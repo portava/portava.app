@@ -24,6 +24,8 @@ import { z } from "zod";
 import { requireUser, sendError, canEditPlan, isAcceptedTripMember } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { nameVisibilitySet } from "../lib/publicIdentity.js";
+import { buildConsumerProjection } from "../services/passport/PassportConsumerProjections.js";
+import { allowDiscoveryPersonCard } from "../services/passport/PassportConsumerAccess.js";
 import { isCompassEnabled, isEnabled } from "../compass/flags.js";
 import { checkRateLimit } from "../lib/rateLimit.js";
 import { getCompassProfile } from "../compass/CompassProfileService.js";
@@ -4176,6 +4178,56 @@ router.get("/compass/telegraph", async (req, res) => {
     req.log?.error({ err }, "compass/telegraph: build failed");
     // Always fail open — return empty cards rather than an error
     res.json({ cards: [], city: null });
+  }
+});
+
+// ── GET /api/compass/people/:userId/passport ──────────────────────────────────
+//
+// §21 TABLE 22, Compass row: "permitted identity, availability, intent, trust
+// capabilities, Trip/shared context". §8 pairs Compass person cards with
+// Discovery ones and the discovery_card variant serves both — it carries the
+// trust CAPABILITIES (`capabilities.owner`) Compass eligibility reads, and its
+// `intent` is the EXPLICIT current intent from the §8 availability-window
+// domain, which is precisely the signal §8 tells Compass to weight above
+// generic interests (`explicitIntentBoost` / `genericInterestWeight`, exported
+// from the same module so the weighting and the card read one truth).
+//
+// §35's loop — "Compass combines the two permitted Passport projections with
+// live Map intelligence" — is two calls to this, one per traveler, not a
+// Compass-local reconstruction of who those travelers are.
+router.get("/compass/people/:userId/passport", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const { userId } = req.params;
+  if (!/^[0-9a-f-]{36}$/i.test(userId)) {
+    sendError(res, "invalid_payload", "Invalid user id");
+    return;
+  }
+
+  const rl = checkRateLimit("compass_person_card", user.id, 60, 60_000);
+  if (!rl.allowed) {
+    res.setHeader("Retry-After", Math.ceil(rl.retryAfterMs / 1000).toString());
+    sendError(res, "rate_limited", "Too many requests. Please wait.");
+    return;
+  }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not available"); return; }
+
+  // Same gate as the Discovery card, from the same module: a traveler the
+  // people-recommendation list must not surface is not reachable by id either.
+  const gate = await allowDiscoveryPersonCard(sc, userId);
+  if (!gate.allowed) { sendError(res, "not_found", "User not found"); return; }
+
+  try {
+    const passport = await buildConsumerProjection(sc, "discovery_card", userId, user.id);
+    if (!passport) { sendError(res, "not_found", "User not found"); return; }
+    res.status(200).json({ passport });
+  } catch (err) {
+    req.log.warn({ err, userId }, "compass person card projection failed");
+    sendError(res, "db_error", "Could not load person card");
   }
 });
 

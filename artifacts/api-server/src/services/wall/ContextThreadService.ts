@@ -43,6 +43,7 @@ import type {
   WallAction,
   WallProjection,
 } from "../../lib/wallProjection.js";
+import { coverageFromBucket, deriveWallTruthClass } from "../../lib/wallProjection.js";
 import { readLiveClaimEnvelopes, type LiveClaimEnvelope } from "../../lib/liveClaimRead.js";
 import { deriveGemProjection } from "../hiddenGems/HiddenGemContributionService.js";
 import { isFlagEnabled } from "../../lib/featureFlags.js";
@@ -335,6 +336,16 @@ async function readLivePlaceCandidate(
         freshness,
         confidence,
         reason: "Live now",
+        // §108: carried from the CANONICAL intel envelope — source class, §10
+        // conflict state, freshness and the coarse cohort bucket. Nothing here
+        // can promote a prediction into an observation.
+        truthClass: deriveWallTruthClass({
+          sourceClass: env.sourceClass,
+          conflictState: env.conflictState,
+          freshness,
+          coverage: coverageFromBucket(env.sourceCountBucket),
+        }),
+        coverage: coverageFromBucket(env.sourceCountBucket),
         action,
       },
       gate: {
@@ -423,6 +434,10 @@ async function readTripRelevanceCandidate(
         freshness: "recent",
         confidence: 0.95,
         reason: "From your trips",
+        // §108: the viewer's OWN canonical trip row — a directly observed fact
+        // about them, from exactly one authoritative source.
+        truthClass: "observed",
+        coverage: "few",
         action,
       },
       gate: {
@@ -510,6 +525,9 @@ async function readSocialPresenceCandidate(
         freshness: "recent",
         confidence: 0.8,
         reason: "From people you follow",
+        // §108: ≥2 independent authors each disclosed this publicly themselves.
+        truthClass: "corroborated",
+        coverage: count >= 5 ? "many" : count >= 3 ? "several" : "few",
         action,
       },
       gate: {
@@ -620,6 +638,10 @@ async function readHiddenGemCandidate(
         freshness: state === "recently_confirmed" ? "recent" : "aging",
         confidence,
         reason: "Hidden Gem",
+        // §108: a gem STATE is derived from contributor evidence about the gem,
+        // not observed conditions right now.
+        truthClass: "inferred",
+        coverage: "unknown",
         action,
       },
       gate: {
@@ -698,6 +720,10 @@ async function readBuddyCandidate(
         freshness: "live", // available_now is a current flag
         confidence: 0.7,
         reason: "Rent a Buddy",
+        // §108: a Buddy's own availability flag — firsthand about themselves,
+        // one non-independent party, so never corroborated.
+        truthClass: "observed",
+        coverage: "few",
         action,
       },
       gate: {
@@ -751,6 +777,9 @@ async function readMapCandidate(
       freshness: "recent",
       confidence: 0.9,
       reason: "On the map",
+      // §108: canonical place identity, asserted by the Places system itself.
+      truthClass: "observed",
+      coverage: "few",
       action,
     },
     gate: {
@@ -807,6 +836,9 @@ async function readMemoryCandidate(
         freshness: "recent",
         confidence: 0.95,
         reason: "From your memories",
+        // §108: the viewer's OWN canonical memory row.
+        truthClass: "observed",
+        coverage: "few",
         action,
       },
       gate: {
@@ -856,6 +888,10 @@ async function readCompassCandidate(
       freshness: "recent",
       confidence: 0.7,
       reason: "Ask Compass",
+      // §108/§21: an offer to ASK is not a claim about the world. It asserts
+      // nothing, so it carries no observation — `unknown`, never `observed`.
+      truthClass: "unknown",
+      coverage: "unknown",
       action,
     },
     gate: {
@@ -868,6 +904,137 @@ async function readCompassCandidate(
       visualOverload: false,
       // At the utility floor: the last-resort bridge, never a dominant thread.
       expectedUtility: 0.5,
+    },
+  };
+}
+
+// ── §21 cluster interpretation ───────────────────────────────────────────────
+
+/**
+ * The thread kinds that are CLAIMS ABOUT THE WORLD or about the viewer's real
+ * situation, as opposed to navigation affordances. Only these count toward a
+ * "cluster of social signals" (spec §21). `map` is a link, `memory` is a private
+ * record, and `compass` is the interpretation itself — none is a signal.
+ */
+const CLUSTER_SIGNAL_KINDS: ReadonlySet<ContextThreadKind> = new Set<ContextThreadKind>([
+  "live_place",
+  "social_presence",
+  "trip_relevance",
+  "hidden_gem",
+  "buddy",
+]);
+
+/** How many independent, individually-eligible signals make a "cluster". */
+export const CLUSTER_MIN_SIGNALS = 2;
+
+/**
+ * Human phrase per signal kind, used to say WHAT the cluster is made of without
+ * saying what it MEANS. "3 people you follow were here + it is busy right now"
+ * is a list of facts; "this place is popping" would be an assertion, and §21
+ * forbids presenting inference as verified fact.
+ */
+const CLUSTER_SIGNAL_PHRASE: Partial<Record<ContextThreadKind, string>> = {
+  live_place: "live activity",
+  social_presence: "people you follow",
+  trip_relevance: "your trip",
+  hidden_gem: "a Hidden Gem",
+  buddy: "a Buddy nearby",
+};
+
+/**
+ * spec §21: *"Interpret a cluster of social signals only when evidence and
+ * privacy rules allow."*
+ *
+ * Compass's per-object affordance is a bare prompt about one place. This turns it
+ * into an interpretation over a SET of signals — but only when the set genuinely
+ * exists and every member of it independently cleared the §9 evidence and
+ * privacy gate. The two conditions the spec names are enforced literally:
+ *
+ *   EVIDENCE — a member must pass `shouldAttachContextThread` ON ITS OWN. A
+ *     candidate that was gathered but would not have earned a thread by itself
+ *     (below the confidence floor, past the freshness horizon, not contextually
+ *     relevant) contributes nothing. Two or more such members are required, from
+ *     DISTINCT kinds, so one system talking twice is not a cluster.
+ *   PRIVACY — a member carrying `sensitiveDisclosure`, or one the viewer is not
+ *     authorized for, is excluded before it is counted. It cannot be laundered
+ *     into the cluster by the presence of other signals, and the cluster label
+ *     names only the KIND of each signal, never its content, so the interpretation
+ *     discloses strictly less than the individual threads it is built from.
+ *
+ * The result never asserts the interpretation. It says which signals are present
+ * and offers to ASK — the truth class is `inferred`, and the confidence is the
+ * WEAKEST member's, so a cluster can never be more confident than its worst
+ * evidence. Returns null when there is no cluster, leaving the bare Compass
+ * prompt (or nothing) exactly as before.
+ */
+export function buildCompassClusterCandidate(
+  base: ContextThreadCandidate | null,
+  others: ContextThreadCandidate[],
+  policy: ContextThreadPolicy = DEFAULT_CONTEXT_THREAD_POLICY,
+): ContextThreadCandidate | null {
+  if (!base || base.thread.kind !== "compass") return null;
+
+  const byKind = new Map<ContextThreadKind, ContextThreadCandidate>();
+  for (const c of others) {
+    const kind = c.thread.kind;
+    if (!CLUSTER_SIGNAL_KINDS.has(kind)) continue;
+    // PRIVACY, before anything else: an unauthorized or sensitive signal is not
+    // evidence the viewer may be told about, in aggregate or otherwise.
+    if (!c.gate.viewerAuthorized || c.gate.sensitiveDisclosure) continue;
+    // EVIDENCE: it must have earned a thread in its own right. `visualOverload`
+    // and `duplicatesLiveStrip` are PRESENTATION constraints, not evidence ones —
+    // a fact that is real but already on screen is still real — so they are
+    // neutralised for this test while every evidence condition is kept.
+    const passesOnItsOwn = shouldAttachContextThread(
+      { ...c.gate, visualOverload: false, duplicatesLiveStrip: false },
+      policy,
+    );
+    if (!passesOnItsOwn) continue;
+    if (!byKind.has(kind)) byKind.set(kind, c);
+  }
+  const members = [...byKind.values()];
+  if (members.length < CLUSTER_MIN_SIGNALS) return null;
+
+  const phrases = members
+    .map((m) => CLUSTER_SIGNAL_PHRASE[m.thread.kind])
+    .filter((x): x is string => !!x);
+  if (phrases.length < CLUSTER_MIN_SIGNALS) return null;
+  const listed =
+    phrases.length === 2
+      ? `${phrases[0]} and ${phrases[1]}`
+      : `${phrases.slice(0, -1).join(", ")} and ${phrases[phrases.length - 1]}`;
+
+  // The weakest member bounds the cluster: confidence, freshness and coverage.
+  const confidence = Math.min(...members.map((m) => m.gate.confidence));
+  const freshnessAgeMs = Math.max(...members.map((m) => m.gate.freshnessAgeMs));
+
+  return {
+    thread: {
+      kind: "compass",
+      // A LIST of what is present, then an offer. Never a conclusion.
+      label: `${listed} here right now — ask Compass what it means`,
+      freshness: base.thread.freshness,
+      confidence,
+      reason: `${members.length} signals here`,
+      // §108: an interpretation over signals is INFERRED, never observed, and
+      // the client renders it as such.
+      truthClass: "inferred",
+      coverage: members.length >= 3 ? "several" : "few",
+      action: base.thread.action,
+    },
+    gate: {
+      viewerAuthorized: true, // every member was authorized; see the loop above
+      contextRelevant: true,
+      confidence,
+      freshnessAgeMs,
+      sensitiveDisclosure: false, // sensitive members were excluded, not merged
+      duplicatesLiveStrip: false, // the cluster is not any one strip signal
+      visualOverload: base.gate.visualOverload,
+      // Above the bare Compass prompt (0.5) because a real cluster is genuinely
+      // more useful — and deliberately BELOW a live fact (0.85) and a strong
+      // social-presence fact (0.8), so an interpretation never outranks the
+      // concrete observation it was built from.
+      expectedUtility: 0.72,
     },
   };
 }
@@ -909,7 +1076,20 @@ export async function gatherContextThread(
   for (const r of settled) {
     if (r.status === "fulfilled" && r.value) candidates.push(r.value);
   }
-  return selectContextThread(candidates, policy, { windowSaturated: viewer.windowSaturated });
+  // spec §21: where a genuine cluster of independently-eligible, privacy-clean
+  // social signals exists, the Compass candidate becomes an INTERPRETATION over
+  // that set instead of a bare per-object prompt. It replaces the bare prompt
+  // rather than joining it, so the object still carries at most one thread.
+  const bare = candidates.find((c) => c.thread.kind === "compass") ?? null;
+  const cluster = buildCompassClusterCandidate(
+    bare,
+    candidates.filter((c) => c.thread.kind !== "compass"),
+    policy,
+  );
+  const finalCandidates = cluster
+    ? [...candidates.filter((c) => c.thread.kind !== "compass"), cluster]
+    : candidates;
+  return selectContextThread(finalCandidates, policy, { windowSaturated: viewer.windowSaturated });
 }
 
 /**
@@ -947,5 +1127,6 @@ export const _internal = {
   readMapCandidate,
   readMemoryCandidate,
   readCompassCandidate,
+  buildCompassClusterCandidate,
   PROTECTED_GEM_SENSITIVITY,
 };

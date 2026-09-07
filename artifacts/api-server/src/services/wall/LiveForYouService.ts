@@ -62,7 +62,10 @@ import type {
   LiveObjectType,
   PublicPlaceRef,
   WallAction,
+  WallCoverage,
+  WallTruthClass,
 } from "../../lib/wallProjection.js";
+import { coverageFromBucket, deriveWallTruthClass } from "../../lib/wallProjection.js";
 
 /** Absolute ceiling on strip size (spec §4: "normally 2–4 items"). */
 export const MAX_LIVE_FOR_YOU = 4;
@@ -110,6 +113,15 @@ export interface ResolvedLiveFact {
   /** Freshness horizon — past ⇒ the fact is stale and never shown. */
   validUntil: string;
   conflictState?: "none" | "minor" | "material";
+  /**
+   * Sensing §108 truth class of THIS fact. Required on every resolved producer:
+   * a schedule is `predicted`, a self-declared availability flag is `observed`,
+   * a count of independent public posts is `corroborated`. There is no default —
+   * a producer that does not state a class gets `unknown`, never `observed`.
+   */
+  truthClass?: WallTruthClass;
+  /** Sensing §108 coverage bucket. Absent ⇒ `unknown` (which is not "none"). */
+  coverage?: WallCoverage;
 }
 
 export interface LiveForYouCandidate {
@@ -124,6 +136,14 @@ export interface LiveForYouCandidate {
    * envelope for `subjectId` as before.
    */
   resolved?: ResolvedLiveFact;
+  /**
+   * A producer-supplied tap action that OVERRIDES the per-kind default in
+   * `actionFor`. Used where the canonical object behind the item admits a real
+   * real-world action the kind alone cannot name — an `event_state` item carries
+   * a `join` into the canonical event surface (spec §2), where the event's OWN
+   * eligibility/capacity gate runs. The Wall never re-implements that gate.
+   */
+  action?: WallAction;
 }
 
 export interface BuildLiveForYouOptions {
@@ -157,8 +177,10 @@ function labelFor(cand: LiveForYouCandidate, env: LiveClaimEnvelope): string {
   return valueStr ? `${name} · ${valueStr}` : name;
 }
 
-/** The single tap action for a live item, by kind (spec §4/§8). */
+/** The single tap action for a live item, by kind (spec §4/§8). A producer may
+ *  override the per-kind default with a canonical action of its own. */
 function actionFor(cand: LiveForYouCandidate): WallAction | undefined {
+  if (cand.action) return cand.action;
   switch (cand.liveObjectType) {
     case "place_state":
     case "event_state":
@@ -246,6 +268,10 @@ export async function buildLiveForYou(
         conflictState: r.conflictState ?? "none",
         observedAt: r.observedAt,
         validUntil: r.validUntil,
+        // §108: the producer states its own epistemic class. Absent ⇒ unknown —
+        // never silently "observed".
+        truthClass: r.truthClass ?? "unknown",
+        coverage: r.coverage ?? "unknown",
         action: actionFor(cand),
       });
       continue;
@@ -268,6 +294,16 @@ export async function buildLiveForYou(
       conflictState: env.conflictState,
       observedAt: env.observedAt,
       validUntil: env.validUntil,
+      // §108: derived from the CANONICAL intel vocabulary (source class + §10
+      // conflict state + freshness + the coarse cohort bucket) — the Wall does
+      // not invent a class and cannot promote a prediction into an observation.
+      truthClass: deriveWallTruthClass({
+        sourceClass: env.sourceClass,
+        conflictState: env.conflictState,
+        freshness,
+        coverage: coverageFromBucket(env.sourceCountBucket),
+      }),
+      coverage: coverageFromBucket(env.sourceCountBucket),
       action: actionFor(cand),
     });
   }
@@ -365,6 +401,10 @@ export async function buildGemLiveCandidates(
           confidence: projection.gemConfidence.score,
           observedAt,
           validUntil: new Date((Number.isNaN(updatedMs) ? now.getTime() : updatedMs) + GEM_FRESH_MS).toISOString(),
+          // §108: a gem STATE is derived from contributor evidence about the
+          // gem, not from an observation of conditions right now — inferred.
+          truthClass: "inferred",
+          coverage: "unknown",
         },
       });
     }
@@ -434,6 +474,12 @@ export async function buildSocialPresenceLiveCandidates(
           confidence: 0.8,
           observedAt: new Date(newest).toISOString(),
           validUntil: new Date(newest + SOCIAL_PRESENCE_DAYS * 24 * 60 * 60 * 1000).toISOString(),
+          // §108: each contributing post is a firsthand public disclosure by its
+          // own author, and the k-anonymity floor guarantees at least two
+          // INDEPENDENT authors — so the count is corroborated, not a single
+          // observation. It is a record of the past, never a claim about now.
+          truthClass: "corroborated",
+          coverage: count >= 5 ? "many" : count >= 3 ? "several" : "few",
         },
       });
     }
@@ -505,6 +551,11 @@ export async function buildBuddyLiveCandidates(
           confidence: 0.7,
           observedAt: now.toISOString(),
           validUntil: new Date(now.getTime() + BUDDY_AVAILABILITY_MS).toISOString(),
+          // §108: a Buddy's own `available_now` flag is a firsthand declaration
+          // about themselves — a real observation, but a single non-independent
+          // party, so it can never read as corroborated.
+          truthClass: "observed",
+          coverage: "few",
         },
       });
     }
@@ -717,6 +768,22 @@ export async function buildEventStateLiveCandidates(
           validUntil: new Date(
             best.phase === "ongoing" ? eventEndMs(best.ev, startMs) : startMs,
           ).toISOString(),
+          // §108, and the §37 truth boundary above: an event schedule states
+          // what someone INTENDS, not what is observably happening. It is a
+          // PREDICTION and the client must never render it as an observation.
+          truthClass: "predicted",
+          coverage: "unknown",
+        },
+        // spec §2 "join": the one real-world action an event admits. It hands the
+        // viewer to the CANONICAL event surface, where the event's own
+        // eligibility / capacity / RSVP gate runs (routes/events.ts
+        // POST /events/:id/join). The Wall never re-implements that gate and
+        // never joins on the viewer's behalf — the transition is not forced (§40).
+        action: {
+          type: "join",
+          label: "Join",
+          targetType: "event",
+          targetId: String(best.ev.id),
         },
       });
     }
@@ -968,6 +1035,9 @@ export async function buildTripSignalLiveCandidates(
           confidence: null,
           observedAt: now.toISOString(),
           validUntil: new Date(e.expiresMs).toISOString(),
+          // §108: a trip plan item is an intention on a schedule — predicted.
+          truthClass: "predicted",
+          coverage: "unknown",
         },
       });
     }

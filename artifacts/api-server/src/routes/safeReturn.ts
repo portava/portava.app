@@ -26,6 +26,8 @@ import { z } from "zod";
 import { requireUser, sendError } from "../lib/http";
 import { getServiceClient } from "../lib/supabase";
 import { nameVisibilitySet } from "../lib/publicIdentity";
+import { buildConsumerProjection } from "../services/passport/PassportConsumerProjections.js";
+import { allowSafetyContext } from "../services/passport/PassportConsumerAccess.js";
 import { createStamp } from "../services/passport/PassportStampService.js";
 import { recordContributionIfEnabled } from "../services/passport/PassportContributionService.js";
 import { awardStamp } from "../services/passport/StampAwardEngine.js";
@@ -812,6 +814,47 @@ router.get("/me/safe-return/sessions/:id/contacts", async (req, res) => {
     res.status(200).json({ ok: true, contacts });
   } catch {
     res.status(200).json({ ok: true, contacts: [] });
+  }
+});
+
+// ── GET /api/me/safe-return/contacts/:userId/passport ─────────────────────────
+//
+// §21 TABLE 22, Safety row: "restricted purpose-specific context only". The
+// `safety` variant is the narrowest projection in the system — handle,
+// verification, and whether §24 marks this relationship blocked/unavailable.
+// Deliberately no name, no avatar, no location, no trust, no availability: a
+// safety surface needs to identify a person and know the relationship is
+// intact, and nothing else.
+//
+// The PURPOSE is the authorisation (`allowSafetyContext`): a safe-return
+// contact link in either direction. Without one there is no safety question to
+// answer, and the route refuses rather than projecting the restricted shape —
+// the restricted shape is what a permitted viewer sees of a blocked person, not
+// a consolation prize for an unrelated one.
+router.get("/me/safe-return/contacts/:userId/passport", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { client, user } = auth;
+
+  const db = getServiceClient() ?? client;
+  if (!await isFlagEnabled(db, "safe_return_enabled")) {
+    res.status(200).json({ passport: null, featureEnabled: false });
+    return;
+  }
+
+  const { userId } = req.params;
+  if (!/^[0-9a-f-]{36}$/i.test(userId)) { sendError(res, "invalid_payload", "Invalid user id"); return; }
+
+  const gate = await allowSafetyContext(db, user.id, userId);
+  if (!gate.allowed) { sendError(res, "forbidden", "No safety relationship with this user"); return; }
+
+  try {
+    const passport = await buildConsumerProjection(db, "safety", userId, user.id);
+    if (!passport) { sendError(res, "not_found", "User not found"); return; }
+    res.status(200).json({ passport });
+  } catch (err) {
+    req.log.error({ err, userId }, "safe-return contact passport projection failed");
+    sendError(res, "db_error", "Could not load contact passport");
   }
 });
 

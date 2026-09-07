@@ -68,6 +68,8 @@ import {
 } from "../lib/canonicalLocations";
 import type { SensitivityLevel } from "../services/hiddenGems/HiddenGemPrivacyGuard.js";
 import { nameVisibilitySet } from "../lib/publicIdentity";
+import { buildConsumerProjection } from "../services/passport/PassportConsumerProjections.js";
+import { allowDiscoveryPersonCard } from "../services/passport/PassportConsumerAccess.js";
 // The canonical author-side block rule for a `discovery_places` row. Shared with
 // routes/discovery.ts (which re-exports it) rather than re-implemented here —
 // two copies of a privacy rule is how these two serve points drifted apart in
@@ -2040,6 +2042,54 @@ router.get("/discovery/suggest", async (req, res) => {
   } catch (err) {
     logger.warn({ err, q }, "discovery/suggest failed");
     res.status(200).json({ query: q, groups: [] });
+  }
+});
+
+// ── GET /api/discovery/people/:userId/passport ────────────────────────────────
+//
+// §21 TABLE 22, Discovery row: "identity, verification, availability, Open to
+// Plans, shared context, permitted trust summary". That is the discovery_card
+// variant verbatim, so this route builds NOTHING — it authorises the request and
+// returns what the one Passport assembler produced for this viewer (§35).
+//
+// The search list above ranks people; this is the card one of those rows opens.
+// The two agree by construction: the same subject the list withholds
+// (`allow_profile_discovery = false`, or age-restricted) is refused here by the
+// shared gate, and blocking / account status are settled inside the assembler,
+// which answers a blocked relationship with the variant's restricted shape
+// rather than a 404 — the client must not be able to tell "blocked" from
+// "does not exist" by the status code.
+router.get("/discovery/people/:userId/passport", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const { userId } = req.params;
+  if (!/^[0-9a-f-]{36}$/i.test(userId)) {
+    sendError(res, "invalid_payload", "Invalid user id");
+    return;
+  }
+
+  const rl = checkRateLimit("discovery_person_card", user.id, 60, 60_000);
+  if (!rl.allowed) {
+    res.setHeader("Retry-After", Math.ceil(rl.retryAfterMs / 1000).toString());
+    sendError(res, "rate_limited", "Too many requests. Please wait.");
+    return;
+  }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const gate = await allowDiscoveryPersonCard(sc, userId);
+  if (!gate.allowed) { sendError(res, "not_found", "User not found"); return; }
+
+  try {
+    const passport = await buildConsumerProjection(sc, "discovery_card", userId, user.id);
+    if (!passport) { sendError(res, "not_found", "User not found"); return; }
+    res.status(200).json({ passport });
+  } catch (err) {
+    logger.warn({ err, userId }, "discovery person card projection failed");
+    sendError(res, "db_error", "Could not load person card");
   }
 });
 

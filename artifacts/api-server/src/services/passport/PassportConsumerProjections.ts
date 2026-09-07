@@ -10,6 +10,29 @@
  * re-implemented privacy per surface. This module gives each consumer a
  * server-side VARIANT of the single §29 aggregate:
  *
+ * ADOPTION (§35's canonical architecture rule — "other surfaces request the
+ * appropriate Passport projection instead of rebuilding identity, availability,
+ * trust and social context independently"). Every TABLE 22 consumer now enters
+ * through `buildConsumerProjection`, each behind the surface gate that warrants
+ * the request (`PassportConsumerAccess`, which is where those gates live once):
+ *
+ *   Discovery  → routes/discoverySearch.ts  GET /discovery/people/:userId/passport
+ *   Compass    → routes/compass.ts          GET /compass/people/:userId/passport
+ *   Buddy      → routes/rentABuddy.ts       (buddy card)
+ *   Trips      → routes/trips.ts            (crew member card)
+ *   Telegraph  → routes/telegraph.ts        GET /telegraph/threads/:threadId/header/:userId
+ *   Safety     → routes/safeReturn.ts       GET /me/safe-return/contacts/:userId/passport
+ *   Event      → services/passport/EventPassportService.ts (QR share)
+ *
+ * These are all SINGLE-SUBJECT reads, and deliberately so. `buildPassportProjection`
+ * is a per-viewer, per-subject assembler costing ~20 round trips; it backs the card
+ * a person opens, never the list they scroll. A ranked list still selects the
+ * columns it ranks on — that is ranking input, not an identity payload — and the
+ * one identity rule a list DOES publish, the §22 display-name gate, already goes
+ * through the same choke point this module's assembler uses (`nameVisibilitySet`).
+ * Fanning the aggregate out across a list would not adopt the projection; it would
+ * make the surface unusable and tempt the very second identity path §35 forbids.
+ *
  *   • It calls the ONE assembler (`buildPassportProjection`) — so blocking /
  *     unavailable propagation (§24), the TABLE 24 location opt-outs, per-plan
  *     and per-memory visibility, and the server-projected capabilities (§30)
@@ -43,6 +66,41 @@
  *                    EventPassportService, which adds the bounded TTL,
  *                    revocation and co-attendance checks around it.
  *   safety         → restricted, purpose-specific context only.
+ *
+ * THERE IS DELIBERATELY NO `map` VARIANT — and this is the one TABLE 22 row that
+ * is NOT a Passport projection. Recorded here so it is a decision, not a hole:
+ *
+ *   1. Its unit is not a person. TABLE 22's Map row reads "aggregate or
+ *      permission-appropriate presence only", and §23 spells out what that
+ *      means: "the map should show '18 travelers active around this area'
+ *      rather than a field of identifiable stranger avatars". §37 lists a public
+ *      real-time people tracker as an explicit non-goal. Every variant above is
+ *      "one person, as seen by one viewer"; the Map's default answer is an area.
+ *   2. Its gate is location, not relationship. Who appears on the map is decided
+ *      by `location_preferences` (location_mode / sharing_paused /
+ *      discovery_visibility), `user_privacy_settings.allow_location_sharing` and
+ *      position freshness — none of which the §29 aggregate reads, and none of
+ *      which it should start reading.
+ *   3. Its payload is a coordinate. A map object carries a coarsened lat/lng and
+ *      the §23 precision rung it sits on. Putting a coordinate inside the
+ *      Passport aggregate would walk straight into §34's "not a raw exact-
+ *      location screen"; the aggregate's location vocabulary stops at a city.
+ *   4. It is viewer-INDEPENDENT by construction. `lib/mapTravelers` caches
+ *      candidates per viewport for 20 s across all viewers and applies only
+ *      self/block filtering per request. `buildPassportProjection` resolves a
+ *      relationship, permissions and name visibility PER VIEWER, so it cannot
+ *      back a shared cache — and per candidate it would cost ~20 round trips
+ *      against a scan of up to 250.
+ *
+ * The Map's projection therefore already exists, and elsewhere on purpose:
+ * `lib/mapProjection.ts` (`projectTraveler` + `mayRenderIdentity`, which STRIPS
+ * name and avatar whenever the privacy rung does not permit identity) over
+ * `lib/mapTravelers.ts`. That is stricter than any variant here would be. What
+ * the Map does share with §21 is the one rule that must never fork — the §22
+ * display-name gate — and it shares it through the same `nameVisibilitySet`
+ * choke point the assembler uses. If the Map ever grows a per-person pin-tap
+ * card, THAT card is a `discovery_card` request for that user id, not a new
+ * variant: the pin stays presence, the card is the person.
  *
  * §8 (Open to Plans and Intent): the discovery_card variant's `intent` is the
  * traveler's EXPLICIT current intent, read from the §8 availability-window

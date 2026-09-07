@@ -133,6 +133,101 @@ export function serverAutoplayHint(kind: DisplayMedia["kind"]): true | undefined
  */
 export type FreshnessState = "live" | "recent" | "aging" | "stale" | "unknown";
 
+// ── Truth metadata (Sensing §108 / §5.1) ─────────────────────────────────────
+
+/**
+ * The epistemic class of a server-built state the Wall consumes.
+ *
+ * Sensing §108 requires that EVERY server-built state consumed by Map /
+ * Discovery / Wall / Compass carries truth class, confidence, freshness and
+ * coverage, and that **prediction is never rendered indistinguishably from
+ * observation**. The vocabulary is Sensing §5.1's, verbatim.
+ *
+ * This is a CARRIED value, not a computed one: `deriveWallTruthClass` maps the
+ * canonical intel vocabulary (lib/intelContracts SOURCE_CLASSES + the §10
+ * conflict state + the read path's freshness) onto it. The Wall never invents a
+ * truth class and never upgrades one — an unknown input stays `unknown`.
+ */
+export type WallTruthClass =
+  | "observed"
+  | "corroborated"
+  | "inferred"
+  | "predicted"
+  | "conflicting"
+  | "stale"
+  | "unknown";
+
+/**
+ * Coverage — how much independent evidence stands behind the state, at the
+ * COARSE bucket granularity the privacy gate permits (the exact cohort count is
+ * never exposed, spec §4/§23). `unknown` is a first-class value and is NOT the
+ * same as "none": Sensing's "no coverage ≠ quiet" separation depends on the
+ * distinction surviving all the way to the surface.
+ */
+export type WallCoverage = "few" | "several" | "many" | "unknown";
+
+/** Truth classes that may NEVER be rendered as a current observation (§108). */
+export const NON_OBSERVATION_TRUTH_CLASSES: readonly WallTruthClass[] = [
+  "predicted",
+  "inferred",
+  "stale",
+  "unknown",
+] as const;
+
+/** True when this truth class may back a user-facing observation/Live label. */
+export function truthClassMayRenderAsObservation(cls: WallTruthClass): boolean {
+  return !NON_OBSERVATION_TRUTH_CLASSES.includes(cls);
+}
+
+/**
+ * Map the canonical intel vocabulary onto the Wall's §108 truth class.
+ *
+ * Precedence is deliberate and fail-weak — the WEAKEST applicable class wins, so
+ * no combination of inputs can promote a prediction or a stale fact into an
+ * observation:
+ *
+ *   1. `stale` freshness            → stale        (a horizon that has passed)
+ *   2. `material` conflict          → conflicting  (§10 — never a Live label)
+ *   3. prediction / historical      → predicted    (intelContracts
+ *                                                   NON_OBSERVATION_SOURCE_CLASSES)
+ *   4. hearsay                      → inferred     (not firsthand)
+ *   5. several/many independent     → corroborated
+ *   6. anything else firsthand-ish  → observed
+ *   7. absent / unrecognised source → unknown
+ *
+ * `sourceClass` is a string rather than the imported union so this contract
+ * module stays dependency-free; an unrecognised value resolves to `unknown`
+ * rather than being trusted.
+ */
+export function deriveWallTruthClass(input: {
+  sourceClass?: string | null;
+  conflictState?: "none" | "minor" | "material" | null;
+  freshness?: FreshnessState | null;
+  coverage?: WallCoverage | null;
+}): WallTruthClass {
+  if (input.freshness === "stale") return "stale";
+  if (input.conflictState === "material") return "conflicting";
+  const cls = input.sourceClass ?? null;
+  if (cls === null || cls === "") return "unknown";
+  if (cls === "historical_pattern" || cls === "portava_prediction") return "predicted";
+  if (cls === "hearsay") return "inferred";
+  const known =
+    cls === "verified_firsthand" ||
+    cls === "firsthand_unverified" ||
+    cls === "official_signed" ||
+    cls === "sponsored" ||
+    cls === "imported_owned";
+  if (!known) return "unknown";
+  if (input.coverage === "several" || input.coverage === "many") return "corroborated";
+  return "observed";
+}
+
+/** Map the read path's coarse cohort bucket to a Wall coverage value. */
+export function coverageFromBucket(bucket: string | null | undefined): WallCoverage {
+  if (bucket === "few" || bucket === "several" || bucket === "many") return bucket;
+  return "unknown";
+}
+
 // ── WallAction ───────────────────────────────────────────────────────────────
 
 /**
@@ -199,6 +294,16 @@ export interface ContextThread {
   /** Short human-readable "why" (spec §8 examples). Never asserts inference as
    *  verified fact (spec §21). */
   reason?: string;
+  /**
+   * Sensing §108: the epistemic class of the fact behind this thread. Carried on
+   * EVERY thread, so the client can render a prediction/inference differently
+   * from an observation without re-deriving anything. Absent is not permitted in
+   * new producers; the type keeps it optional only so a hand-built thread in a
+   * test still compiles.
+   */
+  truthClass?: WallTruthClass;
+  /** Sensing §108: coarse independent-evidence bucket. `unknown` ≠ none. */
+  coverage?: WallCoverage;
   action?: WallAction;
 }
 
@@ -247,6 +352,13 @@ export interface WallProjectionBase {
   place?: PublicPlaceRef;
   /** Rendered only when the §9 gate passed (populated by ContextThreadService). */
   contextThread?: ContextThread;
+  /**
+   * Whether the VIEWER has this object saved in the canonical save store
+   * (`post_saves` for post-like objects, spec §2 "save"). Server-resolved so the
+   * bookmark survives a remount — the Wall never keeps a save in React state.
+   * Absent for object types that have no canonical save concept.
+   */
+  viewerSaved?: boolean;
   actions: WallAction[];
   ranking?: WallRankingMetadata;
 }
@@ -377,6 +489,15 @@ export interface LiveForYouItem {
   observedAt: string;
   /** Freshness horizon — after this the client degrades to unknown (spec §31). */
   validUntil: string;
+  /**
+   * Sensing §108: the epistemic class of this live state. A SCHEDULE (an event's
+   * start/end, a trip plan item) is `predicted`, never `observed` — the strip
+   * renders the two differently so a prediction can never be read as a current
+   * observation of the world.
+   */
+  truthClass: WallTruthClass;
+  /** Sensing §108: coarse independent-evidence bucket behind the state. */
+  coverage: WallCoverage;
   action?: WallAction;
 }
 

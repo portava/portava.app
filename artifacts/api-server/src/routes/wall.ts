@@ -7,6 +7,7 @@
  *   DELETE /wall/session-intent                                  — clear intent
  *   POST   /wall/impression       { objectId, objectType, ... }  — impression
  *   POST   /wall/action           { objectId, objectType, action }— action
+ *   POST   /wall/revalidate       { objectIds }                  — cache revalidation
  *
  * This route is THIN. It authenticates, gates on the Wall feature flags, gathers
  * canonical candidates, and delegates every decision to a Wall service:
@@ -115,6 +116,7 @@ export const WALL_RATE_LIMITS = {
   sessionIntent: { id: "wall_session_intent", limit: 30, windowMs: 60_000 },
   impression: { id: "wall_impression", limit: 600, windowMs: 60_000 },
   action: { id: "wall_action", limit: 300, windowMs: 60_000 },
+  revalidate: { id: "wall_revalidate", limit: 60, windowMs: 60_000 },
 } as const;
 
 const DEFAULT_LIMIT = 20;
@@ -317,6 +319,109 @@ export async function loadViewerContext(sc: any, viewerId: string): Promise<Wall
     logger.warn({ err }, "wall: second-degree follow read failed");
   }
   return ctx;
+}
+
+// ── Viewer engagement read-back (spec §2 save · §7/§32 hide · §41 the loop) ──
+
+/**
+ * How far back a viewer's "not interested" signal keeps an object off their
+ * Wall. Long enough that the control means something, bounded so a single tap
+ * is not a permanent, unrevisitable verdict.
+ */
+export const SUPPRESSION_WINDOW_MS = 90 * 24 * 60 * 60 * 1000;
+/** Cap on suppressed ids held in memory for one request. */
+const MAX_SUPPRESSIONS = 500;
+
+/**
+ * The objects this viewer told the Wall they were not interested in.
+ *
+ * THIS IS THE RETURN LEG OF THE WALL LOOP (spec §41). Every other hop —
+ * open → live → feed → object → engage → context → handoff → real-world action —
+ * already exists; what did not was anything reading an outcome BACK so that it
+ * changes what the Wall later shows. `POST /wall/action { action: "hide" }`
+ * already writes `rank_events` (surface='wall', event_type=ranking_item_hidden);
+ * nothing had ever read it, so a "not interested" survived only in React state
+ * and came back on the next launch.
+ *
+ * It reads the DEPLOYED store. The Wall's own telemetry table
+ * (`wall_telemetry_events`, migration 2308) is not applied in production, so a
+ * loop closed through it would be closed on paper only; `rank_events` is the
+ * table the Wall already writes and it exists.
+ *
+ * This is a VISIBILITY filter, not a ranking term (the ranker is untouched):
+ * the object is removed for this viewer, which is why it holds identically in
+ * Following, where relevance reordering is forbidden (TABLE 1). Fail-soft — an
+ * unreadable engagement store costs the viewer a preference, never the feed.
+ */
+export async function loadViewerSuppressions(
+  sc: any,
+  viewerId: string,
+  opts: { now?: Date } = {},
+): Promise<Set<string>> {
+  const out = new Set<string>();
+  if (!sc || !viewerId) return out;
+  const since = new Date((opts.now ?? new Date()).getTime() - SUPPRESSION_WINDOW_MS).toISOString();
+  try {
+    const { data, error } = await sc
+      .from("rank_events")
+      .select("item_id")
+      .eq("user_id", viewerId)
+      .eq("surface", "wall")
+      .eq("event_type", RankingEvent.ITEM_HIDDEN)
+      .gte("served_at", since)
+      .limit(MAX_SUPPRESSIONS);
+    if (error) {
+      logger.warn({ err: error }, "wall: suppression read failed — nothing suppressed this request");
+      return out;
+    }
+    for (const r of (data as any[]) ?? []) {
+      const id = (r as any)?.item_id;
+      if (id) out.add(String(id));
+    }
+  } catch (err) {
+    logger.warn({ err }, "wall: suppression read threw — nothing suppressed this request");
+  }
+  return out;
+}
+
+/**
+ * The subset of `objectIds` the viewer has SAVED in the canonical save store
+ * (`post_saves` — the table routes/mediaFeed's POST/DELETE /posts/:id/save
+ * writes). The Wall reports the state; it never owns it and never writes it.
+ *
+ * Without this the Wall's bookmark was a `React.useState` boolean that persisted
+ * nothing and reset on remount, so `save` — one of §2's eight named real-world
+ * actions — was an animation. Fail-soft: an unreadable save store yields an
+ * empty set, i.e. "Save" rather than a false "Saved" (the canonical endpoint is
+ * idempotent, so offering Save on an already-saved object is harmless; claiming
+ * Saved for something that is not would be a lie).
+ */
+export async function loadViewerSaves(
+  sc: any,
+  viewerId: string,
+  objectIds: string[],
+): Promise<Set<string>> {
+  const out = new Set<string>();
+  const ids = [...new Set(objectIds)].filter((id) => !!id).slice(0, 500);
+  if (!sc || !viewerId || ids.length === 0) return out;
+  try {
+    const { data, error } = await sc
+      .from("post_saves")
+      .select("post_id")
+      .eq("user_id", viewerId)
+      .in("post_id", ids);
+    if (error) {
+      logger.warn({ err: error }, "wall: post_saves read failed — save state unknown");
+      return out;
+    }
+    for (const r of (data as any[]) ?? []) {
+      const id = (r as any)?.post_id;
+      if (id) out.add(String(id));
+    }
+  } catch (err) {
+    logger.warn({ err }, "wall: post_saves read threw — save state unknown");
+  }
+  return out;
 }
 
 /**
