@@ -8,6 +8,7 @@
 | **Tree censused** | `claude/portava-continuation-uqta94`, HEAD `68ed59d9`. Backend paths relative to `artifacts/api-server/src/`, client paths to `travel-buddy-standalone/` unless stated. |
 | **Database** | Not queried. Production storage facts are the ones supplied as ground truth plus the committed snapshot `artifacts/api-server/baseline/20260907_production_tables.txt` and `src/scripts/checkProductionDrift.ts:168-176`. |
 | **Method** | Requirement-level, four buckets, one bucket per requirement. Every BUILT verdict cites a `file:line` that was opened and read. |
+| **Sibling** | `docs/architecture/census-trips.md`, produced in the same pass under the same denominator rule, so the two are directly comparable. Trips scores 41.7 % constructed / 17.3 % correct / **0.0 % spec-attributable**. |
 
 ---
 
@@ -29,8 +30,8 @@ Three things a reader should take before the table.
 
 **1. This is the first spec I have censused whose attribution is not zero.**
 Two completed sibling censuses returned 0.0 % spec-attributable, and the brief said to test
-that rather than assume it. I did. Media is different: 62 non-test files in the tree carry the literal string
-`Media v2`, migrations `2250`/`2255`/`2256`/`2257` name their phase and their spec section
+that rather than assume it. I did. Media is different: 62 files in the tree carry the literal string `Media v2` (45 of them
+non-test), migrations `2250`/`2255`/`2256`/`2257` name their phase and their spec section
 in their own headers (`2250_media_asset_canonical_model.sql:1-5` — *"Media v2 — Phase 1
 (Canonical Foundation) … the full spec §6 MediaAsset / §6.1 MediaAttachment domain
 model"*), and `routes/mediaWorld.ts:1-11` maps its seven endpoints onto §43/§4.1/§13/§23/
@@ -169,8 +170,24 @@ Watch/Grid/Gems client surface.
 
 | | count | share of 450 |
 | --- | --- | --- |
-| BUILT-AND-CORRECT, spec-attributable | **291A** | **291AP** |
-| BUILT-AND-CORRECT, pre-existing | 291P | 291PP |
+| BUILT-AND-CORRECT, spec-attributable | **216** | **48.0 %** |
+| BUILT-AND-CORRECT, pre-existing | 75 | 16.7 % |
+| (BUILT-AND-CORRECT, total) | 291 | 64.7 % |
+
+Per-section split of the 291 correct verdicts, so the 216 can be re-derived rather than
+taken on trust — `A` = attributable, `P` = pre-existing:
+
+`§2 6A · §3 5A · §4 6A · §5 4A · §6/§6.1 1A+2P · §7 8A · §8 1A+1P · §9 4A+2P · §10 4A ·
+§11 1A · §12/§13 2A · §14 2A · §15 7A+1P · §16 22A+8P · §17 6A · §18 2A · §19 6A · §20 1A ·
+§21 2A · §22 1P · §23 6A · §23.1 2A · §24 2A+12P · §25 3A+3P · §26 3A+1P · §27 1P ·
+§28 1A+5P · §29 1A+1P · §30 2A · §31 7A · §31.1 5A · §32 11A · §33 3A · §34 5P · §35 2A ·
+§36 4A+4P · §37 4P · §39 1A · §40 21A+2P · §41 8A+2P · §42 3A · §43 10A+3P · §44 4A+9P ·
+§45 5A · §46 7A · §46.1 2A+1P · §46.2 5P · §48 8A+2P · §49 5A` = **216 A + 75 P = 291**.
+
+Three sections carry most of the pre-existing share: §24 ranking (12 P — `lib/portavaRank.ts`
+and `MediaFeedRankingService.ts` both predate the programme), §44 telemetry (9 P — the eight
+social signals were already firing), and §46.2 anti-patterns (5 P — five of the nine are
+satisfied by surfaces that were never built rather than by anything Media v2 did).
 
 **So: CORRECT% (spec-attributable) = 216 / 450 = 48.0 %.** The programme is real; the
 pre-existing share is mostly §33/§34/§36/§37 (upload, moderation, delayed publishing,
@@ -198,6 +215,16 @@ And three tables the code targets are **absent from production** (`baseline/2026
 `media_view_request_optins` (§19). A fourth, `hidden_gem_contributions` (§16.3), is on the
 same list at `checkProductionDrift.ts:172`. `routes/hiddenGems.ts:78` imports the
 contribution service that reads it.
+
+**On "the surface a user reaches", precisely.** `MEDIA_TAB_ENABLED` is itself seeded false
+(`2037_media_tab_flags.sql:7-10`), and `app/(tabs)/media.tsx:1-6` records that the route
+stays registered for deep-links even then. So there are exactly two reachable
+configurations, and the World shell is in neither: with the tab off there is no Media
+surface at all, and with it on the landing mode is Watch, because
+`MEDIA_VIEW_MODE_FULLSCREEN_ENABLED` is seeded **true** (`2037:17-20`) and the store's
+default is `'watch'` (`src/stores/mediaStore.ts:104,145`). Every §46.2 verdict below is
+about the second configuration; none of them changes if the tab is dark, because a
+disabled surface is not a compliant one.
 
 So §15.1, §19 and §16.3 are code-correct against storage that does not exist where it
 matters. I have kept them BUILT-AND-CORRECT because the code question is settled, and
