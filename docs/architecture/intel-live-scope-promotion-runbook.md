@@ -56,6 +56,13 @@ hand-written `INSERT`, which carries no evidence, no review horizon and no way
 to withdraw except `DELETE`, destroying the audit trail. See
 `migration-disposition-ledger.md`; `2430` is `ready_for_manual_apply`.
 
+The operator surface below (§"The operator surface") does **not** change this.
+On a pre-`2430` database — production and portava-ci today, re-measured
+2026-09-07 — every one of its routes answers `503 server_not_configured`
+naming `2430`, never an empty success. That is deliberate: a surface that
+showed rows without expiry/withdrawal, or wrote through a function that does
+not exist, would be lying about what is live.
+
 ---
 
 ## Step 1 — assemble the evidence
@@ -99,22 +106,67 @@ Supply, per promotion:
 - `evidence` — the density-gate assessment from step 1, plus the reasoning from
   step 2.
 
-### The gap, stated rather than worked around
+### The operator surface (added 2026-09-07)
 
-**`promoteLiveScope` and `withdrawLiveScope` have no caller.** Grepped across
-the tree: no route, no CLI script, and no scheduler invokes either. Only
-`runLiveScopeExpiryPass` is wired (into `intelPromotionScheduler`). So after
-`2430` is applied there is still no operator-facing surface, and a promotion
-would have to be made by calling the SQL function directly with the service key.
+Until this date `promoteLiveScope` and `withdrawLiveScope` had **no caller** —
+no route, no CLI, no scheduler; only `runLiveScopeExpiryPass` was wired. The
+caller now exists: four admin routes at the bottom of `routes/admin.ts`, all
+going **through the library** (no route writes `intel_live_promoted_scopes`
+itself; the fake in the test throws if one tries).
 
-That is a genuine missing piece and it is deliberately **not** invented here —
-whether the surface should be an admin route, a CLI script, or a reviewed SQL
-runbook entry is an ownership question, and `routes/admin.ts` belongs to another
-lane. It is recorded so it is not mistaken for finished work.
+| | route | body / query |
+|---|---|---|
+| list | `GET  /admin/intel/live-scopes` | active by default; `?all=1` adds withdrawn and expired rows with their `state` |
+| inspect | `GET  /admin/intel/live-scopes/:scopeKey` | `scopeKey` = `zone_id\|claim_type`, bar encoded as `%7C`; returns every column incl. `evidence`, `promoted_by`, `withdrawn_*` |
+| promote | `POST /admin/intel/live-scopes/promote` | `{ zoneId: string\|null, claimType, expiresAt: ISO-8601, evidence: { assessment: object, reasoning: string }, note? }` |
+| withdraw | `POST /admin/intel/live-scopes/withdraw` | `{ zoneId, claimType, reason }` |
+
+What the surface enforces, in the order it checks them (every step is
+fail-closed and every step is pinned by `src/test/intelLiveScopeOps.test.ts`):
+
+1. **Admin only** — `requireAdmin`, the same guard as every other route in
+   the file. A non-admin is 403 before any flag is read.
+2. **`intel_live_scope_admin_surface_enabled`** (seeded FALSE by `2570`) must
+   read TRUE through `isFlagEnabled`. Absent, false or unreadable → 404
+   `feature_disabled`, nothing else read. This is a second flag, not `2430`'s,
+   because `2430` is unapplied where the seed must apply, and because closing
+   the HTTP surface must not stop the expiry sweep (and vice versa); `2570`'s
+   header states the reasoning in full.
+3. **Writes only: `intel_live_scope_promotion_enabled`** (`2430`'s writer
+   flag) must read TRUE. A **missing row** — production today — is 503
+   naming `2430`; a FALSE row is 404 naming the flag. A write needs both
+   flags ON, in series.
+4. **Provenance is required by the request schema.** `expiresAt` and
+   `evidence.assessment` + `evidence.reasoning` are not optional; a body
+   without them is 400 before the library is called. `zoneId` must be said,
+   even as `null`. The row's `promoted_by` / `withdrawn_by` is the admin's id;
+   `evidence` and `reason` are stored verbatim. The row is the audit trail
+   (there is no admin-action table that fits a scope, and none was invented).
+5. **Idempotent at the route level**, because `2430`'s functions are:
+   re-promote → `already_active` (one row, no write); later horizon →
+   `renewed`; withdraw twice → `withdrawn` then `already_withdrawn`, row kept;
+   withdraw then promote → `repromoted` in place. A scope never promoted is
+   404 on withdraw.
+6. **Honest on a pre-`2430` database.** Function missing (42883 / PGRST202)
+   or columns missing (42703) → 503 naming `2430`. Any other resolved
+   database error → 500. There is no path that reports an empty success.
+
+What the surface does **not** do: decide. `certifiable` is `false` by
+construction (step 1), so every promoter is overriding a non-certifiable
+assessment; the surface records that override — who, on what, why, until
+when — and never makes it. Nothing here runs without an admin's request.
+
+To use it on production, in order: apply `2430`; apply `2570`; enable
+`intel_live_scope_admin_surface_enabled`; enable
+`intel_live_scope_promotion_enabled`; then step 1 → 2 → 3. And re-read the
+top of this document first: with `geo_zones`, `intel_observations` and
+`intel_claims` all at 0 rows, a promotion made through this surface would
+still change nothing a user sees.
 
 ## Step 4 — withdraw, when the scope should stop being live
 
-`withdrawLiveScope()` → `system_withdraw_intel_live_scope`. It is idempotent and
+`withdrawLiveScope()` → `system_withdraw_intel_live_scope`, reached through
+`POST /admin/intel/live-scopes/withdraw` with a `reason`. It is idempotent and
 it **keeps the row**, setting `withdrawn_at` / `withdrawn_by` /
 `withdrawn_reason`. The read path treats a withdrawn row as not promoted.
 
@@ -137,5 +189,10 @@ human going through steps 1–3 again — which is the point of having a horizon
   only — the posture `2174` set for `system_promote_admissible_intel_claims`.
 - The whole TS path is gated on `intel_live_scope_promotion_enabled`, checked
   fail-closed. An unreadable flag means no promotion, not a default promotion.
+- The HTTP surface is gated again on `intel_live_scope_admin_surface_enabled`
+  (`2570`), and refuses a write unless both flags are ON. `2570`'s
+  postcondition refuses to leave that flag TRUE on a database without `2430`
+  (rehearsed on portava-ci 2026-09-07 inside a rolled-back transaction: the
+  RAISE fired).
 - Expired and withdrawn rows are *not promoted* to the reader. A row's presence
   is not sufficient; its state is what counts.
