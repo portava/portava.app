@@ -21,6 +21,12 @@
  *   UNCLASSIFIED_BACKLOG  — NOT a decision. Pre-existing tables nobody has
  *                           triaged. Being on this list means the data survives
  *                           deletion and no one has said whether it should.
+ *   POST_BASELINE_UNTRIAGED
+ *                         — the same thing for tables created after the
+ *                           2026-08-19 snapshot, which the guard could not see
+ *                           at all until it learned to read src/migrations.
+ *                           CLOSED at a migration high-water mark, so unlike the
+ *                           backlog it cannot absorb a new table.
  *
  * Emptying UNCLASSIFIED_BACKLOG is owner decision D6 in the A0 packet. Entries
  * move to ERASED_BY_CASCADE (with matching code in AccountDeletionService) or to
@@ -30,15 +36,36 @@
 
 /** Tables AccountDeletionService clears today. */
 export const ERASED_BY_CASCADE: readonly string[] = [
-  // PENDING BASELINE RECAPTURE — do not add the string yet.
-  //   "phone_verification_challenges" (migration 2142) holds a phone number and
-  //   a hashed live credential, and IS already deleted explicitly by
-  //   AccountDeletionService (step "delete_phone_challenges") — not by its FK,
-  //   because the tombstone profile means no cascade off profiles ever fires.
-  //   It cannot be listed here until the baseline snapshot is recaptured: this
-  //   gate reads baseline/20260819_baseline_structure.sql and rejects entries it
-  //   cannot see as "STALE". Add the string in the same change that recaptures
-  //   the baseline.
+  // WAS "PENDING BASELINE RECAPTURE". phone_verification_challenges (migration
+  // 2142) holds a phone number and a hashed live credential, and IS already
+  // deleted explicitly by AccountDeletionService (step
+  // "delete_phone_challenges") — not by its FK, because the tombstone profile
+  // means no cascade off profiles ever fires. It could not be listed while the
+  // gate read only baseline/20260819_baseline_structure.sql, which would reject
+  // an entry it could not see as "STALE". The gate now reads src/migrations too,
+  // so 2142's CREATE TABLE is the proof the table exists and the deferral is
+  // over. Nothing about the service's behaviour changed — only what the guard
+  // can see.
+  "phone_verification_challenges",
+  // Input Intelligence selection history (migration 2258). Keyed by
+  // `user_id uuid NOT NULL REFERENCES auth.users (id) ON DELETE CASCADE` — the
+  // auth.users FK, not a profiles one, so the cascade DOES fire: step 5 of the
+  // deletion flow calls auth.admin.deleteUser even though it keeps an anonymised
+  // profiles tombstone. Same mechanism as passport_stamps_gps and
+  // wall_telemetry_events; the DDL was read before classifying, not assumed.
+  "input_selection_history",
+  // Intel claim review trail (migration 2311, lane 2311 — declared on the branch
+  // behind PR #456, not yet on main). `reviewer_id uuid NOT NULL REFERENCES
+  // auth.users(id) ON DELETE CASCADE`, so the same auth.users cascade erases the
+  // moderator's review rows when their account is deleted. This is a DECISION
+  // with a cost, and it is owner decision (1) in the PR that added this line:
+  // cascading destroys the moderation audit trail for decisions the departing
+  // moderator took, while retaining would keep an identifier attached to a
+  // deleted account. 2311's DDL already chose cascade and this manifest states
+  // that choice rather than silently reversing it — no DDL was changed here.
+  // Listed in POST_BASELINE_TABLES as well, so the guard stays green on main,
+  // where 2311 does not exist.
+  "intel_claim_reviews",
   // Erased by a DATABASE CONSTRAINT, not by service code — the one entry here
   // that AccountDeletionService never names. passport_stamps_gps.user_id
   // REFERENCES auth.users ON DELETE CASCADE, and step 5 calls
@@ -485,10 +512,97 @@ export const UNCLASSIFIED_BACKLOG: readonly string[] = [
 ];
 
 /**
+ * NOT DECISIONS. The post-baseline twin of UNCLASSIFIED_BACKLOG, and the exact
+ * population the coverage guard could not see until it learned to read
+ * src/migrations as well as the 2026-08-19 snapshot.
+ *
+ * Every one of these carries a user-identifying column and survives account
+ * deletion: the no-FK ones (canonical_events, map_telemetry_*, locate_friends_*)
+ * because nothing joins them to a user row at all, and the profiles-FK ones
+ * because executeAccountDeletion keeps an anonymised TOMBSTONE profile, so an
+ * `ON DELETE CASCADE` to profiles(id) never fires. Each entry below was read
+ * from its own migration before being listed; none is assumed.
+ *
+ * WHY THEY ARE NOT IN UNCLASSIFIED_BACKLOG. That list is dated 2026-08-22 and
+ * measured against the baseline; these were invisible to that measurement, so
+ * folding them in would rewrite a historical count. More importantly the backlog
+ * is OPEN-ENDED, which is why the guard's own docblock warns it must never
+ * become a hiding place for a new table. This list is CLOSED: every entry names
+ * the migration that declared it, checkDeletionCoverage verifies that is really
+ * the declaring migration, and it REFUSES any entry whose migration prefix is
+ * above UNTRIAGED_HIGH_WATER. A table added tomorrow cannot be parked here.
+ *
+ * Emptying it is the same owner decision as D6: each entry moves to
+ * ERASED_BY_CASCADE (with matching code in AccountDeletionService and a
+ * service_role DELETE grant), to ANONYMISED_FK_NULLED, or to
+ * RETAINED_WITH_REASON with a reason a user could be shown.
+ */
+export const POST_BASELINE_UNTRIAGED: ReadonlyArray<{ table: string; migration: string }> = [
+  // The canonical event spine. `actor_id uuid` is a BARE uuid with no auth.users
+  // FK, deliberately — 2120's own comment says so — which also means no cascade
+  // can ever reach it. Its retention is governed by 2120 and referenced by the
+  // intel_attributions disposition above ("their id stays on the canonical_events
+  // spine row, whose retention 2120 governs"); that reference is not itself a
+  // decision about the spine, so the spine stays untriaged.
+  { table: "canonical_events", migration: "2120_canonical_events.sql" },
+  // Map telemetry sinks. `viewer_id uuid NOT NULL` with NO foreign key at all,
+  // which is exactly the contrast wall_telemetry_events is documented against
+  // above: 2308 chose an auth.users FK so the cascade fires, and 2202 chose
+  // nothing, so these two survive deletion. Recorded here rather than fixed:
+  // giving them an FK is a migration, and this change makes none.
+  { table: "map_telemetry_events", migration: "2202_map_telemetry.sql" },
+  { table: "map_telemetry_drops", migration: "2202_map_telemetry.sql" },
+  // Locate-a-friend session family. `created_by` / `user_id` / `actor_id`, all
+  // bare uuids with no FK. locate_friends_members and locate_friends_positions
+  // do cascade off locate_friends_sessions(id), so they go when the SESSION goes
+  // — but nothing removes the session on account deletion, and a position row is
+  // a coordinate. The audit row names an actor.
+  { table: "locate_friends_sessions", migration: "2219_locate_friends_sessions.sql" },
+  { table: "locate_friends_members", migration: "2219_locate_friends_sessions.sql" },
+  { table: "locate_friends_positions", migration: "2219_locate_friends_sessions.sql" },
+  { table: "locate_friends_audit", migration: "2219_locate_friends_sessions.sql" },
+  // Route-flow contribution consent. `user_id uuid PRIMARY KEY REFERENCES
+  // public.profiles(id) ON DELETE CASCADE` — the tombstone defeats it, the same
+  // way it defeated intel_contribution_consent (2172) until a service step was
+  // written. A surviving consent record for a deleted account is the worse half
+  // of this bucket, not the harmless half.
+  { table: "route_flow_contribution_consent", migration: "2224_route_hop_signal.sql" },
+  // Hidden-gem contributions. `user_id UUID NOT NULL REFERENCES profiles(id) ON
+  // DELETE CASCADE`, defeated by the tombstone.
+  { table: "hidden_gem_contributions", migration: "2252_hidden_gem_contributions.sql" },
+  // Media intent signals. `user_id UUID NOT NULL REFERENCES profiles(id) ON
+  // DELETE CASCADE`, defeated by the tombstone. Behavioural, per-media.
+  { table: "media_intent_signals", migration: "2256_media_intent_signals.sql" },
+  // Media view requests and their opt-in. Neither column is in
+  // USER_IDENTIFYING_COLUMNS — `requester_id` and `contributor_id` are caught
+  // only because the migration declares REFERENCES public.profiles(id) inline.
+  // They are the same shape of miss as 2311's `reviewer_id`, found by the same
+  // rule, and they are why that rule reads references and not just names.
+  { table: "media_view_requests", migration: "2257_media_view_requests.sql" },
+  { table: "media_view_request_optins", migration: "2257_media_view_requests.sql" },
+];
+
+/**
+ * The highest migration prefix POST_BASELINE_UNTRIAGED may name.
+ *
+ * 2309 is the last migration on main when this list was written, so the list
+ * covers exactly what already existed and nothing after. checkDeletionCoverage
+ * rejects any parked entry above it — which is what makes the list closed, and
+ * what makes 2311's intel_claim_reviews impossible to park rather than classify.
+ */
+export const UNTRIAGED_HIGH_WATER = 2309;
+
+/**
  * Tables created by canonical migrations AFTER the 2026-08-19 baseline. They are
  * classified above but cannot be found in the baseline yet, so the coverage check
  * must not report them as stale. They leave this list when the baseline is
  * recaptured — which is part of the apply sequence, not an afterthought.
+ *
+ * NARROWED IN MEANING, not in contents: now that the guard reads src/migrations,
+ * most of these are found in the schema directly and their entries here are
+ * belt-and-braces. The role that still MATTERS is the one the journey_* family
+ * has always had — a table the guard cannot read anywhere: on production with an
+ * unpushed migration, or declared on a branch that has not merged yet.
  *
  * The journey_* family belongs here too: those tables are LIVE ON PRODUCTION
  * (verified 2026-08-22) while their migrations are still unpushed to git. They
@@ -534,6 +648,13 @@ export const POST_BASELINE_TABLES: readonly string[] = [
   // Wall §32 telemetry sink, added by migration 2308 (post-baseline).
   // Classified in ERASED_BY_CASCADE above.
   "wall_telemetry_events",
+  // Intel claim review trail, declared by migration 2311 on the branch behind
+  // PR #456 and NOT on main. Classified in ERASED_BY_CASCADE above (auth.users
+  // ON DELETE CASCADE). This entry is what keeps the guard green on main, where
+  // neither the baseline nor src/migrations can see the table; once #456 merges,
+  // 2311 declares it and the migration scan finds it directly. Remove this line
+  // in the change that recaptures the baseline, not before.
+  "intel_claim_reviews",
   "journey_observations",
   "journey_revocation_jobs",
   "journey_segment_revisions",
