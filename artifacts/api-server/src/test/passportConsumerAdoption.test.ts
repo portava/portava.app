@@ -131,7 +131,7 @@ async function startServer(app: Express): Promise<{ url: string; close: () => Pr
     const srv = createServer(app);
     srv.listen(0, "127.0.0.1", () => {
       const port = (srv.address() as any).port;
-      resolve({ url: `http://127.0.0.1:${port}`, close: () => new Promise((r) => srv.close(r)) });
+      resolve({ url: `http://127.0.0.1:${port}`, close: () => new Promise<void>((r) => srv.close(() => r())) });
     });
   });
 }
