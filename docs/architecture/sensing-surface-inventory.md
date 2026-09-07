@@ -10,6 +10,51 @@ to do.** No spec was available when it was written. Every line below is either a
 stated failure to establish something. Paths are relative to `artifacts/api-server/src/` unless
 they begin with `db/`, `docs/` or `.agents/`.
 
+---
+
+## MEASURED AGAINST BOTH DATABASES, 2026-09-07 — resolves "could not establish" item 1
+
+This document was written without database access and correctly recorded that it could not
+establish whether migrations `2273`–`2279` are applied in production. They are **not**, and the
+gap is structural rather than incidental.
+
+**The migration chain declares 15 `intel_*` tables. Production has 10.** The five that exist in
+`portava-ci` and are **absent from production** (`ajrurzioarfkagpuxfnb`):
+
+| Table | Migration | The code that targets it |
+|---|---|---|
+| `intel_state_snapshot_versions` | `2273_intel_replayable_projection.sql` | `intelReplay` |
+| `intel_presence_verifications` | `2276_intel_presence_verification.sql` | `IntelCaptureService.ts:303` (write-only) |
+| `intel_attributions` | `2277_intel_outcomes_attribution.sql` | `intelAttributionScheduler` |
+| `intel_scoped_trust` | `2278_intel_scoped_trust.sql` | `intelScopedTrustApply` |
+| `intel_historical_patterns` | `2279_intel_historical_patterns.sql` | `intelPatternScheduler` |
+
+All four schedulers are **registered and running** in production (`index.ts:150`, `:166`, `:167`,
+and `intelReplay`'s caller) against tables that do not exist there.
+
+**Why nothing is currently erupting, and why that is luck rather than design.** The flags gating
+those passes — `intel_attribution`, `intel_pattern_learning`, `intel_scoped_trust` — are **absent
+from the production `feature_flags` table**, and an unseeded flag reads `false`
+(`.agents/memory/unseeded-feature-flag-gates.md`), so each scheduler returns before it touches its
+missing table. **Seeding any one of those three flags in production points a running scheduler at
+a table that is not there.** That is a live landmine, not a hypothetical.
+
+**The general finding, which outlives these five tables.** `audit:schema`
+(`auditMigrationsVsLive.ts`) runs only against the sanctioned CI project — enforced, correctly, by
+`.github/scripts/assert-nonprod-supabase.sh`. So **CI is structurally incapable of detecting
+production schema drift.** It has been green throughout, while production has been missing five
+declared tables. `docs/architecture/10_Database_Architecture.md` §2 already records that the three
+descriptions of the schema disagree; this is that disagreement with a measured instance and a
+named blast radius.
+
+For contrast, the same measurement confirms the flags this lane *does* have live:
+`intel_capture_quick_signal`, `intel_claim_projection_crowd` and `intel_rewards` are all **TRUE**
+in production despite every migration seeding them `false` — see
+`docs/architecture/intel-spine-liveness.md`, which also records that all seven measurable intel
+tables hold **zero rows**.
+
+*Everything below is the original code-derived inventory and stands unchanged.*
+
 A prior commit recorded a "CONSTRUCTED / CORRECT" percentage for this lane. That number is **not
 reproducible from this repository** and is deliberately not repeated here. Counts below are counts.
 
