@@ -287,6 +287,27 @@ async function syncAttendee(sc: any, eventId: string, userId: string, status: st
 }
 
 /** Auto-transition event state based on capacity */
+/**
+ * The score attributed to a user who has NO trust_profiles row.
+ *
+ * This is a SUBSTITUTION, not a measurement, and it decides real access. As of
+ * 2026-09-07 production holds 2 trust_profiles rows for 58 profiles and 22
+ * events carrying trust_score_min: 20 of those thresholds are <= 50, so this
+ * substitution silently admits everyone and the gate does nothing; 2 are above
+ * it (max 65), so it silently DENIES 56 of 58 users from those events for want
+ * of a profile they were never given. The engine is not off -- measured, it has
+ * been on since 2026-07-17 -- its emitters are starved (5 trust_events in 52
+ * days).
+ *
+ * Whether an unscored user should be admitted or denied is an OWNER decision,
+ * so the value is unchanged here and today's behaviour is preserved exactly.
+ * What changes is that the substitution is now named, greppable and documented
+ * instead of a bare `?? 50` in three places. PR #467 replaces this whole idea
+ * with `applicable: false` on the Passport side; this constant is the seam
+ * where the same treatment reaches the event gates.
+ */
+export const TRUST_SCORE_WHEN_NO_PROFILE = 50;
+
 async function hasActiveWaitlistOffer(sc: any, eventId: string): Promise<boolean> {
   const { data } = await sc
     .from("event_waitlist")
@@ -409,8 +430,16 @@ export async function checkEventEligibility(
       }
     }
     if (ev.trust_score_min != null) {
-      const { data: tp } = await sc.from("trust_profiles").select("overall_score").eq("user_id", userId).maybeSingle();
-      const score = (tp as any)?.overall_score ?? 50;
+      // FAIL CLOSED on an unreadable trust_profiles. supabase-js RESOLVES on a
+      // database error, so the previous `const { data: tp }` discarded `error`
+      // and an outage read as "no profile" -> substituted 50 -> admitted on
+      // every threshold <= 50. An authorization gate must not silently open
+      // because a table it depends on could not be read.
+      const { data: tp, error: tpErr } = await sc.from("trust_profiles").select("overall_score").eq("user_id", userId).maybeSingle();
+      if (tpErr) {
+        return { ok: false, errorCode: "forbidden", message: "Trust check is temporarily unavailable for this event" };
+      }
+      const score = (tp as any)?.overall_score ?? TRUST_SCORE_WHEN_NO_PROFILE;
       if (score < ev.trust_score_min) {
         return { ok: false, errorCode: "forbidden", message: `This event requires a trust score of at least ${ev.trust_score_min}` };
       }
@@ -803,7 +832,10 @@ router.get("/events", async (req, res) => {
       ]);
       const profile = (profileRes as any).data;
       viewerVerified = !!profile?.verified;
-      viewerTrust = ((tpRes as any).data)?.overall_score ?? 50;
+      // Ranking/visibility input rather than an authorization gate, so this
+      // one is left substituting rather than failing closed — but it is named
+      // so the two cases are distinguishable when #467 lands.
+      viewerTrust = ((tpRes as any).data)?.overall_score ?? TRUST_SCORE_WHEN_NO_PROFILE;
       viewerAge = profile?.date_of_birth
         ? Math.floor((Date.now() - new Date(profile.date_of_birth).getTime()) / (1000 * 60 * 60 * 24 * 365.25))
         : null;
@@ -2837,8 +2869,13 @@ router.post("/events/:id/waitlist", async (req, res) => {
       }
     }
     if ((ev as any).trust_score_min != null) {
-      const { data: tpWl } = await sc.from("trust_profiles").select("overall_score").eq("user_id", user.id).maybeSingle();
-      const scoreWl = (tpWl as any)?.overall_score ?? 50;
+      // Fail closed on an unreadable trust_profiles — same reasoning as the
+      // join gate above; this path had the identical discarded-error defect.
+      const { data: tpWl, error: tpWlErr } = await sc.from("trust_profiles").select("overall_score").eq("user_id", user.id).maybeSingle();
+      if (tpWlErr) {
+        sendError(res, "forbidden", "Trust check is temporarily unavailable for this event"); return;
+      }
+      const scoreWl = (tpWl as any)?.overall_score ?? TRUST_SCORE_WHEN_NO_PROFILE;
       if (scoreWl < (ev as any).trust_score_min) {
         sendError(res, "forbidden", `This event requires a trust score of at least ${(ev as any).trust_score_min}`); return;
       }

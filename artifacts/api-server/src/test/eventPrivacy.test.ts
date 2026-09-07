@@ -23,6 +23,7 @@ import assert from "node:assert/strict";
 import { createServer, request as httpRequest } from "node:http";
 import type { Server } from "node:http";
 import app from "../app.js";
+import { checkEventEligibility, TRUST_SCORE_WHEN_NO_PROFILE } from "../routes/events.js";
 import { _setTestClient } from "../lib/http.js";
 import {
   toPrivateEventPreview,
@@ -253,6 +254,127 @@ describe("Event Privacy — serializer unit tests", () => {
 });
 
 // ── Route integration tests ───────────────────────────────────────────────────
+
+
+// ── Trust gate: an unreadable trust_profiles must not open the gate ──────────
+//
+// Measured in production on 2026-09-07: 2 trust_profiles rows for 58 profiles,
+// and 22 events carrying trust_score_min — 20 thresholds <= 50 (so the
+// substituted score admits everyone and the gate does nothing) and 2 above it
+// (so it denies 56 of 58 users). The substitution therefore decides real
+// access, and the error path decides it too: supabase-js RESOLVES on a
+// database error, so a discarded `error` read as "no profile" and substituted
+// a passing score.
+describe("Event eligibility — trust gate", () => {
+  const HOST = "11111111-1111-4111-8111-111111111111";
+  const USER = "22222222-2222-4222-8222-222222222222";
+
+  /** Minimal client: every lookup empty except trust_profiles, which is
+   *  configurable — including returning an error rather than a row. */
+  function gateClient(opts: { trustRow?: any; trustError?: boolean } = {}) {
+    return {
+      from(table: string) {
+        const obj: any = {
+          select() { return obj; },
+          eq() { return obj; },
+          neq() { return obj; },
+          in() { return obj; },
+          is() { return obj; },
+          or() { return obj; },
+          not() { return obj; },
+          gt() { return obj; },
+          gte() { return obj; },
+          lte() { return obj; },
+          limit() { return obj; },
+          order() { return obj; },
+          range() { return obj; },
+          single() { return obj.maybeSingle(); },
+          maybeSingle() {
+            // The whole trust gate sits behind events_trust_gates_enabled, which
+            // is TRUE in production (since 2026-06-30). Without this the gate is
+            // skipped entirely and every assertion below passes vacuously —
+            // which is exactly what happened on the first run of these tests.
+            if (table === "feature_flags") {
+              return Promise.resolve({ data: { enabled: true }, error: null });
+            }
+            if (table === "trust_profiles") {
+              if (opts.trustError) return Promise.resolve({ data: null, error: { message: "trust_profiles unavailable" } });
+              return Promise.resolve({ data: opts.trustRow ?? null, error: null });
+            }
+            return Promise.resolve({ data: null, error: null });
+          },
+          then(onF: any, onR: any) { return Promise.resolve({ data: [], error: null }).then(onF, onR); },
+        };
+        return obj;
+      },
+    };
+  }
+
+  const eventWith = (min: number | null) => ({
+    host_id: HOST, age_min: null, age_max: null, verified_only: false, trust_score_min: min,
+  });
+
+  it("an unreadable trust_profiles DENIES rather than admitting (fail closed)", async () => {
+    // Threshold 40: the substituted 50 would pass it, so before the fix a
+    // database outage silently ADMITTED. This is the load-bearing assertion.
+    const r = await checkEventEligibility(gateClient({ trustError: true }), eventWith(40), USER);
+    assert.equal(r.ok, false, "an unreadable trust table must not open the gate");
+    assert.match((r as any).message, /temporarily unavailable/i,
+      "the denial must be distinguishable from a real trust denial");
+  });
+
+  it("no trust profile is still substituted, so today's access is unchanged", async () => {
+    // Preserves current behaviour deliberately: whether an unscored user is
+    // admitted is an owner decision, not one to make inside a bug fix.
+    const pass = await checkEventEligibility(gateClient(), eventWith(TRUST_SCORE_WHEN_NO_PROFILE - 10), USER);
+    assert.equal(pass.ok, true, "threshold below the substitution still admits");
+
+    const fail = await checkEventEligibility(gateClient(), eventWith(TRUST_SCORE_WHEN_NO_PROFILE + 15), USER);
+    assert.equal(fail.ok, false, "threshold above the substitution still denies");
+  });
+
+  it("a real profile is used in preference to the substitution", async () => {
+    const r = await checkEventEligibility(
+      gateClient({ trustRow: { overall_score: TRUST_SCORE_WHEN_NO_PROFILE + 20 } }),
+      eventWith(TRUST_SCORE_WHEN_NO_PROFILE + 15),
+      USER,
+    );
+    assert.equal(r.ok, true, "a scored user above the threshold is admitted on their own score");
+  });
+
+  it("the substituted score is pinned at 50 — changing it changes live access", async () => {
+    // Deliberately an ABSOLUTE assertion, not one written relative to the
+    // constant. Every other threshold in this suite is expressed as
+    // TRUST_SCORE_WHEN_NO_PROFILE +/- N, so they all move WITH the constant and
+    // none of them can detect a change to it — a hand-revert setting it to 1000
+    // left this whole suite green. That value decides access to 22 production
+    // events (20 thresholds <= 50, 2 above it), so it is pinned here.
+    assert.equal(TRUST_SCORE_WHEN_NO_PROFILE, 50,
+      "changing the substituted score changes who can join 22 live events — it is an owner decision, not a refactor");
+
+    // And pin the consequence, not just the number: at exactly 50 an unscored
+    // user is admitted, at 51 they are not.
+    const at50 = await checkEventEligibility(gateClient(), eventWith(50), USER);
+    assert.equal(at50.ok, true, "an unscored user is admitted at a threshold of 50");
+    const at51 = await checkEventEligibility(gateClient(), eventWith(51), USER);
+    assert.equal(at51.ok, false, "an unscored user is denied at a threshold of 51");
+  });
+
+  it("the gate flag is actually on in this harness (vacuity guard)", async () => {
+    // These assertions are worthless if events_trust_gates_enabled reads false,
+    // because the entire block is skipped and everything returns ok. Pin it:
+    // a threshold far above the substitution MUST deny. If this ever passes as
+    // ok:true the harness has stopped exercising the gate.
+    const r = await checkEventEligibility(gateClient(), eventWith(TRUST_SCORE_WHEN_NO_PROFILE + 40), USER);
+    assert.equal(r.ok, false, "the gate is not being exercised — every other assertion here is vacuous");
+  });
+
+  it("no gate configured means the trust table is never consulted", async () => {
+    // Vacuity guard: if trust_score_min is null the error path must not fire.
+    const r = await checkEventEligibility(gateClient({ trustError: true }), eventWith(null), USER);
+    assert.equal(r.ok, true, "an ungated event must not be affected by trust_profiles at all");
+  });
+});
 
 describe("Event Privacy — route integration", () => {
   let server: Server;
