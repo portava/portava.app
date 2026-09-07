@@ -444,6 +444,17 @@ const CLASSIFIED = [
       'inert no-op. The store exists regardless (migration 2279); this gates only the writer. Nothing client-facing; no cash.',
   },
   {
+    flag: 'intel_live_scope_promotion_enabled',
+    kind: 'CAPABILITY',
+    reason:
+      '`true` lets lib/intelLiveScopePromotion.ts WRITE intel_live_promoted_scopes (the IG-09 per-scope Live ' +
+      'allowlist) through the 2430 service functions: an operator-initiated promote/withdraw, and the expiry ' +
+      'sweep the intelPromotionScheduler tick runs. False-on-error is correct and is the design: every writer ' +
+      'returns {skipped:true, reason:"disabled"} before any RPC, the allowlist is untouched, and the live read ' +
+      'path answers exactly as before 2430. It NEVER promotes a scope by itself — which scope goes live is a ' +
+      'human decision (2179 header, lib/intelLiveScope). Seeded FALSE by 2430.',
+  },
+  {
     flag: 'intel_calibration_report',
     kind: 'CAPABILITY',
     reason:
