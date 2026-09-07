@@ -28,6 +28,7 @@ SCAN_PATHS=()
 for path in \
   app \
   apps \
+  artifacts \
   api \
   src \
   server \
@@ -57,7 +58,11 @@ do
 done
 
 if [[ ${#SCAN_PATHS[@]} -eq 0 ]]; then
-  echo "No standard application directories were found."
+  # Same vacuity rule as the referenced-set guard below: finding nothing to
+  # scan is a refusal, not a pass.
+  # This previously exited 0, so a caller that only checked the status code
+  # was told everything was fine.
+  echo "audit-runtime-env: FAILED — no standard application directories were found."
   echo "Run this command from the project root."
   exit 1
 fi
@@ -282,10 +287,38 @@ VERCEL_ENV|
 AWS_EXECUTION_ENV
 )$'
 
+# The pattern above is written one name per line for reviewability, but grep -E
+# treats EACH LINE of a multi-line pattern as a SEPARATE pattern. Fed as-is it
+# sees a bare '^(' first, fails with "Unmatched ( or \\(", and — because the
+# pipeline below ends in `|| true` — the script carried on and reported
+# "Referenced application variables: 0" while exiting 0. A security audit that
+# examines nothing and prints a clean result is worse than no audit at all.
+# Collapse it to one line before any use.
+IGNORE_REGEX="$(printf '%s' "$IGNORE_REGEX" | tr -d '\n')"
+
 awk -F '\t' '{print $1}' "$RAW" \
   | grep -E '^[A-Za-z_][A-Za-z0-9_]*$' \
   | grep -Ev "$IGNORE_REGEX" \
   | sort -u > "$REFERENCED" || true
+
+# VACUITY IS FAILURE. Zero referenced variables is not a clean result for any real
+# codebase — it means the scan found nothing to examine, and every count, the
+# LIKELY REQUIRED / OPTIONAL classification and .env.missing.runtime below would
+# then be computed from an empty set and printed as if they were findings. This
+# script silently did exactly that for its whole history. Refuse instead.
+if [ ! -s "$REFERENCED" ]; then
+  echo
+  echo "audit-runtime-env: FAILED — zero referenced environment variables found under '$(pwd)'."
+  echo
+  echo "  This is a refusal, not a clean bill of health. Either the scan matched no"
+  echo "  source files, or the ignore pattern rejected everything. Nothing below this"
+  echo "  point would have been computed from real data."
+  echo
+  echo "  Check first: SCAN_PATHS does NOT include artifacts/, so running this from the"
+  echo "  repository root misses the api-server entirely. Point it at a subtree:"
+  echo "      bash audit-runtime-env.sh artifacts/api-server"
+  exit 1
+fi
 
 # Load names available in shell and real environment files.
 env | sed -nE 's/^([A-Za-z_][A-Za-z0-9_]*)=.*/\1/p' >> "$AVAILABLE"
