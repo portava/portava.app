@@ -1,0 +1,350 @@
+
+PORTAVA MAP
+Developer Architecture & Mobile Design Specification
+Canonical implementation target · Mobile-first · iOS + Android
+
+Concept visual: mobile Portava Map system and principal modes
+
+1. Product Definition
+Portava Map is the geographic operating interface for Portava. It should not behave like a generic POI directory or a traditional travel map. It renders Portava’s understanding of the physical world through people, place, time, intent, live intelligence, trip context and permitted social presence.
+North-star questionWhat is happening around me, what is changing, who or what is relevant to me, what should I do next, and how do I act on it?
+The map is a projection layer. Canonical facts remain owned by Places, Live Intelligence, Discovery, Compass, Presence, Trips, Memory, Passport, Trust, Safety and Buddy systems.
+2. Primary Map Surfaces
+The map should be implemented as one persistent Map Shell with nine primary experiences. These are not nine unrelated tabs; they are coordinated states of one geographic system.
+#
+Surface
+Purpose
+1
+Live Map / Map Home
+Default geographic world view
+2
+Live Place
+Understand one place right now
+3
+Crowd Flow
+Aggregate movement, shifting activity and city energy
+4
+Trip Map
+Trip itinerary, crew, routes and meeting context
+5
+Locate My Friends
+Temporary group/event coordination
+6
+Intent Mode
+Tell Portava what the user wants right now
+7
+Compass Map Recommendations
+Geographic next-best actions
+8
+Time Machine
+Historical and predicted place/city state
+9
+Layers / Legend
+Control and understand map information
+MapShell├─ LiveMap├─ PlaceDetail├─ CrowdFlowMode├─ TripMode├─ LocateFriendsMode├─ IntentSheet├─ CompassMode├─ TimeMachineMode└─ LayersSheet
+3. Live Map / Map Home
+This is the default map state. It should immediately answer where the user is, what is happening nearby, what is changing, and what is worth acting on.
+Header: menu, current city/area selector, search, layers.
+Filter chips: For You, Live, People, Events, Gems.
+Map canvas dominates the screen; cards should not permanently consume half the viewport.
+Floating controls: recenter, navigation/orientation, zoom where appropriate.
+Bottom Live Pulse card summarizes the most important nearby change.
+Persistent action rail: Ask Compass, Meet Here, Add to Trip, Navigate.
+4. Base Map Appearance
+The geographic base should visually recede behind Portava intelligence. Avoid a Google Maps-style wall of labels and POIs. The product should feel like a living geographic intelligence surface.
+Dark mode first.
+Near-black/navy interface chrome and subdued geographic base.
+Low-saturation streets and buildings.
+Recognizable water and major road labels.
+Minimal native POI clutter.
+Bright, semantic Portava overlays above geography.
+Rounded translucent cards and large mobile touch targets.
+Map motion and pulse are meaningful, not decorative.
+5. Visual Hierarchy
+Level 0  Base geographyLevel 1  Roads / districts / waterLevel 2  Portava activity zonesLevel 3  Crowd flow / temporal signalsLevel 4  Places / events / social objectsLevel 5  User / Crew / meeting pointsLevel 6  Selected objectLevel 7  Compass / Safety / critical overlays
+Safety and active navigation always take visual precedence over popularity or activity.
+6. Map Zones and Semantic Visual Language
+Portava should rely heavily on geographic zones rather than thousands of pins. Zones represent aggregate state and should not imply scientifically exact borders.
+Visual
+Meaning
+Soft filled zone
+Current aggregate activity
+Pulsing outline
+Meaningful recent change
+Dashed boundary
+Predicted state or forecast zone
+Directional arrows
+Aggregate crowd flow
+Standard marker
+Place
+Star
+Compass Pick / high-value recommendation
+Gem
+Hidden Gem
+Event icon
+Time-bound event
+Group icon
+Aggregate social opportunity
+Avatar
+Permitted identified presence only
+Ring
+Approximate location
+Checkpoint pin
+Meeting point
+Shield
+Safety context
+Gold marker
+Saved / Passport / Memory
+Blue dot
+Current user
+7. Activity, Trend, Confidence and Freshness
+The UI must distinguish observation, confidence, trend and freshness rather than collapsing them into one label.
+Activity
+Trend
+Certainty
+Freshness
+Very Quiet
+Increasing quickly
+Confirmed
+Live
+Quiet
+Getting busier
+Strong signal
+2m ago
+Moderate
+Stable
+Reports indicate
+8m ago
+Busy
+Cooling
+Limited data
+Recently
+Very Busy
+Getting quieter
+Unconfirmed
+Last confirmed 1h ago
+Peak
+Rapidly dispersing
+
+Historical
+8. Live Place Surface
+Tapping a place opens a bottom sheet that can expand to a near-full detail view. The place view should emphasize what the place feels like now, why Portava believes that, and what the user can do next.
+Hero photo / recent MomentPlace name · type · distanceLIVE STATEVery Busy · Getting busierUpdated 4 min agoCrowd        BusyTrend        ↑ UpVibe         High energySOCIAL3 friends here12 travelers interestedACCESSQueue ~20 minOpen until 1:30 AMPrice $$$WHY SHOWNMatches current intentCrew nearbyStrong live activityACTIONSGo · Save · Ask Compass · Add to Trip · Meet Here · Share
+9. Intelligence Provenance
+Every meaningful live claim should support a Why? interaction. This is critical to making Portava intelligence trustworthy and replayable.
+WHY PORTAVA SAYS THIS• Several recent traveler reports• Arrival activity increasing• Active event nearby• Recent qualified media• Updated 6 minutes agoConfidence: Strong
+10. Crowd Flow Mode
+Crowd Flow shows aggregate movement between places or zones. It must never expose individual routes or imply that Portava is continuously tracking specific people.
+Flow states: Strong movement, Moderate movement, Emerging movement, Dispersing, Unusual movement.
+Inputs may include anonymous coarse transitions, arrivals, accepted plans, navigation starts, event context, aggregate presence and explicit next-stop contributions.
+High-confidence flow requires minimum cohort density, multiple signal families, freshness checks and privacy gates.
+Observed movement and inferred cause must be separately represented.
+11. Trip Map Mode
+Trip Map renders the current Trip geographically without duplicating or replacing Trip ownership. It should show lodging/home base, itinerary, next stop, saved ideas, crew, routes, meeting points, Safe Return context and Compass alternatives.
+Optimize Today may propose a route based on distance, reservation times, event schedules, live conditions, closing times, crew position, saved ideas and weather where relevant.
+Proposed changes require user acceptance; the map should not silently rewrite the canonical Trip.
+12. Locate My Friends
+Locate My Friends is a specialized temporary group/event map. It should support networked and degraded/offline operation, approximate location and explicit checkpoints.
+Preferred signal sequence1. Normal network location2. Event-local cached location3. Local device proximity4. Peer relay / checkpoint5. Last-known location6. Manual checkpoint
+Opt-in only.
+Group-scoped.
+Temporary and auto-expiring.
+No public friend tracking.
+UI may display states such as Nearby ~40-80m, Last seen 3m ago, or Checkpoint: Food Court.
+13. Intent Mode
+Intent Mode represents temporary context, not a permanent preference rewrite. It should allow the user to tell Portava what they want right now.
+Primary intents: I'm Bored, Eat, Party, Explore, Meet People, Date Night, Chill, Local, Surprise Me.
+Energy control: Low ↔ High.
+Future novelty control: Familiar ↔ Adventurous.
+Intent should carry a TTL or be cleared explicitly.
+UserPreferences      +TemporaryIntent      +CurrentContext      +TripContext      +LiveWorld      ↓Discovery Candidates      ↓Compass Ranking      ↓Map Projection
+14. Compass Map Mode
+Compass Map Mode reduces visual noise and highlights approximately three to five best next moves. Compass does not create live facts; it reasons over structured state produced elsewhere.
+WHY THIS OPTION• Matches current Party intent• Getting busier• 7 minutes away• Strong current evidence• Crew 10 minutes away• Good next options nearby
+15. Time Machine
+Time Machine gives the map temporal intelligence. It should support historical observation and future prediction, with unmistakably different visual treatment.
+Primary control: NOW, +30m, +60m, +120m.
+Later controls: Yesterday, Tonight, Tomorrow, Last Friday.
+Historical means observed or reconstructed from qualified historical evidence.
+Forecast means predicted and must carry forecast confidence.
+A compact city timeline can show expected peaks and cooling periods.
+16. Layers and Progressive Disclosure
+Complexity should be managed with explicit layers plus automatic relevance. Do not turn every layer on simultaneously.
+Core layers: Live Activity, People, Events, Trip, Buddies, Saved, Crowd Flow, Hidden Gems, Safety, Transport, Memories.
+Suggested defaults: Live Activity on, Events on, Relevant Places on, Saved on; People/Trip/Crowd Flow contextual; Buddies and Memories off.
+Rendering detail changes based on zoom, intent, selected layer, Trip state, Compass state, density, confidence, relevance, relationship and privacy.
+17. Zoom Model
+Zoom
+Render
+World
+Countries visited, upcoming Trips, Passport, major destinations; no POI pins.
+City
+Neighborhoods, activity zones, major events, major flow, key Compass recommendations.
+District
+Live places, events, gems, social opportunities, Trip objects.
+Street
+Individual places, entrances, authorized crew, meeting points, route context.
+Venue / Event
+Stages, entrances, checkpoints, food, toilets where available, group members, meeting zones.
+18. Map Object Contract
+type MapObjectKind =  | 'place'  | 'event'  | 'activity_zone'  | 'crowd_flow'  | 'social_zone'  | 'hidden_gem'  | 'trip_stop'  | 'crew_member'  | 'meeting_point'  | 'buddy_zone'  | 'safety_notice'  | 'memory'  | 'prediction';interface MapObject {  id: string;  kind: MapObjectKind;  geometry: Point | Polygon | LineString;  title: string;  subtitle?: string;  observedAt?: string;  expiresAt?: string;  freshness?: FreshnessState;  confidence?: ConfidenceState;  sourceRefs?: string[];  privacyClass: PrivacyClass;  interaction?: MapInteractionConfig;  renderingPriority: number;}
+19. Projection Architecture
+Never place raw database rows directly on the map. Use a dedicated projection layer.
+Canonical Systems      ↓Map Projection Service      ↓Map Objects      ↓Map Ranking      ↓Privacy / Eligibility      ↓Viewport Aggregation      ↓Mobile Renderer
+Conceptual service name: Map Intelligence Gateway. The mobile client should not independently reconstruct Portava intelligence rules.
+20. Data Ownership
+System
+Owns
+Places
+Place identity and location
+Live Intelligence
+Current claims and state
+Discovery
+Candidate relevance
+Compass
+Next-best action
+Presence
+People/place presence
+Trips
+Trip itinerary and crew context
+Telegraph
+Communication
+Memory
+Personal projection and history
+Passport
+Travel identity/history
+Trust
+Evidence/contributor trust
+Safety
+Safety state
+Buddy
+Service availability
+Map
+Geographic presentation
+21. Live Intelligence Flow
+Observation    ↓Evidence    ↓Claim    ↓Confidence    ↓Freshness    ↓Correction / Contradiction    ↓Projected Map State
+22. Map Contributions
+The map is also a low-friction capture surface. Contributions are observations, not immediate truth.
+Crowd level.
+Queue.
+Entry/access.
+Vibe.
+Event status.
+Closure.
+Crowd direction.
+Current photo/video.
+Map Prompt   ↓Observation   ↓Identity / Trust Context   ↓Evidence Qualification   ↓Claim System   ↓Projection   ↓Map changes
+Rewards may incentivize participation but must never increase factual confidence merely because the contribution was paid.
+23. Presence and Privacy
+Default public rendering should aggregate social presence. The map should show '18 travelers active around this area' rather than a field of identifiable stranger avatars.
+enum LocationVisibility {  NONE,  AGGREGATE_ONLY,  APPROXIMATE,  PLACE_LEVEL,  PRECISE_TEMPORARY}
+Public stranger: aggregate only.
+Shared Moment: place-level or delayed.
+Trip Crew: approximate or permitted temporary precise.
+Locate My Friends: temporary group-scoped approximate/precise.
+Safe Return: purpose-bound precise location.
+Temporary location should decay automatically: Precise → Approximate → Last known → Expired.
+24. Protected Location and Safety Rules
+Suppress sensitive locations before data reaches the client.
+Protected examples may include private residences, medical facilities, shelters, sensitive government locations and policy-defined protected zones.
+Safety and access warnings take precedence over activity ranking.
+The public map should never receive more location detail than the viewer is authorized to see.
+25. Interaction System
+Recommended persistent action rail:
+Ask Compass   ·   Meet Here   ·   Add to Trip   ·   Navigate
+Long-press actions:
+Meet here.
+Save location.
+Add to Trip.
+Ask Compass about here.
+Share permitted location.
+Create checkpoint.
+Report what is here.
+26. Pulse Integration
+Pulse and Map must be two presentations of the same underlying intelligence. Pulse is narrative; Map is geographic. A Pulse item should deep-link to the corresponding map state, and map states should never contradict Pulse because of separately implemented truth logic.
+27. Search
+Places.
+Events.
+Trips.
+Users.
+Buddies.
+Hidden Gems.
+Areas.
+Hashtags.
+Saved items.
+Geographic results should center or frame the relevant map object.
+28. Offline and Degraded Mode
+Cache current base-map region.
+Cache current Trip and stops.
+Cache event map and meeting points.
+Cache saved places.
+Cache Crew last-known state.
+Cache recent relevant place intelligence.
+Cache emergency/safety information where appropriate.
+Clearly label stale cached intelligence with last-updated time.
+29. Recommended Mobile Client Structure
+/features/map  /screens    MapScreen.tsx    PlaceDetailScreen.tsx  /modes    LiveMode.ts    CrowdFlowMode.ts    TripMode.ts    LocateFriendsMode.ts    CompassMode.ts    TimeMachineMode.ts  /components    MapCanvas.tsx    ActivityZone.tsx    PlaceMarker.tsx    EventMarker.tsx    CrowdFlowLine.tsx    UserMarker.tsx    CrewMarker.tsx    MeetingPoint.tsx    SocialCluster.tsx    LivePulseCard.tsx    MapBottomActions.tsx    IntentSheet.tsx    LayersSheet.tsx    FreshnessBadge.tsx    ConfidenceIndicator.tsx  /state    mapStore.ts    viewportStore.ts    layerStore.ts    intentStore.ts  /services    mapProjection.ts    mapCache.ts    location.ts  /types    mapObjects.ts
+30. Map State Machine
+Primary modes:LIVEPLACE_SELECTEDCOMPASSTRIPCROWD_FLOWLOCATE_FRIENDSTIME_MACHINEOverlays:INTENTLAYERSFILTERSSEARCH
+The camera should also carry explicit states such as FOLLOW_USER, FREE_EXPLORE, FOCUS_PLACE, FOCUS_AREA, FOCUS_ROUTE, FOCUS_TRIP, FOCUS_GROUP and COMPASS_RECOMMENDATIONS.
+31. Clustering and Rendering Priority
+Use viewport queries, server aggregation, client clustering and render thresholds.
+At wide zoom, many places should collapse into an area summary or activity zone.
+Suggested priority: Safety, User, Active Navigation, Trip Crew/Locate Friends, Selected Destination, Compass Recommendation, Active Event, High-confidence Live Zone, Relevant Place, Social Opportunity, Saved Place, Generic POI.
+Hide lower-priority objects when collisions occur.
+32. Bottom Sheets and Mobile Motion
+Three snap points: Peek ~15-20%, Half ~45-55%, Full ~90-95%.
+Map stays visible behind Peek and Half states.
+Use subtle activity pulse, zone expansion, flow motion, new-intelligence transitions, Compass selection and route animations.
+Avoid constant bouncing markers or animation without semantic meaning.
+33. Loading Strategy
+cached geography↓current position↓canonical places/events↓live state↓social state↓Compass personalization
+The map should progressively improve; it should not blank while live intelligence is loading.
+34. Performance Targets
+Initial usable map: target under 2 seconds on a normal connection.
+Pan responsiveness: target 60 fps where device and map SDK permit.
+Viewport intelligence response: target first meaningful results within ~500-800 ms when cached/server-ready.
+Debounce after camera settles; never re-query on every pixel movement.
+Keep animation layers GPU-friendly.
+35. Product Telemetry
+map_opened
+zone_selected
+place_opened
+live_state_viewed
+why_shown_opened
+compass_requested
+compass_option_selected
+route_started
+trip_stop_added
+plan_joined
+meet_here_created
+crew_locate_started
+contribution_submitted
+alternative_requested
+recommendation_accepted
+recommendation_declined
+Evaluate whether map interaction produces successful real-world outcomes, not only screen engagement.
+36. Implementation Phases
+Phase 1 — Foundation: Map Shell, base map, places, events, saved places, Trip context, filters/layers, Place cards, Compass entry, freshness/confidence UI.
+Phase 2 — Live World: Live Places, activity zones, observations, Live Pulse, vibe, queues, state expiry, Why Shown.
+Phase 3 — Presence & Coordination: Trip Crew, Meet Here, aggregate social opportunity, Shared Moments, Locate My Friends, offline event maps.
+Phase 4 — Crowd Intelligence: Crowd Flow, emerging zones, cooling areas, movement anomalies, event spillover with calibration/privacy gates.
+Phase 5 — Temporal Intelligence: Time Machine, Place Days, recaps, activity predictions, opportunity windows, city timeline.
+Phase 6 — Journey Intelligence: Route optimization, next-move predictions, Along My Way, recovery, group decision, smart meeting points.
+Phase 7 — World Intelligence: City models, personal city models, World Pulse, traveler-flow graph, privacy-safe aggregated intelligence.
+37. Explicit Non-Goals
+Do not build a generic Google Maps clone.
+Do not build a public real-time people tracker.
+Do not create permanent exact-location sharing.
+Do not reduce the product to a place-rating directory.
+Do not fill the screen with unranked POI pins.
+Do not let Compass invent live conditions.
+Do not make predictions look like observations.
+Do not let paid businesses buy factual confidence.
+Do not let stale claims remain visually live.
+38. Developer North-Star Scenario
+A traveler opens Portava at 10:47 PM. The map shows one area getting busier, another cooling, an event starting soon, aggregate social opportunity, directional crowd movement and a Compass Pick. Compass explains that the stronger area matches the current intent, contains saved places and is close to the traveler’s crew. The user taps Go There, gets routed, arrives, and later answers a one-tap prompt about the crowd. That observation re-enters the Live Intelligence pipeline and may update the map for other eligible viewers.
+Closed-loop systemSENSE → UNDERSTAND → PREDICT → RECOMMEND → COORDINATE → ACT → VERIFY → REMEMBER → LEARN
+39. Final Architecture Rule
+Every object on Portava Map must answer at least one of the following questions: Where can I go? What is happening? What is changing? Who is relevant? What did I plan? What should I know? What should I do next?
+Canonical product definitionPortava Map is not a map with Portava features placed on top of it. It is Portava’s understanding of the physical world, rendered geographically and personalized to what matters to the user right now.

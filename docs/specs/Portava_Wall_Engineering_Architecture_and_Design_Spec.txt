@@ -1,0 +1,347 @@
+
+PORTAVA
+Wall Engineering Architecture& Design Specification
+Social media at the center. Portava intelligence around it.
+Canonical developer handoff • August 2026
+
+1. Product Definition
+The Wall is Portava's primary social surface. It must be enjoyable when the user wants nothing more than to scroll, while quietly exposing the surrounding Portava systems when they become relevant. The Wall must never degrade into an events dashboard, travel directory, marketplace, or AI control panel.
+Canonical principle: The Wall entertains first, informs quietly, and becomes actionable when the user wants it to.
+2. Wall Jobs
+Provide a familiar, low-friction social feed for Posts, video, Postcards, Shared Moments, people and network activity.
+Provide a small persistent Live For You surface above the feed for real-time information matched to the user's interests and context.
+Allow ranked random discovery without forcing the user into chronological consumption.
+Provide a strict chronological Following mode for users who want it.
+Attach contextual intelligence to a social object only when that intelligence materially improves the object.
+Turn social content into optional real-world actions: see place, save, add to Trip, join, message, map, ask Compass, or book a Buddy.
+Preserve the distinct identities of Postcards, video, Moments and normal Posts rather than flattening everything into one card template.
+3. Primary Screen Architecture
+WALL├── Header│   ├── Portava│   ├── Current city/context│   ├── Notifications│   └── Telegraph├── Stories / Quick Media├── Live For You        ← small, bounded, real-time surface├── Feed Mode│   ├── For You         ← ranked / exploratory│   └── Following       ← strict chronology├── Social Feed│   ├── Post│   ├── Video│   ├── Postcard│   ├── Shared Moment│   ├── Social text/update│   ├── Discovery insertion│   └── Context Thread (conditional)└── Bottom Navigation    ├── Wall    ├── Map    ├── Create    ├── Trips    └── Passport
+4. Live For You
+Live For You is not the feed. It is a compact, stable mini-surface immediately above the feed that answers: "Is anything happening right now that is unusually relevant to me?" It should normally show 2–4 horizontally browsable items and a single See Live action.
+Allowed live object
+Example
+Required condition
+Place/area state
+An Thuong · Getting busier
+Fresh, sufficiently confident, user-relevant
+Event state
+Beach Festival · Peak now
+Time-valid and relevant
+Hidden Gem
+Quiet now · recently confirmed
+Protection and disclosure policy satisfied
+Social presence
+Maya +2 · Riverside
+Viewer authorized for disclosed granularity
+Buddy availability
+Minh · Nightlife Buddy around
+Availability active; service eligible; no precise private coordinate
+Trip signal
+Crew gathering near saved stop
+Trip-scoped authorization
+Hard rules:
+No generic city-wide firehose.
+No stale live labels.
+No exact private location leakage.
+No paid placement masquerading as live intelligence.
+Do not insert the same live signal repeatedly into the feed after it already appears in Live For You.
+Live For You may be ignored completely; normal scrolling must remain fully functional.
+5. Feed Modes
+Mode
+Ordering
+Purpose
+Algorithm rule
+For You
+Ranked, non-chronological
+Relaxed/random social browsing and discovery
+Optimize social relevance and content quality; time remains a feature, not the spine.
+Following
+Strict reverse chronology
+Predictable catch-up with followed people
+No relevance reordering. Apply only safety/visibility filters.
+For You is the default exploratory social experience. It may surface older missed content, relevant travelers, Postcards, video, Moments and destination-linked content. Following is the user's trust anchor: newest eligible content from followed accounts first.
+6. Feed Object Model
+type WallFeedObject =  | SocialPostProjection  | VideoProjection  | PostcardProjection  | SharedMomentProjection  | SocialUpdateProjection  | DiscoveryProjection  | ContextualOpportunityProjection;interface WallProjection {  projectionId: string;  objectType: string;  canonicalObjectId: string;  actor?: PublicActorRef;  publishedAt: string;  experienceAt?: string;  visibility: VisibilityState;  media?: DisplayMedia[];  text?: string;  place?: PublicPlaceRef;  contextThread?: ContextThread;  actions: WallAction[];  ranking?: WallRankingMetadata;}
+7. Social-First Composition Rules
+A normal social post must be allowed to remain a normal social post. Intelligence is optional.
+Do not add distance, crowd state, Compass, Trip, Map and Buddy actions to every object.
+The creator/person remains visually primary on social objects.
+Commercial/service identity is secondary to person identity for Buddies.
+Discovery insertions must be visually identifiable and explainable.
+The feed should have rhythm: dense media objects, light text objects, special Postcards and breathing space.
+Avoid a uniform stack of identical cards.
+8. Context Thread
+The Context Thread is the primary bridge from social media to Portava's surrounding functions. It is a compact attachment beneath a feed object and only renders when a contextual fact or action is useful enough to justify the extra UI.
+interface ContextThread {  kind:    | 'live_place'    | 'trip_relevance'    | 'hidden_gem'    | 'social_presence'    | 'buddy'    | 'map'    | 'memory'    | 'compass';  label: string;  freshness?: FreshnessState;  confidence?: number;  reason?: string;  action?: WallAction;}
+Examples:
+Quiet right now · 11 min away → See place
+You're going to Bangkok in 12 days → Save to Trip
+3 people you follow were here recently → See who
+Hidden Gem · recently confirmed → Explore
+Nightlife Buddy available in this area → See Buddy
+9. Context Thread Eligibility Gate
+function shouldAttachContextThread(input): boolean {  return (    input.viewerAuthorized &&    input.contextRelevant &&    input.confidence >= policy.minConfidence &&    input.freshness <= policy.maxAge &&    !input.sensitiveDisclosure &&    !input.duplicatesLiveStrip &&    !input.visualOverload &&    input.expectedUtility >= policy.minUtility  );}
+The default outcome should often be false. Contextual intelligence earns space; it does not receive space merely because data exists.
+10. Postcards
+Postcards are first-class social objects with a distinct travel-story presentation. They should periodically break feed rhythm and feel collectible, authored and place/time rooted. They must not be rendered as a normal Post with a Postcard badge.
+Distinct typography/layout from standard posts.
+Place and experience date can be prominent.
+Open Postcard enters the canonical Postcard viewer.
+Passport may show curated Postcards, but the Wall projection remains a social object.
+Postcards may have contextual actions, but their story presentation remains primary.
+11. Video
+Inline playback in the Wall; no mandatory full-screen vertical takeover.
+Autoplay only under product policy and user/device conditions; scrolling away pauses playback.
+Tap may enter the dedicated Media Viewer.
+Video can carry place/time/experience context without claiming the video proves current state.
+Watch time may inform presentation quality but must not become the Wall's primary optimization target.
+12. Shared Moments
+Shared Moments represent real-world overlap between eligible people and can enter the Wall as a special social object. Their visibility follows the underlying consent and Shared Moment policy. They should feel like a discovered social memory, not a location-tracking notification.
+13. Discovery in For You
+For You can reach outside the follow graph, but discovery must remain social. Prefer content from people, Postcards, videos and experiences that explain why they are relevant rather than inserting naked directory listings.
+Followed-by / mutual context.
+Trip or destination relevance.
+Interest relevance.
+High-quality social content the user likely missed.
+Hidden Gem content where disclosure policy allows.
+Creator popularity must not dominate contributor reliability or real-world relevance.
+14. For You Ranking
+ForYouScore =    SocialAffinity  + ContentQuality  + InterestFit  + DestinationFit  + TripRelevance  + Freshness  + Novelty  + NetworkRelevance  + RealWorldUtility  + DiversityValue  - RepetitionPenalty  - StalenessPenalty  - IntegrityRisk  - FatiguePenalty;
+The ranking objective is not maximum watch time. It should balance enjoyable social browsing, relevance, discovery, diversity and useful connection to the physical world.
+15. Feed Diversity Controller
+interface FeedDiversityPolicy {  maxSameActorInWindow: number;  maxSameObjectTypeInWindow: number;  maxContextThreadsInWindow: number;  minSocialObjectRatio: number;  maxDiscoveryInsertionsInWindow: number;  postcardSpacingHint?: number;  liveStripDeduplication: boolean;}
+This controller prevents the For You feed from becoming five videos in a row, repeated content from one creator, excessive intelligence annotations, or a disguised Discovery page.
+16. Two Clocks
+The Wall must distinguish publication time from experience time. Ordering uses publishedAt for chronological Following. A Postcard, delayed-location post or memory can separately display experienceAt.
+publishedAt = "2026-08-31T20:42:00"experienceAt = "2026-08-30T22:15:00"// UI"Posted 4 min ago""Happened last night · 10:15 PM" 
+17. Global Input Intelligence Integration
+The Wall consumes the platform-wide Global Input Intelligence layer; it does not own a separate autocomplete engine. Input assistance can temporarily steer For You without permanently changing preferences unless the user explicitly saves that preference.
+Examples: 'food', 'funny travel stories', 'just friends', 'random', 'Bangkok nightlife'.
+Typed intent may create a temporary Wall session context.
+Canonical entities selected from typeahead should become structured filters, not raw strings.
+Clearing the intent restores the prior Wall state.
+Voice input and typo normalization use the same global engine.
+18. Stories / Quick Media
+A lightweight top row can expose short-lived stories, Postcards, Moments or quick media from followed people. It is not the main Media system and must not compete visually with Live For You.
+19. Rent a Buddy Integration
+RAB has its own living Buddy Space. The Wall should surface Buddy activity sparingly when it is socially or contextually relevant.
+Buddy Dispatch from someone the user follows or has engaged with.
+Temporary 'I'm Around' availability when matched to user interest/context.
+Buddy experience media as social content.
+Context Thread beneath a place/nightlife post when human help is a materially useful option.
+Never expose precise Buddy coordinates; show approved area/service zone.
+Paid Buddy promotion cannot alter factual Live Intelligence confidence.
+20. Hidden Gems Integration
+Hidden Gems can appear through social content, Postcards, discovery or Context Threads.
+Do not optimize Gem exposure for virality.
+Respect approximate/coarse location and intentional-open rules.
+Current Gem state can appear only when evidence is fresh and qualified.
+A user's social post may be associated with a Gem without revealing protected access information.
+21. Compass Integration
+Compass should not occupy a permanent giant panel on the Wall. It may appear as an action or interpretation when it can connect social context to a useful next step.
+Ask Compass from a place-linked post.
+Interpret a cluster of social signals only when evidence and privacy rules allow.
+Never present inference as verified fact.
+Compass references canonical objects in its responses/actions.
+22. Map and Place Integration
+Wall objects may link into canonical Map and Place surfaces. The Wall must not implement a second place-state system. All current-state labels come from the shared Live Places/Live Intelligence projections.
+23. Privacy, Safety and Visibility
+Every object passes canonical visibility/block/moderation policy before projection.
+Exact person location is never inferred from a public post.
+Delayed posting must preserve the user's location-disclosure policy.
+Blocked users are excluded from feed, social proof and typeahead surfaces.
+Trip/private-circle context cannot leak through 'people here' labels.
+Sensitive places and protected Gems use disclosure policy before rendering context.
+Safety suppressions can override ranking and context rendering.
+24. Projection Architecture
+Canonical systems  Social Graph ─────┐  Posts/Media ──────┤  Postcards ────────┤  Shared Moments ───┤  Places/Map ───────┤  Live Intelligence ┤  Trips ────────────┤  Hidden Gems ──────┤  Buddy ────────────┤  Memory ───────────┤                    ↓             Wall Projection Layer                    ↓      Eligibility / Privacy / Moderation                    ↓        For You Ranker OR Following Sort                    ↓          Diversity / Deduplication                    ↓              Wall API Response                    ↓              Mobile Wall UI
+25. Service Boundaries
+Service
+Owns
+Does not own
+WallProjectionService
+Projection of canonical objects into Wall shapes
+Canonical social/media/place truth
+WallRankingService
+For You ordering
+Visibility authorization
+WallDiversityService
+Mix/fatigue/dedup constraints
+Content truth
+LiveForYouService
+Small personalized live strip
+Underlying live claims
+ContextThreadService
+Optional contextual attachments
+Independent feature databases
+FollowingFeedService
+Strict chronological eligible feed
+Relevance reordering
+26. API Shape
+GET /wall  ?mode=for_you|following  &cursor=...  &session_intent=...GET /wall/live  ?limit=4POST /wall/session-intent{  "text": "funny travel stories"}DELETE /wall/session-intentPOST /wall/impressionPOST /wall/action
+27. Response Contract
+interface WallResponse {  mode: 'for_you' | 'following';  sessionIntent?: StructuredIntent;  liveForYou: LiveForYouItem[];  items: WallProjection[];  nextCursor?: string;  caughtUp?: boolean;  generatedAt: string;}
+28. Cursor and Pagination Rules
+Following cursor is stable against publishedAt + deterministic tiebreaker.
+For You cursor carries rank session/version so page 2 does not reshuffle page 1.
+Never duplicate canonicalObjectId in the same active feed session unless explicitly allowed.
+Feed refresh may start a new rank session.
+Live For You refreshes independently from feed pagination.
+29. Client Architecture
+/features/wall  /components    WallScreen.tsx    WallHeader.tsx    QuickMediaRow.tsx    LiveForYouStrip.tsx    FeedModeSwitcher.tsx    WallFeed.tsx    WallObjectRenderer.tsx    ContextThread.tsx    CaughtUpState.tsx    /objects      SocialPostWallItem.tsx      VideoWallItem.tsx      PostcardWallItem.tsx      SharedMomentWallItem.tsx      DiscoveryWallItem.tsx  /hooks    useWallFeed.ts    useLiveForYou.ts    useWallSessionIntent.ts  /services    wallApi.ts    wallAnalytics.ts    wallPrefetch.ts  /types    wallProjection.ts    liveForYou.ts    contextThread.ts
+30. State Ownership
+State
+Owner
+Follow relationship
+Social Graph
+Post/video/Postcard media
+Canonical media/content systems
+Place identity/state
+Places + Live Intelligence
+Trip membership/saves
+Trips
+Hidden Gem qualification
+Hidden Gem system
+Buddy availability/service eligibility
+RAB
+Viewer privacy/block eligibility
+Policy/Trust/Safety
+For You rank score
+Wall Ranking
+Feed session cursor
+Wall
+Temporary typed Wall intent
+Wall session using Global Input Intelligence
+31. Caching and Prefetch
+Cache the first For You page for fast reopen, but revalidate eligibility.
+Following may cache recent projections but must not display deleted/blocked content after policy revalidation.
+Prefetch media for the next small number of visible objects only.
+Live For You has a short TTL appropriate to each live state and must visibly degrade when stale.
+Do not cache exact/private location beyond the owning feature's policy.
+Offline mode may show cached social content; remove or mark live-state UI unavailable/stale.
+32. Analytics
+Measure the Wall as a social product and a bridge to real-world outcomes. Do not reduce success to session length.
+Feed open and mode selection.
+Post/video/Postcard/Moment impressions.
+Stamp/comment/share/save.
+Follow from feed.
+Context Thread shown/acted/ignored.
+Live For You shown/opened.
+Map/Place/Trip/Compass/Buddy handoff.
+Discovery follow conversion.
+Caught-up rate.
+Hide/not-interested signals.
+Real-world outcome signals where valid and consented.
+Do not log raw private message text or unnecessary raw typed content.
+33. Performance Targets
+Area
+Target
+Cached Wall first paint
+Immediate skeleton/content where available
+First server page
+Aim < 500 ms backend excluding network
+Mode switch
+Reuse cached mode if fresh; otherwise progressive load
+Live strip
+Independent refresh; never block feed render
+Scroll
+60 fps target on supported devices
+Video
+Lazy load; only near viewport
+Images
+Responsive variants + CDN/cache
+34. Failure Modes
+Failure
+Required behavior
+Live Intelligence unavailable
+Hide/degrade Live For You; social feed remains normal
+Ranking service unavailable
+Fallback eligible recent/relevance-safe ordering
+Place resolver unavailable
+Render social object without place intelligence
+Compass unavailable
+Remove Compass action; do not block post
+RAB unavailable
+Remove Buddy context only
+Media processing pending
+Render processing placeholder without breaking feed
+Network offline
+Cached social feed; no fake live states
+35. Design System Rules
+Clean social-media density; generous whitespace.
+One primary content object at a time in the vertical scroll.
+Live For You is compact and horizontally browsable.
+For You / Following switch remains simple and persistent near feed start.
+Postcards visibly break the normal feed language.
+Video remains inline and cinematic.
+Context Threads are visually quieter than the post.
+Portava purple is an interaction/accent color, not a background wash for every card.
+Avoid dashboard grids, event-page density, giant recommendation modules and excessive badges.
+The user should understand the Wall without knowing Portava's architecture.
+36. Accessibility
+All feed actions have accessible labels.
+Video controls remain keyboard/screen-reader accessible.
+Autoplay respects reduced motion and user settings.
+Live state must not rely on color alone.
+Postcard decorative typography must preserve readable accessible text.
+Mode switch and horizontal Live For You list support logical focus order.
+37. Security and Abuse Controls
+Server-side eligibility is authoritative; never rely on client hiding.
+Rate-limit impression/action mutation endpoints.
+Prevent ranking manipulation through keyword stuffing or repeated self-engagement.
+Paid/promoted content, if introduced later, is explicitly labeled and separated from factual live confidence.
+Moderation takedowns propagate to cached Wall projections.
+Impersonation, blocked-user and private-account rules apply before social proof is constructed.
+38. Testing Matrix
+Test family
+Must prove
+Ordering
+Following is strictly chronological; For You cursor stable
+Privacy
+No blocked/private/sensitive leakage in items, context or live strip
+Dedup
+No repeated objects/live signals across page boundaries
+Freshness
+Stale live labels disappear/degrade
+Media
+Video pause/resume, image fallback, processing state
+Postcards
+Distinct projection/viewer route preserved
+Context
+Context only appears when gate passes
+Offline
+Cached social content works; live truth not fabricated
+Failure
+Feature subsystem outage never collapses social feed
+Accessibility
+Focus, labels, reduced motion, contrast
+39. Rollout Plan
+Phase
+Scope
+1
+Canonical Wall shell, For You/Following, Posts, photos, video, Postcards
+2
+Live For You mini strip with strict freshness/privacy
+3
+Context Threads for Place, Trip and Hidden Gems
+4
+Shared Moments, discovery insertions and diversity controller
+5
+Global Input Intelligence steering and Compass handoffs
+6
+RAB/Buddy contextual integration and Dispatch projections
+7
+Outcome learning, advanced personalization and continuous certification
+40. Non-Negotiable Product Tests
+Can a user open Portava and enjoy it purely as social media? If no, the Wall is too utility-heavy.
+Can a user ignore Live For You and scroll normally? If no, live intelligence is too intrusive.
+Can a user choose strict chronology? If no, the feed lacks a predictable trust mode.
+Do Postcards and videos feel native and distinct? If no, the feed is visually flattened.
+Does contextual intelligence appear only when useful? If no, the Wall becomes a dashboard.
+Can a social object naturally lead to Map, Trip, Compass, Hidden Gem or Buddy without forcing the transition? If no, Portava's surrounding systems are disconnected.
+If all intelligence services fail, does a safe, functional social feed remain? It must.
+41. End-to-End Wall Loop
+OPEN  ↓LIVE FOR YOU (optional awareness)  ↓FOR YOU or FOLLOWING  ↓SOCIAL OBJECT  ↓ENJOY / ENGAGE  ↓OPTIONAL CONTEXT  ↓PLACE / MAP / TRIP / COMPASS / BUDDY / GEM  ↓REAL-WORLD ACTION  ↓POST / VIDEO / POSTCARD / MOMENT  ↓SOCIAL GRAPH + MEMORY + INTELLIGENCE  ↓FUTURE WALL RELEVANCE
+Final architectural rule
+SOCIAL MEDIA IS THE CENTER.PORTAVA'S FUNCTIONS SURROUND IT.

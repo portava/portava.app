@@ -1,0 +1,334 @@
+
+PORTAVA PASSPORT
+Engineering Architecture & Mobile Design Specification
+Canonical implementation target · Mobile-first · iOS + Android
+
+Concept visual: Passport Home, stamps, availability, trust, My World, memories, plans and social context
+
+1. Canonical Product Definition
+Passport is Portava’s portable human identity layer. It is not merely a profile page: it is the privacy-aware, context-aware representation of a traveler that other Portava systems can query for identity, travel history, current state, availability, intent, trust, credentials, reputation, plans, shared context and permitted actions.
+System shorthandPassport = WHO · Availability = WHEN · Intent = WHAT · Trust = CAN / SHOULD · Map = WHERE · Compass = WHAT NEXT
+Identity + Travel History + Current State + Availability + Intent + Trust + Credentials + Reputation + Social Context + Experience History + Plans + Privacy + Viewer Relationship + Action Eligibility                                      ↓                              Passport Projection
+2. Ten Primary Passport Surfaces
+#
+Surface
+Purpose
+1
+Passport Home
+Main travel/social identity
+2
+Stamps
+Earned and verified travel proof
+3
+Journeys
+Trips and chronological travel history
+4
+Memories
+Travel media and Shared Moments
+5
+Plans
+Upcoming Trips and destinations
+6
+Availability
+Free time, Open to Plans and current intent
+7
+Trust & Credentials
+Trust Score, verification and reputation
+8
+Travel Identity
+Languages, interests and travel style
+9
+My World
+Personal geographic travel history
+10
+Shared Context
+Viewer-to-owner overlap and actionable context
+PassportShell├─ PassportHome├─ Stamps├─ Journeys├─ Memories├─ Plans├─ Availability├─ TrustCredentials├─ TravelIdentity├─ MyWorld└─ SharedContext
+3. Passport Home Design
+Travel hero/cover with circular profile photo overlapping the hero.
+Name, @handle, verification mark, home country and optional home base immediately visible.
+Current travel state and Availability/Open to Plans near the top, not buried below media.
+Trust summary visible as a concise score/label with drill-down.
+Travel stats: countries, cities, stamps and Trips.
+Primary viewer actions: Follow, Make a Plan, Message, More. Owner actions: Edit Passport, Set Availability, My World, Share Passport.
+High-priority previews: Shared Context, recent stamps, Featured Journey, next Trip and memories.
+PASSPORT[ Travel Hero ][PHOTO] Name ✓  @handleCountry · Home base✈ Traveling · Da Nang🟢 Open to Plans · Free 8 PM–1 AMNightlife · Food · ExploreTrust 87 · Strong17 Countries · 42 Cities · 63 Stamps[Make a Plan] [Message] […]YOU TWO → Shared context + See What You Could DoRECENT STAMPSFEATURED JOURNEYNEXT TRIPMEMORIES
+4. Viewer Context and Server-Side Projection
+Do not create separate profile systems for self, public, Trips, Buddy, Discovery or Telegraph. Build one Passport projection system with context-specific views. Privacy filtering must happen before data reaches the mobile client.
+type PassportViewerContext =  | 'self' | 'public' | 'follower' | 'following'  | 'trip_crew' | 'trip_host'  | 'buddy_customer' | 'buddy_provider' | 'event_group';
+Canonical User Data → Passport Context Resolver → Viewer Relationship → Privacy Policy → Trust/Eligibility Policy → Projection Builder → Passport View Model → Mobile UI
+5. Current Traveler State
+Separate permanent identity from temporary traveler state.
+Supported examples: Home, Traveling, Exploring, Open to Plans, At Event, With Crew, Unavailable.
+Every temporary state requires validFrom and expiration semantics.
+Broad city context may be projected; exact location is never ordinary Passport data.
+6. Availability Architecture
+Availability is a first-class Passport domain because it determines whether a real-world social opportunity is actionable. Available does not mean open to strangers.
+Type
+Example
+Recurring
+Friday 6 PM–late
+Trip-specific
+Da Nang: free after 7 PM
+One-time
+Tonight 8 PM–1 AM
+Plan-derived
+Free between dinner and event
+Social
+Open to meeting people
+Activity
+Food · Nightlife · Explore
+Group
+Small groups / crew only
+Radius
+Willing to travel ~20 min
+interface AvailabilityWindow {  id: string; userId: string;  type: 'recurring'|'trip'|'one_time'|'derived';  startAt: string; endAt: string; tripId?: string;  openToPlans: boolean; intents: IntentType[];  groupPreference?: GroupPreference; maxTravelMinutes?: number;  visibility: VisibilityPolicy;  source: 'explicit'|'plan_derived'; expiresAt?: string;}
+7. Availability Screen Design
+MY AVAILABILITYOpen to Plans                         ONAvailable Tonight · 8 PM–1 AMInterested In: [Food] [Drinks] [Nightlife] [Explore] [Events]Group Preference: Small groupsTravel Distance: Up to 20 minutesWEEKLYMon —Tue 6 PM–LateWed —Thu 7 PM–LateFri 5 PM–LateSat FlexibleSun 12 PM–8 PM[ Edit Availability ]
+Never publicly convert inferred availability into an explicit-looking status. Inference may trigger a private prompt such as “Free tonight?”; only an explicit answer should become public/shared availability.
+8. Open to Plans and Intent
+type SocialAvailability = 'open'|'maybe'|'crew_only'|'following_only'|'not_open';
+Availability answers “Can I do something?” Open to Plans answers “Do I want social invitations?”
+Temporary intent is distinct from long-term interests and should carry a TTL or explicit clear action.
+Current intent examples: Food, Drinks, Nightlife, Explore, Events, Meet Travelers.
+Compass and Discovery should weight explicit current intent more heavily than generic interests.
+9. Trust Architecture
+Retain the 0–100 Trust Score internally and, where appropriate, visibly. Do not make it a single universal authorization number. Trust must be domain-specific, confidence-aware and explainable.
+Trust Evidence → Trust Events → Domain Trust → Trust Confidence → Policy/Eligibility → Passport Trust Projection
+Domain
+Example presentation
+Overall
+Strong
+Traveler
+Strong
+Trip Guest
+Strong
+Trip Host
+Established
+Contributor
+Excellent
+Buddy
+Not applicable
+10. Trust & Credentials Design
+TRUST & CREDENTIALS       87 / 100         Strong✓ Identity Verified✓ Established Account✓ Safe & Respectful · Good standing✓ Reliable Contributor · 81 accepted reports✓ Trip Experience · 8 trips completed★ Host Reputation · 4.8[ View Details ]
+Do not expose private report counts, moderation evidence or sensitive safety history to other users.
+Trust confidence matters: an 82 with high evidence is not equivalent to an 82 with little evidence.
+Public copy for low-evidence accounts should avoid stigmatizing new users; e.g. “New Traveler · Verified.”
+Trust changes must be internally replayable from evidence/events.
+11. Trust Capabilities
+Trust Evidence + Domain Policy → CapabilitiescanJoinPublicTripcanHostTripcanCreateLargePlancanUseCrewLocationcanContributeLiveIntelcanBecomeBuddycanProvideVisaBuddyService
+Authorization is server-side. Passport may display positive credentials generated by these capabilities, but the client must not infer authorization from a displayed score.
+12. Stamps and Provenance
+Stamp type
+Examples
+Country
+Vietnam
+City
+Da Nang
+Place
+Landmark or venue
+Event
+Festival
+Experience
+Diving
+Hidden Gem
+Discovery
+Trip
+Completed journey
+Contributor
+Trusted reporter
+Buddy
+Completed experience
+Milestone
+10 countries
+Special
+Campaign / seasonal
+type StampSource = 'self_reported'|'system_observed'|'trip_derived'|'event_verified'|'contribution_earned'|'buddy_derived'|'partner_verified'|'admin_issued';type StampVerification = 'decorative'|'reported'|'verified';
+Self-reported or decorative stamps must never visually impersonate verified stamps. Verified travel facts should be derived from canonical provenance, not editable profile fields.
+13. Stamp Design
+Premium collectible appearance with perforated/passport-stamp edges.
+Unique country/city/event motifs rather than identical generic badges.
+Issue date and verification treatment visible in detail view.
+Metallic accents and subtle depth may distinguish premium/earned states.
+Stamp detail can link to Journey and My World while respecting historical-location privacy.
+14. Journeys and Featured Journey
+Journeys are chronological Passport projections of canonical Trip/travel records.
+Group by year, country/city and Trip.
+Show permitted dates, places, memories, stamps, Shared Moments and people context.
+Allow one Featured Journey such as “30 Days in Vietnam.”
+Featured Journey can include route, timeline, places, memories, stamps, people, events and recommendations.
+15. Memories and Shared Memories
+Memories are travel-contextual, not a generic media grid.
+Views: Trips, Places, People, Timeline and Map.
+Retain permitted place, city, Trip, date, people, event and stamp context.
+Shared history can surface “You were here together” or “Our Da Nang Trip” when both viewers have rights to the underlying records.
+16. Plans and Trip Overlap
+Passport must represent future travel as well as past travel.
+Upcoming Trips require per-plan visibility controls.
+When viewing another Passport, compute Trip overlap such as “You’ll both be in Bangkok Sep 14–17.”
+Provide an action such as “Connect for Bangkok” when policy and eligibility permit.
+17. Shared Context — ME ↔ THEM
+Shared Context is calculated for the viewer relationship rather than stored as a permanent dating-style match score.
+Possible Shared Context• Both in Da Nang• Both free tonight• 3 mutual follows• 2 shared cities• Nightlife + Food overlap• Both going to Bangkok• 1 previous Trip together• 2 Shared Moments
+Do not create a dating match scoreUse explainable descriptions such as “Strong travel overlap” and show the contributing facts.
+18. See What You Could Do — Compass Handoff
+Passport A + Passport B + Availability Overlap + Intent Overlap + Trust Eligibility + Current City + Trip Constraints + Live Map → Compass → Candidate Experiences
+Example result: “You’re both free 8–11 PM. Here are three things that fit both of you.” This is a core bridge from identity to real-world interaction.
+19. Travel Identity
+Dimension
+Examples
+Interests
+Nightlife, Food, Events
+Travel pace
+Relaxed ↔ Packed
+Planning
+Spontaneous ↔ Planner
+Spend style
+Budget ↔ Luxury
+Social
+Solo ↔ Social
+Discovery
+Famous spots ↔ Hidden gems
+Energy
+Low ↔ High
+Rhythm
+Early riser ↔ Night owl
+Group style
+1:1 / small / large groups
+Languages
+Native / Fluent / Conversational / Learning
+Inferred Travel DNA such as Night Explorer, Hidden Gem Hunter or Food Driven must be explainable and user-controlled: Show, Hide, or Not Me.
+20. Contributions, Expertise and Reputation
+CONTRIBUTIONSLevel 4 · Trusted Contributor81 accepted reports · 23 confirmations · 12 hidden gemsTop expertise: Nightlife · Food · Events
+Reputation should reflect usefulness and qualified real-world evidence, not follower count alone.
+Paid contributions must never increase factual confidence merely because they are paid.
+Experience-based expertise such as “Knows Bangkok well” should be derived from legitimate history and contribution quality.
+Host and Buddy reputations are contextual Passport projections, not separate identity systems.
+21. Context-Specific Passport Projections
+Consumer
+Projection should emphasize
+Discovery
+Identity, verification, availability, Open to Plans, shared context, permitted trust summary
+Trips
+Identity, relevant trust eligibility, languages, travel style, host/guest context
+Buddy
+Identity, Buddy verification, services, languages, availability, service area, completion/reputation
+Map
+Aggregate or permission-appropriate presence only
+Telegraph
+Identity + relevant shared context in conversation header
+Compass
+Permitted identity, availability, intent, trust capabilities, Trip/shared context
+Safety
+Restricted purpose-specific context only
+22. Privacy Model
+type Visibility = 'public'|'followers'|'following'|'crew'|'private';
+Field
+Default recommendation
+Name / handle
+Public
+Profile photo
+Public
+Verification
+Public
+Home country
+User controlled
+Home base
+User controlled
+Current city
+User controlled
+Availability
+User controlled
+Open to Plans
+User controlled
+Travel history
+User controlled
+Stamps
+Public / user controlled
+Memories
+Per-item
+Plans
+Private or followers by default
+Languages
+User controlled
+Travel style
+User controlled
+Trust summary
+Contextual
+Exact location
+Never normal Passport data
+23. Location Boundary
+Hard rulePassport may say “Traveling in Da Nang.” It should not ordinarily expose exact coordinates or “42 meters from Sky36.” Exact location belongs to purpose-bound Presence systems such as Trip Crew, Locate My Friends, Safe Return or explicit temporary sharing.
+24. Blocking and Safety Propagation
+A Passport block must propagate across Discovery, Telegraph, Trips, Presence, Map, Shared Moments, Bump, Buddy and Compass social recommendations. Do not implement blocking independently per surface.
+25. QR Passport and Bump
+Share Passport options: QR, Share Link, Copy Link, Bump.
+QR projection is deliberately minimal: photo, first name, @handle, verification, permitted home country/interests, Follow/Connect.
+Scanning a QR never bypasses privacy policy.
+Future Passport Bump should require affirmative exchange/confirmation; passive proximity alone must not reveal profiles.
+26. My World
+WORLD → Country → City → Trip → Places → Memories / Stamps
+My World is the personal geographic travel-history view. Main Map answers “What is happening now?” My World answers “Where has my story happened?” They can deep-link but must not merge truth models.
+27. Design System
+Dark-mode first with deep navy/black surfaces.
+Purple as the Passport identity accent.
+Gold for premium/earned travel identity and collectible stamps.
+Green for verification and positive trust states.
+Blue/teal for availability and social context.
+Use a travel hero image, circular overlapping portrait, rounded cards and restrained glass effects.
+Color is never the only status indicator; pair it with text/iconography.
+28. Mobile Component Structure
+/features/passport  /screens    PassportScreen.tsx · StampsScreen.tsx · JourneysScreen.tsx    MemoriesScreen.tsx · PlansScreen.tsx · AvailabilityScreen.tsx    TrustScreen.tsx · TravelIdentityScreen.tsx · MyWorldScreen.tsx    SharedContextScreen.tsx  /components    PassportHero.tsx · TravelerStateCard.tsx · AvailabilityCard.tsx    TrustSummary.tsx · StampStrip.tsx · StampCard.tsx · JourneyCard.tsx    MemoryGrid.tsx · PlanCard.tsx · SharedContextCard.tsx    TravelStyleCard.tsx · ContributionCard.tsx · CredentialBadge.tsx    PassportActions.tsx · PassportQrSheet.tsx  /services    passportProjection.ts · availability.ts · trustProjection.ts    sharedContext.ts · passportPrivacy.ts
+29. Passport Aggregate Contract
+interface PassportProjection {  userId: string;  identity: PassportIdentity;  travelerState?: TravelerState;  availability?: AvailabilityProjection;  intent?: IntentProjection;  trust?: TrustProjection;  credentials: CredentialProjection[];  stats: TravelStats;  stamps: StampProjection[];  featuredJourney?: JourneyProjection;  upcomingPlans: PlanProjection[];  memories: MemoryProjection[];  travelIdentity?: TravelIdentityProjection;  sharedContext?: SharedContextProjection;  capabilities: PassportActionCapabilities;  viewerContext: PassportViewerContext;}
+30. Actions Must Be Server-Projected
+{  "actions": {    "can_follow": true,    "can_message": true,    "can_make_plan": true,    "can_invite_trip": false,    "can_view_availability": true,    "can_view_trust": true  }}
+Do not let the client recreate policy with rules such as “if trust > 60 show Make Plan.” The server owns authorization and viewer-specific action eligibility.
+31. Loading, Caching and Expiration
+Identity → Viewer Relationship → Privacy Projection → Current State → Availability → Trust Summary → Shared Context → Stamps/History → Plans/Memories
+Cache relatively static identity, stamp metadata, travel stats, travel identity and permitted public journeys.
+Use short TTLs for Availability, current state, Open to Plans, Shared Context, Trust projection and capabilities.
+Explicitly expire Availability, temporary intent, Open to Plans, event Passport, temporary sharing and location projections.
+Never render stale Availability as current.
+32. Telemetry
+passport_viewed / passport_shared / passport_qr_scanned
+availability_set / availability_expired / open_to_plans_enabled
+stamp_issued / stamp_verified / stamp_viewed
+trust_summary_viewed
+shared_context_viewed / make_plan_started
+journey_viewed / memory_viewed / my_world_opened
+follow_from_passport / message_from_passport / trip_invite_from_passport
+33. Implementation Phases
+Phase
+Scope
+1 — Identity Foundation
+Passport Shell, hero, identity, verification, stats, privacy
+2 — Travel Identity
+Stamps, Journeys, Memories, My World
+3 — State & Availability
+Current city, Availability, Open to Plans, temporary intent
+4 — Trust
+Trust summary, credentials, domain trust, capability projection
+5 — Shared Context
+Mutuals, overlap, availability intersection, Trip overlap
+6 — Real-World Action
+Make a Plan, Compass integration, Trip invitations
+7 — Reputation
+Contributor identity, host reputation, expertise
+8 — Sharing
+QR Passport, Bump Passport, temporary event Passport
+9 — Intelligence
+Travel DNA, yearbook, deeper Experience Graph
+34. Explicit Non-Goals
+Not a generic Instagram profile.
+Not a dating profile or compatibility score.
+Not a raw exact-location screen.
+Not a place where users self-award verification.
+Not a public moderation record.
+Not a Trust leaderboard.
+Not permanent exposure of future travel plans.
+Not a duplicate database for Trips, Buddy, Memory, Map or Presence.
+35. Engineering North Star
+Two travelers view one another. Portava determines that both are in the same city, both explicitly free tonight, both open to plans, both interested in nightlife, eligible under trust policy, and share relevant social/travel context. Passport presents that context and offers “See What You Could Do.” Compass combines the two permitted Passport projections with live Map intelligence, proposes suitable experiences, the users form a plan, Telegraph coordinates it, and the resulting real-world experience can later become Memory, Trip history, qualified contribution or Stamp evidence.
+Complete Passport loopPASSPORT → AVAILABILITY → TRUST → SHARED CONTEXT → COMPASS → MAP → PLAN → TELEGRAPH → REAL-WORLD EXPERIENCE → MEMORY → STAMP → PASSPORT
+Canonical architecture rulePassport is the canonical, privacy-aware and context-aware representation of a human throughout Portava. Other surfaces request the appropriate Passport projection instead of rebuilding identity, availability, trust and social context independently.
