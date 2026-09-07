@@ -1,0 +1,387 @@
+# clean-build-proof.yml — the INVERSE schema audit, and the clean-build proof
+# that shares its name.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# WHY THIS FILE EXISTS
+# ─────────────────────────────────────────────────────────────────────────────
+# B-3 (docs/architecture/12_Claude_Code_Implementation.md §3.4, and 10 §12).
+#
+# `audit:live-unexplained` is real, maintained, tested code. It is the ONLY
+# thing in this repository that asks the reverse question — audit:schema asks
+# "does every object the migrations CLAIM exist live?", this asks "does every
+# object that exists LIVE have a canonical explanation?" — and it is therefore
+# the only check that can see drift the forward audit is structurally blind to:
+# a live table, column, index, policy, grant, function, trigger, enum or
+# extension that no migration declares.
+#
+# It ran in NO workflow. Its only caller was .github/scripts/clean-build-proof.sh
+# (:172-174), whose own header (:14) says it is wired to
+# `.github/workflows/clean-build-proof.yml` — and that file did not exist.
+# `.github/workflows/` held ci.yml, live-db.yml and unwired-checks.yml and
+# nothing else. So a check whose whole purpose is to find undeclared live
+# objects was itself an undeclared object, and the drift it exists to catch was
+# found only by accident.
+#
+# This file is that missing workflow. It makes clean-build-proof.sh:14 true and
+# it gives the inverse audit a schedule.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# TWO JOBS, DELIBERATELY DIFFERENT IN KIND
+# ─────────────────────────────────────────────────────────────────────────────
+#   live-unexplained   READ-ONLY. Every statement it sends is a SELECT
+#                      (auditLiveVsCanonical.ts:8-9, and the guard note at
+#                      :38-46). Runs on the schedule below and on dispatch.
+#
+#   clean-build-proof  DESTRUCTIVE. It runs `DROP SCHEMA public CASCADE` and
+#                      rebuilds from baseline + canonical(>= "2100")
+#                      (clean-build-proof.sh:11-16). workflow_dispatch ONLY,
+#                      AND behind an explicit typed confirmation input, so it
+#                      can never fire on a schedule, a push or a PR. It also
+#                      needs one secret nothing else needs —
+#                      CLEAN_BUILD_DATABASE_URL — so if that has not been
+#                      provisioned this job fails loudly rather than skipping.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# CI MUST NEVER TOUCH PRODUCTION. THAT PROPERTY IS PRESERVED HERE EXACTLY.
+# ─────────────────────────────────────────────────────────────────────────────
+# Every credential job below runs .github/scripts/assert-nonprod-supabase.sh in
+# RUN POSITION, unconditionally, as the first step after checkout and before
+# anything installs or executes — the same allowlist, the same one
+# implementation, the same order as live-db.yml's four credential jobs.
+#
+# And as in live-db.yml, that step is a FAIL-FAST DUPLICATE and not the
+# protection. The load-bearing assertion is in the execution path:
+# auditLiveVsCanonical.ts imports artifacts/api-server/src/lib/
+# ciProdReadOnlyAuditGuard.mjs as its FIRST import, which runs the same script
+# and exits 2 before any query is issued. Deleting this step, disabling it with
+# `if:`, or moving it below install does not get past that.
+#
+# ⚠ NOTE FOR WHOEVER MAINTAINS THE PREFLIGHT AUTHORITY.
+# .github/scripts/assert-ci-scripts.mjs declares credential jobs in
+# REQUIRED_CREDENTIAL_JOBS and checks them against ONE hardcoded path,
+# LIVE_DB_WORKFLOW = '.github/workflows/live-db.yml' (:681), on the stated
+# premise that live-db.yml "is the only workflow that runs with database
+# credentials" (:1069). THAT PREMISE IS NO LONGER TRUE, and the jobs in THIS
+# file are consequently outside that declared authority. The property still
+# holds by two independent mechanisms (the in-process guard above, and the
+# unconditional step in each job), but the DECLARATION does not yet cover them.
+# Making REQUIRED_CREDENTIAL_JOBS a per-workflow map is the fix; it is a change
+# to a shared guard and is deliberately not bundled into this one.
+#
+# ⚠ THE SHARED-DATABASE RESIDUAL, STATED RATHER THAN DISCOVERED.
+# live-db.yml serializes access to the one shared CI project with
+# .github/scripts/live-db-acquire-slot.sh. That script resolves THIS RUN'S
+# workflow id and considers only that workflow's runs (:163-198), so it cannot
+# serialize across workflow files and this workflow cannot join that slot.
+#
+# The consequence is bounded but real. This workflow only ever READS (the
+# destructive job is dispatch-only and an operator invoking it is choosing the
+# moment), so it cannot corrupt another run's fixtures. What it CAN do is
+# observe a half-applied schema if it overlaps live-db.yml's migration apply,
+# and report a confident wrong answer — the exact failure this repo's CI exists
+# to eliminate. Two things narrow it:
+#   * NO `push` AND NO `pull_request` TRIGGER. live-db.yml applies migrations
+#     only on `refs/heads/main`; not reacting to commits at all means this
+#     workflow never races the apply that a commit triggers.
+#   * The cron is offset far from live-db.yml's `17 6 * * *`.
+# A residual remains — a manual dispatch during an in-flight apply. Re-dispatch
+# it; a wrong answer from this audit is loud (it names the objects), not silent.
+#
+# Also not here, matching live-db.yml: no `if: secrets.X != ''` job condition.
+# That renders a missing secret as a grey SKIP, which reads as fine. Missing
+# credentials must be RED — hence the explicit non-empty preflight in each job.
+#
+# And no pnpm workspace-selector form: it exits 0 when it matches nothing, so a
+# renamed package or deleted script would report SUCCESS. Every package script
+# goes through .github/scripts/pnpm-run.sh, and the credential-free `preflight`
+# job re-asserts every (directory, package, script) triple first.
+
+name: Clean-build proof + inverse schema audit
+
+on:
+  # Drift between the live database and the canonical migration set is caused by
+  # database changes, not by commits — the same reasoning live-db.yml gives for
+  # its own schedule. Offset from live-db.yml's `17 6 * * *`; see the residual
+  # note above for why this workflow does not react to commits at all.
+  schedule:
+    - cron: '47 3 * * *'
+  workflow_dispatch:
+    inputs:
+      run_destructive_rebuild:
+        description: >-
+          Run the DESTRUCTIVE clean-build proof. This DROPS SCHEMA public on the
+          sanctioned CI project and rebuilds it. Type exactly: REBUILD-CI
+        required: false
+        default: ''
+        type: string
+
+permissions:
+  contents: read
+
+# Serializes this workflow against itself. It cannot serialize against
+# live-db.yml — see the shared-database residual in the header. In-progress runs
+# are NOT cancelled: the destructive job must never be interrupted between the
+# DROP and the rebuild.
+concurrency:
+  group: clean-build-proof
+  cancel-in-progress: false
+
+env:
+  NODE_VERSION: '24'
+  # THE ALLOWLIST — the one Supabase project ref CI is permitted to touch.
+  # Identical resolution to live-db.yml, deliberately: one policy, one source.
+  # Empty means every credential job FAILS CLOSED, because an unverifiable
+  # target is not a safe target.
+  CI_SUPABASE_PROJECT_REF: ${{ vars.CI_SUPABASE_PROJECT_REF || secrets.CI_SUPABASE_PROJECT_REF }}
+  # SECONDARY, not the primary defence. The allowlist above already rejects this
+  # ref along with every other unsanctioned one; this catches the single case
+  # the allowlist cannot — an operator pointing CI_SUPABASE_PROJECT_REF at
+  # production. Kept identical to live-db.yml; if production moves, both change.
+  KNOWN_PROD_PROJECT_REF: 'ajrurzioarfkagpuxfnb'
+
+jobs:
+  # ───────────────────────────────────────────────────────────────────────────
+  # Credential-free fail-fast guard, identical to ci.yml's and live-db.yml's:
+  # every (package directory, package name, script) triple named under .github/
+  # must exist on disk before any job spends time installing. No install, no
+  # network, no secrets.
+  # ───────────────────────────────────────────────────────────────────────────
+  preflight:
+    name: preflight · every CI-invoked package script exists
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Assert every CI-invoked (package, script) pair exists
+        shell: bash
+        run: node .github/scripts/assert-ci-scripts.mjs
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # THE INVERSE AUDIT. This job is the whole point of B-3.
+  # ───────────────────────────────────────────────────────────────────────────
+  live-unexplained:
+    name: inverse audit · every live object must have a canonical explanation (needs credentials)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    needs: preflight
+    environment: ci-nonprod-supabase
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_PROJECT_TOKEN: ${{ secrets.SUPABASE_PROJECT_TOKEN }}
+    steps:
+      - name: Preflight — required secrets must be non-empty
+        shell: bash
+        run: |
+          set -uo pipefail
+          MISSING=0
+          for NAME in SUPABASE_URL SUPABASE_PROJECT_TOKEN; do
+            if [ -z "${!NAME:-}" ]; then
+              echo "::error::Required secret $NAME is empty or not configured. This job fails rather than skips. See docs/ci/README.md."
+              MISSING=1
+            else
+              echo "OK: $NAME is set (value not printed)."
+            fi
+          done
+          if [ "$MISSING" -ne 0 ]; then exit 1; fi
+
+      - uses: actions/checkout@v4
+
+      # ALLOWLIST, not a denylist. One implementation of the policy, in
+      # .github/scripts/assert-nonprod-supabase.sh. Unconditional, in run
+      # position, before anything installs — see the header for why this is a
+      # fail-fast duplicate of the in-process guard rather than the protection.
+      - name: Preflight — Supabase target must be the sanctioned CI project
+        shell: bash
+        run: bash .github/scripts/assert-nonprod-supabase.sh
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Enable corepack
+        shell: bash
+        run: |
+          set -euo pipefail
+          corepack enable
+          echo "pnpm $(pnpm --version)"
+          node --version
+
+      - name: Resolve pnpm store path
+        id: pnpm-store
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache@v4
+        with:
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: pnpm-root-${{ runner.os }}-node${{ env.NODE_VERSION }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            pnpm-root-${{ runner.os }}-node${{ env.NODE_VERSION }}-
+
+      - name: Install (root workspace, frozen lockfile)
+        id: install
+        shell: bash
+        run: |
+          set -euo pipefail
+          pnpm install --frozen-lockfile
+
+      # Exit contract, read from auditLiveVsCanonical.ts:13-24 —
+      #   0 = every live object in all ten inventories is explained
+      #   1 = a finding (UNEXPLAINED_LIVE, EXCESS_PRIVILEGE,
+      #       POLICY_PREDICATE_DRIFT, DISPOSITION_*, STALE_LEDGER_ENTRY,
+      #       VERIFIER_NOT_WIRED, LEDGER_SHAPE_INVALID)
+      #   2 = CANNOT establish a result (missing credentials, the live sweep
+      #       threw, or the live relation census came back empty)
+      # Precedence is 2 > 1 > 0 and the script says so explicitly: an unrunnable
+      # inverse audit exits 2, NEVER 0. All three are surfaced here; 2 is a
+      # failure and never a skip, because "could not look" must not render the
+      # same as "looked and found nothing".
+      - name: 'audit:live-unexplained — live objects the canonical model does not explain'
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        shell: bash
+        run: bash .github/scripts/pnpm-run.sh artifacts/api-server @workspace/api-server audit:live-unexplained
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # THE DESTRUCTIVE PROOF. Opt-in, twice over: workflow_dispatch only, AND the
+  # confirmation input must read exactly REBUILD-CI.
+  #
+  # RECONCILIATION-PACKET §6.6 requirement 9: prove a clean database can be
+  # rebuilt from baseline + canonical(>= "2100") and that BOTH audits then exit
+  # 0 against the rebuilt schema. Combined with a green read-only production run
+  # of audit:live-unexplained, that is the live diff: rebuilt ≡ model ≡ prod.
+  #
+  # The script carries its own two-gate safety chain (clean-build-proof.sh:18-33)
+  # and the second gate matters here: assert-nonprod-supabase.sh validates only
+  # the ref inside SUPABASE_URL, and the DROP runs over a libpq connection
+  # string that gate cannot see, so the script parses the ref out of
+  # CLEAN_BUILD_DATABASE_URL itself and refuses anything that is not the
+  # sanctioned CI project.
+  # ───────────────────────────────────────────────────────────────────────────
+  clean-build-proof:
+    name: clean-build proof · DESTRUCTIVE rebuild of the sanctioned CI project (opt-in)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    needs: [preflight, live-unexplained]
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_destructive_rebuild == 'REBUILD-CI' }}
+    environment: ci-nonprod-supabase
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_PROJECT_TOKEN: ${{ secrets.SUPABASE_PROJECT_TOKEN }}
+      CLEAN_BUILD_DATABASE_URL: ${{ secrets.CLEAN_BUILD_DATABASE_URL }}
+    steps:
+      - name: Preflight — required secrets must be non-empty
+        shell: bash
+        run: |
+          set -uo pipefail
+          MISSING=0
+          for NAME in SUPABASE_URL SUPABASE_PROJECT_TOKEN CLEAN_BUILD_DATABASE_URL; do
+            if [ -z "${!NAME:-}" ]; then
+              echo "::error::Required secret $NAME is empty or not configured. This job fails rather than skips. CLEAN_BUILD_DATABASE_URL is the one secret only this job needs — a libpq connection string for the SANCTIONED CI project, which .github/scripts/clean-build-proof.sh re-validates itself. See docs/ci/README.md."
+              MISSING=1
+            else
+              echo "OK: $NAME is set (value not printed)."
+            fi
+          done
+          if [ "$MISSING" -ne 0 ]; then exit 1; fi
+
+      - uses: actions/checkout@v4
+
+      # Same allowlist, same position, same unconditional form as every other
+      # credential job in this repo. GATE 1 of the script's two-gate chain; the
+      # script itself applies GATE 2 to the libpq connection string.
+      - name: Preflight — Supabase target must be the sanctioned CI project
+        shell: bash
+        run: bash .github/scripts/assert-nonprod-supabase.sh
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Enable corepack
+        shell: bash
+        run: |
+          set -euo pipefail
+          corepack enable
+          echo "pnpm $(pnpm --version)"
+          node --version
+
+      - name: Install psql client
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-client
+          psql --version
+
+      - name: Install (root workspace, frozen lockfile)
+        id: install
+        shell: bash
+        run: |
+          set -euo pipefail
+          pnpm install --frozen-lockfile
+
+      # The script aborts (exit 1) before any destructive statement if either
+      # gate refuses, and runs audit:schema then audit:live-unexplained against
+      # the rebuilt schema, requiring exit 0 from both.
+      - name: 'clean-build proof — DROP, rebuild, then prove BOTH audits exit 0'
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        shell: bash
+        run: bash .github/scripts/clean-build-proof.sh
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # THE VERDICT. A cancelled, skipped or failed job must not read as a pass.
+  # Same classifier as live-db.yml — .github/scripts/live-db-verdict.sh, which
+  # is unit-tested directly (src/test/ciWorkflowArchitecture.test.ts) because an
+  # inline version of it once had the NOT_EXECUTED state collapsed away while a
+  # grep for the word still passed.
+  #
+  # ONE DELIBERATE DIFFERENCE FROM live-db.yml, AND IT IS NOT THE
+  # SKIPPED-READS-AS-PASS BUG.
+  #
+  # `clean-build-proof` is OPT-IN. On every scheduled run, and on any dispatch
+  # that did not type REBUILD-CI, it is skipped BY DESIGN — it was not requested.
+  # Feeding a by-design skip to the classifier would resolve every scheduled run
+  # to NOT_EXECUTED and make this workflow permanently red, which trains people
+  # to ignore it.
+  #
+  # So its result is passed to the classifier EXACTLY WHEN IT IS NOT 'skipped',
+  # and omitted otherwise. Everything else still reaches the classifier:
+  #   * requested and failed    -> 'failure'   -> FAIL
+  #   * requested and cancelled -> 'cancelled' -> NOT_EXECUTED
+  #   * skipped because an upstream `needs` failed -> omitted here, but that
+  #     upstream job is itself passed in and is already FAIL.
+  # The two jobs that run on EVERY run — preflight and live-unexplained — are
+  # passed unconditionally, so "skipped or cancelled is not a pass" holds for
+  # the contract this workflow actually makes on each run.
+  # ───────────────────────────────────────────────────────────────────────────
+  verdict:
+    name: clean-build proof · verdict (skipped or cancelled is not a pass)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: ${{ always() }}
+    needs:
+      - preflight
+      - live-unexplained
+      - clean-build-proof
+    steps:
+      - uses: actions/checkout@v4
+      - name: Classify the run — PASS / FAIL / NOT EXECUTED
+        shell: bash
+        env:
+          PREFLIGHT_RESULT: ${{ needs.preflight.result }}
+          AUDIT_RESULT: ${{ needs['live-unexplained'].result }}
+          REBUILD_RESULT: ${{ needs['clean-build-proof'].result }}
+        run: |
+          set -uo pipefail
+          ARGS=( "preflight=${PREFLIGHT_RESULT}" "live-unexplained=${AUDIT_RESULT}" )
+          if [ "${REBUILD_RESULT}" = "skipped" ]; then
+            echo "clean-build-proof: not requested for this run (opt-in, workflow_dispatch + REBUILD-CI). Omitted from the verdict deliberately — see this job's header."
+          else
+            ARGS+=( "clean-build-proof=${REBUILD_RESULT}" )
+          fi
+          bash .github/scripts/live-db-verdict.sh "${ARGS[@]}"

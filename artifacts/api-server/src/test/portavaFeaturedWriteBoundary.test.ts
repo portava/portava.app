@@ -8,13 +8,24 @@
  * status='approved' with approved_by=self, or UPDATE a pending row to approved —
  * self-featuring arbitrary content, bypassing the creator-permission gate and
  * admin approval. Post-2160 every client INSERT/UPDATE/DELETE fails 42501 while
- * the public read and the service-role approval path still work.
+ * the service-role approval path still works.
  *
  * Every legitimate write (nomination, permission request/grant, admin approval)
- * runs through the API as service-role. 2160 makes anon+authenticated SELECT-only.
- * NOTE: RLS is OFF on this table; the grant removal is what closes the exploit
- * (PostgREST denies a write with no privilege). Enabling RLS is a deferred
- * defense-in-depth follow-up.
+ * runs through the API as service-role, and so does every READ — the client
+ * calls GET /api/featured and never touches PostgREST for this table.
+ *
+ * UPDATED FOR MIGRATION 2332 (2332_money_grant_boundary.sql). 2160 left
+ * anon+authenticated with SELECT; 2332 revokes that too, and revokes from
+ * service_role before granting it back the four DML verbs — the step 2160
+ * omitted, which is why service_role still carried TRUNCATE. So the expectation
+ * here is now "no write AND no direct read" for anon; see the case below for
+ * why the old "public read still works" assertion was never a product read path
+ * and was already false in production.
+ *
+ * NOTE on RLS: it is OFF on this table in portava-ci and ON (with zero policies)
+ * in production — an environment divergence 2332 deliberately does not touch.
+ * The grant removal is what closes the boundary on both, because PostgREST
+ * denies a role with no privilege before RLS is ever consulted.
  *
  * Live-DB suite: kept out of the curated npm test list; run by the live-DB job.
  * Run: node --import tsx/esm --test src/test/portavaFeaturedWriteBoundary.test.ts
@@ -111,12 +122,31 @@ describe("portava_featured client-write boundary", { skip: !CREDS_AVAILABLE }, (
       .upsert({ post_id: postId, category: "best_photo", status: "approved", approved_by: strangerId });
     assertDenied(error, "upsert");
   });
-  it("anon cannot write, but the public read still works", async () => {
+  // CHANGED BY MIGRATION 2332 (2332_money_grant_boundary.sql). This case used
+  // to read "anon cannot write, but the public read still works" and asserted
+  // that anon got exactly one row back over PostgREST.
+  //
+  // That assertion encoded 2160's reasoning — "Featured is public, so grant
+  // SELECT back to anon and authenticated". Public it is, but through the API,
+  // not through PostgREST: `from('portava_featured')` appears nowhere in
+  // travel-buddy-standalone, the Featured Hub calls GET /api/featured
+  // (src/services/featured.ts), and that route serves the table from the
+  // service client (routes/featured.ts:113). The anon SELECT grant backed no
+  // read path in the product.
+  //
+  // It was also already false in production before 2332: RLS is ENABLED there
+  // with ZERO policies, which denies every non-BYPASSRLS role regardless of the
+  // grant. The old assertion passed on portava-ci only because the two
+  // environments had diverged — 2160 was applied to CI and never to production,
+  // and production had RLS switched on out of band instead.
+  //
+  // 2332 removes every anon and authenticated privilege on this table, so the
+  // boundary is now the grant on both sides: no write AND no direct read.
+  it("anon can neither write nor read this table directly", async () => {
     const { error: wErr } = await anonClient().from(TABLE).update({ status: "approved" }).eq("id", featuredId);
     assertDenied(wErr, "anon-update");
-    const { data, error: rErr } = await anonClient().from(TABLE).select("id").eq("id", featuredId);
-    assert.ifError(rErr);
-    assert.equal((data ?? []).length, 1, "anon must still read featured rows");
+    const { error: rErr } = await anonClient().from(TABLE).select("id").eq("id", featuredId);
+    assertDenied(rErr, "anon-select");
   });
   it("the service role can still approve a featured row", async () => {
     const { error } = await adminClient().from(TABLE).update({ status: "approved", approved_by: authorId }).eq("id", featuredId);

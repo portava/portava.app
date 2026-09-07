@@ -348,7 +348,7 @@ export function resolveCreatorActivity(
  *
  * Never throws.
  */
-async function batchLoadActivityScores(
+export async function batchLoadActivityScores(
   db: SupabaseClient | null,
   creatorIds: string[],
 ): Promise<{ scores: Map<string, CreatorActivityRow>; unavailable: boolean }> {

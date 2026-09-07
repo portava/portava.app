@@ -372,6 +372,150 @@ export async function accumulateBookingTip(
   }
 }
 
+/** The verdict rb_confirm_booking_cash returns, plus the post-write state. */
+export interface CashConfirmationResult {
+  /**
+   * 'confirmed'          the write happened
+   * 'not_found'          no such booking
+   * 'not_party'          caller is neither the traveller nor the buddy
+   * 'amount_exceeds_due' a positive confirmation claimed more cash than the
+   *                      booking says is owed; NOTHING was written
+   * 'unavailable'        the confirmation could not be attempted at all
+   */
+  outcome: "confirmed" | "not_found" | "not_party" | "amount_exceeds_due" | "unavailable";
+  actedAsTraveler: boolean;
+  actedAsBuddy: boolean;
+  /** Post-write confirmation flags. Null means "not yet answered". */
+  travelerConfirmed: boolean | null;
+  buddyConfirmed: boolean | null;
+  travelerUserId: string | null;
+  bookingStatus: string | null;
+  cashDueUsd: number | null;
+  disputeExpiresAt: string | null;
+  /** False when the non-atomic fallback ran (no RPC available). */
+  atomic: boolean;
+}
+
+function normaliseConfirmRow(row: any): CashConfirmationResult {
+  const bool = (v: any): boolean | null => (v === true || v === false ? v : null);
+  return {
+    outcome: row?.outcome ?? "unavailable",
+    actedAsTraveler: row?.acted_as_traveler === true,
+    actedAsBuddy: row?.acted_as_buddy === true,
+    travelerConfirmed: bool(row?.traveler_confirmed),
+    buddyConfirmed: bool(row?.buddy_confirmed),
+    travelerUserId: row?.traveler_user_id ?? null,
+    bookingStatus: row?.booking_status ?? null,
+    cashDueUsd: row?.cash_due_usd === null || row?.cash_due_usd === undefined ? null : Number(row.cash_due_usd),
+    disputeExpiresAt: row?.dispute_expires_at ?? null,
+    atomic: true,
+  };
+}
+
+/**
+ * M13 — record one party's cash-balance confirmation atomically, refusing an
+ * inflated amount.
+ *
+ * THE DEFECT THIS REPLACES. The confirm-cash route read the booking, decided
+ * which column to set, and wrote it in a SEPARATE statement. Two simultaneous
+ * confirmations — the traveller's and the buddy's, which is the NORMAL case for
+ * a hand-to-hand cash settlement — each read the other's column as it was
+ * before the other write, and the later write reinstated the stale value. One
+ * party's confirmation silently disappeared, and the pair is the only evidence
+ * that the cash changed hands. 09 §9.2 names both halves; the second is
+ * docs/rent-buddy-audit.md:397, "A buddy could confirm an inflated cash
+ * amount."
+ *
+ * `amountUsd` is the sum the caller claims changed hands. It is OPTIONAL — the
+ * route has never required it and callers that omit it behave exactly as
+ * before — but when it IS supplied it is bounded, database-side, by the
+ * booking's own `cash_balance_usd`. A claim above what the booking says is owed
+ * is refused, not written and not clamped: clamping would record a settlement
+ * that neither party agreed to.
+ */
+export async function confirmBookingCash(
+  client: any,
+  bookingId: string,
+  actorUserId: string,
+  confirmed: boolean,
+  amountUsd?: number | null,
+): Promise<CashConfirmationResult> {
+  const unavailable: CashConfirmationResult = {
+    outcome: "unavailable",
+    actedAsTraveler: false, actedAsBuddy: false,
+    travelerConfirmed: null, buddyConfirmed: null, travelerUserId: null,
+    bookingStatus: null, cashDueUsd: null, disputeExpiresAt: null, atomic: false,
+  };
+  if (!client || !bookingId || !actorUserId) return unavailable;
+
+  const rpc = await rbRpc(client, "rb_confirm_booking_cash", {
+    p_booking_id: bookingId,
+    p_actor_id: actorUserId,
+    p_confirmed: confirmed,
+    p_amount_usd: amountUsd ?? null,
+  });
+  if (rpc.ok) {
+    const row = Array.isArray(rpc.data) ? rpc.data[0] : rpc.data;
+    if (row?.outcome) return normaliseConfirmRow(row);
+  }
+
+  // FALLBACK — read-then-write, for a client with no `.rpc` or a database where
+  // 2330 is not applied yet. It is NOT race-free and reports `atomic: false`,
+  // but it DOES enforce the amount bound, because that half of M13 is a
+  // validation rule rather than a concurrency property and must hold on every
+  // path.
+  try {
+    const bookingRes: any = await client
+      .from("rent_buddy_bookings")
+      .select("*")
+      .eq("id", bookingId)
+      .maybeSingle();
+    if (bookingRes?.error) return unavailable;
+    const b: any = bookingRes?.data;
+    if (!b) return { ...unavailable, outcome: "not_found" };
+
+    const bpRes: any = await client
+      .from("rent_buddy_profiles")
+      .select("id, user_id")
+      .eq("id", b.buddy_id)
+      .maybeSingle();
+    if (bpRes?.error) return unavailable;
+    const buddyUserId: string | null = bpRes?.data ? (bpRes.data as any).user_id : null;
+
+    const isTraveler = b.traveler_id === actorUserId;
+    const isBuddy = !!buddyUserId && buddyUserId === actorUserId;
+    if (!isTraveler && !isBuddy) return { ...unavailable, outcome: "not_party" };
+
+    const due = Number(b.cash_balance_usd ?? 0);
+    if (confirmed === true && amountUsd !== null && amountUsd !== undefined
+        && Number(amountUsd) > (Number.isFinite(due) ? due : 0) + 0.005) {
+      return { ...unavailable, outcome: "amount_exceeds_due", actedAsTraveler: isTraveler, actedAsBuddy: isBuddy, cashDueUsd: due };
+    }
+
+    const patch: Record<string, any> = { updated_at: new Date().toISOString() };
+    if (isTraveler) patch.cash_balance_confirmed_by_traveler = confirmed;
+    if (isBuddy) patch.cash_balance_confirmed_by_buddy = confirmed;
+    const updRes: any = await client.from("rent_buddy_bookings").update(patch).eq("id", bookingId);
+    if (updRes?.error) return unavailable;
+
+    const bool = (v: any): boolean | null => (v === true || v === false ? v : null);
+    return {
+      outcome: "confirmed",
+      actedAsTraveler: isTraveler,
+      actedAsBuddy: isBuddy,
+      travelerConfirmed: isTraveler ? confirmed : bool(b.cash_balance_confirmed_by_traveler),
+      buddyConfirmed: isBuddy ? confirmed : bool(b.cash_balance_confirmed_by_buddy),
+      travelerUserId: b.traveler_id ?? null,
+      bookingStatus: b.status ?? null,
+      cashDueUsd: Number.isFinite(due) ? due : null,
+      disputeExpiresAt: b.dispute_window_expires_at ?? null,
+      atomic: false,
+    };
+  } catch {
+    return unavailable;
+  }
+}
+
 // ── User limits helper ─────────────────────────────────────────────────────────
 
 // Exported so every booking-CREATION path applies the same account-level
@@ -2728,29 +2872,57 @@ router.post("/rent-a-buddy/bookings/:bookingId/confirm-cash", async (req, res) =
   if (!await requireRentBuddyEnabled(serviceClient, res)) return;
 
   const { bookingId } = req.params;
-  const { confirmed } = req.body ?? {};
+  const { confirmed, amountUsd } = req.body ?? {};
 
-  const { data: booking } = await serviceClient
-    .from("rent_buddy_bookings")
-    .select("*")
-    .eq("id", bookingId)
-    .maybeSingle();
+  // `confirmed` used to be written through unvalidated: anything that was not a
+  // boolean landed in the update patch as-is (or, being `undefined`, was
+  // dropped by JSON serialisation and wrote nothing) and the dispute branch
+  // below then compared it against `false`. A cash settlement is a yes/no, so
+  // an unparseable answer is refused rather than half-recorded.
+  if (typeof confirmed !== "boolean") {
+    return res.status(400).json({ error: "invalid_payload", message: "confirmed must be true or false." });
+  }
 
-  if (!booking) return res.status(404).json({ error: "not_found" });
+  // OPTIONAL. When present it is the sum the caller says changed hands, and it
+  // is bounded below by what the booking says is owed — the second half of M13
+  // (docs/rent-buddy-audit.md:397). Omitting it preserves the previous request
+  // contract exactly.
+  let claimedAmountUsd: number | null = null;
+  if (amountUsd !== undefined && amountUsd !== null) {
+    const n = Number(amountUsd);
+    if (!Number.isFinite(n) || n < 0) {
+      return res.status(400).json({ error: "invalid_payload", message: "amountUsd must be a non-negative number." });
+    }
+    claimedAmountUsd = n;
+  }
 
-  const party = await requireBookingParty(serviceClient, booking, auth.user.id, res);
-  if (!party) return;
+  const result = await confirmBookingCash(serviceClient, bookingId, auth.user.id, confirmed, claimedAmountUsd);
 
-  const { isTraveler, isBuddy } = party;
-  const updatePatch: Record<string, any> = { updated_at: new Date().toISOString() };
-  if (isTraveler) updatePatch.cash_balance_confirmed_by_traveler = confirmed;
-  if (isBuddy)    updatePatch.cash_balance_confirmed_by_buddy = confirmed;
+  if (result.outcome === "not_found") return res.status(404).json({ error: "not_found" });
+  if (result.outcome === "not_party") return res.status(403).json({ error: "forbidden" });
+  if (result.outcome === "amount_exceeds_due") {
+    // Refused, not clamped: recording a smaller settlement than the caller
+    // asserted would invent an agreement neither party made.
+    return res.status(409).json({
+      error: "amount_exceeds_due",
+      message: "The confirmed cash amount is higher than the balance this booking says is owed.",
+      cashBalanceDueUsd: result.cashDueUsd,
+    });
+  }
+  if (result.outcome !== "confirmed") {
+    return res.status(503).json({ error: "db_error", message: "Cash confirmation could not be recorded. Please try again." });
+  }
 
-  await serviceClient.from("rent_buddy_bookings").update(updatePatch).eq("id", bookingId);
-
-  const b = booking as any;
-  const tConf = isTraveler ? confirmed : b.cash_balance_confirmed_by_traveler;
-  const bConf = isBuddy    ? confirmed : b.cash_balance_confirmed_by_buddy;
+  // Post-write state, read out of the same statement that wrote it. The old
+  // code recomputed these from the row it had read BEFORE its own write, which
+  // is exactly how a concurrent confirmation by the other party disappeared.
+  const tConf = result.travelerConfirmed;
+  const bConf = result.buddyConfirmed;
+  const b = {
+    traveler_id: result.travelerUserId,
+    status: result.bookingStatus,
+    dispute_window_expires_at: result.disputeExpiresAt,
+  } as any;
 
   if (tConf === false || bConf === false) {
     // Only open a cash dispute when the booking is actually DISPUTABLE — the same
@@ -6358,38 +6530,72 @@ export function nightlifePublicMeetupViolation(meetupLocation: string, category:
 // ── Buddy earnings summary ─────────────────────────────────────────────────────
 // The /api/rent-a-buddy/dashboard/earnings route already exists in the
 // main router section. We add a richer breakdown endpoint here.
+//
+// M7 — THE TOTAL MUST NOT BE SILENTLY TRUNCATED.
+//
+// THE DEFECT (09 §1.3.4, 12 §3.1 M7). This route used to `.select(...)` every
+// completed/disputed booking for a buddy with NO pagination and sum them in the
+// API process. PostgREST caps a select at its configured max-rows and says
+// nothing when it truncates — no error, no header the client reads, just a
+// shorter array. A buddy past that cap was shown an earnings total that was
+// silently too low, and the more they had earned the more was missing. That is
+// a wrong number on a buddy's own money screen today, which is why the register
+// grades it S1 and not S2.
+//
+// THE FIX, in the order 12 §4 asks for it ("aggregate DB-side or paginate",
+// preferring DB-side): rb_buddy_earnings_summary (migration 2330) does the
+// whole aggregation in SQL and returns ONE jsonb row, so there is no row count
+// left to truncate. Where that function is not available the route paginates
+// EXHAUSTIVELY and folds the pages with the identical arithmetic — slower, but
+// never short.
+//
+// WHAT THIS DELIBERATELY DOES NOT CHANGE. `platformFeePct` stays 0.15 here.
+// That literal is itself a defect — M1, "three disagreeing take rates", where
+// this site is called out by name for ignoring the buddy's level entirely — but
+// M1 is blocked on verification V2 (does rent_buddy_fee_rules hold its five
+// seed rows in production?) and reconciling it here would produce a fourth
+// wrong answer instead of a right one. The rate is now a NAMED CONSTANT passed
+// to both the SQL function and the fold, so M1's owner changes one line.
+// `totalCashConfirmedUsd` likewise keeps summing cash_balance_usd for every
+// non-disputed booking, confirmed or not; see the note at the constant.
 
-router.get("/rent-a-buddy/dashboard/earnings/summary", async (req, res) => {
-  const auth = await requireUser(req, res);
-  if (!auth) return;
-  const { user, client } = auth;
-  const serviceClient = sc(client);
-  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
+/**
+ * The platform fee this route applies, as a fraction.
+ *
+ * NOT A DEFAULT — it is applied to every buddy at every level, which is exactly
+ * what M1 files against this line (12 §3.1: "the earnings summary hard-codes
+ * platformFeePct = 0.15 for every buddy at every level"). Named here so the
+ * value has one home when M1 replaces it with a read of rent_buddy_fee_rules.
+ */
+const EARNINGS_SUMMARY_FEE_PCT = 0.15;
 
-  const { data: bp } = await serviceClient
-    .from("rent_buddy_profiles")
-    .select("id")
-    .eq("user_id", user.id)
-    .maybeSingle();
+/** Page size for the exhaustive fallback. */
+const EARNINGS_PAGE_SIZE = 500;
 
-  if (!bp) return res.status(404).json({ error: "not_found", message: "No Buddy profile found." });
+/** Bookings that count toward earnings. */
+const EARNINGS_STATUSES = ["completed", "disputed"] as const;
 
-  const { data: bookings } = await serviceClient
-    .from("rent_buddy_bookings")
-    .select("id, total_usd, deposit_usd, cash_balance_usd, payment_mode, status, completed_at, booking_date, category")
-    .eq("buddy_id", (bp as any).id)
-    .in("status", ["completed", "disputed"]);
+interface EarningsMonth { month: string; totalUsd: number; bookingCount: number; inApp: number; cash: number; fees: number }
 
-  const rows = (bookings ?? []) as any[];
-
-  const platformFeePct = 0.15;
+/**
+ * Fold booking rows into the summary, with byte-identical arithmetic to the
+ * in-line loop this replaced:
+ *   - month key   = first 7 chars of completed_at, else booking_date, else ""
+ *   - fee         = round(total_usd * pct, 2)
+ *   - disputed    → gross to totalDisputed, month's bookingCount +1, nothing else
+ *   - otherwise   → deposit to inApp, cash_balance to cash, fee to fees,
+ *                   (gross - fee) to the month's totalUsd
+ *   - yearlyNet   = sum of the current year's monthly totalUsd
+ * Exported so the concurrency/exactness tests can drive it directly.
+ */
+export function foldEarningsRows(rows: any[], platformFeePct: number, now: Date = new Date()) {
   let totalInApp = 0;
   let totalCashConfirmed = 0;
   let totalFees = 0;
   let totalDisputed = 0;
-  let totalPending = 0;
+  const totalPending = 0;
 
-  const monthlyMap: Record<string, { totalUsd: number; bookingCount: number; inApp: number; cash: number; fees: number }> = {};
+  const monthlyMap: Record<string, Omit<EarningsMonth, "month">> = {};
 
   for (const b of rows) {
     const month = (b.completed_at ?? b.booking_date ?? "").slice(0, 7);
@@ -6416,26 +6622,108 @@ router.get("/rent-a-buddy/dashboard/earnings/summary", async (req, res) => {
     monthlyMap[month].bookingCount += 1;
   }
 
-  const monthlyBreakdown = Object.entries(monthlyMap)
+  const monthlyBreakdown: EarningsMonth[] = Object.entries(monthlyMap)
     .map(([month, v]) => ({ month, ...v }))
     .sort((a, b) => b.month.localeCompare(a.month));
 
-  const currentYear = new Date().getFullYear().toString();
-  const yearlyTotalUsd = monthlyBreakdown
+  const currentYear = now.getFullYear().toString();
+  const yearlyNetUsd = monthlyBreakdown
     .filter((m) => m.month.startsWith(currentYear))
     .reduce((sum, m) => sum + m.totalUsd, 0);
 
-  return res.json({
+  return {
     totalInAppUsd: totalInApp,
     totalCashConfirmedUsd: totalCashConfirmed,
     totalPlatformFeesUsd: totalFees,
     totalDisputedUsd: totalDisputed,
     totalPendingUsd: totalPending,
     totalNetUsd: totalInApp + totalCashConfirmed - totalFees,
-    yearlyNetUsd: yearlyTotalUsd,
+    yearlyNetUsd,
     monthlyBreakdown,
-    taxNote: "Tax documents are not available yet. Please keep your own records of earnings for tax purposes. A tax summary feature is planned for a future release.",
-    platformFeePct: platformFeePct * 100,
+  };
+}
+
+/**
+ * Read EVERY earnings-bearing booking for a buddy, in pages.
+ *
+ * Returns null on a failed read rather than an empty array: an empty array is
+ * indistinguishable from "this buddy has earned nothing", and answering a money
+ * question with a confident zero derived from a failed query is the defect
+ * class 11 §"The defect class" is a census of. The caller reports the failure.
+ *
+ * Ordered by id so the pages partition the set deterministically; rows are
+ * de-duplicated by id so a client that ignores `range` (a partial test fake)
+ * cannot double-count. The page ceiling is a guard against a non-paginating
+ * client looping forever, not an expected limit.
+ */
+export async function fetchAllBuddyEarningsRows(client: any, buddyProfileId: string): Promise<any[] | null> {
+  const seen = new Set<string>();
+  const out: any[] = [];
+  const MAX_PAGES = 400; // 200k bookings; far past any real buddy
+
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const from = page * EARNINGS_PAGE_SIZE;
+    const res: any = await client
+      .from("rent_buddy_bookings")
+      .select("id, total_usd, deposit_usd, cash_balance_usd, payment_mode, status, completed_at, booking_date, category")
+      .eq("buddy_id", buddyProfileId)
+      .in("status", EARNINGS_STATUSES as unknown as string[])
+      .order("id", { ascending: true })
+      .range(from, from + EARNINGS_PAGE_SIZE - 1);
+
+    if (res?.error) return null;
+    const rows: any[] = Array.isArray(res?.data) ? res.data : [];
+    for (const r of rows) {
+      const key = String(r?.id ?? "");
+      if (key && seen.has(key)) continue;
+      if (key) seen.add(key);
+      out.push(r);
+    }
+    if (rows.length < EARNINGS_PAGE_SIZE) return out;
+  }
+  return out;
+}
+
+router.get("/rent-a-buddy/dashboard/earnings/summary", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user, client } = auth;
+  const serviceClient = sc(client);
+  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
+
+  const { data: bp } = await serviceClient
+    .from("rent_buddy_profiles")
+    .select("id")
+    .eq("user_id", user.id)
+    .maybeSingle();
+
+  if (!bp) return res.status(404).json({ error: "not_found", message: "No Buddy profile found." });
+
+  const taxNote = "Tax documents are not available yet. Please keep your own records of earnings for tax purposes. A tax summary feature is planned for a future release.";
+
+  // Preferred path: the whole aggregation happens in SQL and comes back as one
+  // row, so there is nothing for a row cap to truncate.
+  const rpc = await rbRpc(serviceClient, "rb_buddy_earnings_summary", {
+    p_buddy_id: (bp as any).id,
+    p_platform_fee_pct: EARNINGS_SUMMARY_FEE_PCT,
+  });
+  const agg = rpc.ok ? (Array.isArray(rpc.data) ? rpc.data[0] : rpc.data) : null;
+  if (agg && typeof agg === "object" && agg.totalNetUsd !== undefined) {
+    return res.json({ ...agg, taxNote, platformFeePct: EARNINGS_SUMMARY_FEE_PCT * 100 });
+  }
+
+  // Fallback: exhaustive pagination, same arithmetic. Not truncating either.
+  const rows = await fetchAllBuddyEarningsRows(serviceClient, (bp as any).id);
+  if (rows === null) {
+    // A partial total is worse than no total on an earnings screen: the buddy
+    // cannot tell one from the other.
+    return res.status(503).json({ error: "db_error", message: "Earnings could not be totalled. Please try again." });
+  }
+
+  return res.json({
+    ...foldEarningsRows(rows, EARNINGS_SUMMARY_FEE_PCT),
+    taxNote,
+    platformFeePct: EARNINGS_SUMMARY_FEE_PCT * 100,
   });
 });
 

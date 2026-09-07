@@ -247,8 +247,13 @@ describe("adjustProfileCounter — the call contract", () => {
 
 // ─── The route no longer contains the rejected pattern ───────────────────────
 
+/** Drop block and line comments so prose describing the old shape is not read as it. */
+function stripComments(src: string): string {
+  return src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+}
+
 describe("routes/adminFeatured.ts — no read-modify-write counters remain", () => {
-  const src = readFileSync(ROUTE, "utf8");
+  const src = stripComments(readFileSync(ROUTE, "utf8"));
 
   it("has no `update({ featured_count: … })` anywhere", () => {
     // The rejected shape, in any spacing. A source-level pin because a
@@ -279,6 +284,10 @@ describe("routes/adminFeatured.ts — no read-modify-write counters remain", () 
 
 describe("2331_creator_counter_atomicity.sql", () => {
   const sql = readFileSync(MIGRATION, "utf8");
+  /** The executable half: everything up to the final line-start COMMIT. */
+  const body = sql.slice(0, sql.search(/^COMMIT;$/m));
+  /** The commented-out reversal that follows it. */
+  const tail = sql.slice(sql.search(/^COMMIT;$/m));
 
   it("creates the function the route calls, by that exact name", () => {
     assert.match(
@@ -317,8 +326,10 @@ describe("2331_creator_counter_atomicity.sql", () => {
           "can grant ALL at CREATE time (the 2092 -> 2093 failure)",
       );
     }
-    const lastRevoke = sql.lastIndexOf("REVOKE ALL ON FUNCTION");
-    const grant      = sql.indexOf("GRANT EXECUTE ON FUNCTION");
+    // Measured over the executable half only: the commented-out reversal at the
+    // bottom of the file also revokes, and it is not a statement.
+    const lastRevoke = body.lastIndexOf("REVOKE ALL ON FUNCTION");
+    const grant      = body.indexOf("GRANT EXECUTE ON FUNCTION");
     assert.ok(grant > lastRevoke, "the GRANT must come after every REVOKE, or it is undone");
   });
 
@@ -355,7 +366,6 @@ describe("2331_creator_counter_atomicity.sql", () => {
   });
 
   it("ends with a commented-out reversal, as 2325 does", () => {
-    const tail = sql.slice(sql.lastIndexOf("COMMIT;"));
     assert.match(tail, /ROLLBACK \(manual/);
     assert.match(tail, /--\s+DROP FUNCTION IF EXISTS public\.portava_adjust_profile_counter/);
     // Commented out, not executable: nothing after COMMIT may be a live statement.
