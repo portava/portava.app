@@ -32,6 +32,30 @@ async function apiFetch(path: string, opts: RequestInit = {}): Promise<any> {
   }
 }
 
+/**
+ * GET helper for READS, as opposed to the mutations above.
+ *
+ * Resolves `null` when the value COULD NOT BE READ — no auth token, a non-2xx
+ * response, or a network failure. `apiFetch` cannot express that: it hands back
+ * an ordinary object on every path, so `data?.contacts ?? []` turned an outage
+ * into the confident statement "you have no one on your alert list" on a
+ * personal-safety surface. Callers must render an explicit "couldn't load"
+ * state for `null` and must never substitute an empty list.
+ */
+async function apiRead<T>(path: string): Promise<T | null> {
+  const token = await authHeader();
+  if (!token) return null;
+  try {
+    const res = await fetch(`${API_BASE}${path}`, {
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) return null;
+    return (await res.json()) as T;
+  } catch {
+    return null;
+  }
+}
+
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 export interface SafeReturnSessionEvents {
@@ -153,9 +177,19 @@ export interface SessionContact {
   canReceiveLiveLocation: boolean;
 }
 
-export async function getSessionContacts(sessionId: string): Promise<SessionContact[]> {
-  const data = await apiFetch(`/api/me/safe-return/sessions/${sessionId}/contacts`);
-  return data?.contacts ?? [];
+/**
+ * Contacts attached to a running Safe Return session.
+ *
+ * `null` = we could not find out. Callers must not show it as "no one will be
+ * alerted" — during an active session that is the difference between a working
+ * safety net and a user who believes they have none.
+ */
+export async function getSessionContacts(sessionId: string): Promise<SessionContact[] | null> {
+  const data = await apiRead<{ contacts?: SessionContact[] }>(
+    `/api/me/safe-return/sessions/${sessionId}/contacts`,
+  );
+  if (!data) return null;
+  return data.contacts ?? [];
 }
 
 export async function stopLiveShare(sessionId: string, shareId: string): Promise<{ ok: boolean; error?: string }> {
@@ -170,7 +204,15 @@ export async function getHistory(limit = 20): Promise<{ sessions: SafeReturnSess
   return { sessions: data?.sessions ?? [], featureEnabled: data?.featureEnabled };
 }
 
-export async function getTrustedContacts(): Promise<TrustedContact[]> {
-  const data = await apiFetch('/api/me/safe-return/trusted-contacts');
-  return data?.contacts ?? [];
+/**
+ * The people who can be alerted if a Safe Return timer runs out.
+ *
+ * `null` = we could not find out — NOT "you have no contacts saved".
+ */
+export async function getTrustedContacts(): Promise<TrustedContact[] | null> {
+  const data = await apiRead<{ contacts?: TrustedContact[] }>(
+    '/api/me/safe-return/trusted-contacts',
+  );
+  if (!data) return null;
+  return data.contacts ?? [];
 }

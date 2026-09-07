@@ -20,6 +20,14 @@
  *   C) listEmergencyContacts throws only  → empty lists, loadError: true, no throw
  *   D) Both throw together  → empty lists, loadError: true, no throw
  *   E) Successive calls — error then success — behave independently
+ *   F) getTrustedContacts resolves null (unreadable, not empty) → loadError
+ *   G) listEmergencyContacts reports { error } (unreadable)     → loadError
+ *
+ * F and G are the reason this contract exists at all. Neither service ever
+ * threw: getTrustedContacts returned `[]` on an outage and listEmergencyContacts
+ * returned `{ contacts: [], error }` whose error nobody read — so every
+ * loadError branch above was unreachable, and a failed read reached the user as
+ * "No contacts saved yet" while they armed a safety timer.
  */
 
 import { describe, it } from 'node:test';
@@ -34,8 +42,8 @@ interface StubEC { id: string; name: string }
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function makeDeps(overrides: {
-  getTrustedContacts?: () => Promise<StubTC[]>;
-  listEmergencyContacts?: () => Promise<{ contacts: StubEC[] }>;
+  getTrustedContacts?: () => Promise<StubTC[] | null>;
+  listEmergencyContacts?: () => Promise<{ contacts: StubEC[]; error?: string }>;
 }) {
   return {
     getTrustedContacts: overrides.getTrustedContacts ?? (async () => []),
@@ -250,5 +258,41 @@ describe('runContactLoad — successive calls', () => {
     assert.equal(r2.loadError, false);
     assert.deepEqual(r1.trustedContacts, TRUSTED);
     assert.deepEqual(r2.trustedContacts, TRUSTED);
+  });
+});
+
+// ── F/G) Unreadable, as opposed to empty ──────────────────────────────────────
+
+describe('runContactLoad — the read fails without throwing', () => {
+  it('treats a null trusted list as a load error, not as "no contacts"', async () => {
+    const r = await runContactLoad(makeDeps({
+      getTrustedContacts: async () => null,
+      listEmergencyContacts: async () => ({ contacts: EMERGENCY }),
+    }));
+
+    assert.equal(r.loadError, true, 'null means unreadable, not empty');
+    assert.deepEqual(r.trustedContacts, []);
+    assert.deepEqual(r.emergencyContacts, []);
+  });
+
+  it('treats an emergency-contact error field as a load error', async () => {
+    const r = await runContactLoad(makeDeps({
+      getTrustedContacts: async () => TRUSTED,
+      listEmergencyContacts: async () => ({ contacts: [], error: 'network_error' }),
+    }));
+
+    assert.equal(r.loadError, true);
+    assert.deepEqual(r.trustedContacts, []);
+  });
+
+  it('still reports loadError:false when both lists are genuinely empty', async () => {
+    const r = await runContactLoad(makeDeps({
+      getTrustedContacts: async () => [],
+      listEmergencyContacts: async () => ({ contacts: [] }),
+    }));
+
+    assert.equal(r.loadError, false, 'a real "you have none" must stay distinguishable');
+    assert.deepEqual(r.trustedContacts, []);
+    assert.deepEqual(r.emergencyContacts, []);
   });
 });
