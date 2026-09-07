@@ -254,7 +254,7 @@ export async function runBuddyRequestSweep(client?: any): Promise<BuddyRequestSw
     for (const bk of staleNoShows) {
       // Derive the original reporter from the no_show_reported event —
       // do NOT assume traveler; either party can file a no-show report.
-      const { data: noShowEvent } = await serviceClient
+      const { data: noShowEvent, error: noShowEventErr } = await serviceClient
         .from("buddy_booking_events")
         .select("actor_user_id")
         .eq("booking_id", bk.id as string)
@@ -262,18 +262,35 @@ export async function runBuddyRequestSweep(client?: any): Promise<BuddyRequestSw
         .order("created_at", { ascending: false })
         .limit(1)
         .maybeSingle();
+      // supabase-js resolves `{ data, error }`, so a FAILED read looks exactly
+      // like a missing event row and silently takes the traveler fallback. The
+      // resulting dispute row is durably attributed to the wrong party — the
+      // buddy files the no-show, the record says the traveler raised it. Skip
+      // this booking; it stays no_show_pending and the next sweep retries.
+      if (noShowEventErr) {
+        console.error("[sweep] no_show reporter unreadable — skipping escalation for booking", bk.id, noShowEventErr);
+        continue;
+      }
       // Fall back to traveler_id only if the event row is missing (data inconsistency)
       const reporterUserId: string = (noShowEvent as any)?.actor_user_id ?? (bk.traveler_id as string);
 
       // Resolve or create the dispute row FIRST. If the insert fails we skip the
       // booking update entirely, so the booking stays no_show_pending and
       // noShowEscalatedCount is never incremented.
-      const { data: existingDispute } = await serviceClient
+      const { data: existingDispute, error: existingDisputeErr } = await serviceClient
         .from("rent_buddy_disputes")
         .select("id")
         .eq("booking_id", bk.id as string)
         .eq("reason", "no_show")
         .maybeSingle();
+
+      // A FAILED read here is not "no dispute exists yet": defaulting to null
+      // makes the branch below INSERT a second dispute row for a booking that
+      // already has one. Duplicate disputes are durable. Skip and retry later.
+      if (existingDisputeErr) {
+        console.error("[sweep] existing-dispute lookup failed — skipping escalation for booking", bk.id, existingDisputeErr);
+        continue;
+      }
 
       let disputeId: string | null = (existingDispute as any)?.id ?? null;
 

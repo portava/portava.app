@@ -266,12 +266,22 @@ router.post("/admin/featured/approve/:postId", asyncHandler(async (req, res) => 
   // Load any existing featured row for this (post_id, category) pair.
   // This prevents double-incrementing featured_count when the admin re-approves
   // a row that is already live (idempotency guard).
-  const { data: existingFeatured } = await sc
+  const { data: existingFeatured, error: existingFeaturedErr } = await sc
     .from("portava_featured")
     .select("id, status")
     .eq("post_id", postId)
     .eq("category", category)
     .maybeSingle();
+
+  // supabase-js resolves `{ data, error }` — a failed read looks exactly like
+  // "no featured row yet". Treating it as absent defeats the idempotency guard
+  // below: the upsert runs again AND featured_count is incremented a second
+  // time. Both writes are durable. Refuse instead of guessing.
+  if (existingFeaturedErr) {
+    req.log.error({ err: existingFeaturedErr }, "featured/approve: existing-row read failed; refusing to write");
+    sendError(res, "degraded_unavailable", "Could not read the current featured state; nothing was changed. Please retry.");
+    return;
+  }
 
   const wasAlreadyLive = (existingFeatured as any)?.status === "live";
 
@@ -304,6 +314,25 @@ router.post("/admin/featured/approve/:postId", asyncHandler(async (req, res) => 
   const now = new Date().toISOString();
   const initialStatus = needsPermission ? "pending_permission" : "live";
 
+  // Read the author's current featured_count BEFORE any write. A failed read
+  // here used to default to 0 and then write `0 + 1`, resetting an author's
+  // accumulated featured_count to 1 permanently. Reading first means a failed
+  // read aborts the whole request with nothing written at all.
+  let authorFeaturedCount = 0;
+  if (initialStatus === "live") {
+    const { data: profileRow, error: profileErr } = await sc
+      .from("profiles")
+      .select("featured_count")
+      .eq("id", (post as any).author_id)
+      .maybeSingle();
+    if (profileErr) {
+      req.log.error({ err: profileErr }, "featured/approve: featured_count read failed; refusing to write");
+      sendError(res, "degraded_unavailable", "Could not read the author's featured count; nothing was changed. Please retry.");
+      return;
+    }
+    authorFeaturedCount = Number((profileRow as any)?.featured_count ?? 0);
+  }
+
   // Upsert (handles new rows and re-approving previously declined/pending rows).
   // Safe: we already returned early when the row was live, so the count below
   // will increment at most once per (post_id, category) pair.
@@ -330,15 +359,9 @@ router.post("/admin/featured/approve/:postId", asyncHandler(async (req, res) => 
   // (The wasAlreadyLive guard above ensures this runs at most once per
   // (post_id, category) pair regardless of how many times approve is called.)
   if (initialStatus === "live") {
-    const { data: profileRow } = await sc
-      .from("profiles")
-      .select("featured_count")
-      .eq("id", (post as any).author_id)
-      .maybeSingle();
-    const current = (profileRow as any)?.featured_count ?? 0;
     await sc
       .from("profiles")
-      .update({ featured_count: current + 1 })
+      .update({ featured_count: authorFeaturedCount + 1 })
       .eq("id", (post as any).author_id);
   }
 
@@ -412,6 +435,22 @@ router.post("/admin/featured/accept-permission/:postId", asyncHandler(async (req
 
   const now = new Date().toISOString();
 
+  // Read the author's current featured_count BEFORE the status write. A failed
+  // read defaulted to 0 and then wrote `0 + 1`, permanently resetting the
+  // author's accumulated featured_count to 1. Reading first lets a failed read
+  // abort the request with nothing written.
+  const { data: profileRow, error: profileErr } = await sc
+    .from("profiles")
+    .select("featured_count")
+    .eq("id", user.id)
+    .maybeSingle();
+  if (profileErr) {
+    req.log.error({ err: profileErr }, "featured/grant-permission: featured_count read failed; refusing to write");
+    sendError(res, "degraded_unavailable", "Could not read your featured count; nothing was changed. Please retry.");
+    return;
+  }
+  const current = Number((profileRow as any)?.featured_count ?? 0);
+
   // Build the update query, adding disambiguation when provided.
   // A post may have multiple pending_permission rows (one per category), so we
   // must narrow to exactly one row to avoid maybeSingle() conflicts.
@@ -439,13 +478,7 @@ router.post("/admin/featured/accept-permission/:postId", asyncHandler(async (req
   if (updateErr) { sendError(res, "db_error", updateErr.message); return; }
   if (!featured) { sendError(res, "not_found", "Featured record not found or not pending permission"); return; }
 
-  // Increment featured_count on the author's profile
-  const { data: profileRow } = await sc
-    .from("profiles")
-    .select("featured_count")
-    .eq("id", user.id)
-    .maybeSingle();
-  const current = (profileRow as any)?.featured_count ?? 0;
+  // Increment featured_count on the author's profile (read hoisted above).
   await sc.from("profiles").update({ featured_count: current + 1 }).eq("id", user.id);
 
   res.json({ ok: true, featured });
@@ -538,6 +571,39 @@ router.post("/admin/featured/revoke/:postId", asyncHandler(async (req, res) => {
 
   const wasLive = (existing as any).status === "live";
 
+  // Resolve the author's current featured_count BEFORE the state change. A
+  // failed `profiles` read defaulted to 0 and then wrote `Math.max(0, 0 - 1)`,
+  // i.e. it ZEROED an author's accumulated featured_count and persisted the
+  // zero. Reading first means a failed read aborts with nothing written.
+  let decAuthorId: string | null = null;
+  let decCurrent = 0;
+  if (wasLive) {
+    const { data: post, error: postErr } = await sc
+      .from("posts")
+      .select("author_id")
+      .eq("id", postId)
+      .maybeSingle();
+    if (postErr) {
+      req.log.error({ err: postErr }, "featured/revoke: author lookup failed; refusing to write");
+      sendError(res, "degraded_unavailable", "Could not resolve the post author; nothing was changed. Please retry.");
+      return;
+    }
+    if (post) {
+      decAuthorId = (post as any).author_id as string;
+      const { data: profileRow, error: profileErr } = await sc
+        .from("profiles")
+        .select("featured_count")
+        .eq("id", decAuthorId)
+        .maybeSingle();
+      if (profileErr) {
+        req.log.error({ err: profileErr }, "featured/revoke: featured_count read failed; refusing to write");
+        sendError(res, "degraded_unavailable", "Could not read the author's featured count; nothing was changed. Please retry.");
+        return;
+      }
+      decCurrent = Number((profileRow as any)?.featured_count ?? 0);
+    }
+  }
+
   const { data: revoked, error: revokeErr } = await sc
     .from("portava_featured")
     .update({ status: "declined", updated_at: now })
@@ -548,25 +614,12 @@ router.post("/admin/featured/revoke/:postId", asyncHandler(async (req, res) => {
 
   if (revokeErr) { sendError(res, "db_error", revokeErr.message); return; }
 
-  // Decrement featured_count if the post was live
-  if (wasLive) {
-    const { data: post } = await sc
-      .from("posts")
-      .select("author_id")
-      .eq("id", postId)
-      .maybeSingle();
-    if (post) {
-      const { data: profileRow } = await sc
-        .from("profiles")
-        .select("featured_count")
-        .eq("id", (post as any).author_id)
-        .maybeSingle();
-      const current = (profileRow as any)?.featured_count ?? 0;
-      await sc
-        .from("profiles")
-        .update({ featured_count: Math.max(0, current - 1) })
-        .eq("id", (post as any).author_id);
-    }
+  // Decrement featured_count if the post was live (reads hoisted above).
+  if (wasLive && decAuthorId) {
+    await sc
+      .from("profiles")
+      .update({ featured_count: Math.max(0, decCurrent - 1) })
+      .eq("id", decAuthorId);
   }
 
   res.json({ ok: true, featured: revoked });
@@ -698,6 +751,39 @@ router.delete("/admin/featured/:id", asyncHandler(async (req, res) => {
 
   const wasLive = (existing as any).status === "live";
 
+  // Resolve the author's current featured_count BEFORE the state change. A
+  // failed `profiles` read defaulted to 0 and then wrote `Math.max(0, 0 - 1)`,
+  // i.e. it ZEROED an author's accumulated featured_count and persisted the
+  // zero. Reading first means a failed read aborts with nothing written.
+  let decAuthorId: string | null = null;
+  let decCurrent = 0;
+  if (wasLive) {
+    const { data: post, error: postErr } = await sc
+      .from("posts")
+      .select("author_id")
+      .eq("id", (existing as any).post_id)
+      .maybeSingle();
+    if (postErr) {
+      req.log.error({ err: postErr }, "featured/delete: author lookup failed; refusing to write");
+      sendError(res, "degraded_unavailable", "Could not resolve the post author; nothing was changed. Please retry.");
+      return;
+    }
+    if (post) {
+      decAuthorId = (post as any).author_id as string;
+      const { data: profileRow, error: profileErr } = await sc
+        .from("profiles")
+        .select("featured_count")
+        .eq("id", decAuthorId)
+        .maybeSingle();
+      if (profileErr) {
+        req.log.error({ err: profileErr }, "featured/delete: featured_count read failed; refusing to write");
+        sendError(res, "degraded_unavailable", "Could not read the author's featured count; nothing was changed. Please retry.");
+        return;
+      }
+      decCurrent = Number((profileRow as any)?.featured_count ?? 0);
+    }
+  }
+
   const { error: deleteErr } = await sc
     .from("portava_featured")
     .delete()
@@ -705,25 +791,12 @@ router.delete("/admin/featured/:id", asyncHandler(async (req, res) => {
 
   if (deleteErr) { sendError(res, "db_error", deleteErr.message); return; }
 
-  // Decrement featured_count if the deleted record was live
-  if (wasLive) {
-    const { data: post } = await sc
-      .from("posts")
-      .select("author_id")
-      .eq("id", (existing as any).post_id)
-      .maybeSingle();
-    if (post) {
-      const { data: profileRow } = await sc
-        .from("profiles")
-        .select("featured_count")
-        .eq("id", (post as any).author_id)
-        .maybeSingle();
-      const current = (profileRow as any)?.featured_count ?? 0;
-      await sc
-        .from("profiles")
-        .update({ featured_count: Math.max(0, current - 1) })
-        .eq("id", (post as any).author_id);
-    }
+  // Decrement featured_count if the post was live (reads hoisted above).
+  if (wasLive && decAuthorId) {
+    await sc
+      .from("profiles")
+      .update({ featured_count: Math.max(0, decCurrent - 1) })
+      .eq("id", decAuthorId);
   }
 
   res.status(204).end();

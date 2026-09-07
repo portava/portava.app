@@ -57,11 +57,21 @@ export async function createEarningsLedgerEntry(
     .maybeSingle();
   if (!buddy) return;
 
-  const { data: feeRule } = await svc
+  const { data: feeRule, error: feeRuleErr } = await svc
     .from("rent_buddy_fee_rules")
     .select("*")
     .eq("buddy_level", (buddy as any).buddy_level ?? "new")
     .maybeSingle();
+
+  // supabase-js resolves `{ data, error }`, so a FAILED read arrives as
+  // `feeRule === null` — the same shape as "this buddy level has no override".
+  // The defaults below (DEFAULT_PLATFORM_FEE_PERCENT, a zero traveler service
+  // fee) would then be UPSERTED into the earnings ledger keyed on booking_id.
+  // Money written from a guess outlives the outage, so write nothing.
+  if (feeRuleErr) {
+    logger.error({ err: feeRuleErr, bookingId: booking.id }, "earnings ledger: fee rules unreadable — no ledger row written");
+    return;
+  }
 
   const feePercent = (feeRule as any)?.platform_fee_percent ?? DEFAULT_PLATFORM_FEE_PERCENT;
   const travelerSvcFee = Number((feeRule as any)?.traveler_service_fee_usd ?? 0);

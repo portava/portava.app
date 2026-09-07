@@ -39,11 +39,19 @@ export async function syncTripChatMembers(
 ): Promise<string> {
   const now = new Date().toISOString();
 
-  const { data: trip } = await sc
+  const { data: trip, error: tripErr } = await sc
     .from('trips')
     .select('id, title, destination_city')
     .eq('id', tripId)
     .maybeSingle();
+
+  // supabase-js resolves `{ data, error }`, so a FAILED read arrives as
+  // `trip === null` and the title collapses to the literal 'Trip Chat'. The
+  // thread is created once (unique index on trip_id), so that placeholder is
+  // written permanently — the real trip title never replaces it. Refuse.
+  if (tripErr) {
+    throw new Error(`syncTripChatMembers: trip ${tripId} unreadable, refusing to create a chat thread with a placeholder title: ${tripErr.message}`);
+  }
 
   const threadTitle = (trip as any)?.title ?? (trip as any)?.destination_city ?? 'Trip Chat';
 
@@ -153,11 +161,17 @@ export async function syncCircleChatMembers(
 ): Promise<string> {
   const now = new Date().toISOString();
 
-  const { data: ownerProfile } = await sc
+  const { data: ownerProfile, error: ownerProfileErr } = await sc
     .from('profiles')
     .select('id, name, handle')
     .eq('id', circleOwnerId)
     .maybeSingle();
+
+  // Same shape as syncTripChatMembers above: a failed read would name the
+  // circle's one-and-only thread after the 'Circle' placeholder, permanently.
+  if (ownerProfileErr) {
+    throw new Error(`syncCircleChatMembers: owner ${circleOwnerId} unreadable, refusing to create a chat thread with a placeholder title: ${ownerProfileErr.message}`);
+  }
 
   const displayName = (ownerProfile as any)?.name ?? (ownerProfile as any)?.handle ?? 'Circle';
   const threadTitle = circleThreadTitle(displayName);

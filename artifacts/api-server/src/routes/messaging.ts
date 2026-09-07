@@ -1792,11 +1792,29 @@ router.post('/threads/:threadId/messages', async (req, res) => {
   }
 
   // E-2: check thread E2EE flag.
-  const { data: threadMeta } = await client
+  //
+  // supabase-js resolves `{ data, error }`, so a failed read arrives as
+  // `threadMeta === null` — identical to "this thread is not E2EE". The old
+  // code then took the plaintext branch and INSERTED the caller's plaintext
+  // `body` into an end-to-end-encrypted thread. That row is durable: the
+  // outage ends, the plaintext stays. The flag must be known, not guessed.
+  const { data: threadMeta, error: threadMetaErr } = await client
     .from('message_threads')
     .select('is_e2ee')
     .eq('id', threadId)
     .maybeSingle();
+  if (threadMetaErr) {
+    req.log.error(
+      { err: threadMetaErr, threadId },
+      'messages/send: E2EE flag unreadable — refusing to store a message',
+    );
+    sendError(
+      res,
+      'degraded_unavailable',
+      'Could not confirm this conversation\'s encryption state; the message was not sent. Please try again.',
+    );
+    return;
+  }
   const isE2ee = (threadMeta as any)?.is_e2ee === true;
 
   if (isE2ee) {

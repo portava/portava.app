@@ -1843,13 +1843,46 @@ router.patch("/me/privacy", async (req, res) => {
 
   const now = new Date().toISOString();
 
-  // Fetch existing to merge (prevents overwriting fields not in this PATCH)
+  // Fetch existing to merge (prevents overwriting fields not in this PATCH).
+  //
+  // supabase-js RESOLVES `{ data, error }` — it does not throw — so the old
+  // `.then(undefined, ...)` rejection handler never fired on a real database
+  // failure. A failed read therefore produced `existing === null`, which is
+  // indistinguishable from "this user has no settings row yet", and the merge
+  // below fell back to PRIVACY_DEFAULTS. Toggling one preference during an
+  // outage silently reset EVERY other preference to the default and wrote that
+  // reset to the database: a durable privacy regression that outlives the
+  // outage. Three outcomes must be distinguished here — a row, no row, and a
+  // failure — and the failure must write nothing.
   const existingRes = await sc
     .from("profile_privacy_settings")
     .select("*")
     .eq("user_id", user.id)
     .maybeSingle()
-    .then(undefined, () => ({ data: null }));
+    .then(
+      (r) => ({
+        data: (r.data ?? null) as Record<string, unknown> | null,
+        error: (r.error ?? null) as { message?: string } | null,
+      }),
+      (e: unknown) => ({
+        data: null as Record<string, unknown> | null,
+        error: { message: e instanceof Error ? e.message : String(e) } as { message?: string } | null,
+      }),
+    );
+
+  if (existingRes.error) {
+    req.log.error(
+      { err: existingRes.error },
+      "privacy/patch: current settings unreadable — refusing to merge onto defaults",
+    );
+    sendError(
+      res,
+      "degraded_unavailable",
+      "Your current privacy settings could not be read, so nothing was changed. Please try again.",
+    );
+    return;
+  }
+
   const existing = existingRes.data;
 
   // show_profile_picture_publicly lives on `profiles`, not `profile_privacy_settings`.

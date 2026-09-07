@@ -500,12 +500,28 @@ async function _awardStampCore(
         return;
       }
 
-      const { data: prog } = await sc
+      const { data: prog, error: progErr } = await sc
         .from("stamp_progress")
         .select("progress_count")
         .eq("user_id", userId)
         .eq("stamp_definition_id", definition.id)
         .maybeSingle();
+
+      // supabase-js RESOLVES `{ data, error }`, so a database failure arrives as
+      // `prog === null` — the same shape as "no progress row yet". Defaulting to
+      // 0 and upserting 0+1 does not lose an increment, it ERASES the whole
+      // accumulated counter and writes the erasure back. Refuse: a lost +1 is
+      // recoverable, a wiped counter is not.
+      if (progErr) {
+        console.error(JSON.stringify({
+          event:         "stamp.progress.read_failed",
+          user_id:       userId,
+          definition_id: definition.id,
+          code:          (progErr as any).code ?? null,
+          error:         (progErr as any).message ?? String(progErr),
+        }));
+        return;
+      }
 
       const newCount = ((prog as any)?.progress_count ?? 0) + 1;
 

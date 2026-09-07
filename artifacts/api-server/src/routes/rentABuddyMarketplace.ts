@@ -1785,10 +1785,19 @@ router.post("/rent-a-buddy/bookings/:bookingId/addons", async (req, res) => {
   // Idempotency: skip add-ons already attached to this booking so a retry (or a
   // double-tap) does not double-INSERT the join rows AND double-CHARGE the
   // deposit/total. Only newly-attached add-ons are inserted and priced in.
-  const { data: existingAddons } = await svc
+  const { data: existingAddons, error: existingAddonsErr } = await svc
     .from("rent_buddy_booking_addons")
     .select("addon_id")
     .eq("booking_id", bookingId);
+  // supabase-js resolves `{ data, error }`. A FAILED read used to produce an
+  // empty "already attached" set, which is indistinguishable from "nothing
+  // attached yet" — so a retry during an outage re-INSERTED the join rows and
+  // re-ADDED the add-on prices to total_usd / addons_total_usd. The traveler is
+  // durably double-charged. Refuse rather than guess.
+  if (existingAddonsErr) {
+    req.log.error({ err: existingAddonsErr, bookingId }, "addons: idempotency read failed; refusing to write");
+    return sendError(res, 'degraded_unavailable', "Could not check which add-ons are already on this booking; nothing was charged. Please retry.");
+  }
   const alreadyAttached = new Set(((existingAddons ?? []) as any[]).map((r) => r.addon_id));
   addonRows = addonRows.filter((a) => !alreadyAttached.has(a.id));
   if (addonRows.length === 0) {
@@ -1799,6 +1808,34 @@ router.post("/rent-a-buddy/bookings/:bookingId/addons", async (req, res) => {
   }
 
   const addonsTotal = addonRows.reduce((sum: number, a: any) => sum + Number(a.price_usd ?? 0), 0);
+
+  // Pricing inputs are read BEFORE the first write. Every one of them is
+  // persisted onto the booking below, and a failed read silently substitutes
+  // the most permissive default — buddy_level "new", no cash-balance
+  // restriction, no risk hold, zero completed bookings — writing a wrong
+  // deposit and payment mode that survive the outage. Reading first means a
+  // failed read aborts with no join rows inserted and no money moved.
+  const { data: limits, error: limitsErr } = await svc.from("rent_buddy_user_limits").select("*").eq("user_id", user.id).maybeSingle();
+  const { data: buddyRow, error: buddyRowErr } = await svc.from("rent_buddy_profiles").select("*").eq("id", bk.buddy_id).maybeSingle();
+
+  // Real completed-bookings count for the traveler — hardcoding 0 treated every
+  // traveler as brand-new and inflated the recomputed deposit for repeat
+  // travelers (calculateDeposit lowers the deposit as this count rises).
+  const { data: travellerHistory, error: travellerHistoryErr } = await svc
+    .from("rent_buddy_bookings")
+    .select("id")
+    .eq("traveler_id", user.id)
+    .eq("status", "completed");
+
+  if (limitsErr || buddyRowErr || travellerHistoryErr) {
+    req.log.error(
+      { err: limitsErr ?? buddyRowErr ?? travellerHistoryErr, bookingId },
+      "addons: deposit inputs unreadable; refusing to reprice",
+    );
+    return sendError(res, 'degraded_unavailable', "Could not read the pricing inputs for this booking; nothing was charged. Please retry.");
+  }
+
+  const travelerCompletedCount = (travellerHistory ?? []).length;
 
   // Insert booking addons
   const inserts = addonRows.map((a: any) => ({
@@ -1812,19 +1849,6 @@ router.post("/rent-a-buddy/bookings/:bookingId/addons", async (req, res) => {
 
   // Recalculate total + deposit
   const newTotal = Number(bk.total_usd) + addonsTotal;
-  const { data: limits } = await svc.from("rent_buddy_user_limits").select("*").eq("user_id", user.id).maybeSingle();
-  const { data: buddyRow } = await svc.from("rent_buddy_profiles").select("*").eq("id", bk.buddy_id).maybeSingle();
-
-  // Real completed-bookings count for the traveler — hardcoding 0 treated every
-  // traveler as brand-new and inflated the recomputed deposit for repeat
-  // travelers (calculateDeposit lowers the deposit as this count rises).
-  const { data: travellerHistory } = await svc
-    .from("rent_buddy_bookings")
-    .select("id")
-    .eq("traveler_id", user.id)
-    .eq("status", "completed");
-  const travelerCompletedCount = (travellerHistory ?? []).length;
-
   const depositResult = calculateDeposit({
     category: bk.category,
     pricingType: bk.pricing_type ?? "hourly",
