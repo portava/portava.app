@@ -231,10 +231,16 @@ export function selectListColumns(list: string): string[] {
     if (it.embedded) continue;
     let item = it.text.trim();
     if (!item || item === "*") continue;
-    // PostgREST `alias:column`.
+    // Order matters. The cast and the modifier are stripped FIRST, because
+    // `::` is two colons: resolving the alias first makes lastIndexOf(":") land
+    // on the second colon of the cast and return the TYPE. `beta::text` then
+    // reads as a required column named `text`, and the guard reports a missing
+    // column that was never referenced.
+    item = item.replace(/::.*$/, "").replace(/!.*$/, "").trim();
+    // PostgREST `alias:column` — now unambiguous, the only colon left separates
+    // an alias from its column.
     const colon = item.lastIndexOf(":");
     if (colon >= 0) item = item.slice(colon + 1).trim();
-    item = item.replace(/::.*$/, "").replace(/!.*$/, "").trim();
     if (IDENT_RE.test(item)) out.push(item);
   }
   return out;
@@ -775,9 +781,21 @@ export function evaluateRegistry(
     const badConsumers: string[] = [];
     for (const c of def.consumers) {
       const src = readConsumer(c);
+      // Order matters, and it is the opposite of the obvious one.
+      //
+      // "Does it reach lib/capability" is the check that carries the meaning: a
+      // registered capability whose declared consumer never consults the
+      // contract is a readiness signal nobody reads — the producer-with-no-
+      // consumer trap, one layer up.
+      //
+      // "Does it name the flag" is the weaker check and an unreliable one: a
+      // consumer may reach its flag through an imported const (the scanner
+      // resolves exactly that case elsewhere), so a literal-substring test
+      // reports a consumer that is in fact correct. Running it FIRST let it
+      // preempt the real check and mask the finding that matters.
       if (src === null) badConsumers.push(`${c} (not found)`);
-      else if (!src.includes(def.flag)) badConsumers.push(`${c} (does not name ${def.flag})`);
       else if (!/capability\/|SchemaCapability|schemaCapability/.test(src)) badConsumers.push(`${c} (does not reach lib/capability)`);
+      else if (!src.includes(def.flag)) badConsumers.push(`${c} (does not name ${def.flag})`);
     }
     out.push({
       flag: def.flag,
