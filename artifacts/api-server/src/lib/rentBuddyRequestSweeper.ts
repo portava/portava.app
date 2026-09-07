@@ -174,7 +174,7 @@ export async function runBuddyRequestSweep(client?: any): Promise<BuddyRequestSw
           booking_id: bk.id, actor_user_id: bk.traveler_id, event: "request_expired",
           from_status: bk.status as string, to_status: "expired", metadata: {},
         });
-        notifyBookingParty(serviceClient, bk.traveler_id as string, "rent_buddy.booking_expired", bk.id as string);
+        await notifyBookingParty(serviceClient, bk.traveler_id as string, "rent_buddy.booking_expired", bk.id as string);
       }
       expiredCount = staleRequests.length;
     }
@@ -227,10 +227,10 @@ export async function runBuddyRequestSweep(client?: any): Promise<BuddyRequestSw
           from_status: "completed_pending_traveler_confirmation", to_status: "completed",
           metadata: { reason: "dispute_window_expired" },
         });
-        notifyBookingParty(serviceClient, bk.traveler_id as string, "rent_buddy.booking_completed", bk.id as string);
+        await notifyBookingParty(serviceClient, bk.traveler_id as string, "rent_buddy.booking_completed", bk.id as string);
         const buddyUserId = buddyUserIdMap[bk.buddy_id as string];
         if (buddyUserId) {
-          notifyBookingParty(serviceClient, buddyUserId, "rent_buddy.booking_completed", bk.id as string);
+          await notifyBookingParty(serviceClient, buddyUserId, "rent_buddy.booking_completed", bk.id as string);
         }
       }
       autoCompletedCount = pendingConfirm.length;

@@ -1931,7 +1931,7 @@ router.post("/rent-a-buddy/bookings", async (req, res) => {
       to_status: "requested",
       metadata: { city, category, durationH },
     });
-    notifyBookingParty(getServiceClient(), buddyUserId, "rent_buddy.booking_requested", (booking as any).id);
+    await notifyBookingParty(getServiceClient(), buddyUserId, "rent_buddy.booking_requested", (booking as any).id);
   }
 
   return res.status(201).json({ booking: mapBooking(booking), policyText: POLICY_TEXT });
@@ -2093,7 +2093,7 @@ router.post("/rent-a-buddy/bookings/:bookingId/cancel", async (req, res) => {
   const notifyEvent  = isTravelerCancel ? "rent_buddy.booking_cancelled_by_traveler" : "rent_buddy.booking_cancelled_by_buddy";
   const sc2 = getServiceClient();
   if (notifyUserId) {
-    notifyBookingParty(sc2, notifyUserId, notifyEvent, bookingId);
+    await notifyBookingParty(sc2, notifyUserId, notifyEvent, bookingId);
   }
 
   // Calls policy: an active call on this booking's thread deliberately rides
@@ -2240,7 +2240,7 @@ router.post("/rent-a-buddy/bookings/:bookingId/accept", async (req, res) => {
   ]);
 
   // Push notification to traveler
-  notifyBookingParty(sc_, (booking as any).traveler_id as string, "rent_buddy.booking_accepted", bookingId);
+  await notifyBookingParty(sc_, (booking as any).traveler_id as string, "rent_buddy.booking_accepted", bookingId);
 
   return res.json({ ok: true });
 });
@@ -2298,7 +2298,7 @@ router.post("/rent-a-buddy/bookings/:bookingId/decline", async (req, res) => {
   // Push notification to traveler
   const travelerId: string = (booking as any).traveler_id ?? "";
   if (travelerId) {
-    notifyBookingParty(getServiceClient(), travelerId, "rent_buddy.booking_declined", req.params.bookingId);
+    await notifyBookingParty(getServiceClient(), travelerId, "rent_buddy.booking_declined", req.params.bookingId);
   }
 
   return res.json({ ok: true });
@@ -2386,7 +2386,7 @@ router.post("/rent-a-buddy/bookings/:bookingId/suggest", async (req, res) => {
 
   const notifyTargetId = party.isTraveler ? party.buddyUserId : (booking as any).traveler_id as string;
   if (notifyTargetId) {
-    notifyBookingParty(getServiceClient(), notifyTargetId, "rent_buddy.change_request_raised", bookingId);
+    await notifyBookingParty(getServiceClient(), notifyTargetId, "rent_buddy.change_request_raised", bookingId);
   }
 
   return res.status(201).json({ ok: true });
@@ -2646,11 +2646,11 @@ router.post("/rent-a-buddy/bookings/:bookingId/complete", async (req, res) => {
 
   // Push notification to the other party
   if (isBuddyCompleting) {
-    notifyBookingParty(scComplete, (booking as any).traveler_id as string,
+    await notifyBookingParty(scComplete, (booking as any).traveler_id as string,
       "rent_buddy.booking_pending_confirmation", bookingId);
   } else {
     if (buddyUserId) {
-      notifyBookingParty(scComplete, buddyUserId, "rent_buddy.booking_completed", bookingId);
+      await notifyBookingParty(scComplete, buddyUserId, "rent_buddy.booking_completed", bookingId);
     }
   }
 
@@ -3486,7 +3486,7 @@ router.post("/rent-a-buddy/bookings/:bookingId/dispute", async (req, res) => {
     ? party.buddyUserId
     : (booking as any).traveler_id as string;
   if (notifyTargetId) {
-    notifyBookingParty(getServiceClient(), notifyTargetId, "rent_buddy.dispute_opened", bookingId);
+    await notifyBookingParty(getServiceClient(), notifyTargetId, "rent_buddy.dispute_opened", bookingId);
   }
 
   return res.json({ ok: true, disputeId: (dispute as any)?.id ?? null });
@@ -3605,7 +3605,7 @@ router.post("/rent-a-buddy/bookings/:bookingId/no-show", async (req, res) => {
     ? party.buddyUserId
     : (booking as any).traveler_id as string;
   if (notifyTargetId) {
-    notifyBookingParty(getServiceClient(), notifyTargetId, "rent_buddy.no_show_reported", bookingId);
+    await notifyBookingParty(getServiceClient(), notifyTargetId, "rent_buddy.no_show_reported", bookingId);
   }
 
   return res.json({ ok: true, disputeId: null, gracePeriodExpiresAt: graceExpiry });
@@ -6909,7 +6909,7 @@ router.post("/rent-a-buddy/bookings/:bookingId/traveler-confirm", async (req, re
     .maybeSingle();
   const buddyUserIdConfirm: string = (bProf as any)?.user_id ?? "";
   if (buddyUserIdConfirm) {
-    notifyBookingParty(getServiceClient(), buddyUserIdConfirm, "rent_buddy.booking_completed", bookingId);
+    await notifyBookingParty(getServiceClient(), buddyUserIdConfirm, "rent_buddy.booking_completed", bookingId);
   }
 
   // Archive thread
@@ -7074,7 +7074,7 @@ router.post("/rent-a-buddy/bookings/:bookingId/change-request", async (req, res)
 
   const notifyTargetId = party.isTraveler ? party.buddyUserId : (booking as any).traveler_id as string;
   if (notifyTargetId) {
-    notifyBookingParty(getServiceClient(), notifyTargetId, "rent_buddy.change_request_raised", bookingId);
+    await notifyBookingParty(getServiceClient(), notifyTargetId, "rent_buddy.change_request_raised", bookingId);
   }
 
   return res.status(201).json({ changeRequest: changeReq });
@@ -7172,7 +7172,7 @@ router.post("/rent-a-buddy/bookings/:bookingId/respond-change-request", async (r
 
   const notifyTargetId = (changeReq as any).requested_by as string;
   if (notifyTargetId) {
-    notifyBookingParty(getServiceClient(), notifyTargetId,
+    await notifyBookingParty(getServiceClient(), notifyTargetId,
       decision === "accept" ? "rent_buddy.change_request_accepted" : "rent_buddy.change_request_declined",
       bookingId);
   }

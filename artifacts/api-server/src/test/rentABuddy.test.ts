@@ -4406,17 +4406,25 @@ describe("Rent a Buddy — message thread isolation: messages land in the correc
 // for each booking status transition.
 
 describe("Rent a Buddy — notifications: recipient is the other party", () => {
-  // notifyBookingParty runs inside a fire-and-forget void IIFE so the HTTP
-  // response arrives before the notification insert completes.  A short drain
-  // gives the microtask queue time to flush the in-memory fake-client write.
-  const drain = () => new Promise<void>((resolve) => setTimeout(resolve, 50));
+  // NO DRAIN, DELIBERATELY. These assertions used to sit behind a 50ms sleep,
+  // because notifyBookingParty ran its body in a detached `void (async ...)()`
+  // IIFE: the handler responded while the notification insert was still in
+  // flight, and the test waited a guessed interval for it. Under a loaded full
+  // suite 50ms was not always enough, which is what made these two subtests
+  // flake (they read the PREVIOUS request's recipient — the actor — because
+  // this request's write had not landed).
+  //
+  // notifyBookingParty is now awaited by its callers and its promise really
+  // does represent the work, so the notification has landed by the time the
+  // response is observed. Asserting with no sleep at all is the point: if that
+  // contract is ever broken the tests fail immediately instead of passing by
+  // luck on a fast machine.
 
   it("accept: traveler (not the buddy actor) receives booking_accepted notification", async () => {
     // Buddy (BUDDY_USER) accepts → traveler (USER_ID) must be notified
     setupState();
     const r = await req("POST", `/api/rent-a-buddy/bookings/${BOOKING_ID}/accept`, {}, BUDDY_TOKEN);
     assert.equal(r.status, 200, JSON.stringify(r.body));
-    await drain();
     const notes: any[] = (state as any).notifications ?? [];
     const note = notes.find((n: any) => n.event_type === "rent_buddy.booking_accepted");
     assert.ok(note, "expected a booking_accepted notification row");
@@ -4431,7 +4439,6 @@ describe("Rent a Buddy — notifications: recipient is the other party", () => {
     setupState();
     const r = await req("POST", `/api/rent-a-buddy/bookings/${BOOKING_ID}/cancel`, {});
     assert.equal(r.status, 200, JSON.stringify(r.body));
-    await drain();
     const notes: any[] = (state as any).notifications ?? [];
     const note = notes.find((n: any) => n.event_type === "rent_buddy.booking_cancelled_by_traveler");
     assert.ok(note, "expected a booking_cancelled_by_traveler notification row");
@@ -4446,7 +4453,6 @@ describe("Rent a Buddy — notifications: recipient is the other party", () => {
     setupState();
     const r = await req("POST", `/api/rent-a-buddy/bookings/${BOOKING_ID}/cancel`, {}, BUDDY_TOKEN);
     assert.equal(r.status, 200, JSON.stringify(r.body));
-    await drain();
     const notes: any[] = (state as any).notifications ?? [];
     const note = notes.find((n: any) => n.event_type === "rent_buddy.booking_cancelled_by_buddy");
     assert.ok(note, "expected a booking_cancelled_by_buddy notification row");
@@ -4461,7 +4467,6 @@ describe("Rent a Buddy — notifications: recipient is the other party", () => {
     setupState();
     const r = await req("POST", `/api/rent-a-buddy/bookings/${BOOKING_ID}/decline`, {}, BUDDY_TOKEN);
     assert.equal(r.status, 200, JSON.stringify(r.body));
-    await drain();
     const notes: any[] = (state as any).notifications ?? [];
     const note = notes.find((n: any) => n.event_type === "rent_buddy.booking_declined");
     assert.ok(note, "expected a booking_declined notification row");
@@ -4484,7 +4489,6 @@ describe("Rent a Buddy — notifications: recipient is the other party", () => {
     });
     const r = await req("POST", `/api/rent-a-buddy/bookings/${BOOKING_ID}/dispute`, { reason: "other" });
     assert.equal(r.status, 200, JSON.stringify(r.body));
-    await drain();
     const notes: any[] = (state as any).notifications ?? [];
     const note = notes.find((n: any) => n.event_type === "rent_buddy.dispute_opened");
     assert.ok(note, "expected a dispute_opened notification row");
@@ -4507,7 +4511,6 @@ describe("Rent a Buddy — notifications: recipient is the other party", () => {
     });
     const r = await req("POST", `/api/rent-a-buddy/bookings/${BOOKING_ID}/dispute`, { reason: "other" }, BUDDY_TOKEN);
     assert.equal(r.status, 200, JSON.stringify(r.body));
-    await drain();
     const notes: any[] = (state as any).notifications ?? [];
     const note = notes.find((n: any) => n.event_type === "rent_buddy.dispute_opened");
     assert.ok(note, "expected a dispute_opened notification row");
@@ -4530,7 +4533,6 @@ describe("Rent a Buddy — notifications: recipient is the other party", () => {
     });
     const r = await req("POST", `/api/rent-a-buddy/bookings/${BOOKING_ID}/no-show`, {});
     assert.equal(r.status, 200, JSON.stringify(r.body));
-    await drain();
     const notes: any[] = (state as any).notifications ?? [];
     const note = notes.find((n: any) => n.event_type === "rent_buddy.no_show_reported");
     assert.ok(note, "expected a no_show_reported notification row");
@@ -4553,7 +4555,6 @@ describe("Rent a Buddy — notifications: recipient is the other party", () => {
     });
     const r = await req("POST", `/api/rent-a-buddy/bookings/${BOOKING_ID}/no-show`, {}, BUDDY_TOKEN);
     assert.equal(r.status, 200, JSON.stringify(r.body));
-    await drain();
     const notes: any[] = (state as any).notifications ?? [];
     const note = notes.find((n: any) => n.event_type === "rent_buddy.no_show_reported");
     assert.ok(note, "expected a no_show_reported notification row");
@@ -4571,7 +4572,6 @@ describe("Rent a Buddy — notifications: recipient is the other party", () => {
       durationH: 1, city: "Shinjuku Station", category: "city",
     });
     assert.equal(r.status, 201, JSON.stringify(r.body));
-    await drain();
     const notes: any[] = (state as any).notifications ?? [];
     const note = notes.find((n: any) => n.event_type === "rent_buddy.booking_requested");
     assert.ok(note, "expected a booking_requested notification row");
@@ -4590,7 +4590,6 @@ describe("Rent a Buddy — notifications: recipient is the other party", () => {
       proposedDate: "2026-09-01",
     });
     assert.equal(r.status, 201, JSON.stringify(r.body));
-    await drain();
     const notes: any[] = (state as any).notifications ?? [];
     const note = notes.find((n: any) => n.event_type === "rent_buddy.change_request_raised");
     assert.ok(note, "expected a change_request_raised notification row");
@@ -4607,7 +4606,6 @@ describe("Rent a Buddy — notifications: recipient is the other party", () => {
       proposedDate: "2026-09-01",
     }, BUDDY_TOKEN);
     assert.equal(r.status, 201, JSON.stringify(r.body));
-    await drain();
     const notes: any[] = (state as any).notifications ?? [];
     const note = notes.find((n: any) => n.event_type === "rent_buddy.change_request_raised");
     assert.ok(note, "expected a change_request_raised notification row");
@@ -4627,7 +4625,6 @@ describe("Rent a Buddy — notifications: recipient is the other party", () => {
       proposedValue: { duration_h: 3 },
     });
     assert.equal(r.status, 201, JSON.stringify(r.body));
-    await drain();
     const notes: any[] = (state as any).notifications ?? [];
     const note = notes.find((n: any) => n.event_type === "rent_buddy.change_request_raised");
     assert.ok(note, "expected a change_request_raised notification row");
@@ -4645,7 +4642,6 @@ describe("Rent a Buddy — notifications: recipient is the other party", () => {
       proposedValue: { duration_h: 3 },
     }, BUDDY_TOKEN);
     assert.equal(r.status, 201, JSON.stringify(r.body));
-    await drain();
     const notes: any[] = (state as any).notifications ?? [];
     const note = notes.find((n: any) => n.event_type === "rent_buddy.change_request_raised");
     assert.ok(note, "expected a change_request_raised notification row");
