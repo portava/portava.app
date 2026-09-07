@@ -1,6 +1,7 @@
 /**
  * mediaSchemaCapability — the fail-closed schema-capability guard for the
- * canonical media writer (spec §6).
+ * canonical media writer (spec §6), now the media-specific face of the
+ * generic contract in `lib/capability/`.
  *
  * THE FAILURE THIS CLOSES
  * =======================
@@ -21,31 +22,16 @@
  * thing (a write that vanishes) cannot happen while the owner decides what to
  * do about the flag and the migration.
  *
- * HOW IT DECIDES
- * ==============
- * One probe per client per TTL: a SELECT naming exactly the 2250 columns,
- * filtered to the nil UUID so it can never return a row. PostgREST answers
- * `data: null, error: null` when every column exists and 42703 / PGRST204 when
- * one does not. Three verdicts:
- *
- *   present  — every 2250 column answered. The write path may run.
- *   missing  — a column is absent. REFUSE. `missingColumns` names what the
- *              probe could establish (PostgREST reports the first unknown
- *              column only, so this is a floor, and the full 2250 list is what
- *              the owner must apply).
- *   unknown  — the probe failed for some other reason (network, auth, RLS, a
- *              fake without the method). REFUSE. A guard that lets a write
- *              through because it could not check is not a guard.
- *
- * `present` is cached for CANONICAL_SCHEMA_PRESENT_TTL_MS; `missing` and
- * `unknown` for the much shorter CANONICAL_SCHEMA_ABSENT_TTL_MS, so a freshly
- * applied migration is picked up within a minute without a restart and a
- * broken database is not hammered once per upload.
- *
- * The reactive path feeds the same memo: when a write that the probe let
- * through is nonetheless rejected for a missing column (PostgREST's schema
- * cache can lag a DDL by a moment), `markCanonicalSchemaMissing` flips the
- * memo so the NEXT call is refused before any write.
+ * WHAT MOVED, AND WHAT DID NOT
+ * ============================
+ * The probe, the memo, the TTLs and the three verdicts now live in
+ * `lib/capability/schemaCapability.ts`, parameterised by the registry entry
+ * `MEDIA_CANONICAL` (`lib/capability/registry.ts`), so the next flag in this
+ * state gets the same guard by declaration rather than by copy. This file
+ * keeps the media-shaped API `lib/mediaAssets.ts` consumes — `present` /
+ * `missing` / `unknown`, `missingColumns` as bare column names — so the
+ * consumer and its tests are unchanged. It adds nothing of its own: every
+ * function here is a rename over the generic one.
  *
  * WHAT THIS DOES NOT DO
  * =====================
@@ -54,21 +40,26 @@
  * It makes the pending decision safe by making the dead-writer path
  * unreachable and loud.
  */
-import { logger } from "../logger.js";
+import {
+  ABSENT_TTL_MS,
+  READY_TTL_MS,
+  isMissingColumnError as isMissingColumnErrorGeneric,
+  markSchemaMissing,
+  peekSchemaReadiness,
+  probeSchemaReadiness,
+  resetSchemaCapabilityMemo,
+} from "../capability/schemaCapability.js";
+import { MEDIA_CANONICAL, MEDIA_CANONICAL_ASSET_COLUMNS } from "../capability/registry.js";
+import { SCHEMA_PROBE_SENTINEL_ID, type SchemaReadiness } from "../capability/schemaRequirement.js";
 
 /** The `media_assets` columns migration 2250 adds. Nothing before it does. */
-export const CANONICAL_ASSET_SCHEMA_COLUMNS = [
-  "captured_at",
-  "location_visibility",
-  "provenance",
-  "intelligence_eligibility",
-] as const;
+export const CANONICAL_ASSET_SCHEMA_COLUMNS = MEDIA_CANONICAL_ASSET_COLUMNS;
 
 /** A row id that cannot exist, so the probe can never return a user row. */
-export const CANONICAL_SCHEMA_PROBE_SENTINEL_ID = "00000000-0000-0000-0000-000000000000";
+export const CANONICAL_SCHEMA_PROBE_SENTINEL_ID = SCHEMA_PROBE_SENTINEL_ID;
 
-export const CANONICAL_SCHEMA_PRESENT_TTL_MS = 5 * 60 * 1000;
-export const CANONICAL_SCHEMA_ABSENT_TTL_MS = 30 * 1000;
+export const CANONICAL_SCHEMA_PRESENT_TTL_MS = READY_TTL_MS;
+export const CANONICAL_SCHEMA_ABSENT_TTL_MS = ABSENT_TTL_MS;
 
 export type CanonicalSchemaState = "present" | "missing" | "unknown";
 
@@ -86,22 +77,10 @@ export interface CanonicalSchemaVerdict {
 
 /**
  * True when a Supabase/PostgREST error means "this database does not have that
- * column", as opposed to any other failure. Two shapes, two layers:
- *   • PostgREST schema cache — code `PGRST204`, message
- *     `Could not find the 'captured_at' column of 'media_assets' in the schema cache`
- *   • PostgreSQL itself — SQLSTATE `42703`, message
- *     `column "captured_at" of relation "media_assets" does not exist`
- * PURE. Never throws on a malformed error object.
+ * column" (PGRST204 / 42703 / the two message shapes). PURE. Never throws.
  */
 export function isMissingColumnError(error: unknown): boolean {
-  if (!error || typeof error !== "object") return false;
-  const code = String((error as any).code ?? "");
-  if (code === "PGRST204" || code === "42703") return true;
-  const msg = String((error as any).message ?? "").toLowerCase();
-  return (
-    msg.includes("in the schema cache") ||
-    (msg.includes("column") && msg.includes("does not exist"))
-  );
+  return isMissingColumnErrorGeneric(error);
 }
 
 /**
@@ -114,36 +93,25 @@ export function missingColumnsNamedBy(error: unknown): string[] {
   return CANONICAL_ASSET_SCHEMA_COLUMNS.filter((c) => msg.includes(c));
 }
 
-interface MemoEntry {
-  verdict: CanonicalSchemaVerdict;
+/** `media_assets.captured_at` → `captured_at`; a bare `media_assets` → every 2250 column. */
+function toMediaVerdict(v: SchemaReadiness): CanonicalSchemaVerdict {
+  const cols = new Set<string>();
+  for (const m of v.missing) {
+    if (m === "media_assets") for (const c of CANONICAL_ASSET_SCHEMA_COLUMNS) cols.add(c);
+    else if (m.startsWith("media_assets.")) cols.add(m.slice("media_assets.".length));
+  }
+  return {
+    state: v.state === "ready" ? "present" : v.state,
+    missingColumns: [...cols],
+    errorCode: v.errorCode,
+    checkedAt: v.checkedAt,
+    cached: v.cached,
+  };
 }
-
-const memo = new WeakMap<object, MemoEntry>();
-
-function ttlFor(state: CanonicalSchemaState): number {
-  return state === "present" ? CANONICAL_SCHEMA_PRESENT_TTL_MS : CANONICAL_SCHEMA_ABSENT_TTL_MS;
-}
-
-function fresh(entry: MemoEntry | undefined, now: number): CanonicalSchemaVerdict | null {
-  if (!entry) return null;
-  const v = entry.verdict;
-  if (now - v.checkedAt > ttlFor(v.state)) return null;
-  return { ...v, cached: true };
-}
-
-/** Keys we have memoised, so reset can drop them (WeakMap is not iterable). */
-const tracked = new Set<object>();
 
 /** Forget every memoised verdict. Tests only. */
 export function resetCanonicalSchemaMemo(): void {
-  for (const k of tracked) memo.delete(k);
-  tracked.clear();
-}
-
-function remember(sc: object, verdict: CanonicalSchemaVerdict): CanonicalSchemaVerdict {
-  memo.set(sc, { verdict });
-  tracked.add(sc);
-  return verdict;
+  resetSchemaCapabilityMemo();
 }
 
 /**
@@ -151,7 +119,8 @@ function remember(sc: object, verdict: CanonicalSchemaVerdict): CanonicalSchemaV
  * probes. For health/observability readers that must not contact the DB.
  */
 export function peekCanonicalSchemaState(sc: object, now: number = Date.now()): CanonicalSchemaVerdict | null {
-  return fresh(memo.get(sc), now);
+  const v = peekSchemaReadiness(sc, MEDIA_CANONICAL, now);
+  return v ? toMediaVerdict(v) : null;
 }
 
 /**
@@ -164,19 +133,13 @@ export function markCanonicalSchemaMissing(
   error: unknown,
   now: number = Date.now(),
 ): CanonicalSchemaVerdict {
-  const named = missingColumnsNamedBy(error);
-  return remember(sc, {
-    state: "missing",
-    missingColumns: named,
-    errorCode: String((error as any)?.code ?? "") || null,
-    checkedAt: now,
-    cached: false,
-  });
+  return toMediaVerdict(markSchemaMissing(sc, MEDIA_CANONICAL, error, now));
 }
 
 /**
  * Establish whether `media_assets` in the database behind `sc` carries every
- * column migration 2250 adds. Memoised per client; see the header for TTLs.
+ * column migration 2250 adds. Memoised per client; see the generic module for
+ * TTLs.
  *
  * NEVER THROWS. Any failure that is not a recognisable missing-column error is
  * `unknown`, which callers must treat exactly like `missing`: refuse.
@@ -185,65 +148,5 @@ export async function probeCanonicalAssetSchema(
   sc: any,
   opts: { now?: number; force?: boolean } = {},
 ): Promise<CanonicalSchemaVerdict> {
-  const now = opts.now ?? Date.now();
-  if (!opts.force) {
-    const hit = fresh(memo.get(sc), now);
-    if (hit) return hit;
-  }
-  try {
-    const { error } = await sc
-      .from("media_assets")
-      .select(CANONICAL_ASSET_SCHEMA_COLUMNS.join(", "))
-      .eq("id", CANONICAL_SCHEMA_PROBE_SENTINEL_ID)
-      .maybeSingle();
-    if (!error) {
-      return remember(sc, {
-        state: "present",
-        missingColumns: [],
-        errorCode: null,
-        checkedAt: now,
-        cached: false,
-      });
-    }
-    const code = String((error as any)?.code ?? "") || null;
-    if (isMissingColumnError(error)) {
-      const verdict = remember(sc, {
-        state: "missing",
-        missingColumns: missingColumnsNamedBy(error),
-        errorCode: code,
-        checkedAt: now,
-        cached: false,
-      });
-      logger.error(
-        { err: error, missingColumns: verdict.missingColumns, required: CANONICAL_ASSET_SCHEMA_COLUMNS },
-        "media_assets is MISSING migration-2250 columns — canonical media writes are REFUSED until 2250 is applied to this database",
-      );
-      return verdict;
-    }
-    const verdict = remember(sc, {
-      state: "unknown",
-      missingColumns: [],
-      errorCode: code,
-      checkedAt: now,
-      cached: false,
-    });
-    logger.error(
-      { err: error },
-      "media_assets schema probe failed — canonical media writes are REFUSED (fail-closed) until the probe succeeds",
-    );
-    return verdict;
-  } catch (err) {
-    const verdict = remember(sc, {
-      state: "unknown",
-      missingColumns: [],
-      errorCode: null,
-      checkedAt: now,
-      cached: false,
-    });
-    logger.error(
-      { err },
-      "media_assets schema probe threw — canonical media writes are REFUSED (fail-closed) until the probe succeeds",
-    );
-    return verdict;
-  }
+  return toMediaVerdict(await probeSchemaReadiness(sc, MEDIA_CANONICAL, opts));
 }
