@@ -144,3 +144,43 @@ transaction.
 **Postconditions** (ran inside the apply): all five policies route through the
 helper; **zero** route-plan policies still reference `trip_members` directly;
 13 policies still present.
+
+
+---
+
+## 2026-09-07 — `2337_trip_crew_rls_membership_convergence` applied to production
+
+Twenty-nine policies across nineteen tables stop hand-rolling their own idea of
+trip membership. Applied **from the file's exact bytes** rather than retyped: at
+~400 executable lines, a transcription slip would have been a production RLS
+defect, so the file was read and passed through unmodified except for stripping
+the outer `BEGIN;`/`COMMIT;`.
+
+### The ordering hazard that was checked first
+
+`2337` was written **before** the meetup chain was applied. Had it recreated
+`meetups_invitee_select`, it would have reintroduced the `meetups →
+meetup_invites → meetups` cycle repaired an hour earlier. It does not: it names
+that policy only in a comment, and the three meetup policies it does recreate
+(`meetups_trip_select`, `mi_trip_select`, `mto_trip_select`) point **downward**
+in the layering order. Verified before applying, not after.
+
+### Independently verified on production after the apply
+
+| check | result |
+|---|---|
+| policy cycles anywhere in `public` (recursive graph walk, depth 4) | **NONE** |
+| blanket `auth.uid() IS NOT NULL` predicates on the three tables that had one | **NONE** |
+| policies still naming `trip_members` on the 19 converged tables | **NONE** |
+| live reads as role `authenticated` across 8 tables | all OK, no error |
+
+The three policies whose entire predicate was `auth.uid() IS NOT NULL` —
+`trip_crew_location_events`, `plan_attendance_events`, `plan_checkins` — are the
+most serious thing this migration closes. All three were **named** for a
+membership check they did not perform.
+
+Read as an unrelated authenticated user afterwards: 12 trips visible (matching
+the 12 discoverable), 9 public posts, and **0 meetups, 0 trip plan items** —
+correct on the permissive side and correct on the restrictive side. A
+convergence that silently over-tightened would show as zeros everywhere; one
+that over-loosened would show crew data. Neither happened.
