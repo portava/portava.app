@@ -137,3 +137,24 @@ describe("no person identity", () => {
     assert.throws(() => build(agg(), { zoneId: "" }));
   });
 });
+
+// ── §18.2 envelope on the state (census S110) ────────────────────────────────
+import { temporalIncoherence } from "../lib/experienceTruth.js";
+
+describe("temporal envelope", () => {
+  it("effectiveFrom/Until is the privacy bucket, observedAt is capped at the window's end, predictedFor is null, and it is coherent", () => {
+    const s = build(agg());
+    assert.equal(s.temporal.effectiveFrom, BUCKET);
+    assert.equal(s.temporal.effectiveUntil, s.windowEnd);
+    assert.equal(s.temporal.predictedFor, null);
+    assert.equal(s.temporal.freshness, s.freshness);
+    assert.ok(s.temporal.observedAt !== null && Date.parse(s.temporal.observedAt) <= Date.parse(s.windowEnd));
+    assert.equal(temporalIncoherence(s.temporal, s.truthClass), null);
+  });
+  it("an unknown state still carries its window, with no observation instant", () => {
+    const s = build(agg({ publishable: false, reason: "below_actor_threshold", medianSignalBucket: null }));
+    assert.equal(s.temporal.observedAt, null);
+    assert.equal(s.temporal.effectiveFrom, BUCKET);
+    assert.equal(temporalIncoherence(s.temporal, s.truthClass), null);
+  });
+});

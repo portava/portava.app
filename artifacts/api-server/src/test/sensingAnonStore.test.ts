@@ -374,6 +374,17 @@ const PERMITTED_REFERRERS = new Map<string, string>([
       "store's own constants. Pure admission; no issuer, no route, no flag, no publisher.",
   ],
   [
+    join("lib", "sensingRevocationLineage.ts"),
+    'the §18.4 lineage definition for "revocation": models a revocation in memory against the ' +
+      "store's own predicate and the aggregate, proving a published aggregate carries nothing to " +
+      "revoke. Pure; no route, no flag, no publisher.",
+  ],
+  [
+    join("lib", "sensingDifferencingGate.ts"),
+    'the anti-differencing rule over "cohort/coverage aggregation" outputs (a type import): a ' +
+      "re-publication must move by a whole independent party or not at all. Pure; keeps no token.",
+  ],
+  [
     join("lib", "sensingPresenceState.ts"),
     'the §19 PresenceObservation built from "cohort/coverage aggregation": takes the aggregate\'s ' +
       "decision (a type import) and carries truth class / confidence / freshness / coverage. " +

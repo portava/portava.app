@@ -312,3 +312,44 @@ Ten sensing-related test files: **220 tests, 0 fail, exit 0**. `pnpm typecheck` 
 diagnostics are all in four sibling-owned in-flight files (`highlightsBlockFailClosed` 3,
 `highlightsFeedFiniteness` 4, `mapSensingProjectionGates` 2, `memoryLocationPrecision` 12); the six new
 sensing test files contribute 0. Full-suite result is recorded in the session report.
+
+---
+
+## Part 6 — Second pass (after `f04abda1`), on the coordinator's priorities
+
+### 6.1 Remaining BUILT-BUT-WRONG rows
+
+| Row | Result | Where | Revert proof |
+|---|---|---|---|
+| **S112** revocation lineage | **BC** for the anonymous path. `lib/sensingRevocationLineage.ts` defines, per §18.4 stage, what a revocation removes (raw), retains as de-identified (aggregate, inference), and prevents (session, memory — no path exists), and makes it executable: `modelSensingRevocation` removes the device-epoch's rows, a future aggregation excludes it, the published aggregate is proven to carry no token, and revoking below k turns the future aggregate *unpublishable* rather than into a smaller number. The intel path's first link (`erase_intel_for_actor`) was already exemplary. | R11: detector removed → 1 fail; restored → 0 |
+| **S125** mutation list | **BC**, with one caveat. "No client-computed vibe" is now a real ratchet: `test/vibeInference.test.ts` walks `travel-buddy-standalone/src` for any derivation of dance likelihood / sociality from motion features, and was proven by planting a probe file (fires) and removing it (passes). "No prediction-as-observation" is a property test over every class pair (`truthClass`, `experienceTruth`). "No single-device crowd" is now a row property (2340). "No permanent identity link" is mutation-proven **for the anonymous store** (2315/2340 postconditions, tripwire, key walks); the canonical `intel_observations` FK stands by design. "No anomaly-as-safety": `experienceTruth` has no safety member (asserted). | R14: probe planted → 1 fail; removed → 0 |
+| **S26** raw retention | **Stays BW.** The anonymous path is closed (72 h structural + registered sweep). The 180-day intel raw purge is `lib/intelRetentionScheduler.ts` behind `intel_contribution_retention_enabled` = FALSE in production — `lib/intel*` is outside my boundary and the flag is an owner's. | — |
+| **S49** all consumed states carry the four fields | **Stays BW.** Wall done, Map in flight (sibling), sensing states done; Discovery and Compass are other owners. | — |
+
+### 6.2 "Realised in production" — the honest answer is that nothing moves without an owner
+
+Every sensing path needs at least one of: the table in production (2315/2340 — operator action by
+`ROADMAP.md:485`), a route (the tripwire forbids one until the auth posture is decided), or the
+pepper (unreadable from the tree). The truth vocabulary (`lib/truthClass.ts`) will be realised the
+moment the Wall/Map consolidation the coordinator is doing lands **and** a live claim is served —
+and live claims are `[]` in production while `intel_live_promoted_scopes` is empty. I did not
+invent a route. **Realised in production remains 0.0 %.**
+
+### 6.3 Multi-row changes
+
+| Change | Rows | Proof |
+|---|---|---|
+| `lib/sensingSubjectReconciliation.ts` — §18.3's four outcomes (place / event / temporary world object / unknown) with ownership only on anchor / check-in / event QR / operator; **proximity and name-match are never ownership**; no distance threshold exists in the file (asserted on comment-stripped code). | **S111** BW→BC (unknown-owner clusters representable), **S97** BC now guarded (was an unguarded absence), supports S62 | R10: proximity made ownership → 4 fail; restored → 0 |
+| `TemporalEnvelope` in `lib/experienceTruth.ts` — observed_at · effective_from · effective_until · expires_at · freshness · predicted_for, carried on `SensingPresenceState` and `SensingVibeState`; `temporalIncoherence` enforces **`predictedFor` iff truth class `predicted`**, window order, expiry after window. | **S110** BW→BC; gives **S45** its missing horizon slot | R13: iff-rule removed → 1 fail; restored → 0 |
+| `lib/sensingDifferencingGate.ts` — a cohort re-publishes only when its distinct-contributor count moved by ≥ one independent party (`PRIVACY_THRESHOLD_V1.minIndependentGroups`) or not at all; sub-party deltas serve the previous value; an unpublishable current is never masked by the previous. Needs no token set. | **S24** BW→BC (anti-differencing existed nowhere) | R12: threshold lowered to 1 → 3 fail; restored → 0 |
+
+### 6.4 Recomputed (same 127 denominator)
+
+BUILT-AND-CORRECT **83** → **CORRECT 65.4 %** (first pass 61.4 %, census 51.2 %). CONSTRUCTED
+unchanged at 110 → 86.6 % (every row moved this pass was BW). Spec-attributable CORRECT **17 / 127 =
+13.4 %**. Core sub-score (31 rows) 17 / 31 = 54.8 %. **Realised in production: 0.0 %.**
+Strict reading (callerless contracts excluded): 79 / 127 = 62.2 %.
+
+Thirteen sensing-related test files: **256 pass / 0 fail / exit 0**. `pnpm typecheck` exit 0.
+`pnpm typecheck:tests` 880 / 118 = baseline, exit 0. New referrers `sensingRevocationLineage.ts`
+and `sensingDifferencingGate.ts` are allowlisted in the tripwire with their ruling clause.

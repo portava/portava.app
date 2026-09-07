@@ -49,6 +49,63 @@ export interface TruthMetadata {
   provenance: readonly string[];
 }
 
+/**
+ * §18.2's shared temporal semantics — observed_at · effective_from ·
+ * effective_until · expires_at · freshness · predicted_for — as ONE envelope
+ * any server-built state can carry. Census S110 found four of the six in the
+ * tree and `effective_from`, `effective_until`, `predicted_for` nowhere, which
+ * is why a forecast had no horizon (S45). "Use shared semantics where possible;
+ * do not force all domains into one table" — this is the shared semantics, not
+ * a table.
+ *
+ * Every field but freshness is nullable: absent is a fact. The one rule that is
+ * enforced rather than documented: `predictedFor` is set IF AND ONLY IF the
+ * state's truth class is `predicted` (§2 "Prediction ≠ current truth";
+ * §5.1 "Prediction must never be rendered indistinguishably from observation").
+ */
+export interface TemporalEnvelope {
+  /** When reality was observed (ISO), or null when nothing was. */
+  observedAt: string | null;
+  /** The window this state describes. */
+  effectiveFrom: string | null;
+  effectiveUntil: string | null;
+  /** When the state must no longer be served as current. */
+  expiresAt: string | null;
+  freshness: FreshnessState;
+  /** The future instant a PREDICTED state is about. Null for anything observed or inferred. */
+  predictedFor: string | null;
+}
+
+export type TemporalIncoherence =
+  | "predicted_for_without_predicted_class"
+  | "predicted_class_without_predicted_for"
+  | "effective_window_inverted"
+  | "expires_before_effective_until"
+  | "unparseable_instant";
+
+const ms = (s: string | null): number | null => {
+  if (s === null) return null;
+  const t = Date.parse(s);
+  return Number.isFinite(t) ? t : NaN;
+};
+
+/**
+ * The envelope's invariants. Returns the first violation, or null when
+ * coherent. A producer that emits an incoherent envelope has a bug; a consumer
+ * that receives one must treat the state as unknown, never as current.
+ */
+export function temporalIncoherence(t: TemporalEnvelope, truthClass: TruthClass): TemporalIncoherence | null {
+  if (!t) return "unparseable_instant";
+  const vals = [t.observedAt, t.effectiveFrom, t.effectiveUntil, t.expiresAt, t.predictedFor].map(ms);
+  if (vals.some((v) => Number.isNaN(v))) return "unparseable_instant";
+  const [, from, until, expires, predictedFor] = vals;
+  if (predictedFor !== null && truthClass !== "predicted") return "predicted_for_without_predicted_class";
+  if (predictedFor === null && truthClass === "predicted") return "predicted_class_without_predicted_for";
+  if (from !== null && until !== null && from > until) return "effective_window_inverted";
+  if (expires !== null && until !== null && expires < until) return "expires_before_effective_until";
+  return null;
+}
+
 /** The floor. What an absent part contributes, and what an empty composite is. */
 export const UNKNOWN_TRUTH: TruthMetadata = Object.freeze({
   truthClass: "unknown",

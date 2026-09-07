@@ -51,7 +51,7 @@
  */
 import { MIN_BAND_FOR_LIVE_STATE, CONFIDENCE_BANDS, type ConfidenceBand } from "./intelContracts.js";
 import { deriveFreshness } from "./mapObjects.js";
-import type { TruthMetadata } from "./experienceTruth.js";
+import type { TemporalEnvelope, TruthMetadata } from "./experienceTruth.js";
 import type { CoverageBucket } from "./truthClass.js";
 
 export const VIBE_INFERENCE_VERSION = "sensing_vibe_v1";
@@ -101,6 +101,8 @@ export interface SensingVibeState {
   /** Context tags, only where legitimately sourced. Never a behaviour claim. */
   contextTags: readonly string[];
   truth: TruthMetadata;
+  /** §18.2 envelope. `predictedFor` is always null: an inference is about now, never a forecast. */
+  temporal: TemporalEnvelope;
 }
 
 export type VibeInferenceReason = "input_required" | "invalid_input" | "acoustic_without_permission";
@@ -172,6 +174,15 @@ export function inferVibe(features: VibeFeatureInput, nowMs: number): VibeInfere
   if (coverageWeight === undefined) return { ok: false, reason: "invalid_input", field: "coverage" };
 
   const freshness = deriveFreshness(features.observedAt, null, nowMs);
+  const observedAtMs = features.observedAt === null ? NaN : new Date(features.observedAt).getTime();
+  const temporal: TemporalEnvelope = {
+    observedAt: Number.isFinite(observedAtMs) ? new Date(observedAtMs).toISOString() : null,
+    effectiveFrom: null,
+    effectiveUntil: null,
+    expiresAt: null,
+    freshness,
+    predictedFor: null,
+  };
 
   // No coverage ≠ quiet. Nothing is inferred from nothing: every output is
   // null and the truth class is unknown — not `inferred`, because nothing was.
@@ -193,6 +204,7 @@ export function inferVibe(features: VibeFeatureInput, nowMs: number): VibeInfere
           coverage: "unknown",
           provenance: [VIBE_INFERENCE_VERSION],
         },
+        temporal,
       },
     };
   }
@@ -258,6 +270,7 @@ export function inferVibe(features: VibeFeatureInput, nowMs: number): VibeInfere
         coverage: features.coverage,
         provenance: [VIBE_INFERENCE_VERSION],
       },
+      temporal,
     },
   };
 }

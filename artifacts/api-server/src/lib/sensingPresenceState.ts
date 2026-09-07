@@ -50,6 +50,7 @@ import { MIN_BAND_FOR_LIVE_STATE, PRIVACY_THRESHOLD_V1, type ConfidenceBand } fr
 import { sourceCountBucket } from "./liveClaimRead.js";
 import { deriveFreshness, type FreshnessState } from "./mapObjects.js";
 import type { SensingAggregateReason, SensingCohortAggregate } from "./sensingCoverageAggregate.js";
+import type { TemporalEnvelope } from "./experienceTruth.js";
 import type { CoverageBucket, TruthClass } from "./truthClass.js";
 
 export interface SensingPresenceState {
@@ -73,6 +74,12 @@ export interface SensingPresenceState {
   confidence: ConfidenceBand;
   freshness: FreshnessState;
   coverage: CoverageBucket;
+  /**
+   * §18.2 shared temporal semantics. effectiveFrom/Until is the privacy bucket;
+   * observedAt is the freshest arrival capped at the window's end; predictedFor
+   * is always null — this state is never a prediction.
+   */
+  temporal: TemporalEnvelope;
   provenance: {
     source: "sensing_anon";
     /** Why the cohort was withheld, when it was. Null when observed. */
@@ -107,6 +114,14 @@ const UNKNOWN_PRESENCE = (
   confidence: "unverified",
   freshness: "unknown",
   coverage: "unknown",
+  temporal: {
+    observedAt: null,
+    effectiveFrom: input.timeBucket,
+    effectiveUntil: windowEnd,
+    expiresAt: null,
+    freshness: "unknown",
+    predictedFor: null,
+  },
   provenance: { source: "sensing_anon", withheld },
 });
 
@@ -169,6 +184,14 @@ export function buildSensingPresenceState(input: SensingPresenceInput): SensingP
     confidence,
     freshness,
     coverage,
+    temporal: {
+      observedAt: new Date(observedForMs).toISOString(),
+      effectiveFrom: input.timeBucket,
+      effectiveUntil: windowEnd,
+      expiresAt: null,
+      freshness,
+      predictedFor: null,
+    },
     provenance: { source: "sensing_anon", withheld: null },
   };
 }

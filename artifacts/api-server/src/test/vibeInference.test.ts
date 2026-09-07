@@ -164,8 +164,48 @@ describe("bounds and refusals", () => {
   });
 
   it("the module reads no clock and no database, and is named to avoid intelContracts.VibeState", () => {
-    assert.doesNotMatch(MODULE_TS, /Date\.now|new Date\(/);
+    // A no-argument `new Date()` is a clock read; `new Date(instant)` is parsing a supplied instant.
+    assert.doesNotMatch(MODULE_TS, /Date\.now\(|new Date\(\)/);
     assert.doesNotMatch(MODULE_TS, /supabase|\.from\(|getServiceClient/);
     assert.doesNotMatch(MODULE_TS, /export (interface|type) VibeState\b/);
+  });
+});
+
+// ── §18.2 envelope, and the "no client-computed vibe" ratchet (census S110, S125) ──
+import { readdirSync, statSync } from "node:fs";
+import { temporalIncoherence } from "../lib/experienceTruth.js";
+
+describe("temporal envelope", () => {
+  it("is coherent, never a prediction, and its freshness is the truth block's", () => {
+    const s = state();
+    assert.equal(s.temporal.predictedFor, null);
+    assert.equal(s.temporal.freshness, s.truth.freshness);
+    assert.equal(s.temporal.observedAt, new Date(NOW - 60_000).toISOString());
+    assert.equal(temporalIncoherence(s.temporal, s.truth.truthClass), null);
+    assert.equal(state({ observedAt: null }).temporal.observedAt, null);
+  });
+});
+
+describe("no client-computed vibe (§6, §22 mutation list)", () => {
+  const CLIENT = resolve(SRC, "..", "..", "..", "travel-buddy-standalone", "src");
+  function walk(dir: string, out: string[] = []): string[] {
+    for (const entry of readdirSync(dir)) {
+      if (entry === "node_modules" || entry === "__tests__") continue;
+      const full = join(dir, entry);
+      if (statSync(full).isDirectory()) walk(full, out);
+      else if (/\.(ts|tsx)$/.test(entry)) out.push(full);
+    }
+    return out;
+  }
+  it("no client file computes energy / sociality / dance likelihood from device features", () => {
+    const files = walk(CLIENT);
+    assert.ok(files.length > 100, "premise: the client tree was found");
+    const offenders = files.filter((f) => {
+      const t = readFileSync(f, "utf8");
+      // A client may DISPLAY a server value named danceLikelihood; it may not DERIVE one.
+      return /(danceLikelihood|dance_likelihood|sociality)\s*[:=]\s*[^;\n]*(motion|periodicity|accelerometer|DeviceMotion|Gyroscope)/.test(t)
+        || /inferVibe\(/.test(t);
+    });
+    assert.deepEqual(offenders.map((f) => f.slice(CLIENT.length + 1)), []);
   });
 });

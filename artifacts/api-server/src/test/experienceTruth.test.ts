@@ -125,3 +125,38 @@ describe("what the module is not", () => {
     assert.doesNotMatch(MODULE_TS, /\b(safety|danger|unsafe|userId|viewerId)\b/i);
   });
 });
+
+// ── §18.2 temporal envelope (census S110) ────────────────────────────────────
+import { temporalIncoherence, type TemporalEnvelope } from "../lib/experienceTruth.js";
+
+const envelope = (over: Partial<TemporalEnvelope> = {}): TemporalEnvelope => ({
+  observedAt: "2026-09-07T21:40:00.000Z",
+  effectiveFrom: "2026-09-07T21:30:00.000Z",
+  effectiveUntil: "2026-09-07T22:00:00.000Z",
+  expiresAt: "2026-09-07T23:00:00.000Z",
+  freshness: "recent",
+  predictedFor: null,
+  ...over,
+});
+
+describe("§18.2 temporal envelope", () => {
+  it("carries all six semantics the spec names", () => {
+    const e = envelope();
+    assert.deepEqual(Object.keys(e).sort(), ["effectiveFrom", "effectiveUntil", "expiresAt", "freshness", "observedAt", "predictedFor"]);
+  });
+  it("predictedFor is set IF AND ONLY IF the truth class is predicted", () => {
+    assert.equal(temporalIncoherence(envelope(), "observed"), null);
+    assert.equal(temporalIncoherence(envelope({ predictedFor: "2026-09-07T23:00:00.000Z" }), "observed"), "predicted_for_without_predicted_class");
+    assert.equal(temporalIncoherence(envelope(), "predicted"), "predicted_class_without_predicted_for");
+    assert.equal(temporalIncoherence(envelope({ predictedFor: "2026-09-07T23:00:00.000Z" }), "predicted"), null);
+  });
+  it("an inverted window, an expiry before the window's end, or an unparseable instant is incoherent", () => {
+    assert.equal(temporalIncoherence(envelope({ effectiveFrom: "2026-09-07T22:30:00.000Z" }), "observed"), "effective_window_inverted");
+    assert.equal(temporalIncoherence(envelope({ expiresAt: "2026-09-07T21:45:00.000Z" }), "observed"), "expires_before_effective_until");
+    assert.equal(temporalIncoherence(envelope({ observedAt: "yesterday" }), "observed"), "unparseable_instant");
+    assert.equal(temporalIncoherence(null as never, "observed"), "unparseable_instant");
+  });
+  it("nulls are honest: an envelope with nothing but freshness is coherent", () => {
+    assert.equal(temporalIncoherence({ observedAt: null, effectiveFrom: null, effectiveUntil: null, expiresAt: null, freshness: "unknown", predictedFor: null }, "unknown"), null);
+  });
+});
