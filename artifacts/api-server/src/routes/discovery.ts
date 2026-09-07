@@ -65,6 +65,11 @@ import {
 // to the discovery_places.id space place memory keys on, then annotate the served
 // page. Additive + fail-safe + flag-gated (memory_projection) — see placeIdBridge.
 import { annotateNewToMe, recordDiscoveryAlreadyKnown } from "../lib/placeIdBridge.js";
+// Sensing §8 DiscoveryCandidate projection (census-discovery A03/A25). Attached
+// to the OUTGOING slice only, behind discovery_candidate_projection_enabled
+// (2361, seeded OFF): with the flag off withDiscoveryCandidates returns the very
+// array it was handed, so the served JSON is byte-identical.
+import { withDiscoveryCandidates } from "../lib/discoveryCandidate.js";
 
 const router = Router();
 
@@ -1626,7 +1631,7 @@ router.get("/discovery", async (req, res) => {
   // Shared by L1 (in-memory) and L2 (Postgres) hit paths.  OSM places are
   // served from cache; community DB places are always re-queried (they change
   // more often and are not part of the OSM cache key).
-  async function serveCachedPlaces(osmPlaces: DiscoveryPlace[], cacheLevel: string): Promise<void> {
+  async function serveCachedPlaces(osmPlaces: DiscoveryPlace[], cacheLevel: string, cachedAt: number | null): Promise<void> {
     const distRef = userCoords ?? clientCoords;
     // destination! — narrowed by the guard above; TypeScript can't see it through the closure.
     const dbPlaces = await loadCuratedAndCanonicalPlaces(destination!, category, distRef?.lat ?? null, distRef?.lng ?? null, viewerBlockedIds);
@@ -1680,8 +1685,11 @@ router.get("/discovery", async (req, res) => {
     req.log.info({ cacheLevel, destination, category, totalMs, pdeServed: pdeScoredById !== null }, "discovery: cache hit");
     // §7 New-to-Me annotation — additive, order-preserving, flag-gated, fail-safe.
     const annotatedSlice = await annotateNewToMe(getServiceClient(), callerUserId, slice);
+    const candidateSlice = await withDiscoveryCandidates(getServiceClient(), annotatedSlice, {
+      cacheLevel, cachedAt, scoredById: pdeScoredById, rankedBy: pdeScoredById ? "pde" : "none",
+    });
     res.json({
-      places: annotatedSlice, total: servedFiltered.length, destination, context: ctxLabel, cached: true, ageFilterMeta,
+      places: candidateSlice, total: servedFiltered.length, destination, context: ctxLabel, cached: true, ageFilterMeta,
       sourceSummary: { seededDbCount: dbPlaces.length, osmCount: osmPlaces.length, userCreatedCount: 0 },
       meta: { cacheLevel, timings: { totalMs } },
     });
@@ -1784,7 +1792,7 @@ router.get("/discovery", async (req, res) => {
 
   // ── L1: in-process memory (fastest — zero network) ─────────────────────────
   if (cached && isFresh(cached)) {
-    await serveCachedPlaces(cached.places, "L1");
+    await serveCachedPlaces(cached.places, "L1", cached.cachedAt);
     return;
   }
 
@@ -1800,7 +1808,7 @@ router.get("/discovery", async (req, res) => {
     setCacheA(key, { places: dbCacheEntry.entry.places as DiscoveryPlace[], cachedAt: dbCacheEntry.entry.cachedAt });
 
     if (!dbCacheEntry.isStale) {
-      await serveCachedPlaces(dbCacheEntry.entry.places as DiscoveryPlace[], "L2_fresh");
+      await serveCachedPlaces(dbCacheEntry.entry.places as DiscoveryPlace[], "L2_fresh", dbCacheEntry.entry.cachedAt);
       return;
     }
 
@@ -1821,7 +1829,7 @@ router.get("/discovery", async (req, res) => {
       } catch { /* non-fatal background revalidation */ }
     })();
 
-    await serveCachedPlaces(dbCacheEntry.entry.places as DiscoveryPlace[], "L2_stale");
+    await serveCachedPlaces(dbCacheEntry.entry.places as DiscoveryPlace[], "L2_stale", dbCacheEntry.entry.cachedAt);
     return;
   }
 
@@ -1899,7 +1907,10 @@ router.get("/discovery", async (req, res) => {
               const cSlice = cFiltered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE).map(toPublic);
               req.log.info({ destination, cacheLevel: "compass_candidate_hit" }, "discovery: compass candidate cache hit");
               const cAnnotated = await annotateNewToMe(getServiceClient(), callerUserId, cSlice);
-              res.json({ places: cAnnotated, total: cFiltered.length, destination, context: ctxLabel, cached: true, ageFilterMeta,
+              const cCandidates = await withDiscoveryCandidates(getServiceClient(), cAnnotated, {
+                cacheLevel: "compass_candidate_hit", cachedAt: null, scoredById: null, rankedBy: "compass",
+              });
+              res.json({ places: cCandidates, total: cFiltered.length, destination, context: ctxLabel, cached: true, ageFilterMeta,
                 sourceSummary: { seededDbCount: dbPlaces.length, osmCount: osmPlaces.length, userCreatedCount: 0 } });
               // Stage 0 — serve point 4. Replays a stored Compass order; no
               // ranker ran in this request, so rankedInRequest is false.
@@ -1958,7 +1969,10 @@ router.get("/discovery", async (req, res) => {
             const cFiltered  = applyFilters(merged);
             const cSlice     = cFiltered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE).map(toPublic);
             const cFreshAnnotated = await annotateNewToMe(getServiceClient(), callerUserId, cSlice);
-            res.json({ places: cFreshAnnotated, total: cFiltered.length, destination, context: ctxLabel, cached: false, ageFilterMeta,
+            const cFreshCandidates = await withDiscoveryCandidates(getServiceClient(), cFreshAnnotated, {
+              cacheLevel: "compass_fresh_rank", cachedAt: Date.now(), scoredById: null, rankedBy: "compass",
+            });
+            res.json({ places: cFreshCandidates, total: cFiltered.length, destination, context: ctxLabel, cached: false, ageFilterMeta,
               sourceSummary: { seededDbCount: dbPlaces.length, osmCount: osmPlaces.length, userCreatedCount: 0 } });
             // Stage 0 — serve point 5. The Compass ranker DID run here, but
             // this path has never written a rank_events row: it returns before
@@ -2036,7 +2050,14 @@ router.get("/discovery", async (req, res) => {
       "discovery: cold fetch",
     );
     const coldAnnotated = await annotateNewToMe(getServiceClient(), callerUserId, slice);
-    res.json({ places: coldAnnotated, total: filtered.length, destination, context: ctxLabel, cached: false, ageFilterMeta,
+    const coldCandidates = await withDiscoveryCandidates(getServiceClient(), coldAnnotated, {
+      // scoredByPlaceId is always a Map here; it is EMPTY when no per-user
+      // ranker ran (anonymous caller, or a ranker failure). Empty ⇒ "none".
+      cacheLevel: "miss", cachedAt: Date.now(),
+      scoredById: scoredByPlaceId.size > 0 ? scoredByPlaceId : null,
+      rankedBy:   scoredByPlaceId.size > 0 ? "pde" : "none",
+    });
+    res.json({ places: coldCandidates, total: filtered.length, destination, context: ctxLabel, cached: false, ageFilterMeta,
       sourceSummary: { seededDbCount: dbPlaces.length, osmCount: osmPlaces.length, userCreatedCount: 0 },
       meta: { cacheLevel: "miss", timings: { geocodeMs, osmMs, totalMs } },
     });

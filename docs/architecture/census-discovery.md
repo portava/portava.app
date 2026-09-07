@@ -5,11 +5,13 @@ uncommitted sibling-agent work, on 2026-09-07. Discovery has **no spec**. This c
 does not measure a document; it measures the surface against a denominator assembled from three
 sources, stated in §1 so that a reader can reject the denominator before trusting the percentage.*
 
-**Headline: 67 requirements · 46 BUILT-AND-CORRECT · 9 BUILT-BUT-WRONG · 12 NOT-BUILT · 0 CANNOT-VERIFY
-→ CONSTRUCTED 82.1 % · CORRECT 68.7 %.** Before this pass: 44 / 11 / 12 / 0 → CORRECT 65.7 %.
-Two BUILT-BUT-WRONG rows were closed outright (A17, C11), two were half-closed and stay in the
-wrong bucket (B03, C19), and the 12 NOT-BUILT rows split **6 on an explicit owner hold** and
-**6 blocked on a contract another surface has not published** (§4). Discovery is **dark in
+**Headline: 67 requirements · 46 BUILT-AND-CORRECT · 11 BUILT-BUT-WRONG · 10 NOT-BUILT · 0 CANNOT-VERIFY
+→ CONSTRUCTED 85.1 % · CORRECT 68.7 %.** Before this pass: 44 / 11 / 12 / 0 → CONSTRUCTED 82.1 % · CORRECT 65.7 %.
+Two BUILT-BUT-WRONG rows were closed outright (A17, C11); two were half-closed and stay in the
+wrong bucket (B03, C19); two NOT-BUILT inbound rows were **built behind a FALSE-seeded flag and
+land in BUILT-BUT-WRONG on purpose** (A03 — `whyNow` has no producer and is carried as null;
+A25 — the reader exists, its Map consumer does not). The 10 remaining NOT-BUILT rows split
+**3 on an explicit owner hold** and **7 blocked on a contract another surface has not published** (§4). Discovery is **dark in
 production** (§5): the last `surface='discovery'` serve was 2026-08-15, thirteen rows ever.
 
 ---
@@ -27,7 +29,7 @@ each with a different evidentiary weight:
 
 Weighting caveat, stated once: the (c) rows are the easiest to satisfy — they are the surface
 grading its own homework — and they are 33 of 67. **Read the (a) column on its own before the
-headline**: there, Discovery is 10 correct / 3 wrong / 12 not built.
+headline**: there, Discovery is 10 correct / 5 wrong / 10 not built (was 10 / 3 / 12).
 
 ---
 
@@ -44,7 +46,7 @@ with `docs/`, `db/` or `travel-buddy-standalone/`.
 |---|---|---|---|
 | A01 | Sensing §8 `:133` — *"Rank using live ExperienceState, forecast, travel time, friction, compatibility, freshness, safety and Opportunity value"* | **N** — owner hold | The ranker's declared inputs are taste, graph, behaviour, trails (`lib/discoveryPde.ts:1-60` header; `lib/discoveryModifiers.ts:1-50`). No live state, forecast, friction or travel-time term exists under any name. The one live-ish input, `localMomentum`, is behind `discovery_ranking_modifiers_enabled` (`lib/discoveryModifiers.ts:59,130`), **absent from production** (§5). `docs/discovery/ROADMAP.md:222` — *"RANKER WORK GOES ON EXPLICIT HOLD… No optimising ranking machinery over an empty corpus."* Not built, and not buildable by an agent. |
 | A02 | Sensing §8 `:134` — *"Keep search/retrieval truth separate from recommendation ranking; a quiet venue still exists in search"* | **C** | `routes/discoverySearch.ts:1-45` is lexical retrieval with privacy gates and match-tier ordering only; ranking lives in `lib/discoveryPde.ts` and is called from `routes/discovery.ts:1665,2001`, never from the search route. Two paths, no shared ranker. |
-| A03 | Sensing §8 `:135` — *"server-built DiscoveryCandidate / projection with why-now, why-for-user, confidence, freshness and truth class"* | **N** — owner hold | `whyNow`/`why_now`/`truthClass`/`truth_class`: zero occurrences (verified by grep, excluding docs). `DiscoveryCandidateSignals` at `services/wall/WallDiscoveryInsertionService.ts:46` is the Wall's insertion shape. Downstream of A01 and of ROADMAP Phase B (`ROADMAP.md:530`, PARKED). |
+| A03 | Sensing §8 `:135` — *"server-built DiscoveryCandidate / projection with why-now, why-for-user, confidence, freshness and truth class"*; §5.1 `:106-108` truth class / confidence / freshness on every server-built state, *"prediction must never be rendered indistinguishably from observation"* | **N → W (built this pass, deliberately in the wrong bucket)** | **Was:** zero occurrences of any of the five fields. **Now:** `lib/discoveryCandidate.ts` — `DiscoveryCandidate { id, whyNow, whyForUser, rankedBy, confidence, freshness{state, ageMs, servedFrom}, truthClass }` (`:95-115`), attached to the outgoing slice at all four `GET /discovery` serialisation sites (`routes/discovery.ts` cache-A serve, Compass hit, Compass fresh rank, cold fetch — pinned by a source guard) behind `discovery_candidate_projection_enabled` (migration **2361, seeded FALSE**, applied to CI; flag OFF ⇒ the helper returns the **same array reference**, served JSON byte-identical). Four of five fields are derived from facts the row already carries, with the mappings stated for ratification (§6 D9): `truthClass` ∈ {corroborated, observed, stale, unknown} from canonical-row / Wikidata / `db/` / OSM id / stale serve (`:151-158`), never inferred/predicted/conflicting; `confidence` a per-class prior (`:141-146`); `freshness` from serve point and cache age (`:161-171`); `whyForUser` the ranker's own positive feature keys, ≤3, **empty whenever no per-user ranker ran** (`:178-186`). **Why still W:** `whyNow` is `null` on every row by construction (`:203`) — there is no live producer (A01), and manufacturing one from static popularity is the §5.1 rendering the spec forbids. Reasons exist for four fields; the fifth is honestly absent. 30 tests; five hand-reverts (§7 F5). |
 | A04 | Sensing §8 `:136` — Hidden Gems strengthened with behavioural evidence, *"but create candidates — not automatic canonical gems"* | **C** | `services/hiddenGems/HiddenGemContributionService.ts:7-12` — *"A contribution is an OBSERVATION… it never touches the gem's canonical status"*; state and confidence are derived at read time. (File owned by Hidden Gems; the spec files the obligation under Discovery.) |
 | A05 | Sensing §8 `:137` — intent modes *"Right Now, Tonight, Explore, Quiet, Social, High Energy, Nearby, Trip"* on shared intelligence | **N** — owner hold | Nothing in `routes/discovery*.ts` or `lib/discovery*.ts` models an intent mode; the only mode concept is `DiscoveryContextMode` (`routes/discovery.ts:29`), which is a *location* mode (in_city / near_me / going_soon). Compass's nine modes (census-sensing S72) are a different vocabulary on a different surface. Same hold as A01 (`ROADMAP.md:648`). |
 | A06 | Sensing `:19` — *"Existing Map / Discovery / Wall / Compass paths must continue to function while new projections are partial or feature-gated"* | **C** | `lib/discoveryEngineMode.ts:151-175` — every failure (absent row, disabled, no mode, invalid mode, engaged stop, unreadable stop, null client, throwing client) resolves to `legacy`; pinned by `test/discoveryEngineMode.test.ts` cases A–L. `migrations/2289:70-74` refuses to commit the modifiers flag ON. |
@@ -66,7 +68,7 @@ with `docs/`, `db/` or `travel-buddy-standalone/`.
 | A22 | Telegraph `:87` — *"Availability expires automatically and revokes across Telegraph, Discovery and Compass"* | **C** | The only availability Discovery emits is the person card's (`DiscoveryCardAvailability`, `PassportConsumerProjections.ts:204`), built from `loadVisibleActiveWindows(sc, ownerId, context, nowMs)` (`:468,509`) — active windows re-evaluated against the read clock, never a stored copy. The search list carries no availability field (`:529` select), so there is nothing there to revoke. |
 | A23 | Telegraph `:621` — *"Unavailable… revokes Nearby, Discovery, and Compass availability projections promptly"* | **C** | Same path as A22: an ended or cancelled window is not an active window at `nowMs`. |
 | A24 | Telegraph `:621` — *"…or Invisible revokes… Discovery… availability projections"* | **N** | census-telegraph T29: *"No invisible mode."* `grep -i invisible services/passport/PassportConsumerProjections.ts` → nothing. There is no Invisible state anywhere for Discovery to honour; owed first by Telegraph. |
-| A25 | Map `:11`, §20 `:202-203` — Discovery owns *"Candidate relevance"*; the Map consumes projections from each owner | **N** | The Map gateway's owner-reader list (`routes/mapProjection.ts:14-27`) is travelers / gems / events / circle / trips — it calls `findNearbyGems` (`:114`, Hidden Gems), never a Discovery reader, and no `lib/discovery*` module exports a projection for it. census-map M140–M152 `C` is about the Map *not re-deciding* visibility; it is not evidence that Discovery's candidate relevance reaches the map. Nothing of Discovery's ranking does. Building the reader would be new Map surface (frozen for this pass). |
+| A25 | Map `:11`, §20 `:202-203` — Discovery owns *"Candidate relevance"*; the Map consumes projections from each owner | **N → W (Discovery half built; Map half absent)** | **Was:** no Discovery reader existed for the Map gateway to call (`routes/mapProjection.ts:14-27` lists travelers / gems / events / circle / trips). **Now:** `lib/discoveryCandidate.ts:236-268` `readDiscoveryCandidatesForViewer(sc, places, viewerId, city)` — the privacy-complete owner reader Map §20 expects: it **does not retrieve** (the Map hands it rows it already holds), ranks with `served: false` so the ranker gets a client that cannot write (pinned: a recording fake sees zero insert/upsert/update/delete/rpc), and an anonymous viewer gets `rankedBy: "none"` with no client touched. Precondition stated, not assumed: rows are already block-filtered. **Why W:** it has **no consumer** — the Map gateway is another agent's file (§6 D10) — and a reader nobody reads is, per `ROADMAP.md`'s fourth face, not yet a signal. |
 
 ### 2b. Rows shared with the Global Input Intelligence census (B)
 
@@ -125,12 +127,16 @@ with `docs/`, `db/` or `travel-buddy-standalone/`.
 | Bucket | A (inbound) | B (shared) | C (own) | Total |
 |---|---|---|---|---|
 | BUILT-AND-CORRECT | 10 | 4 | 32 | **46** |
-| BUILT-BUT-WRONG | 3 | 5 | 1 | **9** |
-| NOT-BUILT | 12 | 0 | 0 | **12** |
+| BUILT-BUT-WRONG | 5 | 5 | 1 | **11** |
+| NOT-BUILT | 10 | 0 | 0 | **10** |
 | CANNOT-VERIFY | 0 | 0 | 0 | **0** |
 | | 25 | 9 | 33 | **67** |
 
-CONSTRUCTED = (46+9)/67 = **82.1 %** · CORRECT = 46/67 = **68.7 %**. Inbound column alone: 40.0 % correct.
+CONSTRUCTED = (46+11)/67 = **85.1 %** · CORRECT = 46/67 = **68.7 %**. Inbound column alone: 40.0 % correct, 60.0 % constructed (was 52.0 %).
+
+A03 and A25 were placed in BUILT-BUT-WRONG rather than BUILT-AND-CORRECT on purpose, and the
+reasons are in their rows: a projection with one field that can only ever be null, and a reader with
+no reader. Counting either as correct would be the headline inflating itself.
 
 On the empty CANNOT-VERIFY bucket, since the brief warns about it: three rows started there and
 were moved by construction evidence rather than left — C28 (catalog read in both databases), A18
@@ -156,10 +162,10 @@ registration mechanism itself has zero occurrences, so "not registered" is not a
 
 | Explicit owner hold (`ROADMAP.md:222,648`; not agent work) | Blocked on a contract another surface has not published |
 |---|---|
-| A01 live ranking inputs · A03 `DiscoveryCandidate` · A05 intent modes · A18 intent weighting | A07 (no safety projection — Sensing) · A11 (no Temporal Freedom Engine — Trips) · A13/A14 (no `LayoverSnapshot` — Layover) · A20/A21 (no content capability contract — Telegraph) · A24 (no Invisible mode — Telegraph) · A25 (Discovery-side reader for the Map — Map frozen this pass) |
+| A01 live ranking inputs · A05 intent modes · A18 intent weighting | A07 (no safety projection — Sensing) · A11 (no Temporal Freedom Engine — Trips) · A13/A14 (no `LayoverSnapshot` — Layover) · A20/A21 (no content capability contract — Telegraph) · A24 (no Invisible mode — Telegraph) |
 
-Six and six. None was built here: the first six may not be, the second six cannot be consumed
-before they exist, and A25 would be new Map surface.
+Three and seven. None was built here: the first three may not be, the seven cannot be consumed
+before they exist. A03 and A25 left this table for BUILT-BUT-WRONG (§2a).
 
 ---
 
@@ -174,6 +180,7 @@ before they exist, and A25 would be new Map surface.
 | `discovery_serve_log_enabled` | **true** — writer live | **absent** |
 | `discovery_ranking_modifiers_enabled` | **absent** | false |
 | `discovery_buddy_launch_gate_enabled` (new, 2360) | **absent — not applied to production, by design** | false (applied this pass) |
+| `discovery_candidate_projection_enabled` (new, 2361) | **absent — not applied to production, by design** | false (applied this pass) |
 | `memory_projection` | false | false |
 | `COMPASS_V1_RULE_BASED_ENABLED` (for_you tab pipeline) | true | **absent** |
 | `rent_buddy_enabled` | false | (not queried) |
@@ -204,6 +211,8 @@ production.
 | D6 | **Drop the decorative `discovery_places` client write policies** (`auth_insert`, `own_*`, `owner_*`) so the boundary is not one re-`GRANT` from a column-unconstrained forge. 2153 deliberately left them; a 236x migration can remove them idempotently. Hardening, not a defect today. | C28 |
 | D7 | **Apply 2220 to production** (`search_key`), or accept the degraded fold. Operator step. | B01 |
 | D8 | **Flip `discovery_buddy_launch_gate_enabled`** once the marketplace launch rule is wanted on the search surface; apply 2360 to production first. Today it changes nothing (0 buddy-verified profiles). | B03 |
+| D9 | **Ratify or replace the `DiscoveryCandidate` mapping defaults** in `lib/discoveryCandidate.ts` (header): the truth-class rules (canonical/Wikidata ⇒ corroborated; OSM/community-active ⇒ observed; L2_stale ⇒ stale), the per-class confidence priors (0.8/0.6/0.4/0.2), and the ≤3-feature `whyForUser`. Then apply 2361 to production and flip `discovery_candidate_projection_enabled`. Until ratified the flag stays OFF and the projection reaches no client. | A03 |
+| D10 | **Map gateway consumes `readDiscoveryCandidatesForViewer`** (`routes/mapProjection.ts:14-27` owner-reader list) — Map-owned; the reader is built and write-free. | A25 |
 
 ---
 
@@ -215,9 +224,13 @@ production.
 | F2 — canonical `displayName` on the community byline | `routes/discovery.ts:2425-2450` (type), `:2688-2704`; `test/discoveryBlockedSubmitter.test.ts` (+4 tests) | C19 W→W (half) | R2: delete the field · R2b: emit `@handle` when withheld (the wrong consolidation) | **4** / **4** (21/25 each) | `diff -q` clean ×2 |
 | F3 — buddy launch-eligibility gate behind a FALSE-seeded flag | `routes/discoverySearch.ts:424-472,524`; `migrations/2360_discovery_buddy_launch_gate_flag.sql`; `db/rollback/2026-09-07-2360-discovery-buddy-launch-gate-rollback.sql`; `test/discoverySearch.test.ts` (+8 tests) | B03 W→W (launch leg) | R3a: remove the call site · R3b: predicate ignores the gate (the not-inert way) | **2** / **5** (64/66, 61/66) | `diff -q` clean ×2 |
 | F4 — header contract matches the code on private accounts | `routes/discoverySearch.ts:9-14` | C11 W→C | none — documentation, no test | — | — |
+| F5 — server-built `DiscoveryCandidate` projection + Map-facing reader, behind a FALSE-seeded flag | `lib/discoveryCandidate.ts` (new); `routes/discovery.ts` four serve sites + `serveCachedPlaces` now carries `cachedAt`; `migrations/2361_discovery_candidate_projection_flag.sql`; `db/rollback/2026-09-07-2361-discovery-candidate-projection-rollback.sql`; `test/discoveryCandidate.test.ts` (new, 30 tests, registered) | A03 N→W · A25 N→W | R5a helper ignores the flag · R5b cold site bypasses the helper · R5c manufactured `whyNow` · R5d cold path `rankedBy` from a truthy Map · R5e Map reader ranks `served:true` | 4 / 1 / 2 / 1 / 1 (of 30) | `diff -q` clean ×5 |
 
 Post-restore: `discoverySearch` 66/66, `discoverySearchBlockedSubmitter` 12/12,
-`discoveryBlockedSubmitter` 25/25, all exit 0. No new test file, so `package.json` was not edited;
+`discoveryBlockedSubmitter` 25/25, `discoveryCandidate` 30/30, and the other `GET /discovery`
+suites the F5 wiring passes through — `discoveryFeed` 30/30, `discoverySurfaceInstrumentation` 7/7,
+`discoveryPdeServePath` 2/2 — all exit 0. One new test file (`discoveryCandidate.test.ts`) was
+registered in sorted position;
 `check:test-registration` re-run last (§8). `check:flag-polarity` exit 0 with the new flag (a
 `*_enabled` capability read via `isFlagEnabled` with a literal name, seeded in `src/migrations/`).
 `pnpm typecheck` exit 0. `pnpm typecheck:tests`: 901 diagnostics / 122 files against the 880 / 118
@@ -225,7 +238,20 @@ baseline — the four files above baseline are `highlightsBlockFailClosed`, `hig
 `mapSensingProjectionGates`, `memoryLocationPrecision`, all sibling-agent files; **no Discovery test
 file is above baseline**.
 
-## 8. Suite
+## 8. A note on RLS, because a sibling found policies that lied
 
-See the closing report for the full-suite line (≈21 min, judged by exit code) and the final
-`check:test-registration` verdict; both were run after every edit above.
+Three PERMISSIVE policies elsewhere on this branch carried `USING (auth.uid() IS NOT NULL)` as their
+whole predicate and, being OR-ed, dominated the careful policy beside them. Checked for Discovery:
+**no Discovery visibility guarantee rests on a policy.** Every Discovery read goes through the
+service client (`getServiceClient()` at `routes/discovery.ts:1568`, `routes/discoverySearch.ts:1787`),
+which bypasses RLS, so the guarantees are the application filters this census cites (C01–C10,
+C17, A19). The only posture Discovery *relies on* is the `discovery_places` **GRANT** (C28), which
+is a grant, not a policy — and the decorative write policies beside it are recorded as D6 precisely
+because a future `GRANT` would let `discovery_places_auth_insert` (`auth.uid() IS NOT NULL`, no
+column constraint) do exactly what the sibling's three did.
+
+## 9. Suite
+
+The coordinator runs the one authoritative full suite once the tree is quiescent (`a7012986` was
+green — 13872/3395, 0 fail — before F5). The suites named in §7 were run directly after every edit,
+judged by exit code; `check:test-registration` was the last command run.
