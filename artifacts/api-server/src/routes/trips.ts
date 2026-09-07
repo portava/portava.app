@@ -1,5 +1,14 @@
 import { Router } from "express";
+import { randomUUID } from "node:crypto";
 import { isBlockedBetween } from "../lib/blockGuard.js";
+import {
+  isTripKernelEnabled,
+  readCommandEnvelope,
+  executeTripCommand,
+  sendKernelRejection,
+  setTripVersionHeader,
+  planCommandTypeForPatch,
+} from "../lib/tripKernel.js";
 import { computeTripStatus } from "../lib/tripStatus.js";
 import { z } from "zod";
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -16,6 +25,18 @@ import { nameVisibilitySet, sanitizeIdentity, nameVisibleFor } from "../lib/publ
 import { truncateDisplayName } from "../lib/displayName.js";
 
 const router = Router();
+
+/**
+ * Trip Kernel gate (Trips spec §4; lib/tripKernel.ts; migration 2420).
+ * Returns the service client when `trip_kernel_enabled` is TRUE, else null.
+ * Null means: run the pre-kernel direct write exactly as before. The flag read
+ * is fail-closed, so an unreadable feature_flags table is "off", never "on".
+ */
+async function tripKernel(): Promise<SupabaseClient | null> {
+  const sc = getServiceClient();
+  if (!sc) return null;
+  return (await isTripKernelEnabled(sc)) ? sc : null;
+}
 
 /**
  * Explicit column list for all trip selects.
@@ -1456,6 +1477,45 @@ router.post("/trips/:tripId/plan/items", async (req, res) => {
     if (dup) { res.status(409).json({ error: "duplicate", message: "This item is already in the plan" }); return; }
   }
 
+  // Trip Kernel path (§4.1 ADD_PLAN). Authorization above is unchanged; the
+  // kernel writes the row, the event, the outbox row and the receipt in one
+  // transaction and bumps trips.version. Off => the direct insert below.
+  const kernel = await tripKernel();
+  if (kernel) {
+    const env = readCommandEnvelope(req);
+    if (!env.ok) { sendError(res, "invalid_payload", env.message); return; }
+    const r = await executeTripCommand(kernel, {
+      commandId: randomUUID(),
+      tripId,
+      actorUserId: user.id,   // always from token
+      expectedTripVersion: env.expectedTripVersion,
+      idempotencyKey: env.idempotencyKey,
+      type: "ADD_PLAN",
+      payload: {
+        title:               b.title,
+        category:            b.category,
+        status:              b.status,
+        source_type:         b.sourceType,
+        source_id:           b.sourceId ?? null,
+        day_date:            b.dayDate ?? null,
+        starts_at:           b.startsAt ?? null,
+        ends_at:             b.endsAt ?? null,
+        location_name:       b.locationName ?? null,
+        lat:                 b.lat ?? null,
+        lng:                 b.lng ?? null,
+        location_is_private: b.locationIsPrivate ?? false,
+        notes:               b.notes ?? null,
+        sort_order:          b.sortOrder,
+        lock_type:           b.lockType,
+        visibility:          "members",
+      },
+    });
+    if (!r.ok) { sendKernelRejection(res, r, req.log); return; }
+    setTripVersionHeader(res, r.version);
+    res.status(201).json(toCamel(r.result));
+    return;
+  }
+
   const { data: item, error } = await client
     .from("trip_plan_items")
     .insert({
@@ -1523,6 +1583,29 @@ router.patch("/trips/:tripId/plan/items/:itemId", async (req, res) => {
   if (patch.notes             !== undefined) dbPatch.notes               = patch.notes;
   if (patch.sortOrder         !== undefined) dbPatch.sort_order          = patch.sortOrder;
 
+  // Trip Kernel path (§3.3: a status change is a command, not a column write).
+  // The command type is derived from the patch; the kernel refuses a transition
+  // out of `done` / `cancelled` and writes state + event atomically.
+  const kernel = await tripKernel();
+  if (kernel) {
+    const env = readCommandEnvelope(req);
+    if (!env.ok) { sendError(res, "invalid_payload", env.message); return; }
+    const { updated_at: updatedAt, ...columnPatch } = dbPatch;
+    const r = await executeTripCommand(kernel, {
+      commandId: randomUUID(),
+      tripId,
+      actorUserId: user.id,
+      expectedTripVersion: env.expectedTripVersion,
+      idempotencyKey: env.idempotencyKey,
+      type: planCommandTypeForPatch(patch),
+      payload: { item_id: itemId, patch: columnPatch, updated_at: updatedAt },
+    });
+    if (!r.ok) { sendKernelRejection(res, r, req.log); return; }
+    setTripVersionHeader(res, r.version);
+    res.json(toCamel(r.result));
+    return;
+  }
+
   const { data: updated, error } = await client
     .from("trip_plan_items")
     .update(dbPatch)
@@ -1552,6 +1635,26 @@ router.patch("/trips/:tripId/plan/items/:itemId/remove", async (req, res) => {
   const auth = await canEditPlanItem(client, tripId, itemId, user.id);
   if (!auth.permitted) { sendError(res, auth.code, auth.message); return; }
 
+  // Trip Kernel path (REMOVE_PLAN): same soft-delete, as a command.
+  const kernel = await tripKernel();
+  if (kernel) {
+    const env = readCommandEnvelope(req);
+    if (!env.ok) { sendError(res, "invalid_payload", env.message); return; }
+    const r = await executeTripCommand(kernel, {
+      commandId: randomUUID(),
+      tripId,
+      actorUserId: user.id,
+      expectedTripVersion: env.expectedTripVersion,
+      idempotencyKey: env.idempotencyKey,
+      type: "REMOVE_PLAN",
+      payload: { item_id: itemId, removed_at: new Date().toISOString() },
+    });
+    if (!r.ok) { sendKernelRejection(res, r, req.log); return; }
+    setTripVersionHeader(res, r.version);
+    res.json({ status: "removed", itemId });
+    return;
+  }
+
   // Soft-delete only — source record is NOT deleted
   const { error } = await client
     .from("trip_plan_items")
@@ -1579,6 +1682,26 @@ router.delete("/trips/:tripId/plan/items/:itemId", async (req, res) => {
 
   const auth = await canEditPlanItem(client, tripId, itemId, user.id);
   if (!auth.permitted) { sendError(res, auth.code, auth.message); return; }
+
+  // Trip Kernel path (REMOVE_PLAN): the REST spelling of the same command.
+  const kernel = await tripKernel();
+  if (kernel) {
+    const env = readCommandEnvelope(req);
+    if (!env.ok) { sendError(res, "invalid_payload", env.message); return; }
+    const r = await executeTripCommand(kernel, {
+      commandId: randomUUID(),
+      tripId,
+      actorUserId: user.id,
+      expectedTripVersion: env.expectedTripVersion,
+      idempotencyKey: env.idempotencyKey,
+      type: "REMOVE_PLAN",
+      payload: { item_id: itemId, removed_at: new Date().toISOString() },
+    });
+    if (!r.ok) { sendKernelRejection(res, r, req.log); return; }
+    setTripVersionHeader(res, r.version);
+    res.status(204).send();
+    return;
+  }
 
   const { error } = await client
     .from("trip_plan_items")
@@ -1694,6 +1817,26 @@ router.post("/trips/:tripId/plan/items/:itemId/reorder", async (req, res) => {
   const auth = await canEditPlanItem(client, tripId, itemId, user.id, true);
   if (!auth.permitted) { sendError(res, auth.code, auth.message); return; }
 
+  // Trip Kernel path (REORDER_PLAN, one item).
+  const kernel = await tripKernel();
+  if (kernel) {
+    const env = readCommandEnvelope(req);
+    if (!env.ok) { sendError(res, "invalid_payload", env.message); return; }
+    const r = await executeTripCommand(kernel, {
+      commandId: randomUUID(),
+      tripId,
+      actorUserId: user.id,
+      expectedTripVersion: env.expectedTripVersion,
+      idempotencyKey: env.idempotencyKey,
+      type: "REORDER_PLAN",
+      payload: { items: [{ item_id: itemId, sort_order: parsed.data.sortOrder }], updated_at: new Date().toISOString() },
+    });
+    if (!r.ok) { sendKernelRejection(res, r, req.log); return; }
+    setTripVersionHeader(res, r.version);
+    res.json({ status: "reordered", itemId, sortOrder: parsed.data.sortOrder });
+    return;
+  }
+
   const { data: updated, error } = await client
     .from("trip_plan_items")
     .update({ sort_order: parsed.data.sortOrder, updated_at: new Date().toISOString() })
@@ -1767,6 +1910,40 @@ router.post("/trips/:tripId/plan/reorder", async (req, res) => {
   // The slots these items collectively hold, ascending, re-paired to the accepted
   // order. Items outside the list keep their slots untouched.
   const slots = orderedItemIds.map((id) => found.get(id) as number).sort((a, b) => a - b);
+
+  // Trip Kernel path (REORDER_PLAN, whole set): one command, one event, one
+  // version bump for the accepted order. Items already in their slot are not
+  // sent; an all-in-place order issues no command at all (nothing changed).
+  const kernel = await tripKernel();
+  if (kernel) {
+    const env = readCommandEnvelope(req);
+    if (!env.ok) { sendError(res, "invalid_payload", env.message); return; }
+    const kernelStamp = new Date().toISOString();
+    const items: Array<{ item_id: string; sort_order: number }> = [];
+    for (let i = 0; i < orderedItemIds.length; i += 1) {
+      const itemId = orderedItemIds[i];
+      const nextSort = slots[i];
+      if (found.get(itemId) === nextSort) continue;
+      items.push({ item_id: itemId, sort_order: nextSort });
+    }
+    if (items.length === 0) {
+      res.json({ status: "reordered", count: 0, order: orderedItemIds });
+      return;
+    }
+    const r = await executeTripCommand(kernel, {
+      commandId: randomUUID(),
+      tripId,
+      actorUserId: user.id,
+      expectedTripVersion: env.expectedTripVersion,
+      idempotencyKey: env.idempotencyKey,
+      type: "REORDER_PLAN",
+      payload: { items, updated_at: kernelStamp },
+    });
+    if (!r.ok) { sendKernelRejection(res, r, req.log); return; }
+    setTripVersionHeader(res, r.version);
+    res.json({ status: "reordered", count: items.length, order: orderedItemIds });
+    return;
+  }
 
   const updates: Array<{ itemId: string; sortOrder: number }> = [];
   const stamp = new Date().toISOString();

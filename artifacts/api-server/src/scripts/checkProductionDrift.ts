@@ -203,6 +203,23 @@ export const KNOWN_PRODUCTION_GAPS: Record<string, Gap> = {
     classification: "unmerged-pr",
     note: "Migration 2320, PR #470 (UNMERGED). Applied to portava-ci 2026-09-07.",
   },
+  // Trip Kernel foundation (Trips spec §4/§5.1), migration 2420. Applied to
+  // portava-ci 2026-09-07. Inert in production until an owner applies 2420 AND
+  // flips trip_kernel_enabled (seeded false); the only caller is behind that
+  // flag. Production also lacks 2334/2337 (authz.is_trip_crew /
+  // authz.is_accepted_trip_member), which 2420 depends on — apply in order.
+  trip_events: {
+    classification: "ci-only-by-ruling",
+    note: "Migration 2420 (Trip Kernel event store). Applied to portava-ci 2026-09-07; production apply is an owner decision and needs 2334+2337 first.",
+  },
+  trip_command_receipts: {
+    classification: "ci-only-by-ruling",
+    note: "Migration 2420 (Trip Kernel idempotency receipts). Applied to portava-ci 2026-09-07; production apply is an owner decision and needs 2334+2337 first.",
+  },
+  trip_outbox: {
+    classification: "ci-only-by-ruling",
+    note: "Migration 2420 (Trip Kernel outbox; no consumer yet). Applied to portava-ci 2026-09-07; production apply is an owner decision and needs 2334+2337 first.",
+  },
 };
 
 /**
