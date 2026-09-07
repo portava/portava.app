@@ -211,12 +211,21 @@ export function deriveWallTruthClass(input: {
   if (cls === null || cls === "") return "unknown";
   if (cls === "historical_pattern" || cls === "portava_prediction") return "predicted";
   if (cls === "hearsay") return "inferred";
+  // §37 / Sensing §2 "promotional claim ≠ observed reality". A SPONSORED or
+  // IMPORTED claim is one party asserting something about itself. It may be
+  // true, but it is not an observation the platform made, and rendering it as
+  // one is exactly the "paid content indistinguishable from factual live
+  // confidence" failure §37 forbids. `inferred` is in
+  // NON_OBSERVATION_TRUTH_CLASSES, so no amount of coverage can promote it —
+  // which is the structural half of "labelled and separated", enforced in the
+  // contract rather than left to whoever eventually builds promoted content.
+  // (intelContracts already refuses these classes a consensus badge via
+  // mayCountAsConsensus; this refuses them the observation itself.)
+  if (cls === "sponsored" || cls === "imported_owned") return "inferred";
   const known =
     cls === "verified_firsthand" ||
     cls === "firsthand_unverified" ||
-    cls === "official_signed" ||
-    cls === "sponsored" ||
-    cls === "imported_owned";
+    cls === "official_signed";
   if (!known) return "unknown";
   if (input.coverage === "several" || input.coverage === "many") return "corroborated";
   return "observed";

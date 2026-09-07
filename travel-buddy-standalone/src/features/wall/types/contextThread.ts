@@ -8,7 +8,12 @@
  * only renders what arrived, and renders it quieter than the post (spec §35).
  */
 
-import type { FreshnessState, WallAction } from './wallProjection.ts';
+import type {
+  FreshnessState,
+  WallAction,
+  WallCoverage,
+  WallTruthClass,
+} from './wallProjection.ts';
 
 export type ContextThreadKind =
   | 'live_place'
@@ -28,5 +33,10 @@ export interface ContextThread {
   confidence?: number;
   /** Short human-readable "why" (spec §8). Never asserts inference as fact (§21). */
   reason?: string;
+  /** Sensing §108 truth class of the fact behind this thread, carried from the
+   *  server. Absent reads as `unknown` — never as an observation. */
+  truthClass?: WallTruthClass;
+  /** Sensing §108 coverage bucket. */
+  coverage?: WallCoverage;
   action?: WallAction;
 }

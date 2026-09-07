@@ -9,7 +9,13 @@
  * `validUntil` (spec §31 — no stale live labels).
  */
 
-import type { FreshnessState, PublicPlaceRef, WallAction } from './wallProjection.ts';
+import type {
+  FreshnessState,
+  PublicPlaceRef,
+  WallAction,
+  WallCoverage,
+  WallTruthClass,
+} from './wallProjection.ts';
 
 export type LiveObjectType =
   | 'place_state'
@@ -40,5 +46,15 @@ export interface LiveForYouItem {
   observedAt: string;
   /** Freshness horizon — after this the client degrades to unknown (spec §31). */
   validUntil: string;
+  /**
+   * Sensing §108 truth class, carried from the server. A schedule is
+   * `predicted`; an intel observation is `observed`/`corroborated`. The strip
+   * renders the two differently so a prediction can never read as an
+   * observation. Optional only so an older server response still parses; the
+   * renderer treats an absent value as `unknown`, never as observed.
+   */
+  truthClass?: WallTruthClass;
+  /** Sensing §108 coverage bucket. `unknown` ≠ none. */
+  coverage?: WallCoverage;
   action?: WallAction;
 }

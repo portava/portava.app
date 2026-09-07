@@ -329,6 +329,14 @@ export async function loadViewerContext(sc: any, viewerId: string): Promise<Wall
  * is not a permanent, unrevisitable verdict.
  */
 export const SUPPRESSION_WINDOW_MS = 90 * 24 * 60 * 60 * 1000;
+/** Object types whose `canonicalObjectId` IS a `posts` row id (spec §2 save). */
+const SAVEABLE_OBJECT_TYPES: ReadonlySet<WallObjectType> = new Set<WallObjectType>([
+  "social_post",
+  "video",
+  "postcard",
+  "social_update",
+  "discovery",
+]);
 /** Cap on suppressed ids held in memory for one request. */
 const MAX_SUPPRESSIONS = 500;
 
@@ -973,6 +981,25 @@ router.get(
     const steered =
       mode === "for_you" ? applyIntentSteer(merged.candidates, sessionIntent) : merged.candidates;
 
+    // ── Viewer engagement read-back (spec §2 save · §7/§32 hide · §41).
+    //    Both are fail-soft and both are read from DEPLOYED stores. `saved` makes
+    //    the bookmark server truth; `suppressed` is the loop's return leg — an
+    //    object the viewer said they were not interested in is dropped for them
+    //    by the visibility gate below, not merely demoted.
+    const [savedObjectIds, suppressedObjectIds] = await Promise.all([
+      // Only post-like candidates have a `post_saves` row; a shared moment and a
+      // Buddy profile live in other id spaces, so sending their ids would be a
+      // guaranteed miss on every request.
+      loadViewerSaves(
+        sc,
+        user.id,
+        steered
+          .filter((c) => SAVEABLE_OBJECT_TYPES.has(c.objectType))
+          .map((c) => c.canonicalObjectId),
+      ),
+      loadViewerSuppressions(sc, user.id),
+    ]);
+
     // ── Gate + project (eligibility/block/visibility BEFORE ordering, §23/§24).
     const projectViewer: ProjectViewerContext = {
       viewerId: user.id,
@@ -980,6 +1007,8 @@ router.get(
       followedCreatorIds: viewer.followedCreatorIds,
       currentCity: viewer.currentCity,
       compassHandoffEnabled,
+      savedObjectIds,
+      suppressedObjectIds,
     };
     let projections: WallProjection[] = [];
     try {
@@ -1322,6 +1351,178 @@ router.get(
       items = [];
     }
     res.status(200).json({ items, generatedAt: new Date().toISOString() });
+  }),
+);
+
+// ── POST /wall/revalidate ────────────────────────────────────────────────────
+
+/**
+ * Columns the revalidation gate needs. Deliberately its own list rather than a
+ * reuse of POST_COLUMNS: this read wants the tombstone (`deleted_at`) and none
+ * of the ranking counters, and it must not drift when the feed spine's select
+ * list changes for ranking reasons.
+ */
+const REVALIDATE_COLUMNS =
+  "id, author_id, trip_id, visibility, status, post_status, deleted_at, created_at, published_at";
+
+/** Hard cap on ids one revalidation call may carry (the client caches 12). */
+export const MAX_REVALIDATE_IDS = 50;
+
+const revalidateSchema = z.object({
+  objectIds: z.array(z.string().min(1).max(200)).min(1).max(MAX_REVALIDATE_IDS),
+});
+
+/**
+ * Revalidate cached Wall projections against the CANONICAL gate (spec §37:
+ * "Moderation takedowns propagate to cached Wall projections"; §31: "revalidate
+ * eligibility").
+ *
+ * WHY THIS EXISTS. The client persists the first page for up to 24 h
+ * (features/wall/services/wallPrefetch) and paints it when a live fetch fails.
+ * Server-side propagation was already real — `passesEligibility` drops a
+ * taken-down object on every request — but the offline cache was the one path
+ * on which a taken-down object could still paint, because nothing ever
+ * re-checked it. This is that re-check.
+ *
+ * IT RETURNS WHAT IS STILL ELIGIBLE, NOT WHAT WAS REVOKED. An allowlist is
+ * fail-closed by construction: an id the server cannot positively re-admit — a
+ * deleted row, a taken-down row, an author who deactivated, a block that now
+ * exists, a visibility tier the viewer has fallen out of, an object type this
+ * gate cannot resolve, or simply an unreadable database — is absent from the
+ * answer, and the client drops it. A revoked-list would have had to enumerate
+ * every reason a thing can vanish, and would have failed OPEN on the one it
+ * forgot.
+ *
+ * IT RE-RUNS THE REAL GATE, not a copy of it. The ids are loaded back out of
+ * `posts`, rebuilt as candidates and pushed through `projectObjects` — the same
+ * eligibility → block → visibility path the feed uses (§37: "Server-side
+ * eligibility is authoritative; never rely on client hiding"). There is no
+ * second moderation predicate to drift.
+ *
+ * The client cannot reach this while genuinely offline, and nothing can
+ * propagate to a device with no network. What it guarantees is that the cache is
+ * corrected at the FIRST moment the device can reach the server, and that the
+ * correction is persisted — so a takedown that lands during an offline stretch
+ * is honoured before the cache is painted again.
+ */
+router.post(
+  "/wall/revalidate",
+  asyncHandler(async (req: any, res: any) => {
+    const auth = await requireUser(req, res);
+    if (!auth) return;
+    const { client: sc, user } = auth;
+
+    if (!(await isFlagEnabled(sc, "wall_enabled"))) {
+      sendError(res, "feature_disabled", "The Wall is not enabled");
+      return;
+    }
+
+    const parsed = revalidateSchema.safeParse(req.body);
+    if (!parsed.success) {
+      sendError(res, "invalid_payload", "objectIds must be a non-empty array of ids");
+      return;
+    }
+    const { id, limit: rlLimit, windowMs } = WALL_RATE_LIMITS.revalidate;
+    const rl = checkRateLimit(id, user.id, rlLimit, windowMs);
+    if (!rl.allowed) {
+      res.setHeader("Retry-After", Math.ceil(rl.retryAfterMs / 1000).toString());
+      sendError(res, "rate_limited", "Too many revalidation requests. Please slow down.");
+      return;
+    }
+
+    const requested = [...new Set(parsed.data.objectIds)];
+    const generatedAt = new Date().toISOString();
+
+    let rows: any[] = [];
+    try {
+      const { data, error } = await sc
+        .from("posts")
+        .select(REVALIDATE_COLUMNS)
+        .in("id", requested);
+      // Fail CLOSED. An unreadable posts table is not "everything is still
+      // fine" — it is "nothing can be confirmed", and the cache is dropped.
+      if (error) {
+        logger.warn({ err: error }, "wall: revalidate read failed — nothing re-admitted");
+        res.status(200).json({ eligibleObjectIds: [], generatedAt });
+        return;
+      }
+      rows = (data as any[]) ?? [];
+    } catch (err) {
+      logger.warn({ err }, "wall: revalidate read threw — nothing re-admitted");
+      res.status(200).json({ eligibleObjectIds: [], generatedAt });
+      return;
+    }
+
+    // The moderation/tombstone predicate the feed spine applies, restated over
+    // the SAME columns (status='active' + post_status='published' + no
+    // tombstone). Everything downstream of it — author account status, blocks,
+    // visibility tiers — is projectObjects' job, below.
+    const live = rows.filter(
+      (r) =>
+        r &&
+        String(r.status ?? "") === "active" &&
+        String(r.post_status ?? "") === "published" &&
+        r.deleted_at == null &&
+        isPostPublished(r),
+    );
+    if (live.length === 0) {
+      res.status(200).json({ eligibleObjectIds: [], generatedAt });
+      return;
+    }
+
+    // Author account status — the eligibility allowlist (§23). A read failure
+    // leaves the status absent, and `passesEligibility` reads absence as
+    // 'active'; that is the loaders' own documented fail-soft default and is why
+    // the tombstone/moderation predicate above is applied independently of it.
+    const authorIds = [...new Set(live.map((r) => String(r.author_id)))];
+    const accountStatus = new Map<string, string>();
+    try {
+      const { data } = await sc
+        .from("profiles")
+        .select("id, account_status")
+        .in("id", authorIds.slice(0, 500));
+      for (const p of (data as any[]) ?? []) {
+        if (p?.id) accountStatus.set(String(p.id), String(p.account_status ?? "active"));
+      }
+    } catch (err) {
+      logger.warn({ err }, "wall: revalidate profile read failed");
+    }
+
+    const candidates: WallCandidate[] = live.map((r) => ({
+      // The type only has to be POST-LIKE for the gate to route the row through
+      // decidePostReadable; which social presentation the client had cached is
+      // irrelevant to whether the viewer may still see the object.
+      objectType: "social_post",
+      canonicalObjectId: String(r.id),
+      authorId: String(r.author_id),
+      visibility: r.visibility ?? null,
+      tripId: r.trip_id ?? null,
+      publishedAt: String(r.published_at ?? r.created_at ?? generatedAt),
+      authorAccountStatus: accountStatus.get(String(r.author_id)) ?? null,
+      isDeleted: false,
+    }));
+
+    const viewer = await loadViewerContext(sc, user.id);
+    let survivors: WallProjection[] = [];
+    try {
+      survivors = await projectObjects(sc, candidates, {
+        viewerId: user.id,
+        viewerTripIds: viewer.viewerTripIds,
+        followedCreatorIds: viewer.followedCreatorIds,
+        // A hidden object stays hidden through a revalidation too — otherwise
+        // the cache would keep resurrecting something the viewer dismissed.
+        suppressedObjectIds: await loadViewerSuppressions(sc, user.id),
+      });
+    } catch (err) {
+      logger.warn({ err }, "wall: revalidate projection failed — nothing re-admitted");
+      survivors = [];
+    }
+
+    const eligible = new Set(survivors.map((p) => p.canonicalObjectId));
+    res.status(200).json({
+      eligibleObjectIds: requested.filter((objectId) => eligible.has(objectId)),
+      generatedAt,
+    });
   }),
 );
 

@@ -17,6 +17,7 @@ import { trackLiveOpen, trackLiveShown } from '../services/wallAnalytics.ts';
 import { runWallAction } from './objects/wallItemShared.tsx';
 import type { LiveForYouItem } from '../types/liveForYou.ts';
 import type { WallProjection } from '../types/wallProjection.ts';
+import { truthQualifierLabel } from '../types/wallProjection.ts';
 import { CONFLICT_LABEL, normalizeConflictState } from '../../../lib/intel/conflict.ts';
 
 const MAX_ITEMS = 4;
@@ -38,6 +39,13 @@ function stateLabel(item: LiveForYouItem): string {
   // §10: a materially-conflicted claim never carries a Live label — it says so
   // in TEXT (spec §36), wherever Live now / Emerging would have rendered.
   if (normalizeConflictState(item.conflictState) === 'material') return CONFLICT_LABEL;
+  // Sensing §108: a prediction must never render indistinguishably from an
+  // observation. An event's schedule and a trip plan arrive as `predicted`, and
+  // "Emerging" alone reads exactly like an observed emerging state — so the
+  // carried truth class REPLACES the state word rather than decorating it.
+  // Purely a function of the server's value; the client derives no world truth.
+  const qualifier = truthQualifierLabel(item.truthClass);
+  if (qualifier) return qualifier;
   return item.state === 'live' ? 'Live now' : 'Emerging';
 }
 
@@ -60,7 +68,7 @@ export function LiveForYouStrip({
   return (
     <View style={s.container} testID="wall-live-strip">
       <View style={s.head}>
-        <View style={s.headLeft}>
+        <View style={s.headLeft} accessible accessibilityRole="header">
           <Radio size={icon.s16} color={color.signal} />
           <Text style={s.headTitle}>Live for you</Text>
         </View>
@@ -84,7 +92,7 @@ export function LiveForYouStrip({
         contentContainerStyle={s.scroll}
         accessibilityRole="list"
       >
-        {bounded.map((item) => (
+        {bounded.map((item, idx) => (
           <Pressable
             key={item.id}
             testID={`wall-live-item-${item.id}`}
@@ -94,16 +102,31 @@ export function LiveForYouStrip({
               if (item.action) runWallAction(item.action, liveActionCarrier(item));
             }}
             accessibilityRole="button"
-            accessibilityLabel={`${item.label}. ${stateLabel(item)}`}
+            // §36 "the horizontal Live For You list supports logical focus
+            // order". Each card is ONE focusable element (its inner Texts are
+            // merged into the card's own label rather than being separately
+            // focusable), and the position is announced so a screen-reader user
+            // knows where in the strip they are rather than hearing four
+            // unanchored fragments.
+            accessible
+            accessibilityLabel={`${item.label}. ${stateLabel(item)}. ${idx + 1} of ${
+              bounded.length
+            }`}
+            accessibilityHint="Opens this live item"
           >
-            <Text style={s.cardState} numberOfLines={1}>
+            <Text
+              style={s.cardState}
+              numberOfLines={1}
+              importantForAccessibility="no"
+              testID={`wall-live-state-${item.id}`}
+            >
               {stateLabel(item)}
             </Text>
-            <Text style={s.cardLabel} numberOfLines={2}>
+            <Text style={s.cardLabel} numberOfLines={2} importantForAccessibility="no">
               {item.label}
             </Text>
             {item.subject ? (
-              <View style={s.cardPlace}>
+              <View style={s.cardPlace} importantForAccessibility="no-hide-descendants">
                 <MapPin size={icon.s14} color={color.faint} />
                 <Text style={s.cardPlaceText} numberOfLines={1}>
                   {item.subject.name}
@@ -140,8 +163,14 @@ const s = StyleSheet.create({
     padding: space.md,
     gap: space.xs,
   },
-  cardState: { ...t.stamp, color: color.signal },
+  // §36 contrast. `signal` (#FF4D2E) is 3.31:1 on the card's white ground and
+  // `signalDim` only 4.26:1 — neither clears WCAG AA (4.5:1) for 11px text, and
+  // t.stamp is far below the large-text threshold. This is the ONE word on the
+  // card that says whether a state is live, scheduled or out of date, so it has
+  // to be readable: `deep` (teal-ink) is 11.80:1. Nothing is lost — §36 already
+  // forbids conveying live state by colour alone, and the word itself carries it.
+  cardState: { ...t.stamp, color: color.deep },
   cardLabel: { ...t.small, color: color.ink, fontWeight: '700' },
   cardPlace: { flexDirection: 'row', alignItems: 'center', gap: space.xs, marginTop: 2 },
-  cardPlaceText: { ...t.small, color: color.faint, flexShrink: 1 },
+  cardPlaceText: { ...t.small, color: color.mute, flexShrink: 1 },
 });

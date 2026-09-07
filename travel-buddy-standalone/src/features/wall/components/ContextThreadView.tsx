@@ -32,6 +32,7 @@ import { askCompassFromWall } from '../services/wallCompass.ts';
 import { runWallAction } from './objects/wallItemShared.tsx';
 import type { ContextThread, ContextThreadKind } from '../types/contextThread.ts';
 import type { FreshnessState, WallProjection } from '../types/wallProjection.ts';
+import { truthQualifierLabel } from '../types/wallProjection.ts';
 
 const KIND_ICON: Record<ContextThreadKind, React.ComponentType<{ size: number; color: string }>> = {
   live_place: Radio,
@@ -80,6 +81,13 @@ export function ContextThreadView({
 
   const Icon = KIND_ICON[thread.kind] ?? Compass;
   const fresh = freshnessLabel(thread.freshness);
+  // Sensing §108: a prediction, an inference or an unconfirmed state must never
+  // render indistinguishably from an observation. The qualifier is TEXT (spec
+  // §36 — live state must not rely on colour alone) and is derived purely from
+  // the truth class the SERVER carried; the client computes no world truth of
+  // its own (Sensing S6). An observed/corroborated fact needs no qualifier and
+  // gets none, so the annotation appears exactly where it changes the meaning.
+  const qualifier = truthQualifierLabel(thread.truthClass);
 
   // A compass-kind thread is actionable even without an explicit action: it
   // hands the object to Compass (spec §21). Every other kind needs an action.
@@ -104,6 +112,11 @@ export function ContextThreadView({
       <View style={s.textCol}>
         <Text style={s.label} numberOfLines={2}>
           {thread.label}
+          {qualifier ? (
+            <Text style={s.qualifier} testID={`wall-context-truth-${thread.kind}`}>
+              {`  ·  ${qualifier}`}
+            </Text>
+          ) : null}
           {fresh ? (
             <Text style={s.freshness}>{`  ·  ${fresh}`}</Text>
           ) : null}
@@ -131,7 +144,9 @@ export function ContextThreadView({
       style={s.container}
       onPress={onAct}
       accessibilityRole="button"
-      accessibilityLabel={`${thread.label}${actionLabel ? `, ${actionLabel}` : ''}`}
+      accessibilityLabel={`${thread.label}${qualifier ? `, ${qualifier}` : ''}${
+        actionLabel ? `, ${actionLabel}` : ''
+      }`}
       testID={`wall-context-${thread.kind}`}
     >
       {body}
@@ -153,5 +168,8 @@ const s = StyleSheet.create({
   textCol: { flex: 1, minWidth: 0 },
   label: { ...t.small, color: color.ink, fontWeight: '600' },
   freshness: { ...t.small, color: color.deep, fontWeight: '700' },
-  reason: { ...t.small, color: color.faint },
+  // Deliberately the QUIET colour: a "Scheduled"/"Inferred" qualifier must be
+  // legible, never louder than the fact it qualifies (spec §35).
+  qualifier: { ...t.small, color: color.mute, fontWeight: '700' },
+  reason: { ...t.small, color: color.mute },
 });

@@ -35,6 +35,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Image } from 'expo-image';
 import { hydrateMediaUrls } from '../../../services/mediaUrl.ts';
+import { revalidateCachedObjects } from './wallApi.ts';
 import type { WallMode, WallProjection } from '../types/wallProjection.ts';
 
 /** Minimal AsyncStorage subset — injected in tests. */
@@ -181,6 +182,61 @@ export async function writeFirstPageCache(
     cachedAt: now,
   };
   await storage.setItem(cacheKey(mode), JSON.stringify(payload));
+}
+
+/**
+ * Re-check a cached page against the SERVER's canonical eligibility gate and
+ * persist the corrected page (Wall spec §31 "revalidate eligibility"; §37
+ * "moderation takedowns propagate to cached Wall projections").
+ *
+ * The cache used to be write-once-read-many: a page written while an object was
+ * eligible kept painting for up to 24 h, so a takedown that landed in between
+ * never reached it. This is the propagation path.
+ *
+ * THE SERVER DECIDES, ALWAYS. Nothing here re-derives eligibility — there is no
+ * client-side moderation predicate to drift out of step, and none is wanted
+ * (spec §37: "Server-side eligibility is authoritative; never rely on client
+ * hiding"; Sensing S6: no client truth duplication). The client's entire job is
+ * to send ids and keep what comes back.
+ *
+ * A revalidation the server did not answer (genuinely offline, unauthenticated,
+ * unconfigured) leaves the cache untouched and returns `null`: destroying a
+ * cached feed on a flaky connection would break the offline behaviour §31
+ * requires, and an unreachable server is not a takedown. A revalidation the
+ * server DID answer is honoured in full, including an empty answer — that is a
+ * real "none of this may be shown any more", and the page is evicted.
+ *
+ * Returns the surviving items, or null when nothing could be decided.
+ */
+export async function revalidateFirstPageCache(
+  mode: WallMode,
+  opts: {
+    storage?: StorageLike;
+    now?: number;
+    revalidate?: typeof revalidateCachedObjects;
+  } = {},
+): Promise<WallProjection[] | null> {
+  const storage = opts.storage ?? wallStorage;
+  const revalidate = opts.revalidate ?? revalidateCachedObjects;
+  const cached = await readFirstPageCache(mode, { storage, now: opts.now });
+  if (!cached || cached.items.length === 0) return null;
+
+  const result = await revalidate(cached.items.map((i) => i.canonicalObjectId));
+  if (!result.ok) return null; // not a verdict — leave the cache as it is
+
+  const allowed = new Set(result.eligibleObjectIds);
+  const survivors = cached.items.filter((i) => allowed.has(i.canonicalObjectId));
+  if (survivors.length === cached.items.length) return survivors; // nothing changed
+
+  if (survivors.length === 0) {
+    await clearFirstPageCache(mode, { storage });
+    return [];
+  }
+  // Rewrite the page in place, PRESERVING the original `cachedAt` — a
+  // revalidation is not a refresh, and must not make a 20-hour-old page look
+  // freshly fetched (which would suppress the stale label §31 requires).
+  await writeFirstPageCache(mode, survivors, { storage, now: cached.cachedAt });
+  return survivors;
 }
 
 /** Drop the cached page for a mode (e.g. after a policy-driven revalidation). */

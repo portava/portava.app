@@ -325,6 +325,27 @@ describe("event_state producer — time-valid, at the place, privacy-complete", 
     assert.equal(cands[0].resolved!.validUntil, new Date(NOW.getTime() + 90 * 60_000).toISOString());
   });
 
+  it("carries the §108 truth class of a SCHEDULE — predicted, never observed", async () => {
+    // Sensing §108: prediction must never be rendered indistinguishably from
+    // observation. An event's start/end is what someone INTENDS, so the producer
+    // says so on the wire and the client renders it differently.
+    const cands = await buildEventStateLiveCandidates(eventClient([eventRow()]), VIEWER, PLACES, { now: NOW });
+    assert.equal(cands[0].resolved!.truthClass, "predicted");
+    assert.equal(cands[0].resolved!.coverage, "unknown");
+  });
+
+  it("carries the §2 `join` action, aimed at the CANONICAL event", async () => {
+    // The one real-world action an event admits. It hands off to the event's own
+    // screen, where routes/events' eligibility / capacity / RSVP gate runs — the
+    // Wall never re-implements it and never joins on the viewer's behalf.
+    const cands = await buildEventStateLiveCandidates(eventClient([eventRow()]), VIEWER, PLACES, { now: NOW });
+    assert.equal(cands[0].action?.type, "join");
+    assert.equal(cands[0].action?.targetType, "event");
+    assert.equal(cands[0].action?.targetId, "ev-1");
+    // The EVENT, not the place the strip item is keyed on.
+    assert.notEqual(cands[0].action?.targetId, cands[0].subjectId);
+  });
+
   it("an event starting soon is labelled as a start window, not as happening", async () => {
     const starts = new Date(NOW.getTime() + 20 * 60_000).toISOString();
     const cands = await buildEventStateLiveCandidates(

@@ -203,7 +203,11 @@ const s = StyleSheet.create({
     justifyContent: 'center',
     paddingHorizontal: 3,
   },
-  badgeText: { color: color.onInk, fontSize: 9, fontWeight: '800' },
+  // §36 contrast: light-on-vermilion is 3.14:1 — below WCAG AA (4.5:1) for a
+  // 9px numeral, and `signalDim` would only reach 4.04. Ink ON the vermilion is
+  // 5.72:1 and keeps the badge red, which is the half of the design that carries
+  // meaning.
+  badgeText: { color: color.ink, fontSize: 9, fontWeight: '800' },
   steerBar: {
     flexDirection: 'row',
     alignItems: 'center',
