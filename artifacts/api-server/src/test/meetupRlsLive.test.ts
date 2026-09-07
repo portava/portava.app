@@ -16,6 +16,11 @@
  * and the write half of 2460: an invitee can answer and remove their own row
  * but not re-point it; the creator can still invite.
  *
+ * And 2462 (meetup_time_votes.mtv_own): an outsider cannot INSERT a vote on
+ * the meetup's time option (42501 — and the SAME row inserted by the service
+ * role succeeds, so nothing but the WITH CHECK refused it); an invitee and the
+ * creator can. Requires 2462 as well; RED before it.
+ *
  * Trip- and circle-visibility branches are not exercised here (they need a
  * trips / circle_memberships fixture); they were rehearsed on portava-ci inside
  * a rolled-back transaction on 2026-09-07 (crew+circle viewer: 2 meetups, 0
@@ -183,5 +188,49 @@ describe("meetup RLS access matrix (2460 + 2461)", { skip: !CREDS_AVAILABLE }, (
     const { data: gone } = await adminClient().from("meetup_invites").select("id").eq("meetup_id", M1).eq("user_id", users.going.id);
     assert.equal((gone ?? []).length, 0);
     assert.deepEqual(await matrix(userClient(users.going.token)), { meetups: 0, invites: 0, options: 0 }, "with the row gone, access is gone");
+  });
+
+  // ── 2462: votes ──────────────────────────────────────────────────────────────
+
+  it("outsider cannot vote on the option — refused by the WITH CHECK and nothing else", async () => {
+    const row = { option_id: OPT, user_id: users.outsider.id, vote: "yes" };
+    const { error } = await userClient(users.outsider.token).from("meetup_time_votes").insert(row);
+    assertDenied(error, "outsider vote");
+    // Non-vacuity pin: the identical row is acceptable to every constraint —
+    // the service role (RLS bypass) inserts it — so only the policy refused.
+    const sc = adminClient();
+    const { data: twin, error: twinErr } = await sc.from("meetup_time_votes").insert(row).select("id").single();
+    assert.ifError(twinErr);
+    assert.ok((twin as any)?.id, "the service-role twin insert must succeed, or the refusal above proves nothing");
+    await sc.from("meetup_time_votes").delete().eq("id", (twin as any).id);
+    const { data } = await sc.from("meetup_time_votes").select("id").eq("option_id", OPT).eq("user_id", users.outsider.id);
+    assert.equal((data ?? []).length, 0);
+  });
+
+  it("the pending invitee can vote, and can change but not re-point their vote", async () => {
+    // (`going` removed their own invite row in the case above; `pending` is
+    // still invited.)
+    const c = userClient(users.pending.token);
+    const { data, error } = await c.from("meetup_time_votes").insert({ option_id: OPT, user_id: users.pending.id, vote: "yes" }).select("id, vote");
+    assert.ifError(error);
+    assert.equal((data ?? []).length, 1);
+    const { error: uErr, data: changed } = await c.from("meetup_time_votes").update({ vote: "no" }).eq("option_id", OPT).eq("user_id", users.pending.id).select("vote");
+    assert.ifError(uErr);
+    assert.deepEqual((changed ?? []).map((r: any) => r.vote), ["no"]);
+    // An option on M2, which `pending` is not invited to.
+    const { data: opt2, error: oErr } = await adminClient().from("meetup_time_options").insert({ meetup_id: M2, proposed_date: "2026-10-02", time_block: "evening" }).select("id").single();
+    assert.ifError(oErr);
+    const { error: rErr } = await c.from("meetup_time_votes").update({ option_id: (opt2 as any).id }).eq("option_id", OPT).eq("user_id", users.pending.id);
+    assertDenied(rErr, "re-point vote");
+  });
+
+  it("the creator can vote on their own meetup's option without holding an invite row", async () => {
+    const { data, error } = await userClient(users.creator.token).from("meetup_time_votes").insert({ option_id: OPT, user_id: users.creator.id, vote: "maybe" }).select("id");
+    assert.ifError(error);
+    assert.equal((data ?? []).length, 1);
+    const { data: seen } = await userClient(users.creator.token).from("meetup_time_votes").select("user_id").eq("option_id", OPT);
+    assert.equal((seen ?? []).length, 2, "creator reads every vote on the option (pending + own)");
+    const { data: none } = await userClient(users.outsider.token).from("meetup_time_votes").select("user_id").eq("option_id", OPT);
+    assert.equal((none ?? []).length, 0, "outsider still reads none");
   });
 });

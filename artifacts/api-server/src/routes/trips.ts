@@ -51,6 +51,18 @@ const TRIP_COLUMNS =
   "allow_join_requests, show_exact_dates, show_destination_city, delayed_posting_default, " +
   "precise_location_visible, plan_edit_permission, progress, created_at, updated_at";
 
+/**
+ * The kernel returns the whole trips row (the receipt needs it for replay);
+ * the HTTP response must expose exactly TRIP_COLUMNS, in that order, the way
+ * the direct `.select(TRIP_COLUMNS)` did. Nothing internal reaches a client.
+ */
+const TRIP_COLUMN_LIST = TRIP_COLUMNS.split(",").map((c) => c.trim());
+function pickTripColumns(row: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const c of TRIP_COLUMN_LIST) out[c] = row[c] === undefined ? null : row[c];
+  return out;
+}
+
 
 // ── Trip-completion stamp awards ──────────────────────────────────────────────
 // Called fire-and-forget (non-fatal) when a trip transitions → "completed".
@@ -260,7 +272,49 @@ router.post("/trips", async (req, res) => {
   // Trips without title/city are saved as drafts.
   const computedStatus = computeTripStatus(title ?? null, destinationCity ?? null, startDate ?? null, endDate ?? null, "planning");
 
-  const { data, error } = await client
+  // Trip Kernel path (CREATE_TRIP, contract v2). requireUser above (identity +
+  // ban gate) is the authorization; there is no aggregate to be a member of
+  // yet. The kernel creates the row at version 1 with event sequence 1
+  // (trip.created). Off => the direct insert below, exactly as before.
+  const kernelCreate = await tripKernel();
+  let kernelCreated: Record<string, unknown> | null = null;
+  if (kernelCreate) {
+    const env = readCommandEnvelope(req);
+    if (!env.ok) { sendError(res, "invalid_payload", env.message); return; }
+    const r = await executeTripCommand(kernelCreate, {
+      commandId: randomUUID(),
+      tripId: randomUUID(),
+      actorUserId: user.id,   // always from token; becomes owner_id
+      expectedTripVersion: null,   // nothing to match against on a create
+      idempotencyKey: env.idempotencyKey,
+      type: "CREATE_TRIP",
+      payload: {
+        title,
+        destination_city: destinationCity,
+        destination_country: destinationCountry ?? null,
+        start_date: startDate ?? null,
+        end_date: endDate ?? null,
+        status: computedStatus,
+        visibility: visibility ?? "private",
+        cover_url: coverUrl ?? null,
+        cover_media_type: coverMediaType ?? null,
+        cover_image_width: (coverImageWidth as number | null | undefined) ?? null,
+        cover_image_height: (coverImageHeight as number | null | undefined) ?? null,
+        trip_notes: tripNotes ?? null,
+        show_header_publicly: typeof showHeaderPublicly === "boolean"
+          ? showHeaderPublicly
+          : (visibility ?? "private") === "public",
+      },
+    });
+    if (!r.ok) { sendKernelRejection(res, r, req.log); return; }
+    setTripVersionHeader(res, r.version);
+    kernelCreated = pickTripColumns(r.result);
+  }
+
+  // trip-kernel:legacy-path — the flag-off twin of CREATE_TRIP above.
+  const { data, error } = kernelCreated
+    ? { data: kernelCreated, error: null }
+    : await client
     .from("trips")
     .insert({
       owner_id: user.id,
@@ -776,7 +830,34 @@ router.patch("/trips/:tripId", async (req, res) => {
     (b.timezone ?? t.timezone ?? null) as string | null,
   );
 
-  const { data: updated, error: patchErr } = await sc
+  // Trip Kernel path (UPDATE_TRIP, contract v2). The owner check above is the
+  // authorization; the kernel re-checks owner, refuses a way out of a terminal
+  // status (§3.1) and a start > end, and records which columns changed. Off
+  // => the direct update below, exactly as before.
+  const kernelPatch = await tripKernel();
+  let kernelUpdated: Record<string, unknown> | null = null;
+  if (kernelPatch) {
+    const env = readCommandEnvelope(req);
+    if (!env.ok) { sendError(res, "invalid_payload", env.message); return; }
+    const { updated_at: patchStamp, ...columnPatch } = patch;
+    const r = await executeTripCommand(kernelPatch, {
+      commandId: randomUUID(),
+      tripId,
+      actorUserId: user.id,
+      expectedTripVersion: env.expectedTripVersion,
+      idempotencyKey: env.idempotencyKey,
+      type: "UPDATE_TRIP",
+      payload: { patch: columnPatch, updated_at: patchStamp },
+    });
+    if (!r.ok) { sendKernelRejection(res, r, req.log); return; }
+    setTripVersionHeader(res, r.version);
+    kernelUpdated = pickTripColumns(r.result);
+  }
+
+  // trip-kernel:legacy-path — the flag-off twin of UPDATE_TRIP above.
+  const { data: updated, error: patchErr } = kernelUpdated
+    ? { data: kernelUpdated, error: null }
+    : await sc
     .from("trips")
     .update(patch)
     .eq("id", tripId)
@@ -982,7 +1063,30 @@ router.post("/trips/:tripId/invite", async (req, res) => {
   const { data: existing } = await client.from("trip_members").select("role").eq("trip_id", tripId).eq("user_id", userId).maybeSingle();
   if (existing) { res.status(200).json({ status: "already_member", role: (existing as any).role, idempotent: true }); return; }
 
-  const { error } = await client.from("trip_members").insert({ trip_id: tripId, user_id: userId, role: "invited" });
+  // Trip Kernel path (INVITE_PARTICIPANT, contract v2). Owner + block checks
+  // above are the authorization; the kernel re-checks owner and refuses a
+  // second row for the same user. Off => the direct insert below.
+  const kernelInvite = await tripKernel();
+  let kernelInvited = false;
+  if (kernelInvite) {
+    const env = readCommandEnvelope(req);
+    if (!env.ok) { sendError(res, "invalid_payload", env.message); return; }
+    const r = await executeTripCommand(kernelInvite, {
+      commandId: randomUUID(),
+      tripId,
+      actorUserId: user.id,
+      expectedTripVersion: env.expectedTripVersion,
+      idempotencyKey: env.idempotencyKey,
+      type: "INVITE_PARTICIPANT",
+      payload: { user_id: userId },
+    });
+    if (!r.ok) { sendKernelRejection(res, r, req.log); return; }
+    setTripVersionHeader(res, r.version);
+    kernelInvited = true;
+  }
+
+  // trip-kernel:legacy-path — the flag-off twin of INVITE_PARTICIPANT above.
+  const { error } = kernelInvited ? { error: null } : await client.from("trip_members").insert({ trip_id: tripId, user_id: userId, role: "invited" });
   if (error) { req.log.error({ err: error }, "trip invite: insert failed"); sendError(res, "db_error", error.message); return; }
 
   // Fire-and-forget: notify the invitee they've been invited.
@@ -1050,7 +1154,30 @@ router.post("/trips/:tripId/accept-invite", async (req, res) => {
   if (!membership) { res.status(404).json({ error: "not_found", message: "No invitation found for this trip" }); return; }
   if ((membership as any).role !== "invited") { res.status(400).json({ error: "invalid_payload", message: `Already a ${(membership as any).role}` }); return; }
 
-  const { error } = await client.from("trip_members").update({ role: "member" }).eq("trip_id", tripId).eq("user_id", user.id);
+  // Trip Kernel path (ACCEPT_INVITE, contract v2). The invitee is NOT accepted
+  // crew, so the v1 crew re-check could never admit this command; v2 requires
+  // exactly an 'invited' row for the actor. Off => the direct update below.
+  const kernelAccept = await tripKernel();
+  let kernelAccepted = false;
+  if (kernelAccept) {
+    const env = readCommandEnvelope(req);
+    if (!env.ok) { sendError(res, "invalid_payload", env.message); return; }
+    const r = await executeTripCommand(kernelAccept, {
+      commandId: randomUUID(),
+      tripId,
+      actorUserId: user.id,
+      expectedTripVersion: env.expectedTripVersion,
+      idempotencyKey: env.idempotencyKey,
+      type: "ACCEPT_INVITE",
+      payload: {},
+    });
+    if (!r.ok) { sendKernelRejection(res, r, req.log); return; }
+    setTripVersionHeader(res, r.version);
+    kernelAccepted = true;
+  }
+
+  // trip-kernel:legacy-path — the flag-off twin of ACCEPT_INVITE above.
+  const { error } = kernelAccepted ? { error: null } : await client.from("trip_members").update({ role: "member" }).eq("trip_id", tripId).eq("user_id", user.id);
   if (error) { req.log.error({ err: error }, "trip invite accept: update failed"); sendError(res, "db_error", error.message); return; }
 
   // Fire-and-forget: sync group chat membership for this trip.
@@ -1104,7 +1231,29 @@ router.post("/trips/:tripId/decline-invite", async (req, res) => {
   if (!membership) { res.status(404).json({ error: "not_found", message: "No invitation found for this trip" }); return; }
   if ((membership as any).role !== "invited") { res.status(400).json({ error: "invalid_payload", message: "Cannot decline — you are already a member" }); return; }
 
-  const { error } = await client.from("trip_members").delete().eq("trip_id", tripId).eq("user_id", user.id);
+  // Trip Kernel path (DECLINE_INVITE, contract v2): requires the actor's own
+  // 'invited' row; deletes it as legacy does and records trip.participant_declined.
+  const kernelDecline = await tripKernel();
+  let kernelDeclined = false;
+  if (kernelDecline) {
+    const env = readCommandEnvelope(req);
+    if (!env.ok) { sendError(res, "invalid_payload", env.message); return; }
+    const r = await executeTripCommand(kernelDecline, {
+      commandId: randomUUID(),
+      tripId,
+      actorUserId: user.id,
+      expectedTripVersion: env.expectedTripVersion,
+      idempotencyKey: env.idempotencyKey,
+      type: "DECLINE_INVITE",
+      payload: {},
+    });
+    if (!r.ok) { sendKernelRejection(res, r, req.log); return; }
+    setTripVersionHeader(res, r.version);
+    kernelDeclined = true;
+  }
+
+  // trip-kernel:legacy-path — the flag-off twin of DECLINE_INVITE above.
+  const { error } = kernelDeclined ? { error: null } : await client.from("trip_members").delete().eq("trip_id", tripId).eq("user_id", user.id);
   if (error) { req.log.error({ err: error }, "trip invite decline: delete failed"); sendError(res, "db_error", error.message); return; }
 
   // Fire-and-forget: notify trip owner that their invitation was declined.
@@ -1516,6 +1665,7 @@ router.post("/trips/:tripId/plan/items", async (req, res) => {
     return;
   }
 
+  // trip-kernel:legacy-path — flag-off twin of the plan-item command above.
   const { data: item, error } = await client
     .from("trip_plan_items")
     .insert({
@@ -1606,6 +1756,7 @@ router.patch("/trips/:tripId/plan/items/:itemId", async (req, res) => {
     return;
   }
 
+  // trip-kernel:legacy-path — flag-off twin of the plan-item command above.
   const { data: updated, error } = await client
     .from("trip_plan_items")
     .update(dbPatch)
@@ -1656,6 +1807,7 @@ router.patch("/trips/:tripId/plan/items/:itemId/remove", async (req, res) => {
   }
 
   // Soft-delete only — source record is NOT deleted
+  // trip-kernel:legacy-path — flag-off twin of the plan-item command above.
   const { error } = await client
     .from("trip_plan_items")
     .update({ removed_at: new Date().toISOString() })
@@ -1703,6 +1855,7 @@ router.delete("/trips/:tripId/plan/items/:itemId", async (req, res) => {
     return;
   }
 
+  // trip-kernel:legacy-path — flag-off twin of the plan-item command above.
   const { error } = await client
     .from("trip_plan_items")
     .update({ removed_at: new Date().toISOString() })
@@ -1746,15 +1899,40 @@ router.post("/trips/:tripId/members", async (req, res) => {
   const { data: existing } = await client.from("trip_members").select("role").eq("trip_id", tripId).eq("user_id", userId).maybeSingle();
   if (existing && (existing as any).role === role) { res.status(200).json({ status: "already_member", role, idempotent: true }); return; }
 
+  // Trip Kernel path (SET_PARTICIPANT_ROLE when a row exists, ADD_PARTICIPANT
+  // when it does not; contract v2). The owner check above is the
+  // authorization; the kernel re-checks owner and refuses touching the
+  // owner's own row. Off => the direct update / insert below.
+  const kernelMember = await tripKernel();
+  let kernelMembered = false;
+  if (kernelMember) {
+    const env = readCommandEnvelope(req);
+    if (!env.ok) { sendError(res, "invalid_payload", env.message); return; }
+    const r = await executeTripCommand(kernelMember, {
+      commandId: randomUUID(),
+      tripId,
+      actorUserId: user.id,
+      expectedTripVersion: env.expectedTripVersion,
+      idempotencyKey: env.idempotencyKey,
+      type: existing ? "SET_PARTICIPANT_ROLE" : "ADD_PARTICIPANT",
+      payload: { user_id: userId, role },
+    });
+    if (!r.ok) { sendKernelRejection(res, r, req.log); return; }
+    setTripVersionHeader(res, r.version);
+    kernelMembered = true;
+  }
+
   if (existing) {
-    const { error } = await client.from("trip_members").update({ role }).eq("trip_id", tripId).eq("user_id", userId);
+    // trip-kernel:legacy-path — the flag-off twin of SET_PARTICIPANT_ROLE above.
+    const { error } = kernelMembered ? { error: null } : await client.from("trip_members").update({ role }).eq("trip_id", tripId).eq("user_id", userId);
     if (error) { req.log.error({ err: error }, "trip member role update failed"); sendError(res, "db_error", error.message); return; }
     syncTripChatMembers(tripId, client).catch((e) => req.log?.error({ err: e }, "syncTripChatMembers failed"));
     res.status(200).json({ status: "updated", tripId, userId, role });
     return;
   }
 
-  const { error } = await client.from("trip_members").insert({ trip_id: tripId, user_id: userId, role });
+  // trip-kernel:legacy-path — the flag-off twin of ADD_PARTICIPANT above.
+  const { error } = kernelMembered ? { error: null } : await client.from("trip_members").insert({ trip_id: tripId, user_id: userId, role });
   if (error) { req.log.error({ err: error }, "trip member add: insert failed"); sendError(res, "db_error", error.message); return; }
 
   syncTripChatMembers(tripId, client).catch((e) => req.log?.error({ err: e }, "syncTripChatMembers failed"));
@@ -1790,7 +1968,30 @@ router.delete("/trips/:tripId/members/:userId", async (req, res) => {
   if (!memberRow) { res.status(404).json({ error: "not_found", message: "Member not found on this trip" }); return; }
   if ((memberRow as any).role === "owner") { res.status(400).json({ error: "invalid_payload", message: "Cannot remove the trip owner" }); return; }
 
-  const { error } = await client.from("trip_members").delete().eq("trip_id", tripId).eq("user_id", userId);
+  // Trip Kernel path (REMOVE_PARTICIPANT, contract v2). The owner check above
+  // is the authorization; the kernel re-checks owner, refuses removing the
+  // owner's row, and records the role at removal. Off => the direct delete.
+  const kernelRemove = await tripKernel();
+  let kernelRemoved = false;
+  if (kernelRemove) {
+    const env = readCommandEnvelope(req);
+    if (!env.ok) { sendError(res, "invalid_payload", env.message); return; }
+    const r = await executeTripCommand(kernelRemove, {
+      commandId: randomUUID(),
+      tripId,
+      actorUserId: user.id,
+      expectedTripVersion: env.expectedTripVersion,
+      idempotencyKey: env.idempotencyKey,
+      type: "REMOVE_PARTICIPANT",
+      payload: { user_id: userId },
+    });
+    if (!r.ok) { sendKernelRejection(res, r, req.log); return; }
+    setTripVersionHeader(res, r.version);
+    kernelRemoved = true;
+  }
+
+  // trip-kernel:legacy-path — the flag-off twin of REMOVE_PARTICIPANT above.
+  const { error } = kernelRemoved ? { error: null } : await client.from("trip_members").delete().eq("trip_id", tripId).eq("user_id", userId);
   if (error) { req.log.error({ err: error }, "trip member remove: delete failed"); sendError(res, "db_error", error.message); return; }
 
   syncTripChatMembers(tripId, client).catch((e) => req.log?.error({ err: e }, "syncTripChatMembers failed"));
@@ -1837,6 +2038,7 @@ router.post("/trips/:tripId/plan/items/:itemId/reorder", async (req, res) => {
     return;
   }
 
+  // trip-kernel:legacy-path — flag-off twin of the plan-item command above.
   const { data: updated, error } = await client
     .from("trip_plan_items")
     .update({ sort_order: parsed.data.sortOrder, updated_at: new Date().toISOString() })
@@ -1951,6 +2153,7 @@ router.post("/trips/:tripId/plan/reorder", async (req, res) => {
     const itemId = orderedItemIds[i];
     const nextSort = slots[i];
     if (found.get(itemId) === nextSort) continue; // already in place — no write
+    // trip-kernel:legacy-path — flag-off twin of the plan-item command above.
     const { error: upErr } = await client
       .from("trip_plan_items")
       .update({ sort_order: nextSort, updated_at: stamp })

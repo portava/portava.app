@@ -47,6 +47,7 @@ const BASELINE = join(HERE, "../../baseline/20260819_baseline_structure.sql");
 
 const M2460 = "2460_meetup_invites_self_invite_latent_disclosure.sql";
 const M2461 = "2461_meetup_rls_recursion.sql";
+const M2462 = "2462_meetup_time_votes_write_boundary.sql";
 
 const MEETUP_TABLES = ["meetups", "meetup_invites", "meetup_time_options", "meetup_time_votes"] as const;
 type MeetupTable = (typeof MEETUP_TABLES)[number];
@@ -129,12 +130,12 @@ function cycles(g: Map<string, Set<string>>): string[] {
 const migration = (f: string) => readFileSync(join(MIGRATIONS, f), "utf8");
 
 describe("meetup RLS recursion (2460 + 2461)", () => {
-  it("both migrations exist, each with a rollback", () => {
-    assert.ok(existsSync(join(MIGRATIONS, M2460)), `${M2460} is missing`);
-    assert.ok(existsSync(join(MIGRATIONS, M2461)), `${M2461} is missing`);
+  it("all three migrations exist, each with a rollback", () => {
+    for (const m of [M2460, M2461, M2462]) assert.ok(existsSync(join(MIGRATIONS, m)), `${m} is missing`);
     const rollbacks = readdirSync(join(REPO_ROOT, "db/rollback"));
-    assert.equal(rollbacks.filter((f) => f.includes("2460")).length, 1, "exactly one 2460 rollback");
-    assert.equal(rollbacks.filter((f) => f.includes("2461")).length, 1, "exactly one 2461 rollback");
+    for (const n of ["2460", "2461", "2462"]) {
+      assert.equal(rollbacks.filter((f) => f.includes(n)).length, 1, `exactly one ${n} rollback`);
+    }
   });
 
   it("before 2461 the corpus carries the measured cycle — the detector is not vacuous", () => {
@@ -224,5 +225,55 @@ describe("meetup RLS recursion (2460 + 2461)", () => {
       assert.match(stripComments(migration(M2461)), new RegExp(`tablename = '${t}'\\) <> ${EXPECTED_POLICY_COUNTS[t]}`),
         `2461's postcondition must pin ${t} at ${EXPECTED_POLICY_COUNTS[t]} policies`);
     }
+  });
+
+  // ── 2462: the vote-stuffing write 2461 makes reachable ─────────────────────
+
+  it("before 2462 the winning mtv_own bound only user_id — the outsider vote was accepted (measured)", () => {
+    // Pins the NON-vacuity of the 2462 cases: the refusal they assert is new.
+    const def = finalPolicies(2462).get("meetup_time_votes.mtv_own");
+    assert.ok(def, "mtv_own must have a winning definition before 2462 (baseline)");
+    const check = def!.predicate.replace(/\s+/g, " ");
+    assert.match(check, /WITH CHECK \(\(auth\.uid\(\) = user_id\)\)/i, `pre-2462 mtv_own WITH CHECK was expected to bind only user_id: ${check}`);
+    assert.ok(!/meetup_time_options/i.test(check));
+  });
+
+  it("2462's mtv_own WITH CHECK also requires an option the caller is admitted to", () => {
+    const def = finalPolicies().get("meetup_time_votes.mtv_own");
+    assert.ok(def && def.file === M2462, `mtv_own's winning definition must be 2462's, is ${def?.file}`);
+    assert.match(def!.predicate, /WITH\s+CHECK\s*\([\s\S]*auth\.uid\(\)\s*=\s*user_id[\s\S]*EXISTS\s*\(\s*SELECT\s+1\s+FROM\s+public\.meetup_time_options\s+mto\s+WHERE\s+mto\.id\s*=\s*meetup_time_votes\.option_id/i);
+    assert.match(def!.predicate, /USING\s*\(\s*auth\.uid\(\)\s*=\s*user_id\s*\)/i, "a voter still reads / changes / withdraws their OWN vote");
+    // The subquery is the design: it evaluates under meetup_time_options' own
+    // policies (creator, invitee, crew, circle) — one source of truth, no second
+    // helper that would have to copy the CI/prod trip-branch divergence.
+    assert.ok(!/CREATE\s+(OR\s+REPLACE\s+)?FUNCTION/i.test(stripComments(migration(M2462))), "2462 creates no function");
+  });
+
+  it("2462 touches mtv_own and nothing else, and refuses to run without 2461", () => {
+    const defs = parsePolicies(migration(M2462), M2462).map((p) => `${p.table}.${p.policy}`);
+    assert.deepEqual(defs, ["meetup_time_votes.mtv_own"]);
+    const pre = stripComments(migration(M2462));
+    assert.match(pre, /PRECONDITION FAILED:[^;]*meetups_invitee_select does not route through authz\.is_meetup_invitee[^;]*apply 2461 first/i);
+    assert.match(pre, /PRECONDITION FAILED:[^;]*non-service read of meetup_time_votes still fails/i, "it measures that the cycle is gone rather than trusting the catalog");
+  });
+
+  it("2462 pins the votes policy count at 3 and re-asserts the layering certificate", () => {
+    const sql = stripComments(migration(M2462));
+    assert.match(sql, /tablename = 'meetup_time_votes'\) <> 3/);
+    assert.match(sql, /meetup_time_options' AND r\.expr ~ '\\mmeetup_time_votes\\M'/, "the downward-only certificate from 2461 must be re-run after the new edge");
+    assert.match(sql, /WHEN insufficient_privilege THEN NULL/, "it measures the 42501 refusal of an unadmitted insert inside the migration");
+  });
+
+  it("the new edge (votes -> options) keeps the graph acyclic and layered", () => {
+    const g = referenceGraph(finalPolicies());
+    assert.ok(g.get("meetup_time_votes")!.has("meetup_time_options"), "2462 adds the votes -> options edge");
+    assert.deepEqual(cycles(g), []);
+  });
+
+  it("2462's rollback names the vote stuffing it reopens", () => {
+    const dir = join(REPO_ROOT, "db/rollback");
+    const rb = readFileSync(join(dir, readdirSync(dir).find((f) => f.includes("2462"))!), "utf8");
+    assert.match(rb, /VOTE STUFFING/);
+    assert.match(rb, /WITH CHECK \(auth\.uid\(\) = user_id\);/, "it restores the measured original text");
   });
 });

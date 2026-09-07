@@ -6,10 +6,27 @@
  * CANONICAL_TRIP_TABLES fails the check; a listed file whose count grows fails
  * the check. Counts may only go DOWN, as writers move to lib/tripKernel.ts.
  *
+ * TWO NUMBERS PER FILE
+ * ====================
+ *   direct   every literal `.from("<canonical>").insert|update|upsert|delete`
+ *            in the file — the Phase 0 inventory. This is the number that was
+ *            47 on 2026-09-07 and it does NOT shrink when a writer is
+ *            flag-gated, because the flag-off path keeps the direct write.
+ *   ungated  the subset of `direct` that has NO kernel path: a write is
+ *            "gated" only when it is annotated `trip-kernel:legacy-path` in
+ *            the statement's leading comment AND the file imports
+ *            lib/tripKernel. The annotation is the writer's own claim that a
+ *            command exists for it; the check refuses the annotation in a file
+ *            that never calls the kernel. This is the number the ratchet
+ *            exists for. When it reaches zero, the flag can be flipped and the
+ *            legacy writes deleted, at which point `direct` falls too.
+ *
  * SURVEYED 2026-09-07 on claude/portava-continuation-uqta94 by
- * `check:trip-kernel-writers --print-baseline`. 47 direct writes in 18 files.
- * This is a FLOOR: 38 files in src/ contain a non-literal `.from(expr)` and an
- * `.rpc()` that writes is invisible to a literal scan (the check prints them).
+ * `check:trip-kernel-writers --print-baseline`. 47 direct writes in 18 files;
+ * 32 of them ungated (was 40 before the trip and participant families landed
+ * in migration 2450). This is a FLOOR: 38 files in src/ contain a non-literal
+ * `.from(expr)` and an `.rpc()` that writes is invisible to a literal scan
+ * (the check prints them).
  *
  * The registry (docs/architecture/cross-cutting-obligations.md, "seven sites")
  * and the census (census-trips.md TR1) under-counted this surface: the registry
@@ -22,40 +39,69 @@
  * WHICH OF THESE GO THROUGH THE KERNEL
  * ====================================
  * Only two files consult the kernel at all, and only when trip_kernel_enabled
- * is TRUE; with the flag FALSE (its seeded value) every count below is live:
+ * is TRUE; with the flag FALSE (its seeded value) every `direct` count below
+ * is live:
  *
- *   routes/trips.ts      6 of its 14 writes (the plan-item handlers: create,
- *                        patch, remove, delete, reorder, batch reorder) are
- *                        kernel-gated. The other 8 — trip create/patch and the
- *                        six trip_members writes (invite, accept, decline, add,
- *                        change role, remove) — are still direct.
+ *   routes/trips.ts      ALL 14 of its writes are kernel-gated (contract v2,
+ *                        migration 2450): 6 plan-item writes (ADD_PLAN,
+ *                        UPDATE_PLAN/MOVE_PLAN/CONFIRM_PLAN/CANCEL_PLAN/
+ *                        COMPLETE_ACTIVITY, REMOVE_PLAN x2, REORDER_PLAN x2),
+ *                        trip create (CREATE_TRIP), trip patch (UPDATE_TRIP),
+ *                        invite (INVITE_PARTICIPANT), accept (ACCEPT_INVITE),
+ *                        decline (DECLINE_INVITE), add member
+ *                        (ADD_PARTICIPANT / SET_PARTICIPANT_ROLE), remove
+ *                        member (REMOVE_PARTICIPANT).
  *   routes/routePlan.ts  its 1 write (route_stop_id link on accept) is
  *                        kernel-gated when the plan is attached to a trip.
  *
- * Everything else is a legacy direct write with no kernel path. The lane
- * report names the change each needs.
+ * Everything else is a legacy direct write with no kernel path. The command
+ * each one needs now EXISTS (2450); the lane report names the change per site.
+ *
+ * CLASSIFIED OUT OF THE AGGREGATE, NOT MIGRATED
+ * =============================================
+ *   lib/tripReminderScheduler.ts (3) and routes/admin.ts's reminder reset (1
+ *   of its 3) write trips.reminder_sent_at / reminder_retry_count /
+ *   reminder_delivered_at — scheduler claim columns (compare-and-set,
+ *   at-most-once delivery), not aggregate state. A kernel command per reminder
+ *   would bump trips.version and hand clients spurious TRIP_VERSION_CONFLICTs.
+ *   They stay direct until those three columns move off `trips` into a
+ *   sidecar table, which is the change that removes them from this inventory.
  */
 
 /** The Trip aggregate's own rows (Trips spec §2.2). */
 export const CANONICAL_TRIP_TABLES = ["trips", "trip_members", "trip_plan_items"] as const;
 
-export const TRIP_KERNEL_DIRECT_WRITERS: Record<string, number> = {
-  "compass/CompassAutopilotEngine.ts": 1,   // trip_plan_items insert on proposal accept (Compass lane)
-  "lib/tripReminderScheduler.ts": 3,        // trips reminder bookkeeping columns (not aggregate state)
-  "lib/visuals/service.ts": 1,              // trips cover columns (Visuals lane)
-  "routes/admin.ts": 3,                     // admin moderation writes to trips
-  "routes/airport.ts": 3,                   // trip_plan_items from Layover (Layover lane)
-  "routes/compass.ts": 1,                   // trip_plan_items (Compass lane)
-  "routes/events.ts": 1,
-  "routes/hiddenGems.ts": 1,
-  "routes/plan.ts": 2,
-  "routes/requests.ts": 3,                  // trip_members accept/decline/withdraw (Requests lane)
-  "routes/routePlan.ts": 1,                 // KERNEL-GATED (legacy path kept for flag-off / detached plans)
-  "routes/telegraphChat.ts": 1,
-  "routes/tripReservations.ts": 1,
-  "routes/trips-expansion.ts": 7,           // trips status/complete/settings, trip_members
-  "routes/trips.ts": 14,                    // 6 KERNEL-GATED plan-item writes + 8 direct trip/member writes
-  "services/appeals/resolveAppeal.ts": 2,
-  "services/contentTranslation.ts": 1,      // single-quoted .from('trips') — missed by every double-quote grep
-  "services/hiddenGems/HiddenGemService.ts": 1,
+/**
+ * The comment token that marks a direct write as the flag-off twin of a kernel
+ * command. It must appear in the statement's leading comment, i.e. after the
+ * previous `;` and before the `.from(`.
+ */
+export const LEGACY_PATH_MARKER = "trip-kernel:legacy-path";
+
+export interface WriterBaseline {
+  /** All literal direct writes (Phase 0 inventory). */
+  direct: number;
+  /** Direct writes with no kernel path (the Phase 1 ratchet). */
+  ungated: number;
+}
+
+export const TRIP_KERNEL_DIRECT_WRITERS: Record<string, WriterBaseline> = {
+  "compass/CompassAutopilotEngine.ts":     { direct: 1, ungated: 1 }, // trip_plan_items insert on proposal accept (Compass lane) -> ADD_PLAN
+  "lib/tripReminderScheduler.ts":          { direct: 3, ungated: 3 }, // reminder bookkeeping columns (not aggregate state; see header)
+  "lib/visuals/service.ts":                { direct: 1, ungated: 1 }, // trips cover columns (Visuals lane) -> SET_TRIP_COVER (system)
+  "routes/admin.ts":                       { direct: 3, ungated: 3 }, // 2 x visibility hide -> ADMIN_HIDE_TRIP (admin); 1 x reminder reset (not aggregate state)
+  "routes/airport.ts":                     { direct: 3, ungated: 3 }, // trip_plan_items from Layover (Layover lane) -> ADD_PLAN / UPDATE_PLAN / REMOVE_PLAN
+  "routes/compass.ts":                     { direct: 1, ungated: 1 }, // trip_plan_items (Compass lane) -> ADD_PLAN
+  "routes/events.ts":                      { direct: 1, ungated: 1 }, // -> ADD_PLAN
+  "routes/hiddenGems.ts":                  { direct: 1, ungated: 1 }, // -> ADD_PLAN
+  "routes/plan.ts":                        { direct: 2, ungated: 2 }, // -> UPDATE_PLAN / REMOVE_PLAN
+  "routes/requests.ts":                    { direct: 3, ungated: 3 }, // accept -> ACCEPT_INVITE; decline -> DECLINE_INVITE; cancel -> REMOVE_PARTICIPANT
+  "routes/routePlan.ts":                   { direct: 1, ungated: 0 }, // KERNEL-GATED (legacy path kept for flag-off / detached plans)
+  "routes/telegraphChat.ts":               { direct: 1, ungated: 1 }, // -> ADD_PLAN
+  "routes/tripReservations.ts":            { direct: 1, ungated: 1 }, // -> ADD_PLAN / UPDATE_PLAN
+  "routes/trips-expansion.ts":             { direct: 7, ungated: 7 }, // settings -> UPDATE_TRIP; cancel/complete/archive/delete -> CANCEL_TRIP/COMPLETE_TRIP/ARCHIVE_TRIP; join approve + invite-link join -> ADD_PARTICIPANT / SET_PARTICIPANT_ROLE
+  "routes/trips.ts":                       { direct: 14, ungated: 0 }, // ALL KERNEL-GATED (contract v2)
+  "services/appeals/resolveAppeal.ts":     { direct: 2, ungated: 2 }, // -> ADMIN_HIDE_TRIP's inverse does not exist yet (see lane report)
+  "services/contentTranslation.ts":        { direct: 1, ungated: 1 }, // single-quoted .from('trips') — original_language (derived column; see lane report)
+  "services/hiddenGems/HiddenGemService.ts": { direct: 1, ungated: 1 }, // -> ADD_PLAN
 };

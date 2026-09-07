@@ -7,7 +7,7 @@
  *   §24 Phase 1 "Ratchet direct writes: new code must use commands; legacy
  *                paths are enumerated and reduced."
  *   §1  "No Map, Compass, Telegraph, Discovery, Buddy, or UI component may
- *        independently invent canonical trip state."
+ *       independently invent canonical trip state."
  *
  * WHAT IT DOES
  * ============
@@ -15,12 +15,19 @@
  * every literal `.from("<canonical trip table>")` that is followed by
  * `.insert(` / `.update(` / `.upsert(` / `.delete(` before the statement ends.
  * The canonical tables are the Trip aggregate's own rows: trips, trip_members,
- * trip_plan_items (tripKernelWriterBaseline.ts). It compares the counts to the
- * committed baseline and:
+ * trip_plan_items (tripKernelWriterBaseline.ts).
+ *
+ * Each write is either GATED — its statement's leading comment carries the
+ * token `trip-kernel:legacy-path` (LEGACY_PATH_MARKER) and the file imports
+ * lib/tripKernel — or UNGATED. The baseline records both `direct` (all
+ * writes) and `ungated` (writes with no kernel path) per file, and the check:
  *
  *   FAILS (exit 1) when a file not in the baseline writes a canonical table —
- *     a NEW direct writer — or when a listed file's count GREW. New code must
- *     go through lib/tripKernel.ts.
+ *     a NEW direct writer — or when a listed file's `direct` or `ungated`
+ *     count GREW, or when a file carries the marker without importing the
+ *     kernel (an annotation is a claim that a command exists; the check
+ *     refuses a claim the file cannot back). New code must go through
+ *     lib/tripKernel.ts.
  *   PASSES (exit 0) when every count is <= its baseline. A count BELOW the
  *     baseline is reported so the baseline can be lowered; a ratchet that is
  *     never tightened stops being read.
@@ -32,6 +39,9 @@
  * to a function that writes. Every file containing a non-literal `.from(` is
  * listed in the output as "attribution incomplete" so the reader knows the
  * count is a FLOOR for that file. Nothing here settles "nothing writes X".
+ * The marker is likewise a claim, not a proof, that the gated path is
+ * equivalent: src/test/tripKernel.test.ts and the lane report's byte-identity
+ * scenario are what prove it.
  *
  * Usage (from artifacts/api-server):
  *   pnpm run check:trip-kernel-writers
@@ -41,7 +51,12 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
-import { CANONICAL_TRIP_TABLES, TRIP_KERNEL_DIRECT_WRITERS } from "./tripKernelWriterBaseline.js";
+import {
+  CANONICAL_TRIP_TABLES,
+  LEGACY_PATH_MARKER,
+  TRIP_KERNEL_DIRECT_WRITERS,
+  type WriterBaseline,
+} from "./tripKernelWriterBaseline.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SRC = join(HERE, "..");
@@ -50,10 +65,18 @@ const EXCLUDED_DIRS = new Set(["test", "scripts", "migrations", "node_modules"])
 const WRITE_VERB_RE = /\.(insert|update|upsert|delete)\s*\(/;
 const LITERAL_FROM_RE = /\.from\(\s*(["'`])([A-Za-z0-9_]+)\1\s*\)/g;
 const ANY_FROM_RE = /\.from\(\s*([^)\s])/g;
+const KERNEL_IMPORT_RE = /from\s+["'][^"']*\/tripKernel(?:\.js)?["']/;
+/** How far back from `.from(` a leading comment may sit and still belong to the statement. */
+const MARKER_WINDOW = 600;
 
 export interface WriterCount {
   file: string;
+  /** All literal direct writes. */
   count: number;
+  /** Writes annotated LEGACY_PATH_MARKER (only meaningful when importsKernel). */
+  gated: number;
+  /** Whether the file imports lib/tripKernel — without it a marker is refused. */
+  importsKernel: boolean;
   dynamicFrom: boolean;
 }
 
@@ -71,17 +94,25 @@ function walk(dir: string, out: string[]): void {
 }
 
 /** Count direct writes to canonical trip tables in one file's source text. */
-export function countCanonicalWrites(text: string): { count: number; dynamicFrom: boolean } {
+export function countCanonicalWrites(text: string): Pick<WriterCount, "count" | "gated" | "importsKernel" | "dynamicFrom"> {
   const canonical = new Set<string>(CANONICAL_TRIP_TABLES);
   let count = 0;
+  let gated = 0;
   for (const m of text.matchAll(LITERAL_FROM_RE)) {
     if (!canonical.has(m[2])) continue;
-    const start = (m.index ?? 0) + m[0].length;
+    const at = m.index ?? 0;
+    const start = at + m[0].length;
     // The chained call ends at the statement terminator; bound the window so a
     // file with no semicolons cannot make one .from() swallow the next.
     const semi = text.indexOf(";", start);
     const end = Math.min(semi === -1 ? text.length : semi, start + 800);
-    if (WRITE_VERB_RE.test(text.slice(start, end))) count += 1;
+    if (!WRITE_VERB_RE.test(text.slice(start, end))) continue;
+    count += 1;
+    // The marker belongs to THIS statement only if it sits after the previous
+    // statement's `;` — one marker cannot cover two writes.
+    const lead = text.slice(Math.max(0, at - MARKER_WINDOW), at);
+    const lastSemi = lead.lastIndexOf(";");
+    if (lead.slice(lastSemi + 1).includes(LEGACY_PATH_MARKER)) gated += 1;
   }
   let dynamicFrom = false;
   for (const m of text.matchAll(ANY_FROM_RE)) {
@@ -94,7 +125,7 @@ export function countCanonicalWrites(text: string): { count: number; dynamicFrom
       break;
     }
   }
-  return { count, dynamicFrom };
+  return { count, gated, importsKernel: KERNEL_IMPORT_RE.test(text), dynamicFrom };
 }
 
 export function surveyTree(root: string = SRC): WriterCount[] {
@@ -102,31 +133,42 @@ export function surveyTree(root: string = SRC): WriterCount[] {
   walk(root, files);
   const rows: WriterCount[] = [];
   for (const f of files.sort()) {
-    const { count, dynamicFrom } = countCanonicalWrites(readFileSync(f, "utf8"));
-    if (count > 0 || dynamicFrom) rows.push({ file: relative(root, f).split("\\").join("/"), count, dynamicFrom });
+    const c = countCanonicalWrites(readFileSync(f, "utf8"));
+    if (c.count > 0 || c.dynamicFrom || c.gated > 0) {
+      rows.push({ file: relative(root, f).split("\\").join("/"), ...c });
+    }
   }
   return rows;
 }
 
+/** Ungated writes: every direct write the file cannot back with a kernel path. */
+export function ungatedOf(r: Pick<WriterCount, "count" | "gated" | "importsKernel">): number {
+  return r.importsKernel ? r.count - r.gated : r.count;
+}
+
 export interface RatchetVerdict {
   newWriters: WriterCount[];
-  grew: Array<WriterCount & { baseline: number }>;
-  shrank: Array<WriterCount & { baseline: number }>;
+  grew: Array<WriterCount & { baseline: WriterBaseline; ungated: number }>;
+  shrank: Array<WriterCount & { baseline: WriterBaseline; ungated: number }>;
+  /** Marker present in a file that does not import lib/tripKernel. */
+  falseMarkers: WriterCount[];
   vanished: string[];
   incomplete: string[];
 }
 
-export function judge(rows: WriterCount[], baseline: Record<string, number>): RatchetVerdict {
-  const v: RatchetVerdict = { newWriters: [], grew: [], shrank: [], vanished: [], incomplete: [] };
+export function judge(rows: WriterCount[], baseline: Record<string, WriterBaseline>): RatchetVerdict {
+  const v: RatchetVerdict = { newWriters: [], grew: [], shrank: [], falseMarkers: [], vanished: [], incomplete: [] };
   const seen = new Set<string>();
   for (const r of rows) {
     if (r.dynamicFrom) v.incomplete.push(r.file);
+    if (r.gated > 0 && !r.importsKernel) v.falseMarkers.push(r);
     if (r.count === 0) continue;
     seen.add(r.file);
     const b = baseline[r.file];
-    if (b === undefined) v.newWriters.push(r);
-    else if (r.count > b) v.grew.push({ ...r, baseline: b });
-    else if (r.count < b) v.shrank.push({ ...r, baseline: b });
+    const ungated = ungatedOf(r);
+    if (b === undefined) { v.newWriters.push(r); continue; }
+    if (r.count > b.direct || ungated > b.ungated) v.grew.push({ ...r, baseline: b, ungated });
+    else if (r.count < b.direct || ungated < b.ungated) v.shrank.push({ ...r, baseline: b, ungated });
   }
   for (const f of Object.keys(baseline)) if (!seen.has(f)) v.vanished.push(f);
   return v;
@@ -143,16 +185,21 @@ function main(): number {
   }
 
   if (printBaseline) {
-    console.log("export const TRIP_KERNEL_DIRECT_WRITERS: Record<string, number> = {");
-    for (const r of rows) if (r.count > 0) console.log(`  "${r.file}": ${r.count},`);
+    console.log("export const TRIP_KERNEL_DIRECT_WRITERS: Record<string, WriterBaseline> = {");
+    for (const r of rows) if (r.count > 0) console.log(`  "${r.file}": { direct: ${r.count}, ungated: ${ungatedOf(r)} },`);
     console.log("};");
     return 0;
   }
 
   const v = judge(rows, TRIP_KERNEL_DIRECT_WRITERS);
   const total = rows.reduce((n, r) => n + r.count, 0);
+  const ungated = rows.reduce((n, r) => n + ungatedOf(r), 0);
   const files = rows.filter((r) => r.count > 0).length;
-  console.log(`check:trip-kernel-writers — ${total} direct write(s) to ${CANONICAL_TRIP_TABLES.join("/")} across ${files} file(s); baseline lists ${Object.keys(TRIP_KERNEL_DIRECT_WRITERS).length} file(s).`);
+  const baselineUngated = Object.values(TRIP_KERNEL_DIRECT_WRITERS).reduce((n, b) => n + b.ungated, 0);
+  console.log(
+    `check:trip-kernel-writers — ${total} direct write(s) to ${CANONICAL_TRIP_TABLES.join("/")} across ${files} file(s); ` +
+    `${ungated} UNGATED (no kernel path; baseline ${baselineUngated}); baseline lists ${Object.keys(TRIP_KERNEL_DIRECT_WRITERS).length} file(s).`,
+  );
 
   if (v.incomplete.length) {
     console.log(`\nattribution INCOMPLETE for ${v.incomplete.length} file(s) — a non-literal .from(expr) is present, so the count there is a floor:`);
@@ -167,18 +214,23 @@ function main(): number {
   }
   if (v.grew.length) {
     rc = 1;
-    console.log(`\nFAIL — ${v.grew.length} file(s) gained direct writes (legacy paths may only shrink):`);
-    for (const r of v.grew) console.log(`  ${r.file}: ${r.count} (baseline ${r.baseline})`);
+    console.log(`\nFAIL — ${v.grew.length} file(s) gained direct or ungated writes (legacy paths may only shrink):`);
+    for (const r of v.grew) console.log(`  ${r.file}: direct ${r.count} (baseline ${r.baseline.direct}), ungated ${r.ungated} (baseline ${r.baseline.ungated})`);
+  }
+  if (v.falseMarkers.length) {
+    rc = 1;
+    console.log(`\nFAIL — ${v.falseMarkers.length} file(s) carry "${LEGACY_PATH_MARKER}" but never import lib/tripKernel; a write cannot claim a kernel path it does not have:`);
+    for (const r of v.falseMarkers) console.log(`  ${r.file}: ${r.gated} marker(s)`);
   }
   if (v.shrank.length) {
     console.log(`\nratchet can be tightened — ${v.shrank.length} file(s) now write LESS than the baseline; lower the entry in tripKernelWriterBaseline.ts:`);
-    for (const r of v.shrank) console.log(`  ${r.file}: ${r.count} (baseline ${r.baseline})`);
+    for (const r of v.shrank) console.log(`  ${r.file}: direct ${r.count} (baseline ${r.baseline.direct}), ungated ${r.ungated} (baseline ${r.baseline.ungated})`);
   }
   if (v.vanished.length) {
     console.log(`\nratchet can be tightened — ${v.vanished.length} baseline file(s) no longer write any canonical trip table; remove the entry:`);
     for (const f of v.vanished) console.log(`  ${f}`);
   }
-  if (rc === 0) console.log("\nOK — no new direct writer and no count grew.");
+  if (rc === 0) console.log("\nOK — no new direct writer, no count grew, no false marker.");
   return rc;
 }
 

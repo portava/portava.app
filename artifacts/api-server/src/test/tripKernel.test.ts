@@ -36,13 +36,18 @@ import {
   readTripCommandRejectedTotal,
   _resetTripCommandRejectedTotal,
   executeTripCommand,
+  tripCommandFamily,
+  TRIP_EVENT_TYPES,
+  TRIP_KERNEL_CONTRACT_VERSION,
 } from "../lib/tripKernel.js";
-import { countCanonicalWrites, judge } from "../scripts/checkTripKernelWriters.js";
+import { countCanonicalWrites, judge, surveyTree, ungatedOf } from "../scripts/checkTripKernelWriters.js";
+import { TRIP_KERNEL_DIRECT_WRITERS } from "../scripts/tripKernelWriterBaseline.js";
 
 // ── IDs ───────────────────────────────────────────────────────────────────────
 const ALICE_ID = "aaaaaaaa-0000-0000-0000-000000000001"; // owner (no trip_members row)
 const BOB_ID   = "bbbbbbbb-0000-0000-0000-000000000002"; // accepted member
 const CAROL_ID = "cccccccc-0000-0000-0000-000000000003"; // non-member
+const DAVE_ID  = "dddddddd-0000-0000-0000-000000000004"; // pending invitee (role 'invited')
 const TRIP_ID  = "33333333-0000-0000-0000-000000000001";
 const ITEM_A   = "66666666-0000-0000-0000-000000000004";
 const ITEM_B   = "77777777-0000-0000-0000-000000000005";
@@ -67,9 +72,17 @@ interface State {
 
 function baseState(kernelOn: boolean): State {
   return {
-    users: { "alice-tok": { id: ALICE_ID }, "bob-tok": { id: BOB_ID }, "carol-tok": { id: CAROL_ID } },
-    trips: [{ id: TRIP_ID, owner_id: ALICE_ID, plan_edit_permission: "all_members", version: 0 }],
-    trip_members: [{ trip_id: TRIP_ID, user_id: BOB_ID, role: "member", status: "accepted" }],
+    users: { "alice-tok": { id: ALICE_ID }, "bob-tok": { id: BOB_ID }, "carol-tok": { id: CAROL_ID }, "dave-tok": { id: DAVE_ID } },
+    trips: [{ id: TRIP_ID, owner_id: ALICE_ID, plan_edit_permission: "all_members", version: 0,
+      title: "Lisbon", destination_city: "Lisbon", destination_country: "PT", start_date: "2026-10-01", end_date: "2026-10-05",
+      status: "upcoming", visibility: "private", timezone: "Europe/Lisbon", trip_notes: null, cover_url: null, cover_media_type: null,
+      show_header_publicly: false, reminder_sent_at: null, internal_notes: "NEVER-TO-CLIENT",
+      created_at: "2026-01-01T00:00:00.000Z", updated_at: "2026-01-01T00:00:00.000Z" }],
+    trip_members: [
+      { trip_id: TRIP_ID, user_id: BOB_ID, role: "member", status: "accepted" },
+      // Legacy invite row shape: role 'invited', status left at its default.
+      { trip_id: TRIP_ID, user_id: DAVE_ID, role: "invited", status: "accepted" },
+    ],
     trip_plan_items: [
       { id: ITEM_A, trip_id: TRIP_ID, creator_id: ALICE_ID, title: "Dinner", category: "dining", status: "tentative",
         source_type: "manual", source_id: null, day_date: null, starts_at: null, ends_at: null, location_name: null,
@@ -111,6 +124,15 @@ function makeFakeClient(state: State) {
       eq(col: string, val: any) { filters.push((r: any) => r[col] === val); return b; },
       in(col: string, vals: any[]) { filters.push((r: any) => vals.includes(r[col])); return b; },
       is(col: string, val: any) { filters.push((r: any) => (val === null ? r[col] == null : r[col] === val)); return b; },
+      // Filters the trip routes' side-effects use on tables this fake keeps
+      // empty (trust_restrictions, message_threads, ...): pass-through.
+      or() { return b; },
+      gt() { return b; },
+      gte() { return b; },
+      lt() { return b; },
+      lte() { return b; },
+      neq() { return b; },
+      not() { return b; },
       order() { return b; },
       limit() { return b; },
       maybeSingle() { return resolveOne(); },
@@ -177,19 +199,62 @@ function makeFakeClient(state: State) {
     if (state.rpcFail) return { data: null, error: { message: "simulated database error" } };
     if (name !== "trip_kernel_execute") return { data: null, error: { message: `unknown rpc ${name}` } };
     const c = args.p_command;
-    const reject = (reason: string, extra: Record<string, unknown> = {}) => ({ data: { ok: false, reason, ...extra }, error: null });
+    const reject = (reason: string, extra: Record<string, unknown> = {}) => ({ data: { ok: false, reason, ...extra, contract_version: 2 }, error: null });
 
-    const trip = state.trips.find((t) => t.id === c.trip_id);
-    if (!trip) return reject("TRIP_NOT_FOUND");
-    const receipt = state.trip_command_receipts.find((r) => r.trip_id === c.trip_id && r.idempotency_key === c.idempotency_key);
-    if (receipt) {
-      if (receipt.actor_user_id !== c.actor_user_id) return reject("TRIP_AUTH_IDEMPOTENCY_KEY_FOREIGN");
-      return { data: { ok: true, duplicate: true, version: receipt.result_version, event_id: receipt.event_id, result: receipt.result_json }, error: null };
+    // Contract v2 (2450): capability per command family.
+    const REQUIRED: Record<string, string> = {
+      ADD_PLAN: "crew", UPDATE_PLAN: "crew", MOVE_PLAN: "crew", CONFIRM_PLAN: "crew", CANCEL_PLAN: "crew",
+      COMPLETE_ACTIVITY: "crew", REMOVE_PLAN: "crew", REORDER_PLAN: "crew", LINK_PLAN_ROUTE_STOP: "crew",
+      CREATE_TRIP: "none", UPDATE_TRIP: "owner", CANCEL_TRIP: "owner", COMPLETE_TRIP: "owner", ARCHIVE_TRIP: "owner",
+      INVITE_PARTICIPANT: "owner", ADD_PARTICIPANT: "owner", SET_PARTICIPANT_ROLE: "owner", REMOVE_PARTICIPANT: "owner",
+      ACCEPT_INVITE: "invited", DECLINE_INVITE: "invited", ADMIN_HIDE_TRIP: "admin", SET_TRIP_COVER: "system",
+    };
+    const required = REQUIRED[c.type];
+    if (required === undefined) return reject("TRIP_COMMAND_UNKNOWN_TYPE", { type: c.type });
+    const actorRole = c.actor_role ?? "user";
+    if ((required === "admin" && actorRole !== "admin") || (required === "system" && actorRole !== "system")
+        || (!["admin", "system"].includes(required) && actorRole !== "user")) {
+      return reject("TRIP_AUTH_ROLE_NOT_PERMITTED", { actor_role: actorRole, type: c.type });
     }
-    const isCrew = trip.owner_id === c.actor_user_id || state.trip_members.some((m) =>
-      m.trip_id === c.trip_id && m.user_id === c.actor_user_id &&
-      ["owner", "co_host", "member", "viewer"].includes(m.role) && (m.status ?? "accepted") === "accepted");
-    if (!isCrew) return reject("TRIP_AUTH_NOT_CREW");
+    let trip = state.trips.find((t) => t.id === c.trip_id);
+    if (c.type === "CREATE_TRIP") {
+      if (trip) {
+        const rc = state.trip_command_receipts.find((r) => r.trip_id === c.trip_id && r.idempotency_key === c.idempotency_key);
+        if (rc && rc.command_type === "CREATE_TRIP" && rc.actor_user_id === c.actor_user_id) {
+          return { data: { ok: true, duplicate: true, version: rc.result_version, event_id: rc.event_id, result: rc.result_json, contract_version: 2 }, error: null };
+        }
+        return reject("TRIP_IDENTITY_ALREADY_EXISTS");
+      }
+      const p0 = c.payload ?? {};
+      if (p0.start_date && p0.end_date && p0.start_date > p0.end_date) return reject("TRIP_TEMPORAL_RANGE_INVERTED");
+      trip = { id: c.trip_id, owner_id: c.actor_user_id, version: 0, plan_edit_permission: "all_members",
+        title: p0.title ?? null, destination_city: p0.destination_city ?? null, destination_country: p0.destination_country ?? null,
+        start_date: p0.start_date ?? null, end_date: p0.end_date ?? null, status: p0.status ?? "planning",
+        visibility: p0.visibility ?? "private", cover_url: p0.cover_url ?? null, cover_media_type: p0.cover_media_type ?? null,
+        trip_notes: p0.trip_notes ?? null, show_header_publicly: p0.show_header_publicly ?? ((p0.visibility ?? "private") === "public"),
+        reminder_sent_at: null, internal_notes: "NEVER-TO-CLIENT",
+        created_at: "2026-01-02T00:00:00.000Z", updated_at: "2026-01-02T00:00:00.000Z" };
+      state.trips.push(trip);
+      // trg_trip_owner_member: the owner row appears with the trip.
+      state.trip_members.push({ trip_id: trip.id, user_id: c.actor_user_id, role: "owner", status: "accepted" });
+    } else {
+      if (!trip) return reject("TRIP_NOT_FOUND");
+      const receipt = state.trip_command_receipts.find((r) => r.trip_id === c.trip_id && r.idempotency_key === c.idempotency_key);
+      if (receipt) {
+        if (receipt.actor_user_id !== (c.actor_user_id ?? null) || (receipt.actor_role ?? "user") !== actorRole) return reject("TRIP_AUTH_IDEMPOTENCY_KEY_FOREIGN");
+        return { data: { ok: true, duplicate: true, version: receipt.result_version, event_id: receipt.event_id, result: receipt.result_json, contract_version: 2 }, error: null };
+      }
+      const isCrew = trip.owner_id === c.actor_user_id || state.trip_members.some((m) =>
+        m.trip_id === c.trip_id && m.user_id === c.actor_user_id &&
+        ["owner", "co_host", "member", "viewer"].includes(m.role) && (m.status ?? "accepted") === "accepted");
+      const isOwner = trip.owner_id === c.actor_user_id || state.trip_members.some((m) =>
+        m.trip_id === c.trip_id && m.user_id === c.actor_user_id && m.role === "owner" && (m.status ?? "accepted") === "accepted");
+      const ownRow = state.trip_members.find((m) => m.trip_id === c.trip_id && m.user_id === c.actor_user_id);
+      if (required === "crew" && !isCrew) return reject("TRIP_AUTH_NOT_CREW");
+      if (required === "owner" && !isOwner) return reject("TRIP_AUTH_NOT_OWNER");
+      if (required === "invited" && (!ownRow || ownRow.role !== "invited")) return reject("TRIP_AUTH_NOT_INVITED", { current_role: ownRow?.role ?? null });
+      if (required === "admin" && !(state as any).admins?.includes(c.actor_user_id)) return reject("TRIP_AUTH_NOT_ADMIN");
+    }
     const current = trip.version ?? 0;
     if (c.expected_trip_version != null && c.expected_trip_version !== current) {
       return reject("TRIP_VERSION_CONFLICT", { current_version: current, expected_version: c.expected_trip_version });
@@ -240,6 +305,84 @@ function makeFakeClient(state: State) {
         item.route_stop_id = p.route_stop_id;
         eventType = "trip.plan_route_stop_linked"; result = { id: p.item_id, route_stop_id: p.route_stop_id }; break;
       }
+      // ── Contract v2 families (2450) ──
+      case "CREATE_TRIP": {
+        eventType = "trip.created"; result = trip; break;
+      }
+      case "UPDATE_TRIP": {
+        const patch = p.patch ?? {};
+        const allowed = ["title","destination_city","destination_country","destination_lat","destination_lng","destination_place_id",
+          "start_date","end_date","status","visibility","trip_type","timezone","travel_style","open_to_meet","cover_url","cover_media_type",
+          "cover_image_width","cover_image_height","trip_notes","show_on_profile","show_in_discovery","allow_friend_suggestions",
+          "allow_trip_crew_invites","allow_join_requests","show_exact_dates","show_destination_city","delayed_posting_default",
+          "precise_location_visible","plan_edit_permission","progress","show_header_publicly"];
+        const bad = Object.keys(patch).find((k) => !allowed.includes(k));
+        if (bad) return reject("TRIP_COMMAND_MALFORMED", { detail: `UPDATE_TRIP does not accept column ${bad}` });
+        const start = patch.start_date !== undefined ? patch.start_date : trip.start_date;
+        const end = patch.end_date !== undefined ? patch.end_date : trip.end_date;
+        if (start && end && start > end) return reject("TRIP_TEMPORAL_RANGE_INVERTED");
+        const from = trip.status; const to = patch.status ?? from;
+        if (to !== from && ["cancelled", "archived"].includes(from)) return reject("TRIP_LIFECYCLE_INVALID_TRANSITION", { from, to });
+        Object.assign(trip, patch, { updated_at: p.updated_at ?? "2026-01-03T00:00:00.000Z" });
+        eventType = to === "completed" && from !== "completed" ? "trip.trip_completed" : "trip.updated";
+        result = trip; break;
+      }
+      case "CANCEL_TRIP": case "COMPLETE_TRIP": case "ARCHIVE_TRIP": {
+        const to = c.type === "CANCEL_TRIP" ? "cancelled" : c.type === "COMPLETE_TRIP" ? "completed" : "archived";
+        const from = trip.status;
+        if (from === to || from === "archived" || (c.type === "COMPLETE_TRIP" && from === "cancelled")) return reject("TRIP_LIFECYCLE_INVALID_TRANSITION", { from, to });
+        trip.status = to;
+        eventType = `trip.trip_${to}`; result = trip; break;
+      }
+      case "SET_TRIP_COVER": {
+        if (!p.cover_url) return reject("TRIP_COMMAND_MALFORMED", { detail: "cover_url required" });
+        trip.cover_url = p.cover_url; if (p.cover_media_type !== undefined) trip.cover_media_type = p.cover_media_type;
+        eventType = "trip.cover_set"; result = trip; break;
+      }
+      case "ADMIN_HIDE_TRIP": {
+        trip.visibility = "private"; eventType = "trip.hidden_by_admin"; result = trip; break;
+      }
+      case "INVITE_PARTICIPANT": case "ADD_PARTICIPANT": {
+        const role = c.type === "INVITE_PARTICIPANT" ? "invited" : (p.role ?? "member");
+        if (!p.user_id) return reject("TRIP_COMMAND_MALFORMED", { detail: "user_id required" });
+        if (p.user_id === c.actor_user_id) return reject("TRIP_COMMAND_MALFORMED", { detail: "the actor cannot add or invite themselves" });
+        if (!["member", "invited"].includes(role)) return reject("TRIP_COMMAND_MALFORMED", { detail: "role must be member or invited" });
+        const existing = state.trip_members.find((m) => m.trip_id === c.trip_id && m.user_id === p.user_id);
+        if (existing) return reject("TRIP_PARTICIPANT_ALREADY_EXISTS", { current_role: existing.role });
+        if (role === "member" && trip.max_members != null &&
+            state.trip_members.filter((m) => m.trip_id === c.trip_id && (m.status ?? "accepted") === "accepted").length >= trip.max_members) {
+          return reject("TRIP_PARTICIPANT_CAPACITY_REACHED");
+        }
+        // Legacy row shape for an invite: role 'invited', status default.
+        const row = { trip_id: c.trip_id, user_id: p.user_id, role, status: c.type === "INVITE_PARTICIPANT" ? "accepted" : (p.status ?? "accepted") };
+        state.trip_members.push(row);
+        eventType = c.type === "INVITE_PARTICIPANT" ? "trip.participant_invited" : "trip.participant_added";
+        result = { trip_id: c.trip_id, user_id: p.user_id, role, status: row.status }; break;
+      }
+      case "SET_PARTICIPANT_ROLE": {
+        const row = state.trip_members.find((m) => m.trip_id === c.trip_id && m.user_id === p.user_id);
+        if (!row) return reject("TRIP_PARTICIPANT_NOT_FOUND");
+        if (row.role === "owner" || p.user_id === trip.owner_id) return reject("TRIP_PARTICIPANT_IS_OWNER");
+        if (!["member", "invited"].includes(p.role)) return reject("TRIP_COMMAND_MALFORMED");
+        row.role = p.role;
+        eventType = "trip.participant_role_set"; result = { trip_id: c.trip_id, user_id: p.user_id, role: p.role, status: row.status }; break;
+      }
+      case "REMOVE_PARTICIPANT": {
+        const row = state.trip_members.find((m) => m.trip_id === c.trip_id && m.user_id === p.user_id);
+        if (!row) return reject("TRIP_PARTICIPANT_NOT_FOUND");
+        if (row.role === "owner" || p.user_id === trip.owner_id) return reject("TRIP_PARTICIPANT_IS_OWNER");
+        state.trip_members = state.trip_members.filter((m) => m !== row);
+        eventType = "trip.participant_removed"; result = { trip_id: c.trip_id, user_id: p.user_id, role: row.role }; break;
+      }
+      case "ACCEPT_INVITE": {
+        const row = state.trip_members.find((m) => m.trip_id === c.trip_id && m.user_id === c.actor_user_id)!;
+        row.role = "member";
+        eventType = "trip.participant_joined"; result = { trip_id: c.trip_id, user_id: c.actor_user_id, role: "member", status: row.status }; break;
+      }
+      case "DECLINE_INVITE": {
+        state.trip_members = state.trip_members.filter((m) => !(m.trip_id === c.trip_id && m.user_id === c.actor_user_id));
+        eventType = "trip.participant_declined"; result = { trip_id: c.trip_id, user_id: c.actor_user_id }; break;
+      }
       default:
         return reject("TRIP_COMMAND_UNKNOWN_TYPE", { type: c.type });
     }
@@ -249,11 +392,12 @@ function makeFakeClient(state: State) {
     const event_id = `evt-${++counter}`;
     const strip = (o: any) => { if (!o || typeof o !== "object") return o; const { lat: _a, lng: _b, ...rest } = o; return rest; };
     state.trip_events.push({ event_id, trip_id: c.trip_id, aggregate_version: trip.version, sequence, type: eventType,
-      actor_user_id: c.actor_user_id, causation_id: c.command_id, payload_json: { command_type: c.type, payload: strip(p), result: strip(result) } });
+      actor_user_id: c.actor_user_id ?? null, actor_role: actorRole, causation_id: c.command_id,
+      payload_json: { command_type: c.type, payload: strip(p), result: strip(result) } });
     state.trip_outbox.push({ event_id, trip_id: c.trip_id, type: eventType });
     state.trip_command_receipts.push({ trip_id: c.trip_id, idempotency_key: c.idempotency_key, command_id: c.command_id,
-      command_type: c.type, actor_user_id: c.actor_user_id, event_id, result_version: trip.version, result_json: result });
-    return { data: { ok: true, duplicate: false, version: trip.version, event_id, sequence, result }, error: null };
+      command_type: c.type, actor_user_id: c.actor_user_id ?? null, actor_role: actorRole, event_id, result_version: trip.version, result_json: result });
+    return { data: { ok: true, duplicate: false, version: trip.version, event_id, sequence, result, contract_version: 2 }, error: null };
   }
 
   return {
@@ -584,23 +728,58 @@ describe("check:trip-kernel-writers (§24 Phase 1 ratchet)", () => {
       const d = await sc.from("trip_notes").insert({});
       const e = await (client as any).from("trip_members").delete().eq("trip_id", t);
     `;
-    assert.deepEqual(countCanonicalWrites(src), { count: 3, dynamicFrom: false });
+    assert.deepEqual(countCanonicalWrites(src), { count: 3, gated: 0, importsKernel: false, dynamicFrom: false });
   });
   it("flags a dynamic .from(expr) as incomplete attribution without counting it", () => {
     const src = `const t = TABLE; await sc.from(t).insert({}); const arr = Array.from(new Set([1]));`;
-    assert.deepEqual(countCanonicalWrites(src), { count: 0, dynamicFrom: true });
+    assert.deepEqual(countCanonicalWrites(src), { count: 0, gated: 0, importsKernel: false, dynamicFrom: true });
   });
-  it("a new writer or a grown count fails; a shrunk count is reported, not failed", () => {
-    const baseline = { "routes/a.ts": 2, "routes/b.ts": 1 };
+  it("a trip-kernel:legacy-path marker gates exactly the statement it precedes, and only in a file that imports the kernel", () => {
+    const gatedSrc = `
+      import { executeTripCommand } from "../lib/tripKernel.js";
+      if (kernel) { await executeTripCommand(kernel, cmd); return; }
+      // trip-kernel:legacy-path — flag-off twin
+      const { error } = kernelDone ? { error: null } : await client.from("trip_members").insert({ a: 1 });
+      const { error: e2 } = await client.from("trip_members").delete().eq("x", 1);
+    `;
+    assert.deepEqual(countCanonicalWrites(gatedSrc), { count: 2, gated: 1, importsKernel: true, dynamicFrom: false });
+    // Same marker, no kernel import: the write is counted, the marker is a false claim.
+    const liar = gatedSrc.replace(/import .*tripKernel\.js";/, "");
+    const c = countCanonicalWrites(liar);
+    assert.equal(c.importsKernel, false);
+    assert.equal(ungatedOf(c), 2, "without the import every write is ungated");
+    const v = judge([{ file: "routes/liar.ts", ...c }], { "routes/liar.ts": { direct: 2, ungated: 2 } });
+    assert.deepEqual(v.falseMarkers.map((r) => r.file), ["routes/liar.ts"]);
+  });
+  it("a new writer or a grown direct/ungated count fails; a shrunk count is reported, not failed", () => {
+    const baseline = { "routes/a.ts": { direct: 2, ungated: 2 }, "routes/b.ts": { direct: 1, ungated: 1 }, "routes/d.ts": { direct: 2, ungated: 0 } };
     const v = judge([
-      { file: "routes/a.ts", count: 3, dynamicFrom: false },
-      { file: "routes/b.ts", count: 0, dynamicFrom: false },
-      { file: "routes/c.ts", count: 1, dynamicFrom: false },
+      { file: "routes/a.ts", count: 3, gated: 0, importsKernel: false, dynamicFrom: false },
+      { file: "routes/b.ts", count: 0, gated: 0, importsKernel: false, dynamicFrom: false },
+      { file: "routes/c.ts", count: 1, gated: 0, importsKernel: false, dynamicFrom: false },
+      // direct unchanged but a gated write lost its marker: ungated grew 0 -> 1.
+      { file: "routes/d.ts", count: 2, gated: 1, importsKernel: true, dynamicFrom: false },
     ], baseline);
     assert.deepEqual(v.newWriters.map((r) => r.file), ["routes/c.ts"]);
-    assert.deepEqual(v.grew.map((r) => r.file), ["routes/a.ts"]);
+    assert.deepEqual(v.grew.map((r) => r.file), ["routes/a.ts", "routes/d.ts"]);
     assert.deepEqual(v.vanished, ["routes/b.ts"]);
     assert.deepEqual(v.shrank, []);
+    // Gating a write shrinks `ungated` while `direct` stays: reported as shrank, not failed.
+    const s = judge([{ file: "routes/a.ts", count: 2, gated: 1, importsKernel: true, dynamicFrom: false }], { "routes/a.ts": { direct: 2, ungated: 2 } });
+    assert.deepEqual(s.grew, []);
+    assert.deepEqual(s.shrank.map((r) => [r.file, r.ungated]), [["routes/a.ts", 1]]);
+  });
+  it("the committed baseline matches the tree: 47 direct, 32 ungated, routes/trips.ts fully gated", () => {
+    const rows = surveyTree();
+    const v = judge(rows, TRIP_KERNEL_DIRECT_WRITERS);
+    assert.deepEqual(v.newWriters, [], "a new direct writer appeared");
+    assert.deepEqual(v.grew, [], "a direct or ungated count grew");
+    assert.deepEqual(v.falseMarkers, []);
+    assert.equal(rows.reduce((n, r) => n + r.count, 0), 47);
+    assert.equal(rows.reduce((n, r) => n + ungatedOf(r), 0), 32);
+    const trips = rows.find((r) => r.file === "routes/trips.ts")!;
+    assert.equal(trips.count, 14);
+    assert.equal(ungatedOf(trips), 0, "every direct write in routes/trips.ts has a kernel path");
   });
 });
 
@@ -658,5 +837,239 @@ describe("route-plan accept links a plan item through the kernel (§25), legacy 
     assert.equal(state.rpcCalls.length, 0);
     assert.ok(state.trip_plan_items.find((i) => i.id === ITEM_A).route_stop_id);
     await srv.close();
+  });
+});
+
+// ── Contract v2 (migration 2450): trip and participant families ──────────────
+describe("trip_kernel_enabled = false: the trip and participant writes are the direct writes, untouched", () => {
+  let srv: TestServer;
+  beforeEach(async () => { counter = 0; srv = await startServer(baseState(false)); });
+
+  it("create / patch / invite / accept / decline / add / role / remove never call the kernel, never bump the version, write no event", async () => {
+    const { port, state } = srv;
+    const c = await call(port, "POST", "/api/trips", "carol-tok", { title: "Porto", destinationCity: "Porto", visibility: "public" });
+    assert.equal(c.status, 201);
+    assert.equal(c.body.owner_id, CAROL_ID);
+    assert.equal(c.version, null, "no X-Trip-Version header on the legacy path");
+    assert.equal("internal_notes" in c.body, false, "no internal column reaches the client");
+
+    const p = await call(port, "PATCH", `/api/trips/${TRIP_ID}`, "alice-tok", { title: "Lisboa", showInDiscovery: true });
+    assert.equal(p.status, 200);
+    assert.equal(p.body.title, "Lisboa");
+    const pb = await call(port, "PATCH", `/api/trips/${TRIP_ID}`, "bob-tok", { title: "nope" });
+    assert.equal(pb.status, 403);
+
+    const inv = await call(port, "POST", `/api/trips/${TRIP_ID}/invite`, "alice-tok", { userId: CAROL_ID });
+    assert.equal(inv.status, 201);
+    assert.deepEqual(inv.body, { status: "invited", tripId: TRIP_ID, userId: CAROL_ID });
+    const acc = await call(port, "POST", `/api/trips/${TRIP_ID}/accept-invite`, "dave-tok");
+    assert.equal(acc.status, 200);
+    assert.deepEqual(acc.body, { status: "accepted", tripId: TRIP_ID, role: "member" });
+    const dec = await call(port, "POST", `/api/trips/${TRIP_ID}/decline-invite`, "carol-tok");
+    assert.equal(dec.status, 200);
+    assert.deepEqual(dec.body, { status: "declined", tripId: TRIP_ID });
+
+    const add = await call(port, "POST", `/api/trips/${TRIP_ID}/members`, "alice-tok", { userId: CAROL_ID, role: "invited" });
+    assert.equal(add.status, 201);
+    const role = await call(port, "POST", `/api/trips/${TRIP_ID}/members`, "alice-tok", { userId: CAROL_ID, role: "member" });
+    assert.equal(role.status, 200);
+    assert.deepEqual(role.body, { status: "updated", tripId: TRIP_ID, userId: CAROL_ID, role: "member" });
+    const rm = await call(port, "DELETE", `/api/trips/${TRIP_ID}/members/${CAROL_ID}`, "alice-tok");
+    assert.equal(rm.status, 200);
+
+    assert.equal(state.rpcCalls.length, 0, "the kernel function was never called");
+    assert.equal(state.trips.find((t) => t.id === TRIP_ID)!.version, 0, "trips.version untouched");
+    assert.equal(state.trip_events.length, 0);
+    assert.equal(state.trip_outbox.length, 0);
+    assert.equal(state.trip_command_receipts.length, 0);
+    await srv.close();
+  });
+});
+
+describe("trip_kernel_enabled = true: trip and participant writes are commands (contract v2)", () => {
+  let srv: TestServer;
+  beforeEach(async () => { counter = 0; _resetTripCommandRejectedTotal(); srv = await startServer(baseState(true)); });
+
+  it("CREATE_TRIP: actor becomes owner, version 1, trip.created, response is exactly TRIP_COLUMNS", async () => {
+    const { port, state } = srv;
+    const c = await call(port, "POST", "/api/trips", "carol-tok", { title: "Porto", destinationCity: "Porto", startDate: "2026-11-01", endDate: "2026-11-03", visibility: "public" });
+    assert.equal(c.status, 201);
+    assert.equal(c.version, "1");
+    assert.equal(state.rpcCalls.length, 1);
+    const cmd = state.rpcCalls[0].args.p_command;
+    assert.equal(cmd.type, "CREATE_TRIP");
+    assert.equal(cmd.actor_user_id, CAROL_ID, "actor from the token");
+    assert.equal(cmd.actor_role, "user");
+    assert.equal(cmd.expected_trip_version, null, "nothing to match on a create");
+    assert.equal(c.body.owner_id, CAROL_ID);
+    // show_header_publicly is NOT in TRIP_COLUMNS: the legacy .select(TRIP_COLUMNS)
+    // never returned it, and the projection of the kernel row must not either.
+    assert.equal("show_header_publicly" in c.body, false);
+    assert.equal(state.trips.find((t) => t.owner_id === CAROL_ID)!.show_header_publicly, true, "public trips show the header publicly, as before");
+    assert.equal("internal_notes" in c.body, false, "kernel result is projected to TRIP_COLUMNS");
+    assert.equal("version" in c.body, false, "version travels in the header, not the body");
+    assert.equal(state.trip_events.at(-1)!.type, "trip.created");
+    assert.equal(state.trip_members.some((m) => m.user_id === CAROL_ID && m.role === "owner"), true);
+    await srv.close();
+  });
+
+  it("CREATE_TRIP with start > end is refused by the route before any command (route check unchanged)", async () => {
+    const { port, state } = srv;
+    const c = await call(port, "POST", "/api/trips", "carol-tok", { title: "x", destinationCity: "x", startDate: "2026-11-05", endDate: "2026-11-01" });
+    assert.equal(c.status, 400);
+    assert.equal(state.rpcCalls.length, 0);
+    await srv.close();
+  });
+
+  it("UPDATE_TRIP: owner only; status computed by the route is validated by the kernel; If-Match conflict; terminal status sticky", async () => {
+    const { port, state } = srv;
+    const p = await call(port, "PATCH", `/api/trips/${TRIP_ID}`, "alice-tok", { title: "Lisboa", showInDiscovery: true }, { "if-match": "0" });
+    assert.equal(p.status, 200);
+    assert.equal(p.version, "1");
+    assert.equal(p.body.title, "Lisboa");
+    assert.equal("internal_notes" in p.body, false);
+    const cmd = state.rpcCalls[0].args.p_command;
+    assert.equal(cmd.type, "UPDATE_TRIP");
+    assert.ok("status" in cmd.payload.patch, "the route's computed status rides in the patch");
+    assert.ok(!("updated_at" in cmd.payload.patch), "updated_at is envelope, not a column patch");
+    assert.equal(state.trip_events.at(-1)!.type, "trip.updated");
+
+    const stale = await call(port, "PATCH", `/api/trips/${TRIP_ID}`, "alice-tok", { title: "again" }, { "if-match": "0" });
+    assert.equal(stale.status, 409);
+    assert.equal(stale.body.reason, "TRIP_VERSION_CONFLICT");
+    assert.equal(stale.body.currentVersion, 1);
+
+    const bob = await call(port, "PATCH", `/api/trips/${TRIP_ID}`, "bob-tok", { title: "nope" });
+    assert.equal(bob.status, 403, "route-level owner check runs before the command");
+    assert.equal(state.rpcCalls.length, 2);
+
+    // A cancelled trip stays cancelled: the route hands the kernel status 'cancelled'
+    // (computeTripStatus never leaves a terminal state) and the kernel accepts the no-op.
+    state.trips[0].status = "cancelled";
+    const t = await call(port, "PATCH", `/api/trips/${TRIP_ID}`, "alice-tok", { title: "Cancelled trip" });
+    assert.equal(t.status, 200);
+    assert.equal(t.body.status, "cancelled");
+    await srv.close();
+  });
+
+  it("INVITE_PARTICIPANT / ADD_PARTICIPANT / SET_PARTICIPANT_ROLE / REMOVE_PARTICIPANT: owner commands, one event each, legacy row shape kept", async () => {
+    const { port, state } = srv;
+    const inv = await call(port, "POST", `/api/trips/${TRIP_ID}/invite`, "alice-tok", { userId: CAROL_ID });
+    assert.equal(inv.status, 201);
+    assert.equal(inv.version, "1");
+    assert.deepEqual(inv.body, { status: "invited", tripId: TRIP_ID, userId: CAROL_ID });
+    const row = state.trip_members.find((m) => m.user_id === CAROL_ID)!;
+    assert.deepEqual({ role: row.role, status: row.status }, { role: "invited", status: "accepted" }, "legacy invite row shape");
+    assert.equal(state.trip_events.at(-1)!.type, "trip.participant_invited");
+
+    const again = await call(port, "POST", `/api/trips/${TRIP_ID}/invite`, "alice-tok", { userId: CAROL_ID });
+    assert.equal(again.status, 200, "idempotent already_member answer is the route's, before any command");
+    assert.equal(again.body.idempotent, true);
+
+    const role = await call(port, "POST", `/api/trips/${TRIP_ID}/members`, "alice-tok", { userId: CAROL_ID, role: "member" });
+    assert.equal(role.status, 200);
+    assert.equal(role.version, "2");
+    assert.equal(state.rpcCalls.at(-1)!.args.p_command.type, "SET_PARTICIPANT_ROLE");
+    assert.equal(state.trip_events.at(-1)!.type, "trip.participant_role_set");
+
+    const rm = await call(port, "DELETE", `/api/trips/${TRIP_ID}/members/${CAROL_ID}`, "alice-tok");
+    assert.equal(rm.status, 200);
+    assert.equal(rm.version, "3");
+    assert.equal(state.trip_events.at(-1)!.type, "trip.participant_removed");
+    assert.equal(state.trip_members.some((m) => m.user_id === CAROL_ID), false);
+
+    const add = await call(port, "POST", `/api/trips/${TRIP_ID}/members`, "alice-tok", { userId: CAROL_ID, role: "member" });
+    assert.equal(add.status, 201);
+    assert.equal(state.rpcCalls.at(-1)!.args.p_command.type, "ADD_PARTICIPANT");
+    assert.equal(state.trip_events.at(-1)!.type, "trip.participant_added");
+
+    const bob = await call(port, "POST", `/api/trips/${TRIP_ID}/invite`, "bob-tok", { userId: CAROL_ID });
+    assert.equal(bob.status, 403, "a member is not the owner; refused before any command");
+    assert.equal(state.rpcCalls.length, 4);
+    await srv.close();
+  });
+
+  it("ACCEPT_INVITE / DECLINE_INVITE: the invitee — who is NOT accepted crew — is the actor; a member cannot re-accept", async () => {
+    const { port, state } = srv;
+    const acc = await call(port, "POST", `/api/trips/${TRIP_ID}/accept-invite`, "dave-tok");
+    assert.equal(acc.status, 200);
+    assert.equal(acc.version, "1");
+    assert.deepEqual(acc.body, { status: "accepted", tripId: TRIP_ID, role: "member" });
+    assert.equal(state.rpcCalls[0].args.p_command.type, "ACCEPT_INVITE");
+    assert.equal(state.rpcCalls[0].args.p_command.actor_user_id, DAVE_ID);
+    assert.equal(state.trip_events.at(-1)!.type, "trip.participant_joined");
+    assert.equal(state.trip_members.find((m) => m.user_id === DAVE_ID)!.role, "member");
+
+    const twice = await call(port, "POST", `/api/trips/${TRIP_ID}/accept-invite`, "dave-tok");
+    assert.equal(twice.status, 400, "route answers 'Already a member' before any command");
+    assert.equal(state.rpcCalls.length, 1);
+
+    await call(port, "POST", `/api/trips/${TRIP_ID}/invite`, "alice-tok", { userId: CAROL_ID });
+    const dec = await call(port, "POST", `/api/trips/${TRIP_ID}/decline-invite`, "carol-tok");
+    assert.equal(dec.status, 200);
+    assert.equal(dec.version, "3");
+    assert.equal(state.trip_events.at(-1)!.type, "trip.participant_declined");
+    assert.equal(state.trip_members.some((m) => m.user_id === CAROL_ID), false, "declined row is deleted, as legacy does");
+    await srv.close();
+  });
+
+  it("the kernel's own capability check catches what a route did not: a v2 rejection maps to HTTP by reason", async () => {
+    const { port, state } = srv;
+    // Simulate a route that authorized but the row changed underneath: the fake
+    // kernel sees no 'invited' row for Bob (he is a member) => TRIP_AUTH_NOT_INVITED.
+    const r = await executeTripCommand(makeFakeClient(state), {
+      commandId: "c1", tripId: TRIP_ID, actorUserId: BOB_ID, idempotencyKey: "k-bob", type: "ACCEPT_INVITE", payload: {},
+    });
+    assert.equal(r.ok, false);
+    assert.equal((r as any).reason, "TRIP_AUTH_NOT_INVITED");
+    assert.equal((r as any).currentRole, "member");
+    assert.equal((r as any).contractVersion, 2);
+    const owner = await executeTripCommand(makeFakeClient(state), {
+      commandId: "c2", tripId: TRIP_ID, actorUserId: BOB_ID, idempotencyKey: "k-bob-2", type: "UPDATE_TRIP", payload: { patch: { title: "x" } },
+    });
+    assert.equal((owner as any).reason, "TRIP_AUTH_NOT_OWNER");
+    const sys = await executeTripCommand(makeFakeClient(state), {
+      commandId: "c3", tripId: TRIP_ID, actorUserId: ALICE_ID, idempotencyKey: "k-sys", type: "SET_TRIP_COVER", payload: { cover_url: "https://x" },
+    });
+    assert.equal((sys as any).reason, "TRIP_AUTH_ROLE_NOT_PERMITTED", "a user envelope cannot issue a system command");
+    const sysOk = await executeTripCommand(makeFakeClient(state), {
+      commandId: "c4", tripId: TRIP_ID, actorUserId: null, actorRole: "system", idempotencyKey: "k-sys-2", type: "SET_TRIP_COVER", payload: { cover_url: "https://x" },
+    });
+    assert.equal(sysOk.ok, true);
+    assert.equal(state.trip_command_receipts.at(-1)!.actor_user_id, null);
+    assert.equal(state.trip_command_receipts.at(-1)!.actor_role, "system");
+    const counts = readTripCommandRejectedTotal();
+    assert.equal(counts.TRIP_AUTH_NOT_INVITED, 1);
+    assert.equal(counts.TRIP_AUTH_NOT_OWNER, 1);
+    assert.equal(counts.TRIP_AUTH_ROLE_NOT_PERMITTED, 1);
+    await srv.close();
+  });
+
+  it("a contract-v1 database (2420 without 2450) refuses a v2 command as TRIP_COMMAND_UNKNOWN_TYPE — a 400, counted, never a silent success", async () => {
+    const { port, state } = srv;
+    const v1rpc = async (_name: string, args: any) => {
+      state.rpcCalls.push({ name: _name, args });
+      return { data: { ok: false, reason: "TRIP_COMMAND_UNKNOWN_TYPE", type: args.p_command.type }, error: null };
+    };
+    const fake = makeFakeClient(state);
+    _setTestClient({ ...fake, rpc: v1rpc }, true);
+    const inv = await call(port, "POST", `/api/trips/${TRIP_ID}/invite`, "alice-tok", { userId: CAROL_ID });
+    assert.equal(inv.status, 400);
+    assert.equal(inv.body.reason, "TRIP_COMMAND_UNKNOWN_TYPE");
+    assert.equal(state.trip_members.some((m) => m.user_id === CAROL_ID), false, "no direct write ran either");
+    assert.equal(readTripCommandRejectedTotal().TRIP_COMMAND_UNKNOWN_TYPE, 1);
+    await srv.close();
+  });
+
+  it("tripCommandFamily and the event vocabulary cover every declared command type", () => {
+    assert.equal(tripCommandFamily("CREATE_TRIP"), "trip");
+    assert.equal(tripCommandFamily("ACCEPT_INVITE"), "participant");
+    assert.equal(tripCommandFamily("ADMIN_HIDE_TRIP"), "admin");
+    assert.equal(tripCommandFamily("SET_TRIP_COVER"), "system");
+    assert.equal(tripCommandFamily("ADD_PLAN"), "plan");
+    for (const t of ["trip.participant_joined", "trip.trip_completed", "trip.plan_added", "trip.plan_moved", "trip.plan_confirmed"]) {
+      assert.ok((TRIP_EVENT_TYPES as readonly string[]).includes(t), `${t} is a spec-named event and must stay in the vocabulary`);
+    }
+    assert.equal(TRIP_KERNEL_CONTRACT_VERSION, 2);
   });
 });

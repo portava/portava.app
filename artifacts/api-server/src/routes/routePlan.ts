@@ -252,6 +252,7 @@ router.post("/route-plans", asyncHandler(async (req, res) => {
     }
   } else if (planItemLinks.length > 0) {
     for (const link of planItemLinks) {
+      // trip-kernel:legacy-path — flag-off / detached-plan twin of LINK_PLAN_ROUTE_STOP above.
       const { error: linkErr } = await (client as any)
         .from("trip_plan_items")
         .update({ route_stop_id: link.stopId })
