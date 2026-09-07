@@ -30,6 +30,13 @@
  *     the post_media / media_urls behaviour it always had;
  *   - with the read flag off, the loader performs NO query at all.
  *
+ * THE GUARD (2026-09-07). The "schema-capability guard" block below pins the
+ * fail-closed behaviour that makes the pending owner decision safe: with the
+ * flag ON against a database without migration 2250 the writer is REFUSED
+ * before any upsert (zero attempts, `outcome: "refused_schema"`), an
+ * unverifiable schema refuses too, and a rejection that slips past the probe
+ * flips the memo so the next call is refused up front.
+ *
  * And the two failure modes that would lose user media are pinned directly:
  * a canonical row that is not servable must FALL BACK rather than blank the
  * card, and a canonical row must never relax the moderation gate.
@@ -41,10 +48,20 @@ import assert from "node:assert/strict";
 import {
   recordMediaAsset,
   recordMediaAssetDetailed,
+  recordMediaEdit,
   isMissingColumnError,
   CANONICAL_ASSET_COLUMNS_ADDED_BY_2250,
   type RecordAssetInput,
 } from "../lib/mediaAssets.js";
+import {
+  probeCanonicalAssetSchema,
+  peekCanonicalSchemaState,
+  resetCanonicalSchemaMemo,
+  CANONICAL_ASSET_SCHEMA_COLUMNS,
+  CANONICAL_SCHEMA_PROBE_SENTINEL_ID,
+  CANONICAL_SCHEMA_PRESENT_TTL_MS,
+  CANONICAL_SCHEMA_ABSENT_TTL_MS,
+} from "../lib/media/mediaSchemaCapability.js";
 import {
   toMediaProjection,
   MEDIA_PROJECTION_MEDIA_ASSET_COLUMNS,
@@ -77,14 +94,25 @@ function pgrstMissingColumn(column: string) {
 function makeWriteClient(opts: {
   flags: Record<string, boolean>;
   upsertResults: Array<{ id?: string; error?: unknown }>;
+  /**
+   * What the schema-capability probe (a SELECT of the 2250 columns on
+   * media_assets, filtered to the nil id) answers. Default: the columns exist.
+   *   { error }  — the driver rejected the select (a missing column, or anything else)
+   *   "throw"    — the client has no such method (a fake, a broken transport)
+   */
+  probe?: { error: unknown } | "throw";
 }) {
   const attempts: UpsertAttempt[] = [];
   const flagReads: string[] = [];
+  const probes: string[] = [];
   let next = 0;
   const client = {
     from(table: string) {
       return {
-        select(_c: string) {
+        select(cols: string) {
+          if (table === "media_assets" && opts.probe === "throw") {
+            throw new TypeError("select(...).eq is not a function");
+          }
           return {
             eq(_col: string, val: string) {
               return {
@@ -93,6 +121,13 @@ function makeWriteClient(opts: {
                     flagReads.push(val);
                     const on = opts.flags[val] === true;
                     return Promise.resolve({ data: on ? { enabled: true } : null, error: null });
+                  }
+                  if (table === "media_assets") {
+                    probes.push(cols);
+                    assert.equal(val, CANONICAL_SCHEMA_PROBE_SENTINEL_ID, "the probe must be pinned to the nil id");
+                    if (opts.probe && opts.probe !== "throw") {
+                      return Promise.resolve({ data: null, error: opts.probe.error });
+                    }
                   }
                   return Promise.resolve({ data: null, error: null });
                 },
@@ -118,7 +153,7 @@ function makeWriteClient(opts: {
       };
     },
   };
-  return { client: client as any, attempts, flagReads };
+  return { client: client as any, attempts, flagReads, probes };
 }
 
 /** Fake client for the READ side (media_attachments -> media_assets). */
@@ -354,6 +389,200 @@ describe("recordMediaAssetDetailed — the write is legible, and still gated", (
       upsertResults: [{ error: pgrstMissingColumn("captured_at") }],
     });
     assert.equal(await recordMediaAsset(rejected.client, INPUT), null);
+  });
+});
+
+// ── The schema-capability guard ──────────────────────────────────────────────
+//
+// THE GUARD UNDER TEST. `media_canonical_enabled` is TRUE in production and
+// production does not have migration 2250, so without this guard every upload
+// builds a payload the database rejects. The guard probes first and REFUSES —
+// zero upserts, error-level log, a legible outcome — rather than attempting a
+// write that vanishes. `probeCanonicalAssetSchema` answers `missing` for a
+// PGRST204/42703 on the probe, `unknown` for any other failure (including a
+// client that cannot even run the probe), and both refuse.
+
+/** The PostgreSQL-level rejection, as the rolled-back production probe returned it on 2026-09-07. */
+function pgMissingColumn(column: string) {
+  return { code: "42703", message: `column "${column}" of relation "media_assets" does not exist` };
+}
+
+describe("schema-capability guard — the dead writer path cannot be entered", () => {
+  it("probes exactly the migration-2250 columns, pinned to the nil id, once per client", async () => {
+    resetCanonicalSchemaMemo();
+    const { client, probes } = makeWriteClient({
+      flags: { media_canonical_enabled: true },
+      upsertResults: [{ id: "a" }, { id: "b" }],
+    });
+    await recordMediaAssetDetailed(client, INPUT);
+    await recordMediaAssetDetailed(client, INPUT);
+    assert.equal(probes.length, 1, "a fresh 'present' verdict is memoised; the second call must not re-probe");
+    const cols = probes[0].split(",").map((c) => c.trim()).sort();
+    assert.deepEqual(cols, [...CANONICAL_ASSET_SCHEMA_COLUMNS].sort());
+  });
+
+  it("columns MISSING, fallback off: REFUSES before any write — zero upserts, outcome refused_schema", async () => {
+    resetCanonicalSchemaMemo();
+    const { client, attempts, flagReads } = makeWriteClient({
+      flags: { media_canonical_enabled: true },
+      upsertResults: [{ id: "must-never-be-used" }],
+      probe: { error: pgrstMissingColumn("captured_at") },
+    });
+    const r = await recordMediaAssetDetailed(client, INPUT);
+    assert.equal(r.outcome, "refused_schema");
+    assert.equal(r.schemaState, "missing");
+    assert.equal(r.assetId, null);
+    assert.equal(r.errorCode, "PGRST204");
+    assert.equal(attempts.length, 0, "the guard must refuse BEFORE the upsert, not after a rejected one");
+    assert.ok(flagReads.includes("media_canonical_schema_fallback_enabled"), "the degraded switch is consulted before refusing");
+    // The public wrapper keeps its contract: null.
+    assert.equal(await recordMediaAsset(client, INPUT), null);
+  });
+
+  it("recognises the PostgreSQL-level 42703 as 'missing' too", async () => {
+    resetCanonicalSchemaMemo();
+    const { client, attempts } = makeWriteClient({
+      flags: { media_canonical_enabled: true },
+      upsertResults: [{ id: "x" }],
+      probe: { error: pgMissingColumn("captured_at") },
+    });
+    const r = await recordMediaAssetDetailed(client, INPUT);
+    assert.equal(r.outcome, "refused_schema");
+    assert.equal(r.schemaState, "missing");
+    assert.equal(r.errorCode, "42703");
+    assert.equal(attempts.length, 0);
+  });
+
+  it("probe fails for ANY other reason: 'unknown', and still refuses (fail-closed, not fail-open)", async () => {
+    resetCanonicalSchemaMemo();
+    const { client, attempts } = makeWriteClient({
+      flags: { media_canonical_enabled: true, media_canonical_schema_fallback_enabled: true },
+      upsertResults: [{ id: "x" }],
+      probe: { error: { code: "PGRST301", message: "JWT expired" } },
+    });
+    const r = await recordMediaAssetDetailed(client, INPUT);
+    assert.equal(r.outcome, "refused_schema");
+    assert.equal(r.schemaState, "unknown");
+    assert.equal(attempts.length, 0, "an unverifiable schema must not be written to, even with the fallback on");
+  });
+
+  it("a client that cannot run the probe at all is 'unknown' and refused — never a throw, never a write", async () => {
+    resetCanonicalSchemaMemo();
+    const { client, attempts } = makeWriteClient({
+      flags: { media_canonical_enabled: true },
+      upsertResults: [{ id: "x" }],
+      probe: "throw",
+    });
+    const r = await recordMediaAssetDetailed(client, INPUT);
+    assert.equal(r.outcome, "refused_schema");
+    assert.equal(r.schemaState, "unknown");
+    assert.equal(attempts.length, 0);
+  });
+
+  it("columns MISSING, fallback ON: ONE degraded write up front, no rejected full attempt first", async () => {
+    resetCanonicalSchemaMemo();
+    const { client, attempts } = makeWriteClient({
+      flags: { media_canonical_enabled: true, media_canonical_schema_fallback_enabled: true },
+      upsertResults: [{ id: "asset-degraded" }],
+      probe: { error: pgrstMissingColumn("provenance") },
+    });
+    const r = await recordMediaAssetDetailed(client, INPUT);
+    assert.equal(r.outcome, "written_degraded");
+    assert.equal(r.schemaState, "missing");
+    assert.equal(r.assetId, "asset-degraded");
+    assert.equal(attempts.length, 1, "the probe already knows; there is nothing to learn from a rejected full attempt");
+    for (const col of CANONICAL_ASSET_COLUMNS_ADDED_BY_2250) {
+      assert.equal(col in attempts[0].row, false, `${col} must not be sent to a database without it`);
+    }
+    assert.deepEqual([...r.droppedColumns].sort(), ["captured_at", "intelligence_eligibility", "provenance"]);
+  });
+
+  it("probe PRESENT but the write is rejected for a 2250 column: the memo flips and the NEXT call is refused with no write", async () => {
+    resetCanonicalSchemaMemo();
+    const { client, attempts, probes } = makeWriteClient({
+      flags: { media_canonical_enabled: true },
+      upsertResults: [{ error: pgrstMissingColumn("captured_at") }, { id: "must-never-be-used" }],
+    });
+    const first = await recordMediaAssetDetailed(client, INPUT);
+    assert.equal(first.outcome, "failed");
+    assert.equal(first.schemaState, "missing", "the rejection itself is evidence of the schema state");
+    assert.equal(attempts.length, 1);
+
+    const second = await recordMediaAssetDetailed(client, INPUT);
+    assert.equal(second.outcome, "refused_schema");
+    assert.equal(second.schemaState, "missing");
+    assert.equal(attempts.length, 1, "no second upsert: the reactive evidence feeds the guard");
+    assert.equal(probes.length, 1, "and no re-probe either — the memo serves it");
+  });
+
+  it("verdict memo: 'present' lives for its TTL and then re-probes; 'missing' expires much sooner", async () => {
+    resetCanonicalSchemaMemo();
+    const ok = makeWriteClient({ flags: {}, upsertResults: [] });
+    const t0 = 1_000_000;
+    const a = await probeCanonicalAssetSchema(ok.client, { now: t0 });
+    assert.equal(a.state, "present");
+    assert.equal(a.cached, false);
+    const b = await probeCanonicalAssetSchema(ok.client, { now: t0 + CANONICAL_SCHEMA_PRESENT_TTL_MS - 1 });
+    assert.equal(b.cached, true);
+    const c = await probeCanonicalAssetSchema(ok.client, { now: t0 + CANONICAL_SCHEMA_PRESENT_TTL_MS + 1 });
+    assert.equal(c.cached, false, "past the TTL the schema is re-checked");
+    assert.equal(ok.probes.length, 2);
+
+    const bad = makeWriteClient({ flags: {}, upsertResults: [], probe: { error: pgrstMissingColumn("captured_at") } });
+    const m = await probeCanonicalAssetSchema(bad.client, { now: t0 });
+    assert.equal(m.state, "missing");
+    assert.deepEqual(m.missingColumns, ["captured_at"], "the probe names the column PostgREST named");
+    assert.equal((await probeCanonicalAssetSchema(bad.client, { now: t0 + CANONICAL_SCHEMA_ABSENT_TTL_MS - 1 })).cached, true);
+    assert.equal((await probeCanonicalAssetSchema(bad.client, { now: t0 + CANONICAL_SCHEMA_ABSENT_TTL_MS + 1 })).cached, false,
+      "a freshly applied migration must be picked up without a restart");
+    assert.ok(CANONICAL_SCHEMA_ABSENT_TTL_MS < CANONICAL_SCHEMA_PRESENT_TTL_MS);
+
+    assert.equal(peekCanonicalSchemaState({}), null, "peek never probes: an unseen client has no verdict");
+  });
+
+  it("recordMediaEdit is behind the same guard: no provenance read or write on a database without 2250", async () => {
+    resetCanonicalSchemaMemo();
+    let reads = 0;
+    let updates = 0;
+    const client: any = {
+      from(table: string) {
+        return {
+          select(_c: string) {
+            return {
+              eq(_col: string, val: string) {
+                return {
+                  maybeSingle() {
+                    if (table === "feature_flags") return Promise.resolve({ data: { enabled: val === "media_canonical_enabled" }, error: null });
+                    if (val === CANONICAL_SCHEMA_PROBE_SENTINEL_ID) return Promise.resolve({ data: null, error: pgrstMissingColumn("provenance") });
+                    reads++;
+                    return Promise.resolve({ data: { source_type: "user", provenance: null, captured_at: null }, error: null });
+                  },
+                };
+              },
+            };
+          },
+          update() { updates++; return { eq() { return Promise.resolve({ error: null }); } }; },
+        };
+      },
+    };
+    const r = await recordMediaEdit(client, "asset-1", "crop");
+    assert.equal(r, null);
+    assert.equal(reads, 0, "the asset row is not even read");
+    assert.equal(updates, 0);
+  });
+
+  it("flag OFF: the guard is never consulted — no probe, no DB contact beyond the flag read", async () => {
+    resetCanonicalSchemaMemo();
+    const { client, probes, attempts } = makeWriteClient({
+      flags: {},
+      upsertResults: [],
+      probe: { error: pgrstMissingColumn("captured_at") },
+    });
+    const r = await recordMediaAssetDetailed(client, INPUT);
+    assert.equal(r.outcome, "skipped_flag_off");
+    assert.equal(r.schemaState, null);
+    assert.equal(probes.length, 0);
+    assert.equal(attempts.length, 0);
   });
 });
 

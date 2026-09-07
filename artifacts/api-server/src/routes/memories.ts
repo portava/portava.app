@@ -46,6 +46,8 @@ import {
 import {
   MEMORY_LOCATION_PRECISIONS,
   normalizeMemoryPrecision,
+  normalizeMemoryPrecisionForWrite,
+  publicationPrecision,
   resolveMemoryLocationCeiling,
   coarsenMemoryLocation,
 } from "../lib/memoryLocationPrecision.js";
@@ -118,9 +120,10 @@ function protectMemoryRow(
     : UNDETERMINED_GEM_CEILING; // fail-closed
   // Flag off ⇒ 'exact' ⇒ contributes no constraint, so `ceiling` collapses to
   // exactly the gem ceiling and this function is a no-op wherever it was before.
-  const ownerPrecision = precisionEnabled
-    ? normalizeMemoryPrecision(row?.location_precision)
-    : "exact";
+  // Flag on ⇒ the row's rung; a row that does not carry the key, or carries
+  // null / a value off the ladder, is clamped to 'hidden' — the read-side
+  // normalization that keeps an unreadable policy from being served as 'exact'.
+  const ownerPrecision = publicationPrecision(row, precisionEnabled);
   const ceiling = resolveMemoryLocationCeiling(ownerPrecision, gemCeiling);
   if (ceiling == null) return row; // no constraint from either source → unchanged
   const d = coarsenMemoryLocation(row, ceiling);
@@ -470,7 +473,10 @@ router.post("/memories", async (req, res) => {
   // but a payload that `src/scripts/checkWritePathColumns.ts` cannot resolve
   // statically, which trades a real guarantee for a cosmetic one: that check is
   // the thing standing between this route and the PGRST204 outage above.
-  const precisionValue = precisionEnabled ? d.locationPrecision : undefined;
+  // Write-side normalization: only an exact ladder value is ever named; anything
+  // else leaves the column to its DEFAULT (whose value is the owner's pending
+  // decision, not this route's).
+  const precisionValue = precisionEnabled ? normalizeMemoryPrecisionForWrite(d.locationPrecision) : undefined;
 
   const { data: memory, error } = await sc
     .from("memories")
@@ -842,7 +848,10 @@ router.patch("/memories/:id", async (req, res) => {
   if (d.canonicalLocationId !== undefined) patch.canonical_location_id = d.canonicalLocationId;
   // Same schema-presence rule as create: never name the column unless the
   // database has it. See MEMORY_SELECT_WITH_PRECISION.
-  if (precisionEnabled && d.locationPrecision !== undefined) patch.location_precision = d.locationPrecision;
+  if (precisionEnabled && d.locationPrecision !== undefined) {
+    const rung = normalizeMemoryPrecisionForWrite(d.locationPrecision);
+    if (rung !== undefined) patch.location_precision = rung;
+  }
   if (d.startsAt !== undefined) patch.starts_at = d.startsAt;
   if (d.endsAt !== undefined) patch.ends_at = d.endsAt;
   if (d.state !== undefined) patch.state = d.state;

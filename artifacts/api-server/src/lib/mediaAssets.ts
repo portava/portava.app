@@ -30,6 +30,14 @@
  *
  * Consequence for anyone editing this file: a change here is NOT dark in
  * production. Gate it.
+ *
+ * THE GUARD (2026-09-07). `lib/media/mediaSchemaCapability` probes the target
+ * database for the 2250 columns before the writer builds a payload. Missing or
+ * unverifiable ⇒ the write path is REFUSED at error level with NO attempt
+ * (`outcome: "refused_schema"`), instead of an attempt that PostgREST rejects
+ * and nobody sees. The flag is not read differently and is not changed here;
+ * the guard makes the pending owner decision (apply 2250 / flip the flag) safe
+ * in the meantime.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { isFlagEnabled } from "./featureFlags.js";
@@ -43,6 +51,12 @@ import {
   computeIntelligenceEligibility,
   type AppendEditOptions,
 } from "./media/mediaEvidenceEligibility.js";
+import {
+  probeCanonicalAssetSchema,
+  markCanonicalSchemaMissing,
+  isMissingColumnError,
+  type CanonicalSchemaState,
+} from "./media/mediaSchemaCapability.js";
 
 // ── Capture time (§6 / Wall §16 "two clocks") ────────────────────────────────
 
@@ -180,27 +194,11 @@ export const CANONICAL_ASSET_COLUMNS_ADDED_BY_2250 = [
 ] as const;
 
 /**
- * True when a Supabase/PostgREST error means "this database does not have that
- * column", as opposed to any other failure.
- *
- * Two shapes, because two layers can raise it:
- *   • PostgREST schema cache — code `PGRST204`, message
- *     `Could not find the 'captured_at' column of 'media_assets' in the schema cache`
- *   • PostgreSQL itself — SQLSTATE `42703`, message
- *     `column "captured_at" of relation "media_assets" does not exist`
- *
- * PURE. Never throws on a malformed error object.
+ * `isMissingColumnError` lives with the schema-capability guard now
+ * (`lib/media/mediaSchemaCapability`); re-exported so existing importers and
+ * tests keep their path.
  */
-export function isMissingColumnError(error: unknown): boolean {
-  if (!error || typeof error !== "object") return false;
-  const code = String((error as any).code ?? "");
-  if (code === "PGRST204" || code === "42703") return true;
-  const msg = String((error as any).message ?? "").toLowerCase();
-  return (
-    msg.includes("in the schema cache") ||
-    (msg.includes("column") && msg.includes("does not exist"))
-  );
-}
+export { isMissingColumnError };
 
 /** What a canonical asset write actually did. */
 export type CanonicalWriteOutcome =
@@ -210,6 +208,12 @@ export type CanonicalWriteOutcome =
   | "written_degraded"
   /** `media_canonical_enabled` is off — no DB contact beyond the flag read. */
   | "skipped_flag_off"
+  /**
+   * The schema-capability guard refused to enter the write path: this database
+   * does not carry the migration-2250 columns the payload names (or that could
+   * not be established). NO write was attempted. `schemaState` says which.
+   */
+  | "refused_schema"
   /** The write did not land. `errorCode` says why. */
   | "failed";
 
@@ -225,6 +229,12 @@ export interface RecordAssetResult {
   droppedColumns: string[];
   /** The error code that ended a failed attempt, when the driver supplied one. */
   errorCode: string | null;
+  /**
+   * The schema-capability verdict this call ran under. `present` for every
+   * outcome that reached an upsert; `missing` / `unknown` only with
+   * `refused_schema` or a degraded write. Null when the flag was off (no probe).
+   */
+  schemaState: CanonicalSchemaState | null;
 }
 
 /**
@@ -247,7 +257,17 @@ export async function recordMediaAsset(
  * recordMediaAssetDetailed — the canonical §6 asset write, with its outcome
  * made legible.
  *
- * TWO THINGS CHANGE HERE, AND ONLY TWO:
+ * THREE THINGS, IN ORDER:
+ *
+ * 0. THE SCHEMA-CAPABILITY GUARD RUNS FIRST (`lib/media/mediaSchemaCapability`).
+ *    If the database behind `sc` lacks — or cannot be shown to have — the
+ *    migration-2250 columns this payload names, the write path is REFUSED
+ *    before any payload is built: `outcome: "refused_schema"`, an error-level
+ *    log, zero upserts. This is the fail-closed guard for the pending owner
+ *    decision on `media_canonical_enabled`: while it is TRUE against a
+ *    database without 2250, the writer cannot silently lose anything, because
+ *    it never runs. Only `media_canonical_schema_fallback_enabled` (below)
+ *    turns a `missing` verdict into a degraded write instead of a refusal.
  *
  * 1. THE FAILURE IS NO LONGER SILENT. When the flag is ON and the upsert is
  *    rejected, that is logged at warn. No data changes; nothing a user sees
@@ -295,9 +315,44 @@ export async function recordMediaAssetDetailed(
     outcome: "skipped_flag_off",
     droppedColumns: [],
     errorCode: null,
+    schemaState: null,
   };
   try {
     if (!(await isFlagEnabled(sc, "media_canonical_enabled"))) return NONE;
+
+    // ── The schema-capability guard (fail-closed) ─────────────────────────────
+    // Before any payload is built: can this database take the columns the
+    // payload names? `present` → proceed. `missing` / `unknown` → REFUSE, at
+    // error level, before a single write — unless the operator has deliberately
+    // enabled the degraded write, in which case the 2250 columns are dropped
+    // up front instead of after a rejected round trip.
+    const schema = await probeCanonicalAssetSchema(sc);
+    let degradeUpFront = false;
+    if (schema.state !== "present") {
+      const fallbackOn = await isFlagEnabled(sc, "media_canonical_schema_fallback_enabled");
+      if (!(schema.state === "missing" && fallbackOn)) {
+        logger.error(
+          {
+            schemaState: schema.state,
+            missingColumns: schema.missingColumns,
+            errorCode: schema.errorCode,
+            bucket: input.storageBucket,
+            path: input.storagePath,
+          },
+          "media_assets canonical write REFUSED — schema-capability guard: migration 2250 columns " +
+            (schema.state === "missing" ? "are absent from this database" : "could not be verified") +
+            "; nothing was written. Apply 2250 (or set media_canonical_enabled=false) — see lib/media/mediaSchemaCapability",
+        );
+        return {
+          assetId: null,
+          outcome: "refused_schema",
+          droppedColumns: [],
+          errorCode: schema.errorCode,
+          schemaState: schema.state,
+        };
+      }
+      degradeUpFront = true;
+    }
 
     // §35/§10: record provenance (source + empty edit lineage) and compute the
     // evidence-eligibility verdict at write time. Fresh uploads have no edits,
@@ -342,9 +397,13 @@ export async function recordMediaAssetDetailed(
         (input.width != null && input.height != null ? "ready" : "processing"),
     };
 
+    if (degradeUpFront) {
+      return writeDegraded(sc, row, input, schema.state);
+    }
+
     const first = await upsertAssetRow(sc, row);
     if (!first.error) {
-      return { assetId: first.id, outcome: "written", droppedColumns: [], errorCode: null };
+      return { assetId: first.id, outcome: "written", droppedColumns: [], errorCode: null, schemaState: "present" };
     }
 
     const errorCode = String((first.error as any)?.code ?? "") || null;
@@ -362,47 +421,75 @@ export async function recordMediaAssetDetailed(
     );
 
     if (!missingColumn) {
-      return { assetId: null, outcome: "failed", droppedColumns: [], errorCode };
-    }
-    // (2) Degraded write — deliberately switched on, or not at all.
-    if (!(await isFlagEnabled(sc, "media_canonical_schema_fallback_enabled"))) {
-      return { assetId: null, outcome: "failed", droppedColumns: [], errorCode };
+      return { assetId: null, outcome: "failed", droppedColumns: [], errorCode, schemaState: "present" };
     }
 
-    const dropped: string[] = [];
-    for (const col of CANONICAL_ASSET_COLUMNS_ADDED_BY_2250) {
-      if (col in row) {
-        delete row[col];
-        dropped.push(col);
-      }
-    }
-    const second = await upsertAssetRow(sc, row);
-    if (second.error) {
-      logger.warn(
-        { err: second.error, bucket: input.storageBucket, path: input.storagePath },
-        "media_assets degraded upsert also rejected — canonical asset NOT recorded",
-      );
-      return {
-        assetId: null,
-        outcome: "failed",
-        droppedColumns: [],
-        errorCode: String((second.error as any)?.code ?? "") || null,
-      };
-    }
-    logger.warn(
-      { bucket: input.storageBucket, path: input.storagePath, dropped },
-      "media_assets recorded WITHOUT its §6 columns — apply migration 2250 to this database",
+    // The probe said present and the write said otherwise (PostgREST's schema
+    // cache can lag a DDL). Flip the memo so the NEXT call is refused up front,
+    // and say so at error level — this is the exact shape of the three-week loss.
+    markCanonicalSchemaMissing(sc, first.error);
+    logger.error(
+      { err: first.error, bucket: input.storageBucket, path: input.storagePath },
+      "media_assets rejected a migration-2250 column AFTER the schema probe passed — memo flipped to missing; subsequent writes are refused until the probe succeeds again",
     );
-    return {
-      assetId: second.id,
-      outcome: "written_degraded",
-      droppedColumns: dropped,
-      errorCode: null,
-    };
+
+    // (2) Degraded write — deliberately switched on, or not at all.
+    if (!(await isFlagEnabled(sc, "media_canonical_schema_fallback_enabled"))) {
+      return { assetId: null, outcome: "failed", droppedColumns: [], errorCode, schemaState: "missing" };
+    }
+    return writeDegraded(sc, row, input, "missing");
   } catch (err) {
     logger.warn({ err }, "media_assets upsert threw — canonical asset NOT recorded");
-    return { assetId: null, outcome: "failed", droppedColumns: [], errorCode: null };
+    return { assetId: null, outcome: "failed", droppedColumns: [], errorCode: null, schemaState: null };
   }
+}
+
+/**
+ * The degraded write: the 2250 columns removed from `row`, ONE attempt.
+ * Reached only when `media_canonical_schema_fallback_enabled` is on. Drops ALL
+ * of CANONICAL_ASSET_COLUMNS_ADDED_BY_2250, not just the one PostgREST named:
+ * PostgREST reports the first unknown column only, so removing them one at a
+ * time would cost one round trip per column and leave the same total loss in
+ * between.
+ */
+async function writeDegraded(
+  sc: SupabaseClient,
+  row: Record<string, unknown>,
+  input: RecordAssetInput,
+  schemaState: CanonicalSchemaState,
+): Promise<RecordAssetResult> {
+  const dropped: string[] = [];
+  for (const col of CANONICAL_ASSET_COLUMNS_ADDED_BY_2250) {
+    if (col in row) {
+      delete row[col];
+      dropped.push(col);
+    }
+  }
+  const second = await upsertAssetRow(sc, row);
+  if (second.error) {
+    logger.warn(
+      { err: second.error, bucket: input.storageBucket, path: input.storagePath },
+      "media_assets degraded upsert also rejected — canonical asset NOT recorded",
+    );
+    return {
+      assetId: null,
+      outcome: "failed",
+      droppedColumns: [],
+      errorCode: String((second.error as any)?.code ?? "") || null,
+      schemaState,
+    };
+  }
+  logger.warn(
+    { bucket: input.storageBucket, path: input.storagePath, dropped },
+    "media_assets recorded WITHOUT its §6 columns — apply migration 2250 to this database",
+  );
+  return {
+    assetId: second.id,
+    outcome: "written_degraded",
+    droppedColumns: dropped,
+    errorCode: null,
+    schemaState,
+  };
 }
 
 /** One upsert attempt. Never throws; returns the id or the driver's error. */
@@ -539,6 +626,19 @@ export async function recordMediaEdit(
 ): Promise<RecordMediaEditResult | null> {
   try {
     if (!(await isFlagEnabled(sc, "media_canonical_enabled"))) return null;
+
+    // Same schema-capability guard as the writer: this reads and writes
+    // `provenance` / `captured_at` / `intelligence_eligibility`, all of which
+    // migration 2250 adds. On a database without it the select below would be
+    // rejected (42703) and `if (error || !data) return null` would hide it.
+    const schema = await probeCanonicalAssetSchema(sc);
+    if (schema.state !== "present") {
+      logger.error(
+        { schemaState: schema.state, missingColumns: schema.missingColumns, assetId },
+        "media_assets edit lineage REFUSED — schema-capability guard: migration 2250 columns absent or unverified",
+      );
+      return null;
+    }
 
     const { data, error } = await sc
       .from("media_assets")

@@ -73,32 +73,102 @@ const PRECISION_RANK: Record<MemoryLocationPrecision, number> = {
 };
 
 /**
- * Normalize a candidate value to a known rung.
+ * The DEFAULT migration 2338 gave `memories.location_precision`, mirrored here
+ * so the code and the schema cannot drift apart silently (a test reads the
+ * migration file and compares).
  *
- * FAIL CLOSED IS NOT THE RIGHT DEFAULT HERE, AND THAT IS DELIBERATE.
- * `normalizeTier` in mediaLocationVisibility maps anything unknown to 'hidden',
- * because there the absent value means "migration 2250 laid the column with
- * default 'hidden' and nobody has set it". Here the absent value means
- * something different and precisely knowable: the row predates migration 2338,
- * or this database has not run it, or the reader did not select the column
- * because the flag is off. In every one of those cases the row's ACTUAL
- * published precision today is exact — coarsening it to 'hidden' on a null
- * would blank the location of all 80 production Memories the moment anything
- * mis-wired the flag, which is a bigger and much less obvious failure than the
- * one it would prevent.
+ * THIS VALUE IS NOT A RECOMMENDATION. 2338 chose 'exact' because it reproduces
+ * pre-2338 behaviour for the 80 production Memories (all public, all with
+ * coordinates, all served at full precision today) — a migration is not the
+ * place to decide that they should suddenly be served at city level. What the
+ * default SHOULD be for newly created Memories, and whether existing rows
+ * should be re-rated, is an OWNER DECISION that this module deliberately does
+ * not take. Nothing below changes behaviour based on this constant; it exists
+ * so the pending decision has one named place to land.
+ */
+export const MEMORY_LOCATION_PRECISION_SCHEMA_DEFAULT: MemoryLocationPrecision = "exact";
+
+/** True when `v` is exactly one of the six rungs. PURE. */
+export function isMemoryLocationPrecision(v: unknown): v is MemoryLocationPrecision {
+  return typeof v === "string" && (MEMORY_LOCATION_PRECISIONS as readonly string[]).includes(v);
+}
+
+/**
+ * Normalize a stored value to a known rung, for a reader that has the column.
  *
- * So: null/undefined/absent → 'exact' (status quo, no behaviour change), and an
- * unrecognised NON-EMPTY string → 'hidden' (fail closed — a value that is
- * present but not in the ladder is corruption, and corruption must not widen
- * disclosure). Callers that want the strict reading of a missing value should
- * not call this; they should not be reading precision at all.
+ * THREE INPUT STATES, TWO OF WHICH FAIL CLOSED
+ * --------------------------------------------
+ *   undefined     The column was NOT SELECTED — the reader runs with
+ *                 `memory_location_precision_enabled` off, on a database that
+ *                 may not have the column (production does not). There is no
+ *                 policy to read. This is the status quo, 'exact', and it is the
+ *                 ONLY input that resolves to 'exact' without the row saying so.
+ *
+ *   null / ""     The column WAS selected and is EMPTY. On a database with
+ *                 2338 that cannot happen (NOT NULL DEFAULT 'exact' backfills
+ *                 every pre-existing row), so a null here is an anomaly: a
+ *                 future migration that relaxed NOT NULL, a projection that
+ *                 left the field out, a hand-edited row. An anomaly must not
+ *                 widen disclosure → 'hidden'.
+ *
+ *   other string  Present but not on the ladder — corruption → 'hidden'.
+ *
+ * Earlier this mapped null to 'exact' on the reasoning that "the row predates
+ * 2338". That reasoning does not survive the migration itself: ADD COLUMN ...
+ * NOT NULL DEFAULT 'exact' stamps every existing row, so no row that HAS the
+ * column can be null through age. The only null-with-column case is a defect,
+ * and the safe reading of a defect in a privacy control is the private one.
+ *
+ * Callers on the PUBLICATION path should not call this directly: use
+ * `publicationPrecision`, which also refuses to trust an absent column when
+ * the flag says the column should be there.
  */
 export function normalizeMemoryPrecision(v: unknown): MemoryLocationPrecision {
-  if (v == null || v === "") return "exact";
-  if (typeof v === "string" && (MEMORY_LOCATION_PRECISIONS as readonly string[]).includes(v)) {
-    return v as MemoryLocationPrecision;
-  }
+  if (v === undefined) return "exact";
+  if (isMemoryLocationPrecision(v)) return v;
   return "hidden";
+}
+
+/**
+ * The rung a NON-OWNER read must be clamped to, given whether the precision
+ * gate is on for this request.
+ *
+ *   gate OFF  → 'exact'. The column is not named anywhere in this request;
+ *               behaviour is byte-for-byte pre-2338. (On production today, the
+ *               only correct value: the column does not exist there.)
+ *
+ *   gate ON   → the row's rung; and when the row does NOT carry the key at all
+ *               (a reader that forgot to select it, a projection missing the
+ *               field) → 'hidden'. With the gate on, "I could not read the
+ *               owner's policy" must not be served as "the owner chose exact".
+ *
+ * This is the read-side normalization that makes the null/missing case safe
+ * WITHOUT deciding what the default should be: it never invents a rung, it
+ * only refuses to widen when the rung is unavailable.
+ */
+export function publicationPrecision(
+  row: { location_precision?: unknown } | null | undefined,
+  precisionGateOn: boolean,
+): MemoryLocationPrecision {
+  if (!precisionGateOn) return "exact";
+  const v = row?.location_precision;
+  if (v === undefined) return "hidden";
+  return normalizeMemoryPrecision(v);
+}
+
+/**
+ * Write-side normalization for an owner-supplied rung.
+ *
+ * Returns the rung when it is exactly one of the six, and `undefined` — "do
+ * not name the column; let the database DEFAULT apply" — for anything else,
+ * including null and near-misses like "EXACT". A value that is not on the
+ * ladder is never written, so the CHECK constraint is the second line, not the
+ * first. It does not substitute a default of its own: what a new Memory's rung
+ * should be when the owner said nothing is the schema DEFAULT today and the
+ * owner's decision tomorrow (see MEMORY_LOCATION_PRECISION_SCHEMA_DEFAULT).
+ */
+export function normalizeMemoryPrecisionForWrite(v: unknown): MemoryLocationPrecision | undefined {
+  return isMemoryLocationPrecision(v) ? v : undefined;
 }
 
 /** The stricter (coarser) of two rungs. */

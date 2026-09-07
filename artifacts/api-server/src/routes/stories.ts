@@ -9,6 +9,8 @@
  * POST   /stories/:id/reply             — send a private reply
  * GET    /stories/:id/viewers           — owner-only viewer list
  * POST   /stories/:id/save-to-highlight — owner-only; saves story as a Highlight
+ *        (only when the Story's audience maps faithfully onto a Highlight
+ *        visibility — otherwise 409 not_promotable and the Story is untouched)
  */
 
 import { Router } from "express";
@@ -20,6 +22,7 @@ import { nameVisibilitySet } from "../lib/publicIdentity.js";
 import { isFlagEnabled } from "../lib/featureFlags.js";
 import { appStorageUrlInfo } from "../lib/mediaUrl.js";
 import { ownerFromPath } from "../lib/mediaAccess.js";
+import { resolveHighlightVisibilityForStory, PROMOTABLE_STORY_VISIBILITIES } from "../lib/storyHighlightVisibility.js";
 
 const router = Router();
 const UUID_RE = /^[0-9a-f-]{36}$/i;
@@ -595,13 +598,39 @@ router.post("/stories/:id/save-to-highlight", asyncHandler(async (req, res) => {
 
   const { data: story } = await sc
     .from("stories")
-    .select("id, owner_id, media_url, media_type, caption, state, expires_at, saved_to_highlight_id")
+    .select("id, owner_id, media_url, media_type, caption, state, expires_at, saved_to_highlight_id, visibility, close_friends_only, hidden_user_ids, allowed_user_ids, trip_id")
     .eq("id", id)
     .maybeSingle();
 
   if (!story) { sendError(res, "not_found", "Story not found"); return; }
   if ((story as any).owner_id !== user.id) { sendError(res, "forbidden", "Only the owner can save this story"); return; }
   if ((story as any).saved_to_highlight_id) { res.status(200).json({ highlightId: (story as any).saved_to_highlight_id }); return; }
+
+  // The Highlight's audience must never be WIDER than the Story's. This used to
+  // hard-code `visibility: "public"`, so a close-friends Story became a public
+  // Highlight. Only the rungs a Highlight can represent faithfully are promoted
+  // (see lib/storyHighlightVisibility for the audit of each rung); every other
+  // Story is REFUSED here, before anything is written, and left exactly as it
+  // was — no state change, no highlight row, no saved_to_highlight_id. 409 with
+  // a stable `state`/`reason` the client can render, pending the owner's
+  // decision on how Highlights should carry the restricted audiences.
+  const decision = resolveHighlightVisibilityForStory(story as any);
+  if (!decision.ok) {
+    req.log.info(
+      { storyId: id, storyVisibility: decision.storyVisibility, reason: decision.reason },
+      "save-to-highlight refused: no faithful Highlight visibility for this Story's audience",
+    );
+    res.status(409).json({
+      error: "conflict",
+      message: decision.message,
+      state: decision.state,
+      reason: decision.reason,
+      storyVisibility: decision.storyVisibility,
+      highlightVisibility: null,
+      promotableStoryVisibilities: PROMOTABLE_STORY_VISIBILITIES,
+    });
+    return;
+  }
 
   // Create a highlight from this story (24h highlight — saved stories get a 24h highlight window from now)
   const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
@@ -613,7 +642,7 @@ router.post("/stories/:id/save-to-highlight", asyncHandler(async (req, res) => {
       media_url:   (story as any).media_url,
       media_type:  (story as any).media_type,
       caption:     (story as any).caption ?? null,
-      visibility:  "public",
+      visibility:  decision.visibility,
       expires_at:  expiresAt,
       filter_id:   "original",
       filter_intensity: 100,

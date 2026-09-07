@@ -27,15 +27,22 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
 import express from "express";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import path from "node:path";
 import { _setTestClient } from "../lib/http.js";
 import memoriesRouter from "../routes/memories.js";
 import {
   normalizeMemoryPrecision,
+  normalizeMemoryPrecisionForWrite,
+  publicationPrecision,
+  isMemoryLocationPrecision,
   stricterPrecision,
   precisionToMediaTier,
   canSeeExactLocation,
   resolveMemoryLocationCeiling,
   MEMORY_LOCATION_PRECISIONS,
+  MEMORY_LOCATION_PRECISION_SCHEMA_DEFAULT,
 } from "../lib/memoryLocationPrecision.js";
 
 const OWNER  = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
@@ -55,19 +62,60 @@ describe("§4 LocationPrecision — the ladder", () => {
       ["exact", "venue", "neighborhood", "city", "country", "hidden"]);
   });
 
-  it("treats an ABSENT value as 'exact' and a CORRUPT value as 'hidden'", () => {
-    // These two defaults point in opposite directions on purpose. Absent means
-    // "this row predates 2338 / the column was not selected", and those rows are
-    // being published at full precision right now — coarsening them to 'hidden'
-    // on a null would blank every location the moment anything mis-wired the
-    // flag. A present-but-unrecognised value is corruption, and corruption must
-    // never widen disclosure.
+  it("treats an UNSELECTED column as 'exact', and NULL / EMPTY / CORRUPT as 'hidden'", () => {
+    // Only `undefined` — the column was not selected, because the flag is off
+    // and the database may not have it — resolves to the status quo 'exact'.
+    // A SELECTED column that is null or empty cannot happen on a database with
+    // 2338 (NOT NULL DEFAULT 'exact' stamps every pre-existing row), so it is an
+    // anomaly, and an anomaly in a privacy control must not widen disclosure.
     assert.equal(normalizeMemoryPrecision(undefined), "exact");
-    assert.equal(normalizeMemoryPrecision(null), "exact");
-    assert.equal(normalizeMemoryPrecision(""), "exact");
+    assert.equal(normalizeMemoryPrecision(null), "hidden", "a selected-but-null rung is a defect, read privately");
+    assert.equal(normalizeMemoryPrecision(""), "hidden");
     assert.equal(normalizeMemoryPrecision("EXACT"), "hidden", "the ladder is lowercase; a near-miss is not a match");
     assert.equal(normalizeMemoryPrecision("street"), "hidden");
     assert.equal(normalizeMemoryPrecision(7), "hidden");
+    for (const rung of MEMORY_LOCATION_PRECISIONS) assert.equal(normalizeMemoryPrecision(rung), rung);
+  });
+
+  it("publicationPrecision: gate off is the status quo; gate on never serves an unreadable policy as 'exact'", () => {
+    // Gate OFF: the column is not named in the request. Whatever the row
+    // carries (or does not), the pre-2338 behaviour is reproduced exactly.
+    assert.equal(publicationPrecision({}, false), "exact");
+    assert.equal(publicationPrecision({ location_precision: "hidden" }, false), "exact");
+    assert.equal(publicationPrecision(null, false), "exact");
+    // Gate ON: the row's rung, faithfully…
+    for (const rung of MEMORY_LOCATION_PRECISIONS) {
+      assert.equal(publicationPrecision({ location_precision: rung }, true), rung);
+    }
+    // …and 'hidden' whenever the rung is unavailable: absent key, null, junk.
+    assert.equal(publicationPrecision({}, true), "hidden", "a reader that forgot to select the column must not leak exact");
+    assert.equal(publicationPrecision({ location_precision: null }, true), "hidden");
+    assert.equal(publicationPrecision({ location_precision: "" }, true), "hidden");
+    assert.equal(publicationPrecision({ location_precision: "EXACT" }, true), "hidden");
+    assert.equal(publicationPrecision(null, true), "hidden");
+    assert.equal(publicationPrecision(undefined, true), "hidden");
+  });
+
+  it("write-side normalization names only a ladder value, and never substitutes a default of its own", () => {
+    for (const rung of MEMORY_LOCATION_PRECISIONS) assert.equal(normalizeMemoryPrecisionForWrite(rung), rung);
+    assert.equal(normalizeMemoryPrecisionForWrite(undefined), undefined);
+    assert.equal(normalizeMemoryPrecisionForWrite(null), undefined, "null is 'say nothing', not 'write hidden' and not 'write exact'");
+    assert.equal(normalizeMemoryPrecisionForWrite(""), undefined);
+    assert.equal(normalizeMemoryPrecisionForWrite("EXACT"), undefined);
+    assert.equal(normalizeMemoryPrecisionForWrite("street"), undefined);
+    assert.equal(isMemoryLocationPrecision("venue"), true);
+    assert.equal(isMemoryLocationPrecision("Venue"), false);
+  });
+
+  it("the schema DEFAULT the code mirrors is the one migration 2338 actually wrote", () => {
+    // If the owner changes the DEFAULT (a decision this file does not take),
+    // the constant must move with it, or the two describe different systems.
+    const here = path.dirname(fileURLToPath(import.meta.url));
+    const sql = readFileSync(path.join(here, "..", "migrations", "2338_memory_location_precision.sql"), "utf8");
+    const m = sql.match(/ADD COLUMN IF NOT EXISTS location_precision text NOT NULL DEFAULT '([a-z_]+)'/);
+    assert.ok(m, "2338 must declare the column with an explicit DEFAULT");
+    assert.equal(m![1], MEMORY_LOCATION_PRECISION_SCHEMA_DEFAULT);
+    assert.ok(isMemoryLocationPrecision(MEMORY_LOCATION_PRECISION_SCHEMA_DEFAULT));
   });
 
   it("stricterPrecision never widens", () => {
@@ -94,6 +142,12 @@ describe("§23 canSeeExactLocation(userId, memoryId)", () => {
     for (const p of MEMORY_LOCATION_PRECISIONS) {
       assert.equal(canSeeExactLocation(OWNER, { owner_id: OWNER, location_precision: p }), true, p);
     }
+  });
+
+  it("is false for a non-owner when the rung is null or empty — a defect reads privately", () => {
+    assert.equal(canSeeExactLocation(VIEWER, { owner_id: OWNER, location_precision: null }), false);
+    assert.equal(canSeeExactLocation(VIEWER, { owner_id: OWNER, location_precision: "" }), false);
+    assert.equal(canSeeExactLocation(OWNER, { owner_id: OWNER, location_precision: null }), true, "the owner always can");
   });
 
   it("is true for a non-owner only at 'exact'", () => {
@@ -314,6 +368,49 @@ describe("GET /memories/:id — publication never exceeds the owner's rung", () 
       const viewer = await getMemory(app.baseUrl, "viewer-tok");
       assert.equal(viewer.body?.memory?.locationPrecision, undefined,
         "the rung is the owner's audience choice — telling a viewer it was narrowed for them is itself a disclosure");
+    } finally { await app.close(); }
+  });
+});
+
+describe("GET /memories/:id — the null / missing rung is safe without deciding the default", () => {
+  it("flag ON and the stored rung is NULL: a non-owner gets NO coordinate, the owner still gets theirs", async () => {
+    // Cannot happen on a database with 2338 as written (NOT NULL). If a later
+    // migration relaxes that, or a projection omits the field, the read side
+    // must fail closed rather than fabricate 'exact'.
+    const app = await startApp(stateWith(null as any, true));
+    try {
+      const viewer = await getMemory(app.baseUrl, "viewer-tok");
+      assert.equal(viewer.status, 200);
+      assert.equal(viewer.body?.memory?.locationLat, null);
+      assert.equal(viewer.body?.memory?.locationLng, null);
+      assert.equal(viewer.body?.memory?.locationCity, null);
+      assert.equal(viewer.body?.memory?.locationCountry, null);
+      assert.equal(viewer.body?.memory?.locationPrecision, undefined, "the rung is the owner's private choice");
+      const owner = await getMemory(app.baseUrl, "owner-tok");
+      assert.equal(owner.status, 200);
+      assert.equal(owner.body?.memory?.locationLat, LAT);
+      assert.equal(owner.body?.memory?.locationLng, LNG);
+      assert.equal(owner.body?.memory?.locationPrecision, "hidden", "the owner is told what the world sees");
+    } finally { await app.close(); }
+  });
+
+  it("flag ON and the stored rung is junk: same — nothing widens on corruption", async () => {
+    const app = await startApp(stateWith("EXACT", true));
+    try {
+      const viewer = await getMemory(app.baseUrl, "viewer-tok");
+      assert.equal(viewer.status, 200);
+      assert.equal(viewer.body?.memory?.locationLat, null);
+      assert.equal(viewer.body?.memory?.locationLng, null);
+    } finally { await app.close(); }
+  });
+
+  it("flag OFF and the stored rung is NULL: byte-for-byte pre-2338 — the exact coordinate is served (status quo, not a recommendation)", async () => {
+    const app = await startApp(stateWith(null as any, false));
+    try {
+      const viewer = await getMemory(app.baseUrl, "viewer-tok");
+      assert.equal(viewer.status, 200);
+      assert.equal(viewer.body?.memory?.locationLat, LAT);
+      assert.equal(viewer.body?.memory?.locationLng, LNG);
     } finally { await app.close(); }
   });
 });
