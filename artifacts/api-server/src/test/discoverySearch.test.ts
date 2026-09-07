@@ -23,6 +23,11 @@
  */
 import { describe, it, before, after, beforeEach } from "node:test";
 import assert from "node:assert/strict";
+import {
+  buddiesWithheldByLaunchGate,
+  invalidateBuddyLaunchGateCache,
+  DISCOVERY_BUDDY_LAUNCH_GATE_FLAG,
+} from "../routes/discoverySearch.js";
 import { createServer } from "node:http";
 import type { Server } from "node:http";
 import express from "express";
@@ -417,6 +422,109 @@ describe("GET /api/discovery/search — block exclusion (travelers)", () => {
 });
 
 // ── Block fail-closed ─────────────────────────────────────────────────────────
+
+// ── Buddy launch-eligibility gate (GII §29 / census-input-intelligence G71) ───
+//
+// `type=buddies` used to apply exactly one predicate — buddy_verified_at IS NOT
+// NULL — and never asked whether the Rent-a-Buddy marketplace is launched
+// (`rent_buddy_enabled`, false in production). The launch leg now sits behind
+// `discovery_buddy_launch_gate_enabled` (migration 2360, seeded FALSE): with
+// the gate absent/false/unreadable NOTHING changes; with it on, buddies are
+// withheld unless the marketplace flag reads true.
+
+describe("GET /api/discovery/search — buddy launch-eligibility gate", () => {
+  const BUDDY = "ff000000-0000-4000-a000-0000000000b1";
+  const buddyRow = {
+    id: BUDDY, handle: "buddyben", name: "Buddy Ben", avatar_url: null, is_private: false,
+    home_city: null, home_country: null, account_status: "active",
+    buddy_verified_at: "2026-01-01T00:00:00Z",
+  };
+  const gateOn  = { flag: DISCOVERY_BUDDY_LAUNCH_GATE_FLAG, enabled: true };
+  const gateOff = { flag: DISCOVERY_BUDDY_LAUNCH_GATE_FLAG, enabled: false };
+  const launched   = { flag: "rent_buddy_enabled", enabled: true };
+  const unlaunched = { flag: "rent_buddy_enabled", enabled: false };
+
+  // The gate read is cached 30 s inside the route; every case starts cold, and
+  // the last case must not leave a cached `true` behind for later suites.
+  beforeEach(() => invalidateBuddyLaunchGateCache());
+  after(() => invalidateBuddyLaunchGateCache());
+
+  async function buddyIds(type: "buddies" | "travelers"): Promise<string[]> {
+    const r = await get(`/discovery/search?q=buddy&type=${type}`);
+    assert.equal(r.status, 200);
+    const { results } = await r.json() as any;
+    return (results as any[]).map((u: any) => u.id);
+  }
+
+  it("flag row ABSENT: legacy behaviour — a verified buddy is returned (the seed's world)", async () => {
+    setup({ profiles: [buddyRow], feature_flags: [] });
+    assert.deepEqual(await buddyIds("buddies"), [BUDDY]);
+  });
+
+  it("gate explicitly FALSE: legacy behaviour, even while the marketplace is unlaunched", async () => {
+    setup({ profiles: [buddyRow], feature_flags: [gateOff, unlaunched] });
+    assert.deepEqual(await buddyIds("buddies"), [BUDDY]);
+  });
+
+  it("gate ON + marketplace unlaunched: buddies withheld; the same person still appears as a traveler", async () => {
+    setup({ profiles: [buddyRow], feature_flags: [gateOn, unlaunched] });
+    assert.deepEqual(await buddyIds("buddies"), [], "an unlaunched marketplace has no buddy candidates");
+    assert.deepEqual(await buddyIds("travelers"), [BUDDY], "the gate is about the BUDDY role, not the person");
+  });
+
+  it("gate ON + marketplace flag ABSENT: withheld — absence of a launch is not a launch", async () => {
+    setup({ profiles: [buddyRow], feature_flags: [gateOn] });
+    assert.deepEqual(await buddyIds("buddies"), []);
+  });
+
+  it("gate ON + marketplace launched: buddies returned", async () => {
+    setup({ profiles: [buddyRow], feature_flags: [gateOn, launched] });
+    assert.deepEqual(await buddyIds("buddies"), [BUDDY]);
+  });
+
+  it("feature_flags UNREADABLE: the gate fails toward legacy (buddies unchanged)", async () => {
+    setup({ profiles: [buddyRow], feature_flags: [gateOn, unlaunched] }, ["feature_flags"]);
+    assert.deepEqual(await buddyIds("buddies"), [BUDDY],
+      "an unreadable GATE must not switch behaviour — that is the capability-flag polarity");
+  });
+
+  // The route-level fake cannot fail one flag read while answering another, so
+  // the second closure is pinned on the exported predicate directly.
+  it("gate ON + marketplace flag UNREADABLE: withheld — an eligibility gate that cannot be established is not passed", async () => {
+    const calls: string[] = [];
+    const sc: any = {
+      from: (_t: string) => ({
+        select: () => ({
+          eq: (_c: string, flag: string) => ({
+            maybeSingle: async () => {
+              calls.push(flag);
+              if (flag === DISCOVERY_BUDDY_LAUNCH_GATE_FLAG) return { data: { enabled: true }, error: null };
+              return { data: null, error: { message: "simulated DB error" } };
+            },
+          }),
+        }),
+      }),
+    };
+    assert.equal(await buddiesWithheldByLaunchGate(sc), true);
+    assert.deepEqual(calls, [DISCOVERY_BUDDY_LAUNCH_GATE_FLAG, "rent_buddy_enabled"],
+      "the marketplace flag is read only once the gate is known to be on");
+  });
+
+  it("gate OFF: the marketplace flag is never read at all", async () => {
+    const calls: string[] = [];
+    const sc: any = {
+      from: (_t: string) => ({
+        select: () => ({
+          eq: (_c: string, flag: string) => ({
+            maybeSingle: async () => { calls.push(flag); return { data: { enabled: false }, error: null }; },
+          }),
+        }),
+      }),
+    };
+    assert.equal(await buddiesWithheldByLaunchGate(sc), false);
+    assert.deepEqual(calls, [DISCOVERY_BUDDY_LAUNCH_GATE_FLAG]);
+  });
+});
 
 describe("GET /api/discovery/search — block lookup fail-closed", () => {
   it("returns empty results when the blocks table returns a DB error", async () => {

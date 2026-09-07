@@ -347,13 +347,44 @@ describe("submitterIsVisible is ONE rule, shared by every discovery_places reade
     const fs = await import("node:fs/promises");
     const src = await fs.readFile(new URL("../routes/discoverySearch.ts", import.meta.url), "utf8");
 
+    // Tolerates sibling names in the same import (fetchBlockedSet joined it on
+    // 2026-09-07); what is pinned is that the rule comes from lib/blocks.
     assert.match(
-      src, /import \{ submitterIsVisible \} from "\.\.\/lib\/blocks\.js"/,
+      src, /import \{[^}]*\bsubmitterIsVisible\b[^}]*\} from "\.\.\/lib\/blocks\.js"/,
       "discoverySearch must import the shared rule rather than define its own",
     );
     assert.ok(
       !/function submitterIsVisible/.test(src),
       "a second implementation of the block rule has appeared in discoverySearch",
+    );
+  });
+
+  it("fetchBlockedSet is lib/blocks' too — the block SET reader is not re-implemented per route", async () => {
+    // Until 2026-09-07 discoverySearch.ts carried a byte-for-byte private copy
+    // of lib/blocks.fetchBlockedSet (Passport §263: "Do not implement blocking
+    // independently per surface"; Telegraph §285: "No subsystem may
+    // independently 'rediscover' a blocked relationship"). Two identical copies
+    // are a defect of construction, not of behaviour: they agree until one is
+    // edited. The gateway (lib/inputAssistance/gateway.ts) and GET /discovery
+    // already read lib/blocks'; this pins /discovery/search and /suggest to it.
+    const fs = await import("node:fs/promises");
+    const src = await fs.readFile(new URL("../routes/discoverySearch.ts", import.meta.url), "utf8");
+
+    assert.match(
+      src, /import \{ fetchBlockedSet, submitterIsVisible \} from "\.\.\/lib\/blocks\.js"/,
+      "discoverySearch must import fetchBlockedSet from lib/blocks",
+    );
+    assert.ok(
+      !/async function fetchBlockedSet/.test(src),
+      "a private implementation of fetchBlockedSet has reappeared in discoverySearch",
+    );
+
+    // Identity, not resemblance: the symbol the route re-exports IS lib/blocks'.
+    const routeModule = await import("../routes/discoverySearch.js");
+    const blocks = await import("../lib/blocks.js");
+    assert.equal(
+      (routeModule as any).fetchBlockedSet, blocks.fetchBlockedSet,
+      "discoverySearch.fetchBlockedSet must be the same function object as lib/blocks.fetchBlockedSet",
     );
   });
 

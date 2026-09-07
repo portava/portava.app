@@ -368,6 +368,54 @@ describe("discovery/community: blocked submitters", () => {
       "an anonymous caller must see the submitter redacted");
   });
 
+  // ── Canonical byline shape (displayName) ────────────────────────────────────
+  // .agents/memory/display-name-privacy.md prescribes ONE redaction shape: a
+  // null name plus a separate handle. This route's legacy `name` field bakes
+  // the literal `@username` into the name instead — a shape no other surface
+  // uses — and the mobile client renders that field raw, so it cannot change
+  // without changing what a user sees. `displayName` is the canonical shape,
+  // emitted additively: null when withheld, the real name when the viewer is
+  // the submitter or the submitter opted in, never a handle.
+  const submitterOf = (body: any, placeName: string): any =>
+    ((body.items ?? []) as any[]).find((i) => i.name === placeName)?.submittedBy ?? null;
+
+  it("displayName is null for a redacted stranger while the legacy name still carries @handle", async () => {
+    _setTestServiceClient(makeFakeClient({ rows: [...ALL_ROWS, ROW_SELF], blocks: [] }));
+    const { body } = await community(server, true);
+    const s = submitterOf(body, "Stranger Pick");
+    assert.ok(s, "the stranger's row is served");
+    assert.equal(s.displayName, null, "a withheld name is null — never a handle, never '@handle'");
+    assert.equal(s.handle, "stranger", "the handle travels in its own field");
+    assert.equal(s.name, "@stranger", "the legacy field is unchanged for the unmigrated client");
+  });
+
+  it("displayName is the real name for the viewer's own submission (self-exemption) and for nobody else", async () => {
+    _setTestServiceClient(makeFakeClient({ rows: [...ALL_ROWS, ROW_SELF], blocks: [] }));
+    const { body } = await community(server, true);
+    assert.equal(submitterOf(body, "My Own Pick").displayName, "myself display name");
+    assert.equal(submitterOf(body, "Blocker Pick").displayName, null);
+  });
+
+  it("displayName is null for every submitter when the caller is anonymous", async () => {
+    _setTestServiceClient(makeFakeClient({ rows: [...ALL_ROWS, ROW_SELF], blocks: [] }));
+    const { body } = await community(server, false);
+    for (const item of (body.items ?? []) as any[]) {
+      if (item.submittedBy) assert.equal(item.submittedBy.displayName, null, `${item.name} leaked a name to an anonymous caller`);
+    }
+  });
+
+  it("the two byline fields never disagree about WHETHER a name is withheld", async () => {
+    _setTestServiceClient(makeFakeClient({ rows: [...ALL_ROWS, ROW_SELF], blocks: [] }));
+    const { body } = await community(server, true);
+    for (const item of (body.items ?? []) as any[]) {
+      const s = item.submittedBy;
+      if (!s) continue;
+      const legacyWithheld = typeof s.name === "string" && s.name.startsWith("@");
+      assert.equal(s.displayName === null, legacyWithheld,
+        `${item.name}: name=${JSON.stringify(s.name)} displayName=${JSON.stringify(s.displayName)} — one rule, two shapes, same decision`);
+    }
+  });
+
   it("reports total as what the viewer received, not what the query returned", async () => {
     _setTestServiceClient(makeFakeClient({
       rows:   ALL_ROWS,

@@ -6,7 +6,12 @@
  * from @workspace/api-zod, supplemented by a server-side sanitization pass.
  *
  * Privacy rules (server-side, fail-closed):
- *   - Private accounts (is_private=true) excluded entirely.
+ *   - Private accounts (is_private=true) the viewer does not follow are
+ *     returned as a LOCKED PREVIEW (no avatar/location/matchedReason,
+ *     canAccess=false) — never silently excluded, so a private account is
+ *     discoverable everywhere or nowhere, matching /api/users/search. See
+ *     searchTravelers below; this line used to say "excluded entirely", which
+ *     the code has not done since the locked-preview contract landed.
  *   - Suspended/banned/deleted accounts excluded (account_status filter).
  *   - Profile-discovery opt-outs excluded (fail-closed on query error).
  *   - Blocked users excluded in both directions; block lookup failure is
@@ -74,7 +79,8 @@ import { allowDiscoveryPersonCard } from "../services/passport/PassportConsumerA
 // routes/discovery.ts (which re-exports it) rather than re-implemented here —
 // two copies of a privacy rule is how these two serve points drifted apart in
 // the first place.
-import { submitterIsVisible } from "../lib/blocks.js";
+import { fetchBlockedSet, submitterIsVisible } from "../lib/blocks.js";
+import { isFlagEnabled } from "../lib/featureFlags.js";
 import {
   logDiscoveryServe,
   DiscoveryServePoint,
@@ -366,26 +372,18 @@ function encodeCursor(offset: number): string {
 
 // ── Blocked-user set (fail-closed) ────────────────────────────────────────────
 //
-// Returns null on any error. Callers that receive null MUST return [] —
-// never expose content when the block state is unknown.
-
-async function fetchBlockedSet(sc: any, userId: string): Promise<Set<string> | null> {
-  try {
-    const { data, error } = await sc
-      .from("blocks")
-      .select("blocker_id, blocked_id")
-      .or(`blocker_id.eq.${userId},blocked_id.eq.${userId}`);
-    if (error) return null;
-    const set = new Set<string>();
-    for (const b of (data ?? [])) {
-      if ((b as any).blocker_id === userId) set.add((b as any).blocked_id);
-      else set.add((b as any).blocker_id);
-    }
-    return set;
-  } catch {
-    return null;
-  }
-}
+// `fetchBlockedSet` is lib/blocks' — the one bidirectional, fail-closed block
+// reader every people-exposing surface shares (map travelers, circle
+// locations, the input-assistance gateway, GET /discovery). This file carried
+// a byte-for-byte private copy of it until 2026-09-07. Passport §263: "Do not
+// implement blocking independently per surface"; Telegraph §285: "No subsystem
+// may independently 'rediscover' a blocked relationship." Two copies of a
+// privacy rule agree until the day one of them is edited — which is how
+// submitterIsVisible drifted between this route and the feed (see the import
+// above). Re-exported so a test can assert identity rather than resemblance.
+// Contract unchanged: null on any error, and callers that receive null MUST
+// return [] — never expose content when the block state is unknown.
+export { fetchBlockedSet };
 
 // ── Age-restricted profile set (fail-closed) ──────────────────────────────────
 //
@@ -407,6 +405,69 @@ export async function fetchAgeRestrictedSet(sc: any): Promise<Set<string> | null
   } catch {
     return null;
   }
+}
+
+// ── Buddy launch-eligibility gate (inert until seeded ON) ─────────────────────
+//
+// Global Input Intelligence §29 (row G71 of census-input-intelligence): a Buddy
+// suggestion must pass "service category, availability, launch/safety/payment
+// eligibility". `type=buddies` applied exactly one predicate —
+// `buddy_verified_at IS NOT NULL` — and never asked whether the Rent-a-Buddy
+// marketplace is LAUNCHED. `rent_buddy_enabled` is false in production, so a
+// verified buddy was searchable on a surface whose marketplace does not exist.
+//
+// The launch leg is closed here. It sits behind its OWN capability flag,
+// `discovery_buddy_launch_gate_enabled` (migration 2360, seeded FALSE), because
+// Discovery is live and this repository's rule is that nothing changes what a
+// user sees until someone deliberately flips a flag. Both reads are
+// isFlagEnabled — fail-closed — and the two closures point in the SAFE
+// direction each time:
+//   gate absent / false / unreadable   → legacy behaviour, buddies unchanged
+//   gate ON, rent_buddy_enabled false  → buddies withheld
+//   gate ON, rent_buddy_enabled UNREADABLE → buddies withheld (an eligibility
+//                                        gate that cannot be established is
+//                                        not passed)
+// The category and availability legs of G71 remain open — see
+// docs/architecture/census-discovery.md B03.
+//
+// Applied inside searchTravelers(isBuddy) so the input-assistance gateway
+// (lib/inputAssistance/gateway.ts → dispatchSearch) inherits the same rule.
+
+/** Literal name so check-flag-polarity resolves the read. */
+export const DISCOVERY_BUDDY_LAUNCH_GATE_FLAG = "discovery_buddy_launch_gate_enabled";
+/** The marketplace's master switch, read by routes/rentABuddy.ts. */
+const RENT_BUDDY_LAUNCH_FLAG = "rent_buddy_enabled";
+
+// The GATE read is cached 30 s (mirrors discoveryServeLog / compass/flags.ts):
+// type=all fans out through buddies on every search, and an uncached read
+// would add a round-trip per search for a flag that changes once. The
+// marketplace flag is read only when the gate is on, and is NOT cached, so a
+// launch or un-launch is visible on the next request.
+const BUDDY_GATE_TTL_MS = 30_000;
+let _buddyGateCache: { value: boolean; at: number } | null = null;
+
+/** Invalidate the gate cache. Exported for tests. */
+export function invalidateBuddyLaunchGateCache(): void {
+  _buddyGateCache = null;
+}
+
+async function buddyLaunchGateActive(sc: any): Promise<boolean> {
+  if (_buddyGateCache && Date.now() - _buddyGateCache.at < BUDDY_GATE_TTL_MS) {
+    return _buddyGateCache.value;
+  }
+  const value = await isFlagEnabled(sc, DISCOVERY_BUDDY_LAUNCH_GATE_FLAG);
+  _buddyGateCache = { value, at: Date.now() };
+  return value;
+}
+
+/**
+ * True when buddy results must be WITHHELD: the gate is on and the marketplace
+ * is not (or cannot be shown to be) launched. Exported for its unit test — the
+ * route-level fake cannot fail one flag read while answering another.
+ */
+export async function buddiesWithheldByLaunchGate(sc: any): Promise<boolean> {
+  if (!(await buddyLaunchGateActive(sc))) return false;
+  return !(await isFlagEnabled(sc, RENT_BUDDY_LAUNCH_FLAG));
 }
 
 // ── Owner account-status guard ─────────────────────────────────────────────────
@@ -458,6 +519,9 @@ async function searchTravelers(
   ctx?: SearchQueryContext,
 ): Promise<SearchResult[]> {
   if (blockedSet === null || ageRestrictedSet === null) return [];
+  // Launch eligibility (G71) before any row is read: a buddy the marketplace
+  // has not launched is not a candidate. Inert until the gate flag is on.
+  if (isBuddy && await buddiesWithheldByLaunchGate(sc)) return [];
   try {
     const pat = sqlPattern(q);
     let query = sc

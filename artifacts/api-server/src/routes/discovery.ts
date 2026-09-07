@@ -2431,7 +2431,28 @@ export interface CommunityDiscoveryItem {
   neighborhood: string | null;
   blurb: string | null;
   imageUrl: string | null;
-  submittedBy: { id: string; name: string; avatarUrl: string | null } | null;
+  submittedBy: {
+    id: string;
+    /**
+     * LEGACY byline. Carries the real name when the viewer may see it, else the
+     * literal `@username` — a redaction SHAPE no other surface uses (the rule
+     * everywhere else is a null name + a separate handle; see displayName).
+     * Kept verbatim because travel-buddy-standalone renders it raw
+     * (`components/DiscoveryWall.tsx` "By {submittedBy.name}") and this route
+     * is live: changing this field changes what a user sees. Retire it once the
+     * client resolves the byline through displayIdentity(displayName, handle).
+     */
+    name: string;
+    /**
+     * CANONICAL byline, .agents/memory/display-name-privacy.md shape: the real
+     * name iff the submitter is the viewer or opted in via
+     * profile_privacy_settings.show_real_name; otherwise null. Never a handle.
+     * The handle travels separately in `handle`.
+     */
+    displayName: string | null;
+    avatarUrl: string | null;
+    handle: string | null;
+  } | null;
   savedCount: number;
   tag: string | null;
   note: string | null;
@@ -2665,15 +2686,23 @@ router.get("/discovery/community", async (req, res) => {
         blurb:        row.blurb ?? null,
         imageUrl:     row.image_url ?? null,
         submittedBy:  profile
-          ? {
-              id:        profile.id as string,
-              name:      ((profile.id as string) === selfSubmitterId
-                || allowedSubmitterNames.has(profile.id as string)
-                ? (profile.name ?? "Traveler")
-                : (profile.username ? `@${profile.username}` : "Traveler")) as string,
-              avatarUrl: (profile.avatar_url ?? null) as string | null,
-              handle:    (profile.username ?? null) as string | null,
-            }
+          ? (() => {
+              // One decision, two presentations. `nameAllowed` is the whole
+              // privacy rule (self-exemption first, then opt-in); the two
+              // fields below differ only in the SHAPE they give a withheld
+              // name, never in whether it is withheld.
+              const nameAllowed = (profile.id as string) === selfSubmitterId
+                || allowedSubmitterNames.has(profile.id as string);
+              return {
+                id:          profile.id as string,
+                name:        (nameAllowed
+                  ? (profile.name ?? "Traveler")
+                  : (profile.username ? `@${profile.username}` : "Traveler")) as string,
+                displayName: nameAllowed ? ((profile.name ?? null) as string | null) : null,
+                avatarUrl:   (profile.avatar_url ?? null) as string | null,
+                handle:      (profile.username ?? null) as string | null,
+              };
+            })()
           : null,
         savedCount: (row.saved_count as number) ?? 0,
         // `tag` doubles as an internal OSM dedup key on seeded rows
