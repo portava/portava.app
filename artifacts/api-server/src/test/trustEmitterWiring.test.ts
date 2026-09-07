@@ -638,3 +638,89 @@ describe("migration 2540's unique index — a 23505 on insert is reported as a d
     await assert.rejects(() => recordTrustEvent(f.client, input), /recordTrustEvent DB error/);
   });
 });
+
+// ── 6. Cross-emitter: one adjudication reaching TWO routes charges once ──────
+//
+// Everything above proves PER-EMITTER idempotency: the same route replayed is a
+// dedup skip. It does not prove that one ADJUDICATION reaching two DIFFERENT
+// emitters charges once — and the admin report routes make that sequence
+// legal: hide-content has no status guard and leaves the report `in_review`;
+// resolve accepts any report that is not yet `resolved`. So one report on one
+// post can be hidden AND then upheld, and one message report can be "hidden"
+// (no mutation) and then upheld. The declared-but-unproduced
+// `pulse_post_reported` sits exactly on that seam: wired at resolve without
+// subsuming content_removed, one post removal would charge −10 AND −5. These
+// are the assertions that fail if anyone does that.
+
+describe("cross-emitter: one adjudication reaching two admin routes writes ONE trust event", () => {
+  const REPORT_POST_2 = "50000000-0000-4000-8000-000000000011";
+  let f: Fake;
+  beforeEach(() => {
+    f = makeFake({
+      posts: [{ id: POST_ID, author_id: AUTHOR, post_status: "published" }],
+      messages: [{ id: MSG_ID, sender_id: SENDER }],
+      reports: [
+        { id: REPORT_POST, reporter_id: REPORTER, target_type: "post", target_id: POST_ID, status: "open" },
+        { id: REPORT_MSG, reporter_id: REPORTER, target_type: "message", target_id: MSG_ID, status: "open" },
+      ],
+    });
+    _setTestClient(f.client, true);
+  });
+
+  it("post report: hide-content, then resolve {upheld:true} on the SAME report — content_removed once, nothing else", async () => {
+    const h = await req("POST", `/api/admin/reports/${REPORT_POST}/hide-content`, { reason: "x" }, ADMIN);
+    assert.equal(h.status, 200, JSON.stringify(h.body));
+    await settle();
+    assert.equal(f.tables.reports.find((r) => r.id === REPORT_POST)!.status, "in_review", "hide-content leaves the report resolvable");
+    const score1 = (await getTrustProfile(f.client, AUTHOR))!.overall_score;
+
+    const r = await req("POST", `/api/admin/reports/${REPORT_POST}/resolve`, { action: "removed", upheld: true }, ADMIN);
+    assert.equal(r.status, 200, "the second route ACCEPTS the same report — the sequence is legal, so the ledger must guard it");
+    await settle();
+
+    const evs = f.tables.trust_events;
+    assert.equal(evs.length, 1, `one adjudication, one event; got ${JSON.stringify(evs.map((e) => e.event_type))}`);
+    assert.equal(evs[0].event_type, "content_removed");
+    assert.equal(evs[0].user_id, AUTHOR);
+    assert.equal(f.tables.trust_caps.length, 1);
+    assert.equal(f.tables.moderation_actions.length, 2, "both routes audited — the audit trail is NOT the dedup key");
+    assert.equal((await recalculateTrustScore(f.client, AUTHOR)).overall_score, score1, "the second route moved the score by nothing");
+  });
+
+  it("post report: resolve {upheld:true} first, then hide-content — still content_removed once", async () => {
+    await req("POST", `/api/admin/reports/${REPORT_POST}/resolve`, { action: "warned", upheld: true }, ADMIN);
+    await settle();
+    assert.equal(f.tables.trust_events.length, 0, "an upheld post report alone charges nothing today (pulse_post_reported is unwired)");
+    const h = await req("POST", `/api/admin/reports/${REPORT_POST}/hide-content`, { reason: "x" }, ADMIN);
+    assert.equal(h.status, 200, "hide-content has no status guard");
+    await settle();
+    assert.equal(f.tables.trust_events.length, 1);
+    assert.equal(f.tables.trust_events[0].event_type, "content_removed");
+  });
+
+  it("two REPORTS on one post, both hidden — one content item, one content_removed", async () => {
+    f.tables.reports.push({ id: REPORT_POST_2, reporter_id: ATTENDEE, target_type: "post", target_id: POST_ID, status: "open" });
+    await req("POST", `/api/admin/reports/${REPORT_POST}/hide-content`, { reason: "x" }, ADMIN);
+    await settle();
+    await req("POST", `/api/admin/reports/${REPORT_POST_2}/hide-content`, { reason: "y" }, ADMIN);
+    await settle();
+    assert.equal(f.tables.moderation_actions.length, 2, "two audit rows — two reports were actioned");
+    assert.equal(f.tables.trust_events.length, 1, "keyed on the content id, not the report or the audit row");
+    assert.equal(f.tables.trust_caps.length, 1);
+  });
+
+  it("message report: hide-content (no mutation for a message), then resolve {upheld:true} — message_report_confirmed once", async () => {
+    const h = await req("POST", `/api/admin/reports/${REPORT_MSG}/hide-content`, { reason: "x" }, ADMIN);
+    assert.equal(h.status, 200, JSON.stringify(h.body));
+    assert.equal(h.body.contentHidden, false);
+    await settle();
+    assert.equal(f.tables.trust_events.length, 0, "removing nothing charges nothing");
+    await req("POST", `/api/admin/reports/${REPORT_MSG}/resolve`, { action: "warned", upheld: true }, ADMIN);
+    await settle();
+    const evs = f.tables.trust_events;
+    assert.equal(evs.length, 1);
+    assert.equal(evs[0].event_type, "message_report_confirmed");
+    assert.equal(evs[0].user_id, SENDER);
+    assert.equal(evs[0].source_id, MSG_ID);
+  });
+});
