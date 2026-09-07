@@ -4704,9 +4704,19 @@ describe("toLedgerEntryView", () => {
     assert.deepEqual(snake, [], `raw columns leaked: ${snake.join(", ")}`);
   });
 
-  it("warns only while the payout is an estimate", () => {
-    assert.ok(toLedgerEntryView(ROW).warning);
-    assert.equal(toLedgerEntryView({ ...ROW, is_estimated: false }).warning, undefined);
+  // M6 — this used to assert `warning === undefined` for `is_estimated: false`,
+  // pinning a branch that can never be taken. `createEarningsLedgerEntry` is
+  // the only writer of rent_buddy_earnings_ledger in the tree, it writes
+  // `is_estimated: true` at creation, and NOTHING clears it: there is no
+  // settlement writer, no rent_buddy_payouts INSERT and no payment path. A
+  // conditional warning claimed a capability the code does not have.
+  it("warns unconditionally — nothing in this tree can settle a ledger row", () => {
+    assert.equal(toLedgerEntryView(ROW).warning, "Estimated — payout not processed");
+    assert.equal(
+      toLedgerEntryView({ ...ROW, is_estimated: false }).warning,
+      "Estimated — payout not processed",
+      "no writer can produce is_estimated=false, so no reader may present a row as settled",
+    );
   });
 });
 

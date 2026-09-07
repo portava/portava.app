@@ -2153,6 +2153,79 @@ router.post("/rent-a-buddy/admin/category-status/:category", asyncHandler(async 
 }));
 
 // ── admin payout hold / release ────────────────────────────────────────────────
+//
+// M13/M3 — BOTH TRANSITIONS ARE COMPARE-AND-SWAP.
+//
+// THE DEFECT (09 §1.4, 12 §3.1 M3). Both routes used to be a bare
+// `.update({ status }).eq("id", payoutId)` with NO predicate on the payout's
+// current status. Releasing an already-released payout, or holding one that is
+// already on hold or already released, matched a row, wrote the same status
+// again, stamped a fresh released_by/released_at over the original operator and
+// timestamp, appended a second rent_buddy_admin_actions row — and returned 200.
+// Two admins acting at once both "succeeded", and the audit trail recorded the
+// LOSER's identity. On a money row that is not a cosmetic problem: released_by
+// and released_at are the only record of who authorised the movement.
+//
+// THE FIX (09 §9.1: "Every transition is a compare-and-swap ... a zero-row
+// result is a 409, not a success"). The expected current status travels in the
+// same UPDATE as the new one, so the check and the write cannot be separated by
+// another transaction. PostgREST returns the rows it actually updated, so an
+// empty array IS the "somebody else got there first" signal.
+//
+// The predicates are stated as a DENYLIST, not an allowlist, and that is
+// deliberate. `rent_buddy_payouts.status` is free text whose value set exists
+// only in a SQL comment (09 §9.1), and NOTHING in the repository inserts a
+// payout row (M2 — a capability awaiting a ruling, explicitly not this work).
+// An allowlist would therefore have to invent the vocabulary M2 is going to
+// define, and would reject rows carrying any status this file guessed wrong.
+// The denylist refuses exactly the transitions that are known-wrong today and
+// stays correct whatever M2 decides the rest of the ladder is called.
+//
+// Zero rows is ambiguous on its own — the payout may not exist at all — so the
+// row is read back once to tell 404 from 409. That read is NOT the guard; it
+// only picks the status code after the guard has already refused the write.
+
+/** Statuses a hold may not be applied over. See the block comment above. */
+const PAYOUT_NOT_HOLDABLE_FROM = ["on_hold", "released"] as const;
+/** The single status a release may be applied over. */
+const PAYOUT_RELEASABLE_FROM = "on_hold";
+
+/**
+ * Turn a zero-row compare-and-swap into the right status code.
+ *
+ * 404 — no such payout.
+ * 409 — the payout exists but was not in the state this transition requires;
+ *       the caller is told what state it IS in, so a UI can re-render rather
+ *       than retry a transition that will never apply.
+ */
+async function sendPayoutCasFailure(
+  serviceClient: any,
+  res: any,
+  payoutId: string,
+  expected: string,
+): Promise<void> {
+  const { data: current, error } = await serviceClient
+    .from("rent_buddy_payouts")
+    .select("id, status")
+    .eq("id", payoutId)
+    .maybeSingle();
+
+  // A failed read here must not be reported as "not found" — that is the
+  // fail-open shape 11 §"Authorization guards fail closed" exists to stop.
+  if (error) {
+    res.status(500).json({ error: "db_error", message: error.message });
+    return;
+  }
+  if (!current) {
+    res.status(404).json({ error: "not_found" });
+    return;
+  }
+  res.status(409).json({
+    error: "conflict",
+    message: `Payout is ${(current as any).status}; this transition requires ${expected}.`,
+    currentStatus: (current as any).status,
+  });
+}
 
 // POST /api/rent-a-buddy/admin/payouts/:payoutId/hold
 // Also accessible at /api/admin/buddy-payouts/:payoutId/hold via app.ts URL alias
@@ -2166,7 +2239,11 @@ router.post("/rent-a-buddy/admin/payouts/:payoutId/hold", asyncHandler(async (re
   const { payoutId } = req.params;
   const { reason } = req.body ?? {};
 
-  const { data, error } = await serviceClient
+  // Compare-and-swap: the status predicates ride in the SAME statement as the
+  // write, so no second admin can slip a transition in between the check and
+  // the update. `.select()` (not `.single()`) because zero updated rows is an
+  // expected outcome here, not an error.
+  let casQuery: any = serviceClient
     .from("rent_buddy_payouts")
     .update({
       status: "on_hold",
@@ -2175,12 +2252,19 @@ router.post("/rent-a-buddy/admin/payouts/:payoutId/hold", asyncHandler(async (re
       held_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     })
-    .eq("id", payoutId)
-    .select()
-    .single();
+    .eq("id", payoutId);
+  for (const forbidden of PAYOUT_NOT_HOLDABLE_FROM) casQuery = casQuery.neq("status", forbidden);
+  const { data, error } = await casQuery.select();
 
-  if (error || !data) return res.status(404).json({ error: "not_found", message: error?.message });
+  if (error) return res.status(500).json({ error: "db_error", message: error.message });
 
+  const held = Array.isArray(data) ? data[0] : (data ?? null);
+  if (!held) {
+    await sendPayoutCasFailure(serviceClient, res, payoutId, `a status other than ${PAYOUT_NOT_HOLDABLE_FROM.join(" or ")}`);
+    return;
+  }
+
+  // Only a transition that actually happened is written to the audit trail.
   await serviceClient.from("rent_buddy_admin_actions").insert({
     admin_id: auth.user.id,
     target_type: "payout",
@@ -2189,7 +2273,7 @@ router.post("/rent-a-buddy/admin/payouts/:payoutId/hold", asyncHandler(async (re
     notes: reason ?? null,
   });
 
-  return res.json({ payout: data });
+  return res.json({ payout: held });
 }));
 
 // POST /api/rent-a-buddy/admin/payouts/:payoutId/release
@@ -2204,6 +2288,10 @@ router.post("/rent-a-buddy/admin/payouts/:payoutId/release", asyncHandler(async 
   const { payoutId } = req.params;
   const { notes } = req.body ?? {};
 
+  // Compare-and-swap. A release may only be applied to a payout that is
+  // currently on hold — releasing an already-released one is the exact silent
+  // success 09 §1.4 names, and it overwrote released_by/released_at with the
+  // second operator's identity.
   const { data, error } = await serviceClient
     .from("rent_buddy_payouts")
     .update({
@@ -2213,10 +2301,16 @@ router.post("/rent-a-buddy/admin/payouts/:payoutId/release", asyncHandler(async 
       updated_at: new Date().toISOString(),
     })
     .eq("id", payoutId)
-    .select()
-    .single();
+    .eq("status", PAYOUT_RELEASABLE_FROM)
+    .select();
 
-  if (error || !data) return res.status(404).json({ error: "not_found", message: error?.message });
+  if (error) return res.status(500).json({ error: "db_error", message: error.message });
+
+  const released = Array.isArray(data) ? data[0] : (data ?? null);
+  if (!released) {
+    await sendPayoutCasFailure(serviceClient, res, payoutId, PAYOUT_RELEASABLE_FROM);
+    return;
+  }
 
   await serviceClient.from("rent_buddy_admin_actions").insert({
     admin_id: auth.user.id,
@@ -2226,7 +2320,7 @@ router.post("/rent-a-buddy/admin/payouts/:payoutId/release", asyncHandler(async 
     notes: notes ?? null,
   });
 
-  return res.json({ payout: data });
+  return res.json({ payout: released });
 }));
 
 export default router;

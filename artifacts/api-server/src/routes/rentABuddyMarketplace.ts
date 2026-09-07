@@ -77,6 +77,14 @@ import { requireUser, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { logger } from "../lib/logger.js";
 import { createEarningsLedgerEntry } from "../lib/rentBuddyEarningsLedger.js";
+// The ONE reader of rent_buddy_fee_rules. The dashboard used to carry its own
+// `defaultFeePercent = 22`; see lib/rentBuddyFeeSchedule.ts for why a numeric
+// fallback was the defect rather than the safety net (M1 / M10).
+import {
+  describeFeeScheduleFailure,
+  platformFeeUsdFor,
+  resolveFeeSchedule,
+} from "../lib/rentBuddyFeeSchedule.js";
 import { isNonNumericCoord } from "../lib/coords.js";
 import { sendPushWithRetry } from "../lib/pushWithRetry.js";
 import { invalidate as invalidateCompassCache } from "../compass/CompassCacheEngine.js";
@@ -2146,25 +2154,47 @@ router.get("/rent-a-buddy/me/earnings/summary", async (req, res) => {
 
   const today = new Date().toISOString().slice(0, 10);
 
-  const [bookingsRes, tipsRes, ledgerRes, trustRes] = await Promise.all([
+  // The take rate comes from rent_buddy_fee_rules keyed on THIS buddy's level —
+  // the same resolver the ledger writer uses (M1). It used to come from
+  // `ledger[0].platform_fee_percent`: an arbitrary row's rate applied to every
+  // completed booking, defaulting to a hard-coded 22 %. That select is gone
+  // with it; nothing else in this handler read the ledger.
+  const [bookingsRes, tipsRes, feeSchedule, trustRes] = await Promise.all([
     svc.from("rent_buddy_bookings")
       .select("id, status, total_usd, deposit_usd, cash_balance_usd, cash_balance_confirmed_by_buddy, booking_date, category, city, duration_h, tip_usd, pricing_type")
       .eq("buddy_id", buddyProfile.id),
     svc.from("rent_buddy_tips")
       .select("amount_usd")
       .eq("buddy_user_id", auth.user.id),
-    svc.from("rent_buddy_earnings_ledger")
-      .select("*")
-      .eq("buddy_user_id", auth.user.id),
+    resolveFeeSchedule(svc, buddyProfile.buddy_level),
     svc.from("trust_profiles")
       .select("overall_score, public_level")
       .eq("user_id", auth.user.id)
       .maybeSingle(),
   ]);
 
+  // A buddy is told a take rate or told nothing. Quoting a fee the operator did
+  // not configure is the defect (`08` §2.3); an error the client can surface is
+  // the honest alternative to a fabricated 22 %.
+  if (feeSchedule.status === "no_such_level") {
+    logger.error(
+      { userId: auth.user.id, buddyProfileId: buddyProfile.id, buddyLevel: feeSchedule.buddyLevel },
+      "earnings summary refused: buddy_level has no rent_buddy_fee_rules row",
+    );
+    // Operator-neutral text: the log above carries the table and the level.
+    return sendError(res, 'conflict',
+      "Your buddy level has no fee schedule entry, so earnings cannot be estimated.");
+  }
+  if (feeSchedule.status === "read_failed") {
+    logger.error(
+      { userId: auth.user.id, buddyProfileId: buddyProfile.id, detail: feeSchedule.message },
+      "earnings summary refused: rent_buddy_fee_rules unreadable",
+    );
+    return sendError(res, 'db_error', describeFeeScheduleFailure(feeSchedule));
+  }
+
   const bookings = (bookingsRes.data ?? []) as any[];
   const tips = (tipsRes.data ?? []) as any[];
-  const ledger = (ledgerRes.data ?? []) as any[];
 
   const todayBkgs = bookings.filter((b) => b.booking_date === today);
   // Same two-value blind spot as GET /me/requests, in JS rather than SQL: the
@@ -2187,11 +2217,9 @@ router.get("/rent-a-buddy/me/earnings/summary", async (req, res) => {
     .filter((b) => b.cash_balance_confirmed_by_buddy === true)
     .reduce((s, b) => s + Number(b.cash_balance_usd ?? 0), 0);
 
-  // Platform fee estimate
-  const ledgerEntry = ledger[0];
-  const defaultFeePercent = 22;
-  const feePercent = ledgerEntry?.platform_fee_percent ?? defaultFeePercent;
-  const estimatedPlatformFee = Math.round(completedTotal * feePercent / 100 * 100) / 100;
+  // Platform fee estimate — one take rate, from the schedule of record.
+  const feePercent = feeSchedule.rule.platformFeePercent;
+  const estimatedPlatformFee = platformFeeUsdFor(completedTotal, feeSchedule.rule);
   const estimatedBuddyEarnings = Math.round((completedTotal - estimatedPlatformFee) * 100) / 100;
 
   res.json({
@@ -2214,6 +2242,11 @@ router.get("/rent-a-buddy/me/earnings/summary", async (req, res) => {
       inAppAmountCollected: depositCollected,
     },
     tips: { total: totalTips, count: tips.length },
+    // The rate and the level it came from, published together so a buddy can
+    // see WHICH schedule row priced them. Previously the percentage was never
+    // returned at all, which is how three different rates coexisted unnoticed.
+    buddyLevel: feeSchedule.buddyLevel,
+    platformFeePercent: feePercent,
     estimatedPlatformFeeUsd: estimatedPlatformFee,
     estimatedBuddyEarningsUsd: estimatedBuddyEarnings,
     statusBreakdown: {
@@ -2243,7 +2276,28 @@ router.get("/rent-a-buddy/me/earnings/summary", async (req, res) => {
  * `entry.buddyNetEstimatedAmount.toFixed(2)` on undefined and the screen threw
  * on its FIRST row. The type asserted the mapping had happened; nothing checked
  * that it had. GET /me/earnings/summary, directly above, always mapped properly.
+ *
+ * ── THE WARNING IS UNCONDITIONAL, AND THAT IS THE HONEST NAME (M6) ──────────
+ * This used to read `row.is_estimated ? "Estimated — payout not processed"
+ * : undefined`, and the `undefined` arm was UNREACHABLE.
+ * `createEarningsLedgerEntry` is the only writer of `rent_buddy_earnings_ledger`
+ * in this tree; it writes `is_estimated: true` and `cash_balance_confirmed:
+ * false` at creation and nothing anywhere clears either one. There is no
+ * settlement writer, no payout insert (`rent_buddy_payouts` has no INSERT
+ * anywhere — `09` §1.4) and no payment path (`pay-deposit` / `pay-full` return
+ * 503). A branch on a flag that can never be false is not a branch; it is a
+ * claim that settlement exists, made by code that cannot settle anything.
+ *
+ * So the branch is gone and the warning always renders. `isEstimated` and
+ * `cashBalanceConfirmed` are still reported, because they are what the row
+ * actually says — but nothing DECIDES on them here any more.
+ *
+ * When a settlement writer is built (Stage 3, `09` §§4–10), this is the line
+ * that becomes conditional again, and the test that makes the false arm
+ * reachable must land in the same change as the writer that reaches it.
  */
+export const LEDGER_NOT_SETTLED_WARNING = "Estimated — payout not processed";
+
 export function toLedgerEntryView(row: any) {
   return {
     id: row.id,
@@ -2263,7 +2317,7 @@ export function toLedgerEntryView(row: any) {
     cashBalanceConfirmed: row.cash_balance_confirmed,
     isEstimated: row.is_estimated,
     createdAt: row.created_at,
-    warning: row.is_estimated ? "Estimated — payout not processed" : undefined,
+    warning: LEDGER_NOT_SETTLED_WARNING,
   };
 }
 

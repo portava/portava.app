@@ -28,8 +28,127 @@ import { asyncHandler } from "../lib/asyncHandler.js";
 import { NotificationService } from "../services/notifications/NotificationService.js";
 import { NotificationRouter as NotifRouter } from "../services/notifications/NotificationRouter.js";
 import { requireAdmin } from "../lib/requireAdmin.js";
+import { logger as rootLogger } from "../lib/logger.js";
 
 const router = Router();
+
+const logger = rootLogger.child({ route: "adminFeatured" });
+
+// ── featured_count: the atomic counter writer ────────────────────────────────
+//
+// WHY THIS EXISTS
+// ---------------
+// All four sites below used to move `profiles.featured_count` with a
+// read-modify-write across two round trips — select the current value, then
+// `update({ featured_count: current + 1 })`. supabase-js issues each statement
+// in its own implicit transaction, so two admins featuring two different posts
+// by the same author interleave as read(3)/read(3)/write(4)/write(4): two
+// features, one increment. The decrement sites are worse, because
+// `Math.max(0, current - 1)` clamps against a value another writer may already
+// have moved, so the counter drifts in both directions and never self-corrects
+// — nothing anywhere recounts it from `portava_featured`.
+//
+// `.agents/memory/counter-update-atomicity.md` records this exact pattern as
+// REJECTED in completion review and names the required form, which is what
+// migration 2331 creates: a SECURITY DEFINER SQL function with a column
+// allowlist and `GREATEST(0, col + delta)`, granted to service_role only. One
+// UPDATE statement is atomic under Postgres row locking, so N concurrent
+// adjustments land exactly N.
+//
+// WHY THE FALLBACK IS KEPT
+// ------------------------
+// Same reason `services/rentBuddy/ReliabilityCounters.ts` keeps one: the RPC is
+// absent until 2331 is applied out-of-band (docs/architecture/12 §5.2 —
+// migrations land BEFORE the PR that adds them can go green), and the route
+// suites drive this router through partial fake clients that implement `from`
+// and not `rpc`. The fallback is the OLD, lossy path and is documented as such;
+// it is correct on the single-request path and it is not what production runs
+// once the function exists.
+
+/** The columns migration 2331's allowlist admits. Keep in step with its IN-list. */
+export type ProfileCounterColumn = "featured_count";
+
+/** The SECURITY DEFINER writer created by migration 2331. */
+export const PROFILE_COUNTER_RPC = "portava_adjust_profile_counter";
+
+/**
+ * Adjust an allowlisted `profiles` counter by `delta`, clamped at >= 0.
+ *
+ * Best-effort by design — a counter update must never fail an admin's feature
+ * or revoke — but never SILENT: every path that fails to move the counter logs
+ * why, because a featured post whose author's count did not move is invisible
+ * otherwise.
+ */
+export async function adjustProfileCounter(
+  sc:      any,
+  userId:  string,
+  column:  ProfileCounterColumn,
+  delta:   number,
+): Promise<void> {
+  if (!sc || !userId || !delta) return;
+
+  // Preferred path: one atomic statement, DB-side.
+  if (typeof sc.rpc === "function") {
+    try {
+      // supabase-js RESOLVES on a failed query — the failure exists only in
+      // `error`, so this destructure is the whole difference between a lost
+      // increment we know about and one we do not.
+      const { data, error } = await sc.rpc(PROFILE_COUNTER_RPC, {
+        p_user_id: userId,
+        p_column:  column,
+        p_delta:   delta,
+      });
+      if (!error) {
+        // NULL means the UPDATE matched no profile row (author deleted between
+        // the post read and here). Not a failure of the RPC — but not a counted
+        // adjustment either, so it is said out loud rather than inferred.
+        if (data === null || data === undefined) {
+          logger.warn({ userId, column, delta }, "featured counter: no profile row matched");
+        }
+        return;
+      }
+      logger.warn(
+        { err: error, userId, column, delta },
+        "featured counter: atomic RPC unavailable — falling back to read-modify-write",
+      );
+    } catch (err) {
+      logger.warn({ err, userId, column, delta }, "featured counter: atomic RPC threw — falling back");
+    }
+  }
+
+  // Fallback: read-modify-write. LOSSY UNDER CONCURRENCY — this is the pattern
+  // 2331 exists to replace. It runs only where the RPC is absent (before the
+  // migration is applied, or under a partial test client).
+  try {
+    const { data: profileRow, error: readErr } = await sc
+      .from("profiles")
+      .select(column)
+      .eq("id", userId)
+      .maybeSingle();
+    // Do not write a bogus count off a failed read: an unreadable profile row
+    // and a profile row holding 0 are different facts, and `?? 0` used to make
+    // them the same one — a failed read would have RESET the counter to 1.
+    if (readErr) {
+      logger.warn({ err: readErr, userId, column }, "featured counter: profile read failed — counter not moved");
+      return;
+    }
+    if (!profileRow) {
+      logger.warn({ userId, column, delta }, "featured counter: no profile row matched");
+      return;
+    }
+    const current = Number((profileRow as any)[column] ?? 0);
+    const next    = Math.max(0, current + delta);
+    const { error: writeErr } = await sc
+      .from("profiles")
+      .update({ [column]: next })
+      .eq("id", userId);
+    if (writeErr) {
+      logger.warn({ err: writeErr, userId, column, delta }, "featured counter: update failed");
+    }
+  } catch (err) {
+    logger.warn({ err, userId, column, delta }, "featured counter: read-modify-write threw");
+  }
+}
 
 // ── Category → content signal mapping ────────────────────────────────────────
 
@@ -330,16 +449,7 @@ router.post("/admin/featured/approve/:postId", asyncHandler(async (req, res) => 
   // (The wasAlreadyLive guard above ensures this runs at most once per
   // (post_id, category) pair regardless of how many times approve is called.)
   if (initialStatus === "live") {
-    const { data: profileRow } = await sc
-      .from("profiles")
-      .select("featured_count")
-      .eq("id", (post as any).author_id)
-      .maybeSingle();
-    const current = (profileRow as any)?.featured_count ?? 0;
-    await sc
-      .from("profiles")
-      .update({ featured_count: current + 1 })
-      .eq("id", (post as any).author_id);
+    await adjustProfileCounter(sc, (post as any).author_id, "featured_count", +1);
   }
 
   // Send creator-permission notification via NotificationService (privacy guard +
@@ -440,13 +550,7 @@ router.post("/admin/featured/accept-permission/:postId", asyncHandler(async (req
   if (!featured) { sendError(res, "not_found", "Featured record not found or not pending permission"); return; }
 
   // Increment featured_count on the author's profile
-  const { data: profileRow } = await sc
-    .from("profiles")
-    .select("featured_count")
-    .eq("id", user.id)
-    .maybeSingle();
-  const current = (profileRow as any)?.featured_count ?? 0;
-  await sc.from("profiles").update({ featured_count: current + 1 }).eq("id", user.id);
+  await adjustProfileCounter(sc, user.id, "featured_count", +1);
 
   res.json({ ok: true, featured });
 }));
@@ -556,16 +660,7 @@ router.post("/admin/featured/revoke/:postId", asyncHandler(async (req, res) => {
       .eq("id", postId)
       .maybeSingle();
     if (post) {
-      const { data: profileRow } = await sc
-        .from("profiles")
-        .select("featured_count")
-        .eq("id", (post as any).author_id)
-        .maybeSingle();
-      const current = (profileRow as any)?.featured_count ?? 0;
-      await sc
-        .from("profiles")
-        .update({ featured_count: Math.max(0, current - 1) })
-        .eq("id", (post as any).author_id);
+      await adjustProfileCounter(sc, (post as any).author_id, "featured_count", -1);
     }
   }
 
@@ -713,16 +808,7 @@ router.delete("/admin/featured/:id", asyncHandler(async (req, res) => {
       .eq("id", (existing as any).post_id)
       .maybeSingle();
     if (post) {
-      const { data: profileRow } = await sc
-        .from("profiles")
-        .select("featured_count")
-        .eq("id", (post as any).author_id)
-        .maybeSingle();
-      const current = (profileRow as any)?.featured_count ?? 0;
-      await sc
-        .from("profiles")
-        .update({ featured_count: Math.max(0, current - 1) })
-        .eq("id", (post as any).author_id);
+      await adjustProfileCounter(sc, (post as any).author_id, "featured_count", -1);
     }
   }
 

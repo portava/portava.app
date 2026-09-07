@@ -180,8 +180,19 @@ export async function runActivityScoreJob(): Promise<ActivityScoreJobSummary> {
     //                   participation, anyone receiving follows on older
     //                   content, and every zero-contribution account — who still
     //                   needs a row, because a MISSING row and a NEW_USER_BASE
-    //                   floor-10 row produce different boosts downstream
-    //                   (DiscoveryRankingService defaults a missing row to 0).
+    //                   floor-10 row are different facts downstream.
+    //
+    //                   That difference is now STATED at the consumer rather
+    //                   than left implicit here. DiscoveryRankingService used to
+    //                   default a missing row to `{ score: 0 }`, so this comment
+    //                   described a disagreement the reader could not express;
+    //                   it now resolves the three states explicitly
+    //                   (`CreatorActivityLookup`: measured / unscored /
+    //                   unavailable) and a measured 0 is no longer the same
+    //                   input as no row at all. The seeding rationale is
+    //                   unchanged — a creator with a row is a stale row the
+    //                   6-hour rule will refresh, and one without is invisible
+    //                   to the stale half forever.
     //   SELF-DRAINING — the job writes a row for every user it visits, so this
     //                   half shrinks to nothing after the first full pass and
     //                   the 6-hour staleness rule sustains the job alone

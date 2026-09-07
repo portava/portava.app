@@ -224,6 +224,154 @@ function sc(fallback?: any) {
   return getServiceClient() ?? fallback;
 }
 
+// ── Atomic money primitives (migration 2330) ──────────────────────────────────
+//
+// The rent-a-buddy money record has three places where a write can be lost or
+// inflated under concurrency. Each is repaired by moving the read-decide-write
+// sequence into ONE database statement, created by
+// src/migrations/2330_rent_buddy_money_atomicity.sql:
+//
+//   rb_accumulate_booking_tip   M8  — a second tip ADDS instead of replacing
+//   rb_confirm_booking_cash     M13 — cash confirmation is one locked write,
+//                                     and refuses an inflated amount
+//   rb_buddy_earnings_summary   M7  — the earnings total is aggregated DB-side
+//                                     so no row cap can truncate it
+//
+// Every call site keeps a fallback for the case where the function is not
+// there: an un-applied migration (12 §5.2 — migrations are applied out of band
+// BEFORE the PR that adds one can go green, so this file must be correct on
+// both sides of that apply) or a partial test client with no `.rpc`. The
+// fallbacks are documented individually; none of them silently reintroduces
+// the defect the RPC exists to fix.
+
+/**
+ * Call a SQL function, distinguishing "the function answered" from "there is no
+ * function here". supabase-js RESOLVES on a rejected query, so a failure is in
+ * `res.error` and never thrown — see .agents/memory/api-server-testing.md.
+ *
+ * Returns `{ ok: false }` when the RPC could not be used at all, so the caller
+ * can take its documented fallback instead of reporting a false success.
+ */
+async function rbRpc(client: any, fn: string, args: Record<string, unknown>): Promise<{ ok: boolean; data?: any }> {
+  if (typeof client?.rpc !== "function") return { ok: false };
+  try {
+    const res: any = await client.rpc(fn, args);
+    if (res?.error) return { ok: false };
+    return { ok: true, data: res?.data };
+  } catch {
+    // Partial/fake clients may throw on a method they do not implement.
+    return { ok: false };
+  }
+}
+
+/**
+ * M8 — add `amountUsd` to the tip on a booking, atomically.
+ *
+ * THE DEFECT THIS REPLACES. The tip path in routes/rentABuddyMarketplace.ts
+ * (POST /rent-a-buddy/bookings/:bookingId/tip) upserts rent_buddy_tips on
+ * conflict target `booking_id` with a bare `amount_usd: amountUsd`. The table
+ * carries UNIQUE (booking_id), so the second tip a traveller leaves REPLACES
+ * the first rather than adding to it. There is no other copy of the first tip
+ * and no reconciliation that could recover it — which is why 12 §4 orders M8
+ * ahead of the rest of Stage 1B: "a destroyed money record is not recoverable
+ * later." It then issues two more UPDATEs (the ledger's tip_usd and the
+ * booking's tip_usd) with no transaction and explicitly best-effort, each
+ * carrying the SINGLE amount rather than the running total, so the three copies
+ * can and do disagree.
+ *
+ * This helper is the correct primitive: one RPC, one transaction, GREATEST(0,
+ * col + delta) accumulation in rent_buddy_tips, and both denormalised copies
+ * written from the accumulated total.
+ *
+ * Returns the new running total, or null when it could not be applied. A null
+ * is a REAL FAILURE the caller must surface — the fallback below is not
+ * atomic, and pretending a lost tip succeeded is the defect this repairs.
+ *
+ * Exported because the only call site today is in rentABuddyMarketplace.ts,
+ * which already imports from this module.
+ */
+export async function accumulateBookingTip(
+  client: any,
+  bookingId: string,
+  travelerId: string,
+  amountUsd: number,
+  note?: string | null,
+): Promise<{ totalTipUsd: number; atomic: boolean } | null> {
+  if (!client || !bookingId || !travelerId) return null;
+  if (!Number.isFinite(amountUsd) || amountUsd <= 0) return null;
+
+  const rpc = await rbRpc(client, "rb_accumulate_booking_tip", {
+    p_booking_id: bookingId,
+    p_traveler_id: travelerId,
+    p_amount_usd: amountUsd,
+    p_note: note ?? null,
+  });
+  if (rpc.ok) {
+    // RETURNS TABLE surfaces as an array of one row through PostgREST.
+    const row = Array.isArray(rpc.data) ? rpc.data[0] : rpc.data;
+    const total = Number(row?.total_tip_usd ?? row?.totalTipUsd ?? NaN);
+    if (Number.isFinite(total)) return { totalTipUsd: total, atomic: true };
+  }
+
+  // FALLBACK — read-modify-write, used only where the RPC is unavailable.
+  // It is NOT atomic and says so in its return value, but it still ACCUMULATES:
+  // even here a second tip must never destroy the first. Two concurrent tips on
+  // this path can lose one increment; before 2330 a second tip lost the whole
+  // first tip on every path, concurrent or not.
+  try {
+    const readRes: any = await client
+      .from("rent_buddy_tips")
+      .select("id, amount_usd")
+      .eq("booking_id", bookingId)
+      .maybeSingle();
+    if (readRes?.error) return null; // never write a total derived from a failed read
+
+    const existing = readRes?.data ? Number((readRes.data as any).amount_usd ?? 0) : 0;
+    const total = Math.max(0, Math.round(((Number.isFinite(existing) ? existing : 0) + amountUsd) * 100) / 100);
+
+    // buddy_user_id is derived, never taken from the caller: the tips row names
+    // who is owed the money.
+    const bookingRes: any = await client
+      .from("rent_buddy_bookings")
+      .select("id, traveler_id, buddy_id")
+      .eq("id", bookingId)
+      .maybeSingle();
+    if (bookingRes?.error || !bookingRes?.data) return null;
+    if ((bookingRes.data as any).traveler_id !== travelerId) return null;
+
+    const bpRes: any = await client
+      .from("rent_buddy_profiles")
+      .select("id, user_id")
+      .eq("id", (bookingRes.data as any).buddy_id)
+      .maybeSingle();
+    if (bpRes?.error || !bpRes?.data) return null;
+
+    const upsertRes: any = await client
+      .from("rent_buddy_tips")
+      .upsert({
+        booking_id: bookingId,
+        traveler_id: travelerId,
+        buddy_user_id: (bpRes.data as any).user_id,
+        amount_usd: total,
+        note: note ?? null,
+      }, { onConflict: "booking_id" });
+    if (upsertRes?.error) return null;
+
+    await client
+      .from("rent_buddy_earnings_ledger")
+      .update({ tip_usd: total, updated_at: new Date().toISOString() })
+      .eq("booking_id", bookingId);
+    await client
+      .from("rent_buddy_bookings")
+      .update({ tip_usd: total, updated_at: new Date().toISOString() })
+      .eq("id", bookingId);
+
+    return { totalTipUsd: total, atomic: false };
+  } catch {
+    return null;
+  }
+}
+
 // ── User limits helper ─────────────────────────────────────────────────────────
 
 // Exported so every booking-CREATION path applies the same account-level

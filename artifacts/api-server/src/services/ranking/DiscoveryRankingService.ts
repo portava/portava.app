@@ -270,30 +270,114 @@ const SURFACE_WEIGHT_PROFILES: Record<SurfaceName, SurfaceWeightProfile> = {
 // ── DB lookup helpers ─────────────────────────────────────────────────────────
 
 /**
+ * One creator's row in `creator_activity_scores`, as this service reads it.
+ */
+export interface CreatorActivityRow {
+  score:        number;
+  spam_penalty: number;
+}
+
+/**
+ * What this service knows about one creator's activity standing.
+ *
+ * ── WHY THIS IS A THREE-STATE UNION AND NOT A NUMBER (12 §3.3 C2; 07 D3) ────
+ * `creator_activity_scores` answers three different questions, and this
+ * consumer used to collapse all three onto the single number 0:
+ *
+ *   measured  — a row exists and holds `score`. A score of 0 here is a MEASURED
+ *               zero: the scheduler ran, the creator's signals were aggregated,
+ *               and the arithmetic produced 0 (or the safety multiplier
+ *               collapsed it).
+ *   unscored  — NO ROW. The creator has never been through the scheduler. This
+ *               is not a score of zero; it is the absence of a score.
+ *   unavailable — the table could not be READ. supabase-js RESOLVES
+ *               `{ data, error }` rather than rejecting, so without binding
+ *               `error` a failed read is indistinguishable from "none of these
+ *               creators has a row" — every creator in the batch looks unscored
+ *               at once.
+ *
+ * ── WHY IT MATTERS, GIVEN THE BOOST IS OFF ──────────────────────────────────
+ * `lib/creatorActivityScoreScheduler.ts` deliberately seeds EVERY profile,
+ * including zero-contribution accounts, and its own comment states the reason:
+ * "a MISSING row and a NEW_USER_BASE floor-10 row produce different boosts
+ * downstream (DiscoveryRankingService defaults a missing row to 0)". So the two
+ * writers already disagree about what absence means, and the consumer was the
+ * side that had no way to express the difference. `calcActivityBoost` is
+ * monotonic in the score, so today `unscored` and a measured 0 both yield a
+ * boost of 0 and NOTHING CHANGES IN THE RANKING — the union is a contract, not
+ * a behaviour change. It exists so the next reader of this table has to say
+ * which of the three it means, instead of writing `?? 0` and being wrong on the
+ * day `ACTIVITY_DISCOVERY_BOOST_ENABLED` is flipped (which is B3, gated, and
+ * not this code's to propose).
+ *
+ * `07` D3 states the rule this encodes: branch on row present/absent, never on
+ * `score === 0`.
+ */
+export type CreatorActivityLookup =
+  | { state: "measured"; row: CreatorActivityRow }
+  | { state: "unscored" }
+  | { state: "unavailable" };
+
+/**
+ * Resolve one creator's activity standing out of a batch load.
+ *
+ * Exported and pure so the distinction above is testable without standing up a
+ * ranking pass, and so a future consumer has one place to get it right.
+ *
+ * `creatorId` may be null: an item with no creator (a place, a system card) is
+ * `unscored` — there is nobody whose row could exist.
+ */
+export function resolveCreatorActivity(
+  scores:      Map<string, CreatorActivityRow>,
+  creatorId:   string | null | undefined,
+  unavailable: boolean,
+): CreatorActivityLookup {
+  if (unavailable) return { state: "unavailable" };
+  if (!creatorId) return { state: "unscored" };
+  const row = scores.get(creatorId);
+  return row ? { state: "measured", row } : { state: "unscored" };
+}
+
+/**
  * Batch-load creator_activity_scores for a set of creator IDs.
- * Returns a map of creatorId → { score, spam_penalty }.
- * Never throws — missing creators get score=0, spam_penalty=0.
+ *
+ * Returns the rows that EXIST plus whether the read itself failed. A creator
+ * absent from the map has no row; `unavailable` says the map is empty because
+ * nothing could be read, which is a different fact and is why it is returned
+ * separately rather than signalled by an empty map.
+ *
+ * Never throws.
  */
 async function batchLoadActivityScores(
   db: SupabaseClient | null,
   creatorIds: string[],
-): Promise<Map<string, { score: number; spam_penalty: number }>> {
-  const result = new Map<string, { score: number; spam_penalty: number }>();
-  if (!db || creatorIds.length === 0) return result;
+): Promise<{ scores: Map<string, CreatorActivityRow>; unavailable: boolean }> {
+  const scores = new Map<string, CreatorActivityRow>();
+  if (!db || creatorIds.length === 0) return { scores, unavailable: false };
   try {
     const unique = [...new Set(creatorIds)].slice(0, 200);
-    const { data } = await db
+    // `error` is bound deliberately: dropping it is the 146-site defect class
+    // of `11`, and here it would turn one failed read into "no creator in this
+    // batch has ever been scored".
+    const { data, error } = await db
       .from("creator_activity_scores")
       .select("user_id, score, spam_penalty")
       .in("user_id", unique);
+    if (error) {
+      logger.warn({ err: error, creators: unique.length }, "activityScores: batch read failed");
+      return { scores, unavailable: true };
+    }
     for (const row of (data as any[]) ?? []) {
-      result.set(row.user_id as string, {
+      scores.set(row.user_id as string, {
         score:        Number(row.score        ?? 0),
         spam_penalty: Number(row.spam_penalty ?? 0),
       });
     }
-  } catch { /* non-fatal */ }
-  return result;
+  } catch (err) {
+    logger.warn({ err }, "activityScores: batch read threw");
+    return { scores, unavailable: true };
+  }
+  return { scores, unavailable: false };
 }
 
 /**
@@ -509,11 +593,19 @@ function calcExplorationBoost(input: RankingInput, max: number): number {
  * Activity boost: value read from creator_activity_scores.score,
  * scaled to ACTIVITY_SCORE_MAX_BOOST ceiling.
  * Only applied when ACTIVITY_DISCOVERY_BOOST_ENABLED = true.
+ *
+ * `null` means there is NO measurement — no row, or the table could not be read
+ * — and is typed separately from the number 0 on purpose. Both give a boost of
+ * 0, so this is not a behaviour change; what the type buys is that a future
+ * change to this function has to decide what to do about an unmeasured creator
+ * rather than silently treating them as one measured at the bottom of the
+ * scale. See CreatorActivityLookup.
  */
 function calcActivityBoost(
-  activityScore: number,
+  activityScore: number | null,
   maxBoost: number,
 ): number {
+  if (activityScore === null) return 0;
   if (activityScore <= 0) return 0;
   // Activity score is 0–100; scale linearly to maxBoost
   return Math.min(maxBoost, (activityScore / 100) * maxBoost);
@@ -571,8 +663,17 @@ function calcNegativeFeedbackPenalty(
   return Math.min(max, penalty);
 }
 
-/** Spam penalty from creator_activity_scores.spam_penalty (0–25). */
-function calcSpamPenalty(rawSpamPenalty: number, max: number): number {
+/**
+ * Spam penalty from creator_activity_scores.spam_penalty (0–25).
+ *
+ * `null` means no measurement (no row, or an unreadable table) and yields no
+ * penalty — the same as today, and deliberately so: penalising a creator
+ * because their row could not be read would punish them for a database
+ * failure. It is typed distinctly from a measured 0 so that "we found nothing
+ * against this creator" is never confused with "we could not look".
+ */
+function calcSpamPenalty(rawSpamPenalty: number | null, max: number): number {
+  if (rawSpamPenalty === null) return 0;
   // spam_penalty from CreatorActivityScoreService is already 0–25
   return Math.min(max, (rawSpamPenalty / 25) * max);
 }
@@ -736,8 +837,16 @@ export interface RankItemsOptions {
  * Injectable overrides for unit tests (never use in production).
  */
 export interface RankingServiceTestOverrides {
-  /** Pre-loaded activity scores keyed by creatorId — skip DB fetch. */
-  activityScores?: Map<string, { score: number; spam_penalty: number }>;
+  /**
+   * Pre-loaded activity scores keyed by creatorId — skip DB fetch.
+   *
+   * A creator ABSENT from this map is `unscored`, exactly as a creator with no
+   * row in `creator_activity_scores` is. There is no override for the
+   * `unavailable` state and there should not be: a test that wants a failed
+   * read should inject a client whose read fails, not assert a state the loader
+   * would never have produced.
+   */
+  activityScores?: Map<string, CreatorActivityRow>;
   /** Pre-loaded underexposure statuses keyed by itemId — skip DB fetch. */
   underexposureStatus?: Map<string, string>;
   /** Pre-loaded fatigued creator IDs — skip DB fetch. */
@@ -815,9 +924,11 @@ export async function rankItems(
 
   const itemIds = inputs.map((i) => i.itemId);
 
-  const [activityScores, underexposureStatusMap, fatiguedCreators] = await Promise.all([
+  const [activityLoad, underexposureStatusMap, fatiguedCreators] = await Promise.all([
+    // An injected override is a set of rows a test chose to exist: it is never
+    // "the table could not be read".
     _overrides.activityScores != null
-      ? Promise.resolve(_overrides.activityScores)
+      ? Promise.resolve({ scores: _overrides.activityScores, unavailable: false })
       : batchLoadActivityScores(db, creatorIds),
     underexposureEnabled && _overrides.underexposureStatus == null
       ? batchLoadUnderexposureStatus(db, itemIds)
@@ -826,6 +937,9 @@ export async function rankItems(
       ? Promise.resolve(_overrides.fatiguedCreators)
       : batchLoadFatiguedCreators(db, viewer.viewerId, creatorIds, nowMs),
   ]);
+
+  const activityScores      = activityLoad.scores;
+  const activityUnavailable = activityLoad.unavailable;
 
   // ── Step 3: surface weight profile ────────────────────────────────────────
   const profile = SURFACE_WEIGHT_PROFILES[surface] ?? {};
@@ -894,10 +1008,12 @@ export async function rankItems(
     // The constant itself is retained in rankingAnalytics.ts because ~116,000
     // historical rows carry it.
 
-    // Activity data for this item's creator
-    const activityData = input.creatorId
-      ? (activityScores.get(input.creatorId) ?? { score: 0, spam_penalty: 0 })
-      : { score: 0, spam_penalty: 0 };
+    // Activity standing for this item's creator — three states, not a number.
+    // `?? { score: 0 }` used to stand here and it made "this creator has never
+    // been scored" and "this creator was measured at zero" the same input. See
+    // CreatorActivityLookup for why they are not.
+    const activity = resolveCreatorActivity(activityScores, input.creatorId, activityUnavailable);
+    const activityRow: CreatorActivityRow | null = activity.state === "measured" ? activity.row : null;
 
     const isFatigued = input.creatorId
       ? fatiguedCreators.has(input.creatorId)
@@ -921,7 +1037,7 @@ export async function rankItems(
     // only the contribution to the final score does.
     const rawActivityBoost = shadowMode
       ? 0
-      : calcActivityBoost(activityData.score, activityParams.maxBoost);
+      : calcActivityBoost(activityRow ? activityRow.score : null, activityParams.maxBoost);
     const activityBoost = rawActivityBoost * (profile.activityBoost ?? 1);
 
     const newContributorBoost = newContributorEnabled
@@ -944,7 +1060,10 @@ export async function rankItems(
       input.viewerHasReportedItem,
       penalties.negativeFeedback,
     );
-    const spamPenalty = calcSpamPenalty(activityData.spam_penalty, penalties.negativeFeedback * 0.5);
+    const spamPenalty = calcSpamPenalty(
+      activityRow ? activityRow.spam_penalty : null,
+      penalties.negativeFeedback * 0.5,
+    );
 
     const components: ScoreComponents = {
       viewerRelevance,
