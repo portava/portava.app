@@ -18,7 +18,7 @@ import {
   parseNullabilityOverrides,
   effectiveNotNullColumns,
 } from "../scripts/parseBaselineSchema.js";
-import { findNullWrites, nulledColumn } from "../scripts/checkNotNullWrites.js";
+import { findNullWrites, nulledColumn, evaluate, type NullWrite } from "../scripts/checkNotNullWrites.js";
 
 const __dir = dirname(fileURLToPath(import.meta.url));
 const SRC_ROOT = resolve(__dir, "..");
@@ -190,5 +190,94 @@ describe("the whole tree — no write nulls a NOT NULL column", () => {
       "the shared helper's `?? null` dropped every event from a caller that omitted the id");
     assert.doesNotMatch(read("routes/groupChat.ts"), /body:\s*null/,
       "messages.body is NOT NULL — nulling it made message deletion return db_error");
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// THE WIRING — the part that was actually broken
+// ══════════════════════════════════════════════════════════════════════════════
+//
+// `effectiveNotNullColumns` was added to parseBaselineSchema and tested above,
+// and it was correct the whole time. The guard that CI runs went on calling
+// `notNullColumns`, so it kept reporting `layover_plan_stops.travel_min` as
+// NOT NULL after migration 2312 dropped the constraint — a false accusation
+// against code that was right, from a guard whose own unit tests were green.
+//
+// A test of the parser cannot catch that, because the parser was never the
+// broken part. These drive the guard's decision function instead, which is
+// where the baseline and the migrations are combined.
+describe("evaluate() — the guard honours migrations, not just the baseline", () => {
+  const BASE = [
+    "CREATE TABLE public.widgets (",
+    "    id uuid NOT NULL,",
+    "    travel_min integer NOT NULL,",
+    "    label text",
+    ");",
+  ].join("\n");
+
+  const write = (cols: string[]): NullWrite =>
+    ({ file: "routes/w.ts", line: 7, table: "widgets", op: "insert", nulled: cols });
+
+  it("reports a null written to a column the baseline declares NOT NULL", () => {
+    const { problems } = evaluate([write(["travel_min"])], BASE, parseNullabilityOverrides([]));
+    assert.equal(problems.length, 1);
+    assert.match(problems[0], /widgets sets travel_min to null/);
+  });
+
+  it("stops reporting once a migration DROPS the constraint", () => {
+    // This is the regression. Same code, same baseline — but the schema moved,
+    // and a guard that cannot see the move blames the code for agreeing with it.
+    const overrides = parseNullabilityOverrides([{
+      name: "2312_widgets_travel_time_unknown.sql",
+      sql: "ALTER TABLE public.widgets ALTER COLUMN travel_min DROP NOT NULL;",
+    }]);
+    const { problems } = evaluate([write(["travel_min"])], BASE, overrides);
+    assert.deepEqual(problems, [],
+      "migration 2312 dropped this constraint; reporting it is a false accusation");
+  });
+
+  it("still reports OTHER columns the same migration did not touch", () => {
+    // The failure mode on the other side: a DROP NOT NULL must not be read as
+    // "this table is now unchecked".
+    const overrides = parseNullabilityOverrides([{
+      name: "2312_widgets_travel_time_unknown.sql",
+      sql: "ALTER TABLE public.widgets ALTER COLUMN travel_min DROP NOT NULL;",
+    }]);
+    const { problems } = evaluate([write(["id"])], BASE, overrides);
+    assert.equal(problems.length, 1);
+    assert.match(problems[0], /widgets sets id to null/);
+  });
+
+  it("a later SET NOT NULL puts the constraint back", () => {
+    const overrides = parseNullabilityOverrides([
+      { name: "2312_a.sql", sql: "ALTER TABLE public.widgets ALTER COLUMN travel_min DROP NOT NULL;" },
+      { name: "2400_b.sql", sql: "ALTER TABLE public.widgets ALTER COLUMN travel_min SET NOT NULL;" },
+    ]);
+    const { problems } = evaluate([write(["travel_min"])], BASE, overrides);
+    assert.equal(problems.length, 1, "the last migration wins, and it restored the constraint");
+  });
+
+  it("a table absent from the baseline is UNVERIFIABLE, never a pass", () => {
+    // The distinction the whole platform turns on: not-checked is not clean.
+    const { problems, unverifiable } = evaluate(
+      [{ file: "routes/w.ts", line: 3, table: "not_in_baseline", op: "insert", nulled: ["x"] }],
+      BASE, parseNullabilityOverrides([]));
+    assert.deepEqual(problems, []);
+    assert.ok(unverifiable.has("not_in_baseline"),
+      "an unverifiable table must be reported as unverifiable, not silently counted as clean");
+  });
+
+  it("the REAL guard, against the REAL schema, clears layover_plan_stops.travel_min", () => {
+    // The end-to-end statement: migration 2312 is on disk, and the guard sees it.
+    const MIG_DIR = resolve(SRC_ROOT, "migrations");
+    const real = parseNullabilityOverrides(
+      readdirSync(MIG_DIR)
+        .filter((n) => n.endsWith(".sql"))
+        .map((n) => ({ name: n, sql: readFileSync(join(MIG_DIR, n), "utf8") })),
+    );
+    const nn = effectiveNotNullColumns(BASELINE_SQL, "layover_plan_stops", real);
+    assert.equal(nn.has("travel_min"), false,
+      "2312 dropped this NOT NULL so an unknown travel time can be stored as unknown; " +
+      "if this fails, the guard is once again reading a stale snapshot");
   });
 });
