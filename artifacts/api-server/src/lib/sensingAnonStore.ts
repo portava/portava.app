@@ -236,6 +236,21 @@ export function deriveGroupToken(epoch: number, groupTag: string | null | undefi
     .digest("hex");
 }
 
+const CREDENTIAL_CONTEXT = "sensing-anon/credential/v1";
+
+/**
+ * SERVER SIDE. The stored form of a contribution CREDENTIAL (the opaque bearer
+ * §3 says ingest should receive). The bearer itself is never stored: a
+ * sensing_contribution_sessions row (migration 2480, unapplied) holds only this
+ * HMAC under the server pepper, so a leaked table cannot mint a valid bearer.
+ * Same pepper, distinct context, so a credential hash can never collide with a
+ * contributor token or a group token.
+ */
+export function deriveSensingCredentialHash(credential: string): string {
+  if (!credential || typeof credential !== "string") throw new Error("deriveSensingCredentialHash: credential is required");
+  return createHmac("sha256", sensingPepper()).update(`${CREDENTIAL_CONTEXT}|${credential}`).digest("hex");
+}
+
 // ── Cohort / coverage grouping ───────────────────────────────────────────────
 
 /**

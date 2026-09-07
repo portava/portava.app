@@ -374,6 +374,12 @@ const PERMITTED_REFERRERS = new Map<string, string>([
       "store's own constants. Pure admission; no issuer, no route, no flag, no publisher.",
   ],
   [
+    join("lib", "sensingContributionSession.ts"),
+    'the issued half of "rotating IDs" — a short-lived budgeted credential (2480, UNAPPLIED) whose ' +
+      "hash is derived under the store's pepper. Pure issuance/validation; no route, no flag, no " +
+      "publisher. Nothing here can run until the owner decides SENSING_AUTH_POSTURE.",
+  ],
+  [
     join("lib", "sensingRevocationLineage.ts"),
     'the §18.4 lineage definition for "revocation": models a revocation in memory against the ' +
       "store's own predicate and the aggregate, proving a published aggregate carries nothing to " +
@@ -405,6 +411,11 @@ const PERMITTED_REFERRERS = new Map<string, string>([
  * anybody wanted to enforce.
  */
 const PERMITTED_MENTIONS = new Map<string, string>([
+  [
+    join("lib", "sensingAuthPosture.ts"),
+    "names the store while explaining why the FK on intel_observations is not the cap — the posture " +
+      "is. It is the owner's undecided switch (SENSING_AUTH_POSTURE) and imports nothing from the store.",
+  ],
   [
     join("lib", "envValidation.ts"),
     "names lib/sensingAnonStore in the comment recording why SENSING_CONTRIBUTOR_PEPPER is " +
