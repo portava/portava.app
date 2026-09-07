@@ -1,5 +1,65 @@
 # Portava Map — Requirement Census
 
+> ## CORRECTION HEADER — added 2026-09-07 after independent re-measurement
+>
+> This census states "**Database: Not queried**". A later pass DID query both
+> databases, reproduced most of it, and found three things this document gets
+> wrong. The body below is unedited; these corrections take precedence.
+>
+> **1. Attribution is 75.8 %, not 76.5 %.** Re-measured by resolving the first
+> cited path of every BUILT-AND-CORRECT row and testing that file for a Map-spec
+> citation: 218 rows resolvable, 215 cite, 3 do not. Two of the three —
+> **M144 (`lib/mapTravelers.ts`) and M142 (`services/discovery.ts`)** — pre-date
+> the Map spec and cite nothing, so by this census's own rule they are not
+> spec-attributable. Verified: **222/293 = 75.8 %**. The denominator itself
+> reproduces exactly (M1–M293, no gaps; C 235 / W 48 / N 5 / CV 5).
+>
+> **2. "`map_projection_enabled` seeds FALSE (2201)" is wrong: the row does not
+> exist in production at all.** The only `map_*` flags there are
+> `map_compass_commands_enabled` and `map_search_enabled`, both TRUE. 2201, 2218
+> and 2295 are unapplied, as 2202/2217/2219/2224 are. The consequence is the same
+> (a missing flag reads false) but the PREREQUISITES FOR FLIPPING IT DIFFER, which
+> matters to anyone planning a rollout.
+>
+> **3. `geo_zones` holds 0 rows in production — an independent second blocker
+> this census does not record.** M5/M67/M119 attribute Crowd Flow's death solely
+> to the absent consent table. The empty zone model kills it separately:
+> `routes/mapProjection.ts:836` refuses with `no_zone_model`. Populating
+> `geo_zones` is an ops action, not a migration, so applying every pending
+> migration would still leave Crowd Flow dark.
+>
+> Confirmed rather than corrected: `intel_state_snapshots`, `intel_claims`,
+> `intel_observations` and `intel_live_promoted_scopes` all hold 0 rows in
+> production, and `user_location_state` holds 5 rows of which **0 are within 60
+> minutes**, so the `social_zone` layer is empty there whatever the flags say.
+>
+> **Method blind spot, confirmed.** This census scored only artifacts citing the
+> Map spec, so `lib/tripCrewLocation.ts` — which cites Trips — was invisible to
+> it, and the stale-crew-location defect had to be found by the Trips census
+> instead (fixed in `0b4f1934`). The other people-bearing readers were then
+> checked for the same shape: `buddyMapRead.ts` plots a declared meetup base, not
+> a live position, so it makes no staleness claim.
+>
+> **The number, stated twice, because the two are not comparable.**
+> Against this spec alone (denominator 293): **96.6 % constructed / 80.2 %
+> correct / 75.8 % attributable** — unchanged by the Sensing §7 work, because
+> every new behaviour sits behind flags that do not exist in production.
+> Against this spec PLUS the ten Sensing §7 obligations (denominator 303):
+> **96.7 % constructed / 79.2 % correct** under the production rule, or 80.9 %
+> code-level in CI with the flags flipped. Do not publish these as one figure.
+>
+> **Order of operations if the map is ever to be lit.** Apply **2217
+> (`protected_zones`) FIRST** — with the table absent, `loadProtectedZones`
+> returns null, both routes answer the empty envelope, and the client treats
+> `enabled:true, objects:[]` as an answer rather than falling back
+> (`useMapEntities.ts:55-67`). Flipping the gateway before 2217 blanks the map.
+> Then 2201 to seed the flag; then per layer, independently: 2218 + 2224 +
+> curated `geo_zones` rows for Crowd Flow, 2295 for World Intelligence, 2350 for
+> the three Sensing behaviours, a populated `intel_live_promoted_scopes` (a human
+> allowlist by design) before any ExperienceState or trend can appear, 2219 for
+> Locate My Friends, 2202 for telemetry.
+
+
 | Field | Value |
 | --- | --- |
 | **Spec** | `docs/specs/Portava_Map_Developer_Architecture_and_Design_Spec.txt`, §1–§39. The `.docx` beside it is the authority and **never had to be exercised** — see "The .docx question" below. |
