@@ -14,6 +14,136 @@ const router = Router();
 const UUID = /^[0-9a-f-]{36}$/i;
 
 /* ============================================================================
+ * Trip membership — the definition of record, not a local approximation.
+ *
+ * Every trip_only read on this surface used to compute "shares a trip" as
+ *
+ *     trip_members WHERE role IN ('owner','member')      -- and nothing else
+ *
+ * on BOTH sides of the join. That is not what the API means by a trip member.
+ * lib/http.ts requireTripMember (the definition of record, http.ts:430-478)
+ * accepts a viewer when a trip_members row exists with
+ *     role IN ('owner','co_host','member','viewer')
+ *     AND (status IS NULL OR status = 'accepted')
+ * and, when NO row exists, when trips.owner_id is the viewer. trip_members
+ * encodes "pending" in TWO columns — the legacy role='invited' and the current
+ * status='invited' — so a predicate reading only one of them is defective.
+ *
+ * The old predicate therefore ran wrong in both directions at once:
+ *   FAIL-OPEN   role='member', status='invited' (a PENDING invitee) and
+ *               role='member', status='removed' (REMOVED from the trip) both
+ *               passed, so they read the trip_only highlights of everyone on a
+ *               trip they had not joined or had been removed from.
+ *   FAIL-CLOSED co_host and viewer are accepted crew everywhere else and were
+ *               omitted; a trip owner holding no trip_members row was omitted.
+ *
+ * Migration 2337 measured the same defect in the RLS policy behind this table
+ * (highlights_select_active) and built authz.shares_accepted_trip(uuid) for it;
+ * migration 2530 applies it. This is the app-side half of that fix, and it is
+ * the ONLY place on this surface that decides trip membership.
+ *
+ * FAIL CLOSED. supabase-js RESOLVES on a database error, so an unchecked
+ * `.data` reads as an empty result. Every read here checks `.error` and
+ * returns { ok: false }; callers then withhold every trip_only highlight rather
+ * than serving one on the strength of a lookup that did not happen. That is the
+ * same answer a genuine "not shared" produces, so the response shape is
+ * unchanged — only the log line distinguishes them.
+ * ============================================================================ */
+const ACCEPTED_TRIP_ROLES = new Set(["owner", "co_host", "member", "viewer"]);
+
+function isAcceptedMembershipRow(r: { role?: string | null; status?: string | null }): boolean {
+  if (!r.role || !ACCEPTED_TRIP_ROLES.has(r.role)) return false;
+  return r.status == null || r.status === "accepted";
+}
+
+type SharesTripResult =
+  | { ok: true; shared: Set<string> }
+  | { ok: false; error: unknown };
+
+/**
+ * Which of `ownerIds` are accepted crew of a trip that `viewerId` is ALSO
+ * accepted crew of, by requireTripMember's rule applied to BOTH people.
+ * Four reads, each `.error`-checked: the viewer's membership rows and owned
+ * trips (to derive the viewer's accepted trips, owner fallback included), then
+ * the owners' rows and ownerships on exactly those trips.
+ */
+async function sharesAcceptedTrip(
+  sc: SupabaseClient,
+  viewerId: string,
+  ownerIds: string[],
+): Promise<SharesTripResult> {
+  const shared = new Set<string>();
+  const others = [...new Set(ownerIds.filter((id) => id && id !== viewerId))];
+  if (others.length === 0) return { ok: true, shared };
+
+  const [viewerRows, viewerOwned] = await Promise.all([
+    sc.from("trip_members").select("trip_id, role, status").eq("user_id", viewerId),
+    sc.from("trips").select("id").eq("owner_id", viewerId),
+  ]);
+  if (viewerRows.error) return { ok: false, error: viewerRows.error };
+  if (viewerOwned.error) return { ok: false, error: viewerOwned.error };
+
+  // requireTripMember consults the row when one exists and falls back to
+  // trips.owner_id ONLY when none does — an owner whose own row says
+  // status='removed' is denied. Same shape here.
+  const viewerRowTrips = new Set<string>();
+  const viewerTrips = new Set<string>();
+  for (const r of (viewerRows.data ?? []) as any[]) {
+    viewerRowTrips.add(r.trip_id as string);
+    if (isAcceptedMembershipRow(r)) viewerTrips.add(r.trip_id as string);
+  }
+  for (const t of (viewerOwned.data ?? []) as any[]) {
+    if (!viewerRowTrips.has(t.id as string)) viewerTrips.add(t.id as string);
+  }
+  if (viewerTrips.size === 0) return { ok: true, shared };
+  const tripIds = [...viewerTrips];
+
+  const [ownerRows, ownerOwned] = await Promise.all([
+    sc.from("trip_members").select("trip_id, user_id, role, status").in("trip_id", tripIds).in("user_id", others),
+    sc.from("trips").select("id, owner_id").in("id", tripIds).in("owner_id", others),
+  ]);
+  if (ownerRows.error) return { ok: false, error: ownerRows.error };
+  if (ownerOwned.error) return { ok: false, error: ownerOwned.error };
+
+  const ownerRowKeys = new Set<string>();
+  for (const r of (ownerRows.data ?? []) as any[]) {
+    ownerRowKeys.add(`${r.trip_id}:${r.user_id}`);
+    if (isAcceptedMembershipRow(r)) shared.add(r.user_id as string);
+  }
+  for (const t of (ownerOwned.data ?? []) as any[]) {
+    if (!ownerRowKeys.has(`${t.id}:${t.owner_id}`)) shared.add(t.owner_id as string);
+  }
+  return { ok: true, shared };
+}
+
+/**
+ * The accepted crew of one trip, by the same rule: accepted rows plus the
+ * trips.owner_id fallback when the owner holds no row. Used only to scope the
+ * `?tripId=` filter on /highlights/active; the per-highlight permission check
+ * still runs on top of it.
+ */
+async function acceptedMemberIdsOfTrip(
+  sc: SupabaseClient,
+  tripId: string,
+): Promise<{ ok: true; ids: Set<string> } | { ok: false; error: unknown }> {
+  const [rows, trip] = await Promise.all([
+    sc.from("trip_members").select("user_id, role, status").eq("trip_id", tripId),
+    sc.from("trips").select("owner_id").eq("id", tripId).maybeSingle(),
+  ]);
+  if (rows.error) return { ok: false, error: rows.error };
+  if (trip.error) return { ok: false, error: trip.error };
+  const ids = new Set<string>();
+  const rowUsers = new Set<string>();
+  for (const r of (rows.data ?? []) as any[]) {
+    rowUsers.add(r.user_id as string);
+    if (isAcceptedMembershipRow(r)) ids.add(r.user_id as string);
+  }
+  const ownerId = (trip.data as any)?.owner_id as string | null | undefined;
+  if (ownerId && !rowUsers.has(ownerId)) ids.add(ownerId);
+  return { ok: true, ids };
+}
+
+/* ============================================================================
  * Internal helper — resolve whether viewerId can access highlightId.
  * Checks blocks, loads highlight, resolves circle/trip membership, and calls
  * canViewHighlight. Returns null + sends the error response on failure.
@@ -23,6 +153,7 @@ async function resolveViewAccess(
   viewerId: string,
   highlightId: string,
   res: Response,
+  log?: { error: (obj: unknown, msg: string) => void },
 ): Promise<{ h: HighlightRecord } | null> {
   const { data: h } = await sc
     .from("highlights")
@@ -65,24 +196,19 @@ async function resolveViewAccess(
   let viewerFollowsOwner = viewerId === ownerId;
   let sharesTrip = viewerId === ownerId;
 
-  if (viewerId !== ownerId && (record.visibility === "circle_only" || record.visibility === "trip_only")) {
-    const [circleMember, myTripRows] = await Promise.all([
-      sc.from("circle_memberships").select("other_id").eq("user_id", ownerId).eq("other_id", viewerId).maybeSingle(),
-      sc.from("trip_members").select("trip_id").eq("user_id", viewerId).in("role", ["owner", "member"]),
-    ]);
+  if (viewerId !== ownerId && record.visibility === "circle_only") {
+    const circleMember = await sc
+      .from("circle_memberships").select("other_id").eq("user_id", ownerId).eq("other_id", viewerId).maybeSingle();
     viewerFollowsOwner = Boolean(circleMember.data);
+  }
 
-    if (myTripRows.data && myTripRows.data.length > 0) {
-      const myTripIds = myTripRows.data.map((r: any) => r.trip_id as string);
-      const { data: sharedTrip } = await sc
-        .from("trip_members")
-        .select("trip_id")
-        .eq("user_id", ownerId)
-        .in("role", ["owner", "member"])
-        .in("trip_id", myTripIds)
-        .limit(1)
-        .maybeSingle();
-      sharesTrip = Boolean(sharedTrip);
+  if (viewerId !== ownerId && record.visibility === "trip_only") {
+    const shares = await sharesAcceptedTrip(sc, viewerId, [ownerId]);
+    if (shares.ok) {
+      sharesTrip = shares.shared.has(ownerId);
+    } else {
+      // Withhold: sharesTrip stays false and the highlight reads as not found.
+      log?.error({ err: shares.error, highlightId }, "highlights: trip membership lookup failed — withholding trip_only highlight");
     }
   }
 
@@ -270,22 +396,19 @@ router.get("/users/:userId/highlights", async (req, res) => {
   if (!isOwnProfile && highlights.some((h) => ["circle_only", "trip_only"].includes(h.visibility))) {
     const sc = getServiceClient();
     if (sc) {
-      const [circleMember, tripRows] = await Promise.all([
-        sc.from("circle_memberships").select("other_id").eq("user_id", targetId).eq("other_id", user.id).maybeSingle(),
-        sc.from("trip_members").select("trip_id").eq("user_id", user.id).in("role", ["owner", "member"]),
-      ]);
+      const circleMember = await sc
+        .from("circle_memberships").select("other_id").eq("user_id", targetId).eq("other_id", user.id).maybeSingle();
       viewerFollowsOwner = Boolean(circleMember.data);
-      if (tripRows.data && tripRows.data.length > 0) {
-        const myTripIds = tripRows.data.map((r: any) => r.trip_id as string);
-        const { data: sharedTrip } = await sc
-          .from("trip_members")
-          .select("trip_id")
-          .eq("user_id", targetId)
-          .in("role", ["owner", "member"])
-          .in("trip_id", myTripIds)
-          .limit(1)
-          .maybeSingle();
-        sharesTrip = Boolean(sharedTrip);
+
+      if (highlights.some((h) => h.visibility === "trip_only")) {
+        const shares = await sharesAcceptedTrip(sc, user.id, [targetId]);
+        if (shares.ok) {
+          sharesTrip = shares.shared.has(targetId);
+        } else {
+          // Withhold the trip_only ones; everything else on the profile is
+          // still decided on its own merits.
+          req.log.error({ err: shares.error, targetId }, "highlights: trip membership lookup failed — withholding trip_only highlights");
+        }
       }
     }
   }
@@ -362,28 +485,27 @@ router.get("/highlights/active", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
-  // Resolve trip member IDs when tripId filter is provided
+  // Resolve the trip's ACCEPTED crew when a tripId filter is provided. This
+  // scopes the query to that crew's highlights; the per-highlight permission
+  // check below still decides each one. FAIL CLOSED: an unreadable membership
+  // is an error, and a trip with no accepted crew (or no such trip) is an empty
+  // page — it used to be an UNFILTERED page, because `data ?? []` on an errored
+  // or empty read produced a zero-size set and the filter was skipped.
   let tripMemberIds: Set<string> | null = null;
-  let viewerTripIds: string[] = [];
 
   if (filterTripId) {
-    const { data: memberRows } = await sc
-      .from("trip_members")
-      .select("user_id")
-      .eq("trip_id", filterTripId)
-      .in("role", ["owner", "member"]);
-    const ids = (memberRows ?? []).map((r: any) => r.user_id as string);
-    // Ensure the viewer is actually in the trip (or it's public — we still filter below)
-    tripMemberIds = new Set(ids);
+    const members = await acceptedMemberIdsOfTrip(sc, filterTripId);
+    if (!members.ok) {
+      req.log.error({ err: members.error, tripId: filterTripId }, "highlights: trip crew lookup failed — failing closed");
+      sendError(res, "db_error", "Could not resolve trip membership");
+      return;
+    }
+    if (members.ids.size === 0) {
+      res.status(200).json({ highlights: [] });
+      return;
+    }
+    tripMemberIds = members.ids;
   }
-
-  // Resolve trips the viewer is in (for trip_only permission checking)
-  const { data: viewerTripRows } = await sc
-    .from("trip_members")
-    .select("trip_id")
-    .eq("user_id", user.id)
-    .in("role", ["owner", "member"]);
-  viewerTripIds = (viewerTripRows ?? []).map((r: any) => r.trip_id as string);
 
   // Get blocks list for this user (both directions). FAIL CLOSED.
   //
@@ -457,15 +579,14 @@ router.get("/highlights/active", async (req, res) => {
   const tripOnlyOwnerIds = [...new Set(
     unblocked.filter((h: any) => h.visibility === "trip_only").map((h: any) => h.owner_id as string)
   )];
-  const sharesTripSet = new Set<string>();
-  if (tripOnlyOwnerIds.length > 0 && viewerTripIds.length > 0) {
-    const { data: sharedRows } = await sc
-      .from("trip_members")
-      .select("user_id")
-      .in("user_id", tripOnlyOwnerIds)
-      .in("trip_id", viewerTripIds)
-      .in("role", ["owner", "member"]);
-    for (const r of sharedRows ?? []) sharesTripSet.add((r as any).user_id as string);
+  let sharesTripSet = new Set<string>();
+  if (tripOnlyOwnerIds.length > 0) {
+    const shares = await sharesAcceptedTrip(sc, user.id, tripOnlyOwnerIds);
+    if (shares.ok) {
+      sharesTripSet = shares.shared;
+    } else {
+      req.log.error({ err: shares.error }, "highlights: trip membership lookup failed — withholding trip_only highlights");
+    }
   }
 
   // Permission filter
@@ -569,7 +690,7 @@ router.post("/highlights/:id/view", async (req, res) => {
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
   // Verify viewer has permission to see this highlight
-  const access = await resolveViewAccess(sc, user.id, id, res);
+  const access = await resolveViewAccess(sc, user.id, id, res, req.log);
   if (!access) return;
 
   // Idempotent upsert
@@ -600,7 +721,7 @@ router.post("/highlights/:id/like", async (req, res) => {
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
   // Enforce access before allowing engagement
-  const access = await resolveViewAccess(sc, user.id, id, res);
+  const access = await resolveViewAccess(sc, user.id, id, res, req.log);
   if (!access) return;
 
   if (access.h.owner_id === user.id) {
@@ -635,7 +756,7 @@ router.delete("/highlights/:id/like", async (req, res) => {
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
   // Enforce access before allowing engagement
-  const access = await resolveViewAccess(sc, user.id, id, res);
+  const access = await resolveViewAccess(sc, user.id, id, res, req.log);
   if (!access) return;
 
   await sc.from("highlight_likes").delete().eq("highlight_id", id).eq("user_id", user.id);
@@ -732,7 +853,7 @@ router.post("/highlights/:id/reply", async (req, res) => {
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
   // Enforce access before allowing reply
-  const access = await resolveViewAccess(sc, user.id, id, res);
+  const access = await resolveViewAccess(sc, user.id, id, res, req.log);
   if (!access) return;
 
   const ownerId = access.h.owner_id;
@@ -871,7 +992,7 @@ router.post("/highlights/:id/report", async (req, res) => {
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
   // Enforce access — can only report highlights you can actually see
-  const access = await resolveViewAccess(sc, user.id, id, res);
+  const access = await resolveViewAccess(sc, user.id, id, res, req.log);
   if (!access) return;
 
   if (access.h.owner_id === user.id) {
@@ -1017,38 +1138,24 @@ router.get("/highlights/following-feed", async (req, res) => {
   )];
 
   const circleApprovedSet = new Set<string>();
-  const sharesTripSet = new Set<string>();
+  let sharesTripSet = new Set<string>();
 
-  await Promise.all([
+  const [circleRows, shares] = await Promise.all([
     circleOwnerIds.length > 0
-      ? sc
-          .from("circle_memberships")
-          .select("user_id")
-          .eq("other_id", user.id)
-          .in("user_id", circleOwnerIds)
-          .then(({ data }) => {
-            for (const r of data ?? []) circleApprovedSet.add((r as any).user_id as string);
-          })
-      : Promise.resolve(),
+      ? sc.from("circle_memberships").select("user_id").eq("other_id", user.id).in("user_id", circleOwnerIds)
+      : Promise.resolve(null),
     tripOnlyOwnerIds.length > 0
-      ? sc
-          .from("trip_members")
-          .select("trip_id")
-          .eq("user_id", user.id)
-          .in("role", ["owner", "member"])
-          .then(async ({ data: viewerTrips }) => {
-            const vtIds = (viewerTrips ?? []).map((r: any) => r.trip_id as string);
-            if (vtIds.length === 0) return;
-            const { data: shared } = await sc
-              .from("trip_members")
-              .select("user_id")
-              .in("user_id", tripOnlyOwnerIds)
-              .in("trip_id", vtIds)
-              .in("role", ["owner", "member"]);
-            for (const r of shared ?? []) sharesTripSet.add((r as any).user_id as string);
-          })
-      : Promise.resolve(),
+      ? sharesAcceptedTrip(sc, user.id, tripOnlyOwnerIds)
+      : Promise.resolve(null),
   ]);
+  for (const r of (circleRows as any)?.data ?? []) circleApprovedSet.add((r as any).user_id as string);
+  if (shares) {
+    if (shares.ok) {
+      sharesTripSet = shares.shared;
+    } else {
+      req.log.error({ err: shares.error }, "highlights: following-feed trip membership lookup failed — withholding trip_only highlights");
+    }
+  }
 
   // 5. Permission filter, then (when bounded) the finite page.
   const permitted = allHighlights.filter((h) => {
