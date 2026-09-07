@@ -27,6 +27,13 @@ Everything else in scope is **unapplied**.
 
 2217 ──> any flip of map_projection_enabled
    without protected_zones the gateway cannot serve; see the risk note
+
+2224 ──┐
+2315 ──┴─> 2333                 (grant-boundary chain) — ADDED 2026-09-07
+   2333 REVOKEs on route_flow_contribution_consent and
+   sensing_anon_contributions. Neither table exists in production.
+   A REVOKE against an absent relation is an ERROR, so 2333 as
+   originally written would have ABORTED and landed nothing.
 ```
 
 Everything else is independent and may be applied in any order.
@@ -133,7 +140,28 @@ Everything else is independent and may be applied in any order.
   ```
 - **Rollback** `db/rollback/2026-09-07-2420-trip-kernel-foundation-rollback.sql`, idempotent.
 
-### B2. `2333_derived_memory_and_consent_grant_boundary.sql`
+### B2. `2333_derived_memory_and_consent_grant_boundary.sql` — **CORRECTED 2026-09-07: requires 2224 + 2315**
+
+> **This entry was wrong.** It said 2333 depends on nothing. It depends on two
+> migrations that create two of the eight tables it revokes on:
+> `route_flow_contribution_consent` (`2224_route_hop_signal.sql`) and
+> `sensing_anon_contributions` (`2315_sensing_anon_contributions.sql`). Measured
+> 2026-09-07: **neither table exists in production.** `REVOKE ALL ON` an absent
+> relation raises `relation ... does not exist`, which rolls the transaction
+> back — so applying B2 before those two would have landed **none** of the
+> memory revokes while appearing to be a single clean failure of an unrelated
+> kind. 2333 now carries a PRECONDITION block that names both prerequisites in
+> the error text.
+>
+> **Also corrected:** 2333's own header claimed all eight rows were "read from
+> BOTH databases". For those two tables that reading was taken on portava-ci
+> only. The other six were genuinely read on both and stand.
+>
+> **Drift:** 2333 is **already applied on portava-ci** (anon and authenticated
+> hold nothing on all four derived-memory tables there, and service_role matches
+> the eight narrowed sets exactly). Production still carries the full blanket
+> set. Do not read a green CI as evidence for production on this file.
+
 - **Purpose** revokes the full privilege set from `anon`/`authenticated` on `memory_events`, `memory_feedback`, `memory_policy`, `memory_projections`, and narrows eight `service_role` grants to what each migration actually enumerated.
 - **Measured now** `anon` holds `DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE` on `memory_events`.
 - **Type** privilege-only. **Risk LOW** — all four tables have RLS enabled with **zero policies**, so no legitimate `anon`/`authenticated` path exists to break. **TRUNCATE is not policed by RLS**, which is the one capability the grant really conferred.
