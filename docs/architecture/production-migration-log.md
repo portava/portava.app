@@ -81,3 +81,35 @@ meetup. `meetups.test.ts`, `meetupRlsRecursion.test.ts`, `meetupAgeRsvp.test.ts`
 
 **Production effect: Meetups went from a surface that raised a database error on
 every read to one that works and discloses nothing.**
+
+
+---
+
+## 2026-09-07 — Trip crew: the membership rule the API means
+
+### `2334_route_plan_crew_visibility` — applied to production
+
+Creates `authz.is_trip_crew(uuid)` and repoints five route-plan policies at it.
+
+The helper is the API's rule, not an approximation of it. `lib/http.ts`
+`requireTripMember` consults the membership row when one exists and falls back
+to `trips.owner_id` **only when none does** — so the helper is a `CASE`, not a
+flat `OR`. A flat `OR` would admit a trip owner whose own membership row says
+`status='removed'`, a viewer the API denies. `coalesce(status,'accepted')`
+mirrors http.ts's backwards-compatibility line and is inert today because the
+column is NOT NULL; it is kept so the predicate cannot quietly change meaning if
+that constraint is ever relaxed.
+
+**Before**: five policies joined `trip_members` with no status gate, so a
+pending invitee (`role='member', status='invited'`) could read a trip's plan,
+stops and legs through direct PostgREST.
+
+**Gate**: preconditions verified on production before applying — `authz` present,
+all four route-plan tables present, `trip_members.status` present, and the exact
+policy count the postcondition demands (**13** across the four tables). CI has
+carried 2334 since earlier, which is a longer-running rehearsal than a rollback
+transaction.
+
+**Postconditions** (ran inside the apply): all five policies route through the
+helper; **zero** route-plan policies still reference `trip_members` directly;
+13 policies still present.
