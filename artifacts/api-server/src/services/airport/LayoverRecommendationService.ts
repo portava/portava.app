@@ -11,7 +11,12 @@ import { logger as rootLogger } from "../../lib/logger.js";
 const logger = rootLogger.child({ service: "LayoverRecommendationService" });
 import type { AirportProfile } from "./AirportProfileService.js";
 import type { LayoverSession } from "./LayoverSessionService.js";
-import { assess, type SafetyRating } from "./LayoverSafetyEngine.js";
+import {
+  assess,
+  computeReturnDeadline,
+  LAYOVER_ENGINE_VERSION,
+  type SafetyRating,
+} from "./LayoverSafetyEngine.js";
 import { sanitizeRecommendation, type SafeRecommendation } from "./LayoverPrivacyGuard.js";
 import { localHour } from "./AirportTime.js";
 
@@ -179,7 +184,13 @@ async function fetchDiscoveryPlaces(
       .eq("status", "active")
       .limit(limit);
 
-    const { data } = await query;
+    const { data, error } = await query;
+    if (error) {
+      // supabase-js RESOLVES on a DB error. Unchecked, a failed read is
+      // indistinguishable from "no places in this city" (spec Appendix C2).
+      logger.warn({ err: error, city }, "discovery_places read failed — landside candidates omitted");
+      return [];
+    }
     if (!data) return [];
 
     return (data as any[]).map((p) => ({
@@ -195,9 +206,31 @@ async function fetchDiscoveryPlaces(
       placeId:        p.id,
       verified:       Boolean(p.verified),
     }));
-  } catch {
+  } catch (err) {
+    logger.warn({ err, city }, "discovery_places read threw — landside candidates omitted");
     return [];
   }
+}
+
+/**
+ * Stable identity for a recommendation within a session, independent of the
+ * generation that produced it. Persisted as `layover_recommendations.rec_key`
+ * (migration 2410) so re-generation UPDATES a card in place instead of
+ * deleting and re-inserting it under a new id — which is what nulled every
+ * `layover_plan_stops.recommendation_id` (ON DELETE SET NULL) and left the
+ * client holding ids that no longer existed.
+ */
+export function recommendationKey(c: {
+  recType: string;
+  title: string;
+  insideAirport: boolean;
+  placeId?: string | null;
+  city?: string | null;
+}): string {
+  const slug = (t: string) => t.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "").slice(0, 80);
+  if (c.placeId) return `place:${c.placeId}`;
+  if (c.insideAirport) return `inside:${c.recType}:${slug(c.title)}`;
+  return `${c.recType}:${slug(c.city ?? "")}:${slug(c.title)}`;
 }
 
 function mapPlaceTypeToRecType(placeType: string): string {
@@ -227,11 +260,23 @@ function estimateActivityTime(placeType: string): number {
  * Generate and persist recommendations for a session.
  * Returns the safe (privacy-filtered) recommendation list.
  */
+export interface GenerateRecommendationsOptions {
+  /**
+   * When true (flag `layover_stable_recommendation_ids_enabled`, seeded FALSE), rows
+   * are upserted on (session_id, rec_key) and returned WITH their ids; cards
+   * that no longer apply are deleted individually. When false, the legacy
+   * delete-everything-then-insert path runs unchanged and — as before — the
+   * returned cards carry no id.
+   */
+  stableIds?: boolean;
+}
+
 export async function generateRecommendations(
   db: SupabaseClient,
   airport: AirportProfile,
   session: LayoverSession,
   nowMs = Date.now(),
+  opts: GenerateRecommendationsOptions = {},
 ): Promise<SafeRecommendation[]> {
   const city = airport.city ?? session.manualCity ?? "Unknown";
 
@@ -281,10 +326,12 @@ export async function generateRecommendations(
 
   // Assess each through safety engine
   const rows: any[] = [];
+  const keys: string[] = [];
   let sortOrder = 0;
 
   for (const candidate of allCandidates) {
     const a = assess(airport, session, candidate, nowMs);
+    keys.push(recommendationKey(candidate));
     const row = {
       session_id:       session.id,
       rec_type:         candidate.recType,
@@ -306,8 +353,50 @@ export async function generateRecommendations(
     rows.push(row);
   }
 
-  // Delete old recs for this session and insert fresh ones (non-fatal)
-  {
+  // id per row, known only on the stable-identity path.
+  const idByKey = new Map<string, string>();
+
+  if (opts.stableIds) {
+    // Stable identity: upsert in place on (session_id, rec_key), then remove
+    // only the cards that no longer apply. Existing ids — and therefore
+    // layover_plan_stops.recommendation_id — survive a regeneration.
+    const keyed = rows.map((row, i) => ({ ...row, rec_key: keys[i] }));
+    if (keyed.length > 0) {
+      const { data: written, error: upError } = await db
+        .from("layover_recommendations")
+        .upsert(keyed, { onConflict: "session_id,rec_key" })
+        .select("id, rec_key");
+      if (upError) {
+        logger.warn({ err: upError, sessionId: session.id }, "recommendation upsert failed (non-fatal)");
+      } else {
+        for (const w of (written ?? []) as any[]) {
+          if (w?.id && w?.rec_key) idByKey.set(w.rec_key, w.id);
+        }
+      }
+    }
+    const { data: existing, error: exError } = await db
+      .from("layover_recommendations")
+      .select("id, rec_key")
+      .eq("session_id", session.id);
+    if (exError) {
+      logger.warn({ err: exError, sessionId: session.id }, "recommendation stale-scan failed (non-fatal)");
+    } else {
+      const live = new Set(keys);
+      const stale = ((existing ?? []) as any[])
+        .filter((r) => !r.rec_key || !live.has(r.rec_key))
+        .map((r) => r.id as string);
+      if (stale.length > 0) {
+        const { error: delError } = await db
+          .from("layover_recommendations")
+          .delete()
+          .eq("session_id", session.id)
+          .in("id", stale);
+        if (delError) logger.warn({ err: delError, sessionId: session.id }, "stale recommendation delete failed (non-fatal)");
+      }
+    }
+  } else {
+    // Legacy path (flag off): delete old recs for this session and insert fresh
+    // ones (non-fatal). Ids are not returned — see GenerateRecommendationsOptions.
     const { error: delError } = await db.from("layover_recommendations").delete().eq("session_id", session.id);
     if (delError) {
       logger.warn({ err: delError, sessionId: session.id }, "recommendation delete failed (non-fatal)");
@@ -317,19 +406,45 @@ export async function generateRecommendations(
     }
   }
 
-  // Emit event (non-fatal)
+  // Emit event (non-fatal). The metadata is the audit record for every
+  // safety_rating / return_buffer_min / hard_return_time written above (spec
+  // §23 "audit all server-side changes to certification fields"): the rules
+  // version, the inputs the deadline was derived from, and what was written.
   {
+    const { cutoffMs, breakdown, hardReturnTime } = computeReturnDeadline(airport, session);
+    const ratings: Record<string, number> = {};
+    for (const r of rows) ratings[r.safety_rating] = (ratings[r.safety_rating] ?? 0) + 1;
     const { error: evtError } = await db.from("layover_events").insert({
       session_id: session.id,
       user_id:    session.userId,
       event_type: "recommendation_generated",
-      metadata:   { count: rows.length },
+      metadata:   {
+        count: rows.length,
+        engineVersion: LAYOVER_ENGINE_VERSION,
+        stableIds: Boolean(opts.stableIds),
+        inputs: {
+          airportId: airport.id,
+          iataCode: airport.iataCode,
+          airportVerified: airport.verified,
+          timezone: airport.timezone,
+          flightType: session.flightType,
+          immigrationRequired: session.immigrationRequired,
+          checkedBags: session.checkedBags,
+          wantsToLeave: session.wantsToLeave,
+          cutoff: new Date(cutoffMs).toISOString(),
+          computedAt: new Date(nowMs).toISOString(),
+        },
+        breakdown,
+        hardReturnTime: hardReturnTime.toISOString(),
+        ratings,
+      },
     });
     if (evtError) logger.warn({ err: evtError, sessionId: session.id }, "recommendation_generated event failed (non-fatal)");
   }
 
   // Return privacy-safe view
   return rows.map((row, idx) => sanitizeRecommendation({
+    id:             idByKey.get(keys[idx]),
     recType:        row.rec_type,
     title:          row.title,
     description:    row.description,

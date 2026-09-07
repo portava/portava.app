@@ -1,5 +1,70 @@
 # Portava Layover — Requirement Census
 
+> ## CORRECTION HEADER — added 2026-09-07 after production measurement and two build passes
+>
+> The body below is unedited and describes HEAD `68ed59d9`. Two later commits
+> changed verdicts: `9c26efba` (non-monotonic deadline; forgeable safety row)
+> and the pass recorded in **§7** at the end of this file. **The headline
+> numbers below are stale.** Recomputed over the same 296 denominator, same
+> counting rule, same prohibition rule:
+>
+> | Measure | Was | Now |
+> | --- | --- | --- |
+> | BUILT-AND-CORRECT | 10 | **20** (18 non-vacuous; L51/L52 still `⌀`) |
+> | BUILT-BUT-WRONG | 83 | **87** |
+> | NOT-BUILT | 202 | **189** |
+> | CANNOT-VERIFY | 1 | **0** |
+> | CONSTRUCTED% | 31.4 % | **36.1 %** (107/296) |
+> | CORRECT% | 3.4 % | **6.8 %** (20/296) |
+> | CORRECT% (spec-attributable) | 0.0 % | **2.0 %** (6/296 — L140, L235, L278, L280, L290, L292; see §7) |
+>
+> **Production was measured this time** (`ajrurzioarfkagpuxfnb`, read-only,
+> aggregates only). Three of the body's "could not check" notes resolve, and
+> one framing is wrong:
+> - **Note 1 (flags):** all five layover flags are TRUE; so is
+>   `passport_entry_intelligence_enabled`. `rent_buddy_enabled` is **FALSE**.
+> - **Note 2 (airport_profiles):** 3,206 rows, **0 verified, 0 with any
+>   non-default buffer, 0 with terminal_info** — every production session runs
+>   on the generic 60/120/30/15/20 constants regardless of airport. The L243
+>   divergence is realised for 100 % of airports. Timezones are real (0 rows
+>   at 'UTC'; 0 at (0,0)); the fallback profile's `timezone: "UTC"` would only
+>   bite on a failed read (L262, still open — PR #463).
+> - **Note 3 (sessions):** "live sessions" overstates it. **5 sessions ever,
+>   from 2 users, 0 active** (2 cancelled, 3 expired; last created 2026-08-09,
+>   last event 2026-08-12), 30 recommendation rows, **0 plan stops**,
+>   38 events. Every BUILT verdict is about code that a handful of people ran
+>   a month ago — not code nobody ran, and not code under load.
+> - **L201 (CANNOT-VERIFY) resolves against the tree's favour in production.**
+>   `authenticated` held the full default grant set (DELETE, INSERT, …,
+>   TRUNCATE) on all five layover tables, so the missing `WITH CHECK` was
+>   exploitable, and the write was demonstrated on CI by `9c26efba`. Migration
+>   2335 closes it **on CI only**; production still carries the 0127 policy
+>   and grants as of this pass. Owner decision.
+>
+> **Headline defect 4 is larger than written.** `LayoverRecommendationScreen.tsx`
+> (326 lines) is also imported by nothing, so `getSessionSafety` has no live
+> caller either: `GET /:id/safety` — the endpoint with the fictitious
+> `travelTimeMin: 20 / activityTimeMin: 30` probe (L293c) — is dark from the app.
+>
+> **A live defect the body missed, on the path the body scored as working
+> (L74, L183):** the client renders "Add to plan" only when `rec.id` is set
+> (`LayoverRecsSection.tsx:63,81`), and with `layover_safety_engine_enabled`
+> TRUE every `GET /:id/recommendations` regenerated the cards by delete+insert
+> without reading ids back (`LayoverRecommendationService.ts` pre-2410). **No
+> production traveller has ever seen that control** — consistent with 0 plan
+> stops — and `layover_plan_stops.recommendation_id` (ON DELETE SET NULL) was
+> nulled on every dashboard load. Fixed behind `layover_stable_recommendation_ids_enabled`,
+> seeded FALSE (2410); see §7.
+>
+> **Two open PRs cover rows this pass deliberately did not re-author:** #463
+> (entry gate L48/L34/L230, fabricated travel time L293, unknown-leg plan fit
+> L47, failed-airport-read L262/L294) and #469 (fail-closed blocks at 15 sites,
+> one of them this file's buddies list). Both are "do not merge without an
+> owner decision" and both now conflict with `9c26efba` in
+> `LayoverSafetyEngine.ts` / `routes/airport.ts`. Their verdict deltas in §5
+> stand, unrealised.
+
+
 | Field | Value |
 | --- | --- |
 | **Spec** | `docs/specs/Portava_Layover_Development_Architecture_Spec_v3.txt` (v3.0), `.docx` original authoritative |
@@ -886,3 +951,86 @@ Everything the spec is *about* — a certified snapshot lifecycle, a time budget
 and confidence, an entry gate, isochrone reachability, canonical external events, a replanner, a
 decision ledger, reason codes, crews, outcomes, an airport maturity model — is NOT-BUILT, with
 the single exception that PR #463 supplies the entry gate.
+
+---
+
+## 7. Recount — `9c26efba` and the 2026-09-07 build pass
+
+Paths relative to `artifacts/api-server/src/`. Every verdict change cites the
+line that earns it. Changes are gated, additive, or apply an owner decision
+already made; the one visible-behaviour repair is behind a flag seeded FALSE.
+
+### What was live vs dark, measured before changing anything
+
+| Path | Live? | Reading |
+| --- | --- | --- |
+| Dashboard `GET /:id/overview`, `/:id/recommendations`, `/:id/buddies` | **Live** — called on every dashboard load (`app/layover/[id].tsx:104-108`) | 5 sessions ever, 0 active |
+| `GET /:id/buddies` serving `rent_buddy_profiles` | **Live, wrong** — 6 active buddy profiles served while `rent_buddy_enabled` = FALSE | every load |
+| "Add to plan" from a recommendation (`POST /stops/from-recommendation`) | **Dead in production** — cards never carry an id | 0 stops ever |
+| `GET /:id/safety`, `POST /:id/compass` | **Dark** — `LayoverRecommendationScreen`, `LayoverReturnPanel` unmounted | — |
+| `PATCH /sessions/:id` | Reachable, **no client caller** (`updateLayoverSession` has no importer) | — |
+| `DELETE /sessions/:id` | **Live** — always `cancelled` | 2 cancelled, 0 completed |
+
+### Verdict changes
+
+| id | Was | Now | Evidence |
+| --- | --- | --- | --- |
+| L53 | W | **C** | `9c26efba`: `computeReturnDeadline` (`LayoverSafetyEngine.ts:212`) is the single anchor; 1-Lipschitz ramp; 1,520,640-case sweep in `test/layoverDeadlineMonotonicity.test.ts`. Also closes headline defect 2 (one buffer per response). Not spec-attributable (cites the census, not the spec). |
+| L201 | ? | **C** (tree) | `2335_layover_recommendation_write_boundary.sql`: `layover_recs_owner` FOR SELECT, `authenticated` = SELECT only, measured on CI (`pg_policies`, `role_table_grants`, `column_privileges` INSERT/UPDATE = 0). **Production still open.** |
+| L199 | N | W | 2410 carries four postconditions (`2410_layover_recommendation_identity.sql:82-103`); `security/authorization-contract.json:205` now pins `layover_recommendations` (grants, no client-writable columns, one SELECT policy). `layover_sessions` / `layover_plan_stops` remain uncontracted — the contract's invariant 1 requires SELECT-only client grants and those tables are owner-writable by design. 0127 still has no postconditions. |
+| L41 | N | W | `computeReturnState` (`LayoverSafetyEngine.ts:382`) derives RETURN_SOON at `hardReturn − 30 min` (`RETURN_SOON_LEAD_MIN`, `:84`), wired into every window (`:463`) and serialised to the client by `serializeWindow`. No notification fires and discovery is not de-emphasised — those effects are client/Safe Return work. |
+| L42 | N | W | RETURN_NOW at `hardReturn`; CONNECTION_AT_RISK once the traffic + time-of-day cushion is consumed (`:382-392`). No CTA switches. |
+| L140 | N | **C** | The ladder NORMAL → RETURN_SOON → RETURN_NOW → CONNECTION_AT_RISK exists as a deterministic, certified derivation with two proved properties — monotone in time and in the cutoff — over 3 timezones incl. two DST falls-back (`test/layoverReturnState.test.ts`, 20k+ and 10k+ point sweeps). L141–L145 (what happens AT the state) stay N. Spec-attributable. |
+| L278, L280, L290, L292 | N | **C** | `LAYOVER_REASON_CODES` declares Appendix A's fifteen (`:48`); `adviseLeaving` emits `ENTRY_NOT_CONFIRMED` always (`:499` — entry is never confirmed on main, so the code is always true), `AIRPORT_MATURITY_LIMITED` when `!airport.verified` (`:500` — every production airport), `RETURN_THRESHOLD_REACHED` at RETURN_NOW+ (`:502`), `INSUFFICIENT_USABLE_TIME` on verdict `no` (`:538`). The other eleven are declared and **never emitted** because their triggering fact does not exist (baggage-unknown is unrepresentable, L35); they stay N. Spec-attributable. |
+| L235 | N | **C** | Property sweeps for "worse input cannot produce safer/larger output": cutoff monotonicity of the deadline (`layoverDeadlineMonotonicity.test.ts`) and of the return state (`layoverReturnState.test.ts`, "monotone in the flight cutoff"). Spec-attributable. |
+| L258 | W | **C** | `recommendation_generated` now records `engineVersion`, the deadline inputs (airport, flags, cutoff, computedAt), the buffer breakdown, `hardReturnTime` and a ratings histogram for every `safety_rating` / `return_buffer_min` / `hard_return_time` written (`LayoverRecommendationService.ts:420-440`). |
+| L207, L206 | N | W | The event metadata above is a DecisionRecord in substance (sessionId, engineVersion, inputFacts, result, computedAt) but not in name, lacks snapshotId / inputHash / sourceRefs / rulesApplied / reasonCodes, and only the recommendation recomputation writes one — the overview window writes nothing. |
+| L5 | N | W | `LAYOVER_ENGINE_VERSION` (`:31`) on every window and advice (`:463`, `adviseLeaving` `engineVersion`), and the recorded inputs make a by-hand replay possible. No version column on rows; no replay entry point (L191 stays N). |
+| L214 | N | W | `session_completed` is now writable (below), so the metric is derivable by query — the same rule that scored L208 W. Not emitted. |
+| L255 | W | **C** | `GET /:id/buddies` gates on `rent_buddy_enabled` through the shared fail-closed reader (`routes/airport.ts:1427`), the same row `lib/buddyMapRead.ts:199` and `routes/rentABuddy.ts` gate on. Applies an owner decision already made (the flag is FALSE in production); with it, the marketplace's own controls govern. Its blocks read also fails closed now (`:1458`) — overlapping PR #469's change at this one site. |
+| L33 | W | W (improved) | `completed` is reachable: `DELETE /sessions/:id` takes `outcome` in body or query (`routes/airport.ts:1623-1626`), default `cancelled` unchanged. Thirteen spec states still absent. |
+| L174 | W | W (improved) | `close(sessionId, outcome)` now has an outcome that lands (status + `session_completed` event). No `layover_outcomes` record (L32 stays N). |
+| L172 | W | W (improved) | `PATCH` validates the merged window — departure after arrival, ≤ 48 h, boarding inside the window, not already departed — and converts the `*Local` wall-time fields it always accepted but silently dropped (`routes/airport.ts:496-557`). Still no constraint entity. |
+| L97, L296 | W / N | W (improved) / N | Behind `layover_stable_recommendation_ids_enabled` (2410, seeded FALSE): regeneration upserts on `(session_id, rec_key)` (`LayoverRecommendationService.ts:359-396`, key at `:223`) and deletes only cards that no longer apply, so ids survive, `layover_plan_stops.recommendation_id` survives, and the client's "Add to plan" becomes reachable. Flag off = the legacy path byte-for-byte (`:398`), pinned by `test/layoverRecommendationIdentity.test.ts`. Still client-GET-driven, still no snapshot. |
+| L294 | W | W (improved) | `fetchDiscoveryPlaces` checks and logs the read error (`:191`). Log-only: the path was already fail-closed via `if (!data)`; the hand-revert of the check alone passes its test and the test says so. Nine bare catches in `LayoverSessionService.ts` and the swallowed airport read (`resolveAirportForSession`) remain. |
+
+### Corrected §6 summary (rows that changed only)
+
+| Section | n | C | W | N | ? |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| §2.1 Non-negotiable rules | 8 | 1 | 4 | 3 | 0 |
+| §5 State machines | 6 | 0 | 2 | 4 | 0 |
+| §6.1 Hard invariants | 7 | 3 | 1 | 3 | 0 |
+| §15 Safe Return | 6 | 1 | 0 | 5 | 0 |
+| §19 Storage / migration plan | 8 | 0 | 6 | 2 | 0 |
+| §19.1 RLS expectations | 6 | 1 | 3 | 2 | 0 |
+| §20 Observability / ledger | 12 | 0 | 4 | 8 | 0 |
+| §21.2 Test layers | 9 | 1 | 2 | 6 | 0 |
+| §23 Security / abuse | 8 | 3 | 1 | 4 | 0 |
+| App A Reason codes | 15 | 4 | 0 | 11 | 0 |
+| **Total** | **296** | **20** | **87** | **189** | **0** |
+
+### What this pass did NOT do, and why
+
+- **Did not re-author PR #463 or #469.** Both are open, both say "do not
+  merge without an owner decision", and both now conflict with `9c26efba`.
+  Re-implementing them here would have produced a third divergent copy of the
+  same fix on a live safety file. Owner decision: rebase-and-merge, or ask for
+  a port.
+- **Did not change any number a traveller sees.** `returnState`, `engineVersion`
+  and `reasonCodes` are new fields the client ignores; the buddies gate applies
+  a flag the owner already set to FALSE; the PATCH validation only refuses input
+  the POST already refused; the completion outcome defaults to the old value;
+  the stable-id path is flag-off.
+- **Did not touch §25 outbound integration.** `LayoverSnapshot` still has zero
+  occurrences; Compass, Trips, Discovery and Map still reference nothing under
+  `services/airport/`. Every one of those contracts is owned by another surface.
+- **Did not apply 2335 or 2410 to production.** Both are on CI
+  (`schema_migration_ledger` rows `2335…`, `2410…`); production carries neither.
+
+### Owner decisions surfaced
+
+1. Apply `2335` to production — the certified fields are client-writable there today.
+2. Apply `2410` to production and flip `layover_stable_recommendation_ids_enabled` — this is the only way "Add to plan" from a recommendation ever renders.
+3. Merge or port PR #463 (entry gate; fabricated travel time; failed-read substitution) and PR #469 (blocks fail-closed) after rebasing over `9c26efba`.
+4. Whether `airport_profiles` should carry curated buffers at all: 3,206 rows, 0 non-default. Until then the spec's L0 "airport-side guidance only by default" (L243) is the honest product state and the engine's `AIRPORT_MATURITY_LIMITED` code now says so on every session.

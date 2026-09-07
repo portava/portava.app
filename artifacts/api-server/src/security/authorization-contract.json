@@ -201,6 +201,15 @@
       "insertCols": {},
       "updateCols": {},
       "policies": []
+    },
+    "layover_recommendations": {
+      "note": "2335 — server-computed safety fields (safety_rating, return_buffer_min, hard_return_time) must not be client-writable. 0127 shipped a FOR ALL policy with no WITH CHECK plus the default ALL grant; 2335 made the policy FOR SELECT and narrowed grants to authenticated=SELECT, anon=nothing. Every writer is service-role (services/airport/LayoverRecommendationService.ts, routes/airport.ts). Applied to CI only as of 2026-09-07; production still carries the 0127 state (owner decision).",
+      "tableGrants": { "authenticated": ["SELECT"] },
+      "insertCols": {},
+      "updateCols": {},
+      "policies": [
+        { "name": "layover_recs_owner", "cmd": "SELECT", "permissive": true, "roles": ["authenticated"] }
+      ]
     }
   }
 }

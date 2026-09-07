@@ -13,7 +13,7 @@
  * POST   /api/airport/sessions/:id/return-deadline   — set return deadline reminder
  * POST   /api/airport/sessions/:id/telegraph         — send Telegraph layover suggestion
  * GET    /api/airport/pulse                          — Airport Pulse feed
- * DELETE /api/airport/sessions/:id                   — end/cancel session
+ * DELETE /api/airport/sessions/:id                   — end session (body/query outcome: completed|cancelled, default cancelled)
  *
  * Admin routes under /api/admin/airport:
  *   POST /api/admin/airport/profiles                 — upsert airport profile
@@ -493,7 +493,68 @@ router.patch("/airport/sessions/:id", async (req, res) => {
     return;
   }
 
-  const session = await updateSession(sc, req.params.id, user.id, parsed.data);
+  // The window is validated as a WHOLE against the session it edits. This
+  // route used to hand the patch straight to updateSession: departure before
+  // arrival, boarding outside the window and a 3-day layover were all
+  // accepted (POST refuses every one), and the *Local wall-time fields the
+  // schema accepts were silently dropped, so an edit sent in airport-local
+  // time changed nothing and reported ok.
+  const current = await getSession(sc, req.params.id, user.id);
+  if (!current || current.status !== "active") {
+    sendError(res, "not_found", "Session not found or already closed");
+    return;
+  }
+  const p = parsed.data;
+  const patch: Parameters<typeof updateSession>[3] = { ...p };
+  delete (patch as any).arrivalLocal;
+  delete (patch as any).departureLocal;
+  delete (patch as any).boardingLocal;
+  delete (patch as any).iata;
+
+  if (p.arrivalLocal || p.departureLocal || p.boardingLocal) {
+    const tzAirport = await resolveAirportForSession(sc, current);
+    if (tzAirport.iataCode === "UNK") {
+      sendError(res, "invalid_payload", "This session has no resolved airport — send UTC instants, not local wall times");
+      return;
+    }
+    const tz = tzAirport.timezone;
+    if (p.arrivalLocal) {
+      const d = wallTimeToUtc(tz, p.arrivalLocal);
+      if (!d) { sendError(res, "invalid_payload", "arrivalLocal is not a valid local time"); return; }
+      patch.arrivalTime = d.toISOString();
+    }
+    if (p.departureLocal) {
+      const d = wallTimeToUtc(tz, p.departureLocal);
+      if (!d) { sendError(res, "invalid_payload", "departureLocal is not a valid local time"); return; }
+      patch.departureTime = d.toISOString();
+    }
+    if (p.boardingLocal) {
+      const d = wallTimeToUtc(tz, p.boardingLocal);
+      if (!d) { sendError(res, "invalid_payload", "boardingLocal is not a valid local time"); return; }
+      patch.boardingTime = d.toISOString();
+    }
+  }
+
+  const arrivalMs   = new Date(patch.arrivalTime   ?? current.arrivalTime).getTime();
+  const departureMs = new Date(patch.departureTime ?? current.departureTime).getTime();
+  const boardingIso = patch.boardingTime === undefined ? current.boardingTime : patch.boardingTime;
+  if (departureMs <= arrivalMs) {
+    sendError(res, "invalid_payload", "Departure must be after arrival"); return;
+  }
+  if (departureMs <= Date.now()) {
+    sendError(res, "invalid_payload", "This layover has already departed — set a departure time in the future"); return;
+  }
+  if (departureMs - arrivalMs > 48 * 3_600_000) {
+    sendError(res, "invalid_payload", "A layover window cannot exceed 48 hours"); return;
+  }
+  if (boardingIso) {
+    const boardingMs = new Date(boardingIso).getTime();
+    if (boardingMs <= arrivalMs || boardingMs > departureMs) {
+      sendError(res, "invalid_payload", "Boarding time must fall between arrival and departure"); return;
+    }
+  }
+
+  const session = await updateSession(sc, req.params.id, user.id, patch);
   if (!session) {
     sendError(res, "not_found", "Session not found or already closed");
     return;
@@ -558,11 +619,16 @@ router.get("/airport/sessions/:id/recommendations", async (req, res) => {
   }
 
   const isSafetyEnabled = await isFlagEnabled(sc, "layover_safety_engine_enabled");
+  // Seeded FALSE (migration 2410). Off: the legacy regenerate path, which
+  // deletes and re-inserts every card and returns them WITHOUT ids — so the
+  // client's "Add to plan" control (gated on rec.id) never renders. On: cards
+  // keep their id across regenerations and the control becomes reachable.
+  const stableIds = await isFlagEnabled(sc, "layover_stable_recommendation_ids_enabled");
 
   // Try persisted recs first; regenerate if empty or safety engine is enabled
   let recs = await getRecommendations(sc, session.id);
   if (recs.length === 0 || isSafetyEnabled) {
-    recs = await generateRecommendations(sc, airport, session);
+    recs = await generateRecommendations(sc, airport, session, Date.now(), { stableIds });
   }
 
   res.json({ recommendations: recs, featureEnabled: true });
@@ -1353,6 +1419,16 @@ router.get("/airport/sessions/:id/buddies", async (req, res) => {
   const city = airport.city !== "Unknown" ? airport.city : session.manualCity;
   if (!city) { res.json({ ok: true, city: null, buddies: [] }); return; }
 
+  // The marketplace's own master gate. Every other reader of
+  // rent_buddy_profiles goes through `rent_buddy_enabled` (lib/buddyMapRead.ts,
+  // routes/rentABuddy.ts); this route read the table behind the layover flag
+  // alone and served buddy profiles while the marketplace was switched OFF in
+  // production. Same fail-closed reader, same empty answer.
+  if (!await isFlagEnabled(sc, "rent_buddy_enabled")) {
+    res.json({ ok: true, city, buddies: [], reason: "rent_buddy_not_enabled" });
+    return;
+  }
+
   try {
     const { data: buddies, error } = await sc
       .from("rent_buddy_profiles")
@@ -1370,18 +1446,29 @@ router.get("/airport/sessions/:id/buddies", async (req, res) => {
     let rows = (buddies ?? []) as any[];
     rows = rows.filter((b) => b.user_id !== user.id);
 
-    // Exclude blocked users in both directions.
+    // Exclude blocked users in both directions — fail CLOSED. supabase-js
+    // resolves `{ data: null, error }` on a failed read; `?? []` on that turned
+    // an outage into "nobody is blocked" and recommended meeting a blocked
+    // person. Matches cityPresence above (routes/airport.ts cityPresence).
     try {
-      const { data: blockRows } = await sc
+      const { data: blockRows, error: blockErr } = await sc
         .from("blocks")
         .select("blocker_id, blocked_id")
         .or(`blocker_id.eq.${user.id},blocked_id.eq.${user.id}`);
-      const excluded = new Set<string>();
-      for (const b of (blockRows ?? []) as any[]) {
-        excluded.add(b.blocker_id === user.id ? b.blocked_id : b.blocker_id);
+      if (blockErr) {
+        logger.warn({ err: blockErr, userId: user.id }, "layover buddies: blocks unreadable — serving none");
+        rows = [];
+      } else {
+        const excluded = new Set<string>();
+        for (const b of (blockRows ?? []) as any[]) {
+          excluded.add(b.blocker_id === user.id ? b.blocked_id : b.blocker_id);
+        }
+        rows = rows.filter((b) => !excluded.has(b.user_id));
       }
-      rows = rows.filter((b) => !excluded.has(b.user_id));
-    } catch { rows = []; }
+    } catch (err) {
+      logger.warn({ err, userId: user.id }, "layover buddies: blocks read threw — serving none");
+      rows = [];
+    }
 
     // Availability during the layover's airport-local day(s).
     const tz = airport.timezone ?? "UTC";
@@ -1529,14 +1616,21 @@ router.delete("/airport/sessions/:id", async (req, res) => {
     sendError(res, "feature_disabled"); return;
   }
 
-  const session = await endSession(sc, req.params.id, user.id, "cancelled");
+  // `completed` was unreachable: this was the only close path and it passed
+  // the literal "cancelled", so a traveller who came back and boarded was
+  // recorded as having abandoned the layover. The default is unchanged; a
+  // caller that knows the outcome may now say so (body or query `outcome`).
+  const rawOutcome = (req.body?.outcome ?? req.query?.outcome) as unknown;
+  const outcome: "completed" | "cancelled" = rawOutcome === "completed" ? "completed" : "cancelled";
+
+  const session = await endSession(sc, req.params.id, user.id, outcome);
   if (!session) {
     sendError(res, "not_found", "Session not found or already closed");
     return;
   }
 
   // Passport seam: safe layover completed only on explicit completion
-  res.json({ ok: true, session });
+  res.json({ ok: true, session, outcome });
 });
 
 // ── Admin: POST /api/admin/airport/profiles ───────────────────────────────────

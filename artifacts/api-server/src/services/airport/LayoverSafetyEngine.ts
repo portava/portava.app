@@ -3,6 +3,10 @@
  *
  * Core calculation service. Computes required return buffer, available time,
  * and safety rating for candidate activities during a layover.
+ *
+ * Spec: docs/specs/Portava_Layover_Development_Architecture_Spec_v3.txt —
+ * §6.1 hard invariants (deadline monotonicity), §15 escalation ladder
+ * (`computeReturnState`), §20 engineVersion, Appendix A reason codes.
  */
 import type { AirportProfile } from "./AirportProfileService.js";
 import type { LayoverSession } from "./LayoverSessionService.js";
@@ -13,6 +17,71 @@ export type SafetyRating =
   | "possible_but_risky"
   | "not_recommended"
   | "airport_only";
+
+/**
+ * Version stamp for every certified output of this module. Bump when the
+ * arithmetic changes (a buffer term, a threshold, a band) so a stored
+ * `hardReturnTime` / `returnState` can be traced to the rules that produced
+ * it (spec §20 DecisionRecord.engineVersion, §18 replay(sessionId, engineVersion)).
+ *
+ * History:
+ *   2026.09.07-1  ramped time-of-day buffer (1-Lipschitz), single deadline
+ *                 anchor (9c26efba); returnState ladder + reason codes added.
+ */
+export const LAYOVER_ENGINE_VERSION = "2026.09.07-1";
+
+/**
+ * Spec Appendix A reason codes — the whole vocabulary, declared once so it can
+ * be counted, tested and diffed. Only the codes whose triggering FACT exists in
+ * this tree are ever emitted (see `adviseLeaving`); the rest are declared here
+ * so a future emitter cannot invent a spelling. Emitters today:
+ *   ENTRY_NOT_CONFIRMED         always — nothing on main confirms entry (§6.1)
+ *   INSUFFICIENT_USABLE_TIME    verdict "no"
+ *   RETURN_THRESHOLD_REACHED    returnState RETURN_NOW / CONNECTION_AT_RISK
+ *   AIRPORT_MATURITY_LIMITED    airport.verified === false (spec §22 L0)
+ * Declared, never emitted (no input exists): BAGGAGE_STATUS_CRITICAL_UNKNOWN
+ * (checked_bags is a boolean, unknown is unrepresentable), SECURITY_WAIT_HIGH,
+ * RETURN_ROUTE_UNRELIABLE, AIRPORT_CHANGE_REQUIRED, SELF_TRANSFER_FRICTION,
+ * DATA_STALE, SOURCE_CONFLICT, TRAFFIC_DEGRADED, FLIGHT_MOVED_EARLIER,
+ * FLIGHT_DELAY_CREATED_OPPORTUNITY, RECOMMENDATION_EXPIRED.
+ */
+export const LAYOVER_REASON_CODES = [
+  "ENTRY_NOT_CONFIRMED",
+  "BAGGAGE_STATUS_CRITICAL_UNKNOWN",
+  "INSUFFICIENT_USABLE_TIME",
+  "SECURITY_WAIT_HIGH",
+  "RETURN_ROUTE_UNRELIABLE",
+  "AIRPORT_CHANGE_REQUIRED",
+  "SELF_TRANSFER_FRICTION",
+  "DATA_STALE",
+  "SOURCE_CONFLICT",
+  "TRAFFIC_DEGRADED",
+  "FLIGHT_MOVED_EARLIER",
+  "FLIGHT_DELAY_CREATED_OPPORTUNITY",
+  "RETURN_THRESHOLD_REACHED",
+  "RECOMMENDATION_EXPIRED",
+  "AIRPORT_MATURITY_LIMITED",
+] as const;
+export type LayoverReasonCode = (typeof LAYOVER_REASON_CODES)[number];
+
+/**
+ * Spec §15 escalation ladder, derived deterministically from the clock and the
+ * certified deadline. No side effect fires from it here (no notification, no
+ * CTA switch — those are client/Safe Return concerns the spec assigns to other
+ * surfaces); it is the STATE those surfaces are meant to consume.
+ */
+export type LayoverReturnState =
+  | "NORMAL"
+  | "RETURN_SOON"
+  | "RETURN_NOW"
+  | "CONNECTION_AT_RISK";
+
+/**
+ * Minutes before the hard return deadline at which RETURN_SOON begins. Equal to
+ * the client's default "Remind me" lead (returnDeadlineSchema minutesBefore
+ * default 30) so the server state and the local reminder agree.
+ */
+export const RETURN_SOON_LEAD_MIN = 30;
 
 export interface ActivityCandidate {
   title: string;
@@ -285,6 +354,41 @@ export interface LayoverWindow {
   tierLabel: string;
   tierBlurb: string;
   overnight: boolean;
+  /** §15 escalation state at `nowMs`. See `computeReturnState`. */
+  returnState: LayoverReturnState;
+  /** Rules version that produced every number above. */
+  engineVersion: string;
+}
+
+/**
+ * Derive the §15 escalation state from the clock.
+ *
+ *   NORMAL              now <  hardReturn − RETURN_SOON_LEAD_MIN
+ *   RETURN_SOON         now >= hardReturn − RETURN_SOON_LEAD_MIN
+ *   RETURN_NOW          now >= hardReturn
+ *   CONNECTION_AT_RISK  now >= hardReturn + contingency, where contingency is
+ *                       the cushion half of the buffer (traffic + time-of-day);
+ *                       past it, only the process terms (security, immigration,
+ *                       bags) remain and any further delay is a missed flight.
+ *
+ * Two properties, both swept in src/test/layoverReturnState.test.ts:
+ *   1. monotone in time — as `nowMs` advances the state never steps back;
+ *   2. monotone in the cutoff — a flight that stops waiting EARLIER never yields
+ *      a calmer state at the same instant (hardReturn is non-decreasing in the
+ *      cutoff, proved in layoverDeadlineMonotonicity.test.ts, and
+ *      hardReturn + contingency = cutoff − (base + immigration + bags) is
+ *      non-decreasing by construction).
+ */
+export function computeReturnState(
+  hardReturnMs: number,
+  breakdown: Pick<SafetyAssessment["breakdown"], "trafficExtra" | "timeOfDayExtra">,
+  nowMs: number,
+): LayoverReturnState {
+  const contingencyMs = (breakdown.trafficExtra + breakdown.timeOfDayExtra) * 60_000;
+  if (nowMs >= hardReturnMs + contingencyMs) return "CONNECTION_AT_RISK";
+  if (nowMs >= hardReturnMs) return "RETURN_NOW";
+  if (nowMs >= hardReturnMs - RETURN_SOON_LEAD_MIN * 60_000) return "RETURN_SOON";
+  return "NORMAL";
 }
 
 /** Estimated minutes from wheels-down to standing landside. */
@@ -356,6 +460,8 @@ export function computeWindow(
       ? "You chose to stay at the airport — here's how to make the most of it."
       : TIER_META[tier].blurb,
     overnight,
+    returnState: computeReturnState(hardReturnMs, breakdownBase, nowMs),
+    engineVersion: LAYOVER_ENGINE_VERSION,
   };
 }
 
@@ -365,6 +471,13 @@ export interface LeaveAdvice {
   /** Facts we cannot know from the data we hold — shown explicitly to the user. */
   unknowns: string[];
   disclaimer: string;
+  /**
+   * Machine-readable counterpart of `reasons` / `unknowns` (spec Appendix A).
+   * Every code here corresponds to a fact the engine actually holds; see
+   * LAYOVER_REASON_CODES for which codes can and cannot be emitted on this tree.
+   */
+  reasonCodes: LayoverReasonCode[];
+  engineVersion: string;
 }
 
 const LEAVE_DISCLAIMER =
@@ -381,6 +494,13 @@ export function adviseLeaving(
   const unknowns: string[] = [
     "Visa or transit-permit requirements for your nationality",
   ];
+  // Entry is never confirmed on this tree — the visa line above is a standing
+  // unknown, and the code says so in a form a client or a metric can count.
+  const reasonCodes: LayoverReasonCode[] = ["ENTRY_NOT_CONFIRMED"];
+  if (!airport.verified) reasonCodes.push("AIRPORT_MATURITY_LIMITED");
+  if (window.returnState === "RETURN_NOW" || window.returnState === "CONNECTION_AT_RISK") {
+    reasonCodes.push("RETURN_THRESHOLD_REACHED");
+  }
   if (session.flightType === "international") {
     unknowns.push("Security and immigration queue times vary by hour");
   }
@@ -389,13 +509,14 @@ export function adviseLeaving(
   } else {
     reasons.push("Checked bags: confirm they're tagged through to your next flight.");
   }
+  const common = { unknowns, disclaimer: LEAVE_DISCLAIMER, engineVersion: LAYOVER_ENGINE_VERSION };
 
   if (!session.wantsToLeave) {
     return {
       verdict: "stay_airside",
       reasons: ["You chose to stay at the airport for this layover."],
-      unknowns,
-      disclaimer: LEAVE_DISCLAIMER,
+      reasonCodes,
+      ...common,
     };
   }
 
@@ -403,16 +524,17 @@ export function adviseLeaving(
     reasons.unshift(
       `About ${Math.floor(window.usableMinutes / 60)}h ${window.usableMinutes % 60}m of usable time after exit and return buffers.`,
     );
-    return { verdict: "yes", reasons, unknowns, disclaimer: LEAVE_DISCLAIMER };
+    return { verdict: "yes", reasons, reasonCodes, ...common };
   }
   if (window.usableMinutes >= 45) {
     reasons.unshift(
       `Only ~${window.usableMinutes} min usable — a very short trip right by the airport at most.`,
     );
-    return { verdict: "tight", reasons, unknowns, disclaimer: LEAVE_DISCLAIMER };
+    return { verdict: "tight", reasons, reasonCodes, ...common };
   }
   reasons.unshift(
     `After the required buffers you'd have ~${window.usableMinutes} min — not enough to leave and return safely.`,
   );
-  return { verdict: "no", reasons, unknowns, disclaimer: LEAVE_DISCLAIMER };
+  reasonCodes.push("INSUFFICIENT_USABLE_TIME");
+  return { verdict: "no", reasons, reasonCodes, ...common };
 }
