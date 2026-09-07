@@ -47,11 +47,12 @@ const sc = CREDS
   : (null as any);
 
 /**
- * Known-open offenders, as `table::policy`. ONE entry, and it may only shrink.
+ * Known-open offenders, as `table::policy`. It may only shrink, and as of
+ * migration 2402 it is EMPTY.
  *
- * mtm_select carries BOTH defects and is being fixed separately — deliberately
- * both at once, because fixing the recursion alone would convert a hard 42P17
- * into a silent cross-thread message leak.
+ * mtm_select carried BOTH defects and was fixed exactly as this note asked —
+ * both at once (2401 then 2402), because fixing the recursion alone would have
+ * converted a hard 42P17 into a silent cross-thread message leak.
  *
  * NOTE ON SCOPE, so the next reader is not misled: this suite runs against the
  * CI database, and CI and PRODUCTION are not identical here. Production's
@@ -63,7 +64,11 @@ const sc = CREDS
  * (2026-08-28) rather than inferred from CI being green.
  */
 const KNOWN_OPEN = new Set<string>([
-  "message_thread_members::mtm_select",
+  // message_thread_members::mtm_select — FIXED by migration 2402 (2026-09-07),
+  // together with 2401, which had to land first: 2401 corrected the msg_select
+  // tautology and made messages_hide_blocked_sender RESTRICTIVE, so that
+  // repairing the recursion could not turn a hard 42P17 into a silent grant of
+  // every message to every caller. The allowlist is now EMPTY. Keep it so.
 ]);
 
 /** One row per public-schema policy, via the service-role-only snapshot RPC. */

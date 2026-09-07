@@ -45,6 +45,12 @@ import {
   syncTripChatMembers,
   syncCircleChatMembers,
 } from '../services/groupChatSync';
+import {
+  historyBoundEnabled,
+  membershipSelect,
+  visibleFromOf,
+  withinWindow,
+} from '../services/groupChatHistoryBound';
 import { publishToThread, publishToUsers } from '../lib/telegraphEvents';
 import { invalidate as invalidateCompassCache } from '../compass/CompassCacheEngine.js';
 import { recordTrustEvent } from '../services/trust/TrustEventService.js';
@@ -920,11 +926,15 @@ router.get('/me/unread-counts', async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, 'server_not_configured', 'Service client not ready'); return; }
 
+  // Telegraph §14.3: the unread badge counts only messages inside the caller's
+  // per-thread window (visible_from_at, migration 2400), flag-gated.
+  const boundOn = await historyBoundEnabled(sc);
+
   // ── Run messages query and notifications queries in parallel ──────────────
   const [membershipsResult, profileResult] = await Promise.all([
     sc
       .from('message_thread_members')
-      .select('thread_id, last_read_at')
+      .select(membershipSelect('thread_id, last_read_at', boundOn))
       .eq('user_id', user.id)
       .is('left_at', null),
     sc
@@ -934,7 +944,11 @@ router.get('/me/unread-counts', async (req, res) => {
       .maybeSingle(),
   ]);
 
-  let { data: memberships, error: mErr } = membershipsResult;
+  // The membership select is built by membershipSelect() (a runtime string),
+  // so supabase-js cannot infer the row type; the rows are the same shape
+  // they always were.
+  let memberships: any[] | null = (membershipsResult.data as any[] | null);
+  let mErr: any = membershipsResult.error;
 
   // Migration 0016 adds last_read_at to message_thread_members. If it hasn't
   // been applied yet (pg error 42703 = undefined column), fall back to a query
@@ -969,9 +983,11 @@ router.get('/me/unread-counts', async (req, res) => {
 
   if (threadIds.length > 0) {
     const readAtByThread: Record<string, string | null> = {};
+    const visibleFromByThread: Record<string, string | null> = {};
     for (const m of memberships ?? []) {
       // last_read_at may be absent if migration 0016 is pending; default null
       readAtByThread[(m as any).thread_id] = (m as any).last_read_at ?? null;
+      visibleFromByThread[(m as any).thread_id] = visibleFromOf(m as any, boundOn);
     }
 
     const { data: threads, error: tErr } = await sc
@@ -1010,6 +1026,9 @@ router.get('/me/unread-counts', async (req, res) => {
 
       const lastMsgByThread: Record<string, any> = {};
       for (const m of lastMsgs ?? []) {
+        // §14.3: a message outside the caller's window for its thread is not
+        // theirs to count as unread. No-op while the flag is OFF.
+        if (!withinWindow((m as any).created_at, visibleFromByThread[(m as any).thread_id] ?? null)) continue;
         if (!lastMsgByThread[(m as any).thread_id]) {
           lastMsgByThread[(m as any).thread_id] = m;
         }
@@ -1334,9 +1353,14 @@ router.get('/me/threads', async (req, res) => {
   if (!auth) return;
   const { client, user } = auth;
 
+  // Telegraph §14.3: the inbox preview and unread count are reads of message
+  // history too, so they honour the same per-membership bound as the thread
+  // read (visible_from_at, migration 2400), under the same flag.
+  const boundOn = await historyBoundEnabled(client);
+
   const { data: memberships, error: mErr } = await client
     .from('message_thread_members')
-    .select('thread_id, muted_at, archived_at, left_at, last_read_at')
+    .select(membershipSelect('thread_id, muted_at, archived_at, left_at, last_read_at', boundOn))
     .eq('user_id', user.id)
     .is('left_at', null);
 
@@ -1398,9 +1422,21 @@ router.get('/me/threads', async (req, res) => {
     }
   }
 
+  // §14.3 window per thread: a message created before the caller's
+  // visible_from_at for that thread is not the caller's to preview or count.
+  // Applied once here so the preview (lastMsgByThread) and the unread count
+  // (msgsByThread, below) agree. No-op while the flag is OFF (visibleFrom null).
+  const visibleFromByThread: Record<string, string | null> = {};
+  for (const m of memberships ?? []) {
+    visibleFromByThread[(m as any).thread_id] = visibleFromOf(m as any, boundOn);
+  }
+  const windowedMsgs = ((lastMsgRes.data ?? []) as any[]).filter((m) =>
+    withinWindow(m.created_at, visibleFromByThread[m.thread_id] ?? null),
+  );
+
   // Last message per thread.
   const lastMsgByThread: Record<string, any> = {};
-  for (const m of (lastMsgRes.data ?? []) as any[]) {
+  for (const m of windowedMsgs) {
     if (!lastMsgByThread[m.thread_id]) lastMsgByThread[m.thread_id] = m;
   }
 
@@ -1439,9 +1475,9 @@ router.get('/me/threads', async (req, res) => {
   const membershipMap: Record<string, any> = {};
   for (const m of memberships ?? []) membershipMap[(m as any).thread_id] = m;
 
-  // Group all messages by thread for unread counts.
+  // Group all messages by thread for unread counts (inside the §14.3 window).
   const msgsByThread: Record<string, any[]> = {};
-  for (const m of (lastMsgRes.data ?? []) as any[]) {
+  for (const m of windowedMsgs) {
     if (!msgsByThread[m.thread_id]) msgsByThread[m.thread_id] = [];
     msgsByThread[m.thread_id].push(m);
   }
@@ -1555,9 +1591,16 @@ router.get('/threads/:threadId/messages', async (req, res) => {
   const { threadId } = req.params;
   if (!isUuid(threadId)) { sendError(res, 'invalid_payload', 'Invalid thread id'); return; }
 
+  // Telegraph §14.3 / §26: "New member reads pre-membership history without
+  // policy → DENY". The bound lives on the caller's OWN membership row
+  // (visible_from_at, migration 2400) and is honoured only while
+  // telegraph_history_bound_enabled is TRUE; while OFF this read is exactly
+  // the query it was before 2400, column list included.
+  const boundOn = await historyBoundEnabled(client);
+
   const { data: membership } = await client
     .from('message_thread_members')
-    .select('user_id, left_at')
+    .select(membershipSelect('user_id, left_at', boundOn))
     .eq('thread_id', threadId)
     .eq('user_id', user.id)
     .is('left_at', null)
@@ -1565,6 +1608,8 @@ router.get('/threads/:threadId/messages', async (req, res) => {
 
   if (!membership) { sendError(res, 'forbidden', 'Not a member of this thread'); return; }
   if ((membership as any).left_at !== null) { sendError(res, 'forbidden', 'You no longer have access to this thread'); return; }
+
+  const visibleFrom = visibleFromOf(membership as any, boundOn);
 
   const before = req.query.before as string | undefined;
   const limit = Math.min(Number(req.query.limit ?? 50), 100);
@@ -1580,6 +1625,8 @@ router.get('/threads/:threadId/messages', async (req, res) => {
     .limit(limit);
 
   if (before) query = query.lt('created_at', before);
+  // The §14.3 window, applied in the query so pagination cannot walk past it.
+  if (visibleFrom) query = query.gte('created_at', visibleFrom);
 
   const { data, error } = await query;
   if (error) {
@@ -1641,10 +1688,14 @@ router.get('/threads/:threadId/messages', async (req, res) => {
         }
         const replyIds = Object.values(replyToIdMap).filter(Boolean) as string[];
         if (replyIds.length > 0) {
-          const { data: quotedRows } = await sc
+          // A reply to a message outside the caller's §14.3 window must not
+          // quote it back in — the quoted body is retrieval by another name.
+          let quotedQuery = sc
             .from('messages')
             .select(`id, body, sender_id, profile:profiles!messages_sender_id_fkey(name, handle, username, full_name)`)
             .in('id', replyIds);
+          if (visibleFrom) quotedQuery = quotedQuery.gte('created_at', visibleFrom);
+          const { data: quotedRows } = await quotedQuery;
           // Universal display-name rule: quoted sender shows @handle unless opted in.
           const qAllowed = await nameVisibilitySet(sc, ((quotedRows as any[]) ?? []).map((q: any) => q.sender_id));
           for (const qr of quotedRows as any[] ?? []) {
@@ -2643,6 +2694,122 @@ router.post('/threads/:threadId/report', async (req, res) => {
   await invalidateCompassCache(sc, user.id, "thread_report");
 
   res.status(201).json({ ok: true });
+});
+
+// ── Saved messages ─────────────────────────────────────────────────────────────
+
+/**
+ * GET /api/me/saved-messages?limit=50
+ *
+ * The READ half of saved_messages. Until this route existed the table was
+ * write-only: both client surfaces offer "Save", the handler below persists it,
+ * and nothing anywhere read it back (Telegraph census T119, "persists into a
+ * hole"). This is not yet §10.2's "private Memory draft" — it is the projection
+ * that makes the save observable at all; promoting a save into a Memory is an
+ * owner decision this route does not make.
+ *
+ * §14.2 "Read authorization is dynamic": a save is not a permanent grant. Every
+ * item is RE-AUTHORIZED at read time, against the same rules the thread read
+ * applies —
+ *   - the caller is still an ACTIVE member of the message's thread
+ *     (a departed member's saves stay in the table and stop being returned);
+ *   - the message is not deleted / unsent (§7.4 "remove from normal
+ *     retrieval/search/projections");
+ *   - the message is inside the caller's §14.3 window when the history bound
+ *     is enabled.
+ * Every read is error-checked and fails CLOSED: supabase-js resolves rather
+ * than throws, and a failed read must never be reported as an empty collection
+ * (§29 "No silent schema failures that become plausible empty state").
+ *
+ * INERT: no client calls this route; nothing existing changes shape.
+ */
+router.get('/me/saved-messages', async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, 'server_not_configured', 'Service client not ready'); return; }
+
+  const limitRaw = Number(req.query.limit ?? 50);
+  const limit = Number.isFinite(limitRaw) && limitRaw > 0 ? Math.min(Math.floor(limitRaw), 200) : 50;
+
+  const { data: savedRows, error: savedErr } = await sc
+    .from('saved_messages')
+    .select('message_id, saved_at')
+    .eq('user_id', user.id)
+    .order('saved_at', { ascending: false })
+    .limit(limit);
+
+  if (savedErr) {
+    req.log.error({ err: savedErr }, 'saved_messages read failed');
+    sendError(res, 'db_error', savedErr.message);
+    return;
+  }
+
+  const saved = ((savedRows ?? []) as any[]);
+  if (saved.length === 0) { res.status(200).json({ saved: [] }); return; }
+
+  const savedAtById: Record<string, string> = {};
+  for (const s of saved) savedAtById[s.message_id as string] = s.saved_at as string;
+
+  const { data: msgRows, error: msgErr } = await sc
+    .from('messages')
+    .select('id, thread_id, sender_id, body, deleted_at, created_at, msg_type, subtype, media_url, media_type, media_thumbnail_url')
+    .in('id', Object.keys(savedAtById))
+    .is('deleted_at', null);
+
+  if (msgErr) {
+    req.log.error({ err: msgErr }, 'saved_messages: messages read failed');
+    sendError(res, 'db_error', msgErr.message);
+    return;
+  }
+
+  const msgs = ((msgRows ?? []) as any[]);
+  if (msgs.length === 0) { res.status(200).json({ saved: [] }); return; }
+
+  const threadIds = Array.from(new Set(msgs.map((m) => m.thread_id as string)));
+
+  const boundOn = await historyBoundEnabled(sc);
+  const { data: memRows, error: memErr } = await sc
+    .from('message_thread_members')
+    .select(membershipSelect('thread_id', boundOn))
+    .eq('user_id', user.id)
+    .in('thread_id', threadIds)
+    .is('left_at', null);
+
+  if (memErr) {
+    req.log.error({ err: memErr }, 'saved_messages: membership read failed');
+    sendError(res, 'db_error', memErr.message);
+    return;
+  }
+
+  const visibleFromByThread: Record<string, string | null> = {};
+  const activeThreads = new Set<string>();
+  for (const m of ((memRows ?? []) as any[])) {
+    activeThreads.add(m.thread_id as string);
+    visibleFromByThread[m.thread_id as string] = visibleFromOf(m, boundOn);
+  }
+
+  const items = msgs
+    .filter((m) => activeThreads.has(m.thread_id as string))
+    .filter((m) => withinWindow(m.created_at, visibleFromByThread[m.thread_id as string] ?? null))
+    .map((m) => ({
+      messageId: m.id as string,
+      threadId: m.thread_id as string,
+      senderId: (m.sender_id as string | null) ?? null,
+      body: (m.body as string | null) ?? null,
+      createdAt: m.created_at as string,
+      savedAt: savedAtById[m.id as string],
+      msgType: (m.msg_type as string) ?? 'text',
+      subtype: (m.subtype as string | null) ?? null,
+      mediaUrl: (m.media_url as string | null) ?? null,
+      mediaType: (m.media_type as string | null) ?? null,
+      mediaThumbnailUrl: (m.media_thumbnail_url as string | null) ?? null,
+    }))
+    .sort((a, b) => (a.savedAt < b.savedAt ? 1 : a.savedAt > b.savedAt ? -1 : 0));
+
+  res.status(200).json({ saved: items });
 });
 
 // ── Report message ────────────────────────────────────────────────────────────
