@@ -331,9 +331,45 @@ describe("aggregation — routes through the real privacy gate", () => {
   });
 });
 
-// ── Inert by construction ────────────────────────────────────────────────────
+// ── Reachability: who is allowed to touch this store ─────────────────────────
+//
+// THIS SECTION USED TO ASSERT THE STORE WAS WIRED INTO NOTHING, and it should be
+// read knowing that. When 2315 landed, the store had no caller anywhere and these
+// tests asserted the importer list and the table-name list were both EMPTY. That
+// was a deliberate tripwire: the first live import would turn CI red, so wiring
+// the store could not happen quietly.
+//
+// The tripwire fired, as designed, when the four callers the owner ruling
+// already permits were built. It is NOT deleted here — deleting it is what it
+// existed to prevent. It is tightened into an ALLOWLIST, so the property it
+// enforced survives in a stronger form:
+//
+//   * an UNLISTED referrer is still red, exactly as before;
+//   * a listed file that no longer references anything is ALSO red, so the list
+//     cannot rot into a blanket permission for files that have moved on;
+//   * and a new negative is added below that the empty-list version could not
+//     express: no route may reference this store, ever, because the transport is
+//     the step the gap analysis classifies as needing an owner decision
+//     (docs/architecture/sensing-input-gap.md §3.2).
+//
+// Each entry carries the clause of the owner ruling that permits it, verbatim
+// from the enumeration: "privacy-reduced sensor contributions, rotating IDs,
+// TTL, cohort/coverage aggregation and revocation". A referrer that cannot be
+// justified by one of those five words does not belong on this list, and adding
+// it here is the visible act that makes that claim in a diff.
+const PERMITTED_REFERRERS = new Map<string, string>([
+  [
+    join("lib", "sensingAnonService.ts"),
+    'the service-role bindings for "privacy-reduced sensor contributions", ' +
+      '"cohort/coverage aggregation" and "revocation". No route, no flag, no publisher.',
+  ],
+  [
+    join("lib", "sensingRetentionScheduler.ts"),
+    'the "TTL" sweep: calls purge_expired_sensing_contributions, and only where the table exists.',
+  ],
+]);
 
-describe("the store is wired into nothing", () => {
+describe("the store is reachable only from the callers the ruling names", () => {
   function walk(dir: string, out: string[] = []): string[] {
     for (const entry of readdirSync(dir)) {
       if (entry === "node_modules" || entry === "generated" || entry === "dist") continue;
@@ -344,25 +380,69 @@ describe("the store is wired into nothing", () => {
     return out;
   }
 
-  it("nothing outside its own tests imports either module", () => {
-    const files = walk(SRC);
-    assert.ok(files.length > 200, "premise: the source tree was found");
-    const importers = files.filter((f) => {
-      if (f.includes(`${join("src", "test")}`) || f.endsWith("sensingAnonStore.ts") || f.endsWith("sensingCoverageAggregate.ts")) {
-        return false;
-      }
-      const text = readFileSync(f, "utf8");
-      return /sensingAnonStore|sensingCoverageAggregate/.test(text);
-    });
-    assert.deepEqual(importers, [], "the anonymous sensing store must not be on a live path yet");
+  /** Non-test, non-self files under src/ that name either module. */
+  function importers(): string[] {
+    return walk(SRC)
+      .filter((f) => {
+        if (f.includes(`${join("src", "test")}`)) return false;
+        if (f.endsWith("sensingAnonStore.ts") || f.endsWith("sensingCoverageAggregate.ts")) return false;
+        return /sensingAnonStore|sensingCoverageAggregate/.test(readFileSync(f, "utf8"));
+      })
+      .map((f) => f.slice(SRC.length + 1));
+  }
+
+  it("the allowlist is not empty and every entry gives a reason", () => {
+    // Vacuity is failure: an empty allowlist would make the equality assertion
+    // below pass by describing nothing.
+    assert.ok(PERMITTED_REFERRERS.size > 0, "the allowlist describes nothing");
+    for (const [file, reason] of PERMITTED_REFERRERS) {
+      assert.ok(reason.trim().length > 20, `${file} is allowlisted with no reason`);
+    }
   });
 
-  it("no route, scheduler or flag names the table", () => {
-    const files = walk(SRC).filter(
-      (f) => !f.includes(`${join("src", "test")}`) && !f.includes(`${join("src", "migrations")}`) && !f.endsWith("sensingAnonStore.ts"),
+  it("the importers are EXACTLY the allowlisted callers — no more, and no fewer", () => {
+    const files = walk(SRC);
+    assert.ok(files.length > 200, "premise: the source tree was found");
+    assert.deepEqual(
+      importers().sort(),
+      [...PERMITTED_REFERRERS.keys()].sort(),
+      "an unlisted file imports the anonymous sensing store, or an allowlisted one no longer does",
     );
-    const namers = files.filter((f) => readFileSync(f, "utf8").includes(TABLE));
-    assert.deepEqual(namers, [], `${TABLE} is referenced outside its own contract module`);
+  });
+
+  it("no route touches the store — a transport is an owner decision, not an implementation detail", () => {
+    const routes = walk(join(SRC, "routes"));
+    assert.ok(routes.length > 100, "premise: the route tree was found");
+    const offenders = routes.filter((f) => {
+      const text = readFileSync(f, "utf8");
+      return /sensingAnonStore|sensingCoverageAggregate|sensingAnonService/.test(text) || text.includes(TABLE);
+    });
+    assert.deepEqual(offenders, [], "an HTTP surface for the anonymous sensing store needs an owner decision first");
+  });
+
+  it("only the allowlisted callers name the table", () => {
+    const namers = walk(SRC)
+      .filter(
+        (f) =>
+          !f.includes(`${join("src", "test")}`) &&
+          !f.includes(`${join("src", "migrations")}`) &&
+          !f.endsWith("sensingAnonStore.ts"),
+      )
+      .filter((f) => readFileSync(f, "utf8").includes(TABLE))
+      .map((f) => f.slice(SRC.length + 1));
+    for (const f of namers) {
+      assert.ok(PERMITTED_REFERRERS.has(f), `${TABLE} is named by ${f}, which is not an allowlisted caller`);
+    }
+  });
+
+  it("no feature flag was invented for this store", () => {
+    // 2315 seeds none, and seeding one is an owner decision (sensing-input-gap
+    // §3.2). The TTL sweep is gated on the table existing instead.
+    assert.doesNotMatch(CODE, /feature_flags/i);
+    for (const f of PERMITTED_REFERRERS.keys()) {
+      const text = readFileSync(join(SRC, f), "utf8");
+      assert.ok(!/isFlagEnabled|feature_flags/.test(text), `${f} reads a feature flag that nothing seeds`);
+    }
   });
 
   it("the contract module both reads and writes the table, so it is not a writerless read", () => {

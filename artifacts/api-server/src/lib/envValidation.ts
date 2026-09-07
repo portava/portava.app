@@ -19,6 +19,29 @@ const OPTIONAL_KEYS = [
   "AI_INTEGRATIONS_OPENAI_API_KEY",
   "INTERNAL_API_SECRET",
   "MAPBOX_TOKEN",
+  // SENSING_CONTRIBUTOR_PEPPER — the server pepper for the anonymous sensing
+  // store's rotating contributor tokens (lib/sensingAnonStore, migration 2315).
+  //
+  // WHY OPTIONAL AND NOT REQUIRED, since a wrong answer here is a privacy
+  // failure. REQUIRED_KEYS is enforced by process.exit(1) below. Nothing has
+  // ever provisioned this variable, and 2315 is not applied to production at
+  // all, so promoting it to required would take the production API server down
+  // at its next boot over a secret for a store that does not exist there. That
+  // is a self-inflicted outage, and it breaks the standing rule that every stage
+  // lands behaviour-preserving (docs/discovery/ROADMAP.md:487-488).
+  //
+  // Optional is not lenient here, because the requirement is enforced where it
+  // actually bites rather than at boot:
+  //   * lib/sensingAnonStore.sensingPepper() THROWS when no pepper of any kind
+  //     is set — there is deliberately no constant fallback, since a guessable
+  //     pepper would make a contributor token forgeable;
+  //   * lib/sensingAnonService refuses to write or revoke unless THIS variable
+  //     specifically is set and at least 32 characters, so a contribution can
+  //     never be written under the SESSION_SECRET fallback — whose rotation is a
+  //     routine security action that would make every prior row unrevokable.
+  // The effect of listing it here is a named boot warning naming exactly the key
+  // an operator has to provision, instead of a silent fallback nobody sees.
+  "SENSING_CONTRIBUTOR_PEPPER",
 ] as const;
 
 export interface EnvValidationResult {

@@ -44,6 +44,7 @@ import { startCompassSearchDecayFlushScheduler } from "./lib/compassSearchDecayF
 import { startAccountDeletionScheduler } from "./lib/accountDeletionScheduler.js";
 import { startLocationSnapshotPurgeScheduler } from "./lib/locationSnapshotPurgeScheduler.js";
 import { startIntelRetentionScheduler } from "./lib/intelRetentionScheduler.js";
+import { startSensingRetentionScheduler } from "./lib/sensingRetentionScheduler.js";
 import { startIntelProjectionScheduler } from "./lib/intelProjectionScheduler.js";
 import { startIntelPromotionScheduler } from "./lib/intelPromotionScheduler.js";
 import { startIntelPatternScheduler } from "./lib/intelPatternScheduler.js";
@@ -133,6 +134,16 @@ app.listen(port, (err) => {
   // it sweeps so they never repeat the location_snapshots defect (expires_at with
   // no cleanup job). Flag-gated and fail-closed; safe to start before enabling.
   startIntelRetentionScheduler();
+  // TTL sweep for the anonymous sensing store (migration 2315). 2315 shipped
+  // purge_expired_sensing_contributions and nothing called it, and there is no
+  // pg_cron in src/migrations, so without this a short-lived store kept its rows
+  // forever — the location_snapshots defect again. Not flag-gated: an expired
+  // row here is already invisible (its only reader filters expires_at) and 72h
+  // is a structural CHECK, so a flag would only add a way to retain expired
+  // personal data. It is gated on the SCHEMA instead — the sweep probes for the
+  // table and never calls the RPC where 2315 is not applied, which today means
+  // production, where this is an inert heartbeat.
+  startSensingRetentionScheduler();
   startIntelPromotionScheduler();
   startIntelProjectionScheduler();
   // Memory + Experience Intelligence projector (spec §22): projects canonical
