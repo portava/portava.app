@@ -295,8 +295,18 @@ CREATE TRIGGER trg_memory_evidence_no_update
 ALTER TABLE public.memory_episodes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.memory_evidence ENABLE ROW LEVEL SECURITY;
 
-REVOKE ALL ON public.memory_episodes FROM PUBLIC, anon, authenticated;
-REVOKE ALL ON public.memory_evidence FROM PUBLIC, anon, authenticated;
+-- service_role IS IN THE REVOKE LIST, and that is the load-bearing part.
+-- Supabase ships `ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES
+-- TO postgres, anon, authenticated, service_role`, so a table created here
+-- arrives with ALL granted to all four — service_role included, and that
+-- includes UPDATE on memory_evidence. Revoking only anon/authenticated (the
+-- 2183 posture) would leave append-only resting on the trigger alone, and the
+-- postcondition below would then correctly refuse to let this migration
+-- through. So every privilege is revoked first and only the intended set is
+-- granted back: the grants below are the WHOLE truth about who may do what,
+-- rather than a subset layered over an invisible default.
+REVOKE ALL ON public.memory_episodes FROM PUBLIC, anon, authenticated, service_role;
+REVOKE ALL ON public.memory_evidence FROM PUBLIC, anon, authenticated, service_role;
 
 GRANT INSERT, SELECT, UPDATE, DELETE ON public.memory_episodes TO service_role;
 -- No UPDATE for evidence: append-only is a grant, not only a trigger.

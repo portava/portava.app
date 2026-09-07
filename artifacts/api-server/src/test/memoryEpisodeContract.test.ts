@@ -544,6 +544,19 @@ describe("the spine is inert by construction", () => {
     assert.match(sql, /POSTCONDITION FAILED: a policy exists on the provenance spine/);
   });
 
+  it("every privilege is revoked first — including service_role's Supabase default", () => {
+    // Supabase's ALTER DEFAULT PRIVILEGES grants ALL on a new public table to
+    // service_role as well as anon/authenticated. Revoking only the latter two
+    // would leave memory_evidence UPDATE-able by default, and append-only would
+    // rest on the trigger alone. The REVOKE must name service_role.
+    assert.match(sql, /REVOKE ALL ON public\.memory_episodes FROM PUBLIC, anon, authenticated, service_role;/);
+    assert.match(sql, /REVOKE ALL ON public\.memory_evidence FROM PUBLIC, anon, authenticated, service_role;/);
+    // ...and the grants below it are then the whole truth about who may do what.
+    const revokeAt = sql.indexOf("REVOKE ALL ON public.memory_evidence FROM PUBLIC");
+    const grantAt = sql.indexOf("GRANT INSERT, SELECT, DELETE         ON public.memory_evidence");
+    assert.ok(revokeAt > 0 && grantAt > revokeAt, "the revoke must precede the grant or it undoes it");
+  });
+
   it("anon and authenticated are revoked and never granted", () => {
     assert.match(sql, /REVOKE ALL ON public\.memory_episodes FROM PUBLIC, anon, authenticated/);
     assert.match(sql, /REVOKE ALL ON public\.memory_evidence FROM PUBLIC, anon, authenticated/);
