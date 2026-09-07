@@ -257,7 +257,10 @@ BEGIN
   IF v_prosecdef IS NOT TRUE THEN
     RAISE EXCEPTION 'POSTCONDITION FAILED: telegraph_unsend_message_before_seen must be SECURITY DEFINER.';
   END IF;
-  IF v_config IS NULL OR NOT (v_config && ARRAY['search_path=pg_catalog, public']) THEN
+  -- Substring match rather than an exact array compare: Postgres preserves the
+  -- SET text verbatim in proconfig and its quoting is not worth depending on.
+  -- Matches the check in migration 2199.
+  IF v_config IS NULL OR array_to_string(v_config, ',') NOT LIKE '%search_path%' THEN
     RAISE EXCEPTION 'POSTCONDITION FAILED: telegraph_unsend_message_before_seen must pin search_path.';
   END IF;
 
