@@ -1034,3 +1034,178 @@ already made; the one visible-behaviour repair is behind a flag seeded FALSE.
 2. Apply `2410` to production and flip `layover_stable_recommendation_ids_enabled` — this is the only way "Add to plan" from a recommendation ever renders.
 3. Merge or port PR #463 (entry gate; fabricated travel time; failed-read substitution) and PR #469 (blocks fail-closed) after rebasing over `9c26efba`.
 4. Whether `airport_profiles` should carry curated buffers at all: 3,206 rows, 0 non-default. Until then the spec's L0 "airport-side guidance only by default" (L243) is the honest product state and the engine's `AIRPORT_MATURITY_LIMITED` code now says so on every session.
+
+## 8. Lane B4 (2026-09-07, later) — L201 verified, L199 pinned, L9 disclosed, L50 not built
+
+Paths relative to `artifacts/api-server/src/`. Every number below was measured
+in this pass; nothing is carried forward from §7 without being re-read.
+
+### What the brief got wrong, and what was already there
+
+The lane brief asked for a new `2510_layover_write_boundary.sql` implementing
+L201. **That migration already existed** as
+`migrations/2335_layover_recommendation_write_boundary.sql` (committed in
+`9c26efba`, applied to CI, ledgered with checksum `efe7172d…`), and the
+contract entry the brief asked for under L199 already existed for
+`layover_recommendations` (`security/authorization-contract.json`, entry
+`layover_recommendations`). The lead corrected the brief mid-pass and handed
+over 2335/2410 for in-place edits. **That edit is not possible either**: the CI
+ledger row carries the sha256 of the file as committed, equal to the file on
+disk, and `scripts/checkMigrationLedger.ts` reports an edited applied
+migration as its own finding. Anything 2335 lacks has to be a new file.
+
+### Measured before changing anything (aggregates only)
+
+| Fact | production `ajrurzioarfkagpuxfnb` | CI `hwokxgbmezheskbzskfr` |
+| --- | --- | --- |
+| `layover_recs_owner` cmd / `with_check` | **ALL / NULL** (0127 state) | SELECT / NULL (2335 applied) |
+| Policies on `layover_recommendations` | exactly 1 | exactly 1 |
+| `authenticated` on `layover_recommendations` (aclexplode) | DELETE,INSERT,MAINTAIN,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE | SELECT |
+| `anon` on `layover_recommendations` | same full set | none |
+| `service_role` on `layover_recommendations` | full set | SELECT,INSERT,UPDATE,DELETE |
+| Sibling tables, `anon`/`authenticated` | full set incl. TRUNCATE | full set minus TRUNCATE (MAINTAIN remains) |
+| `rec_key` column / stable-ids flag row | absent / absent (2410 not applied) | present / present |
+| `schema_migration_ledger` | **absent** | present |
+
+So the question the census left open in L201 — "whether it is exploitable
+depends on the grant" — is answered: **yes, in production, today.** The grant
+is the blanket default, the policy is FOR ALL with no WITH CHECK, and the only
+thing 2335 changes is exactly that. `MAINTAIN` (PG17) does not appear in
+`information_schema.role_table_grants`, so the contract checker cannot see it;
+it is noted, not pinned.
+
+### T1 — 2335 and 2410 read adversarially: both sound
+
+- **No live path breaks under 2335.** Every `layover_recommendations` access
+  runs on `getServiceClient()`: `routes/airport.ts` constructs `sc` that way at
+  every handler (`:268, :307, :484, :581, :644, :694, :739, :792, :840, :1047`)
+  and passes it to the services; `services/airport/*.ts` contain no
+  `createClient` and no `getServiceClient` (grep: zero hits), so the
+  regeneration write, the stale-scan delete and the admin update all carry
+  BYPASSRLS. There is no mobile client in this repository (`artifacts/` holds
+  `api-server` and `mockup-sandbox` only), and no other file in the tree names
+  the table outside migrations, tests and generated types.
+- **No surviving policy dominates.** One policy in both databases (table
+  above). `layover_sessions` / `layover_plan_stops` keep their FOR ALL +
+  WITH CHECK owner policies; `layover_events` / `airport_profiles` are SELECT-only.
+- **2335's one gap is the postcondition block.** Built as
+  `migrations/2510_layover_write_boundary_postconditions.sql` — verify-only,
+  changes nothing, six conditional `RAISE EXCEPTION`s (RLS on; exactly one
+  policy, `layover_recs_owner`, FOR SELECT, permissive, `{authenticated}`;
+  `authenticated` = SELECT and not INSERT/UPDATE/DELETE/TRUNCATE; `anon` and
+  PUBLIC hold nothing; `service_role` = DML and not TRUNCATE; no client
+  TRUNCATE on the four siblings). It **fails on production today by design**
+  and must run after 2335. Passes `migrationDeployability` (every RAISE is
+  under an IF) and `check:migration-prefixes`.
+- **2410** carries preconditions and four real postconditions already; the
+  unique index is full (PostgREST `on_conflict` needs that), the upsert omits
+  `id` so identities survive, the flag seed is `DO NOTHING`, and the flag is
+  read through the shared fail-closed reader (`lib/featureFlags.ts:21`). No
+  change made.
+- Rollback files exist for both: `db/rollback/2026-09-07-2335-…` and `…-2410-…`.
+
+### T2 — L199: the other four layover tables enter the contract
+
+`security/authorization-contract.json` now pins `layover_sessions`,
+`layover_plan_stops`, `layover_events` and `airport_profiles` **at the state
+measured on CI**, under a top-level `$pinnedAsMeasured` note saying so. They
+are broader than invariant 1's SELECT-only ideal (0127's default
+DELETE/INSERT/REFERENCES/TRIGGER/UPDATE grants, minus the TRUNCATE 2335 took
+back); what denies client writes today is RLS — owner-scoped WITH CHECK
+policies, and no `anon` policy at all — plus the fact that every application
+writer is the service client. This is a pin, not an approval: narrowing those
+grants is a separate migration and owner decision **L199-b**.
+
+The CLI (`check:authorization-contract`) cannot run in this environment (no
+`SUPABASE_URL` / token; it exits 2). The same evaluator it calls
+(`security/authorizationContract.ts:evaluateContract`) was run over the three
+queries it issues, answered by CI: **0 violations** on the measured rows, and
+four perturbations each caught — `layover_recs_owner` back to FOR ALL,
+`authenticated` UPDATE restored on `layover_recommendations`,
+`layover_sessions_owner` dropped, `anon` TRUNCATE restored on
+`layover_plan_stops`. `test/authorizationContractGuard.test.ts` still passes
+over the 22-table contract.
+
+### T3 — L9 / L65: the category constant is disclosed, not replaced
+
+No routing was built. What travels now is **provenance**:
+
+- `LayoverSafetyEngine.ts:106` declares `TravelTimeSource =
+  inside_airport | category_default | measured`; `:121` `travelTimeSourceFor`
+  resolves an absent or unknown value to the least-trusted kind that applies
+  (never `measured`); `ActivityCandidate.travelTimeSource` is optional.
+- `LayoverRecommendationService.ts` tags every candidate — airside `inside_airport`
+  (`:121`), discovery places `category_default` (`:210`, the SELECT reads no
+  coordinate), city escape `category_default` (`:328`) — keeps the source
+  beside the row (`:353`, not in the insert payload: the table has no
+  column and adding one unconditionally would break the write on any database
+  without the migration, the hazard 2410 gates), and the persisted read path
+  infers it from `inside_airport` (`:491`) — exact only while nothing
+  produces `measured`.
+- `LayoverPrivacyGuard.ts:49` adds `travelTimeSource` to `SafeRecommendation`;
+  `:89` always populates it.
+- `adviseLeaving(airport, session, window, facts?)` (`LayoverSafetyEngine.ts:557`)
+  pushes `TRAVEL_TIME_UNMEASURED_UNKNOWN` into `unknowns[]` whenever the
+  traveller intends to leave and the facts do not say `measured` (`:572`);
+  absence fails closed. `routes/airport.ts:663` labels the safety route's
+  literal 20 and returns `travelTimeSource` (`:667`); `/overview` passes no
+  facts and relies on the closed default (`:1117`).
+- `test/layoverTravelTimeProvenance.test.ts` (17 tests, registered): resolver,
+  both generation paths, persisted read, sanitizer, `adviseLeaving` in all four
+  states, the three routes at the HTTP boundary, and a tripwire that `"measured"`
+  appears nowhere but the engine's declaration and comparison. Non-vacuity was
+  proved by four breaks (drop the push; tag discovery `measured`; tag the
+  returned card `measured`; drop the field in the sanitizer): 4, 4, 4 and 5
+  failures respectively, 17/17 after restore.
+
+What this does NOT do: change any number a traveller sees, or render the
+disclosure — the client lives outside this repository. L9 and L65 stay **W**;
+the fabrication is now labelled at the API, which is the obligation §2.1
+actually states.
+
+### T4 — L50: NOT BUILT, with the reason
+
+`status IN ('active','hidden','flagged')` (`0127:132-134`) could express BLOCKED
+as `hidden` without a new enum value. It was not built because (a) hiding
+`not_recommended` cards changes what the traveller sees, which every change on
+this surface so far has refused to do without a flag seeded FALSE, and (b) the
+read path ignores `status` entirely: `getRecommendations`
+(`LayoverRecommendationService.ts:491-500`) selects `*` with no status
+filter, so **a card an admin sets to `hidden` through
+`POST /admin/airport/reports/:id/resolve` is still returned to the user** —
+the admin "hide" action is ineffective today. A BLOCKED status would inherit
+that defect until the read path filters, and filtering is the same visible
+change. Owner decision **L50-a**: is BLOCKED "not rendered" or "rendered as
+refused"? Then a flag, a status filter that also makes admin-hide real, and
+the write.
+
+### Verdict changes
+
+| id | Was (§7) | Now | Evidence |
+| --- | --- | --- | --- |
+| L201 | C (tree) | **C (tree)**, postconditions now exist | 2510 asserts 2335's six claims; production still open (owner decision 1 stands). |
+| L199 | W | **W (improved)** | all five layover tables contracted; evaluator proven non-vacuous; 0127 itself still has no postconditions. |
+| L9 | W | **W (improved)** | provenance field + `unknowns` disclosure at the API; no route measured; client rendering out of tree. |
+| L65 | W | W | terms are still constants; now labelled. |
+| L50 | N | N | not built; admin-hide defect found (above). |
+
+### Gates, measured at the end of the pass
+
+- `npm run typecheck`: 0 errors.
+- `typecheck:tests`: my file adds 0 diagnostics; the gate reports **one new
+  diagnostic in `test/mapTripProjectionWorker.test.ts`**, an uncommitted
+  sibling-lane file, not this lane's.
+- `check:test-registration`: `layoverTravelTimeProvenance.test.ts` registered;
+  the check fails on `test/trustEmitterWiring.test.ts` (sibling, unregistered).
+- `migrationDeployability.test.ts`: passes 2510; fails on
+  `2462_meetup_time_votes_write_boundary.sql` (sibling band, unconditional RAISE).
+- `check:enum-literals`, `check:migration-prefixes`: pass.
+
+### Owner decisions surfaced by this pass
+
+5. Apply 2335 **then** 2510 to production; 2510 is the loud check that 2335 took.
+6. **L199-b** — narrow `anon`/`authenticated` on `layover_sessions`,
+   `layover_plan_stops`, `layover_events`, `airport_profiles` to SELECT-only
+   (or nothing for `anon`), since no application path writes them as a user.
+   Shrink the four contract entries in the same PR.
+7. **L50-a** — what BLOCKED means on screen, before any status write is built.
