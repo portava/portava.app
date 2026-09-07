@@ -45,6 +45,29 @@ const router = Router();
  * Returns 'owner' | 'member' | null.
  * Only 'owner' and 'member' (accepted) are granted access.
  * Pending invites, removed members, and non-members get null → 403.
+ *
+ * "PENDING" IS ENCODED TWICE, AND THIS USED TO CHECK ONLY ONE OF THEM.
+ * trip_members carries pending state in BOTH columns:
+ *   role   — the legacy encoding; role='invited' is a pending invite, which
+ *            routes/invites flips to 'member' on accept. The role filter below
+ *            already excluded it.
+ *   status — text NOT NULL DEFAULT 'accepted'; status='invited' is a pending
+ *            invite under the newer encoding. This function never read it, so
+ *            a row of {role:'member', status:'invited'} passed every check and
+ *            the doc comment above was false. Production holds exactly one such
+ *            row, and this function gates seven crew-location endpoints.
+ *
+ * The rule now matches requireTripMember (lib/http.ts:430-478), which is the
+ * definition of record: coalesce(status,'accepted') = 'accepted'. Status is
+ * selected and compared in JS rather than filtered in PostgREST because
+ * coalesce-on-a-nullable-column is awkward to express as a filter and easy to
+ * get subtly wrong; the row count here is at most one.
+ *
+ * DELIBERATELY NOT WIDENED: requireTripMember also accepts 'viewer', and
+ * migration 2337 widened the RLS policies to match it. This function keeps its
+ * narrower owner/co_host/member set, because widening it would GRANT crew
+ * location access to a role that does not have it today. Route stricter than
+ * RLS is the safe direction; the reverse is not.
  */
 async function getMemberRole(
   db: ReturnType<typeof getServiceClient>,
@@ -62,12 +85,18 @@ async function getMemberRole(
 
     const { data: member } = await db
       .from("trip_members")
-      .select("role")
+      .select("role, status")
       .eq("trip_id", tripId)
       .eq("user_id", userId)
       .in("role", ["owner", "co_host", "member"])
       .maybeSingle();
-    return member ? "member" : null;
+    if (!member) return null;
+    // A read error leaves `member` undefined and returns null above, so this
+    // path stays fail-closed (403) rather than fail-open — unlike the
+    // resolves-on-error pattern that opened guards elsewhere in this tree.
+    const status = (member as any).status ?? "accepted";
+    if (status !== "accepted") return null;
+    return "member";
   } catch {
     return null;
   }

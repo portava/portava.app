@@ -226,8 +226,17 @@ const BASE_FLAGS = {
 const OWNER_TRIP = [{ id: TRIP_ID, owner_id: USER_ID }];
 /** MEMBER_ID is an accepted member */
 const ACCEPTED_MEMBERS = [{ trip_id: TRIP_ID, user_id: MEMBER_ID, role: "member" }];
-/** OTHER_USER has a pending invite (not accepted) */
+/** OTHER_USER has a pending invite under the LEGACY encoding (role='invited') */
 const PENDING_MEMBERS  = [{ trip_id: TRIP_ID, user_id: OTHER_USER, role: "invited" }];
+/**
+ * OTHER_USER has a pending invite under the NEWER encoding: the role reads
+ * 'member' and only `status` says the invite has not been accepted.
+ * trip_members.status is `text NOT NULL DEFAULT 'accepted'`, and PRODUCTION
+ * holds exactly one row of this shape. getMemberRole filtered on role alone,
+ * so this passed every crew-location gate while its own doc comment claimed
+ * pending invites got a 403.
+ */
+const PENDING_BY_STATUS = [{ trip_id: TRIP_ID, user_id: OTHER_USER, role: "member", status: "invited" }];
 
 // ── Setup ─────────────────────────────────────────────────────────────────────
 
@@ -276,6 +285,65 @@ describe("Trip Crew Location — access control", () => {
     const r = await req("GET", `/api/trips/${TRIP_ID}/crew/map`, undefined, OTHER_TOKEN);
     assert.equal(r.status, 200);
     assert.equal(r.body.featureEnabled, true);
+  });
+
+  // ── Pending-by-status must be refused on the STRICT gate ──────────────────
+  // /crew/map deliberately uses getMemberRoleAny, which admits pending invitees
+  // so they can see who is on the trip before accepting. Every OTHER endpoint
+  // uses getMemberRole, whose contract is accepted-members-only. These pin the
+  // status encoding against that strict gate.
+
+  it("2b. Pending-by-STATUS is refused on an accepted-members-only endpoint (403)", async () => {
+    setClients(makeFakeClient({
+      featureFlags: BASE_FLAGS,
+      trips: OWNER_TRIP,
+      tripMembers: [...ACCEPTED_MEMBERS, ...PENDING_BY_STATUS],
+    }));
+    const r = await req("GET", `/api/trips/${TRIP_ID}/crew/location-preferences`, undefined, OTHER_TOKEN);
+    assert.equal(r.status, 403, "role='member' with status='invited' is a PENDING invite, not a member");
+  });
+
+  it("2c. Pending-by-STATUS cannot start a live share (403)", async () => {
+    // A write path, and the one with the most consequence: a live share hands
+    // out a position. A user who has not accepted the invite must not open one.
+    setClients(makeFakeClient({
+      featureFlags: BASE_FLAGS,
+      trips: OWNER_TRIP,
+      tripMembers: [...ACCEPTED_MEMBERS, ...PENDING_BY_STATUS],
+    }));
+    // A VALID payload, deliberately: the schema is parsed before the membership
+    // gate, so an invalid body returns 400 and never reaches the gate this test
+    // exists to prove. My first version sent {durationMinutes:30}, got a 400,
+    // and would have "passed" for a reason unrelated to membership.
+    const r = await req("POST", `/api/trips/${TRIP_ID}/crew/live-share/start`, {
+      duration: "30m",
+      allowedMemberIds: [MEMBER_ID],
+    }, OTHER_TOKEN);
+    assert.equal(r.status, 403, "a pending-by-status invitee must not open a live share");
+    assert.equal(r.body.error, "not_member");
+  });
+
+  it("2d. An accepted member with NO status column is still admitted", async () => {
+    // coalesce(status,'accepted') = 'accepted'. Rows predating the column carry
+    // no status and must keep working — a fix that locked them out would be a
+    // worse defect than the one being closed. ACCEPTED_MEMBERS has no `status`.
+    setClients(makeFakeClient({
+      featureFlags: BASE_FLAGS,
+      trips: OWNER_TRIP,
+      tripMembers: [{ trip_id: TRIP_ID, user_id: OTHER_USER, role: "member" }],
+    }));
+    const r = await req("GET", `/api/trips/${TRIP_ID}/crew/location-preferences`, undefined, OTHER_TOKEN);
+    assert.notEqual(r.status, 403, "a row with no status column must still count as accepted");
+  });
+
+  it("2e. An explicitly accepted member is admitted", async () => {
+    setClients(makeFakeClient({
+      featureFlags: BASE_FLAGS,
+      trips: OWNER_TRIP,
+      tripMembers: [{ trip_id: TRIP_ID, user_id: OTHER_USER, role: "member", status: "accepted" }],
+    }));
+    const r = await req("GET", `/api/trips/${TRIP_ID}/crew/location-preferences`, undefined, OTHER_TOKEN);
+    assert.notEqual(r.status, 403);
   });
 
   it("3. Trip owner can access crew map (200)", async () => {
