@@ -26,9 +26,30 @@ import {
   toAuthorizedTripView,
 } from "../lib/privacy/tripSerializers.js";
 import { computeTripStatus } from "../lib/tripStatus.js";
+import {
+  isTripKernelEnabled,
+  readCommandEnvelope,
+  executeTripCommand,
+  sendKernelRejection,
+  setTripVersionHeader,
+  type TripKernelResult,
+} from "../lib/tripKernel.js";
 
 const router = Router();
 const UUID_RE = /^[0-9a-f-]{36}$/i;
+
+/**
+ * Trip Kernel gate (Trips spec §4; lib/tripKernel.ts; migrations 2420/2450/2500).
+ * Returns the service client when `trip_kernel_enabled` is TRUE, else null.
+ * Null means: run the pre-kernel direct write exactly as before. The flag read
+ * is fail-closed, so an unreadable feature_flags table is "off", never "on".
+ * Same shape as routes/trips.ts.
+ */
+async function tripKernel(): Promise<any | null> {
+  const sc = getServiceClient();
+  if (!sc) return null;
+  return (await isTripKernelEnabled(sc)) ? sc : null;
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -413,7 +434,34 @@ router.patch("/trips/:tripId/settings", async (req, res) => {
   const effectiveTimezone = (b.timezone ?? (t as any).timezone) as string | null;
   patch.status = computeTripStatus(effectiveTitle, effectiveCity, newStart as string | null, newEnd as string | null, effectiveStatus, effectiveTimezone);
 
-  const { data: updated, error } = await sc
+  // Trip Kernel path (UPDATE_TRIP, contract v2). The owner check above is the
+  // authorization; the kernel re-checks owner, refuses a way out of a terminal
+  // status (§3.1) and a start > end, and records which columns changed. Off
+  // => the direct update below, exactly as before.
+  const kernelPatch = await tripKernel();
+  let kernelUpdated: Record<string, unknown> | null = null;
+  if (kernelPatch) {
+    const env = readCommandEnvelope(req);
+    if (!env.ok) { sendError(res, "invalid_payload", env.message); return; }
+    const { updated_at: patchStamp, ...columnPatch } = patch;
+    const r = await executeTripCommand(kernelPatch, {
+      commandId: crypto.randomUUID(),
+      tripId,
+      actorUserId: user.id,
+      expectedTripVersion: env.expectedTripVersion,
+      idempotencyKey: env.idempotencyKey,
+      type: "UPDATE_TRIP",
+      payload: { patch: columnPatch, updated_at: patchStamp },
+    });
+    if (!r.ok) { sendKernelRejection(res, r, req.log); return; }
+    setTripVersionHeader(res, r.version);
+    kernelUpdated = r.result as Record<string, unknown>;
+  }
+
+  // trip-kernel:legacy-path — the flag-off twin of UPDATE_TRIP above.
+  const { data: updated, error } = kernelUpdated
+    ? { data: kernelUpdated, error: null }
+    : await sc
     .from("trips")
     .update(patch)
     .eq("id", tripId)
@@ -457,7 +505,30 @@ router.post("/trips/:tripId/cancel", async (req, res) => {
   if ((trip as any).status === "cancelled") { res.json({ status: "cancelled", idempotent: true }); return; }
   if ((trip as any).status === "archived")  { sendError(res, "invalid_state_transition", "Cannot cancel an archived trip"); return; }
 
-  await sc.from("trips").update({ status: "cancelled", updated_at: new Date().toISOString() }).eq("id", tripId);
+  // Trip Kernel path (CANCEL_TRIP, contract v2). The owner and terminal-state
+  // checks above are the authorization and the idempotent answer; the kernel
+  // re-checks owner and the §3.1 edge. Off => the direct update below.
+  const kernelCancel = await tripKernel();
+  let kernelCancelled = false;
+  if (kernelCancel) {
+    const env = readCommandEnvelope(req);
+    if (!env.ok) { sendError(res, "invalid_payload", env.message); return; }
+    const r = await executeTripCommand(kernelCancel, {
+      commandId: crypto.randomUUID(),
+      tripId,
+      actorUserId: user.id,
+      expectedTripVersion: env.expectedTripVersion,
+      idempotencyKey: env.idempotencyKey,
+      type: "CANCEL_TRIP",
+      payload: { updated_at: new Date().toISOString() },
+    });
+    if (!r.ok) { sendKernelRejection(res, r, req.log); return; }
+    setTripVersionHeader(res, r.version);
+    kernelCancelled = true;
+  }
+
+  // trip-kernel:legacy-path — the flag-off twin of CANCEL_TRIP above.
+  if (!kernelCancelled) await sc.from("trips").update({ status: "cancelled", updated_at: new Date().toISOString() }).eq("id", tripId);
   await logActivity(sc, tripId, user.id, "trip_cancelled");
 
   // Fire-and-forget: notify all accepted trip members that the trip was cancelled.
@@ -513,7 +584,28 @@ router.post("/trips/:tripId/complete", async (req, res) => {
     return;
   }
 
-  await sc.from("trips").update({ status: "completed", updated_at: new Date().toISOString() }).eq("id", tripId);
+  // Trip Kernel path (COMPLETE_TRIP, contract v2). Off => the direct update below.
+  const kernelComplete = await tripKernel();
+  let kernelCompleted = false;
+  if (kernelComplete) {
+    const env = readCommandEnvelope(req);
+    if (!env.ok) { sendError(res, "invalid_payload", env.message); return; }
+    const r = await executeTripCommand(kernelComplete, {
+      commandId: crypto.randomUUID(),
+      tripId,
+      actorUserId: user.id,
+      expectedTripVersion: env.expectedTripVersion,
+      idempotencyKey: env.idempotencyKey,
+      type: "COMPLETE_TRIP",
+      payload: { updated_at: new Date().toISOString() },
+    });
+    if (!r.ok) { sendKernelRejection(res, r, req.log); return; }
+    setTripVersionHeader(res, r.version);
+    kernelCompleted = true;
+  }
+
+  // trip-kernel:legacy-path — the flag-off twin of COMPLETE_TRIP above.
+  if (!kernelCompleted) await sc.from("trips").update({ status: "completed", updated_at: new Date().toISOString() }).eq("id", tripId);
   await logActivity(sc, tripId, user.id, "trip_completed");
   res.json({ status: "completed", tripId });
 });
@@ -535,7 +627,28 @@ router.post("/trips/:tripId/archive", async (req, res) => {
   if ((trip as any).owner_id !== user.id) { sendError(res, "forbidden", "Only the owner can archive a trip"); return; }
   if ((trip as any).status === "archived") { res.json({ status: "archived", idempotent: true }); return; }
 
-  await sc.from("trips").update({ status: "archived", updated_at: new Date().toISOString() }).eq("id", tripId);
+  // Trip Kernel path (ARCHIVE_TRIP, contract v2). Off => the direct update below.
+  const kernelArchive = await tripKernel();
+  let kernelArchived = false;
+  if (kernelArchive) {
+    const env = readCommandEnvelope(req);
+    if (!env.ok) { sendError(res, "invalid_payload", env.message); return; }
+    const r = await executeTripCommand(kernelArchive, {
+      commandId: crypto.randomUUID(),
+      tripId,
+      actorUserId: user.id,
+      expectedTripVersion: env.expectedTripVersion,
+      idempotencyKey: env.idempotencyKey,
+      type: "ARCHIVE_TRIP",
+      payload: { updated_at: new Date().toISOString() },
+    });
+    if (!r.ok) { sendKernelRejection(res, r, req.log); return; }
+    setTripVersionHeader(res, r.version);
+    kernelArchived = true;
+  }
+
+  // trip-kernel:legacy-path — the flag-off twin of ARCHIVE_TRIP above.
+  if (!kernelArchived) await sc.from("trips").update({ status: "archived", updated_at: new Date().toISOString() }).eq("id", tripId);
   await logActivity(sc, tripId, user.id, "trip_archived");
 
   // Fire-and-forget: notify all accepted trip members that the trip was archived.
@@ -584,7 +697,37 @@ router.delete("/trips/:tripId", async (req, res) => {
   if (!trip) { sendError(res, "not_found", "Trip not found"); return; }
   if ((trip as any).owner_id !== user.id) { sendError(res, "forbidden", "Only the owner can delete a trip"); return; }
 
-  await sc.from("trips").update({ status: "archived", updated_at: new Date().toISOString() }).eq("id", tripId);
+  // Trip Kernel path (ARCHIVE_TRIP, contract v2). Legacy writes 'archived'
+  // unconditionally, so a second DELETE re-writes an archived row; ARCHIVE_TRIP
+  // refuses archived -> archived as a non-transition, so under the kernel an
+  // already-archived trip is answered 204 with NO command (nothing to
+  // transition; only the legacy updated_at bump is lost, recorded in the lane
+  // report). Off => the direct update below, exactly as before.
+  const kernelDelete = await tripKernel();
+  let deleteWrite: "legacy" | "kernel" | "already_archived" = "legacy";
+  if (kernelDelete) {
+    if ((trip as any).status === "archived") {
+      deleteWrite = "already_archived";
+    } else {
+      const env = readCommandEnvelope(req);
+      if (!env.ok) { sendError(res, "invalid_payload", env.message); return; }
+      const r = await executeTripCommand(kernelDelete, {
+        commandId: crypto.randomUUID(),
+        tripId,
+        actorUserId: user.id,
+        expectedTripVersion: env.expectedTripVersion,
+        idempotencyKey: env.idempotencyKey,
+        type: "ARCHIVE_TRIP",
+        payload: { updated_at: new Date().toISOString(), soft_delete: true },
+      });
+      if (!r.ok) { sendKernelRejection(res, r, req.log); return; }
+      setTripVersionHeader(res, r.version);
+      deleteWrite = "kernel";
+    }
+  }
+
+  // trip-kernel:legacy-path — the flag-off twin of ARCHIVE_TRIP above.
+  if (deleteWrite === "legacy") await sc.from("trips").update({ status: "archived", updated_at: new Date().toISOString() }).eq("id", tripId);
   await logActivity(sc, tripId, user.id, "trip_deleted");
   res.status(204).send();
 });
@@ -723,8 +866,41 @@ router.post("/trips/:tripId/join-requests/:requestId/approve", async (req, res) 
 
   const requestedUserId = (req_ as any).user_id as string;
 
+  // Trip Kernel path (contract v2 + 2500). The legacy upsert hides which case
+  // it is, so read the row first: no row => ADD_PARTICIPANT (member, accepted,
+  // joined now); an existing row => SET_PARTICIPANT_ROLE to member (the kernel
+  // refuses to touch the owner's row, which the upsert would silently
+  // downgrade). The route's owner/co_host check above is the authorization;
+  // the kernel re-checks `host` (owner or accepted co_host; 2500 — under 2450
+  // alone a co_host approver is refused TRIP_AUTH_NOT_OWNER). Off => the
+  // direct upsert below, exactly as before.
+  const kernelApprove = await tripKernel();
+  let kernelApproved = false;
+  if (kernelApprove) {
+    const env = readCommandEnvelope(req);
+    if (!env.ok) { sendError(res, "invalid_payload", env.message); return; }
+    const { data: existingRow, error: existingErr } = await kernelApprove
+      .from("trip_members").select("role").eq("trip_id", tripId).eq("user_id", requestedUserId).maybeSingle();
+    if (existingErr) { sendError(res, "db_error", existingErr.message); return; }
+    const r = await executeTripCommand(kernelApprove, {
+      commandId: crypto.randomUUID(),
+      tripId,
+      actorUserId: user.id,
+      expectedTripVersion: env.expectedTripVersion,
+      idempotencyKey: env.idempotencyKey,
+      type: existingRow ? "SET_PARTICIPANT_ROLE" : "ADD_PARTICIPANT",
+      payload: existingRow
+        ? { user_id: requestedUserId, role: "member" }
+        : { user_id: requestedUserId, role: "member", status: "accepted", joined_at: new Date().toISOString() },
+    });
+    if (!r.ok) { sendKernelRejection(res, r, req.log); return; }
+    setTripVersionHeader(res, r.version);
+    kernelApproved = true;
+  }
+
   // Add to trip_members
-  const { error: memErr } = await sc
+  // trip-kernel:legacy-path — the flag-off twin of ADD_PARTICIPANT / SET_PARTICIPANT_ROLE above.
+  const { error: memErr } = kernelApproved ? { error: null } : await sc
     .from("trip_members")
     .upsert({ trip_id: tripId, user_id: requestedUserId, role: "member", status: "accepted", joined_at: new Date().toISOString() },
              { onConflict: "trip_id,user_id" });
@@ -1246,6 +1422,15 @@ router.post("/trips/invite-link/:token/accept", async (req, res) => {
     }
   }
 
+  // Trip Kernel gate (JOIN_VIA_LINK, contract v2 + migration 2500), read
+  // BEFORE the slot is claimed so a malformed envelope is refused without
+  // consuming or stranding a slot. The actor is the JOINER; the kernel's
+  // `link_holder` capability is exactly what the claim below establishes: an
+  // attempt row for (this link, this user) on a link that belongs to this trip.
+  const kernelJoin = await tripKernel();
+  const joinEnv = kernelJoin ? readCommandEnvelope(req) : null;
+  if (joinEnv && !joinEnv.ok) { sendError(res, "invalid_payload", joinEnv.message); return; }
+
   // ── Capacity-enforcement guarantee ────────────────────────────────────────
   // claim_invite_link_slot_for_user is the SINGLE authoritative gate for slot
   // capacity.  It runs entirely inside one PostgreSQL transaction and uses a
@@ -1306,8 +1491,34 @@ router.post("/trips/invite-link/:token/accept", async (req, res) => {
       .eq("link_id", lk.id)
       .eq("user_id", user.id);
 
+  // Kernel twin of the insert: a rejection is mapped onto the SAME error shapes
+  // the legacy insert produces, so every compensation branch below (release the
+  // freshly claimed slot, clear the attempt row, answer already_member / 410)
+  // runs unchanged for both paths. TRIP_PARTICIPANT_ALREADY_EXISTS is the
+  // unique-violation case; TRIP_PARTICIPANT_CAPACITY_REACHED is the trigger's
+  // trip_full; anything else reaches the generic branch, which then answers
+  // with the kernel's reason instead of db_error.
+  const kernelJoinOutcome: { rejection: Extract<TripKernelResult, { ok: false }> | null } = { rejection: null };
+  const joinViaKernel = async (): Promise<{ error: { code?: string; message: string } | null }> => {
+    const r = await executeTripCommand(kernelJoin, {
+      commandId: crypto.randomUUID(),
+      tripId,
+      actorUserId: user.id,
+      expectedTripVersion: joinEnv!.ok ? joinEnv!.expectedTripVersion : null,
+      idempotencyKey: joinEnv!.ok ? joinEnv!.idempotencyKey : crypto.randomUUID(),
+      type: "JOIN_VIA_LINK",
+      payload: { invite_link_id: lk.id, joined_at: new Date().toISOString() },
+    });
+    if (r.ok) { setTripVersionHeader(res, r.version); return { error: null }; }
+    if (r.reason === "TRIP_PARTICIPANT_ALREADY_EXISTS") return { error: { code: "23505", message: "duplicate key value violates unique constraint" } };
+    if (r.reason === "TRIP_PARTICIPANT_CAPACITY_REACHED") return { error: { code: "P0001", message: "trip_full" } };
+    kernelJoinOutcome.rejection = r;
+    return { error: { code: "TRIP_KERNEL", message: r.detail ?? r.reason } };
+  };
+
   // Add member
-  const { error: memErr } = await sc
+  // trip-kernel:legacy-path — the flag-off twin of JOIN_VIA_LINK above.
+  const { error: memErr } = kernelJoin ? await joinViaKernel() : await sc
     .from("trip_members")
     .insert({ trip_id: tripId, user_id: user.id, role: "member", status: "accepted", joined_at: new Date().toISOString(), invite_link_id: lk.id });
 
@@ -1369,6 +1580,7 @@ router.post("/trips/invite-link/:token/accept", async (req, res) => {
       }
       await clearAttempt();
     }
+    if (kernelJoinOutcome.rejection) { sendKernelRejection(res, kernelJoinOutcome.rejection, req.log); return; }
     sendError(res, "db_error", memErr.message);
     return;
   }

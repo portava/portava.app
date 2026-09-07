@@ -50,6 +50,15 @@
  *              function is refused as TRIP_COMMAND_UNKNOWN_TYPE (400), which is
  *              how a route learns the database is behind the code — it is
  *              counted and logged, never mistaken for success.
+ *   v2 + 2500  ADDITIVE, contract_version stays 2 (envelope and response shape
+ *              unchanged): + JOIN_VIA_LINK (participant family; the actor is
+ *              the JOINER, capability `link_holder` = the actor holds a claimed
+ *              slot on an invite link that belongs to this trip); the
+ *              ADD_PARTICIPANT / SET_PARTICIPANT_ROLE capability widens from
+ *              `owner` to `host` (owner OR accepted co_host) because
+ *              routes/trips-expansion.ts already lets a co-host approve a join
+ *              request. A JOIN_VIA_LINK sent to a 2450 function is refused as
+ *              TRIP_COMMAND_UNKNOWN_TYPE, the same signal as v2-against-v1.
  *
  * WHAT IT DOES NOT DO
  * ===================
@@ -105,14 +114,20 @@ export type TripTripCommandType =
   | "COMPLETE_TRIP"
   | "ARCHIVE_TRIP";
 
-/** Participant family (contract v2). Capability: owner, or the invitee for ACCEPT/DECLINE. */
+/**
+ * Participant family (contract v2). Capability: owner (INVITE / REMOVE), host —
+ * owner or accepted co_host — for ADD / SET_PARTICIPANT_ROLE (2500; owner
+ * under 2450), the invitee for ACCEPT / DECLINE, and for JOIN_VIA_LINK (2500)
+ * the JOINER holding a claimed slot on an invite link of this trip.
+ */
 export type TripParticipantCommandType =
   | "INVITE_PARTICIPANT"
   | "ADD_PARTICIPANT"
   | "SET_PARTICIPANT_ROLE"
   | "REMOVE_PARTICIPANT"
   | "ACCEPT_INVITE"
-  | "DECLINE_INVITE";
+  | "DECLINE_INVITE"
+  | "JOIN_VIA_LINK";
 
 /** Admin family (contract v2). Capability: actor_role 'admin' + profiles.role = 'admin'. */
 export type TripAdminCommandType = "ADMIN_HIDE_TRIP";
@@ -135,7 +150,7 @@ export function tripCommandFamily(type: TripCommandType): TripCommandFamily {
     case "CREATE_TRIP": case "UPDATE_TRIP": case "CANCEL_TRIP": case "COMPLETE_TRIP": case "ARCHIVE_TRIP":
       return "trip";
     case "INVITE_PARTICIPANT": case "ADD_PARTICIPANT": case "SET_PARTICIPANT_ROLE":
-    case "REMOVE_PARTICIPANT": case "ACCEPT_INVITE": case "DECLINE_INVITE":
+    case "REMOVE_PARTICIPANT": case "ACCEPT_INVITE": case "DECLINE_INVITE": case "JOIN_VIA_LINK":
       return "participant";
     case "ADMIN_HIDE_TRIP":
       return "admin";
@@ -181,6 +196,8 @@ export type TripKernelReason =
   | "TRIP_AUTH_NOT_CREW"
   | "TRIP_AUTH_NOT_OWNER"
   | "TRIP_AUTH_NOT_INVITED"
+  | "TRIP_AUTH_NOT_HOST"
+  | "TRIP_AUTH_NOT_LINK_HOLDER"
   | "TRIP_AUTH_NOT_ADMIN"
   | "TRIP_AUTH_ROLE_NOT_PERMITTED"
   | "TRIP_AUTH_IDEMPOTENCY_KEY_FOREIGN"
@@ -233,7 +250,8 @@ export const TRIP_EVENT_TYPES = [
   // trip family (v2)
   "trip.created", "trip.updated", "trip.trip_completed", "trip.trip_cancelled", "trip.trip_archived",
   "trip.cover_set", "trip.hidden_by_admin",
-  // participant family (v2)
+  // participant family (v2). JOIN_VIA_LINK (2500) emits the spec-named
+  // trip.participant_joined with payload.via = 'invite_link' — no new type.
   "trip.participant_invited", "trip.participant_added", "trip.participant_role_set",
   "trip.participant_removed", "trip.participant_joined", "trip.participant_declined",
 ] as const;
@@ -459,6 +477,8 @@ export function sendKernelRejection(
     case "TRIP_AUTH_NOT_CREW":
     case "TRIP_AUTH_NOT_OWNER":
     case "TRIP_AUTH_NOT_INVITED":
+    case "TRIP_AUTH_NOT_HOST":
+    case "TRIP_AUTH_NOT_LINK_HOLDER":
     case "TRIP_AUTH_NOT_ADMIN":
     case "TRIP_AUTH_ROLE_NOT_PERMITTED":
     case "TRIP_AUTH_IDEMPOTENCY_KEY_FOREIGN":

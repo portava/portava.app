@@ -769,17 +769,24 @@ describe("check:trip-kernel-writers (§24 Phase 1 ratchet)", () => {
     assert.deepEqual(s.grew, []);
     assert.deepEqual(s.shrank.map((r) => [r.file, r.ungated]), [["routes/a.ts", 1]]);
   });
-  it("the committed baseline matches the tree: 47 direct, 32 ungated, routes/trips.ts fully gated", () => {
+  it("the committed baseline matches the tree: 47 direct, 22 ungated; trips.ts, trips-expansion.ts and requests.ts fully gated", () => {
     const rows = surveyTree();
     const v = judge(rows, TRIP_KERNEL_DIRECT_WRITERS);
     assert.deepEqual(v.newWriters, [], "a new direct writer appeared");
     assert.deepEqual(v.grew, [], "a direct or ungated count grew");
     assert.deepEqual(v.falseMarkers, []);
+    assert.deepEqual(v.shrank, [], "the baseline is stale: a file now writes less than it records — lower the entry");
     assert.equal(rows.reduce((n, r) => n + r.count, 0), 47);
-    assert.equal(rows.reduce((n, r) => n + ungatedOf(r), 0), 32);
+    assert.equal(rows.reduce((n, r) => n + ungatedOf(r), 0), 22);
     const trips = rows.find((r) => r.file === "routes/trips.ts")!;
     assert.equal(trips.count, 14);
     assert.equal(ungatedOf(trips), 0, "every direct write in routes/trips.ts has a kernel path");
+    const expansion = rows.find((r) => r.file === "routes/trips-expansion.ts")!;
+    assert.equal(expansion.count, 7, "the legacy twins are still there for the flag-off path");
+    assert.equal(ungatedOf(expansion), 0, "every direct write in routes/trips-expansion.ts has a kernel path");
+    const requests = rows.find((r) => r.file === "routes/requests.ts")!;
+    assert.equal(requests.count, 3);
+    assert.equal(ungatedOf(requests), 0, "every direct write in routes/requests.ts has a kernel path");
   });
 });
 

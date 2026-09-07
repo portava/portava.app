@@ -23,10 +23,11 @@
  *
  * SURVEYED 2026-09-07 on claude/portava-continuation-uqta94 by
  * `check:trip-kernel-writers --print-baseline`. 47 direct writes in 18 files;
- * 32 of them ungated (was 40 before the trip and participant families landed
- * in migration 2450). This is a FLOOR: 38 files in src/ contain a non-literal
- * `.from(expr)` and an `.rpc()` that writes is invisible to a literal scan
- * (the check prints them).
+ * 22 of them ungated (was 40 before the trip and participant families landed
+ * in migration 2450, 32 before routes/trips-expansion.ts and routes/requests.ts
+ * were gated in the third pass). This is a FLOOR: 38 files in src/ contain a
+ * non-literal `.from(expr)` and an `.rpc()` that writes is invisible to a
+ * literal scan (the check prints them).
  *
  * The registry (docs/architecture/cross-cutting-obligations.md, "seven sites")
  * and the census (census-trips.md TR1) under-counted this surface: the registry
@@ -38,9 +39,19 @@
  *
  * WHICH OF THESE GO THROUGH THE KERNEL
  * ====================================
- * Only two files consult the kernel at all, and only when trip_kernel_enabled
+ * Four files consult the kernel at all, and only when trip_kernel_enabled
  * is TRUE; with the flag FALSE (its seeded value) every `direct` count below
  * is live:
+ *
+ *   routes/trips-expansion.ts  ALL 7 kernel-gated: settings (UPDATE_TRIP),
+ *                        cancel / complete / archive / delete (CANCEL_TRIP /
+ *                        COMPLETE_TRIP / ARCHIVE_TRIP x2), join-request approve
+ *                        (ADD_PARTICIPANT or SET_PARTICIPANT_ROLE after reading
+ *                        the row; `host` capability, migration 2500), invite-link
+ *                        join (JOIN_VIA_LINK; `link_holder` capability, 2500 —
+ *                        the actor is the joiner).
+ *   routes/requests.ts   ALL 3 kernel-gated: accept (ACCEPT_INVITE), decline
+ *                        (DECLINE_INVITE), cancel (REMOVE_PARTICIPANT).
  *
  *   routes/trips.ts      ALL 14 of its writes are kernel-gated (contract v2,
  *                        migration 2450): 6 plan-item writes (ADD_PLAN,
@@ -95,11 +106,11 @@ export const TRIP_KERNEL_DIRECT_WRITERS: Record<string, WriterBaseline> = {
   "routes/events.ts":                      { direct: 1, ungated: 1 }, // -> ADD_PLAN
   "routes/hiddenGems.ts":                  { direct: 1, ungated: 1 }, // -> ADD_PLAN
   "routes/plan.ts":                        { direct: 2, ungated: 2 }, // -> UPDATE_PLAN / REMOVE_PLAN
-  "routes/requests.ts":                    { direct: 3, ungated: 3 }, // accept -> ACCEPT_INVITE; decline -> DECLINE_INVITE; cancel -> REMOVE_PARTICIPANT
+  "routes/requests.ts":                    { direct: 3, ungated: 0 }, // ALL KERNEL-GATED (contract v2): accept -> ACCEPT_INVITE; decline -> DECLINE_INVITE; cancel -> REMOVE_PARTICIPANT
   "routes/routePlan.ts":                   { direct: 1, ungated: 0 }, // KERNEL-GATED (legacy path kept for flag-off / detached plans)
   "routes/telegraphChat.ts":               { direct: 1, ungated: 1 }, // -> ADD_PLAN
   "routes/tripReservations.ts":            { direct: 1, ungated: 1 }, // -> ADD_PLAN / UPDATE_PLAN
-  "routes/trips-expansion.ts":             { direct: 7, ungated: 7 }, // settings -> UPDATE_TRIP; cancel/complete/archive/delete -> CANCEL_TRIP/COMPLETE_TRIP/ARCHIVE_TRIP; join approve + invite-link join -> ADD_PARTICIPANT / SET_PARTICIPANT_ROLE
+  "routes/trips-expansion.ts":             { direct: 7, ungated: 0 }, // ALL KERNEL-GATED: settings -> UPDATE_TRIP; cancel/complete/archive/delete -> CANCEL_TRIP/COMPLETE_TRIP/ARCHIVE_TRIP x2; join approve -> ADD_PARTICIPANT / SET_PARTICIPANT_ROLE (host, 2500); invite-link join -> JOIN_VIA_LINK (link_holder, 2500)
   "routes/trips.ts":                       { direct: 14, ungated: 0 }, // ALL KERNEL-GATED (contract v2)
   "services/appeals/resolveAppeal.ts":     { direct: 2, ungated: 2 }, // -> ADMIN_HIDE_TRIP's inverse does not exist yet (see lane report)
   "services/contentTranslation.ts":        { direct: 1, ungated: 1 }, // single-quoted .from('trips') — original_language (derived column; see lane report)
