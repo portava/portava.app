@@ -124,8 +124,8 @@
 -- public.shares_trip_with(uuid) -- the app-era predecessor of this branch, a
 -- SECURITY DEFINER self-join with no role or status gate, EXECUTE-able by anon
 -- and authenticated on both databases as a PostgREST RPC -- is NOT touched
--- here. It is named in no policy. It is reported, as an RPC oracle of the
--- class 2182 closed, for a separate lane.
+-- here. It is named in no policy. It is an RPC oracle of the class 2182
+-- closed, and migration 2533 drops it.
 --
 -- DEPENDS ON: 2337 (authz.shares_accepted_trip). Refuses to run without it.
 
