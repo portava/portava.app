@@ -45,6 +45,32 @@ production SQL, and without data that does not exist.
 | Trust | `trust_events` has 5 rows ever; 56 of 58 users have no `trust_profiles` row | OPS_DATA | — | Partly | emitters now wired for 5 types | `ef2a8f3d` | Engine runs and is nearly silent |
 | Layover | 5 sessions ever, 2 users, 0 active | OPS_DATA | — | — | — | — | Surface is effectively unexercised |
 
+## P7 — geo_zones: determined, and deliberately not built
+
+`geo_zones` holds **0 rows** in production, which starves the entire intel spine
+and makes Map §10 Crowd Flow refuse with `no_zone_model`.
+
+**The operator surface already exists and is complete.** `routes/admin.ts`
+carries full CRUD plus `POST /admin/geo-zones/import`, a validated bulk-seed
+endpoint backed by `lib/geoZoneSeed.validateGeoZoneSeed`, and
+`db/seed/geo_zones_production_seed_template.sql` is the hand-run equivalent.
+Both doors enforce the same four rules. This is **not** a missing-surface
+problem, and an earlier draft of this ledger was wrong to imply it was.
+
+**No valid seed definitions exist in the repository, and none were invented.**
+The template consists of `__FILL_ME__` rows and states its own rule:
+
+> Nothing in the repository invents production zones; this file is the shape the
+> owner's curated list is poured into.
+
+`src/test/fixtures/geo-zones.sample.json` is test data, not approved production
+geography. Fabricating geofences to make Crowd Flow light up would be
+manufacturing the exact kind of false intelligence this pass exists to prevent.
+
+**Type: OPS_DATA. Blocked on the owner supplying curated zones — not on
+engineering.** The fail-closed behaviour is correct and is preserved: with no
+zone covering the viewport, Crowd Flow refuses rather than approximating.
+
 ## P5 — owner decisions
 
 | Decision | Bound by | Type | Buildable now? | What it decides |
