@@ -19,8 +19,16 @@
  *   POST /admin/venues/:id/moderate   — approve (→ verified) or reject (→ blocked)
  */
 import { Router } from "express";
+import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { sendError } from "../lib/http";
+import {
+  tripKernelClient,
+  readCommandEnvelope,
+  executeTripCommand,
+  sendKernelRejection,
+  setTripVersionHeader,
+} from "../lib/tripKernel.js";
 import { logger } from "../lib/logger";
 import { clearReminderDedup } from "../lib/tripReminderScheduler";
 import { invalidateCompassHomeCache } from "./compassHome.js";
@@ -2246,7 +2254,34 @@ router.post("/admin/reports/:id/hide-content", async (req, res) => {
     if (error) { sendError(res, "db_error", error.message); return; }
     contentHidden = true;
   } else if (target_type === "trip") {
-    const { error } = await sc.from("trips")
+    // Trip Kernel path (ADMIN_HIDE_TRIP, admin family: actor_role 'admin' AND
+    // profiles.role = 'admin' — exactly requireAdmin's DEFAULT_ROLES, so the
+    // kernel admits every caller the route admits). The kernel writes the same
+    // two columns and records visibility_from + reason on the event. One
+    // difference on THIS path only: a report whose target trip no longer
+    // exists is TRIP_NOT_FOUND (404) where the direct update matched nothing
+    // and reported contentHidden = true. Off => the direct update below.
+    const kernelHide = await tripKernelClient(sc);
+    let kernelHidden = false;
+    if (kernelHide) {
+      const env = readCommandEnvelope(req);
+      if (!env.ok) { sendError(res, "invalid_payload", env.message); return; }
+      const r = await executeTripCommand(kernelHide, {
+        commandId: randomUUID(),
+        tripId: target_id,
+        actorUserId: adminUserId,
+        actorRole: "admin",
+        expectedTripVersion: env.expectedTripVersion,
+        idempotencyKey: env.idempotencyKey,
+        type: "ADMIN_HIDE_TRIP",
+        payload: { reason, updated_at: now },
+      });
+      if (!r.ok) { sendKernelRejection(res, r, req.log); return; }
+      setTripVersionHeader(res, r.version);
+      kernelHidden = true;
+    }
+    // trip-kernel:legacy-path — the flag-off twin of ADMIN_HIDE_TRIP above.
+    const { error } = kernelHidden ? { error: null } : await sc.from("trips")
       .update({ visibility: "private", updated_at: now })
       .eq("id", target_id);
     if (error) { sendError(res, "db_error", error.message); return; }
@@ -2494,7 +2529,31 @@ router.post("/admin/trips/:tripId/hide", async (req, res) => {
 
   const reason = typeof req.body?.reason === "string" ? req.body.reason.slice(0, 500) : "Admin hide";
 
-  await sc.from("trips").update({ visibility: "private", updated_at: new Date().toISOString() }).eq("id", tripId);
+  // Trip Kernel path (ADMIN_HIDE_TRIP, admin family) — see /admin/reports/:id/
+  // hide-content. The existence check above is unchanged; the kernel re-checks
+  // profiles.role = 'admin' for the actor. Off => the direct update below,
+  // whose result was — and with the flag off still is — discarded.
+  const kernelHide = await tripKernelClient(sc);
+  let kernelHidden = false;
+  if (kernelHide) {
+    const env = readCommandEnvelope(req);
+    if (!env.ok) { sendError(res, "invalid_payload", env.message); return; }
+    const r = await executeTripCommand(kernelHide, {
+      commandId: randomUUID(),
+      tripId,
+      actorUserId: admin.userId,
+      actorRole: "admin",
+      expectedTripVersion: env.expectedTripVersion,
+      idempotencyKey: env.idempotencyKey,
+      type: "ADMIN_HIDE_TRIP",
+      payload: { reason, updated_at: new Date().toISOString() },
+    });
+    if (!r.ok) { sendKernelRejection(res, r, req.log); return; }
+    setTripVersionHeader(res, r.version);
+    kernelHidden = true;
+  }
+  // trip-kernel:legacy-path — the flag-off twin of ADMIN_HIDE_TRIP above.
+  if (!kernelHidden) await sc.from("trips").update({ visibility: "private", updated_at: new Date().toISOString() }).eq("id", tripId);
 
   await sc.from("moderation_actions").insert({
     target_user_id: (trip as any).owner_id,

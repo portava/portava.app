@@ -14,8 +14,16 @@
  *   DELETE /trips/:tripId/reservations/:id          — creator or trip owner
  */
 import { Router } from "express";
+import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { asyncHandler } from "../lib/asyncHandler.js";
+import {
+  tripKernelClient,
+  readCommandEnvelope,
+  executeTripCommand,
+  sendKernelRejection,
+  setTripVersionHeader,
+} from "../lib/tripKernel.js";
 import { requireUser, requireTripMember, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { isFlagEnabled } from "../lib/featureFlags.js";
@@ -350,6 +358,48 @@ router.post("/trips/:tripId/reservations/:id/confirm", asyncHandler(async (req, 
       planItem = dup;
     } else {
       const startsAt: string | null = (reservation as any).starts_at ?? null;
+      // Trip Kernel path (§4.1 ADD_PLAN, capability crew). requireReservationMember
+      // + canManageReservation above are the authorization; the kernel re-checks
+      // crew. The payload is the direct insert's column set, key for key. Off =>
+      // the insert below.
+      const kernel = await tripKernelClient(sc);
+      if (kernel) {
+        const env = readCommandEnvelope(req);
+        if (!env.ok) { sendError(res, "invalid_payload", env.message); return; }
+        const r = await executeTripCommand(kernel, {
+          commandId: randomUUID(),
+          tripId: (trip as any).id,
+          actorUserId: userId,   // always from token
+          expectedTripVersion: env.expectedTripVersion,
+          idempotencyKey: env.idempotencyKey,
+          type: "ADD_PLAN",
+          payload: {
+            title:               (reservation as any).title,
+            category:            PLAN_CATEGORY_MAP[(reservation as any).type] ?? "other",
+            status:              "confirmed",
+            source_type:         "manual",
+            source_id:           (reservation as any).id,
+            day_date:            startsAt ? String(startsAt).slice(0, 10) : null,
+            starts_at:           startsAt,
+            ends_at:             (reservation as any).ends_at ?? null,
+            location_name:       (reservation as any).location_name ?? null,
+            lat:                 null,
+            lng:                 null,
+            location_is_private: false,
+            notes:               (reservation as any).confirmation_ref
+              ? `Confirmation: ${(reservation as any).confirmation_ref}`
+              : null,
+            sort_order:          0,
+            lock_type:           startsAt ? "fixed" : "flexible",
+            visibility:          "members",
+          },
+        });
+        if (!r.ok) { sendKernelRejection(res, r, req.log); return; }
+        setTripVersionHeader(res, r.version);
+        res.json({ reservation: updated, planItem: r.result });
+        return;
+      }
+      // trip-kernel:legacy-path — flag-off twin of ADD_PLAN above.
       // Column shape mirrors POST /trips/:tripId/plan/items (src/routes/trips.ts).
       const { data: item, error: planError } = await sc
         .from("trip_plan_items")

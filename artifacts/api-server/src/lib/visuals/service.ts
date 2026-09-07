@@ -13,6 +13,8 @@
  */
 import { getServiceClient } from "../supabase.js";
 import { isFlagEnabled } from "../featureFlags.js";
+import { randomUUID } from "node:crypto";
+import { tripKernelClient, executeTripCommand } from "../tripKernel.js";
 import {
   buildPrompt,
   promptVersionFor,
@@ -562,6 +564,35 @@ async function finalizeVisual(sc: any, job: any, args: FinalizeArgs): Promise<vo
       header_image_updated_at: now,
     }).eq("id", job.entity_id);
   } else if (job.entity_type === "trip") {
+    // Trip Kernel path (SET_TRIP_COVER, system family — actor_role 'system',
+    // no user; contract v2). mayApplyGenerated above is the authorization: a
+    // generated cover applies only when nothing higher-priority landed
+    // meanwhile. Key `visual:<job>` is deterministic: finalizing the same job
+    // twice replays the receipt. Only cover_url is sent — the direct update
+    // writes only cover_url, and the kernel leaves cover_media_type alone when
+    // the key is absent. The direct update discards its result; a kernel
+    // rejection is likewise not fatal to the job, but it is not silent.
+    const kernel = await tripKernelClient(sc);
+    if (kernel) {
+      const r = await executeTripCommand(kernel, {
+        commandId: randomUUID(),
+        tripId: job.entity_id,
+        actorUserId: null,
+        actorRole: "system",
+        expectedTripVersion: null,
+        idempotencyKey: `visual:${job.id}`,
+        type: "SET_TRIP_COVER",
+        payload: { cover_url: heroUrl },
+      });
+      if (!r.ok) {
+        emitVisualEvent("visual_generation_failed", {
+          entity_type: "trip", entity_id: job.entity_id, purpose: job.purpose, style: job.style,
+          status: "kernel_rejected", visual_id: job.id, provider: args.provider, reason: r.reason,
+        } as any);
+      }
+      return;
+    }
+    // trip-kernel:legacy-path — flag-off twin of SET_TRIP_COVER above.
     // Trips use cover_url for their header image.
     await sc.from("trips").update({
       cover_url: heroUrl,

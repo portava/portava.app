@@ -769,7 +769,7 @@ describe("check:trip-kernel-writers (§24 Phase 1 ratchet)", () => {
     assert.deepEqual(s.grew, []);
     assert.deepEqual(s.shrank.map((r) => [r.file, r.ungated]), [["routes/a.ts", 1]]);
   });
-  it("the committed baseline matches the tree: 47 direct, 22 ungated; trips.ts, trips-expansion.ts and requests.ts fully gated", () => {
+  it("the committed baseline matches the tree: 47 direct, 8 ungated; trips.ts, trips-expansion.ts, requests.ts and the fourth-pass satellites fully gated", () => {
     const rows = surveyTree();
     const v = judge(rows, TRIP_KERNEL_DIRECT_WRITERS);
     assert.deepEqual(v.newWriters, [], "a new direct writer appeared");
@@ -777,7 +777,7 @@ describe("check:trip-kernel-writers (§24 Phase 1 ratchet)", () => {
     assert.deepEqual(v.falseMarkers, []);
     assert.deepEqual(v.shrank, [], "the baseline is stale: a file now writes less than it records — lower the entry");
     assert.equal(rows.reduce((n, r) => n + r.count, 0), 47);
-    assert.equal(rows.reduce((n, r) => n + ungatedOf(r), 0), 22);
+    assert.equal(rows.reduce((n, r) => n + ungatedOf(r), 0), 8);
     const trips = rows.find((r) => r.file === "routes/trips.ts")!;
     assert.equal(trips.count, 14);
     assert.equal(ungatedOf(trips), 0, "every direct write in routes/trips.ts has a kernel path");
@@ -787,6 +787,15 @@ describe("check:trip-kernel-writers (§24 Phase 1 ratchet)", () => {
     const requests = rows.find((r) => r.file === "routes/requests.ts")!;
     assert.equal(requests.count, 3);
     assert.equal(ungatedOf(requests), 0, "every direct write in routes/requests.ts has a kernel path");
+    // Fourth pass: the satellite plan-item writers keep their legacy twin and gain a kernel path.
+    for (const [file, direct] of [["routes/plan.ts", 2], ["routes/tripReservations.ts", 1], ["routes/telegraphChat.ts", 1], ["routes/hiddenGems.ts", 1], ["routes/compass.ts", 1], ["compass/CompassAutopilotEngine.ts", 1], ["lib/visuals/service.ts", 1], ["routes/airport.ts", 3], ["services/hiddenGems/HiddenGemService.ts", 1]] as const) {
+      const row = rows.find((r) => r.file === file)!;
+      assert.equal(row.count, direct, `${file}: the legacy twin is still there for the flag-off path`);
+      assert.equal(ungatedOf(row), 0, `every direct write in ${file} has a kernel path`);
+    }
+    const admin = rows.find((r) => r.file === "routes/admin.ts")!;
+    assert.equal(admin.count, 3);
+    assert.equal(ungatedOf(admin), 1, "routes/admin.ts: the two hides are gated; the reminder reset is classified out of the aggregate and stays direct");
   });
 });
 

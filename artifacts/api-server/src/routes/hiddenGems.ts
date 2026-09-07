@@ -30,9 +30,17 @@
  *          LLM calls (Compass): protected gems excluded entirely.
  */
 import { Router } from "express";
+import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { requireUser, sendError, canEditPlan } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
+import {
+  tripKernelClient,
+  readCommandEnvelope,
+  executeTripCommand,
+  sendKernelRejection,
+  setTripVersionHeader,
+} from "../lib/tripKernel.js";
 import {
   submitGem,
   getGem,
@@ -1284,7 +1292,38 @@ router.post("/hidden-gems/:id/plan", async (req, res) => {
       category: (gem as any).category,
     };
 
-    const { data, error } = await client
+    // Trip Kernel path (§4.1 ADD_PLAN, capability crew). canEditPlan above is
+    // the authorization; the kernel re-checks crew. This is the ONE writer whose
+    // row needs migration 2590: added_by / description / city / country are
+    // not in a 2500 function's ADD_PLAN column list (it drops them silently),
+    // so the flag must not be flipped ahead of 2590 where this route matters.
+    // creator_id is not sent — the kernel stamps the actor, which is what the
+    // insert sends. location_is_private is the table default the insert relies
+    // on, sent explicitly. Off => the insert below.
+    const kernel = await tripKernelClient(sc);
+    let kernelPlanItemId: string | null = null;
+    if (kernel) {
+      const env = readCommandEnvelope(req);
+      if (!env.ok) { sendError(res, "invalid_payload", env.message); return; }
+      const { trip_id: _tripId, creator_id: _creatorId, ...rest } = planItem;
+      const r = await executeTripCommand(kernel, {
+        commandId: randomUUID(),
+        tripId,
+        actorUserId: user.id,   // always from token
+        expectedTripVersion: env.expectedTripVersion,
+        idempotencyKey: env.idempotencyKey,
+        type: "ADD_PLAN",
+        payload: { ...rest, location_is_private: true },
+      });
+      if (!r.ok) { sendKernelRejection(res, r, req.log); return; }
+      setTripVersionHeader(res, r.version);
+      kernelPlanItemId = r.result.id;
+    }
+
+    // trip-kernel:legacy-path — flag-off twin of ADD_PLAN above.
+    const { data, error } = kernelPlanItemId
+      ? { data: { id: kernelPlanItemId }, error: null }
+      : await client
       .from("trip_plan_items")
       .insert(planItem)
       .select("id")

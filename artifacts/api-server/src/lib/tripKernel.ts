@@ -59,6 +59,15 @@
  *              routes/trips-expansion.ts already lets a co-host approve a join
  *              request. A JOIN_VIA_LINK sent to a 2450 function is refused as
  *              TRIP_COMMAND_UNKNOWN_TYPE, the same signal as v2-against-v1.
+ *   v2 + 2590  ADDITIVE, contract_version stays 2: ADD_PLAN carries the four
+ *              remaining trip_plan_items columns (added_by — must be the
+ *              actor —, description, city, country) so the hidden-gem
+ *              attachment can be a command, and its location_is_private
+ *              default is the TABLE's (true), not 2420's false. A 2500
+ *              function silently drops the four keys and defaults to false —
+ *              which is why every satellite route sends location_is_private
+ *              explicitly and routes/hiddenGems.ts is the only writer whose
+ *              kernel row depends on 2590.
  *
  * WHAT IT DOES NOT DO
  * ===================
@@ -72,7 +81,9 @@
  */
 import { randomUUID } from "node:crypto";
 import type { Request, Response } from "express";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { isFlagEnabled } from "./featureFlags.js";
+import { getServiceClient } from "./supabase.js";
 
 export const TRIP_KERNEL_FLAG = "trip_kernel_enabled";
 
@@ -82,6 +93,26 @@ export const TRIP_KERNEL_CONTRACT_VERSION = 2;
 /** Flag read is fail-closed (lib/featureFlags.isFlagEnabled). */
 export async function isTripKernelEnabled(sc: any): Promise<boolean> {
   return isFlagEnabled(sc, TRIP_KERNEL_FLAG);
+}
+
+/**
+ * The gate every satellite writer uses: the SERVICE client when
+ * `trip_kernel_enabled` is TRUE, else null — and null means "run the
+ * pre-kernel direct write exactly as before". The function is executable by
+ * service_role only (2420), so a user-scoped client is never handed back even
+ * when the caller authorized with one. No service client configured => null,
+ * the same fail-closed answer as an unreadable flag.
+ *
+ * routes/trips.ts, routes/trips-expansion.ts and routes/requests.ts predate
+ * this helper and carry a local twin; the satellites (routes/plan.ts,
+ * routes/events.ts, routes/hiddenGems.ts, routes/telegraphChat.ts,
+ * routes/tripReservations.ts, routes/compass.ts, routes/airport.ts,
+ * compass/CompassAutopilotEngine.ts, lib/visuals/service.ts) call this.
+ */
+export async function tripKernelClient(sc?: SupabaseClient | null): Promise<SupabaseClient | null> {
+  const service = sc ?? getServiceClient();
+  if (!service) return null;
+  return (await isTripKernelEnabled(service)) ? service : null;
 }
 
 // ── Command vocabulary (§4.1) ─────────────────────────────────────────────────

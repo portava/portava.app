@@ -23,6 +23,13 @@ import { Router } from "express";
 import { z } from "zod";
 import { requireUser, sendError, canEditPlan, isAcceptedTripMember } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
+import {
+  tripKernelClient,
+  readCommandEnvelope,
+  executeTripCommand,
+  sendKernelRejection,
+  setTripVersionHeader,
+} from "../lib/tripKernel.js";
 import { nameVisibilitySet } from "../lib/publicIdentity.js";
 import { buildConsumerProjection } from "../services/passport/PassportConsumerProjections.js";
 import { allowDiscoveryPersonCard } from "../services/passport/PassportConsumerAccess.js";
@@ -1818,7 +1825,42 @@ router.post("/compass/proposals/:proposalId/confirm", async (req, res) => {
     if (existing) { sendError(res, "conflict", "This place is already in your trip plan"); return; }
   }
 
-  const { data: item, error } = await sc
+  // Trip Kernel path (§4.1 ADD_PLAN, capability crew). The re-authorization
+  // above (accepted member + canEditPlan, at execution time) is the
+  // authorization; the kernel re-checks crew. The payload is the direct
+  // insert's column set plus location_is_private = true, the table default the
+  // insert relies on. Off => the insert below.
+  const kernel = await tripKernelClient(sc);
+  let kernelItem: any = null;
+  if (kernel) {
+    const env = readCommandEnvelope(req);
+    if (!env.ok) { sendError(res, "invalid_payload", env.message); return; }
+    const r = await executeTripCommand(kernel, {
+      commandId: randomUUID(),
+      tripId: proposal.tripId,
+      actorUserId: user.id,   // always from token
+      expectedTripVersion: env.expectedTripVersion,
+      idempotencyKey: env.idempotencyKey,
+      type: "ADD_PLAN",
+      payload: {
+        title:               proposal.title,
+        category:            proposal.category || "activity",
+        status:              "tentative",
+        source_type:         proposal.placeId ? "place" : "compass",
+        source_id:           proposal.placeId ?? proposal.proposalId,
+        day_date:            proposal.dayDate ?? null,
+        location_is_private: true,
+        sort_order:          0,
+        visibility:          "members",
+      },
+    });
+    if (!r.ok) { sendKernelRejection(res, r, req.log); return; }
+    setTripVersionHeader(res, r.version);
+    kernelItem = r.result;
+  }
+
+  // trip-kernel:legacy-path — flag-off twin of ADD_PLAN above.
+  const { data: item, error } = kernelItem ? { data: kernelItem, error: null } : await sc
     .from("trip_plan_items")
     .insert({
       trip_id:       proposal.tripId,

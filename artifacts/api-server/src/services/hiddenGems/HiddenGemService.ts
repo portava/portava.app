@@ -2,6 +2,8 @@
  * HiddenGemService — CRUD, save/unsave, ranking helpers.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { randomUUID } from "node:crypto";
+import { tripKernelClient, executeTripCommand } from "../../lib/tripKernel.js";
 import { recordTrustEvent } from "../trust/TrustEventService.js";
 import { logger as rootLogger } from "../../lib/logger.js";
 import { recordEntityMedia } from "../../lib/mediaAssets.js";
@@ -127,6 +129,41 @@ export async function submitGem(db: SupabaseClient, input: CreateGemInput) {
   // a trip_plan_items row (source_type="hidden_gem", source_id=gem id).
   // Best-effort: a failure here should not fail gem submission itself.
   if (input.tripId) {
+    // Trip Kernel path (§4.1 ADD_PLAN, capability crew; needs migration 2590
+    // for added_by / description / city / country — a 2500 function drops
+    // them). routes/hiddenGems.ts POST /hidden-gems verified trip + membership
+    // before calling; this service has no check of its own and the kernel's
+    // crew re-check is the first one at this layer. Two differences on THIS
+    // path only: the kernel stamps creator_id = the submitter where the direct
+    // insert leaves it NULL, and location_is_private is sent as true — the
+    // table default the insert relies on. Key gem:<id>:attach is deterministic:
+    // a gem is attached at submission exactly once. Best-effort, like the
+    // insert: a rejection is logged, never fatal to the submission.
+    const kernel = await tripKernelClient(db);
+    if (kernel) {
+      const r = await executeTripCommand(kernel, {
+        commandId: randomUUID(),
+        tripId: input.tripId,
+        actorUserId: input.submittedBy,
+        expectedTripVersion: null,
+        idempotencyKey: `gem:${(data as any).id}:attach`,
+        type: "ADD_PLAN",
+        payload: {
+          added_by: input.submittedBy,
+          source_type: "hidden_gem",
+          source_id: (data as any).id,
+          title: (data as any).name,
+          description: (data as any).description ?? null,
+          location_name: (data as any).name,
+          city: (data as any).city,
+          country: (data as any).country ?? null,
+          category: (data as any).category,
+          location_is_private: true,
+        },
+      });
+      if (!r.ok) logger.warn({ reason: r.reason, gemId: (data as any).id, tripId: input.tripId }, "submitGem: trip kernel refused attaching gem to trip plan");
+    } else {
+    // trip-kernel:legacy-path — flag-off twin of ADD_PLAN above.
     await db
       .from("trip_plan_items")
       .insert({
@@ -144,6 +181,7 @@ export async function submitGem(db: SupabaseClient, input: CreateGemInput) {
       .then(({ error: planError }) => {
         if (planError) logger.warn({ err: planError, gemId: (data as any).id, tripId: input.tripId }, "submitGem: failed to attach gem to trip plan");
       });
+    }
   }
 
   // Canonical dual-write (flag-gated OFF; fail-soft — legacy image_url path

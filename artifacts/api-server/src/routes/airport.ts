@@ -23,9 +23,17 @@
  * Privacy: exact GPS NEVER in responses. All location info is city-level only.
  */
 import { Router } from "express";
+import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { requireUser, sendError, isAcceptedTripMember, canEditPlan } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
+import {
+  tripKernelClient,
+  readCommandEnvelope,
+  executeTripCommand,
+  sendKernelRejection,
+  setTripVersionHeader,
+} from "../lib/tripKernel.js";
 // Capability gates are read through the SHARED fail-closed helper. This file
 // used to define its own `isFlagEnabled` under the same name that failed OPEN
 // (`if (error) return true; if (data == null) return true;`) as a dev-env
@@ -178,9 +186,53 @@ async function mirrorSessionToTrip(
       .eq("source_id", session.id)
       .is("removed_at", null)
       .maybeSingle();
+
+    // Trip Kernel path (§4.1 UPDATE_PLAN when the mirror row exists, ADD_PLAN
+    // when it does not; capability crew — isAcceptedTripMember above). No
+    // request envelope here (this is a side effect of a session write), so the
+    // key is fresh per call: the mirror is not idempotent today either. The
+    // UPDATE_PLAN patch names the seven columns the direct update rewrites
+    // besides its identity columns (trip_id / creator_id / source_type /
+    // source_id are the lookup keys and cannot differ); updated_at rides in the
+    // payload. The kernel refuses a done/cancelled item re-confirming where the
+    // direct update overwrote it — best-effort either way. Off => the direct
+    // update / insert below.
+    const kernel = await tripKernelClient(sc);
+    if (kernel) {
+      const r = await executeTripCommand(kernel, {
+        commandId: randomUUID(),
+        tripId: session.tripId,
+        actorUserId: userId,
+        expectedTripVersion: null,
+        idempotencyKey: randomUUID(),
+        type: (existing as any)?.id ? "UPDATE_PLAN" : "ADD_PLAN",
+        payload: (existing as any)?.id
+          ? {
+              item_id: (existing as any).id,
+              patch: {
+                title, category: "layover", status: "confirmed",
+                day_date: record.day_date, starts_at: record.starts_at, ends_at: record.ends_at,
+                location_name: record.location_name,
+              },
+              updated_at: record.updated_at,
+            }
+          : {
+              title, category: "layover", status: "confirmed",
+              source_type: "layover_session", source_id: session.id,
+              day_date: record.day_date, starts_at: record.starts_at, ends_at: record.ends_at,
+              location_name: record.location_name,
+              location_is_private: true,
+            },
+      });
+      if (!r.ok) logger.warn({ reason: r.reason, sessionId: session.id, tripId: session.tripId }, "layover trip mirror refused by the trip kernel");
+      return;
+    }
+
     if ((existing as any)?.id) {
+      // trip-kernel:legacy-path — flag-off twin of UPDATE_PLAN above.
       await sc.from("trip_plan_items").update(record).eq("id", (existing as any).id);
     } else {
+      // trip-kernel:legacy-path — flag-off twin of ADD_PLAN above.
       await sc.from("trip_plan_items").insert(record);
     }
   } catch { /* best-effort */ }
@@ -770,7 +822,40 @@ router.post("/airport/sessions/:id/plan", async (req, res) => {
   if (permitted === null) { sendError(res, "not_found", "Trip not found"); return; }
   if (!permitted) { sendError(res, "forbidden", "You don't have permission to add items to this plan"); return; }
 
-  const { data: item, error } = await sc.from("trip_plan_items").insert({
+  // Trip Kernel path (§4.1 ADD_PLAN, capability crew). The membership and
+  // plan-edit checks above are the authorization; the kernel re-checks crew.
+  // The payload is the direct insert's column set plus location_is_private =
+  // true, the table default the insert relies on. Off => the insert below.
+  const kernel = await tripKernelClient(sc);
+  let kernelItemId: string | null = null;
+  if (kernel) {
+    const env = readCommandEnvelope(req);
+    if (!env.ok) { sendError(res, "invalid_payload", env.message); return; }
+    const r = await executeTripCommand(kernel, {
+      commandId: randomUUID(),
+      tripId,
+      actorUserId: user.id,   // always from token
+      expectedTripVersion: env.expectedTripVersion,
+      idempotencyKey: env.idempotencyKey,
+      type: "ADD_PLAN",
+      payload: {
+        title:               parsed.data.title,
+        starts_at:           parsed.data.startsAt ?? null,
+        location_name:       parsed.data.locationName ?? parsed.data.city ?? session.manualCity ?? null,
+        notes:               parsed.data.notes ?? null,
+        category:            "layover",
+        source_type:         "layover_activity",
+        source_id:           `${session.id}:${Date.now()}`,
+        location_is_private: true,
+      },
+    });
+    if (!r.ok) { sendKernelRejection(res, r, req.log); return; }
+    setTripVersionHeader(res, r.version);
+    kernelItemId = r.result.id;
+  }
+
+  // trip-kernel:legacy-path — flag-off twin of ADD_PLAN above.
+  const { data: item, error } = kernelItemId ? { data: { id: kernelItemId }, error: null } : await sc.from("trip_plan_items").insert({
     trip_id:       tripId,
     creator_id:    user.id,
     title:         parsed.data.title,
