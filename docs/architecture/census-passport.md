@@ -602,3 +602,47 @@ the one that moves a verdict.**
 Taken together the four are a coordinated repair of §9–§11 rendering. Only #467
 changes what the product *asserts*; the other three change what it *shows* of
 assertions the server already makes correctly.
+
+---
+
+## 6. Addendum (2026-09-07): `stamp_verified` now has a producer, and one deployment fact above is stale
+
+Two corrections to the text above, both read from production rather than
+remembered, and one change to the tree.
+
+**Correction — the trust engine is not dark.** Headline item 1 and §3
+deployment fact 1 say `trust_engine_enabled` "is seeded false, so nothing
+writes `trust_events`". The seed is false; the production row is **TRUE** and
+has been since 2026-07-17. Read 2026-09-07: `trust_engine_enabled = true`,
+`trust_events` 5 rows, `trust_profiles` 2 rows, `user_stamps` 47 live rows
+(0 admin-awarded), `stamp_verified` events **0**. The "Established"
+substitution in P45/P50 is therefore produced not by a dark engine but by a
+**starved** one: the scorer and scheduler run, and the emitters were the
+defect. The P45/P50/P154 verdicts stand; the mechanism named for them was
+wrong.
+
+**Correction — P146 is telemetry only.** The row cites `stamp_verified` as
+emitted from the award path; that is the §32 *telemetry* event
+(`recordPassportEvent`), which lands nowhere (§3 fact 2). Until this addendum
+the *Trust* event of the same name — `TRUST_EVENT_TYPES.STAMP_VERIFIED`,
++3 `passport_authenticity` — was declared and produced by nothing, so
+`passport_authenticity` could only move DOWN on the live pipeline
+(`stamp_disputed`, on revoke).
+
+**Change.** `services/passport/StampAwardEngine.ts` `_awardStampCore` now
+calls Trust's `recordStampVerifiedTrustEvent` (`StampAwardEngine.ts:665`) on
+its `awarded: true` return — the same placement rule as the §32 events: only
+when a `user_stamps` row was written by that call. Provenance: subject = the
+stamp owner; source = the `user_stamps` row (one stamp pays once, 365-day
+dedup inside Trust); an admin who awarded it is `metadata.awardedByAdminId`,
+never the subject; a self-reported tier is refused by the helper. Fail-closed
+on the flag (off or unreadable → no event, award unaffected); a ledger write
+failure leaves the award awarded and is logged as
+`stamp.award.trust_event_failed`. `revokeStamp`, `restoreStamp` and the
+`recalculateForUser` backfill never enter `_awardStampCore` and emit nothing;
+the heal of a partial failure emits once. Proven award → event →
+`runTrustMaintenance` → `trust_profiles` in
+`src/test/trustStampVerified.test.ts`; the declared-vs-produced matrix in
+`src/test/trustEventCoverage.test.ts` no longer lists `stamp_verified` as
+unproduced. No migration is required, and the flag is already on, so this is
+live on deploy.
