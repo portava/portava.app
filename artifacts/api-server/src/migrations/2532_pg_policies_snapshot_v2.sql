@@ -60,6 +60,44 @@ GRANT EXECUTE ON FUNCTION public.pg_policies_snapshot_v2() TO service_role;
 COMMENT ON FUNCTION public.pg_policies_snapshot_v2() IS
   'Diagnostic: public-schema RLS policy shapes with USING (qual) and WITH CHECK kept separate, plus cmd, roles and permissiveness, for the policy-shape regression guard (rlsPolicyShapeLive.test.ts). Supersedes pg_policies_snapshot for rules that must tell a FOR ALL policy with WITH CHECK from one without. service_role only -- policy expressions describe the authorization logic itself. See migration 2532.';
 
+-- ── The second thing the textual guard cannot see: functions ──────────────────
+-- A policy that calls a public boolean function whose body reads trip_members
+-- reaches the membership table without naming it. The guard carries a captured
+-- list of such functions (UNGATED_TRIP_MEMBERS_FUNCTIONS in
+-- src/scripts/rlsDispositions.ts); this RPC lets the live suite verify that
+-- list against pg_proc on every run, so it cannot rot when a function is
+-- repaired (2534 gates can_see_trip) or dropped (2533 drops shares_trip_with).
+-- Boolean-returning functions only: trigger and maintenance functions also
+-- read trip_members and are not predicates. Same posture: service_role only.
+CREATE OR REPLACE FUNCTION public.pg_trip_members_readers_snapshot()
+RETURNS TABLE (
+  schema_name     text,
+  function_name   text,
+  mentions_role   boolean,
+  mentions_status boolean
+)
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path TO 'pg_catalog', 'public'
+AS $fn$
+  SELECT ns.nspname::text,
+         p.proname::text,
+         p.prosrc ~ '\mrole\M',
+         p.prosrc ~ '\mstatus\M'
+    FROM pg_proc p
+    JOIN pg_namespace ns ON ns.oid = p.pronamespace
+   WHERE ns.nspname IN ('public', 'authz')
+     AND p.prorettype = 'boolean'::regtype
+     AND p.prosrc ~ '\mtrip_members\M';
+$fn$;
+
+REVOKE ALL ON FUNCTION public.pg_trip_members_readers_snapshot() FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.pg_trip_members_readers_snapshot() TO service_role;
+
+COMMENT ON FUNCTION public.pg_trip_members_readers_snapshot() IS
+  'Diagnostic: every boolean function in public/authz whose body reads trip_members, and whether it mentions role and status. Lets rlsPolicyShapeLive.test.ts verify the captured UNGATED_TRIP_MEMBERS_FUNCTIONS list against the live catalog instead of trusting it. service_role only. See migration 2532.';
+
 DO $$
 BEGIN
   IF to_regprocedure('public.pg_policies_snapshot_v2()') IS NULL THEN
@@ -92,6 +130,22 @@ BEGIN
   IF NOT EXISTS (SELECT 1 FROM public.pg_policies_snapshot_v2() WHERE qual IS NOT NULL AND with_check IS NULL)
      OR NOT EXISTS (SELECT 1 FROM public.pg_policies_snapshot_v2() WHERE with_check IS NOT NULL) THEN
     RAISE EXCEPTION 'POSTCONDITION FAILED: pg_policies_snapshot_v2 does not distinguish qual from with_check';
+  END IF;
+
+  IF to_regprocedure('public.pg_trip_members_readers_snapshot()') IS NULL THEN
+    RAISE EXCEPTION 'POSTCONDITION FAILED: pg_trip_members_readers_snapshot missing';
+  END IF;
+  IF has_function_privilege('anon', 'public.pg_trip_members_readers_snapshot()', 'EXECUTE')
+     OR has_function_privilege('authenticated', 'public.pg_trip_members_readers_snapshot()', 'EXECUTE') THEN
+    RAISE EXCEPTION 'POSTCONDITION FAILED: pg_trip_members_readers_snapshot is reachable by anon/authenticated';
+  END IF;
+  -- authz.is_trip_crew (2334) reads trip_members and mentions both words; it
+  -- must be visible here or the snapshot is not reading function bodies.
+  IF NOT EXISTS (
+    SELECT 1 FROM public.pg_trip_members_readers_snapshot()
+     WHERE schema_name = 'authz' AND function_name = 'is_trip_crew' AND mentions_role AND mentions_status
+  ) THEN
+    RAISE EXCEPTION 'POSTCONDITION FAILED: pg_trip_members_readers_snapshot does not see authz.is_trip_crew';
   END IF;
 END $$;
 

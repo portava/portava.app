@@ -36,11 +36,13 @@ import {
   UNGATED_TRIP_MEMBERS_FUNCTIONS,
   arrayGrantVerdict,
   assertSnapshotExamined,
+  compareUngatedFunctionList,
   evaluatePolicySnapshot,
   forAllWriteCheckVerdict,
   policyKey,
   tripMembersVerdict,
   type PolicySnapshotRow,
+  type TripMembersReaderRow,
 } from "../scripts/rlsDispositions.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -135,8 +137,35 @@ describe("rule 1 — trip_members without role AND status", () => {
     assert.deepEqual(tripMembersVerdict(row("x", "y", "SELECT", "my_can_see_trip_wrapper(id)")), { kind: "not_applicable" });
   });
 
-  it("the captured function list is exactly the two functions read from pg_proc", () => {
+  it("the captured function list is exactly the two functions read from pg_proc on CI (until 2533/2534 land there)", () => {
     assert.deepEqual([...UNGATED_TRIP_MEMBERS_FUNCTIONS].sort(), ["can_see_trip", "shares_trip_with"]);
+  });
+
+  it("compareUngatedFunctionList: the CI catalog today matches; 2533 and 2534 each make an entry stale; a new reader is unlisted", () => {
+    const ciToday: TripMembersReaderRow[] = [
+      { schema_name: "authz", function_name: "is_trip_crew", mentions_role: true, mentions_status: true },
+      { schema_name: "public", function_name: "can_see_trip", mentions_role: true, mentions_status: false },
+      { schema_name: "public", function_name: "shares_trip_with", mentions_role: false, mentions_status: false },
+    ];
+    assert.deepEqual(compareUngatedFunctionList(ciToday), { unlisted: [], stale: [] });
+
+    // 2533 drops shares_trip_with.
+    const after2533 = ciToday.filter((r) => r.function_name !== "shares_trip_with");
+    assert.deepEqual(compareUngatedFunctionList(after2533), { unlisted: [], stale: ["shares_trip_with"] });
+
+    // 2534 routes can_see_trip through authz.is_trip_crew, so it no longer reads trip_members at all.
+    const after2534 = after2533.filter((r) => r.function_name !== "can_see_trip");
+    assert.deepEqual(compareUngatedFunctionList(after2534), { unlisted: [], stale: ["can_see_trip", "shares_trip_with"] });
+
+    // A gated reader (mentions status) is not ungated; an ungated newcomer is.
+    const gatedNew = [...ciToday, { schema_name: "public", function_name: "is_on_trip", mentions_role: true, mentions_status: true }];
+    assert.deepEqual(compareUngatedFunctionList(gatedNew).unlisted, []);
+    const ungatedNew = [...ciToday, { schema_name: "public", function_name: "is_on_trip", mentions_role: true, mentions_status: false }];
+    assert.deepEqual(compareUngatedFunctionList(ungatedNew).unlisted, ["is_on_trip"]);
+
+    // authz functions are not PostgREST-exposed and are the helpers themselves; never "unlisted".
+    const authzUngated = [...ciToday, { schema_name: "authz", function_name: "x", mentions_role: false, mentions_status: false }];
+    assert.deepEqual(compareUngatedFunctionList(authzUngated).unlisted, []);
   });
 
   it("2337's helper-routed policies are gated_by_helper", () => {

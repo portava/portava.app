@@ -603,13 +603,44 @@ export const AUTHZ_CREW_HELPER_RE =
  * can_post_to_trip, can_see_postcard.
  */
 export const UNGATED_TRIP_MEMBERS_FUNCTIONS: ReadonlyArray<string> = [
-  // role IN (owner,member,co_host,viewer) OR trips.owner_id OR public trip; NO status.
+  // role IN (owner,member,co_host,viewer) OR trips.owner_id OR public trip; NO
+  // status. Repaired by migration 2534 (routes through authz.is_trip_crew).
+  // REMOVE once 2534 is applied to portava-ci -- the live suite compares this
+  // list with pg_trip_members_readers_snapshot() (2532) and fails until you do.
   "can_see_trip",
   // self-join, no role, no status; EXECUTE held by anon/authenticated — an RPC
-  // oracle of 2182's class. Named in no policy today; listed so that if one
-  // ever calls it, this rule sees it.
+  // oracle of 2182's class. Named in no policy. DROPPED by migration 2533.
+  // REMOVE once 2533 is applied to portava-ci -- same live comparison.
   "shares_trip_with",
 ];
+
+/** One row of public.pg_trip_members_readers_snapshot() (migration 2532). */
+export interface TripMembersReaderRow {
+  schema_name: string;
+  function_name: string;
+  mentions_role: boolean;
+  mentions_status: boolean;
+}
+
+/**
+ * The live set of `public` boolean functions that read trip_members without a
+ * status gate, versus the captured list. Both differences are failures: a
+ * function missing from the list is a reach the rule cannot see; a listed
+ * function that is gone or gated is a stale entry that would keep excusing
+ * its callers as "known open" forever.
+ */
+export function compareUngatedFunctionList(
+  live: ReadonlyArray<TripMembersReaderRow>,
+): { unlisted: string[]; stale: string[] } {
+  const liveUngated = new Set(
+    live.filter((r) => r.schema_name === "public" && !r.mentions_status).map((r) => r.function_name),
+  );
+  const listed = new Set(UNGATED_TRIP_MEMBERS_FUNCTIONS);
+  return {
+    unlisted: [...liveUngated].filter((f) => !listed.has(f)).sort(),
+    stale: [...listed].filter((f) => !liveUngated.has(f)).sort(),
+  };
+}
 const ungatedFunctionRe = (): RegExp =>
   new RegExp(`\\b(?:public\\.)?(${UNGATED_TRIP_MEMBERS_FUNCTIONS.join("|")})\\s*\\(`);
 
@@ -707,10 +738,10 @@ export const TRIP_MEMBERS_KNOWN_OPEN: ReadonlyArray<KnownOpenEntry> = [
     key,
     kind: "ungated_via_function",
     reason:
-      "Reaches trip_members through public.can_see_trip(uuid), whose body gates on role IN (owner,member,co_host,viewer) OR trips.owner_id OR a public trip, and NEVER reads status — so a pending invitee (role='member', status='invited') passes. 2337 named the defect in can_see_trip and did not repair it; no migration does. Not a lane B5 deliverable: recorded so it cannot be forgotten.",
+      "Reaches trip_members through public.can_see_trip(uuid), whose body gates on role IN (owner,member,co_host,viewer) OR trips.owner_id OR a public trip, and NEVER reads status — so a pending invitee (role='member', status='invited') and a removed member pass (measured on portava-ci 2026-09-07). Repaired by migration 2534, which routes can_see_trip through authz.is_trip_crew and moves every write policy that borrowed it onto the API's write rules.",
     since: "2026-09-07",
     removeWhen:
-      "public.can_see_trip gains coalesce(status,'accepted')='accepted' (or these policies are repointed at authz.is_trip_crew) in an applied migration.",
+      "migration 2534 is applied to portava-ci. In the SAME change remove 'can_see_trip' from UNGATED_TRIP_MEMBERS_FUNCTIONS (the live suite compares that list with pg_trip_members_readers_snapshot and fails while it is stale) and delete these seventeen entries (they then read as stale).",
   })),
 ];
 

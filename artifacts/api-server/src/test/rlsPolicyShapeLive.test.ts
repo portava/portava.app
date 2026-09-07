@@ -63,9 +63,12 @@ import {
   FOR_ALL_WITHOUT_WITH_CHECK_BASELINE,
   TRIP_MEMBERS_KNOWN_OPEN,
   TRIP_MEMBERS_REVIEWED_ALLOWLIST,
+  UNGATED_TRIP_MEMBERS_FUNCTIONS,
   assertSnapshotExamined,
+  compareUngatedFunctionList,
   evaluatePolicySnapshot,
   type PolicySnapshotRow,
+  type TripMembersReaderRow,
 } from "../scripts/rlsDispositions.js";
 
 const SUPABASE_URL = process.env.SUPABASE_URL ?? "";
@@ -148,6 +151,26 @@ async function policiesV2(): Promise<PolicySnapshotRow[]> {
   }
   const rows = (data ?? []) as PolicySnapshotRow[];
   assertSnapshotExamined(rows);
+  return rows;
+}
+
+/**
+ * Every boolean function in public/authz whose body reads trip_members (2532).
+ * This is what makes the captured UNGATED_TRIP_MEMBERS_FUNCTIONS list a fact
+ * rather than a memory: the rule cannot see through a function, so the list
+ * of functions it must see through is checked against pg_proc every run.
+ */
+async function tripMembersReaders(): Promise<TripMembersReaderRow[]> {
+  const { data, error } = await sc.rpc("pg_trip_members_readers_snapshot");
+  if (error) {
+    throw new Error(`pg_trip_members_readers_snapshot: ${error.message} — apply migration 2532 to the CI database`);
+  }
+  const rows = (data ?? []) as TripMembersReaderRow[];
+  // authz.is_trip_crew (2334) reads trip_members and is on every database
+  // these rules were written for; its absence means the RPC saw nothing.
+  if (!rows.some((r) => r.schema_name === "authz" && r.function_name === "is_trip_crew")) {
+    throw new Error(`pg_trip_members_readers_snapshot returned ${rows.length} rows and none of them is authz.is_trip_crew — it examined nothing`);
+  }
   return rows;
 }
 
@@ -304,6 +327,26 @@ describe("RLS policy shapes — membership gates (textual; rules in scripts/rlsD
         "UNGATED_TRIP_MEMBERS_FUNCTIONS must be recaptured from pg_proc when functions change.\n" +
         "Offenders:\n  " + report.tripMembersOffenders.join("\n  "),
     );
+  });
+
+  it("the captured list of ungated trip_members-reading functions equals the live catalog", async () => {
+    const live = await snapshotOrFail(tripMembersReaders);
+    const { unlisted, stale } = compareUngatedFunctionList(live);
+    assert.deepEqual(
+      unlisted, [],
+      "A public boolean function reads trip_members with no status gate and is NOT in\n" +
+        "UNGATED_TRIP_MEMBERS_FUNCTIONS, so any policy calling it reaches the membership table where\n" +
+        "the textual rule cannot see. Either gate it (route through authz.is_trip_crew, as 2534 does for\n" +
+        "can_see_trip) or add it to the captured list with its callers recorded as known-open:\n  " +
+        unlisted.join("\n  "),
+    );
+    assert.deepEqual(
+      stale, [],
+      "These UNGATED_TRIP_MEMBERS_FUNCTIONS entries are gone or gated on this database (2533 drops\n" +
+        "shares_trip_with; 2534 gates can_see_trip). Remove them — and the TRIP_MEMBERS_KNOWN_OPEN\n" +
+        "entries that cite them, which the stale-entry check will then report:\n  " + stale.join("\n  "),
+    );
+    assert.ok(UNGATED_TRIP_MEMBERS_FUNCTIONS.length >= 0);
   });
 
   it("no FOR ALL policy without WITH CHECK exists outside the captured baseline", async () => {
