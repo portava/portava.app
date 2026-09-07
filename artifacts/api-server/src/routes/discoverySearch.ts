@@ -81,6 +81,22 @@ import { allowDiscoveryPersonCard } from "../services/passport/PassportConsumerA
 // the first place.
 import { fetchBlockedSet, submitterIsVisible } from "../lib/blocks.js";
 import { isFlagEnabled } from "../lib/featureFlags.js";
+// Trips' projection contract (census-discovery A10 / D3, Trips spec §25) and
+// Discovery's consumer of it. Gated by discovery_trip_projection_enabled
+// (migration 2550, seeded FALSE): production has no trips.version, and the
+// readers fail closed on it. See lib/discoveryTripProjectionConsumer.ts.
+import {
+  searchTripDiscoveryProjections,
+  readTripDiscoveryProjections,
+  tripDiscoveryAdmits,
+} from "../lib/tripDiscoveryProjection.js";
+import {
+  discoveryTripProjectionEnabled,
+  acceptTripDiscoveryProjections,
+  tripCardSourceFromProjection,
+  type DiscoveryTripCardSource,
+  type DiscoveryPlanParentTrip,
+} from "../lib/discoveryTripProjectionConsumer.js";
 import {
   logDiscoveryServe,
   DiscoveryServePoint,
@@ -755,6 +771,25 @@ async function searchEvents(
 
 /**
  * Trips — public only; blocked/suspended owners excluded.
+ *
+ * Two sources for the candidate rows, one flag between them
+ * (discovery_trip_projection_enabled, migration 2550, seeded FALSE):
+ *
+ *   OFF (the seed, and every failure to read the flag) — the legacy read
+ *   below, byte-identical to before: same columns, same predicates, same
+ *   order, same range. Pinned by src/test/discoveryTripProjectionConsumer.test.ts.
+ *
+ *   ON — searchTripDiscoveryProjections, the Trip-owned contract
+ *   (lib/tripDiscoveryProjection.ts; Trips spec §25, census-discovery A10/D3).
+ *   Discovery no longer states the visibility rule; it consumes
+ *   `discoverable`. A failed read (TRIP_PROJECTION_UNAVAILABLE — e.g. a
+ *   database without trips.version) is `[]`, never a crash and never a leak.
+ *   The owner's non-member privacy toggles then apply to a searcher; see
+ *   lib/discoveryTripProjectionConsumer.ts for why that is accepted.
+ *
+ * Both sources feed ONE card mapping, so the two paths cannot drift in what a
+ * card shows. The blocked / age-restricted / active-owner filters run on
+ * both, here, on ownerId — they are Trust and Discovery rules, not Trip ones.
  */
 async function searchTrips(
   sc: any, q: string, userId: string,
@@ -764,57 +799,88 @@ async function searchTrips(
 ): Promise<SearchResult[]> {
   if (blockedSet === null || ageRestrictedSet === null) return [];
   try {
-    const pat = sqlPattern(q);
-    let trQ: any = sc
-      .from("trips")
-      .select("id, title, destination_city, destination_country, owner_id, cover_url, start_date, status, visibility, created_at")
-      .or(`title.ilike.${pat},destination_city.ilike.${pat},destination_country.ilike.${pat}`)
-      .eq("visibility", "public")
-      .eq("show_in_discovery", true)
-      // `trip_status` is an ENUM: draft | planning | upcoming | active |
-      // completed | cancelled | archived. "deleted" and "banned" are NOT
-      // labels, and Postgres rejects an unknown enum literal outright (22P02)
-      // rather than matching nothing — so `type=trips` search errored out and
-      // fell into the `if (error || !data) return []` below on every request.
-      //
-      // Same shape as the events fix above: a denylist of real labels that also
-      // drops unpublished `draft` trips the broken filter would have surfaced.
-      .not("status", "in", '("draft","cancelled","archived")')
-      .order("start_date", { ascending: true });
-    // Apply time-intent date bounds to trip start_date when present
-    if (ctx?.startsAfter)  trQ = trQ.gte("start_date", ctx.startsAfter.slice(0, 10));
-    if (ctx?.startsBefore) trQ = trQ.lt("start_date",  ctx.startsBefore.slice(0, 10));
-    const { data, error } = await trQ.range(offset, offset + fetchLimit - 1);
+    let cards: DiscoveryTripCardSource[];
 
-    if (error || !data) return [];
+    if (await discoveryTripProjectionEnabled(sc)) {
+      const r = await searchTripDiscoveryProjections(sc, {
+        text: q,
+        startsAfter: ctx?.startsAfter,
+        startsBefore: ctx?.startsBefore,
+        offset,
+        limit: fetchLimit,
+      });
+      if (!r.ok) {
+        logger.warn({ reason: r.reason, detail: r.detail }, "trip discovery projection unavailable; trips search returns nothing");
+        return [];
+      }
+      const { accepted, rejected } = acceptTripDiscoveryProjections(r.projections);
+      if (rejected > 0) logger.warn({ rejected }, "trip discovery projections of an unreadable schema version dropped");
+      cards = accepted.map(tripCardSourceFromProjection);
+    } else {
+      const pat = sqlPattern(q);
+      let trQ: any = sc
+        .from("trips")
+        .select("id, title, destination_city, destination_country, owner_id, cover_url, start_date, status, visibility, created_at")
+        .or(`title.ilike.${pat},destination_city.ilike.${pat},destination_country.ilike.${pat}`)
+        .eq("visibility", "public")
+        .eq("show_in_discovery", true)
+        // `trip_status` is an ENUM: draft | planning | upcoming | active |
+        // completed | cancelled | archived. "deleted" and "banned" are NOT
+        // labels, and Postgres rejects an unknown enum literal outright (22P02)
+        // rather than matching nothing — so `type=trips` search errored out and
+        // fell into the `if (error || !data) return []` below on every request.
+        //
+        // Same shape as the events fix above: a denylist of real labels that also
+        // drops unpublished `draft` trips the broken filter would have surfaced.
+        .not("status", "in", '("draft","cancelled","archived")')
+        .order("start_date", { ascending: true });
+      // Apply time-intent date bounds to trip start_date when present
+      if (ctx?.startsAfter)  trQ = trQ.gte("start_date", ctx.startsAfter.slice(0, 10));
+      if (ctx?.startsBefore) trQ = trQ.lt("start_date",  ctx.startsBefore.slice(0, 10));
+      const { data, error } = await trQ.range(offset, offset + fetchLimit - 1);
 
-    const rows = (data as any[]).filter(
-      (t: any) => !blockedSet.has(t.owner_id as string) && !ageRestrictedSet.has(t.owner_id as string),
+      if (error || !data) return [];
+
+      cards = (data as any[]).map((t: any): DiscoveryTripCardSource => ({
+        id: t.id as string,
+        ownerId: t.owner_id as string,
+        title: (t.title as string | null) ?? null,
+        destinationCity: (t.destination_city as string | null) ?? null,
+        destinationCountry: (t.destination_country as string | null) ?? null,
+        coverUrl: (t.cover_url as string | null) ?? null,
+        startDate: (t.start_date as string | null) ?? null,
+        status: t.status as string,
+        createdAt: (t.created_at as string | null) ?? null,
+      }));
+    }
+
+    const rows = cards.filter(
+      (t) => !blockedSet.has(t.ownerId) && !ageRestrictedSet.has(t.ownerId),
     );
     if (rows.length === 0) return [];
 
-    const ownerIds = [...new Set(rows.map((t: any) => t.owner_id as string))];
+    const ownerIds = [...new Set(rows.map((t) => t.ownerId))];
     const activeOwnerSet = await fetchActiveOwnerSet(sc, ownerIds);
 
     return rows
-      .filter((t: any) => activeOwnerSet.has(t.owner_id as string))
-      .map((t: any): SearchResult => ({
+      .filter((t) => activeOwnerSet.has(t.ownerId))
+      .map((t): SearchResult => ({
         id: t.id,
         type: "trips",
-        title: (t.title as string) ?? (t.destination_city as string) ?? "",
-        subtitle: [(t.destination_city as string | null), (t.destination_country as string | null)].filter(Boolean).join(", ") || null,
+        title: t.title ?? t.destinationCity ?? "",
+        subtitle: [t.destinationCity, t.destinationCountry].filter(Boolean).join(", ") || null,
         avatarUrl: null,
-        imageUrl: (t.cover_url as string | null) ?? null,
-        fallbackInitials: initials((t.title as string) ?? ""),
-        locationPreview: [(t.destination_city as string | null), (t.destination_country as string | null)].filter(Boolean).join(", ") || null,
+        imageUrl: t.coverUrl ?? null,
+        fallbackInitials: initials(t.title ?? ""),
+        locationPreview: [t.destinationCity, t.destinationCountry].filter(Boolean).join(", ") || null,
         matchedReason: null,
         actionState: null,
         privacyState: { isPublic: true },
         accessState: { canAccess: true },
-        destinationRoute: `/trip/${t.id as string}`,
-        metadata: { ownerId: t.owner_id, status: t.status },
-        createdAt: (t.created_at as string | null) ?? null,
-        startsAt: (t.start_date as string | null) ?? null,
+        destinationRoute: `/trip/${t.id}`,
+        metadata: { ownerId: t.ownerId, status: t.status },
+        createdAt: t.createdAt ?? null,
+        startsAt: t.startDate ?? null,
       }));
   } catch {
     return [];
@@ -850,37 +916,77 @@ async function searchPlans(
     if (items.length === 0) return [];
 
     const tripIds = [...new Set(items.map((p: any) => p.trip_id as string))];
-    const { data: trips } = await sc
-      .from("trips")
-      .select("id, visibility, show_in_discovery, owner_id, status, start_date")
-      .in("id", tripIds)
-      // Same dead literals as searchTrips above ("deleted" / "banned" are not
-      // `trip_status` labels), and worse here: the result is destructured as
-      // `const { data: trips }` with the error never inspected, so `trips` was
-      // undefined, `allowedTrips` empty, and EVERY plan was dropped as
-      // "no allowed parent trip". `type=plans` returned [] on every request.
-      .not("status", "in", '("draft","cancelled","archived")');
 
-    const allowedTrips = (trips ?? []).filter(
-      (t: any) =>
+    // The parent trips, from one of two sources behind
+    // discovery_trip_projection_enabled (see searchTrips above). Either way
+    // each candidate carries `admitted` — may THIS viewer see this trip's
+    // plans — decided by Trip semantics, and `ownerId` / `startDate` for the
+    // Discovery-owned filters that follow.
+    let parents: DiscoveryPlanParentTrip[];
+
+    if (await discoveryTripProjectionEnabled(sc)) {
+      // Not filtered by discoverability in SQL: the by-id reader returns the
+      // owner's own private trip too, and tripDiscoveryAdmits — Trips' rule,
+      // not restated here — decides per viewer. A failed read is `[]`.
+      const r = await readTripDiscoveryProjections(sc, tripIds);
+      if (!r.ok) {
+        logger.warn({ reason: r.reason, detail: r.detail }, "trip discovery projection unavailable; plans search returns nothing");
+        return [];
+      }
+      const { accepted, rejected } = acceptTripDiscoveryProjections(r.projections);
+      if (rejected > 0) logger.warn({ rejected }, "trip discovery projections of an unreadable schema version dropped");
+      // startDate is the projection's — null when the owner hides exact dates,
+      // in which case the time-intent bound below passes the trip exactly as
+      // it passes a trip with no start_date today. The contract carries no
+      // separate bounding date for the by-id reader (reported, not worked
+      // around by reading `trips` here).
+      parents = accepted.map((p): DiscoveryPlanParentTrip => ({
+        id: p.tripId,
+        ownerId: p.ownerId,
+        startDate: p.startDate,
+        admitted: tripDiscoveryAdmits(p, userId),
+      }));
+    } else {
+      const { data: trips } = await sc
+        .from("trips")
+        .select("id, visibility, show_in_discovery, owner_id, status, start_date")
+        .in("id", tripIds)
+        // Same dead literals as searchTrips above ("deleted" / "banned" are not
+        // `trip_status` labels), and worse here: the result is destructured as
+        // `const { data: trips }` with the error never inspected, so `trips` was
+        // undefined, `allowedTrips` empty, and EVERY plan was dropped as
+        // "no allowed parent trip". `type=plans` returned [] on every request.
+        .not("status", "in", '("draft","cancelled","archived")');
+
+      parents = ((trips ?? []) as any[]).map((t: any): DiscoveryPlanParentTrip => ({
+        id: t.id as string,
+        ownerId: t.owner_id as string,
+        startDate: (t.start_date as string | null) ?? null,
         // Public trips: also require show_in_discovery so owners who opted out are excluded.
         // Caller-owned trips are always visible regardless of the flag.
-        (((t.visibility as string) === "public" && t.show_in_discovery === true) ||
-          (t.owner_id as string) === userId) &&
-        !blockedSet.has(t.owner_id as string) &&
-        !ageRestrictedSet.has(t.owner_id as string) &&
+        admitted:
+          ((t.visibility as string) === "public" && t.show_in_discovery === true) ||
+          (t.owner_id as string) === userId,
+      }));
+    }
+
+    const allowedTrips = parents.filter(
+      (t) =>
+        t.admitted &&
+        !blockedSet.has(t.ownerId) &&
+        !ageRestrictedSet.has(t.ownerId) &&
         // Time-intent: filter by parent trip's start_date when bounds are present
-        (!ctx?.startsAfter  || !(t.start_date as string | null) || (t.start_date as string) >= ctx.startsAfter.slice(0, 10)) &&
-        (!ctx?.startsBefore || !(t.start_date as string | null) || (t.start_date as string) <  ctx.startsBefore.slice(0, 10)),
+        (!ctx?.startsAfter  || !t.startDate || t.startDate >= ctx.startsAfter.slice(0, 10)) &&
+        (!ctx?.startsBefore || !t.startDate || t.startDate <  ctx.startsBefore.slice(0, 10)),
     );
 
-    const allowedOwnerIds: string[] = [...new Set<string>(allowedTrips.map((t: any) => t.owner_id as string))];
+    const allowedOwnerIds: string[] = [...new Set<string>(allowedTrips.map((t) => t.ownerId))];
     const activeTripOwnerSet = await fetchActiveOwnerSet(sc, allowedOwnerIds);
 
     const visibleTripIds = new Set<string>(
       allowedTrips
-        .filter((t: any) => activeTripOwnerSet.has(t.owner_id as string))
-        .map((t: any) => t.id as string),
+        .filter((t) => activeTripOwnerSet.has(t.ownerId))
+        .map((t) => t.id),
     );
 
     return items
