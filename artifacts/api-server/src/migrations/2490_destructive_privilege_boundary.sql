@@ -88,17 +88,50 @@
 --    member of `supabase_admin`. So the `postgres` default is fixed below and
 --    the `supabase_admin` default CANNOT BE FIXED FROM A MIGRATION.
 --
---    Practical exposure of that residue: a table created BY supabase_admin in
---    schema public would inherit the blanket set again. In production exactly
---    one such table exists — `spatial_ref_sys`, PostGIS's own coordinate-system
---    reference data, which holds no user data and which this migration cannot
---    revoke on either (postgres does not own it). Application tables are all
---    created by `postgres`. This is recorded as a residual, not as done.
+--    Practical exposure of that residue: a relation created BY supabase_admin in
+--    schema public would inherit the blanket set again. Application tables are
+--    all created by `postgres`.
+--
+--    CORRECTED 2026-09-07 — THERE ARE THREE SUCH RELATIONS, NOT ONE.
+--    The first draft of this file named only `spatial_ref_sys`. A re-measurement
+--    against pg_depend (deptype='e') on BOTH databases found PostGIS owns three
+--    relations in `public`, identically on each:
+--
+--      spatial_ref_sys     table  [postgis]  owner=supabase_admin
+--      geography_columns   view   [postgis]  owner=supabase_admin
+--      geometry_columns    view   [postgis]  owner=supabase_admin
+--
+--    All three grant the four privileges to anon/authenticated, and `postgres`
+--    can revoke on none of them. With only `spatial_ref_sys` excluded by name,
+--    THIS MIGRATION WOULD HAVE FAILED ITS OWN POSTCONDITION: it would revoke
+--    everything it could reach, then RAISE because two PostGIS views still hold
+--    the grants — aborting the transaction and landing nothing. Exactly the
+--    failure 2333 had, for exactly the same reason: a postcondition asserting
+--    something about an object the migration cannot touch.
+--
+--    So the exclusion below is by EXTENSION OWNERSHIP, not by name. That is the
+--    real reason these relations are unreachable, it covers all three without
+--    enumerating them, and it will cover the next extension object too. None of
+--    the three holds user data: two are PostGIS catalog views over
+--    information_schema, the third is its coordinate-system reference table.
 --
 -- 2. CI DRIFT. portava-ci shows 357/438 rather than production's 374/417. The
 --    two are the same posture; the numbers differ because CI carries tables
 --    production does not. Apply to portava-ci FIRST and read the postcondition
 --    there before touching production.
+--
+-- ══════════════════════════════════════════════════════════════════════════════
+-- ONE INTERACTION WORTH KNOWING ABOUT
+-- ══════════════════════════════════════════════════════════════════════════════
+-- 2332_money_grant_boundary.sql records its rollback, in comments, as
+-- `GRANT ALL ON TABLE public.rent_buddy_{earnings_ledger,payouts,tips} TO anon,
+-- authenticated, service_role`. Those are comments, not statements, so 2332
+-- itself cannot undo this migration in any order. But if 2332 is ever ROLLED
+-- BACK after this migration is applied, that GRANT ALL re-grants TRUNCATE,
+-- REFERENCES, TRIGGER and MAINTAIN to anon on three money tables and silently
+-- breaches this boundary. Rolling 2332 back therefore means re-running this
+-- file afterwards. No other migration in the tree grants any of the four to a
+-- client role (checked by grep across all of src/migrations).
 --
 -- ══════════════════════════════════════════════════════════════════════════════
 -- ROLLBACK
@@ -116,6 +149,13 @@ BEGIN;
 -- `public` at execution time. Objects the current role cannot revoke on
 -- (spatial_ref_sys) raise a WARNING and are skipped; that is expected and is
 -- why the postcondition below excludes it by name rather than by silence.
+
+-- NOTE ON MATERIALIZED VIEWS: `ON ALL TABLES IN SCHEMA` expands to tables,
+-- views and foreign tables — NOT materialized views. Neither database has a
+-- materialized view in `public` today (production r=417 v=12, portava-ci r=438
+-- v=13, m=0 on both), so there is nothing to miss. The postcondition scans 'm'
+-- anyway: if one is ever added holding these grants, this migration should fail
+-- and say so rather than quietly not covering it.
 
 REVOKE TRUNCATE, REFERENCES, TRIGGER, MAINTAIN
   ON ALL TABLES IN SCHEMA public
@@ -147,7 +187,7 @@ BEGIN
   -- nothing at all.
   SELECT count(*) INTO v_examined
     FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-   WHERE n.nspname = 'public' AND c.relkind IN ('r','p','v','f');
+   WHERE n.nspname = 'public' AND c.relkind IN ('r','p','v','f','m');
 
   IF v_examined < 300 THEN
     RAISE EXCEPTION
@@ -167,8 +207,16 @@ BEGIN
         CROSS JOIN LATERAL aclexplode(c.relacl) x
         JOIN pg_roles r ON r.oid = x.grantee
        WHERE n.nspname = 'public'
-         AND c.relkind IN ('r','p','v','f')
-         AND c.relname <> 'spatial_ref_sys'
+         AND c.relkind IN ('r','p','v','f','m')
+         -- Extension-owned relations are excluded because `postgres` cannot
+         -- revoke on them at all, not as a convenience. PostGIS owns three in
+         -- `public` (spatial_ref_sys, geography_columns, geometry_columns), all
+         -- owned by supabase_admin. Excluding by extension ownership rather
+         -- than by name states the actual reason and covers future ones.
+         AND NOT EXISTS (
+           SELECT 1 FROM pg_depend d
+            WHERE d.objid = c.oid AND d.deptype = 'e'
+              AND d.classid = 'pg_class'::regclass)
          AND r.rolname IN ('anon','authenticated')
          AND x.privilege_type IN ('TRUNCATE','REFERENCES','TRIGGER','MAINTAIN')
     ) s;
@@ -197,7 +245,7 @@ BEGIN
       v_default;
   END IF;
 
-  RAISE NOTICE '2490 OK: % relations examined, 0 still grant TRUNCATE/REFERENCES/TRIGGER/MAINTAIN to anon or authenticated, postgres default ACL clean. Residual: supabase_admin default ACL (unreachable, see header).', v_examined;
+  RAISE NOTICE '2490 OK: % relations examined, 0 non-extension relation still grants TRUNCATE/REFERENCES/TRIGGER/MAINTAIN to anon or authenticated, postgres default ACL clean. Residuals (both unreachable from a migration, see header): the supabase_admin default ACL, and PostGIS''s three relations in public.', v_examined;
 END $$;
 
 COMMIT;
