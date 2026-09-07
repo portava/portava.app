@@ -32,6 +32,13 @@ import { logModerationAction, auditReportAction } from "../lib/moderationAudit.j
 
 import { requireAdmin } from "../lib/requireAdmin.js";
 import {
+  GEO_ZONE_DB_TYPES,
+  GEO_ZONE_SAFETY_RATINGS,
+  GeoZoneSeedFileSchema,
+  PolygonGeojsonSchema,
+  validateGeoZoneSeed,
+} from "../lib/geoZoneSeed.js";
+import {
   invalidateDiscoveryEngineModeCache,
   DISCOVERY_ENGINE_MODE_FLAG,
   DISCOVERY_PDE_KILL_SWITCH,
@@ -45,10 +52,13 @@ const router = Router();
 
 // ── Geo zone schemas ──────────────────────────────────────────────────────────
 
-// Valid zone_type values from the migration comment
-const GEO_ZONE_TYPES = ["city", "neighborhood", "district", "venue_area", "safety_zone"] as const;
-// Valid safety_rating values from the migration comment
-const SAFETY_RATINGS = ["safe", "moderate", "caution", "avoid"] as const;
+// zone_type: the LIVE CHECK constraint (geo_zones_zone_type_check), not the
+// list this file used to carry — `district`, `venue_area` and `safety_zone`
+// were never accepted by the database (every such POST died as a db_error),
+// while `venue`, `custom`, `airport` and `hotel` were refused here and
+// accepted there. One source of truth, shared with the seed validator.
+const GEO_ZONE_TYPES = GEO_ZONE_DB_TYPES;
+const SAFETY_RATINGS = GEO_ZONE_SAFETY_RATINGS;
 
 const createGeoZoneSchema = z.object({
   name:          z.string().min(1).max(200),
@@ -57,6 +67,9 @@ const createGeoZoneSchema = z.object({
   centerLng:     z.number().min(-180).max(180).optional(),
   radiusMeters:  z.number().positive().max(100_000).optional(),
   boundsJson:    z.record(z.unknown()).optional(),
+  // Crowd Flow (lib/mapProjection.parseFlowZones) reads polygon_geojson, not
+  // bounds_json; without this an admin could only ever create circle zones.
+  polygonGeojson: PolygonGeojsonSchema.optional(),
   city:          z.string().max(120).optional(),
   countryCode:   z.string().max(4).optional(),
   safetyRating:  z.enum(SAFETY_RATINGS).optional(),
@@ -115,6 +128,7 @@ router.post("/admin/geo-zones", async (req, res) => {
       center_lng:    d.centerLng     ?? null,
       radius_meters: d.radiusMeters  ?? null,
       bounds_json:   d.boundsJson    ?? null,
+      ...(d.polygonGeojson !== undefined ? { polygon_geojson: d.polygonGeojson } : {}),
       city:          d.city          ?? null,
       country_code:  d.countryCode   ?? null,
       safety_rating: d.safetyRating  ?? null,
@@ -127,6 +141,82 @@ router.post("/admin/geo-zones", async (req, res) => {
 
   if (error) { sendError(res, "db_error", error.message); return; }
   res.status(201).json({ zone: data });
+});
+
+// ── POST /admin/geo-zones/import ─────────────────────────────────────────────
+//
+// The ops door for the Crowd Flow zone model. `geo_zones` is empty in
+// production and routes/mapProjection.ts refuses with `no_zone_model` until it
+// is not; 2159 revoked every client write grant, so the ONLY writers are the
+// service role (this route) and the owner's manual SQL
+// (db/seed/geo_zones_production_seed_template.sql). Both run the same rules —
+// lib/geoZoneSeed.validateGeoZoneSeed — and nothing is inserted unless every
+// zone in the batch passes. `dryRun: true` returns the report without writing.
+// The projection route caches the zone model for 30 s (loadFlowZones), so a
+// fresh import is visible on the map within that window.
+
+const MAX_EXISTING_ZONE_NAMES = 5_000;
+
+const importGeoZonesSchema = GeoZoneSeedFileSchema.extend({
+  dryRun: z.boolean().optional(),
+});
+
+router.post("/admin/geo-zones/import", async (req, res) => {
+  const admin = await requireAdmin(req, res, { withDisplayName: true });
+  if (!admin) return;
+  const { sc } = admin;
+
+  const parsedBody = importGeoZonesSchema.safeParse(req.body);
+  if (!parsedBody.success) {
+    res.status(400).json({
+      error: "invalid_payload",
+      message: parsedBody.error.issues[0]?.message ?? "Invalid payload",
+      issues: parsedBody.error.issues.map((i) => ({
+        index: i.path[0] === "zones" && typeof i.path[1] === "number" ? i.path[1] : null,
+        name: null,
+        code: "schema",
+        message: `${i.path.join(".") || "(root)"}: ${i.message}`,
+      })),
+    });
+    return;
+  }
+  const { dryRun, ...seed } = parsedBody.data;
+
+  // Rule 4 needs the names already stored: a duplicate name makes BOTH zones
+  // unresolvable for the next-stop family. A failed read is a refusal, not an
+  // empty store.
+  const { data: existing, error: readErr } = await sc
+    .from("geo_zones")
+    .select("name")
+    .limit(MAX_EXISTING_ZONE_NAMES);
+  if (readErr) { sendError(res, "db_error", readErr.message); return; }
+
+  const validation = validateGeoZoneSeed(seed, {
+    existingNames: ((existing ?? []) as Array<{ name: string }>).map((r) => r.name),
+    createdBy: admin.userId,
+  });
+  if (!validation.ok) {
+    res.status(400).json({
+      error: "invalid_payload",
+      message: `${validation.issues.length} issue(s); nothing was imported`,
+      issues: validation.issues,
+    });
+    return;
+  }
+
+  if (dryRun) {
+    res.json({ dryRun: true, wouldInsert: validation.rows.length, report: validation.report });
+    return;
+  }
+
+  const { data, error } = await sc
+    .from("geo_zones")
+    .insert(validation.rows)
+    .select("id, name, zone_type");
+  if (error) { sendError(res, "db_error", error.message); return; }
+  const zones = (data ?? []) as Array<{ id: string; name: string; zone_type: string }>;
+  logger.info({ admin: admin.userId, inserted: zones.length, source: seed.source }, "geo_zones import");
+  res.status(201).json({ inserted: zones.length, zones, report: validation.report });
 });
 
 // ── GET /admin/geo-zones/:id ──────────────────────────────────────────────────
@@ -167,6 +257,7 @@ router.patch("/admin/geo-zones/:id", async (req, res) => {
   if (d.centerLng    !== undefined) patch.center_lng    = d.centerLng;
   if (d.radiusMeters !== undefined) patch.radius_meters = d.radiusMeters;
   if (d.boundsJson   !== undefined) patch.bounds_json   = d.boundsJson;
+  if (d.polygonGeojson !== undefined) patch.polygon_geojson = d.polygonGeojson;
   if (d.city         !== undefined) patch.city          = d.city;
   if (d.countryCode  !== undefined) patch.country_code  = d.countryCode;
   if (d.safetyRating !== undefined) patch.safety_rating = d.safetyRating;

@@ -71,6 +71,22 @@ const KNOWN_OPEN = new Set<string>([
   // every message to every caller. The allowlist is now EMPTY. Keep it so.
 ]);
 
+/**
+ * Known-open CROSS-TABLE cycles, as the sorted member tables joined by " <-> ".
+ * A cycle of length two — A's policy reads B, B's policy reads A — raises the
+ * same 42P17 as a self-reference and neither sweep above can see it, which is
+ * how the meetup cycle survived the 2026-08-28 sweep. Same rule: it may only
+ * shrink.
+ */
+const KNOWN_CYCLES = new Set<string>([
+  // meetups.meetups_invitee_select reads meetup_invites; four meetup_invites
+  // policies read meetups. FIXED by 2461 (with 2460 first, which hardens the
+  // self-insertable mi_own the repair would otherwise expose). REMOVE THIS
+  // ENTRY once 2460 + 2461 are applied to CI — the stale-allowlist case below
+  // fails by design until you do.
+  "meetup_invites <-> meetups",
+]);
+
 /** One row per public-schema policy, via the service-role-only snapshot RPC. */
 async function policies(): Promise<Array<{ tablename: string; policyname: string; expr: string }>> {
   const { data, error } = await sc.rpc("pg_policies_snapshot");
@@ -80,6 +96,45 @@ async function policies(): Promise<Array<{ tablename: string; policyname: string
 
 const SELF_REF = (t: string) => new RegExp(`(FROM|JOIN)\\s+(public\\.)?${t}\\M`);
 const TAUTOLOGY = /\(([a-z_][a-z0-9_]*)\.([a-z_][a-z0-9_]*) = \1\.\2\)/;
+
+/**
+ * Strongly connected components of size > 1 in the policy-reference graph:
+ * an edge A -> B whenever a policy on A selects FROM (or JOINs) B, B being any
+ * other table that itself carries policies. Each component is rendered as its
+ * sorted members joined by " <-> ".
+ */
+function policyCycles(rows: Array<{ tablename: string; expr: string }>): string[] {
+  const tables = [...new Set(rows.map((r) => r.tablename))];
+  const edges = new Map<string, Set<string>>(tables.map((t) => [t, new Set<string>()]));
+  for (const r of rows) {
+    for (const t of tables) {
+      if (t !== r.tablename && SELF_REF(t).test(r.expr)) edges.get(r.tablename)!.add(t);
+    }
+  }
+  // Tarjan.
+  let index = 0;
+  const idx = new Map<string, number>();
+  const low = new Map<string, number>();
+  const onStack = new Set<string>();
+  const stack: string[] = [];
+  const out: string[] = [];
+  const visit = (v: string) => {
+    idx.set(v, index); low.set(v, index); index += 1;
+    stack.push(v); onStack.add(v);
+    for (const w of edges.get(v) ?? []) {
+      if (!idx.has(w)) { visit(w); low.set(v, Math.min(low.get(v)!, low.get(w)!)); }
+      else if (onStack.has(w)) low.set(v, Math.min(low.get(v)!, idx.get(w)!));
+    }
+    if (low.get(v) === idx.get(v)) {
+      const comp: string[] = [];
+      let w: string;
+      do { w = stack.pop()!; onStack.delete(w); comp.push(w); } while (w !== v);
+      if (comp.length > 1) out.push(comp.sort().join(" <-> "));
+    }
+  };
+  for (const t of tables) if (!idx.has(t)) visit(t);
+  return out.sort();
+}
 
 describe("RLS policy shapes — recursion and tautology", () => {
   it("no policy selects FROM its own table (42P17 infinite recursion)", async (t) => {
@@ -120,6 +175,22 @@ describe("RLS policy shapes — recursion and tautology", () => {
     );
   });
 
+  it("no cross-table policy cycle (42P17 by mutual reference)", async (t) => {
+    if (!CREDS) return t.skip("credentials absent");
+    let rows;
+    try { rows = await policies(); } catch (e) { return t.skip(`snapshot unavailable: ${(e as Error).message}`); }
+
+    const offenders = policyCycles(rows).filter((c) => !KNOWN_CYCLES.has(c));
+    assert.deepEqual(
+      offenders, [],
+      "Policies on these tables read each other in a cycle. Postgres re-enters the first policy while\n" +
+        "expanding the second and raises 42P17, so EVERY read of every table in the cycle fails — and no\n" +
+        "self-reference sweep can see it. Break the cycle with a SECURITY DEFINER helper in authz that\n" +
+        "reads the membership table as its owner (see authz.is_meetup_invitee, migration 2460/2461, and\n" +
+        "authz.is_active_thread_member, 2402). Cycles:\n  " + offenders.join("\n  "),
+    );
+  });
+
   it("the allowlist only holds entries that are still genuinely broken", async (t) => {
     if (!CREDS) return t.skip("credentials absent");
     let rows;
@@ -136,6 +207,13 @@ describe("RLS policy shapes — recursion and tautology", () => {
       stale, [],
       "These allowlist entries are FIXED. Remove them, so the allowlist keeps shrinking and a future\n" +
         "regression on the same policy is caught rather than permanently excused:\n  " + stale.join("\n  "),
+    );
+
+    const liveCycles = new Set(policyCycles(rows));
+    const staleCycles = [...KNOWN_CYCLES].filter((c) => !liveCycles.has(c));
+    assert.deepEqual(
+      staleCycles, [],
+      "These KNOWN_CYCLES entries are FIXED on this database. Remove them:\n  " + staleCycles.join("\n  "),
     );
   });
 });
