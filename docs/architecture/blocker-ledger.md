@@ -30,6 +30,42 @@ production SQL, and without data that does not exist.
 | Discovery | Discovery authors its own `trips` reads instead of consuming the Trip-owned projection | CODE | Discovery lane | **In flight** | flag-gated consumer, legacy as off-state | in progress | None until `2420` applies — the reader selects `trips.version`, absent in production |
 | Intel | `promoteLiveScope` / `withdrawLiveScope` have no caller | CODE | Intel Ops lane | **In flight** | admin surface over the existing library | in progress | None — see OPS_DATA row |
 
+## P2.5 — a state machine with an unreachable state
+
+| Surface | Blocker | Type | Owner | Buildable now? | Fix / action | Production impact |
+|---|---|---|---|---|---|---|
+| Events | `events.state` includes `started`, and **nothing in the tree ever writes it** — no `/start` route, no `update({state:"started"})` anywhere | CODE + OWNER | Events lane | **In flight** | derived transition, flag-gated FALSE; the derived-vs-host-initiated choice is the owner decision `EVENT_START_TRANSITION` | **Live now**, and larger than it looks |
+
+Measured on production 2026-09-07:
+
+| state | count | already past `starts_at` |
+|---|---|---|
+| `open` | 97 | **96** |
+| `completed` | 7 | 7 |
+| `started` | **0** | — |
+
+**Eight code paths depend on the state that is never reached**, and one of them
+is a hard block: `routes/events.ts:4563-4565` refuses `POST .../complete` unless
+`state === 'started'`, so **no event can be completed through the API at all**.
+Production nonetheless holds 7 completed events, which means a second,
+undocumented path put them there — itself worth establishing.
+
+The others: two gates at `events.ts:3491,:3552` permanently closed;
+`BROWSE_STATES`; `pulse.ts:1224,1271,1757`; Passport's `LIVE_EVENT_STATES` in
+two services; and `TrustEventService.ts:612 EVENT_HOST_CANCEL_TRIGGER_STATES`.
+Downstream, the Trust type `event_attendee_no_show` has an emitter that is
+unreachable for exactly this reason — so it is not "unwired", it is wired to a
+state the product never enters.
+
+**Why this is not simply engineering's to close.** Two designs are both valid and
+differ in what a user sees: derived (`now() >= starts_at` flips it) versus
+host-initiated (an event nobody starts never starts). Does an event auto-start
+when nobody showed? Does a host who forgets block completion forever? That is
+product policy, recorded as **`EVENT_START_TRANSITION`**. The derived transition
+is being built flag-gated and seeded FALSE, with the rule isolated in a pure
+function so a host-initiated route can be added later without rework — building
+the architecture around the decision without taking it.
+
 ## P3 — contract exists, producer missing
 
 | Surface | Blocker | Type | Owner | Buildable now? | Fix / action | Commit | Production impact |
