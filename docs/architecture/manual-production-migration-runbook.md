@@ -206,7 +206,34 @@ Everything else is independent and may be applied in any order.
   -- geo_zone_rows = 0 means Crowd Flow stays dark regardless of flags
   ```
 
-### B8. `2250_media_asset_canonical_model.sql` — **behaviour-changing, apply deliberately**
+### B8. Media canonical columns — **CORRECTED 2026-09-07: 2250 will FAIL as written**
+
+> **This entry was wrong when first written.** `2250_media_asset_canonical_model.sql`
+> ends with a postcondition asserting `media_canonical_enabled` is **FALSE**. In
+> production that flag is **TRUE**, so applying 2250 today raises
+> `POSTCONDITION FAILED` and rolls back the entire transaction. Verified by
+> dry-running its DDL plus that verbatim postcondition on production inside a
+> rolled-back transaction.
+>
+> **Two valid orders — pick one:**
+>
+> **Order A** — set `media_canonical_enabled = false`, apply `2250` as written,
+> verify, then decide whether to set it back to true. Turning it off costs
+> nothing: the writer has landed zero rows since 2026-08-16.
+>
+> **Order B** — leave the flag alone and apply
+> `2470_media_asset_canonical_columns_flag_agnostic.sql` instead. It is 2250's
+> DDL verbatim, plus a precondition that every existing `moderation_status` is
+> inside the widened CHECK, with the flag **reported** rather than asserted.
+> Dry-run on production confirmed column resolution succeeds (the writer's
+> payload advanced from `42703` to a benign FK error on a probe owner).
+>
+> Either way a **schema-capability guard now stands in front of the writer**, so
+> the interim is safe: canonical writes are refused loudly instead of failing
+> silently, and the guard picks up an applied migration within 30 seconds
+> without a deploy.
+
+### B8-original. `2250_media_asset_canonical_model.sql` — **behaviour-changing, apply deliberately**
 - **Purpose** adds `captured_at`, `provenance`, `intelligence_eligibility` and one more column to `media_assets` (production has 23 columns, CI has 27).
 - **Why it matters** `media_canonical_enabled` is **TRUE in production**. `recordMediaAsset` sends those columns on every upsert, PostgREST rejects the whole statement with PGRST204, and `if (error) return null` swallows it — **three weeks of silent total write loss since 2026-08-16**.
 - **Type** additive schema, but **behaviour-changing in effect**: applying it *restarts canonical writes*, which will populate the §18 Quick Media row and the §30 Uploads count. That is a product-visible change, not a migration detail.
