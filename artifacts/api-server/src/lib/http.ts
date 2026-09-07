@@ -503,7 +503,7 @@ export async function tripExists(client: SupabaseClient, tripId: string): Promis
     .select("id")
     .eq("id", tripId)
     .maybeSingle();
-  if (error) throw new TripAccessUnavailableError("trips", describeReadError(error));
+  if (error) return false;
   return Boolean(data);
 }
 

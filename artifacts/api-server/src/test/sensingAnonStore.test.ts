@@ -369,6 +369,31 @@ const PERMITTED_REFERRERS = new Map<string, string>([
   ],
 ]);
 
+/**
+ * Files that NAME the store without calling it. Kept separate from the caller
+ * allowlist on purpose — a prose or data mention is a different fact from a
+ * call, and collapsing the two would let a real caller hide behind "it is only
+ * mentioned". Every entry here is asserted below to contain no import.
+ *
+ * checkProductionDrift.ts is worth reading twice: it was added to this branch
+ * AFTER 2315, and it names the table. So the original zero-namers assertion was
+ * already false here before any caller existed — the tripwire had drifted from
+ * "nothing calls this" to "nothing mentions this", which is not the property
+ * anybody wanted to enforce.
+ */
+const PERMITTED_MENTIONS = new Map<string, string>([
+  [
+    join("lib", "envValidation.ts"),
+    "names lib/sensingAnonStore in the comment recording why SENSING_CONTRIBUTOR_PEPPER is " +
+      "OPTIONAL rather than boot-required. It imports nothing and reads no store.",
+  ],
+  [
+    join("scripts", "checkProductionDrift.ts"),
+    "the CI-vs-production drift registry classifies sensing_anon_contributions as a known gap. " +
+      "That is data ABOUT the table, not a caller of it.",
+  ],
+]);
+
 describe("the store is reachable only from the callers the ruling names", () => {
   function walk(dir: string, out: string[] = []): string[] {
     for (const entry of readdirSync(dir)) {
@@ -380,34 +405,54 @@ describe("the store is reachable only from the callers the ruling names", () => 
     return out;
   }
 
-  /** Non-test, non-self files under src/ that name either module. */
-  function importers(): string[] {
+  /**
+   * Every non-test, non-self file under src/ that mentions either module OR the
+   * table by name. One scan, deliberately: an import and a bare table name are
+   * two ways to reach the same store, and the original tripwire ran them as two
+   * lists, which is how one of them silently acquired an entry.
+   */
+  function mentioners(): string[] {
     return walk(SRC)
       .filter((f) => {
         if (f.includes(`${join("src", "test")}`)) return false;
+        if (f.includes(`${join("src", "migrations")}`)) return false;
         if (f.endsWith("sensingAnonStore.ts") || f.endsWith("sensingCoverageAggregate.ts")) return false;
-        return /sensingAnonStore|sensingCoverageAggregate/.test(readFileSync(f, "utf8"));
+        const text = readFileSync(f, "utf8");
+        return /sensingAnonStore|sensingCoverageAggregate/.test(text) || text.includes(TABLE);
       })
       .map((f) => f.slice(SRC.length + 1));
   }
 
-  it("the allowlist is not empty and every entry gives a reason", () => {
-    // Vacuity is failure: an empty allowlist would make the equality assertion
+  const IMPORT_RE = /import[\s\S]{0,400}?from\s+"\.[^"]*sensing(AnonStore|CoverageAggregate|AnonService)\.js"/;
+
+  it("both allowlists are non-empty and every entry gives a reason", () => {
+    // Vacuity is failure: an empty allowlist would make the equality assertions
     // below pass by describing nothing.
-    assert.ok(PERMITTED_REFERRERS.size > 0, "the allowlist describes nothing");
-    for (const [file, reason] of PERMITTED_REFERRERS) {
+    assert.ok(PERMITTED_REFERRERS.size > 0, "the caller allowlist describes nothing");
+    assert.ok(PERMITTED_MENTIONS.size > 0, "the mention allowlist describes nothing");
+    for (const [file, reason] of [...PERMITTED_REFERRERS, ...PERMITTED_MENTIONS]) {
       assert.ok(reason.trim().length > 20, `${file} is allowlisted with no reason`);
     }
   });
 
-  it("the importers are EXACTLY the allowlisted callers — no more, and no fewer", () => {
+  it("the files that mention the store are EXACTLY the two allowlists — no more, and no fewer", () => {
     const files = walk(SRC);
     assert.ok(files.length > 200, "premise: the source tree was found");
     assert.deepEqual(
-      importers().sort(),
-      [...PERMITTED_REFERRERS.keys()].sort(),
-      "an unlisted file imports the anonymous sensing store, or an allowlisted one no longer does",
+      mentioners().sort(),
+      [...PERMITTED_REFERRERS.keys(), ...PERMITTED_MENTIONS.keys()].sort(),
+      "an unlisted file references the anonymous sensing store, or an allowlisted one no longer does",
     );
+  });
+
+  it("the callers really call, and the mentions really only mention", () => {
+    // Without this, the two lists are one list and the distinction is decoration.
+    for (const f of PERMITTED_REFERRERS.keys()) {
+      assert.match(readFileSync(join(SRC, f), "utf8"), IMPORT_RE, `${f} is allowlisted as a caller but imports nothing`);
+    }
+    for (const f of PERMITTED_MENTIONS.keys()) {
+      assert.doesNotMatch(readFileSync(join(SRC, f), "utf8"), IMPORT_RE, `${f} is allowlisted as a mention but is a caller`);
+    }
   });
 
   it("no route touches the store — a transport is an owner decision, not an implementation detail", () => {
@@ -420,7 +465,7 @@ describe("the store is reachable only from the callers the ruling names", () => 
     assert.deepEqual(offenders, [], "an HTTP surface for the anonymous sensing store needs an owner decision first");
   });
 
-  it("only the allowlisted callers name the table", () => {
+  it("only allowlisted files name the table", () => {
     const namers = walk(SRC)
       .filter(
         (f) =>
@@ -431,7 +476,10 @@ describe("the store is reachable only from the callers the ruling names", () => 
       .filter((f) => readFileSync(f, "utf8").includes(TABLE))
       .map((f) => f.slice(SRC.length + 1));
     for (const f of namers) {
-      assert.ok(PERMITTED_REFERRERS.has(f), `${TABLE} is named by ${f}, which is not an allowlisted caller`);
+      assert.ok(
+        PERMITTED_REFERRERS.has(f) || PERMITTED_MENTIONS.has(f),
+        `${TABLE} is named by ${f}, which is on neither allowlist`,
+      );
     }
   });
 
