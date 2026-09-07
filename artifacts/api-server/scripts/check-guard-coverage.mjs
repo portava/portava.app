@@ -180,7 +180,12 @@ const READ_ONLY_AUDIT_ENTRY_POINTS = [
     reason:
       'Reads the live schema through the Management API with SELECTs on pg_class, information_schema.columns, ' +
       'pg_proc, pg_indexes, pg_policies, pg_type/pg_enum and pg_trigger, and diffs them against migration files ' +
-      'on disk. Auditing production is its purpose: the drift list in docs/migrations.md came from it.',
+      'on disk. Since 2026-09-06 it additionally issues two SELECTs when (and only when) that diff is non-empty, ' +
+      'to classify each gap as drift / pending-on-main / new-on-this-branch: one to_regclass() existence probe ' +
+      'for public.schema_migration_ledger, and one `select filename, checksum, applied_by from ' +
+      'public.schema_migration_ledger`. Same statements checkMigrationLedger.ts declares. Still every-statement-' +
+      'a-read: no INSERT/UPDATE/DELETE/DDL anywhere. Auditing production is its purpose: the drift list in ' +
+      'docs/migrations.md came from it.',
   },
   {
     file: 'src/scripts/auditLiveVsCanonical.ts',

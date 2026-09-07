@@ -13,9 +13,33 @@
  *   SUPABASE_URL=<url> SUPABASE_PROJECT_TOKEN=<token> \  # or SUPABASE_ACCESS_TOKEN
  *     node --import tsx/esm src/scripts/auditMigrationsVsLive.ts
  *
- * Exit code 0 → no missing objects (ignoring the known-drift allowlist)
- * Exit code 1 → missing objects found (details printed per migration file)
+ * Exit code 0 → no UNEXPLAINED missing objects (see the classification below)
+ * Exit code 1 → drift, or migrations that should already be applied and are not
  * Exit code 2 → environment / API error
+ *
+ * MISSING IS NOT ONE STATE — THE 2026-09-06 CLASSIFICATION
+ * =======================================================
+ * The apply step this audit depends on (`migrations — apply to the sanctioned
+ * CI project`, in .github/workflows/live-db.yml) is gated
+ * `github.ref == 'refs/heads/main'`. This audit is not. So on a PR branch it
+ * ran with its enabling step skipped and every PR adding an object-creating
+ * migration was guaranteed red, in the same undifferentiated wording it uses
+ * for genuine drift. "Not yet applied" is not "drift", exactly as "the read
+ * failed" is not "there is no data" — and rendering them identically is what
+ * teaches a reviewer to wave both through.
+ *
+ * Each migration file with a missing object is therefore classified, using
+ * public.schema_migration_ledger as the arbiter of what was actually applied
+ * and origin/main as the arbiter of what the applier has ever seen:
+ *
+ *   DRIFT              ledger row exists, objects absent  → exit 1
+ *   PENDING ON MAIN    no ledger row, file IS on main     → exit 1
+ *   NEW ON THIS BRANCH no ledger row, file NOT on main    → exit 0, and PRINTS
+ *
+ * Category 3 is the ONLY exit-0 path and anything that cannot be established
+ * falls into category 2. See src/scripts/lib/migrationGapClassification.ts and
+ * src/scripts/lib/mainBranchFiles.ts, which hold the rule and the git
+ * resolution; src/test/migrationGapClassification.test.ts drives both.
  *
  * Notes / known gotchas encoded below:
  * - Uses the Management API query endpoint (direct psql is unreachable from
@@ -63,16 +87,36 @@
 // See src/lib/ciProdReadOnlyAuditGuard.mjs and docs/ci/README.md.
 import "../lib/ciProdReadOnlyAuditGuard.mjs";
 
+import { spawnSync } from "node:child_process";
 import { readdirSync, readFileSync } from "node:fs";
-import { join, dirname, resolve } from "node:path";
+import { join, dirname, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { FROZEN_LEGACY_FILES, findRogueFrozenFiles } from "./frozenLegacyFiles.js";
 import { FROZEN_ROOT_FILES } from "./frozenRootFiles.js";
+import {
+  LEDGER_TABLE,
+  computeLedgerDrift,
+  readDiskFiles,
+  type LedgerRow,
+} from "./lib/migrationLedgerCore.js";
+import {
+  DEFAULT_MAIN_REF,
+  resolveMainFileSet,
+  type GitRunResult,
+} from "./lib/mainBranchFiles.js";
+import {
+  classifyGaps,
+  decideGapExitCode,
+  formatGapReport,
+  type MigrationGap,
+} from "./lib/migrationGapClassification.js";
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
 const __dir = dirname(fileURLToPath(import.meta.url));
-const MIGRATION_DIRS = [resolve(__dir, "../migrations")]; // canonical chain
+const CANONICAL_MIGRATIONS_DIR = resolve(__dir, "../migrations");
+const REPO_ROOT = resolve(__dir, "../../../..");
+const MIGRATION_DIRS = [CANONICAL_MIGRATIONS_DIR]; // canonical chain
 
 // The legacy chain (artifacts/api-server/migrations/, no src/) is historical
 // and diverges heavily from live (e.g. its 0032 creates
@@ -887,6 +931,94 @@ function isMissing(claim: Claim, live: LiveSchema): boolean {
   }
 }
 
+// ── Branch comparison ─────────────────────────────────────────────────────────
+//
+// The classifier needs to know whether a migration file exists on the branch
+// the applier runs on. That is a question about the REPOSITORY, not about the
+// database, and it is answered by git — never inferred from the filename, and
+// never guessed at when git cannot answer.
+//
+// The runner is a thin wrapper that turns every failure mode (git missing, git
+// non-zero, spawn error) into a value, because resolveMainFileSet() treats
+// "could not establish" as a first-class answer and must not have to catch.
+
+function runGit(args: readonly string[]): GitRunResult {
+  const r = spawnSync("git", [...args], {
+    cwd: REPO_ROOT,
+    encoding: "utf8",
+    // A full migrations listing is ~30KB today; the ceiling is generous so a
+    // truncated listing can never masquerade as "these files are not on main".
+    maxBuffer: 32 * 1024 * 1024,
+  });
+  if (r.error) return { status: -1, stdout: "", stderr: r.error.message };
+  return { status: r.status ?? -1, stdout: r.stdout ?? "", stderr: r.stderr ?? "" };
+}
+
+/**
+ * `--main-ref <ref>` / `--main-ref=<ref>`, defaulting to origin/main.
+ *
+ * For an operator who has genuinely moved the apply branch. It is NOT a way to
+ * make a red run green: pointing it at a ref that lacks a migration turns that
+ * migration into category 3, so the flag is as load-bearing as the gate in
+ * live-db.yml and belongs with whoever owns that gate.
+ */
+export function parseMainRefFlag(argv: readonly string[]): string {
+  const idx = argv.indexOf("--main-ref");
+  if (idx >= 0) {
+    const next = argv[idx + 1];
+    if (typeof next === "string" && next !== "" && !next.startsWith("--")) {
+      return next;
+    }
+  }
+  const inline = argv.find((a) => a.startsWith("--main-ref="));
+  if (inline !== undefined) {
+    const value = inline.slice("--main-ref=".length);
+    if (value !== "") return value;
+  }
+  return DEFAULT_MAIN_REF;
+}
+
+/**
+ * Read the ledger and reduce it to "which files on disk have NO row".
+ *
+ * Delegates the disk/ledger diff to computeLedgerDrift() — the same core
+ * `check:migration-ledger` and `certify:migrations` read — rather than defining
+ * "recorded" a second time here. Returns null for every state in which the
+ * answer cannot be established (table absent, query failed): the classifier
+ * fails those closed rather than treating an unread ledger as an empty one.
+ */
+async function readFilesWithoutLedgerRow(
+  projectRef: string,
+  trail: string[],
+): Promise<ReadonlySet<string> | null> {
+  try {
+    const presence = await liveQuery<{ present: boolean }>(
+      `select (to_regclass('${LEDGER_TABLE}') is not null) as present`,
+    );
+    if (presence[0]?.present !== true) {
+      trail.push(
+        `${LEDGER_TABLE} does not exist on ${projectRef} — 2254 has not been applied ` +
+          "here, so this database cannot say which migrations it has run",
+      );
+      return null;
+    }
+    const rows = await liveQuery<LedgerRow>(
+      `select filename, checksum, applied_by from ${LEDGER_TABLE}`,
+    );
+    const drift = computeLedgerDrift(readDiskFiles(CANONICAL_MIGRATIONS_DIR), rows);
+    trail.push(
+      `${LEDGER_TABLE} on ${projectRef}: ${rows.length} row(s); ` +
+        `${drift.missingFromLedger.length} file(s) on disk have none`,
+    );
+    return new Set(drift.missingFromLedger);
+  } catch (err) {
+    trail.push(
+      `could not read ${LEDGER_TABLE} on ${projectRef}: ${(err as Error).message}`,
+    );
+    return null;
+  }
+}
+
 // ── Main ──────────────────────────────────────────────────────────────────────
 //
 // The audit runs only when this file is the process ENTRYPOINT (audit:schema),
@@ -929,9 +1061,8 @@ async function main(): Promise<void> {
   }
 
   let totalClaims = 0;
-  let filesWithGaps = 0;
-  let missingCount = 0;
   let filesAudited = 0;
+  const gaps: MigrationGap[] = [];
 
   for (const dir of MIGRATION_DIRS) {
     let files: string[];
@@ -940,6 +1071,7 @@ async function main(): Promise<void> {
     } catch {
       continue; // dir may not exist
     }
+    const dirLabel = relative(REPO_ROOT, dir);
     console.log(`\n── ${dir}`);
     for (const file of files) {
       if (SKIP_FILES.has(file)) {
@@ -953,10 +1085,16 @@ async function main(): Promise<void> {
         (c) => !ALLOWLIST.has(c.key) && isMissing(c, live),
       );
       if (missing.length > 0) {
-        filesWithGaps++;
-        missingCount += missing.length;
-        console.log(`  ✖ ${file}`);
-        for (const c of missing) console.log(`      missing ${c.label}`);
+        gaps.push({
+          file,
+          repoPath: `${dirLabel}/${file}`,
+          missing: missing.map((c) => c.label),
+          // The ledger tracks the canonical chain only. The frozen legacy chain
+          // (reachable via --include-legacy) has no rows there, so its ledger
+          // presence cannot be established and it fails closed rather than
+          // being waved through as "new".
+          ledgerTracksDir: dir === CANONICAL_MIGRATIONS_DIR,
+        });
       }
     }
   }
@@ -964,15 +1102,49 @@ async function main(): Promise<void> {
   console.log(
     `\nAudited ${filesAudited} migration files, ${totalClaims} claimed objects.`,
   );
-  if (missingCount > 0) {
-    console.error(
-      `✖ ${missingCount} missing object(s) across ${filesWithGaps} file(s). ` +
-        "Apply the migrations via the Supabase Management API and update docs/migrations.md.",
+
+  // ── CLASSIFY ──────────────────────────────────────────────────────────────
+  //
+  // The evidence is gathered only when there is something to classify: a clean
+  // tree needs neither a ledger read nor a git fetch, and a run that asks the
+  // network for nothing cannot fail on the network.
+  let report: string;
+  let exitCode: 0 | 1;
+  if (gaps.length === 0) {
+    report = formatGapReport([], {
+      projectRef,
+      mainRefLabel: "the apply branch (not consulted — nothing to classify)",
+      evidenceTrail: [],
+    });
+    exitCode = 0;
+  } else {
+    const evidenceTrail: string[] = [];
+    const filesWithoutLedgerRow = await readFilesWithoutLedgerRow(
+      projectRef,
+      evidenceTrail,
     );
-    process.exit(1);
+    const mainFiles = resolveMainFileSet({
+      run: runGit,
+      dirs: MIGRATION_DIRS.map((d) => relative(REPO_ROOT, d)),
+      ref: parseMainRefFlag(process.argv),
+    });
+    evidenceTrail.push(...mainFiles.detail);
+
+    const classified = classifyGaps(gaps, {
+      filesWithoutLedgerRow,
+      mainPaths: mainFiles.paths,
+    });
+    report = formatGapReport(classified, {
+      projectRef,
+      mainRefLabel: mainFiles.label,
+      evidenceTrail,
+    });
+    exitCode = decideGapExitCode(classified);
   }
-  console.log("✔ Live schema contains every object claimed by the migrations.");
-  process.exit(0);
+
+  if (exitCode === 0) console.log(report);
+  else console.error(report);
+  process.exit(exitCode);
 }
 
 // Entrypoint gate: run the audit only when invoked directly (audit:schema),
