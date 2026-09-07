@@ -45,6 +45,10 @@ import {
 } from "../lib/discoveryEngineMode.js";
 import { recordAdjudicatedTrustEvent, TRUST_EVENT_TYPES } from "../services/trust/TrustEventService.js";
 import { revokeModerationTrustConsequences } from "../services/trust/TrustAdminService.js";
+// Intel live-scope operator surface (section at the bottom of this file).
+import { promoteLiveScope, withdrawLiveScope, liveScopeKey } from "../lib/intelLiveScopePromotion.js";
+import { isPromotedScopeActive } from "../lib/liveClaimRead.js";
+import { isFlagEnabled, getFlagRow } from "../lib/featureFlags.js";
 
 const router = Router();
 
@@ -2945,6 +2949,337 @@ router.get("/admin/health/schema-drift", async (req, res) => {
     checkedAt: cached.checkedAt,
     cached: fromCache,
   });
+});
+
+// ── Intel live-scope promotion — the operator surface ─────────────────────────
+//
+// intel_live_promoted_scopes (2179) is the per-scope allowlist that
+// lib/liveClaimRead.ts consults before ANY live claim is served. 2430 built
+// the ONE write path — three SECURITY DEFINER, service_role-only SQL functions
+// wrapped by lib/intelLiveScopePromotion.ts — and, until this section, nothing
+// called promoteLiveScope / withdrawLiveScope: no route, no CLI, no scheduler
+// (only the expiry sweep was wired). These four routes are that caller.
+//
+//   GET  /admin/intel/live-scopes                 list (active by default; ?all=1 for the audit trail)
+//   GET  /admin/intel/live-scopes/:scopeKey       inspect one row: provenance, evidence, state
+//   POST /admin/intel/live-scopes/promote         { zoneId, claimType, expiresAt, evidence, note? }
+//   POST /admin/intel/live-scopes/withdraw        { zoneId, claimType, reason }
+//
+// WHAT THIS DOES NOT DO. It does not decide which scope goes live. Promotion is
+// a human decision (2179's header, lib/intelLiveScope.ts,
+// lib/intelCalibrationScheduler.ts, docs/architecture/intel-spine-liveness.md),
+// and assessDensityGate's `certifiable` is false BY CONSTRUCTION while two §26
+// inputs are uninstrumented — so every promoter is overriding a non-certifiable
+// assessment. This surface RECORDS that override (who, on what evidence, with
+// what reasoning, until when); it never makes it, and nothing here runs
+// without a request from an authenticated admin.
+//
+// FAIL-CLOSED, IN ORDER, ON EVERY ROUTE
+//   1. requireAdmin (403), exactly as every other route in this file.
+//   2. intel_live_scope_admin_surface_enabled (2570, seeded FALSE) must read
+//      TRUE through isFlagEnabled (the house reader: absent, false and
+//      unreadable are all OFF). Closed → 404 feature_disabled; the message
+//      says whether the row is missing (apply 2570) or off.
+//   3. Writes only: intel_live_scope_promotion_enabled (2430's writer flag),
+//      the same way. When it is not ON, getFlagRow says whether the row is
+//      MISSING — which on a pre-2430 database it is — so the answer is 503
+//      naming migration 2430 rather than an indistinguishable "disabled";
+//      a row that is FALSE → 404 naming the flag. (Both readers are the
+//      shared ones scripts/check-flag-polarity.mjs recognises; a direct
+//      feature_flags read here would need a DIRECT_READS entry in a file this
+//      lane does not own. The cost is that "unreadable" and "absent" share a
+//      message; both are closed.)
+//   4. The library call. A RESOLVED database error is checked, never ignored;
+//      42883 / PGRST202 (function missing) and 42703 / PGRST* (column missing)
+//      are the pre-2430 shape and answer 503 "requires 2430". Any other error
+//      is 500. There is no path that reports an empty success on a failure.
+// Reads (list / inspect) select the 2430 columns explicitly and answer 503 on
+// a pre-2430 schema rather than falling back to the six-column shape: an
+// operator surface that silently showed rows without expiry/withdrawal would
+// be lying about what is live.
+//
+// AUDIT. The row IS the audit trail (2430: "the allowlist is also the audit
+// trail of what was ever live"): promoted_by / withdrawn_by are the admin's
+// user id, withdrawn_reason and evidence are what they typed, and a withdrawal
+// keeps the row. This file has no admin-action audit table that fits a scope
+// (admin_access_log's record_type CHECK is profile|event|trip|gps_event|
+// check_in; moderation_actions needs a target user; feature_flag_audit_log is
+// per flag), so nothing new is invented: the row carries the who/why, and the
+// request log line carries the display name, the same way the feature-flag
+// toggle above logs its actor.
+
+/** CAPABILITY flag (2570). Literal so scripts/check-flag-polarity.mjs resolves it. */
+export const LIVE_SCOPE_ADMIN_SURFACE_FLAG = "intel_live_scope_admin_surface_enabled";
+/**
+ * 2430's writer flag, restated as a local literal because the polarity check
+ * resolves flag names within one file only. MUST equal
+ * lib/intelLiveScopePromotion.LIVE_SCOPE_PROMOTION_FLAG — pinned by
+ * src/test/intelLiveScopeOps.test.ts.
+ */
+export const LIVE_SCOPE_WRITER_FLAG = "intel_live_scope_promotion_enabled";
+
+/** Every column 2179 + 2430 put on the row; the operator sees all of it. */
+export const LIVE_SCOPE_ROW_COLUMNS =
+  "scope_key, zone_id, claim_type, promoted_at, promoted_by, note, expires_at, " +
+  "withdrawn_at, withdrawn_by, withdrawn_reason, promoted_via, evidence, updated_at";
+
+/** Codes meaning "the 2430 column/table/function is not on this database" (same sets as lib/schemaDriftCheck). */
+const LIVE_SCOPE_SCHEMA_MISSING_CODES: ReadonlySet<string> = new Set(["42703", "42P01", "PGRST100", "PGRST204", "PGRST205"]);
+const LIVE_SCOPE_FUNCTION_MISSING_CODES: ReadonlySet<string> = new Set(["42883", "PGRST202"]);
+
+const REQUIRES_2430 =
+  "migration 2430 (intel_live_scope_promotion_writer) is not applied to this database — " +
+  "the promotion functions and the expires_at/withdrawn_at/evidence columns do not exist";
+
+/**
+ * Gate 2: the surface flag, through isFlagEnabled (fail-closed). Sends the
+ * response and returns false when the surface is closed; getFlagRow is
+ * consulted only then, to say WHY (null = no row or unreadable; else off).
+ */
+async function requireLiveScopeSurface(res: any, sc: any): Promise<boolean> {
+  if (await isFlagEnabled(sc, LIVE_SCOPE_ADMIN_SURFACE_FLAG)) return true;
+  const row = await getFlagRow(sc, LIVE_SCOPE_ADMIN_SURFACE_FLAG);
+  sendError(
+    res,
+    "feature_disabled",
+    row === null
+      ? `${LIVE_SCOPE_ADMIN_SURFACE_FLAG} has no row (or could not be read) — migration 2570 seeds it; the intel live-scope admin surface is closed`
+      : `${LIVE_SCOPE_ADMIN_SURFACE_FLAG} is off; the intel live-scope admin surface is closed`,
+  );
+  return false;
+}
+
+/**
+ * Gate 3 (writes): 2430's writer flag, through isFlagEnabled (fail-closed).
+ * When it is not ON, a MISSING row (getFlagRow null — production today, and
+ * also an unreadable read) is 503 naming 2430; a FALSE row is 404 naming the
+ * flag. Neither path reaches the library.
+ */
+async function requireLiveScopeWriter(res: any, sc: any): Promise<boolean> {
+  if (await isFlagEnabled(sc, LIVE_SCOPE_WRITER_FLAG)) return true;
+  const row = await getFlagRow(sc, LIVE_SCOPE_WRITER_FLAG);
+  if (row === null) {
+    sendError(res, "server_not_configured", `${LIVE_SCOPE_WRITER_FLAG} has no row (or could not be read): ${REQUIRES_2430}. Apply 2430, then enable the flag. No promotion is made on a missing or unreadable flag.`);
+    return false;
+  }
+  sendError(res, "feature_disabled", `${LIVE_SCOPE_WRITER_FLAG} is off; the writer refuses every promotion and withdrawal until it is enabled`);
+  return false;
+}
+
+/**
+ * Map a library refusal onto the wire. `skipped:false` never reaches here.
+ * Returns the receipt's disposition so the caller can log it.
+ */
+function sendLiveScopeWriterFailure(
+  req: any,
+  res: any,
+  verb: "promotion" | "withdrawal",
+  r: { reason: string | null; errorCode?: string | null; errorMessage?: string | null; scopeKey: string },
+): void {
+  switch (r.reason) {
+    case "invalid_input":
+      sendError(res, "invalid_payload", `${verb} refused by the writer as invalid input (claim type empty, horizon not in the future, or reason empty)`);
+      return;
+    case "disabled":
+      // The flag row was ON a moment ago (gate 3) and OFF when the library read it.
+      sendError(res, "feature_disabled", `${LIVE_SCOPE_WRITER_FLAG} is off; ${verb} not made`);
+      return;
+    case "no_client":
+      sendError(res, "server_not_configured", "service client unavailable; no promotion write is possible");
+      return;
+    default: {
+      const code = r.errorCode ?? null;
+      if (code && (LIVE_SCOPE_FUNCTION_MISSING_CODES.has(code) || LIVE_SCOPE_SCHEMA_MISSING_CODES.has(code))) {
+        req.log.error({ scopeKey: r.scopeKey, pgCode: code, verb }, `intel live-scope ${verb}: 2430 function/column missing — apply migration 2430`);
+        sendError(res, "server_not_configured", `${verb} failed (${code}): ${REQUIRES_2430}`);
+        return;
+      }
+      req.log.error({ scopeKey: r.scopeKey, pgCode: code, err: r.errorMessage, verb }, `intel live-scope ${verb} failed`);
+      sendError(res, "db_error", `${verb} failed${code ? ` (${code})` : ""}: ${r.errorMessage ?? "database error"}`, { exposeDetail: true });
+    }
+  }
+}
+
+/** Serve-path truth (lib/liveClaimRead.isPromotedScopeActive) labelled for a human. */
+function liveScopeState(row: { scope_key: string; expires_at?: string | null; withdrawn_at?: string | null }, nowMs: number): "active" | "withdrawn" | "expired" {
+  if (row.withdrawn_at != null) return "withdrawn";
+  return isPromotedScopeActive(row, nowMs) ? "active" : "expired";
+}
+
+/**
+ * Sends the response for a RESOLVED read error on intel_live_promoted_scopes.
+ * A pre-2430 schema answers 503 naming the migration; anything else is 500.
+ * Never lets an error read as "no rows".
+ */
+function sendLiveScopeReadFailure(req: any, res: any, error: { code?: unknown; message?: unknown }): void {
+  const code = typeof error?.code === "string" ? error.code : null;
+  if (code && LIVE_SCOPE_SCHEMA_MISSING_CODES.has(code)) {
+    req.log.error({ pgCode: code }, "intel live-scope list: 2430 columns missing — apply migration 2430");
+    sendError(res, "server_not_configured", `intel_live_promoted_scopes read failed (${code}): ${REQUIRES_2430}`);
+    return;
+  }
+  sendError(res, "db_error", `intel_live_promoted_scopes read failed${code ? ` (${code})` : ""}: ${String(error?.message ?? "database error")}`, { exposeDetail: true });
+}
+
+const liveScopeTargetSchema = z.object({
+  // The scope is (zone_id, claim_type). null is the zone-less scope 2179's CHECK
+  // composes as '' — it must be SAID, not defaulted, so the key is required.
+  zoneId:    z.string().min(1).max(200).nullable(),
+  claimType: z.string().min(1).max(120),
+});
+
+/**
+ * Provenance is mandatory. `evidence` is what the promoter looked at (the §26
+ * density-gate assessment, `npm run report:intel-funnel`) AND why they are
+ * signing for it anyway (certifiable is false by construction — see the section
+ * header). `expiresAt` is the review horizon: the read path treats an expired
+ * row as not promoted, so it is a safety property, and NULL — allowed on the
+ * column only so legacy hand inserts stay valid — is not offered here.
+ */
+const promoteLiveScopeSchema = liveScopeTargetSchema.extend({
+  expiresAt: z.string().datetime({ offset: true }),
+  evidence:  z.object({
+    assessment: z.record(z.unknown()),
+    reasoning:  z.string().min(1).max(4000),
+  }).passthrough(),
+  note: z.string().max(1000).optional(),
+});
+
+const withdrawLiveScopeSchema = liveScopeTargetSchema.extend({
+  reason: z.string().min(1).max(1000),
+});
+
+/**
+ * GET /admin/intel/live-scopes
+ * Active scopes by default (the allowlist as the serve path sees it right
+ * now); ?all=1 adds withdrawn and expired rows (the audit trail).
+ */
+router.get("/admin/intel/live-scopes", async (req, res) => {
+  const admin = await requireAdmin(req, res, { withDisplayName: true });
+  if (!admin) return;
+  const { sc } = admin;
+  if (!(await requireLiveScopeSurface(res, sc))) return;
+
+  const all = req.query["all"] === "1" || req.query["all"] === "true";
+  const now = new Date();
+  const { data, error } = await sc
+    .from("intel_live_promoted_scopes")
+    .select(LIVE_SCOPE_ROW_COLUMNS)
+    .order("promoted_at", { ascending: false });
+  if (error) { sendLiveScopeReadFailure(req, res, error); return; }
+
+  const rows = (Array.isArray(data) ? data : []).map((r: any) => ({ ...r, state: liveScopeState(r, now.getTime()) }));
+  const scopes = all ? rows : rows.filter((r: any) => r.state === "active");
+  res.json({ scopes, total: scopes.length, includesInactive: all, now: now.toISOString() });
+});
+
+/**
+ * GET /admin/intel/live-scopes/:scopeKey
+ * One row, everything on it. scopeKey is the canonical `zone|claim_type`
+ * (URL-encode the bar as %7C).
+ */
+router.get("/admin/intel/live-scopes/:scopeKey", async (req, res) => {
+  const admin = await requireAdmin(req, res, { withDisplayName: true });
+  if (!admin) return;
+  const { sc } = admin;
+  if (!(await requireLiveScopeSurface(res, sc))) return;
+
+  const scopeKey = String(req.params.scopeKey ?? "");
+  if (!scopeKey.includes("|")) {
+    sendError(res, "invalid_payload", "scopeKey must be the canonical `<zone_id>|<claim_type>` (bar URL-encoded as %7C)");
+    return;
+  }
+  const now = new Date();
+  const { data, error } = await sc
+    .from("intel_live_promoted_scopes")
+    .select(LIVE_SCOPE_ROW_COLUMNS)
+    .eq("scope_key", scopeKey)
+    .maybeSingle();
+  if (error) { sendLiveScopeReadFailure(req, res, error); return; }
+  if (!data) { sendError(res, "not_found", `scope ${scopeKey} has never been promoted`); return; }
+
+  res.json({ scope: { ...(data as any), state: liveScopeState(data as any, now.getTime()) }, now: now.toISOString() });
+});
+
+/**
+ * POST /admin/intel/live-scopes/promote
+ * Promote / re-promote / renew one scope through promoteLiveScope →
+ * system_promote_intel_live_scope. Idempotent per scope_key (2430's action
+ * table: promoted / repromoted / renewed / already_active); the response says
+ * which happened. promoted_by is the admin.
+ */
+router.post("/admin/intel/live-scopes/promote", async (req, res) => {
+  const admin = await requireAdmin(req, res, { withDisplayName: true });
+  if (!admin) return;
+  const { sc, userId, displayName } = admin;
+  if (!(await requireLiveScopeSurface(res, sc))) return;
+
+  const parsed = promoteLiveScopeSchema.safeParse(req.body);
+  if (!parsed.success) {
+    sendError(res, "invalid_payload", `Body must be { zoneId: string|null, claimType, expiresAt: ISO-8601, evidence: { assessment: object, reasoning: string }, note? } — ${parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ")}`);
+    return;
+  }
+  const { zoneId, claimType, expiresAt, evidence, note } = parsed.data;
+  const now = new Date();
+  if (Date.parse(expiresAt) <= now.getTime()) {
+    sendError(res, "invalid_payload", "expiresAt (the review horizon) must be in the future");
+    return;
+  }
+
+  if (!(await requireLiveScopeWriter(res, sc))) return;
+
+  const r = await promoteLiveScope(
+    { zoneId, claimType, expiresAt, evidence, note: note ?? null, promotedBy: userId, now },
+    { client: sc },
+  );
+  if (r.skipped) { sendLiveScopeWriterFailure(req, res, "promotion", r); return; }
+
+  req.log.info(
+    { scopeKey: r.scopeKey, action: r.action, expiresAt: r.expiresAt, adminId: userId, adminName: displayName },
+    "intel live scope promoted via admin surface",
+  );
+  res.json({
+    scopeKey: r.scopeKey,
+    action: r.action,
+    expiresAt: r.expiresAt,
+    promotedBy: { userId, displayName },
+  });
+});
+
+/**
+ * POST /admin/intel/live-scopes/withdraw
+ * Withdraw one scope through withdrawLiveScope → system_withdraw_intel_live_scope.
+ * The row is KEPT (audit); the read path stops serving it at once. Idempotent:
+ * a second withdrawal is already_withdrawn (200, no write). A scope that was
+ * never promoted is 404 — there is nothing to withdraw and the key is probably wrong.
+ */
+router.post("/admin/intel/live-scopes/withdraw", async (req, res) => {
+  const admin = await requireAdmin(req, res, { withDisplayName: true });
+  if (!admin) return;
+  const { sc, userId, displayName } = admin;
+  if (!(await requireLiveScopeSurface(res, sc))) return;
+
+  const parsed = withdrawLiveScopeSchema.safeParse(req.body);
+  if (!parsed.success) {
+    sendError(res, "invalid_payload", `Body must be { zoneId: string|null, claimType, reason } — ${parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ")}`);
+    return;
+  }
+  const { zoneId, claimType, reason } = parsed.data;
+
+  if (!(await requireLiveScopeWriter(res, sc))) return;
+
+  const r = await withdrawLiveScope({ zoneId, claimType, reason, withdrawnBy: userId, now: new Date() }, { client: sc });
+  if (r.skipped) { sendLiveScopeWriterFailure(req, res, "withdrawal", r); return; }
+  if (r.action === "not_found") {
+    sendError(res, "not_found", `scope ${liveScopeKey(zoneId, claimType)} has never been promoted; nothing to withdraw`);
+    return;
+  }
+
+  req.log.info(
+    { scopeKey: r.scopeKey, action: r.action, reason, adminId: userId, adminName: displayName },
+    "intel live scope withdrawn via admin surface",
+  );
+  res.json({ scopeKey: r.scopeKey, action: r.action, withdrawnBy: { userId, displayName } });
 });
 
 export default router;

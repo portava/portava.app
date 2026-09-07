@@ -103,6 +103,15 @@ export interface PromoteLiveScopeResult {
   scopeKey: string;
   action: PromoteAction | null;
   expiresAt: string | null;
+  /**
+   * Present ONLY when reason === "error" and the RPC resolved with a database
+   * error: the PostgREST/Postgres code (e.g. 42883 / PGRST202 = the 2430
+   * function does not exist on this database). A caller with a human on the
+   * other end (routes/admin.ts) uses it to say "apply 2430" instead of "error".
+   * Absent on every other path so existing deepEqual pins keep holding.
+   */
+  errorCode?: string | null;
+  errorMessage?: string | null;
 }
 
 export interface WithdrawLiveScopeInput {
@@ -119,6 +128,9 @@ export interface WithdrawLiveScopeResult {
   reason: WriterSkipReason | null;
   scopeKey: string;
   action: WithdrawAction | null;
+  /** As on PromoteLiveScopeResult: only when reason === "error" from a resolved RPC error. */
+  errorCode?: string | null;
+  errorMessage?: string | null;
 }
 
 export interface LiveScopeExpiryResult {
@@ -130,6 +142,15 @@ export interface LiveScopeExpiryResult {
 
 const PROMOTE_ACTIONS: ReadonlySet<string> = new Set(["promoted", "repromoted", "renewed", "already_active"]);
 const WITHDRAW_ACTIONS: ReadonlySet<string> = new Set(["withdrawn", "already_withdrawn", "not_found"]);
+
+/** The code/message of a RESOLVED supabase-js error, for the receipt. Never throws. */
+function errorDetail(error: unknown): { errorCode: string | null; errorMessage: string | null } {
+  const e = (error ?? {}) as { code?: unknown; message?: unknown };
+  return {
+    errorCode: typeof e.code === "string" ? e.code : null,
+    errorMessage: typeof e.message === "string" ? e.message : null,
+  };
+}
 
 /** House pattern (intelRetentionScheduler): explicit null = no client; undefined = service client. */
 function resolveClient(opts: { client?: any }): any {
@@ -182,7 +203,7 @@ export async function promoteLiveScope(
     });
     if (error) {
       logger.warn({ err: error, scopeKey }, "intel live-scope promotion failed");
-      return { ...base, skipped: true, reason: "error" };
+      return { ...base, skipped: true, reason: "error", ...errorDetail(error) };
     }
     const receipt = (data ?? {}) as { action?: unknown; expires_at?: unknown };
     const action = typeof receipt.action === "string" && PROMOTE_ACTIONS.has(receipt.action)
@@ -240,7 +261,7 @@ export async function withdrawLiveScope(
     });
     if (error) {
       logger.warn({ err: error, scopeKey }, "intel live-scope withdrawal failed");
-      return { ...base, skipped: true, reason: "error" };
+      return { ...base, skipped: true, reason: "error", ...errorDetail(error) };
     }
     const receipt = (data ?? {}) as { action?: unknown };
     const action = typeof receipt.action === "string" && WITHDRAW_ACTIONS.has(receipt.action)
