@@ -17,7 +17,10 @@ export const lookupUsernameLimiter = rateLimit({
   max: 10,
   standardHeaders: "draft-7",
   legacyHeaders: false,
-  message: { error: { code: "RATE_LIMITED", message: "Too many requests. Please try again later." } },
+  // Flat envelope, matching sendError and lib/errorEnvelope.ts. express-rate-limit
+  // writes this body itself, so it is one of the two places in the tree that
+  // could still emit the nested shape (A2, `11` §"The envelope").
+  message: { error: "RATE_LIMITED", message: "Too many requests. Please try again later." },
 });
 
 /**
@@ -29,7 +32,7 @@ export const signupLimiter = rateLimit({
   max: 5,
   standardHeaders: "draft-7",
   legacyHeaders: false,
-  message: { error: { code: "RATE_LIMITED", message: "Too many signup attempts. Please try again later." } },
+  message: { error: "RATE_LIMITED", message: "Too many signup attempts. Please try again later." },
 });
 
 /**

@@ -500,7 +500,13 @@ export async function revokeSensingContributions(
       p_contributor_token: token,
     });
     if (error) return { ok: false, error: error.message ?? "revoke_failed" };
-    return { ok: true, revoked: typeof data === "number" ? data : 0 };
+    // Coerce, do not type-check. The function returns bigint, and PostgREST does
+    // NOT always emit int8 as a JSON number (it exceeds the JS safe-integer
+    // range), so a `typeof data === "number"` guard silently reports 0 for every
+    // successful revocation — a contributor told nothing was erased when their
+    // rows were. lib/intelRetentionScheduler carries the same fix for the same
+    // reason.
+    return { ok: true, revoked: Number(data) || 0 };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "revoke_threw" };
   }
@@ -536,7 +542,10 @@ export async function purgeExpiredSensingContributions(
   try {
     const { data, error } = await db.rpc("purge_expired_sensing_contributions", { p_now: nowIso });
     if (error) return { ok: false, error: error.message ?? "purge_failed" };
-    return { ok: true, deleted: typeof data === "number" ? data : 0 };
+    // Same bigint-over-PostgREST hazard as revokeSensingContributions above: a
+    // type-check reports 0 for every real sweep, which is exactly how a working
+    // purge reads as an idle one in the logs.
+    return { ok: true, deleted: Number(data) || 0 };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "purge_threw" };
   }

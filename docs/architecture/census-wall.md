@@ -3,7 +3,7 @@
 | Field | Value |
 | --- | --- |
 | **Spec** | `docs/specs/Portava_Wall_Engineering_Architecture_and_Design_Spec.txt` (§1–41), `.docx` original authoritative |
-| **Tree censused** | `main` as checked out at `ebe72b34` on `claude/portava-continuation-uqta94` |
+| **Tree censused** | `claude/portava-continuation-uqta94`, working tree at `ebe72b34`. Sibling agents committed the shared tree during this pass (HEAD is now `2d40aece`); `git diff ebe72b34..2d40aece` over every Wall, Passport, trust and availability path cited below is **empty**, so every verdict holds at HEAD. |
 | **Method** | Requirement-level, four buckets, one bucket per requirement. Every BUILT verdict cites a file:line that was opened and read. |
 | **Database** | Not queried. Storage facts are the ones supplied as ground truth. |
 

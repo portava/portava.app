@@ -3,7 +3,7 @@
 | Field | Value |
 | --- | --- |
 | **Spec** | `docs/specs/Portava_Passport_Engineering_Architecture_and_Design_Spec.txt` (§1–35), `.docx` original authoritative |
-| **Tree censused** | `main` as checked out at `ebe72b34` on `claude/portava-continuation-uqta94` |
+| **Tree censused** | `claude/portava-continuation-uqta94`, working tree at `ebe72b34`. Sibling agents committed the shared tree during this pass (HEAD is now `2d40aece`); `git diff ebe72b34..2d40aece` over every Wall, Passport, trust and availability path cited below is **empty**, so every verdict holds at HEAD. |
 | **Method** | Requirement-level, four buckets, one bucket per requirement. Every BUILT verdict cites a file:line that was opened and read. |
 | **Database** | Not queried. Storage facts are the ones supplied as ground truth (25 `passport*`/`stamp*` tables in production). |
 
@@ -16,11 +16,64 @@
 | BUILT-BUT-WRONG | **21** |
 | NOT-BUILT | **2** |
 | CANNOT-VERIFY | **1** |
-| **CONSTRUCTED%** = (correct+wrong)/denominator | **145ONS** |
-| **CORRECT%** = correct/denominator | **145ORR** |
-| CANNOT-VERIFY share | **145VP** |
+| **CONSTRUCTED%** = (correct+wrong)/denominator | **166 / 169 = 98.2%** |
+| **CORRECT%** = correct/denominator | **145 / 169 = 85.8%** |
+| CANNOT-VERIFY share | **1 / 169 = 0.6%** |
 
-1ERDICT
+**Verdict on "~92% construction complete": too low on construction, too high on
+correctness, and resting on a CANNOT-VERIFY bucket that the spec does not ask
+for.**
+
+Passport is **more built** than the certification says and **less right**. At 169
+requirements it measures **98.2% constructed** — because six of that document's
+nine open findings have since closed: Shared Context is reachable, public
+Memories and Plans render, stamp verification is enforced on the card, Travel DNA
+persists, §32 telemetry is fully wired, and the event Passport and Yearbook now
+exist. Almost nothing named by this spec is simply absent: only
+`canProvideVisaBuddyService` (§11) and the Map consumer projection (§21) have no
+implementation at all.
+
+But **21 requirements exist and diverge**, which is why CORRECT% is 85.8% rather
+than 98%. Three of them matter more than the rest:
+
+1. **Trust presents a constant as a measurement (§9/§10).** `trust_engine_enabled`
+   is seeded false, so nothing writes `trust_events`, `trust_profiles` is empty,
+   and `buildDomainTrust` substitutes the neutral 50 for the overall score and for
+   every missing category (`PassportProjectionService.ts:958,965`). Since
+   `presentationWord(50)` returns "Established" (`:933`), **every Portava user is
+   currently described as an Established member of the community across all six
+   trust domains on the strength of a hard-coded number.** §9 demands
+   "domain-specific, confidence-aware and explainable"; the confidence band is
+   real but is computed from stamps and trips rather than from trust evidence
+   (`:983-985`), so a high-evidence 82 and a no-evidence default are not
+   distinguished — the exact equivalence §10 forbids. Open PR **#467** fixes
+   precisely this.
+2. **The canonical architecture rule the spec closes on is half-adopted (§21/§35).**
+   `PassportConsumerProjections` exists, is correct, and has six variants — but
+   `buildConsumerProjection` has **three call sites** (Trips, Buddy, Event).
+   Discovery, Compass, Telegraph and Safety still build their own identity
+   payloads from `profiles` (`routes/discovery.ts:1504,2523`;
+   `routes/discoverySearch.ts:420,462,1324`), which is the precise duplication the
+   module's own header says it exists to end, and **Map has no variant at all**.
+   Four of §21's seven consumers, plus §35's closing rule, are
+   built-but-unadopted.
+3. **The design system is a coherent, deliberate inversion of §27.** Dark-mode
+   first became a light paper palette; purple became a red seal; the blue/teal
+   availability accent is absent. Four §27 requirements and §3's hero composition
+   diverge for the same reason. This is a product decision, not a defect — but it
+   is five requirements the spec asks for and does not get, and no single
+   percentage can say that.
+
+**On the CANNOT-VERIFY bucket specifically.** The certification's §7 lists seven
+"Runtime QA" items and leans on them for its remaining ~8%. Six of the seven —
+on-device layout of ten screens, VoiceOver behaviour, P95 latency, real push and
+booking hand-off, live-DB RLS, camera QR round-trip — **are not requirements in
+this spec**. §27's one accessibility clause ("colour is never the only status
+indicator") is statically decidable and is met; there is no performance table and
+no accessibility section as there is in the Wall spec. So the honest
+CANNOT-VERIFY count against the *spec text* is **1**, not seven. Those runtime
+checks remain genuinely owed before GA — they are simply not the reason the
+construction score is below 100.
 
 ---
 
@@ -400,3 +453,152 @@ All eighteen named events exist, allow-listed on both sides (`routes/passport.ts
 | --- | --- | --- | --- |
 | P168 | The complete loop: Passport → Availability → Trust → Shared Context → Compass → Map → Plan → Telegraph → real-world experience → Memory → Stamp → Passport | C | Every hop exists and is wired: availability (`OpenToPlansService`), trust (`buildTrust`), shared context (`SharedContextService`), Compass (`SharedContextScreen.tsx:217` → `app/(tabs)/ai.tsx:104`), plan (`TripInvitePickerSheet`), Telegraph (messaging routes), memory (`PassportMemoryService`), stamp (`StampAwardEngine`, whose `safe_return`/`check_in` sources are literally experience-derived). Unlike the Wall's §41, the Passport loop's return leg **does** close: a real-world experience becomes a stamp through a deployed table (`user_stamps`, `stamp_award_events`). |
 | P169 | Other surfaces request the appropriate Passport projection instead of rebuilding identity, availability, trust and social context independently | **W** | The mechanism is built and correct (`PassportConsumerProjections.ts`, six variants). Adoption is **three of seven consumers** — Trips, Buddy and Event. Discovery, Compass, Telegraph and Safety still build their own identity payloads, and Map has no variant at all. This is the single largest structural gap in Passport: the canonical architecture rule the spec closes on is half-adopted. |
+
+---
+
+## 3. What could not be verified (1), and the deployment facts
+
+**The CANNOT-VERIFY bucket against this spec's text holds exactly one
+requirement:**
+
+| id | § | Why it cannot be settled by construction |
+| --- | --- | --- |
+| P66 | 13 | "Premium collectible appearance" is an aesthetic judgement needing a rendered screen. The perforated-edge half of the same bullet is present and was verified. |
+
+That the bucket is nearly empty is a property of the spec, not of my leniency.
+The Passport spec has no performance-target table and no accessibility section
+— unlike the Wall spec, which has both and which yields nine CANNOT-VERIFYs
+under the identical method. §27's one accessibility clause ("colour is never the
+only status indicator") is a statically decidable pairing requirement, and it is
+met (`PassportStampCollection.tsx:56-85` pairs every verification colour with a
+distinct glyph *and* an accessibility label).
+
+**Runtime QA is still owed — it is just not a requirement of this spec.**
+On-device layout of the ten screens on iOS and Android, VoiceOver/TalkBack
+behaviour and dynamic-type scaling, P95 latency and clock-skew behaviour of the
+short-TTL projections, a real camera QR round-trip, live-DB RLS behaviour of the
+two guard-refused `*SelfVerification` suites, and the flag-gated capability paths
+all remain unexercised. Every one of them should be checked before GA. None of
+them is a reason a construction score is below 100, and treating them as one is
+the main way the existing certification's ~8% shortfall is over-explained.
+
+**Deployment facts that bound the built code.** Not construction verdicts, not
+in the 169, and — as with the Wall — the most consequential paragraphs here.
+
+1. **The trust engine is dark, and the projection does not degrade honestly.**
+   `trust_engine_enabled` is seeded false (`services/trust/TrustEventService.ts:85`),
+   so `trust_events` has no writer in practice, `trust_profiles` is empty, and
+   `getTrustProfile` returns null. `buildTrust` then substitutes 50 and every
+   user reads "Established". Worse, `getTrustProfile` never destructures `error`,
+   so **"this person is established" and "we could not reach the trust engine"
+   render identically**. This is the one place in Passport where a deployment
+   fact produces a wrong *claim about a person* rather than an empty surface.
+2. **`passport_telemetry_events` (migration 2287) is not deployed.** Production's
+   25 `passport*`/`stamp*` tables do not include it. All eighteen §32 events are
+   emitted correctly on both sides and validated against a server allow-list
+   (`routes/passport.ts:1802`); they have nowhere to land. The same holds for
+   `event_passport_shares` (migration 2294), so the Phase-8 event Passport is
+   built and undeployed.
+3. **Two capability flags ship OFF**: `open_to_plans_windows_enabled` and
+   `passport_travel_dna_enabled` (migrations 2260, 2261, each with an OFF
+   postcondition). The §6/§8 window CRUD and the §19 DNA write path are built and
+   unit-tested but have never run against an enabled environment.
+   `passport_event_share_enabled` and `passport_telemetry_enabled` are likewise
+   gates on their surfaces.
+4. **The core Passport is NOT flag-gated** — unlike the Wall, `routes/passport.ts`
+   checks a flag only for telemetry (`:1797`) and event shares (`:1936`). The
+   identity, stamps, journeys, memories, plans, availability, trust, DNA, My
+   World and shared-context paths are live. That is why the fabricated
+   "Established" matters now rather than at some future rollout.
+5. **Storage matches the design.** All 25 production `passport*`/`stamp*` tables
+   are Passport-owned domains — stamps and their artwork/campaign/milestone
+   machinery, postcards, memories, DNA preferences, visibility preferences,
+   contribution events, reconciliation and admin audit. None duplicates another
+   system's truth, which is §34's last non-goal holding. The one Passport-owned
+   table the spec implies and production lacks is the telemetry sink.
+6. **Writer-attribution caveat.** `src/scripts/checkWriterlessReads.ts:39-41`
+   states that a dynamic `.from(expr)` anywhere makes writer attribution
+   INCOMPLETE and that the check errs toward silence. Every "nothing writes X" /
+   "nothing calls X" claim above was settled by reading the call sites, not by
+   grepping `from("…")`.
+
+---
+
+## 4. Reconciliation with `passport-certification.md`
+
+That document certifies `7c03bdc` (2026-09-03) and reports **~92% construction
+complete** (backend ~97%, client ~86%) with nine findings F1–F9. This census
+reads `ebe72b34`. Six of the nine have closed.
+
+### 4.1 Its findings, re-tested
+
+| Finding | Certification | Now | Evidence |
+| --- | --- | --- | --- |
+| **F1 · MED** Shared Context orphaned — "no `router.push` reaches it" | open | **CLOSED** | `src/components/passport/PassportHomePreviews.tsx:233` pushes `/passport/shared-context?userId=…` from the viewer band; `:258` `passport-shared-context-entry`. |
+| **F2 · MED** Stamp verification not enforced on read/card; `"reported"`/`"decorative"` dead | open | **CLOSED** | `UnifiedStampService.verificationFromLevel:125` derives the assertion from the live level; `PassportStampCollection.tsx:56-85` renders a distinct colour + glyph + a11y label per state, only `verified` wearing the shield. |
+| **F3 · MED** Public passport renders empty Memories/Plans (`memories={[]}` / `trips={[]}`) | open | **CLOSED** | `PassportHomePreviews.tsx:332` `PassportViewerMemoriesList`, `:376` the viewer plans list — with the comment recording that the hardcoded empties were the defect. |
+| **F4 · MED** §32 telemetry not wired — "none of the spec's passport events are emitted" | open | **CLOSED (construction)** | All eighteen events: `src/features/passport/passportTelemetry.ts:46-80`, server allow-list `lib/passportTelemetry.ts`, route `routes/passport.ts:1764`, transport `installPassportTelemetry.ts`. Table not deployed — §3 above. |
+| **F5 · LOW** Travel DNA client persistence unwired | open | **CLOSED** | `PUT /passport/me/travel-dna` (`routes/passport.ts:1597`) + `useTravelIdentity.ts`; still behind `passport_travel_dna_enabled`. |
+| **F6 · LOW** Dual availability surfaces writing different backends | open | **still open** | `/availability` (legacy quick-status) and `/passport/availability` (the §7/§8 editor) both exist. Not a spec requirement in itself; folded into P36's evidence rather than scored separately. |
+| **F7 · LOW** Viewer actions gate on `isAuthed`, not the server capability flags | open | **still open** | Counted here as **P138 · W**. No client-side policy is *recreated*, so §30's prohibition holds; the positive half is under-consumed. |
+| **F8 · DESIGN** §27 dark-mode-first not met | open | **still open, and larger than logged** | Counted as **four** W verdicts (P128 dark-mode, P129 purple, P132 blue/teal, P133 hero composition) plus **P13** in §3. The certification logs it as one design deviation; at requirement grain it is five. |
+| **F9 · LOW** Phase 8 event Passport and Phase 9 yearbook not built | open | **CLOSED** | `EventPassportService.ts` + `routes/passport.ts:1877-1976` + `app/passport/event/[token].tsx`; `PassportYearbookService.ts` + `routes/passport.ts:1638` + `app/passport/yearbook.tsx`, entered from `PassportQuickLinks.tsx:89`. Only the "deeper Experience Graph" remains (P159 · W). |
+
+### 4.2 What it did not find
+
+Three requirement-level divergences are not in that document at all, and two of
+them are structural:
+
+- **The fabricated trust presentation (P45, P50, P154).** The certification's
+  invariant 3 checks that trust is *domain-specific and confidence-aware* and
+  passes it, citing `buildTrust:661` and the evidence-derived `confidence`. Both
+  citations are accurate. What it does not ask is whether the number the domains
+  are computed *from* exists — and it does not: with `trust_engine_enabled` off,
+  `buildDomainTrust` reads a literal 50. Every Passport suite the certification
+  ran "seeds a populated `trust_profiles` row" (PR #467's own account of why no
+  test caught it), so the tests could not have surfaced this.
+- **Consumer-projection adoption (P95, P98, P99, P100, P101, P169).** The
+  certification does not test §21 at all. `PassportConsumerProjections` is built
+  and correct; four of its six variants have no caller and Map has no variant.
+  §35's canonical architecture rule — the sentence the spec ends on — is
+  three-sevenths adopted.
+- **Coverage holes in surfaces it scored BUILT**: §15's Memories views (two of
+  five — Trips, Places, People and Map do not exist, P77), §12's stamp-type
+  vocabulary (no Place label, no Contributor type, P61), §14's Featured Journey
+  (no events, no recommendations, P75), §26's My World hierarchy (stops at
+  Country → City → stamps, P126), §13's detail view (no verification treatment,
+  P68).
+
+### 4.3 Net position
+
+| Question | Certification | This census |
+| --- | --- | --- |
+| How much of the named code exists and is wired? | ~92% | **98.2%** — the certification is stale in Passport's favour; six of nine findings closed |
+| How much of it does what the spec says? | not asked | **85.8%** |
+| How much is honestly unverifiable *against this spec*? | ~8% narrated as "Runtime QA" | **0.6%** — one requirement. The runtime checks are real and owed, but they are not spec requirements |
+| Biggest risk | "UI integration, one design choice, instrumentation — none silent correctness failures" | **A silent correctness failure**: every user is told they are "Established" on the strength of a constant, and an unreachable trust engine is indistinguishable from an established member |
+
+The certification's closing sentence — "none of which are silent correctness
+violations today" — is the one claim in it I would withdraw. P45/P50 is exactly
+that: a live, user-visible, unfalsifiable claim about a person, produced by a
+default that was written kindly and never re-examined. Everything else in the
+gap between 98.2% constructed and 85.8% correct is unadopted plumbing or a
+deliberate design inversion.
+
+---
+
+## 5. Open PRs that would change a verdict
+
+Censused state is `main`. Four open PRs touch Passport trust rendering; **#467 is
+the one that moves a verdict.**
+
+| PR | What it does | Effect on this census |
+| --- | --- | --- |
+| **#467** — "stop presenting the constant 50 as a trust measurement" | Replaces the 50-substitution with `applicable: false`, a field the contract already carried for the Buddy domain; a domain rates only when at least one of its categories exists. Adds `getTrustProfileResult()` returning `ok \| absent \| unavailable` beside `getTrustProfile` so a failed read stops rendering as "established". | **Would flip P45, P50 and P154 from W to C** — the three verdicts that produce my only silent-correctness finding. CORRECT% would rise from 85.8% to **87.6%**. This is the single highest-value open PR against either spec in this pair. |
+| **#453** — "render the trust strengths the server already sends" | `TrustScreen` renders `trust.strengths`, already produced by `TrustPrivacyGuard`. | Strengthens P45's explainability evidence; does not change a verdict on its own. |
+| **#454** — "render the server's per-domain trust instead of a client constant" | `TrustScreen`/`useTrustProjection` consume the server's six domains rather than a client-side list. | Reinforces P60 (client renders, never derives). No verdict change — the server was already authoritative; this removes a client-side duplicate. |
+| **#455** — "show the owner the recovery steps the server already computed" | Surfaces `TrustRecoveryService` hints on the owner's Trust screen. | Additive to P52's replayability story; no verdict change. |
+
+Taken together the four are a coordinated repair of §9–§11 rendering. Only #467
+changes what the product *asserts*; the other three change what it *shows* of
+assertions the server already makes correctly.
