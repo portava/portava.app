@@ -2639,6 +2639,20 @@ router.get("/discovery/community", async (req, res) => {
       rows.map((r: any) => r.submitted_by).filter(Boolean),
     );
 
+    // SELF-EXEMPTION, applied before the opt-in check.
+    // .agents/memory/display-name-privacy.md: "The viewer must always see their
+    // own name (self-exemption before the opt-in check)." Without this a user
+    // who has not opted in, looking at a place THEY submitted, sees their own
+    // byline rendered as `@username` — the redaction rule turned on its author.
+    // Not a leak (it withholds rather than reveals), but it is the same rule
+    // behaving differently here than in discoverySearch.ts:539, compass.ts and
+    // safeReturn.ts, all of which exempt the viewer.
+    // resolveCommunityViewer() is memoised (commViewerPromise), so this costs no
+    // extra auth round trip when the block filter above already resolved it.
+    // Guarded on rows.length to preserve the property documented above: a
+    // request whose query came back empty still resolves no viewer.
+    const selfSubmitterId = rows.length > 0 ? await resolveCommunityViewer() : null;
+
     const items: CommunityDiscoveryItem[] = rows.map((row: any) => {
       const profile = Array.isArray(row.profiles) ? row.profiles[0] : row.profiles;
       return {
@@ -2653,7 +2667,8 @@ router.get("/discovery/community", async (req, res) => {
         submittedBy:  profile
           ? {
               id:        profile.id as string,
-              name:      (allowedSubmitterNames.has(profile.id as string)
+              name:      ((profile.id as string) === selfSubmitterId
+                || allowedSubmitterNames.has(profile.id as string)
                 ? (profile.name ?? "Traveler")
                 : (profile.username ? `@${profile.username}` : "Traveler")) as string,
               avatarUrl: (profile.avatar_url ?? null) as string | null,
