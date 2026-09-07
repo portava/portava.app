@@ -656,21 +656,27 @@ router.get("/airport/sessions/:id/safety", async (req, res) => {
 
   const airport = await resolveAirportForSession(sc, session);
 
-  // Assess a generic "leaving airport" activity to get overall safety
+  // Assess a generic "leaving airport" activity to get overall safety. The
+  // 20-minute leg is a category constant, not a route from this airport, and
+  // the response says so (travelTimeSource) rather than letting the rating
+  // pose as measured — spec §2.1 "never fabricate freshness".
+  const travelTimeSource = "category_default" as const;
   const a = assess(airport, session, {
     title:          "Leaving airport",
     travelTimeMin:  20,
+    travelTimeSource,
     activityTimeMin: 30,
     insideAirport:  false,
   });
 
   const window = computeWindow(airport, session);
-  const advice = adviseLeaving(airport, session, window);
+  const advice = adviseLeaving(airport, session, window, { travelTimeSource });
 
   res.json({
     featureEnabled:  true,
     overallRating:   a.rating,
     overallLabel:    safetyLabel(a.rating),
+    travelTimeSource,
     availableMinutes: a.availableMinutes,
     usableMinutes:   window.usableMinutes,
     returnBufferMin: a.returnBufferMin,
@@ -1105,6 +1111,9 @@ router.get("/airport/sessions/:id/overview", async (req, res) => {
 
   const airport = await resolveAirportForSession(sc, session);
   const window  = computeWindow(airport, session);
+  // No facts passed: nothing on this tree measures a route from the airport,
+  // and adviseLeaving reads an absent provenance as "not measured" and says so
+  // in `advice.unknowns` (fail-closed by design — see LeaveAdviceFacts).
   const advice  = adviseLeaving(airport, session, window);
   const stops   = await loadStops(sc, session.id);
   const planFit = computePlanFit(window, stops);

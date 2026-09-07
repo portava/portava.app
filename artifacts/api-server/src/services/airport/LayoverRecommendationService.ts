@@ -14,8 +14,10 @@ import type { LayoverSession } from "./LayoverSessionService.js";
 import {
   assess,
   computeReturnDeadline,
+  travelTimeSourceFor,
   LAYOVER_ENGINE_VERSION,
   type SafetyRating,
+  type TravelTimeSource,
 } from "./LayoverSafetyEngine.js";
 import { sanitizeRecommendation, type SafeRecommendation } from "./LayoverPrivacyGuard.js";
 import { localHour } from "./AirportTime.js";
@@ -107,26 +109,30 @@ function insideAirportCandidates(session: LayoverSession): Array<{
   title: string;
   description: string;
   travelTimeMin: number;
+  travelTimeSource: TravelTimeSource;
   activityTimeMin: number;
   insideAirport: boolean;
   locationLabel: string;
 }> {
   const has = (vibe: string) => session.vibeChips.includes(vibe);
-  const items: Array<{ recType: string; title: string; description: string; travelTimeMin: number; activityTimeMin: number; insideAirport: boolean; locationLabel: string }> = [];
+  const items: Array<{ recType: string; title: string; description: string; travelTimeMin: number; travelTimeSource: TravelTimeSource; activityTimeMin: number; insideAirport: boolean; locationLabel: string }> = [];
+  // Airside: zero travel by construction, so the provenance is the fact that
+  // there is no landside leg — not an estimate of one.
+  const travelTimeSource: TravelTimeSource = "inside_airport";
 
   items.push({
     recType: "inside_airport", title: "Airport Lounge / Rest Area",
     description: session.loungeAccess
       ? "Use your lounge access to relax, eat, and recharge."
       : "Find a quiet gate area or pay-per-use lounge to rest.",
-    travelTimeMin: 0, activityTimeMin: 30, insideAirport: true, locationLabel: "Inside airport",
+    travelTimeMin: 0, travelTimeSource, activityTimeMin: 30, insideAirport: true, locationLabel: "Inside airport",
   });
 
   if (has("food") || session.layoverMinutes >= 90) {
     items.push({
       recType: "food", title: "Airport Dining",
       description: "Explore terminal restaurants — many airports have excellent local food options.",
-      travelTimeMin: 0, activityTimeMin: 45, insideAirport: true, locationLabel: "Airport terminals",
+      travelTimeMin: 0, travelTimeSource, activityTimeMin: 45, insideAirport: true, locationLabel: "Airport terminals",
     });
   }
 
@@ -134,7 +140,7 @@ function insideAirportCandidates(session: LayoverSession): Array<{
     items.push({
       recType: "inside_airport", title: "Duty-Free & Airport Shops",
       description: "Browse duty-free, local souvenirs, and travel essentials.",
-      travelTimeMin: 0, activityTimeMin: 30, insideAirport: true, locationLabel: "Duty-free zone",
+      travelTimeMin: 0, travelTimeSource, activityTimeMin: 30, insideAirport: true, locationLabel: "Duty-free zone",
     });
   }
 
@@ -142,14 +148,14 @@ function insideAirportCandidates(session: LayoverSession): Array<{
     items.push({
       recType: "inside_airport", title: "Airport Art & Culture",
       description: "Many international airports feature galleries, cultural exhibits, and installations.",
-      travelTimeMin: 0, activityTimeMin: 20, insideAirport: true, locationLabel: "Inside airport",
+      travelTimeMin: 0, travelTimeSource, activityTimeMin: 20, insideAirport: true, locationLabel: "Inside airport",
     });
   }
 
   items.push({
     recType: "rest", title: "Rest & Sleep Pod",
     description: "Catch some sleep at a transit hotel or airport sleep pod.",
-    travelTimeMin: 0, activityTimeMin: 60, insideAirport: true, locationLabel: "Airside hotel",
+    travelTimeMin: 0, travelTimeSource, activityTimeMin: 60, insideAirport: true, locationLabel: "Airside hotel",
   });
 
   return items;
@@ -168,6 +174,7 @@ async function fetchDiscoveryPlaces(
   title: string;
   description: string;
   travelTimeMin: number;
+  travelTimeSource: TravelTimeSource;
   activityTimeMin: number;
   insideAirport: boolean;
   locationLabel: string;
@@ -198,6 +205,9 @@ async function fetchDiscoveryPlaces(
       title:          p.name,
       description:    p.blurb ?? null,
       travelTimeMin:  estimateTravelTime(p.place_type),
+      // The SELECT above reads no coordinate; estimateTravelTime is a category
+      // constant. Carry that fact rather than let the number pose as a route.
+      travelTimeSource: "category_default" as const,
       activityTimeMin: estimateActivityTime(p.place_type),
       insideAirport:  false,
       locationLabel:  p.neighborhood ? `${p.neighborhood}, ${city}` : city,
@@ -242,6 +252,13 @@ function mapPlaceTypeToRecType(placeType: string): string {
   return map[placeType] ?? "activity";
 }
 
+/**
+ * A per-category CONSTANT — 15 or 25 minutes — chosen without a coordinate.
+ * It is not a route and must never be presented as one: every caller tags the
+ * result TravelTimeSource "category_default" (spec §2.1 "never fabricate
+ * freshness"). Building a routed estimate is out of scope here; carrying the
+ * provenance is the obligation this tree can meet honestly.
+ */
 function estimateTravelTime(placeType: string): number {
   const near = ["cafe", "restaurant", "shopping"];
   if (near.includes(placeType)) return 15;
@@ -308,6 +325,7 @@ export async function generateRecommendations(
         title: `Quick City Tour — ${city}`,
         description: `A short exploration of ${city}'s highlights — ideal for a ${session.layoverMinutes >= 240 ? "half-day" : "quick"} layover.`,
         travelTimeMin: 30,
+        travelTimeSource: "category_default" as const,
         activityTimeMin: session.layoverMinutes >= 240 ? 120 : 60,
         insideAirport: false,
         locationLabel: city,
@@ -327,11 +345,15 @@ export async function generateRecommendations(
   // Assess each through safety engine
   const rows: any[] = [];
   const keys: string[] = [];
+  // Provenance per row, kept BESIDE the row like `keys`: the row object is the
+  // insert/upsert payload and layover_recommendations has no column for it.
+  const sources: TravelTimeSource[] = [];
   let sortOrder = 0;
 
   for (const candidate of allCandidates) {
     const a = assess(airport, session, candidate, nowMs);
     keys.push(recommendationKey(candidate));
+    sources.push(travelTimeSourceFor(candidate));
     const row = {
       session_id:       session.id,
       rec_type:         candidate.recType,
@@ -450,6 +472,7 @@ export async function generateRecommendations(
     description:    row.description,
     safetyRating:   row.safety_rating,
     travelTimeMin:  row.travel_time_min,
+    travelTimeSource: sources[idx],
     activityTimeMin: row.activity_time_min,
     returnBufferMin: row.return_buffer_min,
     hardReturnTime: row.hard_return_time,
@@ -483,6 +506,9 @@ export async function getRecommendations(
       description:    row.description,
       safetyRating:   row.safety_rating,
       travelTimeMin:  row.travel_time_min,
+      // No column carries provenance; inferred from inside_airport, which is
+      // exact only while no "measured" producer exists (see travelTimeSourceFor).
+      travelTimeSource: travelTimeSourceFor({ insideAirport: Boolean(row.inside_airport) }),
       activityTimeMin: row.activity_time_min,
       returnBufferMin: row.return_buffer_min,
       hardReturnTime: row.hard_return_time,

@@ -83,12 +83,59 @@ export type LayoverReturnState =
  */
 export const RETURN_SOON_LEAD_MIN = 30;
 
+/**
+ * Where a candidate's `travelTimeMin` came from. Spec §2.1: "missing live
+ * intelligence degrades VISIBLY; never fabricate freshness." A travel time is
+ * an input to a "safe" rating a traveller may act on by leaving the airport,
+ * so its nature travels with the recommendation to the client
+ * (SafeRecommendation.travelTimeSource) and into `adviseLeaving`'s `unknowns`.
+ *
+ *   inside_airport    no landside travel — the candidate is airside, 0 minutes
+ *                     by construction, not by estimate.
+ *   category_default  a per-category constant chosen without reading a
+ *                     coordinate (LayoverRecommendationService.estimateTravelTime
+ *                     — 15 or 25 min; the city-escape card's 30; the safety
+ *                     route's 20). This is every landside number on this tree.
+ *   measured          derived from a real route/distance for THIS place from
+ *                     THIS airport. Declared so a client can distinguish it;
+ *                     NO PRODUCER EXISTS on this tree (pinned by
+ *                     src/test/layoverTravelTimeProvenance.test.ts). When one is
+ *                     built, persist the source on the row — see
+ *                     `travelTimeSourceFor` for why the read path cannot infer it.
+ */
+export const TRAVEL_TIME_SOURCES = ["inside_airport", "category_default", "measured"] as const;
+export type TravelTimeSource = (typeof TRAVEL_TIME_SOURCES)[number];
+
+/**
+ * Resolve the provenance of a travel-time figure, failing CLOSED: an absent
+ * source is treated as the least-trusted kind that applies, never as measured.
+ *
+ * Today this is also how the persisted read path (`getRecommendations`)
+ * recovers provenance, because `layover_recommendations` has no column for it
+ * and adding one unconditionally would break the write on any database that
+ * has not run the migration (the same hazard 2410 gates behind a flag). That
+ * inference is honest ONLY while nothing produces "measured" — which the
+ * provenance test pins. The day a measured producer lands, the row must carry
+ * the source and this fallback must stop being used for persisted rows.
+ */
+export function travelTimeSourceFor(c: {
+  insideAirport: boolean;
+  travelTimeSource?: TravelTimeSource | null;
+}): TravelTimeSource {
+  if (c.travelTimeSource && (TRAVEL_TIME_SOURCES as readonly string[]).includes(c.travelTimeSource)) {
+    return c.travelTimeSource;
+  }
+  return c.insideAirport ? "inside_airport" : "category_default";
+}
+
 export interface ActivityCandidate {
   title: string;
   travelTimeMin: number;       // one-way travel time in minutes
   activityTimeMin: number;     // time needed at the destination
   insideAirport: boolean;
   verified?: boolean;
+  /** Provenance of `travelTimeMin`. Absent = not measured (see travelTimeSourceFor). */
+  travelTimeSource?: TravelTimeSource;
 }
 
 export interface SafetyAssessment {
@@ -484,16 +531,46 @@ const LEAVE_DISCLAIMER =
   "This is guidance based on your timings, not a guarantee. Verify visa rules, " +
   "airline re-check-in policy and local conditions before leaving the airport.";
 
+/**
+ * Facts about the inputs behind the advice that the engine cannot observe on
+ * its own. Every field is optional and every absence is read the CONSERVATIVE
+ * way — an unstated fact is an unknown, never an assumption in the traveller's
+ * favour.
+ */
+export interface LeaveAdviceFacts {
+  /**
+   * Provenance of the travel-time figures the traveller's landside options rest
+   * on. Anything other than "measured" (including absent) is disclosed in
+   * `unknowns` so a category constant is never mistaken for a routed estimate.
+   */
+  travelTimeSource?: TravelTimeSource;
+}
+
+/**
+ * The `unknowns` line for a travel time that was not measured. Exported so the
+ * test can assert on the exact sentence the traveller sees.
+ */
+export const TRAVEL_TIME_UNMEASURED_UNKNOWN =
+  "Travel times to places outside the airport are category estimates, not measured routes from this airport";
+
 /** "Can I Leave the Airport?" decision, phrased as guidance. */
 export function adviseLeaving(
   airport: AirportProfile,
   session: LayoverSession,
   window: LayoverWindow,
+  facts: LeaveAdviceFacts = {},
 ): LeaveAdvice {
   const reasons: string[] = [];
   const unknowns: string[] = [
     "Visa or transit-permit requirements for your nationality",
   ];
+  // Landside travel times: on this tree every one is a category constant
+  // (TravelTimeSource "category_default"). Say so wherever the traveller might
+  // act on it — i.e. whenever they intend to leave — and stop saying so only
+  // when the caller asserts the figures were measured. Absent facts fail closed.
+  if (session.wantsToLeave && travelTimeSourceFor({ insideAirport: false, travelTimeSource: facts.travelTimeSource }) !== "measured") {
+    unknowns.push(TRAVEL_TIME_UNMEASURED_UNKNOWN);
+  }
   // Entry is never confirmed on this tree — the visa line above is a standing
   // unknown, and the code says so in a form a client or a metric can count.
   const reasonCodes: LayoverReasonCode[] = ["ENTRY_NOT_CONFIRMED"];

@@ -13,6 +13,8 @@ export interface RawRecommendation {
   description?: string | null;
   safetyRating: string;
   travelTimeMin: number;
+  /** Provenance of travelTimeMin. Absent = not measured (travelTimeSourceFor). */
+  travelTimeSource?: TravelTimeSource | null;
   activityTimeMin: number;
   returnBufferMin: number;
   hardReturnTime?: Date | string | null;
@@ -39,6 +41,12 @@ export interface SafeRecommendation {
   safetyRating: string;
   safetyLabel: string;
   travelTimeMin: number;
+  /**
+   * How travelTimeMin was obtained. "category_default" means a per-category
+   * constant, not a route — the client must not present it as measured.
+   * Always populated; never "measured" on this tree (no producer exists).
+   */
+  travelTimeSource: TravelTimeSource;
   activityTimeMin: number;
   returnBufferMin: number;
   hardReturnTime: string | null;
@@ -56,7 +64,7 @@ export interface SafeRecommendation {
   sortOrder: number;
 }
 
-import { safetyLabel } from "./LayoverSafetyEngine.js";
+import { safetyLabel, travelTimeSourceFor, type TravelTimeSource } from "./LayoverSafetyEngine.js";
 
 export function sanitizeRecommendation(rec: RawRecommendation): SafeRecommendation {
   const isMeetup = rec.recType === "meetup";
@@ -78,6 +86,7 @@ export function sanitizeRecommendation(rec: RawRecommendation): SafeRecommendati
     safetyRating:         rec.safetyRating,
     safetyLabel:          safetyLabel(rec.safetyRating as any),
     travelTimeMin:        rec.travelTimeMin,
+    travelTimeSource:     travelTimeSourceFor(rec),
     activityTimeMin:      rec.activityTimeMin,
     returnBufferMin:      rec.returnBufferMin,
     hardReturnTime:       hardReturnStr,
