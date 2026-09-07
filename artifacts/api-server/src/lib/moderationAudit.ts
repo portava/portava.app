@@ -72,7 +72,16 @@ export async function auditReportAction(
     actionType: string;
     reason: string | null;
   },
-): Promise<{ ok: true; audit: string } | { ok: false; error: string }> {
+): Promise<
+  | { ok: true; audit: "recorded"; id?: string; ownerUserId: string }
+  | { ok: true; audit: "skipped_no_owner"; id?: undefined; ownerUserId: null }
+  | { ok: false; error: string }
+> {
+  // `id` and `ownerUserId` are returned (additively) so an adjudicated trust
+  // charge can name the accountable user as its subject and record the audit
+  // row it rides on — routes/admin.ts hide-content and report resolve. The
+  // skipped_no_owner branch returns ownerUserId: null, and a caller must NOT
+  // charge anyone in that case, for the same reason the audit row is skipped.
   const ownerUserId = await resolveContentOwner(sc, opts.targetType, opts.targetId);
 
   const metadata: ModerationMetadata = {
@@ -88,12 +97,12 @@ export async function auditReportAction(
       "moderation audit: no accountable user for reported content — " +
         "user-scoped audit row skipped (see auditReportAction)",
     );
-    return { ok: true, audit: "skipped_no_owner" };
+    return { ok: true, audit: "skipped_no_owner", ownerUserId: null };
   }
 
   const r = await logModerationAction(
     sc, ownerUserId, opts.adminUserId, opts.actionType, opts.reason, metadata,
   );
   if (!r.ok) return { ok: false, error: r.error ?? "unknown" };
-  return { ok: true, audit: "recorded" };
+  return { ok: true, audit: "recorded", id: r.id, ownerUserId };
 }

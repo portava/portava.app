@@ -192,7 +192,11 @@ import { isFlagEnabled, isKillSwitchEngaged } from "../lib/featureFlags.js";
 import { appStorageUrlInfo } from "../lib/mediaUrl.js";
 import { sendPushWithRetry } from "../lib/pushWithRetry.js";
 import { linkOutcomeSignal } from "../compass/CompassOutcomeEngine.js";
-import { recordTrustEvent } from "../services/trust/TrustEventService.js";
+import {
+  recordTrustEvent,
+  recordEventHostCancelledTrustEvent,
+  recordEventReviewTrustEvent,
+} from "../services/trust/TrustEventService.js";
 import { rankCandidates } from "../lib/portavaRank.js";
 import type { RankCandidate, ViewerContext } from "../lib/portavaRank.js";
 import { logImpression } from "../lib/rankLog.js";
@@ -234,6 +238,59 @@ async function getEventRole(
     .eq("user_id", userId)
     .maybeSingle();
   return (r as any)?.role ?? null;
+}
+
+/**
+ * Live count of users OTHER than the host who have committed ('going') to an
+ * event. Read from event_rsvps, not the cached events.going_count (BUG AY:
+ * that counter drifts). Feeds recordEventHostCancelledTrustEvent's trigger
+ * rule; a read failure is reported as null so the emitter can decline rather
+ * than charge on an unknown.
+ */
+async function countCommittedAttendees(sc: any, eventId: string, hostId: string): Promise<number | null> {
+  const { data, error } = await sc
+    .from("event_rsvps")
+    .select("user_id")
+    .eq("event_id", eventId)
+    .eq("status", "going");
+  if (error) return null;
+  return ((data as any[]) ?? []).filter((r: any) => r.user_id !== hostId).length;
+}
+
+/**
+ * Host cancellation → EVENT_HOST_CANCELLED. Called by both host-cancel routes
+ * (DELETE /events/:id and POST /events/:id/cancel — one action, two verbs)
+ * AFTER the transition to 'cancelled' is written. The trigger rule (published
+ * state, ≥1 committed attendee) and the provenance live in
+ * TrustEventService.recordEventHostCancelledTrustEvent; this only gathers the
+ * facts. Fire-and-forget: a cancel must not fail because trust bookkeeping did.
+ * Never called from the admin moderation path — an admin cancel is not the
+ * host's act.
+ */
+function emitHostCancelledTrustEvent(
+  sc: any,
+  req: any,
+  ev: { id: string; hostId: string; priorState: string; startsAt: string | null; reason: string | null },
+): void {
+  void (async () => {
+    try {
+      const committed = await countCommittedAttendees(sc, ev.id, ev.hostId);
+      if (committed === null) {
+        req.log?.warn({ eventId: ev.id }, "host-cancel trust event: committed-attendee read failed — not recorded");
+        return;
+      }
+      await recordEventHostCancelledTrustEvent(sc, {
+        hostId: ev.hostId,
+        eventId: ev.id,
+        priorState: ev.priorState,
+        committedAttendees: committed,
+        startsAt: ev.startsAt,
+        reason: ev.reason,
+      });
+    } catch (err) {
+      req.log?.warn({ err, eventId: ev.id }, "host-cancel trust event failed (non-fatal)");
+    }
+  })();
 }
 
 async function isHostOrCoHost(sc: any, eventId: string, userId: string): Promise<boolean> {
@@ -2357,13 +2414,23 @@ router.delete("/events/:id", async (req, res) => {
   const role = await getEventRole(sc, id, user.id);
   if (role !== "host") { sendError(res, "forbidden", "Only the host can cancel an event"); return; }
 
-  const { data: ev } = await sc.from("events").select("title, state").eq("id", id).maybeSingle();
+  const { data: ev } = await sc.from("events").select("title, state, starts_at").eq("id", id).maybeSingle();
   if (!ev) { sendError(res, "not_found", "Event not found"); return; }
+  // Captured BEFORE the transition: the trust rule is about the state the host
+  // walked away from, not the one the update leaves behind.
+  const priorState = String((ev as any).state ?? "");
 
   // supabase-js resolves rather than throws — unchecked, a failed cancel
   // returned {ok:true} while the event stayed open.
   const { error: cancelErr } = await sc.from("events").update({ state: "cancelled", updated_at: new Date().toISOString() }).eq("id", id);
   if (cancelErr) { sendError(res, "db_error", cancelErr.message); return; }
+
+  // Trust: the host broke a published commitment (rule + provenance in
+  // TrustEventService; keyed on the event id, so this and POST /cancel cannot
+  // charge twice for one event).
+  emitHostCancelledTrustEvent(sc, req, {
+    id, hostId: user.id, priorState, startsAt: (ev as any).starts_at ?? null, reason: null,
+  });
 
   // Notify all Going/Maybe attendees (fire-and-forget)
   void (async () => {
@@ -4075,6 +4142,19 @@ router.post("/events/:id/reviews", async (req, res) => {
     sendError(res, "forbidden", "Only confirmed attendees can review this event"); return;
   }
 
+  // The upsert below keeps the row id on (event_id, reviewer_id) conflict, so
+  // an edit and a first submission are indistinguishable from its result.
+  // Trust must know which: one review is one piece of evidence, and an edit
+  // must not stack a second event on the same review id. A failed read is
+  // treated as "unknown" and no trust event is written.
+  const { data: priorReview, error: priorReviewErr } = await sc
+    .from("event_reviews")
+    .select("id")
+    .eq("event_id", id)
+    .eq("reviewer_id", user.id)
+    .maybeSingle();
+  const isFirstSubmission: boolean | null = priorReviewErr ? null : !priorReview;
+
   const { data: review, error } = await sc
     .from("event_reviews")
     .upsert(
@@ -4092,6 +4172,22 @@ router.post("/events/:id/reviews", async (req, res) => {
     .single();
 
   if (error) { req.log.error({ err: error }, "submit event review"); sendError(res, "db_error", error.message); return; }
+
+  // Trust: the HOST is rated; the reviewer is the counterparty. Bands, key and
+  // the anonymous-reviewer rule live in TrustEventService. Fire-and-forget.
+  if (isFirstSubmission === null) {
+    req.log?.warn({ eventId: id, reviewerId: user.id }, "event review trust event: prior-review read failed — not recorded");
+  } else {
+    void recordEventReviewTrustEvent(sc, {
+      hostId: (ev as any).host_id,
+      reviewerId: user.id,
+      eventId: id,
+      reviewId: (review as any).id,
+      rating: parsed.data.rating,
+      anonymous: parsed.data.anonymous,
+      isFirstSubmission,
+    }).catch((err) => req.log?.warn({ err, eventId: id }, "event review trust event failed (non-fatal)"));
+  }
 
   // Recompute average rating
   const { data: allRatings } = await sc
@@ -4356,10 +4452,11 @@ router.post("/events/:id/cancel", async (req, res) => {
   const role = await getEventRole(sc, id, user.id);
   if (role !== "host") { sendError(res, "forbidden", "Only the host can cancel this event"); return; }
 
-  const { data: ev } = await sc.from("events").select("title, state").eq("id", id).maybeSingle();
+  const { data: ev } = await sc.from("events").select("title, state, starts_at").eq("id", id).maybeSingle();
   if (!ev) { sendError(res, "not_found", "Event not found"); return; }
 
   if ((ev as any).state === "cancelled") { res.json({ ok: true }); return; }
+  const priorState = String((ev as any).state ?? "");
 
   const reason = z.string().max(500).optional().parse(req.body.reason);
 
@@ -4369,6 +4466,11 @@ router.post("/events/:id/cancel", async (req, res) => {
   if (cancelErr) { sendError(res, "db_error", cancelErr.message); return; }
 
   await logEventActivity(sc, id, user.id, "cancelled", { reason: reason ?? null });
+
+  // Trust: same action as DELETE /events/:id, same key (the event id).
+  emitHostCancelledTrustEvent(sc, req, {
+    id, hostId: user.id, priorState, startsAt: (ev as any).starts_at ?? null, reason: reason ?? null,
+  });
 
   void (async () => {
     try {

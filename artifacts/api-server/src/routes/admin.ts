@@ -1841,6 +1841,38 @@ async function removeProfileMediaObject(
   }
 }
 
+/**
+ * Admin removal of profile media → CONTENT_REMOVED, via the adjudicated path
+ * (the removal IS the finding; the admin confirms it in the same request and
+ * is recorded as the reviewer, never the subject). Delta and severity come
+ * from the vocabulary; the ceiling (content_quality 50 for 30 days) from
+ * TrustCapService.applyEventCaps on confirm. Reversible per user through
+ * revokeModerationTrustConsequences (source_type='moderation').
+ */
+function emitProfileMediaRemovedTrustEvent(
+  sc: any,
+  adminUserId: string,
+  targetUserId: string,
+  auditId: string | undefined,
+  field: "avatar" | "cover",
+  outcome: string,
+  reason: string | null,
+): void {
+  if (!auditId || outcome === "no_media") return;
+  const t = TRUST_EVENT_TYPES.CONTENT_REMOVED;
+  void recordAdjudicatedTrustEvent(sc, adminUserId, {
+    userId: targetUserId,
+    eventType: "content_removed",
+    category: t.category,
+    delta: t.delta,
+    severity: t.severity,
+    sourceType: "moderation",
+    sourceId: auditId,
+    dedupWindowHours: 24 * 365,
+    metadata: { actionType: `${field}_removed`, moderationActionId: auditId, storageOutcome: outcome, reason: reason ?? null },
+  }).catch(() => {});
+}
+
 /** DELETE /admin/users/:userId/avatar — remove a user's avatar (admin action) */
 router.delete("/admin/users/:userId/avatar", async (req, res) => {
   const admin = await requireAdmin(req, res, { withDisplayName: true });
@@ -1867,6 +1899,13 @@ router.delete("/admin/users/:userId/avatar", async (req, res) => {
 
   const { error } = await sc.from("profiles").update({ avatar_url: null }).eq("id", userId);
   if (error) { sendError(res, "db_error", error.message); return; }
+
+  // Trust: charged only when something was actually removed. `no_media` means
+  // the column was already empty — a replayed delete, or nothing to remove —
+  // and removing nothing is not a finding. Keyed on the audit row, which is
+  // the record of THIS removal; a later re-upload removed again is a second
+  // finding with its own row. Fire-and-forget.
+  emitProfileMediaRemovedTrustEvent(sc, adminUserId, userId, auditR.id, "avatar", removal.outcome, reason);
   res.json({ ok: true, storage: removal.outcome });
 });
 
@@ -1893,6 +1932,8 @@ router.delete("/admin/users/:userId/cover", async (req, res) => {
 
   const { error } = await sc.from("profiles").update({ cover_photo_url: null }).eq("id", userId);
   if (error) { sendError(res, "db_error", error.message); return; }
+
+  emitProfileMediaRemovedTrustEvent(sc, adminUserId, userId, auditR.id, "cover", removal.outcome, reason);
   res.json({ ok: true, storage: removal.outcome });
 });
 
@@ -2004,6 +2045,18 @@ router.get("/admin/reports", async (req, res) => {
 const resolveReportSchema = z.object({
   action: z.string().max(100),
   notes:  z.string().max(1000).optional().nullable(),
+  /**
+   * Explicit adjudication: the admin confirms the report was FOUNDED. `action`
+   * is free text (the admin client passes whatever was typed into the resolve
+   * prompt), so "resolved" alone cannot be read as "upheld" — an admin can
+   * resolve with "no action needed". Only `upheld: true` charges the content
+   * owner (message_report_confirmed for a message report). Absent or false is
+   * inert: the report resolves exactly as before and no trust event is
+   * written. The admin client does not send this yet — enabling it is a
+   * one-line client change, and whether every resolve should default to
+   * upheld is an owner decision (see the Trust report).
+   */
+  upheld: z.boolean().optional(),
 });
 
 /** POST /admin/reports/:id/resolve */
@@ -2050,6 +2103,38 @@ router.post("/admin/reports/:id/resolve", async (req, res) => {
     .maybeSingle();
 
   if (error) { sendError(res, "db_error", error.message); return; }
+
+  // Trust: an UPHELD report against a message charges the message's SENDER
+  // (the accountable user auditReportAction resolved — never the reporter,
+  // never the admin, who is recorded by recordAdjudicatedTrustEvent as the
+  // confirming reviewer). Keyed on the MESSAGE id, so two reports against one
+  // message confirm once; the report and audit row ride in metadata. The
+  // status guard above (`neq status resolved`) already makes a replayed
+  // resolve a 404, so this cannot fire twice for one report. Only
+  // `upheld: true` reaches here — see resolveReportSchema. Fire-and-forget.
+  const targetType = (reportRow as any).target_type as string;
+  if (parsed.data.upheld === true && targetType === "message" && auditR.audit === "recorded" && auditR.ownerUserId) {
+    const t = TRUST_EVENT_TYPES.MESSAGE_REPORT_CONFIRMED;
+    void recordAdjudicatedTrustEvent(sc, adminUserId, {
+      userId: auditR.ownerUserId,
+      eventType: "message_report_confirmed",
+      category: t.category,
+      delta: t.delta,
+      severity: t.severity,
+      sourceType: "moderation",
+      sourceId: (reportRow as any).target_id as string,
+      dedupWindowHours: 24 * 365,
+      metadata: {
+        actionType: "report_upheld",
+        reportId: req.params.id,
+        moderationActionId: auditR.id ?? null,
+        targetType,
+        targetId: (reportRow as any).target_id,
+        action: parsed.data.action,
+      },
+    }).catch(() => {});
+  }
+
   res.json({
     report: { id: (data as any).id, status: (data as any).status, reviewedAt: (data as any).reviewed_at },
     audit: auditR.audit,
@@ -2168,6 +2253,35 @@ router.post("/admin/reports/:id/hide-content", async (req, res) => {
       .eq("id", target_id);
     if (error) { sendError(res, "db_error", error.message); return; }
     contentHidden = true;
+  }
+
+  // Trust: content was actually removed from public view (post/trip/event —
+  // the branches above; a target type with no mutation removes nothing and
+  // charges nothing). Subject = the content OWNER auditReportAction resolved;
+  // the admin is provenance. Keyed on the CONTENT id rather than the audit row:
+  // this route has no status guard, so a second click writes a second audit
+  // row, and keying on that would charge twice for one removal. One content
+  // item, one content_removed. Fire-and-forget.
+  if (contentHidden && auditR.audit === "recorded" && auditR.ownerUserId) {
+    const t = TRUST_EVENT_TYPES.CONTENT_REMOVED;
+    void recordAdjudicatedTrustEvent(sc, adminUserId, {
+      userId: auditR.ownerUserId,
+      eventType: "content_removed",
+      category: t.category,
+      delta: t.delta,
+      severity: t.severity,
+      sourceType: "moderation",
+      sourceId: target_id,
+      dedupWindowHours: 24 * 365,
+      metadata: {
+        actionType: "content_removed",
+        reportId: req.params.id,
+        moderationActionId: auditR.id ?? null,
+        targetType: target_type,
+        targetId: target_id,
+        reason,
+      },
+    }).catch(() => {});
   }
 
   // Move report to in_review

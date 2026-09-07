@@ -322,7 +322,19 @@ export async function recordTrustEvent(
     .select("id")
     .single();
 
-  if (error) throw new Error(`recordTrustEvent DB error: ${error.message}`);
+  if (error) {
+    // 23505 = unique_violation. Migration 2540 adds a partial UNIQUE index on
+    // the dedup key for the one-shot event types; when two concurrent emitters
+    // both pass the read-then-insert dedup above, the database refuses the
+    // second insert. That is the same fact as `dup === "duplicate"` — the
+    // event already exists — so it is reported as a dedup skip, not thrown.
+    // Any other insert error is still a failure the caller must see.
+    if ((error as any).code === "23505") {
+      logger.info({ userId, eventType, sourceType, sourceId }, "trust_events insert refused by unique index — treated as dedup");
+      return { ok: false, skipped: true, skipReason: "dedup" };
+    }
+    throw new Error(`recordTrustEvent DB error: ${error.message}`);
+  }
 
   const eventId: string = (data as any).id;
   if (status === "pending_review") {
@@ -573,6 +585,180 @@ export async function recordStampVerifiedTrustEvent(
     });
   } catch (err) {
     logger.warn({ err, userId: input.userId, userStampId: input.userStampId }, "stamp_verified trust event failed (non-fatal to the award)");
+    return { ok: false };
+  }
+}
+
+/**
+ * Host-cancel trigger conditions. Trust-owned POLICY surface (like the review
+ * bands below): the vocabulary fixes the delta and severity of
+ * EVENT_HOST_CANCELLED; it does not say WHICH cancellations count. These two
+ * constants do, and they are exported so the rule is inspectable and testable
+ * rather than buried in a route.
+ *
+ *   - Only a PUBLISHED event can be broken: a draft was never a commitment to
+ *     anyone, and a completed/archived event has nothing left to cancel.
+ *   - Only a cancellation that lets somebody down is host-quality evidence: at
+ *     least one OTHER user must have committed ("going") to it. Cancelling an
+ *     empty event — a mistake, a test, a change of plan nobody had joined — is
+ *     recorded as a skip with a reason, never as a penalty.
+ *
+ * Both are the conservative subset. Whether a far-in-advance cancellation
+ * should be exempt, or a "maybe" should count as commitment, is an owner
+ * decision; the facts needed to decide it (lead time, counts) are written into
+ * the event's metadata so the policy can be tightened or loosened later
+ * without losing the evidence.
+ */
+export const EVENT_HOST_CANCEL_TRIGGER_STATES: readonly string[] = ["open", "started"];
+export const EVENT_HOST_CANCEL_MIN_COMMITTED_ATTENDEES = 1;
+
+/**
+ * The Trust-owned half of EVENT_HOST_CANCELLED.
+ *
+ * Called by routes/events.ts from BOTH host-cancel routes (DELETE /events/:id
+ * and POST /events/:id/cancel — the same action behind two verbs) AFTER the
+ * state transition to 'cancelled' has been written. Never for an admin cancel
+ * (routes/admin.ts `event_cancel`): that is the admin's act, not the host's.
+ *
+ *   user_id     — the HOST (the actor whose commitment was broken).
+ *   source_type — 'event'; source_id — the event id. One event can charge its
+ *                 host once (365-day dedup; recordTrustEvent's dedup fails
+ *                 closed; migration 2540 makes the key unique in the database).
+ *                 Two routes, one key: the second route hitting the same event
+ *                 is a dedup skip, not a second penalty.
+ *
+ * Returns `{ skipReason: "not_published" | "no_committed_attendees" }` when the
+ * trigger conditions above are not met, so the caller (and a test) can tell
+ * "skipped by rule" from "skipped by the engine". Never throws.
+ */
+export async function recordEventHostCancelledTrustEvent(
+  db: SupabaseClient,
+  input: {
+    hostId: string;
+    eventId: string;
+    /** events.state BEFORE the transition to 'cancelled'. */
+    priorState: string;
+    /** Live count of event_rsvps with status='going' for users OTHER than the host. */
+    committedAttendees: number;
+    startsAt?: string | null;
+    reason?: string | null;
+  },
+): Promise<Omit<RecordEventResult, "skipReason"> & { skipReason?: NonNullable<RecordEventResult["skipReason"]> | "not_published" | "no_committed_attendees" }> {
+  if (!EVENT_HOST_CANCEL_TRIGGER_STATES.includes(input.priorState)) {
+    return { ok: false, skipped: true, skipReason: "not_published" };
+  }
+  if (input.committedAttendees < EVENT_HOST_CANCEL_MIN_COMMITTED_ATTENDEES) {
+    return { ok: false, skipped: true, skipReason: "no_committed_attendees" };
+  }
+  const t = TRUST_EVENT_TYPES.EVENT_HOST_CANCELLED;
+  const startsAtMs = input.startsAt ? Date.parse(input.startsAt) : NaN;
+  const leadTimeHours = Number.isFinite(startsAtMs) ? Math.round((startsAtMs - Date.now()) / 36e5) : null;
+  try {
+    return await recordTrustEvent(db, {
+      userId: input.hostId,
+      eventType: "event_host_cancelled",
+      category: t.category,
+      delta: t.delta,
+      severity: t.severity,
+      sourceType: "event",
+      sourceId: input.eventId,
+      dedupWindowHours: 24 * 365,
+      metadata: {
+        eventId:            input.eventId,
+        priorState:         input.priorState,
+        committedAttendees: input.committedAttendees,
+        startsAt:           input.startsAt ?? null,
+        leadTimeHours,
+        reason:             input.reason ?? null,
+      },
+    });
+  } catch (err) {
+    logger.warn({ err, hostId: input.hostId, eventId: input.eventId }, "event_host_cancelled trust event failed (non-fatal to the cancel)");
+    return { ok: false };
+  }
+}
+
+/**
+ * Rating bands for event reviews. Trust-owned POLICY surface.
+ *
+ * The vocabulary fixes EVENT_POSITIVE_REVIEW (+3 minor) and
+ * EVENT_NEGATIVE_REVIEW (-6 moderate) but not where on a 1–5 scale "positive"
+ * and "negative" begin. This follows the one precedent already in the tree —
+ * routes/rentABuddy.ts treats `rating >= 4` as the positive band — and mirrors
+ * it for the negative side. A 3 is neutral and emits NOTHING: a middling
+ * review is not evidence of host quality in either direction. Owner decision
+ * to confirm; see the report.
+ */
+export const EVENT_REVIEW_RATING_BANDS = { positiveMin: 4, negativeMax: 2 } as const;
+
+/**
+ * The Trust-owned half of EVENT_POSITIVE_REVIEW / EVENT_NEGATIVE_REVIEW.
+ *
+ * Called by routes/events.ts POST /events/:id/reviews on the FIRST submission
+ * of a review only. That route already guarantees the trigger is real: the
+ * event is 'completed', the reviewer is a confirmed attendee, and the host
+ * cannot review their own event.
+ *
+ *   user_id       — the HOST (the subject of the review; the person being
+ *                   rated). The reviewer is the counterparty, never the subject.
+ *   source_type   — 'event_review'; source_id — the event_reviews row id. One
+ *                   review can charge or credit once (365-day dedup; 2540
+ *                   makes the key unique). The route upserts on
+ *                   (event_id, reviewer_id), so an EDITED review keeps its id —
+ *                   the caller must pass `isFirstSubmission: false` for an edit
+ *                   and nothing is written: otherwise a 5 edited to a 1 would
+ *                   stand as +3 AND -6 for one review. Whether an edit that
+ *                   flips sentiment should re-score is an owner decision.
+ *   counterparty  — the reviewer, for the mutual-ring scan — EXCEPT when the
+ *                   review is anonymous. `trust_events` carries an RLS policy
+ *                   (te_select_own) that lets the subject read their own
+ *                   applied rows including metadata until migration 2370 is on
+ *                   production; recording an anonymous reviewer's id there
+ *                   would let the host unmask them with one PostgREST call.
+ *                   The ring scan is therefore blind to anonymous reviews for
+ *                   now; `reviewerAnonymous: true` is recorded so the gap is
+ *                   visible. Flip when 2370 is live — owner decision.
+ *
+ * Never throws: a review must not fail because trust bookkeeping did.
+ */
+export async function recordEventReviewTrustEvent(
+  db: SupabaseClient,
+  input: {
+    hostId: string;
+    reviewerId: string;
+    eventId: string;
+    reviewId: string;
+    rating: number;
+    anonymous: boolean;
+    isFirstSubmission: boolean;
+  },
+): Promise<Omit<RecordEventResult, "skipReason"> & { skipReason?: NonNullable<RecordEventResult["skipReason"]> | "review_edit" | "neutral_rating" | "self_review" }> {
+  if (input.hostId === input.reviewerId) return { ok: false, skipped: true, skipReason: "self_review" };
+  if (!input.isFirstSubmission)          return { ok: false, skipped: true, skipReason: "review_edit" };
+  const positive = input.rating >= EVENT_REVIEW_RATING_BANDS.positiveMin;
+  const negative = input.rating <= EVENT_REVIEW_RATING_BANDS.negativeMax;
+  if (!positive && !negative)            return { ok: false, skipped: true, skipReason: "neutral_rating" };
+  const t = positive ? TRUST_EVENT_TYPES.EVENT_POSITIVE_REVIEW : TRUST_EVENT_TYPES.EVENT_NEGATIVE_REVIEW;
+  try {
+    return await recordTrustEvent(db, {
+      userId: input.hostId,
+      eventType: positive ? "event_positive_review" : "event_negative_review",
+      category: t.category,
+      delta: t.delta,
+      severity: t.severity,
+      sourceType: "event_review",
+      sourceId: input.reviewId,
+      counterpartyUserId: input.anonymous ? undefined : input.reviewerId,
+      dedupWindowHours: 24 * 365,
+      metadata: {
+        eventId:           input.eventId,
+        reviewId:          input.reviewId,
+        rating:            input.rating,
+        reviewerAnonymous: input.anonymous,
+      },
+    });
+  } catch (err) {
+    logger.warn({ err, hostId: input.hostId, reviewId: input.reviewId }, "event review trust event failed (non-fatal to the review)");
     return { ok: false };
   }
 }

@@ -32,6 +32,13 @@
  * codebase actually uses are resolved: a same-file `const x = cond ? "a" : "b"`
  * feeding `eventType: x` (routes/rentABuddy.ts), and `recordLocationTrustEvent`'s
  * `gps_${reason}` template (services/location/LocationSafetyService.ts).
+ * Trust-OWNED helper emitters whose event type is fixed inside the vocabulary
+ * file itself (`recordStampVerifiedTrustEvent` → stamp_verified,
+ * `recordEventHostCancelledTrustEvent` → event_host_cancelled,
+ * `recordEventReviewTrustEvent` → event_positive_review / event_negative_review)
+ * count as producers at their CALL SITE, never at their definition: the
+ * vocabulary file is excluded from the walk, so a helper with no caller still
+ * reads as unproduced — which is exactly the stamp_verified state today.
  * Anything else dynamic is refused and listed as such, never guessed.
  *
  * This is a STATIC test: it proves a producer exists in the tree, not that its
@@ -56,6 +63,20 @@ const VOCABULARY_FILE = resolve(SRC_ROOT, "services/trust/TrustEventService.ts")
  * Every entry here is a statement of fact about the tree, verified by the AST
  * walk below. Owner decisions attached to each (census-trust.md §5 items 3, 5, 9):
  *
+ * WIRED (no longer listed) — each rides a real, pre-existing action:
+ *   event_host_cancelled      — routes/events.ts DELETE /events/:id and
+ *                               POST /events/:id/cancel (host only), via
+ *                               recordEventHostCancelledTrustEvent.
+ *   event_positive_review /
+ *   event_negative_review     — routes/events.ts POST /events/:id/reviews
+ *                               (completed event, confirmed attendee), for the
+ *                               HOST, via recordEventReviewTrustEvent.
+ *   content_removed           — routes/admin.ts hide-content (post/trip/event
+ *                               actually hidden) and avatar/cover removal.
+ *   message_report_confirmed  — routes/admin.ts report resolve with
+ *                               `upheld: true` on a message report (inert until
+ *                               the admin client sends the flag).
+ *
  *   stamp_verified            — trigger exists (StampAwardEngine.awardStamp,
  *                               Passport-owned). Trust's half is
  *                               recordStampVerifiedTrustEvent; the call is
@@ -63,12 +84,6 @@ const VOCABULARY_FILE = resolve(SRC_ROOT, "services/trust/TrustEventService.ts")
  *   event_attendee_no_show    — routes/events.ts emits `event_no_show` (moderate,
  *                               -5) for the same action. Vocabulary mismatch.
  *   appeal_approved_reversal  — services/appeals emits `appeal_approved`. Same.
- *   event_host_cancelled      — trigger exists (DELETE /events/:id by host).
- *   event_positive_review /
- *   event_negative_review     — trigger exists (POST /events/:id/reviews).
- *   content_removed           — trigger exists (admin hide-content / avatar /
- *                               cover removal; moderation_actions rows).
- *   message_report_confirmed  — trigger exists (admin report resolve, message).
  *   pulse_post_reported       — the only honest trigger is an UPHELD report on
  *                               a post (admin resolve / hide-content), which is
  *                               the same adjudication content_removed names;
@@ -80,16 +95,11 @@ const VOCABULARY_FILE = resolve(SRC_ROOT, "services/trust/TrustEventService.ts")
  */
 export const KNOWN_UNPRODUCED_TRUST_EVENT_TYPES: readonly string[] = [
   "appeal_approved_reversal",
-  "content_removed",
   "event_attendee_no_show",
-  "event_host_cancelled",
   "event_host_no_show",
-  "event_negative_review",
-  "event_positive_review",
   "fake_gps_confirmed",
   "host_negative_review",
   "host_positive_review",
-  "message_report_confirmed",
   "mutual_report",
   "plan_late_cancel",
   "plan_no_show",
@@ -117,6 +127,16 @@ function listSourceFiles(dir: string, out: string[] = []): string[] {
 
 const EMITTERS = new Set(["recordTrustEvent", "recordAdjudicatedTrustEvent"]);
 const LOCATION_EMITTER = "recordLocationTrustEvent";
+/**
+ * Trust-owned helpers with a FIXED event type (declared in TrustEventService).
+ * A call to one of these outside the vocabulary file is a producer of exactly
+ * those types. The definition itself never counts (VOCABULARY_FILE is skipped).
+ */
+const HELPER_EMITTERS: Record<string, readonly string[]> = {
+  recordStampVerifiedTrustEvent:       ["stamp_verified"],
+  recordEventHostCancelledTrustEvent:  ["event_host_cancelled"],
+  recordEventReviewTrustEvent:         ["event_positive_review", "event_negative_review"],
+};
 
 export interface ProducerSite {
   file: string;
@@ -172,7 +192,10 @@ export function scanProducers(root: string = SRC_ROOT): CoverageScan {
   for (const file of listSourceFiles(root)) {
     if (resolve(file) === VOCABULARY_FILE) continue; // the declaration, not a producer
     const text = readFileSync(file, "utf8");
-    if (!text.includes("recordTrustEvent") && !text.includes("recordAdjudicatedTrustEvent") && !text.includes(LOCATION_EMITTER)) continue;
+    if (
+      !text.includes("recordTrustEvent") && !text.includes("recordAdjudicatedTrustEvent") &&
+      !text.includes(LOCATION_EMITTER) && !Object.keys(HELPER_EMITTERS).some((h) => text.includes(h))
+    ) continue;
     const sf = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
     const rel = relative(root, file);
 
@@ -199,6 +222,10 @@ export function scanProducers(root: string = SRC_ROOT): CoverageScan {
           } else if (inputArg) {
             dynamic.push({ file: rel, line, expr: inputArg.getText(sf) });
           }
+        }
+
+        if (name && Object.hasOwn(HELPER_EMITTERS, name)) {
+          for (const t of HELPER_EMITTERS[name]) produced.push({ file: rel, line, eventType: t });
         }
 
         if (name === LOCATION_EMITTER) {
@@ -231,6 +258,16 @@ describe("Trust event vocabulary — declared vs produced", () => {
     assert.ok(producedTypes.has("gps_impossible_speed"), "LocationSafetyService gps_impossible_speed not found");
     assert.ok(producedTypes.has("behavior_report_confirmed"), "routes/admin.ts behavior_report_confirmed not found");
     assert.ok(producedTypes.has("rent_buddy_late_cancel"), "rentABuddy.ts const-ternary eventType not resolved");
+    assert.ok(producedTypes.has("event_host_cancelled"), "routes/events.ts helper-emitter call not found");
+    assert.ok(producedTypes.has("content_removed"), "routes/admin.ts content_removed not found");
+  });
+
+  it("a Trust-owned helper counts only where it is CALLED: stamp_verified has no caller and stays unproduced", () => {
+    // The helper is defined in the vocabulary file (excluded) and, until
+    // services/passport/StampAwardEngine.ts calls it, nothing produces it.
+    assert.equal(producedTypes.has("stamp_verified"), false);
+    const helperSites = scan.produced.filter((p) => p.eventType === "event_host_cancelled");
+    assert.ok(helperSites.every((s) => s.file.startsWith("routes/")), `helper producers must be call sites, got ${JSON.stringify(helperSites)}`);
   });
 
   it("every emitter call resolved to a literal set, except the intel bridge (template, by design)", () => {
