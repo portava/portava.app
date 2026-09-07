@@ -112,7 +112,22 @@ export const PACKED_CROWD_LEVELS: readonly string[] = ["packed", "unsafe_density
 export type LiveConstraintReasonCode =
   | "walk_in_denied"
   | "queue_exceeds_tolerance"
-  | "packed_vs_quiet_intent";
+  | "packed_vs_quiet_intent"
+  | "unsafe_density_safety";
+
+/**
+ * The one crowd level that is a SAFETY claim rather than a busyness reading.
+ * lib/intelContracts SPECIALIST_ONLY_CROWD_LEVELS: `unsafe_density` is
+ * "a safety claim, not a vibe: specialist review only" — it cannot be emitted
+ * by any contributor surface and reaches an envelope only through specialist
+ * review. Sensing §7 (spec :129): "Safety constraints outrank opportunity/vibe.
+ * A dangerous place must never simultaneously be promoted as 'best move now'."
+ * lib/mapProjection already maps it to NO activity level for the same reason.
+ * Here it is a hard EXCLUSION for every viewer, whatever their intent — it was
+ * previously folded into PACKED_CROWD_LEVELS and therefore only DEMOTED, and
+ * only for a viewer who had asked for somewhere quiet.
+ */
+export const UNSAFE_CROWD_LEVEL = "unsafe_density";
 
 export type LiveConstraintKind = "exclude" | "demote";
 
@@ -391,6 +406,13 @@ function constraintReasonFor(
     }
     case "crowd.level": {
       const level = crowdLevelOf(env.value);
+      if (level === UNSAFE_CROWD_LEVEL) {
+        return {
+          code: "unsafe_density_safety",
+          kind: "exclude",
+          reason: "Reported unsafe crowding right now — safety comes before any recommendation",
+        };
+      }
       if (level && PACKED_CROWD_LEVELS.includes(level) && tol.intent === "quiet") {
         return {
           code: "packed_vs_quiet_intent",

@@ -440,19 +440,45 @@ export async function evaluateNotification(
   // dedicated step 1 above, which returns the notification-specific
   // "suppressed_blocked_sender" outcome.
   {
-    // Resolve whether the sender is suspended via trust_profiles when the payload
-    // doesn't already carry an explicit isSuspended flag.
+    // Resolve whether the sender is suspended when the payload doesn't already
+    // carry an explicit isSuspended flag.
+    //
+    // This used to read `trust_profiles.public_level === "suspended"`. That
+    // value cannot exist: the live CHECK on trust_profiles.public_level admits
+    // only new_traveler / building_trust / reliable_traveler / trusted_traveler
+    // / highly_trusted / city_trusted (verified against production
+    // 2026-09-07), so the check was dead and a suspended sender's push was
+    // never suppressed by it. Suspension lives in `user_account_states`
+    // (state banned/suspended, optionally time-bounded by expires_at) — the
+    // same table lib/circleAccessGuard, lib/http and lib/profileVisibility
+    // read for the same question. A read error is bound and logged rather
+    // than discarded (supabase-js resolves on a DB error); the posture stays
+    // deliver-with-warning, matching the blocked-sender step above.
     const dataFields = payload.data ?? {};
     let senderSuspended = dataFields["isSuspended"] === true;
     if (db && senderId && !senderSuspended) {
       try {
-        const { data: senderTrust } = await db
-          .from("trust_profiles")
-          .select("public_level")
+        const { data: acctRows, error: acctErr } = await db
+          .from("user_account_states")
+          .select("state, expires_at")
           .eq("user_id", senderId)
-          .maybeSingle();
-        if ((senderTrust as any)?.public_level === "suspended") senderSuspended = true;
-      } catch { /* fail-open */ }
+          .in("state", ["banned", "suspended"]);
+        if (acctErr) {
+          console.warn(
+            "CompassNotificationEngine: sender account-state check failed — push is being evaluated WITHOUT suspension suppression",
+            { userId, senderId, code: (acctErr as any)?.code, message: (acctErr as any)?.message },
+          );
+        } else {
+          const now = Date.now();
+          senderSuspended = ((acctRows ?? []) as Array<{ state: string; expires_at: string | null }>)
+            .some((r) => r.expires_at == null || Date.parse(r.expires_at) > now);
+        }
+      } catch (err) {
+        console.warn(
+          "CompassNotificationEngine: sender account-state check rejected — push is being evaluated WITHOUT suspension suppression",
+          { userId, senderId, err },
+        );
+      }
     }
 
     const VALID_ITEM_TYPES = new Set([

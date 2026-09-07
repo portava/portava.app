@@ -1,7 +1,8 @@
 /**
  * CompassTools — Phase 4 native function calling for the Compass assistant.
  *
- * Eight tools the model may call on demand. Hard rules (master-roadmap.md):
+ * Eleven tools the model may call on demand (the OpenAI schemas in TOOL_DEFINITIONS
+ * below are the authoritative list). Hard rules (master-roadmap.md):
  *   - Candidate generation is strictly separated from AI explanation: tools
  *     produce candidates from real DB data; the model interprets, ranks,
  *     chooses, and explains — it must NEVER invent the candidate list.
@@ -270,7 +271,12 @@ function hiddenUserIds(profile: CompassProfile | null): Set<string> {
  * time (and cached ~2 min). If the user blocks someone MID-CONVERSATION,
  * later tool calls in the same conversation must not surface that person —
  * so social tools refresh the hidden set per call instead of trusting the
- * stale snapshot. Fails safe: on query error the snapshot's ids are kept.
+ * stale snapshot. Fails safe: on query error the snapshot's ids are kept —
+ * and when there is NO snapshot to keep (profile null) a failed read THROWS
+ * rather than answering with an empty hidden set, because an empty set here
+ * would un-hide every blocked, blocker and muted user for that tool call.
+ * executeCompassTool's catch turns the throw into a "Tool execution failed"
+ * result, which is the closed answer.
  */
 async function refreshHiddenUsers(
   sc: SupabaseClient,
@@ -292,10 +298,14 @@ async function refreshHiddenUsers(
     const mutedUserIds = mutedRes.error
       ? (profile?.mutedUserIds ?? [])
       : ((mutedRes.data ?? []) as any[]).map((r) => String(r.muted_id));
+    if (!profile && (blockedRes.error || blockerRes.error || mutedRes.error)) {
+      throw new Error("hidden-user lists unavailable and no snapshot to fall back to");
+    }
     const base =
       profile ?? ({ userId, blockedUserIds: [], blockerUserIds: [], mutedUserIds: [] } as unknown as CompassProfile);
     return { ...base, blockedUserIds, blockerUserIds, mutedUserIds };
-  } catch {
+  } catch (err) {
+    if (!profile) throw err; // no snapshot to fall back to: closed, not empty
     return profile; // fail safe to the snapshot — never widen visibility
   }
 }
@@ -823,15 +833,27 @@ async function toolTravelCompatibility(
   if (!related) return notAvailable;
 
   // Trust gate: below-floor accounts are not surfaced in social answers.
+  //
+  // FAIL CLOSED on an UNREADABLE trust_profiles. supabase-js RESOLVES on a
+  // database error, so the previous `const { data: trust }` discarded `error`
+  // and an outage read as "no profile" -> gate passed -> a below-floor account
+  // could be surfaced for exactly as long as the table was unreadable. This is
+  // a surfacing gate, and "we could not check" must not render like "checked
+  // and fine" — the same defect the event trust gates carried (routes/events.ts,
+  // 2026-09-07). An ABSENT row is still admitted: as of 2026-09-07 production
+  // holds 2 trust_profiles rows for 58 profiles, so "no row" is the normal
+  // state of an ordinary account, not evidence about it; whether unscored
+  // accounts should pass a floor is an owner decision and is unchanged here.
   try {
-    const { data: trust } = await sc
+    const { data: trust, error: trustErr } = await sc
       .from("trust_profiles")
       .select("overall_score")
       .eq("user_id", targetId)
       .maybeSingle();
+    if (trustErr) return notAvailable;
     const score = (trust as any)?.overall_score;
     if (typeof score === "number" && score < SOCIAL_TRUST_FLOOR) return notAvailable;
-  } catch { /* trust lookup failure never blocks (fail-open on infra error) */ }
+  } catch { return notAvailable; /* an unreadable gate is a closed gate */ }
 
   const { data: me } = await sc
     .from("profiles")
