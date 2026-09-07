@@ -53,6 +53,7 @@ import { startIntelRewardScheduler } from "./lib/intelRewardScheduler.js";
 import { startIntelAttributionScheduler } from "./lib/intelAttributionScheduler.js";
 import { registerScopedTrustApplier } from "./lib/intelScopedTrustApply.js";
 import { startMemoryProjectionScheduler } from "./lib/memoryProjectionScheduler.js";
+import { startTripMapProjectionScheduler } from "./lib/mapTripProjectionWorker.js";
 import { startPlaceDayLifecycleWorker } from "./lib/places/placeDaysWorker.js";
 
 assertRequiredEnv(logger);
@@ -150,6 +151,12 @@ app.listen(port, (err) => {
   // facts + the Experience Graph into memory_projections and sweeps expired
   // memory. Flag-gated on memory_projection, fail-closed; a no-op until enabled.
   startMemoryProjectionScheduler();
+  // Trips spec §19.4 projection worker: drains trip_outbox (2420) into the
+  // Map-owned trip_map_projections (2520), idempotent by event_id +
+  // aggregate_version. Flag-gated on trip_map_projection_worker_enabled,
+  // fail-closed; a no-op (one flag read a minute) until enabled. Production
+  // has no outbox yet, so it has no input there until 2334→2337→2420→2520 apply.
+  startTripMapProjectionScheduler();
   // IG-08 coverage producer: assembles (zone, claim-family) gap snapshots and
   // (when intel_missions is also on) generates mission candidates. Flag-gated on
   // intel_coverage, fail-closed; a no-op until enabled.
