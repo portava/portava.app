@@ -562,7 +562,16 @@ describe("the spine is inert by construction", () => {
   });
 
   it("it does not touch the highlights table, which another unit owns", () => {
-    assert.doesNotMatch(sql, /\bhighlights\b/);
+    // Case-INSENSITIVE, and aimed at statements rather than prose: the file's
+    // own header names the "Highlights/Memories spec", so a bare word match
+    // would either be vacuous or fail on the citation. What must be absent is
+    // any DDL or DML naming the table.
+    assert.doesNotMatch(
+      sql,
+      /(ALTER|DROP|CREATE|INSERT INTO|UPDATE|DELETE FROM|REFERENCES|GRANT[^;]*ON)\s+(TABLE\s+)?(public\.)?highlights\b/i,
+    );
+    // ...and the guard is not vacuous: the same pattern DOES fire on a statement.
+    assert.match("ALTER TABLE public.highlights ADD COLUMN x int;", /(ALTER|DROP|CREATE|INSERT INTO|UPDATE|DELETE FROM|REFERENCES|GRANT[^;]*ON)\s+(TABLE\s+)?(public\.)?highlights\b/i);
   });
 
   it("it does not touch the four neighbouring memory tables it must not overload", () => {
