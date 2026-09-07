@@ -79,8 +79,39 @@ Recursion gone; no row disclosed to a user with no relationship to either
 meetup. `meetups.test.ts`, `meetupRlsRecursion.test.ts`, `meetupAgeRsvp.test.ts`
 → 57/57, EXIT 0.
 
-**Production effect: Meetups went from a surface that raised a database error on
-every read to one that works and discloses nothing.**
+### CORRECTION — what this did and did not change for users
+
+My first write-up of this said "Meetups went from raising a database error on
+every read to one that works". **That overclaims it, and the correction matters
+more than the claim.**
+
+Measured after the fact: `routes/meetups.ts` reaches every meetup table on
+`getServiceClient()`, which is `BYPASSRLS`, and a repo-wide search finds **no
+direct client read** of `meetups`, `meetup_invites`, `meetup_time_options` or
+`meetup_time_votes` outside `artifacts/api-server`. The mobile client holds a
+Supabase client but does not use it for these tables.
+
+So the `42P17` recursion **did not break the app's user-facing path**. It broke
+the RLS layer, which is a different and narrower thing.
+
+What actually changed:
+
+1. **RLS became a real second layer instead of an accidental brick wall.** Every
+   non-service read failing is fail-closed by accident, not by design — and an
+   accident that strict is one policy edit away from being an accident that is
+   permissive. It is now a predicate that means something.
+2. **A latent disclosure was closed before it could open** (`2460`). `mi_own`
+   would have let any authenticated caller mint their own invite and read any
+   meetup — reachable the moment the recursion was repaired, which is exactly
+   what `2461` then did.
+3. **A vote-stuffing write boundary was closed** (`2462`).
+4. **A direct PostgREST caller now gets correct answers rather than an error** —
+   including any future client that reads these tables without going through the
+   API.
+
+**Honest production effect: no user-visible behaviour changed. Three real
+security defects were closed and a dead authorization layer was brought back to
+life.** That is worth doing and it is not the same as fixing a broken feature.
 
 
 ---
