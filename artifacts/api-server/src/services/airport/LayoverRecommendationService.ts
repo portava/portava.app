@@ -487,17 +487,57 @@ export async function generateRecommendations(
   }));
 }
 
-/** Fetch persisted recommendations for a session. */
+/**
+ * The one moderation state that suppresses a recommendation from its owner.
+ *
+ * `layover_recommendations.status` is CHECK-constrained to ('active','hidden',
+ * 'flagged') by 0127:132-134, and `POST /admin/airport/reports/:id/resolve`
+ * (routes/airport.ts) maps its three admin actions onto exactly those:
+ *
+ *   approve      -> 'active'   the report was rejected; show it
+ *   hide         -> 'hidden'   the report was upheld; stop showing it
+ *   keep_flagged -> 'flagged'  still under review
+ *
+ * So the user-visible set is everything that is NOT 'hidden'. `flagged` is
+ * deliberately still visible: the admin contract offers `keep_flagged` as an
+ * outcome DISTINCT from `hide`, and collapsing them here would silently make
+ * "leave it up while we look at it" mean "take it down".
+ *
+ * This is a moderation filter, not a safety-band filter. It says nothing about
+ * whether an unsafe recommendation should be blocked (spec L50); that is a
+ * separate, unanswered product question and is not decided here.
+ */
+export const USER_HIDDEN_RECOMMENDATION_STATUS = "hidden" as const;
+
+/**
+ * Fetch persisted recommendations for a session, as the session's owner sees
+ * them.
+ *
+ * Excludes admin-hidden rows. Admin and service inspection paths deliberately
+ * do NOT go through here — `GET /admin/airport/reports` queries
+ * `layover_recommendations` directly for `status='flagged'`, and the resolve
+ * route reads by id — so an admin can still see and act on everything.
+ */
 export async function getRecommendations(
   db: SupabaseClient,
   sessionId: string,
 ): Promise<SafeRecommendation[]> {
   try {
-    const { data } = await db
+    const { data, error } = await db
       .from("layover_recommendations")
       .select("*")
       .eq("session_id", sessionId)
+      .neq("status", USER_HIDDEN_RECOMMENDATION_STATUS)
       .order("sort_order", { ascending: true });
+
+    // supabase-js RESOLVES on a database error, so an unchecked `error` reads
+    // as an empty result. Returning [] here is the fail-closed direction for a
+    // read, but it must be logged rather than silently indistinguishable from
+    // "this session has no recommendations".
+    if (error) {
+      logger.warn({ err: error, sessionId }, "recommendation read failed; serving none");
+      return [];
+    }
 
     return (data ?? []).map((row: any) => sanitizeRecommendation({
       id:             row.id,

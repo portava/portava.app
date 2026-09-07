@@ -76,6 +76,7 @@ import { resolveCanonicalLocation } from "../lib/canonicalLocations.js";
 import {
   generateRecommendations,
   getRecommendations,
+  USER_HIDDEN_RECOMMENDATION_STATUS,
 } from "../services/airport/LayoverRecommendationService.js";
 import { answerLayoverQuestion } from "../services/airport/LayoverCompassService.js";
 import {
@@ -1247,12 +1248,19 @@ router.post("/airport/sessions/:id/stops/from-recommendation", async (req, res) 
   const recId = typeof req.body?.recommendationId === "string" ? req.body.recommendationId : null;
   if (!recId) { sendError(res, "invalid_payload", "recommendationId is required"); return; }
 
-  const { data: rec } = await sc
+  // Same moderation boundary as the list read: an admin-hidden recommendation
+  // must not be addable to a plan either, or the suppression is one API call
+  // wide. A client holding an id from before the hide would otherwise still get
+  // the row. `.error` is checked because supabase-js resolves on a DB error,
+  // which would otherwise read as "not found" and mask a real fault.
+  const { data: rec, error: recError } = await sc
     .from("layover_recommendations")
     .select("*")
     .eq("id", recId)
     .eq("session_id", session.id)
+    .neq("status", USER_HIDDEN_RECOMMENDATION_STATUS)
     .maybeSingle();
+  if (recError) { sendError(res, "db_error", recError.message); return; }
   if (!rec) { sendError(res, "not_found", "Recommendation not found for this session"); return; }
 
   const existing = await loadStops(sc, session.id);
