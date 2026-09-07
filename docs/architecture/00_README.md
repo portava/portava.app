@@ -13,7 +13,12 @@ which are still unreconciled proposals.
 | `04_Behavior_Engine.md` | `rank_events` reality and the Event-Truth gate | current-state |
 | `05_Graph_Engine.md` | `CompassGraphEngine` — nodes, edges, world model, city confidence | current-state |
 | `06_Recommendation_Engine.md` | `portavaRank`, the modifiers, the exploration governor | current-state |
-| `07`–`12` | Creator economy, revenue, payments, DB, API, implementation | proposal stubs |
+| `07_Creator_Economy.md` | The four standings, the reward ladder, anti-gaming — and what Impact may not mean yet | current-state + design |
+| `08_Portava_Revenue_Model.md` | The revenue lines, the take rate, and what Portava will not monetise | current-state |
+| `09_Payment_Architecture.md` | What exists (a priced booking, an estimate) and the unbuilt wallet / ledger / payout design | current-state + design |
+| `10_Database_Architecture.md` | The migration chain, the ledger, the applier, RLS posture, and the traps | current-state |
+| `11_API_Specification.md` | Routing rules, the error envelope, guards, pagination, versioning | current-state |
+| `12_Claude_Code_Implementation.md` | Build order, the defect register, what is blocked and by which ruling | sequencing |
 
 Two documents outside this set govern what may be built here:
 
