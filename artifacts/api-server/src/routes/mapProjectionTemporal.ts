@@ -576,7 +576,11 @@ router.get(
     if (zones === null) {
       // An unreadable §24 policy is NOT an absent policy — serve nothing.
       res.json({
-        enabled: true,
+        enabled: false,
+        // Same rule as routes/mapProjection.ts: an unreadable §24 policy answers
+        // `enabled: false` with a named refusal so the client keeps its legacy
+        // path instead of drawing a blank Time Machine.
+        refusal: "protection_unreadable",
         objects: [],
         viewport: { bbox, zoom },
         target: { at: new Date(target.at).toISOString(), mode: target.mode },

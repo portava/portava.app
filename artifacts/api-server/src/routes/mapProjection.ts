@@ -189,8 +189,25 @@ const router = Router();
  * with an empty zone list is an IDENTITY PASS — it means "no protection policy
  * exists", not "the policy could not be read". Returning [] on a read failure
  * would therefore silently disable the gate exactly when the database is
- * unhealthy. So a failed read returns null, and the caller answers with the
- * empty envelope instead of serving unprotected objects.
+ * unhealthy. So a failed read returns null, and the caller answers
+ * `enabled: false` with a named refusal instead of serving unprotected objects.
+ *
+ * WHY `enabled: false` AND NOT `enabled: true, objects: []` — THE BLANK MAP.
+ * The client (travel-buddy-standalone/src/hooks/useMapEntities.ts) treats an
+ * `enabled: true` answer as OWNING every layer and never re-fetches, while
+ * `enabled: false` means "the gateway is not serving — keep the legacy
+ * per-layer path". This branch used to answer `enabled: true, objects: []`,
+ * which is a fail-closed answer to the wrong question: it told the client
+ * "there is nothing here" when the truth was "I cannot tell whether it is safe
+ * to show you anything". Measured 2026-09-07, `protected_zones` does not exist
+ * in production (migration 2217 unapplied), so the first flip of
+ * `map_projection_enabled` there would have blanked the map for every user —
+ * the legacy path they were on a second earlier would be declined as a
+ * re-fetch. Answering `enabled: false` keeps them on exactly the path that
+ * serves them today, which exposes nothing this gateway would not, and the
+ * `refusal` names the cause so an operator can see the flip did not take.
+ * 2217 still has to precede a flip for the gateway to SERVE; it no longer has
+ * to precede it for the map to survive.
  *
  * Cached briefly: the table is tiny and effectively static, and a per-request
  * read on a polled endpoint would be pure waste. 30s mirrors the flag cache.
@@ -1002,9 +1019,11 @@ router.get(
     // downstream only coarsens or reorders, so nothing can re-sharpen this.
     const zones = await loadProtectedZones(sc);
     if (zones === null) {
-      // See loadProtectedZones: an unreadable policy is NOT an absent policy.
+      // See loadProtectedZones: an unreadable policy is NOT an absent policy,
+      // and `enabled: false` (not an empty `true`) is what keeps the map drawn.
       res.json({
-        enabled: true,
+        enabled: false,
+        refusal: "protection_unreadable",
         objects: [],
         viewport: { bbox, zoom },
         total: 0,
