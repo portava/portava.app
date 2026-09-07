@@ -77,21 +77,40 @@ const VOCABULARY_FILE = resolve(SRC_ROOT, "services/trust/TrustEventService.ts")
  *                               `upheld: true` on a message report (inert until
  *                               the admin client sends the flag).
  *
- *   stamp_verified            — trigger exists (StampAwardEngine.awardStamp,
- *                               Passport-owned). Trust's half is
- *                               recordStampVerifiedTrustEvent; the call is
- *                               Passport's to add.
- *   event_attendee_no_show    — routes/events.ts emits `event_no_show` (moderate,
- *                               -5) for the same action. Vocabulary mismatch.
- *   appeal_approved_reversal  — services/appeals emits `appeal_approved`. Same.
- *   pulse_post_reported       — the only honest trigger is an UPHELD report on
- *                               a post (admin resolve / hide-content), which is
- *                               the same adjudication content_removed names;
- *                               charging on FILING would be unadjudicated.
- *   plan_no_show, plan_late_cancel, host_positive_review, host_negative_review,
- *   responded_promptly, travel_circle_join, mutual_report, fake_gps_confirmed,
- *   event_host_no_show        — no triggering action exists anywhere in the
- *                               tree. Emitting these would be fabrication.
+ * STILL UNPRODUCED — classified one by one, each handler opened, in
+ * docs/architecture/trust-unproduced-vocabulary.md §2 (the authority; this
+ * comment is the index). A raw signal is not an adjudicated event:
+ *
+ *   missing_real_emitter (the action is produced AND adjudicated; nothing emits):
+ *   stamp_verified            — StampAwardEngine fresh-award return (Passport);
+ *                               Trust's half is recordStampVerifiedTrustEvent.
+ *   plan_no_show              — trip owner overrides a member to `no_show`
+ *                               (routes/geofence.ts:872); gate it on the
+ *                               geofence's own `no_show_affects_reliability`.
+ *   host_positive_review /
+ *   host_negative_review      — routes/reviews.ts trip reviews rate the host;
+ *                               only the reviewer is credited today.
+ *
+ *   owner_decision (a product question, named in the doc):
+ *   appeal_approved_reversal  — emitted as `appeal_approved` (same values);
+ *                               recommended: the declared name wins.
+ *   event_attendee_no_show    — emitted as `event_no_show` (moderate, −5);
+ *                               severity has no routing consequence; the 48 h
+ *                               dedup does. Unreachable: nothing sets `started`.
+ *   pulse_post_reported       — "upheld but not removed" is the only honest
+ *                               trigger; it must defer to content_removed
+ *                               (trustEmitterWiring.test.ts §6 pins that).
+ *   responded_promptly        — latency is recorded; two band sets disagree.
+ *   travel_circle_join        — circle joins exist; "travel circle" is nowhere.
+ *   fake_gps_confirmed        — confirm re-affirms gps_impossible_speed; a
+ *                               separate −20 would double-charge one finding.
+ *
+ *   reserved_future_event (nothing produces the situation):
+ *   event_host_no_show, plan_late_cancel
+ *
+ *   unsafe_to_emit_with_current_data:
+ *   mutual_report             — any reciprocity rule hits the reporter the
+ *                               anti-retaliation logic exists to protect.
  */
 export const KNOWN_UNPRODUCED_TRUST_EVENT_TYPES: readonly string[] = [
   "appeal_approved_reversal",

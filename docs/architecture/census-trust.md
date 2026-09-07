@@ -145,7 +145,7 @@ Not counted here. Checked because the brief asked what it marked wrong.
 | C10 | `getDisplayTrustScore` is THE display number; no second engine (`:353-364`; `lib/trustScore.ts:1-25`) | C | `lib/trustScore.ts:124-149` delegates; `PassportProjectionService.ts:1015` and `routes/rentABuddy.ts:1237` read through it; `passportTrustConsistency.test.ts`. |
 | C11 | `getTrustProfile` "loads the current profile" (`:375`) — and a failed read is not a missing profile | **W** | `:376-410` never destructures `error`; `null` means both. Five readers collapse an unreachable engine into "New Traveler"/`score: null`: `getDisplayTrustScore:365`, `getSafeTrustSummary:91`, `getPublicTrustBadge:136`, `getRecoveryStatus:89`, `computeTrustScore:131`. **PR #467 adds `getTrustProfileResult()` (ok/absent/unavailable) and switches ONE reader — Passport's domain builder.** Not fixed here: a second error-aware read in the same file would duplicate #467's hunk. Recommended as a #467 follow-up (§4). |
 | C12 | Caps: create, enforce as ceilings, expire on schedule (`TrustCapService.ts:1-6`) | C | `createCap:32`, applied at `recalculateTrustScore:276-281`, `expireOldCaps:78-91` driven by the scheduler (`:300-306`); `trust.test.ts:400-475`. |
-| C13 | `applyEventCaps` keys on the event vocabulary the emitters actually write (`:166-180`) | **W → C** | `coordinate_jump` named a type nobody emits; `recordLocationTrustEvent:375-396` writes `gps_coordinate_jump`. Corrected (`:186`). Residual, **owner decision**: `plan_no_show`, `fake_gps_confirmed`, `content_removed`, `message_report_confirmed` have no emitter at all, and `event_host_no_show` (serious, −15, `routes/events.ts:3473`) gets no ceiling when confirmed — which serious findings deserve a ceiling is policy, listed in §5. |
+| C13 | `applyEventCaps` keys on the event vocabulary the emitters actually write (`:166-180`) | **W → C** | `coordinate_jump` named a type nobody emits; `recordLocationTrustEvent:375-396` writes `gps_coordinate_jump`. Corrected (`:186`). Residual, **owner decision**: `plan_no_show` and `fake_gps_confirmed` have ceilings and no emitter; `content_removed` and `message_report_confirmed` were wired by the emitter pass. **Correction (2026-09-07, second pass):** this row cited `event_host_no_show (serious, −15, routes/events.ts:3473)` as an emitter. Nothing emits it — `:3473` is the attendance route (`event_attendance_confirmed`), and the no-show emitter at `:3575` writes `event_no_show` (−5 moderate). Which serious findings deserve a ceiling is policy, listed in §5; the per-type evidence is in [trust-unproduced-vocabulary.md](trust-unproduced-vocabulary.md). |
 | C14 | Every cap a moderation finding created is lifted when the finding is reversed (`:93-108`) | C | `liftCapsBySourceEvents:110-128`; wired through `revokeModerationTrustConsequences:112-155` from `routes/admin.ts:1589`. |
 | C15 | `getRestrictionState()` is the enforcement seam — "never query trust_restrictions directly in route code" (`TrustRestrictionService.ts:175-179`) | **W** | `routes/admin.ts:1319-1322` selects `trust_restrictions` directly for the admin user view (read-only, includes `reason`). Low impact; **owner: admin route.** |
 | C16 | Degraded reads are labelled: fail-open (table missing) vs fail-closed (query error), and callers must never show a restriction message for a failed check (`:50-80`) | C | `getRestrictionState:180-250`; consumers honour it (`routes/trips.ts:218-227`, `interactionPermissions.ts:326-337`); `trust.test.ts:906-1043`. |
@@ -164,7 +164,7 @@ Not counted here. Checked because the brief asked what it marked wrong.
 | C29 | Audit inserts match the live `trust_admin_actions` columns (`trustAdminAuditInsertSchemaDrift.test.ts`) | C | Suite passes; `check:write-path-columns` could not run here (live-DB guard; §7). |
 | C30 | The 19 unguarded `void recordTrustEvent(...)` sites cannot crash the process (`index.ts:60-80`) | C | `process.on("unhandledRejection")` backstop logs and continues (`index.ts:77-83`). |
 | C31 | `lib/trustScore.ts` is an adapter, never a second computation (`:1-25`) | C | `computeTrustScore:124-149` reads only `getTrustProfile` + `getDisplayTrustScore` + `publicTrustLabel`; `passportTrustConsistency.test.ts`. |
-| C32 | `TRUST_EVENT_TYPES` is "all event types by source system" (`TrustEventService.ts:458`) — the declared vocabulary is what emitters emit | **W** | One emitter spreads a constant (`routes/verification.ts:76`); five read a constant's fields (`routes/admin.ts:1495`, `StampAwardEngine.ts:723`, `HiddenGemModerationService.ts:133`, `HiddenGemVerificationService.ts:254`); **every other emitter hand-writes its own type, delta and severity** (24 sites across `routes/events.ts`, `routes/rentABuddy.ts`, `routes/messaging.ts`, `routes/posts.ts`, `routes/geofence.ts`, `services/hiddenGems/*`, `services/safeReturn/*`). Declared and emitted by nothing: `STAMP_VERIFIED`, `FAKE_GPS_CONFIRMED`, `CONTENT_REMOVED`, `MESSAGE_REPORT_CONFIRMED`, `PLAN_NO_SHOW`, `PLAN_LATE_CANCEL`, `HOST_POSITIVE_REVIEW`, `HOST_NEGATIVE_REVIEW`, `RESPONDED_PROMPTLY`, `MUTUAL_REPORT`, `TRAVEL_CIRCLE_JOIN`, `EVENT_HOST_CANCELLED`, `EVENT_HOST_NO_SHOW` (the emitter writes `event_no_show` at moderate instead), `EVENT_POSITIVE_REVIEW`, `EVENT_NEGATIVE_REVIEW`. The constant is a wish-list, not a contract. Consolidating it is emitter-side work (not Trust files) and which types survive is an **owner decision**. |
+| C32 | `TRUST_EVENT_TYPES` is "all event types by source system" (`TrustEventService.ts:458`) — the declared vocabulary is what emitters emit | **W** | One emitter spreads a constant (`routes/verification.ts:76`); five read a constant's fields (`routes/admin.ts:1495`, `StampAwardEngine.ts:723`, `HiddenGemModerationService.ts:133`, `HiddenGemVerificationService.ts:254`); **every other emitter hand-writes its own type, delta and severity** (24 sites across `routes/events.ts`, `routes/rentABuddy.ts`, `routes/messaging.ts`, `routes/posts.ts`, `routes/geofence.ts`, `services/hiddenGems/*`, `services/safeReturn/*`). Declared and emitted by nothing: `STAMP_VERIFIED`, `FAKE_GPS_CONFIRMED`, `CONTENT_REMOVED`, `MESSAGE_REPORT_CONFIRMED`, `PLAN_NO_SHOW`, `PLAN_LATE_CANCEL`, `HOST_POSITIVE_REVIEW`, `HOST_NEGATIVE_REVIEW`, `RESPONDED_PROMPTLY`, `MUTUAL_REPORT`, `TRAVEL_CIRCLE_JOIN`, `EVENT_HOST_CANCELLED`, `EVENT_HOST_NO_SHOW` (the emitter writes `event_no_show` at moderate instead), `EVENT_POSITIVE_REVIEW`, `EVENT_NEGATIVE_REVIEW`. The constant is a wish-list, not a contract. Consolidating it is emitter-side work (not Trust files) and which types survive is an **owner decision**. **Since measured:** five of these were wired (`EVENT_HOST_CANCELLED`, `EVENT_POSITIVE_REVIEW`, `EVENT_NEGATIVE_REVIEW`, `CONTENT_REMOVED`, `MESSAGE_REPORT_CONFIRMED`; `trustEventCoverage.test.ts` pins the set). The remaining **13** are classified one by one, with the triggering action opened rather than grepped, in [trust-unproduced-vocabulary.md](trust-unproduced-vocabulary.md): 4 `missing_real_emitter` (`stamp_verified`, `plan_no_show`, `host_positive_review`, `host_negative_review`), 6 `owner_decision`, 2 `reserved_future_event`, 1 `unsafe_to_emit`. The earlier claim that nine had "no triggering action anywhere" is wrong for three and partly wrong for four. |
 
 ---
 
@@ -264,9 +264,9 @@ remaining `getTrustProfile` readers to `getTrustProfileResult`, (iii) decide A17
    read of gaming thresholds; it changes nothing the API does. Recommended; not done.
 2. **Apply 2371 to production?** Adds two nullable columns nobody reads yet. Until applied, every
    recalculation logs one WARN and skips the evidence write. Recommended with (i) in §4.
-3. **Which serious/severe event types earn a ceiling** (C13 residual): today `event_host_no_show`
-   (serious) confirmed gets none; `plan_no_show`, `fake_gps_confirmed`, `content_removed`,
-   `message_report_confirmed` have ceilings for events nobody emits.
+3. **Which serious/severe event types earn a ceiling** (C13 residual): `event_host_no_show`
+   (serious, declared, emitted by nothing) would get none if it were ever confirmed; `plan_no_show`
+   and `fake_gps_confirmed` have ceilings for events nobody emits.
 4. **Whether "score override" means pin or cap** (C22) — `trust_caps` has no floor.
 5. **The event vocabulary** (C32): prune `TRUST_EVENT_TYPES` to what is emitted, or make the
    emitters use it. Either is a deltas-and-severities decision.
@@ -278,7 +278,23 @@ remaining `getTrustProfile` readers to `getTrustProfileResult`, (iii) decide A17
 8. **The four `?? 50` consumers** (A17): whether a user with no profile passes a
    `trust_score_min` gate is the Events owner's call; today they do, on a constant.
 9. **Whether stamp awards should emit trust evidence** (A6): `STAMP_VERIFIED` exists at +3; the
-   live award engine emits nothing. Passport-owned.
+   live award engine emits nothing. Passport-owned; the exact call is written out in
+   [trust-unproduced-vocabulary.md](trust-unproduced-vocabulary.md) §3.2.
+10. **The six unproduced types that are product questions, not missing code** (from the
+    per-type classification, same doc §2): which string wins for the appeal counter-event
+    (`appeal_approved` vs the declared `appeal_approved_reversal`; recommended: declared) and
+    for the attendee no-show (`event_no_show` moderate vs declared `event_attendee_no_show`
+    minor — severity has **no** routing consequence today; the 48 h dedup does); whether an
+    upheld-but-not-removed post report charges `pulse_post_reported` and how it defers to
+    `content_removed`; which response, on which surface, at which threshold is "prompt"; whether
+    the Locate-Friends circle is the "travel circle" and who its join credits; whether an
+    admin-confirmed impossible-speed finding **is** `fake_gps_confirmed` (and if so, that
+    `confirmEvent` must not also apply the `gps_*` cap).
+11. **Two events surfaces cannot reach `started`.** No code path sets `events.state='started'`
+    (every writer enumerated in the same doc, row 2), so host no-show marking, attendance
+    confirmation and completion are unreachable through the API for any event created through
+    it; 96 of 97 open events in production are past their start. Events-owned; it is the reason
+    the *existing* `event_no_show` emitter has never fired, not merely a vocabulary mismatch.
 
 ---
 
@@ -294,6 +310,7 @@ All in Trust-owned files. Nothing a user sees changes; no flag was flipped or ad
 | C27 — settings bounds | `routes/trust-admin.ts:43-94, 414-415` | §5 | R5 (bounds bypassed): **16/18, fail 2** |
 | A3 — evidence behind the score (migration 2371) | `services/trust/TrustScoreService.ts:233-258, 299, 326-341, 348-349, 390-401`; `migrations/2371_trust_profiles_evidence.sql`; `db/rollback/2026-09-07-2371-trust-profiles-evidence-rollback.sql` | §6 | R6a (evidence not persisted): **16/18, fail 2**. R6b (not exposed): **17/18, fail 1**. |
 | A8 — trust tables service-role-only (migration 2370) | `migrations/2370_trust_tables_privileges.sql`; `db/rollback/2026-09-07-2370-trust-tables-privileges-rollback.sql` | §7 | R7 (TRUNCATE re-granted): **17/18, fail 1** |
+| Cross-emitter double-charge (second pass, classification lane) — one report reaching both `hide-content` and `resolve {upheld}`, either order; two reports on one post; a message report hidden then upheld | `src/test/trustEmitterWiring.test.ts` §6 (4 tests; suite 24 → 28) | `trustEmitterWiring.test.ts` §6 | R1 (resolve emits for post targets too — the shape of a naive `pulse_post_reported` wiring, one-line edit to `routes/admin.ts:2124`, restored): **25/28, fail 3**. R3 (`isDuplicate` always `"new"`, Trust-owned): **23/28, fail 5**. Baseline and final 28/28, exit 0. |
 
 Every revert was made against a pristine copy, the suite run under `timeout 300`, the file
 restored and the restore verified with `diff -q` (all seven files: "restored"). Baseline and
@@ -350,6 +367,8 @@ on `src/test/tripCrewRlsMembershipConvergence.test.ts`, a sibling's Trips file, 
 | Writerless-read pattern in a Trust service | **Not found.** Every table has a live writer; four have writers no production event has reached (§3). |
 | Gaming / Cap / Restriction / Recovery built but never invoked | Gaming: **runs every 6 h on empty inputs.** Cap: **never invoked** (needs an admin confirm; 0 ever). Restriction: **read every request, never written.** Recovery: runs. (§3) |
 | `trustMaintenanceScheduler` registered and fires | **TRUE, with production evidence** (§2 C25). |
+| (second pass) Nine of the 13 unproduced types have "no triggering action anywhere" | **FALSE for three** (`plan_no_show` — owner override `routes/geofence.ts:872`; `host_positive_review` / `host_negative_review` — `routes/reviews.ts:199`), **partly for four** (raw signal, no adjudication), **TRUE for two** (`event_host_no_show`, `plan_late_cancel`). [trust-unproduced-vocabulary.md](trust-unproduced-vocabulary.md) §0. |
+| (second pass) `plan_attendance_events` is read/written by four files | `routes/geofence.ts:154` writes; `routes/admin.ts:607` and `TrustGamingDetectionService.ts:130` read; `lib/crowdFlowProducer.ts` names it in comments only (`:152`, `:361`). 0 rows in production. |
 
 ---
 
