@@ -18,6 +18,7 @@ import { resolveCountryWithGeocoding } from "../../lib/stamps/countryGeocoder.js
 import { criteriaGate } from "../../lib/stamps/criteria/index.js";
 import { isFlagEnabled } from "../../lib/featureFlags.js";
 import { recordPassportEvent } from "../../lib/passportTelemetry.js";
+import { recordStampVerifiedTrustEvent } from "../trust/TrustEventService.js";
 
 /**
  * §12/TABLE 16 provenance tier for a StampAwardEngine award. Everything the
@@ -609,8 +610,8 @@ async function _awardStampCore(
   // OFF, payload allow-listed, and it can never block or fail the award. Emitted
   // only on a genuine fresh award (this return), never on the already-earned /
   // recovery no-op paths above. `void` so the award result is not awaited on it.
+  const tier = stampVerificationTier(sourceType);
   {
-    const tier = stampVerificationTier(sourceType);
     const evtPayload = {
       source: sourceType,
       verification: tier,
@@ -633,6 +634,58 @@ async function _awardStampCore(
       });
     }
   }
+
+  // Trust: the Passport half of STAMP_VERIFIED (+3 passport_authenticity).
+  // Declared in TRUST_EVENT_TYPES since the vocabulary was written and, until
+  // this call, emitted by nothing — 47 live production stamps, zero
+  // stamp_verified events, with trust_engine_enabled TRUE. The delta, category,
+  // dedup key and the verified/reported rule are fixed inside Trust's helper;
+  // this side only states the provenance:
+  //   subject  — userId, the stamp OWNER (the person whose travel fact was
+  //              verified). An admin-awarded stamp still credits the owner;
+  //              the admin rides in metadata as awardedByAdminId, never as
+  //              the subject.
+  //   source   — the user_stamps row just inserted. One stamp pays once.
+  //   tier     — the same §32 provenance tier as the telemetry above; a
+  //              'reported' (self-declared) award is refused by the helper.
+  // Same placement rule as the §32 events: this line is reached only when a
+  // user_stamps row was written by THIS call. Every no-op (already_awarded,
+  // already_earned, max_awards_reached, a lost 23505 race) returned above, and
+  // revokeStamp / restoreStamp / recalculateForUser never enter this function.
+  // The heal path (skipToStampInsert) also lands here — correctly: it writes
+  // the FIRST user_stamps row for an award event whose earlier attempt died
+  // before reaching this line, so no event exists for it yet.
+  //
+  // Fire-and-forget: trust bookkeeping can never fail or delay the award. But
+  // non-fatal is not silent — the helper resolves `{ ok: false }` (never
+  // throws) when the ledger write failed, so the result is read and a failure
+  // is surfaced in the engine's structured log vocabulary. A skip
+  // (flag_off / dedup / not_verified / daily_cap) is the engine's decision,
+  // not a failure, and is not logged here.
+  void recordStampVerifiedTrustEvent(sc, {
+    userId,
+    userStampId:       newStampId,
+    tier,
+    stampSourceType:   sourceType,
+    stampDefinitionId: definition.id,
+    awardedByAdminId:  adminId ?? null,
+  }).then((r) => {
+    if (r.ok || r.skipped) return;
+    console.error(JSON.stringify({
+      event:           "stamp.award.trust_event_failed",
+      user_id:         userId,
+      stamp_id:        newStampId,
+      definition_slug: definitionSlug,
+      source_type:     sourceType,
+    }));
+  }).catch((e: any) => {
+    console.error(JSON.stringify({
+      event:    "stamp.award.trust_event_failed",
+      user_id:  userId,
+      stamp_id: newStampId,
+      error:    e?.message ?? String(e),
+    }));
+  });
 
   return {
     awarded: true,

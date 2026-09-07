@@ -38,7 +38,8 @@
  * `recordEventReviewTrustEvent` → event_positive_review / event_negative_review)
  * count as producers at their CALL SITE, never at their definition: the
  * vocabulary file is excluded from the walk, so a helper with no caller still
- * reads as unproduced — which is exactly the stamp_verified state today.
+ * reads as unproduced — which was the stamp_verified state until
+ * services/passport/StampAwardEngine.ts made the call on its fresh-award return.
  * Anything else dynamic is refused and listed as such, never guessed.
  *
  * This is a STATIC test: it proves a producer exists in the tree, not that its
@@ -76,14 +77,19 @@ const VOCABULARY_FILE = resolve(SRC_ROOT, "services/trust/TrustEventService.ts")
  *   message_report_confirmed  — routes/admin.ts report resolve with
  *                               `upheld: true` on a message report (inert until
  *                               the admin client sends the flag).
+ *   stamp_verified            — services/passport/StampAwardEngine.ts
+ *                               _awardStampCore, on the `awarded: true` return
+ *                               only, via recordStampVerifiedTrustEvent. Live
+ *                               the moment it deploys: trust_engine_enabled is
+ *                               TRUE in production (47 live stamps, 0 events
+ *                               when wired, 2026-09-07). Proven end to end in
+ *                               trustStampVerified.test.ts.
  *
  * STILL UNPRODUCED — classified one by one, each handler opened, in
  * docs/architecture/trust-unproduced-vocabulary.md §2 (the authority; this
  * comment is the index). A raw signal is not an adjudicated event:
  *
  *   missing_real_emitter (the action is produced AND adjudicated; nothing emits):
- *   stamp_verified            — StampAwardEngine fresh-award return (Passport);
- *                               Trust's half is recordStampVerifiedTrustEvent.
  *   plan_no_show              — trip owner overrides a member to `no_show`
  *                               (routes/geofence.ts:872); gate it on the
  *                               geofence's own `no_show_affects_reliability`.
@@ -124,7 +130,6 @@ export const KNOWN_UNPRODUCED_TRUST_EVENT_TYPES: readonly string[] = [
   "plan_no_show",
   "pulse_post_reported",
   "responded_promptly",
-  "stamp_verified",
   "travel_circle_join",
 ];
 
@@ -281,10 +286,18 @@ describe("Trust event vocabulary — declared vs produced", () => {
     assert.ok(producedTypes.has("content_removed"), "routes/admin.ts content_removed not found");
   });
 
-  it("a Trust-owned helper counts only where it is CALLED: stamp_verified has no caller and stays unproduced", () => {
-    // The helper is defined in the vocabulary file (excluded) and, until
-    // services/passport/StampAwardEngine.ts calls it, nothing produces it.
-    assert.equal(producedTypes.has("stamp_verified"), false);
+  it("a Trust-owned helper counts only where it is CALLED: stamp_verified is produced by StampAwardEngine, never by its own definition", () => {
+    // The helper is defined in the vocabulary file (excluded from the walk),
+    // so the ONLY way stamp_verified reads as produced is a call from another
+    // surface. That call lives in the Passport award engine — and nowhere else:
+    // a second site would be a second key for one stamp.
+    const stampSites = scan.produced.filter((p) => p.eventType === "stamp_verified");
+    assert.deepEqual(
+      stampSites.map((s) => s.file),
+      ["services/passport/StampAwardEngine.ts"],
+      `stamp_verified must be produced by exactly one call site in the award engine, got ${JSON.stringify(stampSites)}`,
+    );
+    assert.ok(stampSites.every((s) => !s.file.startsWith("services/trust/")), "the definition never counts as a producer");
     const helperSites = scan.produced.filter((p) => p.eventType === "event_host_cancelled");
     assert.ok(helperSites.every((s) => s.file.startsWith("routes/")), `helper producers must be call sites, got ${JSON.stringify(helperSites)}`);
   });
