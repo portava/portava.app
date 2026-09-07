@@ -247,17 +247,35 @@ export async function getRestrictionState(
   }
 }
 
-/** Expire restrictions whose expires_at has passed (call from cleanup job) */
+/**
+ * Expire restrictions whose expires_at has passed.
+ *
+ * Called from lib/trustMaintenanceScheduler on every pass. This function
+ * existed with the comment "call from cleanup job" and no caller: every
+ * read-side consumer (getRestrictionState, interactionPermissions) already
+ * filters on `expires_at`, so an expired restriction was never ENFORCED past
+ * its date — but its row stayed `lifted_at IS NULL`, so the admin user view
+ * (routes/admin.ts, routes/trust-admin.ts) listed it as active indefinitely.
+ * The row now agrees with the enforcement.
+ *
+ * Reads `error`: postgrest-js resolves `{ data, error }` rather than rejecting,
+ * so the previous `const { data }` turned any failed update into a silent 0.
+ */
 export async function expireOldRestrictions(db: SupabaseClient): Promise<number> {
   try {
-    const { data } = await db
+    const { data, error } = await db
       .from("trust_restrictions")
       .update({ lifted_at: new Date().toISOString() })
       .lt("expires_at", new Date().toISOString())
       .is("lifted_at", null)
       .select("id");
+    if (error) {
+      trustRestrictionLogger.warn({ err: error }, "expireOldRestrictions failed (non-fatal)");
+      return 0;
+    }
     return (data as any[])?.length ?? 0;
-  } catch {
+  } catch (err) {
+    trustRestrictionLogger.warn({ err }, "expireOldRestrictions threw (non-fatal)");
     return 0;
   }
 }

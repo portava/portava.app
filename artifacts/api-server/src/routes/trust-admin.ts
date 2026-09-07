@@ -4,6 +4,7 @@
  * Mounted at /api (so full paths are /api/admin/trust/...).
  *
  * GET    /admin/trust/reviews                      — paginated review queue
+ * GET    /admin/trust/events/pending               — events awaiting confirm/dismiss
  * GET    /admin/trust/users/:userId                — full admin trust view
  * POST   /admin/trust/events/:eventId/confirm      — confirm pending event
  * POST   /admin/trust/events/:eventId/dismiss      — dismiss pending event
@@ -14,6 +15,7 @@
  * POST   /admin/trust/gaming-flags/:id/mark-reviewed — dismiss a gaming flag
  * GET    /admin/trust/settings                     — read trust settings
  * PUT    /admin/trust/settings/:key                — update one trust setting + async recalc
+ *                                                     (value bounded per key — see SETTING_BOUNDS)
  */
 import { Router } from "express";
 import { logAdminAccess, accessReason } from "../lib/adminAudit.js";
@@ -25,6 +27,7 @@ import {
   adminApplyRestriction,
   adminLiftRestriction,
   adminResolveReview,
+  getPendingEvents,
 } from "../services/trust/TrustAdminService.js";
 import { getTrustProfile, recalculateTrustScore } from "../services/trust/TrustScoreService.js";
 import { invalidate as invalidateCompassCache } from "../compass/CompassCacheEngine.js";
@@ -37,17 +40,58 @@ const router = Router();
 
 const UUID = /^[0-9a-f-]{36}$/i;
 
-const TRUST_SETTING_KEYS = new Set([
-  "weight_plan_attendance", "weight_host_quality", "weight_communication",
-  "weight_respect_safety", "weight_location_honesty", "weight_content_quality",
-  "weight_community_value", "weight_guide_accuracy", "weight_passport_auth",
-  "decay_half_life_days",
-  "level_building_trust", "level_reliable", "level_trusted",
-  "level_highly_trusted", "level_city_trusted",
-  "daily_cap_plan_attend", "daily_cap_guide_verify", "daily_cap_gem_save",
-  "weekly_cap_plan_attend", "weekly_cap_guide_verify", "weekly_cap_gem_save",
-  "gaming_checkin_cluster_limit", "gaming_mutual_rate_threshold", "gaming_rapid_jump_points",
-]);
+/**
+ * Structural bounds for each trust setting. These are NOT policy: the numbers
+ * an operator picks inside a range are theirs. They are the ranges outside of
+ * which the engine stops computing rather than computes something different:
+ *
+ *   - weights are fractions of the overall score (TrustScoreService multiplies
+ *     each category by its weight and sums); a negative weight inverts a
+ *     category and a weight above 1 lets one category exceed the 0–100 scale.
+ *   - decay_half_life_days is the divisor in 2^(-age/halfLife): 0 makes every
+ *     weight 2^-∞ = 0, so every score collapses to the neutral 50 and evidence
+ *     weight reads 0 for everyone; a negative value makes OLDER events count
+ *     MORE. The column is INTEGER, so a fraction is rejected by the database
+ *     anyway — rejected here with a message instead of a 500.
+ *   - level_* thresholds are compared against a 0–100 score.
+ *   - the caps and gaming_checkin_cluster_limit are INTEGER counts.
+ *   - gaming_mutual_rate_threshold is a rate (count / total) in [0, 1].
+ *   - gaming_rapid_jump_points is compared against a 24-hour delta sum.
+ *
+ * The previous validator was `z.number()` — any finite number, including all
+ * of the above — and the PUT's audit row would faithfully record the moment
+ * the engine was zeroed.
+ */
+type SettingBound = { min: number; max: number; integer?: boolean; exclusiveMin?: boolean };
+const WEIGHT: SettingBound = { min: 0, max: 1 };
+const LEVEL: SettingBound = { min: 0, max: 100 };
+const COUNT: SettingBound = { min: 0, max: 1_000_000, integer: true };
+const SETTING_BOUNDS: Record<string, SettingBound> = {
+  weight_plan_attendance: WEIGHT, weight_host_quality: WEIGHT, weight_communication: WEIGHT,
+  weight_respect_safety: WEIGHT, weight_location_honesty: WEIGHT, weight_content_quality: WEIGHT,
+  weight_community_value: WEIGHT, weight_guide_accuracy: WEIGHT, weight_passport_auth: WEIGHT,
+  decay_half_life_days: { min: 1, max: 3650, integer: true },
+  level_building_trust: LEVEL, level_reliable: LEVEL, level_trusted: LEVEL,
+  level_highly_trusted: LEVEL, level_city_trusted: LEVEL,
+  daily_cap_plan_attend: COUNT, daily_cap_guide_verify: COUNT, daily_cap_gem_save: COUNT,
+  weekly_cap_plan_attend: COUNT, weekly_cap_guide_verify: COUNT, weekly_cap_gem_save: COUNT,
+  gaming_checkin_cluster_limit: { min: 1, max: 1_000_000, integer: true },
+  gaming_mutual_rate_threshold: { min: 0, max: 1 },
+  gaming_rapid_jump_points: { min: 0, max: 1000, exclusiveMin: true },
+};
+
+const TRUST_SETTING_KEYS = new Set(Object.keys(SETTING_BOUNDS));
+
+/** Exported for tests. Returns null when `value` is acceptable for `key`, else the reason. */
+export function trustSettingRejection(key: string, value: unknown): string | null {
+  const b = SETTING_BOUNDS[key];
+  if (!b) return `Unknown trust setting key: ${key}`;
+  if (typeof value !== "number" || !Number.isFinite(value)) return "value must be a finite number";
+  if (b.integer && !Number.isInteger(value)) return `${key} must be an integer`;
+  if (b.exclusiveMin ? value <= b.min : value < b.min) return `${key} must be ${b.exclusiveMin ? "greater than" : "at least"} ${b.min}`;
+  if (value > b.max) return `${key} must be at most ${b.max}`;
+  return null;
+}
 
 // ── GET /admin/trust/reviews ─────────────────────────────────────────────────
 
@@ -80,6 +124,26 @@ router.get("/admin/trust/reviews", async (req, res) => {
   if (error) { sendError(res, "db_error", error.message); return; }
   void logAdminAccess(sc, admin.userId, "profile", "list", "view", accessReason(req));
   res.json({ reviews: data ?? [], total: count ?? 0, page });
+});
+
+// ── GET /admin/trust/events/pending ──────────────────────────────────────────
+//
+// The events an admin can confirm or dismiss. TrustAdminService.getPendingEvents
+// existed from the start and no route called it, so the only way to find a
+// pending_review event was to already know which user to open. Pending events
+// now also get a trust_reviews row (TrustEventService.queueEventForReview), so
+// /admin/trust/reviews lists them; this endpoint is the direct view of the
+// ledger itself, and the one that shows an event queued before that change.
+
+router.get("/admin/trust/events/pending", async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const { sc } = admin;
+
+  const limit = Math.min(100, Number(req.query.limit) || 50);
+  const events = await getPendingEvents(sc, limit);
+  void logAdminAccess(sc, admin.userId, "profile", "list", "view", accessReason(req));
+  res.json({ events, total: events.length });
 });
 
 // ── GET /admin/trust/users/:userId ───────────────────────────────────────────
@@ -347,6 +411,8 @@ router.put("/admin/trust/settings/:key", async (req, res) => {
 
   const parsed = z.object({ value: z.number() }).safeParse(req.body);
   if (!parsed.success) { sendError(res, "invalid_payload", "value must be a number"); return; }
+  const rejection = trustSettingRejection(key, parsed.data.value);
+  if (rejection) { sendError(res, "invalid_payload", rejection); return; }
 
   const { data, error } = await sc
     .from("trust_settings")

@@ -11,6 +11,9 @@
  * Never auto-bans. Serious/severe events are queued for admin review.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { logger as rootLogger } from "../../lib/logger.js";
+
+const logger = rootLogger.child({ service: "TrustEventService" });
 
 export type TrustCategory =
   | "plan_attendance"
@@ -289,11 +292,72 @@ export async function recordTrustEvent(
 
   if (error) throw new Error(`recordTrustEvent DB error: ${error.message}`);
 
+  const eventId: string = (data as any).id;
+  if (status === "pending_review") {
+    await queueEventForReview(db, userId, eventId, { eventType, category, severity, sourceType });
+  }
+
   return {
     ok: true,
-    eventId: (data as any).id,
+    eventId,
     pendingReview: status === "pending_review",
   };
+}
+
+/**
+ * Put a pending_review event on the admin review queue.
+ *
+ * The header of this module has always said "Serious/severe events are queued
+ * for admin review". They were routed to status='pending_review' — and that
+ * was the whole of the queueing. The queue an admin actually reads is
+ * `trust_reviews` (GET /admin/trust/reviews), and nothing wrote a row there
+ * for a pending event: recordAdjudicatedTrustEvent's own comment records the
+ * gap ("nothing would prompt them to, since recordTrustEvent writes no
+ * trust_reviews row"), and TrustAdminService.confirmEvent / dismissEvent both
+ * close `trust_reviews WHERE source_event_id = eventId` — a row that never
+ * existed. The schema was built for this: `review_type` admits 'event_review'
+ * and `source_event_id` is a foreign key to trust_events. So an unattended
+ * serious finding — an impossible-speed GPS trace, a host no-show — sat in
+ * pending_review, excluded from the score by design, visible only to an admin
+ * who happened to open that one user's page. Queued into a queue nobody could
+ * list.
+ *
+ * One review per event, keyed by source_event_id; the event itself is already
+ * deduplicated upstream. Non-fatal: the event is the record of the finding
+ * and is already written; a failed review insert delays the adjudication
+ * rather than losing the evidence, and is logged so it cannot fail silently.
+ */
+async function queueEventForReview(
+  db: SupabaseClient,
+  userId: string,
+  eventId: string,
+  facts: { eventType: string; category: TrustCategory; severity: TrustSeverity; sourceType: string },
+): Promise<void> {
+  try {
+    const { error } = await db.from("trust_reviews").insert({
+      user_id:         userId,
+      review_type:     "event_review",
+      source_event_id: eventId,
+      status:          "open",
+      metadata: {
+        event_type:  facts.eventType,
+        category:    facts.category,
+        severity:    facts.severity,
+        source_type: facts.sourceType,
+      },
+    });
+    if (error) {
+      logger.warn(
+        { err: error, userId, eventId, eventType: facts.eventType },
+        "pending_review event recorded but trust_reviews queue insert failed — adjudication delayed, not lost",
+      );
+    }
+  } catch (err) {
+    logger.warn(
+      { err, userId, eventId, eventType: facts.eventType },
+      "pending_review event recorded but trust_reviews queue insert threw — adjudication delayed, not lost",
+    );
+  }
 }
 
 /** Batch record multiple events (ignores individual failures) */

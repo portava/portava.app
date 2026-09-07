@@ -20,6 +20,9 @@
  *   - CAP EXPIRY. `applyEventCaps` writes ceilings with `expires_at` (7/14/30/60
  *     days). Nothing lifted them, so a time-limited ceiling was permanent — the
  *     opposite of the intended "recovers slowly".
+ *   - RESTRICTION EXPIRY. `applyRestriction` accepts `expires_at` and every
+ *     enforcement read already ignores an expired row, but nothing marked the
+ *     row lifted, so admin views listed a lapsed restriction as active for ever.
  *   - PROBATION. `trust_profiles.probation_ends_at` had no reader, so probation
  *     never ended.
  *
@@ -47,6 +50,7 @@ import { getServiceClient } from "./supabase.js";
 import { logger as rootLogger } from "./logger.js";
 import { recalculateTrustScore } from "../services/trust/TrustScoreService.js";
 import { expireOldCaps } from "../services/trust/TrustCapService.js";
+import { expireOldRestrictions } from "../services/trust/TrustRestrictionService.js";
 import { runGamingDetectionScan } from "../services/trust/TrustGamingDetectionService.js";
 import { isTrustEnabled } from "../services/trust/TrustEventService.js";
 
@@ -88,6 +92,7 @@ const DAY_MS = 24 * 60 * 60 * 1_000;
 export interface TrustMaintenanceStatus {
   lastRunAt: string | null;
   lastCapsExpired: number;
+  lastRestrictionsExpired: number;
   lastProbationCleared: number;
   lastUsersRecalculated: number;
   lastGamingFlagged: number;
@@ -98,6 +103,7 @@ export interface TrustMaintenanceStatus {
 const _status: TrustMaintenanceStatus = {
   lastRunAt: null,
   lastCapsExpired: 0,
+  lastRestrictionsExpired: 0,
   lastProbationCleared: 0,
   lastUsersRecalculated: 0,
   lastGamingFlagged: 0,
@@ -113,6 +119,7 @@ export function getTrustMaintenanceStatus(): Readonly<TrustMaintenanceStatus> {
 export function _resetStatus(): void {
   _status.lastRunAt = null;
   _status.lastCapsExpired = 0;
+  _status.lastRestrictionsExpired = 0;
   _status.lastProbationCleared = 0;
   _status.lastUsersRecalculated = 0;
   _status.lastGamingFlagged = 0;
@@ -258,6 +265,7 @@ export interface TrustMaintenanceResult {
   skipped?: boolean;
   skipReason?: string;
   capsExpired: number;
+  restrictionsExpired: number;
   probationCleared: number;
   usersRecalculated: number;
   recalcFailures: number;
@@ -273,7 +281,7 @@ export interface TrustMaintenanceResult {
  */
 export async function runTrustMaintenance(client?: any): Promise<TrustMaintenanceResult> {
   const empty: TrustMaintenanceResult = {
-    ok: true, capsExpired: 0, probationCleared: 0,
+    ok: true, capsExpired: 0, restrictionsExpired: 0, probationCleared: 0,
     usersRecalculated: 0, recalcFailures: 0, gamingFlagged: 0, truncated: false,
   };
 
@@ -295,6 +303,17 @@ export async function runTrustMaintenance(client?: any): Promise<TrustMaintenanc
     capsExpired = await expireOldCaps(db);
   } catch (err) {
     logger.warn({ err }, "expireOldCaps threw (non-fatal)");
+  }
+
+  // 1b. Mark time-limited restrictions that have run out as lifted. Enforcement
+  //     already ignores them past `expires_at` (getRestrictionState filters on
+  //     it); this keeps the row — and the admin views that list it — honest.
+  //     TrustRestrictionService.expireOldRestrictions had no caller before.
+  let restrictionsExpired = 0;
+  try {
+    restrictionsExpired = await expireOldRestrictions(db);
+  } catch (err) {
+    logger.warn({ err }, "expireOldRestrictions threw (non-fatal)");
   }
 
   // 2. End probation whose term has run.
@@ -345,6 +364,7 @@ export async function runTrustMaintenance(client?: any): Promise<TrustMaintenanc
   return {
     ok: true,
     capsExpired,
+    restrictionsExpired,
     probationCleared,
     usersRecalculated,
     recalcFailures,
@@ -364,12 +384,14 @@ async function tickOnce(): Promise<void> {
     _status.lastSkippedReason = r.skipped ? (r.skipReason ?? "skipped") : null;
     if (!r.skipped) {
       _status.lastCapsExpired = r.capsExpired;
+      _status.lastRestrictionsExpired = r.restrictionsExpired;
       _status.lastProbationCleared = r.probationCleared;
       _status.lastUsersRecalculated = r.usersRecalculated;
       _status.lastGamingFlagged = r.gamingFlagged;
       logger.info(
         {
           capsExpired: r.capsExpired,
+          restrictionsExpired: r.restrictionsExpired,
           probationCleared: r.probationCleared,
           usersRecalculated: r.usersRecalculated,
           recalcFailures: r.recalcFailures,

@@ -167,12 +167,23 @@ export async function applyEventCaps(
   // Keys are lowercase — callers must have already lowercased eventType
   // (TrustEventService.recordTrustEvent normalizes on entry; confirmEvent passes the
   // stored value which is always lowercase after that normalization).
+  //
+  // Keys must be the EMITTED vocabulary, not the TRUST_EVENT_TYPES constant
+  // name. The location findings are written by recordLocationTrustEvent as
+  // `gps_${suspicionReason}` — `gps_impossible_speed` and `gps_coordinate_jump`
+  // — so the entry here was `coordinate_jump` for a type nobody has ever
+  // emitted, exactly the mismatch CHECKIN_CLUSTER_EVENT_TYPES documents for the
+  // gaming scan. A coordinate jump is emitted at 'moderate' and is applied
+  // rather than queued, so today this entry is reached only if one is ever
+  // confirmed through the adjudicated path; the key is corrected so that path
+  // caps the right thing when it happens, and so the map stops naming an event
+  // that does not exist.
   const capMap: Record<string, { category: TrustCategory; ceiling: number; reasonCode: string; expiresInDays?: number }[]> = {
     plan_no_show:              [{ category: "plan_attendance",  ceiling: 60, reasonCode: "no_show",              expiresInDays: 30 }],
     behavior_report_confirmed: [{ category: "respect_safety",  ceiling: 40, reasonCode: "behavior_confirmed" }],
     fake_gps_confirmed:        [{ category: "location_honesty", ceiling: 35, reasonCode: "fake_gps_confirmed"                      }],
     gps_impossible_speed:      [{ category: "location_honesty", ceiling: 55, reasonCode: "impossible_speed",     expiresInDays: 14 }],
-    coordinate_jump:           [{ category: "location_honesty", ceiling: 55, reasonCode: "coordinate_jump",      expiresInDays: 7  }],
+    gps_coordinate_jump:       [{ category: "location_honesty", ceiling: 55, reasonCode: "coordinate_jump",      expiresInDays: 7  }],
     content_removed:           [{ category: "content_quality",  ceiling: 50, reasonCode: "content_removed",      expiresInDays: 30 }],
     message_report_confirmed:  [{ category: "communication",    ceiling: 45, reasonCode: "message_report",       expiresInDays: 60 }],
   };

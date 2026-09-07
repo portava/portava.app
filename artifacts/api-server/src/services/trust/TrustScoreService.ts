@@ -229,6 +229,32 @@ export interface TrustScoreResult {
   public_level: PublicTrustLevel;
   categories: Record<TrustCategory, number>;
   capsApplied: string[];
+  /**
+   * How much evidence stands behind the scores (Passport §9 "Trust Confidence",
+   * §10 "an 82 with high evidence is not equivalent to an 82 with little").
+   *
+   *   evidenceWeight — decay-weighted count of the applied/confirmed events in
+   *                    the 365-day scoring window: the same quantity, decay and
+   *                    window the category scores are built from.
+   *   evidenceCount  — the undecayed count of those events.
+   *
+   * `null` means NOT YET MEASURED — a profile written before migration 2371 or
+   * by a build that predates it — and must not be read as zero. `0` means
+   * measured and empty: every score on the row is the neutral 50 with nothing
+   * behind it. Banding into words is the presenting surface's decision.
+   */
+  evidenceWeight?: number | null;
+  evidenceCount?: number | null;
+}
+
+/**
+ * Total decayed weight and raw count of the events a recalculation scored.
+ * Exported for tests; the numbers are persisted by recalculateTrustScore.
+ */
+export function measureEvidence(events: readonly any[], halfLifeDays: number): { weight: number; count: number } {
+  let weight = 0;
+  for (const e of events) weight += decayWeight(e.created_at, halfLifeDays);
+  return { weight: Math.round(weight * 1000) / 1000, count: events.length };
 }
 
 /** Recalculate all scores for a user and persist to trust_profiles */
@@ -270,6 +296,7 @@ export async function recalculateTrustScore(
   ) / 100;
 
   const public_level = scoreToLevel(overall, settings);
+  const evidence = measureEvidence(events, halfLife);
 
   // Persist (non-fatal — return computed result even if persist fails)
   {
@@ -290,6 +317,26 @@ export async function recalculateTrustScore(
       updated_at:            new Date().toISOString(),
     }, { onConflict: "user_id" });
     if (upsertError) logger.warn({ err: upsertError, userId }, "trust_profiles persist failed (non-fatal)");
+    else {
+      // The evidence columns are written in a SEPARATE statement on purpose.
+      // Migration 2371 adds them; a database that has not applied it (production
+      // at the time of writing) rejects a statement that names them (PGRST204)
+      // — and PostgREST rejects the WHOLE statement. Folding them into the
+      // upsert above would therefore stop every score persist on such a
+      // database, silently, exactly as lib/mediaAssets did for three weeks
+      // (see migration 2336's header). Here only the evidence write is lost,
+      // it is logged with the migration number, and the score still lands.
+      const { error: evidenceError } = await db
+        .from("trust_profiles")
+        .update({ evidence_weight: evidence.weight, evidence_count: evidence.count })
+        .eq("user_id", userId);
+      if (evidenceError) {
+        logger.warn(
+          { err: evidenceError, userId },
+          "trust_profiles evidence persist failed (non-fatal) — is migration 2371_trust_profiles_evidence applied?",
+        );
+      }
+    }
   }
 
   return {
@@ -298,6 +345,8 @@ export async function recalculateTrustScore(
     public_level,
     categories: categories as Record<TrustCategory, number>,
     capsApplied,
+    evidenceWeight: evidence.weight,
+    evidenceCount: evidence.count,
   };
 }
 
@@ -336,11 +385,20 @@ export async function getTrustProfile(
       .maybeSingle();
     if (!data) return null;
     const d = data as any;
+    const num = (v: unknown): number | null => {
+      if (v === null || v === undefined) return null;
+      const n = Number(v);
+      return Number.isFinite(n) ? n : null;
+    };
     return {
       userId,
       overall_score: d.overall_score,
       public_level:  d.public_level,
       capsApplied:   [],
+      // NULL (pre-2371 row, or a database without the columns) stays null:
+      // "not measured" is a different answer from "measured, nothing there".
+      evidenceWeight: num(d.evidence_weight),
+      evidenceCount:  num(d.evidence_count),
       categories: {
         plan_attendance:       d.plan_attendance,
         host_quality:          d.host_quality,
