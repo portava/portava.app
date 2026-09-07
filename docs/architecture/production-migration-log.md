@@ -249,3 +249,47 @@ deletes require owner / co_host / member — **not viewer**, matching the API.
 
 That last row is the check that matters: a status gate applied carelessly would
 have shown as a drop in visible rows.
+
+
+---
+
+## 2026-09-07 — `2530_highlights_trip_only_accepted_crew`, and the end state
+
+`highlights_select_active`'s `trip_only` branch joined `trip_members` to itself
+with **no role filter and no status filter**, so a pending invitee read the
+`trip_only` highlights of everyone on a trip they had not joined.
+
+2530 does not rewrite the policy; it rewrites **one branch of whatever is live**.
+It reads the current `qual`, matches the self-join fragment, refuses if the
+policy is not `(SELECT, PERMISSIVE, TO authenticated, no WITH CHECK)`, refuses if
+the fragment does not appear exactly once, and — before writing anything —
+proves the rewrite changed nothing outside that branch by masking the branch on
+both sides and comparing. Then it re-reads what Postgres actually stored and
+compares again, because Postgres re-deparses what you give it.
+
+That shape-agnosticism matters here: PR #461's `2313` restructures both SELECT
+policies on `highlights` and reproduces the self-join byte-for-byte, so whichever
+of the two lands second must not undo the other. 2530 was written to be the one
+that adapts.
+
+## End state on production, measured
+
+| invariant | result |
+|---|---|
+| policy cycles anywhere in `public` (recursive walk, depth 6) | **NONE** |
+| blanket `auth.uid() IS NOT NULL` read policies | **NONE** |
+| `public.shares_trip_with` social-graph oracle | **DROPPED** |
+| `highlights` `trip_members` self-join | **GONE** |
+| policies still naming `trip_members` | **4** |
+
+Those four are the ones `2337` measured as **correct as written** and
+deliberately did not touch:
+
+- `trip_members_insert` / `trip_members_delete` — they govern who may create or
+  remove a membership row. A membership gate here would be circular.
+- `tri_member_read` / `trs_member_read` — they already spell out
+  `role IN (owner, co_host, member, viewer) AND status accepted OR
+  trips.owner_id`. That is `requireTripMember` exactly; somebody got these right
+  first, and they are the proof the rule is expressible.
+
+So the residue is not leftover work. It is the set that was already correct.
