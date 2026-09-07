@@ -110,6 +110,27 @@ function makeClient(state: FakeState) {
       neq(col: string, val: any) { filters.push((r) => r[col] !== val); return builder; },
       in(col: string, vals: any[]) { filters.push((r) => vals.includes(r[col])); return builder; },
       lt(col: string, val: any)  { filters.push((r) => r[col] < val); return builder; },
+      gt(col: string, val: any)  { filters.push((r) => r[col] > val); return builder; },
+      // PostgREST negations used by the discovery feed's pre-filters:
+      //   .not("hidden_user_ids", "cs", "{uuid}")  — array does NOT contain
+      //   .not("owner_id", "in", "(a,b)")          — value NOT in list
+      not(col: string, op: string, val: any) {
+        if (op === "cs") {
+          const wanted = String(val).replace(/^\{|\}$/g, "").split(",").filter(Boolean);
+          filters.push((r) => {
+            const arr: any[] = r[col] ?? [];
+            return !wanted.some((w) => arr.includes(w));
+          });
+        } else if (op === "in") {
+          // PostgREST accepts quoted and bare list members; strip either.
+          const list = String(val).replace(/^\(|\)$/g, "").split(",")
+            .map((x) => x.trim().replace(/^"|"$/g, "")).filter(Boolean);
+          filters.push((r) => !list.includes(r[col]));
+        } else {
+          filters.push((r) => r[col] !== val);
+        }
+        return builder;
+      },
       order()  { return builder; },
       limit()  { return builder; },
       maybeSingle() { return resolveSingle(true); },

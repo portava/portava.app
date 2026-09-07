@@ -5,6 +5,7 @@ import { getServiceClient } from "../lib/supabase";
 import { invalidate as invalidateCompassCache } from "../compass/CompassCacheEngine.js";
 import { canViewHighlight, type HighlightVisibility, type HighlightRecord } from "../lib/highlightPermissions";
 import { canMessage } from "../lib/messagingPermissions";
+import { isFlagEnabled } from "../lib/featureFlags";
 import { nameVisibilitySet, presentedName } from "../lib/publicIdentity";
 import { z } from "zod";
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -37,13 +38,24 @@ async function resolveViewAccess(
   const record = h as HighlightRecord;
   const ownerId = record.owner_id;
 
-  // Block check (both directions)
+  // Block check (both directions). FAIL CLOSED.
+  //
+  // supabase-js RESOLVES rather than throws on a DB error, so `.data` is null on
+  // a failed query and the old `if (blockedByMe.data || blockingMe.data)` read a
+  // blocks-table failure as "these two users are not blocked" — the highlight,
+  // and every engagement action gated by this helper, was served. That is the
+  // MEM·M6 defect that routes/memories.ts fixed on the memories surface
+  // (isBlocked() there returns true on either error); the highlights surface
+  // never got the same treatment, in this helper or in the three feed routes.
+  // Spec §10: "blocking and account deletion must suppress future social
+  // resurfacing"; §28.11: never swallow a failure into a plausible-looking
+  // permissive answer.
   if (viewerId !== ownerId) {
     const [blockedByMe, blockingMe] = await Promise.all([
       sc.from("blocks").select("blocked_id").eq("blocker_id", viewerId).eq("blocked_id", ownerId).maybeSingle(),
       sc.from("blocks").select("blocker_id").eq("blocker_id", ownerId).eq("blocked_id", viewerId).maybeSingle(),
     ]);
-    if (blockedByMe.data || blockingMe.data) {
+    if (blockedByMe.error || blockingMe.error || blockedByMe.data || blockingMe.data) {
       sendError(res, "not_found", "Highlight not found");
       return null;
     }
@@ -81,6 +93,14 @@ async function resolveViewAccess(
 
   return { h: record };
 }
+
+/**
+ * §12 finiteness bounds for GET /highlights/following-feed, engaged only when
+ * `highlights_feed_bounded_enabled` is on (migration 2339). 60 is a page of
+ * highlights, not a policy about how many Highlights a person may have.
+ */
+const FOLLOWING_FEED_DEFAULT_LIMIT = 60;
+const FOLLOWING_FEED_MAX_LIMIT = 200;
 
 const EXPIRY_HOURS = [3, 6, 12, 24, 48] as const;
 const MAX_VIDEO_DURATION_SECONDS = 10;
@@ -152,9 +172,24 @@ router.post("/highlights", async (req, res) => {
       location_country: d.locationCountry ?? null,
       visibility: d.visibility,
       expires_at: expiresAt,
-      // filter_id / filter_intensity / media_thumbnail_url / media_duration_seconds
-      // do not exist on the live highlights table — accepted in the payload for
-      // client compatibility but not persisted.
+      // filter_id / filter_intensity DO exist on the live highlights table.
+      //
+      // The comment that used to sit here said they did not, and it was wrong —
+      // measured 2026-09-07 against production (ajrurzioarfkagpuxfnb): both
+      // columns are present, NOT NULL, defaulting to 'original' / 100. They were
+      // added deliberately by migration 0164_write_path_drift_columns_2.sql,
+      // whose own header names this exact pair as "written by the save-story-to-
+      // highlight insert" — and routes/stories.ts does write them. So the schema
+      // was fixed, one of the two writers was updated, and this one was left
+      // validating the client's chosen filter against KNOWN_FILTER_IDS and then
+      // discarding it. Every highlight created through this route has been
+      // stored as 'original' at intensity 100 regardless of what the user chose.
+      filter_id: d.filterId,
+      filter_intensity: d.filterIntensity,
+      // media_thumbnail_url / media_duration_seconds genuinely do NOT exist
+      // live (re-measured the same day): accepted in the payload for client
+      // compatibility and deliberately not persisted. One unknown column fails
+      // the WHOLE insert (PGRST204), so this distinction is load-bearing.
     })
     .select("id, owner_id, media_url, media_type, video_duration_seconds, caption, location_name, location_city, location_country, visibility, expires_at, created_at, deleted_at")
     .single();
@@ -189,11 +224,21 @@ router.get("/users/:userId/highlights", async (req, res) => {
     return;
   }
 
-  // Check blocks in both directions
+  // Check blocks in both directions. FAIL CLOSED — see resolveViewAccess above:
+  // an errored lookup used to read as "not blocked" and serve the profile's
+  // highlights. Serving an EMPTY list on an unresolvable block state is the safe
+  // answer here (it is what a genuine block returns) and keeps the route's
+  // contract; it does not pretend the user has no highlights, it declines to
+  // decide who may see them.
   const [blocker, blocked] = await Promise.all([
     client.from("blocks").select("blocked_id").eq("blocker_id", user.id).eq("blocked_id", targetId).maybeSingle(),
     client.from("blocks").select("blocked_id").eq("blocker_id", targetId).eq("blocked_id", user.id).maybeSingle(),
   ]);
+  if (blocker.error || blocked.error) {
+    req.log.error({ err: blocker.error ?? blocked.error }, "highlights: block lookup failed — failing closed");
+    res.status(200).json({ highlights: [] });
+    return;
+  }
   if (blocker.data || blocked.data) {
     res.status(200).json({ highlights: [] });
     return;
@@ -340,11 +385,25 @@ router.get("/highlights/active", async (req, res) => {
     .in("role", ["owner", "member"]);
   viewerTripIds = (viewerTripRows ?? []).map((r: any) => r.trip_id as string);
 
-  // Get blocks list for this user (both directions)
+  // Get blocks list for this user (both directions). FAIL CLOSED.
+  //
+  // `data ?? []` on an errored query yields an EMPTY block set — nothing
+  // filtered — which is indistinguishable at the call site from "this viewer
+  // has blocked nobody". A transient blocks-table failure therefore served
+  // blocked owners' highlights into the feed. Same defect, same fix, as
+  // routes/memories.ts's discovery feed.
   const [blockedByMe, blockingMe] = await Promise.all([
     sc.from("blocks").select("blocked_id").eq("blocker_id", user.id),
     sc.from("blocks").select("blocker_id").eq("blocked_id", user.id),
   ]);
+  if (blockedByMe.error || blockingMe.error) {
+    req.log.error(
+      { err: blockedByMe.error ?? blockingMe.error },
+      "highlights: block lookup failed — failing closed",
+    );
+    sendError(res, "db_error", "Could not resolve block state");
+    return;
+  }
   const blockedIds = new Set<string>([
     ...((blockedByMe.data ?? []).map((r: any) => r.blocked_id as string)),
     ...((blockingMe.data ?? []).map((r: any) => r.blocker_id as string)),
@@ -869,11 +928,20 @@ router.get("/highlights/following-feed", async (req, res) => {
     return;
   }
 
-  // 2. Resolve blocked users (both directions) and filter them out
+  // 2. Resolve blocked users (both directions) and filter them out. FAIL CLOSED
+  //    — see /highlights/active above for why `data ?? []` on an error is a leak.
   const [blockedByMe, blockingMe] = await Promise.all([
     sc.from("blocks").select("blocked_id").eq("blocker_id", user.id),
     sc.from("blocks").select("blocker_id").eq("blocked_id", user.id),
   ]);
+  if (blockedByMe.error || blockingMe.error) {
+    req.log.error(
+      { err: blockedByMe.error ?? blockingMe.error },
+      "highlights: following-feed block lookup failed — failing closed",
+    );
+    sendError(res, "db_error", "Could not resolve block state");
+    return;
+  }
   const blockedIds = new Set<string>([
     ...((blockedByMe.data ?? []).map((r: any) => r.blocked_id as string)),
     ...((blockingMe.data ?? []).map((r: any) => r.blocker_id as string)),
@@ -884,8 +952,30 @@ router.get("/highlights/following-feed", async (req, res) => {
     return;
   }
 
-  // 3. Fetch active (non-expired, non-deleted, non-private) highlights from followed users
-  const { data: rows, error } = await sc
+  // 3. Fetch active (non-expired, non-deleted, non-private) highlights from
+  //    followed users.
+  //
+  //    §12: "Highlights should remain finite and contextual. Do not turn the
+  //    surface into an endless feed." This query has no `.limit()` and no
+  //    cursor: it returns every active highlight of every followed user in one
+  //    response, bounded only by the 24-hour expiry. Every sibling read is
+  //    bounded — /highlights/active caps at 100, the memories discovery feed
+  //    caps at 100 — so the omission is an oversight, not a design.
+  //
+  //    Capping a feed that is uncapped today can only REMOVE highlights from
+  //    somebody's screen, and how many is finite-enough is a product decision
+  //    §12 does not make. So the cap ships behind
+  //    `highlights_feed_bounded_enabled` (migration 2339), seeded FALSE: off,
+  //    this is the unbounded query it has always been; on, it is capped and
+  //    paginated. isFlagEnabled is false-on-error, so an unreadable flag leaves
+  //    the feed unbounded rather than silently truncating it.
+  const bounded = await isFlagEnabled(sc, "highlights_feed_bounded_enabled");
+  const feedLimit = bounded
+    ? Math.min(Math.max(Number(req.query.limit ?? FOLLOWING_FEED_DEFAULT_LIMIT) || FOLLOWING_FEED_DEFAULT_LIMIT, 1), FOLLOWING_FEED_MAX_LIMIT)
+    : null;
+  const feedCursor = bounded && typeof req.query.cursor === "string" ? req.query.cursor : null;
+
+  let feedQuery = sc
     .from("highlights")
     .select("id, owner_id, media_url, media_type, video_duration_seconds, caption, location_name, location_city, location_country, visibility, expires_at, created_at, deleted_at")
     .in("owner_id", eligibleIds)
@@ -893,6 +983,18 @@ router.get("/highlights/following-feed", async (req, res) => {
     .gt("expires_at", new Date().toISOString())
     .neq("visibility", "private")
     .order("created_at", { ascending: true });
+
+  if (feedLimit != null) {
+    // Over-fetch, because the visibility filter in step 5 runs after this query
+    // and would otherwise shrink the page — the same defect the memories
+    // discovery feed had. `slice(0, feedLimit)` below trims the FILTERED set.
+    (feedQuery as any) = (feedQuery as any).limit(feedLimit * 5);
+  }
+  if (feedCursor) {
+    (feedQuery as any) = (feedQuery as any).gt("created_at", feedCursor);
+  }
+
+  const { data: rows, error } = await feedQuery;
 
   if (error) {
     req.log.error({ err: error }, "Failed to load following highlights feed");
@@ -948,13 +1050,17 @@ router.get("/highlights/following-feed", async (req, res) => {
       : Promise.resolve(),
   ]);
 
-  // 5. Permission filter
-  const visible = allHighlights.filter((h) => {
+  // 5. Permission filter, then (when bounded) the finite page.
+  const permitted = allHighlights.filter((h) => {
     if (h.visibility === "public" || h.visibility === "travelers_nearby") return true;
     if (h.visibility === "circle_only") return circleApprovedSet.has(h.owner_id as string);
     if (h.visibility === "trip_only") return sharesTripSet.has(h.owner_id as string);
     return false;
   });
+  const visible = feedLimit != null ? permitted.slice(0, feedLimit) : permitted;
+  const nextCursor = feedLimit != null && visible.length === feedLimit
+    ? (visible[visible.length - 1]?.created_at ?? null)
+    : null;
 
   if (visible.length === 0) {
     res.status(200).json({ users: [] });
@@ -1021,7 +1127,9 @@ router.get("/highlights/following-feed", async (req, res) => {
       highlights: g.highlights,
     }));
 
-  res.status(200).json({ users });
+  // nextCursor is present only while the cap is engaged; unbounded responses
+  // keep the exact shape they had before 2339.
+  res.status(200).json(feedLimit != null ? { users, nextCursor } : { users });
 });
 
 export default router;
