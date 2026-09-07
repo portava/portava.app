@@ -40,10 +40,16 @@
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { resolve, dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
-import { BASELINE_PATH, notNullColumns } from "./parseBaselineSchema.js";
+import {
+  BASELINE_PATH,
+  parseNullabilityOverrides,
+  effectiveNotNullColumns,
+  type NullabilityOverrides,
+} from "./parseBaselineSchema.js";
 
 const __dir = dirname(fileURLToPath(import.meta.url));
 const SRC_ROOT = resolve(__dir, "..");
+const MIGRATIONS_DIR = resolve(SRC_ROOT, "migrations");
 
 /** Generated types and test mocks legitimately contain nulls. */
 const SKIP_DIRS = new Set(["test", "node_modules"]);
@@ -156,8 +162,71 @@ function walk(dir: string, acc: string[] = []): string[] {
   return acc;
 }
 
+/**
+ * The guard's whole decision, extracted so a test can drive it.
+ *
+ * It lives here rather than inline in main() for one reason: this function is
+ * where the baseline and the migrations are COMBINED, and that combination has
+ * already been got wrong once. `parseBaselineSchema` grew
+ * `effectiveNotNullColumns`, the parser was tested directly and passed — and
+ * main() went on calling `notNullColumns`, so CI kept reporting a violation
+ * against a constraint migration 2312 had already dropped. The parser was
+ * right and the guard ignored it. A unit test of the parser could not see
+ * that, because the parser was never the broken part.
+ */
+export function evaluate(
+  writes: NullWrite[],
+  baselineSql: string,
+  overrides: NullabilityOverrides,
+): { problems: string[]; unverifiable: Set<string> } {
+  const problems: string[] = [];
+  const unverifiable = new Set<string>();
+
+  for (const w of writes) {
+    const nn = effectiveNotNullColumns(baselineSql, w.table, overrides);
+    if (nn.size === 0) { unverifiable.add(w.table); continue; }
+    const bad = w.nulled.filter((c) => nn.has(c));
+    if (bad.length > 0) {
+      problems.push(
+        `${w.file}:${w.line} — .${w.op}() on ${w.table} sets ${bad.join(", ")} to null, ` +
+        `but the schema (baseline + migrations) declares ${bad.length > 1 ? "them" : "it"} NOT NULL. ` +
+        `This raises 23502 at runtime.`,
+      );
+    }
+  }
+
+  return { problems, unverifiable };
+}
+
+/**
+ * The baseline is a SNAPSHOT, not the schema. Migrations after it move columns
+ * in and out of NOT NULL, and a guard that reads only the snapshot reports a
+ * violation against a constraint that no longer exists — which is a false
+ * accusation, and the fastest way to teach people to exempt their columns
+ * instead of fixing them.
+ */
+function loadMigrations(): Array<{ name: string; sql: string }> {
+  const files = readdirSync(MIGRATIONS_DIR).filter((f) => f.endsWith(".sql"));
+
+  // An empty read here would silently restore baseline-only behaviour: the
+  // guard would still run, still print a total, and still pass or fail — on
+  // stale constraints. Refuse instead. A directory this guard cannot read is
+  // not a directory with no migrations in it.
+  if (files.length < 100) {
+    console.error(
+      `check-not-null-writes: found only ${files.length} migration file(s) in ` +
+      `${MIGRATIONS_DIR}. The band holds hundreds; this read is broken, not empty. ` +
+      "Refusing to evaluate NOT NULL against the baseline alone.",
+    );
+    process.exit(1);
+  }
+
+  return files.map((name) => ({ name, sql: readFileSync(join(MIGRATIONS_DIR, name), "utf8") }));
+}
+
 function main(): void {
   const baselineSql = readFileSync(BASELINE_PATH, "utf8");
+  const overrides = parseNullabilityOverrides(loadMigrations());
   const files = walk(SRC_ROOT);
 
   const writes: NullWrite[] = [];
@@ -174,21 +243,7 @@ function main(): void {
     process.exit(1);
   }
 
-  const problems: string[] = [];
-  const unverifiable = new Set<string>();
-
-  for (const w of writes) {
-    const nn = notNullColumns(baselineSql, w.table);
-    if (nn.size === 0) { unverifiable.add(w.table); continue; }
-    const bad = w.nulled.filter((c) => nn.has(c));
-    if (bad.length > 0) {
-      problems.push(
-        `${w.file}:${w.line} — .${w.op}() on ${w.table} sets ${bad.join(", ")} to null, ` +
-        `but the baseline declares ${bad.length > 1 ? "them" : "it"} NOT NULL. ` +
-        `This raises 23502 at runtime.`,
-      );
-    }
-  }
+  const { problems, unverifiable } = evaluate(writes, baselineSql, overrides);
 
   console.log(
     `\ncheck-not-null-writes: ${files.length} source file(s), ` +

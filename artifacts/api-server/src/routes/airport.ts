@@ -62,10 +62,12 @@ import {
 } from "../services/airport/LayoverSessionService.js";
 import {
   assess,
+  assessWindowOnly,
   safetyLabel,
   computeWindow,
   adviseLeaving,
 } from "../services/airport/LayoverSafetyEngine.js";
+import { resolveEntryEligibility } from "../lib/layoverEntryEligibility.js";
 import {
   wallTimeToUtc,
   formatLocalTime,
@@ -91,20 +93,43 @@ const router = Router();
 
 // ── Airport profile resolution helper ────────────────────────────────────────
 /**
- * Resolves airport profile from session.airportId (real DB row with admin-
- * configured buffers), falling back to a defaults profile built from manual
- * fields. Used by safety, compass, return-deadline, and plan endpoints.
+ * Resolve the airport profile behind a session.
+ *
+ * WHY THIS RETURNS A RESULT RATHER THAN A PROFILE
+ * ===============================================
+ * It used to read `const { data }` — dropping `error` — and fall through to
+ * `buildFallbackProfile` on anything that was not a row. supabase-js RESOLVES
+ * `{data, error}`, so a permission error, schema drift or a connection blip was
+ * indistinguishable from "this session has no airport row", and the fallback
+ * carries GENERIC buffers: 60/90/120/180/30/15/20.
+ *
+ * Those buffers are the safety arithmetic. `computeWindow` subtracts them to
+ * produce `usableMinutes` and `hardReturnTime`, and `adviseLeaving` turns that
+ * into "can I leave the airport?". So a failed read quietly replaced an
+ * airport's admin-curated return buffers with generic ones and kept answering —
+ * the same defect as the category-constant travel time this branch removes, one
+ * layer further in, and on the same live surface.
+ *
+ * Callers that produce a safety verdict must now refuse. The fallback profile
+ * remains correct for its real case — a session with no `airportId`, or a
+ * SUCCESSFUL read that found no row — and is reachable only through those.
  */
-async function resolveAirportForSession(sc: any, session: any) {
+export type AirportForSession =
+  | { ok: true; airport: ReturnType<typeof buildFallbackProfile> | any; curated: boolean }
+  | { ok: false; reason: "airport_read_failed" };
+
+export async function resolveAirportForSession(sc: any, session: any): Promise<AirportForSession> {
   if (session.airportId) {
     try {
-      const { data } = await sc
+      const { data, error } = await sc
         .from("airport_profiles")
         .select("*")
         .eq("id", session.airportId)
         .maybeSingle();
+      // A failed read is not a missing airport.
+      if (error) return { ok: false, reason: "airport_read_failed" };
       if (data) {
-        return {
+        return { ok: true, curated: true, airport: {
           id: (data as any).id,
           iataCode: (data as any).iata_code,
           name: (data as any).name,
@@ -122,16 +147,31 @@ async function resolveAirportForSession(sc: any, session: any) {
           checkedBagsExtraMin: (data as any).checked_bags_extra_min ?? 15,
           trafficExtraMin: (data as any).traffic_extra_min ?? 20,
           verified: Boolean((data as any).verified),
-        };
+        } };
       }
-    } catch { /* fall through to fallback */ }
+    } catch {
+      // A thrown transport error is a failure too, not an absent row.
+      return { ok: false, reason: "airport_read_failed" };
+    }
   }
-  return buildFallbackProfile({
+  // Reached only when the session names no airport, or a SUCCESSFUL read found
+  // none. `curated: false` says these are generic buffers, so a caller can
+  // decline to build a safety verdict on them.
+  return { ok: true, curated: false, airport: buildFallbackProfile({
     iataCode: session.manualIata    ?? "UNK",
     city:     session.manualCity    ?? "Unknown",
     country:  session.manualCountry ?? "Unknown",
     name:     session.manualAirportName ?? "Unknown Airport",
-  });
+  }) };
+}
+
+/** Refuse rather than answer on buffers we could not read. */
+function airportUnavailable(res: any): void {
+  sendError(
+    res,
+    "degraded_unavailable",
+    "We couldn't load this airport's return buffers, so we can't work out your timings right now.",
+  );
 }
 
 // ── Trip timeline mirror ──────────────────────────────────────────────────────
@@ -140,14 +180,30 @@ async function resolveAirportForSession(sc: any, session: any) {
  * layover shows up in the trip timeline / Today / Next Up. Dedupe by
  * (source_type='layover_session', source_id=session.id). Best-effort.
  */
-async function mirrorSessionToTrip(
+export async function mirrorSessionToTrip(
   sc: any,
   client: any,
   session: LayoverSession,
-  airport: { city: string; iataCode: string; name: string; timezone: string } | null,
+  /**
+   * The airport RESOLUTION, not a profile.
+   *
+   * Taking `{profile | null} + airportUnknown: boolean` let a caller pass a null
+   * profile while claiming the read succeeded, and the mirror then titled the
+   * row from `session.manualCity ?? "stopover city"` — a durable trip_plan_items
+   * entry derived from an airport nobody read. Two arguments that must agree are
+   * two arguments that can disagree, so the resolution is passed whole and this
+   * function decides. A caller cannot get it wrong because there is nothing left
+   * to get wrong.
+   *
+   * `{ok:true, airport:null}` is the honest no-airport case — the session names
+   * none, and titling from its manual fields is correct.
+   */
+  resolution: AirportForSession | { ok: true; airport: { city: string; iataCode: string; name: string; timezone: string } | null },
   userId: string,
 ): Promise<void> {
   if (!session.tripId) return;
+  if (!resolution.ok) return;
+  const airport = (resolution as any).airport ?? null;
   try {
     const member = await isAcceptedTripMember(client, session.tripId, userId);
     if (!member) return;
@@ -322,7 +378,9 @@ router.post("/airport/sessions", async (req, res) => {
   // ── Resolve the airport up front (picker IATA, explicit id, or manual) ──────
   let airport: Awaited<ReturnType<typeof resolveByIata>> = null;
   if (p.airportId) {
-    const resolved = await resolveAirportForSession(sc, { airportId: p.airportId });
+    const resolvedRes = await resolveAirportForSession(sc, { airportId: p.airportId });
+    if (!resolvedRes.ok) { airportUnavailable(res); return; }
+    const resolved = resolvedRes.airport;
     airport = resolved.iataCode === "UNK" ? null : resolved;
   }
   if (!airport && (p.iata ?? p.manualIata)) {
@@ -468,8 +526,9 @@ router.post("/airport/sessions", async (req, res) => {
     }
   })();
 
-  // Trip timeline mirror (best-effort)
-  await mirrorSessionToTrip(sc, auth.client, session, airport, user.id);
+  // Trip timeline mirror (best-effort). `airport` is only bound past the
+  // refusal above, so reaching here means the read succeeded.
+  await mirrorSessionToTrip(sc, auth.client, session, { ok: true, airport }, user.id);
 
   res.status(201).json({ ok: true, session, safeReturnSuggested: suggest, safeReturnReasons: reasons });
 });
@@ -500,10 +559,15 @@ router.patch("/airport/sessions/:id", async (req, res) => {
   }
 
   // Keep the trip timeline mirror in sync with the updated window.
-  const airportForMirror = await resolveAirportForSession(sc, session);
+  // A failed read must not become a trip_plan_items row titled from a
+  // fabricated city. Passing null makes the mirror skip its own write.
+  const airportForMirrorRes = await resolveAirportForSession(sc, session);
+  const airportForMirror = airportForMirrorRes.ok ? airportForMirrorRes.airport : null;
   await mirrorSessionToTrip(
     sc, auth.client, session,
-    airportForMirror.iataCode === "UNK" ? null : airportForMirror,
+    airportForMirrorRes.ok
+      ? { ok: true, airport: airportForMirror?.iataCode === "UNK" ? null : airportForMirror }
+      : airportForMirrorRes,
     user.id,
   );
 
@@ -526,36 +590,12 @@ router.get("/airport/sessions/:id/recommendations", async (req, res) => {
   const session = await getSession(sc, req.params.id, user.id);
   if (!session) { sendError(res, "not_found", "Session not found"); return; }
 
-  // Resolve airport profile
-  const airportId = session.airportId;
-  let airport = null;
-  if (airportId) {
-    const { data } = await sc.from("airport_profiles").select("*").eq("id", airportId).maybeSingle();
-    if (data) {
-      airport = {
-        id: (data as any).id, iataCode: (data as any).iata_code, name: (data as any).name,
-        city: (data as any).city, country: (data as any).country, countryCode: (data as any).country_code,
-        timezone: (data as any).timezone ?? "UTC", lat: Number((data as any).lat), lng: Number((data as any).lng),
-        domesticBufferMin: (data as any).domestic_buffer_min ?? 60,
-        domesticBufferMax: (data as any).domestic_buffer_max ?? 90,
-        internationalBufferMin: (data as any).international_buffer_min ?? 120,
-        internationalBufferMax: (data as any).international_buffer_max ?? 180,
-        immigrationExtraMin: (data as any).immigration_extra_min ?? 30,
-        checkedBagsExtraMin: (data as any).checked_bags_extra_min ?? 15,
-        trafficExtraMin: (data as any).traffic_extra_min ?? 20,
-        verified: Boolean((data as any).verified),
-      };
-    }
-  }
-
-  if (!airport) {
-    airport = buildFallbackProfile({
-      iataCode:    session.manualIata    ?? "UNK",
-      city:        session.manualCity    ?? "Unknown",
-      country:     session.manualCountry ?? "Unknown",
-      name:        session.manualAirportName ?? "Unknown Airport",
-    });
-  }
+  // Was a verbatim copy of resolveAirportForSession, including its dropped
+  // `error` — so a failed airport read silently became the generic-buffer
+  // fallback here too. One definition now, and it reports failure.
+  const airportRes = await resolveAirportForSession(sc, session);
+  if (!airportRes.ok) { airportUnavailable(res); return; }
+  const airport = airportRes.airport;
 
   const isSafetyEnabled = await isFlagEnabled(sc, "layover_safety_engine_enabled");
 
@@ -588,18 +628,26 @@ router.get("/airport/sessions/:id/safety", async (req, res) => {
   const session = await getSession(sc, req.params.id, user.id);
   if (!session) { sendError(res, "not_found", "Session not found"); return; }
 
-  const airport = await resolveAirportForSession(sc, session);
+  const airportRes = await resolveAirportForSession(sc, session);
+  if (!airportRes.ok) { airportUnavailable(res); return; }
+  const airport = airportRes.airport;
 
-  // Assess a generic "leaving airport" activity to get overall safety
-  const a = assess(airport, session, {
-    title:          "Leaving airport",
-    travelTimeMin:  20,
-    activityTimeMin: 30,
-    insideAirport:  false,
-  });
-
+  // The overall rating used to come from a fabricated candidate: a "Leaving
+  // airport" activity with a hardcoded 20-minute travel time and a 30-minute
+  // stay, invented right here so that `assess` would have something to score.
+  // Every session at every airport in the world got the same two numbers, and
+  // the answer they produced was presented as this session's safety.
+  //
+  // The honest overall rating is the one the window already computes: it rests
+  // on the session's real timings and the airport's real buffers, and it claims
+  // nothing about a journey nobody has measured.
   const window = computeWindow(airport, session);
-  const advice = adviseLeaving(airport, session, window);
+  const entry  = await resolveEntryEligibility(sc, {
+    userId: user.id,
+    airportCountryCode: airport.countryCode,
+  });
+  const advice = adviseLeaving(airport, session, window, entry);
+  const a = assessWindowOnly(airport, session, window);
 
   res.json({
     featureEnabled:  true,
@@ -611,6 +659,7 @@ router.get("/airport/sessions/:id/safety", async (req, res) => {
     hardReturnTime:  window.hardReturnTime.toISOString(),
     warningReason:   a.warningReason,
     breakdown:       a.breakdown,
+    entry,
     layoverMinutes:  session.layoverMinutes,
     tier:            window.tier,
     tierLabel:       window.tierLabel,
@@ -643,7 +692,9 @@ router.post("/airport/sessions/:id/compass", async (req, res) => {
   const session = await getSession(sc, req.params.id, user.id);
   if (!session) { sendError(res, "not_found", "Session not found"); return; }
 
-  const airport = await resolveAirportForSession(sc, session);
+  const airportRes = await resolveAirportForSession(sc, session);
+  if (!airportRes.ok) { airportUnavailable(res); return; }
+  const airport = airportRes.airport;
 
   const answer = await answerLayoverQuestion(sc, { question: parsed.data.question, session, airport });
 
@@ -737,7 +788,9 @@ router.post("/airport/sessions/:id/return-deadline", async (req, res) => {
   const session = await getSession(sc, req.params.id, user.id);
   if (!session) { sendError(res, "not_found", "Session not found"); return; }
 
-  const airport = await resolveAirportForSession(sc, session);
+  const airportRes = await resolveAirportForSession(sc, session);
+  if (!airportRes.ok) { airportUnavailable(res); return; }
+  const airport = airportRes.airport;
 
   const window     = computeWindow(airport, session);
   const hardReturn = window.hardReturnTime;
@@ -806,7 +859,9 @@ router.post("/airport/sessions/:id/telegraph", async (req, res) => {
     } catch { /* thread stays null */ }
   }
 
-  const airport = await resolveAirportForSession(sc, session);
+  const airportRes = await resolveAirportForSession(sc, session);
+  if (!airportRes.ok) { airportUnavailable(res); return; }
+  const airport = airportRes.airport;
 
   // Emit Telegraph suggestion event (no private location in payload)
   await emitLayoverEvent(sc, session.id, user.id, "telegraph_suggestion_sent", {
@@ -857,7 +912,9 @@ function stopRowToJson(row: any) {
     description:      row.description ?? null,
     stopOrder:        row.stop_order ?? 0,
     durationMin:      row.duration_min ?? 30,
-    travelMin:        row.travel_min ?? 0,
+    // `?? 0` here turned every unmeasured leg into a free one. NULL means
+    // nobody measured this journey; it is not zero minutes of travel.
+    travelMin:        typeof row.travel_min === "number" ? row.travel_min : null,
     placeId:          row.place_id ?? null,
     recommendationId: row.recommendation_id ?? null,
     lat:              row.lat != null ? Number(row.lat) : null,
@@ -883,22 +940,57 @@ async function loadStops(sc: any, sessionId: string): Promise<any[]> {
 }
 
 /** Does the planned itinerary fit inside the usable window? */
-function computePlanFit(window: ReturnType<typeof computeWindow>, stops: any[]) {
-  const totalPlannedMin = stops.reduce(
-    (sum, s) => sum + (s.durationMin ?? 0) + (s.travelMin ?? 0), 0,
+/**
+ * Does this plan fit the layover?
+ *
+ * TWO FICTIONS USED TO LIVE HERE.
+ *
+ * The first was `?? 0`: any leg with no measured travel time counted as zero
+ * minutes, so a plan made entirely of unmeasured stops summed to just its
+ * durations and reported `fitsWindow: true`. Unknown became the single most
+ * optimistic value available.
+ *
+ * The second is still visible in the old comment — "approximate the ride back as
+ * the travel time of the last outside stop". The journey home from the last stop
+ * is not the journey out to it, and on a layover that difference is the whole
+ * question. It is retained ONLY as a lower bound and is now labelled as one,
+ * because a lower bound that says "this already does not fit" is still a sound
+ * refusal; what it can never do is certify a fit.
+ *
+ * So: any landside stop with an unmeasured leg makes the total UNKNOWN, and an
+ * unknown total is never reported as fitting. `fitsWindow` is `false` in that
+ * case and `travelUnknown` says why, so the UI can tell "your plan is too long"
+ * apart from "we cannot tell how long your plan is".
+ */
+export function computePlanFit(window: ReturnType<typeof computeWindow>, stops: any[]) {
+  const landside = stops.filter((s) => !s.insideAirport);
+  const travelUnknown = landside.some((s) => typeof s.travelMin !== "number");
+
+  const durationMin = stops.reduce((sum, s) => sum + (s.durationMin ?? 0), 0);
+  const knownTravelMin = stops.reduce(
+    (sum, s) => sum + (typeof s.travelMin === "number" ? s.travelMin : 0), 0,
   );
-  // Approximate the ride back as the travel time of the last outside stop.
   const lastOutside = [...stops].reverse().find((s) => !s.insideAirport);
-  const returnTravelMin = lastOutside ? (lastOutside.travelMin ?? 0) : 0;
-  const neededMin = totalPlannedMin + returnTravelMin;
+  const returnTravelMin =
+    lastOutside && typeof lastOutside.travelMin === "number" ? lastOutside.travelMin : null;
+
+  // A LOWER BOUND, never a total: unmeasured legs contribute nothing to it, so
+  // it can only ever understate what the plan really costs.
+  const minimumNeededMin = durationMin + knownTravelMin + (returnTravelMin ?? 0);
+
   return {
-    totalPlannedMin,
+    totalPlannedMin: travelUnknown ? null : durationMin + knownTravelMin,
     returnTravelMin,
-    neededMin,
+    /** Null when unknowable. Callers must not coalesce it. */
+    neededMin: travelUnknown ? null : minimumNeededMin,
+    minimumNeededMin,
+    travelUnknown,
     usableMinutes: window.usableMinutes,
-    fitsWindow:    neededMin <= window.usableMinutes,
-    overflowMin:   Math.max(0, neededMin - window.usableMinutes),
-    backByTime:    window.hardReturnTime.toISOString(),
+    // An unknown total never fits. Overshooting the window on the lower bound
+    // alone is still a definite miss, so that stays a refusal too.
+    fitsWindow: !travelUnknown && minimumNeededMin <= window.usableMinutes,
+    overflowMin: Math.max(0, minimumNeededMin - window.usableMinutes),
+    backByTime: window.hardReturnTime.toISOString(),
   };
 }
 
@@ -1011,7 +1103,9 @@ router.get("/airport/sessions/active", async (req, res) => {
   const session = await getActiveSession(sc, user.id);
   if (!session) { res.json({ session: null, featureEnabled: true }); return; }
 
-  const airport = await resolveAirportForSession(sc, session);
+  const airportRes = await resolveAirportForSession(sc, session);
+  if (!airportRes.ok) { airportUnavailable(res); return; }
+  const airport = airportRes.airport;
   res.json({
     session,
     airport: publicAirport(airport),
@@ -1037,9 +1131,15 @@ router.get("/airport/sessions/:id/overview", async (req, res) => {
   const session = await getSession(sc, req.params.id, user.id);
   if (!session) { sendError(res, "not_found", "Session not found"); return; }
 
-  const airport = await resolveAirportForSession(sc, session);
+  const airportRes = await resolveAirportForSession(sc, session);
+  if (!airportRes.ok) { airportUnavailable(res); return; }
+  const airport = airportRes.airport;
   const window  = computeWindow(airport, session);
-  const advice  = adviseLeaving(airport, session, window);
+  const entry   = await resolveEntryEligibility(sc, {
+    userId: user.id,
+    airportCountryCode: airport.countryCode,
+  });
+  const advice  = adviseLeaving(airport, session, window, entry);
   const stops   = await loadStops(sc, session.id);
   const planFit = computePlanFit(window, stops);
   const tz      = airport.timezone ?? "UTC";
@@ -1083,7 +1183,9 @@ const stopCreateSchema = z.object({
   title:         z.string().min(1).max(200),
   description:   z.string().max(500).optional().nullable(),
   durationMin:   z.number().int().min(5).max(720),
-  travelMin:     z.number().int().min(0).max(240).optional().default(0),
+  // No `.default(0)`: a caller that does not say how long the journey takes
+  // has not told us it takes no time.
+  travelMin:     z.number().int().min(0).max(240).nullable().optional(),
   locationLabel: z.string().max(300).optional().nullable(),
   insideAirport: z.boolean().optional().default(false),
   lat:           z.number().min(-90).max(90).optional().nullable(),
@@ -1109,7 +1211,9 @@ async function requireOwnedSession(req: any, res: any): Promise<{ sc: any; user:
 }
 
 async function respondWithStops(res: any, sc: any, session: LayoverSession) {
-  const airport = await resolveAirportForSession(sc, session);
+  const airportRes = await resolveAirportForSession(sc, session);
+  if (!airportRes.ok) { airportUnavailable(res); return; }
+  const airport = airportRes.airport;
   const window  = computeWindow(airport, session);
   const stops   = await loadStops(sc, session.id);
   res.json({ ok: true, stops, planFit: computePlanFit(window, stops) });
@@ -1147,7 +1251,7 @@ router.post("/airport/sessions/:id/stops", async (req, res) => {
     description:    parsed.data.description ?? null,
     stop_order:     existing.length,
     duration_min:   parsed.data.durationMin,
-    travel_min:     parsed.data.travelMin,
+    travel_min:     parsed.data.travelMin ?? null,
     location_label: parsed.data.locationLabel ?? null,
     inside_airport: parsed.data.insideAirport,
     lat:            parsed.data.lat ?? null,
@@ -1196,7 +1300,12 @@ router.post("/airport/sessions/:id/stops/from-recommendation", async (req, res) 
     description:       (rec as any).description ?? null,
     stop_order:        existing.length,
     duration_min:      Math.min(720, Math.max(5, (rec as any).activity_time_min ?? 30)),
-    travel_min:        Math.min(240, Math.max(0, (rec as any).travel_time_min ?? 0)),
+    // The recommendation's travel time may be NULL (unmeasured). Copying it
+    // through `?? 0` would launder an unknown into a confident zero at exactly
+    // the moment the user commits it to a plan.
+    travel_min:        typeof (rec as any).travel_time_min === "number"
+      ? Math.min(240, Math.max(0, (rec as any).travel_time_min))
+      : null,
     location_label:    (rec as any).location_label ?? null,
     inside_airport:    Boolean((rec as any).inside_airport),
     place_id:          (rec as any).place_id ?? null,
@@ -1333,7 +1442,9 @@ router.get("/airport/sessions/:id/presence", async (req, res) => {
     return;
   }
 
-  const airport = await resolveAirportForSession(sc, session);
+  const airportRes = await resolveAirportForSession(sc, session);
+  if (!airportRes.ok) { airportUnavailable(res); return; }
+  const airport = airportRes.airport;
   const city = airport.city !== "Unknown" ? airport.city : session.manualCity;
   const presence = await cityPresence(sc, user.id, city ?? null);
 
@@ -1349,7 +1460,9 @@ router.get("/airport/sessions/:id/buddies", async (req, res) => {
   if (!ctx) return;
   const { sc, user, session } = ctx;
 
-  const airport = await resolveAirportForSession(sc, session);
+  const airportRes = await resolveAirportForSession(sc, session);
+  if (!airportRes.ok) { airportUnavailable(res); return; }
+  const airport = airportRes.airport;
   const city = airport.city !== "Unknown" ? airport.city : session.manualCity;
   if (!city) { res.json({ ok: true, city: null, buddies: [] }); return; }
 

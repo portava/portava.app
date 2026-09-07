@@ -798,6 +798,23 @@ describe("computeWindow tiers", () => {
 describe("adviseLeaving", () => {
   const airport = makeAirportProfile();
 
+  // The entry decisions this suite exercises. Shapes come from
+  // lib/layoverEntryEligibility; nothing here invents a status.
+  const ENTRY_PERMITTED = {
+    state: "permitted" as const, passportCountry: "GB", destinationCountry: "TW",
+    status: "visa_free", condition: null, officialSourceUrl: "https://example.gov/tw",
+    lastVerifiedAt: "2026-01-01T00:00:00.000Z", disclaimer: "d",
+  };
+  const ENTRY_UNRESOLVED = {
+    state: "unresolved" as const, reason: "no_data_for_corridor" as const,
+    passportCountry: "GB", destinationCountry: "TW", disclaimer: "d",
+  };
+  const ENTRY_REFUSED = {
+    state: "not_permitted" as const, passportCountry: "GB", destinationCountry: "TW",
+    status: "visa_required", reason: "requires_advance_authorization" as const,
+    officialSourceUrl: "https://example.gov/tw", lastVerifiedAt: null, disclaimer: "d",
+  };
+
   function sessionFor(tier: "long" | "short" | "stay"): any {
     const base = {
       id: "sess-advice", userId: USER_A, airportId: "airport-fake", tripId: null,
@@ -815,34 +832,84 @@ describe("adviseLeaving", () => {
     return { ...base, arrivalTime: "2026-03-10T01:00:00.000Z", departureTime: "2026-03-10T11:00:00.000Z", layoverMinutes: 600 };
   }
 
-  it("says yes with reasons for a roomy window", () => {
-    const s = sessionFor("long");
+  const adviceFor = (tier: "long" | "short" | "stay", entry: any) => {
+    const s = sessionFor(tier);
     const w = computeWindow(airport, s, new Date(s.arrivalTime).getTime());
-    const advice = adviseLeaving(airport, s, w);
+    return adviseLeaving(airport, s, w, entry);
+  };
+
+  it("says yes for a roomy window ONLY when entry is actually established", () => {
+    const advice = adviceFor("long", ENTRY_PERMITTED);
     assert.equal(advice.verdict, "yes");
     assert.ok(advice.reasons.length > 0);
+    assert.equal(advice.entry?.state, "permitted");
   });
 
-  it("says no when buffers eat the whole window", () => {
-    const s = sessionFor("short");
-    const w = computeWindow(airport, s, new Date(s.arrivalTime).getTime());
-    const advice = adviseLeaving(airport, s, w);
+  it("a roomy window with UNRESOLVED entry is not an affirmative answer", () => {
+    // This is the defect this suite used to codify: the old test asserted
+    // "yes" for exactly this case, with the visa question demoted to prose in
+    // `unknowns`. Ten hours of spare time is not permission to cross a border.
+    const advice = adviceFor("long", ENTRY_UNRESOLVED);
+    assert.equal(advice.verdict, "entry_unverified");
+    assert.notEqual(advice.verdict, "yes");
+  });
+
+  it("an omitted entry argument is treated as unresolved, never as permission", () => {
+    // A caller that forgets to resolve entry must get the cautious answer.
+    const advice = adviceFor("long", null);
+    assert.equal(advice.verdict, "entry_unverified");
+  });
+
+  it("a REFUSED corridor overrides any amount of spare time", () => {
+    const advice = adviceFor("long", ENTRY_REFUSED);
     assert.equal(advice.verdict, "no");
+    assert.ok(advice.reasons.some((r: string) => /visa or permit arranged before travel/i.test(r)));
+    assert.ok(advice.reasons.some((r: string) => r.includes("https://example.gov/tw")),
+      "the official source must travel with a refusal so the traveller can check it");
+  });
+
+  it("says no when buffers eat the whole window, whatever the border says", () => {
+    for (const entry of [ENTRY_PERMITTED, ENTRY_UNRESOLVED, ENTRY_REFUSED]) {
+      assert.equal(adviceFor("short", entry).verdict, "no");
+    }
+  });
+
+  it("the entry gate can only ever DOWNGRADE the clock's answer", () => {
+    // The safety property, stated directly: for every window, no entry state
+    // produces a better verdict than permitted entry does.
+    const RANK: Record<string, number> = { yes: 0, tight: 1, entry_unverified: 2, no: 3, stay_airside: 4 };
+    for (const tier of ["long", "short"] as const) {
+      const best = RANK[adviceFor(tier, ENTRY_PERMITTED).verdict];
+      for (const entry of [ENTRY_UNRESOLVED, ENTRY_REFUSED, null]) {
+        assert.ok(RANK[adviceFor(tier, entry).verdict] >= best,
+          `${tier} with ${JSON.stringify(entry)} must not beat the permitted verdict`);
+      }
+    }
   });
 
   it("respects the stay-airside preference", () => {
-    const s = sessionFor("stay");
-    const w = computeWindow(airport, s, new Date(s.arrivalTime).getTime());
-    const advice = adviseLeaving(airport, s, w);
-    assert.equal(advice.verdict, "stay_airside");
+    assert.equal(adviceFor("stay", ENTRY_PERMITTED).verdict, "stay_airside");
   });
 
-  it("is always explicit about visa unknowns and the guidance disclaimer", () => {
-    const s = sessionFor("long");
-    const w = computeWindow(airport, s, new Date(s.arrivalTime).getTime());
-    const advice = adviseLeaving(airport, s, w);
-    assert.ok(advice.unknowns.some((u) => u.toLowerCase().includes("visa")), "visa must be listed as unknown");
-    assert.ok(advice.disclaimer.toLowerCase().includes("guidance"), "disclaimer must frame this as guidance");
+  it("always surfaces the entry question — as a gate, or as an explicit unknown", () => {
+    const disclaimerHasGuidance = (a: any) => a.disclaimer.toLowerCase().includes("guidance");
+
+    const unresolved = adviceFor("long", ENTRY_UNRESOLVED);
+    assert.ok(
+      unresolved.unknowns.some((u: string) => /may enter this country/i.test(u)),
+      "an unresolved corridor must be named as an unknown, not silently dropped",
+    );
+    assert.ok(disclaimerHasGuidance(unresolved));
+
+    // When it IS resolved it is no longer an unknown — it is a decision, and it
+    // must be attached to the advice rather than left as a caveat.
+    const permitted = adviceFor("long", ENTRY_PERMITTED);
+    assert.equal(permitted.entry?.state, "permitted");
+    assert.ok(
+      !permitted.unknowns.some((u: string) => /may enter this country/i.test(u)),
+      "a resolved corridor is a gate that passed, not a standing unknown",
+    );
+    assert.ok(disclaimerHasGuidance(permitted));
   });
 });
 

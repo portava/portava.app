@@ -101,7 +101,7 @@ function insideAirportCandidates(session: LayoverSession): Array<{
   recType: string;
   title: string;
   description: string;
-  travelTimeMin: number;
+  travelTimeMin: number | null;
   activityTimeMin: number;
   insideAirport: boolean;
   locationLabel: string;
@@ -162,7 +162,7 @@ async function fetchDiscoveryPlaces(
   recType: string;
   title: string;
   description: string;
-  travelTimeMin: number;
+  travelTimeMin: number | null;
   activityTimeMin: number;
   insideAirport: boolean;
   locationLabel: string;
@@ -186,7 +186,7 @@ async function fetchDiscoveryPlaces(
       recType:        mapPlaceTypeToRecType(p.place_type ?? "activity"),
       title:          p.name,
       description:    p.blurb ?? null,
-      travelTimeMin:  estimateTravelTime(p.place_type),
+      travelTimeMin:  null, // unknown: no routing provider exists (see above)
       activityTimeMin: estimateActivityTime(p.place_type),
       insideAirport:  false,
       locationLabel:  p.neighborhood ? `${p.neighborhood}, ${city}` : city,
@@ -209,11 +209,28 @@ function mapPlaceTypeToRecType(placeType: string): string {
   return map[placeType] ?? "activity";
 }
 
-function estimateTravelTime(placeType: string): number {
-  const near = ["cafe", "restaurant", "shopping"];
-  if (near.includes(placeType)) return 15;
-  return 25;
-}
+/**
+ * DELETED: estimateTravelTime(placeType).
+ *
+ * It returned 15 minutes for a cafe/restaurant/shopping place and 25 for
+ * anything else, and it never looked at a coordinate — indeed
+ * `fetchDiscoveryPlaces` does not even SELECT lat/lng, and matches its city with
+ * `ilike %city%`, so a place in a different city whose name contains the string
+ * would score the same 15 minutes as one across the airport road.
+ *
+ * That number was doubled into a round trip by the safety engine and turned
+ * directly into "safe" / "not recommended". It was the load-bearing input to a
+ * verdict about whether somebody would make their flight, and it was a constant.
+ *
+ * There is no replacement because there is nothing honest to replace it with:
+ * this repo has no routing provider. MAPBOX_TOKEN and GOOGLE_MAPS_API_KEY are
+ * both geocoding-only (src/services/geocodingService.ts), and no Directions,
+ * Distance Matrix or Isochrone client exists. Straight-line distance is not
+ * travel time and must not be substituted for it.
+ *
+ * So a landside candidate's travel time is `null`, the safety engine refuses to
+ * rate it, and the traveller is told we cannot work it out — which is true.
+ */
 
 function estimateActivityTime(placeType: string): number {
   const quick = ["cafe", "shopping"];
@@ -262,7 +279,9 @@ export async function generateRecommendations(
         recType: "quick_city_escape",
         title: `Quick City Tour — ${city}`,
         description: `A short exploration of ${city}'s highlights — ideal for a ${session.layoverMinutes >= 240 ? "half-day" : "quick"} layover.`,
-        travelTimeMin: 30,
+        // Was a hardcoded 30 minutes for "a short exploration of the city",
+        // at every airport on earth. Unknown for the same reason as above.
+        travelTimeMin: null as number | null,
         activityTimeMin: session.layoverMinutes >= 240 ? 120 : 60,
         insideAirport: false,
         locationLabel: city,

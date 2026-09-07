@@ -100,10 +100,27 @@ export interface LayoverWindow {
   overnight: boolean;
 }
 
+/** Mirrors the server's LeaveAdvice (services/airport/LayoverSafetyEngine). */
+export type EntryEligibility =
+  | { state: 'permitted'; passportCountry: string; destinationCountry: string; status: string;
+      condition: string | null; officialSourceUrl: string | null; lastVerifiedAt: string | null; disclaimer: string }
+  | { state: 'not_permitted'; passportCountry: string; destinationCountry: string; status: string;
+      reason: string; officialSourceUrl: string | null; lastVerifiedAt: string | null; disclaimer: string }
+  | { state: 'unresolved'; reason: string; passportCountry: string | null;
+      destinationCountry: string | null; disclaimer: string };
+
 export interface LeaveAdvice {
-  verdict: 'yes' | 'tight' | 'no' | 'stay_airside';
+  /**
+   * `entry_unverified` means the clock says there is time but we have not
+   * established that this traveller may cross the border. It is deliberately not
+   * folded into 'no' (which means "not enough time") or 'tight': the two need
+   * different things from the user — one is a scheduling fact, the other is a
+   * missing passport or an uncurated corridor they can act on.
+   */
+  verdict: 'yes' | 'tight' | 'no' | 'stay_airside' | 'entry_unverified';
   reasons: string[];
   unknowns: string[];
+  entry: EntryEligibility | null;
   disclaimer: string;
 }
 
