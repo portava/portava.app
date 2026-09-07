@@ -42,6 +42,7 @@ import { markViewed, invalidateHighlightCache } from '../hooks/useHighlightRingS
 import { HighlightViewersSheet } from './HighlightViewersSheet.tsx';
 import { EngagementUserListSheet } from './EngagementUserListSheet.tsx';
 import { UserIdentityLink } from './interaction/UserIdentityLink.tsx';
+import { formatHighlightExpiry } from './highlights/HighlightTermChips.tsx';
 
 const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
 
@@ -131,8 +132,18 @@ export function HighlightViewer({
       setPaused(false);
       setReplyOpen(false);
       setReplyText('');
+      // The viewer is fed by the LIVE strip, whose counts are always real
+      // numbers. Archive rows — where a count can be null because the metric
+      // read failed — go to app/archive.tsx, never here. Rather than coerce a
+      // null to 0 and quietly claim "nobody liked this", a highlight arriving
+      // without counts is skipped: the like control then falls back to its own
+      // per-item default below, which is the same behaviour as a highlight the
+      // map has never seen.
       const map: Record<string, { liked: boolean; count: number }> = {};
-      for (const h of highlights) map[h.id] = { liked: h.likedByMe, count: h.likeCount };
+      for (const h of highlights) {
+        if (typeof h.likeCount !== "number" || typeof h.likedByMe !== "boolean") continue;
+        map[h.id] = { liked: h.likedByMe, count: h.likeCount };
+      }
       setLikeMap(map);
       // Best-effort: advance the highlights_last_viewed_at cursor so the
       // Explore tab badge clears after the user opens any highlight viewer.
@@ -278,7 +289,7 @@ export function HighlightViewer({
 
   const handleLike = useCallback(async () => {
     if (!current) return;
-    const prev = likeMap[current.id] ?? { liked: current.likedByMe, count: current.likeCount };
+    const prev = likeMap[current.id] ?? { liked: current.likedByMe === true, count: current.likeCount ?? 0 };
     const nextLiked = !prev.liked;
     const nextCount = Math.max(0, prev.count + (nextLiked ? 1 : -1));
     setLikeMap((m) => ({ ...m, [current.id]: { liked: nextLiked, count: nextCount } }));
@@ -319,7 +330,7 @@ export function HighlightViewer({
 
   if (!visible || !current) return null;
 
-  const likeState = likeMap[current.id] ?? { liked: current.likedByMe, count: current.likeCount };
+  const likeState = likeMap[current.id] ?? { liked: current.likedByMe === true, count: current.likeCount ?? 0 };
   const locLabel = [current.locationName ?? current.locationCity, current.locationCountry].filter(Boolean).join(', ');
 
   const isVideoHighlight = (current.mediaType ?? '').startsWith('video/');
@@ -443,7 +454,7 @@ export function HighlightViewer({
                   {locLabel ? <Text style={s.locText}>{locLabel}</Text> : null}
                 </View>
                 <View style={s.timeChip}>
-                  <Text style={s.timeText}>{fmtExpiry(current.expiresAt)}</Text>
+                  <Text style={s.timeText}>{formatHighlightExpiry(current.expiresAt)}</Text>
                 </View>
               </View>
             </UserIdentityLink>
@@ -613,14 +624,6 @@ export function HighlightViewer({
       )}
     </Modal>
   );
-}
-
-function fmtExpiry(expiresAt: string): string {
-  const diff = Math.max(0, new Date(expiresAt).getTime() - Date.now());
-  const hrs = Math.floor(diff / 3600000);
-  const mins = Math.floor((diff % 3600000) / 60000);
-  if (hrs > 0) return `${hrs}h left`;
-  return `${mins}m left`;
 }
 
 const s = StyleSheet.create({

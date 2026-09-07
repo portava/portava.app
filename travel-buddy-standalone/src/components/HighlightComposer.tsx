@@ -22,6 +22,11 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { color, space, radius, type as t, shadow, avatar } from '../theme/tokens.ts';
 import { uploadMedia, validateMedia } from '../services/media.ts';
 import { createHighlight, type HighlightVisibility } from '../services/highlights.ts';
+import {
+  HighlightTermChips,
+  DEFAULT_HIGHLIGHT_TERM_HOURS,
+  describeHighlightTerm,
+} from './highlights/HighlightTermChips.tsx';
 import { useSession } from '../context/SessionContext.tsx';
 import { router } from 'expo-router';
 import { MediaFilterEditor, type FilterApplyResult } from './MediaFilterEditor.tsx';
@@ -32,14 +37,6 @@ import { VIDEO_MAX_DURATION_SECONDS } from '../constants/mediaLimits.ts';
 /** Bound the highlight caption — the audit flagged it as the one unbounded
  *  caption composer. 2000 matches the Postcard composer's caption cap. */
 const CAPTION_MAX = 2000;
-
-const DURATIONS: { hours: number; label: string }[] = [
-  { hours: 3,  label: '3h' },
-  { hours: 6,  label: '6h' },
-  { hours: 12, label: '12h' },
-  { hours: 24, label: '24h' },
-  { hours: 48, label: '48h' },
-];
 
 const VISIBILITIES: { value: HighlightVisibility; label: string }[] = [
   { value: 'public',           label: 'Everyone' },
@@ -77,7 +74,9 @@ export function HighlightComposer({ visible, onClose, onSuccess }: Props) {
   const [mentionLoading, setMentionLoading] = useState(false);
   const [mentionVisible, setMentionVisible] = useState(false);
   const [vis, setVis] = useState<HighlightVisibility>('public');
-  const [expiresInHours, setExpiresInHours] = useState(24);
+  // `null` is the permanent term. 24h stays the default — permanence is chosen,
+  // never inherited.
+  const [expiresInHours, setExpiresInHours] = useState<number | null>(DEFAULT_HIGHLIGHT_TERM_HOURS);
   const [loc, setLoc] = useState<LocState>({ source: 'none' });
   const [placePickerOpen, setPlacePickerOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -98,7 +97,7 @@ export function HighlightComposer({ visible, onClose, onSuccess }: Props) {
     if (visible) {
       setCaption('');
       setVis('public');
-      setExpiresInHours(24);
+      setExpiresInHours(DEFAULT_HIGHLIGHT_TERM_HOURS);
       setLoc({ source: 'none' });
       setPlacePickerOpen(false);
       setError(null);
@@ -363,17 +362,13 @@ export function HighlightComposer({ visible, onClose, onSuccess }: Props) {
             {/* Duration */}
             <View style={s.field}>
               <Text style={s.fieldLabel}>Expires in</Text>
-              <View style={s.chipRow}>
-                {DURATIONS.map(({ hours, label }) => (
-                  <Pressable
-                    key={hours}
-                    style={[s.chip, expiresInHours === hours && s.chipOn]}
-                    onPress={() => setExpiresInHours(hours)}
-                  >
-                    <Text style={[s.chipText, expiresInHours === hours && s.chipTextOn]}>{label}</Text>
-                  </Pressable>
-                ))}
-              </View>
+              <HighlightTermChips
+                value={expiresInHours}
+                onChange={setExpiresInHours}
+                disabled={submitting}
+                testID="highlight-composer-term-chips"
+              />
+              <Text style={s.mediaHint}>{describeHighlightTerm(expiresInHours)}</Text>
             </View>
 
             {error && (

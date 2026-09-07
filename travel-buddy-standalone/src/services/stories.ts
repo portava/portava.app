@@ -234,16 +234,79 @@ export async function replyToStory(storyId: string, message: string): Promise<{ 
   } catch { return { ok: false }; }
 }
 
+// ── Archive ───────────────────────────────────────────────────────────────────
+//
+// An expired story is ARCHIVED, not gone. The owner can list what expired and
+// re-post it. A story's term is fixed at 24h, so re-post takes no argument.
+
+export async function getArchivedStories(
+  limit?: number,
+): Promise<{ ok: true; stories: Story[] } | { ok: false; message: string }> {
+  try {
+    const headers = await authHeader();
+    const qs = limit ? `?limit=${limit}` : '';
+    const res = await fetch(`${apiBase()}/api/stories/archive${qs}`, { headers });
+    if (!res.ok) {
+      const j = await res.json().catch(() => ({}));
+      return { ok: false, message: j.message ?? `HTTP ${res.status}` };
+    }
+    const json = await res.json();
+    return { ok: true, stories: json.stories ?? [] };
+  } catch (e: any) {
+    return { ok: false, message: e?.message ?? 'Network error' };
+  }
+}
+
+/** Re-activate an archived story for a fresh 24 hours. Stories have no term choice. */
+export async function repostStory(
+  storyId: string,
+): Promise<{ ok: true; story: Story; expiresAt: string } | { ok: false; message: string }> {
+  try {
+    const headers = await authHeader();
+    const res = await fetch(`${apiBase()}/api/stories/${storyId}/repost`, { method: 'POST', headers });
+    if (!res.ok) {
+      const j = await res.json().catch(() => ({}));
+      return { ok: false, message: j.message ?? `HTTP ${res.status}` };
+    }
+    const json = await res.json();
+    return { ok: true, story: json.story, expiresAt: json.expiresAt };
+  } catch (e: any) {
+    return { ok: false, message: e?.message ?? 'Network error' };
+  }
+}
+
 // ── Save to highlight ─────────────────────────────────────────────────────────
 
-export async function saveToHighlight(storyId: string, highlightId: string): Promise<{ ok: boolean }> {
+/**
+ * Promote a story into a Highlight.
+ *
+ * @param expiresInHours Term for the new highlight, or `null` for permanent.
+ *                       There is no default on either side of the wire — the
+ *                       user picks the term, so the caller must pass one.
+ */
+export async function saveToHighlight(
+  storyId: string,
+  expiresInHours: number | null,
+): Promise<{ ok: true; highlightId: string; permanent: boolean; expiresAt: string | null } | { ok: false; message: string }> {
   try {
     const headers = { ...(await authHeader()), 'Content-Type': 'application/json' };
     const res = await fetch(`${apiBase()}/api/stories/${storyId}/save-to-highlight`, {
-      method: 'POST', headers, body: JSON.stringify({ highlightId }),
+      method: 'POST', headers, body: JSON.stringify({ expiresInHours }),
     });
-    return { ok: res.ok };
-  } catch { return { ok: false }; }
+    if (!res.ok) {
+      const j = await res.json().catch(() => ({}));
+      return { ok: false, message: j.message ?? `HTTP ${res.status}` };
+    }
+    const json = await res.json();
+    return {
+      ok: true,
+      highlightId: json.highlightId,
+      permanent: json.permanent === true,
+      expiresAt: json.expiresAt ?? null,
+    };
+  } catch (e: any) {
+    return { ok: false, message: e?.message ?? 'Network error' };
+  }
 }
 
 // ── Close Friends ─────────────────────────────────────────────────────────────

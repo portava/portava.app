@@ -25,18 +25,33 @@ export interface Highlight {
   locationCity: string | null;
   locationCountry: string | null;
   visibility: HighlightVisibility;
-  expiresAt: string;
+  /**
+   * ISO-8601 expiry, or `null` when the highlight is PERMANENT.
+   *
+   * `null` is a first-class value here, not a missing field: the owner may
+   * choose "Never" in the composer. Every consumer must branch on it — a
+   * `null` handed to a date formatter is the defect this type change exists
+   * to make impossible.
+   */
+  expiresAt: string | null;
   createdAt: string;
   deletedAt: string | null;
   author: HighlightAuthor | null;
-  viewCount: number;
-  likeCount: number;
+  /**
+   * NULL when the server could not read the metrics — distinct from 0, which
+   * means nobody looked. `GET /highlights/archive` sends null with
+   * `countsAvailable: false` rather than inventing a zero.
+   */
+  viewCount: number | null;
+  likeCount: number | null;
   viewedByMe: boolean;
-  likedByMe: boolean;
+  likedByMe: boolean | null;
   filterId: string;
   filterIntensity: number;
   mediaThumbnailUrl?: string | null;
   mediaDurationSeconds?: number | null;
+  /** True only on rows served by the archive endpoint (expired, re-postable). */
+  archived: boolean;
 }
 
 export interface HighlightViewer {
@@ -103,20 +118,24 @@ function mapHighlight(r: any): Highlight {
     locationCity: r.location_city ?? null,
     locationCountry: r.location_country ?? null,
     visibility: r.visibility,
-    expiresAt: r.expires_at,
+    expiresAt: r.expires_at ?? null,
     createdAt: r.created_at,
     deletedAt: r.deleted_at ?? null,
     author: r.author
       ? { id: r.author.id, handle: r.author.handle, name: r.author.name, avatarUrl: r.author.avatarUrl ?? null }
       : null,
-    viewCount: r.viewCount ?? 0,
-    likeCount: r.likeCount ?? 0,
+    // NOT `?? 0`. A null here is the server saying it could not read the
+    // metrics, and coercing it to 0 turns "we don't know" into "nobody looked" —
+    // the same coercion that turned a deliberate permanent term back into 24h.
+    viewCount: typeof r.viewCount === "number" ? r.viewCount : null,
+    likeCount: typeof r.likeCount === "number" ? r.likeCount : null,
     viewedByMe: r.viewedByMe ?? false,
-    likedByMe: r.likedByMe ?? false,
+    likedByMe: typeof r.likedByMe === "boolean" ? r.likedByMe : null,
     filterId: r.filter_id ?? 'original',
     filterIntensity: r.filter_intensity ?? 100,
     mediaThumbnailUrl: r.media_thumbnail_url ?? null,
     mediaDurationSeconds: r.media_duration_seconds ?? null,
+    archived: r.archived === true,
   };
 }
 
@@ -129,7 +148,14 @@ export interface CreateHighlightInput {
   locationCity?: string | null;
   locationCountry?: string | null;
   visibility?: HighlightVisibility;
-  expiresInHours?: number;
+  /**
+   * Term in hours, or `null` for a permanent highlight.
+   *
+   * Omitting the field is NOT the same as passing `null`: an omitted field
+   * sends the server's 24h default, so permanence is always a deliberate
+   * choice and never an accident of an undefined variable.
+   */
+  expiresInHours?: number | null;
   filterId?: string;
   filterIntensity?: number;
   mediaThumbnailUrl?: string | null;
@@ -153,7 +179,7 @@ export async function createHighlight(input: CreateHighlightInput): Promise<High
         locationCity: input.locationCity ?? null,
         locationCountry: input.locationCountry ?? null,
         visibility: input.visibility ?? 'public',
-        expiresInHours: input.expiresInHours ?? 24,
+        expiresInHours: input.expiresInHours === undefined ? 24 : input.expiresInHours,
         filterId: input.filterId ?? 'original',
         filterIntensity: input.filterIntensity ?? 100,
         mediaThumbnailUrl: input.mediaThumbnailUrl ?? null,
@@ -330,6 +356,65 @@ export async function reportHighlight(highlightId: string, reason: string): Prom
   } catch (e) {
     if (isNetworkError(e)) return { ok: false, data: null, errorKind: 'network_unreachable' };
     return { ok: false, data: null, errorKind: 'db_error' };
+  }
+}
+
+// ── Archive ───────────────────────────────────────────────────────────────────
+//
+// An expired highlight is ARCHIVED, not gone. These two calls are the owner's
+// only route back to it: list what expired, then re-post it on a fresh term.
+
+/**
+ * Fetch the signed-in owner's EXPIRED highlights.
+ *
+ * Unlike the active-highlight readers above, a read failure here is surfaced
+ * as an error rather than an empty list — an archive that silently renders
+ * "nothing here" is indistinguishable from an archive that lost the user's
+ * content, and the server deliberately returns db_error instead of [].
+ */
+export async function fetchArchivedHighlights(limit?: number): Promise<HighlightResult<Highlight[]>> {
+  if (!isSupabaseConfigured || !apiBase()) return { ok: false, data: null, errorKind: 'config_error', message: 'Backend not configured' };
+  const token = await freshToken();
+  if (!token) return { ok: false, data: null, errorKind: 'unauthenticated' };
+  const qs = limit ? `?limit=${limit}` : '';
+  try {
+    const res = await fetch(`${apiBase()}/api/highlights/archive${qs}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) return mapApiError<Highlight[]>(res.status, await res.json().catch(() => ({})));
+    const body = await res.json();
+    return { ok: true, data: (body.highlights ?? []).map(mapHighlight) };
+  } catch (e) {
+    if (isNetworkError(e)) return { ok: false, data: null, errorKind: 'network_unreachable' };
+    return { ok: false, data: null, errorKind: 'db_error', message: e instanceof Error ? e.message : 'Unknown' };
+  }
+}
+
+/**
+ * Re-post an archived highlight on a new term.
+ *
+ * @param expiresInHours Term in hours, or `null` for permanent. Required —
+ *                       there is no default, because the user is choosing.
+ */
+export async function repostHighlight(
+  highlightId: string,
+  expiresInHours: number | null,
+): Promise<HighlightResult<{ highlight: Highlight; permanent: boolean }>> {
+  if (!isSupabaseConfigured || !apiBase()) return { ok: false, data: null, errorKind: 'config_error', message: 'Backend not configured' };
+  const token = await freshToken();
+  if (!token) return { ok: false, data: null, errorKind: 'unauthenticated' };
+  try {
+    const res = await fetch(`${apiBase()}/api/highlights/${highlightId}/repost`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ expiresInHours }),
+    });
+    if (!res.ok) return mapApiError(res.status, await res.json().catch(() => ({})));
+    const body = await res.json();
+    return { ok: true, data: { highlight: mapHighlight(body.highlight), permanent: body.permanent === true } };
+  } catch (e) {
+    if (isNetworkError(e)) return { ok: false, data: null, errorKind: 'network_unreachable' };
+    return { ok: false, data: null, errorKind: 'db_error', message: e instanceof Error ? e.message : 'Unknown' };
   }
 }
 

@@ -7,6 +7,8 @@ import { canViewHighlight, type HighlightVisibility, type HighlightRecord } from
 import { canMessage } from "../lib/messagingPermissions";
 import { nameVisibilitySet, presentedName } from "../lib/publicIdentity";
 import { z } from "zod";
+import { fetchBlockedSet } from "../lib/blocks.js";
+import { isBlockedBetween } from "../lib/blockGuard.js";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 const router = Router();
@@ -39,11 +41,9 @@ async function resolveViewAccess(
 
   // Block check (both directions)
   if (viewerId !== ownerId) {
-    const [blockedByMe, blockingMe] = await Promise.all([
-      sc.from("blocks").select("blocked_id").eq("blocker_id", viewerId).eq("blocked_id", ownerId).maybeSingle(),
-      sc.from("blocks").select("blocker_id").eq("blocker_id", ownerId).eq("blocked_id", viewerId).maybeSingle(),
-    ]);
-    if (blockedByMe.data || blockingMe.data) {
+    // Neither `.error` was bound, so a failed read left both `.data` null and
+    // the pair read as "not blocked". isBlockedBetween fails closed.
+    if (await isBlockedBetween(sc, viewerId, ownerId)) {
       sendError(res, "not_found", "Highlight not found");
       return null;
     }
@@ -82,7 +82,30 @@ async function resolveViewAccess(
   return { h: record };
 }
 
+/**
+ * Terms a Highlight may be given. `null` is PERMANENT — the owner chose "never".
+ *
+ * Owner ruling 2026-09-06. Before it, 48 hours was the ceiling and there was no
+ * way to say "keep this", which is why "save to Highlight" quietly meant
+ * "re-publish this for 24 more hours and then lose it".
+ */
 const EXPIRY_HOURS = [3, 6, 12, 24, 48] as const;
+export const PERMANENT: null = null;
+
+/**
+ * The visibility filter for a NON-OWNER read: live, or permanent.
+ *
+ * Written once because a bare `.gt("expires_at", …)` is invisibly wrong now —
+ * `NULL > now()` is NULL, so every permanent Highlight would silently vanish
+ * from any reader that forgets the NULL arm. Migration 2313 enforces the same
+ * rule inside the RLS policies; this is its query-layer twin.
+ *
+ * NOT for owner-scoped reads. An owner sees their own Highlights whatever the
+ * expiry says — an expired one is ARCHIVED, not gone.
+ */
+export function liveOrPermanent(nowIso = new Date().toISOString()): string {
+  return `expires_at.is.null,expires_at.gt.${nowIso}`;
+}
 const MAX_VIDEO_DURATION_SECONDS = 10;
 
 const KNOWN_FILTER_IDS = [
@@ -101,9 +124,15 @@ const createHighlightSchema = z.object({
   visibility: z
     .enum(["public", "travelers_nearby", "circle_only", "trip_only", "private"])
     .default("public"),
-  expiresInHours: z.number().int().refine((h) => EXPIRY_HOURS.includes(h as any), {
-    message: `expiresInHours must be one of: ${EXPIRY_HOURS.join(", ")}`,
-  }).default(24),
+  // `null` means PERMANENT. It is spelled explicitly rather than by omission:
+  // a caller that simply leaves the field out still gets the 24h default, so a
+  // forgetful client can never create a permanent Highlight by accident.
+  expiresInHours: z
+    .union([z.number().int(), z.null()])
+    .refine((h) => h === null || EXPIRY_HOURS.includes(h as any), {
+      message: `expiresInHours must be null (permanent) or one of: ${EXPIRY_HOURS.join(", ")}`,
+    })
+    .default(24),
   filterId: z.enum(KNOWN_FILTER_IDS).optional().default('original'),
   filterIntensity: z.number().int().min(0).max(100).optional().default(100),
   mediaThumbnailUrl: z.string().min(1).nullable().optional(),
@@ -137,7 +166,12 @@ router.post("/highlights", async (req, res) => {
     }
   }
 
-  const expiresAt = new Date(Date.now() + d.expiresInHours * 60 * 60 * 1000).toISOString();
+  // NULL is the stored form of "permanent" (migration 2313). Never coalesce it
+  // to a date: that is the silent-truncation defect this feature removes.
+  const expiresAt =
+    d.expiresInHours === null
+      ? null
+      : new Date(Date.now() + d.expiresInHours * 60 * 60 * 1000).toISOString();
 
   const { data, error } = await client
     .from("highlights")
@@ -190,11 +224,10 @@ router.get("/users/:userId/highlights", async (req, res) => {
   }
 
   // Check blocks in both directions
-  const [blocker, blocked] = await Promise.all([
-    client.from("blocks").select("blocked_id").eq("blocker_id", user.id).eq("blocked_id", targetId).maybeSingle(),
-    client.from("blocks").select("blocked_id").eq("blocker_id", targetId).eq("blocked_id", user.id).maybeSingle(),
-  ]);
-  if (blocker.data || blocked.data) {
+  // Same shape, same fix. A blocked viewer still gets an empty list (unchanged);
+  // a FAILED read now says so instead of serving the same empty list, which is
+  // what made an outage indistinguishable from a block.
+  if (await isBlockedBetween(client, user.id, targetId)) {
     res.status(200).json({ highlights: [] });
     return;
   }
@@ -207,7 +240,7 @@ router.get("/users/:userId/highlights", async (req, res) => {
     .select("id, owner_id, media_url, media_type, video_duration_seconds, caption, location_name, location_city, location_country, visibility, expires_at, created_at, deleted_at")
     .eq("owner_id", targetId)
     .is("deleted_at", null)
-    .gt("expires_at", new Date().toISOString())
+    .or(liveOrPermanent())
     .order("created_at", { ascending: true });
 
   if (error) {
@@ -341,21 +374,19 @@ router.get("/highlights/active", async (req, res) => {
   viewerTripIds = (viewerTripRows ?? []).map((r: any) => r.trip_id as string);
 
   // Get blocks list for this user (both directions)
-  const [blockedByMe, blockingMe] = await Promise.all([
-    sc.from("blocks").select("blocked_id").eq("blocker_id", user.id),
-    sc.from("blocks").select("blocker_id").eq("blocked_id", user.id),
-  ]);
-  const blockedIds = new Set<string>([
-    ...((blockedByMe.data ?? []).map((r: any) => r.blocked_id as string)),
-    ...((blockingMe.data ?? []).map((r: any) => r.blocker_id as string)),
-  ]);
+  // `fetchBlockedSet` returns NULL on a read failure, and its contract says a
+  // caller must treat that as "show nobody" — never as "nobody is blocked".
+  // Building the set inline with `?? []` did the opposite: an unreadable blocks
+  // table produced an empty set, which un-blocks every blocked user.
+  const blockedIds = await fetchBlockedSet(sc, user.id);
+  if (blockedIds === null) { sendError(res, "db_error", "Could not check blocks"); return; }
 
   // Build query — include trip_only so trip members can see them
   let q = sc
     .from("highlights")
     .select("id, owner_id, media_url, media_type, video_duration_seconds, caption, location_name, location_city, location_country, visibility, expires_at, created_at, deleted_at")
     .is("deleted_at", null)
-    .gt("expires_at", new Date().toISOString())
+    .or(liveOrPermanent())
     .in("visibility", ["public", "travelers_nearby", "circle_only", "trip_only"])
     .order("created_at", { ascending: false })
     .limit(limit * 5); // over-fetch to account for permission filtering
@@ -458,6 +489,186 @@ router.get("/highlights/active", async (req, res) => {
   }));
 
   res.status(200).json({ highlights: result });
+});
+
+/* ============================================================================
+ * GET /highlights/archive — the owner's expired Highlights
+ *
+ * Owner ruling 2026-09-06: an expired Highlight is ARCHIVED, not gone. Before
+ * it, expiry was terminal in the hardest possible way — the predicate lived in
+ * both RLS SELECT policies OUTSIDE the owner branch, so an expired Highlight
+ * became invisible to the person who made it, with no route able to see around
+ * it. Migration 2313 moves that predicate inside the non-owner arm; this is the
+ * surface that ruling was for.
+ *
+ * Deliberately NOT part of /highlights/active: the live strip is what other
+ * people can see, and mixing the archive into it would put expired media back
+ * in front of viewers. This is owner-only, always.
+ * ============================================================================ */
+router.get("/highlights/archive", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { client, user } = auth;
+
+  const limit = Math.min(Number(req.query.limit ?? 50) || 50, 100);
+
+  // Expired only: a permanent Highlight (expires_at IS NULL) is live, not
+  // archived, and a live-dated one has not expired yet.
+  const { data: rows, error } = await client
+    .from("highlights")
+    .select("id, owner_id, media_url, media_type, video_duration_seconds, caption, location_name, location_city, location_country, visibility, expires_at, created_at, deleted_at")
+    .eq("owner_id", user.id)
+    .is("deleted_at", null)
+    .not("expires_at", "is", null)
+    .lte("expires_at", new Date().toISOString())
+    .order("expires_at", { ascending: false })
+    .limit(limit);
+
+  if (error) {
+    // A failed read is not an empty archive. Saying "you have nothing archived"
+    // to someone whose archive we could not read is the exact defect this
+    // codebase spent the day removing.
+    req.log.error({ err: error }, "Failed to load highlight archive");
+    sendError(res, "db_error", error.message);
+    return;
+  }
+
+  const list = (rows ?? []) as any[];
+  if (list.length === 0) { res.json({ highlights: [], ok: true }); return; }
+
+  // ENRICHED TO THE SAME SHAPE AS /highlights/active, on purpose.
+  //
+  // The archive first returned raw rows. The client maps both endpoints through
+  // one `mapHighlight`, so a raw row arrived as `author: null` with `viewCount`
+  // and `likeCount` of 0 — and a zero that means "we did not ask" is
+  // indistinguishable from a zero that means "nobody looked". Nothing renders
+  // those on the archive screen today, which is exactly what would have made it
+  // a trap for the next surface to reuse this endpoint.
+  //
+  // The owner is the only possible author here (the query is owner-scoped), but
+  // the profile is looked up rather than assumed so the shape is produced by the
+  // same rules as the live strip rather than by a shortcut.
+  const ids = list.map((h) => h.id as string);
+  const [viewRows, likeRows, likedRows, profileRows] = await Promise.all([
+    client.from("highlight_views").select("highlight_id").in("highlight_id", ids),
+    client.from("highlight_likes").select("highlight_id").in("highlight_id", ids),
+    client.from("highlight_likes").select("highlight_id").eq("user_id", user.id).in("highlight_id", ids),
+    client.from("profiles").select("id, handle, name, avatar_url").eq("id", user.id),
+  ]);
+
+  // A failed metric read must not become a confident zero either. The archive
+  // still lists — losing a view count is not worth withholding someone's own
+  // media — but the counts go NULL and `countsAvailable` says why.
+  const countsAvailable = !viewRows.error && !likeRows.error && !likedRows.error;
+  const viewCount: Record<string, number> = {};
+  const likeCount: Record<string, number> = {};
+  for (const r of (viewRows.data ?? []) as any[]) viewCount[r.highlight_id] = (viewCount[r.highlight_id] ?? 0) + 1;
+  for (const r of (likeRows.data ?? []) as any[]) likeCount[r.highlight_id] = (likeCount[r.highlight_id] ?? 0) + 1;
+  const likedSet = new Set<string>(((likedRows.data ?? []) as any[]).map((r) => r.highlight_id as string));
+
+  const me = ((profileRows.data ?? []) as any[])[0] ?? null;
+  // `true` without a lookup, and deliberately: this list is owner-scoped, so the
+  // author IS the caller, and a person always sees their own real name. Asking
+  // nameVisibilitySet here would be a query whose answer is already known.
+  const author = me
+    ? { id: me.id, handle: me.handle, name: presentedName(me, true), avatarUrl: me.avatar_url ?? null }
+    : null;
+
+  res.json({
+    highlights: list.map((h) => ({
+      ...h,
+      archived: true,
+      author,
+      viewCount: countsAvailable ? (viewCount[h.id] ?? 0) : null,
+      likeCount: countsAvailable ? (likeCount[h.id] ?? 0) : null,
+      likedByMe: countsAvailable ? likedSet.has(h.id) : null,
+      viewedByMe: true, // it is the owner's own Highlight
+    })),
+    countsAvailable,
+    // Stated so a client never has to infer it from an empty list.
+    ok: true,
+  });
+});
+
+/* ============================================================================
+ * POST /highlights/:id/repost — put an archived Highlight back up
+ *
+ * Owner-only. Takes the same term vocabulary as creation, including `null` for
+ * permanent, so re-posting is the same decision as posting.
+ *
+ * It re-dates the EXISTING row rather than inserting a copy: the media, the
+ * caption, the place and the view history all belong to this Highlight, and a
+ * duplicate row would fork them. `created_at` is left alone — this is the same
+ * Highlight, posted again, not a new one pretending to be old.
+ * ============================================================================ */
+const repostSchema = z.object({
+  expiresInHours: z
+    .union([z.number().int(), z.null()])
+    .refine((h) => h === null || EXPIRY_HOURS.includes(h as any), {
+      message: `expiresInHours must be null (permanent) or one of: ${EXPIRY_HOURS.join(", ")}`,
+    })
+    .default(24),
+});
+
+router.post("/highlights/:id/repost", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { client, user } = auth;
+
+  const { id } = req.params;
+  if (!UUID.test(id)) { sendError(res, "invalid_payload", "Invalid highlight id"); return; }
+
+  const parsed = repostSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid payload");
+    return;
+  }
+
+  const { data: existing, error: readErr } = await client
+    .from("highlights")
+    .select("id, owner_id")
+    .eq("id", id)
+    .is("deleted_at", null)
+    .maybeSingle();
+
+  // The read is checked before the row: `{data: null, error}` and "no such
+  // highlight" are different answers, and only the second is a 404.
+  if (readErr) {
+    req.log.error({ err: readErr }, "Failed to read highlight for repost");
+    sendError(res, "db_error", readErr.message);
+    return;
+  }
+  if (!existing) { sendError(res, "not_found", "Highlight not found"); return; }
+  if ((existing as any).owner_id !== user.id) {
+    sendError(res, "forbidden", "Only the owner can repost this highlight");
+    return;
+  }
+
+  const expiresAt =
+    parsed.data.expiresInHours === null
+      ? null
+      : new Date(Date.now() + parsed.data.expiresInHours * 60 * 60 * 1000).toISOString();
+
+  const { data, error } = await client
+    .from("highlights")
+    .update({ expires_at: expiresAt, archived_at: null })
+    .eq("id", id)
+    .eq("owner_id", user.id)
+    .select("id, owner_id, media_url, media_type, video_duration_seconds, caption, location_name, location_city, location_country, visibility, expires_at, created_at, deleted_at")
+    .maybeSingle();
+
+  if (error) {
+    req.log.error({ err: error }, "Failed to repost highlight");
+    sendError(res, "db_error", error.message);
+    return;
+  }
+  if (!data) {
+    // The row moved between the ownership check and the write.
+    sendError(res, "not_found", "Highlight not found");
+    return;
+  }
+
+  res.json({ highlight: data, permanent: expiresAt === null });
 });
 
 /* ============================================================================
@@ -870,14 +1081,12 @@ router.get("/highlights/following-feed", async (req, res) => {
   }
 
   // 2. Resolve blocked users (both directions) and filter them out
-  const [blockedByMe, blockingMe] = await Promise.all([
-    sc.from("blocks").select("blocked_id").eq("blocker_id", user.id),
-    sc.from("blocks").select("blocker_id").eq("blocked_id", user.id),
-  ]);
-  const blockedIds = new Set<string>([
-    ...((blockedByMe.data ?? []).map((r: any) => r.blocked_id as string)),
-    ...((blockingMe.data ?? []).map((r: any) => r.blocker_id as string)),
-  ]);
+  // `fetchBlockedSet` returns NULL on a read failure, and its contract says a
+  // caller must treat that as "show nobody" — never as "nobody is blocked".
+  // Building the set inline with `?? []` did the opposite: an unreadable blocks
+  // table produced an empty set, which un-blocks every blocked user.
+  const blockedIds = await fetchBlockedSet(sc, user.id);
+  if (blockedIds === null) { sendError(res, "db_error", "Could not check blocks"); return; }
   const eligibleIds = followingIds.filter((id: string) => !blockedIds.has(id));
   if (eligibleIds.length === 0) {
     res.status(200).json({ users: [] });
@@ -890,7 +1099,7 @@ router.get("/highlights/following-feed", async (req, res) => {
     .select("id, owner_id, media_url, media_type, video_duration_seconds, caption, location_name, location_city, location_country, visibility, expires_at, created_at, deleted_at")
     .in("owner_id", eligibleIds)
     .is("deleted_at", null)
-    .gt("expires_at", new Date().toISOString())
+    .or(liveOrPermanent())
     .neq("visibility", "private")
     .order("created_at", { ascending: true });
 
