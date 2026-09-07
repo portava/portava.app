@@ -45,6 +45,13 @@ import {
 } from "../lib/rentBuddyBookingStatus.js";
 import { runBuddyRequestSweep } from "../lib/rentBuddyRequestSweeper.js";
 import { createEarningsLedgerEntry } from "../lib/rentBuddyEarningsLedger.js";
+// The ONE reader of rent_buddy_fee_rules. The earnings-summary route used to
+// carry its own level-blind 0.15; see lib/rentBuddyFeeSchedule.ts for why a
+// numeric fallback was the defect rather than the safety net (M1 / M10).
+import {
+  describeFeeScheduleFailure,
+  resolveFeeSchedule,
+} from "../lib/rentBuddyFeeSchedule.js";
 import {
   findLaunchControlRow,
   normalizeLaunchControlKey,
@@ -6549,25 +6556,21 @@ export function nightlifePublicMeetupViolation(meetupLocation: string, category:
 // EXHAUSTIVELY and folds the pages with the identical arithmetic — slower, but
 // never short.
 //
-// WHAT THIS DELIBERATELY DOES NOT CHANGE. `platformFeePct` stays 0.15 here.
-// That literal is itself a defect — M1, "three disagreeing take rates", where
-// this site is called out by name for ignoring the buddy's level entirely — but
-// M1 is blocked on verification V2 (does rent_buddy_fee_rules hold its five
-// seed rows in production?) and reconciling it here would produce a fourth
-// wrong answer instead of a right one. The rate is now a NAMED CONSTANT passed
-// to both the SQL function and the fold, so M1's owner changes one line.
-// `totalCashConfirmedUsd` likewise keeps summing cash_balance_usd for every
-// non-disputed booking, confirmed or not; see the note at the constant.
-
-/**
- * The platform fee this route applies, as a fraction.
- *
- * NOT A DEFAULT — it is applied to every buddy at every level, which is exactly
- * what M1 files against this line (12 §3.1: "the earnings summary hard-codes
- * platformFeePct = 0.15 for every buddy at every level"). Named here so the
- * value has one home when M1 replaces it with a read of rent_buddy_fee_rules.
- */
-const EARNINGS_SUMMARY_FEE_PCT = 0.15;
+// THE TAKE RATE (M1), NOW CLOSED. This route used to carry its own fraction —
+// applied to every buddy at every level, so a `new` buddy (25 %) and an `elite`
+// buddy (12 %) were both shown a 15 % deduction, and only a `pro` buddy saw a
+// correct number, by coincidence. Verification V2 is discharged:
+// `rent_buddy_fee_rules` holds its five seed rows in production
+// (new 25 / rising 22 / pro 15 / elite 12 / city_ambassador 12), so the literal
+// is gone and the rate is resolved per buddy through the ONE reader,
+// `lib/rentBuddyFeeSchedule.ts`. There is deliberately no numeric fallback:
+// when the schedule cannot answer, this route refuses rather than publishing a
+// take rate nobody configured. See that module's header for why 22 was the
+// defect and not the safety net.
+//
+// WHAT THIS DELIBERATELY DOES NOT CHANGE. `totalCashConfirmedUsd` keeps summing
+// cash_balance_usd for every non-disputed booking, confirmed or not; see the
+// note at the fold.
 
 /** Page size for the exhaustive fallback. */
 const EARNINGS_PAGE_SIZE = 500;
@@ -6646,30 +6649,51 @@ export function foldEarningsRows(rows: any[], platformFeePct: number, now: Date 
 /**
  * Read EVERY earnings-bearing booking for a buddy, in pages.
  *
- * Returns null on a failed read rather than an empty array: an empty array is
- * indistinguishable from "this buddy has earned nothing", and answering a money
- * question with a confident zero derived from a failed query is the defect
- * class 11 §"The defect class" is a census of. The caller reports the failure.
- *
- * Ordered by id so the pages partition the set deterministically; rows are
- * de-duplicated by id so a client that ignores `range` (a partial test fake)
- * cannot double-count. The page ceiling is a guard against a non-paginating
- * client looping forever, not an expected limit.
+ * Signature and behaviour unchanged; the paging itself now lives in
+ * `fetchAllPagedRows` below, which the marketplace dashboard's two reads share.
+ * Returns null on a failed read rather than an empty array — see the pager.
  */
 export async function fetchAllBuddyEarningsRows(client: any, buddyProfileId: string): Promise<any[] | null> {
+  return fetchAllPagedRows(client, "rent_buddy_bookings", EARNINGS_BOOKING_COLUMNS, {
+    column: "buddy_id",
+    value: buddyProfileId,
+    statuses: EARNINGS_STATUSES as unknown as string[],
+  });
+}
+
+/** The columns the earnings fold reads. */
+const EARNINGS_BOOKING_COLUMNS =
+  "id, total_usd, deposit_usd, cash_balance_usd, payment_mode, status, completed_at, booking_date, category";
+
+/**
+ * The exhaustive pager the three earnings readers share.
+ *
+ * One equality predicate, an optional status set, ordered by `id` so the pages
+ * partition the set deterministically, de-duplicated by `id` so a client that
+ * ignores `range` (a partial test fake) cannot double-count. `null` on a failed
+ * read — never `[]`, because an empty array is indistinguishable from "this
+ * buddy has earned nothing" and answering a money question with a confident
+ * zero derived from a failed query is the defect class `11` §"The defect class"
+ * is a census of.
+ *
+ * The page ceiling is a guard against a non-paginating client looping forever,
+ * not an expected limit.
+ */
+async function fetchAllPagedRows(
+  client: any,
+  table: string,
+  columns: string,
+  match: { column: string; value: any; statuses?: string[] },
+): Promise<any[] | null> {
   const seen = new Set<string>();
   const out: any[] = [];
-  const MAX_PAGES = 400; // 200k bookings; far past any real buddy
+  const MAX_PAGES = 400; // 200k rows; far past any real buddy
 
   for (let page = 0; page < MAX_PAGES; page++) {
     const from = page * EARNINGS_PAGE_SIZE;
-    const res: any = await client
-      .from("rent_buddy_bookings")
-      .select("id, total_usd, deposit_usd, cash_balance_usd, payment_mode, status, completed_at, booking_date, category")
-      .eq("buddy_id", buddyProfileId)
-      .in("status", EARNINGS_STATUSES as unknown as string[])
-      .order("id", { ascending: true })
-      .range(from, from + EARNINGS_PAGE_SIZE - 1);
+    let q: any = client.from(table).select(columns).eq(match.column, match.value);
+    if (match.statuses) q = q.in("status", match.statuses);
+    const res: any = await q.order("id", { ascending: true }).range(from, from + EARNINGS_PAGE_SIZE - 1);
 
     if (res?.error) return null;
     const rows: any[] = Array.isArray(res?.data) ? res.data : [];
@@ -6684,6 +6708,43 @@ export async function fetchAllBuddyEarningsRows(client: any, buddyProfileId: str
   return out;
 }
 
+/**
+ * EVERY booking a buddy has, in pages — M7's other site.
+ *
+ * `GET /rent-a-buddy/me/earnings/summary` in rentABuddyMarketplace.ts needs the
+ * buddy's WHOLE booking set, not only the earnings-bearing statuses: it derives
+ * today's bookings, upcoming bookings and the cancelled count from the same
+ * array. So it cannot reuse `fetchAllBuddyEarningsRows`, whose
+ * `.in("status", ['completed','disputed'])` would empty all three. It reuses
+ * the pager instead, with its own column list and no status filter.
+ *
+ * Null on a failed read, for the same reason as above.
+ */
+export async function fetchAllBuddyBookingRows(
+  client: any,
+  buddyProfileId: string,
+  columns: string,
+): Promise<any[] | null> {
+  return fetchAllPagedRows(client, "rent_buddy_bookings", columns, {
+    column: "buddy_id",
+    value: buddyProfileId,
+  });
+}
+
+/**
+ * EVERY tip row paid to a buddy, in pages.
+ *
+ * The same unpaginated-select defect as the bookings read, in the same
+ * `Promise.all`: `select("amount_usd").eq("buddy_user_id", …)` with no range.
+ * `id` is selected so the pages have a deterministic order to partition on.
+ */
+export async function fetchAllBuddyTipRows(client: any, buddyUserId: string): Promise<any[] | null> {
+  return fetchAllPagedRows(client, "rent_buddy_tips", "id, amount_usd", {
+    column: "buddy_user_id",
+    value: buddyUserId,
+  });
+}
+
 router.get("/rent-a-buddy/dashboard/earnings/summary", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
@@ -6693,23 +6754,47 @@ router.get("/rent-a-buddy/dashboard/earnings/summary", async (req, res) => {
 
   const { data: bp } = await serviceClient
     .from("rent_buddy_profiles")
-    .select("id")
+    .select("id, buddy_level")
     .eq("user_id", user.id)
     .maybeSingle();
 
   if (!bp) return res.status(404).json({ error: "not_found", message: "No Buddy profile found." });
 
+  // M1 — the take rate for THIS buddy's level, from the schedule of record.
+  // Both failure states refuse: a buddy is told a rate the operator configured
+  // or told nothing at all. Falling through to a number here is what made a
+  // missing row indistinguishable from a deliberate 15 %.
+  const feeSchedule = await resolveFeeSchedule(serviceClient, (bp as any).buddy_level);
+  if (feeSchedule.status === "no_such_level") {
+    req.log?.error(
+      { userId: user.id, buddyProfileId: (bp as any).id, buddyLevel: feeSchedule.buddyLevel },
+      "earnings summary refused: buddy_level has no rent_buddy_fee_rules row",
+    );
+    // Operator-neutral text: the log above carries the table and the level.
+    return sendError(res, 'conflict',
+      "Your buddy level has no fee schedule entry, so earnings cannot be estimated.");
+  }
+  if (feeSchedule.status === "read_failed") {
+    req.log?.error(
+      { userId: user.id, buddyProfileId: (bp as any).id, detail: feeSchedule.message },
+      "earnings summary refused: rent_buddy_fee_rules unreadable",
+    );
+    return sendError(res, 'db_error', describeFeeScheduleFailure(feeSchedule));
+  }
+  const rule = feeSchedule.rule;
+
   const taxNote = "Tax documents are not available yet. Please keep your own records of earnings for tax purposes. A tax summary feature is planned for a future release.";
 
   // Preferred path: the whole aggregation happens in SQL and comes back as one
-  // row, so there is nothing for a row cap to truncate.
+  // row, so there is nothing for a row cap to truncate. The SQL function takes
+  // the rate as a FRACTION (0.15 == 15 %); the schedule stores a percentage.
   const rpc = await rbRpc(serviceClient, "rb_buddy_earnings_summary", {
     p_buddy_id: (bp as any).id,
-    p_platform_fee_pct: EARNINGS_SUMMARY_FEE_PCT,
+    p_platform_fee_pct: rule.platformFeePercent / 100,
   });
   const agg = rpc.ok ? (Array.isArray(rpc.data) ? rpc.data[0] : rpc.data) : null;
   if (agg && typeof agg === "object" && agg.totalNetUsd !== undefined) {
-    return res.json({ ...agg, taxNote, platformFeePct: EARNINGS_SUMMARY_FEE_PCT * 100 });
+    return res.json({ ...agg, taxNote, buddyLevel: feeSchedule.buddyLevel, platformFeePct: rule.platformFeePercent });
   }
 
   // Fallback: exhaustive pagination, same arithmetic. Not truncating either.
@@ -6721,9 +6806,10 @@ router.get("/rent-a-buddy/dashboard/earnings/summary", async (req, res) => {
   }
 
   return res.json({
-    ...foldEarningsRows(rows, EARNINGS_SUMMARY_FEE_PCT),
+    ...foldEarningsRows(rows, rule.platformFeePercent / 100),
     taxNote,
-    platformFeePct: EARNINGS_SUMMARY_FEE_PCT * 100,
+    buddyLevel: feeSchedule.buddyLevel,
+    platformFeePct: rule.platformFeePercent,
   });
 });
 

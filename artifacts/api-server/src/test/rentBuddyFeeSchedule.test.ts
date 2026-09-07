@@ -251,7 +251,7 @@ describe("one take rate, one reader — read as text", () => {
     assert.ok(files.length > 50, `expected to scan src/lib + src/routes, found ${files.length} files`);
   });
 
-  for (const literal of ["DEFAULT_PLATFORM_FEE_PERCENT", "defaultFeePercent"]) {
+  for (const literal of ["DEFAULT_PLATFORM_FEE_PERCENT", "defaultFeePercent", "EARNINGS_SUMMARY_FEE_PCT"]) {
     it(`no file reintroduces \`${literal}\``, () => {
       const hits = files
         .filter((f) => stripComments(readFileSync(f, "utf8")).includes(literal))

@@ -95,7 +95,7 @@ import { isKillSwitchEngaged } from "../lib/featureFlags.js";
 // rentABuddy.ts (which already gates its own 70 handlers with it). Imported
 // rather than re-implemented so this router cannot drift from the meaning of
 // `rent_buddy_enabled`. See its doc comment for why admin routes are exempt.
-import { getUserLimits, enforceBookingCreationGates, deriveServiceCountry, requireRentBuddyEnabled } from "./rentABuddy.js";
+import { accumulateBookingTip, getUserLimits, enforceBookingCreationGates, deriveServiceCountry, fetchAllBuddyBookingRows, fetchAllBuddyTipRows, requireRentBuddyEnabled } from "./rentABuddy.js";
 import {
   calculateCompatibilityScore,
   rankBuddies,
@@ -1896,32 +1896,38 @@ router.post("/rent-a-buddy/bookings/:bookingId/tip", async (req, res) => {
     return sendError(res, 'invalid_payload', "Maximum tip amount is $200.");
   }
 
-  const { error } = await svc
-    .from("rent_buddy_tips")
-    .upsert({
-      booking_id: bookingId,
-      traveler_id: user.id,
-      buddy_user_id: bk.buddy.user_id,
-      amount_usd: amountUsd,
-      note: note ?? null,
-    }, { onConflict: "booking_id" });
-
-  if (error) return sendError(res, 'db_error', error.message);
-
-  // Update ledger with tip (best-effort: the tip row itself is committed — log only)
-  const { error: ledgerTipErr } = await svc
-    .from("rent_buddy_earnings_ledger")
-    .update({ tip_usd: amountUsd, updated_at: new Date().toISOString() })
-    .eq("booking_id", bookingId);
-  if (ledgerTipErr) logger.error({ err: ledgerTipErr, bookingId }, "ledger tip update failed (best-effort)");
-
-  // Update booking tip field (best-effort denormalised copy)
-  const { error: bookingTipErr } = await svc.from("rent_buddy_bookings").update({ tip_usd: amountUsd, updated_at: new Date().toISOString() }).eq("id", bookingId);
-  if (bookingTipErr) logger.error({ err: bookingTipErr, bookingId }, "booking tip update failed (best-effort)");
+  // M8 — ONE call, and it ACCUMULATES.
+  //
+  // THE DEFECT THIS REPLACES. Three unrelated writes used to happen here with
+  // no transaction: an upsert into rent_buddy_tips on conflict target
+  // `booking_id` carrying the single `amountUsd`, then two explicitly
+  // best-effort UPDATEs of the ledger's and the booking's `tip_usd`. The table
+  // is UNIQUE on booking_id, so a traveller's second tip REPLACED the first —
+  // there is no other copy of the destroyed amount and no reconciliation that
+  // could recover it, which is why 12 §4 orders M8 ahead of the rest of Stage
+  // 1B. The two trailing updates then wrote the single amount rather than the
+  // running total, so the three copies could disagree even without a second tip.
+  //
+  // WHY A FAILURE IS NOW A 500 AND NOT A LOG LINE. The two UPDATEs were
+  // best-effort by construction: they logged and the request still answered
+  // `{ ok: true }`. A silently dropped money write reported as a success is
+  // exactly the defect, so this is a DELIBERATE semantic change — the tip
+  // either lands in all three places or the traveller is told it did not.
+  //
+  // `buddy_user_id` is no longer passed from here: the payee is derived
+  // DB-side from the booking, so a caller cannot name someone else as the
+  // recipient of a tip.
+  const tip = await accumulateBookingTip(svc, bookingId, user.id, Number(amountUsd), note ?? null);
+  if (!tip) {
+    logger.error({ bookingId, userId: user.id }, "tip could not be applied");
+    return sendError(res, 'db_error', "The tip could not be recorded. Please try again.");
+  }
 
   emitAnalyticsEvent(svc, "tip_sent", { userId: user.id, buddyId: bk.buddy_id, city: bk.buddy?.city, category: bk.category, amountUsd: Number(amountUsd) });
 
-  res.json({ ok: true });
+  // totalTipUsd is the RUNNING TOTAL on this booking, not the amount just
+  // added — a second tip adds to the first rather than replacing it.
+  res.json({ ok: true, totalTipUsd: tip.totalTipUsd, atomic: tip.atomic });
 });
 
 // ── Saved Buddies (enhanced) ──────────────────────────────────────────────────
@@ -2144,6 +2150,14 @@ router.get("/rent-a-buddy/pricing/suggestion", async (req, res) => {
 
 // ── Earnings ──────────────────────────────────────────────────────────────────
 
+/**
+ * The booking columns this dashboard reads. Wider than the earnings fold's set
+ * in rentABuddy.ts, because this handler also renders today's and upcoming
+ * bookings to the client.
+ */
+const EARNINGS_DASHBOARD_BOOKING_COLUMNS =
+  "id, status, total_usd, deposit_usd, cash_balance_usd, cash_balance_confirmed_by_buddy, booking_date, category, city, duration_h, tip_usd, pricing_type";
+
 router.get("/rent-a-buddy/me/earnings/summary", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
@@ -2159,13 +2173,20 @@ router.get("/rent-a-buddy/me/earnings/summary", async (req, res) => {
   // `ledger[0].platform_fee_percent`: an arbitrary row's rate applied to every
   // completed booking, defaulting to a hard-coded 22 %. That select is gone
   // with it; nothing else in this handler read the ledger.
-  const [bookingsRes, tipsRes, feeSchedule, trustRes] = await Promise.all([
-    svc.from("rent_buddy_bookings")
-      .select("id, status, total_usd, deposit_usd, cash_balance_usd, cash_balance_confirmed_by_buddy, booking_date, category, city, duration_h, tip_usd, pricing_type")
-      .eq("buddy_id", buddyProfile.id),
-    svc.from("rent_buddy_tips")
-      .select("amount_usd")
-      .eq("buddy_user_id", auth.user.id),
+  //
+  // M7 — both money reads are EXHAUSTIVE, and both can say "I could not read".
+  //
+  // THE DEFECT (09 §1.3.4). Both of these were a single unpaginated select
+  // whose rows were then summed in JavaScript. PostgREST caps a select at its
+  // configured max-rows and says nothing when it truncates — no error, no
+  // header, just a shorter array — so a buddy past that cap was shown an
+  // earnings total and a tip total that were silently too low, and the more
+  // they had earned the more was missing. Worse, `(res.data ?? [])` turned a
+  // FAILED read into an empty array, so an outage published a confident $0.
+  // Both now page to exhaustion and return null on failure, and null is a 500.
+  const [bookingRows, tipRows, feeSchedule, trustRes] = await Promise.all([
+    fetchAllBuddyBookingRows(svc, buddyProfile.id, EARNINGS_DASHBOARD_BOOKING_COLUMNS),
+    fetchAllBuddyTipRows(svc, auth.user.id),
     resolveFeeSchedule(svc, buddyProfile.buddy_level),
     svc.from("trust_profiles")
       .select("overall_score, public_level")
@@ -2193,8 +2214,18 @@ router.get("/rent-a-buddy/me/earnings/summary", async (req, res) => {
     return sendError(res, 'db_error', describeFeeScheduleFailure(feeSchedule));
   }
 
-  const bookings = (bookingsRes.data ?? []) as any[];
-  const tips = (tipsRes.data ?? []) as any[];
+  // A partial total is worse than no total on a buddy's own money screen: the
+  // buddy cannot tell one from the other, and neither can an operator.
+  if (bookingRows === null || tipRows === null) {
+    logger.error(
+      { userId: auth.user.id, buddyProfileId: buddyProfile.id, bookingsFailed: bookingRows === null, tipsFailed: tipRows === null },
+      "earnings summary refused: booking/tip rows could not be read in full",
+    );
+    return sendError(res, 'db_error', "Earnings could not be totalled. Please try again.");
+  }
+
+  const bookings = bookingRows as any[];
+  const tips = tipRows as any[];
 
   const todayBkgs = bookings.filter((b) => b.booking_date === today);
   // Same two-value blind spot as GET /me/requests, in JS rather than SQL: the
