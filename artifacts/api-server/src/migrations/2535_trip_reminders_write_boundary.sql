@@ -71,6 +71,31 @@
 -- The API is unaffected: routes/trips-expansion.ts:2671-2736 reaches this table
 -- on the service client, which is BYPASSRLS.
 --
+-- ══════════════════════════════════════════════════════════════════════════════
+-- CORRECTION 2026-09-07 — THIS FILE USED THE READ PREDICATE AS A WRITE CHECK
+-- ══════════════════════════════════════════════════════════════════════════════
+-- The first draft gave trip_reminders_update `WITH CHECK (... AND
+-- can_see_trip(trip_id))`. That is the exact anti-pattern 2534 exists to remove,
+-- and 2534 makes it an invariant across ten tables INCLUDING trip_reminders:
+--
+--   "No write policy on the ten tables may gate on the READ predicate."
+--   -> RAISE EXCEPTION 'POSTCONDITION FAILED: write policies still gate on
+--      can_see_trip: %'
+--
+-- So the first draft would have ABORTED 2534 on apply. Worse than the ordering
+-- collision is what it says about the predicate: `can_see_trip` admits a viewer
+-- of a PUBLIC trip. Using it as a write check is how the checklist tables ended
+-- up letting any public-trip viewer write — the defect 2534 repairs. Reaching
+-- for it here would have reintroduced that shape on a third table.
+--
+-- The write gate is now `authz.is_trip_crew(trip_id)` (2334): accepted crew, by
+-- exactly lib/http.ts requireTripMember's rule. Reads are unchanged and remain
+-- owner-only.
+--
+-- ORDER: apply AFTER 2534, which rewrites trip_reminders_insert off can_see_trip
+-- for the same reason. The precondition below enforces it rather than trusting
+-- the runbook.
+--
 -- ROLLBACK: db/rollback/2026-09-07-2535-trip-reminders-write-boundary-rollback.sql
 -- ══════════════════════════════════════════════════════════════════════════════
 
@@ -93,11 +118,21 @@ BEGIN
     RAISE EXCEPTION 'PRECONDITION FAILED: policy trip_reminders_insert is absent. This migration deliberately does NOT recreate it (0079 creates it, 2534 repoints it); without it, splitting trip_reminders_own would leave INSERT ungoverned.';
   END IF;
 
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
-     WHERE n.nspname = 'public' AND p.proname = 'can_see_trip'
+  IF to_regprocedure('authz.is_trip_crew(uuid)') IS NULL THEN
+    RAISE EXCEPTION 'PRECONDITION FAILED: authz.is_trip_crew(uuid) is absent -- apply 2334 first. The UPDATE write check below requires accepted crew, not merely someone who can SEE the trip.';
+  END IF;
+
+  -- 2534 must have already moved trip_reminders_insert off can_see_trip. If it
+  -- has not, applying this file leaves the table half-converted: the UPDATE
+  -- verb gated on crew and the INSERT verb still gated on a predicate that
+  -- admits any viewer of a public trip.
+  IF EXISTS (
+    SELECT 1 FROM pg_policies
+     WHERE schemaname = 'public' AND tablename = 'trip_reminders'
+       AND policyname = 'trip_reminders_insert'
+       AND coalesce(with_check,'') ~ '\mcan_see_trip\s*\('
   ) THEN
-    RAISE EXCEPTION 'PRECONDITION FAILED: public.can_see_trip(uuid) is absent; trip_reminders_insert and the new UPDATE check both call it.';
+    RAISE EXCEPTION 'PRECONDITION FAILED: trip_reminders_insert still gates on can_see_trip -- apply 2534 first. Applying this file before it would leave INSERT admitting any viewer of a public trip while UPDATE requires accepted crew.';
   END IF;
 END $$;
 
@@ -113,7 +148,7 @@ CREATE POLICY "trip_reminders_select" ON public.trip_reminders
 CREATE POLICY "trip_reminders_update" ON public.trip_reminders
   FOR UPDATE TO authenticated
   USING      (user_id = auth.uid())
-  WITH CHECK ((user_id = auth.uid()) AND can_see_trip(trip_id));
+  WITH CHECK ((user_id = auth.uid()) AND authz.is_trip_crew(trip_id));
 
 CREATE POLICY "trip_reminders_delete" ON public.trip_reminders
   FOR DELETE TO authenticated
@@ -168,19 +203,36 @@ BEGIN
   IF NOT EXISTS (
     SELECT 1 FROM pg_policies
      WHERE schemaname = 'public' AND tablename = 'trip_reminders'
-       AND policyname = 'trip_reminders_update' AND with_check LIKE '%can_see_trip%'
+       AND policyname = 'trip_reminders_update' AND with_check LIKE '%authz.is_trip_crew%'
   ) THEN
     RAISE EXCEPTION
-      '2535 postcondition FAILED: trip_reminders_update does not require can_see_trip, so a row could still be retargeted onto an unseeable trip.';
+      '2535 postcondition FAILED: trip_reminders_update does not require accepted crew, so a row could still be retargeted onto a trip the writer is not on.';
   END IF;
 
+  -- 2534's invariant, re-asserted here so this table cannot drift back: no
+  -- write verb may gate on the READ predicate. can_see_trip admits a viewer of
+  -- a PUBLIC trip, which is how the checklist tables ended up writable by
+  -- anyone who could see them.
+  SELECT string_agg(policyname || ' (' || cmd || ')', ', ') INTO v_offender
+    FROM pg_policies
+   WHERE schemaname = 'public' AND tablename = 'trip_reminders'
+     AND cmd IN ('INSERT','UPDATE','DELETE','ALL')
+     AND coalesce(qual,'') || coalesce(with_check,'') ~ '\mcan_see_trip\s*\(';
+
+  IF v_offender IS NOT NULL THEN
+    RAISE EXCEPTION
+      '2535 postcondition FAILED: write policy on trip_reminders still gates on the read predicate can_see_trip: %', v_offender;
+  END IF;
+
+  -- And both write verbs must require SOMETHING beyond row ownership.
   IF NOT EXISTS (
     SELECT 1 FROM pg_policies
      WHERE schemaname = 'public' AND tablename = 'trip_reminders'
-       AND policyname = 'trip_reminders_insert' AND with_check LIKE '%can_see_trip%'
+       AND policyname = 'trip_reminders_insert'
+       AND coalesce(with_check,'') ~ '\m(authz\.is_trip_crew|is_accepted_trip_member)\s*\('
   ) THEN
     RAISE EXCEPTION
-      '2535 postcondition FAILED: trip_reminders_insert no longer requires can_see_trip; the domination this migration removes has been replaced by a weaker insert policy.';
+      '2535 postcondition FAILED: trip_reminders_insert does not require a trip gate; removing the FOR ALL domination has been undone by a weaker insert policy.';
   END IF;
 
   RAISE NOTICE '2535 OK: % policies on trip_reminders, no FOR ALL, every write policy states WITH CHECK, can_see_trip required on INSERT and UPDATE.', v_count;
