@@ -237,7 +237,7 @@ function resolveClient(opts: { client?: any }): any {
 // ── 1. Writing a contribution from a service-role process ────────────────────
 
 export type SensingRecordResult =
-  | { ok: true }
+  | { ok: true; duplicate: boolean }
   | { ok: false; reason: SensingServiceReason; error?: string };
 
 /**
@@ -275,7 +275,9 @@ export async function recordAnonSensingContribution(
     logger.warn({ err: e }, "sensing contribution write threw");
     return { ok: false, reason: "error" };
   }
-  if (result.ok) return { ok: true };
+  // A duplicate is a success that wrote nothing (2340's replay key) — passed
+  // through, never collapsed, so a caller can count replays.
+  if (result.ok) return { ok: true, duplicate: result.duplicate };
 
   // The store's named validation errors (commitment_required, ttl_exceeds_
   // maximum, epoch_does_not_match_observation, ...) are refusals of the INPUT;
@@ -303,6 +305,8 @@ const VALIDATION_ERRORS = new Set([
   "ttl_invalid",
   "ttl_exceeds_maximum",
   "epoch_does_not_match_observation",
+  "observed_at_in_future",
+  "observed_at_too_old",
 ]);
 
 // ── 2. Server-side revocation ────────────────────────────────────────────────

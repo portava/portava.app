@@ -131,6 +131,13 @@ import {
   type WorldIntelligenceRefusal,
 } from "../lib/mapProducers/worldIntelligence.js";
 import { deriveWorldPulse, type WorldPulseReport } from "../lib/mapProducers/worldPulseProducer.js";
+import { attachWorldMoments, type WorldMomentReport } from "../lib/mapProducers/worldMomentProducer.js";
+import {
+  parseDisplayIntent,
+  parseDisplayMode,
+  resolveDisplay,
+  type DisplayReport,
+} from "../lib/mapDisplayResolver.js";
 import { readTravelerFlowEdges, type TravelerFlowReport } from "../lib/mapProducers/travelerFlowProducer.js";
 import { readCityModels, type CityModelReport } from "../lib/mapProducers/cityModelProducer.js";
 import { readPersonalCityPins, type PersonalCityReport } from "../lib/mapProducers/personalCityProducer.js";
@@ -431,6 +438,12 @@ interface WorldIntelligenceReport {
   personalCities: PersonalCityReport | null;
   /** Phase 7 objects §24 withheld rather than coarsened, and then suppressed. */
   withheldForProtection: number;
+  /**
+   * Sensing §7 world moments over the surviving pulses. Null when
+   * `map_world_moments_enabled` is off; otherwise counts, even when no pulse
+   * was offered, so "off" and "nothing changed" are different facts.
+   */
+  worldMoments: WorldMomentReport | null;
 }
 
 /**
@@ -510,6 +523,7 @@ router.get(
         producers: null,
         places: null,
         worldIntelligence: null,
+        display: null,
         generatedAt,
       });
       return;
@@ -542,6 +556,28 @@ router.get(
     const limitRaw = Number(req.query.limit);
     const limit = Number.isFinite(limitRaw) ? Math.min(200, Math.max(1, limitRaw)) : 100;
     const cursor = req.query.cursor ? String(req.query.cursor) : null;
+    // §30 mode and §13 intent, for the display resolver. Lenient: an unknown
+    // value is null, and null means LIVE / no intent. Ignored unless the
+    // resolver flag is on.
+    const displayMode = parseDisplayMode(req.query.mode);
+    const displayIntent = parseDisplayIntent(req.query.intent);
+
+    // ── Sensing §7 capability flags (migration 2350), ALL SEEDED OFF ──────────
+    // Three switches for three behaviours, each read fail-closed through
+    // isFlagEnabled so an unreadable flag leaves the behaviour off. LITERALS,
+    // so check:flag-polarity can resolve every read. With all three off this
+    // handler serves exactly what it served before they existed:
+    //   map_experience_state_enabled  applyLiveClaims folds a §5.3 ExperienceState
+    //                                 and stamps truthClass/coverage (SX-02, SX-07)
+    //   map_world_moments_enabled     world_pulse cells gain a world-change
+    //                                 moment (SX-03)
+    //   map_display_resolver_enabled  the clutter budget + safety precedence
+    //                                 pass runs before paging (SX-08, SX-09)
+    const [experienceStateOn, worldMomentsOn, displayResolverOn] = await Promise.all([
+      isFlagEnabled(sc, "map_experience_state_enabled"),
+      isFlagEnabled(sc, "map_world_moments_enabled"),
+      isFlagEnabled(sc, "map_display_resolver_enabled"),
+    ]);
 
     // ONE shared, fail-closed block set for every source. If it cannot be read,
     // nobody is returned — matching /api/map/search.
@@ -561,6 +597,7 @@ router.get(
         producers: null,
         places: null,
         worldIntelligence: null,
+        display: null,
         generatedAt,
       });
       return;
@@ -952,6 +989,8 @@ router.get(
           const count = countAdjacentActiveEvents(obj, activeEvents, nowMs);
           return count > 0 ? { eventNearby: { count } } : null;
         },
+        // Sensing §7 (SX-02 / SX-07). Off ⇒ applyLiveClaims is unchanged.
+        experienceState: experienceStateOn,
       },
     );
     objects = enrichment.objects;
@@ -978,6 +1017,7 @@ router.get(
         producers: null,
         places: null,
         worldIntelligence: null,
+        display: null,
         generatedAt,
       });
       return;
@@ -1044,6 +1084,7 @@ router.get(
         cityModels: null,
         personalCities: null,
         withheldForProtection: 0,
+        worldMoments: null,
       };
       worldIntelligence.report = report;
 
@@ -1219,19 +1260,59 @@ router.get(
             if (removed > 0) layer.published = Math.max(0, layer.published - removed);
           }
 
-          finalObjects = [...finalObjects, ...wiSurvived];
+          // ── Sensing §7 world moments (SX-03) ────────────────────────────
+          // AFTER §24, over the SURVIVING pulses, with a context of objects
+          // that have themselves survived §24 (the aggregation output and the
+          // Phase 7 edges). A moment therefore only ever re-describes what is
+          // already on the wire; it cannot resurrect a withheld cell or read
+          // an object the gate removed. Off ⇒ pulses are untouched and the
+          // report stays null.
+          let wiFinal: MapObject[] = wiSurvived;
+          if (worldMomentsOn) {
+            const pulses = wiSurvived.filter((o) => o.kind === "world_pulse");
+            const context = [
+              ...finalObjects,
+              ...wiSurvived.filter((o) => o.kind === "traveler_flow"),
+            ];
+            const moments = attachWorldMoments(pulses, context, { zoom });
+            report.worldMoments = moments.report;
+            const promoted = new Map(moments.pulses.map((p) => [p.id, p as MapObject]));
+            wiFinal = wiSurvived.map((o) =>
+              o.kind === "world_pulse" ? (promoted.get(o.id) ?? o) : o,
+            );
+          }
+
+          finalObjects = [...finalObjects, ...wiFinal];
         }
       }
     }
 
     const ranked = rankObjects(finalObjects, { lat, lng });
-    const { page, nextCursor } = paginate(ranked, cursor, limit);
+
+    // ── Sensing §7 display resolver (SX-08 / SX-09) ─────────────────────────
+    // Between ranking and paging, so it sees `distanceKm` and the §31 order,
+    // and so what it drops is never paged back in. Off ⇒ the ranked list is
+    // paged exactly as before and `display` is null.
+    let servable: MapObject[] = ranked;
+    let display: DisplayReport | null = null;
+    if (displayResolverOn) {
+      const resolved = resolveDisplay(ranked, {
+        band: aggregation.band,
+        mode: displayMode,
+        intent: displayIntent,
+        limit,
+      });
+      servable = resolved.objects;
+      display = resolved.report;
+    }
+
+    const { page, nextCursor } = paginate(servable, cursor, limit);
 
     res.json({
       enabled: true,
       objects: page,
       viewport: { bbox, zoom, center: { lat, lng }, radiusKm },
-      total: ranked.length,
+      total: servable.length,
       nextCursor,
       sources,
       aggregation: {
@@ -1266,6 +1347,10 @@ router.get(
       // so "no world intelligence" is never ambiguous between "the gates said
       // no", "the flag is off" and "nothing asked". See WorldIntelligenceReport.
       worldIntelligence: worldIntelligence.report,
+      // Null when `map_display_resolver_enabled` is off. Otherwise the budget
+      // that was applied and what it dropped, by kind — a thinned viewport is
+      // never indistinguishable from an empty one. See DisplayReport.
+      display,
       generatedAt,
     });
   }),

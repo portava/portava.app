@@ -367,6 +367,18 @@ const PERMITTED_REFERRERS = new Map<string, string>([
     join("lib", "sensingRetentionScheduler.ts"),
     'the "TTL" sweep: calls purge_expired_sensing_contributions, and only where the table exists.',
   ],
+  [
+    join("lib", "sensingContributionPolicy.ts"),
+    'the S1 privacy contract over "privacy-reduced sensor contributions", "rotating IDs", "TTL" and ' +
+      '"revocation": purpose scopes, precision, retention, credential validity, composed from the ' +
+      "store's own constants. Pure admission; no issuer, no route, no flag, no publisher.",
+  ],
+  [
+    join("lib", "sensingPresenceState.ts"),
+    'the §19 PresenceObservation built from "cohort/coverage aggregation": takes the aggregate\'s ' +
+      "decision (a type import) and carries truth class / confidence / freshness / coverage. " +
+      "Reads no store, publishes nothing, names no contributor.",
+  ],
 ]);
 
 /**

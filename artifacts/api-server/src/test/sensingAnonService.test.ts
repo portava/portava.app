@@ -277,7 +277,7 @@ describe("recording a contribution from a service-role process", () => {
   it("writes exactly the ten columns it may write, and nothing that could be an identity", async () => {
     const c = client();
     const r = await recordAnonSensingContribution(contribution(NOW), { client: c, nowMs: NOW });
-    assert.deepEqual(r, { ok: true });
+    assert.deepEqual(r, { ok: true, duplicate: false });
     assert.equal(c.state.inserts.length, 1);
     const row = c.state.inserts[0];
     assert.deepEqual(

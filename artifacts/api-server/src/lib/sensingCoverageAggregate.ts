@@ -100,6 +100,19 @@ export interface SensingCohortAggregate {
   contributions: number;
   /** Freshest arrival in the cohort, or null when nothing was counted. */
   observedAt: string | null;
+  /**
+   * The cohort's PER-CONTRIBUTOR median signal bucket (0..4), or null.
+   *
+   * Null whenever the cohort is not publishable — an unpublishable cohort has
+   * no statistic to leak, not even a coarse one — and null when nothing was
+   * counted. It is a per-PERSON statistic because 2340's replay key allows one
+   * row per contributor per cohort; where older duplicates exist (rows written
+   * before 2340), the contributor's latest row is the one that counts, so a
+   * prolific device still weighs exactly one. Its MEANING (what bucket 3 is) is
+   * pinned by reduction_version in code and is an owner decision; this field
+   * carries the ordinal and no label.
+   */
+  medianSignalBucket: number | null;
 }
 
 const REFUSED_WITHOUT_LOOKING = (reason: SensingAggregateReason): SensingCohortAggregate => ({
@@ -110,7 +123,15 @@ const REFUSED_WITHOUT_LOOKING = (reason: SensingAggregateReason): SensingCohortA
   maxGroupShare: 0,
   contributions: 0,
   observedAt: null,
+  medianSignalBucket: null,
 });
+
+/** Lower median of a non-empty integer list; null for an empty one. */
+function lowerMedian(values: number[]): number | null {
+  if (values.length === 0) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  return sorted[Math.floor((sorted.length - 1) / 2)] ?? null;
+}
 
 export interface SensingAggregateOptions {
   /** Evaluation instant. Also decides which rows have expired. */
@@ -150,6 +171,10 @@ export function aggregateSensingCohort(
   const groupedActorUnion = new Set<string>();
   let latestMs = Number.NEGATIVE_INFINITY;
 
+  // One bucket PER CONTRIBUTOR — the contributor's latest row wins, so a device
+  // that wrote several rows before 2340's replay key still weighs exactly one.
+  const bucketByActor = new Map<string, { createdMs: number; bucket: number }>();
+
   for (const r of fresh) {
     const token = r.contributor_token;
     if (!token) continue; // a tokenless row is not a countable contributor
@@ -157,6 +182,12 @@ export function aggregateSensingCohort(
 
     const created = Date.parse(r.created_at);
     if (Number.isFinite(created) && created > latestMs) latestMs = created;
+
+    if (Number.isInteger(r.signal_bucket)) {
+      const createdMs = Number.isFinite(created) ? created : Number.NEGATIVE_INFINITY;
+      const prev = bucketByActor.get(token);
+      if (!prev || createdMs >= prev.createdMs) bucketByActor.set(token, { createdMs, bucket: r.signal_bucket });
+    }
 
     const group = r.group_token;
     if (group === null || group === undefined || group === "") continue; // zero group credit
@@ -201,6 +232,7 @@ export function aggregateSensingCohort(
       // module's whole argument is that its numbers are literal.
       contributions: fresh.length,
       observedAt: null,
+      medianSignalBucket: null,
     };
   }
 
@@ -227,5 +259,10 @@ export function aggregateSensingCohort(
     maxGroupShare,
     contributions: fresh.length,
     observedAt,
+    // Only a cohort the gate has cleared carries a statistic. A sub-k cohort's
+    // median is a fact about a handful of people, so it is withheld outright.
+    medianSignalBucket: decision.publishable
+      ? lowerMedian([...bucketByActor.values()].map((v) => v.bucket))
+      : null,
   };
 }

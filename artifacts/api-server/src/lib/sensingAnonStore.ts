@@ -87,10 +87,26 @@
  */
 import { createHmac, createHash } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { PRIVACY_THRESHOLD_V1 } from "./intelContracts.js";
+import { PRIVACY_THRESHOLD_V1, MAX_OBSERVED_AT_SKEW_MS } from "./intelContracts.js";
 
 /** The store. */
 export const SENSING_TABLE = "sensing_anon_contributions";
+
+/**
+ * How far in the past a contribution's time bucket may lie, in seconds.
+ *
+ * Equal to the TTL ceiling on purpose: a reading older than the longest any row
+ * can live has no cohort it could honestly still be counted in. The forward
+ * bound is the intel path's MAX_OBSERVED_AT_SKEW_MS (60 s), reused rather than
+ * restated. Both are mirrored by the CHECK migration 2340 adds on
+ * (time_bucket, created_at); the SQL remains authoritative and this exists so a
+ * caller is refused before the round trip with a named error.
+ *
+ * Before 2340 the only timestamp check was that the claimed epoch matched the
+ * instant — and a device chooses both, so a reading twenty hours in the future
+ * or a week in the past was stored into a cohort it had no business in.
+ */
+export const SENSING_MAX_OBSERVATION_AGE_SECONDS = 72 * 60 * 60;
 
 /**
  * How long a contributor token stays stable before it rotates.
@@ -337,7 +353,20 @@ export function buildSensingContributionRow(
     return { ok: false, error: "epoch_does_not_match_observation" };
   }
 
+  // Impossible instants (§4.3 "Reject impossible timestamps"). The epoch check
+  // above binds the epoch to the instant; nothing bound the instant to the
+  // clock, so a device could date a reading into a cohort nobody had reached
+  // yet, or one long past. Beyond the intel path's drift allowance is not skew.
+  if (input.observedAtMs > nowMs + MAX_OBSERVED_AT_SKEW_MS) {
+    return { ok: false, error: "observed_at_in_future" };
+  }
+
   const timeBucket = sensingTimeBucket(input.observedAtMs);
+  // Bounded at BUCKET granularity, because the bucket is what the row stores and
+  // what 2340's CHECK compares against created_at.
+  if (Date.parse(timeBucket) < nowMs - SENSING_MAX_OBSERVATION_AGE_SECONDS * 1000) {
+    return { ok: false, error: "observed_at_too_old" };
+  }
   const zoneId = canon(input.zoneId);
 
   return {
@@ -367,7 +396,16 @@ export function isSensingContributionExpired(row: SensingContributionRow, nowMs:
 
 // ── Writer ───────────────────────────────────────────────────────────────────
 
-export type SensingWriteResult = { ok: true } | { ok: false; error: string };
+/**
+ * `duplicate: true` means the store already held this contributor's reading for
+ * this cohort and wrote nothing — a replay, or an honest retry. Either way the
+ * caller's intent is satisfied, so it is a SUCCESS, distinguished so a caller
+ * can count replays without ever seeing a second row.
+ */
+export type SensingWriteResult = { ok: true; duplicate: boolean } | { ok: false; error: string };
+
+/** Postgres unique_violation. Raised by 2340's replay key. */
+const UNIQUE_VIOLATION = "23505";
 
 /** Insert one contribution. The client is injected; this module names no credential. */
 export async function recordSensingContribution(
@@ -379,8 +417,15 @@ export async function recordSensingContribution(
   if (!built.ok) return { ok: false, error: built.error };
   try {
     const { error } = await db.from(SENSING_TABLE).insert(built.row);
-    if (error) return { ok: false, error: error.message ?? "insert_failed" };
-    return { ok: true };
+    if (error) {
+      // Anti-replay (§4.3). The natural identity of a contribution is
+      // (cohort_key, contributor_token) — 2340 makes it UNIQUE, so a replay is a
+      // unique violation and a unique violation is a no-op, not a failure. The
+      // same shape lib/placeIdBridge and intelAttributionScheduler use.
+      if ((error as { code?: string }).code === UNIQUE_VIOLATION) return { ok: true, duplicate: true };
+      return { ok: false, error: error.message ?? "insert_failed" };
+    }
+    return { ok: true, duplicate: false };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "insert_threw" };
   }
