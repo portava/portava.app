@@ -31,6 +31,21 @@ function makeFakeClient(initialRows: Row[] = [], opts: { dbError?: string } = {}
   let lastUpsert: Row | null = null;
   let lastDelete: { placeId?: string; listId?: string; all?: boolean } | null = null;
 
+  /** The same builder with `dbError` suppressed — for tables this suite is not
+   *  injecting a failure into (see `from` below). */
+  function chainNoError(sourceRows: Row[]) {
+    const obj: any = {
+      select()      { return obj; },
+      eq()          { return obj; },
+      order()       { return obj; },
+      limit()       { return obj; },
+      single()      { return Promise.resolve({ data: sourceRows[0] ?? null, error: null }); },
+      maybeSingle() { return Promise.resolve({ data: sourceRows[0] ?? null, error: null }); },
+      then(resolve: any) { return resolve({ data: sourceRows, error: null }); },
+    };
+    return obj;
+  }
+
   function chain(sourceRows: Row[]) {
     let filtered = [...sourceRows];
     let _delete = false;
@@ -98,6 +113,15 @@ function makeFakeClient(initialRows: Row[] = [], opts: { dbError?: string } = {}
   return {
     getRows: () => rows,
     from(table: string) {
+      // `requireUser`'s ban gate reads `profiles.account_status` before any
+      // route body runs (lib/http.ts). Since A1 an unreadable `account_status`
+      // is a 503 `degraded_unavailable` refusal — correct, but it is the AUTH
+      // layer, not this one. Erroring `profiles` alongside `wishlist_places`
+      // would make the "DB error propagation" suite below assert the gate's
+      // refusal instead of the wishlist route's `db_error`, which is the
+      // opposite of what it exists to check. The gate gets a healthy read; the
+      // route's own table keeps the injected failure.
+      if (table === "profiles") return chainNoError([{ account_status: "active" }]);
       return chain(table === "wishlist_places" ? rows : []);
     },
     auth: {
