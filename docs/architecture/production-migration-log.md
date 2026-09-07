@@ -184,3 +184,68 @@ the 12 discoverable), 9 public posts, and **0 meetups, 0 trip plan items** —
 correct on the permissive side and correct on the restrictive side. A
 convergence that silently over-tightened would show as zeros everywhere; one
 that over-loosened would show crew data. Neither happened.
+
+
+---
+
+## 2026-09-07 — the authorization batch: 2531, 2532, 2533, 2534
+
+All four applied to portava-ci first, verified there, then to production.
+
+### `2531_crew_session_owner_select_owner_only`
+`crew_session_owner_select` was `auth.uid() = user_id OR auth.uid() = ANY
+(allowed_member_ids)` — no membership, status or expiry check — and it
+**dominated** `crew_sessions_recipients_read` completely, so a stranger listed
+in `allowed_member_ids` read the session. Now owner-only; the crew-gated
+recipient path 2337 repaired becomes the one that decides.
+
+### `2532_pg_policies_snapshot_v2`
+Diagnostic only, `service_role`-only. Two RPCs the textual policy guard cannot
+work without: policy shapes with `qual` and `with_check` kept **separate** (so a
+`FOR ALL` policy with a WITH CHECK is distinguishable from one without), and
+every boolean function whose body reads `trip_members`, so the captured
+`UNGATED_TRIP_MEMBERS_FUNCTIONS` list can be verified against the live catalog
+instead of trusted. Its postcondition carries a positive control: it must see
+`authz.is_trip_crew`, or it is not reading function bodies at all.
+
+### `2533_drop_shares_trip_with_oracle` — a DROP
+`public.shares_trip_with(uuid)`: SECURITY DEFINER, in PostgREST-exposed
+`public`, EXECUTE held by `anon` and `authenticated`, **no role gate and no
+status gate** — a social-graph oracle answering "do these two share a trip" for
+pending invitees and removed members alike, callable as
+`POST /rest/v1/rpc/shares_trip_with`.
+
+Destructive-rule evidence, measured on production before dropping: **0** policies
+reference it, **0** functions call it, **0** views reference it, `pg_depend`
+reports no dependants, and there is no `.rpc("shares_trip_with")` anywhere in
+the repository. The replacement, `authz.shares_accepted_trip`, had to exist
+first — the migration refuses otherwise. Rollback:
+`db/rollback/2026-09-07-2533-drop-shares-trip-with-oracle-rollback.sql`.
+
+### `2534_can_see_trip_status_gate_and_checklist_write_boundary`
+The riskiest of the batch. `can_see_trip` read `role` and never `status`, so
+`role='member', status='invited'` passed — and **seventeen** policies bound to
+it, including two `FOR ALL` policies with no `WITH CHECK`
+(`trip_checklists_members`, `trip_checklist_items_members`) where USING doubled
+as the write check. Any viewer of a **public** trip could INSERT, UPDATE or
+DELETE checklist rows.
+
+Its precondition asserts the dependant set is **exactly** the seventeen that
+were measured, so it refuses to run on a database in an unmeasured state. The
+before-state was captured independently first and matched.
+
+Read and write are now separated: `can_see_trip` stays the READ predicate and
+routes membership through `authz.is_trip_crew`; writes gate on
+`authz.is_trip_crew` or `authz.accepted_trip_role`. Checklist item updates and
+deletes require owner / co_host / member — **not viewer**, matching the API.
+
+| after, on production | |
+|---|---|
+| policies bound to `can_see_trip` | **17 → 9**, all reads |
+| `FOR ALL` policies on the checklist tables | **NONE** |
+| write policies gating on the read predicate | **NONE** |
+| reads as role `authenticated` across 9 tables | all OK |
+| `trips` / `trip_members` visible to an unrelated user | 12 / 12, unchanged |
+
+That last row is the check that matters: a status gate applied carelessly would
+have shown as a drop in visible rows.
