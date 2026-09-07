@@ -3,9 +3,9 @@
 | Field | Value |
 | --- | --- |
 | **Specs** | `docs/specs/Portava_Telegraph_Design_Architecture_Developer_Spec_v1.txt` (30 sections) and `..._v1_1.txt` (32 headings). The `.docx` originals are authoritative and were extracted and compared; see §2. |
-| **Tree censused** | `claude/portava-continuation-uqta94`, working tree at `ebe72b34`. Censused state is **main** — open PRs #460 and #472 are read but never scored into a bucket; see §8. |
+| **Tree censused** | `claude/portava-continuation-uqta94`, working tree at `ebe72b34`. Sibling agents committed the shared tree during this pass (HEAD is now `feedfb0a`); `git diff ebe72b34..feedfb0a` over every path cited below touches exactly one file — `routes/safeReturn.ts`, +43 lines, an unrelated Passport contact projection appended after `:817` plus two imports — so every verdict holds at HEAD, with that file's post-`:26` citations renumbered. Censused state is **main**: open PRs #460 and #472 are read but never scored into a bucket; see §9. |
 | **Method** | Requirement-level, four buckets, one bucket per requirement. Every BUILT verdict cites a file:line that was opened and read. Matches `census-sensing.md` and `census-wall.md`. |
-| **Database** | Not queried. Storage facts are the ones supplied as ground truth. |
+| **Database** | Not queried. Storage facts are the ones supplied as ground truth — **independently corroborated in-tree** by `artifacts/api-server/baseline/20260907_production_tables.txt`, committed during this pass, which lists exactly seven Telegraph tables (`message_reports`, `message_requests`, `message_thread_members`, `message_threads`, `message_translations`, `messages`, `thread_reports`) and contains no `unsent` column anywhere. |
 | **Prior census** | **None. Telegraph has never been censused.** There is no earlier number to agree or disagree with; this is the first. |
 
 Backend paths are relative to `artifacts/api-server/src/` unless prefixed
@@ -19,27 +19,41 @@ Backend paths are relative to `artifacts/api-server/src/` unless prefixed
 | --- | --- |
 | **Denominator (testable requirements) — v1.1** | **451** |
 | — of which shared with v1 | 378 |
-| — of which v1.1-only (§30 Addendum + §31) | 73 |
-| BUILT-AND-CORRECT | **96** |
-| BUILT-BUT-WRONG | **93** |
-| NOT-BUILT | **250** |
-| CANNOT-VERIFY | **12** |
-| **CONSTRUCTED%** = (96+93)/451 | **41.9 %** |
-| **CORRECT%** (raw) = 96/451 | **21.3 %** |
+| — of which v1.1-only (§30A Addendum + §31) | 73 |
+| BUILT-AND-CORRECT | **98** |
+| BUILT-BUT-WRONG | **172** |
+| NOT-BUILT | **178** |
+| CANNOT-VERIFY | **3** |
+| **CONSTRUCTED%** = (98+172)/451 | **59.9 %** |
+| **CORRECT%** (raw) = 98/451 | **21.7 %** |
 | **CORRECT% (spec-attributable)** = 0/451 | **0.0 %** |
-| CANNOT-VERIFY share | 12 / 451 = 2.7 % |
+| CANNOT-VERIFY share | 3 / 451 = 0.7 % |
 
-Scored against **v1 alone** (378 requirements), the numbers are very slightly
-better, because the v1.1 addendum is almost entirely unbuilt:
+Scored against **v1 alone** and against the **v1.1-only** addendum separately:
 
 | Measure | v1 (378) | v1.1-only (73) | v1.1 total (451) |
 | --- | --- | --- | --- |
-| BUILT-AND-CORRECT | 89 | 7 | 96 |
-| BUILT-BUT-WRONG | 82 | 11 | 93 |
-| NOT-BUILT | 196 | 54 | 250 |
-| CANNOT-VERIFY | 11 | 1 | 12 |
-| CONSTRUCTED% | 45.2 % | 24.7 % | 41.9 % |
-| CORRECT% | 23.5 % | 9.6 % | 21.3 % |
+| BUILT-AND-CORRECT | 86 | 12 | 98 |
+| BUILT-BUT-WRONG | 135 | 37 | 172 |
+| NOT-BUILT | 154 | 24 | 178 |
+| CANNOT-VERIFY | 3 | 0 | 3 |
+| CONSTRUCTED% | 58.5 % | 67.1 % | 59.9 % |
+| CORRECT% | 22.8 % | **16.4 %** | 21.7 % |
+
+The two versions score similarly on *construction* and differ on *correctness*,
+and the reason is worth stating: the v1.1 addendum is largely a list of
+production concerns for which this repository has a **partial analogue built
+for some other programme** — a media pipeline, a notification taxonomy, a
+device registry, a trust system, a deletion ledger. Those analogues earn
+BUILT-BUT-WRONG in volume (37 of 73) and BUILT-AND-CORRECT rarely (12 of 73).
+The addendum is 67 % constructed and 16 % correct: almost everything it asks
+for has something nearby that is not quite it.
+
+**CANNOT-VERIFY is only 3.** That is unusually low against the sibling censuses
+(the Wall's was 9 of 205) and it is not a shortcut: Telegraph's gaps are
+overwhelmingly hard absences — a table that is not in the schema, a route that
+is not registered, a tool name that returns nothing — and those are decidable
+by reading. Only three requirements genuinely need a device or a runtime.
 
 ### The one-paragraph reading
 
@@ -192,7 +206,8 @@ versions and matching the sibling censuses:
 - **The Primary Invariant** ("Telegraph must never invent or silently mutate
   canonical truth owned by Trips, Plans, Events, Memories, Buddy, Safety, Map")
   is restated as §29's *"No direct mutation of canonical Trip/Plan/Event/Buddy
-  terms from message prose"* and again in §23. Counted **once**, at T340.
+  terms from message prose"* and again in §23 and §30A.19. Counted **once**, at
+  T360.
 - **Appendix A's twenty schema names** are explicitly *"architectural names, not
   permission to create duplicate tables if equivalent canonical structures
   already exist."* A list the spec itself declines to require is not a
@@ -203,11 +218,11 @@ versions and matching the sibling censuses:
 - **§31** is a restatement of §30A.19 and of the whole spec; counting it in full
   would double-score. It contributes **1** — the five-responsibility
   decomposition it names.
-- **Duplicates are merged to a single id.** §7.4's unsend rule and §27.1's
-  *"any eligible recipient seen → unseen-unsend impossible"* are the same
-  assertion (T94/T291 — the §27 instance is scored as a *test-existence*
-  requirement, which is a different question, so both are kept and the
-  distinction is stated in the row).
+- **Duplicates are merged to a single id.** §7.4's unsend rule (T75) and §27.1's
+  *"any eligible recipient seen → unseen-unsend impossible"* (T327) are the same
+  assertion, but the §27 instance asks whether a **property test** exists, which
+  is a different question, so both are kept and each row says which question it
+  answers.
 
 ### Per-section contribution
 
@@ -236,11 +251,12 @@ uniformly, and identically to `census-sensing.md`:
   absence*. The guarantee is not constructed; it is merely currently
   unviolated.
 
-**Thirty-one** NOT-BUILT verdicts are unguarded absences rather than missing
-machinery; they are marked `∅` in the table. A reader who credits vacuous
-satisfaction should move all thirty-one to BUILT-AND-CORRECT, which gives
-CORRECT% = 127/451 = **28.2 %** and CONSTRUCTED% = 220/451 = **48.8 %**. This
-census does not credit them.
+**Twenty-one** NOT-BUILT verdicts are unguarded absences rather than missing
+machinery; they are marked `∅` in the table (T1, T18, T19, T26, T67, T118,
+T120, T122, T212, T275, T317, T358, T366, T367, T393, T404, T405, T406, T408,
+T416, T446). A reader who credits vacuous satisfaction should move all
+twenty-one to BUILT-AND-CORRECT, which gives CORRECT% = 119/451 = **26.4 %**
+and CONSTRUCTED% = 291/451 = **64.5 %**. This census does not credit them.
 
 ### Method caveat, inherited
 
@@ -324,8 +340,11 @@ it is unmerged. `migrations/2325_telegraph_unsend_before_seen.sql`, the route
 that calls it, and `test/telegraphUnsendBeforeSeen.test.ts` cite §7.1, §7.3,
 §7.4, §12.1, §13.1, §26, §27.1, §28 and §29 by number and quote them. Its test
 header even states the superset relationship this census independently verified
-in §2. If it merges, spec-attributable CORRECT% becomes 5/451 = 1.1 % (T92, T93,
-T94, T96, T97). It is applied to `portava-ci` only; `messages.unsent_at` does
+in §2. If it merges, eleven requirements move: T75, T76, T77, T161, T326, T327, T338
+and T387 from NOT-BUILT, and T79, T220 and T314 from BUILT-BUT-WRONG, all to
+BUILT-AND-CORRECT. Spec-attributable CORRECT% would become 11/451 = **2.4 %**
+(T344 would stay BUILT-BUT-WRONG — #472 closes one of its four dropped-error
+reads, not all four). It is applied to `portava-ci` only; `messages.unsent_at` does
 not exist in production. **It is not scored in any bucket here.**
 
 PR #460 is *not* spec-attributable — it carries no section citation anywhere in
@@ -634,7 +653,7 @@ Backend paths relative to `artifacts/api-server/src/`; client paths to
 | --- | --- | --- | --- |
 | T214 | `LocationShare` — purpose / audience / precision / expiry / lifecycle | W | Three of five. `trip_crew_location_sessions` (`baseline:10507-10521`) carries audience (`allowed_member_ids`), precision (`visibility_level` CHECK `city_only\|neighborhood\|nearby`) and expiry (`expires_at NOT NULL` + a status CHECK `active\|stopped\|expired`). **No `purpose` column** and no `LIVE\|RECENT\|LAST_KNOWN\|EXPIRED` lifecycle vocabulary. |
 | T215 | A meetup grant cannot be silently reused for general Nearby discovery or future tracking | W | The purpose *registry* is real and ratcheted — twelve purposes with lawful basis, precision class and retention (`lib/locationPurposes.ts:103-302`), guarded by `scripts/checkLocationPurposes.ts` — but **no share row carries a purpose** (T214), so nothing binds a grant to one. Reuse is prevented only because there is no Nearby to reuse into. |
-| T216 | Expired location becomes inaccessible, not merely hidden in UI | C | Server-side and structural. Recipient access runs through `requireSafeReturnRecipient` **before the handler** (`routes/safeReturn.ts:657-660`), the module states *"exact coords never appear in API responses (enforced by `toPublicSession`)"* (`:22`), and the session status CHECK admits `expired` as a terminal state (`baseline:10520`). Expiry removes the read, not the render. |
+| T216 | Expired location becomes inaccessible, not merely hidden in UI | C | Server-side and structural. Recipient access runs through `requireSafeReturnRecipient` **before the handler** (`routes/safeReturn.ts:660-661`), the module states *"exact coords never appear in API responses (enforced by `toPublicSession`)"* (`:22`), and the session status CHECK admits `expired` as a terminal state (`baseline:10520`). Expiry removes the read, not the render. |
 | T217 | Safety mode NORMAL → SAFETY_ATTENTION → SAFETY_EVENT | W | Two escalation ladders exist and neither is this one: Safe Return sessions escalate via `trigger-missed` (`routes/safeReturn.ts:13`) into `safe_return.missed` / `trusted_circle_alert` urgent notifications, and circle presence escalates via `needs_help` (`routes/circle.ts:1556-1589`). Neither is a conversation-level mode. |
 | T218 | Safety mode promotes trusted contact, status, help, route/return, call, block/report; de-prioritizes entertainment | W | Every named affordance exists — `components/ThreadSafetySheet.tsx` in the thread, trusted contacts (`routes/safeReturn.ts:22`), call entry (`app/messages/[id].tsx:1699-1716`), block/report (`:57,59`) — but nothing **promotes** or **de-prioritizes**: the surface never reorders. |
 | T219 | Block cascade across direct delivery, location, presence, Nearby, Bump discovery, shared-memory resurfacing, Crew suggestions and Compass retrieval | W | Five of eight have real enforcement: delivery (`routes/messaging.ts:1786-1790`), Compass (`compass/CompassTools.ts:1158` `refreshHiddenUsers`), discovery (`test/discoverySearchBlockedSubmitter.test.ts`), memories (`test/memoriesBlockFailClosed.test.ts`), Buddy search (`test/rentABuddySearchBlocks.test.ts`). Nearby, Bump and Crew suggestions have no referent; shared-memory resurfacing is covered. |
@@ -788,7 +807,7 @@ Backend paths relative to `artifacts/api-server/src/`; client paths to
 | T312 | Removed member reads future sequence → **DENY** | C | Achieved by a blunter rule that is strictly stronger: `.is('left_at', null)` (`routes/messaging.ts:1563`) denies a departed member the *entire* thread, not merely future messages. There is no sequence, but the required outcome holds. |
 | T313 | New member reads pre-membership history without policy → **DENY** | W | **Expected DENY, actual ALLOW.** The read path has no `joined_at` bound (T211). This is the single clearest divergence in the census. |
 | T314 | Blocked sender sends DM → **DENY** | W | Denied on the happy path (`routes/messaging.ts:1786-1790`, fail-closed `isBlockedBetween`) — but the membership read that decides whether to consult the guard drops its error (`:1781`), so a transient read failure yields ALLOW (T220). PR #472 closes it. |
-| T315 | Expired exact location read → **DENY** | C | `requireSafeReturnRecipient` runs as middleware before the handler (`routes/safeReturn.ts:657-660`), coordinates never leave `toPublicSession` (`:22`), and `expired` is a terminal session status (`baseline:10520`). |
+| T315 | Expired exact location read → **DENY** | C | `requireSafeReturnRecipient` runs as middleware before the handler (`routes/safeReturn.ts:660-661`), coordinates never leave `toPublicSession` (`:22`), and `expired` is a terminal session status (`baseline:10520`). |
 | T316 | Availability audience excludes viewer → **DENY** | C | `migrations/2260_availability_windows.sql:44-49` — RLS enabled, owner-only SELECT of their own rows, **no cross-user read policy at all**, and service-role-only writes so `source` and `visibility` cannot be self-set through PostgREST. A viewer reaches another traveler's window only through the projection, which re-checks explicit-source + active + visibility together. |
 | T317 | Private Memory source shared without derivative authorization → **DENY** | N `∅` | Vacuous: no Memory share path exists (T117), so the case cannot arise and nothing guards it. |
 | T318 | Authorized user reads current safe share projection → **ALLOW** | N | There is no share projection to read (T44). The positive case has no implementation. |
@@ -884,3 +903,206 @@ Backend paths relative to `artifacts/api-server/src/`; client paths to
 | --- | --- | --- | --- |
 | T378 | Use existing repository naming conventions where established — the `telegraph_*` list is architectural, not permission to duplicate canonical structures | C | Honoured deliberately. The messenger uses `message_threads` / `message_thread_members` / `messages` / `message_requests` / `message_translations` and no parallel `telegraph_*` set was created. Migration 2325 makes the same call explicitly rather than by accident (`2325:47-58`): it reuses `last_read_at` as the seen substrate because *"Introducing a sequence column here would be a second, competing receipt system for one behaviour."* |
 
+---
+
+## 6. v1.1-only requirements — §30A Production Architecture Completion Addendum, and §31
+
+These 73 requirements exist **only** in v1.1. They score **7 C / 11 W / 54 N /
+1 ?** — CONSTRUCTED 24.7 %, CORRECT 9.6 %. The addendum is titled *"closes the
+remaining platform-level gaps required for Telegraph to move from
+feature-complete product architecture to production-complete infrastructure"*,
+and it is the part of the specification the tree is furthest from.
+
+| id | Requirement | V | Evidence |
+| --- | --- | --- | --- |
+| T379 | **§30A.1** Canonical `TelegraphRelationship` model so eligibility, calling, Nearby, location, invitations and temporary connections do not independently infer relationship state | W | **The anti-pattern is exactly what exists.** Relationship is independently inferred by at least four resolvers with different vocabularies: `lib/messagingPermissions.ts:38-45` (friend / follower / following / trip / circle), `services/interactionPermissions.ts:597-632`, `lib/calls/callPermissionEngine.ts` via `whoCanCall` (`test/callHardening.test.ts:31` `'people_i_message'`), and `compass/CompassTools.ts:822` `sharesSocialContext`. Each is correct; none is canonical. |
+| T380 | Origins FOLLOW/MUTUAL_FOLLOW/TRIP/CREW/EVENT/BUMP/NEARBY/BUDDY/PLAN/MANUAL; states REQUEST_ONLY/ACTIVE/TEMPORARY/RESTRICTED/BLOCKED/EXPIRED | N | Neither vocabulary exists in any form. |
+| T381 | Relationship policy is an **input** to ConversationPolicy, not a replacement for block, age, safety, membership or object authorization | W | The "not a replacement" half is structurally honoured — `services/interactionPermissions.ts:597-632` folds blocks, trust restrictions and age in *alongside* the relationship term rather than deriving them from it, and every route re-checks membership independently (T208). The "input to ConversationPolicy" half has no referent (T207). |
+| T382 | **§30A.2** Server-built `ReachablePersonProjection` combining relationship, availability, permitted proximity, shared context, privacy and safety | N | No such projection. |
+| T383 | Nearby is geographical, availability temporal, reachability contextual; clients must not recompute this eligibility from raw tables | W | Messaging eligibility *is* server-computed (`services/interactionPermissions.ts`), but the client recomputes thread membership from a raw table (`app/messages/[id].tsx:1260-1266`, T295), and reachability as a concept does not exist. |
+| T384 | Availability never implies permission to call, bypass message requests, expose exact location or access private plans | C | Enforced by four independent gates, none of which takes availability as an input. Calling: `routes/calls.ts:17-20` authorizes only through `callPermissionEngine`. Requests: `lib/messagingPermissions.ts:29-45`. Location: a separately granted scoped session (`baseline:10511-10521`). Plans: trip/circle membership. And availability windows have **no cross-user read policy at all** (`2260:44-49`), so availability cannot even be observed without going through the projection. |
+| T385 | **§30A.3** Text editing with an Edited marker and internal version history; editing never mutates a canonical object | W | Marker yes (`routes/messaging.ts:2369`), history no (T80). The non-mutation half is fully correct (T81). |
+| T386 | Model UNDO_SEND, UNSEND_BEFORE_SEEN, DELETE_FOR_ME, DELETE_FOR_EVERYONE, REMOVE_ATTACHMENT, SOURCE_OBJECT_REVOKED and ACCOUNT_DELETED as **distinct** operations | W | Two of seven. `DELETE_FOR_EVERYONE` is `routes/groupChat.ts:340-381`. `ACCOUNT_DELETED` is genuinely and carefully modelled as its own operation by the deletion programme — `lib/deletionDispositions.ts:370-441` is a per-table ledger, and `migrations/2139_shared_content_tombstones.sql:26-37` tombstones `messages.sender_id` with `SET NULL` rather than cascading, precisely so *"a conversation has two sides"* and a bystander keeps their reply. The other five do not exist. |
+| T387 | `UNSEND_BEFORE_SEEN` is race-safe and server-authoritative; in groups it succeeds only while no eligible recipient has seen the message | N | Absent (T75–T77). Implemented in PR #472, unmerged, CI-only. |
+| T388 | Deleted and unsent content removed from normal search, Compass retrieval, inbox projections and content drawers per the operation's semantics | W | Inbox/read suppression is real (`routes/messaging.ts:1717`) and Compass is invalidated on report (`:2723`). Media survives deletion in main (T79); there is no search (T272) or drawer (T66) to remove from. |
+| T389 | **§30A.4** Membership records include `joined_at`, `left_at`, `removed_at`, `visible_from_sequence`, `visible_until_sequence`, `role` | W | Three of six (`baseline:7496-7504`): `joined_at`, `left_at`, `role`. No `removed_at` (a removal is indistinguishable from a voluntary leave) and no sequence bounds (T210). |
+| T390 | New members do not automatically gain pre-membership history; adding a third person to a direct conversation creates a new group | W | The first clause is **violated** (T211, T313); the second is vacuous because no add-to-DM operation exists (T212). |
+| T391 | Roles OWNER, ADMIN, HOST, MEMBER, GUEST with capability-based authorization for invitations, removals, pins, announcements, group settings and shared operational state | W | Two of five roles (`role` CHECK `member\|admin`, `baseline:7504`) and **none** of the six capabilities: there is no invite, remove, pin, announce or group-settings operation on a thread at all. |
+| T392 | **§30A.5** An `ANNOUNCEMENT` message/object type | N | Does not exist (T58). |
+| T393 | Seen and Acknowledged are separate concepts | N `∅` | Unguarded absence: there is no acknowledgement, so `last_read_at` is the only signal and nothing distinguishes them. |
+| T394 | Do not overload passive read receipts to represent acceptance, agreement or acknowledgement | C | Honoured, and not by accident: `last_read_at` feeds only unread counts (`routes/messaging.ts:915-960`), while every consent-shaped act has its own explicit object — `message_requests.status`, `meetup_invites.status`, and `confirm-action` / `decline-action` (`routes/telegraphCommands.ts:390`, `:445`). No path infers agreement from reading. |
+| T395 | **§30A.6** Notification causes MESSAGE, MENTION, PLAN_CHANGED, INVITATION, COORDINATION, LOCATION, CALL, SAFETY | W | Seven of eight exist under a richer taxonomy of 13 categories and ~80 event types (`services/notifications/NotificationTemplateService.ts:14-16`): `telegraph.message`, `telegraph.mention` (`:651`), `plan.item_updated`, invitation events, the `location` category (`:282-306`), `call.incoming` (`:186`) and `safe_return.*`. **COORDINATION has no cause** — as expected, since coordination does not exist (T85). |
+| T396 | Priority ladder P0 SAFETY / P1 ACTIVE_COORDINATION / P2 DIRECT_OR_MENTION / P3 PLAN_OR_TRIP / P4 NORMAL_GROUP / P5 REACTION_OR_PASSIVE | W | Four levels, not six (`NotificationTemplateService.ts:19`), and only `urgent` produces different behaviour (T254–T259). The ladder's ordering is approximated by category, not modelled. |
+| T397 | Deduplicate by underlying causal event; one Plan change must not create redundant Plan, Trip, Telegraph and Compass notifications | W | A dedup service exists and is correct for one case only: `services/notifications/NotificationDeduplicationService.ts:42-45` coalesces `telegraph.message` by `sourceId`. There is no causal-event identity shared across categories, which is exactly the redundancy the requirement names. |
+| T398 | Thread notification policy ALL / MENTIONS / IMPORTANT / temporary mute / MUTED; safety-critical delivery governed by safety policy rather than ordinary mute | W | Two of five, but the second is the important one and it is exactly right: `MUTED` (`message_thread_members.muted_at`, `routes/messaging.ts:2538`) and the safety override — `services/notifications/NotificationPreferenceService.ts:6-7`, *"Safety override: urgent + admin priority always deliver even when push is off"*, with a stored `safety_override` flag (`:59`). No ALL/MENTIONS/IMPORTANT selector, no temporary mute. |
+| T399 | **§30A.7** `TelegraphDevice` registry: platform, push, voice/video, proximity, background-location capability, trust state, last activity | W | A registry exists for a different purpose and carries one of the seven fields: `routes/devices.ts:1-16` registers `platform` and an Ed25519 MLS identity key per install. No capability flags, no trust state, no last-activity. |
+| T400 | Precise location sharing is device-specific and must not silently transfer to a newly authenticated device | N | Both location stores are keyed by `user_id` with no device column (`baseline:7109`, `:10509`), so a live share follows the account (T235). The device registry that exists is never consulted by a location path. |
+| T401 | Device revocation terminates realtime sessions, invalidates location capabilities and proximity identities, stops push, rotates credentials — without destroying conversation history | W | **One fifth is genuinely well built.** Realtime termination exists end-to-end: `lib/telegraphEvents.ts:47` `access.revoked`, `registerTerminator` / `terminateUserConnectionsLocal`, a cross-instance terminate hook in `lib/telegraphBroadcast.ts:33`, and a 30-minute max connection age so *"revoked sessions … cannot hold open an indefinite connection"* (`routes/telegraphStream.ts:35-40`). Location capabilities and push are not device-scoped, credentials are not rotated, and there is no device-revocation endpoint. |
+| T402 | **§30A.8** Uploads pass quarantine, file-type verification, security scanning, metadata policy, transcoding and approved-asset publication; **never trust a client-provided MIME type** | W | Four of six, and the emphasized clause is **fully and unusually well satisfied**. `lib/mediaPipeline.ts:186-226`: `sniffMedia(buf)` reads magic bytes; the size ceiling comes from the **sniffed** kind, not the declared one (`:199`); a declared/actual mismatch is refused outright (`:216-222`); and the module states the rule as policy — *"A declared type is a hint, never a fact"* (`:71`) — with a documented history of the drift that made it necessary (`:20-38`). Metadata policy and transcoding: `lib/mediaProcessing.ts:154-166`. **Quarantine and security scanning do not exist.** |
+| T403 | EXIF handling defined explicitly — GPS, capture time, device metadata — so forwarding a photo does not disclose where it was captured | C | Three layers. Strip: `lib/mediaProcessing.ts:154,165-166` re-encodes through sharp, `.rotate()` first *"to auto-orient from EXIF before the EXIF is stripped"*, then a full EXIF/GPS/XMP strip. Deliberate retention of the one non-location fact: capture time is extracted server-side before the strip and stored as a field, bounded by a plausibility window (`lib/mediaAssets.ts:37-80`). Audit: `scripts/auditStorageExif.ts:1-30` enumerates the **bucket**, not rows, because *"an object nothing references … is invisible to a row walk"*, distinguishes "carries EXIF" from "carries a GPS IFD", and **never dereferences a coordinate**. |
+| T404 | External URL previews are fetched through a controlled server-side preview service; recipients must not silently contact arbitrary sender-provided domains | N `∅` | Unguarded absence. There are **no link previews at all** — a URL renders as plain text through `components/RichText.tsx` — so no recipient-side fetch occurs today, and nothing implements or guards the rule for when one is added. |
+| T405 | GIF and other external media providers use the same isolation and attribution boundary | N `∅` | No GIF provider exists (T52). |
+| T406 | **§30A.9** Track FORWARDED / RESHARED_FROM_SOURCE / COPIED_ATTACHMENT without exposing private conversation lineage | N `∅` | There is no forward operation, so no lineage leaks and no provenance is tracked. |
+| T407 | Content capabilities ALLOW / NO_FORWARD / SOURCE_POLICY / EXPIRES_WITH_SOURCE | N | No capability vocabulary on any shared content (T41). |
+| T408 | Screenshot detection, if supported, is informational only and never presented as a guarantee | N `∅` | No screenshot detection. |
+| T409 | **§30A.10** Every shareable domain registers preview, authorization, current state, actions, search behaviour and revocation through a content capability contract | N | No registry and no contract (T41); each producer hand-rolls a payload (T35). |
+| T410 | Every executable action registers authorize / preview / execute / optional compensate; Telegraph orchestrates, source domains retain truth | W | The orchestration half is genuinely right (T288, T441). Three of four hooks exist for **one** action family: `ProposedAction.label` (preview), `confirm-action` (execute), and `:390`'s re-verification (authorize) — `routes/telegraphCommands.ts:53-59,390-444`. No registry, no compensate. |
+| T411 | Action buttons derived from current capabilities; an old rendered card must not authorize a stale action | W | **Violated at the card**: the action row is static markup over a frozen payload with no capability read (`components/DiscoveryCardMessage.tsx:1-9,37-45`). Honoured on the command path, where authorization is re-derived at execution (`routes/telegraphCommands.ts:390`). |
+| T412 | **§30A.11** tap → command → owning-domain authorization/write → domain event → projection update | W | Three of five hops exist, and only on the command path: `routes/telegraphCommands.ts:326` (command), `:390` (authorize + execute). There is no domain event (T195) and no projection update (T291–T294). Card actions bypass the chain entirely (T411). |
+| T413 | Do not permanently render Going / Joined / Booked / Paid from optimistic UI alone | W | Correct where it matters most: RSVP state is server-backed and re-read (`getMeetup` / `rsvpMeetup`, `app/messages/[id].tsx:48`, against `meetup_invites.status`), and Save round-trips (`services/discoveryBookmarks.toggleSave`). Wrong at the card, whose *rendered* state is the sender's snapshot and is never re-derived (T46). |
+| T414 | Current source-domain capability is rechecked at execution time so expired events, revoked invitations, changed bookings and removed memberships fail safely | C | Done properly wherever an execution path exists. `routes/telegraphCommands.ts:11-14` states it — *"confirm-action re-verifies trip membership at execution time"* — and `:390-444` implements it; call eligibility is re-derived from live booking state at call time (`isRabBookingCallEligible`, `routes/calls.ts:26`); message sends re-check membership and blocks per request (T208). The gap is cards, which have no execution path to recheck on and are counted at T411. |
+| T415 | **§30A.12** Distinguish PRIVATE_CONVERSATION / SMALL_GROUP / LARGE_GROUP / BROADCAST transport classes | N | `message_threads.thread_type` is `direct\|trip\|circle` (`baseline:7526`) — a **context** discriminator, not a scale class — and the fanout path is byte-identical for all three. |
+| T416 | Large Event conversations must not use small-group fanout, presence or per-recipient Seen UI without bounded strategies | N `∅` | Unguarded absence: `publishToThread` fans out to every active member with no size bound (`lib/telegraphEvents.ts`), and the rule is unviolated only because event conversations do not exist. |
+| T417 | Large groups may support slow mode, host-only posting, media/link restrictions, member moderation, bounded acknowledgement | N | None of the five. |
+| T418 | **§30A.13** Private policy signals — request acceptance, spam reports, block rate, burst, duplicate-message, malicious-link — constrain abuse and are **never** exposed as a public messaging score | W | The privacy clause is fully honoured: `trust_profiles.overall_score` is consulted as a floor and never returned to any caller (`compass/CompassTools.ts:826-834`, with a uniform "not available" answer that never confirms why), and restrictions are resolved server-side (`services/trust/TrustRestrictionService`). Of the six named signals only reports and restriction state feed it — no burst detection (T279), no duplicate-message signal (T231), no malicious-link signal (T281). |
+| T419 | New accounts receive gradual outreach capabilities; Nearby must never become mass-DM infrastructure | W | The gradual half is real for the *request* step, where account state and trust restrictions gate eligibility with a fail-closed degraded path (`routes/messaging.ts:430-560`, six tests at `test/messaging.test.ts:519-631`). Sends themselves are unrestricted (T279), and the Nearby clause is vacuous. |
+| T420 | Proximity defenses: coarse distance buckets, update throttling, privacy-zone suppression, purpose-bound access, no historical proximity endpoint | W | One of five, and it is real: **no historical proximity endpoint exists**, and `trip_crew_location_sessions` structurally cannot become one — it keeps a single `last_location_snapshot_id` (`baseline:10519`), not a trail. The other four have no referent in Telegraph. |
+| T421 | BLOCK overrides Nearby in both directions; Unavailable/Invisible promptly revokes Nearby, Discovery and Compass availability projections | W | Bidirectionality is real and checked both ways (`routes/blocks.ts:275-276`), fail-closed (`lib/blockGuard.ts`), and Compass re-derives hidden users on every request rather than caching (`compass/CompassTools.ts:1158` `refreshHiddenUsers`) — which is the "promptly" the rule asks for. Nearby and Invisible have no referent (T29). |
+| T422 | **§30A.14** Accessibility as an architecture requirement: screen-reader labels, dynamic type, reduced motion, high contrast, captions/transcripts, non-colour-only status, large touch targets, accessible alternatives for maps, waveforms, video, proximity and coordination | W | Two of eight in the Telegraph tree: non-colour status (T133) and text-first proximity (T137). Reduced motion is not applied (T134), captions do not exist (T136), and the rest is absent. The tree's own precedent shows this is a Telegraph gap, not a platform one: the Wall implements reduced motion and proves it four ways. |
+| T423 | **§30A.14** i18n: RTL layouts, locale-sensitive timestamps, 12/24-hour clocks, pluralization, Unicode names/handles, long translations, mixed-language threads, destination/user timezone semantics | W | Two of eight, and Telegraph got the two that are hardest: **mixed-language threads are fully solved per recipient** (T145, T241 — original preserved, per-recipient translation, honest failure status) and Unicode handles work. **There is no RTL support anywhere in the client** — a repo-wide search for `I18nManager` / `isRTL` returns nothing. Timestamps use hand-rolled formatters, not a locale API (`app/messages/[id].tsx:82-99`). |
+| T424 | Timezone and date-line behaviour must be covered by automated tests | C | For the one timezone-sensitive computation Telegraph performs — the conversation's day dividers — it is, and the test is written against exactly the date-line hazard: `travel-buddy-standalone/src/utils/localDate.test.ts:6-12` constructs a late-evening local instant and asserts the local day, noting *"`toISOString().slice(0,10)` would roll this to 2026-08-30 at any positive UTC offset."* Consumed by `app/messages/[id].tsx:20`. |
+| T425 | **§30A.15** Truthful ONLINE / POOR_CONNECTION / OFFLINE / RECONNECTING; distinguish local unsent, server accepted, recipient offline, receipt unavailable | N | No connection-state model and no send-state model. The SSE client reconnects but exposes no state, and there is no local-unsent representation (T230). |
+| T426 | Storage tiers for thumbnails, streamable media, originals, archival and deletion; temporary precise-location has a much shorter lifecycle than ordinary media | W | The **location half is genuinely right**, and it is the half the rule emphasises: location sessions carry mandatory expiry with an `expired` terminal state (`baseline:10512,10520`) and `location_sessions.expires_at`, while message media has no expiry at all — the asymmetry the rule demands exists. The media-tier half does not (T222). |
+| T427 | Canonical conversations and messages survive loss of realtime caches, search indexes, translations, notification queues, AI artifacts and read projections | C | All six are strictly derived and none is on the write path. Realtime: in-memory, failures swallowed by design (`lib/telegraphEvents.ts:14-16`). Search index: none. Translations: separate rows with a `failed` status that never throws (`services/messageTranslation.ts:11`). Notifications: `Promise.allSettled` inside a non-fatal try (`routes/messaging.ts:1975-1990`). AI artifacts: their own table. Read projections: a single nullable timestamp, with an explicit fallback when the column itself is missing (`routes/messaging.ts:940-943`). |
+| T428 | `ConversationProjection`, `InboxProjection`, `SharedContextProjection`, `ContentIndexProjection`, `SearchIndex` and seen-state derivatives are rebuildable from canonical state and events | W | The two that exist are stronger than rebuildable — computed per request from canonical tables, caching nothing (`routes/messaging.ts:1332`, `:1550`). Four do not exist, and there are no events to rebuild from (T195). |
+| T429 | **§30A.16** Versioned structured-message schemas `place.share.v1`, `event.share.v1`, `trip.share.v1`, `memory_note.v1`, `location.scope.v1`, `coordination.status.v1` | N | None exists; card payloads are unversioned JSON in `body` (T157). The convention **is** practised elsewhere in the same tree — `schemaVersion` appears in intel and passport telemetry envelopes (`test/intelObservability.test.ts:406`, `test/passportTelemetryIngest.test.ts:142,268`, which even rejects an unknown version) — so this is a Telegraph omission, not a missing platform capability. |
+| T430 | Unknown future message types render a **safe generic fallback** on older clients rather than crashing or silently disappearing | W | Two thirds. A fallback does exist and nothing crashes or disappears: an unknown `msg_type:'system'` subtype falls to the centred pill (`app/messages/[id].tsx:1892-1898` → `components/TelegraphSystemNotice.tsx:16`) and an unknown `msgType` falls through every branch to `MessageBubble` (`:1899`). It is not **safe**: because structured payloads live in `body` as raw JSON (T157), both fallbacks render the payload as literal text, so an unrecognised structured message shows the user its JSON. |
+| T431 | Client capability negotiation when an interaction requires a minimum supported schema or action version | N | No version negotiation of any kind. |
+| T432 | **§30A.17** Measure delivery latency, failed sends, unsend outcomes, seen convergence, media processing, plan conversion, coordination success, Nearby→conversation, conversation→plan and completed real-world outcomes | N | None of the ten is measured. Telegraph has no telemetry sink at all — no analogue of the Wall's `wall_telemetry_events` (T354). |
+| T433 | Do not indiscriminately copy private message text into analytics | C | Actively honoured with concrete artifacts, not merely by the absence of analytics. `services/messageTranslation.ts:13` — *"Privacy: never logs full message body. Only message_id, status, codes."* The one place message text is ever persisted outside `messages` is the off-app abuse excerpt, capped at 120 characters and explicitly tagged `visibility: 'admin_only'` (`routes/messaging.ts:1900`). The north-star half of this bullet is counted separately at T1 and T354. |
+| T434 | SLOs for message acceptance, realtime delivery, offline recovery, seen convergence, block enforcement, location revocation, media availability and projection freshness, with safety/privacy strictest | N | No SLO definitions exist for any of the eight (T346–T354). |
+| T435 | Internal support tooling exposing delivery and projection diagnostics, event ids, conversation ids and authorized moderation context under purpose-scoped access with audit logging | W | The moderation half exists and is guarded — `routes/moderation.ts`, `routes/admin.ts`, `routes/appeals.ts`, with `scripts/checkAdminGuard.ts` as a standing CI guard and admin-only visibility tagging on abuse events (`routes/messaging.ts:1900`). The diagnostics half does not: no delivery diagnostics, no projection diagnostics, and no event ids to trace with (T195). |
+| T436 | **§30A.18** A Telegraph replay simulator permuting send, disconnect, unsend, reconnect, member removal, location expiry, plan changes, blocking, translation completion and media completion, verifying deterministic final state | N | No replay harness — and nothing to replay: there is no event log (T195) and no snapshot table (T155). |
+| T437 | Property tests: permission monotonicity, precision monotonicity, removed participants, block, temporary-scope expiry | N | None exists for Telegraph (T321–T327). The tree's one genuine property test of this family guards a different module (`test/presenceDomain.test.ts:79-83`). |
+| T438 | Live-DB contracts verify columns and enum literals against the actual schema and verify RLS role behaviour; **schema/permission failures must never be swallowed into plausible empty inboxes** | W | The first half is fully built and is the strongest area in the census (T340–T343, T345). The emphasized half — the one clause in the whole addendum that names an inbox — is the clause that still fails: four dropped-error reads in `routes/messaging.ts` (`:1560`, `:1609`, `:1781`, `:2668`), one of which silently disables a block guard (T220, T344). PR #460 exists for this class and is unmerged. |
+| T439 | **§30A.19** Formalize a Context Kernel above transport: Relationship, Time, Proximity, Intent, Shared Objects → Policy + Capabilities | N | No kernel. Two of the five inputs exist as scattered, uncomposed resolvers (relationship: four of them, T379; intent: `services/telegraphIntent.ts`). Nothing assembles them. |
+| T440 | Transport answers what was sent · conversation context answers what is happening between these people · world context answers what is happening around them · policy answers what each may know or do · actions execute through owning domains | W | Two of the five layers are genuinely separated: transport (`routes/messaging.ts` + `lib/telegraphEvents.ts`) from policy (`lib/messagingPermissions.ts`, `services/interactionPermissions.ts`, `lib/calls/callPermissionEngine.ts`), with actions executing through owning domains (T288). Conversation context and world context have no layer at all. |
+| T441 | The separation is mandatory so messaging infrastructure does not become the canonical owner of Trips, Events, Buddy bookings, Memories, availability, location or other domain truth | C | Holds absolutely. The messaging tree owns no domain truth: `routes/messaging.ts` writes only messaging tables plus `reports`; domain effects are produced by their owning routes (`routes/circle.ts:300`, the RAB tree) and executed only through re-authorized commands (`routes/telegraphCommands.ts:390`). This is the spec's Primary Invariant and it is the thing the repository gets most right. |
+| T442 | **§30A.20** Availability is user intent, not permission to contact or track | C | T384, reinforced at the storage layer: `2260`'s `CHECK (source = 'explicit' OR visibility = 'private')` makes an *inferred* window that looks public **unrepresentable**, so availability cannot even be fabricated into a contact signal by a writer that bypasses the service. |
+| T443 | Online presence, availability, proximity and precise location sharing are separate capabilities | W | Three of four are separate stores with separate consent and separate expiry (T22). Proximity does not exist. |
+| T444 | A newly added group participant cannot read history outside the authorized sequence window | W | **Violated** (T211, T313, T390). |
+| T445 | A source object shared in Telegraph cannot grant broader access than its authorized share projection | W | There is no share projection, and the frozen card grants access that outlives the source's own authorization (T46, T359). |
+| T446 | External previews cannot cause recipient-side network disclosure to arbitrary sender-controlled domains | N `∅` | Unguarded absence — no previews exist (T404). |
+| T447 | AI, translation, transcription, GIF providers, maps, search and push are never required for core text-message correctness | C | T355, T238, T427. The insert and the 201 complete before every one of them, and each has its own swallow-and-continue net. |
+| T448 | Canonical operational state always outranks historical conversation text | W | True wherever operational state is re-read — RSVP (`meetup_invites.status`), call eligibility (`routes/calls.ts:26`), confirmed commands (`routes/telegraphCommands.ts:390`). False at the card, which **is** historical conversation text presented as current operational state (T46, T411, T413). |
+| T449 | All consequential cross-domain actions pass through the owning domain's command/authorization path | C | T288, T360, T414. No cross-domain write originates in the messaging tree. |
+| T450 | Derived Telegraph projections are rebuildable; caches and indexes are never the sole authoritative copy | C | Nothing derived is authoritative anywhere on the server: the realtime bus is in-memory and lossy by design (`lib/telegraphEvents.ts:14-16`), translations are derived rows that never replace the original (T365), read state degrades to a documented fallback when its column is missing (`routes/messaging.ts:940-943`), and both projections are recomputed per request from canonical tables (T369). |
+| T451 | **§31** Five responsibilities: transport · Context Kernel · policy · action orchestration · outcome loop | W | Three of five exist as identifiable layers — transport, policy and action orchestration (T440). The **Context Kernel** does not exist (T439) and the **outcome loop** does not close: nothing measures a coordinated real-world outcome (T354) and nothing returns one to Memory (T119, T121). |
+
+---
+
+## 7. What could not be verified (3)
+
+Counted honestly in their own bucket and never folded into either side.
+
+| id | § | Why construction cannot settle it |
+| --- | --- | --- |
+| T61 | 6.3 | Inline video playback controls — poster, play/pause, scrub, mute, fullscreen, captions. `components/MessageMediaBubble.tsx:170` mounts an autoplay-capable player, but scrub/mute/fullscreen/caption behaviour belongs to the shared player and is a device property. |
+| T71 | 7.2 | "Push delivery, app launch and background rendering do not count as seen." **The server cannot know.** `POST /threads/:threadId/read` (`routes/messaging.ts:1202`) accepts no evidence of foreground visibility and stamps `last_read_at` on any authenticated call. The client calls it from a mount effect on thread open (`app/messages/[id].tsx:1269-1273`, *"Mark thread as read when the user opens it. Fire-and-forget."*), which is the right intent but fires on mount rather than on visible render, and nothing enforces it server-side. This is a *design* gap as much as a verification one — the requirement is not checkable because the protocol carries nothing to check. |
+| T135 | 11.3 | Voice/video control screen-reader labels and hit targets. Voice does not exist (T53); the video transport controls belong to the shared player, whose accessibility-tree behaviour needs a device. |
+
+**Three is a real number, not a rounding of a harder question.** Where a
+requirement was absent I said NOT-BUILT rather than CANNOT-VERIFY, because the
+absence of a table, a route, a column or a named function is decidable by
+reading. The visual-judgement rows that would ordinarily land here (§11's
+"cards compact and contextual", "bubbles visually dominant") were decidable in
+this tree because the structures they would compete with do not exist — and
+those rows say so rather than claiming a design win.
+
+---
+
+## 8. Deployment and liveness facts that bound the built code
+
+These are **not** construction verdicts and are not in the 451. They decide
+whether the built code can do anything.
+
+1. **`messages.unsent_at` does not exist in production.** Confirmed in-tree:
+   `baseline/20260907_production_tables.txt` (431 lines, committed during this
+   pass) contains **zero** matches for `unsent`. Migration 2325 (PR #472) adds
+   the column and `telegraph_unsend_message_before_seen`, applied to
+   `portava-ci` only. Everything §7.4 asks for is therefore CI-only, and this
+   census scores main.
+2. **Two of production's seven Telegraph tables are orphans.** The seven are
+   confirmed by `baseline/20260907_production_tables.txt`. `message_reports`
+   and `thread_reports` have no writer and no reader in application code —
+   settled by reading both report handlers, which write the unified `reports`
+   table instead (`routes/messaging.ts:2626`, `:2708`). Their migrations are
+   hash-frozen (`scripts/frozenLegacyFiles.ts:45-46`), so they will persist.
+3. **`saved_messages` is written and never read** (T119). The Save affordance is
+   live on two client surfaces today and does nothing observable.
+4. **Telegraph has no telemetry sink.** Unlike the Wall (`wall_telemetry_events`,
+   migration 2308), there is no Telegraph analytics table, deployed or
+   undeployed. Nothing in §28 or §30A.17 has anywhere to land.
+5. **The `open_to_plans_windows_enabled` flag gates availability windows** and is
+   seeded OFF by migration 2260. Since Telegraph never reads availability at all
+   (T28), this does not change a Telegraph verdict — but it means the strongest
+   §4-adjacent artifact is dark even on its own surface.
+6. **Messaging has one kill switch and no rate limit.** `disable_messaging` is
+   checked fail-closed on every send (`routes/messaging.ts:1750-1754`), which is
+   good; there is no per-user send limit at all (T279).
+7. **Writer-attribution caveat, inherited.** `scripts/checkWriterlessReads.ts:39-41`
+   declares that a dynamic `.from(expr)` anywhere makes writer attribution
+   INCOMPLETE and that the check errs toward silence. Every "nothing
+   writes/reads X" claim above was settled by reading call sites, and the tree's
+   two dynamic `.from(table)` sites (`services/media/MyWorldMemoryService.ts:614`,
+   `services/media/MediaProjectionService.ts:795`) were opened and confirmed to be
+   gem- and media-scoped helpers whose callers cannot pass a messaging table name.
+
+---
+
+## 9. Open PRs that would change a verdict
+
+Censused state is **main**. Neither PR below is scored in any bucket.
+
+### PR #472 — Telegraph §7.4 unsend-before-seen
+
+Five files: `migrations/2325_telegraph_unsend_before_seen.sql` (287 lines),
+`routes/messaging.ts` (+152), `test/telegraphUnsendBeforeSeen.test.ts` (601),
+plus a no-op `lib/telegraphEvents.ts` touch and a version bump.
+
+**This is the only artifact in the repository built for this specification**
+(§4). It is also, read on its merits, the best-argued migration in the
+Telegraph area:
+
+- The decision lives in the database, not the route, and the stated reason is
+  the right one: *"supabase-js issues each statement in its own implicit
+  transaction, so a recipient's read landing between (1) and (2) yields an
+  unsend of a message that HAS been seen"* (`2325:30-39`). It locks the message row (`2325:162`) and then takes `FOR UPDATE` locks on
+  every eligible recipient's receipt row **before** reading `last_read_at`
+  (`2325:189-195`, commented *"This is the §7.4 race, closed."*).
+- It refuses to invent a substrate: seen is `last_read_at >= messages.created_at`
+  because that is already what the unread-count logic means, and *"Introducing a
+  sequence column here would be a second, competing receipt system for one
+  behaviour"* (`2325:47-58`). That is Appendix A's rule (T378) applied
+  correctly.
+- It returns a discriminating `outcome` envelope rather than raising, and the
+  route treats a null/absent outcome as a **failure**, never a success and never
+  a refusal (route diff, `+`unsend handler).
+- Its postconditions assert `prosecdef`, a pinned `search_path`, and explicitly
+  that `anon` and `authenticated` hold **no** EXECUTE.
+
+If merged it would move **eleven** requirements to BUILT-AND-CORRECT (§4), and
+would be the first non-zero spec-attributable score any Portava census has
+recorded.
+
+Two things it does **not** do, which is why some verdicts stay where they are:
+it adds no `message.unsent` event (T181 — its `telegraphEvents.ts` diff is
+empty), and it closes one of T344's four dropped-error reads, not all four.
+
+### PR #460 — Telegraph silent failures
+
+Seven files: `lib/mediaAccess.ts` (+6), `routes/groupChat.ts` (+15),
+`routes/messaging.ts` (+14), `routes/telegraphChat.ts` (+171),
+`test/telegraphSilentFailures.test.ts` (545), `test/mediaAccess.test.ts` (+23).
+
+It closes a genuine hole this census does not otherwise capture: *"rows
+tombstoned before that change still carry `media_url` and went on authorizing
+the bytes for a picture the sender had already unsent"* — the fix filters the
+signed-URL lookup on `deleted_at IS NULL`. It would strengthen T79, T276 and
+T344.
+
+**PR #460 is not spec-attributable.** Its diff carries no section citation
+anywhere — a repo-wide grep for `§` over `git diff main...pr/460` returns
+nothing — despite hardening behaviour §7.4, §21 and §27.3 all require. It is
+good work done for the codebase, not for this document, which is the same
+pattern §4 describes for the tree as a whole.
