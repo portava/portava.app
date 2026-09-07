@@ -141,6 +141,10 @@ run_check "check:migration-prefixes" pnpm run check:migration-prefixes
 run_check "check:compiler-authentic" pnpm run check:compiler-authentic
 run_check "check:not-null-writes" pnpm run check:not-null-writes
 run_check "check:silent-supabase-writes" pnpm run check:silent-supabase-writes
+# check:silent-supabase-reads — the READ half of the same language fact. Runs
+# beside its sibling deliberately: a fix that moves a silent write into a silent
+# read should not be able to turn one of these green while the other stays red.
+run_check "check:silent-supabase-reads" pnpm run check:silent-supabase-reads
 run_check "check:test-runner-flags" pnpm run check:test-runner-flags
 run_check "check:write-path-columns" pnpm run check:write-path-columns
 run_check "check:missing-live-columns" pnpm run check:missing-live-columns
