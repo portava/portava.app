@@ -44,6 +44,7 @@ interface FakeOpts {
   routePlans?: Row[];
   routeStops?: Row[];
   tripMembers?: Row[];
+  trips?: Row[];
   promotedScopes?: Row[];
   snapshots?: Row[];
   profiles?: string[];
@@ -55,6 +56,8 @@ function makeDb(opts: FakeOpts) {
     route_plans: opts.routePlans ?? [],
     route_stops: opts.routeStops ?? [],
     trip_members: opts.tripMembers ?? [],
+    // requireTripMember falls back to trips.owner_id when no membership row exists.
+    trips: opts.trips ?? [],
     intel_live_promoted_scopes: opts.promotedScopes ?? [],
     intel_state_snapshots: opts.snapshots ?? [],
     intel_observations: [],
@@ -126,7 +129,7 @@ const ownedTrail = (over: Partial<FakeOpts> = {}): FakeOpts => ({
     { id: "s2", route_plan_id: TRAIL, source_type: "manual", source_id: null, title: "Walk", order_index: 1 },
     { id: "s3", route_plan_id: TRAIL, source_type: "place", source_id: PLACE_B, title: "Club B", order_index: 2 },
   ],
-  tripMembers: [{ trip_id: TRIP, user_id: MEMBER, status: "accepted" }],
+  tripMembers: [{ trip_id: TRIP, user_id: MEMBER, role: "member", status: "accepted" }],
   ...over,
 });
 
@@ -155,9 +158,35 @@ describe("readTrailLiveIntel — authorization is fail-closed", () => {
 
   it("a non-accepted member is not authorized", async () => {
     _clearPromotedScopeCache();
-    const db = makeDb(ownedTrail({ tripMembers: [{ trip_id: TRIP, user_id: MEMBER, status: "invited" }] }));
+    const db = makeDb(ownedTrail({ tripMembers: [{ trip_id: TRIP, user_id: MEMBER, role: "member", status: "invited" }] }));
     const r = await readTrailLiveIntel(db as any, MEMBER, TRAIL, { now: NOW });
     assert.equal(r.refusal, "unknown_trail");
+  });
+
+  // REGRESSION (migration 2334's reader half). This authorization used to be a
+  // hand-rolled `.eq("status","accepted")` with no role filter, so a row whose
+  // ROLE still says 'invited' — the legacy pending-invite encoding, which the
+  // invite routes flip to 'member' only on accept — was served the whole trail.
+  // requireTripMember refuses that viewer, and two such rows existed in
+  // production. Deleting the role check makes this test, and only this test, red.
+  it("a pending invite encoded in role (role='invited', status='accepted') is not authorized", async () => {
+    _clearPromotedScopeCache();
+    const db = makeDb(ownedTrail({
+      tripMembers: [{ trip_id: TRIP, user_id: MEMBER, role: "invited", status: "accepted" }],
+    }));
+    const r = await readTrailLiveIntel(db as any, MEMBER, TRAIL, { now: NOW });
+    assert.equal(r.refusal, "unknown_trail");
+    assert.deepEqual(r.stops, []);
+  });
+
+  // The trip's OWNER is crew even holding no trip_members row at all — the case
+  // lib/http.ts:454-462 exists for. The hand-rolled read could not see it.
+  it("the trip owner is authorized with no trip_members row", async () => {
+    _clearPromotedScopeCache();
+    const db = makeDb(ownedTrail({ tripMembers: [], trips: [{ id: TRIP, owner_id: STRANGER }] }));
+    const r = await readTrailLiveIntel(db as any, STRANGER, TRAIL, { now: NOW });
+    assert.equal(r.refusal, null);
+    assert.equal(r.stops.length, 2);
   });
 
   it("a missing trail is unknown_trail", async () => {

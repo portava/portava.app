@@ -1,0 +1,174 @@
+-- Rollback for 2334_route_plan_crew_visibility.sql
+-- Applied to portava-ci (hwokxgbmezheskbzskfr) on 2026-09-07. NOT applied to
+-- production (ajrurzioarfkagpuxfnb) -- that remains an owner decision.
+--
+-- WHAT 2334 DID
+-- =============
+-- Policy-only. It created authz.is_trip_crew(uuid) and repointed five route-plan
+-- CREW policies at it, so that RLS means exactly what lib/http.ts
+-- requireTripMember means by "accepted trip member":
+--
+--   route_plans.route_plans_member_select        (SELECT)
+--   route_stops.route_stops_member_select        (SELECT)
+--   route_legs.route_legs_member_select          (SELECT)
+--   route_plan_members.rpm_select_trip           (SELECT)
+--   route_plan_members.rpm_insert_own            (INSERT / WITH CHECK)
+--
+-- It did NOT touch the owner policies (route_plans_owner_select/insert/update/
+-- delete, route_stops_owner_all, route_legs_owner_all, rpm_select_own,
+-- rpm_delete_own), any table, column, grant or row. Running this file restores
+-- the five predicates verbatim from 0058_trip_flow.sql / 0059_route_plan_members.sql.
+--
+-- ⚠ READ THIS BEFORE RUNNING SECTION 1
+-- ====================================
+-- SECTION 1 RE-OPENS A MEASURED READ LEAK. The 0058/0059 predicates test
+-- `tm.role IN ('owner','member')` and never look at trip_members.status. That
+-- column is `text NOT NULL DEFAULT 'accepted'` with live non-accepted values, so
+-- restoring these policies restores this, demonstrated on portava-ci 2026-09-07
+-- against a fixture trip:
+--
+--   VIEWER                                 2334 POLICIES     0058/0059 POLICIES
+--   plan owner (member/accepted)           plan+stops+legs   plan+stops+legs
+--   crew member (member/accepted)          plan+stops+legs   plan+stops+legs
+--   co_host (accepted)                     plan+stops+legs   NOTHING
+--   viewer (accepted)                      plan+stops+legs   NOTHING
+--   PENDING INVITEE (member/invited)       NOTHING           plan+stops+legs  <--
+--   stranger (no membership row)           NOTHING           NOTHING
+--   trip owner with no members row         plan+stops+legs   NOTHING
+--
+-- The marked row is the leak: a viewer the API refuses (requireTripMember
+-- rejects status <> 'accepted') reads the trip's route plan, every stop's
+-- precise {label,lat,lng} and every leg straight off PostgREST with their own
+-- JWT. `anon` and `authenticated` hold the full DML set on all four tables, so
+-- RLS is the only control on that path.
+--
+-- One production row matched that shape when 2334 was written (role='member',
+-- status='invited'; aggregate count, no user rows read).
+--
+-- So do not run section 1 to "undo 2334" as a whole. If something broke after
+-- 2334, the likely cause is section 2 -- the helper being unreachable -- not the
+-- policies. Diagnose first:
+--   * A crew read that now returns nothing where it used to return rows, for a
+--     viewer whose trip_members.status IS 'accepted' -> suspect EXECUTE on
+--     authz.is_trip_crew, or USAGE on schema authz. Section 2's note applies.
+--   * A crew read that now returns nothing for a viewer whose status is NOT
+--     'accepted' -> that is 2334 working as designed. The API already refused
+--     that viewer; the fix was to make RLS agree.
+--   * A co_host, viewer, or membership-row-less trip owner who can suddenly
+--     read a plan -> also 2334 working as designed; all three are accepted crew
+--     per lib/http.ts:454-474 and the API has always served them.
+
+-- ═════════════════════════════════════════════════════════════════════════════
+-- SECTION 1 -- restore the 0058/0059 crew predicates verbatim
+-- ⚠ RE-OPENS THE LEAK DESCRIBED ABOVE. Run only with intent.
+-- ═════════════════════════════════════════════════════════════════════════════
+-- BEGIN;
+--
+-- DROP POLICY IF EXISTS "route_plans_member_select" ON public.route_plans;
+-- CREATE POLICY "route_plans_member_select" ON public.route_plans
+--   FOR SELECT USING (
+--     trip_id IS NOT NULL
+--     AND EXISTS (
+--       SELECT 1 FROM trip_members tm
+--       WHERE tm.trip_id = route_plans.trip_id
+--         AND tm.user_id = auth.uid()
+--         AND tm.role IN ('owner', 'member')
+--     )
+--   );
+--
+-- DROP POLICY IF EXISTS "route_stops_member_select" ON public.route_stops;
+-- CREATE POLICY "route_stops_member_select" ON public.route_stops
+--   FOR SELECT USING (
+--     EXISTS (
+--       SELECT 1 FROM route_plans rp
+--       JOIN trip_members tm ON tm.trip_id = rp.trip_id
+--       WHERE rp.id = route_stops.route_plan_id
+--         AND tm.user_id = auth.uid()
+--         AND tm.role IN ('owner', 'member')
+--         AND rp.trip_id IS NOT NULL
+--     )
+--   );
+--
+-- DROP POLICY IF EXISTS "route_legs_member_select" ON public.route_legs;
+-- CREATE POLICY "route_legs_member_select" ON public.route_legs
+--   FOR SELECT USING (
+--     EXISTS (
+--       SELECT 1 FROM route_plans rp
+--       JOIN trip_members tm ON tm.trip_id = rp.trip_id
+--       WHERE rp.id = route_legs.route_plan_id
+--         AND tm.user_id = auth.uid()
+--         AND tm.role IN ('owner', 'member')
+--         AND rp.trip_id IS NOT NULL
+--     )
+--   );
+--
+-- DROP POLICY IF EXISTS "rpm_select_trip" ON public.route_plan_members;
+-- CREATE POLICY "rpm_select_trip" ON public.route_plan_members
+--   FOR SELECT USING (
+--     EXISTS (
+--       SELECT 1 FROM route_plans rp
+--       JOIN trip_members tm ON tm.trip_id = rp.trip_id
+--       WHERE rp.id = route_plan_members.route_plan_id
+--         AND tm.user_id = auth.uid()
+--         AND tm.role IN ('owner', 'member')
+--     )
+--   );
+--
+-- DROP POLICY IF EXISTS "rpm_insert_own" ON public.route_plan_members;
+-- CREATE POLICY "rpm_insert_own" ON public.route_plan_members
+--   FOR INSERT WITH CHECK (
+--     user_id = auth.uid()
+--     AND (
+--       EXISTS (
+--         SELECT 1 FROM route_plans rp
+--         JOIN trip_members tm ON tm.trip_id = rp.trip_id
+--         WHERE rp.id = route_plan_members.route_plan_id
+--           AND tm.user_id = auth.uid()
+--           AND tm.role IN ('owner', 'member')
+--       )
+--       OR
+--       EXISTS (
+--         SELECT 1 FROM route_plans rp
+--         WHERE rp.id = route_plan_members.route_plan_id
+--           AND rp.owner_user_id = auth.uid()
+--           AND rp.trip_id IS NULL
+--       )
+--     )
+--   );
+--
+-- COMMIT;
+
+-- ═════════════════════════════════════════════════════════════════════════════
+-- SECTION 2 -- drop the helper
+-- Run ONLY after section 1. Dropping it while any of the five policies still
+-- reference it makes those policies unevaluatable and every crew read fails.
+-- PostgreSQL will refuse the DROP for exactly that reason unless section 1 has
+-- already repointed them, which is the intended safety interlock -- do NOT
+-- reach for CASCADE, which would silently delete the policies themselves and
+-- leave the tables with owner-only access.
+--
+-- NOTE ON "hardening": if the symptom you are chasing is that crew reads return
+-- nothing, do not fix it by revoking EXECUTE here. RLS predicates evaluate with
+-- the querying role's privileges, so anon/authenticated MUST retain EXECUTE on
+-- authz.is_trip_crew and USAGE on schema authz (granted by 2182). Revoking
+-- either breaks every crew read rather than narrowing anything -- the same trap
+-- 2199 documents for authz.viewer_in_call.
+-- ═════════════════════════════════════════════════════════════════════════════
+-- BEGIN;
+--
+-- DROP FUNCTION IF EXISTS authz.is_trip_crew(uuid);
+--
+-- COMMIT;
+
+-- ═════════════════════════════════════════════════════════════════════════════
+-- VERIFY (safe to run at any time; reads catalogs only)
+-- ═════════════════════════════════════════════════════════════════════════════
+-- SELECT tablename, policyname, cmd,
+--        coalesce(qual,'') || coalesce(with_check,'') LIKE '%is_trip_crew%' AS routed_through_helper
+-- FROM pg_policies
+-- WHERE schemaname = 'public'
+--   AND tablename IN ('route_plans','route_stops','route_legs','route_plan_members')
+-- ORDER BY tablename, policyname;
+--
+-- Expect after 2334:      5 of 13 policies routed_through_helper = true
+-- Expect after rollback:  0 of 13, and no authz.is_trip_crew in pg_proc.
