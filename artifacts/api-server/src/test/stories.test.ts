@@ -105,6 +105,46 @@ function makeFakeClient(tables: Record<string, FakeTable> = {}) {
       eq(col: string, val: any)    { filtered = filtered.filter((r) => r[col] === val); return obj; },
       neq(col: string, val: any)   { filtered = filtered.filter((r) => r[col] !== val); return obj; },
       in(col: string, vals: any[]) { filtered = filtered.filter((r) => vals.includes(r[col])); return obj; },
+      /**
+       * PostgREST `or`, for the `and(a.eq.x,b.eq.y),and(a.eq.y,b.eq.x)` shape
+       * `lib/blockGuard.isBlockedBetween` issues.
+       *
+       * Added because this fake could not answer a two-direction blocks query at
+       * all — so every block assertion in this file was passing against a double
+       * that would have thrown in production. Splitting is TOP-LEVEL only: an
+       * and(...) group's own commas sit inside parentheses.
+       */
+      or(expr: string) {
+        const groups: string[] = [];
+        let depth = 0, cur = "";
+        for (const ch of String(expr)) {
+          if (ch === "(") { depth++; cur += ch; }
+          else if (ch === ")") { depth--; cur += ch; }
+          else if (ch === "," && depth === 0) { if (cur.trim()) groups.push(cur.trim()); cur = ""; }
+          else cur += ch;
+        }
+        if (cur.trim()) groups.push(cur.trim());
+        const preds = groups.map((g) => {
+          const isAnd = g.startsWith("and(");
+          const inner = isAnd ? g.slice(4, -1) : g;
+          const terms = inner.split(",").map((t) => {
+            const m = /^([\w.]+)\.(\w+)\.(.*)$/.exec(t.trim());
+            if (!m) throw new Error(`stories fake: unparseable or() term "${t}"`);
+            return m;
+          });
+          return (r: Row) => {
+            const hits = terms.map((m) => {
+              const [, col, op, val] = m;
+              if (op === "eq") return String(r[col]) === val;
+              if (op === "is") return val === "null" ? r[col] == null : r[col] === val;
+              throw new Error(`stories fake: unsupported or() operator ${op}`);
+            });
+            return isAnd ? hits.every(Boolean) : hits.some(Boolean);
+          };
+        });
+        filtered = filtered.filter((r) => preds.some((p) => p(r)));
+        return obj;
+      },
       gt(col: string, val: any)    { filtered = filtered.filter((r) => r[col] > val); return obj; },
       lt(col: string, val: any)    { filtered = filtered.filter((r) => r[col] < val); return obj; },
       gte(col: string, val: any)   { filtered = filtered.filter((r) => r[col] >= val); return obj; },

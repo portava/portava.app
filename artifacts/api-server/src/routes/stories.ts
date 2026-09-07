@@ -25,6 +25,8 @@ import { nameVisibilitySet } from "../lib/publicIdentity.js";
 import { isFlagEnabled } from "../lib/featureFlags.js";
 import { appStorageUrlInfo } from "../lib/mediaUrl.js";
 import { ownerFromPath } from "../lib/mediaAccess.js";
+import { fetchBlockedSet } from "../lib/blocks.js";
+import { isBlockedBetween } from "../lib/blockGuard.js";
 
 const router = Router();
 const UUID_RE = /^[0-9a-f-]{36}$/i;
@@ -60,11 +62,11 @@ async function isCloseFriend(sc: any, ownerId: string, viewerId: string): Promis
  * Returns true if viewerId is blocked by ownerId or vice-versa.
  */
 async function isBlocked(sc: any, a: string, b: string): Promise<boolean> {
-  const [r1, r2] = await Promise.all([
-    sc.from("blocks").select("blocked_id").eq("blocker_id", a).eq("blocked_id", b).maybeSingle(),
-    sc.from("blocks").select("blocked_id").eq("blocker_id", b).eq("blocked_id", a).maybeSingle(),
-  ]);
-  return Boolean(r1.data || r2.data);
+  // Delegates to the shared guard, which binds `error` and fails CLOSED. The
+  // two reads this replaced inspected only `.data`, so any failure left both
+  // null and the pair read as "not blocked" — the guard opening precisely when
+  // the database is unhealthy.
+  return isBlockedBetween(sc, a, b);
 }
 
 /**
@@ -242,14 +244,12 @@ router.get("/stories/feed", asyncHandler(async (req, res) => {
   const now = new Date().toISOString();
 
   // Get blocks in both directions
-  const [blockedByMe, blockingMe] = await Promise.all([
-    sc.from("blocks").select("blocked_id").eq("blocker_id", user.id),
-    sc.from("blocks").select("blocker_id").eq("blocked_id", user.id),
-  ]);
-  const blockedIds = new Set<string>([
-    ...((blockedByMe.data ?? []).map((r: any) => r.blocked_id as string)),
-    ...((blockingMe.data ?? []).map((r: any) => r.blocker_id as string)),
-  ]);
+  // `fetchBlockedSet` returns NULL on a read failure, and its contract says a
+  // caller must treat that as "show nobody" — never as "nobody is blocked".
+  // Building the set inline with `?? []` did the opposite: an unreadable blocks
+  // table produced an empty set, which un-blocks every blocked user.
+  const blockedIds = await fetchBlockedSet(sc, user.id);
+  if (blockedIds === null) { sendError(res, "db_error", "Could not check blocks"); return; }
 
   // Resolve viewer context: follows (both directions), trips, circle memberships, close-friends membership
   const [followRows, followerRows, tripMemberRows, circleMemberRows, closeFriendOfRows] = await Promise.all([
@@ -589,14 +589,12 @@ router.get("/stories/:id/viewers", asyncHandler(async (req, res) => {
   if (!viewRows || viewRows.length === 0) { res.status(200).json({ viewers: [], hidden: false }); return; }
 
   // Get blocks (exclude blocked viewers from list)
-  const [blockedByMe, blockingMe] = await Promise.all([
-    sc.from("blocks").select("blocked_id").eq("blocker_id", user.id),
-    sc.from("blocks").select("blocker_id").eq("blocked_id", user.id),
-  ]);
-  const blockedIds = new Set<string>([
-    ...((blockedByMe.data ?? []).map((r: any) => r.blocked_id as string)),
-    ...((blockingMe.data ?? []).map((r: any) => r.blocker_id as string)),
-  ]);
+  // `fetchBlockedSet` returns NULL on a read failure, and its contract says a
+  // caller must treat that as "show nobody" — never as "nobody is blocked".
+  // Building the set inline with `?? []` did the opposite: an unreadable blocks
+  // table produced an empty set, which un-blocks every blocked user.
+  const blockedIds = await fetchBlockedSet(sc, user.id);
+  if (blockedIds === null) { sendError(res, "db_error", "Could not check blocks"); return; }
 
   const viewerIds = (viewRows ?? []).map((r: any) => r.viewer_id as string).filter((v) => !blockedIds.has(v));
 

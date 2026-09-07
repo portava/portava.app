@@ -379,6 +379,50 @@ describe("Highlights — repost from the archive", () => {
   });
 });
 
+// ══ BLOCKS FAIL CLOSED ════════════════════════════════════════════════════════
+
+describe("Highlights — an unreadable blocks table is not an absence of blocks", () => {
+  it("the discovery feed refuses rather than serving everyone", async () => {
+    // These routes built the blocked set inline with `?? []`, so a failed blocks
+    // read produced an EMPTY set — which un-blocks every blocked user and shows
+    // their media in the feed. `fetchBlockedSet` returns null on failure and its
+    // contract says a caller must treat that as "show nobody".
+    const c = makeFakeClient({
+      _users: { rows: [owner] },
+      highlights: { rows: [baseHighlight()] },
+      blocks: { rows: [], error: "blocks unreadable" },
+    });
+    _setTestClient(c, true);
+    const r = await req("GET", "/api/highlights/active", undefined, owner.token);
+    assert.ok(r.status >= 400, `expected a refusal, got ${r.status} ${JSON.stringify(r.json)}`);
+    assert.notDeepEqual(r.json?.highlights, [baseHighlight()],
+      "an unreadable blocks table must not serve an unfiltered feed");
+  });
+
+  it("the following feed refuses too", async () => {
+    const c = makeFakeClient({
+      _users: { rows: [owner] },
+      highlights: { rows: [baseHighlight()] },
+      user_follows: { rows: [{ follower_id: U.owner, following_id: U.other }] },
+      blocks: { rows: [], error: "blocks unreadable" },
+    });
+    _setTestClient(c, true);
+    const r = await req("GET", "/api/highlights/following-feed", undefined, owner.token);
+    assert.ok(r.status >= 400, `expected a refusal, got ${r.status}`);
+  });
+
+  it("a clean blocks read still serves — refusing everything would also pass", async () => {
+    const c = makeFakeClient({
+      _users: { rows: [owner] },
+      highlights: { rows: [baseHighlight()] },
+      blocks: { rows: [] },
+    });
+    _setTestClient(c, true);
+    const r = await req("GET", "/api/highlights/active", undefined, owner.token);
+    assert.equal(r.status, 200, JSON.stringify(r.json));
+  });
+});
+
 // ══ THE MIGRATION'S OWN CONTRACT ══════════════════════════════════════════════
 
 describe("migration 2313 — the RLS shape permanence and the archive both need", () => {

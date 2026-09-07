@@ -7,6 +7,8 @@ import { canViewHighlight, type HighlightVisibility, type HighlightRecord } from
 import { canMessage } from "../lib/messagingPermissions";
 import { nameVisibilitySet, presentedName } from "../lib/publicIdentity";
 import { z } from "zod";
+import { fetchBlockedSet } from "../lib/blocks.js";
+import { isBlockedBetween } from "../lib/blockGuard.js";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 const router = Router();
@@ -39,11 +41,9 @@ async function resolveViewAccess(
 
   // Block check (both directions)
   if (viewerId !== ownerId) {
-    const [blockedByMe, blockingMe] = await Promise.all([
-      sc.from("blocks").select("blocked_id").eq("blocker_id", viewerId).eq("blocked_id", ownerId).maybeSingle(),
-      sc.from("blocks").select("blocker_id").eq("blocker_id", ownerId).eq("blocked_id", viewerId).maybeSingle(),
-    ]);
-    if (blockedByMe.data || blockingMe.data) {
+    // Neither `.error` was bound, so a failed read left both `.data` null and
+    // the pair read as "not blocked". isBlockedBetween fails closed.
+    if (await isBlockedBetween(sc, viewerId, ownerId)) {
       sendError(res, "not_found", "Highlight not found");
       return null;
     }
@@ -224,11 +224,10 @@ router.get("/users/:userId/highlights", async (req, res) => {
   }
 
   // Check blocks in both directions
-  const [blocker, blocked] = await Promise.all([
-    client.from("blocks").select("blocked_id").eq("blocker_id", user.id).eq("blocked_id", targetId).maybeSingle(),
-    client.from("blocks").select("blocked_id").eq("blocker_id", targetId).eq("blocked_id", user.id).maybeSingle(),
-  ]);
-  if (blocker.data || blocked.data) {
+  // Same shape, same fix. A blocked viewer still gets an empty list (unchanged);
+  // a FAILED read now says so instead of serving the same empty list, which is
+  // what made an outage indistinguishable from a block.
+  if (await isBlockedBetween(client, user.id, targetId)) {
     res.status(200).json({ highlights: [] });
     return;
   }
@@ -375,14 +374,12 @@ router.get("/highlights/active", async (req, res) => {
   viewerTripIds = (viewerTripRows ?? []).map((r: any) => r.trip_id as string);
 
   // Get blocks list for this user (both directions)
-  const [blockedByMe, blockingMe] = await Promise.all([
-    sc.from("blocks").select("blocked_id").eq("blocker_id", user.id),
-    sc.from("blocks").select("blocker_id").eq("blocked_id", user.id),
-  ]);
-  const blockedIds = new Set<string>([
-    ...((blockedByMe.data ?? []).map((r: any) => r.blocked_id as string)),
-    ...((blockingMe.data ?? []).map((r: any) => r.blocker_id as string)),
-  ]);
+  // `fetchBlockedSet` returns NULL on a read failure, and its contract says a
+  // caller must treat that as "show nobody" — never as "nobody is blocked".
+  // Building the set inline with `?? []` did the opposite: an unreadable blocks
+  // table produced an empty set, which un-blocks every blocked user.
+  const blockedIds = await fetchBlockedSet(sc, user.id);
+  if (blockedIds === null) { sendError(res, "db_error", "Could not check blocks"); return; }
 
   // Build query — include trip_only so trip members can see them
   let q = sc
@@ -1084,14 +1081,12 @@ router.get("/highlights/following-feed", async (req, res) => {
   }
 
   // 2. Resolve blocked users (both directions) and filter them out
-  const [blockedByMe, blockingMe] = await Promise.all([
-    sc.from("blocks").select("blocked_id").eq("blocker_id", user.id),
-    sc.from("blocks").select("blocker_id").eq("blocked_id", user.id),
-  ]);
-  const blockedIds = new Set<string>([
-    ...((blockedByMe.data ?? []).map((r: any) => r.blocked_id as string)),
-    ...((blockingMe.data ?? []).map((r: any) => r.blocker_id as string)),
-  ]);
+  // `fetchBlockedSet` returns NULL on a read failure, and its contract says a
+  // caller must treat that as "show nobody" — never as "nobody is blocked".
+  // Building the set inline with `?? []` did the opposite: an unreadable blocks
+  // table produced an empty set, which un-blocks every blocked user.
+  const blockedIds = await fetchBlockedSet(sc, user.id);
+  if (blockedIds === null) { sendError(res, "db_error", "Could not check blocks"); return; }
   const eligibleIds = followingIds.filter((id: string) => !blockedIds.has(id));
   if (eligibleIds.length === 0) {
     res.status(200).json({ users: [] });
