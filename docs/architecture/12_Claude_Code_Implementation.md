@@ -246,8 +246,13 @@ what stops 1A and 1B from silently regressing.
    exists, then take the residue.
 2. **A1 — the ban gate.** `lib/http.ts:213-222`. This is the highest-value single repair in the
    register: it is the only ban enforcement point in the system and there is no session revocation.
-   The fix is a three-state read (present / absent / unreadable), matching #458's
-   `getTrustProfileResult` shape and #466's three-state passport visibility, not a fourth invention.
+   The fix is a three-state read (present / absent / unreadable), matching **#467's**
+   `getTrustProfileResult` shape and #466's three-state passport visibility, not a fourth
+   invention. (**Correction, 2026-09-07:** this line, and `07` §5, both attributed
+   `getTrustProfileResult` to #458. It is #467 —
+   `git show pr/458 | grep -c getTrustProfileResult` is 0, `pr/467` is 9. #458 contributes
+   `TrustInputUnavailableError` and the three throwing loaders, which is the MECHANISM the guard
+   repair below reuses; #467 contributes the union SHAPE.)
 3. **A2 — one envelope.** `app.ts:242-247` must emit the flat shape `lib/http.ts:140-152` writes,
    or the nested shape must be documented as a tier. It cannot stay undecided; `11` calls it
    *"an unreconciled inconsistency, not a documented tier."*

@@ -351,13 +351,17 @@ describe("auth rate limits — POST /auth/lookup-username", () => {
     assert.equal(over.status, 429, `expected 429 on request 11, got ${over.status}: ${JSON.stringify(over.body)}`);
   });
 
-  it("429 body uses the standard { error: { code, message } } envelope", async () => {
+  it("429 body uses the standard flat { error, message } envelope", async () => {
     for (let i = 0; i < 10; i++) await postLookup(i);
     const over = await postLookup(10);
     assert.equal(over.status, 429);
     assert.ok(over.body?.error, "response must have an 'error' key");
-    assert.equal(over.body.error.code, "RATE_LIMITED");
-    assert.ok(typeof over.body.error.message === "string" && over.body.error.message.length > 0,
+    // MOVED with the signup suite's identical assertion above: the
+    // express-rate-limit `message` bodies in routes/auth.ts were the other two
+    // nested-envelope emitters in the tree (A2).
+    assert.equal(typeof over.body.error, "string", "body.error must be the code itself");
+    assert.equal(over.body.error, "RATE_LIMITED");
+    assert.ok(typeof over.body.message === "string" && over.body.message.length > 0,
       "message must be a non-empty string");
   });
 

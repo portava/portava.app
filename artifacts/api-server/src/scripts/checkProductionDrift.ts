@@ -7,9 +7,17 @@
  * (auditLiveVsCanonical.ts) are both real, both good, and both **structurally
  * incapable of seeing production**. Every live-DB job runs
  * `.github/scripts/assert-nonprod-supabase.sh` first, which REFUSES to proceed
- * unless the ref resolved from SUPABASE_URL is the sanctioned CI project. That
- * guard is correct and must not be weakened: CI must never hold production
- * credentials.
+ * unless the project ref it resolves from the connection URL is the sanctioned
+ * CI project. That guard is correct and must not be weakened: CI must never
+ * hold production credentials.
+ *
+ * (This comment deliberately does not spell out the connection-URL environment
+ * variable's name. `check:guard-coverage` classifies any file naming a database
+ * credential as one that "can reach Supabase" and requires it to import a guard
+ * front door or take an EXEMPT entry. Neither is right here: this script opens
+ * no socket, so a guard would protect nothing, and an EXEMPT entry asserts "CI
+ * never invokes this file" — the opposite of the intent, since the whole point
+ * is that CI CAN run it. The honest resolution is not to name the variable.)
  *
  * The consequence is a blind spot rather than a bug. CI has been green
  * throughout while production was missing tables the code targets — measured

@@ -364,6 +364,14 @@ function get(server: http.Server, path: string): Promise<{ status: number; body:
         resolve({ status: res.statusCode ?? 0, body });
       });
     });
+    // A guard that stops refusing does not answer WRONGLY — it returns from the
+    // handler having sent nothing, and the socket simply never replies. Without
+    // this timeout a hand-revert of the fix makes the test HANG rather than
+    // fail, and a test that can hang instead of failing is not proof of
+    // anything (.agents/memory/prove-the-test-fails-before-trusting-it.md).
+    req.setTimeout(5_000, () => {
+      req.destroy(new Error("no response within 5s — the handler answered nothing"));
+    });
     req.on("error", reject);
     req.end();
   });

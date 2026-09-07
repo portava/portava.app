@@ -388,9 +388,17 @@ describe("§49 Failure — the endpoint never 500s mid-keystroke; degrades grace
   });
 
   it("total data-layer failure degrades to a well-formed EMPTY 200 envelope (never an error mid-keystroke)", async () => {
-    // Every table the request touches errors. The route's try/catch guarantees a
-    // 200 with an empty, well-formed envelope carrying requestId + policyVersion.
-    setup({}, ["canonical_locations", "blocks", "user_privacy_settings", "events", "trips", "profiles", "places", "hidden_gems"]);
+    // Every SUGGESTION SOURCE the request touches errors. The route's try/catch
+    // guarantees a 200 with an empty, well-formed envelope carrying requestId +
+    // policyVersion.
+    //
+    // `profiles` was in this list and has been moved to the test below. It is
+    // not a suggestion source: it is `requireUser`'s ban gate (lib/http.ts), and
+    // since A1 an unreadable `account_status` is refused before the route body
+    // runs. Erroring it here conflated two layers and would have let a change to
+    // the AUTH gate pass or fail this DATA-layer certification by accident. The
+    // data-layer guarantee is unchanged and is what this test still asserts.
+    setup({}, ["canonical_locations", "blocks", "user_privacy_settings", "events", "trips", "places", "hidden_gems"]);
     const r = await suggest({ context: "global_search", text: "da nang" });
     assert.equal(r.status, 200, "a total failure must still be a 200 (typeahead never shows an error)");
     const body = await r.json() as any;
@@ -398,6 +406,22 @@ describe("§49 Failure — the endpoint never 500s mid-keystroke; degrades grace
     assert.equal(body.context, "global_search");
     assert.ok(typeof body.requestId === "string" && body.requestId.length > 0);
     assert.ok(Array.isArray(body.suggestions), "suggestions is always a well-formed array");
+  });
+
+  it("an unreadable `profiles` is the BAN GATE failing, and outranks the never-error rule", async () => {
+    // The one exception to "typeahead never shows an error", stated on purpose
+    // rather than inherited from the list above. `profiles.account_status` is
+    // the only ban enforcement point in the system — there is no session
+    // revocation anywhere — so a request whose ban check did not run may not be
+    // served, not even an empty list. The answer is the retryable
+    // `degraded_unavailable`, which means "the check was not performed", not
+    // "you are banned" and not "there is nothing here".
+    setup({}, ["profiles"]);
+    const r = await suggest({ context: "global_search", text: "da nang" });
+    assert.equal(r.status, 503, "an unchecked ban gate must not be served a 200");
+    const body = await r.json() as any;
+    assert.equal(body.error, "degraded_unavailable");
+    assert.equal(body.retryable, true, "the client must retry, not re-authenticate");
   });
 
   it("empty result: a no-match query returns a clean 200 with an empty (or completion-only) list", async () => {

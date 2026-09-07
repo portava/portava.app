@@ -296,8 +296,11 @@ places it touches them are called out rather than left to be discovered.
 - **#458 — "a failed read must never be reported as empty, clean, or done."** `loadSettings`,
   `loadEvents` and `loadCaps` now **throw** `TrustInputUnavailableError` instead of substituting
   defaults, because a row computed from inputs that failed to load is a fabricated measurement
-  wearing a fresh `last_recalculated_at`. It adds `getTrustProfileResult`, a three-state read
-  (`ok` / `absent` / `unavailable`). *Consequence here:* `_fetchSafetyMultiplier` reads
+  wearing a fresh `last_recalculated_at`. (**Correction, 2026-09-07:** `getTrustProfileResult`,
+  the three-state `ok` / `absent` / `unavailable` read, is **#467**, not #458 —
+  `git show pr/458 | grep -c getTrustProfileResult` is 0 and `pr/467` is 9. #458 contributes
+  `TrustInputUnavailableError` and the three throwing loaders; #467 contributes the union.)
+  *Consequence here:* `_fetchSafetyMultiplier` reads
   `trust_profiles` directly and never calls `recalculateTrustScore`, so it does not break — **but
   its `catch → 1.0` fail-open (`:1140-1142`) becomes the last place in the trust-consuming code
   that still turns an unreadable input into a confident value.** Under #458's rule the honest
