@@ -568,3 +568,58 @@ leaves the question open — which is precisely the condition for an OWNER row.
 
 **What is buildable now, either way:** nothing. The correct next commit depends
 on the answer, and no code change improves the situation before it.
+
+---
+
+## `WALL_ACCENT_COLOUR` — the last open row in the Wall census, and it is a brand decision
+
+Raised 2026-09-08 by the Wall recensus (`census-wall.md` §6). W166 is the **one**
+remaining non-CANNOT-VERIFY row between the Wall and 205/205: 196 correct, 1
+wrong, 0 not-built, 8 that need a device or a human judgement.
+
+### The measurement
+
+Wall spec §35: *"Portava purple is an interaction/accent colour, not a background
+wash."* The rule has two halves and they have different answers.
+
+- **Structural half — HOLDS.** No Wall card, sheet or strip uses the accent as a
+  background wash. Accent is used for icons, state words and interaction
+  affordances, which is exactly what the rule asks for. This was verified over
+  the real tokens by the §38 contrast suite, which additionally proves the accent
+  cannot carry small text on white and therefore is not being used as body
+  colour anywhere.
+- **Colour half — DOES NOT HOLD.** The Wall's accent tokens are
+  `signal: '#FF4D2E'` (vermilion) and `deep: '#0A3D4A'` (teal-ink)
+  (`travel-buddy-standalone/src/theme/tokens.ts:12#signal`). There is no purple.
+
+So the Wall obeys the spec's *rule about how an accent may be used* and uses a
+different accent than the spec names. That is the same family of divergence as
+Passport §27, and it is not new: the vermilion/teal palette is the one the whole
+client is built on, and the contrast suite's AA thresholds are computed against
+it.
+
+### The question
+
+| | Meaning | What changes | Cost |
+|---|---|---|---|
+| **SPEC IS STALE** | the palette moved and the spec did not | one line in the spec; W166 becomes C with no code change | none |
+| **PALETTE IS WRONG** | the Wall really should be purple | `theme/tokens.ts` accent values, and every AA pairing recomputed against them | the contrast suite re-runs across the whole client, not just the Wall; some pairings will fail and need new tokens |
+
+### Why engineering is not choosing
+
+Repainting a brand accent is a one-line change and an irreversible product
+statement, and the two options are not "fix it" versus "leave it" — one of them
+says the spec is out of date and the other says the app is. Nothing in the code
+distinguishes them: both palettes satisfy §35's structural rule, and a checker
+cannot tell which colour a brand *intends*.
+
+**What is buildable now, either way: nothing.** If the answer is SPEC IS STALE
+the change is a sentence in a document engineering does not own. If it is PALETTE
+IS WRONG the first step is a design decision about which purple, and the contrast
+consequences follow from that value. There is no commit that improves the
+situation before the answer.
+
+**Note on scope, so this is not read as bigger than it is:** W166 is worth 0.5 %
+of one census. It is on this ledger because it is the LAST row, not because it is
+urgent — and because a census that says "1 BUILT-BUT-WRONG" with no explanation
+of who can fix it is the shape that quietly becomes permanent.
