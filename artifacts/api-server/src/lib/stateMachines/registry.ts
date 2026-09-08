@@ -388,7 +388,7 @@ export const STATE_MACHINES: readonly StateMachineEntry[] = [
           // fragments can each be satisfied by unrelated text elsewhere in the file
           // and prove nothing together.
           evidence: [
-            '  let newState: EventState = current as EventState;\n  if (going >= maxAttendees) {\n    newState = (ev as any).waitlist_enabled ? "waitlist" : "full";\n  } else if (["full", "waitlist"].includes(current) && !(await hasActiveWaitlistOffer(sc, eventId))) {\n    newState = "open";\n  }\n  if (newState !== current) await writeEventState(sc, eventId, current, newState);',
+            '  let newState: EventState = current as EventState;\n  if (going >= maxAttendees) {\n    newState = (ev as any).waitlist_enabled ? "waitlist" : "full";\n  } else if (["full", "waitlist"].includes(current) && !(await hasActiveWaitlistOffer(sc, eventId))) {\n    newState = "open";\n  }\n  if (newState !== current) {\n    const w = await writeEventState(sc, eventId, current, newState);',
           ],
         },
       },
@@ -399,7 +399,7 @@ export const STATE_MACHINES: readonly StateMachineEntry[] = [
         writer: {
           file: "routes/events.ts",
           evidence: [
-            '  let newState: EventState = current as EventState;\n  if (going >= maxAttendees) {\n    newState = (ev as any).waitlist_enabled ? "waitlist" : "full";\n  } else if (["full", "waitlist"].includes(current) && !(await hasActiveWaitlistOffer(sc, eventId))) {\n    newState = "open";\n  }\n  if (newState !== current) await writeEventState(sc, eventId, current, newState);',
+            '  let newState: EventState = current as EventState;\n  if (going >= maxAttendees) {\n    newState = (ev as any).waitlist_enabled ? "waitlist" : "full";\n  } else if (["full", "waitlist"].includes(current) && !(await hasActiveWaitlistOffer(sc, eventId))) {\n    newState = "open";\n  }\n  if (newState !== current) {\n    const w = await writeEventState(sc, eventId, current, newState);',
           ],
         },
       },
@@ -410,7 +410,7 @@ export const STATE_MACHINES: readonly StateMachineEntry[] = [
         writer: {
           file: "routes/events.ts",
           evidence: [
-            '  let newState: EventState = current as EventState;\n  if (going >= maxAttendees) {\n    newState = (ev as any).waitlist_enabled ? "waitlist" : "full";\n  } else if (["full", "waitlist"].includes(current) && !(await hasActiveWaitlistOffer(sc, eventId))) {\n    newState = "open";\n  }\n  if (newState !== current) await writeEventState(sc, eventId, current, newState);',
+            '  let newState: EventState = current as EventState;\n  if (going >= maxAttendees) {\n    newState = (ev as any).waitlist_enabled ? "waitlist" : "full";\n  } else if (["full", "waitlist"].includes(current) && !(await hasActiveWaitlistOffer(sc, eventId))) {\n    newState = "open";\n  }\n  if (newState !== current) {\n    const w = await writeEventState(sc, eventId, current, newState);',
           ],
         },
       },

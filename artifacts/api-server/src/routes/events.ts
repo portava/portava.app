@@ -569,7 +569,10 @@ async function syncEventState(sc: any, eventId: string): Promise<void> {
   } else if (["full", "waitlist"].includes(current) && !(await hasActiveWaitlistOffer(sc, eventId))) {
     newState = "open";
   }
-  if (newState !== current) await writeEventState(sc, eventId, current, newState);
+  if (newState !== current) {
+    const w = await writeEventState(sc, eventId, current, newState);
+    if (!w.ok) logger.warn({ eventId, from: current, to: newState, code: w.code }, "event capacity sync did not write");
+  }
 }
 
 /**
