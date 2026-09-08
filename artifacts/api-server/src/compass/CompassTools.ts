@@ -57,6 +57,7 @@ import {
   type PassportViewerContext,
 } from "../services/passport/PassportProjectionService.js";
 import { getActiveWindows } from "../services/passport/OpenToPlansService.js";
+import { readGroupBlockExclusions, exclusionsUnavailable, type ExclusionSet } from "../lib/exclusionSet.js";
 
 // ── Tool definitions (OpenAI function schemas) ────────────────────────────────
 
@@ -977,20 +978,20 @@ async function resolveGroupMemberIds(
   return { memberIds: [...ids], groupLabel: trip.title ? wrapUgc(String(trip.title)) : "the trip group", circleOwnerId: null };
 }
 
-/** Union of block relationships (both directions) involving any group member. */
-async function groupBlockUnion(sc: SupabaseClient, memberIds: string[]): Promise<string[]> {
+/**
+ * Union of block relationships (both directions) involving any group member.
+ *
+ * FAIL-CLOSED, shape 2/3 (lib/exclusionSet.ts): returns an `ExclusionSet`, so
+ * "unreadable" is a value the caller must handle rather than an empty array it
+ * cannot tell apart from "nobody in this group has blocked anybody". Both the
+ * old `(x ?? [])` reads AND the `catch` returned that indistinguishable `[]`;
+ * a group recommendation then ranked and surfaced people a member had blocked.
+ */
+async function groupBlockUnion(sc: SupabaseClient, memberIds: string[]): Promise<ExclusionSet> {
   try {
-    const [{ data: asBlocker }, { data: asBlocked }] = await Promise.all([
-      sc.from("blocks").select("blocker_id, blocked_id").in("blocker_id", memberIds),
-      sc.from("blocks").select("blocker_id, blocked_id").in("blocked_id", memberIds),
-    ]);
-    const out = new Set<string>();
-    for (const b of ((asBlocker ?? []) as any[])) out.add(String(b.blocked_id));
-    for (const b of ((asBlocked ?? []) as any[])) out.add(String(b.blocker_id));
-    for (const id of memberIds) out.delete(id); // members themselves stay
-    return [...out];
-  } catch {
-    return [];
+    return await readGroupBlockExclusions(sc, memberIds);
+  } catch (e) {
+    return exclusionsUnavailable(e);
   }
 }
 
@@ -1016,14 +1017,23 @@ async function toolGroupRecommendation(
     sc.from("profiles").select(PREF_COLUMNS).in("id", memberIds),
     groupBlockUnion(sc, memberIds),
   ]);
+  // The whole point of a GROUP recommendation is that it is shared with the
+  // group, so a candidate one member blocked must not appear in it. With the
+  // block union unreadable there is no filtered answer to give — and this tool
+  // already has a vocabulary for "cannot answer" that the assistant renders as
+  // a sentence, so it says so instead of returning an unfiltered ranking.
+  if (!blockUnion.ok) {
+    return { candidates: [], info: "Group block state could not be read, so no group recommendation was made." };
+  }
+  const blockUnionIds = [...blockUnion.ids];
   const members = ((profRows ?? []) as any[]).map(prefsFromRow);
   if (members.length === 0) return { candidates: [], info: "Group member profiles are not available." };
 
   const agg = aggregateGroupPreferences(members);
   const viewerProfile: CompassProfile =
     profile ?? ({ userId, blockedUserIds: [], blockerUserIds: [], mutedUserIds: [] } as unknown as CompassProfile);
-  const groupProfile = buildGroupRankingProfile(viewerProfile, agg, blockUnion);
-  const excluded = new Set<string>([...hidden, ...blockUnion]);
+  const groupProfile = buildGroupRankingProfile(viewerProfile, agg, blockUnionIds);
+  const excluded = new Set<string>([...hidden, ...blockUnionIds]);
 
   // Phase 6 circle memories → group ranking. Membership-gated inside the
   // loader (fail-closed), boost stays bounded exactly like personal memories.

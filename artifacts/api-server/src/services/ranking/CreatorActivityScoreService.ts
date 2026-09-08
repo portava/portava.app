@@ -528,6 +528,25 @@ export class CreatorSignalAggregator {
     // round-trip is acceptable; everything else runs in parallel after.
     const blockedIds = await this._fetchBlockedIds(userId);
 
+    // FAIL-CLOSED, shape 2 (lib/exclusionSet.ts). An unreadable block list does
+    // NOT stop the pass — that is `trust_profiles`' privilege, because it is a
+    // veto. It zeroes exactly the two components the block set filters, which
+    // is this class's stated rule for every non-veto input: "degrades to zero
+    // on failure, which understates a creator's activity rather than
+    // overstating their safety." Contributions, active days, maintenance, spam
+    // signals and the safety multiplier are not block-scoped and are still
+    // computed, so the score is a real (lower) score, not a refusal.
+    const blockScoped = blockedIds !== null;
+    if (!blockScoped) {
+      // This score is PERSISTED with a fresh calculated_at, so nothing
+      // downstream can tell a genuinely low participation score from one zeroed
+      // by an unreadable block list. Record it here or it leaves no trace.
+      logger.warn(
+        { userId },
+        "aggregate: blocks unreadable — participation and positive-response components scored as 0",
+      );
+    }
+
     const [
       contributions,
       activeDays,
@@ -539,8 +558,12 @@ export class CreatorSignalAggregator {
     ] = await Promise.all([
       this._fetchContributions(userId, ago24h, ago7d, ago30d, ago90d),
       this._fetchActiveDays(userId, ago90d),
-      this._fetchParticipation(userId, ago90d, blockedIds),
-      this._fetchPositiveResponses(userId, ago90d, blockedIds),
+      blockScoped
+        ? this._fetchParticipation(userId, ago90d, blockedIds!)
+        : Promise.resolve({ participationEvents: 0, participationDistinctUsers: 0 }),
+      blockScoped
+        ? this._fetchPositiveResponses(userId, ago90d, blockedIds!)
+        : Promise.resolve({ receivedPositiveActions: 0, receivedInteractionVolume: 0 }),
       this._fetchMaintenance(userId, ago90d),
       this._fetchSpamSignals(userId, ago90d),
       this._fetchSafetyMultiplier(userId),
@@ -559,14 +582,25 @@ export class CreatorSignalAggregator {
 
   // ── Blocked account IDs ───────────────────────────────────────────────────
 
-  /** Build the set of user IDs the creator has blocked or been blocked by. */
-  private async _fetchBlockedIds(userId: string): Promise<Set<string>> {
+  /**
+   * Build the set of user IDs the creator has blocked or been blocked by.
+   *
+   * Returns null when `blocks` could not be READ. That is not the same as an
+   * empty set, and the difference is the whole defect: an empty set means
+   * "exclude nobody", so a resolved DB error used to let likes, saves, follows
+   * and comments from blocked and blocking accounts count towards this
+   * creator's participation and positive-response signals — the two components
+   * an abuser most wants inflated, inflated exactly by the accounts that
+   * blocked them.
+   */
+  private async _fetchBlockedIds(userId: string): Promise<Set<string> | null> {
     try {
       // blocks table: blocker_id, blocked_id
-      const { data } = await (this.db as any)
+      const { data, error } = await (this.db as any)
         .from("blocks")
         .select("blocker_id, blocked_id")
         .or(`blocker_id.eq.${userId},blocked_id.eq.${userId}`);
+      if (error) return null;
 
       const ids = new Set<string>();
       for (const r of (data as any[]) ?? []) {
@@ -575,7 +609,7 @@ export class CreatorSignalAggregator {
       }
       return ids;
     } catch {
-      return new Set();
+      return null;
     }
   }
 

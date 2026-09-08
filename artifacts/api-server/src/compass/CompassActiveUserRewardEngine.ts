@@ -184,20 +184,33 @@ async function loadEvents(db: SupabaseClient, userId: string): Promise<any[]> {
   }
 }
 
-/** Check if user has an active trust cap. Never throws. */
+/**
+ * Check if user has an active trust cap. Never throws.
+ *
+ * FAIL-CLOSED, shape 1 (lib/exclusionSet.ts): `trust_caps` is an exclusion
+ * table — a row means this user is CAPPED and must not receive the active-user
+ * visibility boost. The narrow fail-closed answer is therefore `true`: withhold
+ * one discretionary boost from one user. Nothing is denied to the user, nothing
+ * is shown to anyone who should not see it, and the next pass re-reads the cap.
+ *
+ * Both old exits returned `false` — "not capped" — on failure: `(data ?? [])`
+ * for the resolved-error path supabase-js actually takes, and the catch for the
+ * client fault it does not. A capped account got its boost back during a blip.
+ */
 async function hasActiveTrustCap(db: SupabaseClient, userId: string): Promise<boolean> {
   try {
     const now = new Date().toISOString();
-    const { data } = await db
+    const { data, error } = await db
       .from("trust_caps")
       .select("id")
       .eq("user_id", userId)
       .is("lifted_at", null)
       .or(`expires_at.is.null,expires_at.gt.${now}`)
       .limit(1);
+    if (error) return true; // cap state unknown → treat as capped, withhold the boost
     return ((data as any[]) ?? []).length > 0;
   } catch {
-    return false;
+    return true;
   }
 }
 

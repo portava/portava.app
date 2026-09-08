@@ -60,6 +60,7 @@ import { enrichSpans } from '../lib/enrichSpans';
 import { circleThreadTitle } from '../lib/displayName';
 import { NotificationService } from '../services/notifications/NotificationService.js';
 import { NotificationRouter } from '../services/notifications/NotificationRouter.js';
+import { readBlockExclusions, isExcluded } from '../lib/exclusionSet.js';
 
 const router = Router();
 
@@ -1110,14 +1111,23 @@ router.get('/me/unread-counts', async (req, res) => {
     const now = new Date().toISOString();
 
     // 1. Get IDs of users blocked in either direction.
-    const [blockedByMe, blockingMe] = await Promise.all([
-      sc.from('blocks').select('blocked_id').eq('blocker_id', user.id),
-      sc.from('blocks').select('blocker_id').eq('blocked_id', user.id),
-    ]);
-    const blockedSet = new Set<string>([
-      ...((blockedByMe.data ?? []).map((r: any) => r.blocked_id as string)),
-      ...((blockingMe.data ?? []).map((r: any) => r.blocker_id as string)),
-    ]);
+    //
+    // FAIL-CLOSED, shape 2 (lib/exclusionSet.ts): the block set scopes ONE of
+    // the four numbers this endpoint returns. `messages`, `notifications` and
+    // `meetups` are not block-scoped and are already computed above, so the
+    // narrow honest answer is to leave `newHighlights` at its 0 default rather
+    // than 503 the whole badge endpoint. `isExcluded` returns true for every id
+    // when the set is unreadable, so `circleIds` empties, the highlights count
+    // is skipped, and the badge under-reports instead of surfacing a highlight
+    // from someone the caller blocked. Previously `(x.data ?? [])` turned a
+    // resolved DB error into an empty block set and the count included them.
+    const blockSet = await readBlockExclusions(sc, user.id);
+    if (!blockSet.ok) {
+      req.log.warn(
+        { reason: blockSet.reason },
+        'unread-counts: block list unreadable — newHighlights reported as 0',
+      );
+    }
 
     // 2. Get IDs of users in the caller's circle.
     const { data: circleRows } = await sc
@@ -1126,7 +1136,7 @@ router.get('/me/unread-counts', async (req, res) => {
       .eq('user_id', user.id);
     const circleIds = (circleRows ?? [])
       .map((r: any) => r.other_id as string)
-      .filter((id: string) => !blockedSet.has(id));
+      .filter((id: string) => !isExcluded(blockSet, id));
 
     if (circleIds.length > 0) {
       // 3. Count active highlights from circle members posted after last view.
