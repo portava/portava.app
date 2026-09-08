@@ -23,8 +23,13 @@
  *   circle    → readCircleLocations     (kill switch + membership + blocks +
  *                                        affirmative consent + master switch +
  *                                        SERVER-SIDE coarsening)
- *   trips     → loadViewerTrips         (accepted-membership scope, then the
- *                                        shared toAuthorizedTripView DTO)
+ *   trips     → readTripStopLayer       (accepted-membership scope, then EITHER
+ *                                        the §19.4 trip_map_projections read
+ *                                        model or the canonical `trips` +
+ *                                        toAuthorizedTripView path, chosen by
+ *                                        the capability contract — see
+ *                                        lib/mapProjectionTripRead and the
+ *                                        `trips` report / X-Map-Trip-Source)
  *
  * The block set is resolved ONCE, fail-closed: if it cannot be read, nobody is
  * returned. That single set is handed to every people-bearing source —
@@ -110,7 +115,10 @@ import { fetchBlockedSet } from "../lib/blocks.js";
 import { listMapTravelers } from "../lib/mapTravelers.js";
 import { readCircleLocations } from "../lib/circleLocationsRead.js";
 import { readBuddyMapPins } from "../lib/buddyMapRead.js";
-import { toAuthorizedTripView } from "../lib/privacy/tripSerializers.js";
+import {
+  readTripStopLayer,
+  type TripLayerReport,
+} from "../lib/mapProjectionTripRead.js";
 import { findNearbyGems } from "../services/hiddenGems/HiddenGemDiscoveryService.js";
 import { applyGemPrivacyBatch } from "../services/hiddenGems/HiddenGemPrivacyGuard.js";
 import { readLiveClaims, toLiveClaimEnvelope } from "../lib/liveClaimRead.js";
@@ -177,7 +185,6 @@ import {
   withholdCoarsenableAggregates,
   type CityGeographyParseResult,
   type FlowZone,
-  type TripViewLike,
 } from "../lib/mapProjection.js";
 
 const router = Router();
@@ -463,45 +470,6 @@ interface WorldIntelligenceReport {
   worldMoments: WorldMomentReport | null;
 }
 
-/**
- * The viewer's own trips, scoped exactly as GET /api/trips/me scopes them.
- *
- * WHY THIS READ IS HERE AND NOT EXTRACTED
- * =======================================
- * The trips layer has no leftover privacy logic to extract: its FIELD-level
- * discipline — which trip columns an authorized viewer may see — already lives
- * in the shared `toAuthorizedTripView` DTO, and that is what this calls. The
- * only thing restated is the SCOPE predicate: "rows in trip_members for this
- * user whose role is not 'invited'". An invited-but-not-accepted member must
- * NOT get the authorized view, so that `.neq("role", "invited")` is the whole
- * privacy decision, and src/test/mapProjectionLayers.test.ts pins it against
- * GET /api/trips/me's own output over the same data rather than trusting that
- * two copies of one predicate will stay in step.
- *
- * Failure returns null (not []) so the caller can leave the layer OUT of
- * `sources` rather than claim an empty trips layer it never successfully read.
- */
-async function loadViewerTrips(sc: any, viewerId: string): Promise<TripViewLike[] | null> {
-  const { data: memberRows, error: memErr } = await sc
-    .from("trip_members")
-    .select("trip_id, role")
-    .eq("user_id", viewerId)
-    .neq("role", "invited");
-  if (memErr) return null;
-
-  const tripIds = ((memberRows ?? []) as any[]).map((r) => r.trip_id as string);
-  if (tripIds.length === 0) return [];
-
-  const { data: trips, error: tripsErr } = await sc
-    .from("trips")
-    .select("*")
-    .in("id", tripIds)
-    .not("status", "is", null);
-  if (tripsErr) return null;
-
-  return ((trips ?? []) as any[]).map(toAuthorizedTripView) as unknown as TripViewLike[];
-}
-
 router.get(
   "/map/projection",
   asyncHandler(async (req, res) => {
@@ -539,6 +507,7 @@ router.get(
         crowdFlow: null,
         producers: null,
         places: null,
+        trips: null,
         worldIntelligence: null,
         display: null,
         generatedAt,
@@ -613,6 +582,7 @@ router.get(
         crowdFlow: null,
         producers: null,
         places: null,
+        trips: null,
         worldIntelligence: null,
         display: null,
         generatedAt,
@@ -804,12 +774,27 @@ router.get(
       );
     }
 
+    // ── trip_stop: the FIRST reader of the §19.4 trip projection ────────────
+    //
+    // lib/mapProjectionTripRead picks the branch through the capability
+    // contract (FLAG_ENABLED && SCHEMA_CAPABILITY_READY, fail-closed) and
+    // returns the SAME `TripViewLike` shape from either, so `projectTrip`
+    // below is the one and only place a trip becomes a MapObject and the two
+    // branches cannot drift. `tripLayer.report.path` says which one ran.
+    //
+    // `trips === null` means the layer was not READ — a scope failure, a
+    // canonical failure, or a projection that answered an error. It is left
+    // out of `sources`, exactly as before, so an unread layer is never served
+    // as an empty one.
+    const tripLayer: { report: TripLayerReport | null } = { report: null };
     if (wantKind("trip_stop")) {
       tasks.push(
         (async () => {
-          const trips = await loadViewerTrips(sc, user.id).catch(() => null);
-          if (trips === null) return;
-          for (const t of trips) collected.push(projectTrip(t));
+          const layer = await readTripStopLayer(sc, user.id).catch(() => null);
+          if (!layer) return;
+          tripLayer.report = layer.report;
+          if (layer.trips === null) return;
+          for (const t of layer.trips) collected.push(projectTrip(t));
           sources.push("trips");
         })(),
       );
@@ -1035,6 +1020,7 @@ router.get(
         crowdFlow: null,
         producers: null,
         places: null,
+        trips: null,
         worldIntelligence: null,
         display: null,
         generatedAt,
@@ -1327,6 +1313,20 @@ router.get(
 
     const { page, nextCursor } = paginate(servable, cursor, limit);
 
+    // WHICH BRANCH RAN, as a header as well as a body field: an operator
+    // watching the edge must be able to see the trip layer flip from the
+    // canonical `trips` read to the §19.4 projection without parsing a body.
+    // "absent" = the layer was not requested; "unread" = it was requested and
+    // could not be read (and is therefore absent from `sources` too).
+    res.setHeader(
+      "X-Map-Trip-Source",
+      tripLayer.report === null
+        ? "absent"
+        : tripLayer.report.refusal !== null
+          ? `${tripLayer.report.path}:unread`
+          : tripLayer.report.path,
+    );
+
     res.json({
       enabled: true,
       objects: page,
@@ -1362,6 +1362,13 @@ router.get(
       // also absent from `sources`). Otherwise the row count and whether the
       // bounded read was a SAMPLE of the viewport — see lib/mapProjectPlace.
       places: placesReport.report,
+      // Null when the trip_stop layer was not requested. Otherwise WHICH
+      // BRANCH RAN (`path`), the capability verdict that chose it, the named
+      // refusal when the layer could not be read, and the fold counters — so
+      // an empty trip layer is never ambiguous between "no trips", "the
+      // projection is not ready", "the projection is broken" and "nothing
+      // asked". See TripLayerReport.
+      trips: tripLayer.report,
       // Null when no Phase 7 kind was requested. Otherwise counts + refusals,
       // so "no world intelligence" is never ambiguous between "the gates said
       // no", "the flag is off" and "nothing asked". See WorldIntelligenceReport.
