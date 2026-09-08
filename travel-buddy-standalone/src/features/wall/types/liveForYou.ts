@@ -56,5 +56,13 @@ export interface LiveForYouItem {
   truthClass?: WallTruthClass;
   /** Sensing §108 coverage bucket. `unknown` ≠ none. */
   coverage?: WallCoverage;
+  /**
+   * §37 disclosure, carried from the server: "Sponsored" / "Owner-supplied".
+   * Present ONLY for a promotional source class. The client never derives it —
+   * it is server-resolved alongside `truthClass` from the same source class, so
+   * the two cannot disagree, and an absent value means not promotional rather
+   * than unknown.
+   */
+  promotionLabel?: string;
   action?: WallAction;
 }

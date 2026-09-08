@@ -43,7 +43,11 @@ import type {
   WallAction,
   WallProjection,
 } from "../../lib/wallProjection.js";
-import { coverageFromBucket, deriveWallTruthClass } from "../../lib/wallProjection.js";
+import {
+  coverageFromBucket,
+  deriveWallTruthClass,
+  promotionLabelFor,
+} from "../../lib/wallProjection.js";
 import { readLiveClaimEnvelopes, type LiveClaimEnvelope } from "../../lib/liveClaimRead.js";
 import { deriveGemProjection } from "../hiddenGems/HiddenGemContributionService.js";
 import { isFlagEnabled } from "../../lib/featureFlags.js";
@@ -346,6 +350,12 @@ async function readLivePlaceCandidate(
           coverage: coverageFromBucket(env.sourceCountBucket),
         }),
         coverage: coverageFromBucket(env.sourceCountBucket),
+        // §37: the SAME sourceClass that just downgraded the truth class also
+        // produces the viewer-facing disclosure. Spreading the field means a
+        // non-promotional claim carries no key at all (absence ≠ "Organic").
+        ...(promotionLabelFor(env.sourceClass) !== null
+          ? { promotionLabel: promotionLabelFor(env.sourceClass) as string }
+          : {}),
         action,
       },
       gate: {

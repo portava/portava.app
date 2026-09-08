@@ -231,6 +231,67 @@ export function deriveWallTruthClass(input: {
   return "observed";
 }
 
+// ── Promoted / paid content (spec §37, §35 non-negotiable) ──────────────────
+//
+// "Paid/promoted content, if introduced later, is explicitly labeled and
+// separated from factual live confidence."
+//
+// THE SEPARATION HALF HAS ALWAYS BEEN HERE, AND ONLY THAT HALF.
+// `deriveWallTruthClass` maps `sponsored` / `imported_owned` to `inferred`,
+// which is in NON_OBSERVATION_TRUTH_CLASSES, so no amount of coverage can
+// promote a paid claim into an observation. That is the "separated from factual
+// live confidence" half, enforced in the contract.
+//
+// The LABEL half was missing, and its absence was not hypothetical. These two
+// source classes are already in the canonical intel vocabulary and already
+// reach the Wall's producers; a sponsored claim was rendered with a quieter
+// truth class and NO WORD ANYWHERE SAYING IT WAS SPONSORED. "Separated but
+// unlabelled" is half a rule, and it is the half a viewer cannot see.
+//
+// The label is derived from the SAME `sourceClass` the truth class is derived
+// from, in the same call, so the two can never disagree — a producer cannot
+// label something sponsored while rendering it observed, or render it inferred
+// while staying silent about why.
+
+/** Source classes that are one party asserting something about itself. */
+export const PROMOTIONAL_SOURCE_CLASSES: readonly string[] = [
+  "sponsored",
+  "imported_owned",
+] as const;
+
+/** True when this source class is a promotional / self-asserted claim (§37). */
+export function isPromotionalSourceClass(sourceClass: string | null | undefined): boolean {
+  return sourceClass != null && PROMOTIONAL_SOURCE_CLASSES.includes(sourceClass);
+}
+
+/**
+ * The viewer-facing disclosure for a promotional source class, or null when the
+ * class is not promotional.
+ *
+ * THESE STRINGS ARE NOT NEW WORDING. They are `intelContracts.SOURCE_CLASS_LABELS`
+ * for the same two classes, repeated here rather than imported because this
+ * contract module is deliberately dependency-free (see `deriveWallTruthClass`:
+ * `sourceClass` is a string, not the imported union, for exactly that reason).
+ * A repeated constant is a constant that can drift, so the repetition is not
+ * left on trust — wallPromotionDisclosure.test.ts imports BOTH modules and
+ * asserts they still agree, which is the only place the two can be compared
+ * without giving this file a dependency.
+ *
+ * Two distinct labels rather than one: `sponsored` is a commercial relationship
+ * and `imported_owned` is a venue describing itself. Collapsing them would tell
+ * the viewer less than the system knows, and §37 is about what the viewer is
+ * told.
+ *
+ * Returns null — not "" and not "Organic" — for everything else. A non-
+ * promotional item carries NO promotion field at all, so the absence of a label
+ * is the absence of a claim rather than a claim of absence.
+ */
+export function promotionLabelFor(sourceClass: string | null | undefined): string | null {
+  if (sourceClass === "sponsored") return "Sponsored";
+  if (sourceClass === "imported_owned") return "Imported source";
+  return null;
+}
+
 /** Map the read path's coarse cohort bucket to a Wall coverage value. */
 export function coverageFromBucket(bucket: string | null | undefined): WallCoverage {
   if (bucket === "few" || bucket === "several" || bucket === "many") return bucket;
@@ -313,6 +374,11 @@ export interface ContextThread {
   truthClass?: WallTruthClass;
   /** Sensing §108: coarse independent-evidence bucket. `unknown` ≠ none. */
   coverage?: WallCoverage;
+  /**
+   * §37 disclosure — see `promotionLabelFor`. Present only for a promotional
+   * source class, derived alongside `truthClass` from the same input.
+   */
+  promotionLabel?: string;
   action?: WallAction;
 }
 
@@ -507,6 +573,13 @@ export interface LiveForYouItem {
   truthClass: WallTruthClass;
   /** Sensing §108: coarse independent-evidence bucket behind the state. */
   coverage: WallCoverage;
+  /**
+   * §37 disclosure: present ONLY when the claim behind this item comes from a
+   * promotional source class, and derived from the same `sourceClass` the truth
+   * class is, so the label and the epistemic downgrade can never disagree.
+   * Absent means "not promotional", never "unknown" — see promotionLabelFor.
+   */
+  promotionLabel?: string;
   action?: WallAction;
 }
 

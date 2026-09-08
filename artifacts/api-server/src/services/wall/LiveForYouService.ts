@@ -65,7 +65,11 @@ import type {
   WallCoverage,
   WallTruthClass,
 } from "../../lib/wallProjection.js";
-import { coverageFromBucket, deriveWallTruthClass } from "../../lib/wallProjection.js";
+import {
+  coverageFromBucket,
+  deriveWallTruthClass,
+  promotionLabelFor,
+} from "../../lib/wallProjection.js";
 
 /** Absolute ceiling on strip size (spec §4: "normally 2–4 items"). */
 export const MAX_LIVE_FOR_YOU = 4;
@@ -304,6 +308,11 @@ export async function buildLiveForYou(
         coverage: coverageFromBucket(env.sourceCountBucket),
       }),
       coverage: coverageFromBucket(env.sourceCountBucket),
+      // §37: derived from the same `env.sourceClass` as truthClass above, so a
+      // sponsored claim cannot be quietly downgraded without also being named.
+      ...(promotionLabelFor(env.sourceClass) !== null
+        ? { promotionLabel: promotionLabelFor(env.sourceClass) as string }
+        : {}),
       action: actionFor(cand),
     });
   }

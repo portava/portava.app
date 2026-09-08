@@ -36,6 +36,8 @@ export interface ContextThread {
   /** Sensing §108 truth class of the fact behind this thread, carried from the
    *  server. Absent reads as `unknown` — never as an observation. */
   truthClass?: WallTruthClass;
+  /** §37 disclosure, server-resolved. See LiveForYouItem.promotionLabel. */
+  promotionLabel?: string;
   /** Sensing §108 coverage bucket. */
   coverage?: WallCoverage;
   action?: WallAction;

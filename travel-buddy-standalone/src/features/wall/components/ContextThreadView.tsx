@@ -89,6 +89,15 @@ export function ContextThreadView({
   // gets none, so the annotation appears exactly where it changes the meaning.
   const qualifier = truthQualifierLabel(thread.truthClass);
 
+  // §37 "paid/promoted content is explicitly labeled and separated from factual
+  // live confidence". The SEPARATION already happened on the server (a
+  // promotional source class can only produce a non-observation truth class);
+  // this is the LABEL, which is the half a viewer can actually see. It is the
+  // server's string rendered verbatim — the client classifies nothing — and it
+  // renders BEFORE the truth qualifier, because "who is telling you this"
+  // changes how the rest of the row should be read.
+  const promotion = thread.promotionLabel ?? null;
+
   // A compass-kind thread is actionable even without an explicit action: it
   // hands the object to Compass (spec §21). Every other kind needs an action.
   const isCompass = thread.kind === 'compass';
@@ -112,6 +121,11 @@ export function ContextThreadView({
       <View style={s.textCol}>
         <Text style={s.label} numberOfLines={2}>
           {thread.label}
+          {promotion ? (
+            <Text style={s.promotion} testID={`wall-context-promotion-${thread.kind}`}>
+              {`  ·  ${promotion}`}
+            </Text>
+          ) : null}
           {qualifier ? (
             <Text style={s.qualifier} testID={`wall-context-truth-${thread.kind}`}>
               {`  ·  ${qualifier}`}
@@ -144,9 +158,9 @@ export function ContextThreadView({
       style={s.container}
       onPress={onAct}
       accessibilityRole="button"
-      accessibilityLabel={`${thread.label}${qualifier ? `, ${qualifier}` : ''}${
-        actionLabel ? `, ${actionLabel}` : ''
-      }`}
+      accessibilityLabel={`${thread.label}${promotion ? `, ${promotion}` : ''}${
+        qualifier ? `, ${qualifier}` : ''
+      }${actionLabel ? `, ${actionLabel}` : ''}`}
       testID={`wall-context-${thread.kind}`}
     >
       {body}
@@ -171,5 +185,10 @@ const s = StyleSheet.create({
   // Deliberately the QUIET colour: a "Scheduled"/"Inferred" qualifier must be
   // legible, never louder than the fact it qualifies (spec §35).
   qualifier: { ...t.small, color: color.mute, fontWeight: '700' },
+  // Same weight and colour as the truth qualifier: a disclosure that whispers is
+  // not a disclosure. `mute` clears AA on both Wall surfaces (see the contrast
+  // suite in WallAccessibility.component.test.tsx), and it is not the accent —
+  // a sponsored row must not read as a promoted-looking highlight.
+  promotion: { ...t.small, color: color.mute, fontWeight: '700' },
   reason: { ...t.small, color: color.mute },
 });

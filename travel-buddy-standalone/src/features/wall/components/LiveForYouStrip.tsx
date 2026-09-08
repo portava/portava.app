@@ -109,11 +109,30 @@ export function LiveForYouStrip({
             // knows where in the strip they are rather than hearing four
             // unanchored fragments.
             accessible
-            accessibilityLabel={`${item.label}. ${stateLabel(item)}. ${idx + 1} of ${
-              bounded.length
-            }`}
+            // §37: the disclosure is part of the card's ONE spoken label, not
+            // a separate focus stop — a screen-reader user must not have to
+            // discover that the card is sponsored by exploring past it. It is
+            // spoken FIRST, before the state word, for the same reason it is
+            // rendered first: it changes how "Live now" should be heard.
+            accessibilityLabel={`${
+              item.promotionLabel ? `${item.promotionLabel}. ` : ''
+            }${item.label}. ${stateLabel(item)}. ${idx + 1} of ${bounded.length}`}
             accessibilityHint="Opens this live item"
           >
+            {item.promotionLabel ? (
+              // §37 label half. The separation half already happened on the
+              // server: a promotional source class cannot produce an observed
+              // truth class, so this card's state word is already a
+              // non-observation one. This says WHY, in text, above it.
+              <Text
+                style={s.cardPromotion}
+                numberOfLines={1}
+                importantForAccessibility="no"
+                testID={`wall-live-promotion-${item.id}`}
+              >
+                {item.promotionLabel}
+              </Text>
+            ) : null}
             <Text
               style={s.cardState}
               numberOfLines={1}
@@ -170,6 +189,10 @@ const s = StyleSheet.create({
   // to be readable: `deep` (teal-ink) is 11.80:1. Nothing is lost — §36 already
   // forbids conveying live state by colour alone, and the word itself carries it.
   cardState: { ...t.stamp, color: color.deep },
+  // `mute` on paperRaised, the same pairing the contrast suite pins for
+  // secondary text. Deliberately NOT the accent: a sponsored card must not
+  // be the most eye-catching thing in the strip (§35/§37).
+  cardPromotion: { ...t.stamp, color: color.mute },
   cardLabel: { ...t.small, color: color.ink, fontWeight: '700' },
   cardPlace: { flexDirection: 'row', alignItems: 'center', gap: space.xs, marginTop: 2 },
   cardPlaceText: { ...t.small, color: color.mute, flexShrink: 1 },
