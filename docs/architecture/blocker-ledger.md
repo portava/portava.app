@@ -1,6 +1,6 @@
 # Live blocker ledger
 
-**Updated 2026-09-07.** Every row measured, not inferred. Types: `CODE` ·
+**Updated 2026-09-08.** Every row measured, not inferred. Types: `CODE` ·
 `MANUAL_SQL` · `OPS_DATA` · `OWNER` · `EXTERNAL` · `HOLD`.
 
 "Buildable now?" means: can engineering finish it without owner action, without
@@ -119,6 +119,10 @@ zone covering the viewport, Crowd Flow refuses rather than approximating.
 | `EVENT_START_TRANSITION` | `2600` (**not applied to production**) | **OWNER** | Yes, safely | Classified 2026-09-08 — see below |
 | `MAP_CANCELLED_TRIP_VISIBILITY` | *nothing* | **OWNER** | Yes, safely | Classified 2026-09-08 — see below |
 | `PASSPORT_CREW_PRESENCE_AUDIENCE` | *nothing* | **OWNER** | Already fail-closed | **NEW 2026-09-08.** Two specs disagree and the code takes neither side — see below |
+| `GEM_MODERATION_AUDIT_ORDERING` | *nothing* | **OWNER** | Already loud | **NEW 2026-09-08.** Whether moderation blocks on an unwritable audit table — see below |
+| `SAVE_COUNT_UNSAVE_ASYMMETRY` | *needs an RPC* | **OWNER** | Partly | **NEW 2026-09-08.** `save_count` drifts upward for ever; the correct fix needs a schema change — see below |
+| `RAB_EARNINGS_LEDGER_VOIDING` | *nothing* | **OWNER** | Yes, safely | **NEW 2026-09-08.** Declined, expired and cancelled bookings still show estimated earnings — see below |
+| `MESSAGING_DEGRADED_READ_POSTURE` | *nothing* | **OWNER** | Yes, safely | **NEW 2026-09-08.** 43 enrichment reads across ~15 endpoints: 503 or degrade visibly — see below |
 
 ### `PASSPORT_CREW_PRESENCE_AUDIENCE` — surfaced while separating Safe Return from Locate Friends
 
@@ -186,6 +190,84 @@ follow is a product judgement:
 **Zero user impact either way today**, which is why deciding it now is cheap:
 production has **0 cancelled trips**, **0 rows** in `trip_map_projections`, and
 `map_trip_projection_read_enabled` is **FALSE**.
+
+### `GEM_MODERATION_AUDIT_ORDERING` — act-then-record, or record-then-act
+
+`recordGuideVerification` / `recordAdminVerification` in
+`services/hiddenGems/HiddenGemVerificationService.ts` write the audit row and
+then flip the gem's status **regardless of whether the row landed**. Measured
+2026-09-08: the audit write's error was discarded entirely, so a lost audit row
+was invisible.
+
+**Half of it is fixed and not a decision:** the hole is now loud
+(`ERROR`, `code: "verification_audit_row_lost"`). The ORDERING is the decision,
+and it is a genuine trade rather than an oversight:
+
+- **record-then-act** — refuse to moderate while `hidden_gem_verifications` is
+  unwritable. Every moderation action is then provably audited, and reported
+  content stays LIVE during the outage.
+- **act-then-record** (today) — moderation always works; an outage can lose the
+  record of who did it and why.
+
+Not decided here. Both answers are defensible and the choice is about which
+failure a moderator should be exposed to, which is a product call.
+
+### `SAVE_COUNT_UNSAVE_ASYMMETRY` — a counter that only goes up
+
+`unsaveGem` deletes the `hidden_gem_saves` row and does **not** decrement
+`hidden_gems.save_count`. Save → unsave → save therefore counts 2 for one save,
+and the drift is monotonic and permanent — nothing recomputes `save_count` from
+the rows.
+
+It is not cosmetic. `save_count` is a threshold input to `deriveHiddenGemState`
+(`lib/hiddenGemState.ts`): at `NO_LONGER_HIDDEN_SAVE_THRESHOLD` together with the
+visit threshold the gem becomes `no_longer_hidden`, which is the state that stops
+the system pushing a small real place that has already been discovered. Drift in
+this direction SUPPRESSES a gem on saves that no longer exist.
+
+**Why it is not simply fixed:** `increment_counter(table, column, row_id)` takes
+no delta, so a correct decrement needs either a schema change or a non-atomic
+read-modify-write carrying the same lost-update race the current fallback has.
+The migration that would settle it is written and **NOT APPLIED** — an
+`adjust_counter(table, column, row_id, delta)` with a `GREATEST(0, …)` floor,
+recorded in the discovery lane's report. Applying a function nothing calls would
+be applying a migration merely because it exists; it goes in when the caller
+does, under the usual gate.
+
+### `RAB_EARNINGS_LEDGER_VOIDING` — a money screen that counts bookings that did not happen
+
+Rent-a-Buddy earnings-ledger rows are written at booking CREATION and no
+terminal transition removes or marks them. `GET /me/earnings/ledger` reads every
+row for the buddy with no join to booking status, so **declined, expired and
+cancelled bookings still show estimated earnings**.
+
+Buildable either way — a join filter on the read, or a settlement writer on the
+terminal transitions — but the two produce different numbers on a screen about
+money, and picking one is a product decision rather than an engineering one.
+
+Two smaller asymmetries recorded with it, both measured 2026-09-08, neither
+fixed: `POST /safety/end-early` reaches the same terminal states as `/complete`
+and never increments `completed_count`, so an ended-early session counts 0 while
+an identical completion counts 1; and
+`completed_pending_traveler_confirmation` falls into no bucket of the earnings
+summary at all, so a finished session vanishes from the buddy's dashboard until
+the traveller confirms.
+
+### `MESSAGING_DEGRADED_READ_POSTURE` — 43 reads that render an outage as an empty thread
+
+`routes/messaging.ts` had 53 reads discarding `.error`; 10 were permission- or
+confidentiality-relevant and are fixed. The remaining **43 are display
+enrichment** — 10 `profiles` reads for names and avatars, 5 `messages` reads for
+previews and quotes, 3 `message_translations`, and unread counts. Each was read
+individually and every one fails CLOSED in the sense that matters: none of them
+can grant access.
+
+What they do instead is render a nameless or empty thread, which is a wrong
+answer about a person but not a permission failure. Fixing them means deciding,
+per endpoint across roughly fifteen of them, whether a degraded read should 503
+or degrade visibly — and that is a product call about what a user should see
+when half the page is unavailable. Classified OWNER-priority rather than FIX NOW
+for that reason, not because the work is hard.
 
 ## P6 — explicit holds
 
