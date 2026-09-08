@@ -116,6 +116,57 @@ zone covering the viewport, Crowd Flow refuses rather than approximating.
 | `LOCATION_PRECISION_DEFAULT` | *nothing* | OWNER | n/a | `2338` defaults to a no-op on purpose, so applying it does **not** pre-empt the product choice |
 | `STORY_HIGHLIGHT_VISIBILITY` | *nothing in this band* | OWNER | n/a | `2339` gates feed bounding only, behind a FALSE flag |
 | Layover L50 — what BLOCKED means on screen | — | OWNER | No | Whether an unsafe recommendation is hidden, greyed, or shown with a warning |
+| `EVENT_START_TRANSITION` | `2600` (**not applied to production**) | **OWNER** | Yes, safely | Classified 2026-09-08 — see below |
+| `MAP_CANCELLED_TRIP_VISIBILITY` | *nothing* | **OWNER** | Yes, safely | Classified 2026-09-08 — see below |
+
+### `EVENT_START_TRANSITION` — classified OWNER, and why it is not ENGINEERING
+
+The engineering question ("how does a row reach `started`?") has a settled
+answer: `decideEventStart` is a pure function and `2600` seeds
+`event_start_transition_enabled` FALSE. What is unsettled is a **product** rule
+with different outcomes for real people:
+
+| | (a) derived | (b) host-initiated |
+|---|---|---|
+| An event nobody attended | becomes `started` anyway | stays `open` forever |
+| The host forgets | nothing is blocked | the event can never be completed; no-shows never marked; `event_hosted` / `event_attended` never accrue |
+
+Neither follows from any existing contract — the two produce different products
+— so this is OWNER, not ENGINEERING. **Re-measured on production 2026-09-08 and
+the doc's numbers still hold exactly:** `started` **0**, `completed` **7**,
+`open` **97**, `event_activity_log` **0 rows**. `2600` is **not applied**, so
+the flag has no row and the transition cannot be enabled even by mistake.
+
+Consequence of not deciding, stated plainly: **no event can be completed through
+the API.** That is today's behaviour, not a regression this pass introduced.
+
+### `MAP_CANCELLED_TRIP_VISIBILITY` — classified OWNER; nothing was changed
+
+This decision was named in direction but **existed nowhere in the tree** — no
+code, no migration, no doc mentioned it. Written down here so it can be decided
+rather than drifted into.
+
+**Measured behaviour today.** `trip_map_projection_body` (2520) writes
+`'stage', t.status::text` — the trip's status verbatim, cancellation included —
+and `readTripStopLayer` passes it through as `status` with **no filtering**
+(`mapProjectionTripContract.ts:339`). So a cancelled trip keeps its pin and the
+pin carries `status: "cancelled"`. That is the current product behaviour and it
+was **left exactly as it is**.
+
+Note the contrast that makes this a real choice rather than an oversight: the
+meeting-point producer *does* drop cancelled items
+(`meetingPointProducer.ts:153`, `:287`, `:331`). So the codebase already
+contains both answers, applied to different surfaces. Which one a **trip** should
+follow is a product judgement:
+
+- **drop the pin** — the Map is a "what is happening" surface and a cancelled
+  trip is noise;
+- **keep it, marked cancelled** — crew who saw the pin yesterday learn *why* it
+  is gone instead of watching it vanish.
+
+**Zero user impact either way today**, which is why deciding it now is cheap:
+production has **0 cancelled trips**, **0 rows** in `trip_map_projections`, and
+`map_trip_projection_read_enabled` is **FALSE**.
 
 ## P6 — explicit holds
 
