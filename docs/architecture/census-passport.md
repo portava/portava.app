@@ -12,15 +12,15 @@
 | Measure | Value |
 | --- | --- |
 | **Denominator (testable requirements)** | **169** |
-| BUILT-AND-CORRECT | **150** |
-| BUILT-BUT-WRONG | **17** |
+| BUILT-AND-CORRECT | **152** |
+| BUILT-BUT-WRONG | **15** |
 | NOT-BUILT | **1** |
 | CANNOT-VERIFY | **1** |
 | **CONSTRUCTED%** = (correct+wrong)/denominator | **167 / 169 = 98.8%** |
-| **CORRECT%** = correct/denominator | **150 / 169 = 88.8%** |
+| **CORRECT%** = correct/denominator | **152 / 169 = 89.9%** |
 | CANNOT-VERIFY share | **1 / 169 = 0.6%** |
 
-Counted from the rows: 150 + 17 + 1 + 1 = 169. Previously 145 / 21 / 2 / 1.
+Counted from the rows: 152 + 15 + 1 + 1 = 169. Previously 145 / 21 / 2 / 1.
 
 **Five rows moved on 2026-09-08, and only one of them by building anything.**
 P98 (Map) moved N→C when the map adopted a batch Passport projection — that was
@@ -29,6 +29,15 @@ BUILT-BUT-WRONG on the finding "the variant exists and nothing calls it", and
 every one of the six variants now has a caller. Those four were already true at
 `ebe72b34 + n`; the census had simply not been re-read. `canProvideVisaBuddyService`
 (P59) is now the only NOT-BUILT requirement.
+
+**Two more rows moved later the same day, and this time one was built.** **P68**
+(verification treatment in the stamp detail view) moved W→C by building it — the
+provenance data was already on that screen and only the *presentation* was
+unreachable, so the fix was to give it one home rather than a second copy.
+**P138** moved W→C on the call sites with no code change: its finding was that
+Follow/Message "still gate on `isAuthed`", and they consume the projection's
+capabilities; the one surviving `isAuthed` gate covers Report and Block, which
+must stay reachable by someone the subject has blocked.
 
 A note on not double-counting: Discovery's search list and Compass's traveler
 suggestions still build identity inline. That remainder is carried by **P169
@@ -276,7 +285,7 @@ NOT-BUILT · **?** = CANNOT-VERIFY. Backend paths are relative to
 | --- | --- | --- | --- |
 | P66 | Premium collectible appearance with perforated / passport-stamp edges | **?** | The perforated-edge half is present and decidable — dashed stamp borders throughout (`src/components/PassportStamps.tsx:104,179`, `src/components/PassportStampCard.tsx:106`, `src/components/ui/VerifiedStamp.tsx:40`, `src/components/PassportVerificationStamp.tsx:154`). "Premium collectible appearance" is the load-bearing clause and it needs a rendered screen, so this is ruled the same way as the Wall census rules "generous whitespace". |
 | P67 | Unique country/city/event motifs rather than identical generic badges | C | Per-stamp artwork is a first-class system: `stamp_artwork_definitions` / `stamp_artwork_versions` / `stamp_generation_queue` (all in production), rendered at `PassportStampCollection.tsx:104-111` with a coloured per-kind placeholder fallback (`kindAccent`). |
-| P68 | Issue date **and verification treatment** visible in the detail view | **W** | The detail view shows the issue date (`src/components/stamps/StampDetailModal.tsx:187`) and a human source label (`:180` `SOURCE_LABELS[stamp.sourceType]`), but a grep of that file for `verification` returns nothing — the verification treatment lives on the collection **card** (`PassportStampCollection.tsx:75-85`), not in the detail view the spec names. |
+| P68 | Issue date **and verification treatment** visible in the detail view | C | **Moved W→C 2026-09-08 by building it.** The detail view shows the issue date (`src/components/stamps/StampDetailModal.tsx:191#Earned`) and now the verification treatment beside it (`:208#Verification`), derived by the CANONICAL decision (`src/services/passportStampMappers.ts:37#deriveStampVerification`, from `sourceType` + `verificationLevel`, fail-closed) and rendered from the shared presentation (`src/features/passport/stampVerificationPresentation.ts:42#VERIFICATION_META`). The data was never missing from this screen — `PassportStampNew` already carried both inputs; the PRESENTATION was module-private inside the stamp strip, so it existed in one place and could not be reached from another. Both surfaces now import it and a test asserts neither re-declares the label or the colour. §27 holds and is asserted: three distinct words, glyphs and colours, so the row survives greyscale and a screen reader, and only `verified` wears the shield. |
 | P69 | Metallic accents and subtle depth may distinguish premium/earned states | C | `src/theme/passportTokens.ts:17-18` `gold` / `goldLight`; gold-ring avatar (`PassportIdentityCard.tsx:3`); `STAMP_RARITY_COLORS` + rarity pip (`src/components/StampCard.tsx:73,137`). |
 | P70 | Stamp detail links to Journey and My World while respecting historical-location privacy | C | `StampDetailModal.tsx:13` imports `journeysHref` / `myWorldHref`; `:201` `stamp-open-journey`, `:212` `stamp-open-my-world`. Privacy holds because `PassportPrivacyGuard.guardStamp:154` strips `place_id` from a `hidden_gem` stamp and `PassportMapService.buildMapPayload` selects city/neighborhood only (`:44-47`). |
 
@@ -431,7 +440,7 @@ NOT-BUILT · **?** = CANNOT-VERIFY. Backend paths are relative to
 | id | Requirement | V | Evidence |
 | --- | --- | --- | --- |
 | P137 | The actions block: can_follow, can_message, can_make_plan, can_invite_trip, can_view_availability, can_view_trust | C | `buildViewerActions:583-610` — exactly those six, and all six forced false for a blocked or unavailable owner (`:590-599`). |
-| P138 | The client must not recreate policy; the server owns authorization | **W** | The rule holds where it matters — no client-side trust math exists anywhere in the passport tree, and `usePassportPlans.ts:210` reads `proj.actions.can_make_plan` verbatim. But the public passport's Follow/Message controls still gate on `isAuthed` rather than consuming `can_follow` / `can_message` from the projection (the certification's F7, unchanged). No policy is *recreated*, so §30's prohibition is not violated; the positive half — "the server owns viewer-specific action eligibility" — is only partly consumed. |
+| P138 | The client must not recreate policy; the server owns authorization | C | **Moved W→C 2026-09-08 from the call sites; no code changed.** The W said the public passport's Follow/Message controls "still gate on `isAuthed`". They do not: `app/passport/[username].tsx:477#viewerActions.canFollow`, `:479#onFollowPress` and `:480#onMessagePress` consume `resolveViewerActions` (`src/features/passport/viewerActions.ts:38#resolveViewerActions`), which reads the projection's `capabilities.actions` verbatim and fails CLOSED — no projection, or a missing flag, offers nothing. `usePassportPlans.ts:210#can_make_plan` likewise. The one surviving `isAuthed` gate (`app/passport/[username].tsx:402#isAuthed`) covers the overflow menu, whose only items are **Report** and **Block** — safety actions that are deliberately NOT in TABLE 29's `can_*` set and must remain reachable by someone the subject has blocked. Gating those on a server capability would be the defect, not the fix. |
 
 ### §31 Loading, Caching and Expiration
 

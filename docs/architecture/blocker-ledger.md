@@ -746,3 +746,59 @@ threshold nobody set. Leaving it takes nothing and costs one row in one census.
 
 **What is buildable now, either way: nothing.** Under DROP there is no code. Under
 DEFINE the capability is the last step, not the first.
+
+---
+
+## `CLIENT_NODE_SUITE_CANNOT_RUN` — 262 tests the branch certification cannot see
+
+Found 2026-09-08 while building Passport P68. ENGINEERING, and it is on this
+ledger because it is invisible: the branch stays CERTIFIED: YES throughout.
+
+### The measurement
+
+`travel-buddy-standalone`'s node-test suite does not run in this environment.
+`node scripts/run-node-tests.mjs` reports **262 tests, 3 pass, 259 fail**, and
+every failure is the same one, before any assertion executes:
+
+```
+Error [ERR_REQUIRE_CYCLE_MODULE]: Cannot require() ES Module
+  …/viewerActions.test.ts in a cycle. A cycle involving require(esm) is not
+  allowed to maintain invariants mandated by the ECMAScript specification.
+```
+
+`viewerActions.test.ts` is untouched and predates this session (`a745ba11`), so
+this is not a regression from any change here. Node is **v22.22.2** and the
+runner invokes `--import tsx/esm --test`, which is what the failure is about; the
+suite's own contents are not implicated.
+
+### Why it matters more than "some tests are red"
+
+**`scripts/certify-branch.mjs` runs the api-server suite and nothing else.** So a
+whole client test suite can stop executing and every certification in this
+session still says `CERTIFIED: YES — 33 passed, 0 failed`. It did.
+
+That is not hypothetical damage. `check-test-mocks.mjs` — a client gate — refused
+to start the runner because `WallPromotionDisclosure.component.test.tsx`, added
+earlier the same day, carried its explanation without the literal word `NOTE`.
+The branch certified green three times over that. It was found by hand, and only
+because P68 happened to be a client row.
+
+### What is buildable now, in this order
+
+1. **Make the certification able to see it.** A `test:client` step in
+   `certify-branch.mjs`, classified `liveonly`/`gate` as appropriate, so an
+   unrunnable client suite reports CANNOT-RUN rather than nothing at all. This is
+   the part that stops the class, and it is worth doing even while the suite is
+   broken — CANNOT-RUN is a state this harness already models honestly.
+2. **Then fix the runner.** Likely a tsx/Node-version interaction; the fix is
+   the runner's invocation, not the tests.
+
+Doing (2) without (1) fixes today's outage and leaves the blind spot that hid it.
+
+### Not fixed here, deliberately
+
+`certify-branch.mjs` is the instrument every claim in this session rests on.
+Adding a step to it changes what "CERTIFIED" means, and doing that in the same
+pass that discovered the gap — without the suite green to calibrate against —
+would be measuring with an instrument altered mid-measurement. It is the next
+unit of work, not a footnote to this one.
