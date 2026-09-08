@@ -11,10 +11,16 @@ import { fileURLToPath } from "node:url";
 import { POST_BASELINE_TABLES } from "../deletionDispositions.js";
 import { buildDeletionGraph, candidateCounts } from "./graph.js";
 import { scanCodeUsage, scanRetentionRpcs } from "./codeFacts.js";
-import type { DeletionGraphNode } from "./types.js";
+import { classifyUserLinks, userLinkCounts, type UserLinkCounts } from "./userLink.js";
+import type { DeletionGraphNode, UserLinkFact } from "./types.js";
 
 export * from "./types.js";
-export { buildDeletionGraph, candidateCounts, classifyExposure } from "./graph.js";
+export { buildDeletionGraph, candidateCounts, classifyExposure, graphUserLinkCounts, assertDenominatorNotShrunk } from "./graph.js";
+export {
+  classifyUserLinks, userLinkCounts, manuallyRegisteredTables, isOwnershipPreserving,
+  INDIRECT_OWNERSHIP_RULE, USER_ROOT_REFERENCES, USER_ROOT_TABLES, USER_NAME_HINT_RE,
+  type UserLinkCounts, type UserLinkInput,
+} from "./userLink.js";
 export { parseSchemaFacts, statements } from "./schemaFacts.js";
 export { scanCodeUsage, scanRetentionRpcs } from "./codeFacts.js";
 export { classifyCandidate } from "./candidateClass.js";
@@ -43,10 +49,32 @@ export function deletionGraph(): DeletionGraphNode[] {
 /** Test seam: drop the memoised graph. */
 export function _resetDeletionGraphCache(): void {
   cached = null;
+  cachedLinks = null;
 }
 
 export function graphNode(table: string): DeletionGraphNode | undefined {
   return deletionGraph().find((n) => n.table === table);
+}
+
+/**
+ * The six headline denominator counts over the committed baseline, plus the
+ * per-table reasons. Memoised alongside the graph: the whole point of this
+ * artefact is that a reviewer can ask "why is this table in scope?" and get an
+ * answer measured from the dump.
+ */
+let cachedLinks: Map<string, UserLinkFact> | null = null;
+export function baselineUserLinks(): Map<string, UserLinkFact> {
+  if (!cachedLinks) {
+    cachedLinks = classifyUserLinks({
+      sql: readFileSync(BASELINE_SQL_PATH, "utf8"),
+      extraTables: POST_BASELINE_TABLES,
+    });
+  }
+  return cachedLinks;
+}
+
+export function baselineUserLinkCounts(): UserLinkCounts {
+  return userLinkCounts(baselineUserLinks());
 }
 
 export { candidateCounts as deletionCandidateCounts };

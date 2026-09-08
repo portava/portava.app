@@ -23,6 +23,7 @@ export interface FieldProvenance {
 export const FIELD_PROVENANCE: readonly FieldProvenance[] = [
   { field: "table", provenance: "MEASURED", source: "CREATE TABLE statements in the baseline dump" },
   { field: "inBaseline", provenance: "MEASURED", source: "presence in the baseline dump" },
+  { field: "userLink", provenance: "MEASURED", source: "userLink.classifyUserLinks — DIRECT/INDIRECT are foreign keys read out of the dump; DERIVED and AMBIGUOUS carry the RULE_DERIVED column-name and hand-registration evidence, kept in separate classes for that reason" },
   { field: "statedFate", provenance: "MEASURED", source: "which bucket of lib/deletionDispositions.ts names the table" },
   { field: "manifestCoverageGap", provenance: "MEASURED", source: "has an FK to profiles/auth.users but no USER_IDENTIFYING_COLUMNS column" },
   { field: "userColumns", provenance: "MEASURED", source: "columns + FOREIGN KEY constraints in the dump (role sub-field is RULE_DERIVED)" },

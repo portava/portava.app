@@ -32,6 +32,7 @@ import { snapshotNode, SNAPSHOT_PATH } from "../lib/deletion/writeSnapshot.js";
 import { classifyCandidate } from "../lib/deletion/candidateClass.js";
 import {
   ERASED_BY_CASCADE, UNCLASSIFIED_BACKLOG, ANONYMISED_FK_NULLED, DELETION_FLOW_TABLES,
+  DENOMINATOR_CORRECTION_BACKLOG,
 } from "../lib/deletionDispositions.js";
 
 const SQL = readFileSync(BASELINE_SQL_PATH, "utf8");
@@ -105,8 +106,9 @@ describe("the graph over the committed baseline", () => {
   const byTable = new Map(nodes.map((n) => [n.table, n]));
 
   it("covers at least every table the coverage gate counts", () => {
-    assert.ok(nodes.length >= 248, `expected >= 248 nodes, got ${nodes.length}`);
-    for (const t of [...ERASED_BY_CASCADE, ...ANONYMISED_FK_NULLED, ...DELETION_FLOW_TABLES, ...UNCLASSIFIED_BACKLOG]) {
+    // 248 was the column-name denominator; the measured one is a superset.
+    assert.ok(nodes.length >= 360, `expected >= 360 nodes, got ${nodes.length}`);
+    for (const t of [...ERASED_BY_CASCADE, ...ANONYMISED_FK_NULLED, ...DELETION_FLOW_TABLES, ...UNCLASSIFIED_BACKLOG, ...DENOMINATOR_CORRECTION_BACKLOG]) {
       assert.ok(byTable.has(t), `graph is missing manifest table ${t}`);
     }
   });
@@ -115,7 +117,11 @@ describe("the graph over the committed baseline", () => {
     const fates: Record<string, number> = {};
     for (const n of nodes) fates[n.statedFate] = (fates[n.statedFate] ?? 0) + 1;
     assert.equal(fates.ERASED_BY_CASCADE, ERASED_BY_CASCADE.length);
-    assert.equal(fates.UNCLASSIFIED_BACKLOG, UNCLASSIFIED_BACKLOG.length);
+    // Both backlogs report the same FATE: the rows survive and nobody has ruled.
+    // They are separate lists for provenance, not for a different outcome.
+    assert.equal(fates.UNCLASSIFIED_BACKLOG, UNCLASSIFIED_BACKLOG.length + DENOMINATOR_CORRECTION_BACKLOG.length);
+    assert.equal(fates.NOT_IN_MANIFEST ?? 0, 0,
+      "every table in the corrected denominator must be named by some bucket of the manifest");
     assert.equal(fates.ANONYMISED_FK_NULLED, ANONYMISED_FK_NULLED.length);
     assert.equal(fates.DELETION_FLOW, DELETION_FLOW_TABLES.length);
   });

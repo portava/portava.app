@@ -17,7 +17,7 @@
  */
 import { writeFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { deletionGraph, candidateCounts, REPO_ROOT } from "./index.js";
+import { deletionGraph, candidateCounts, baselineUserLinkCounts, REPO_ROOT } from "./index.js";
 import type { DeletionGraphNode } from "./types.js";
 
 export const SNAPSHOT_PATH = resolve(REPO_ROOT, "src/lib/deletion/deletionGraph.snapshot.json");
@@ -27,6 +27,7 @@ export function snapshotNode(n: DeletionGraphNode): Record<string, unknown> {
   return {
     table: n.table,
     inBaseline: n.inBaseline,
+    userLink: n.userLink,
     statedFate: n.statedFate,
     manifestCoverageGap: n.manifestCoverageGap,
     userColumns: n.userColumns,
@@ -69,6 +70,7 @@ export function snapshotBody(): Record<string, unknown> {
       "not a deletion policy: OWNER_REQUIRED means the evidence does not decide and owner decision D6 must. " +
       "Field provenance is declared in src/lib/deletion/provenance.ts.",
     tableCount: nodes.length,
+    userLinkCounts: baselineUserLinkCounts(),
     candidateCounts: candidateCounts(nodes),
     nodes: nodes.map(snapshotNode),
   };

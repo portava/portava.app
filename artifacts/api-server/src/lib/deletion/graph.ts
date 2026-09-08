@@ -19,9 +19,11 @@ import {
   DELETION_FLOW_TABLES,
   RETAINED_WITH_REASON,
   UNCLASSIFIED_BACKLOG,
+  DENOMINATOR_CORRECTION_BACKLOG,
   USER_IDENTIFYING_COLUMNS,
 } from "../deletionDispositions.js";
 import { parseSchemaFacts, type TableFacts } from "./schemaFacts.js";
+import { classifyUserLinks, userLinkCounts, type UserLinkCounts } from "./userLink.js";
 import type { TableCodeUsage, RetentionRpcFact } from "./codeFacts.js";
 import {
   SIGNAL_RULES,
@@ -36,6 +38,7 @@ import { handNoteFor } from "./handNotes.js";
 import { classifyCandidate } from "./candidateClass.js";
 import type {
   DeletionGraphNode, OnDelete, PropagationPlan, SelectExposure, SignalFact, StatedFate, UserColumnFact,
+  UserLinkFact,
 } from "./types.js";
 
 export interface BuildInput {
@@ -62,6 +65,14 @@ function statedFate(table: string): StatedFate {
   if (DELETION_FLOW_TABLES.includes(table)) return "DELETION_FLOW";
   if (RETAINED_WITH_REASON.some((r) => r.table === table)) return "RETAINED_WITH_REASON";
   if (UNCLASSIFIED_BACKLOG.includes(table)) return "UNCLASSIFIED_BACKLOG";
+  // The denominator-correction backlog is UNCLASSIFIED in every sense that
+  // matters downstream: the rows survive deletion and nobody has ruled on them.
+  // The two lists are kept apart in the manifest for PROVENANCE (triaged and
+  // found undecided, versus never seen at all), which is a fact about how the
+  // debt was discovered, not about what happens to a user's data — so the fate
+  // reported here is the same one, and resolveFate says "nobody has decided"
+  // rather than the false "absent from every bucket".
+  if (DENOMINATOR_CORRECTION_BACKLOG.includes(table)) return "UNCLASSIFIED_BACKLOG";
   return "NOT_IN_MANIFEST";
 }
 
@@ -195,6 +206,34 @@ function propagationFor(
   };
 }
 
+/**
+ * THE NO-SHRINK RULE, as a function so it can be proven rather than admired.
+ *
+ * The column-name heuristic this graph replaced found 248 tables. The
+ * foreign-key graph is strictly MORE evidence, so every table the heuristic
+ * finds must still be governed — and a COUNT cannot say that, because a graph
+ * that drops five tables and gains six is bigger and still broken. Set
+ * containment, not arithmetic.
+ *
+ * Kept exported and separate because it is the invariant that stops a future
+ * "simplification" of the classification rules from quietly making a
+ * legal-surface guard govern less than it used to.
+ */
+export function assertDenominatorNotShrunk(
+  nameHeuristicTables: readonly string[],
+  governedTables: readonly string[],
+): void {
+  const governed = new Set(governedTables);
+  const lost = [...new Set(nameHeuristicTables)].filter((t) => !governed.has(t)).sort();
+  if (lost.length > 0) {
+    throw new Error(
+      `buildDeletionGraph: ${lost.length} table(s) the column-name heuristic finds are NOT in the measured ` +
+        `user-link graph: ${lost.join(", ")}. The denominator has shrunk; refusing to build a graph that ` +
+        "governs less than the check it replaces.",
+    );
+  }
+}
+
 export function buildDeletionGraph(input: BuildInput): DeletionGraphNode[] {
   const facts = parseSchemaFacts(input.sql);
   const code = input.code ?? new Map<string, TableCodeUsage>();
@@ -205,17 +244,32 @@ export function buildDeletionGraph(input: BuildInput): DeletionGraphNode[] {
   const userFkColumns = (t: TableFacts): string[] =>
     [...new Set(t.foreignKeys.filter((k) => isUserFk(k.references)).flatMap((k) => k.columns))];
 
+  // ── WHO IS IN THE GRAPH ──────────────────────────────────────────────────
+  // The node set is the DELETION DENOMINATOR, and it is measured from the
+  // foreign-key graph (userLink.ts), not from a list of column names. Every
+  // class except NOT_USER_LINKED is in: AMBIGUOUS included, because "the schema
+  // cannot tell" is a reason for a person to look, not a reason to drop a table
+  // out of the universe a legal-surface guard governs.
+  const links = classifyUserLinks({ facts, extraTables: input.extraTables });
+  const governed = [...links.values()].filter((l) => l.governed);
+
   const baselineUserKeyed = [...facts.values()]
     .filter((t) => t.columns.some((c) => userCols.has(c.name)) || userFkColumns(t).length > 0)
     .map((t) => t.table);
-  if (baselineUserKeyed.length === 0) {
+  if (governed.length === 0) {
     throw new Error(
       "buildDeletionGraph: the schema text yielded ZERO user-keyed tables. " +
         "A graph over nothing would let every downstream check pass vacuously; refusing to build one.",
     );
   }
+  // The name-list answer is a FLOOR the measured answer may never fall below —
+  // and a COUNT is not enough, because a graph that drops five tables and gains
+  // six is bigger and still broken. The foreign-key graph is strictly more
+  // evidence than the column-name heuristic, so every table the heuristic finds
+  // must still be governed. Set containment, not arithmetic.
+  assertDenominatorNotShrunk(baselineUserKeyed, governed.map((l) => l.table));
 
-  const tableNames = [...new Set([...baselineUserKeyed, ...(input.extraTables ?? [])])].sort();
+  const tableNames = governed.map((l) => l.table).sort();
 
   // Which tables look like projections, for the staleness edge below.
   const projectionTables = new Set(
@@ -313,6 +367,7 @@ export function buildDeletionGraph(input: BuildInput): DeletionGraphNode[] {
     const node: DeletionGraphNode = {
       table,
       inBaseline: Boolean(f),
+      userLink: links.get(table) as UserLinkFact,
       statedFate: statedFate(table),
       manifestCoverageGap,
       userColumns,
@@ -353,6 +408,11 @@ export function buildDeletionGraph(input: BuildInput): DeletionGraphNode[] {
   }
 
   return nodes;
+}
+
+/** The six headline denominator counts over a whole schema. */
+export function graphUserLinkCounts(sql: string, extraTables?: readonly string[]): UserLinkCounts {
+  return userLinkCounts(classifyUserLinks({ sql, extraTables }));
 }
 
 /** Candidate-class counts, for reporting. Deterministic key order. */

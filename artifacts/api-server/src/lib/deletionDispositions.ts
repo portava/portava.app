@@ -10,10 +10,24 @@
  * deletion indefinitely, keyed to a uuid that is still joinable across tables.
  *
  * This manifest does not fix that. It makes it IMPOSSIBLE TO GROW SILENTLY.
- * Modelled on rlsDispositions.ts: every user-keyed table in the baseline must
+ * Modelled on rlsDispositions.ts: every user-linked table in the baseline must
  * appear in exactly one bucket below, and checkDeletionCoverage.ts fails if a
  * NEW one appears in none of them. A new table therefore cannot enter the blind
  * spot without someone writing down what happens to it on deletion.
+ *
+ * WHICH TABLES THOSE ARE IS NOW MEASURED, NOT GUESSED (2026-09-08). The gate
+ * used to find user-keyed tables by matching 18 recognised COLUMN NAMES, which
+ * reported 248 tables. A column name is a convention, not a fact: a table can
+ * hold a person's uuid behind a foreign key and carry no recognised name at all.
+ * src/lib/deletion/userLink.ts derives the universe from the FOREIGN KEY GRAPH
+ * of the committed baseline instead, and the answer is 366 — 296 with a direct
+ * foreign key to profiles/auth.users, 30 owned indirectly through another owned
+ * row, 31 derived from an unbacked user column or a hand registration, and 9
+ * AMBIGUOUS. The 91 tables that difference uncovered — blocks, appeals,
+ * moderation_actions, reviews, media_assets, user_restrictions, user_mutes,
+ * safe_return_contacts, trip_documents and `profiles` itself among them — are in
+ * DENOMINATOR_CORRECTION_BACKLOG below, with the reason each one is in scope
+ * available per table from the user-link graph.
  *
  * THE BUCKETS ARE NOT EQUIVALENT:
  *   ERASED_BY_CASCADE     — the service actually deletes these today.
@@ -482,6 +496,143 @@ export const UNCLASSIFIED_BACKLOG: readonly string[] = [
   "user_suggestion_seen",
   "user_trust_scores",
   "viewer_creator_fatigue",
+];
+
+/**
+ * ── THE DENOMINATOR CORRECTION OF 2026-09-08 ────────────────────────────────
+ *
+ * These 91 tables were ALWAYS user-keyed. They were never in this manifest
+ * because check:deletion-coverage decided "is this table about a user?" by
+ * matching 18 recognised COLUMN NAMES, and every table here carries a person's
+ * uuid under a name that list had never heard of, or reaches an account through
+ * a foreign key rather than through a column name. The guard reported 248
+ * user-keyed tables while the schema declares 366.
+ *
+ * The denominator is now measured from the FOREIGN KEY GRAPH of the baseline
+ * (src/lib/deletion/userLink.ts), and these tables entered scope the moment it
+ * was. They are held here, separately from UNCLASSIFIED_BACKLOG, for one
+ * reason: PROVENANCE. The 225 entries above were triaged by a person and found
+ * undecided. These 91 have never been triaged at all - they were invisible.
+ * Merging the two lists would lose that difference and let a bigger number look
+ * like more work done.
+ *
+ * NOTHING HERE IS A DECISION. Being on this list means exactly what
+ * UNCLASSIFIED_BACKLOG means: the rows survive account deletion and nobody has
+ * ruled on whether they should. It is owner decision D6, and this list is its
+ * input, not its answer.
+ *
+ * SOME OF THESE ARE NOT ACTUALLY UNDECIDED, and that must not be papered over
+ * by a lane that does not own the decision:
+ *   * `profiles` is deliberately kept as an ANONYMISED TOMBSTONE by
+ *     executeAccountDeletion - the behaviour is implemented and is the reason
+ *     no cascade off profiles ever fires. That is a decision in CODE that has
+ *     never been written down as a disposition here. Recording it belongs to
+ *     whoever answers D6, not to the change that discovered the table was
+ *     missing from the universe.
+ *   * several of these are already cleared by AccountDeletionService. Until the
+ *     corrected denominator existed they could not even be RECORDED as erased:
+ *     an entry naming a table the name list could not see was reported as a
+ *     STALE ENTRY and failed the gate. That contradiction is now gone, so
+ *     moving them to ERASED_BY_CASCADE is finally possible - it is a triage
+ *     pass, and it is not this one.
+ *
+ * Entries leave this list the same way UNCLASSIFIED_BACKLOG entries do: to
+ * ERASED_BY_CASCADE with matching service code, or to RETAINED_WITH_REASON with
+ * a reason a user could be shown. A NEW table must never be added here - it has
+ * a fate decided on the day it is created, which is what the gate exists for.
+ */
+export const DENOMINATOR_CORRECTION_BACKLOG: readonly string[] = [
+  "admin_access_log",
+  "age_limit_audit_log",
+  "appeals",
+  "blocks",
+  "buddy_booking_change_requests",
+  "buddy_booking_events",
+  "call_sessions",
+  "circle_audit_events",
+  "circle_meeting_points",
+  "collection_items",
+  "compass_abuse_flags",
+  "compass_admin_actions",
+  "compass_algorithm_versions",
+  "compass_conversation_messages",
+  "compass_rollbacks",
+  "content_distribution_stats",
+  "entry_requirements",
+  "event_agenda_items",
+  "event_invites",
+  "event_media",
+  "event_reviews",
+  "event_share_links",
+  "feature_flag_audit_log",
+  "generated_visuals",
+  "highlight_replies",
+  "key_packages",
+  "layover_plan_stops",
+  "layover_recommendations",
+  "live_place_recap_chapters",
+  "live_place_recap_snapshots",
+  "live_place_recap_sources",
+  "live_place_recap_versions",
+  "local_guide_contributions",
+  "media_assets",
+  "media_attachments",
+  "media_dedup_groups",
+  "media_dedup_memberships",
+  "meetup_time_options",
+  "meetups",
+  "memory_items",
+  "memory_tags",
+  "moderation_actions",
+  "place_image_reports",
+  "place_merge_log",
+  "place_profiles",
+  "portava_featured",
+  "post_bucket_ledger",
+  "post_event_links",
+  "post_media_moderation_ledger",
+  "price_baselines",
+  "profiles",
+  "ranking_config_audit_log",
+  "rent_buddy_admin_access_logs",
+  "rent_buddy_admin_actions",
+  "rent_buddy_booking_addons",
+  "rent_buddy_booking_extensions",
+  "rent_buddy_city_rollouts",
+  "rent_buddy_disputes",
+  "rent_buddy_global_controls",
+  "rent_buddy_launch_audit_logs",
+  "rent_buddy_launch_checklists",
+  "rent_buddy_offers",
+  "rent_buddy_package_stops",
+  "rent_buddy_policy_flags",
+  "rent_buddy_reviews",
+  "rent_buddy_route_change_requests",
+  "rent_buddy_route_stops",
+  "rent_buddy_safety_events",
+  "rent_buddy_tag_consents",
+  "report_evidence",
+  "reviews",
+  "route_legs",
+  "route_plans",
+  "route_stops",
+  "safe_return_contacts",
+  "shared_moment_contributions",
+  "stamp_admin_audit_log",
+  "stamp_admires",
+  "stamp_artwork_versions",
+  "tags",
+  "trip_budget",
+  "trip_checklist_items",
+  "trip_destinations",
+  "trip_documents",
+  "trip_plan_items",
+  "trip_readiness_snapshots",
+  "trust_admin_actions",
+  "user_friendships",
+  "user_mutes",
+  "user_restrictions",
+  "user_saves",
 ];
 
 /**

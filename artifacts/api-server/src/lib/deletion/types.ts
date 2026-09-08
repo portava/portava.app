@@ -116,6 +116,37 @@ export interface PropagationPlan {
   obstacles: string[];
 }
 
+/**
+ * How a table is linked to a user account, measured from the foreign-key graph
+ * of the committed baseline. See userLink.ts for the rule behind each class and
+ * for why a column-name list could never produce this on its own.
+ *
+ * DIRECT / INDIRECT are MEASURED from declared constraints. DERIVED and
+ * AMBIGUOUS are the classes that carry column-name or hand-registration
+ * evidence, which is exactly why they are kept separate from the measured two.
+ */
+export type UserLinkClass =
+  | "DIRECT_USER_LINKED"
+  | "INDIRECT_USER_LINKED"
+  | "DERIVED_USER_LINKED"
+  | "AMBIGUOUS"
+  | "NOT_USER_LINKED";
+
+export interface UserLinkFact {
+  table: string;
+  linkClass: UserLinkClass;
+  /** Why, in words a reviewer can check against the dump. Never empty. */
+  reasons: string[];
+  /** Ownership hops to a user root: 0 = direct, n = indirect. Null otherwise. */
+  hops: number | null;
+  /** The ownership path walked, child first, ending at the user root. */
+  path: string[];
+  /** In the deletion denominator: every class except NOT_USER_LINKED. */
+  governed: boolean;
+  /** MEASURED: present in the committed baseline dump. */
+  inBaseline: boolean;
+}
+
 export type CandidateClass =
   | "DELETE_CANDIDATE"
   | "ANONYMIZE_CANDIDATE"
@@ -137,6 +168,11 @@ export interface DeletionGraphNode {
   table: string;
   /** MEASURED: present in the committed baseline dump. */
   inBaseline: boolean;
+  /**
+   * MEASURED + RULE_DERIVED: how the schema links this table to an account, and
+   * why. This is what puts the table in the deletion denominator at all.
+   */
+  userLink: UserLinkFact;
   /** MEASURED: which bucket of deletionDispositions.ts names it. */
   statedFate: StatedFate;
   /**
