@@ -451,6 +451,23 @@ export const GUARDS: readonly GuardEntry[] = [
     reach: { kind: "check-all", script: "check:admin-guard" },
   },
   {
+    checker: "src/scripts/checkMemoryTableOwnership.ts",
+    inspects: {
+      countPattern: "(\\d+) file\\(s\\) reference a memory event log",
+      unit: "files referencing a memory event log",
+    },
+    responsibility:
+      "public.memory_events (the projection family's log, live) and public.memory_domain_events (the spec \u00a717 " +
+      "command log, unapplied) stay distinguishable: every reference is classified and no object name straddles them.",
+    // Migration 2710 was written to call the command log `memory_events`, which
+    // already exists in production as a different table that the
+    // account-deletion cascade reads. CREATE TABLE IF NOT EXISTS would not have
+    // created it and would not have complained. The rename fixed the table; a
+    // second pass found nine dependent objects still named memory_events_*.
+    // This is what stops the third instance.
+    reach: { kind: "check-all", script: "check:memory-table-ownership" },
+  },
+  {
     checker: "src/scripts/checkCensusIntegrity.ts",
     inspects: {
       countPattern: "(\\d+) verdict row\\(s\\) parsed",

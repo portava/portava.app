@@ -157,6 +157,15 @@ run_check "check:security-definer-oracles" pnpm run check:security-definer-oracl
 # counted in prose where no tool can read them — so it is visible how much of
 # each headline rests on something checkable.
 run_check "check:census-integrity" pnpm run check:census-integrity
+# check:memory-table-ownership — public.memory_events (the Memory projection
+# family's log, live in production and read by the account-deletion cascade) and
+# public.memory_domain_events (the Highlights/Memories spec §17 command log, not
+# applied) share a prefix and nothing else. Migration 2710 was written to call
+# the second one memory_events; with CREATE TABLE IF NOT EXISTS that would not
+# have created it and would not have complained, and the command kernel would
+# have written domain events into the projection family's table. Every reference
+# is classified here, and no object name may straddle the two.
+run_check "check:memory-table-ownership" pnpm run check:memory-table-ownership
 # check:flag-polarity — every feature flag is classified STOP/CAPABILITY/CONFIG
 # and read through the reader that classification demands. Wired 2026-08-10
 # after c89f09a7 converted eleven emergency stops that had been reading

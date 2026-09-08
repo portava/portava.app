@@ -137,7 +137,7 @@
 --   DROP TABLE IF EXISTS public.memory_command_receipts;
 --   DROP TABLE IF EXISTS public.memory_event_outbox;
 --   DROP TABLE IF EXISTS public.memory_domain_events;
---   DROP FUNCTION IF EXISTS public.memory_events_refuse_update();
+--   DROP FUNCTION IF EXISTS public.memory_domain_events_refuse_update();
 --   (Safe while the flag is false: nothing writes these tables.)
 
 BEGIN;
@@ -155,12 +155,12 @@ CREATE TABLE IF NOT EXISTS public.memory_domain_events (
   schema_version integer     NOT NULL DEFAULT 1,
   occurred_at    timestamptz NOT NULL,
   recorded_at    timestamptz NOT NULL DEFAULT now(),
-  CONSTRAINT memory_events_sequence_unique UNIQUE (memory_id, sequence),
-  CONSTRAINT memory_events_sequence_positive CHECK (sequence > 0),
+  CONSTRAINT memory_domain_events_sequence_unique UNIQUE (memory_id, sequence),
+  CONSTRAINT memory_domain_events_sequence_positive CHECK (sequence > 0),
   -- §17's fourteen names, spelled out rather than a LIKE pattern: a typo'd
   -- event type is a projection that silently never fires, and the consumer
   -- side has no way to notice a name nobody subscribes to.
-  CONSTRAINT memory_events_type_vocabulary CHECK (type IN (
+  CONSTRAINT memory_domain_events_type_vocabulary CHECK (type IN (
     'memory.created', 'memory.confirmed', 'memory.corrected', 'memory.merged',
     'memory.split', 'memory.archived', 'memory.deleted', 'memory.visibility_changed',
     'highlight.created', 'highlight.published', 'highlight.expired',
@@ -168,10 +168,10 @@ CREATE TABLE IF NOT EXISTS public.memory_domain_events (
 );
 COMMENT ON TABLE public.memory_domain_events IS
   'Immutable Memory domain events (Highlights/Memories spec §17). Written only by public.memory_kernel_execute, in the same transaction as the canonical state change. UPDATE is refused by trigger; DELETE follows the Memory (cascade). Payloads are privacy-filtered (§23): ids and vocabulary, never the Memory body.';
-CREATE INDEX IF NOT EXISTS idx_memory_events_memory_seq ON public.memory_domain_events (memory_id, sequence);
-CREATE INDEX IF NOT EXISTS idx_memory_events_type_time  ON public.memory_domain_events (type, recorded_at DESC);
+CREATE INDEX IF NOT EXISTS idx_memory_domain_events_memory_seq ON public.memory_domain_events (memory_id, sequence);
+CREATE INDEX IF NOT EXISTS idx_memory_domain_events_type_time  ON public.memory_domain_events (type, recorded_at DESC);
 
-CREATE OR REPLACE FUNCTION public.memory_events_refuse_update()
+CREATE OR REPLACE FUNCTION public.memory_domain_events_refuse_update()
 RETURNS trigger
 LANGUAGE plpgsql
 SET search_path TO 'public', 'pg_catalog'
@@ -182,10 +182,10 @@ BEGIN
 END;
 $fn$;
 
-DROP TRIGGER IF EXISTS trg_memory_events_append_only ON public.memory_domain_events;
-CREATE TRIGGER trg_memory_events_append_only
+DROP TRIGGER IF EXISTS trg_memory_domain_events_append_only ON public.memory_domain_events;
+CREATE TRIGGER trg_memory_domain_events_append_only
   BEFORE UPDATE ON public.memory_domain_events
-  FOR EACH ROW EXECUTE FUNCTION public.memory_events_refuse_update();
+  FOR EACH ROW EXECUTE FUNCTION public.memory_domain_events_refuse_update();
 
 -- ── 2. Outbox (§17) ──────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS public.memory_event_outbox (
@@ -268,8 +268,8 @@ REVOKE ALL ON public.memory_command_audit    FROM PUBLIC, anon, authenticated;
 -- §23: owner-only, and SELECT only. Participants get nothing: line 599,
 -- "Participant membership alone does not grant full Memory access."
 GRANT SELECT ON public.memory_domain_events TO authenticated;
-DROP POLICY IF EXISTS memory_events_owner_select ON public.memory_domain_events;
-CREATE POLICY memory_events_owner_select ON public.memory_domain_events
+DROP POLICY IF EXISTS memory_domain_events_owner_select ON public.memory_domain_events;
+CREATE POLICY memory_domain_events_owner_select ON public.memory_domain_events
   FOR SELECT USING (
     EXISTS (SELECT 1 FROM public.memories m
              WHERE m.id = public.memory_domain_events.memory_id
@@ -328,7 +328,7 @@ BEGIN
   END IF;
 
   -- The append-only trigger is installed.
-  IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_memory_events_append_only' AND NOT tgisinternal) THEN
+  IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_memory_domain_events_append_only' AND NOT tgisinternal) THEN
     RAISE EXCEPTION 'POSTCONDITION FAILED: memory_domain_events append-only trigger is absent';
   END IF;
 END $$;

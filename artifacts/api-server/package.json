@@ -49,6 +49,7 @@
     "check:security": "bash scripts/run-security-checks.sh",
     "check:security-definer-oracles": "node --import tsx/esm src/scripts/checkSecurityDefinerOracles.ts",
     "check:census-integrity": "node --import tsx/esm src/scripts/checkCensusIntegrity.ts",
+    "check:memory-table-ownership": "node --import tsx/esm src/scripts/checkMemoryTableOwnership.ts",
     "measure:layover-cutover-sql": "node --import tsx/esm src/scripts/emitLayoverCutoverSql.ts",
     "check:admin-guard": "node --import tsx/esm src/scripts/checkAdminGuard.ts",
     "check:layover-cutover": "node --import tsx/esm src/scripts/checkLayoverCutover.ts",

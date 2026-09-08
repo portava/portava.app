@@ -506,7 +506,7 @@ COMMENT ON FUNCTION public.memory_kernel_execute(jsonb) IS
 
 REVOKE ALL ON FUNCTION public.memory_kernel_execute(jsonb) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.memory_kernel_execute(jsonb) TO service_role;
-REVOKE ALL ON FUNCTION public.memory_events_refuse_update() FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.memory_domain_events_refuse_update() FROM PUBLIC, anon, authenticated;
 
 -- ── Postconditions ───────────────────────────────────────────────────────────
 DO $$
