@@ -28,6 +28,7 @@ import { getServiceClient } from '../lib/supabase.js';
 import { nameVisibilitySet } from '../lib/publicIdentity.js';
 
 import { requireAdmin } from "../lib/requireAdmin.js";
+import { readBlockExclusions, isExcluded, sendExclusionsUnavailable } from '../lib/exclusionSet.js';
 
 const router = Router();
 
@@ -542,15 +543,23 @@ router.get('/hashtags/:slug/feed', async (req, res) => {
     return;
   }
 
-  // ── Viewer block-list (needed for post-tab visibility filtering) ────────────
-  const { data: feedBlockRows } = await sc
-    .from('blocks')
-    .select('blocker_id, blocked_id')
-    .or(`blocker_id.eq.${user.id},blocked_id.eq.${user.id}`);
-  const feedBlockedSet = new Set<string>();
-  for (const b of (feedBlockRows ?? []) as any[]) {
-    if (b.blocker_id === user.id) feedBlockedSet.add(b.blocked_id);
-    else feedBlockedSet.add(b.blocker_id);
+  // ── Viewer block-list (needed for EVERY tab's visibility filtering) ─────────
+  //
+  // FAIL-CLOSED, shape 3 (lib/exclusionSet.ts). Every one of the seven tabs
+  // below filters on this set — posts by author_id, people by id, places by
+  // submitted_by, trips and circles by owner_id, events by host_id — so there
+  // is no tab that can still be served honestly when it is unreadable, and no
+  // sub-part of the response that is not block-scoped. Refuse with
+  // `degraded_unavailable` (503, retryable): the check could not be performed,
+  // the request is fine, and a retry is the right recovery. db_error (500) is
+  // reserved here for the reads that actually failed to produce the feed.
+  //
+  // `(feedBlockRows ?? [])` previously read a resolved DB error as an empty
+  // block set and every tab served content from blocked users.
+  const feedBlockedSet = await readBlockExclusions(sc, user.id);
+  if (!feedBlockedSet.ok) {
+    sendExclusionsUnavailable(req, res, feedBlockedSet, 'hashtags/feed');
+    return;
   }
 
   // Dispatch per tab type — fetch the underlying entities for each source_type
@@ -569,7 +578,7 @@ router.get('/hashtags/:slug/feed', async (req, res) => {
     const { data: posts, error: postsErr } = await postsQ;
     if (postsErr) { req.log.error({ err: postsErr }, 'hashtag feed posts failed'); sendError(res, 'db_error', postsErr.message); return; }
 
-    const visiblePosts = (posts ?? []).filter((p: any) => !feedBlockedSet.has(p.author_id));
+    const visiblePosts = (posts ?? []).filter((p: any) => !isExcluded(feedBlockedSet, p.author_id));
 
     const authorIds = [...new Set(visiblePosts.map((p: any) => p.author_id))];
     let profileMap: Record<string, any> = {};
@@ -613,7 +622,7 @@ router.get('/hashtags/:slug/feed', async (req, res) => {
     // Exclude blocked/blocking profiles
     const { data: profiles } = await sc
       .from('profiles').select('id, handle, name, avatar_url').in('id', sourceIds);
-    const visiblePeople = (profiles ?? []).filter((p: any) => !feedBlockedSet.has(p.id));
+    const visiblePeople = (profiles ?? []).filter((p: any) => !isExcluded(feedBlockedSet, p.id));
     // Universal display-name rule: real name only when the subject opted in.
     const allowedPeopleNames = await nameVisibilitySet(sc, visiblePeople.map((p: any) => p.id as string));
     const items = visiblePeople
@@ -632,7 +641,7 @@ router.get('/hashtags/:slug/feed', async (req, res) => {
       const { data: places } = await sc
         .from('discovery_places').select('id, name, city, place_type, image_url, submitted_by').in('id', sourceIds);
       const items = (places ?? [])
-        .filter((p: any) => !feedBlockedSet.has(p.submitted_by))
+        .filter((p: any) => !isExcluded(feedBlockedSet, p.submitted_by))
         .map((p: any) => ({
           id: p.id, type: 'place', name: p.name, city: p.city ?? null,
           placeType: p.place_type ?? null, imageUrl: p.image_url ?? null,
@@ -651,7 +660,7 @@ router.get('/hashtags/:slug/feed', async (req, res) => {
         .from('trips').select('id, title, destination_city, status, owner_id, visibility').in('id', sourceIds);
       const items = (trips ?? [])
         .filter((t: any) =>
-          !feedBlockedSet.has(t.owner_id) &&
+          !isExcluded(feedBlockedSet, t.owner_id) &&
           (t.visibility === 'public' || t.owner_id === user.id || viewerTripIds.has(t.id))
         )
         .map((t: any) => ({
@@ -675,7 +684,7 @@ router.get('/hashtags/:slug/feed', async (req, res) => {
       }
       const items = (circles ?? [])
         .filter((c: any) =>
-          !feedBlockedSet.has(c.owner_id) &&
+          !isExcluded(feedBlockedSet, c.owner_id) &&
           (c.visibility === 'public' || c.owner_id === user.id || viewerCircleOwnerIds.has(c.owner_id))
         )
         .map((c: any) => ({ id: c.id, type: 'circle', name: c.name }));
@@ -688,7 +697,7 @@ router.get('/hashtags/:slug/feed', async (req, res) => {
       const { data: events } = await sc
         .from('events').select('id, title, location_name, starts_at, ends_at, host_id').in('id', sourceIds);
       const items = (events ?? [])
-        .filter((e: any) => !feedBlockedSet.has(e.host_id))
+        .filter((e: any) => !isExcluded(feedBlockedSet, e.host_id))
         .map((e: any) => ({
           id: e.id, type: 'event', name: e.title, location: e.location_name ?? null,
           startAt: e.starts_at ?? null, endAt: e.ends_at ?? null,

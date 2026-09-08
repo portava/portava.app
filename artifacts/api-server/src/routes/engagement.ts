@@ -34,6 +34,7 @@ import { requireUser, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { nameVisibilitySet, presentedName } from "../lib/publicIdentity.js";
 import { asyncHandler } from "../lib/asyncHandler.js";
+import { readBlockExclusions, isExcluded, sendExclusionsUnavailable } from "../lib/exclusionSet.js";
 
 const router = Router();
 
@@ -232,19 +233,30 @@ router.get("/engagement/likes", asyncHandler(async (req, res) => {
     return;
   }
 
-  // Build blocked-user set (both directions from viewer's perspective)
-  const { data: blockRows } = await sc
-    .from("blocks")
-    .select("blocker_id, blocked_id")
-    .or(`blocker_id.eq.${user.id},blocked_id.eq.${user.id}`);
-  const blockedSet = new Set<string>();
-  for (const b of (blockRows ?? []) as any[]) {
-    if (b.blocker_id === user.id) blockedSet.add(b.blocked_id);
-    else blockedSet.add(b.blocker_id);
+  // Build blocked-user set (both directions from viewer's perspective).
+  //
+  // FAIL-CLOSED, shape 3 (lib/exclusionSet.ts): this response IS a roster of
+  // other people — there is no part of it the block set does not scope. So an
+  // unreadable `blocks` table has no narrower honest answer available:
+  //   • the unfiltered list shows the viewer people they blocked (the defect);
+  //   • `users: []` is a false statement that nobody liked this, which the
+  //     client renders and caches as fact.
+  // It refuses with `degraded_unavailable` (503, retryable) — "the check could
+  // not be performed", the same code requireUser uses for an unreadable
+  // account_status — rather than db_error (500), because nothing is wrong with
+  // the request and a retry is the correct recovery. The scoped read (`among`)
+  // is used because the candidate ids are already known and bounded.
+  //
+  // Previously `(blockRows ?? [])` made a resolved DB error an empty set and
+  // this endpoint listed blocked users among the likers.
+  const blockedSet = await readBlockExclusions(sc, user.id, { among: userIds });
+  if (!blockedSet.ok) {
+    sendExclusionsUnavailable(req, res, blockedSet, "engagement/likes");
+    return;
   }
 
   // Filter: exclude viewer + blocked users
-  const filteredIds = userIds.filter((id) => id !== user.id && !blockedSet.has(id));
+  const filteredIds = userIds.filter((id) => id !== user.id && !isExcluded(blockedSet, id));
 
   if (filteredIds.length === 0) {
     res.json({ ok: true, users: [], nextCursor, hasMore });

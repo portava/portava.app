@@ -23,6 +23,8 @@ import { isFlagEnabled } from "../lib/featureFlags.js";
 import { appStorageUrlInfo } from "../lib/mediaUrl.js";
 import { ownerFromPath } from "../lib/mediaAccess.js";
 import { resolveHighlightVisibilityForStory, PROMOTABLE_STORY_VISIBILITIES } from "../lib/storyHighlightVisibility.js";
+import { isBlockedBetween } from "../lib/blockGuard.js";
+import { readBlockExclusions, isExcluded, sendExclusionsUnavailable } from "../lib/exclusionSet.js";
 
 const router = Router();
 const UUID_RE = /^[0-9a-f-]{36}$/i;
@@ -56,13 +58,18 @@ async function isCloseFriend(sc: any, ownerId: string, viewerId: string): Promis
 
 /**
  * Returns true if viewerId is blocked by ownerId or vice-versa.
+ *
+ * FAIL-CLOSED, shape 1 (lib/exclusionSet.ts): this gates ONE interaction — may
+ * this viewer read/view/react to this ONE story — so an unreadable `blocks`
+ * table denies that story and nothing else. checkStoryAccess turns the true
+ * into "not_found", which is exactly what a real block produces.
+ *
+ * `Boolean(r1.data || r2.data)` read a resolved DB error as "not blocked" on
+ * BOTH halves at once, which is the fail-open shape the unchecked-reads ledger
+ * recorded for this pair of reads.
  */
 async function isBlocked(sc: any, a: string, b: string): Promise<boolean> {
-  const [r1, r2] = await Promise.all([
-    sc.from("blocks").select("blocked_id").eq("blocker_id", a).eq("blocked_id", b).maybeSingle(),
-    sc.from("blocks").select("blocked_id").eq("blocker_id", b).eq("blocked_id", a).maybeSingle(),
-  ]);
-  return Boolean(r1.data || r2.data);
+  return isBlockedBetween(sc, a, b);
 }
 
 /**
@@ -239,15 +246,22 @@ router.get("/stories/feed", asyncHandler(async (req, res) => {
   const limit = Math.min(Number(req.query.limit ?? 50), 100);
   const now = new Date().toISOString();
 
-  // Get blocks in both directions
-  const [blockedByMe, blockingMe] = await Promise.all([
-    sc.from("blocks").select("blocked_id").eq("blocker_id", user.id),
-    sc.from("blocks").select("blocker_id").eq("blocked_id", user.id),
-  ]);
-  const blockedIds = new Set<string>([
-    ...((blockedByMe.data ?? []).map((r: any) => r.blocked_id as string)),
-    ...((blockingMe.data ?? []).map((r: any) => r.blocker_id as string)),
-  ]);
+  // Get blocks in both directions.
+  //
+  // FAIL-CLOSED, shape 3 (lib/exclusionSet.ts): every story in this feed
+  // belongs to somebody other than the viewer, so the block set scopes the
+  // entire response and there is no narrower part left to serve. `users: []`
+  // would be a false statement — the client renders "no stories" and the viewer
+  // believes it — so this refuses with `degraded_unavailable` (503, retryable),
+  // the code for "the check could not be performed", and the client retries.
+  //
+  // `(blockedByMe.data ?? [])` turned a resolved DB error into an empty block
+  // set and the feed served stories from blocked owners.
+  const blockedIds = await readBlockExclusions(sc, user.id);
+  if (!blockedIds.ok) {
+    sendExclusionsUnavailable(req, res, blockedIds, "stories/feed");
+    return;
+  }
 
   // Resolve viewer context: follows (both directions), trips, circle memberships, close-friends membership
   const [followRows, followerRows, tripMemberRows, circleMemberRows, closeFriendOfRows] = await Promise.all([
@@ -301,7 +315,7 @@ router.get("/stories/feed", asyncHandler(async (req, res) => {
 
   // Filter by blocks + visibility
   const visible = (storyRows ?? []).filter((s: any) => {
-    if (blockedIds.has(s.owner_id as string)) return false;
+    if (isExcluded(blockedIds, s.owner_id as string)) return false;
     if (s.owner_id === user.id) return true;
     const vis: StoryVisibility = s.visibility;
     if (vis === "public") return true;
@@ -548,17 +562,25 @@ router.get("/stories/:id/viewers", asyncHandler(async (req, res) => {
 
   if (!viewRows || viewRows.length === 0) { res.status(200).json({ viewers: [], hidden: false }); return; }
 
-  // Get blocks (exclude blocked viewers from list)
-  const [blockedByMe, blockingMe] = await Promise.all([
-    sc.from("blocks").select("blocked_id").eq("blocker_id", user.id),
-    sc.from("blocks").select("blocker_id").eq("blocked_id", user.id),
-  ]);
-  const blockedIds = new Set<string>([
-    ...((blockedByMe.data ?? []).map((r: any) => r.blocked_id as string)),
-    ...((blockingMe.data ?? []).map((r: any) => r.blocker_id as string)),
-  ]);
+  // Get blocks (exclude blocked viewers from list).
+  //
+  // FAIL-CLOSED, shape 3 (lib/exclusionSet.ts): this response is nothing but a
+  // roster of people, so the block set scopes all of it. `viewers: []` is not
+  // the safe answer here, it is a wrong one — the owner reads it as "nobody has
+  // seen this" — so it refuses with `degraded_unavailable` (503, retryable),
+  // matching the db_error path this handler already has for an unreadable
+  // story_views but distinguishing "could not check" from "read failed".
+  //
+  // `(blockedByMe.data ?? [])` previously made a resolved DB error an empty
+  // block set and listed a blocked viewer to the story owner.
+  const viewerCandidateIds = (viewRows ?? []).map((r: any) => r.viewer_id as string);
+  const blockedIds = await readBlockExclusions(sc, user.id, { among: viewerCandidateIds });
+  if (!blockedIds.ok) {
+    sendExclusionsUnavailable(req, res, blockedIds, "stories/viewers");
+    return;
+  }
 
-  const viewerIds = (viewRows ?? []).map((r: any) => r.viewer_id as string).filter((v) => !blockedIds.has(v));
+  const viewerIds = viewerCandidateIds.filter((v) => !isExcluded(blockedIds, v));
 
   if (viewerIds.length === 0) { res.status(200).json({ viewers: [], hidden: false }); return; }
 

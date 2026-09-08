@@ -13,6 +13,7 @@ import { syncCircleChatMembers } from "../lib/chatSync";
 import { resolveInteractionPermissions } from "../services/interactionPermissions";
 import { nameVisibilitySet, sanitizeIdentity } from "../lib/publicIdentity";
 import { linkOutcomeSignal } from "../compass/CompassOutcomeEngine";
+import { readBlockExclusions, isExcluded, sendExclusionsUnavailable } from "../lib/exclusionSet.js";
 
 // NOTE (Section A table-name audit, 2026-07-20): the product spec is
 // follow-only (no friends system) and the original plan called for removing
@@ -536,29 +537,38 @@ router.get("/circles/:circleOwnerId/invitable-users", async (req, res) => {
     if (!mem) { sendError(res, "forbidden", "Not a circle member"); return; }
   }
 
-  const [{ data: memberships }, { data: friendsAsA }, { data: friendsAsB }, blockResult] = await Promise.all([
+  const [{ data: memberships }, { data: friendsAsA }, { data: friendsAsB }, blockedSet] = await Promise.all([
     sc.from("circle_memberships").select("other_id").eq("user_id", circleOwnerId),
     sc.from("user_friendships").select("user_b").eq("user_a", user.id),
     sc.from("user_friendships").select("user_a").eq("user_b", user.id),
-    sc.from("blocks").select("blocker_id, blocked_id").or(`blocker_id.eq.${user.id},blocked_id.eq.${user.id}`),
+    readBlockExclusions(sc, user.id),
   ]);
-
-  const blockedSet = new Set<string>();
-  for (const b of (blockResult.data ?? [])) {
-    if ((b as any).blocker_id === user.id) blockedSet.add((b as any).blocked_id);
-    else blockedSet.add((b as any).blocker_id);
+  //
+  // FAIL-CLOSED, shape 3 (lib/exclusionSet.ts): both halves of this response —
+  // groupMembers and otherFollowers — are rosters of people, and the block set
+  // scopes every id in both. There is no sub-part left to serve honestly, and
+  // an empty picker is a false statement ("you have nobody to invite") that the
+  // caller would act on. It refuses with `degraded_unavailable` (503,
+  // retryable), the code this codebase already uses for "the check could not be
+  // PERFORMED", not db_error (500).
+  //
+  // `blockResult.data ?? []` previously turned a resolved DB error into an
+  // empty block set, so the invite picker offered people the caller blocked.
+  if (!blockedSet.ok) {
+    sendExclusionsUnavailable(req, res, blockedSet, "circles/invitable-users");
+    return;
   }
 
   const groupMemberIds = (memberships ?? [])
     .map((m: any) => m.other_id as string)
     .concat(!isOwner ? [circleOwnerId] : [])
-    .filter((id) => id !== user.id && !blockedSet.has(id));
+    .filter((id) => id !== user.id && !isExcluded(blockedSet, id));
 
   const groupMemberSet = new Set(groupMemberIds);
   const otherFollowerIds = [
     ...(friendsAsA ?? []).map((r: any) => r.user_b as string),
     ...(friendsAsB ?? []).map((r: any) => r.user_a as string),
-  ].filter((id) => id !== user.id && !groupMemberSet.has(id) && !blockedSet.has(id));
+  ].filter((id) => id !== user.id && !groupMemberSet.has(id) && !isExcluded(blockedSet, id));
 
   const allIds = [...groupMemberIds, ...otherFollowerIds];
   const profileMap: Record<string, any> = {};

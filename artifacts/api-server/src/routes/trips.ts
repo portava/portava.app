@@ -23,6 +23,7 @@ import { awardStamp, type StampLogger } from "../services/passport/StampAwardEng
 import { buildConsumerProjection } from "../services/passport/PassportConsumerProjections.js";
 import { nameVisibilitySet, sanitizeIdentity, nameVisibleFor } from "../lib/publicIdentity";
 import { truncateDisplayName } from "../lib/displayName.js";
+import { readBlockExclusions, isExcluded, sendExclusionsUnavailable } from "../lib/exclusionSet.js";
 
 const router = Router();
 
@@ -569,28 +570,37 @@ router.get("/trips/:tripId/invitable-users", async (req, res) => {
   const membership = await requireTripMember(sc, tripId, user.id);
   if (!membership) { sendError(res, "forbidden", "Not a trip member"); return; }
 
-  const [{ data: memberRows }, { data: friendsAsA }, { data: friendsAsB }, blockResult] = await Promise.all([
+  const [{ data: memberRows }, { data: friendsAsA }, { data: friendsAsB }, blockedSet] = await Promise.all([
     sc.from("trip_members").select("user_id").eq("trip_id", tripId).in("role", ["owner", "member"]),
     sc.from("user_friendships").select("user_b").eq("user_a", user.id),
     sc.from("user_friendships").select("user_a").eq("user_b", user.id),
-    sc.from("blocks").select("blocker_id, blocked_id").or(`blocker_id.eq.${user.id},blocked_id.eq.${user.id}`),
+    readBlockExclusions(sc, user.id),
   ]);
-
-  const blockedSet = new Set<string>();
-  for (const b of (blockResult.data ?? [])) {
-    if ((b as any).blocker_id === user.id) blockedSet.add((b as any).blocked_id);
-    else blockedSet.add((b as any).blocker_id);
+  //
+  // FAIL-CLOSED, shape 3 (lib/exclusionSet.ts): both halves of this response —
+  // groupMembers and otherFollowers — are rosters of people, and the block set
+  // scopes every id in both. There is no sub-part left to serve honestly, and
+  // an empty picker is a false statement ("you have nobody to invite") that the
+  // caller would act on. It refuses with `degraded_unavailable` (503,
+  // retryable), the code this codebase already uses for "the check could not be
+  // PERFORMED", not db_error (500).
+  //
+  // `blockResult.data ?? []` previously turned a resolved DB error into an
+  // empty block set, so the invite picker offered people the caller blocked.
+  if (!blockedSet.ok) {
+    sendExclusionsUnavailable(req, res, blockedSet, "trips/invitable-users");
+    return;
   }
 
   const groupMemberIds = (memberRows ?? [])
     .map((r: any) => r.user_id as string)
-    .filter((id) => id !== user.id && !blockedSet.has(id));
+    .filter((id) => id !== user.id && !isExcluded(blockedSet, id));
 
   const groupMemberSet = new Set(groupMemberIds);
   const otherFollowerIds = [
     ...(friendsAsA ?? []).map((r: any) => r.user_b as string),
     ...(friendsAsB ?? []).map((r: any) => r.user_a as string),
-  ].filter((id) => id !== user.id && !groupMemberSet.has(id) && !blockedSet.has(id));
+  ].filter((id) => id !== user.id && !groupMemberSet.has(id) && !isExcluded(blockedSet, id));
 
   const allIds = [...groupMemberIds, ...otherFollowerIds];
   const profileMap: Record<string, any> = {};
