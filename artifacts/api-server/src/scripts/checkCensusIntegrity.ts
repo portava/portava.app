@@ -17,6 +17,31 @@
  * So this check recomputes what CAN be recomputed and refuses to invent the
  * rest.
  *
+ * ── A PR-COMPARISON TABLE IS NOT A RECOUNT ───────────────────────────────────
+ * This tool takes the LAST verdict on a row, which is right for a recount
+ * section restating a row a later pass revised. census-layover.md §5 is headed
+ * `| id | Requirement | Main | With #463 | What changes |` and compares the
+ * tree against an UNMERGED pull request. Every row there holds two verdicts,
+ * and last-wins took the PR's. Four requirements (L34, L47, L48, L230) were
+ * recorded C/W when main has N, W, N, N: the tool reported unmerged work as
+ * shipped, inside the one document whose purpose is to say what is built.
+ *
+ * Rows in a table whose header names a PR or reads as a hypothetical are now
+ * SKIPPED — they are not statements about HEAD in either direction.
+ *
+ * MEASURED, on a synthetic census with such a table and no correcting rows:
+ *
+ *   without the skip   C=2  W=0  N=1     <- two requirements reported CORRECT
+ *   with the skip      C=0  W=0  N=3        that are not built at all
+ *
+ * The synthetic case is needed because on census-layover.md itself the bug is
+ * currently MASKED: a later pass added correcting rows in §9.5, and those come
+ * after §5, so last-wins already overrides the PR verdicts there. Removing the
+ * skip changes nothing on the real corpus today. That makes the fix invisible
+ * to a mutation test against the repository — and a fix that is only invisible
+ * because somebody else worked around the bug by hand is exactly the kind that
+ * gets deleted later as unnecessary.
+ *
  * ── WHAT IT CHECKS ───────────────────────────────────────────────────────────
  * 1. DUPLICATE IDS. Two rows claiming the same requirement id means one of them
  *    is uncounted or double-counted, and no reader would see it. Hard failure.
@@ -78,6 +103,8 @@ interface CensusResult {
   revised: string[];
   /** Rows keyed by an id that carry no verdict at all (summary/cross-reference tables). */
   nonVerdictRows: number;
+  /** Rows in a PR-comparison or hypothetical table — NOT statements about HEAD. */
+  hypotheticalRows: number;
   counts: Record<Verdict, number>;
   statedDenominator: number | null;
   /** Every denominator the document states. More than one is deliberate, not a bug. */
@@ -118,12 +145,36 @@ const ID_CELL = /^\*{0,2}([A-Z]{1,4}-?[0-9]{1,4}[a-z]?)\*{0,2}$/;
 function parseCensus(file: string, text: string): CensusResult {
   const seenRows: Row[] = [];
   let nonVerdictRows = 0;
+  let hypotheticalRows = 0;
   const lines = text.split("\n");
 
+  // Track which TABLE each row belongs to, by remembering the last header row
+  // (a `|...|` line immediately followed by a `|---|` separator).
+  //
+  // This exists because of a measured false green. census-layover.md §5 carries
+  // a table headed `| id | Requirement | Main | With #463 | What changes |`,
+  // comparing the tree against an UNMERGED pull request. Every one of its rows
+  // holds two verdicts, and the last-statement-wins rule -- correct for a
+  // recount table, which restates a row a later pass revised -- took the PR's
+  // hypothetical verdict as current. Four requirements (L34, L47, L48, L230)
+  // were recorded as C/W when main has N, W, N, N. The tool was reporting
+  // unmerged work as shipped, in a document whose whole purpose is to say what
+  // is actually built.
+  //
+  // A hypothetical table is not a recount and its rows are not statements about
+  // HEAD, so they are skipped entirely rather than read in either direction.
+  let headerCells: string[] = [];
+  const isSeparator = (l: string) => /^\|[\s:|-]+\|?$/.test(l.trim()) && l.includes("-");
+  /** A column header naming a PR, or phrased as a hypothetical. */
+  const HYPOTHETICAL = /#\d+|\bwould\b|\bif applied\b|\bhypothetical\b|\bproposed\b/i;
+
   lines.forEach((line, i) => {
-    if (!line.startsWith("|")) return;
+    if (!line.startsWith("|")) { headerCells = []; return; }
+    if (isSeparator(line)) return;
     const cells = line.split("|").slice(1, -1);
     if (cells.length < 3) return;
+    // Is this line a header? It is if the NEXT line is a separator.
+    if (isSeparator(lines[i + 1] ?? "")) { headerCells = cells.map((c) => c.trim()); return; }
     const idm = ID_CELL.exec(cells[0]!.trim());
     if (!idm) return;
     const id = idm[1]!;
@@ -143,6 +194,12 @@ function parseCensus(file: string, text: string): CensusResult {
     for (let c = 1; c < cells.length; c++) {
       const got = verdictOf(cells[c]!);
       if (got) found.push(got);
+    }
+    // Two or more verdicts in a table whose header names a PR or reads as a
+    // hypothetical is a COMPARISON, not a revision. Skip it.
+    if (found.length > 1 && headerCells.some((h) => HYPOTHETICAL.test(h))) {
+      hypotheticalRows++;
+      return;
     }
     if (found.length > 0) seenRows.push({ id, verdict: found[found.length - 1]!, line: i + 1 });
     else nonVerdictRows++;
@@ -189,6 +246,7 @@ function parseCensus(file: string, text: string): CensusResult {
     allDenominators: uniqueDenoms,
     revised,
     nonVerdictRows,
+    hypotheticalRows,
     counts,
     statedDenominator,
     duplicates,
@@ -237,6 +295,7 @@ for (const r of results) {
       `${r.allDenominators.length > 1 ? ` [states ${r.allDenominators.length} denominators: ${r.allDenominators.join(", ")} — scored against more than one population on purpose]` : ""}` +
       `${r.revised.length > 0 ? ` [${r.revised.length} row(s) revised by a later recount; last statement taken]` : ""}` +
       `${r.nonVerdictRows > 0 ? ` [${r.nonVerdictRows} id-keyed row(s) carry no verdict — not verdict tables, not counted]` : ""}` +
+      `${r.hypotheticalRows > 0 ? ` [${r.hypotheticalRows} row(s) in a PR-comparison table — skipped, they describe UNMERGED work]` : ""}` +
       `${r.hasCorrectionHeader ? "  [carries a CORRECTION HEADER]" : ""}`,
   );
 }
