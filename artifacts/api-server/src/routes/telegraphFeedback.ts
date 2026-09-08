@@ -110,10 +110,42 @@ router.post("/telegraph/recommendations/:id/feedback", async (req, res) => {
     tripId,
   });
 
-  await client.from("user_preference_profiles").update({
-    inferred_preferences_json: JSON.stringify(updated),
-    updated_at: now,
-  }).eq("user_id", user.id);
+  // ── THE FEEDBACK *IS* THIS WRITE, AND IT WAS ISSUED BLIND ──────────────────
+  // `await client.from(...).update(...).eq(...)` with no `.select()` and no
+  // `{ error }`. supabase-js RESOLVES on a database error, so an UPDATE that
+  // never landed returned exactly what a successful one returns and the route
+  // answered HTTP 201 `{ ok: true }` — "your feedback was applied" for a
+  // preference profile nobody wrote to. The signal is not queued anywhere and
+  // the client has no reason to resend, so it is simply gone; the next
+  // recommendation is scored off the unchanged profile and the user watches the
+  // thing they just said "less like this" about come back.
+  //
+  // getOrCreateInferred above already refuses to proceed when this same row
+  // cannot be READ, precisely so it is not overwritten with defaults. Leaving
+  // the WRITE unobserved made that care one-sided.
+  //
+  // STILL OPEN, and deliberately not fixed here: `.eq("user_id", …)` matching
+  // NO row is the same silent loss by a different cause — the blank-profile
+  // insert in getOrCreateInferred is best-effort, so when it fails the row does
+  // not exist and this UPDATE applies to zero rows while resolving cleanly.
+  // Catching that needs `.select("user_id")` and a row-count branch, which
+  // src/test/intelligence.test.ts's fake client cannot express (its
+  // user_preference_profiles insert is never persisted into the fake state, so
+  // every feedback case would report zero rows). Fixing it means editing that
+  // fixture, which is out of this change's scope; recorded rather than dropped.
+  const { error: saveErr } = await client
+    .from("user_preference_profiles")
+    .update({
+      inferred_preferences_json: JSON.stringify(updated),
+      updated_at: now,
+    })
+    .eq("user_id", user.id);
+
+  if (saveErr) {
+    fbLogger.error({ err: saveErr, userId: user.id, recommendationId }, "inferred preference profile write failed — feedback not applied");
+    sendError(res, "db_error", "Could not save your preference profile — feedback not applied");
+    return;
+  }
 
   res.status(201).json({ ok: true, signal, category, recommendationId });
 });

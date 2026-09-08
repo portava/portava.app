@@ -456,11 +456,30 @@ router.post('/users/:userId/open-thread', async (req, res) => {
   if (existingThreadId) {
     // Reusing a thread one (or both) parties previously left: reset left_at so
     // the conversation is usable again for both sides.
-    await sc
+    //
+    // ── THIS WRITE IS THE DIFFERENCE BETWEEN A THREAD AND A 403 ───────────────
+    // It was issued blind: no `{ error }`. supabase-js RESOLVES on a database
+    // error, so a rejoin that never landed answered exactly like one that did,
+    // and the handler replied 200 `{ threadId, created: false }`. The client
+    // then opens a thread in which every send and every media upload is refused
+    // — `left_at !== null` is checked explicitly in those handlers and answers
+    // 403 "You no longer have access to this thread". The endpoint's whole
+    // contract is "here is a conversation you can use", so a failure here has to
+    // be reported rather than papered over with the thread id.
+    const { error: rejoinErr } = await sc
       .from('message_thread_members')
       .update({ left_at: null })
       .eq('thread_id', existingThreadId)
       .in('user_id', [user.id, recipientId]);
+
+    if (rejoinErr) {
+      req.log.error(
+        { err: rejoinErr, threadId: existingThreadId },
+        'open-thread: left_at reset failed — the thread would 403 on every send; refusing instead of returning it',
+      );
+      sendError(res, 'db_error', rejoinErr.message ?? 'Failed to reopen this conversation');
+      return;
+    }
 
     res.status(200).json({ threadId: existingThreadId, created: false });
     return;
@@ -800,11 +819,44 @@ router.post('/message-requests/:requestId/accept', async (req, res) => {
     threadId = existingDirectThreadId;
     // Reusing a thread one (or both) parties previously left: reset left_at so
     // the conversation is usable again for both sides.
-    await sc
+    //
+    // Same blind write as POST /users/:id/open-thread carried: an unobserved
+    // failure here hands both parties a thread whose send handlers answer 403
+    // "You no longer have access to this thread" on `left_at !== null`, while
+    // the response says the request was accepted and names the thread.
+    const { error: rejoinErr } = await sc
       .from('message_thread_members')
       .update({ left_at: null })
       .eq('thread_id', threadId)
       .in('user_id', [req_.sender_id, req_.recipient_id]);
+
+    if (rejoinErr) {
+      req.log.error(
+        { err: rejoinErr, threadId, requestId },
+        'message-request accept: left_at reset failed — the reused thread would 403 on every send',
+      );
+      // The compare-and-swap above has ALREADY moved this request to 'accepted',
+      // and the status check at the top of the handler refuses anything that is
+      // not 'pending' — so returning here without undoing it would leave the
+      // recipient with an accepted request, no usable thread, and no way to try
+      // again. Put the request back the way we found it so the accept is
+      // genuinely retryable, exactly as the orphan-thread branch below rolls
+      // back the thread it created. If the rollback itself fails there is
+      // nothing further to try; it is logged rather than swallowed.
+      const { error: rollbackErr } = await sc
+        .from('message_requests')
+        .update({ status: 'pending', responded_at: null })
+        .eq('id', requestId)
+        .eq('status', 'accepted');
+      if (rollbackErr) {
+        req.log.error(
+          { err: rollbackErr, requestId },
+          'message-request accept: could not roll the request back to pending after a failed rejoin — it is stuck accepted with no usable thread',
+        );
+      }
+      sendError(res, 'db_error', rejoinErr.message ?? 'Failed to reopen this conversation');
+      return;
+    }
   } else {
     const { data: thread, error: tErr } = await sc
       .from('message_threads')
@@ -960,11 +1012,38 @@ router.post('/message-requests/:requestId/decline', async (req, res) => {
   if (req_.status !== 'pending') { sendError(res, 'invalid_payload', `Request is already ${req_.status}`); return; }
 
   const now = new Date().toISOString();
-  await sc.from('message_requests').update({ status: 'declined', responded_at: now }).eq('id', requestId);
+
+  // ── THE DECLINE IS THE WHOLE ENDPOINT, AND IT WAS ISSUED BLIND ──────────────
+  // This used to be a bare `await sc.from(...).update(...).eq('id', requestId)`
+  // — no `.select()`, no `{ error }`. supabase-js RESOLVES on a database error,
+  // so an UPDATE that never landed returned exactly what a successful one
+  // returns, and the handler went on to answer HTTP 200 `{ status: 'declined' }`
+  // AND publish a `request.declined` realtime event to the sender — for a
+  // request still sitting at `pending` in the table. Three parties then disagree
+  // about one fact: the recipient's client drops the card, the sender is told
+  // they were turned down, and the next GET /message-requests hands the
+  // recipient the very same request back. Nothing retries, because nothing
+  // observed a failure.
+  //
+  // The fix is scoped to what was MEASURED: the error was never bound, so it was
+  // never seen. The non-atomic `status !== 'pending'` check above is a separate,
+  // pre-existing double-submit race and is deliberately left alone here.
+  const { error: declineErr } = await sc
+    .from('message_requests')
+    .update({ status: 'declined', responded_at: now })
+    .eq('id', requestId);
+
+  if (declineErr) {
+    req.log.error({ err: declineErr, requestId }, 'message_requests decline update failed');
+    sendError(res, 'db_error', declineErr.message);
+    return;
+  }
 
   res.status(200).json({ status: 'declined', requestId });
 
   // Realtime: notify the original sender their request was declined.
+  // Reached only on a decline this handler WATCHED land, so the event can no
+  // longer announce a state change the table does not carry.
   if (req_.sender_id) {
     void publishToUsers([req_.sender_id], {
       type: 'request.declined',
@@ -998,7 +1077,20 @@ router.post('/message-requests/:requestId/cancel', async (req, res) => {
   if (req_.sender_id !== user.id) { sendError(res, 'forbidden', 'Only the sender can cancel this request'); return; }
   if (req_.status !== 'pending') { sendError(res, 'invalid_payload', `Request is already ${req_.status}`); return; }
 
-  await sc.from('message_requests').update({ status: 'cancelled' }).eq('id', requestId);
+  // Same blind write as decline had: no `{ error }`. A failed UPDATE was
+  // reported to the sender as HTTP 200 `{ status: 'cancelled' }` while the
+  // request stayed `pending` and kept sitting in the recipient's inbox — a
+  // withdrawal the recipient never saw withdrawn.
+  const { error: cancelErr } = await sc
+    .from('message_requests')
+    .update({ status: 'cancelled' })
+    .eq('id', requestId);
+
+  if (cancelErr) {
+    req.log.error({ err: cancelErr, requestId }, 'message_requests cancel update failed');
+    sendError(res, 'db_error', cancelErr.message);
+    return;
+  }
 
   res.status(200).json({ status: 'cancelled', requestId });
 });

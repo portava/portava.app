@@ -224,13 +224,13 @@ export class NotificationRouter {
       // ── End Compass gate ───────────────────────────────────────────────────
 
       // Gather all push tokens registered for this user
-      const { data: devices } = await this.db
+      const { data: devices, error: devicesErr } = await this.db
         .from('notification_devices')
         .select('push_token')
         .eq('user_id', userId);
 
       // Also check legacy expo_push_token on profiles
-      const { data: profile } = await this.db
+      const { data: profile, error: profileErr } = await this.db
         .from('profiles')
         .select('expo_push_token')
         .eq('id', userId)
@@ -248,6 +248,54 @@ export class NotificationRouter {
           ].filter(Boolean),
         ),
       ];
+
+      // ── "THIS USER HAS NO DEVICE" vs "WE COULD NOT READ THEIR DEVICES" ──────
+      // Both reads above used to discard `{ error }`. supabase-js RESOLVES on a
+      // database error, so an unreadable notification_devices came back as
+      // `data: null` — an EMPTY token list — and the very next branch wrote
+      // `status: 'suppressed', error_message: 'no push tokens'` into
+      // notification_delivery_attempts. That is the SAME ledger row a user who
+      // has never installed the app produces. notification_delivery_attempts is
+      // the table an operator reads to answer "why did this alert not arrive?",
+      // and it answered "that person has no device registered" for an outage —
+      // a terminal, action-closing answer for a condition that was transient and
+      // retryable. Nothing else records the difference.
+      //
+      // route() above was already fixed to log 'failed' with
+      // 'preferences_unreadable' rather than 'suppressed' when consent could not
+      // be read, on the reasoning that conflating an outage with an opt-out is
+      // how this class of failure stays invisible. The token registry is the
+      // other half of the same claim and must agree: 'suppressed' is reserved
+      // for a decision about the user, 'failed' is what an outage gets.
+      //
+      // The two reads are not symmetric. A notification_devices failure is
+      // decisive: the token set is unknown, so pushing to whatever the legacy
+      // column happened to return would under-deliver AND record a 'sent' that
+      // overstates it. A profiles failure only matters when it leaves us with
+      // nothing to send to — when device tokens came back, the legacy column is
+      // a duplicate of one of them for almost every user.
+      if (devicesErr || (profileErr && tokens.length === 0)) {
+        const readErr = devicesErr ?? profileErr;
+        logger.error(
+          {
+            err: readErr,
+            notificationId: notification.id,
+            userId,
+            source: devicesErr ? 'notification_devices' : 'profiles',
+          },
+          'NotificationRouter: push token registry unreadable — recording a FAILED attempt, not "no push tokens"',
+        );
+        await this.logAttempt(
+          notification.id, userId, 'push', 'failed', 'push_tokens_unreadable',
+        );
+        return;
+      }
+      if (profileErr) {
+        logger.warn(
+          { err: profileErr, notificationId: notification.id, userId },
+          'NotificationRouter: legacy profiles.expo_push_token unreadable — sending to the device tokens that were readable',
+        );
+      }
 
       if (tokens.length === 0) {
         await this.logAttempt(notification.id, userId, 'push', 'suppressed', 'no push tokens');
