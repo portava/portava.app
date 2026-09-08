@@ -33,6 +33,7 @@ import { requireAdmin } from "../lib/requireAdmin.js";
 import { resolveStoragePath } from "../lib/storagePath.js";
 import { resolveContentOwner } from "../lib/contentOwner.js";
 import { logModerationAction, auditReportAction } from "../lib/moderationAudit.js";
+import { affectedRows } from "../lib/affectedRows.js";
 
 const router = Router();
 
@@ -557,13 +558,28 @@ router.post("/admin/media/backfill-dimensions", asyncHandler(async (req, res) =>
         continue;
       }
 
-      const { error: updateErr } = await sc
+      // `.select()` makes the statement RETURNING, which is the only way to
+      // learn what it matched: a zero-row UPDATE resolves `{ data: null,
+      // error: null }` — byte-identical to a successful one — so the previous
+      // `if (updateErr) ... else status:"ok"` reported a backfilled row for a
+      // post_media id that had been hard-deleted since the candidate SELECT.
+      // The batch summary counts those in `ok`, and an operator draining this
+      // backfill by watching `ok` vs `candidates` would see a clean pass over
+      // rows it never wrote.
+      const { data: updatedRows, error: updateErr } = await sc
         .from("post_media")
         .update(patch)
-        .eq("id", row.id);
+        .eq("id", row.id)
+        .select("id");
 
       if (updateErr) {
         results.push({ id: row.id, status: "error", error: updateErr.message });
+      } else if (affectedRows(updatedRows) === 0) {
+        results.push({
+          id:     row.id,
+          status: "error",
+          error:  "update matched no row (media deleted since the candidate scan) — nothing was backfilled",
+        });
       } else {
         const note = needDims && !dims
           ? `Dimensions not parsed (unsupported format: ${row.mime_type ?? row.media_type ?? "unknown"})`

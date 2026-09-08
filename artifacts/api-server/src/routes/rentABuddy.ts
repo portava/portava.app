@@ -60,6 +60,7 @@ import {
 // The ONE bidirectional, fail-closed block resolver. Marketplace search filters
 // against the same set the map layer does.
 import { fetchBlockedSet } from "../lib/blocks.js";
+import { affectedRows } from "../lib/affectedRows.js";
 import { haversineKm } from "../lib/canonicalLocations.js";
 import { isNonNumericCoord } from "../lib/coords.js";
 import { SEED_CITIES } from "../lib/popularCities.js";
@@ -5311,6 +5312,12 @@ router.post("/rent-a-buddy/admin/safety/flags/:flagId/confirm", async (req, res)
 
   const f = flag as any;
 
+  // "applied"           the buddy profile really is on risk hold
+  // "no_buddy_profile"  the flagged user has no buddy profile to hold
+  // "failed"            the hold errored — the control is NOT on
+  // "not_applicable"    the flag is not critical, so no hold is called for
+  let riskHold: "applied" | "no_buddy_profile" | "failed" | "not_applicable" = "not_applicable";
+
   await serviceClient.from("rent_buddy_policy_flags").update({
     status: "resolved",
     admin_notes: req.body?.notes ?? null,
@@ -5333,11 +5340,52 @@ router.post("/rent-a-buddy/admin/safety/flags/:flagId/confirm", async (req, res)
       sourceId: flagId,
     });
 
-    // Risk hold for critical flags
+    // Risk hold for critical flags.
+    //
+    // The statement's ONLY predicate is user_id, so zero matched rows has
+    // exactly one meaning: the flagged user has no rent_buddy_profiles row —
+    // a flagged TRAVELER, who never applied to be a buddy. That is legitimate
+    // and must not be reported as a failure. But it is also indistinguishable,
+    // to code that reads neither `error` nor the affected-row count, from a
+    // hold that FAILED to land on a buddy who does have a profile: supabase-js
+    // resolves a zero-row UPDATE as `{ data: null, error: null }`, the same
+    // shape a successful one returns, and this call discarded even that. The
+    // route then answered {ok:true} for a critical safety flag whose hold was
+    // never applied.
+    //
+    // All three outcomes are now distinguished and reported in the response,
+    // and the two that are not "the hold is on" are logged with the flag and
+    // user ids so an operator can act on them.
     if (f.severity === "critical") {
-      await serviceClient.from("rent_buddy_profiles")
+      const { data: held, error: holdErr } = await serviceClient.from("rent_buddy_profiles")
         .update({ risk_hold: true, admin_status: "disabled" })
-        .eq("user_id", f.flagged_user_id);
+        .eq("user_id", f.flagged_user_id)
+        .select("user_id");
+      if (holdErr) {
+        // A critical hold that errored is a safety control that is NOT on.
+        riskHold = "failed";
+        req.log?.error?.(
+          { err: holdErr, flagId, flaggedUserId: f.flagged_user_id },
+          "rent-a-buddy: critical-flag risk hold FAILED — the buddy is not disabled",
+        );
+      } else if (affectedRows(held) === 0) {
+        // OPEN POLICY QUESTION (RAB_CRITICAL_HOLD_WITHOUT_PROFILE): a critical
+        // flag against a user with no buddy profile currently holds NOTHING,
+        // and nothing carries the hold forward if that user later applies to
+        // become a buddy. Whether the hold should be pre-created (a
+        // rent_buddy_user_limits row, an application block, or a profile row
+        // in `disabled` state) is an owner decision about the buddy-onboarding
+        // funnel, not one this handler may make on a moderator's behalf. Until
+        // it is decided, the truthful state is reported rather than assumed.
+        riskHold = "no_buddy_profile";
+        req.log?.warn?.(
+          { flagId, flaggedUserId: f.flagged_user_id },
+          "rent-a-buddy: critical-flag risk hold matched no rent_buddy_profiles row " +
+          "(flagged user is not a buddy) — no hold exists to carry into a future application",
+        );
+      } else {
+        riskHold = "applied";
+      }
     }
   }
 
@@ -5347,9 +5395,18 @@ router.post("/rent-a-buddy/admin/safety/flags/:flagId/confirm", async (req, res)
     target_id: flagId,
     action: "confirmed",
     notes: req.body?.notes ?? null,
+    // No column carries riskHold here: 0047 defines rent_buddy_admin_actions
+    // with (id, admin_id, target_type, target_id, action, notes, created_at)
+    // and 0107 adds only `details`, so which shape is live depends on which
+    // migration created the table. Writing an unknown column would make this
+    // (unchecked) audit insert fail silently and lose the row entirely, so the
+    // hold outcome travels in the response and the log instead.
   });
 
-  return res.json({ ok: true });
+  // riskHold is reported to the admin who confirmed the flag. `ok` still
+  // describes the confirmation (which did happen); it never again stands in
+  // for a critical hold that did not.
+  return res.json({ ok: true, riskHold });
 });
 
 router.post("/rent-a-buddy/admin/safety/flags/:flagId/escalate", async (req, res) => {

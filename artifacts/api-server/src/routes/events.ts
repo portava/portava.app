@@ -190,6 +190,7 @@ import { detectAndStoreLanguage, invalidateContentTranslations } from "../servic
 import { nameVisibilitySet, sanitizeIdentity } from "../lib/publicIdentity.js";
 import { isFlagEnabled, isKillSwitchEngaged } from "../lib/featureFlags.js";
 import { isBlockedBetween } from "../lib/blockGuard.js";
+import { affectedRows } from "../lib/affectedRows.js";
 import { tripKernelClient, executeTripCommand, TRIP_VERSION_RESPONSE_HEADER } from "../lib/tripKernel.js";
 import { readBlockExclusions, sendExclusionsUnavailable } from "../lib/exclusionSet.js";
 import { appStorageUrlInfo } from "../lib/mediaUrl.js";
@@ -3385,12 +3386,29 @@ router.patch("/events/:id/requests/:userId", async (req, res) => {
       sendError(res, approveElig.errorCode as any, `Cannot approve: ${approveElig.message}`); return;
     }
 
-    // Mark request as approved
-    await sc.from("event_join_requests").update({
+    // Mark request as approved.
+    //
+    // Nothing above this line reads event_join_requests: the handler checks
+    // that the caller may manage attendance and that the TARGET is eligible,
+    // then writes. So an approval for a user who never asked to join matched
+    // ZERO rows — which supabase-js resolves as `{ data: null, error: null }`,
+    // indistinguishable from an approval that landed — and the handler carried
+    // straight on to seat them: an unrequested `going` RSVP, a going_count
+    // bump, a chat-thread add and a "You're in! 🎉" push. `.select()` makes the
+    // statement RETURNING so the request's existence is PROVEN by the write
+    // that approves it, and the route's own not_found is returned when it is
+    // not there. Re-approving an already-approved request still matches (there
+    // is no status guard), so this stays idempotent.
+    const { data: approvedReq, error: approveErr } = await sc.from("event_join_requests").update({
       status: "approved",
       reviewed_by: user.id,
       reviewed_at: new Date().toISOString(),
-    }).eq("event_id", id).eq("user_id", userId);
+    }).eq("event_id", id).eq("user_id", userId).select("user_id");
+    if (approveErr) { sendError(res, "db_error", approveErr.message); return; }
+    if (affectedRows(approvedReq) === 0) {
+      req.log?.warn?.({ eventId: id, targetUserId: userId }, "events: approve matched no join request — no RSVP created");
+      sendError(res, "not_found", "No pending join request from this user"); return;
+    }
 
     // Capacity check: if full, route to waitlist (when enabled) instead of going
     const maxAtt = (evFull as any).max_attendees ?? null;
@@ -3422,12 +3440,19 @@ router.patch("/events/:id/requests/:userId", async (req, res) => {
       await addUserToChatThread(sc, (evFull as any).chat_thread_id, userId);
     }
   } else {
-    // Deny: just update the request status
-    await sc.from("event_join_requests").update({
+    // Deny: just update the request status — and the same rule applies. A deny
+    // that matched nothing used to answer {ok:true, action:"deny"} and send the
+    // "Join request declined" push to a user who had not requested anything.
+    const { data: deniedReq, error: denyErr } = await sc.from("event_join_requests").update({
       status: "denied",
       reviewed_by: user.id,
       reviewed_at: new Date().toISOString(),
-    }).eq("event_id", id).eq("user_id", userId);
+    }).eq("event_id", id).eq("user_id", userId).select("user_id");
+    if (denyErr) { sendError(res, "db_error", denyErr.message); return; }
+    if (affectedRows(deniedReq) === 0) {
+      req.log?.warn?.({ eventId: id, targetUserId: userId }, "events: deny matched no join request");
+      sendError(res, "not_found", "No pending join request from this user"); return;
+    }
   }
 
   // Notify the requester (fire-and-forget)
