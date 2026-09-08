@@ -290,6 +290,13 @@ router.delete("/users/:userId/follow", async (req, res) => {
     return;
   }
 
+  // ZERO-ROW DECISION. No `.select()`, so `error === null` says the statement
+  // ran, not that a row went away. Acceptable here because the filters are the
+  // table's key AND `canUnfollow` above already established the edge existed:
+  // a zero-row delete therefore means a concurrent unfollow won the race, and
+  // the response asserts the END STATE ("you are not following them"), which
+  // both outcomes satisfy. It would NOT be acceptable if this response claimed
+  // to have changed something.
   const { error } = await client
     .from("user_follows")
     .delete()
