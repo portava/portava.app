@@ -377,11 +377,23 @@ export async function generateRecommendations(
 
   // id per row, known only on the stable-identity path.
   const idByKey = new Map<string, string>();
+  // Stored moderation state per key, re-read after the write on the
+  // stable-identity path so a regenerated card is served under the status an
+  // admin last set for it. Empty on the legacy path, where a card has no
+  // identity that outlives the DELETE and therefore no prior state to carry.
+  const statusByKey = new Map<string, string>();
 
   if (opts.stableIds) {
     // Stable identity: upsert in place on (session_id, rec_key), then remove
     // only the cards that no longer apply. Existing ids — and therefore
     // layover_plan_stops.recommendation_id — survive a regeneration.
+    //
+    // `status` is deliberately ABSENT from the upsert payload. PostgREST's
+    // merge-duplicates upsert emits ON CONFLICT DO UPDATE SET only for the
+    // columns the payload carries, so an admin's hide/flag on an existing row
+    // is left standing by the write itself. Adding `status` here would reset
+    // every moderated card to 'active' on the next dashboard load — which is
+    // exactly the durability this path exists to provide.
     const keyed = rows.map((row, i) => ({ ...row, rec_key: keys[i] }));
     if (keyed.length > 0) {
       const { data: written, error: upError } = await db
@@ -398,12 +410,20 @@ export async function generateRecommendations(
     }
     const { data: existing, error: exError } = await db
       .from("layover_recommendations")
-      .select("id, rec_key")
+      .select("id, rec_key, status")
       .eq("session_id", session.id);
     if (exError) {
       logger.warn({ err: exError, sessionId: session.id }, "recommendation stale-scan failed (non-fatal)");
     } else {
       const live = new Set(keys);
+      for (const r of (existing ?? []) as any[]) {
+        // Identity is rec_key and ONLY rec_key. A row is matched to a freshly
+        // generated card because it carries that card's key, never because the
+        // two happen to read alike — text similarity is not identity.
+        if (!r?.rec_key || !live.has(r.rec_key)) continue;
+        if (r.id) idByKey.set(r.rec_key, r.id);
+        if (typeof r.status === "string") statusByKey.set(r.rec_key, r.status);
+      }
       const stale = ((existing ?? []) as any[])
         .filter((r) => !r.rec_key || !live.has(r.rec_key))
         .map((r) => r.id as string);
@@ -441,7 +461,12 @@ export async function generateRecommendations(
       user_id:    session.userId,
       event_type: "recommendation_generated",
       metadata:   {
+        // `count` is what was WRITTEN, not what was returned: a moderated card
+        // is still generated and still persisted, it is only withheld from the
+        // traveller. `moderationHidden` is how many of those there were, so the
+        // gap between the two is auditable rather than invisible.
         count: rows.length,
+        moderationHidden: keys.filter((k) => statusByKey.get(k) === USER_HIDDEN_RECOMMENDATION_STATUS).length,
         engineVersion: LAYOVER_ENGINE_VERSION,
         stableIds: Boolean(opts.stableIds),
         inputs: {
@@ -464,27 +489,40 @@ export async function generateRecommendations(
     if (evtError) logger.warn({ err: evtError, sessionId: session.id }, "recommendation_generated event failed (non-fatal)");
   }
 
-  // Return privacy-safe view
-  return rows.map((row, idx) => sanitizeRecommendation({
-    id:             idByKey.get(keys[idx]),
-    recType:        row.rec_type,
-    title:          row.title,
-    description:    row.description,
-    safetyRating:   row.safety_rating,
-    travelTimeMin:  row.travel_time_min,
-    travelTimeSource: sources[idx],
-    activityTimeMin: row.activity_time_min,
-    returnBufferMin: row.return_buffer_min,
-    hardReturnTime: row.hard_return_time,
-    warningReason:  row.warning_reason,
-    insideAirport:  row.inside_airport,
-    locationLabel:  row.location_label,
-    city:           row.city,
-    neighborhood:   row.neighborhood,
-    sortOrder:      idx,
-    placeId:        row.place_id ?? null,
-    planItemId:     null,
-  }));
+  // Return privacy-safe view.
+  //
+  // A card whose stored row is admin-hidden is dropped here, so regeneration
+  // cannot smuggle a moderated card back onto the traveller's dashboard. The
+  // suppression uses the same constant as `getRecommendations` and the plan-add
+  // read, so the three cannot drift apart. `flagged` deliberately stays visible
+  // — see USER_HIDDEN_RECOMMENDATION_STATUS.
+  //
+  // On the legacy path `statusByKey` is empty, so nothing is dropped and the
+  // returned set is byte-identical to what it was before this filter existed.
+  return rows.flatMap((row, idx) => {
+    const status = statusByKey.get(keys[idx]);
+    if (status === USER_HIDDEN_RECOMMENDATION_STATUS) return [];
+    return [sanitizeRecommendation({
+      id:              idByKey.get(keys[idx]),
+      recType:         row.rec_type,
+      title:           row.title,
+      description:     row.description,
+      safetyRating:    row.safety_rating,
+      travelTimeMin:   row.travel_time_min,
+      travelTimeSource: sources[idx],
+      activityTimeMin: row.activity_time_min,
+      returnBufferMin: row.return_buffer_min,
+      hardReturnTime:  row.hard_return_time,
+      warningReason:   row.warning_reason,
+      insideAirport:   row.inside_airport,
+      locationLabel:   row.location_label,
+      city:            row.city,
+      neighborhood:    row.neighborhood,
+      sortOrder:       row.sort_order,
+      placeId:         row.place_id ?? null,
+      planItemId:      null,
+    })];
+  });
 }
 
 /**
