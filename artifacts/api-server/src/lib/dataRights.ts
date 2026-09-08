@@ -72,7 +72,17 @@ export const FIELD_RIGHTS: readonly FieldRight[] = [
   { table: "intel_observations", column: "claim_type", ownership: "portava_owned", personal: false,
     reason: "Portava's claim taxonomy (IG-01 registry)." },
   { table: "intel_observations", column: "value", ownership: "contributor_licensed", personal: false,
-    reason: "The contributor's report about the world. Redistributable only under the contributor licence, with attribution." },
+    reason: "The contributor's report about the world. Redistributable only under the contributor licence, with " +
+      "attribution. TWO QUALIFICATIONS ON personal:false, both measured 2026-09-08. (1) Until lib/intelValueProjection " +
+      "was applied at capture, the value validators ADMITTED ANY KEY THEY DID NOT NAME — validateClaimValue" +
+      "(\"crowd.level\", { level: \"busy\", note: \"met Alice at 9pm\" }) returned true, as did a queue.wait carrying " +
+      "lat/lng — and the column is z.record(z.string(), z.unknown()) flowing verbatim through 2174 into " +
+      "intel_state_snapshots.value, which projectSnapshotForApi redistributes. So ROWS WRITTEN BEFORE THAT COMMIT MAY " +
+      "CARRY FREE TEXT OR COORDINATES under a client-chosen key. That is an audit of existing rows, not a code " +
+      "question, and it is recorded here rather than assumed away. (2) experience.next_move carries destinationArea, " +
+      "contributor free text up to 120 chars naming where the contributor is going NEXT. It is aggregate-only at claim " +
+      "level (mustAggregate refuses a single-user next_move) so it never publishes as one person's claim, but the " +
+      "observation row holds it." },
   { table: "intel_observations", column: "source_class", ownership: "portava_owned", personal: false,
     reason: "Portava's epistemic classification of the assertion." },
   { table: "intel_observations", column: "capture_surface", ownership: "portava_owned", personal: false,
@@ -107,8 +117,19 @@ export const FIELD_RIGHTS: readonly FieldRight[] = [
   { table: "intel_claims", column: "claim_type", ownership: "portava_owned", personal: false, reason: "Portava's claim taxonomy." },
   { table: "intel_claims", column: "zone_id", ownership: "portava_owned", personal: false,
     reason: "Portava's intra-venue zone label. Coarse by construction — a zone is a named area, never a position." },
-  { table: "intel_claims", column: "value", ownership: "derived_aggregate", personal: false,
-    reason: "A belief synthesised from many contributors' reports — Portava's derivation, not any one contributor's text." },
+  { table: "intel_claims", column: "value", ownership: "contributor_licensed", personal: false,
+    reason: "MEASURED, not assumed: every claim in this tree carries ONE contributor's value verbatim. 2174's " +
+      "system_promote_admissible_intel_claims is `SELECT DISTINCT ON (o.subject_id, coalesce(o.zone_id,''), " +
+      "o.claim_type) ... o.value ... 1 ...` — the value copied straight through and source_count literally 1 — and " +
+      "IntelCaptureService.proposeClaim:528 writes `value: observation.value`. NOTHING synthesises a claim value " +
+      "from a cohort; that happens one layer LATER, at intel_state_snapshots, where intelProjectionAggregator takes " +
+      "a plurality over the consented cohort, and that is where derived_aggregate is earned. These are the same " +
+      "bytes as intel_observations.value and they keep that column's class: redistributable only under the " +
+      "contributor licence, WITH ATTRIBUTION. The previous class said the opposite — that this is Portava's " +
+      "derivation and not any one contributor's text — which would have dropped the attribution obligation on a " +
+      "person's own words. Re-classify as derived_aggregate if and when a promotion path composes the value from " +
+      "more than one contributor. No runtime behaviour changes here: REDISTRIBUTABLE is true for both classes, so " +
+      "projectRedistributable emits exactly the same fields. What changes is the recorded obligation." },
   { table: "intel_claims", column: "status", ownership: "portava_owned", personal: false, reason: "Portava's lifecycle state." },
   { table: "intel_claims", column: "confidence", ownership: "derived_aggregate", personal: false,
     reason: "Portava's computed score. Redistributable WITH its band, never as a bare number implying more precision than the formula supports." },
@@ -243,7 +264,12 @@ export const INTERNAL_COLUMNS: readonly string[] = [
   "input_claim_versions",
   // I1 (2274) intel_claims.lineage: Table-5 ancestry (observation, evidence,
   // confirmations, algorithm, correction) — a record of pointers into the
-  // pipeline, exactly like superseded_by / observation_id. Never redistributed.
+  // pipeline, exactly like superseded_by / observation_id. Never redistributed —
+  // which is LOAD-BEARING, not incidental: proposeClaim also copies
+  // moderation_state_at_propose and presence_level into it, and both are
+  // classified restricted_no_redistribution / personal on intel_observations.
+  // Treating this column as inert internal plumbing would carry two personal
+  // fields out with it the moment anything started projecting it.
   "lineage",
   // I4a lineage pointers + versioning (2277/2278): an FK to the outcome event on
   // the spine, the algorithm version a row was computed under, and the
