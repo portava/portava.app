@@ -451,6 +451,21 @@ export const GUARDS: readonly GuardEntry[] = [
     reach: { kind: "check-all", script: "check:admin-guard" },
   },
   {
+    checker: "src/scripts/checkCensusIntegrity.ts",
+    inspects: {
+      countPattern: "(\\d+) verdict row\\(s\\) parsed",
+      unit: "census verdict rows parsed",
+    },
+    responsibility:
+      "Each per-architecture census agrees with itself \u2014 its verdict rows parse, no requirement id is " +
+      "double-counted, and it never states fewer requirements than it lists.",
+    // It checks the DOCUMENT against itself, never the document against the
+    // code. Three of the thirteen censuses already carry a correction header
+    // saying their headline had drifted from their own body, which is the
+    // failure this makes harder rather than one it can claim to have closed.
+    reach: { kind: "check-all", script: "check:census-integrity" },
+  },
+  {
     checker: "src/scripts/checkSecurityDefinerOracles.ts",
     inspects: {
       countPattern: "(\\d+) SECURITY DEFINER function\\(s\\) alive",

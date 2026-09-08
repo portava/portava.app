@@ -148,6 +148,15 @@ run_check "check:admin-guard" pnpm run check:admin-guard
 # denied for function" for every end-user token, measured on CI for both
 # `language sql` and `language plpgsql` before the guard was written.
 run_check "check:security-definer-oracles" pnpm run check:security-definer-oracles
+# check:census-integrity — the thirteen docs/architecture/census-*.md files are
+# the only per-architecture measurement this repo has, and their headlines are
+# what a reader uses to decide where to spend a month. Three of the thirteen
+# already carry a correction header saying the headline had drifted from the
+# table beneath it. This recomputes what is machine-readable, takes the LAST
+# statement of a revised row, and prints per census how many requirements are
+# counted in prose where no tool can read them — so it is visible how much of
+# each headline rests on something checkable.
+run_check "check:census-integrity" pnpm run check:census-integrity
 # check:flag-polarity — every feature flag is classified STOP/CAPABILITY/CONFIG
 # and read through the reader that classification demands. Wired 2026-08-10
 # after c89f09a7 converted eleven emergency stops that had been reading
