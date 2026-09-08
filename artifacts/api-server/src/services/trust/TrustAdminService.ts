@@ -358,21 +358,44 @@ export async function adminResolveReview(
   resolution: "resolved" | "dismissed",
   notes?: string,
 ): Promise<{ ok: boolean }> {
-  const { data: review } = await db
+  // supabase-js RESOLVES on a database error, so an unbound `error` here made an
+  // unreadable `trust_reviews` indistinguishable from a review that does not
+  // exist — the admin was told "Review not found" about a row that is right
+  // there. The two sibling adjudication paths (confirmEvent, dismissEvent)
+  // already separate them; this one did not.
+  const { data: review, error: fetchErr } = await db
     .from("trust_reviews")
     .select("id, user_id")
     .eq("id", reviewId)
     .maybeSingle();
 
+  if (fetchErr) throw new Error(`adminResolveReview: review read failed — ${fetchErr.message ?? fetchErr.code ?? "db_error"}`);
   if (!review) throw new Error("Review not found");
   const r = review as any;
 
-  await db.from("trust_reviews").update({
+  // The resolution must be KNOWN to have happened before it is reported as
+  // done and written into the admin audit log. This update carried no
+  // `.select()` and no `.error` check at all: its result was discarded
+  // entirely, so a failed write returned `{ ok: true }` to the admin, left the
+  // review sitting in the queue, and recorded a `resolve_review` audit row for
+  // an action that never took place — a false entry in the one log whose whole
+  // purpose is to be trustworthy. Same rule confirmEvent and dismissEvent
+  // already apply to their status transitions.
+  const { data: resolved, error: updateErr } = await db.from("trust_reviews").update({
     status:      resolution,
     resolved_by: adminId,
     resolved_at: new Date().toISOString(),
     notes:       notes ?? null,
-  }).eq("id", reviewId);
+  }).eq("id", reviewId).select("id");
+  if (updateErr) throw new Error(`adminResolveReview: status update failed — ${updateErr.message ?? updateErr.code ?? "db_error"}`);
+  // A bodyless UPDATE cannot report affected rows (PostgREST answers 204 with
+  // no content-range), so `.select()` is what makes the transition observable
+  // at all. Zero rows means the review vanished between the read and the write;
+  // auditing a resolution of a row that is not there is the false success.
+  if (affectedRows(resolved) === 0) {
+    logger.warn({ reviewId, adminId, resolution }, "adminResolveReview: update matched no row — no audit written");
+    throw new Error("Review not found");
+  }
 
   await logAdminAction(db, adminId, r.user_id, "resolve_review",
     notes ?? resolution, { resolution }, reviewId);
