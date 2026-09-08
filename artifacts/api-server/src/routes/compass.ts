@@ -921,12 +921,25 @@ router.get("/compass/why/:recommendationId", async (req, res) => {
     // Step 2: Authoritative DB lookup — recommendation must have been served via the feed.
     // The feed route pre-registers all served recommendations in compass_served_recommendations.
     // If the row doesn't exist, the recommendation was never served to this user.
-    const { data: row } = await sc
+    // This read IS the authorization: only a recommendation this server
+    // actually served to THIS user has a row here. supabase-js resolves on a
+    // DB error, so an unreadable compass_served_recommendations returns the
+    // same `null` an unserved recommendation does — the denial below is the
+    // right outcome either way (never serve an explanation we cannot attribute),
+    // but without observing `error` the outage is invisible and looks like a
+    // flood of users asking about recommendations they were never served.
+    const { data: row, error: rowErr } = await sc
       .from("compass_served_recommendations")
       .select("explanation_key, ranking_factors")
       .eq("recommendation_id", recommendationId)
       .eq("user_id", user.id)
       .maybeSingle();
+
+    if (rowErr) {
+      req.log?.warn({ err: rowErr, userId: user.id }, "compass/why: served-recommendation lookup unavailable; denying");
+      res.json({ explanation: "Recommendation not found or not available for your account." });
+      return;
+    }
 
     if (!row) {
       res.json({ explanation: "Recommendation not found or not available for your account." });
@@ -1814,7 +1827,13 @@ router.post("/compass/proposals/:proposalId/confirm", async (req, res) => {
 
   // Duplicate guard for catalog places (same rule as the plan route).
   if (proposal.placeId) {
-    const { data: existing } = await sc
+    // The duplicate guard is the only thing between a confirmed proposal and a
+    // second copy of the same place in the itinerary: the legacy (kernel-off)
+    // INSERT below runs unconditionally. supabase-js resolves on a DB error, so
+    // an unreadable trip_plan_items gives `data: null` — indistinguishable from
+    // "not in the plan" — and the place gets added again. Refuse instead; the
+    // proposal is still pending and the confirm is safe to retry.
+    const { data: existing, error: existingErr } = await sc
       .from("trip_plan_items")
       .select("id")
       .eq("trip_id", proposal.tripId)
@@ -1822,6 +1841,11 @@ router.post("/compass/proposals/:proposalId/confirm", async (req, res) => {
       .eq("source_id", proposal.placeId)
       .is("removed_at", null)
       .maybeSingle();
+    if (existingErr) {
+      req.log?.warn({ err: existingErr, tripId: proposal.tripId, placeId: proposal.placeId }, "compass proposal confirm: duplicate check unavailable");
+      sendError(res, "degraded_unavailable", "We could not check your trip plan right now. Please try again shortly.");
+      return;
+    }
     if (existing) { sendError(res, "conflict", "This place is already in your trip plan"); return; }
   }
 
@@ -2083,11 +2107,18 @@ router.patch("/compass/me/preferences", async (req, res) => {
     return;
   }
 
-  const { data: updated } = await sc
+  // Read-back echo. The upsert above already succeeded, so this failing must
+  // NOT fail the request — but the `?? { user_id, ...parsed.data }` fallback
+  // hands the client a row built purely from what it just sent, hiding every
+  // stored field it did not touch. Log so the substituted echo is visible.
+  const { data: updated, error: readBackErr } = await sc
     .from("compass_user_preferences")
     .select("*")
     .eq("user_id", user.id)
     .maybeSingle();
+  if (readBackErr) {
+    req.log.warn({ err: readBackErr, userId: user.id }, "compass/me/preferences: saved, but read-back failed; echoing request body");
+  }
 
   res.json({ preferences: updated ?? { user_id: user.id, ...parsed.data } });
 });
@@ -2895,11 +2926,20 @@ router.patch("/compass/settings", async (req, res) => {
     return;
   }
 
-  const { data: updated } = await sc
+  // Read-back echo. The upsert already landed, so a failed read must not fail
+  // the request — but the fallback below renders every setting the caller did
+  // NOT send as the built-in DEFAULT, which for this table means showing
+  // default privacy/sharing toggles over whatever the user actually has stored.
+  // A client that then PATCHes the screen back would write those defaults in.
+  // Log it so the substitution is never silent.
+  const { data: updated, error: readBackErr } = await sc
     .from("compass_settings")
     .select(SETTINGS_SELECT_COLS)
     .eq("user_id", user.id)
     .maybeSingle();
+  if (readBackErr) {
+    req.log.warn({ err: readBackErr, userId: user.id }, "compass/settings PATCH: saved, but read-back failed; echoing defaults + request body");
+  }
 
   res.json({ settings: updated ?? { user_id: user.id, ...DEFAULT_COMPASS_SETTINGS, ...parsed.data } });
 });
@@ -3018,11 +3058,22 @@ router.post("/compass/signals/search", async (req, res) => {
 
   (async () => {
     try {
-      const { data } = await sc
+      // This is a read-modify-WRITE of the whole category_weights map. An
+      // unreadable compass_user_preferences resolves as `{ data: null }`, the
+      // same shape a user with no preferences row gives, so `?? {}` would make
+      // the upsert below overwrite EVERY learned category weight this user has
+      // accumulated with a single `{ [category]: 1 }` — destroying their
+      // personalisation permanently on a transient read failure. A skipped
+      // nudge costs one +1; a clobbered map cannot be recovered.
+      const { data, error: readErr } = await sc
         .from("compass_user_preferences")
         .select("category_weights")
         .eq("user_id", user.id)
         .maybeSingle();
+      if (readErr) {
+        req.log?.warn({ err: readErr, userId: user.id, category }, "compass/signals/search: weights unreadable; skipping nudge rather than clobbering the map");
+        return;
+      }
       const weights: Record<string, number> =
         ((data as any)?.category_weights as Record<string, number>) ?? {};
       // Nudge +1 toward the searched category, clamped to [-10, +10].

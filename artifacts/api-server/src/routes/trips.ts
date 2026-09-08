@@ -1069,8 +1069,19 @@ router.post("/trips/:tripId/invite", async (req, res) => {
     res.status(403).json({ error: "forbidden", message: "Cannot invite a blocked user" }); return;
   }
 
-  // Idempotent: check existing membership
-  const { data: existing } = await client.from("trip_members").select("role").eq("trip_id", tripId).eq("user_id", userId).maybeSingle();
+  // Idempotent: check existing membership.
+  // supabase-js resolves on a DB error, so an unreadable trip_members returns
+  // the same `null` "not a member" does. Reading that as "not a member" sends
+  // an INVITE_PARTICIPANT / trip_members INSERT for someone who may already be
+  // an accepted member or the owner — demoting an existing relationship to a
+  // fresh "invited" row on the legacy path, and re-notifying them. The 200
+  // already_member answer is exactly what we can no longer prove, so refuse.
+  const { data: existing, error: existingErr } = await client.from("trip_members").select("role").eq("trip_id", tripId).eq("user_id", userId).maybeSingle();
+  if (existingErr) {
+    req.log.error({ err: existingErr, tripId, userId }, "trip invite: membership check unavailable");
+    sendError(res, "degraded_unavailable", "We could not check this trip's members right now. Please try again shortly.");
+    return;
+  }
   if (existing) { res.status(200).json({ status: "already_member", role: (existing as any).role, idempotent: true }); return; }
 
   // Trip Kernel path (INVITE_PARTICIPANT, contract v2). Owner + block checks
@@ -1625,7 +1636,12 @@ router.post("/trips/:tripId/plan/items", async (req, res) => {
 
   // Duplicate guard for sourced items
   if (b.sourceId) {
-    const { data: dup } = await client
+    // The 409 below is the only duplicate protection on the legacy
+    // (kernel-off) path, whose INSERT runs unconditionally. An unreadable
+    // trip_plan_items resolves as `{ data: null }` — the same shape as "no
+    // duplicate" — so ignoring `error` turns a retry into a second copy of the
+    // same sourced item in the itinerary. Refuse; the add is safe to retry.
+    const { data: dup, error: dupErr } = await client
       .from("trip_plan_items")
       .select("id")
       .eq("trip_id", tripId)
@@ -1633,6 +1649,11 @@ router.post("/trips/:tripId/plan/items", async (req, res) => {
       .eq("source_id", b.sourceId)
       .is("removed_at", null)
       .maybeSingle();
+    if (dupErr) {
+      req.log.error({ err: dupErr, tripId, sourceType: b.sourceType, sourceId: b.sourceId }, "plan item: duplicate check unavailable");
+      sendError(res, "degraded_unavailable", "We could not check the plan for duplicates right now. Please try again shortly.");
+      return;
+    }
     if (dup) { res.status(409).json({ error: "duplicate", message: "This item is already in the plan" }); return; }
   }
 
@@ -1906,7 +1927,18 @@ router.post("/trips/:tripId/members", async (req, res) => {
   if (!trip) { res.status(404).json({ error: "not_found", message: "Trip not found" }); return; }
   if ((trip as any).owner_id !== user.id) { res.status(403).json({ error: "forbidden", message: "Only the trip owner can add members" }); return; }
 
-  const { data: existing } = await client.from("trip_members").select("role").eq("trip_id", tripId).eq("user_id", userId).maybeSingle();
+  // `existing` picks the WRITE, not just the response: SET_PARTICIPANT_ROLE vs
+  // ADD_PARTICIPANT for the kernel, UPDATE vs INSERT on the legacy path. An
+  // unreadable trip_members resolves as `{ data: null }`, exactly like "not a
+  // member", so a failed read turns an intended role CHANGE into an attempted
+  // add — the existing row keeps its old role (a silently un-applied
+  // demotion/promotion) while the caller is told "added". Refuse instead.
+  const { data: existing, error: existingErr } = await client.from("trip_members").select("role").eq("trip_id", tripId).eq("user_id", userId).maybeSingle();
+  if (existingErr) {
+    req.log.error({ err: existingErr, tripId, userId }, "trip member add: membership check unavailable");
+    sendError(res, "degraded_unavailable", "We could not check this trip's members right now. Please try again shortly.");
+    return;
+  }
   if (existing && (existing as any).role === role) { res.status(200).json({ status: "already_member", role, idempotent: true }); return; }
 
   // Trip Kernel path (SET_PARTICIPANT_ROLE when a row exists, ADD_PARTICIPANT
