@@ -167,15 +167,25 @@ function stripComments(text) {
       line = line.slice(end + 2);
       inBlock = false;
     }
+    // Whichever opens FIRST wins. This file carries its own copy of the
+    // stripper because it is .mjs and cannot import the .ts one; it therefore
+    // also carried the .ts one's bug — scanning for '/*' before '//' let an
+    // ordinary line comment containing a glob or URL open a block comment that
+    // ran to the next '*/' anywhere in the file, blanking real code. See
+    // src/scripts/lib/stripComments.ts and src/test/stripComments.test.ts,
+    // which is the test for the shared one; this copy must stay in step.
     for (;;) {
-      const begin = line.indexOf('/*');
-      if (begin === -1) break;
-      const end = line.indexOf('*/', begin + 2);
-      if (end === -1) { line = line.slice(0, begin); inBlock = true; break; }
-      line = line.slice(0, begin) + line.slice(end + 2);
+      const block = line.indexOf('/*');
+      const lineComment = line.indexOf('//');
+      if (block === -1 && lineComment === -1) break;
+      if (lineComment !== -1 && (block === -1 || lineComment < block)) {
+        line = line.slice(0, lineComment);
+        break;
+      }
+      const end = line.indexOf('*/', block + 2);
+      if (end === -1) { line = line.slice(0, block); inBlock = true; break; }
+      line = line.slice(0, block) + line.slice(end + 2);
     }
-    const slashes = line.indexOf('//');
-    if (slashes !== -1) line = line.slice(0, slashes);
     out += line + '\n';
   }
   return out;
@@ -707,6 +717,52 @@ const EXEMPT = [
       'the URL, and the URL is the loopback discard port besides. EXEMPTION MEANS UNGUARDED, NOT SAFE — if either ' +
       'file is ever changed to let the real fetch through, the exemption is void and it must import the guard.',
   })),
+
+  {
+    file: 'src/test/helpers/postgrestOracle.ts',
+    reason:
+      'THE CONFORMANCE ORACLE. It builds the REAL @supabase/supabase-js client on purpose: it is the ' +
+      'reference half of the harness that contract-checks every in-memory Supabase double in ' +
+      'src/test/helpers/ against the client they stand in for. That comparison is the only thing that can ' +
+      'catch a fake written AROUND a client behaviour — which is how a fake came to record an insert ' +
+      'EAGERLY and twenty writes that issued no HTTP request at all stayed green for months. It is a helper, ' +
+      'not an entry point: no package script names it, so CI never invokes it directly; it runs only when a ' +
+      'test imports it. That is not why it is safe, though, and the exemption does not rest on it. It is ' +
+      'safe because it CANNOT DIAL ANYTHING: createClient is given an injected fetch that emulates a ' +
+      'PostgREST server over in-memory tables and is the only transport the client has, and the URL it is ' +
+      'handed is the literal "http://oracle.invalid" — a name reserved never to resolve — written in the ' +
+      'file rather than read from the environment. It names no Supabase credential variable at all. ' +
+      'EXEMPTION MEANS UNGUARDED, NOT SAFE — if the injected fetch is ever removed, or the URL ever comes ' +
+      'from the environment, the exemption is void and this file must import the guard.',
+  },
+
+  {
+    file: 'src/test/rabLifecycleTransitions.test.ts',
+    pinnedTestEnv: true,
+    reason:
+      'Registered unit test in the rabLifecycle family, built the same way and exempt for the same reasons as ' +
+      'the three below. It proves that six booking transitions are COMPARE-AND-SWAP — that the write itself ' +
+      'carries the expected-status predicate rather than a read having checked it first — and that question ' +
+      'is only answerable against a real client, because what distinguishes the two is the request that goes ' +
+      'on the wire. The client is handed its own transport (global: { fetch: makeRecordingFetch(...) }), so ' +
+      'the installed fetch is never consulted and no request leaves the process, and SUPA_URL is the ' +
+      'hardcoded literal "http://supabase.test" declared in the file rather than read from the environment. ' +
+      'pinnedTestEnv because CI invokes it. EXEMPTION MEANS UNGUARDED, NOT SAFE.',
+  },
+
+  {
+    file: 'src/test/rabLifecycleRestrictions.test.ts',
+    pinnedTestEnv: true,
+    reason:
+      'Registered unit test in the same family as the two rabLifecycle suites below, built the same way and ' +
+      'for the same reason: it drives the real routes over a REAL createClient because the question is ' +
+      'whether the restriction path READS what it claims to and the route ISSUES what it claims to, and a ' +
+      'hand-written double answers that by construction rather than by measurement. The client is handed its ' +
+      'own transport (global: { fetch: makeRecordingFetch(...) }), so the installed fetch is never consulted ' +
+      'and no request leaves the process, and SUPA_URL is the hardcoded literal "http://supabase.test" ' +
+      'declared in the file rather than read from the environment. pinnedTestEnv because CI invokes it and ' +
+      'the CI-surface rule requires the flag of any exemption CI runs. EXEMPTION MEANS UNGUARDED, NOT SAFE.',
+  },
 
   {
     file: 'src/test/rabLifecycleNoShowAttribution.test.ts',

@@ -15,7 +15,6 @@
   "routes/circle.ts": 1,
   "routes/dailyBrief.ts": 1,
   "routes/events.ts": 1,
-  "routes/geofence.ts": 1,
   "routes/hiddenGems.ts": 1,
   "routes/messaging.ts": 2,
   "routes/postcards.ts": 1,

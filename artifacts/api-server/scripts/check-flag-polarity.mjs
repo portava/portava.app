@@ -1042,15 +1042,28 @@ const SHADOW_READERS = [
     file: 'routes/safeReturn.ts',
     fn: 'isFlagEnabled',
     reason:
-      'Shadow. `if (!db) return false`, try/catch returns false. Fails closed. Verified by hand at c89f09a77: ' +
-      'reads only safe_return_* CAPABILITY flags.',
+      'Shadow, and NO LONGER A BOOLEAN. It returns a THREE-STATE FlagState — "on" / "off" / "unknown" — and ' +
+      'returns "unknown" for a missing client, a returned error object and a thrown query alike; only a row ' +
+      'it actually read produces "on" or "off". The prose here said "Fails closed" until 2026-09-08, which ' +
+      'was the description of the previous shape and was wrong about this one in the direction that matters: ' +
+      'a boolean false collapses "the flag is off" into "the flag could not be read", and this route answered ' +
+      'the second with a 404 feature_disabled — telling someone walking home that Safe Return does not exist ' +
+      'for them because a table was unreadable. The third state is what lets sendFlagUnknown answer 503 and ' +
+      'retryable instead. Reads only safe_return_* CAPABILITY flags (verified by hand at c89f09a77; the ' +
+      'reader shape re-read at 6639d347).',
   },
   {
     file: 'lib/safeReturnScheduler.ts',
     fn: 'isFlagEnabled',
     reason:
-      'Shadow. Destructures `data` only; `(data as any)?.enabled === true`, catch returns false. Fails closed. ' +
-      'Verified by hand at c89f09a77: reads only safe_return_* CAPABILITY flags.',
+      'Shadow, and NO LONGER A BOOLEAN. Same three-state FlagState as routes/safeReturn.ts above: a returned ' +
+      'error and a thrown query each yield "unknown", both logged at ERROR, and only a row actually read ' +
+      'yields "on" or "off". The prose here said "Fails closed" until 2026-09-08 and described the previous ' +
+      'shape. The distinction is load-bearing HERE IN THE OPPOSITE DIRECTION from the route: this is the ' +
+      'missed-check-in escalation loop, and standing it down because a flag row could not be read would ' +
+      'silently switch off the escalation for everyone. On "unknown" the scheduler does NOT stand down — ' +
+      'per-session consent still gates every action it takes. Reads only safe_return_* CAPABILITY flags ' +
+      '(verified by hand at c89f09a77; the reader shape re-read at 6639d347).',
   },
   {
     file: 'lib/accountDeletionScheduler.ts',

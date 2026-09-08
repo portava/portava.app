@@ -21,6 +21,19 @@
  *
  * So the stripper lives in one place. `callsFunction` is the boolean built on it.
  *
+ * ── AND THEN THE SHARED STRIPPER SHIPPED THE SAME CLASS OF BUG ───────────────
+ * Consolidating the logic did not make it right. Until 2026-09-08 this function
+ * looked for `/*` BEFORE `//` on each line, so a line comment containing `/*`
+ * opened a block comment that swallowed everything up to the next block-close
+ * marker (which cannot be written here: inside this very comment it would end
+ * it — which is itself a small demonstration of why this is fiddly). One
+ * `// … /api/buddy-bookings/*` in routes/rentABuddySpec.ts hid ~969 lines,
+ * including a state-machine writer, from every guard built on this. Across
+ * src/ it erased 2,510 non-blank code lines in 12 files. The lesson is the one
+ * above, one level up: a helper that answers "what is the CODE here" is itself
+ * load-bearing, and it needs its own adversarial test rather than the trust of
+ * its callers. src/test/stripComments.test.ts is that test.
+ *
  * ── THE DELIBERATE CONSERVATIVE DIRECTION ────────────────────────────────────
  * String literals are NOT parsed, so a `//` inside a string (a URL, say)
  * truncates the rest of that line. That can only ever remove text, never invent
@@ -41,15 +54,30 @@ export function stripComments(text: string): string {
       line = line.slice(end + 2);
       inBlock = false;
     }
+    // WHICHEVER OPENS FIRST WINS. Scanning for `/*` before `//` was a bug, not
+    // a simplification: a line comment containing `/*` — an ordinary URL or
+    // glob such as `// see /api/buddy-bookings/*` — opened a block comment that
+    // ran until the NEXT `*/` anywhere in the file. Measured over src/ at the
+    // time of the fix: 12 files affected and 2,510 non-blank lines of real code
+    // erased from what every caller was looking at, 969 of them in one route
+    // file and 67 in routes/index.ts. That is the failure direction this module
+    // exists to prevent — a guard cannot find a defect in text it was handed as
+    // blank lines, and it reports the resulting silence as a pass.
     for (;;) {
-      const begin = line.indexOf("/*");
-      if (begin === -1) break;
-      const end = line.indexOf("*/", begin + 2);
-      if (end === -1) { line = line.slice(0, begin); inBlock = true; break; }
-      line = line.slice(0, begin) + line.slice(end + 2);
+      const block = line.indexOf("/*");
+      const lineComment = line.indexOf("//");
+      if (block === -1 && lineComment === -1) break;
+      if (lineComment !== -1 && (block === -1 || lineComment < block)) {
+        // Everything from here is a line comment, `/*` included. It opens nothing.
+        line = line.slice(0, lineComment);
+        break;
+      }
+      const end = line.indexOf("*/", block + 2);
+      if (end === -1) { line = line.slice(0, block); inBlock = true; break; }
+      // Keep scanning the remainder: a `//` after a closed block comment on the
+      // same line is still a line comment.
+      line = line.slice(0, block) + line.slice(end + 2);
     }
-    const slashes = line.indexOf("//");
-    if (slashes !== -1) line = line.slice(0, slashes);
     out.push(line);
   }
   return out.join("\n");

@@ -221,7 +221,20 @@ describe("scanSource — chains that are not PostgREST reads", () => {
 // ── Scope tiers ─────────────────────────────────────────────────────────────
 
 describe("scope tiers", () => {
-  const read = (over: Partial<UncheckedRead>) => ({ table: "posts", fn: "handler", file: "routes/x.ts", ...over });
+  // `terminal` is required by tierOf. "select" is the inert choice: the only
+  // rule that reads it is the write-precondition tier, which fires solely for
+  // "maybeSingle"/"single" AND only when a `writtenInFn` set is passed — and no
+  // call below passes one. So this default cannot move any verdict here; it
+  // makes the fixture match the shape tierOf actually takes.
+  const read = (
+    over: Partial<UncheckedRead> = {},
+  ): Pick<UncheckedRead, "table" | "fn" | "file" | "terminal"> => ({
+    table: "posts",
+    fn: "handler",
+    file: "routes/x.ts",
+    terminal: "select",
+    ...over,
+  });
 
   it("exclusion tables are in scope wherever they are read", () => {
     for (const t of EXCLUSION_TABLES) assert.equal(tierOf(read({ table: t, fn: "get /anything" })), "exclusion-table", t);

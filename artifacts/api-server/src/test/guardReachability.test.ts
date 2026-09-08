@@ -66,7 +66,7 @@ describe("guard reachability ratchet", () => {
     const r = spawnSync(process.execPath, ["--import", "tsx/esm", CHECKER], {
       cwd: API_ROOT, encoding: "utf8", timeout: 180_000, maxBuffer: 64 * 1024 * 1024,
     });
-    assert.equal(r.status, 0, r.out ?? `${r.stdout}${r.stderr}`);
+    assert.equal(r.status, 0, `${r.stdout ?? ""}${r.stderr ?? ""}`);
     // A silent pass proves nothing: the inventory must actually be printed, and
     // the unenforced count must be stated rather than rounded away.
     assert.match(r.stdout, /guard\(s\) on disk/);
