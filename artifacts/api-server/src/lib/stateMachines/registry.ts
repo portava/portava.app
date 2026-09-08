@@ -283,13 +283,16 @@ export const STATE_MACHINES: readonly StateMachineEntry[] = [
     field: "state",
     vocabulary: { kind: "pgEnum", file: "baseline/20260819_baseline_structure.sql", symbol: "public.event_state" },
     note:
-      "PATCH /events/:id additionally accepts a raw `state` from the body (UpdateEventSchema, " +
-      "routes/events.ts:631, enum draft|open|started|completed|cancelled|archived) and writes it with NO " +
-      "transition guard (:2334). It is host-only. That path is a recorded defect, not a lifecycle writer: " +
-      "no client in the repository sends it, and production's empty event_activity_log says nobody ever " +
-      "has. It is deliberately NOT registered as a transition — treating an unguarded free-transition as " +
-      "the writer of `started` would let this registry report the gap as closed while every measured fact " +
-      "says it is open. See docs/architecture/event-lifecycle-started-transition.md §1.",
+      "PATCH /events/:id accepts a raw `state` from the body (UpdateEventSchema) and USED TO WRITE IT WITH " +
+      "NO TRANSITION GUARD — host-only, but otherwise a free transition, and this note described that " +
+      "defect. It no longer exists: PATCH now goes through decideEventTransition (lib/eventLifecycle.ts) " +
+      "like the other eight writers, its UPDATE is conditional on the decided-from state, and it refuses " +
+      "-> started BY NAME because that transition's TRIGGER is the open EVENT_START_TRANSITION decision. " +
+      "That last part is the thing worth reading twice: while PATCH was unguarded, a host could hand-write " +
+      "`started` and unlock complete / attendance / no-show and their trust awards, so the flag that exists " +
+      "to withhold the transition was gating the scheduler and nothing else. `started` and `completed` stay " +
+      "OWNER_BLOCKED here: making the transition harder to reach is not the same as deciding what performs " +
+      "it. See docs/architecture/event-lifecycle-started-transition.md §1.",
     states: [
       { name: "draft", classification: "REACHABLE" },
       { name: "open", classification: "REACHABLE" },
@@ -451,7 +454,7 @@ export const STATE_MACHINES: readonly StateMachineEntry[] = [
           "code looks — this is the shape that made the defect invisible for so long.",
       },
       {
-        from: ["draft", "open", "full", "waitlist", "started", "completed"],
+        from: ["draft", "open", "full", "waitlist", "started"],
         to: "cancelled",
         classification: "REACHABLE",
         writer: {
@@ -462,28 +465,36 @@ export const STATE_MACHINES: readonly StateMachineEntry[] = [
           // same authority.
           evidence: ['const cancelWrite = await writeEventState(sc, id, priorState, "cancelled");'],
         },
-        // STALE IN ONE ENTRY, deliberately: `completed` is listed here because the pre-authority
-        // cancel route accepted any state but `cancelled`. decideEventTransition
-        // (lib/eventLifecycle.ts) now REFUSES completed -> cancelled — an event that already
-        // happened cannot be un-happened, and cancelling one pushed \ to the people who attended
-        // it. Removing `completed` from this list is a registry `from` edit, which this lane was
-        // not granted; it is reported to the owner instead of made silently.
+        // `completed` WAS in this list and has been removed. It was there because the
+        // pre-authority cancel route accepted any state but `cancelled`.
+        // decideEventTransition (lib/eventLifecycle.ts) now refuses completed -> cancelled: an
+        // event that already happened cannot be un-happened, and cancelling one pushed
+        // "Event cancelled" to the people who attended it. The registry describes what the code
+        // enforces, so leaving `completed` here would have made this file the last place still
+        // asserting a transition nothing can perform.
+        //
+        // STATED BEHAVIOUR CHANGE, not hidden in a registry edit: POST /events/:id/cancel on a
+        // completed event now answers 409 invalid_state_transition where it used to answer 200.
       },
       {
-        from: ["open", "full", "waitlist"],
+        from: ["open", "full", "waitlist", "started"],
         to: "draft",
         classification: "REACHABLE",
         writer: {
           file: "routes/events.ts",
           evidence: ['const postponeWrite = await writeEventState(sc, id, (ev as any).state, "draft");'],
         },
-        // UNDERSTATED, pre-existing: POST /events/:id/postpone refuses only
-        // cancelled|archived|completed, so started -> draft was already reachable before the
-        // transition authority existed and the table preserves it. Whether postponing an
-        // IN-PROGRESS event should be possible at all is an open question — it is also the one
-        // way a host leaves a started event without the host-cancel trust charge
-        // (EVENT_HOST_CANCEL_TRIGGER_STATES includes `started`, postponing does not fire it).
-        // Reported rather than changed: it is a `from` edit and a product call.
+        // `started` ADDED. POST /events/:id/postpone refuses only cancelled|archived|completed,
+        // so started -> draft was already reachable before the transition authority existed and
+        // EVENT_STATE_TRANSITIONS preserves it. Recording it is not a decision — it is the
+        // removal of an understatement, and a registry that omits a reachable transition is the
+        // more dangerous error of the two: nothing then asks who writes it.
+        //
+        // WHAT REMAINS AN OPEN QUESTION, and is NOT settled by this entry: whether postponing an
+        // IN-PROGRESS event should be possible at all. It is currently the one way a host leaves
+        // a started event without the host-cancel trust charge — EVENT_HOST_CANCEL_TRIGGER_STATES
+        // includes `started` and postponing does not fire it. That is a product call and stays
+        // with the owner.
       },
       {
         from: ["draft", "open", "full", "waitlist", "started", "completed", "cancelled"],
