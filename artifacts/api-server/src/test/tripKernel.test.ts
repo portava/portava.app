@@ -728,11 +728,11 @@ describe("check:trip-kernel-writers (§24 Phase 1 ratchet)", () => {
       const d = await sc.from("trip_notes").insert({});
       const e = await (client as any).from("trip_members").delete().eq("trip_id", t);
     `;
-    assert.deepEqual(countCanonicalWrites(src), { count: 3, gated: 0, importsKernel: false, dynamicFrom: false });
+    assert.deepEqual(countCanonicalWrites(src), { count: 3, gated: 0, nonAggregate: 0, refusedNonAggregate: [], importsKernel: false, dynamicFrom: false });
   });
   it("flags a dynamic .from(expr) as incomplete attribution without counting it", () => {
     const src = `const t = TABLE; await sc.from(t).insert({}); const arr = Array.from(new Set([1]));`;
-    assert.deepEqual(countCanonicalWrites(src), { count: 0, gated: 0, importsKernel: false, dynamicFrom: true });
+    assert.deepEqual(countCanonicalWrites(src), { count: 0, gated: 0, nonAggregate: 0, refusedNonAggregate: [], importsKernel: false, dynamicFrom: true });
   });
   it("a trip-kernel:legacy-path marker gates exactly the statement it precedes, and only in a file that imports the kernel", () => {
     const gatedSrc = `
@@ -742,7 +742,7 @@ describe("check:trip-kernel-writers (§24 Phase 1 ratchet)", () => {
       const { error } = kernelDone ? { error: null } : await client.from("trip_members").insert({ a: 1 });
       const { error: e2 } = await client.from("trip_members").delete().eq("x", 1);
     `;
-    assert.deepEqual(countCanonicalWrites(gatedSrc), { count: 2, gated: 1, importsKernel: true, dynamicFrom: false });
+    assert.deepEqual(countCanonicalWrites(gatedSrc), { count: 2, gated: 1, nonAggregate: 0, refusedNonAggregate: [], importsKernel: true, dynamicFrom: false });
     // Same marker, no kernel import: the write is counted, the marker is a false claim.
     const liar = gatedSrc.replace(/import .*tripKernel\.js";/, "");
     const c = countCanonicalWrites(liar);
@@ -754,30 +754,33 @@ describe("check:trip-kernel-writers (§24 Phase 1 ratchet)", () => {
   it("a new writer or a grown direct/ungated count fails; a shrunk count is reported, not failed", () => {
     const baseline = { "routes/a.ts": { direct: 2, ungated: 2 }, "routes/b.ts": { direct: 1, ungated: 1 }, "routes/d.ts": { direct: 2, ungated: 0 } };
     const v = judge([
-      { file: "routes/a.ts", count: 3, gated: 0, importsKernel: false, dynamicFrom: false },
-      { file: "routes/b.ts", count: 0, gated: 0, importsKernel: false, dynamicFrom: false },
-      { file: "routes/c.ts", count: 1, gated: 0, importsKernel: false, dynamicFrom: false },
+      { file: "routes/a.ts", count: 3, gated: 0, nonAggregate: 0, refusedNonAggregate: [], importsKernel: false, dynamicFrom: false },
+      { file: "routes/b.ts", count: 0, gated: 0, nonAggregate: 0, refusedNonAggregate: [], importsKernel: false, dynamicFrom: false },
+      { file: "routes/c.ts", count: 1, gated: 0, nonAggregate: 0, refusedNonAggregate: [], importsKernel: false, dynamicFrom: false },
       // direct unchanged but a gated write lost its marker: ungated grew 0 -> 1.
-      { file: "routes/d.ts", count: 2, gated: 1, importsKernel: true, dynamicFrom: false },
+      { file: "routes/d.ts", count: 2, gated: 1, nonAggregate: 0, refusedNonAggregate: [], importsKernel: true, dynamicFrom: false },
     ], baseline);
     assert.deepEqual(v.newWriters.map((r) => r.file), ["routes/c.ts"]);
     assert.deepEqual(v.grew.map((r) => r.file), ["routes/a.ts", "routes/d.ts"]);
     assert.deepEqual(v.vanished, ["routes/b.ts"]);
     assert.deepEqual(v.shrank, []);
     // Gating a write shrinks `ungated` while `direct` stays: reported as shrank, not failed.
-    const s = judge([{ file: "routes/a.ts", count: 2, gated: 1, importsKernel: true, dynamicFrom: false }], { "routes/a.ts": { direct: 2, ungated: 2 } });
+    const s = judge([{ file: "routes/a.ts", count: 2, gated: 1, nonAggregate: 0, refusedNonAggregate: [], importsKernel: true, dynamicFrom: false }], { "routes/a.ts": { direct: 2, ungated: 2 } });
     assert.deepEqual(s.grew, []);
     assert.deepEqual(s.shrank.map((r) => [r.file, r.ungated]), [["routes/a.ts", 1]]);
   });
-  it("the committed baseline matches the tree: 47 direct, 8 ungated; trips.ts, trips-expansion.ts, requests.ts and the fourth-pass satellites fully gated", () => {
+  it("the committed baseline matches the tree: 47 direct, 40 kernel-gated, 5 declared non-aggregate, 2 ungated", () => {
     const rows = surveyTree();
     const v = judge(rows, TRIP_KERNEL_DIRECT_WRITERS);
     assert.deepEqual(v.newWriters, [], "a new direct writer appeared");
     assert.deepEqual(v.grew, [], "a direct or ungated count grew");
     assert.deepEqual(v.falseMarkers, []);
+    assert.deepEqual(v.refusedExemptions, [], "a trip-kernel:non-aggregate declaration does not match the columns its statement writes");
     assert.deepEqual(v.shrank, [], "the baseline is stale: a file now writes less than it records — lower the entry");
     assert.equal(rows.reduce((n, r) => n + r.count, 0), 47);
-    assert.equal(rows.reduce((n, r) => n + ungatedOf(r), 0), 8);
+    assert.equal(rows.reduce((n, r) => n + (r.importsKernel ? r.gated : 0), 0), 40, "kernel-gated writes");
+    assert.equal(rows.reduce((n, r) => n + r.nonAggregate, 0), 5, "writes declared out of the aggregate, per column");
+    assert.equal(rows.reduce((n, r) => n + ungatedOf(r), 0), 2, "neither gated nor declared: routes/events.ts and resolveAppeal's trip_membership case");
     const trips = rows.find((r) => r.file === "routes/trips.ts")!;
     assert.equal(trips.count, 14);
     assert.equal(ungatedOf(trips), 0, "every direct write in routes/trips.ts has a kernel path");
@@ -795,7 +798,18 @@ describe("check:trip-kernel-writers (§24 Phase 1 ratchet)", () => {
     }
     const admin = rows.find((r) => r.file === "routes/admin.ts")!;
     assert.equal(admin.count, 3);
-    assert.equal(ungatedOf(admin), 1, "routes/admin.ts: the two hides are gated; the reminder reset is classified out of the aggregate and stays direct");
+    assert.equal(admin.gated, 2, "the two visibility hides go through ADMIN_HIDE_TRIP");
+    assert.equal(admin.nonAggregate, 1, "the reminder reset declares its three claim columns and is verified against them");
+    assert.equal(ungatedOf(admin), 0);
+    // The two that remain, named so this test fails if either is quietly
+    // exempted rather than converted. Both are KERNEL_COMMANDs.
+    const events = rows.find((r) => r.file === "routes/events.ts")!;
+    assert.equal(ungatedOf(events), 1, "routes/events.ts still needs ADD_PLAN (another lane owns the file)");
+    assert.equal(events.nonAggregate, 0, "routes/events.ts must NOT be classified out of the aggregate");
+    const appeals = rows.find((r) => r.file === "services/appeals/resolveAppeal.ts")!;
+    assert.equal(appeals.gated, 1, "the trip restore goes through UPDATE_TRIP");
+    assert.equal(ungatedOf(appeals), 1, "trip_membership still needs a command that does not exist");
+    assert.equal(appeals.nonAggregate, 0, "trip_members.role is aggregate state and must NOT be exempted");
   });
 });
 

@@ -241,6 +241,14 @@ describe("nonAggregate is ratcheted per file", () => {
     assert.equal(v.grew.length, 1);
   });
 
+  it("FAILS a legacy-path marker in a file that never imports the kernel", () => {
+    // The sibling rule this pass did not change, pinned here because the two
+    // markers now share a code path: an annotation is a CLAIM that a command
+    // exists, and the check refuses a claim the file cannot back.
+    const v = judge([row({ gated: 1, nonAggregate: 0, importsKernel: false })], { "routes/x.ts": { direct: 1, ungated: 1 } });
+    assert.equal(v.falseMarkers.length, 1);
+  });
+
   it("reports a REFUSED declaration as its own failure, not merely as an ungated write", () => {
     const v = judge([row({ nonAggregate: 0, refusedNonAggregate: ["nope"] })], { "routes/x.ts": { direct: 1, ungated: 1 } });
     assert.equal(v.refusedExemptions.length, 1);
