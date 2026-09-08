@@ -303,7 +303,10 @@ for (const failing of ["trip_members", "trips"] as const) {
 
     it("GET /highlights/active?tripId= — an unreadable crew is db_error, not an unfiltered page", async () => {
       const r = await call(app, "GET", `/api/highlights/active?tripId=${T1}`, U.ACC);
-      assert.ok(r.status >= 500, `expected a 5xx, got ${r.status}`);
+      // The CODE, not a band. `status >= 500` also admits a 500 thrown by a
+      // crash in the handler — which is the trap this suite exists to avoid,
+      // because a crash and a deliberate refusal are not the same result.
+      assert.equal(r.status, 500, `expected 500 db_error, got ${r.status}`);
       assert.equal(r.body?.error, "db_error");
     });
   });
