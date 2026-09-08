@@ -6,6 +6,7 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { logger as rootLogger } from "../../lib/logger.js";
+import { affectedRows } from "../../lib/affectedRows.js";
 
 const logger = rootLogger.child({ service: "TrustAdminService" });
 import { recalculateTrustScore } from "./TrustScoreService.js";
@@ -66,11 +67,27 @@ export async function confirmEvent(
   // action. The next confirm of the same (still pending) event would then apply
   // the cap AGAIN. The status transition is the idempotency guard for
   // everything that follows, so a failure here stops here.
-  const { error: confirmErr } = await db.from("trust_events")
+  //
+  // Reading `error` alone was not enough to make that guarantee. The statement
+  // carries `.eq("status","pending_review")` — a compare-and-swap — and losing
+  // that CAS is NOT an error: PostgREST answers a zero-row UPDATE with 204 and
+  // supabase-js resolves `{ data: null, error: null }`, exactly as it does for
+  // the winning caller. Two admins adjudicating the same queue item (or one
+  // double-clicked request) therefore both ran the cap application, the
+  // probation set and the audit write, which is the double-charge the comment
+  // above says the transition prevents. `.select()` makes the update RETURNING
+  // so the transition can be OBSERVED, and zero rows raises the same
+  // "not pending review" the pre-check raises — the route already maps it.
+  const { data: confirmed, error: confirmErr } = await db.from("trust_events")
     .update({ status: "confirmed", reviewed_by: adminId, reviewed_at: new Date(nowMs).toISOString() })
     .eq("id", eventId)
-    .eq("status", "pending_review");
+    .eq("status", "pending_review")
+    .select("id");
   if (confirmErr) throw new Error(`confirmEvent: status update failed — ${confirmErr.message ?? confirmErr.code ?? "db_error"}`);
+  if (affectedRows(confirmed) === 0) {
+    logger.warn({ eventId, adminId }, "confirmEvent: pending_review→confirmed matched no row — already adjudicated; no cap, probation or audit applied");
+    throw new Error("Event is not pending review");
+  }
 
   // Apply standard caps for this event type
   const { applyEventCaps } = await import("./TrustCapService.js");
@@ -141,10 +158,29 @@ export async function revokeModerationTrustConsequences(
     const { liftCapsBySourceEvents } = await import("./TrustCapService.js");
     const capsLifted = await liftCapsBySourceEvents(db, ids, adminId);
 
-    await db
+    // The count this function RETURNS is what routes/admin.ts's restore path
+    // reports as "the sanction's trust consequences were reversed". It used to
+    // be `ids.length` — the size of the READ set — while the write's outcome
+    // was discarded entirely: neither its error nor its affected-row count was
+    // read, so a dismissal that moved nothing still answered "N events
+    // dismissed" and the user kept the trust penalty for a lifted ban.
+    const { data: dismissedEvents, error: dismissErr } = await db
       .from("trust_events")
       .update({ status: "dismissed", reviewed_by: adminId, reviewed_at: new Date().toISOString() })
-      .in("id", ids);
+      .in("id", ids)
+      .in("status", ["applied", "confirmed", "pending_review"])
+      .select("id");
+    // Never throws, and the two user-favourable steps below (clearing probation
+    // and recalculating) still run on a failed dismissal — they are independent
+    // of it and the sanction really was lifted. What must NOT survive is the
+    // CLAIM: a dismissal that errored or matched nothing reports 0.
+    if (dismissErr) {
+      logger.error({ err: dismissErr, userId, adminId }, "revokeModerationTrustConsequences: event dismissal failed — trust penalty NOT reversed");
+    }
+    const eventsDismissed = dismissErr ? 0 : affectedRows(dismissedEvents);
+    if (eventsDismissed < ids.length) {
+      logger.warn({ userId, selected: ids.length, dismissed: eventsDismissed }, "revokeModerationTrustConsequences: fewer events dismissed than selected");
+    }
 
     // A reversed finding must not leave the user on probation for it.
     await setProbation(db, userId, false, null).catch(() => {});
@@ -156,10 +192,10 @@ export async function revokeModerationTrustConsequences(
     // metadata carries what actually happened.
     await logAdminAction(
       db, adminId, userId, "lift_cap", reason,
-      { op: "revoke_moderation_trust", eventsDismissed: ids.length, capsLifted },
+      { op: "revoke_moderation_trust", eventsDismissed, capsLifted },
     ).catch(() => {});
 
-    return { eventsDismissed: ids.length, capsLifted };
+    return { eventsDismissed, capsLifted };
   } catch {
     return { eventsDismissed: 0, capsLifted: 0 };
   }
@@ -185,11 +221,20 @@ export async function dismissEvent(
 
   // Same rule as confirmEvent: the status transition must be known to have
   // happened before the dismissal is recalculated and audited as done.
-  const { error: dismissErr } = await db.from("trust_events")
+  const { data: dismissed, error: dismissErr } = await db.from("trust_events")
     .update({ status: "dismissed", reviewed_by: adminId, reviewed_at: new Date().toISOString() })
     .eq("id", eventId)
-    .eq("status", "pending_review");
+    .eq("status", "pending_review")
+    .select("id");
   if (dismissErr) throw new Error(`dismissEvent: status update failed — ${dismissErr.message ?? dismissErr.code ?? "db_error"}`);
+  // Losing the compare-and-swap is not an error (see confirmEvent): zero rows
+  // means someone else adjudicated this event first, and reviewed_by on the row
+  // is theirs, not this admin's. Recalculating and writing a dismiss_event audit
+  // row for an adjudication this call did not make is the false success.
+  if (affectedRows(dismissed) === 0) {
+    logger.warn({ eventId, adminId }, "dismissEvent: pending_review→dismissed matched no row — already adjudicated; no recalc or audit written");
+    throw new Error("Event is not pending review");
+  }
 
   {
     const { error: reviewErr } = await db.from("trust_reviews")
