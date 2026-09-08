@@ -86,27 +86,55 @@ async function sendReminderForTrip(
 ): Promise<boolean> {
   const tripId = trip.id;
 
-  const { data: members } = await (sc as any)
+  // ── AN UNREADABLE RECIPIENT LIST IS NOT AN EMPTY ONE ────────────────────────
+  // Both of these reads discarded their `.error`. supabase-js RESOLVES on a
+  // database error with `data: null`, so the failure modes were:
+  //
+  //   trip_members unreadable → `members` null → the crew silently vanishes and
+  //     the reminder goes to the OWNER ONLY, after which markDelivered() runs
+  //     and the members' reminder is gone for good — the outbox considers it
+  //     delivered.
+  //   profiles unreadable → `recipients` empty → the old `return true` said
+  //     "nothing to send; don't block delivery mark", markDelivered() ran, and
+  //     the reminder was permanently lost for EVERY recipient.
+  //
+  // Both are a scheduled notification dropped on the floor because a read
+  // failure was indistinguishable from an empty result. Throwing instead is not
+  // a new failure path: this function is called inside a try/catch at both call
+  // sites, `reminder_delivered_at` stays NULL, and the recovery sweep retries
+  // after STALE_CLAIM_MINUTES — which is what the two-phase outbox is for.
+  const { data: members, error: membersErr } = await (sc as any)
     .from("trip_members")
     .select("user_id")
     .eq("trip_id", tripId)
     .eq("role", "member");
+  if (membersErr) {
+    throw new Error(
+      `trip_members unreadable for trip ${tripId} (${membersErr.message ?? "unknown"}) — refusing to send an owner-only reminder and mark it delivered`,
+    );
+  }
 
   const recipientIds = [trip.owner_id];
   (members ?? []).forEach((m: any) => {
     if (m.user_id !== trip.owner_id) recipientIds.push(m.user_id);
   });
 
-  const { data: profiles } = await (sc as any)
+  const { data: profiles, error: profilesErr } = await (sc as any)
     .from("profiles")
     .select("id, expo_push_token")
     .in("id", recipientIds);
+  if (profilesErr) {
+    throw new Error(
+      `profiles unreadable for trip ${tripId} (${profilesErr.message ?? "unknown"}) — 'nobody has a push token' and 'we could not look' are not the same answer`,
+    );
+  }
 
   const recipients = (profiles ?? [])
     .filter((p: any) => Boolean(p.expo_push_token))
     .map((p: any) => ({ userId: p.id as string, tokens: [p.expo_push_token as string] }));
 
-  if (recipients.length === 0) return true; // nothing to send; don't block delivery mark
+  // Genuinely nobody to push to — a real answer from a readable table.
+  if (recipients.length === 0) return true;
 
   await sendPushWithRetry(sc as any, recipients, {
     title: "Your trip starts tomorrow! 🌍",
@@ -238,7 +266,19 @@ async function recoverStaleClaims(sc: ReturnType<typeof getServiceClient>): Prom
     claimQuery = rawCount == null
       ? claimQuery.is("reminder_retry_count", null)
       : claimQuery.eq("reminder_retry_count", rawCount);
-    const { data: claimed } = await claimQuery.select("id");
+    // The CAS write's own `.error` was discarded, so a FAILED update looked
+    // exactly like a lost race and was logged as one. The direction was always
+    // safe — a failed claim skips, it never double-sends — but an operator
+    // reading "already claimed by a concurrent recovery run" during a database
+    // outage is being told the wrong thing about why reminders stopped.
+    const { data: claimed, error: claimErr } = await claimQuery.select("id");
+    if (claimErr) {
+      logger.warn(
+        { err: claimErr, tripId },
+        "TripReminderScheduler: retry-count claim FAILED (not a lost race) — skipping this poll; the recovery sweep retries",
+      );
+      continue;
+    }
     if (!claimed || (claimed as any[]).length === 0) {
       logger.info({ tripId }, "TripReminderScheduler: reminder already claimed by a concurrent recovery run — skipping to avoid a double send");
       continue;
