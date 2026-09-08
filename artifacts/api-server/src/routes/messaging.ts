@@ -95,6 +95,49 @@ const LanguageSettingsPatchSchema = z.object({
 });
 
 /* ---------------------------------------------------------------------------
+ * Off-app solicitation control — tunables
+ * ---------------------------------------------------------------------------
+ */
+
+/**
+ * Hard cap on how many of a buddy's bookings are pulled when computing the
+ * booking-scoped offense count.
+ *
+ * PostgREST caps every unbounded collection response at `db-max-rows` (Supabase
+ * ships 1000). A `.select('id')` with no `.limit()` therefore returns a
+ * TRUNCATED list, and the `.in(...)` count built from it silently under-counts —
+ * the more bookings a buddy has, the more offenses go missing. Naming our own
+ * bound makes the truncation point ours, deterministic and testable, rather than
+ * a server-side default nobody in this process can observe.
+ */
+export const BUDDY_BOOKING_SCAN_CAP = 1000;
+
+/** Default number of cumulative offenses (including the current one) that suspends a buddy. */
+export const OFF_APP_SUSPENSION_THRESHOLD_DEFAULT = 3;
+
+interface ThresholdLogger { error: (obj: unknown, msg: string) => void }
+
+/**
+ * Resolve OFF_APP_SUSPENSION_THRESHOLD. A malformed value used to become NaN,
+ * and `n >= NaN` is false for every n — a typo in an env var switched the
+ * suspension off for good with no error anywhere. A value that cannot be read as
+ * a positive integer is reported and the default is used instead.
+ */
+export function offAppSuspensionThreshold(log?: ThresholdLogger): number {
+  const raw = process.env['OFF_APP_SUSPENSION_THRESHOLD'];
+  if (raw === undefined || raw === '') return OFF_APP_SUSPENSION_THRESHOLD_DEFAULT;
+  const parsed = Number(raw);
+  if (!Number.isInteger(parsed) || parsed < 1) {
+    log?.error(
+      { raw, fallback: OFF_APP_SUSPENSION_THRESHOLD_DEFAULT },
+      'OFF_APP_SUSPENSION_THRESHOLD is not a positive integer — falling back to the default instead of disabling suspension',
+    );
+    return OFF_APP_SUSPENSION_THRESHOLD_DEFAULT;
+  }
+  return parsed;
+}
+
+/* ---------------------------------------------------------------------------
  * GET /api/me/message-settings
  * ---------------------------------------------------------------------------
  */
@@ -1973,8 +2016,17 @@ router.post('/threads/:threadId/messages', async (req, res) => {
   // E-2: skip for E2EE threads — server cannot read ciphertext.
   // Scans the message body for off-app payment solicitation phrases. On match:
   //   1. Logs a buddy_booking_events row (event=off_app_solicitation_warning, admin_only).
-  //   2. After OFF_APP_SUSPENSION_THRESHOLD cumulative offenses for the buddy, suspends
-  //      the buddy profile and logs an auto-suspension event for admin review.
+  //   2. Counts the buddy's CUMULATIVE offenses INCLUDING the one being handled, and at
+  //      OFF_APP_SUSPENSION_THRESHOLD (default 3) suspends the buddy profile and logs an
+  //      auto-suspension event for admin review. "Three strikes": the third flagged
+  //      message is the one that suspends. The old local was named `priorCount` while
+  //      being read AFTER the warning insert, so it never held prior offenses at all —
+  //      the name lied about a number that decides whether an account is disabled. The
+  //      three-strikes BEHAVIOUR is what the surrounding prose, the operator-facing
+  //      threshold name and the existing acceptance test all describe, so the behaviour
+  //      is kept and the name is corrected to `offenseCount`; renaming rather than
+  //      re-basing the comparison also avoids silently converting this control into
+  //      four-strikes, which would weaken an abuse guard to satisfy a variable name.
   // Normal travel phrases do not trigger (patterns require explicit off-platform wording).
   const OFF_APP_PATTERNS = [
     /\boff[-\s]?app\b/i, /\bpay\s+outside\b/i, /\bcash\s+only\b.*\boutside\b/i,
@@ -1988,62 +2040,138 @@ router.post('/threads/:threadId/messages', async (req, res) => {
       try {
         const svcClient = getServiceClient();
         if (!svcClient) return;
-        const { data: booking } = await svcClient
+        // Every read below is an input to a decision that can DISABLE an account.
+        // supabase-js RESOLVES on a database error, so an unchecked `.error` reads
+        // as "no booking / no profile / no offenses" and silently switches the whole
+        // control off. Each one is checked and each failure is logged with what was
+        // lost, because a control that turns itself off during a bad database minute
+        // is worse than one that is absent: nobody knows it stopped.
+        const { data: booking, error: bookingErr } = await svcClient
           .from('rent_buddy_bookings')
           .select('id, buddy_id')
           .eq('telegraph_thread_id', threadId)
           .maybeSingle();
+        if (bookingErr) {
+          req.log.error({ err: bookingErr, threadId, messageId: (msg as any).id },
+            'off-app solicitation: booking lookup FAILED — flagged message not attributed to any buddy');
+          return;
+        }
         if (!booking) return;
         const bookingId = (booking as any).id as string;
         const buddyProfileId = (booking as any).buddy_id as string;
         // Only attribute the offense when the sender IS the buddy account.
         // A traveler can write off-app phrases without triggering buddy suspension.
-        const { data: buddySenderProfile } = await svcClient
+        const { data: buddySenderProfile, error: buddyProfErr } = await svcClient
           .from('rent_buddy_profiles')
           .select('id, user_id')
           .eq('id', buddyProfileId)
           .maybeSingle();
+        if (buddyProfErr) {
+          req.log.error({ err: buddyProfErr, buddyProfileId, bookingId },
+            'off-app solicitation: buddy profile lookup FAILED — offense not attributed');
+          return;
+        }
         if (!buddySenderProfile || (buddySenderProfile as any).user_id !== user.id) return;
-        await svcClient.from('buddy_booking_events').insert({
+        const { error: warnErr } = await svcClient.from('buddy_booking_events').insert({
           booking_id: bookingId,
           actor_user_id: user.id,
           event: 'off_app_solicitation_warning',
           metadata: { message_id: (msg as any).id, thread_id: threadId, excerpt: body.slice(0, 120), visibility: 'admin_only' },
         });
-        const { data: buddyBookings } = await svcClient
+        if (warnErr) {
+          req.log.error({ err: warnErr, bookingId, buddyProfileId, messageId: (msg as any).id },
+            'off-app solicitation warning insert FAILED — offense unaudited');
+        }
+
+        const threshold = offAppSuspensionThreshold(req.log);
+
+        // OFFENSE COUNT — two independent counts, neither of which may silently
+        // under-report.
+        //
+        // (A) actor-scoped: every off_app_solicitation_warning this user has ever
+        //     accrued. One equality filter, no id list, so PostgREST's row cap
+        //     cannot touch it. This is the authoritative count.
+        // (B) booking-scoped: the historical shape (warnings on any booking held by
+        //     this buddy PROFILE). It needs a booking-id list, and that list was
+        //     UNBOUNDED — PostgREST applies a default row cap (Supabase ships
+        //     db-max-rows = 1000), so a busy buddy's older bookings fell off the end
+        //     and the count was computed over a truncated set: the more bookings the
+        //     buddy had, the fewer offenses were counted. The cap is now OURS and
+        //     explicit, and hitting it is reported instead of being invisible; when
+        //     it is hit, (B) is a floor and (A) carries the answer.
+        //
+        // The decision uses max(A, B): (A) also aggregates across multiple buddy
+        // profiles owned by one user, and (B) still counts any legacy warning row
+        // whose actor was cleared (actor_user_id is ON DELETE SET NULL). Taking the
+        // max can only ever count more offenses, never fewer, so neither leg can
+        // make suspension easier to escape.
+        const { count: actorOffenses, error: actorCountErr } = await svcClient
+          .from('buddy_booking_events')
+          .select('id', { count: 'exact', head: true })
+          .eq('event', 'off_app_solicitation_warning')
+          .eq('actor_user_id', user.id);
+        if (actorCountErr || actorOffenses == null) {
+          req.log.error({ err: actorCountErr, buddyProfileId, threshold },
+            'off-app solicitation: offense count read FAILED — suspension decision SKIPPED, repeat offender stays active');
+          return;
+        }
+
+        const { data: buddyBookings, error: bookingsErr } = await svcClient
           .from('rent_buddy_bookings')
           .select('id')
-          .eq('buddy_id', buddyProfileId);
+          .eq('buddy_id', buddyProfileId)
+          .limit(BUDDY_BOOKING_SCAN_CAP);
+        if (bookingsErr) {
+          req.log.error({ err: bookingsErr, buddyProfileId },
+            'off-app solicitation: buddy booking list read FAILED — booking-scoped offense count unavailable, using actor-scoped count only');
+        }
         const buddyBookingIds = (buddyBookings ?? []).map((r: any) => r.id as string);
+        if (buddyBookingIds.length >= BUDDY_BOOKING_SCAN_CAP) {
+          req.log.warn({ buddyProfileId, cap: BUDDY_BOOKING_SCAN_CAP },
+            'off-app solicitation: buddy booking list hit the scan cap — booking-scoped offense count is a LOWER BOUND');
+        }
+        let bookingOffenses = 0;
         if (buddyBookingIds.length > 0) {
-          const { count: priorCount } = await svcClient
+          const { count: scoped, error: scopedErr } = await svcClient
             .from('buddy_booking_events')
-            .select('id', { count: 'exact' })
+            .select('id', { count: 'exact', head: true })
             .eq('event', 'off_app_solicitation_warning')
             .in('booking_id', buddyBookingIds);
-          const threshold = Number(process.env['OFF_APP_SUSPENSION_THRESHOLD'] ?? '3');
-          if ((priorCount ?? 0) >= threshold) {
-            // SAFETY enforcement: supabase-js resolves rather than throws on a DB
-            // error, so these results must be checked — a silently failed update
-            // here leaves a repeat off-app solicitor ACTIVE with no trace.
-            const { error: suspErr } = await svcClient
-              .from('rent_buddy_profiles')
-              .update({ status: 'suspended', admin_status: 'under_review', updated_at: new Date().toISOString() })
-              .eq('id', buddyProfileId);
-            if (suspErr) {
-              req.log.error({ err: suspErr, buddyProfileId, priorCount },
-                'off-app auto-suspension UPDATE failed — repeat offender remains active');
-            }
-            const { error: evErr } = await svcClient.from('buddy_booking_events').insert({
-              booking_id: bookingId,
-              actor_user_id: user.id,
-              event: 'buddy_auto_suspended',
-              metadata: { reason: 'repeated_off_app_solicitation', offense_count: priorCount, visibility: 'admin_only' },
-            });
-            if (evErr) {
-              req.log.error({ err: evErr, buddyProfileId },
-                'buddy_auto_suspended event insert failed — suspension unaudited');
-            }
+          if (scopedErr) {
+            req.log.error({ err: scopedErr, buddyProfileId },
+              'off-app solicitation: booking-scoped offense count FAILED — using actor-scoped count only');
+          } else {
+            bookingOffenses = scoped ?? 0;
+          }
+        }
+
+        // Cumulative offenses INCLUDING this message. The warning row was inserted
+        // above, so a successful insert is already in the count; when the insert
+        // failed the offense still happened and is added back explicitly, so a
+        // broken audit write cannot buy a repeat offender an extra strike.
+        const offenseCount = Math.max(actorOffenses, bookingOffenses) + (warnErr ? 1 : 0);
+
+        if (offenseCount >= threshold) {
+          // SAFETY enforcement: supabase-js resolves rather than throws on a DB
+          // error, so these results must be checked — a silently failed update
+          // here leaves a repeat off-app solicitor ACTIVE with no trace.
+          const { error: suspErr } = await svcClient
+            .from('rent_buddy_profiles')
+            .update({ status: 'suspended', admin_status: 'under_review', updated_at: new Date().toISOString() })
+            .eq('id', buddyProfileId);
+          if (suspErr) {
+            req.log.error({ err: suspErr, buddyProfileId, offenseCount },
+              'off-app auto-suspension UPDATE failed — repeat offender remains active');
+          }
+          const { error: evErr } = await svcClient.from('buddy_booking_events').insert({
+            booking_id: bookingId,
+            actor_user_id: user.id,
+            event: 'buddy_auto_suspended',
+            metadata: { reason: 'repeated_off_app_solicitation', offense_count: offenseCount, visibility: 'admin_only' },
+          });
+          if (evErr) {
+            req.log.error({ err: evErr, buddyProfileId },
+              'buddy_auto_suspended event insert failed — suspension unaudited');
           }
         }
       } catch (err) {
