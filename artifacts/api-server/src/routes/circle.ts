@@ -20,6 +20,7 @@ import { z } from "zod";
 import { requireUser, sendError, safeSecretEquals, type ApiErrorCode } from "../lib/http.js";
 import { requireAdmin } from "../lib/requireAdmin.js";
 import { getServiceClient } from "../lib/supabase.js";
+import { logger } from "../lib/logger.js";
 import { isFlagEnabled } from "../lib/featureFlags.js";
 import {
   canViewCirclePresence,
@@ -86,25 +87,66 @@ async function requireFeatureEnabled(res: any, sc: any): Promise<boolean> {
 }
 
 /** Check whether userId is the host of the given context. */
+/**
+ * A CIRCLE AUTHORIZATION INPUT COULD NOT BE READ.
+ *
+ * Deliberately distinct from "the input is empty", because those two used to be
+ * the same observation and the difference decides whether an access answer may
+ * be given at all. Same device, and the same `status`/`code` contract, as
+ * `TripAccessUnavailableError` in lib/http.ts: the global error handler
+ * (lib/errorEnvelope.ts, mounted in app.ts) reads `status` and `code` off the
+ * thrown object, so an uncaught one becomes exactly the response a route would
+ * have written by hand — 503 `degraded_unavailable`, retryable. Express 5
+ * forwards a rejected async handler there automatically, so no handler here
+ * needs a try/catch for this to arrive correctly.
+ *
+ * It has to be an exception rather than a wider return type for the same
+ * structural reason it did there: `isAcceptedMember` returns a bare boolean and
+ * `getAcceptedMemberIds` a bare array, and neither has anywhere to put a third
+ * state. Widening them would rewrite the twenty-odd call sites in this file.
+ */
+class CircleAccessUnavailableError extends Error {
+  readonly input: string;
+  readonly status: number = 503;
+  readonly code = "degraded_unavailable";
+  constructor(input: string, detail: string) {
+    super(`circle access input ${input} unavailable — refusing to answer: ${detail}`);
+    this.name = "CircleAccessUnavailableError";
+    this.input = input;
+  }
+}
+
+function describeCircleReadError(error: any): string {
+  return String(error?.message ?? error?.code ?? "db_error");
+}
+
 async function isContextHost(
   sc: any,
   userId: string,
   contextType: ContextType,
   contextId: string,
 ): Promise<boolean> {
+  // WAS: `const { data } = await …; return data?.owner_id === userId`.
+  // supabase-js RESOLVES on a database error, so an unreadable `trips` or
+  // `events` row made `data` null and the comparison `undefined === userId`
+  // false — reporting the CONTEXT'S OWN HOST as not the host, and denying them
+  // the meeting-point create/update/delete this gate protects, with nothing
+  // logged and no way for them to tell an outage from a permission.
   if (contextType === "trip") {
-    const { data } = await sc
+    const { data, error } = await sc
       .from("trips")
       .select("owner_id")
       .eq("id", contextId)
       .maybeSingle();
+    if (error) throw new CircleAccessUnavailableError("trips", describeCircleReadError(error));
     return (data as any)?.owner_id === userId;
   }
-  const { data } = await sc
+  const { data, error } = await sc
     .from("events")
     .select("host_id")
     .eq("id", contextId)
     .maybeSingle();
+  if (error) throw new CircleAccessUnavailableError("events", describeCircleReadError(error));
   return (data as any)?.host_id === userId;
 }
 
@@ -115,6 +157,13 @@ async function isAcceptedMember(
   contextType: ContextType,
   contextId: string,
 ): Promise<boolean> {
+  // `error || !data` FOLDED AN OUTAGE INTO A MEMBERSHIP VERDICT. The error was
+  // bound here, and then spent on the same `return false` as a genuinely absent
+  // row — so "you are not on this trip" and "we could not look" were the same
+  // answer, and GET .../is-member served the first of those with a 200 while
+  // GET .../members answered 403 "Not a member of this context". Both are
+  // confident claims about a person's standing in a group, and neither may be
+  // assembled out of a query that did not answer.
   if (contextType === "trip") {
     const { data, error } = await sc
       .from("trip_members")
@@ -122,21 +171,26 @@ async function isAcceptedMember(
       .eq("trip_id", contextId)
       .eq("user_id", userId)
       .maybeSingle();
-    if (error || !data) return false;
+    if (error) throw new CircleAccessUnavailableError("trip_members", describeCircleReadError(error));
+    if (!data) return false;
     const row = data as { role: string; status?: string | null };
     const acceptedRoles = new Set(["owner", "co_host", "member", "viewer"]);
     if (!acceptedRoles.has(row.role)) return false;
     if (row.status != null && row.status !== "accepted") return false;
     return true;
   }
-  // Event: require both RSVP going AND a confirmed event_attendees row.
+  // Event: require both RSVP going AND a confirmed event_attendees row. BOTH
+  // are required, so an unreadable EITHER of them is an unanswerable question,
+  // not a "no".
   const [rsvpResult, attendeeResult] = await Promise.all([
     sc.from("event_rsvps").select("status").eq("event_id", contextId).eq("user_id", userId).maybeSingle(),
     sc.from("event_attendees").select("user_id").eq("event_id", contextId).eq("user_id", userId).maybeSingle(),
   ]);
-  if (rsvpResult.error || !rsvpResult.data) return false;
+  if (rsvpResult.error) throw new CircleAccessUnavailableError("event_rsvps", describeCircleReadError(rsvpResult.error));
+  if (attendeeResult.error) throw new CircleAccessUnavailableError("event_attendees", describeCircleReadError(attendeeResult.error));
+  if (!rsvpResult.data) return false;
   if ((rsvpResult.data as any).status !== "going") return false;
-  if (attendeeResult.error || !attendeeResult.data) return false;
+  if (!attendeeResult.data) return false;
   return true;
 }
 
@@ -146,24 +200,59 @@ async function getAcceptedMemberIds(
   contextType: ContextType,
   contextId: string,
 ): Promise<string[]> {
+  // AN EMPTY ROSTER IS A STATEMENT: "this circle has no members". Read without
+  // its `.error` — supabase-js resolves on a database error — an unreadable
+  // membership table produced exactly that, and every caller acted on it:
+  // GET .../members and .../who-can-see-me served `[]` with a 200, every
+  // circle notification went to nobody, and the ADMIN disable-context action
+  // disabled Circle for zero people and reported success. None of that is a
+  // safe degradation; it is a wrong answer delivered confidently.
   if (contextType === "trip") {
-    const { data } = await sc
+    const { data, error } = await sc
       .from("trip_members")
       .select("user_id, role, status")
       .eq("trip_id", contextId)
       .in("role", ["owner", "co_host", "member", "viewer"]);
+    if (error) throw new CircleAccessUnavailableError("trip_members", describeCircleReadError(error));
     return ((data ?? []) as any[])
       .filter((r) => r.status == null || r.status === "accepted")
       .map((r) => r.user_id as string);
   }
-  // Event: intersection of going RSVPs and event_attendees (both required)
+  // Event: intersection of going RSVPs and event_attendees (both required). An
+  // unreadable half silently SHRINKS the intersection, which is the same lie in
+  // partial form — a roster missing people with nothing marking it partial.
   const [rsvpResult, attendeeResult] = await Promise.all([
     sc.from("event_rsvps").select("user_id").eq("event_id", contextId).eq("status", "going"),
     sc.from("event_attendees").select("user_id").eq("event_id", contextId),
   ]);
+  if (rsvpResult.error) throw new CircleAccessUnavailableError("event_rsvps", describeCircleReadError(rsvpResult.error));
+  if (attendeeResult.error) throw new CircleAccessUnavailableError("event_attendees", describeCircleReadError(attendeeResult.error));
   const goingIds = new Set(((rsvpResult.data ?? []) as any[]).map((r) => r.user_id as string));
   const attendeeIds = new Set(((attendeeResult.data ?? []) as any[]).map((r) => r.user_id as string));
   return [...goingIds].filter((id) => attendeeIds.has(id));
+}
+
+/**
+ * A CIRCLE FAN-OUT THAT REACHED NOBODY MUST NOT DO SO IN SILENCE.
+ *
+ * Every notification/Telegraph fan-out in this file runs detached from the
+ * response (`void (async () => …)()`) behind a bare `catch {}`. That was correct
+ * about one thing — a notification failure must never fail the request that
+ * triggered it — and wrong about another: the commonest failure was invisible.
+ * An unreadable membership table resolved to an empty roster, the fan-out
+ * "succeeded" against zero recipients, and nothing was recorded. Now that
+ * getAcceptedMemberIds throws on an unreadable roster, these catches are where
+ * that lands, so they log instead of discarding.
+ *
+ * Still swallowed on purpose: the response has already been sent by the time
+ * this runs, so there is nothing to fail and nowhere to report it but the log.
+ */
+function logCircleFanoutFailure(req: any, err: unknown, what: string): void {
+  const msg = `${what} failed — recipients may not have been notified`;
+  // The request logger when there is one (route fan-outs), the module logger
+  // otherwise (the shared notification helper has no request in scope).
+  if (req?.log?.warn) req.log.warn({ err }, msg);
+  else logger.warn({ err }, msg);
 }
 
 /** Write a circle_audit_events row. Non-fatal — swallows errors. */
@@ -213,10 +302,10 @@ async function sendCircleNotifications(
         try {
           const row = await svc.create({ userId: uid, eventType, params });
           if (row) await router.route(row);
-        } catch { /* non-fatal */ }
+        } catch (err) { logCircleFanoutFailure(null, err, `circle notification ${eventType}`); }
       }),
     );
-  } catch { /* non-fatal */ }
+  } catch (err) { logCircleFanoutFailure(null, err, `circle notification ${eventType}`); }
 }
 
 /**
@@ -516,10 +605,10 @@ router.patch("/circle/settings", async (req, res) => {
               await sendCircleNotifications(sc, recipients, "circle.sharing_enabled", {
                 actor: actorName, contextTitle, contextType: context_type, contextId: context_id,
               });
-            } catch { /* non-fatal per context */ }
+            } catch (err) { logCircleFanoutFailure(req, err, "per-context circle fan-out"); }
           }),
         );
-      } catch { /* non-fatal */ }
+      } catch (err) { logCircleFanoutFailure(req, err, "circle fan-out"); }
     })();
   }
 
@@ -586,10 +675,10 @@ router.post("/circle/pause-all", async (req, res) => {
             await sendCircleNotifications(sc, recipients, "circle.sharing_paused", {
               actor: actorName, contextTitle, contextType: context_type, contextId: context_id,
             });
-          } catch { /* non-fatal per context */ }
+          } catch (err) { logCircleFanoutFailure(req, err, "per-context circle fan-out"); }
         }),
       );
-    } catch { /* non-fatal */ }
+    } catch (err) { logCircleFanoutFailure(req, err, "circle fan-out"); }
   })();
 
   res.status(200).json({
@@ -1045,7 +1134,7 @@ router.post("/circle/contexts/:type/:id/presence", async (req, res) => {
             actor: actorName, contextTitle, contextType: type, contextId: id,
           });
         }
-      } catch { /* non-fatal */ }
+      } catch (err) { logCircleFanoutFailure(req, err, "circle fan-out"); }
     })();
   }
 
@@ -1149,7 +1238,7 @@ router.post("/circle/contexts/:type/:id/check-in", async (req, res) => {
       // Telegraph status card: preserve checkinType subtype for distinct card variants
       // (e.g. "arrived" vs "with_group") — body still contains only { subtype } for privacy.
       void postCircleStatusCard(sc, type as ContextType, id, user.id, parsed.data.checkinType);
-    } catch { /* non-fatal */ }
+    } catch (err) { logCircleFanoutFailure(req, err, "circle fan-out"); }
   })();
 
   res.status(201).json({
@@ -1366,7 +1455,7 @@ router.post("/circle/contexts/:type/:id/meeting-point", async (req, res) => {
         venueLabel: (data as any)?.venue_label       ?? null,
         approxArea: (data as any)?.approximate_label ?? null,
       });
-    } catch { /* non-fatal */ }
+    } catch (err) { logCircleFanoutFailure(req, err, "circle fan-out"); }
   })();
 
   const row = data as any;
@@ -1446,7 +1535,7 @@ router.patch("/circle/contexts/:type/:id/meeting-point", async (req, res) => {
         venueLabel: (data as any)?.venue_label       ?? null,
         approxArea: (data as any)?.approximate_label ?? null,
       });
-    } catch { /* non-fatal */ }
+    } catch (err) { logCircleFanoutFailure(req, err, "circle fan-out"); }
   })();
 
   const row = data as any;
@@ -1508,7 +1597,7 @@ router.delete("/circle/contexts/:type/:id/meeting-point", async (req, res) => {
       await sendCircleNotifications(sc, recipients, "circle.meeting_point_updated", {
         actor: actorName, contextTitle, contextType: type, contextId: id,
       });
-    } catch { /* non-fatal */ }
+    } catch (err) { logCircleFanoutFailure(req, err, "circle fan-out"); }
   })();
 
   res.status(200).json({ removed: true });
@@ -1780,7 +1869,7 @@ router.get("/circle/compass-suggestions", async (req, res) => {
             });
           }
         }
-      } catch { /* non-fatal per context */ }
+      } catch (err) { logCircleFanoutFailure(req, err, "per-context circle fan-out"); }
     }),
   );
 
@@ -1873,10 +1962,10 @@ router.post("/circle/pause-on-session-end", async (req, res) => {
               actor: actorName, contextTitle,
               contextType: row.context_type, contextId: row.context_id,
             });
-          } catch { /* non-fatal per context */ }
+          } catch (err) { logCircleFanoutFailure(req, err, "per-context circle fan-out"); }
         }),
       );
-    } catch { /* non-fatal */ }
+    } catch (err) { logCircleFanoutFailure(req, err, "circle fan-out"); }
   })();
 
   res.status(200).json({ paused: presenceRows.length });
