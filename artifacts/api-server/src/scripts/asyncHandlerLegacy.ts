@@ -36,7 +36,6 @@ export const ASYNC_HANDLER_LEGACY_FILES = new Set([
   "adminStamps.ts",
   "admin.ts",
   "airport.ts",
-  "auth.ts",
   "availability.ts",
   "blocks.ts",
   "calls.ts",

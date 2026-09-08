@@ -752,6 +752,24 @@ const EXEMPT = [
   },
 
   {
+    file: 'src/test/authSignupStatusNoClient.test.ts',
+    pinnedTestEnv: true,
+    reason:
+      'Registered unit test for GET /auth/signup-status on the NO-SERVICE-CLIENT path. It names SUPABASE_URL and '
+      + 'SUPABASE_SERVICE_ROLE_KEY only to `delete` them from process.env, before a dynamic import() of '
+      + 'src/lib/supabase.js — which is the ONLY way to reach that branch, because isServiceClientReady is a '
+      + 'load-time const evaluated when the module is first imported, so the runner\'s own credentials would '
+      + 'otherwise pin it true forever. The detector here is NAME-BASED and cannot tell a read of a credential '
+      + 'from a DELETION of one, so it classified the file as a reacher on the strength of the two lines that '
+      + 'take the credentials AWAY. The file constructs no client, calls createClient nowhere, and after those '
+      + 'two deletes there is no URL left in the environment for anything to dial. Its whole subject is that the '
+      + 'route must answer 503 {signupsEnabled:false} rather than open signups when nothing is readable — a '
+      + 'fail-CLOSED assertion, which is why removing the credentials is the fixture and not a bypass. '
+      + 'EXEMPTION MEANS UNGUARDED, NOT SAFE — if this file ever stops deleting those variables, or ever '
+      + 'constructs a client, the exemption is void and it must import the guard.',
+  },
+
+  {
     file: 'src/test/notificationIssuance.test.ts',
     pinnedTestEnv: true,
     reason:
