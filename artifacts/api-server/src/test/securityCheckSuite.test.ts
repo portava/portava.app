@@ -75,6 +75,16 @@ const CREDENTIAL_FREE = [
   "check:deletion-coverage",
   "check:data-rights",
   "check:location-purposes",
+  // Added 2026-09-08. run-security-checks.sh had grown to 13 checks while this
+  // list still named 11, so the non-vacuity assertion below (passed + failed
+  // === the length of these two lists) went RED with `13 !== 11`. It was right
+  // to: two guards were running inside the security suite and NOT named by the
+  // control that claims to cover it, which is the difference between "every
+  // security check passes" and "every security check I remembered passes".
+  // Both are credential-free and both pass, so they join the by-name list
+  // rather than the count being bumped to match.
+  "check:admin-guard",
+  "check:security-definer-oracles",
 ];
 
 let tmp = "";
@@ -175,7 +185,22 @@ describe("security check suite runner", () => {
     // Non-vacuity, and the unenforced gap is measured rather than implied.
     assert.equal(passed.length + failed.length, CREDENTIAL_FREE.length + CREDENTIAL_GATED.length, r.out);
     assert.match(r.out, /NOT RUN AS A GATE: [1-9][0-9]* security-relevant guard\(s\) are UNENFORCED/);
-    assert.match(r.out, /NOT GATED: src\/scripts\/checkAdminGuard\.ts/);
+    // WAS `/NOT GATED: src\/scripts\/checkAdminGuard\.ts/`, naming one file as
+    // the proof that the unenforced list is real. That file is now GATED — it
+    // runs inside this very suite as check:admin-guard — so the assertion was
+    // pinning a gap that had been closed, and would have gone green again only
+    // if the guard were un-gated. Pin the property instead, in both directions:
+    // the list must still name a real checker file, and checkAdminGuard must NOT
+    // be on it.
+    assert.match(
+      r.out,
+      /NOT RUN AS A GATE:[\s\S]*?src\/scripts\/check[A-Za-z-]*\.ts —/,
+      `the unenforced list must name a real guard file, or the measured gap is prose:\n${r.out}`,
+    );
+    assert.ok(
+      !/NOT RUN AS A GATE:[\s\S]*?checkAdminGuard\.ts/.test(r.out),
+      `checkAdminGuard.ts runs in this suite as check:admin-guard; listing it as unenforced would be false:\n${r.out}`,
+    );
 
     // A ratchet's green must be reprinted with what it does not cover.
     // "check:deletion-coverage passed" is true and means far less than it sounds:

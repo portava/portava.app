@@ -175,6 +175,21 @@ export const PROJECTIONS: readonly ProjectionEntry[] = [
       "Writes dedup results back onto the canonical post_media rows rather than into a projection of " +
       "its own. post_media has many readers; nothing is stranded.",
   },
+  {
+    // Found by this check's own discovery rule on 2026-09-08, the day 2730 was
+    // applied to portava-ci: an unregistered projection-shaped writer. The
+    // finding was correct and the fix is not a registry entry that names a
+    // consumer the checker cannot see. Every read AND every write lived in
+    // derivativeRegistry.ts, so the only consumer WAS the producer — the exact
+    // shape this check exists to catch. Build and serve are now two modules,
+    // and the chain below is one the checker can verify rather than one it is
+    // asked to believe.
+    key: "MEMORY_DERIVATIVE_REGISTRY",
+    kind: "projection",
+    storage: ["memory_derivative_registry"],
+    producers: ["services/memoryProjections/derivativeRegistry.ts"],
+    consumers: ["services/memoryProjections/derivativeRegistryRead.ts"],
+  },
 ];
 
 export function projectionFor(table: string): ProjectionEntry | null {

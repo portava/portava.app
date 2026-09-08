@@ -32,11 +32,14 @@ import {
   DERIVATIVE_REGISTRY_TABLE,
   deriveProjection,
   projectionStaleness,
-  readRegisteredPayload,
   rebuildProjection,
   revokeDerivativesForMemory,
   type ClientLike,
 } from "../services/memoryProjections/derivativeRegistry.js";
+// The SERVE path moved to its own module so the projection has a consumer that
+// is not its own producer — see derivativeRegistryRead.ts. The assertions below
+// are unchanged; only where the function is imported from moved.
+import { readRegisteredPayload } from "../services/memoryProjections/derivativeRegistryRead.js";
 import {
   PROJECTION_DEFINITIONS,
   getProjectionDefinition,

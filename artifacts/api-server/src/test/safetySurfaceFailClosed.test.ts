@@ -491,12 +491,57 @@ describe("moderation: a report is still filed when a supporting read fails", () 
       "and it lands unattributed, which is exactly why an operator must be told",
     );
 
+    // The assertion used to match /no accountable subject user/ and went RED
+    // once routes/moderation.ts split that one message in two. The split is the
+    // improvement, not the regression: "the content row is missing" is a fact
+    // about the content, and "the lookup could not run" is an operations event,
+    // and the old single message could not tell an operator which one had
+    // happened. THIS case is the unreadable one, so it must take the unreadable
+    // branch — matching the old wording here would now assert the WRONG branch.
     const unattributed = logged.filter(
-      (l) => l.level === "error" && /no accountable subject user/i.test(l.msg),
+      (l) => l.level === "error" && /subject-owner lookup COULD NOT RUN/i.test(l.msg),
     );
     assert.equal(
       unattributed.length, 1,
       `the unattributed report must be visible to an operator; logged: ${JSON.stringify(logged.map((l) => l.msg))}`,
+    );
+    assert.match(
+      unattributed[0]!.msg,
+      /NOT because the content is unowned/i,
+      "and it must say which of the two it was — an operator who reads 'unowned' will close the ticket",
+    );
+    // The OTHER branch must not have fired. If both messages appear, the two
+    // cases are being told apart in the text and not in the code.
+    assert.equal(
+      logged.filter((l) => /no accountable subject user/i.test(l.msg)).length, 0,
+      "a failed lookup must not also be reported as a missing content row",
+    );
+  });
+
+  it("a MISSING content row takes the other branch, and says so", async () => {
+    // The positive control for the split above. Same endpoint, same fail-OPEN,
+    // but the owner lookup SUCCEEDS and finds nothing — so the operator must be
+    // told the content is unowned rather than that the database blinked.
+    logged.length = 0;
+    const rows = baseRows();
+    rows.moderation_reports = [];
+    rows.posts = [];
+    const inserted: Record<string, any[]> = {};
+    install({ rows, inserted });
+
+    const res = await req("POST", "/api/moderation/report", {
+      subjectType: "post", subjectId: TARGET, category: "safety_concern",
+    });
+
+    assert.equal(res.status, 201, "the fail-OPEN posture is the same on this branch");
+    assert.equal((inserted.moderation_reports ?? []).length, 1, "the report is still written");
+    assert.equal(
+      logged.filter((l) => l.level === "error" && /no accountable subject user/i.test(l.msg)).length, 1,
+      `the missing-row branch must fire here; logged: ${JSON.stringify(logged.map((l) => l.msg))}`,
+    );
+    assert.equal(
+      logged.filter((l) => /COULD NOT RUN/i.test(l.msg)).length, 0,
+      "and the unreadable-database message must NOT — nothing was unreadable",
     );
   });
 });

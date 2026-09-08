@@ -372,6 +372,20 @@ export async function readRegistration(
   return { ok: true, value: rows[0] };
 }
 
+// readRegisteredPayload MOVED to derivativeRegistryRead.ts.
+// This module BUILDS and REVOKES; that one SERVES. They were one file, which
+// made public.memory_derivative_registry a projection whose only consumer was
+// its own producer -- the exact shape check:projection-consumers exists to
+// catch, and it did.
+//
+// readRegistration stays HERE, and the serve path issues its own SELECT rather
+// than calling it. That is not duplication for its own sake: importing it back
+// would make these two modules a CYCLE (this file imports the reader, the
+// reader imports this file's table constant), and a value read across an ESM
+// cycle at module-evaluation time is how a constant arrives `undefined`. The
+// seam only holds if it points one way.
+
+
 export type StalenessState = "FRESH" | "STALE" | "REVOKED" | "NOT_REGISTERED";
 
 export interface StalenessVerdict {
@@ -501,25 +515,3 @@ export async function revokeDerivativesForMemory(
   return { ok: true, value: { revoked: updated.length, scope_keys: updated.map((u) => u.scope_key).sort() } };
 }
 
-/**
- * Section 15 reads derivatives, not canonical rows. This is the only reader:
- * it returns the registered payload, and refuses when the registration is
- * missing, revoked or unreadable rather than returning [].
- */
-export async function readRegisteredPayload(
-  client: ClientLike,
-  projectionId: ProjectionId,
-  scope: ProjectionScope,
-): Promise<ProjectionResult<{ rows: ProjectedRow[]; registration: RegistrationRow }>> {
-  const reg = await readRegistration(client, projectionId, scope);
-  if (!reg.ok) return reg;
-  if (reg.value.revocation_state === "REVOKED" || reg.value.revocation_state === "PURGED") {
-    return {
-      ok: false, reason: "not_registered",
-      detail: `derivative ${reg.value.scope_key} is ${reg.value.revocation_state}`,
-      retryable: false,
-    };
-  }
-  const rows = Array.isArray(reg.value.payload_json) ? reg.value.payload_json : [];
-  return { ok: true, value: { rows, registration: reg.value } };
-}

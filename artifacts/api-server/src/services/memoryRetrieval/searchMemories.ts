@@ -33,7 +33,7 @@
  */
 
 import type { ClientLike, ProjectionResult } from "../memoryProjections/derivativeRegistry.js";
-import { readRegisteredPayload } from "../memoryProjections/derivativeRegistry.js";
+import { readRegisteredPayload } from "../memoryProjections/derivativeRegistryRead.js";
 import { getProjectionDefinition } from "../memoryProjections/projectionRegistry.js";
 import type { ProjectedRow, ProjectionId, ProjectionScope } from "../memoryProjections/projectionRegistry.js";
 
