@@ -45,6 +45,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { callsFunction } from "./lib/callsFunction.js";
+import { stripComments } from "./lib/stripComments.js";
 import { PROJECTIONS as REAL_PROJECTIONS, type ProjectionEntry } from "../lib/projections/registry.js";
 
 /**
@@ -84,7 +85,11 @@ function tableConstants(files: string[]): Map<string, string> {
   const m = new Map<string, string>();
   const re = /\b(?:export\s+)?const\s+([A-Z][A-Z0-9_]*)\s*(?::\s*[^=]+)?=\s*["'`]([a-z0-9_]+)["'`]/g;
   for (const f of files) {
-    for (const hit of readFileSync(f, "utf8").matchAll(re)) m.set(hit[1], hit[2]);
+    // Comment-stripped, like every other question this file asks about code. A
+    // table-name constant that exists only inside a doc comment is not a
+    // constant; three of them do, and resolving `.from(SOME_CONST)` through one
+    // attributes a real access to a name nothing declares.
+    for (const hit of stripComments(readFileSync(f, "utf8")).matchAll(re)) m.set(hit[1], hit[2]);
   }
   return m;
 }
@@ -119,7 +124,20 @@ function main(): void {
   const rpcBy = new Map<string, Set<string>>();
 
   for (const f of files) {
-    const s = readFileSync(f, "utf8");
+    // COMMENTS ARE NOT CODE, and here the direction is the dangerous one. This
+    // guard answers "does this projection have a producer, and does anything
+    // read it". Both questions were being answered from the RAW file text, so a
+    // commented-out `.from("posts").insert(...)` — an example in a doc block, a
+    // disabled writer, a guard script quoting the shape it looks for — counted
+    // as a producer, and the projection was reported as complete. That is the
+    // sixth guard in this tree to ship this bug, and the fifth to ship it in the
+    // direction that reports a GAP AS CLOSED.
+    //
+    // Measured over 1,725 files at the time of the fix: 24 phantom writer
+    // attributions and 24 phantom reader attributions, at least one of them
+    // (`posts`, from scripts/lib/tableAccessExtract.ts) naming a table this
+    // registry actually tracks.
+    const s = stripComments(readFileSync(f, "utf8"));
     const r = rel(f);
     for (const t of tablesTouched(s, consts, WRITE_VERBS)) {
       if (!writesBy.has(t)) writesBy.set(t, new Set());

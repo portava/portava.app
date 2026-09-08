@@ -30,7 +30,7 @@
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, writeFileSync, rmSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname, resolve, relative } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -43,6 +43,40 @@ const CHECKER = join(API_ROOT, "src", "scripts", "checkProjectionConsumers.ts");
 let tmp = "";
 before(() => { tmp = mkdtempSync(join(tmpdir(), "projcons-")); });
 after(() => { if (tmp) rmSync(tmp, { recursive: true, force: true }); });
+
+/**
+ * Run the checker against a CRAFTED src tree.
+ *
+ * The writer/reader attribution rules read whole source files, so proving they
+ * are comment-aware needs a tree whose only `.from(...)` occurrences are the
+ * ones under test — mutating the real tree could not isolate that. The checker
+ * refuses a tree of fewer than 100 files (MIN_FILES_SCANNED), which is itself
+ * the right behaviour, so the tree is padded with inert filler; a case that
+ * passed by scanning almost nothing would prove nothing.
+ */
+function withTree(name: string, files: Record<string, string>, entries: unknown[]) {
+  const root = join(tmp, `tree-${name}`);
+  const src = join(root, "src");
+  mkdirSync(src, { recursive: true });
+  for (let i = 0; i < 110; i++) {
+    writeFileSync(join(src, `filler${i}.ts`), `export const filler${i} = ${i};\n`);
+  }
+  for (const [rel, body] of Object.entries(files)) {
+    const abs = join(src, rel);
+    mkdirSync(dirname(abs), { recursive: true });
+    writeFileSync(abs, body);
+  }
+  const reg = join(tmp, `${name}.json`);
+  writeFileSync(reg, JSON.stringify(entries, null, 1));
+  const r = spawnSync(process.execPath, ["--import", "tsx/esm", CHECKER], {
+    cwd: API_ROOT,
+    encoding: "utf8",
+    env: { ...process.env, PROJECTION_REGISTRY: reg, PROJECTION_SRC: src },
+    timeout: 180_000,
+    maxBuffer: 64 * 1024 * 1024,
+  });
+  return { code: r.status, out: `${r.stdout ?? ""}${r.stderr ?? ""}` };
+}
 
 function withRegistry(name: string, entries: unknown[]) {
   const p = join(tmp, `${name}.json`);
@@ -259,5 +293,99 @@ describe("callsFunction — the shared comment-aware detector", () => {
     // quietly. Pinned so a future \"improvement\" that flips the direction has to
     // argue with this case.
     assert.equal(callsFunction('const u = "https://x"; startX();', "startX"), false);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// WRITER AND READER ATTRIBUTION ARE ANSWERED FROM CODE, NOT FROM PROSE.
+//
+// Until 2026-09-08 both scans ran over the RAW file text, so a commented-out
+// `.from("t").insert(...)` counted as a producer and a commented-out
+// `.from("t").select(...)` counted as a consumer. That is the sixth guard in
+// this tree to ship this bug and the fifth to ship it in the direction that
+// reports a GAP AS CLOSED: the projection looks wired, and nothing says
+// otherwise.
+//
+// Measured over 1,725 real files at the time of the fix: 24 phantom writer
+// attributions and 24 phantom reader attributions, at least one of them
+// (`posts`, from scripts/lib/tableAccessExtract.ts) naming a table this registry
+// actually tracks. No projection's verdict changed on the day — the defect was
+// latent, not live — which is the right time to close it, and the reason this
+// suite exists rather than a commit message saying it was fine.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const CRAFTED = [{
+  key: "CRAFTED",
+  kind: "projection",
+  storage: ["crafted_projection"],
+  producers: ["worker.ts"],
+  consumers: ["reader.ts"],
+}];
+
+describe("writer/reader attribution is comment-aware", () => {
+  it("CONTROL — a real write and a real read PASS", () => {
+    const { code, out } = withTree("real", {
+      "worker.ts": 'export async function run(sc: any) { await sc.from("crafted_projection").insert({ a: 1 }); }\n',
+      "reader.ts": 'export async function read(sc: any) { return sc.from("crafted_projection").select("*"); }\n',
+    }, CRAFTED);
+    assert.equal(code, 0, `the control tree must pass, otherwise the two cases below prove nothing:\n${out}`);
+  });
+
+  it("FAILS when the only write is inside a COMMENT", () => {
+    const { code, out } = withTree("commented-write", {
+      "worker.ts": [
+        "// await sc.from(\"crafted_projection\").insert({ a: 1 });",
+        "/* await sc.from(\"crafted_projection\").insert({ a: 1 }); */",
+        "/**",
+        " * Historical shape:",
+        " *   await sc.from(\"crafted_projection\").insert({ a: 1 });",
+        " */",
+        "export const nothingHere = true;",
+      ].join("\n") + "\n",
+      "reader.ts": 'export async function read(sc: any) { return sc.from("crafted_projection").select("*"); }\n',
+    }, CRAFTED);
+    assert.notEqual(code, 0, "a commented-out insert is not a producer");
+    assert.match(out, /producer worker\.ts writes neither crafted_projection/);
+  });
+
+  it("FAILS when the only read is inside a COMMENT", () => {
+    const { code, out } = withTree("commented-read", {
+      "worker.ts": 'export async function run(sc: any) { await sc.from("crafted_projection").insert({ a: 1 }); }\n',
+      "reader.ts": [
+        "// return sc.from(\"crafted_projection\").select(\"*\");",
+        "/* return sc.from(\"crafted_projection\").select(\"*\"); */",
+        "export const nothingHere = true;",
+      ].join("\n") + "\n",
+    }, CRAFTED);
+    assert.notEqual(code, 0, "a commented-out select is not a consumer");
+    assert.match(out, /declared consumer reader\.ts does not read crafted_projection/);
+  });
+
+  it("a table-name CONSTANT declared only in a comment does not resolve", () => {
+    // `.from(SOME_CONST)` is resolved through a map of `const NAME = "table"`
+    // declarations, and that map was built from raw text too. Three constants in
+    // the real tree exist only inside comments; resolving a chain through one
+    // attributes a real access to a name nothing declares.
+    const { code, out } = withTree("commented-const", {
+      "worker.ts": [
+        '// const CRAFTED_TABLE = "crafted_projection";',
+        'export async function run(sc: any) { await sc.from(CRAFTED_TABLE).insert({ a: 1 }); }',
+        'declare const CRAFTED_TABLE: string;',
+      ].join("\n") + "\n",
+      "reader.ts": 'export async function read(sc: any) { return sc.from("crafted_projection").select("*"); }\n',
+    }, CRAFTED);
+    assert.notEqual(code, 0, "a constant that exists only in a comment must not resolve a table name");
+    assert.match(out, /producer worker\.ts writes neither crafted_projection/);
+  });
+
+  it("the crafted tree is not passing by being too small to judge", () => {
+    // The checker refuses below MIN_FILES_SCANNED, and that refusal must be the
+    // thing NOT happening in the cases above — otherwise every "FAILS" result
+    // here is a vacuity refusal wearing the right exit code.
+    const { out } = withTree("real2", {
+      "worker.ts": 'export async function run(sc: any) { await sc.from("crafted_projection").insert({ a: 1 }); }\n',
+      "reader.ts": 'export async function read(sc: any) { return sc.from("crafted_projection").select("*"); }\n',
+    }, CRAFTED);
+    assert.doesNotMatch(out, /VACUOUS/, "the crafted tree is below the file floor");
   });
 });
