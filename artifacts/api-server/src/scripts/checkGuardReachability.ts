@@ -44,14 +44,19 @@
  *   6. test-control— the test file exists, is REGISTERED in the test script, and
  *                    contains an it() that spawns the checker with no seam
  *                    override and asserts its status/code is 0.
- *   7. manual      — a reason of real length, AND the guard must NOT in fact be
- *                    wired (a stale exemption fails).
+ *   7. manual      — a reason of real length; the guard must NOT in fact be wired
+ *                    (a stale exemption fails); AND running it must NOT exit 0.
+ *                    That last part is the one that matters: "CI cannot invoke
+ *                    this" was prose, and three privacy/legal-surface guards sat
+ *                    unenforced behind a sentence nobody had checked. A guard
+ *                    that passes is a guard that can be wired.
  *   8. VACUITY: zero guards discovered or zero registered fails.
  *
  * Run: node --import tsx/esm src/scripts/checkGuardReachability.ts
  * Exit 0 only when every discovered guard is registered and its declaration
  * verifies. Exit 1 otherwise.
  */
+import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -79,6 +84,8 @@ const WORKFLOW_DIR = process.env.GUARD_WORKFLOW_DIR
   ? resolve(process.env.GUARD_WORKFLOW_DIR)
   : join(REPO_ROOT, ".github", "workflows");
 
+/** Per-guard ceiling when the manual claim is tested by running it. */
+const MANUAL_RUN_TIMEOUT_MS = 120_000;
 const MIN_RESPONSIBILITY = 60;
 const MIN_MANUAL_REASON = 120;
 /** Directories that hold guards. Anything named check* in them must be declared. */
@@ -468,6 +475,42 @@ function main(): void {
               `invoke it — and that unwired means unenforced, not safe.`,
           );
         }
+        // THE MANUAL CLAIM IS TESTED BY RUNNING IT.
+        //
+        // "CI cannot invoke this" was prose, and prose is not verified. Three
+        // entries in this registry — check:deletion-coverage, check:data-rights,
+        // check:location-purposes — carried the reason "unwired because it
+        // carries standing findings; wiring it would make check:all permanently
+        // red". All three exit 0 on this tree. The reasons had been written from
+        // each guard's HEADER instead of from running it, and three privacy and
+        // legal-surface checks sat unenforced on the strength of a sentence
+        // nobody had checked.
+        //
+        // So: a guard that runs cleanly here is a guard that could be wired, and
+        // must not hide behind a manual exemption. A guard that genuinely cannot
+        // run says so with its exit code — 2 for "no sanctioned target / no
+        // credentials", 1 for a real finding — and passes this rule.
+        //
+        // A timeout counts as "cannot run cleanly" rather than as a pass for the
+        // registry, because a guard that never finishes cannot be wired either;
+        // it is reported so the reader knows which of the two happened.
+        const manualAbs = join(API_ROOT, g.checker);
+        if (existsSync(manualAbs) && !process.env.GUARD_SKIP_MANUAL_RUN) {
+          const argv = manualAbs.endsWith(".mjs") ? [manualAbs] : ["--import", "tsx/esm", manualAbs];
+          const run = spawnSync(process.execPath, argv, {
+            cwd: API_ROOT, encoding: "utf8", timeout: MANUAL_RUN_TIMEOUT_MS,
+            maxBuffer: 32 * 1024 * 1024,
+          });
+          if (run.status === 0) {
+            problems.push(
+              `${g.checker}: declared MANUAL — "CI cannot invoke it" — but it runs cleanly here and exits 0. ` +
+                `A guard that passes is a guard that can be wired; three privacy checks sat unenforced on exactly ` +
+                `this kind of unverified reason. Wire it into run-all-checks.sh or a workflow, or record why a clean ` +
+                `run is not a runnable check.`,
+            );
+          }
+        }
+
         // A stale exemption: it says CI cannot run it, and CI does.
         const wired = Object.entries(scripts).find(
           ([name, body]) => body.includes(g.checker.split("/").pop()!) && (runAllInvokes(runAllText, name) || workflowInvokes(name)),

@@ -50,7 +50,11 @@ function withRegistry(name: string, entries: unknown[], extra: Record<string, st
   const r = spawnSync(process.execPath, ["--import", "tsx/esm", CHECKER], {
     cwd: API_ROOT,
     encoding: "utf8",
-    env: { ...process.env, GUARD_REGISTRY: p, ...extra },
+    // Manual entries are RUN by the checker to test their "CI cannot invoke this"
+    // claim. That is the point of the rule, but it costs six subprocesses per
+    // invocation, so fixtures that are not about the manual rule skip it — and
+    // the two that ARE about it pass GUARD_SKIP_MANUAL_RUN: "" to opt back in.
+    env: { ...process.env, GUARD_SKIP_MANUAL_RUN: "1", GUARD_REGISTRY: p, ...extra },
     timeout: 180_000,
     maxBuffer: 64 * 1024 * 1024,
   });
@@ -169,6 +173,49 @@ describe("guard reachability ratchet", () => {
     }]);
     assert.notEqual(code, 0);
     assert.match(out, /manual requires a reason/);
+  });
+
+  it("FAILS a manual exemption for a guard that RUNS CLEANLY — the three-privacy-guards bug", () => {
+    // "CI cannot invoke this" was prose, and prose is not verified.
+    // check:deletion-coverage, check:data-rights and check:location-purposes all
+    // carried "unwired because it carries standing findings; wiring it would
+    // make check:all permanently red", written from each guard's HEADER rather
+    // than from running it. All three exit 0. Three privacy and legal-surface
+    // checks sat unenforced on the strength of a sentence nobody had checked.
+    //
+    // The empty run-all and workflow dir keep the STALE rule from firing first,
+    // so this asserts the runs-clean rule specifically rather than whichever
+    // problem happens to be reported.
+    const runAll = join(tmp, "none.sh");
+    writeFileSync(runAll, "#!/usr/bin/env bash\n");
+    const wf = join(tmp, "wfnone");
+    mkdirSync(wf, { recursive: true });
+    const { code, out } = withRegistry("cleanmanual", [{
+      checker: "src/scripts/checkMigrationPrefixes.ts",
+      responsibility: "A fast static guard that exits 0, declared manual to prove the runs-clean rule fires on it.",
+      reach: { kind: "manual", reason: "q".repeat(200) },
+    }], { GUARD_RUN_ALL: runAll, GUARD_WORKFLOW_DIR: wf, GUARD_SKIP_MANUAL_RUN: "" });
+    assert.notEqual(code, 0);
+    assert.match(out, /runs cleanly here and exits 0/);
+  });
+
+  it("ACCEPTS a manual exemption for a guard that genuinely cannot run", () => {
+    // The control. checkMediaUrlsExternalOnly exits 2 — its credential guard
+    // refusing a non-sanctioned target — so the manual claim is true and must be
+    // accepted. Without this, a rule that rejected every manual entry would pass
+    // the case above while making the exemption mechanism unusable.
+    const runAll = join(tmp, "none2.sh");
+    writeFileSync(runAll, "#!/usr/bin/env bash\n");
+    const wf = join(tmp, "wfnone2");
+    mkdirSync(wf, { recursive: true });
+    const { out } = withRegistry("truemanual", [{
+      checker: "src/scripts/checkMediaUrlsExternalOnly.ts",
+      responsibility: "A guard whose read-only audit front door refuses an unsanctioned target, so it cannot run in CI.",
+      reach: { kind: "manual", reason: "r".repeat(200) },
+    }], { GUARD_RUN_ALL: runAll, GUARD_WORKFLOW_DIR: wf, GUARD_SKIP_MANUAL_RUN: "" });
+    // It will still trip the UNREGISTERED-GUARD discovery rule (this crafted
+    // registry names one guard), so assert on the manual verdict specifically.
+    assert.doesNotMatch(out, /checkMediaUrlsExternalOnly\.ts: declared MANUAL/);
   });
 
   it("FAILS a STALE manual exemption — it says CI cannot run it, and CI does", () => {

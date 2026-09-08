@@ -297,37 +297,30 @@ export const GUARDS: readonly GuardEntry[] = [
   },
   {
     checker: "src/scripts/checkDataRights.ts",
-    responsibility: "Reports personal-data columns with no declared retention/erasure route under the data-rights contract.",
-    reach: {
-      kind: "manual",
-      reason:
-        "UNWIRED AND THIS IS A GAP, NOT A JUSTIFICATION. It is static and could run in CI; it is not wired because its " +
-        "current output has standing findings that no one has burnt down, and wiring it today would make check:all " +
-        "permanently red — one `|| true` away from being no check at all. The honest state is: it runs by hand, its " +
-        "findings are unenforced, and it should be wired the moment its ledger reaches zero.",
-    },
+    responsibility: "Every intel column carries a stated ownership class, so no personal contribution is stored with its owner undecided.",
+    // WAS MANUAL, on a reason written from this guard's header rather than from
+    // running it: "unwired because it carries standing findings". It exits 0.
+    reach: { kind: "check-all", script: "check:data-rights" },
   },
   {
     checker: "src/scripts/checkDeletionCoverage.ts",
-    responsibility: "Reports tables holding user data that the account-deletion path does not visit.",
-    reach: {
-      kind: "manual",
-      reason:
-        "UNWIRED AND THIS IS A GAP, NOT A JUSTIFICATION. Same shape as check:data-rights: static, CI-capable, and left " +
-        "out because it carries standing findings. Deletion coverage is a legal-surface guarantee, so this is the most " +
-        "consequential unwired guard in the list and should be wired ahead of the others.",
-    },
+    responsibility: "Every user-keyed table has a STATED deletion fate, so a new one cannot arrive with its fate undecided and unnoticed.",
+    // WAS MANUAL, and the reason was false — it exits 0. Read the responsibility
+    // literally: it enforces that a fate is stated, NOT that the fate is erasure.
+    // 225 of 248 tables currently state "survive deletion, undecided, owner
+    // decision D6", which is a real and large gap that this guard passing does
+    // not close. Wired anyway, because unwired it does not even hold the line
+    // against a new table arriving with nothing said about it at all.
+    reach: { kind: "check-all", script: "check:deletion-coverage" },
   },
   {
     checker: "src/scripts/checkLocationPurposes.ts",
-    responsibility: "Reports location reads and writes with no declared purpose under the location-privacy contract.",
-    reach: {
-      kind: "manual",
-      reason:
-        "UNWIRED AND THIS IS A GAP, NOT A JUSTIFICATION. Static and CI-capable; unwired because LOCATION_PRECISION_DEFAULT " +
-        "is an open OWNER decision and the purpose taxonomy the check enforces is not settled until that is decided. " +
-        "Wiring it now would encode a guess at an owner decision as a gate.",
-    },
+    responsibility: "Every coordinate-holding table is claimed by a documented purpose under the location-privacy contract.",
+    // WAS MANUAL, on the theory that LOCATION_PRECISION_DEFAULT being an open
+    // owner decision made the purpose taxonomy unsettled. Running it shows the
+    // taxonomy it enforces is settled and satisfied — exit 0. The owner decision
+    // is about PRECISION, which this guard does not touch.
+    reach: { kind: "check-all", script: "check:location-purposes" },
   },
   {
     checker: "src/scripts/checkMediaUrlsExternalOnly.ts",
@@ -335,9 +328,11 @@ export const GUARDS: readonly GuardEntry[] = [
     reach: {
       kind: "manual",
       reason:
-        "UNWIRED AND THIS IS A GAP, NOT A JUSTIFICATION. Static and CI-capable. It is unwired for no recorded reason — " +
-        "it simply was never added to run-all-checks.sh — and the honest classification is an oversight rather than a " +
-        "decision. Nothing about media URL shape is enforced today.",
+        "STAYS MANUAL, but not for the reason first recorded here. It was filed as an unwired oversight; running it " +
+        "shows it exits 2 because ciProdReadOnlyAuditGuard refuses the target — it is a read-only audit against a live " +
+        "database, and .github/scripts/assert-nonprod-supabase.sh will not sanction a credential-less or production " +
+        "target. Wiring it into CI would score a permanent failure for a verdict that was never available. NOT WIRED " +
+        "MEANS NOT ENFORCED: nothing about media URL shape is checked on a pull request.",
     },
   },
   {

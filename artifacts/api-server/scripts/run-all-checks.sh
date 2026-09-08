@@ -156,6 +156,21 @@ run_check "check:migration-prefixes" pnpm run check:migration-prefixes
 # and a green from it means nothing; this ran first in CI for that reason.
 run_check "check:compiler-authentic" pnpm run check:compiler-authentic
 run_check "check:not-null-writes" pnpm run check:not-null-writes
+# The three privacy / legal-surface checks. They were sitting on disk, each with
+# a package script, invoked by NOTHING — and the guard registry recorded them as
+# unwired "because they carry standing findings and wiring them would make
+# check:all permanently red". That reason was written from their headers rather
+# than from running them, and it was false: all three exit 0 on this tree.
+#
+# READ WHAT THEIR GREEN COVERS BEFORE TRUSTING IT. check:deletion-coverage passes
+# while reporting 225 of 248 user-keyed tables as UNCLASSIFIED — "survive
+# deletion, undecided, owner decision D6". What it enforces is that every table
+# has a STATED FATE, not that the fate is erasure. That is the honest contract,
+# and it is worth more wired than not: it is what stops a NEW user-keyed table
+# from arriving with no stated fate at all.
+run_check "check:deletion-coverage" pnpm run check:deletion-coverage
+run_check "check:data-rights" pnpm run check:data-rights
+run_check "check:location-purposes" pnpm run check:location-purposes
 run_check "check:silent-supabase-writes" pnpm run check:silent-supabase-writes
 run_check "check:trip-kernel-writers" pnpm run check:trip-kernel-writers
 run_check "check:test-runner-flags" pnpm run check:test-runner-flags
