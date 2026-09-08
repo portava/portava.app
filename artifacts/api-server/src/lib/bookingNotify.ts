@@ -23,6 +23,9 @@
  */
 
 import { getServiceClient } from "./supabase.js";
+import { logger as rootLogger } from "./logger.js";
+
+const logger = rootLogger.child({ lib: "bookingNotify" });
 
 export async function notifyBookingParty(
   client: ReturnType<typeof getServiceClient>,
@@ -45,5 +48,13 @@ export async function notifyBookingParty(
       params,
     });
     if (row) await nr.route(row);
-  } catch { /* non-critical — never fails the caller */ }
+  } catch (err) {
+    // Still non-fatal — a notification failure must never fail a booking. But
+    // a bare `catch {}` also left no trace anywhere, so a booking-notification
+    // outage was invisible: nothing in the logs, nothing in the response, and
+    // the delivery-attempt ledger has no row either because the throw happened
+    // before the router ran. Swallowing is a decision; swallowing silently is
+    // not one anybody can audit.
+    logger.warn({ err, userId, eventType, bookingId }, "notifyBookingParty: notification failed (booking unaffected)");
+  }
 }

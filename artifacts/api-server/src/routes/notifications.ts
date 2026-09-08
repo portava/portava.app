@@ -158,9 +158,14 @@ router.post('/me/notifications/:id/dismiss', async (req, res) => {
 
   const sc = getServiceClient() ?? client;
   const svc = new NotificationService(sc);
+  const realtimeSvc = new RealtimeActivityService(sc);
 
   const ok = await svc.dismiss(user.id, req.params.id);
   if (!ok) { sendError(res, 'not_found', 'Notification not found'); return; }
+  // `notification.dismissed` was a declared realtime event with no producer;
+  // other open sessions kept showing a card the user had already dismissed
+  // until the next poll.
+  realtimeSvc.emitDismissed(user.id, req.params.id);
   res.json({ ok: true });
 });
 
@@ -221,11 +226,22 @@ router.put('/me/notification-preferences', async (req, res) => {
   const prefs = await prefSvc.upsertPreferences(user.id, globalPatch);
 
   if (categoryPreferences && categoryPreferences.length > 0) {
-    await Promise.all(
-      categoryPreferences.map((cp) =>
-        prefSvc.upsertCategoryPreferences(user.id, cp.category as NotificationCategory, cp),
-      ),
-    );
+    // upsertCategoryPreferences used to discard its `{ error }` and return
+    // void, so a failed write reached this handler as a success and the user
+    // was told `ok: true` for a mute that was never stored — then kept getting
+    // the notifications they had just switched off. It now throws; a caller
+    // muting a category must hear about a failure to record it.
+    try {
+      await Promise.all(
+        categoryPreferences.map((cp) =>
+          prefSvc.upsertCategoryPreferences(user.id, cp.category as NotificationCategory, cp),
+        ),
+      );
+    } catch (err: any) {
+      req.log.error({ err, userId: user.id }, 'notification category preference write failed');
+      sendError(res, 'db_error', err?.message ?? 'category preference write failed');
+      return;
+    }
   }
 
   res.json({ ok: true, preferences: prefs });
@@ -301,12 +317,27 @@ router.post('/me/devices', async (req, res) => {
     // Detach this token from any OTHER account that still carries it on the
     // legacy profile / buddy fields — the same cross-user delivery hazard as
     // notification_devices, on the SafeReturn / rent-a-buddy push paths.
-    await sc.from('profiles').update({ expo_push_token: null })
+    // These three writes were issued but their `{ error }` was discarded, and
+    // supabase-js resolves rather than throws on a failure — so a detach that
+    // did not happen looked exactly like one that did. The first two are the
+    // cross-user delivery hazard the comment above describes: if they fail
+    // silently, a push aimed at the previous holder of this token is still
+    // delivered to whoever holds the device now. That is worth a log line.
+    const { error: detachProfileErr } = await sc.from('profiles').update({ expo_push_token: null })
       .eq('expo_push_token', parsed.data.pushToken).neq('id', user.id);
-    await sc.from('rent_buddy_profiles').update({ expo_push_token: null })
+    if (detachProfileErr) {
+      (req as any).log?.warn({ err: detachProfileErr, userId: user.id }, 'devices: legacy profile token detach failed — token may still deliver to the previous account');
+    }
+    const { error: detachBuddyErr } = await sc.from('rent_buddy_profiles').update({ expo_push_token: null })
       .eq('expo_push_token', parsed.data.pushToken).neq('user_id', user.id);
+    if (detachBuddyErr) {
+      (req as any).log?.warn({ err: detachBuddyErr, userId: user.id }, 'devices: buddy-profile token detach failed — token may still deliver to the previous account');
+    }
 
-    await sc.from('profiles').update({ expo_push_token: parsed.data.pushToken }).eq('id', user.id);
+    const { error: profileTokenErr } = await sc.from('profiles').update({ expo_push_token: parsed.data.pushToken }).eq('id', user.id);
+    if (profileTokenErr) {
+      (req as any).log?.warn({ err: profileTokenErr, userId: user.id }, 'devices: profile token backfill failed — SafeReturn push may have no token for this user');
+    }
     // Also store on the buddy profile (if the user is a Buddy) so
     // rent-a-buddy request alerts can be delivered to their device.
     const { error: buddyTokenErr } = await sc
@@ -464,7 +495,19 @@ router.post('/internal/notifications/digest', async (req, res) => {
     await digestSvc.sendDailyDigest(userId as string);
     res.json({ ok: true, mode: 'single', userId });
   } else {
-    const { usersProcessed } = await digestSvc.runForAllUsers();
+    const { usersProcessed, recipientsUnreadable } = await digestSvc.runForAllUsers();
+    if (recipientsUnreadable) {
+      // `usersProcessed: 0` used to be returned with HTTP 200 `ok: true` both
+      // when no user had digests enabled AND when the recipient list could not
+      // be read at all. A scheduler cannot retry a run it was told succeeded.
+      req.log.error({}, 'internal digest run: recipient list unreadable');
+      res.status(503).json({
+        error: 'db_error',
+        message: 'digest recipient list could not be read; no digests were sent',
+        usersProcessed: 0,
+      });
+      return;
+    }
     res.json({ ok: true, mode: 'all', usersProcessed });
   }
 });

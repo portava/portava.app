@@ -136,19 +136,42 @@ export class NotificationDeduplicationService {
     }
   }
 
+  /**
+   * How many notifications of this category has the user already had today?
+   *
+   * ── SAME LEDGER, SAME DIRECTION ───────────────────────────────────────────
+   * `hasRecentNotification` above was fixed to answer "already sent" when the
+   * notifications table cannot be read. This function is the OTHER half of the
+   * same ledger and it disagreed: `const { data } = await …` discarded the
+   * error, `Array.isArray(null)` was false, and an unreadable table counted as
+   * ZERO notifications sent today — i.e. the Compass daily cap read as "no
+   * budget used" and every Compass suggestion went out, uncapped, for as long
+   * as the table stayed unreadable. The `catch { return 0 }` could never fire
+   * for that case either: supabase-js RESOLVES on a database error.
+   *
+   * An unknown count now answers COMPASS_DAILY_LIMIT — treat the budget as
+   * spent. Same asymmetry as its sibling: a suppressed suggestion is a
+   * suggestion the user can still get tomorrow; a burst of delivered pushes
+   * cannot be recalled.
+   */
   private async countTodayNotifications(userId: string, category: string): Promise<number> {
     try {
       const startOfDay = new Date();
       startOfDay.setHours(0, 0, 0, 0);
-      const { data } = await this.db
+      const { data, error } = await this.db
         .from('notifications')
         .select('id')
         .eq('user_id', userId)
         .eq('category', category)
         .gt('created_at', startOfDay.toISOString());
+      if (error) {
+        logger.warn({ err: error, userId, category }, 'dedup: daily-count read failed, treating the daily budget as spent');
+        return COMPASS_DAILY_LIMIT;
+      }
       return Array.isArray(data) ? data.length : 0;
-    } catch {
-      return 0;
+    } catch (err) {
+      logger.warn({ err, userId, category }, 'dedup: daily-count read threw, treating the daily budget as spent');
+      return COMPASS_DAILY_LIMIT;
     }
   }
 }
