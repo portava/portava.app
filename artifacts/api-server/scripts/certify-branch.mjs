@@ -39,6 +39,13 @@ const FAIL_EXCERPT_LINES = 25;
  * kind:
  *   gate      must exit 0
  *   liveonly  needs live DB credentials; refuses without them (CANNOT-RUN, not a pass)
+ *
+ * A run with zero failures is CERTIFIED, and the verdict says at what SCOPE:
+ * "FULL" only when every step executed, "OFFLINE SURFACE ONLY" when any step
+ * refused. Certifying offline is a real and useful statement — it is what CI can
+ * assert without ever holding a production credential — but it is not the same
+ * statement as certifying against a live database, and printing one word for
+ * both would be this command committing the defect it was written to catch.
  */
 const STEPS = [
   // ── compile ───────────────────────────────────────────────────────────────
@@ -138,8 +145,22 @@ const cannot = results.filter((r) => r.status === "CANNOT-RUN");
 let headCommit = "unknown";
 try { headCommit = execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim(); } catch { /* not a git tree */ }
 
+// "CERTIFIED: YES" with five steps that could not run is an over-claim, and this
+// command exists to refuse over-claims. A run in which every step executed is a
+// different statement from one where five refused for want of credentials, and
+// the verdict word now carries which it was. `certified` keeps its meaning for
+// machine consumers -- no step FAILED -- and `certified_scope` says how much of
+// the surface that covers.
+const scope = cannot.length === 0 ? "full" : "offline";
+
 const summary = {
   certified: fail.length === 0,
+  certified_scope: scope,
+  certified_scope_note:
+    scope === "full"
+      ? "Every step executed. Nothing declined for want of credentials."
+      : `${cannot.length} step(s) could not run and were neither passed nor failed. This verdict covers the ` +
+        "OFFLINE surface only: nothing here says the live database agrees with the tree.",
   head_commit: headCommit,
   generated_at: new Date().toISOString(),
   total: results.length,
@@ -165,7 +186,16 @@ if (JSON_ONLY) {
   }
   console.log("".padEnd(64, "─"));
   console.log(`  ${pass.length} passed, ${fail.length} failed, ${cannot.length} CANNOT-RUN (live credentials absent — not passes)`);
-  console.log(`  CERTIFIED: ${summary.certified ? "YES" : "NO"}`);
+  const verdict = !summary.certified
+    ? "NO"
+    : scope === "full"
+      ? "YES (FULL — every step executed)"
+      : `YES (OFFLINE SURFACE ONLY — ${cannot.length} step(s) could not run)`;
+  console.log(`  CERTIFIED: ${verdict}`);
+  if (summary.certified && scope !== "full") {
+    console.log(`             ${summary.certified_scope_note}`);
+    console.log(`             could not run: ${cannot.map((c) => c.id).join(", ")}`);
+  }
   if (fail.length > 0) {
     console.log(`  failing: ${fail.map((f) => f.id).join(", ")}`);
     for (const f of fail) {
@@ -175,7 +205,7 @@ if (JSON_ONLY) {
     }
   }
   console.log("");
-  console.log(JSON.stringify({ certified: summary.certified, passed: pass.length, failed: fail.length, cannot_run: cannot.length, head_commit: headCommit }));
+  console.log(JSON.stringify({ certified: summary.certified, certified_scope: scope, passed: pass.length, failed: fail.length, cannot_run: cannot.length, head_commit: headCommit }));
 }
 
 process.exit(fail.length === 0 ? 0 : 1);
