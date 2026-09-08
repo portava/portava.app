@@ -12,17 +12,29 @@
 | Measure | Value |
 | --- | --- |
 | **Denominator (testable requirements)** | **169** |
-| BUILT-AND-CORRECT | **146** |
-| BUILT-BUT-WRONG | **21** |
+| BUILT-AND-CORRECT | **150** |
+| BUILT-BUT-WRONG | **17** |
 | NOT-BUILT | **1** |
 | CANNOT-VERIFY | **1** |
 | **CONSTRUCTED%** = (correct+wrong)/denominator | **167 / 169 = 98.8%** |
-| **CORRECT%** = correct/denominator | **146 / 169 = 86.4%** |
+| **CORRECT%** = correct/denominator | **150 / 169 = 88.8%** |
 | CANNOT-VERIFY share | **1 / 169 = 0.6%** |
 
-Counted from the rows: 146 + 21 + 1 + 1 = 169. Previously 145 / 21 / 2 / 1;
-**P98 moved N→C on 2026-09-08** when the map adopted a batch Passport projection.
-`canProvideVisaBuddyService` (P59) is now the only NOT-BUILT requirement.
+Counted from the rows: 150 + 17 + 1 + 1 = 169. Previously 145 / 21 / 2 / 1.
+
+**Five rows moved on 2026-09-08, and only one of them by building anything.**
+P98 (Map) moved N→C when the map adopted a batch Passport projection — that was
+work. P95, P99, P100 and P101 moved W→C on the CALL SITES: each was scored
+BUILT-BUT-WRONG on the finding "the variant exists and nothing calls it", and
+every one of the six variants now has a caller. Those four were already true at
+`ebe72b34 + n`; the census had simply not been re-read. `canProvideVisaBuddyService`
+(P59) is now the only NOT-BUILT requirement.
+
+A note on not double-counting: Discovery's search list and Compass's traveler
+suggestions still build identity inline. That remainder is carried by **P169
+alone**, which stays W. Scoring it again in P95 and P100 would count one gap
+three times and make the surface look worse than it is — the same arithmetic
+error in the other direction from the one the layover headline made.
 
 **This census still declares NO `head_commit`, deliberately.** The 169 verdicts
 were taken at working tree `ebe72b34` and only P98/P169 have been re-read since.
@@ -317,13 +329,13 @@ NOT-BUILT · **?** = CANNOT-VERIFY. Backend paths are relative to
 
 | id | Consumer | V | Evidence |
 | --- | --- | --- | --- |
-| P95 | **Discovery** | **W** | The variant is built and correct — `PassportConsumerProjections.ts:96-156` `DiscoveryCardProjection` (identity, verification, availability, Open to Plans, shared context, permitted trust summary), assembled at `:828`. **Nothing calls it.** `buildConsumerProjection` has exactly three call sites (`rentABuddy.ts:1241`, `trips.ts:467`, `EventPassportService.ts:423`), and Discovery still reads `profiles` directly (`routes/discovery.ts:1504,2523`; `routes/discoverySearch.ts:420,462,1324`) — the precise duplication the module's own header (`:8-9`) says it exists to end. |
+| P95 | **Discovery** | C | **Moved W→C 2026-09-08 from the call site.** The W said "nothing calls it" and named the three `buildConsumerProjection` sites that existed then. Discovery's person card now consumes the variant: `routes/discoverySearch.ts:2272#buildConsumerProjection`. The inline identity that remains is in the SEARCH LIST (`routes/discoverySearch.ts:641#subtitle`), a different endpoint and a different problem — a bulk list cannot pay the ~34-reads-per-target per-user path. That remainder is carried by **P169**, not double-counted here. |
 | P96 | Trips | C | `PassportConsumerProjections.ts:229-240` `TripsProjection` (identity + `TripsTrustEligibility` + host/guest context, deliberately no stamps/memories/plans), consumed at `routes/trips.ts:467`. |
 | P97 | Buddy | C | `:178-200` `BuddyProjection` (identity, verification, services, availability, reputation), consumed at `routes/rentABuddy.ts:1241`. |
 | P98 | **Map** — aggregate or permission-appropriate presence only | C | **Moved N→C 2026-09-08.** The map now REQUESTS the Passport's map-presence projection instead of rebuilding identity: `services/passport/PassportConsumerProjections.ts:978#buildMapPresenceProjections`, consumed at `lib/mapTravelers.ts:285#buildMapPresenceProjections`. It carries identity ONLY — handle, displayName, avatarUrl, verified — and applies the two rules that govern them (the universal display-name gate and the `show_profile_picture_publicly` opt-out). **It is deliberately NOT a seventh `PassportConsumerVariant`** (`PassportConsumerProjections.ts:144#PassportConsumerVariant`): every variant is reached through `buildConsumerProjection`, which narrows a full per-user assembly (~21 reads plus ~13 for the permissions engine, per target), and the live map returns up to 100 travelers polled every 45 s — the per-user path is ~3,400 reads per poll per viewer. A `"map"` member would advertise that path to the next person wiring a map feature, so `passportMapPresence.test.ts` asserts the union does not gain one and pins the projection at exactly ONE table read for 50 owners. **This was an AUTHORITY defect, not a leak** — `mapTravelers` already applied both rules correctly; they simply lived in a consumer, so a change to the universal display-name rule had two places to land. Output is unchanged and `mapTravelers.test.ts` (14 tests) is green unmodified; the adoption costs no read, because the projection took over the `nameVisibilitySet` call that file already made. `openToMeet` stays behind deliberately: it is a map-ELIGIBILITY signal, not identity. |
-| P99 | **Telegraph** | **W** | `:158-176` `TelegraphHeaderProjection` is built (identity + relevant shared context for the conversation header) and `toTelegraphHeader` is reachable at `:836`, but a grep for `toTelegraphHeader` / `TelegraphHeaderProjection` outside the defining module returns **nothing** — no Telegraph route consumes it. |
-| P100 | Compass | **W** | Same as Discovery: `:23-26` documents that the discovery-card variant serves Compass person cards too, and `:149` carries trust capabilities for exactly that purpose. No Compass route calls `buildConsumerProjection`. |
-| P101 | **Safety** | **W** | `toSafetyProjection:777` (restricted, purpose-specific context) is built and reachable at `:840`, but nothing outside the module references it. |
+| P99 | **Telegraph** | C | **Moved W→C 2026-09-08 from the call site.** The W said a grep for the variant outside its defining module returned nothing. The conversation header now consumes it: `routes/telegraph.ts:370#buildConsumerProjection`. |
+| P100 | Compass | C | **Moved W→C 2026-09-08 from the call site.** The W said "no Compass route calls `buildConsumerProjection`". One does: `routes/compass.ts:4318#buildConsumerProjection`, taking the `discovery_card` variant for person cards exactly as the module's header intended. Compass's traveler SUGGESTION LIST (`routes/compass.ts:3671#title`) still builds identity inline for the bulk-surface reason above; carried by **P169**. |
+| P101 | **Safety** | C | **Moved W→C 2026-09-08 from the call site.** The W said nothing outside the module referenced `toSafetyProjection`. Safe Return does: `routes/safeReturn.ts:1156#buildConsumerProjection`. |
 
 ### §22 Privacy Model
 
@@ -463,7 +475,7 @@ All eighteen named events exist, allow-listed on both sides (`routes/passport.ts
 | id | Requirement | V | Evidence |
 | --- | --- | --- | --- |
 | P168 | The complete loop: Passport → Availability → Trust → Shared Context → Compass → Map → Plan → Telegraph → real-world experience → Memory → Stamp → Passport | C | Every hop exists and is wired: availability (`OpenToPlansService`), trust (`buildTrust`), shared context (`SharedContextService`), Compass (`SharedContextScreen.tsx:217` → `app/(tabs)/ai.tsx:104`), plan (`TripInvitePickerSheet`), Telegraph (messaging routes), memory (`PassportMemoryService`), stamp (`StampAwardEngine`, whose `safe_return`/`check_in` sources are literally experience-derived). Unlike the Wall's §41, the Passport loop's return leg **does** close: a real-world experience becomes a stamp through a deployed table (`user_stamps`, `stamp_award_events`). |
-| P169 | Other surfaces request the appropriate Passport projection instead of rebuilding identity, availability, trust and social context independently | **W** | The mechanism is built and correct (`PassportConsumerProjections.ts`, six variants). Adoption is **three of seven consumers** — Trips, Buddy and Event. Discovery, Compass, Telegraph and Safety still build their own identity payloads. **Map has since adopted (P98)** — through a batch projection rather than a variant — so adoption is four of seven. This is the single largest structural gap in Passport: the canonical architecture rule the spec closes on is half-adopted. **Note added 2026-09-08:** the unadopted consumers were never one job, and counting Map with the other three made this row look like one refactor. Discovery, Compass and Telegraph are per-user surfaces and can adopt the existing `buildConsumerProjection` exactly as Trips/Buddy/Event did. Map could not: it is a bulk polling surface and the per-user API is ~34 reads deep per target. That was the new capability, and it is now built (P98, `buildMapPresenceProjections`). **What is left is three straightforward adoptions of an API that already exists**, which is why this row stays W rather than N — and why it is a smaller row than it was. |
+| P169 | Other surfaces request the appropriate Passport projection instead of rebuilding identity, availability, trust and social context independently | **W** | **This row was badly stale and its replacement note (written earlier the same day) was wrong too; both are corrected here from the call sites.** It read "adoption is three of seven consumers — Trips, Buddy and Event". Every one of the seven now calls `buildConsumerProjection`: `routes/trips.ts:543#buildConsumerProjection`, `routes/rentABuddy.ts:1385#buildConsumerProjection`, `services/passport/EventPassportService.ts:423#buildConsumerProjection`, `routes/telegraph.ts:370#buildConsumerProjection`, `routes/safeReturn.ts:1156#buildConsumerProjection`, `routes/discoverySearch.ts:2272#buildConsumerProjection` and `routes/compass.ts:4318#buildConsumerProjection`. **What actually remains is not four unadopted consumers — it is two BULK LIST endpoints**, which are different routes from the profile-card ones above and were being counted as the same thing: the discovery search list (`routes/discoverySearch.ts:641#subtitle`) and the Compass traveler suggestions (`routes/compass.ts:3671#title`). Both still build identity inline, and both do so for exactly the reason the map did — the per-user projection is ~34 reads per target and a list cannot pay it. **The batch path they need now exists** (P98's `buildMapPresenceProjections`), but it is not a drop-in for either: the map's projection is viewer-INDEPENDENT (a pin carries no follow/friend context), while both of these gate on the viewer relationship — Discovery suppresses the avatar unless `isFollowing || isFriend || show_profile_picture_publicly`, and Compass suppresses the title entirely for a private non-followed profile. Extending the batch projection with a viewer-relationship input is the remaining work, and it is one job, not two. **The row stays W**, but it is a much smaller and much better-specified W than "the single largest structural gap in Passport". |
 
 ---
 
@@ -569,10 +581,15 @@ them are structural:
   ran "seeds a populated `trust_profiles` row" (PR #467's own account of why no
   test caught it), so the tests could not have surfaced this.
 - **Consumer-projection adoption (P95, P98, P99, P100, P101, P169).** The
-  certification does not test §21 at all. `PassportConsumerProjections` is built
-  and correct; four of its six variants have no caller and Map has no variant.
-  §35's canonical architecture rule — the sentence the spec ends on — is
-  three-sevenths adopted.
+  certification does not test §21 at all — that part stands. The rest of this
+  bullet was measured at `ebe72b34` and is **superseded as of 2026-09-08**: every
+  one of the six variants now has a caller, and Map has a batch projection, so
+  §35's rule is adopted on all seven consumer surfaces rather than
+  three-sevenths. What remains is narrower and is carried by P169 alone: two BULK
+  LIST endpoints — the discovery search list and the Compass traveler
+  suggestions — still build identity inline, because a list cannot pay the
+  per-user projection's ~34 reads per target and the batch path they need is
+  viewer-dependent in a way the map's is not.
 - **Coverage holes in surfaces it scored BUILT**: §15's Memories views (two of
   five — Trips, Places, People and Map do not exist, P77), §12's stamp-type
   vocabulary (no Place label, no Contributor type, P61), §14's Featured Journey
