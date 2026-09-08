@@ -64,12 +64,12 @@
 > `LayoverSafetyEngine.ts` / `routes/airport.ts`. Their verdict deltas in §5
 > stand, unrealised.
 
-> ## RE-CENSUS HEADER — 2026-09-08, measured at HEAD `cdfff599`
+> ## RE-CENSUS HEADER — 2026-09-08 (second pass), measured at HEAD `743ae78f`
 >
 > | Field | Value |
 > | --- | --- |
 > | `generated_at` | 2026-09-08 |
-> | `head_commit` | `cdfff5995c92f7adfb3ae7880496bc94002717e9` (`git rev-parse HEAD`) |
+> | `head_commit` | `743ae78f305ea657ab508a34bdbc574488f4aae7` (`git rev-parse HEAD`) — §9 measured `cdfff5995c92f7adfb3ae7880496bc94002717e9`; §10 re-measured, at this commit, the rows a client lane could move |
 > | `methodology_version` | 2 — **the §1 denominator rule is unchanged and the denominator is still 296.** Bucket meanings unchanged (`C` / `W` / `N` / `?`, `⌀` vacuous, `∅` unguarded absence). Only the verdicts moved, and every verdict that moved cites a `file:line` opened at this commit. |
 > | Scanned | `artifacts/api-server/src/services/airport/` (14 files, 5,896 lines), `artifacts/api-server/src/routes/airport.ts` (2,452 lines), `artifacts/api-server/src/migrations/2700`, `2740`, `2741`, `artifacts/api-server/src/test/layover*.test.ts` (21 files), `travel-buddy-standalone/src/services/layover.ts`, `travel-buddy-standalone/app/layover/[id].tsx`, `travel-buddy-standalone/src/components/layover/`, `artifacts/api-server/src/lib/deletionDispositions.ts` |
 > | Production state | Read from the repository's own committed artifacts, not from a live query: `src/lib/capability/snapshots/20260908-production-schema.json` (watermark `20260908133347`) for tables and flags, `src/lib/capability/production-applied-migrations.json` for applied migrations, `src/lib/capability/layover-cutover-measurement.json` for row counts. 5 sessions (2 cancelled, 3 expired, 0 active), 42 events, 30 recommendations, **0 plan stops**, 3,206 `airport_profiles` — 0 verified, 0 with `terminal_info`. |
@@ -1530,3 +1530,69 @@ parsed.
 | L201 | — | **C** | §8 wrote `C (tree)`, which is not a bare token. Verdict unchanged: 2335 + 2510 are applied to production (`20260908104231`, `20260908104255`), which is a change since §8 wrote "production still open" — the write boundary is now closed in production, and owner decision 1 from §7 is discharged. |
 | L251 | — | **N** | `N ∅`. |
 | L256 | — | **N** | `N ∅`. |
+
+
+## 10. Re-census — 2026-09-08 (later), HEAD `743ae78f`
+
+Paths relative to `travel-buddy-standalone/` unless prefixed
+`artifacts/api-server/src/`. Same denominator (296), same rule (§1), same
+buckets. **Every row below was re-derived by opening the file at this commit.**
+Rows not restated here keep the verdict §9 left them with.
+
+This pass exists because §9's reachability table was, in its own words, a list of
+things the server published that no client read. A lane closed part of that list.
+The interesting question is not "did a component get written" — it is which of
+those `W` rows had *reachability* as their only missing half, because those are
+the ones a client can move, and which had a second missing half that a component
+cannot supply.
+
+### Reachability, re-measured
+
+| Surface | §9 (`cdfff599`) | Now (`743ae78f`) | Evidence |
+| --- | --- | --- | --- |
+| `certification` on `/overview` | Published, **not read** | **Read and rendered** | `LayoverOverview.certification` (`src/services/layover.ts:349`), `summarizeCertification` (`src/components/layover/layoverReturnFacts.ts:142`), rendered `LayoverSafeReturnCard.tsx:89` and `LayoverCompassCard.tsx:60` |
+| `safeReturn` posture | Published, **not read** | **Read and rendered** | `LayoverOverview.safeReturn` (`layover.ts:351`), `postureHeadline` (`layoverReturnFacts.ts:169`), used `LayoverSafeReturnCard.tsx:81`; `returnRoutePrimary` hoists the card above the hero (`app/layover/[id].tsx:284`) |
+| `offlineBundle` | Published, **not read** | **Read and displayed; still not cached** | `LayoverOverview.offlineBundle` (`layover.ts:353`), `bundleFreshness`/`describeDeadline` (`layoverReturnFacts.ts:53, 91`). **`AsyncStorage` appears nowhere** under `app/layover/`, `src/components/layover/`, `src/services/layover.ts` or `src/context/LayoverSessionContext.tsx` — grep, not recollection |
+| `POST /:id/return-now` | Wired, **no client function** | **Reachable by gesture** | `returnToAirportNow` (`layover.ts:608`) → `LayoverSafeReturnCard.tsx:96`, mounted at `app/layover/[id].tsx:272` |
+| `POST /:id/compass` | **Dark** — `askCompass` had no importer | **Reachable by gesture** | `LayoverCompassCard.tsx:24, 48`, mounted at `app/layover/[id].tsx:346` |
+| `runLayoverTool` (12 §12 tools) | Callable, **not passed to the model** | **Unchanged** | `LayoverCompassService.ts:726-736` still says DECLARED, NOT YET PASSED TO THE MODEL. A reachable endpoint is not a reachable tool |
+| `GET /:id/safety` | Dark — `LayoverRecommendationScreen.tsx` imported by nothing | **Still dark** | `grep -rn LayoverRecommendationScreen app/ src/` outside its own file: no hits. `getSessionSafety` still has that one importer and it is unmounted |
+| `LayoverCrewService` (12 exports), `localReplan`, `sensingPolicy`, `nextDisruptionState`, `recomputeForDisruption` | No caller outside tests | **Unchanged** | No client can reach what no route exposes |
+
+### Verdict changes
+
+| id | Was | Now | Evidence at `743ae78f` |
+| --- | --- | --- | --- |
+| L2 | W | **C** | Both halves that kept it `W` are closed. The header is consumed — `summarizeCertification` (`layoverReturnFacts.ts:142`) renders the server's own `engineVersion`/`confidence`/`bufferPercentile` rather than a client restatement of them — and the client's DUPLICATE thresholds are gone with the file that held them: `LayoverReturnPanel.tsx:113-114` no longer exists (`git rm`, commit `a718beb5`). Grepped for surviving threshold constants in the replacement: none. |
+| L146 | W | **C** | §9 said "Reachability is the missing half" in those words. It is closed: `returnToAirportNow` (`layover.ts:608`) calls `POST /:id/return-now`, `LayoverSafeReturnCard.tsx:96` calls it on a **RETURN TO AIRPORT** press, and the card is mounted (`app/layover/[id].tsx:272`). A double press is refused by a ref written synchronously (`:77, 92-93`) — state alone loses two presses in one frame. The abort's own `statusCapability` is reported to the traveller rather than swallowed (`:239-240`, `statusCapabilityNote`), so `flag_off` reads as "your layover stays open so you keep the countdown", not as a failure. |
+| L114 | W | **C** | §9 ended "The endpoint it lives on is still dark from the app." It is not: `askCompass` (`layover.ts:560`) has an importer (`LayoverCompassCard.tsx:24, 48`), the card is mounted (`app/layover/[id].tsx:346`), and the single highest-value clarifying question is the thing actually rendered (`LayoverCompassCard.tsx:83-86`). The computation (`valueOfInformation`, `LayoverCompassService.ts:453`) was already built and pinned; a traveller can now be asked. |
+
+### Rows I looked at and deliberately did NOT move
+
+| id | Stays | Why |
+| --- | --- | --- |
+| L150 | W | The client half is **displayed, not cached**. `describeDeadline` (`layoverReturnFacts.ts:91`) renders "Last certified N min ago" from `offlineBundle.certifiedAt`/`staleAfter`, which is honest labelling of an answer's age — but §16's claim is that a client can *serve* a stale answer offline, and nothing writes the bundle to storage. `AsyncStorage` does not appear anywhere under the layover client. A label about staleness on a screen that cannot open offline is half of L150, and half is `W`. |
+| L141 | W | `explorationCollapsed` is derived and published, and after this pass it is still read by nothing: grep across `app/layover/` and `src/components/layover/` finds `returnRoutePrimary` (`[id].tsx:284`) and no `explorationCollapsed`. The card is HOISTED; exploration is not COLLAPSED. Those are different claims and only one is built. |
+| L102–L113 | W | Twelve §12 tools, reachable from a route that a traveller can now reach — and still not passed to the model (`LayoverCompassService.ts:726-736`). The endpoint becoming live does not make the tools live; wiring the model to choose among them is a change made behind a flag, which the service file itself says. |
+| L142 | N | `returnRoutePrimary` is now consumed by the client, which is exactly why this row does **not** move: it is a boolean asking for a ROUTE to be made primary, and there is still no route (`ReturnContract.route` is `null` with `routeUnavailableReason: "no_routing_provider"`). What the client hoists is the return CARD. Rendering a flag about an absent thing is not the thing. |
+| L33, L147 | W | `layover_safe_return_status_enabled` is still FALSE and 2741's widened domain is still unused in production (0 rows in `returning`, measured 2026-09-08). The client now *reports* that state instead of hiding it, which is why L146 moves and these do not: the capability is honest, and off. |
+| L293 | W | Nothing in this pass touched the three substitutions. A client that renders `travelTimeSource` does not remove a fabricated 20/30 probe. |
+
+### Recomputed headline — HEAD `743ae78f`
+
+Same 296 denominator, same counting rule, same prohibition rule. Three rows move
+`W → C`; nothing moves into or out of `N`.
+
+| Measure | §9 (`cdfff599`) | Now (`743ae78f`) |
+| --- | --- | --- |
+| BUILT-AND-CORRECT | 27 | **30** |
+| BUILT-BUT-WRONG | 133 | **130** |
+| NOT-BUILT | 139 | **139** |
+| CANNOT-VERIFY | 0 | **0** |
+| CONSTRUCTED% | 54.1 % (160/296) | **54.1 %** (160/296) |
+| CORRECT% | 9.1 % (27/296) | **10.1 %** (30/296) |
+
+**CONSTRUCTED% is unchanged and that is the finding.** Nothing was built in this
+pass that was not already built; three capabilities that a traveller could not
+reach became reachable. A census that counted a mounted component as new
+construction would have reported growth where there was none.

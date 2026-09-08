@@ -1,1 +1,12 @@
-{ "//": "Acknowledgements that a counted architecture file changed WITHOUT the census being re-measured. Read by src/scripts/checkCensusFreshness.ts. An entry names the census, the head_commit it was written against (`since`), and why the change cannot have moved a verdict. It is spent the moment that census is re-measured: the checker compares `since` against the census head_commit and FAILS on a mismatch, so an acknowledgement cannot outlive the measurement it was written for.", "acknowledged": [] }
+{
+  "//": "Acknowledgements that a counted architecture file changed WITHOUT the census being re-measured. Read by src/scripts/checkCensusFreshness.ts. An entry names the census, the head_commit it was written against (`since`), and why the change cannot have moved a verdict. It is spent the moment that census is re-measured: the checker compares `since` against the census head_commit and FAILS on a mismatch, so an acknowledgement cannot outlive the measurement it was written for.",
+  "acknowledged": [
+    {
+      "census": "census-highlights-memories.md",
+      "since": "cdfff5995c92f7adfb3ae7880496bc94002717e9",
+      "file": "artifacts/api-server/src/lib/memoryOutbox.ts",
+      "acknowledgedAt": "2026-09-08",
+      "reason": "The change adds 48 lines to that file and NOT ONE OF THEM IS CODE. Verified mechanically, not by reading the commit message: `git diff cdfff599..HEAD -- src/lib/memoryOutbox.ts` filtered to lines that are neither comment nor blank returns EMPTY, against a --stat of 48 insertions / 0 deletions. The added text records four facts the outbox-certification lane measured on portava-ci for whoever writes the section-18 worker: nothing acks a row, there is no poison handling so batch ordering is a choice with a cost, now() is transaction-start time so timestamps cannot order events, and the outbox row does not carry `sequence`. Every H/M verdict this census records is about behaviour that a comment cannot change. Reproduce the check with the command above; if it ever prints a line, this acknowledgement is void."
+    }
+  ]
+}
