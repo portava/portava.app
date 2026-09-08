@@ -202,3 +202,51 @@ production has **0 cancelled trips**, **0 rows** in `trip_map_projections`, and
 production** (`2402`). portava-ci is eighteen ahead. Nine P1 security rows above
 are fixed in code and live in production purely because the SQL is unapplied.
 No amount of further engineering closes them.
+
+## Fail-open reads — the ledger reached ZERO, and what that does and does not mean
+
+`check-unchecked-supabase-reads`, 2026-09-08:
+
+```
+0 FAIL-OPEN / 217 FAIL-CLOSED / 16 UNCLASSIFIED   exit 0
+```
+
+Trajectory across the pass: **306 → 61 → 54 → 25 → 19 → 0.** Every entry was
+removed only after the guard itself reported it stale, and every fix was proved
+by hand-revert (the fix removed, the test observed failing, the fix restored,
+the suite back to 0).
+
+### Two things this number does NOT cover — stated so it is not read as more than it is
+
+**1. `_awardStampCore` is outside the guard's scope.** The guard attributes a
+read to its enclosing function name and gates on a set of patterns;
+`_awardStampCore` matches none of them, so the WRITE path's copies of the
+eligibility reads are not counted. One of them genuinely discards its error:
+
+```ts
+const { data: existingEvent } = await sc
+  .from("stamp_award_events").select("id, status")
+  .eq("idempotency_key", idemKey).maybeSingle();
+```
+
+An unreadable table therefore reads as "not yet awarded" and the code proceeds
+toward awarding.
+
+**The containment was verified against production rather than assumed**, because
+"a constraint will catch it" is exactly the kind of claim that turns out to be
+false:
+
+| backstop | present | shape |
+|---|---|---|
+| `stamp_award_events_idempotency_key_key` | ✅ | `UNIQUE (idempotency_key)` |
+| `user_stamps_live_award_unique` | ✅ | `UNIQUE (user_id, stamp_definition_id, coalesce(source_type,''), coalesce(source_id::text,'')) WHERE is_revoked = false` |
+
+So a duplicate award cannot land: the database refuses it with `23505`. The
+defect is real but **bounded by a constraint, not by the code** — which is worth
+knowing, because deleting either index would silently un-bound it.
+
+**2. The guard's scope rule is itself a false-green surface.** A read moved into
+a function whose name does not match the gate patterns leaves the ledger without
+being fixed. Widening the scope is the honest next step and is deliberately NOT
+done here: it would surface a new population mid-pass and the burn-down would
+stop meaning what it currently means. Recorded as engineering work, not closed.
