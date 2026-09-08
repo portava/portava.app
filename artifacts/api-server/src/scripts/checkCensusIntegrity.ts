@@ -65,7 +65,14 @@
  * repository keeps finding in its own guards.
  *
  * ── WHAT IT DELIBERATELY DOES NOT CHECK, AND WHY ─────────────────────────────
- * It does NOT require the parsed counts to equal the stated headline, because
+ * It DOES require them to be equal in the one case where the exemption below
+ * cannot apply: when the parsed row count equals the stated denominator, every
+ * requirement was parsed, there is no prose gap, and a headline that does not
+ * sum to the denominator is arithmetic rather than judgement. That rule was
+ * added on 2026-09-08 after census-layover was found stating 27 + 133 + 139
+ * against a denominator of 296.
+ *
+ * Otherwise it does NOT require the parsed counts to equal the stated headline, because
  * for several censuses that would be a false accusation. Some requirements are
  * counted in PROSE rather than in a table row — census-highlights-memories.md
  * §17 says "eleven of the seventeen operations ... each is BBW" in a paragraph
@@ -107,6 +114,12 @@ interface CensusResult {
   hypotheticalRows: number;
   counts: Record<Verdict, number>;
   statedDenominator: number | null;
+  /**
+   * The LAST headline the document states, as a bucket count — the one a reader
+   * who scrolls to the newest section would quote. Null when no headline table
+   * states all four buckets.
+   */
+  statedHeadline: { c: number; w: number; n: number; x: number } | null;
   /** Every denominator the document states. More than one is deliberate, not a bug. */
   allDenominators: number[];
   duplicates: Array<{ id: string; lines: number[] }>;
@@ -240,6 +253,29 @@ function parseCensus(file: string, text: string): CensusResult {
   const uniqueDenoms = [...new Set(candidates)].sort((a, b) => a - b);
   const statedDenominator = uniqueDenoms.length > 0 ? uniqueDenoms[uniqueDenoms.length - 1]! : null;
 
+  // The stated headline, as four bucket counts. Censuses write it as a small
+  // table of `| BUILT-AND-CORRECT | ... | **30** |` rows, sometimes with a
+  // "was / now" pair, so the LAST number on each line is the current claim and
+  // the LAST such block in the file is the current headline. A block that does
+  // not state all four buckets is not a headline and is ignored — this must not
+  // half-read a table and then accuse it of not summing.
+  const headlineFor = (label: RegExp): number[] => {
+    const found: number[] = [];
+    for (const m of text.matchAll(new RegExp(`^>?\\s*\\|\\s*${label.source}[^|]*((?:\\|[^|\\n]*)+)\\|\\s*$`, "gim"))) {
+      const nums = [...m[1]!.matchAll(/\*{0,2}([0-9]{1,4})\*{0,2}/g)].map((x) => Number(x[1]));
+      if (nums.length > 0) found.push(nums[nums.length - 1]!);
+    }
+    return found;
+  };
+  const hC = headlineFor(/BUILT-AND-CORRECT/);
+  const hW = headlineFor(/BUILT-BUT-WRONG/);
+  const hN = headlineFor(/NOT-BUILT/);
+  const hX = headlineFor(/CANNOT-VERIFY/);
+  const statedHeadline =
+    hC.length > 0 && hW.length > 0 && hN.length > 0 && hX.length > 0
+      ? { c: hC[hC.length - 1]!, w: hW[hW.length - 1]!, n: hN[hN.length - 1]!, x: hX[hX.length - 1]! }
+      : null;
+
   return {
     file,
     rows,
@@ -249,6 +285,7 @@ function parseCensus(file: string, text: string): CensusResult {
     hypotheticalRows,
     counts,
     statedDenominator,
+    statedHeadline,
     duplicates,
     hasCorrectionHeader: /CORRECTION HEADER/i.test(text),
   };
@@ -271,6 +308,35 @@ for (const f of files) {
   }
   if (r.statedDenominator !== null && r.rows.length > r.statedDenominator) {
     problems.push(`::error::${f}: ${r.rows.length} verdict rows parsed but the stated denominator is ${r.statedDenominator}. More rows than requirements is arithmetically impossible — one of the two is wrong.`);
+  }
+
+  // ── A HEADLINE THAT DOES NOT SUM TO ITS OWN DENOMINATOR ──────────────────
+  //
+  // The general rule is that a stated headline need NOT equal the parsed
+  // counts, because requirements counted in prose are real and unparseable.
+  // That exemption does not apply when there IS no prose gap: if every
+  // requirement in the denominator was parsed, then C + W + N + X must equal
+  // the denominator, and a headline that does not is arithmetic, not judgement.
+  //
+  // Found by hand on 2026-09-08 in census-layover: a headline of 27 + 133 + 139
+  // against a denominator of 296 — 299. It survived because the pass that wrote
+  // it ADDED its own moves to the previous headline instead of counting the
+  // rows, which carries any earlier error forward while looking freshly
+  // measured. The census is now corrected; this is the check that would have
+  // caught it.
+  const parsedTotal = r.rows.length;
+  if (r.statedDenominator !== null && parsedTotal === r.statedDenominator && r.statedHeadline) {
+    const h = r.statedHeadline;
+    const sum = h.c + h.w + h.n + h.x;
+    if (sum !== r.statedDenominator) {
+      problems.push(
+        `::error::${f}: its stated headline sums to ${sum} (C ${h.c} + W ${h.w} + N ${h.n} + X ${h.x}) against a ` +
+          `denominator of ${r.statedDenominator}, and EVERY requirement in that denominator was parsed — there is no ` +
+          `prose gap for the difference to live in. A headline arrived at by adding this pass's moves to the previous ` +
+          `headline carries the previous headline's error forward while looking freshly measured. Count the rows: ` +
+          `C ${r.counts.C} / W ${r.counts.W} / N ${r.counts.N} / X ${r.counts.X}.`,
+      );
+    }
   }
 }
 
@@ -308,7 +374,8 @@ console.log(
 console.log(
   `NOTE: DOES NOT COVER, stated rather than implied: (1) whether a verdict is CORRECT — this checks that the document ` +
     `agrees with itself, not that it agrees with the code; (2) the prose-counted requirements above; (3) whether the ` +
-    `stated headline percentages match the parsed counts, which is NOT required here because the prose gap makes a ` +
+    `stated headline percentages match the parsed counts EXCEPT where a census has no prose gap at all (parsed rows = ` +
+    `stated denominator), where the headline must sum to the denominator and is checked; elsewhere the prose gap makes a ` +
     `mismatch expected rather than wrong. ${results.filter((r) => r.hasCorrectionHeader).length} of ${files.length} ` +
     `censuses already carry a correction header saying their own headline had drifted from their own body — that is ` +
     `the failure mode this file exists to make harder, not one it can claim to have closed.`,

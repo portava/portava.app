@@ -1583,16 +1583,37 @@ cannot supply.
 Same 296 denominator, same counting rule, same prohibition rule. Three rows move
 `W → C`; nothing moves into or out of `N`.
 
-| Measure | §9 (`cdfff599`) | Now (`743ae78f`) |
-| --- | --- | --- |
-| BUILT-AND-CORRECT | 27 | **30** |
-| BUILT-BUT-WRONG | 133 | **130** |
-| NOT-BUILT | 139 | **139** |
-| CANNOT-VERIFY | 0 | **0** |
-| CONSTRUCTED% | 54.1 % (160/296) | **54.1 %** (160/296) |
-| CORRECT% | 9.1 % (27/296) | **10.1 %** (30/296) |
+> **CORRECTED, same day, before anyone quoted it.** The first version of this
+> table said 27 → 30 correct, 133 → 130 wrong, 139 not built. Those numbers came
+> from ADDING this pass's three moves to §9's stated headline instead of counting
+> the rows — and §9's headline does not sum to its own denominator: 27 + 133 +
+> 139 = **299**, against a denominator of 296. Carrying it forward carried the
+> error forward and made it look freshly measured.
+>
+> The numbers below are the ones `check:census-integrity` recomputes from the
+> tables themselves, last-verdict-wins, with the eight PR-comparison rows skipped
+> because they describe unmerged work. For this census that arithmetic is
+> authoritative rather than approximate: it reports **0 requirements counted
+> where the parser cannot read**, so there is no prose gap for a headline to
+> differ by. A layover headline that disagrees with the parsed counts is simply
+> wrong, and this one was.
 
-**CONSTRUCTED% is unchanged and that is the finding.** Nothing was built in this
-pass that was not already built; three capabilities that a traveller could not
+| Measure | Parsed at `743ae78f` |
+| --- | --- |
+| BUILT-AND-CORRECT | **28** |
+| BUILT-BUT-WRONG | **120** |
+| NOT-BUILT | **148** |
+| CANNOT-VERIFY | **0** |
+| Sum | **296** — equal to the denominator, which the previous headline was not |
+| CONSTRUCTED% | **50.0 %** (148/296) |
+| CORRECT% | **9.5 %** (28/296) |
+
+The three rows this pass moved (L2, L146, L114) are inside that 28. What the
+earlier table got wrong was the BASE, not the moves.
+
+**CONSTRUCTED% did not move, and that is still the finding.** Nothing was built
+in this pass that was not already built; three capabilities a traveller could not
 reach became reachable. A census that counted a mounted component as new
-construction would have reported growth where there was none.
+construction would have reported growth where there was none — and the corrected
+arithmetic above does not change that, because all three moves are W → C, which
+leaves C + W where it was.
