@@ -121,6 +121,18 @@
     {
       "version": "20260908073559",
       "name": "2660_trust_events_one_shot_covers_stamp_verified"
+    },
+    {
+      "version": "20260908103147",
+      "name": "2535_trip_reminders_write_boundary"
+    },
+    {
+      "version": "20260908104231",
+      "name": "2335_layover_recommendation_write_boundary"
+    },
+    {
+      "version": "20260908104255",
+      "name": "2510_layover_write_boundary_postconditions"
     }
   ]
 }

@@ -173,7 +173,14 @@ describe("layover cutover checker — the real tree", () => {
     assert.equal(code, 0, out);
     assert.match(out, /index layover_recs_session_key_uidx — created by APPLIED 2410_layover_recommendation_identity/);
     assert.match(out, /derivation matches recommendationKey branch for branch/);
-    assert.match(out, /co-toucher 2335_layover_recommendation_write_boundary/);
+    // 2335 USED to appear here as a classified co-toucher. It was applied to
+    // production on 2026-09-08, so it is no longer an UNAPPLIED co-toucher and its
+    // classification was struck. The evidence line the report prints for an empty
+    // co-toucher set is asserted instead — an empty set has to SAY so, or a
+    // condition that examined nothing would read the same as one that examined
+    // everything and found nothing.
+    assert.match(out, /no unapplied migration mutates an object 2411 touches/);
+    assert.doesNotMatch(out, /co-toucher 2335_layover_recommendation_write_boundary/);
   });
 
   it("refuses to report a verdict on a scan that examined almost nothing", () => {
@@ -588,14 +595,33 @@ describe("condition 5 — ORDERING_COLLISION", () => {
   });
 
   it("FAILS a classification that has gone stale", () => {
-    const dir = scratch("ord-stale");
-    for (const f of readdirSync(REAL_MIGRATIONS)) {
-      if (f === "2335_layover_recommendation_write_boundary.sql") continue;
-      symlinkSync(join(REAL_MIGRATIONS, f), join(dir, f));
-    }
-    const { code, out } = run({ LAYOVER_CUTOVER_MIGRATION_DIR: dir });
+    // THIS CASE USED TO WORK BY DELETING 2335 from a mirrored migration
+    // directory, because 2335 was the map's only entry. That stopped proving
+    // anything when 2335 was APPLIED on 2026-09-08 and its entry was struck: the
+    // map went empty and there was nothing left to go stale. Keeping an entry
+    // alive so this test had something to delete would have put a false
+    // statement into guard data, which is worse than an untested rule — so the
+    // map became injectable (LAYOVER_CUTOVER_COTOUCHERS) instead, and the rule
+    // now has a witness that does not depend on which migrations happen to be
+    // unapplied this week.
+    //
+    // The rule matters: it is what caught 2335's own apply, on the day, by
+    // refusing to let a discharged ordering decision sit in the file looking
+    // like a live one.
+    const { code, out } = run({
+      LAYOVER_CUTOVER_COTOUCHERS: JSON.stringify({
+        "9999_a_migration_that_is_not_there": "ORDER-INSENSITIVE, allegedly.",
+      }),
+    });
     assert.notEqual(code, 0, out);
-    assert.match(out, /STALE CLASSIFICATION: 2335_layover_recommendation_write_boundary/);
+    assert.match(out, /STALE CLASSIFICATION: 9999_a_migration_that_is_not_there/);
+  });
+
+  it("CONTROL — the same run with the map left alone does NOT report a stale classification", () => {
+    // Without this, the case above would also pass against a checker that had
+    // started reporting every classification as stale.
+    const { out } = run({});
+    assert.doesNotMatch(out, /STALE CLASSIFICATION/);
   });
 });
 

@@ -80,12 +80,54 @@ export const RESIDUAL_PREDICATE = [
  * 5: the point of the rule is that nobody gets to decide "order does not matter"
  * silently.
  */
-export const CO_TOUCHER_CLASSIFICATION: Record<string, string> = {
-  "2335_layover_recommendation_write_boundary":
-    "ORDER-INSENSITIVE. Changes only RLS policies and role GRANTs on layover_recommendations; " +
-    "2411 is applied as the migration role, whose privileges neither migration alters. Neither " +
-    "reads or writes a column the other changes, and both are single-transaction.",
+const CO_TOUCHER_CLASSIFICATION_DEFAULT: Record<string, string> = {
+  // EMPTY, AND THAT IS A RESULT RATHER THAN AN OMISSION.
+  //
+  // This map held one entry — 2335_layover_recommendation_write_boundary,
+  // classified ORDER-INSENSITIVE because it changes only RLS policies and role
+  // GRANTs on layover_recommendations while 2411 writes a column, and neither
+  // touches what the other reads.
+  //
+  // 2335 was APPLIED to production on 2026-09-08 (version 20260908104231), so it
+  // is no longer an UNAPPLIED co-toucher and the entry stopped describing
+  // anything. The checker said so itself — "STALE CLASSIFICATION: … is
+  // classified as a co-toucher but no longer is. Strike the entry." — which is
+  // the staleness rule doing its job on the day the apply landed, rather than
+  // this list quietly accumulating decisions about migrations that are already
+  // in the database.
+  //
+  // An empty map is a legitimate GO for ORDERING_COLLISION: the condition
+  // records "no unapplied migration mutates an object 2411 touches" as evidence
+  // rather than passing silently. It is NOT a licence to apply 2411 — that is
+  // still blocked on NON_VACUITY, because the measurement says the backfill
+  // would key 30 rows and preserve nothing.
 };
+
+/**
+ * The classification map the run uses. LAYOVER_CUTOVER_COTOUCHERS overrides it
+ * with a JSON object, in exactly the way LAYOVER_CUTOVER_MIGRATION_DIR overrides
+ * the directory — a test seam, never set by CI or by a real run.
+ *
+ * WHY IT EXISTS. The staleness rule below (an entry naming a migration that is
+ * no longer an unapplied co-toucher must be struck) is the rule that caught
+ * 2335's apply on the day it landed. Its witness in the suite worked by deleting
+ * 2335 from a mirrored migration directory — which stopped proving anything the
+ * moment 2335 was applied and its entry struck, because the map went empty. The
+ * rule would then have had no test at all, and a rule with no test is how the
+ * last five comment-blindness bugs survived.
+ *
+ * The alternative was to keep a classification entry alive for the sake of the
+ * test. That would be a false statement in guard data — the worse of the two.
+ */
+export const CO_TOUCHER_CLASSIFICATION: Record<string, string> = (() => {
+  const override = process.env.LAYOVER_CUTOVER_COTOUCHERS;
+  if (!override) return CO_TOUCHER_CLASSIFICATION_DEFAULT;
+  const parsed = JSON.parse(override) as unknown;
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    throw new Error("LAYOVER_CUTOVER_COTOUCHERS must be a JSON object of { migrationName: reason }");
+  }
+  return parsed as Record<string, string>;
+})();
 
 export type Verdict = "GO" | "NO_GO";
 
