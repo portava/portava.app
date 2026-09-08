@@ -15,17 +15,60 @@
  *
  * Every builder is created per `.from()` call, so concurrent awaits (the
  * dashboard fans out three reads) cannot share filter state.
+*
+ * ── CHECKED AGAINST THE REAL CLIENT ─────────────────────────────────────────
+ * `src/test/supabaseContract.test.ts` runs this double and the REAL installed
+ * supabase-js client through the same scenarios every CI run and fails if they
+ * disagree anywhere not listed below. Do not "improve" this file by making a
+ * scenario pass more loosely; change the scenario, or declare a gap here.
+ *
+ * MODELLED EXACTLY (measured, not assumed): thenable execution — a builder with
+ * no `.then`/`await` performs NOTHING, one with either performs it once;
+ * `.single()`/`.maybeSingle()` cardinality including the RESOLVED PGRST116 for
+ * more than one row; failures arriving RESOLVED as `{ data: null, error }`,
+ * never thrown; a write with no chained `.select()` returning `data: null`, so
+ * affected rows are UNKNOWABLE without one; `count` null unless requested.
+ *
+ * NOT MODELLED — every entry below is enforced: the contract suite fails if the
+ * behaviour silently starts agreeing, and fails if a listed operation stops
+ * refusing:
+ *
+ *   insert/unique-violation-23505 — no unique index. A duplicate insert appends
+ *     a second row instead of resolving 23505. Stage the error via
+ *     `failures["<table>:insert"] = { code: "23505", message }` if a test needs
+ *     that shape; this double cannot DISCOVER the collision.
+ *   error/unknown-column-42703 — no schema knowledge. An unknown column reads as
+ *     `undefined` instead of failing the whole statement. Use
+ *     schemaStrictSupabase for that question.
+ *   rls/denied-read-yields-zero-rows, rls/denied-write-yields-42501 — there is
+ *     one table set and no service-vs-user distinction, so a denied read cannot
+ *     be told from an empty one. Passing `role` THROWS rather than answering.
+ *     Use failClosedSupabase (`role` + `rlsHiddenTables`/`rlsProtectedTables`).
+ *   rpc/success, rpc/error-resolves, rpc/unknown-function — no rpc surface.
+ *     `.rpc()` THROWS. A double that answers an unknown stored procedure with a
+ *     plausible shape is precisely what let the dead writes through.
  */
 
 type Row = Record<string, any>;
 
 export interface FakeLayoverDbOptions {
-  failures?: Record<string, { message: string }>;
+  failures?: Record<string, { message: string; code?: string }>;
   /** Bearer token → user id map for auth.getUser. */
   users?: Record<string, string>;
+  /**
+   * Present only so that asking for RLS is LOUD. This double has one table set
+   * and no policies; see NOT MODELLED above.
+   */
+  role?: "service" | "user";
 }
 
 export function makeLayoverDb(tables: Record<string, Row[]>, opts: FakeLayoverDbOptions = {}) {
+  if (opts.role !== undefined) {
+    throw new Error(
+      "fakeLayoverDb does not model RLS: there is one table set and no service-vs-user distinction. " +
+        "Use failClosedSupabase (role/rlsHiddenTables) for a role-sensitive read.",
+    );
+  }
   const failures = opts.failures ?? {};
   const users = opts.users ?? {};
 
@@ -39,8 +82,17 @@ export function makeLayoverDb(tables: Record<string, Row[]>, opts: FakeLayoverDb
     let payload: any = null;
     let onConflict: string[] | null = null;
 
+    let selected = false;
+    let countMode: string | null = null;
+    let headOnly = false;
+
     const builder: any = {
-      select() { return builder; },
+      select(_cols?: string, o?: { count?: string; head?: boolean }) {
+        selected = true;
+        if (o?.count) countMode = String(o.count);
+        if (o?.head) headOnly = true;
+        return builder;
+      },
       insert(rows: Row | Row[]) { op = "insert"; payload = rows; return builder; },
       upsert(rows: Row | Row[], o?: { onConflict?: string }) {
         op = "upsert"; payload = rows;
@@ -67,55 +119,78 @@ export function makeLayoverDb(tables: Record<string, Row[]>, opts: FakeLayoverDb
       order(col: string, o: any = {}) { order = { col, asc: o.ascending !== false }; return builder; },
       limit(n: number) { limitN = n; return builder; },
       range() { return builder; },
-      maybeSingle() { return Promise.resolve(resolve(true)); },
-      single() { return Promise.resolve(resolve(true)); },
-      then(onF: any, onR: any) { return Promise.resolve(resolve(false)).then(onF, onR); },
+      maybeSingle() { return Promise.resolve(resolve("maybeSingle")); },
+      single() { return Promise.resolve(resolve("single")); },
+      then(onF: any, onR: any) { return Promise.resolve(resolve("list")).then(onF, onR); },
     };
 
     const matches = (r: Row) => filters.every((f) => f(r));
     const newId = () => `fake-${Math.random().toString(36).slice(2, 10)}`;
 
-    function resolve(single: boolean): { data: any; error: any } {
-      const failure = failures[`${table}:${op}`];
-      if (failure) return { data: null, error: { message: failure.message } };
+    /** PostgREST's answer when `application/vnd.pgrst.object+json` sees != 1 row. */
+    function pgrst116(n: number) {
+      return {
+        data: null,
+        error: {
+          code: "PGRST116",
+          details: `Results contain ${n} rows, application/vnd.pgrst.object+json requires 1 row`,
+          hint: null,
+          message: "JSON object requested, multiple (or no) rows returned",
+        },
+      };
+    }
 
-      if (op === "delete") {
-        const gone = store.filter(matches);
-        for (const g of gone) store.splice(store.indexOf(g), 1);
-        return { data: single ? (gone[0] ?? null) : gone, error: null };
+    /** Shape a settled row set the way the wire would, given the terminal call. */
+    function shape(rows: Row[], mode: "list" | "single" | "maybeSingle") {
+      if (mode === "list") return { data: rows, error: null };
+      if (rows.length > 1 || (mode === "single" && rows.length !== 1)) return pgrst116(rows.length);
+      return { data: rows[0] ?? null, error: null };
+    }
+
+    function resolve(mode: "list" | "single" | "maybeSingle"): { data: any; error: any } {
+      const failure = failures[`${table}:${op}`];
+      if (failure) {
+        return { data: null, error: failure.code ? { message: failure.message, code: failure.code } : { message: failure.message } };
       }
-      if (op === "insert") {
-        const rows = Array.isArray(payload) ? payload : [payload];
-        const out: Row[] = [];
-        for (const r of rows) {
-          const row = { id: newId(), created_at: new Date().toISOString(), ...r };
-          store.push(row); out.push(row);
+
+      if (op !== "select") {
+        let out: Row[] = [];
+        if (op === "delete") {
+          out = store.filter(matches);
+          for (const g of out) store.splice(store.indexOf(g), 1);
+        } else if (op === "insert") {
+          for (const r of Array.isArray(payload) ? payload : [payload]) {
+            const row = { id: newId(), created_at: new Date().toISOString(), ...r };
+            store.push(row); out.push(row);
+          }
+        } else if (op === "upsert") {
+          for (const r of Array.isArray(payload) ? payload : [payload]) {
+            const keyCols = onConflict!;
+            const hit = store.find((s) => keyCols.every((k) => r[k] != null && s[k] === r[k]));
+            if (hit) { Object.assign(hit, r); out.push(hit); }
+            else { const row = { id: newId(), created_at: new Date().toISOString(), ...r }; store.push(row); out.push(row); }
+          }
+        } else {
+          for (const r of store) if (matches(r)) { Object.assign(r, payload); out.push(r); }
         }
-        return { data: single ? (out[0] ?? null) : out, error: null };
+        // No chained `.select()` means PostgREST sent 201/204 with no body, so
+        // there is nothing to count. See NOT MODELLED in the header.
+        if (!selected) return { data: null, error: null };
+        return shape(out, mode);
       }
-      if (op === "upsert") {
-        const rows = Array.isArray(payload) ? payload : [payload];
-        const out: Row[] = [];
-        for (const r of rows) {
-          const keyCols = onConflict!;
-          const hit = store.find((s) => keyCols.every((k) => r[k] != null && s[k] === r[k]));
-          if (hit) { Object.assign(hit, r); out.push(hit); }
-          else { const row = { id: newId(), created_at: new Date().toISOString(), ...r }; store.push(row); out.push(row); }
-        }
-        return { data: single ? (out[0] ?? null) : out, error: null };
-      }
-      if (op === "update") {
-        const out: Row[] = [];
-        for (const r of store) if (matches(r)) { Object.assign(r, payload); out.push(r); }
-        return { data: single ? (out[0] ?? null) : out, error: null };
-      }
+
       let rows = store.filter(matches);
       if (order) {
         const { col, asc } = order;
         rows = [...rows].sort((a, b) => (a[col] > b[col] ? 1 : a[col] < b[col] ? -1 : 0) * (asc ? 1 : -1));
       }
+      const total = rows.length;
       if (limitN !== null) rows = rows.slice(0, limitN);
-      return { data: single ? (rows[0] ?? null) : rows, error: null };
+      if (mode === "list") {
+        // `count` mirrors PostgREST's Content-Range: null unless asked for.
+        return { data: headOnly ? null : rows, error: null, count: countMode ? total : null } as any;
+      }
+      return shape(rows, mode);
     }
 
     return builder;
@@ -123,6 +198,12 @@ export function makeLayoverDb(tables: Record<string, Row[]>, opts: FakeLayoverDb
 
   return {
     from,
+    rpc(fn: string) {
+      throw new Error(
+        `fakeLayoverDb does not model rpc (called "${fn}"). A double that answers every rpc with a plausible ` +
+          "shape is exactly what hid the dead writes; use fakeMapDb or failClosedSupabase, which take explicit handlers.",
+      );
+    },
     auth: {
       getUser: async (token: string) =>
         users[token]

@@ -29,6 +29,35 @@
  * limit / maybeSingle / single / insert / upsert / update / delete, and
  * `await`ing the builder. It is a schema conscience for a query, not a
  * Postgres.
+*
+ * ── CHECKED AGAINST THE REAL CLIENT ─────────────────────────────────────────
+ * `src/test/supabaseContract.test.ts` runs this double and the REAL installed
+ * supabase-js client through the same scenarios every CI run and fails if they
+ * disagree anywhere not listed below. Do not "improve" this file by making a
+ * scenario pass more loosely; change the scenario, or declare a gap here.
+ *
+ * MODELLED EXACTLY (measured, not assumed): thenable execution — a builder with
+ * no `.then`/`await` performs NOTHING; `.single()`/`.maybeSingle()` cardinality
+ * including the RESOLVED PGRST116 for more than one row; failures arriving
+ * RESOLVED as `{ data: null, error }`, never thrown; `count` null unless asked.
+ *
+ * NOT MODELLED — every entry below is enforced: the contract suite fails if the
+ * behaviour silently starts agreeing, and fails if a listed operation stops
+ * refusing:
+ *
+ *   failure/read-error-resolves, failure/read-error-under-maybeSingle,
+ *   transport/aborted-request — only a WRITE error can be injected
+ *     (`opts.writeError`). A READ here cannot be made to fail, so this double
+ *     cannot answer "does the caller fail closed when the table is unreadable".
+ *     Use failClosedSupabase for that.
+ *   insert/unique-violation-23505 — no unique index. A duplicate insert appends
+ *     a second row; stage the shape with `opts.writeError` instead.
+ *   rls/denied-read-yields-zero-rows, rls/denied-write-yields-42501 — one seed,
+ *     no policies, no service-vs-user distinction. Use failClosedSupabase
+ *     (`role` + `rlsHiddenTables`/`rlsProtectedTables`).
+ *   rpc/success, rpc/error-resolves, rpc/unknown-function — no rpc surface.
+ *     `.rpc()` THROWS rather than answering a stored procedure it knows nothing
+ *     about.
  */
 import { liveColumns } from "./liveColumns.ts";
 import { projectionKeys, projectRow } from "./selectProjection.js";
@@ -45,10 +74,23 @@ export interface SchemaStrictOptions {
   unchecked?: string[];
   /** Force an error from a specific table's write, to exercise failure paths. */
   writeError?: { table: string; error: { code?: string; message?: string } };
+  /**
+   * Column sets that STAND IN for the live snapshot, table by table.
+   *
+   * This exists for ONE caller: `src/test/supabaseContract.test.ts`, which has
+   * to run this double over synthetic tables that do not exist in the live
+   * database in order to compare it against the real client. Handing a
+   * production suite a schema of its own invention would destroy the only thing
+   * this file is for, so it is refused unless the conformance harness sets
+   * SUPABASE_CONFORMANCE=1.
+   */
+  syntheticColumns?: Record<string, string[]>;
 }
 
 export interface SchemaStrictClient {
   from: (table: string) => any;
+  /** Always throws: this double has no stored procedures. */
+  rpc?: (fn: string, args?: unknown) => never;
   /** Every write body the client accepted, in order. */
   writes: Array<{ table: string; op: "insert" | "upsert" | "update"; rows: Row[] }>;
   /** Every 42703 the client raised: the proof a dead column was named. */
@@ -56,6 +98,19 @@ export interface SchemaStrictClient {
 }
 
 const PG_UNDEFINED_COLUMN = "42703";
+
+/** PostgREST's answer when `application/vnd.pgrst.object+json` sees != 1 row. */
+function pgrst116(n: number) {
+  return {
+    data: null,
+    error: {
+      code: "PGRST116",
+      details: `Results contain ${n} rows, application/vnd.pgrst.object+json requires 1 row`,
+      hint: null,
+      message: "JSON object requested, multiple (or no) rows returned",
+    },
+  };
+}
 
 /** Split a PostgREST select list into bare column names. */
 export function selectedColumns(select: string): string[] {
@@ -77,12 +132,21 @@ export function makeSchemaStrictClient(
   opts: SchemaStrictOptions = {},
 ): SchemaStrictClient {
   const unchecked = new Set(opts.unchecked ?? []);
+  const synthetic = opts.syntheticColumns;
+  if (synthetic && process.env.SUPABASE_CONFORMANCE !== "1") {
+    throw new Error(
+      "makeSchemaStrictClient: `syntheticColumns` replaces the LIVE schema snapshot, which is the only " +
+        "thing this double is for. It is available exclusively to the conformance harness " +
+        "(src/test/supabaseContract.test.ts, SUPABASE_CONFORMANCE=1). Seed real tables instead.",
+    );
+  }
   const writes: SchemaStrictClient["writes"] = [];
   const deadColumnErrors: SchemaStrictClient["deadColumnErrors"] = [];
 
   function checkColumns(table: string, columns: string[], where: string): boolean {
     if (unchecked.has(table)) return true;
-    const live = liveColumns(table); // throws loudly if the table itself is unknown
+    // `liveColumns` throws loudly if the table itself is unknown.
+    const live = synthetic?.[table] ? new Set(synthetic[table]) : liveColumns(table);
     let ok = true;
     for (const col of columns) {
       if (!live.has(col)) {
@@ -99,6 +163,9 @@ export function makeSchemaStrictClient(
     let limit: number | null = null;
     let orderKey: { key: string; asc: boolean } | null = null;
     let written: Row[] | null = null;
+    let selected = false;
+    let deleting = false;
+    let countMode: string | null = null;
     // `null` = do not project (the historical behaviour). See selectProjection.ts.
     let projection: Array<[string, string]> | null = null;
     let op: "insert" | "upsert" | "update" | null = null;
@@ -127,14 +194,27 @@ export function makeSchemaStrictClient(
           count: null,
         };
       }
-      if (written) {
+      if (written || deleting) {
         if (opts.writeError && opts.writeError.table === table) {
           return { data: null, error: opts.writeError.error, count: null };
         }
-        writes.push({ table, op: op ?? "insert", rows: written });
         const store = (seed[table] ??= []);
-        if (op !== "update") store.push(...written);
-        return { data: projection ? written.map((r) => projectRow(r, projection!) as Row) : written, error: null, count: written.length };
+        let affected: Row[];
+        if (deleting) {
+          affected = store.filter((r) => filters.every((f) => f(r)));
+          for (const r of affected) store.splice(store.indexOf(r), 1);
+        } else if (op === "update") {
+          affected = store.filter((r) => filters.every((f) => f(r)));
+          for (const r of affected) Object.assign(r, written![0] ?? {});
+          writes.push({ table, op, rows: written! });
+        } else {
+          affected = written!;
+          writes.push({ table, op: op ?? "insert", rows: written! });
+          store.push(...written!);
+        }
+        // No chained `.select()` means PostgREST sent 201/204 with no body.
+        if (!selected) return { data: null, error: null, count: null };
+        return { data: projection ? affected.map((r) => projectRow(r, projection!) as Row) : affected, error: null, count: null };
       }
       let out = (seed[table] ?? []).filter((r) => filters.every((f) => f(r)));
       if (orderKey) {
@@ -145,11 +225,14 @@ export function makeSchemaStrictClient(
         });
       }
       if (limit !== null) out = out.slice(0, limit);
-      return { data: projection ? out.map((r) => projectRow(r, projection!) as Row) : out, error: null, count: out.length };
+      // `count` mirrors PostgREST's Content-Range: null unless the caller asked.
+      return { data: projection ? out.map((r) => projectRow(r, projection!) as Row) : out, error: null, count: countMode ? out.length : null };
     }
 
     const b: any = {
-      select: (cols?: string) => {
+      select: (cols?: string, o?: { count?: string; head?: boolean }) => {
+        selected = true;
+        if (o?.count) countMode = String(o.count);
         if (cols) note(selectedColumns(cols), `select("${cols}")`);
         // Adopt the SHARED projector (#436) rather than growing a second copy of
         // the rule — this double validated the select list but still returned the
@@ -200,20 +283,20 @@ export function makeSchemaStrictClient(
         written = arr; op = "upsert"; return b;
       },
       update: (row: Row) => { note(Object.keys(row), "update body"); written = [row]; op = "update"; return b; },
-      delete: () => { written = []; op = "update"; return b; },
+      delete: () => { deleting = true; return b; },
       maybeSingle: async () => {
         const r = settle();
         if (r.error) return { data: null, error: r.error };
-        const rows = (r.data as Row[] | null) ?? [];
-        return { data: rows[0] ?? null, error: null };
+        if (r.data === null) return { data: null, error: null };
+        const rows = r.data as Row[];
+        return rows.length > 1 ? pgrst116(rows.length) : { data: rows[0] ?? null, error: null };
       },
       single: async () => {
         const r = settle();
         if (r.error) return { data: null, error: r.error };
-        const rows = (r.data as Row[] | null) ?? [];
-        return rows.length === 1
-          ? { data: rows[0], error: null }
-          : { data: null, error: { code: "PGRST116", message: "no/multiple rows" } };
+        if (r.data === null) return { data: null, error: null };
+        const rows = r.data as Row[];
+        return rows.length === 1 ? { data: rows[0], error: null } : pgrst116(rows.length);
       },
       then: (resolve: (v: unknown) => unknown, reject?: (e: unknown) => unknown) => {
         try { return Promise.resolve(settle()).then(resolve, reject); }
@@ -223,5 +306,12 @@ export function makeSchemaStrictClient(
     return b;
   }
 
-  return { from, writes, deadColumnErrors };
+  const rpc = (fn: string) => {
+    throw new Error(
+      `makeSchemaStrictClient does not model rpc (called "${fn}"): its subject is column names in the live ` +
+        "schema, not stored procedures. Use failClosedSupabase or fakeMapDb, which take explicit handlers.",
+    );
+  };
+
+  return { from, writes, deadColumnErrors, rpc } as SchemaStrictClient & { rpc: (fn: string) => never };
 }
