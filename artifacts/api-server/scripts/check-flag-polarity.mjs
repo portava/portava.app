@@ -1241,9 +1241,34 @@ const DIRECT_READS = [
   },
 
   // ── Bulk reads: no resolvable flag name at all ────────────────────────────
-  { file: 'compass/flags.ts',                        shape: 'bulk', reason: `Wildcard \`.like("flag", "COMPASS_%")\` — no flag-name literal exists to inventory. ${V}: catch → {}, all Compass flags read as undefined/falsy. Fail-closed.` },
-  { file: 'compass/CompassPipeline.ts',              shape: 'bulk', reason: `Wildcard \`.like("flag", "COMPASS_%")\`. ${V}: catch → {} with a warning log, degrading to all-defaults. Fail-closed.` },
-  { file: 'compass/CompassFrontLoadEngine.ts',       shape: 'bulk', reason: `Wildcard \`.like("flag", "COMPASS_%")\`. ${V}: catch is non-fatal and \`flags\` stays {} from its initializer. Fail-closed.` },
+  // THE COMPASS BULK READ WAS THREE COPIES, AND "FAIL-CLOSED" WAS WRONG FOR ALL
+  // THREE. Until 2026-09-08 CompassPipeline and CompassFrontLoadEngine each
+  // carried their own `.like("flag", "COMPASS_%")` with its own dead try/catch,
+  // and each of the three entries here said the same reassuring thing: catch →
+  // {}, fail-closed. That is true of a CAPABILITY name and false of a STOP.
+  // COMPASS_<TYPE>_SAFETY_BLOCK is a STOP — CompassSafetyFilter rule 15 reads it
+  // out of that very map, in the normal feed and again through getFlags in
+  // CompassFallbackFeedBuilder — so an empty map DISENGAGED the emergency switch
+  // on exactly the failure an operator reaches for it during. The three loaders
+  // did not agree by design; they coincided, and nothing made them agree.
+  //
+  // The other two entries are struck because the reads are gone: both files now
+  // call fetchCompassFlags here. No new entry was needed for the survivor — it
+  // was already declared, which is why the guard reported two stale entries and
+  // not three.
+  { file: 'compass/flags.ts', shape: 'bulk',
+    reason: `Wildcard \`.like("flag", "COMPASS_%")\` — no flag-name literal exists to inventory. THE ONLY ` +
+      `COMPASS_% read in the tree since 2026-09-08: CompassPipeline and CompassFrontLoadEngine had their own ` +
+      `copies and now call \`fetchCompassFlags\` here. ${V}: \`.error\` IS observed (it was not before), and ` +
+      `the answer is polarity-aware rather than uniformly "off". CAPABILITY names stay absent/falsy — ` +
+      `fail-closed. COMPASS_<TYPE>_SAFETY_BLOCK is a STOP, and an empty map disengaged it on exactly the ` +
+      `failure an operator reaches for it during, so a failed read returns \`FAILSAFE_COMPASS_FLAGS\` with ` +
+      `every _SAFETY_BLOCK ENGAGED — the whole CompassItemType vocabulary, tsc-enforced. Launch-control flags ` +
+      `are deliberately NOT engaged (see the module header). A failed load is never cached. A THROWN read ` +
+      `keeps the empty map: measured against supabase-js 2.108.2, a network failure RESOLVES ` +
+      `(\`{ error: { message: "TypeError: fetch failed" }, status: 0 }\`), so a catch here means a non-builder ` +
+      `client — a wiring bug — not an unhealthy database, and blanking every content type for a wiring bug ` +
+      `would hide it behind an empty feed.` },
   { file: 'services/ranking/DiscoveryRankingService.ts', shape: 'bulk', reason: `\`.in("flag", [...])\` over five SCREAMING_CASE ranking boosts, each individually present in CLASSIFIED. ${V}: catch → {}, boosts off. Fail-closed.` },
   { file: 'services/ranking/MediaFeedRankingService.ts', shape: 'bulk', reason: `\`.in("flag", [...])\` over eight SCREAMING_CASE media ranking flags, each individually present in CLASSIFIED. ${V}: a \`defaults\` object of all-false is returned on failure. Fail-closed.` },
   { file: 'routes/adminRankingConfig.ts',            shape: 'bulk', reason: `Admin listing of ranking flags for display. ${V}: not a gate.` },
