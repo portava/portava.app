@@ -39,7 +39,17 @@ const PASS_ID   = "77777777-7777-7777-7777-777777777777";
 // ---------------------------------------------------------------------------
 type Row = Record<string, any>;
 interface FakeTable { rows: Row[]; nextInsertError?: string; }
-interface FakeOpts { throwOnTables?: string[]; }
+interface FakeOpts {
+  /** `from(table)` THROWS — a transport-level failure / a client that dies before it queries. */
+  throwOnTables?: string[];
+  /**
+   * Every chain on the table RESOLVES `{ data: null, error }` — which is what a
+   * real PostgREST failure looks like, and the case `throwOnTables` does NOT
+   * model. supabase-js resolves rather than throws, so a double that only
+   * throws cannot exercise a route's `.error` handling at all.
+   */
+  errorOnTables?: string[];
+}
 
 function makeFakeClient(tables: Record<string, FakeTable> = {}, opts: FakeOpts = {}) {
   const db: Record<string, FakeTable> = {
@@ -61,6 +71,7 @@ function makeFakeClient(tables: Record<string, FakeTable> = {}, opts: FakeOpts =
     ...tables,
   };
   const throwOn = opts.throwOnTables ?? [];
+  const errorOn = opts.errorOnTables ?? [];
 
   let idCtr = 0;
   function newId() {
@@ -203,8 +214,24 @@ function makeFakeClient(tables: Record<string, FakeTable> = {}, opts: FakeOpts =
     },
     from: (tableName: string) => {
       if (throwOn.includes(tableName)) {
-        // Simulates an environment where the table's schema doesn't exist yet.
+        // Simulates a client that dies before it queries (transport level).
         throw new Error(`relation "${tableName}" does not exist`);
+      }
+      if (errorOn.includes(tableName)) {
+        // Simulates the REAL failure shape: the builder RESOLVES with an error.
+        const failing: any = new Proxy({}, {
+          get(_t, prop) {
+            if (prop === "then") {
+              return (onF: any, onR: any) =>
+                Promise.resolve({ data: null, error: { message: `relation "${tableName}" is unavailable`, code: "PGRST999" } }).then(onF, onR);
+            }
+            if (prop === "maybeSingle" || prop === "single") {
+              return () => Promise.resolve({ data: null, error: { message: `relation "${tableName}" is unavailable`, code: "PGRST999" } });
+            }
+            return () => failing;
+          },
+        });
+        return failing;
       }
       return chain(tableName);
     },
@@ -561,6 +588,46 @@ describe("trip readiness routes", () => {
     assert.equal(snap.trip_id, TRIP_ID);
     assert.equal(snap.snapshot_date, todayStr, "snapshot_date must be today (UTC)");
     assert.equal(snap.score, r.body.score, "snapshot score must match the returned score");
+  });
+
+  it("a snapshot table that ERRORS does not break the readiness response (and the trend reads as none)", async () => {
+    // The snapshot is a decoration on an otherwise-correct readiness answer, so
+    // its failure must never become the user's 5xx. Nothing covered the failure
+    // shape the real client actually produces — a RESOLVED `{ data: null, error }`
+    // — only a synchronous throw, which supabase-js never does.
+    const { client } = makeFakeClient(
+      {
+        trips: { rows: [baseTrip()] },
+        trip_members: { rows: [ownerMemberRow()] },
+        feature_flags: flagOn(),
+      },
+      { errorOnTables: ["trip_readiness_snapshots"] },
+    );
+    _setTestClient(client, true);
+
+    const r = await req(port, "GET", `/trips/${TRIP_ID}/readiness`, { token: "owner-token" });
+    assert.equal(r.status, 200, `a failed snapshot must not fail readiness (got ${r.status} ${JSON.stringify(r.body)})`);
+    assert.equal(r.body.previousScore, null, "an unreadable snapshot reads as 'no prior snapshot', not as a score");
+    assert.equal(typeof r.body.score, "number", "the readiness score itself is still computed");
+  });
+
+  it("a snapshot table that THROWS does not break the readiness response either", async () => {
+    // The transport-level case. This is what the `try`/`catch` around the
+    // snapshot read and write is actually for; deleting it turns a socket error
+    // during a decoration into a 5xx on the whole readiness response.
+    const { client } = makeFakeClient(
+      {
+        trips: { rows: [baseTrip()] },
+        trip_members: { rows: [ownerMemberRow()] },
+        feature_flags: flagOn(),
+      },
+      { throwOnTables: ["trip_readiness_snapshots"] },
+    );
+    _setTestClient(client, true);
+
+    const r = await req(port, "GET", `/trips/${TRIP_ID}/readiness`, { token: "owner-token" });
+    assert.equal(r.status, 200, `a throwing snapshot table must not fail readiness (got ${r.status} ${JSON.stringify(r.body)})`);
+    assert.equal(r.body.previousScore, null);
   });
 
   it("prunes snapshot rows older than 30 days on recompute, keeping recent ones", async () => {

@@ -20,6 +20,7 @@ import type { Response } from "express";
 import { z } from "zod";
 import { asyncHandler } from "../lib/asyncHandler.js";
 import { getServiceClient } from "../lib/supabase.js";
+import { logger } from "../lib/logger.js";
 import { requireUser, requireTripMember, sendError } from "../lib/http.js";
 import { isFlagEnabled } from "../lib/featureFlags.js";
 import {
@@ -98,8 +99,19 @@ function newestComputedAtMs(rows: any[]): number {
 
 /**
  * Fetch the most recent snapshot score for this trip from a prior UTC day.
- * Returns null when no such snapshot exists (first-ever compute or table
- * absent). Defensive: any DB error silently returns null.
+ *
+ * `null` is the right answer for "no prior snapshot" — it renders as "no trend
+ * yet", which is honest — so a failed read still returns null rather than
+ * failing the whole readiness response over a decoration. But it is no longer
+ * SILENT: an unreadable trip_readiness_snapshots and a genuinely first-ever
+ * compute produced the identical null, so a permanently broken trend looked
+ * exactly like a new trip and could never be noticed. The error is now logged
+ * and the two cases are distinguishable in the log.
+ *
+ * The `try`/`catch` is kept but is no longer EMPTY. It was written to absorb
+ * PostgREST failures and could never do that — supabase-js RESOLVES
+ * `{ data, error }` and does not throw — so it only ever covered a
+ * transport-level rejection, and covered that silently too. Both paths log.
  */
 async function loadPreviousSnapshotScore(sc: any, tripId: string): Promise<number | null> {
   try {
@@ -111,17 +123,37 @@ async function loadPreviousSnapshotScore(sc: any, tripId: string): Promise<numbe
       .order("snapshot_date", { ascending: false })
       .limit(1)
       .maybeSingle();
-    if (error || !data) return null;
+    if (error) {
+      logger.warn({ err: error, tripId }, "trip_readiness_snapshots read failed — readiness trend will read as 'no prior snapshot'");
+      return null;
+    }
+    if (!data) return null;
     return typeof (data as any).score === "number" ? (data as any).score : null;
-  } catch {
+  } catch (err) {
+    // TRANSPORT-level rejection only (socket, DNS, a client that throws before
+    // it queries). PostgREST failures arrive through `error` above — that is why
+    // this catch, when it was EMPTY, could not do the job it was written for.
+    logger.warn({ err, tripId }, "trip_readiness_snapshots read threw — readiness trend will read as 'no prior snapshot'");
     return null;
   }
 }
 
 /**
- * Persist today's score snapshot (upsert by trip_id + snapshot_date).
- * Best-effort: failures are swallowed so a snapshot write never breaks the response.
- * Also prunes snapshot rows older than 30 days for this trip (same best-effort policy).
+ * Persist today's score snapshot (upsert by trip_id + snapshot_date), then prune
+ * rows older than 30 days for this trip so the table does not grow unbounded
+ * (only the most recent prior-day row is ever read).
+ *
+ * Still best-effort — a failed snapshot must not break a readiness response that
+ * is otherwise correct — but no longer SILENT, which is the part that mattered.
+ * Both writes were `.then(undefined, () => {})` inside a `try`/`catch`, and
+ * BOTH of those are dead: a PostgREST builder RESOLVES on a database error, so
+ * the rejection handler never ran and the catch never fired; the resolved
+ * `{ error }` was discarded unread. The consequence was invisible and
+ * self-concealing: if the upsert failed systematically, every later
+ * loadPreviousSnapshotScore found nothing, `previousScore` was permanently
+ * null, the readiness TREND silently never worked, and it looked exactly like a
+ * trip on its first compute. Both are the pair baselined in
+ * scripts/SILENT_SUPABASE_WRITES_BASELINE.json as routes/tripReadiness.ts: 2.
  */
 async function persistTodaySnapshot(sc: any, tripId: string, score: number): Promise<void> {
   const nowMs = Date.now();
@@ -129,29 +161,36 @@ async function persistTodaySnapshot(sc: any, tripId: string, score: number): Pro
   const todayStr = nowIso.slice(0, 10);
 
   try {
-    await sc
+    const { error: upsertErr } = await sc
       .from("trip_readiness_snapshots")
       .upsert(
         { trip_id: tripId, snapshot_date: todayStr, score, computed_at: nowIso },
         { onConflict: "trip_id,snapshot_date" },
-      )
-      .then(undefined, () => {});
-  } catch {
-    // best-effort — never propagate
+      );
+    if (upsertErr) {
+      logger.warn({ err: upsertErr, tripId, snapshotDate: todayStr },
+        "trip_readiness_snapshots upsert failed — today's score is not recorded, so tomorrow's trend will read as 'no prior snapshot'");
+    }
+  } catch (err) {
+    // Transport-level only; see loadPreviousSnapshotScore. Kept because the
+    // snapshot is a decoration on an otherwise-correct readiness response and
+    // must not turn it into a 5xx — but it LOGS now, which is the whole point.
+    logger.warn({ err, tripId, snapshotDate: todayStr }, "trip_readiness_snapshots upsert threw — today's score is not recorded");
   }
 
-  // Prune rows older than 30 days for this trip so the table doesn't grow unbounded.
-  // Only the most recent prior-day row is ever read; anything beyond ~30 days is dead weight.
+  const cutoff = new Date(nowMs - 30 * 864e5).toISOString().slice(0, 10);
   try {
-    const cutoff = new Date(nowMs - 30 * 864e5).toISOString().slice(0, 10);
-    await sc
+    const { error: pruneErr } = await sc
       .from("trip_readiness_snapshots")
       .delete()
       .eq("trip_id", tripId)
-      .lt("snapshot_date", cutoff)
-      .then(undefined, () => {});
-  } catch {
-    // best-effort — never propagate
+      .lt("snapshot_date", cutoff);
+    if (pruneErr) {
+      logger.warn({ err: pruneErr, tripId, cutoff },
+        "trip_readiness_snapshots prune failed — old snapshot rows will accumulate for this trip");
+    }
+  } catch (err) {
+    logger.warn({ err, tripId, cutoff }, "trip_readiness_snapshots prune threw — old snapshot rows will accumulate for this trip");
   }
 }
 
