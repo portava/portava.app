@@ -62,6 +62,37 @@
  *                    read as "off" is fail-open); check:flag-polarity records
  *                    the polarity, this guard demands the error be seen.
  *
+ * ── WHAT "OBSERVED" MEANS, AND THE CLASS THIS GUARD CANNOT SEE ─────────────
+ * "Observed" above is SYNTACTIC: `.error` is bound and the bound name is
+ * referenced. It is NOT a claim that referencing it changed the answer. A read
+ * can bind its error, read it, and still produce the permissive result:
+ *
+ *     const hidden = res.error && !isTableMissing(res.error) ? false : Boolean(res.data);
+ *
+ * — the error is observed, the guard passes, and an unreadable restrictions
+ * table still reports NOT RESTRICTED. Call this shape ERROR-INERT: the error
+ * branch yields the same value the empty read would.
+ *
+ * SO THE LEDGER'S "0 FAIL-OPEN" DOES NOT COVER IT, and that sentence should be
+ * read with this paragraph attached. The count means: of the sites this guard
+ * classifies, none leaves its error unobserved in a fail-open direction. It does
+ * not mean no fail-open read exists.
+ *
+ * An attempt was made on 2026-09-08 to detect the class — every reference to the
+ * bound `error` sitting in a conditional whose error-true branch is a falsy
+ * literal — and it returned ZERO across 705 files and 188 in-scope reads that
+ * bind an error. That zero was WRONG, and it is recorded here rather than
+ * quietly discarded: the detector handled `const { data, error } = …` and the
+ * real instance used member access on a variable (`res.error`), so it could not
+ * see the one site known to have the shape. A measurement that returns zero
+ * because the instrument cannot see the thing is a false green, which is the
+ * failure this whole file exists to make impossible. Building the detector
+ * properly means covering member access, `Promise.allSettled` normalisation and
+ * helper predicates like `realError(res)`, and then deciding direction per site
+ * the way check:flag-polarity records STOP vs CAPABILITY — because `error →
+ * false` is CORRECT for a capability gate and WRONG for a stop. That is real
+ * work and it is not done.
+ *
  * DELIBERATELY OUT OF SCOPE, with the number printed on every run so the blind
  * spot is measured rather than implied: inline membership/ownership checks in
  * route handlers, entity loads (`if (!post) 404`), listings, and enrichment.
