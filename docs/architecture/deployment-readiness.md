@@ -34,7 +34,7 @@ ENABLED. FLAG ENABLED is not PRODUCTION REALIZED.**
 | Mobile deployed | **NO** | — |
 | Migrations applied to production | **35** | `production-applied-migrations.json`, reconciled against `supabase_migrations.schema_migrations` |
 | Migrations written, NOT applied to PRODUCTION | **10** | 2700, 2710, 2711, 2720–2724, 2730, 2740 |
-| Of those, applied to **portava-ci** | **2** | 2710 `20260908142429`, 2711 `20260908142652` — CI is not production and this row exists so the two are never read as one |
+| Of those, applied to **portava-ci** | **3** | 2710 `20260908142429`, 2711 `20260908142652`, 2700 `20260908145925` — CI is not production and this row exists so the two are never read as one |
 
 ## Per-surface
 
@@ -43,7 +43,7 @@ ENABLED. FLAG ENABLED is not PRODUCTION REALIZED.**
 
 | Surface | Branch built | Branch wired | Branch tested | Migr applied | Merged | Server deployed | Mobile deployed | Flag | Prod realized |
 |---|---|---|---|---|---|---|---|---|---|
-| Layover — feasibility record | yes | yes | yes | n/a | **no** | no | no | n/a | **no** |
+| Layover — feasibility record | yes | yes | yes | **ci only (2700)** — and NO WRITER exists, by design | **no** | no | no | n/a | **no** |
 | Layover — sharing gate / presence | yes | yes | yes | n/a | **no** | no | no | ladder flag FALSE (2740 unapplied ⇒ no row) | **no** |
 | Layover — safe return / abort | yes | yes | yes | **yes (2741)** | **no** | no | **client built, undeployed** | `layover_safe_return_status_enabled` FALSE | **no** |
 | Layover — crew constraints | yes | **no** (no route) | yes | n/a | **no** | no | no | n/a | **no** |
@@ -83,6 +83,24 @@ new "yes".
   Production was never contacted. `Migr applied` for that surface therefore
   reads `ci only`, which is a state this table did not previously have a word
   for and needed one.
+- **2700** (layover certified computations) was certified and applied to
+  **portava-ci only** in this session: object names verified free first, applied
+  bytes md5-matched against the committed file, postconditions re-read
+  independently, second apply and rollback both rehearsed inside transactions
+  that were rolled back. It creates a table with **no writer at all**, which the
+  migration's own header requires — a writer that names a column fails outright
+  on a database that has not run this, so the order is schema first. `Branch
+  wired` for that row therefore means "every route consults one certified record
+  per request", not "the record is stored anywhere".
+
+A live confirmation worth recording because so much depends on it: production's
+`public.profiles` has **182 inbound `ON DELETE CASCADE` foreign keys and ZERO
+outbound ones** — it does not reference `auth.users` at all. Account deletion
+anonymises the profile row rather than deleting it, so every one of those 182
+cascades is permanently disarmed. That is exactly what `lib/deletionDispositions
+.ts:5` already says; this pass measured it against the live catalogue instead of
+taking the comment's word, and it holds. Any table whose erasure story is "the
+profiles cascade takes it" is not erased.
 
 **Every row ends `PRODUCTION_REALIZED = no`, because the branch is unmerged.**
 That single fact dominates the table: no amount of branch-side completeness

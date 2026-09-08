@@ -32,6 +32,9 @@ import { existsSync } from "node:fs";
 
 const JSON_ONLY = process.argv.includes("--json");
 
+/** How much of a failing step's output to keep. Enough to name the defect. */
+const FAIL_EXCERPT_LINES = 25;
+
 /**
  * kind:
  *   gate      must exit 0
@@ -116,7 +119,16 @@ for (const step of STEPS) {
     step.kind === "liveonly" &&
     /\[(?:ciSupabaseGuard|ciProdReadOnlyAuditGuard)\] REFUSED|Nothing downstream of this point has run|no live credentials/i.test(output);
   const status = code === 0 ? "PASS" : refused ? "CANNOT-RUN" : "FAIL";
-  results.push({ id: step.id, kind: step.kind, exit: code, status, ms: Date.now() - started });
+  // Keep the tail of a failing step's output. The first version of this command
+  // reported six FAILs and not one line of WHY, so an operator had to re-run
+  // each by hand to find out — which is a pipeline hiding a status by another
+  // route: the verdict was visible and the reason was not. Tail rather than head
+  // because these tools print their findings last.
+  const excerpt =
+    status === "FAIL"
+      ? output.split("\n").filter((l) => l.trim().length > 0).slice(-FAIL_EXCERPT_LINES).join("\n")
+      : "";
+  results.push({ id: step.id, kind: step.kind, exit: code, status, ms: Date.now() - started, excerpt });
 }
 
 const pass = results.filter((r) => r.status === "PASS");
@@ -154,7 +166,14 @@ if (JSON_ONLY) {
   console.log("".padEnd(64, "─"));
   console.log(`  ${pass.length} passed, ${fail.length} failed, ${cannot.length} CANNOT-RUN (live credentials absent — not passes)`);
   console.log(`  CERTIFIED: ${summary.certified ? "YES" : "NO"}`);
-  if (fail.length > 0) console.log(`  failing: ${fail.map((f) => f.id).join(", ")}`);
+  if (fail.length > 0) {
+    console.log(`  failing: ${fail.map((f) => f.id).join(", ")}`);
+    for (const f of fail) {
+      console.log("");
+      console.log(`── ${f.id} — exit ${f.exit}, last ${FAIL_EXCERPT_LINES} non-empty line(s) ${"".padEnd(10, "─")}`);
+      console.log(f.excerpt || "  (the step failed and printed nothing — that is itself the finding)");
+    }
+  }
   console.log("");
   console.log(JSON.stringify({ certified: summary.certified, passed: pass.length, failed: fail.length, cannot_run: cannot.length, head_commit: headCommit }));
 }
