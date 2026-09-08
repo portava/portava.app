@@ -124,6 +124,12 @@ function makeReqClient() {
       ilike(col: string, val: any) { this._filters.push(["eq", col, val]); return this; },
       or() { return this; },
       order() { return this; },
+      // PostgREST `.limit()` — reached since the block check became
+      // lib/blockGuard's single `.or(...).limit(1)` query (one query instead of
+      // two `.maybeSingle()` reads, because a MUTUAL block is two rows and
+      // maybeSingle raised on them). Without this method the route crashes with
+      // a TypeError and a 500-from-crash would masquerade as a refusal.
+      limit() { return this; },
       maybeSingle() { this._maybeSingle = true; return this; },
       single() { this._maybeSingle = true; return this; },
 
