@@ -475,18 +475,33 @@ export async function unsaveGem(
   return { removed: (data ?? []).length > 0 };
 }
 
-/** Check if a user has saved a specific gem. */
+/**
+ * Check if a user has saved a specific gem.
+ *
+ * NO CALLERS as of this commit (reported to the lane owner rather than deleted).
+ * The unreadable-table case is still resolved here rather than left for whoever
+ * wires it up: supabase-js resolves on a database error, so `data === null`
+ * covers both "not saved" and "could not tell". This function's name promises an
+ * ANSWER, and "false" is the wrong shape for "unknown" — a caller would read it
+ * as "not saved" and, for instance, re-save and re-count. It throws, matching
+ * saveGem's own dedup read two functions up, so an unknown cannot be mistaken
+ * for a no.
+ */
 export async function hasSavedGem(
   db: SupabaseClient,
   gemId: string,
   userId: string,
 ): Promise<boolean> {
-  const { data } = await db
+  const { data, error } = await db
     .from("hidden_gem_saves")
     .select("gem_id")
     .eq("gem_id", gemId)
     .eq("user_id", userId)
     .maybeSingle();
+  if (error) {
+    logger.warn({ err: error, gemId, userId }, "hasSavedGem: hidden_gem_saves lookup failed");
+    throw error;
+  }
   return !!data;
 }
 
