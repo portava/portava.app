@@ -83,10 +83,24 @@ const SRC = join(API_ROOT, "src");
  * reason check-flag-polarity.mjs exposes FLAG_POLARITY_SRC. Setting it in CI
  * makes the check examine a different production; it is built to fail when
  * you do.
+ *
+ * THE SNAPSHOT IS THE EXPIRY DATE ON EVERY ANSWER THIS SCRIPT GIVES. It is a
+ * frozen copy, so the moment production moves, this check starts grading a
+ * database that no longer exists — and it does so SILENTLY, in whichever
+ * direction the drift happens to fall. On 2026-09-08 eighteen migrations had
+ * been applied to production against a snapshot captured on 09-07, which had
+ * turned several KNOWN entries into descriptions of an already-fixed world
+ * while the ratchet kept reporting green.
+ *
+ * So: when a migration is applied to production, refresh this file in the same
+ * change. Prove the refresh is COMPLETE rather than assuming it — capture the
+ * per-table digest, the function list and the flag list, and check each one
+ * reproduces production's own md5 over the identical construction. A partial
+ * refresh is worse than a stale one, because it looks current.
  */
 const SNAPSHOT = process.env.FLAG_SCHEMA_SNAPSHOT
   ? resolve(process.env.FLAG_SCHEMA_SNAPSHOT)
-  : join(SRC, "lib", "capability", "snapshots", "20260907-production-schema.json");
+  : join(SRC, "lib", "capability", "snapshots", "20260908-production-schema.json");
 const BASELINE = join(API_ROOT, "baseline", "20260819_baseline_structure.sql");
 const MIGRATION_DIRS = [join(API_ROOT, "migrations"), join(SRC, "migrations")];
 const REPORT = process.argv.includes("--report");
@@ -100,8 +114,30 @@ type Known = {
 };
 
 /**
- * Measured 2026-09-07 against snapshot 20260907-production-schema.json.
+ * Measured 2026-09-08 against snapshot 20260908-production-schema.json.
  * `objects` are `table`, `table.column` or `fn()`.
+ *
+ * FIVE ENTRIES WERE RETIRED ON 2026-09-08 by applying the migration rather than
+ * by editing the list, which is the only honest way to shrink it:
+ *
+ *   trust_engine_enabled          2371 — trust_profiles.evidence_weight/_count now exist
+ *   layover_plans_enabled         2420 — trip_kernel_execute() now exists
+ *   airport_mode_enabled          2410 + 2420 — rec_key and the kernel fn now exist
+ *   layover_safety_engine_enabled 2410 — layover_recommendations.rec_key now exists
+ *   hidden_gems_enabled           2420 — trip_kernel_execute() struck from its objects;
+ *                                 the entry REMAINS because hidden_gem_contributions
+ *                                 (2252) is still absent in production.
+ *
+ * What that does and does not mean. It closes the SCHEMA half of
+ * `capability = FLAG_ENABLED && SCHEMA_CAPABILITY_READY`: these flags are no
+ * longer ON over a database that cannot answer them. It does NOT mean the
+ * features run. The branch carrying their code is unmerged, and the layover
+ * upsert path is behind `layover_stable_recommendation_ids_enabled`, seeded
+ * FALSE by 2410 — so nothing a traveller sees has changed.
+ *
+ * These five were only visible because the snapshot was refreshed in the same
+ * change. Against the 09-07 capture the ratchet reported green while four of
+ * its entries described defects that no longer existed.
  */
 const KNOWN: Record<string, Known> = {
   // ── Guarded: the contract refuses before the failing call ───────────────────
@@ -165,41 +201,19 @@ const KNOWN: Record<string, Known> = {
     ],
     note: "Same IntelCaptureService sites as intel_capture_quick_signal (read via SURFACE_FLAG). HANDOVER: intel owner.",
   },
-  trust_engine_enabled: {
-    classification: "unguarded",
-    objects: ["trust_profiles.evidence_count", "trust_profiles.evidence_weight"],
-    note:
-      "services/trust/TrustScoreService.ts:352 updates the 2371 evidence columns in a deliberately separate statement; it PGRST204s on every " +
-      "recalculation in production and is logged at warn ('is migration 2371 applied?'). The score still lands; the evidence never does. " +
-      "HANDOVER: trust owner (services/trust/**).",
-  },
   hidden_gems_enabled: {
     classification: "unguarded",
     objects: [
       "hidden_gem_contributions", "hidden_gem_contributions.contribution_type", "hidden_gem_contributions.gem_id",
       "hidden_gem_contributions.id", "hidden_gem_contributions.notes", "hidden_gem_contributions.updated_at",
       "hidden_gem_contributions.user_id",
-      "trip_kernel_execute()",
     ],
     note:
       "services/hiddenGems/HiddenGemContributionService.ts:82-188 reads and upserts hidden_gem_contributions (2252, not in production). " +
-      "trip_kernel_execute() (2420) is a FLOOR false positive: reached through lib/tripKernel.ts whose gate is the null client from " +
-      "tripKernelClient(), a shape the closure walk cannot model. HANDOVER: hidden-gems owner (the contribution service).",
-  },
-  layover_plans_enabled: {
-    classification: "unguarded",
-    objects: ["trip_kernel_execute()"],
-    note:
-      "FLOOR false positive, same shape as hidden_gems_enabled: routes/airport.ts:829-834 obtains the kernel from tripKernelClient() " +
-      "(null unless trip_kernel_enabled, which has no row in production) in the SAME handler that reads this flag, and the scan cannot " +
-      "order a gate relative to the calls after it. No action; the entry exists so a REAL new object under this flag still fails.",
-  },
-  airport_mode_enabled: {
-    classification: "unguarded",
-    objects: ["layover_recommendations.rec_key", "trip_kernel_execute()"],
-    note:
-      "services/airport/LayoverRecommendationService.ts:390 names rec_key (2410, not in production) — REAL, HANDOVER: layover owner. " +
-      "trip_kernel_execute() is the tripKernelClient() floor false positive described under layover_plans_enabled.",
+      "HANDOVER: hidden-gems owner (the contribution service). " +
+      "trip_kernel_execute() WAS listed here as a FLOOR false positive; 2420 was applied to production 2026-09-08 so the function now " +
+      "exists and the object is no longer absent-and-referenced. The false-positive reasoning is preserved in git history rather than " +
+      "in a list entry that no longer describes anything.",
   },
   safe_return_enabled: {
     classification: "unguarded",
@@ -212,11 +226,6 @@ const KNOWN: Record<string, Known> = {
       "routes/safeReturn.ts reaches services/passport/PassportProjectionService.ts:1342-1353, which reads the locate_friends tables (2219, " +
       "not in production; locate_friends_enabled has no row there but that read is not gated on it). HANDOVER: passport owner " +
       "(services/passport/**) — gate the locate-friends read on its own flag or register a capability.",
-  },
-  layover_safety_engine_enabled: {
-    classification: "unguarded",
-    objects: ["layover_recommendations.rec_key"],
-    note: "Same site as airport_mode_enabled (routes/airport.ts:622/651 reach the recommendation service). HANDOVER: layover owner.",
   },
 };
 
