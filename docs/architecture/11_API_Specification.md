@@ -152,10 +152,9 @@ Three properties of the envelope are load-bearing:
   `retryable: true` (`http.ts:109-117`). It means a permission check *was not performed*, not
   that it was performed and failed. It is the code this campaign's answers are supposed to reach
   for.
-- **The global handler emits a DIFFERENT shape.** `app.ts:242-247` returns
-  `{ error: { code, message } }` — a nested object where every route returns a flat string. A
-  client that reads `body.error` as a code gets an object for any unhandled throw. This is an
-  unreconciled inconsistency, not a documented tier.
+- **The global handler used to emit a DIFFERENT shape** — `{ error: { code, message } }`, a
+  nested object where every route returns a flat string, so a client reading `body.error` as a
+  code got an object for any unhandled throw. **CLOSED.** The global handler no longer emits a different shape. It moved out of `app.ts` into `lib/errorEnvelope.ts:42#globalErrorHandler` — so the one response writer in the system that is not `sendError` can be tested against the real function instead of the hand-copied replica that could not fail when the original changed — and it now emits the same FLAT `{ error: "<code>", message }` every route emits (`app.ts:225#globalErrorHandler` registers it last). Decided in the direction of the 4159 `sendError` call sites, not the one handler.
 
 ### The defect class: supabase-js RESOLVES, it does not throw
 

@@ -243,6 +243,64 @@ describe("evaluateCitations over a synthetic tree", () => {
 
 // ---------------------------------------------------------------------------
 
+describe("Expo dynamic-route paths — `app/messages/[id].tsx`", () => {
+  /**
+   * WHY THE GRAMMAR HAS SQUARE BRACKETS IN IT.
+   *
+   * The client is an Expo Router app, so its route files are literally named
+   * `[id].tsx`, `[slug].tsx`, `[handle].tsx`. The path segment class excluded
+   * `[` and `]`, which made those citations INVISIBLE — and invisible is worse
+   * than unchecked here, because the line-local inheritance rule then resolves a
+   * following bare `:NNN` against whatever file WAS visible.
+   *
+   * Measured on the real corpus: census-telegraph.md:780 cites
+   * `app/messages/[id].tsx:1247-1252` and `:1260-1266` side by side. The first
+   * was not extracted at all; the second inherited `src/services/messaging.ts`
+   * (767 lines) from earlier on the line and was reported as out of range. The
+   * citation was right and the grammar was wrong — a false failure and a missed
+   * one from a single omission. 62 lines across docs/architecture/ carry a
+   * bracketed path.
+   */
+  it("extracts a bracketed route path as its own citation", () => {
+    const { citations } = extractCitations("see `app/messages/[id].tsx:1247-1252`");
+    assert.equal(citations.length, 1);
+    assert.equal(citations[0]?.file, "app/messages/[id].tsx");
+    assert.equal(citations[0]?.spec, "1247-1252");
+  });
+
+  it("a following bare :NNN inherits the BRACKETED file, not the one before it", () => {
+    // This is the whole point. Without brackets in the grammar the second spec
+    // silently belongs to messaging.ts.
+    const { citations } = extractCitations(
+      "`src/services/messaging.ts:238`, then `app/messages/[id].tsx:1247-1252` and `:1260-1266`",
+    );
+    assert.deepEqual(
+      citations.map((c) => `${c.file}:${c.spec}`),
+      ["src/services/messaging.ts:238", "app/messages/[id].tsx:1247-1252", "app/messages/[id].tsx:1260-1266"],
+    );
+  });
+
+  it("resolves a bracketed path by its real basename", () => {
+    const byBasename = new Map<string, string[]>([
+      ["[id].tsx", ["travel-buddy-standalone/app/messages/[id].tsx"]],
+    ]);
+    assert.deepEqual(
+      resolveCitationPath("app/messages/[id].tsx", byBasename),
+      ["travel-buddy-standalone/app/messages/[id].tsx"],
+    );
+  });
+
+  it("does not swallow a markdown link into the path", () => {
+    // `[text](path.ts:12)` must not extract `[text](path.ts` — the closing
+    // paren and the opening one are outside the segment class, so the path can
+    // only be what follows `(`.
+    const { citations } = extractCitations("[the runner](scripts/run.ts:12) does it");
+    assert.deepEqual(citations.map((c) => c.file), ["scripts/run.ts"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+
 describe("an anchored citation that goes OUT OF RANGE is still an anchored citation", () => {
   /**
    * THE DEFECT THIS PINS, AND HOW IT WAS FOUND.

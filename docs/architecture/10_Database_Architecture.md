@@ -256,7 +256,7 @@ human decides per file (`:908-931`).
 
 `.github/workflows/live-db.yml`, job **`schema-drift`** (`:561`). Steps, in order:
 
-1. **Allowlist preflight** — `assert-nonprod-supabase.sh` (`:614`). This is a fail-fast duplicate,
+1. **Allowlist preflight** — `assert-nonprod-supabase.sh` (`.github/workflows/live-db.yml:614`). This is a fail-fast duplicate,
    **not** the protection. The load-bearing assertion is in the execution path: every entry point
    imports `src/lib/ciSupabaseGuard.mjs` (or the read-only door) as its **first** import, and ES
    module evaluation order means the guard runs to completion before `@supabase/supabase-js` is

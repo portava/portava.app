@@ -124,16 +124,23 @@ export const COVERED = [
     file: 'docs/architecture/01_Portava_Discovery_Engine.md',
   },
   {
-    // The Wall census. Its 265 citations are the evidence for every one of its
-    // 205 requirement verdicts — a verdict whose citation has rotted is a
-    // verdict nobody can re-check, which is the whole failure mode a census
-    // exists to prevent. Adopted by the recensus that re-read them.
-    file: 'docs/architecture/census-wall.md',
-  },
-  {
-    // The Wall certification the census reconciles against. This is the file
-    // the header's old "KNOWN, NOT ADOPTED" note was about.
-    file: 'docs/architecture/wall-certification.md',
+    // THE WHOLE ARCHITECTURE CORPUS — 56 documents, ~6000 citations.
+    //
+    // This directory was the header's "KNOWN, NOT ADOPTED" note for a long time,
+    // on the argument that adopting it would ship a red check nobody could
+    // honestly fix. That argument was correct when it was written and is no
+    // longer true: the 50 unresolvable citations it was about were found, read
+    // one at a time against the tree, and corrected — see the header.
+    //
+    // WHAT ADOPTION BUYS HERE, STATED PLAINLY SO IT IS NOT READ AS MORE:
+    //   • every citation's file exists and is long enough — machine-verified,
+    //     and now enforced, so a file that shrinks or moves goes red;
+    //   • the ~120 citations that carry an anchor are pinned to a line.
+    // WHAT IT DOES NOT BUY: the other ~5900 are range-only, and the Wall pass
+    // proved the IN-RANGE-BUT-WRONG class is much larger than the out-of-range
+    // one. Anchor them a document at a time, as the Wall recensus did, and raise
+    // MIN_ANCHORED_CITATIONS with them.
+    dir: 'docs/architecture',
   },
   {
     // Source, not documentation — and covered for exactly the reason the docs
@@ -170,10 +177,17 @@ export const COVERED = [
 // file long enough for both to pass a range check), which is invisible to
 // everything in this script except the anchor half.
 //
+// Adopting all of docs/architecture/ brought the corpus to ~6150 citations and
+// the measured anchor count to 180, so the floor is 180. Note what that ratio
+// says and do not let it be read as coverage: 180 of 6150 citations are pinned
+// to a line. The rest are range-only, and the Wall pass measured the
+// IN-RANGE-BUT-WRONG class as the larger of the two. This floor stops anchors
+// being deleted; it does not claim the corpus is anchored.
+//
 // Whoever adds anchors next should move this number up with them in the same
 // PR — that is the ratchet doing its job, not a chore.
 // ---------------------------------------------------------------------------
-export const MIN_ANCHORED_CITATIONS = 96;
+export const MIN_ANCHORED_CITATIONS = 180;
 
 const SKIP_DIRS = new Set(['.git', 'node_modules']);
 
@@ -189,6 +203,18 @@ const CITED_EXTS = [
 // citation grammar
 // ---------------------------------------------------------------------------
 const EXT_ALT = CITED_EXTS.join('|');
+// One path SEGMENT. `[` and `]` are in here because this repo's client is an
+// Expo Router app and its route files are literally named `[id].tsx`,
+// `[slug].tsx`, `[handle].tsx`. Without them the grammar cannot see
+// `app/messages/[id].tsx:1247` AT ALL — and that is worse than not checking it,
+// because a bare `:1260` later on the same line then inherits whatever file WAS
+// visible, silently naming the wrong one. Measured 2026-09-08:
+// census-telegraph.md:780 cited `app/messages/[id].tsx:1247-1252` and `:1260-1266`
+// side by side; the first was invisible and the second resolved against
+// `src/services/messaging.ts` (767 lines) and was reported as out of range. The
+// citation was correct; the grammar was wrong. 62 lines across
+// docs/architecture/ carry a bracketed path.
+const SEG = String.raw`[\w.@+\[\]-]`;
 const SPEC = String.raw`\d+(?:-\d+)?(?:,\d+(?:-\d+)?)*`;
 // An anchor is everything up to the closing backtick, quote or whitespace.
 // It is a LITERAL substring to find, not a pattern: `#` in an anchor would be
@@ -197,7 +223,7 @@ const ANCHOR = String.raw`(?:#([^\s\x60"'#]+))?`;
 
 // path/to/file.ts:12  |  file.ts:12-19  |  file.ts:277,375  |  file.ts:208-216#needle
 export const CITATION_RE = new RegExp(
-  String.raw`(^|[^\w./:@-])((?:[\w.@+-]+\/)*[\w.@+-]+\.(?:${EXT_ALT})):(${SPEC})${ANCHOR}`,
+  String.raw`(^|[^\w./:@-])((?:${SEG}+\/)*${SEG}+\.(?:${EXT_ALT})):(${SPEC})${ANCHOR}`,
   'g',
 );
 // a bare `:408` in backticks continues the most recently named file ON THE SAME LINE
@@ -208,7 +234,7 @@ export const INHERITED_RE = new RegExp(String.raw`\x60:(${SPEC})${ANCHOR}\x60`, 
 //     `routes/discovery.ts`: Cache A is checked at `:1786`
 // resolves `:1786` against whatever file was cited last, which is a guess.
 export const BARE_PATH_RE = new RegExp(
-  String.raw`\x60((?:\.{1,2}\/)*(?:[\w.@+-]+\/)*[\w.@+-]+\.(?:${EXT_ALT}))\x60`,
+  String.raw`\x60((?:\.{1,2}\/)*(?:${SEG}+\/)*${SEG}+\.(?:${EXT_ALT}))\x60`,
   'g',
 );
 
