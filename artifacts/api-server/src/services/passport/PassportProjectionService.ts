@@ -35,7 +35,7 @@ import { getDisplayTrustScore, getTrustProfile } from "../trust/TrustScoreServic
 import { getRestrictionState, type RestrictionState } from "../trust/TrustRestrictionService.js";
 import { buildStats } from "./PassportMapService.js";
 import { buildUnifiedStamps, filterUnifiedStamps, type UnifiedStamp, type StampSource } from "./UnifiedStampService.js";
-import { loadMemories } from "./PassportMemoryService.js";
+import { loadMemoriesRead } from "./PassportMemoryService.js";
 import { filterMemories } from "./PassportPrivacyGuard.js";
 import { countUserTrips } from "../../lib/tripCounts.js";
 import { nameVisibilitySet, sanitizeIdentity } from "../../lib/publicIdentity.js";
@@ -302,6 +302,15 @@ export interface MemoryProjection {
 }
 
 /** §29 aggregate (TABLE 28), plus a server-side `restricted` discriminator. */
+/**
+ * A section of the projection whose underlying read FAILED.
+ *
+ * Every name here corresponds to a field that is a CLAIM ABOUT A PERSON, and
+ * whose failure mode is a zero or an empty array indistinguishable from the
+ * truthful version of the same value.
+ */
+export type PassportUnreadableSection = "stats" | "stamps" | "memories";
+
 export interface PassportProjection {
   userId: string;
   identity: PassportIdentity;
@@ -319,6 +328,30 @@ export interface PassportProjection {
   sharedContext?: SharedContextProjection;
   capabilities: PassportActionCapabilities;
   viewerContext: PassportViewerContext;
+  /**
+   * Sections whose underlying read FAILED, so the value carried for them is a
+   * placeholder rather than a measurement.
+   *
+   * ── WHY A PASSPORT NEEDS THIS FIELD ──────────────────────────────────────
+   * Absent it, `stats: { countries: 0, stamps: 0 }` and `memories: []` were the
+   * projection's answer to BOTH "this traveller has earned nothing" and "the
+   * table could not be read". They are not the same statement: the first is a
+   * claim about a person and the second is a claim about our infrastructure,
+   * and rendering the second as the first tells a traveller their record is
+   * empty when it is merely unavailable.
+   *
+   * The reason it could go unnoticed for so long is mechanical: supabase-js
+   * RESOLVES on a database error rather than rejecting, so a failed read
+   * arrives as `{ data: null, error }`, the `?? []` turns it into an empty
+   * collection, and the `try/catch` wrapped around it is dead code that never
+   * fires. Nothing throws; nothing logs at the call site; the number is simply
+   * wrong and confident.
+   *
+   * ABSENT when every read succeeded. Never used to widen or narrow what a
+   * viewer may see — a degraded read stays fail-closed exactly as before; this
+   * only stops the result being PRESENTED as a fact.
+   */
+  unreadable?: PassportUnreadableSection[];
   /** Present when privacy/blocking reduced the projection to a minimal card. */
   restricted?: { reason: string };
 }
@@ -1702,9 +1735,17 @@ export async function buildPassportProjection(
 
   // 4. Shared canonical reads (in parallel).
   const [statsRaw, tripCount, unified, quick, prefs, restrictionState, reputation, buddyRep] = await Promise.all([
-    buildStats(sc, userId).catch(() => ({ countries: 0, cities: 0, hiddenGemStamps: 0, totalStamps: 0 } as any)),
+    // The `.catch` arms below are the LAST resort, not the failure path: a
+    // PostgREST failure resolves, so these fire only on a genuine throw. Both
+    // now report `readFailed` so the two ways of not-seeing-the-data converge
+    // on the same honest answer instead of on a confident zero.
+    buildStats(sc, userId).catch(
+      () => ({ countries: 0, cities: 0, hiddenGemStamps: 0, totalStamps: 0, readFailed: true } as any),
+    ),
     countUserTrips(sc, userId).catch(() => ({ count: 0 })),
-    buildUnifiedStamps(sc, userId).catch(() => ({ stamps: [] as UnifiedStamp[], count: 0 } as any)),
+    buildUnifiedStamps(sc, userId).catch(
+      () => ({ stamps: [] as UnifiedStamp[], count: 0, readFailed: true } as any),
+    ),
     loadQuickStatus(sc, userId),
     loadVisibilityPrefs(sc, userId),
     // The owner's ACTIVE trust restrictions — never throws (degraded reads
@@ -1723,6 +1764,13 @@ export async function buildPassportProjection(
     stamps: unified.count ?? 0,
     trips: tripCount.count ?? 0,
   };
+
+  // Sections whose numbers above are placeholders because the read did not
+  // happen. Collected here, next to the reads, rather than inferred later from
+  // a zero — a zero is exactly the thing that cannot be distinguished.
+  const unreadable: PassportUnreadableSection[] = [];
+  if (statsRaw.readFailed === true) unreadable.push("stats");
+  if (unified.readFailed === true) unreadable.push("stamps");
 
   // 5. Traveler state + availability + intent (availability/intent gated).
   // Gate 2 for the crew signal: the SAME location test `buildTravelerState`
@@ -1786,8 +1834,9 @@ export async function buildPassportProjection(
   let memories: MemoryProjection[] = [];
   if (tierPermits(prefs?.memories_visible, callerCtx)) {
     try {
-      const raw = await loadMemories(sc, userId);
-      const guarded = filterMemories(raw as any[], callerCtx);
+      const memRead = await loadMemoriesRead(sc, userId);
+      if (memRead.readFailed) unreadable.push("memories");
+      const guarded = filterMemories(memRead.rows as any[], callerCtx);
       memories = guarded.slice(0, 24).map((m: any) => ({
         id: m.id,
         title: m.title ?? null,
@@ -1800,6 +1849,7 @@ export async function buildPassportProjection(
       }));
     } catch {
       memories = [];
+      if (!unreadable.includes("memories")) unreadable.push("memories");
     }
   }
 
@@ -1858,6 +1908,9 @@ export async function buildPassportProjection(
     sharedContext,
     capabilities,
     viewerContext: context,
+    // Absent when everything was read. Present only to stop a placeholder being
+    // shown as a fact; it never changes what this viewer is allowed to see.
+    ...(unreadable.length > 0 ? { unreadable } : {}),
   };
   return projection;
 }
@@ -1925,6 +1978,16 @@ export function buildProjectionCachePolicy(projection: PassportProjection): Proj
   // A restricted (blocked/unavailable) card carries a relationship-dependent
   // `restricted` marker — never cache it beyond the dynamic horizon.
   if (projection.restricted) sections.restricted = PASSPORT_DYNAMIC_MAX_AGE;
+  // A DEGRADED projection must not be cached at the static hour. `stamps` and
+  // `stats` are static-tier precisely because a stamp shelf changes rarely —
+  // but a shelf that reads empty because the table was unreachable changes the
+  // moment the table comes back, and caching it for an hour turns a transient
+  // failure into an hour of telling a traveller they have earned nothing.
+  // Every unreadable section drops to the dynamic horizon, which pulls the
+  // whole response's max-age down with it.
+  for (const section of projection.unreadable ?? []) {
+    sections[section] = PASSPORT_DYNAMIC_MAX_AGE;
+  }
   const ttls = Object.values(sections);
   const maxAge = ttls.length ? Math.min(...ttls) : PASSPORT_DYNAMIC_MAX_AGE;
   return { maxAge, sections };

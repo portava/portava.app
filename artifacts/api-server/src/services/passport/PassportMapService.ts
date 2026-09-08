@@ -140,10 +140,7 @@ export const STATS_SLUG_BUCKETS = {
 /**
  * Compute passport stats for a user.
  */
-export async function buildStats(
-  db: SupabaseClient,
-  userId: string,
-): Promise<{
+export interface PassportStats {
   countries: number;
   cities: number;
   neighborhoods: number;
@@ -152,7 +149,25 @@ export async function buildStats(
   hiddenGemStamps: number;
   safeReturnStamps: number;
   totalStamps: number;
-}> {
+  /**
+   * TRUE when the underlying `user_stamps` read FAILED, so every number above
+   * is a placeholder zero rather than a measurement.
+   *
+   * Without this field the two cases are literally the same object: a traveller
+   * who has earned nothing and a table that could not be read both produce
+   * `{ countries: 0, cities: 0, totalStamps: 0, ... }`. Passport stats are a
+   * CLAIM ABOUT A PERSON — "you have been to 0 countries" — so rendering the
+   * second as the first is a false statement, not a degraded one. supabase-js
+   * RESOLVES on a database error, so no caller could have inferred the
+   * difference from a thrown exception either; this flag is the only carrier.
+   */
+  readFailed: boolean;
+}
+
+export async function buildStats(
+  db: SupabaseClient,
+  userId: string,
+): Promise<PassportStats> {
   // Bug fix (2026-07-28): this previously read from `passport_stamps`, a stale
   // legacy table (last write 2026-05-10) that the live award pipeline
   // (src/routes/posts.ts trip/location-milestone stamps) never writes to.
@@ -173,6 +188,8 @@ export async function buildStats(
       countries: 0, cities: 0, neighborhoods: 0,
       planStamps: 0, hostStamps: 0, hiddenGemStamps: 0,
       safeReturnStamps: 0, totalStamps: 0,
+      // Not "this traveller has nothing" — "we could not look". See PassportStats.
+      readFailed: true,
     };
   }
 
@@ -205,5 +222,6 @@ export async function buildStats(
     hiddenGemStamps,
     safeReturnStamps,
     totalStamps: rows.length,
+    readFailed: false,
   };
 }

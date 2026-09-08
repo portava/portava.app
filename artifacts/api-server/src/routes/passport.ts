@@ -1487,6 +1487,19 @@ async function resolveProjectionUserId(sc: any, param: string): Promise<string |
 // sections every 30s). A weak ETag over the projection enables 304 revalidation.
 // The response is `private` for an authenticated viewer (it is viewer-specific)
 // and `public` for the anonymous view (identical for every anonymous caller).
+//
+// DEGRADED READS: `projection.unreadable` names any section whose underlying
+// read FAILED, and is ABSENT when everything was read. It exists because a
+// passport is a claim about a person: without it `stats: { countries: 0 }` and
+// `memories: []` were the aggregate's answer to both "this traveller has earned
+// nothing" and "the table could not be read", and supabase-js RESOLVES on a
+// database error so nothing here could tell them apart. A client must not
+// present a section named there as a fact. Every named section also drops to
+// the DYNAMIC cache tier (buildProjectionCachePolicy), which pulls this
+// response's max-age down with it — an unreadable shelf cached for the static
+// hour would turn a transient failure into an hour of a false statement. The
+// ETag is computed over the whole projection, so a degraded body and a healthy
+// one never share a validator.
 router.get("/passport/:userId/projection", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "not_found", "Unavailable"); return; }
