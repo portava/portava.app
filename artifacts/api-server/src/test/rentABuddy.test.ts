@@ -162,8 +162,21 @@ function makeClient(userId: string, role = "user") {
       _count: false,
       _maybeSingle: false,
       _eagerCaptured: false,
+      // Set by a `.select()` chained AFTER a mutation, which is what makes the
+      // statement RETURNING. Until this existed the fake resolved EVERY update
+      // as `{ data: null, error: null }` — the one shape a zero-row update and
+      // a full-table update share — so a caller that reads the affected-row
+      // count (the sweeper's expiry, auto-completion and no-show escalation all
+      // do now) saw "matched nothing" for every write the fake performed.
+      _returning: false,
 
-      select(cols?: string, opts?: any) { if (opts?.count) this._count = true; return this; },
+      select(cols?: string, opts?: any) {
+        if (opts?.count) this._count = true;
+        if (this._updateData !== null || this._insertData !== null || this._upsertData !== null) {
+          this._returning = true;
+        }
+        return this;
+      },
       insert(data: any) {
         this._insertData = data;
         // For every table in FIRE_AND_FORGET_TABLES, the production code issues
@@ -332,25 +345,36 @@ function makeClient(userId: string, role = "user") {
             return { data: null, error: null };
           }
           if (t === "rent_buddy_bookings") {
-            for (const [op, col, val] of this._filters) {
-              if (op === "eq" && col === "id" && state.bookings?.[val]) {
-                if (this._updateData === "__delete__") {
-                  delete state.bookings[val];
-                } else {
-                  state.bookings[val] = { ...state.bookings[val], ...this._updateData };
+            // EVERY filter is applied, not just the id ones. The sweeper now
+            // repeats its status guard on the write (`.in("id", ids)` AND
+            // `.in("status", …)`), so a fake that honoured only the id list
+            // would update a booking the real statement excludes — and would
+            // then report it as affected.
+            const matchesAll = (row: any): boolean =>
+              this._filters.every(([op, col, val]: [string, string, any]) => {
+                const v = row?.[col];
+                switch (op) {
+                  case "eq":  return v === val;
+                  case "neq": return v !== val;
+                  case "in":  return (val as any[]).includes(v);
+                  case "lt":  return v != null && v < val;
+                  case "lte": return v != null && v <= val;
+                  case "gt":  return v != null && v > val;
+                  case "gte": return v != null && v >= val;
+                  default:    return true;
                 }
-              }
-              if (op === "in" && col === "id") {
-                for (const id of val as string[]) {
-                  if (state.bookings?.[id]) {
-                    if (this._updateData === "__delete__") {
-                      delete state.bookings[id];
-                    } else {
-                      state.bookings[id] = { ...state.bookings[id], ...this._updateData };
-                    }
-                  }
-                }
-              }
+              });
+            const matched = Object.values(state.bookings ?? {}).filter(matchesAll) as any[];
+            const matchedIds = matched.map((r: any) => r.id);
+            for (const id of matchedIds) {
+              if (this._updateData === "__delete__") delete state.bookings[id];
+              else state.bookings[id] = { ...state.bookings[id], ...this._updateData };
+            }
+            // RETURNING: the rows the statement MATCHED, `[]` when it matched
+            // none. Without `.select()` chained, `null` — as supabase-js does.
+            if (this._returning) {
+              const rows = matchedIds.map((id: string) => ({ id }));
+              return { data: this._maybeSingle ? (rows[0] ?? null) : rows, error: null };
             }
           }
           if (t === "rent_buddy_policy_flags") {
@@ -362,15 +386,23 @@ function makeClient(userId: string, role = "user") {
             }
           }
           if (t === "rent_buddy_profiles") {
+            const touched: any[] = [];
             for (const [, col, val] of this._filters) {
               if (col === "user_id") {
                 for (const p of Object.values(state.buddyProfiles ?? {})) {
-                  if ((p as any).user_id === val) Object.assign(p as any, this._updateData);
+                  if ((p as any).user_id === val) { Object.assign(p as any, this._updateData); touched.push(p); }
                 }
               }
               if (col === "id" && state.buddyProfiles?.[val]) {
                 Object.assign(state.buddyProfiles[val], this._updateData);
+                touched.push(state.buddyProfiles[val]);
               }
+            }
+            // RETURNING, same rule: a risk hold that matched no buddy profile
+            // must be distinguishable from one that landed.
+            if (this._returning) {
+              const rows = touched.map((r: any) => ({ id: r.id, user_id: r.user_id }));
+              return { data: this._maybeSingle ? (rows[0] ?? null) : rows, error: null };
             }
           }
           return { data: null, error: null };
