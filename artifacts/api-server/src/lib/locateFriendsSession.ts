@@ -804,9 +804,30 @@ export function projectMember(input: ProjectMemberInput): MemberView {
     sessionCeiling,
     RUNG_PRECISION_CEILING[position.rung],
     DECAY_STAGE_CEILING[stage],
-    // §24 only constrains a member we actually have a coordinate for; with no
-    // coordinate there is nothing a zone could be asked about.
-    rawPoint ? protectionCeiling(rawPoint, zones) : "precise",
+    // §24. Two distinct cases, and conflating them was a leak:
+    //
+    //  - POLICY UNKNOWN (`zones === null`, i.e. the read FAILED) constrains
+    //    EVERY member, coordinate or not. This used to fall through to the
+    //    `"precise"` no-op below whenever `rawPoint` was null, because the
+    //    refusal lived inside `protectionCeiling` and that was only consulted
+    //    for a member we could geolocate. A `manual_checkpoint` never carries
+    //    a coordinate — positionRowFor keeps a point only at `precise` — so
+    //    those members sailed past §24 entirely and had their
+    //    `checkpointLabel` served with the policy unreadable. A checkpoint
+    //    label is a PLACE NAME: precisely the disclosure §24 governs.
+    //    `readSessionForViewer` already documents this as gate (5) ("the §24
+    //    policy must be readable; null means nobody") and `loadProtectedZones`
+    //    states the same contract; neither was true for this class of member.
+    //    It is not hypothetical: `protected_zones` does not exist in
+    //    production (2217 unapplied), so this is the branch taken today.
+    //
+    //  - POLICY READABLE but the member has NO coordinate: genuinely nothing a
+    //    zone could be asked about, so no constraint. Unchanged.
+    zones === null
+      ? "none"
+      : rawPoint
+        ? protectionCeiling(rawPoint, zones)
+        : "precise",
   );
 
   if (precision === "none") return notSharing(memberId);
@@ -1087,7 +1108,9 @@ const EMPTY_READ: ReadResult = Object.freeze({
  *   3. the viewer must hold a live membership row,
  *   4. the block set must be readable; null means nobody (fetchBlockedSet's
  *      documented contract, and the same choice TripCrewLocationService makes),
- *   5. the §24 policy must be readable; null means nobody,
+ *   5. the §24 policy must be readable; an unreadable one (null) licenses no
+ *      precision for ANY member — enforced inside `projectMember`, for members
+ *      with and without a coordinate alike,
  *   6. each member is projected through `projectMember`, which applies the
  *      decay and the ceilings.
  *
