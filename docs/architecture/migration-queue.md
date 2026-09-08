@@ -41,9 +41,10 @@ owner decision — neither is a backlog item.
 | 16 | `2711` memory kernel execute | **2710** | **ci ✓** `20260908142652` | same enumeration | **not applied to production** | stored statement md5 `e84267cad3f1b49c0f9c85addadfa4f0` = file on disk; transaction rollback PROVED by fault injection (a `BEFORE INSERT` trigger on the outbox), with a control run that commits when the fault is removed, and an outbox identity gap as physical corroboration | **ci only** |
 | 17 | `2700` layover certified computations | none (creates 1 table, alters nothing) | **ci ✓** `20260908145925` applied, second-applied, rollback-rehearsed | 4 object names (`layover_certified_computations`, its pkey, `layover_certcomp_session_idx`, `layover_certcomp_session_hash_uidx`) and the policy name all FREE on CI; `layover_recommendations` carries no `engine_version`/`input_hash` (the co-toucher postcondition would have aborted); `gen_random_uuid` present; `layover_sessions` PK `id`, 0 rows | **not applied to production** — read-only listing of production's `public` schema on 2026-09-08 confirms the table is absent | stored statement md5 `2f7199c11bea8903f80b7da660781164` **equals** `printf '%s' "$(cat 2700….sql)" \| md5sum` — the applied bytes are the committed bytes, not a retyped copy. Independent re-read: RLS on, exactly 1 policy (`layover_certcomp_owner_read`/SELECT), anon holds NOTHING and authenticated holds SELECT only, service_role full, unique index present, 0 rows, `layover_recommendations` still 22 columns. Second apply inside a ROLLED-BACK transaction: all postconditions passed — unlike 2711, no postcondition asserts the table is empty, so it stays re-appliable after use. Rollback rehearsed the same way: 4 relations → 0, 1 policy → 0, grants → 0, `layover_recommendations` unchanged | **ci only** |
 | 18 | `2740` layover presence ladder flag | none (one `feature_flags` row) | **ci ✓** `20260908150439` applied, owner-flip survival and rollback both rehearsed | flag row ABSENT on CI; `feature_flags` has 86 rows and the two other layover flags are FALSE; the file's own precondition (the table exists) holds | **not applied to production** | flag seeded FALSE, 86 → 87 rows, the other two layover flags byte-identical. **Owner-flip survival PROVED, not assumed**: the file says its postcondition deliberately omits `enabled = FALSE` so "a later owner flip is an owner decision this migration must survive being re-run over" — flipped ON, re-ran the migration, flag STAYED ON, postcondition passed. **Rollback rehearsed counting the whole table, not just the target row**: residue for a flag migration is OTHER FLAGS, and a `DELETE` that took one too many would read as "capability off" rather than as an error, because `isFlagEnabled` is fail-closed. 87 → 86, layover flags back to exactly the two that predated it | **ci only** |
-| 19 | `2450` trip/participant families | **2420** | — | — | queued | — | — |
-| 20 | `2500` `JOIN_VIA_LINK` + host | **2450** | — | — | queued | — | — |
-| 21 | `2490` destructive privilege boundary | none | ✓ | 375 app-owned offenders → **0**; 3 extension-owned excluded | **APPLIED prod 20260908011416** | vacuity guard ≥300 relations; 3472 `has_table_privilege` probes, 0 held | ✓ |
+| 19 | `2730` memory derivative registry | **2710** (a registry keyed on domain-event identity cannot precede the events) | **ci ✓** `20260908151001` applied, constraints exercised, rollback rehearsed | 6 relation names, 2 constraint names and the trigger name all FREE on CI; both stated preconditions hold (`public.set_updated_at()` and `public.memories` present); GIN available | **not applied to production** | RLS on with **ZERO policies**, which is what the file asks for and is checked as an equality rather than a floor — deny-by-default is the design, and one permissive policy would be the defect. anon/authenticated hold nothing; 5 indexes; 3 CHECKs; trigger present; 0 rows; `public.memories` still 21 columns. **The file ships no postcondition block**, so its constraints were asserted by nobody — all five exercised with positive controls (see below). Rollback rehearsed: 5 relations → 0, 3 constraints → 0, 1 trigger → 0, and `set_updated_at()` SURVIVES | **ci only** |
+| 20 | `2450` trip/participant families | **2420** | — | — | queued | — | — |
+| 21 | `2500` `JOIN_VIA_LINK` + host | **2450** | — | — | queued | — | — |
+| 22 | `2490` destructive privilege boundary | none | ✓ | 375 app-owned offenders → **0**; 3 extension-owned excluded | **APPLIED prod 20260908011416** | vacuity guard ≥300 relations; 3472 `has_table_privilege` probes, 0 held | ✓ |
 | — | `2224`, `2315` → `2333` | each other | — | both tables absent in production | queued | 2333 aborts without them | — |
 
 ## Not queued, and why
@@ -55,6 +56,37 @@ owner decision — neither is a backlog item.
 | `2250` media asset canonical model | **`do_not_apply` as written.** Its own postcondition asserts the flag is FALSE; it is TRUE, so it fails on itself. `2470` exists because of this. |
 | `2510` layover postconditions | Verify-only, **strictly after `2335`**. Raises by design until then. |
 | PR #461's `2313` | **Blocked on the PR.** Unpatched it reintroduces the `trip_members` self-join wherever it runs after `2530`; the rebase patch is in `docs/architecture/`. |
+
+## What was proved about 2730's constraints, since the file proves nothing itself
+
+2730 has preconditions and no postconditions. Every constraint below was
+exercised on CI inside a transaction that was ROLLED BACK, each with a POSITIVE
+CONTROL, because a constraint that refuses everything is as useless as one that
+refuses nothing.
+
+| Attempt | Result |
+|---|---|
+| a well-formed ACTIVE row | **accepted** (control) |
+| `REVOKED` with no `revoked_at` / `revocation_reason` | **refused** — an unexplained revocation is as unauditable as an unrecorded one |
+| `REVOKED` still carrying `row_count = 5` | **refused** — a revoked derivative holds no content |
+| `REVOKED` with a reason, a timestamp and `row_count = 0` | **accepted** (control) |
+| a second row on the same `(projection_id, scope_key)` | **refused** — one registration per built artifact |
+| `revocation_state = 'BOGUS'` | **refused** |
+| an `UPDATE` over a writer-supplied `updated_at` of 2001-01-01 | **overwritten with transaction-now** — a writer cannot forge it |
+
+The last row is also a correction of my own first reading. The first probe
+asserted `updated_at > created_at` after an UPDATE and got FALSE, which looks
+exactly like a dead trigger. It is not: `now()` is TRANSACTION START time, so a
+row created and updated inside one transaction has `created_at = updated_at` by
+construction and that comparison can never move — the same fact the memory-kernel
+lane measured for the outbox. The assertion was wrong, not the trigger.
+
+One observation that is not a defect but should not be silently absorbed: the
+migration's `GRANT SELECT, INSERT, UPDATE, DELETE … TO service_role` is a no-op.
+`service_role` already held all seven privileges — TRUNCATE, REFERENCES and
+TRIGGER included — from the Supabase `ALTER DEFAULT PRIVILEGES` blanket that
+every `CREATE TABLE` receives. The `REVOKE`s from `anon`/`authenticated` are the
+statements doing the work.
 
 ## Known defects in queued files, found during certification
 
