@@ -114,7 +114,7 @@ zone covering the viewport, Crowd Flow refuses rather than approximating.
 | `SENSING_AUTH_POSTURE` | `2481` | OWNER | No | Its CHECK constrains `issuance_class` to `authenticated_profile`. Under Option B the file is never run |
 | `MEDIA_CANONICAL_FLAG` | `2470` | OWNER | No | `media_canonical_enabled` is TRUE in production while the columns are absent — the condition that caused three weeks of swallowed write loss |
 | `LOCATION_PRECISION_DEFAULT` | *nothing* | OWNER | n/a | `2338` defaults to a no-op on purpose, so applying it does **not** pre-empt the product choice |
-| `STORY_HIGHLIGHT_VISIBILITY` | *nothing in this band* | OWNER | n/a | `2339` gates feed bounding only, behind a FALSE flag |
+| `STORY_HIGHLIGHT_VISIBILITY` | *nothing in this band* | OWNER | n/a | **Restated 2026-09-08 and it is not the flag.** `2339` gates feed bounding only, behind a FALSE flag. The unbound decision is what save-to-highlight does with the Story audiences a Highlight cannot represent — see below |
 | Layover L50 — what BLOCKED means on screen | — | OWNER | No | Whether an unsafe recommendation is hidden, greyed, or shown with a warning |
 | `EVENT_START_TRANSITION` | `2600` (**not applied to production**) | **OWNER** | Yes, safely | Classified 2026-09-08 — see below |
 | `MAP_CANCELLED_TRIP_VISIBILITY` | *nothing* | **OWNER** | Yes, safely | Classified 2026-09-08 — see below |
@@ -123,6 +123,10 @@ zone covering the viewport, Crowd Flow refuses rather than approximating.
 | `SAVE_COUNT_UNSAVE_ASYMMETRY` | *needs an RPC* | **OWNER** | Partly | **NEW 2026-09-08.** `save_count` drifts upward for ever; the correct fix needs a schema change — see below |
 | `RAB_EARNINGS_LEDGER_VOIDING` | *nothing* | **OWNER** | Yes, safely | **NEW 2026-09-08.** Declined, expired and cancelled bookings still show estimated earnings — see below |
 | `MESSAGING_DEGRADED_READ_POSTURE` | *nothing* | **OWNER** | Yes, safely | **NEW 2026-09-08.** 43 enrichment reads across ~15 endpoints: 503 or degrade visibly — see below |
+| `TRIP_CREW_SIGNAL_ROLE_COVERAGE` | *nothing* | **OWNER** | Yes, but it WIDENS a gate | **NEW 2026-09-08.** `lib/tripMembership.ts` omits `co_host` and `viewer` while claiming to mirror `getMemberRole` — see below |
+| `LAYOVER_RETURN_REMINDER_DELIVERY` | *nothing* | **OWNER** | Yes, safely | **NEW 2026-09-08.** The server-side push path for the return deadline is dead code — see below |
+| `MODERATION_TARGET_NULLABILITY` | *needs a schema change* | **OWNER** | No | **NEW 2026-09-08.** `moderation_actions.target_user_id` is NOT NULL, which is what forces the skip-vs-fabricate dilemma — see below |
+| `INTERACTION_COOLDOWN_READ_DIRECTION` | *nothing* | **OWNER** | Yes, safely | **NEW 2026-09-08.** A measured fail-open; flipping it blocks legitimate pairs during an outage across 15+ routes — see below |
 
 ### `PASSPORT_CREW_PRESENCE_AUDIENCE` — surfaced while separating Safe Return from Locate Friends
 
@@ -385,3 +389,135 @@ a function whose name does not match the gate patterns leaves the ledger without
 being fixed. Widening the scope is the honest next step and is deliberately NOT
 done here: it would surface a new population mid-pass and the burn-down would
 stop meaning what it currently means. Recorded as engineering work, not closed.
+
+### `STORY_HIGHLIGHT_VISIBILITY` — restated 2026-09-08, and it is NOT the feed-bounding flag
+
+`2339` gates feed bounding, is seeded FALSE, and was left alone. The unbound
+decision is narrower and sharper: **what should `POST /stories/:id/save-to-highlight`
+do with the Story audiences a Highlight cannot represent?**
+
+Measured against the committed production schema snapshot, not estimated:
+`stories` carries `trip_id`, `allowed_user_ids`, `hidden_user_ids` and
+`close_friends_only`. **`highlights` carries none of those four columns.**
+
+| Story rung | Highlight target | Why |
+|---|---|---|
+| `public` | `public` | identical audience |
+| `circle_only` | `circle_only` | identical predicate both sides |
+| `close_friends` | **none** | no close-friends audience on Highlights |
+| `friends_only` | **none** | no mutual-follow audience |
+| `custom` | **none** | no `allowed_user_ids` / `hidden_user_ids` |
+| `trip_crew` | **none** | looks like `trip_only` and is not |
+
+So four of six rungs have literally nowhere to land, and three Highlight
+visibilities (`travelers_nearby`, `trip_only`, `private`) are unreachable by
+promotion at all. The `trip_crew` case is the one that must not be waved
+through: a trip_crew Story admits the accepted crew of ONE trip
+(`stories.trip_id`), while `sharesAcceptedTrip` resolves `trip_only` across
+**every** trip the viewer is accepted crew of. Mapping one to the other is a
+WIDENING, not a translation — from one crew to every crew the owner has ever
+had.
+
+Today the code refuses those four rungs with `409 not_promotable` and a stable
+`reason`, leaving the Story untouched. The options and what each costs:
+
+1. **Keep refusing.** Nothing widens. Four of six Story kinds can never become
+   Highlights, permanently.
+2. **Add matching Highlight audiences** (`close_friends`, `friends_only`, a
+   `trip_id` column, an ACL). Faithful, and the only option that makes
+   `trip_crew` promotable. Costs schema plus a new predicate in every highlight
+   read path.
+3. **Snapshot an explicit viewer ACL onto the Highlight at promotion time.**
+   Faithful at the instant of promotion; the audience then stops tracking the
+   owner's later list edits — a product statement, not a bug, and one that has
+   to be chosen rather than inherited.
+
+**Not decided here.** Everything that does not depend on the answer is built.
+
+### `TRIP_CREW_SIGNAL_ROLE_COVERAGE` — a split the file's own header says must not happen
+
+`lib/tripMembership.ts` admits `owner` and `member`. `getMemberRole`, which its
+header claims to mirror, admits `owner`, `co_host` and `member`. Measured: for a
+trip with an owner and an ACCEPTED `co_host`, `isAcceptedTripMember(co_host)` is
+**false**, `acceptedCrewSize` is **1**, and `isSharedCrewMember(owner)` is
+**false**. Both people are on the trip; both fall back to solo intel groups.
+That is a SPLIT, which the file's own header calls "the exact leak the crew
+signal exists to prevent".
+
+**Why this is an owner decision and not a bug fix.** The repair WIDENS who may
+assert a crew token. Widening an authorization gate to make a header's claim
+true is not a change engineering should make on its own reading, however
+obviously the header intends it — and the lane that found it declined to,
+correctly. What must be decided is whether the crew signal covers `co_host` and
+`viewer`, or whether the header is wrong and should be narrowed to match the
+code.
+
+### `LAYOVER_RETURN_REMINDER_DELIVERY` — the "head back NOW" push has no sender
+
+`sendReturnDeadlineReminder` (`src/services/airport/LayoverNotificationService.ts`)
+has **zero references anywhere, including tests**. It is the function that
+composes *"🚨 Head back to the airport NOW"* and *"You must be back at the
+airport by X to board safely."* `POST /return-deadline` persists
+`return_reminder_at`, and the route comment says the client reschedules local
+notifications.
+
+So either the server-side push is meant to exist and is dead, or the reminder is
+client-only by design and the composer is vestigial. That is a product decision
+about a SAFETY notification — the one class where "we thought the other side was
+doing it" is least acceptable — and it is recorded rather than guessed.
+
+### `MODERATION_TARGET_NULLABILITY` — the column shape is what forces the dilemma
+
+`moderation_actions.target_user_id` is `NOT NULL REFERENCES profiles(id)`. When
+the content owner cannot be resolved — because the lookup FAILED, not because
+there is no owner — the moderation path has exactly two options: **skip the
+audit row**, or **fabricate a target**. Both are bad, and the code currently
+skips loudly (`skipped_owner_lookup_failed` at ERROR, with the outcome in the
+response) rather than inventing one.
+
+A nullable column, or a separate content-target column, would let those paths be
+genuinely fail-closed instead of choosing the least-bad lie. That is a schema
+change on an audit table and it is not engineering's call to make unilaterally.
+Recorded with the constraint named, so the decision is about the column rather
+than about the symptom.
+
+### `INTERACTION_COOLDOWN_READ_DIRECTION` — a measured fail-open that is not safe to simply flip
+
+`user_interaction_cooldowns` is a DENY table: a row means "this pair is in
+cooldown". The read returns `false` on error, so an unreadable table lets a
+previously-blocked viewer act again. Fail-open, measured, and left in direction
+deliberately.
+
+Flipping it is not obviously right. A cooldown is a *temporary* restriction, and
+failing closed means every legitimate pair is blocked for the duration of any
+outage, across 15+ routes that resolve interaction permissions. Choosing between
+"a cooldown occasionally lapses during an outage" and "nobody can interact
+during an outage" is a policy call about how much friction a degraded database
+should impose. The read is now OBSERVED and logged either way, so whichever is
+chosen can be implemented without further discovery.
+
+### Two exposed SECURITY DEFINER functions inside HOLD workstreams
+
+Not owner decisions and not engineering backlog — findings recorded so that
+whoever unfreezes the relevant workstream inherits them rather than
+rediscovering them. Both measured on production 2026-09-08; neither touched,
+because both sit inside declared HOLD areas.
+
+| Function | Live grants | What it answers | HOLD area |
+|---|---|---|---|
+| `event_is_in_state(uuid, event_state[])` | **anon AND authenticated** | for any event id, whether it exists and is in a named state — to a caller who has not signed in | Event Truth Phase-B; `EVENT_START_TRANSITION` is the paired owner decision |
+| `purge_old_ranking_debug_samples()` | authenticated | DELETEs `ranking_debug_samples` older than seven days and returns the count | Ranker |
+
+Neither is referenced by any of the 808 surviving RLS policies, by any function
+body, view or trigger, or by any string literal in `src/`. `event_is_in_state`
+is the wider exposure of the two; `purge_old_ranking_debug_samples` is bounded
+to rows already past their intended retention, which is why it is recorded
+rather than treated as urgent. In both cases **the grant is the part that is
+wrong, not the function** — and for the same reason set out in
+`src/scripts/checkSecurityDefinerOracles.ts`, the remedy is a REVOKE or a DROP
+and never a blanket sweep: eleven sibling functions ARE policy-referenced, and
+revoking EXECUTE on one of those makes the policy itself raise "permission
+denied for function" for every end-user token.
+
+The third member of that set, `increment_hashtag_usage_count`, was NOT inside a
+HOLD area and was closed under the full migration gate — see `2551`.
