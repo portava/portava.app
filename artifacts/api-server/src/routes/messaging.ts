@@ -2573,11 +2573,23 @@ router.post('/messages/:messageId/translate/retry', async (req, res) => {
   if (m.deleted_at) { sendError(res, 'invalid_payload', 'Cannot retry translation on a deleted message'); return; }
 
   // E-2: refuse translation for E2EE threads — server cannot read ciphertext.
-  const { data: threadMetaForTranslate } = await sc
+  // Third instance of the same shape as the two send paths: an unchecked
+  // `.error` made an unreadable message_threads read as `is_e2ee: false` and
+  // the gate was skipped, running the translation pipeline over a message from
+  // a thread whose contract is that the server never processes its contents.
+  // That the ciphertext column would probably yield nothing useful is not the
+  // guarantee; the gate is.
+  const { data: threadMetaForTranslate, error: threadMetaForTranslateErr } = await sc
     .from('message_threads')
     .select('is_e2ee')
     .eq('id', m.thread_id)
     .maybeSingle();
+  if (threadMetaForTranslateErr) {
+    req.log.error({ err: threadMetaForTranslateErr, threadId: m.thread_id, messageId },
+      'thread E2EE flag read failed on the translate path — refusing rather than translating a possibly E2EE message');
+    sendError(res, 'degraded_unavailable', 'We could not verify this conversation right now. Please try again shortly.');
+    return;
+  }
   if ((threadMetaForTranslate as any)?.is_e2ee === true) {
     sendError(res, 'e2ee_thread', 'Translation is unavailable for end-to-end encrypted messages');
     return;
