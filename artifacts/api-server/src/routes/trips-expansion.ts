@@ -2324,6 +2324,60 @@ router.post("/trips/:tripId/documents", async (req, res) => {
   res.status(201).json(data);
 });
 
+// GET /api/trips/:tripId/documents/:docId  — one document, WITH its content
+//
+// THE GAP THIS CLOSES. `trip_documents.content` is written by POST and by PATCH
+// and was returned by NOTHING: the list route selects
+// `id, title, document_type, is_private, creator_id, created_at, updated_at`,
+// POST and PATCH return the same column set, and there was no by-id route at
+// all. A client could store a document's body and could never read it back —
+// so "no mobile consumer" was a symptom here, not the disease. The listing
+// deliberately stays lean (a packing list or an itinerary body does not belong
+// in a collection response); this is where the body lives.
+//
+// Visibility is the SAME rule the listing enforces, restated here because a
+// by-id route cannot inherit an or-filter: the trip owner reads every document;
+// anyone else reads a document only if it is not private or they created it.
+router.get("/trips/:tripId/documents/:docId", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const { tripId, docId } = req.params;
+  if (!UUID_RE.test(tripId) || !UUID_RE.test(docId)) { sendError(res, "invalid_payload", "Invalid ID"); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured"); return; }
+
+  const { data: trip, error: tripErr } = await sc.from("trips").select("owner_id").eq("id", tripId).maybeSingle();
+  if (tripErr) throw readUnavailable("trips", tripErr);
+  if (!trip) { sendError(res, "not_found", "Trip not found"); return; }
+
+  const membership = await requireTripMember(sc, tripId, user.id);
+  const isOwner = (trip as any).owner_id === user.id;
+  if (!membership && !isOwner) { sendError(res, "not_member", "Not a trip member"); return; }
+
+  const { data: doc, error: docErr } = await sc
+    .from("trip_documents")
+    .select("id, title, content, document_type, is_private, creator_id, created_at, updated_at")
+    .eq("id", docId)
+    .eq("trip_id", tripId)
+    .maybeSingle();
+  if (docErr) throw readUnavailable("trip_documents", docErr);
+  if (!doc) { sendError(res, "not_found", "Document not found"); return; }
+
+  const d = doc as any;
+  // A private document the caller did not create is answered 404, not 403: a
+  // 403 would confirm that a document with this id exists on this trip, which
+  // is exactly what the privacy flag is withholding.
+  if (!isOwner && d.is_private === true && d.creator_id !== user.id) {
+    sendError(res, "not_found", "Document not found");
+    return;
+  }
+
+  res.json(d);
+});
+
 // PATCH /api/trips/:tripId/documents/:docId  — update document
 router.patch("/trips/:tripId/documents/:docId", async (req, res) => {
   const auth = await requireUser(req, res);
@@ -2946,6 +3000,18 @@ router.patch("/trips/:tripId/checklists/:checklistId/items/:itemId", async (req,
   if (typeof req.body?.isDone === "boolean")   patch.is_done    = req.body.isDone;
   if (typeof req.body?.label  === "string")    patch.label      = req.body.label.slice(0, 300);
   if (typeof req.body?.sortOrder === "number") patch.sort_order = req.body.sortOrder;
+  // `assigned_to` and `due_date` were WRITE-ONCE: POST .../items accepts both
+  // and the list route returns both, but this PATCH accepted neither, so an
+  // item assigned to the wrong person or given the wrong date could only be
+  // corrected by deleting and recreating it (which loses its id and its place
+  // in the list). `null` clears the field, which is the only way to unassign.
+  if (req.body?.assignedTo === null)                  patch.assigned_to = null;
+  else if (typeof req.body?.assignedTo === "string") {
+    if (!UUID_RE.test(req.body.assignedTo)) { sendError(res, "invalid_payload", "assignedTo must be a UUID or null"); return; }
+    patch.assigned_to = req.body.assignedTo;
+  }
+  if (req.body?.dueDate === null)                     patch.due_date = null;
+  else if (typeof req.body?.dueDate === "string")     patch.due_date = req.body.dueDate;
 
   if (Object.keys(patch).length === 0) { sendError(res, "invalid_payload", "No fields to update"); return; }
 
@@ -2955,7 +3021,7 @@ router.patch("/trips/:tripId/checklists/:checklistId/items/:itemId", async (req,
     .eq("id", itemId)
     .eq("checklist_id", checklistId)
     .eq("trip_id", tripId)
-    .select("id, label, is_done, sort_order")
+    .select("id, label, is_done, assigned_to, due_date, sort_order")
     .maybeSingle();
 
   if (error) { sendError(res, "db_error", error.message); return; }
