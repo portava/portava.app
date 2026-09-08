@@ -371,9 +371,25 @@ describe("the five sites this session fixed — against the real files", () => {
     const key = `${rel}::checkEventEligibility::trust_profiles.maybeSingle`;
     assert.ok(!keysOf(src, rel).includes(key), "the fixed trust_profiles read must not be reported");
 
-    const fixedAnchor = /\{\s*data:\s*tp\s*,\s*error:\s*tpErr\s*\}/;
-    assert.match(src, fixedAnchor, "events.ts no longer carries the `{ data: tp, error: tpErr }` binding this test reverts — re-anchor the test");
-    const reverted = src.replace(fixedAnchor, "{ data: tp }");
+    // RE-ANCHORED 2026-09-08. The fixed form used to be an inline
+    // `{ data: tp, error: tpErr }` binding in this route. census-trust A17 moved
+    // the read behind the canonical seam — `getTrustProfileResult`, which owns
+    // the three states — so the binding this test reverted no longer exists.
+    //
+    // The test's own message said "re-anchor the test", and that is what this
+    // is. What it proves is unchanged and still worth proving: revert the gate
+    // to an unbound-error read and checkUncheckedSupabaseReads must catch it IN
+    // SCOPE, at gate-function tier. The revert now reconstructs the pre-seam
+    // shape rather than editing a binding that is gone.
+    const fixedAnchor = /const tpRead = await getTrustProfileResult\(sc, userId\);/;
+    assert.match(
+      src, fixedAnchor,
+      "events.ts no longer routes its trust gate through getTrustProfileResult — re-anchor the test",
+    );
+    const reverted = src.replace(
+      fixedAnchor,
+      'const { data: tp } = await sc.from("trust_profiles").select("overall_score").eq("user_id", userId).maybeSingle();',
+    );
     const hit = reads(reverted, rel).find((r) => r.key === key);
     assert.ok(hit, "reverting the fix must be reported");
     assert.equal(hit.shape, "data-only");
