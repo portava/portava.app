@@ -68,10 +68,23 @@ BEGIN
     RAISE EXCEPTION 'ROLLBACK POSTCONDITION FAILED: only % of the 9 pre-2723 columns this file names are still present -- the inverse removed something it did not add', core_cols;
   END IF;
 
+  -- WAS `policies <> 5`. That pinned this inverse to a count another migration
+  -- legitimately changes: PR #461's 2313 does DROP POLICY IF EXISTS
+  -- highlights_select / highlights_select_active and recreates them, and 2530 is
+  -- already in production having reworked the same family. A count is not the
+  -- property; the property is that 2723 CREATES NO POLICY, so its inverse must
+  -- remove none and must not leave the table unprotected.
   SELECT count(*) INTO policies FROM pg_policies
    WHERE schemaname = 'public' AND tablename = 'highlights';
-  IF policies <> 5 THEN
-    RAISE EXCEPTION 'ROLLBACK POSTCONDITION FAILED: public.highlights has % RLS policies, expected the 5 that predate 2723 -- this migration adds none and its inverse must remove none', policies;
+  IF policies = 0 THEN
+    RAISE EXCEPTION 'ROLLBACK POSTCONDITION FAILED: public.highlights has NO RLS policies left -- 2723 created none, so its inverse cannot have removed any';
+  END IF;
+  IF EXISTS (
+    SELECT 1 FROM pg_policies
+     WHERE schemaname = 'public' AND tablename = 'highlights'
+       AND (policyname LIKE '%lifetime%' OR policyname LIKE '%lifecycle%' OR policyname LIKE '%pinned%')
+  ) THEN
+    RAISE EXCEPTION 'ROLLBACK POSTCONDITION FAILED: a policy named for 2723''s columns survives -- 2723 created no policy and neither may anything undoing it';
   END IF;
 END $$;
 
