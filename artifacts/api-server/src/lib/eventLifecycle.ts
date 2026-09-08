@@ -77,9 +77,163 @@ import { logger } from "./logger.js";
 import { isFlagEnabled } from "./featureFlags.js";
 
 export const EVENT_START_TRANSITION_FLAG = "event_start_transition_enabled";
-/** The repo's "published, not yet begun" states — see the header for the derivation. */
-export const EVENT_STARTABLE_STATES: readonly string[] = ["open", "full", "waitlist"];
+
+// ═══════════════════════════════════════════════════════════════════════════
+// THE TRANSITION AUTHORITY — which state may follow which, in ONE place
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// THE DEFECT (measured by reading every writer of `events.state`)
+// --------------------------------------------------------------
+// Nine sites in routes/events.ts write `events.state`. Eight carry their own
+// hand-rolled, non-overlapping opinion about what is legal, and the ninth —
+// `PATCH /events/:id` — carried NONE:
+//
+//     state: z.enum(["draft","open","started","completed","cancelled","archived"]).optional()
+//     ...
+//     if (b.state !== undefined) patch.state = b.state;      // ← written raw
+//
+// The only check on that path was `role === "host"`, so a host could PATCH any
+// of the six values over any current state. That made every other gate in the
+// file advisory rather than enforced:
+//
+//   * `PATCH {state:"completed"}` from `draft` skipped POST /complete's
+//     `state === "started"` requirement outright.
+//   * `PATCH {state:"open"}` from `cancelled` silently un-cancelled an event
+//     whose attendees had already been told it was cancelled.
+//   * `PATCH {state:"started"}` wrote `started` DIRECTLY — the one value the
+//     whole `event_start_transition_enabled` flag (seeded FALSE, migration
+//     2600) exists to withhold until the owner decides. The flag gated the
+//     scheduler and nothing else, so it was not a gate at all: any host could
+//     reach the complete / attendance / no-show routes today and collect the
+//     trust awards behind them.
+//   * `POST /events/:id/archive` read no state at all, so `cancelled`,
+//     `completed` and already-`archived` events were all re-archived, and its
+//     UPDATE discarded `.error` (supabase-js RESOLVES on a database error) so a
+//     refused archive answered `{ok:true}`.
+//
+// WHAT THIS IS
+// ------------
+// `EVENT_STATE_TRANSITIONS` is the single answer to "may this event go from A
+// to B". It is DERIVED from what the dedicated routes already enforce, not
+// invented: publish draft→open; syncEventState cycles open/full/waitlist;
+// postpone →draft from anything not cancelled/archived/completed; complete
+// started→completed; cancel → cancelled from anything not already cancelled;
+// archive → archived. Every writer now calls `decideEventTransition` before it
+// writes, and `src/test/eventStateTransitionAuthority.test.ts` fails if a new
+// `events.state` write appears in the routes without one.
+//
+// WHAT IT DELIBERATELY DOES NOT DECIDE
+// ------------------------------------
+// The table says open|full|waitlist → started is a STRUCTURALLY legal pair,
+// which is exactly what `decideEventStart` already asserted and what the
+// complete route's `state === "started"` precondition presumes. It says
+// nothing about WHO or WHAT performs it — that is the open owner decision
+// EVENT_START_TRANSITION. `isEventStartTransition` names that pair so a caller
+// which is not an authorised starter (today: PATCH) can refuse it explicitly
+// rather than by accident.
+
+export const EVENT_STATES = [
+  "draft", "open", "full", "waitlist", "started", "completed", "cancelled", "archived",
+] as const;
+export type EventState = (typeof EVENT_STATES)[number];
+
+function isEventState(v: unknown): v is EventState {
+  return typeof v === "string" && (EVENT_STATES as readonly string[]).includes(v);
+}
+
+/**
+ * from -> the states it may move to. Absence is refusal; a state may never
+ * transition to itself (a no-op write is the caller's business, not a
+ * transition). `archived` is terminal.
+ *
+ * Each entry cites the writer it is derived from:
+ *   open        publish (routes/events.ts POST /events/:id/publish)
+ *   full/waitlist  syncEventState capacity cycle
+ *   draft       postpone (POST /events/:id/postpone)
+ *   started     decideEventStart / runEventStartPass  [EVENT_START_TRANSITION]
+ *   completed   POST /events/:id/complete (requires `started`)
+ *   cancelled   POST /events/:id/cancel and DELETE /events/:id
+ *   archived    POST /events/:id/archive
+ */
+export const EVENT_STATE_TRANSITIONS: Readonly<Record<EventState, readonly EventState[]>> = Object.freeze({
+  // Unpublished. Publishing is the only forward move.
+  draft:     Object.freeze(["open", "cancelled", "archived"]),
+  // Published, before it begins: capacity cycles it, the scheduler starts it,
+  // the host may postpone / cancel / archive it.
+  open:      Object.freeze(["full", "waitlist", "started", "draft", "cancelled", "archived"]),
+  full:      Object.freeze(["open", "waitlist", "started", "draft", "cancelled", "archived"]),
+  waitlist:  Object.freeze(["open", "full", "started", "draft", "cancelled", "archived"]),
+  // In progress. It may finish, be called off, or be filed away. It may NOT
+  // go back to open/full/waitlist — that would re-run the start transition.
+  started:   Object.freeze(["completed", "draft", "cancelled", "archived"]),
+  // Terminal outcomes: only filing remains. Notably NOT -> cancelled: an event
+  // that already happened cannot be un-happened, and cancelling one pushed
+  // "Event cancelled" to people who attended it.
+  completed: Object.freeze(["archived"]),
+  cancelled: Object.freeze(["archived"]),
+  archived:  Object.freeze([]),
+}) as Readonly<Record<EventState, readonly EventState[]>>;
+
+export type EventTransitionRefusal =
+  | "unknown_from_state"
+  | "unknown_to_state"
+  | "same_state"
+  | "illegal_transition";
+
+export type EventTransitionDecision =
+  | { allowed: true; from: EventState; to: EventState }
+  | { allowed: false; reason: EventTransitionRefusal; from: string; to: string };
+
+/**
+ * The one authority. Pure: no I/O, no clock, no flag read — so a route, the
+ * scheduler and a test all get the same answer for the same pair.
+ */
+export function decideEventTransition(from: unknown, to: unknown): EventTransitionDecision {
+  const f = typeof from === "string" ? from : String(from ?? "");
+  const t = typeof to === "string" ? to : String(to ?? "");
+  if (!isEventState(f)) return { allowed: false, reason: "unknown_from_state", from: f, to: t };
+  if (!isEventState(t)) return { allowed: false, reason: "unknown_to_state", from: f, to: t };
+  if (f === t) return { allowed: false, reason: "same_state", from: f, to: t };
+  if (!EVENT_STATE_TRANSITIONS[f].includes(t)) {
+    return { allowed: false, reason: "illegal_transition", from: f, to: t };
+  }
+  return { allowed: true, from: f, to: t };
+}
+
+/** Every state that may legally precede `to` — the `.in("state", …)` guard for a conditional UPDATE. */
+export function eventStatesAllowedBefore(to: EventState): readonly EventState[] {
+  return EVENT_STATES.filter((f) => f !== to && EVENT_STATE_TRANSITIONS[f].includes(to));
+}
+
+/**
+ * Is this the transition whose TRIGGER is the open EVENT_START_TRANSITION
+ * decision? Structurally legal (the table allows it); who may perform it is
+ * not settled, so a caller that is not a sanctioned starter refuses it by name
+ * rather than letting it through as an ordinary edit.
+ */
+export function isEventStartTransition(_from: unknown, to: unknown): boolean {
+  return to === EVENT_STARTED_STATE;
+}
+
+/** Human-readable refusal, used verbatim in the 409 body so clients can tell the cases apart. */
+export function eventTransitionRefusalMessage(d: Extract<EventTransitionDecision, { allowed: false }>): string {
+  switch (d.reason) {
+    case "unknown_from_state": return `Event is in an unrecognised state '${d.from}'`;
+    case "unknown_to_state":   return `'${d.to}' is not an event state`;
+    case "same_state":         return `Event is already '${d.to}'`;
+    case "illegal_transition": return `An event cannot go from '${d.from}' to '${d.to}'`;
+  }
+}
+
 export const EVENT_STARTED_STATE = "started";
+/**
+ * The repo's "published, not yet begun" states. DERIVED from the transition
+ * table rather than restated, so the two can never disagree: it is exactly the
+ * set of states the table lets become `started`.
+ */
+export const EVENT_STARTABLE_STATES: readonly string[] = EVENT_STATES.filter(
+  (f) => f !== EVENT_STARTED_STATE && EVENT_STATE_TRANSITIONS[f].includes(EVENT_STARTED_STATE),
+);
 /** Written to event_activity_log so a scheduler transition is auditable (the 7 seeded rows were not). */
 export const EVENT_STARTED_ACTIVITY_ACTION = "started";
 export const EVENT_START_BATCH_LIMIT = 500;
@@ -108,7 +262,11 @@ export function decideEventStart(
   now: Date,
 ): EventStartDecision {
   const state = typeof ev.state === "string" ? ev.state : "";
-  if (!EVENT_STARTABLE_STATES.includes(state)) return { start: false, reason: "not_startable_state" };
+  // One authority: "may this state become `started`?" is answered by the
+  // transition table, not by a second list that could drift away from it.
+  if (!decideEventTransition(state, EVENT_STARTED_STATE).allowed) {
+    return { start: false, reason: "not_startable_state" };
+  }
   if (ev.starts_at === null || ev.starts_at === undefined || ev.starts_at === "") {
     return { start: false, reason: "no_starts_at" };
   }

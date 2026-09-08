@@ -184,12 +184,19 @@
 import { randomUUID } from "node:crypto";
 import { Router } from "express";
 import { z } from "zod";
-import { requireUser, sendError } from "../lib/http.js";
+import { requireUser, sendError, type ApiErrorCode } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { detectAndStoreLanguage, invalidateContentTranslations } from "../services/contentTranslation.js";
 import { nameVisibilitySet, sanitizeIdentity } from "../lib/publicIdentity.js";
 import { isFlagEnabled, isKillSwitchEngaged } from "../lib/featureFlags.js";
 import { isBlockedBetween } from "../lib/blockGuard.js";
+import {
+  decideEventTransition,
+  eventTransitionRefusalMessage,
+  isEventStartTransition,
+  EVENT_START_TRANSITION_FLAG,
+  type EventState,
+} from "../lib/eventLifecycle.js";
 import { affectedRows } from "../lib/affectedRows.js";
 import { tripKernelClient, executeTripCommand, TRIP_VERSION_RESPONSE_HEADER } from "../lib/tripKernel.js";
 import { readBlockExclusions, sendExclusionsUnavailable } from "../lib/exclusionSet.js";
@@ -476,6 +483,59 @@ async function recountEventWaitlist(sc: any, eventId: string, req: any, extra?: 
   await sc.from("events").update({ waitlist_count: (rows as any[]).length, ...(extra ?? {}) }).eq("id", eventId);
 }
 
+/**
+ * The ONE way any route writes `events.state`.
+ *
+ * Every caller passes the state it read and the state it wants; the pair is put
+ * to `decideEventTransition` (lib/eventLifecycle.ts) before anything is written,
+ * and the UPDATE is made CONDITIONAL on the row still being in the state that
+ * was decided on — so a cancel that lands between the read and the write wins
+ * instead of being clobbered, and the same request replayed twice writes once.
+ *
+ * `.select("id")` is not decoration: without it supabase returns no rows and a
+ * write that matched NOTHING is indistinguishable from one that matched. The
+ * zero-row case is reported as `contended`, never as success.
+ *
+ * `.error` is checked because supabase-js RESOLVES on a database error — the
+ * archive route discarded it and answered `{ok:true}` for a write the database
+ * refused.
+ */
+type EventStateWriteOutcome =
+  | { ok: true; from: string; to: EventState }
+  | { ok: false; code: ApiErrorCode; message: string };
+
+async function writeEventState(
+  sc: any,
+  eventId: string,
+  from: unknown,
+  to: EventState,
+  extraPatch: Record<string, unknown> = {},
+): Promise<EventStateWriteOutcome> {
+  const decision = decideEventTransition(from, to);
+  if (!decision.allowed) {
+    return {
+      ok: false,
+      code: "invalid_state_transition",
+      message: eventTransitionRefusalMessage(decision),
+    };
+  }
+  const { data, error } = await sc
+    .from("events")
+    .update({ state: to, updated_at: new Date().toISOString(), ...extraPatch })
+    .eq("id", eventId)
+    .eq("state", decision.from)
+    .select("id");
+  if (error) return { ok: false, code: "db_error", message: String(error.message ?? error) };
+  if (!Array.isArray(data) || data.length === 0) {
+    return {
+      ok: false,
+      code: "conflict",
+      message: "The event changed while this request was in flight — reload and try again",
+    };
+  }
+  return { ok: true, from: decision.from, to };
+}
+
 async function syncEventState(sc: any, eventId: string): Promise<void> {
   const { data: ev } = await sc
     .from("events")
@@ -501,7 +561,10 @@ async function syncEventState(sc: any, eventId: string): Promise<void> {
   }
 
   if (newState !== (ev as any).state) {
-    await sc.from("events").update({ state: newState, updated_at: new Date().toISOString() }).eq("id", eventId);
+    // Through the authority like every other writer: the capacity cycle is a
+    // transition, and a `full` event that was cancelled between the read above
+    // and this write must not be resurrected as `open`.
+    await writeEventState(sc, eventId, (ev as any).state, newState as EventState);
   }
 }
 
@@ -2389,6 +2452,24 @@ router.patch("/events/:id", async (req, res) => {
   const { data: current } = await sc.from("events").select("*").eq("id", id).maybeSingle();
   if (!current) { sendError(res, "not_found", "Event not found"); return; }
 
+  // ── the state transition, through the one authority ───────────────────────
+  // `started` is refused here by NAME rather than by the table: the table says
+  // open|full|waitlist -> started is a structurally legal pair, but WHO may
+  // perform it is the open EVENT_START_TRANSITION owner decision, and a raw
+  // PATCH is not a sanctioned starter. Letting it through made the
+  // event_start_transition_enabled flag (seeded FALSE) decorative — any host
+  // could write `started` and unlock the complete / attendance / no-show
+  // routes and the trust awards behind them.
+  if (b.state !== undefined && b.state !== (current as any).state) {
+    if (isEventStartTransition((current as any).state, b.state)) {
+      sendError(res, "invalid_state_transition",
+        `An event is not started by editing it. Starting is gated by ${EVENT_START_TRANSITION_FLAG}.`);
+      return;
+    }
+    const stateWrite = await writeEventState(sc, id, (current as any).state, b.state as EventState);
+    if (!stateWrite.ok) { sendError(res, stateWrite.code, stateWrite.message); return; }
+  }
+
   const KEY_FIELDS = ["starts_at", "ends_at", "location_name", "age_min", "trust_score_min", "verified_only"] as const;
   const patch: Record<string, any> = { updated_at: new Date().toISOString() };
 
@@ -2411,7 +2492,10 @@ router.patch("/events/:id", async (req, res) => {
   if (b.visibility      !== undefined) patch.visibility       = b.visibility;
   if (b.circleId        !== undefined) patch.circle_id        = b.circleId;
   if (b.tripId          !== undefined) patch.trip_id          = b.tripId;
-  if (b.state           !== undefined) patch.state            = b.state;
+  // `state` is DELIBERATELY absent from this raw assembly. It used to be
+  // `patch.state = b.state` — an unguarded free transition (see
+  // lib/eventLifecycle.ts). It is now decided by the transition authority
+  // below and written by the same conditional UPDATE as every other writer.
   if (b.chatEnabled     !== undefined) patch.chat_enabled     = b.chatEnabled;
   if (b.waitlistEnabled !== undefined) patch.waitlist_enabled = b.waitlistEnabled;
   if (b.attendeeCommentsEnabled !== undefined) patch.attendee_comments_enabled = b.attendeeCommentsEnabled;
@@ -2548,8 +2632,9 @@ router.delete("/events/:id", async (req, res) => {
 
   // supabase-js resolves rather than throws — unchecked, a failed cancel
   // returned {ok:true} while the event stayed open.
-  const { error: cancelErr } = await sc.from("events").update({ state: "cancelled", updated_at: new Date().toISOString() }).eq("id", id);
-  if (cancelErr) { sendError(res, "db_error", cancelErr.message); return; }
+  if (priorState === "cancelled") { res.json({ ok: true }); return; }
+  const delWrite = await writeEventState(sc, id, priorState, "cancelled");
+  if (!delWrite.ok) { sendError(res, delWrite.code, delWrite.message); return; }
 
   // Trust: the host broke a published commitment (rule + provenance in
   // TrustEventService; keyed on the event id, so this and POST /cancel cannot
@@ -4495,12 +4580,13 @@ router.post("/events/:id/publish", async (req, res) => {
     sendError(res, "duplicate_event", "An event with the same host, location, and time already exists"); return;
   }
 
-  const { data: updated, error } = await sc.from("events")
-    .update({ state: "open", updated_at: new Date().toISOString() })
-    .eq("id", id)
-    .select("*").single();
-
-  if (error) { req.log.error({ err: error }, "publish event"); sendError(res, "db_error", error.message); return; }
+  const publishWrite = await writeEventState(sc, id, (ev as any).state, "open");
+  if (!publishWrite.ok) {
+    if (publishWrite.code === "db_error") req.log.error({ eventId: id, message: publishWrite.message }, "publish event");
+    sendError(res, publishWrite.code, publishWrite.message); return;
+  }
+  const { data: updated, error } = await sc.from("events").select("*").eq("id", id).single();
+  if (error) { req.log.error({ err: error }, "publish event reread"); sendError(res, "db_error", error.message); return; }
 
   if (e.chat_enabled) {
     await createEventChatThread(sc, id, e.title, user.id);
@@ -4595,8 +4681,8 @@ router.post("/events/:id/cancel", async (req, res) => {
 
   // supabase-js resolves rather than throws — unchecked, a failed cancel
   // returned {ok:true} while the event stayed open.
-  const { error: cancelErr } = await sc.from("events").update({ state: "cancelled", updated_at: new Date().toISOString() }).eq("id", id);
-  if (cancelErr) { sendError(res, "db_error", cancelErr.message); return; }
+  const cancelWrite = await writeEventState(sc, id, priorState, "cancelled");
+  if (!cancelWrite.ok) { sendError(res, cancelWrite.code, cancelWrite.message); return; }
 
   await logEventActivity(sc, id, user.id, "cancelled", { reason: reason ?? null });
 
@@ -4650,8 +4736,8 @@ router.post("/events/:id/postpone", async (req, res) => {
 
   // supabase-js resolves rather than throws — unchecked, a failed postpone
   // returned {ok:true} while the event stayed live.
-  const { error: postponeErr } = await sc.from("events").update({ state: "draft", updated_at: new Date().toISOString() }).eq("id", id);
-  if (postponeErr) { sendError(res, "db_error", postponeErr.message); return; }
+  const postponeWrite = await writeEventState(sc, id, (ev as any).state, "draft");
+  if (!postponeWrite.ok) { sendError(res, postponeWrite.code, postponeWrite.message); return; }
   await logEventActivity(sc, id, user.id, "postponed", { reason: reason ?? null });
 
   void (async () => {
@@ -4702,8 +4788,8 @@ router.post("/events/:id/complete", async (req, res) => {
   // {ok:true} and fired trust events, stamps and review pushes for a completion
   // that never happened. (Reachable at all only once lib/eventLifecycle.ts, or
   // a future host-initiated route, has written `started`.)
-  const { error: completeErr } = await sc.from("events").update({ state: "completed", updated_at: new Date().toISOString() }).eq("id", id);
-  if (completeErr) { sendError(res, "db_error", completeErr.message); return; }
+  const completeWrite = await writeEventState(sc, id, (ev as any).state, "completed");
+  if (!completeWrite.ok) { sendError(res, completeWrite.code, completeWrite.message); return; }
   await logEventActivity(sc, id, user.id, "completed", {});
 
   // Fire-and-forget: award trust signals + send review-prompt push notifications + stamps
@@ -4833,7 +4919,14 @@ router.post("/events/:id/archive", async (req, res) => {
   const role = await getEventRole(sc, id, user.id);
   if (role !== "host") { sendError(res, "forbidden", "Only the host can archive this event"); return; }
 
-  await sc.from("events").update({ state: "archived", updated_at: new Date().toISOString() }).eq("id", id);
+  // This route read no state at all and discarded the UPDATE's `.error`, so a
+  // refused write answered {ok:true} and an already-archived / cancelled /
+  // completed event was re-archived silently.
+  const { data: archEv } = await sc.from("events").select("state").eq("id", id).maybeSingle();
+  if (!archEv) { sendError(res, "not_found", "Event not found"); return; }
+  if ((archEv as any).state === "archived") { res.json({ ok: true }); return; }
+  const archiveWrite = await writeEventState(sc, id, (archEv as any).state, "archived");
+  if (!archiveWrite.ok) { sendError(res, archiveWrite.code, archiveWrite.message); return; }
   await logEventActivity(sc, id, user.id, "archived", {});
 
   res.json({ ok: true });
