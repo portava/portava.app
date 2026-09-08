@@ -31,7 +31,7 @@ import {
   type OwnerFieldVisibility,
 } from "./PassportPrivacyGuard.js";
 import { getSafeTrustSummary, getPublicTrustBadge } from "../trust/TrustPrivacyGuard.js";
-import { getDisplayTrustScore, getTrustProfile } from "../trust/TrustScoreService.js";
+import { getDisplayTrustScore, getTrustProfileResult, type TrustProfileRead } from "../trust/TrustScoreService.js";
 import { getRestrictionState, type RestrictionState } from "../trust/TrustRestrictionService.js";
 import { buildStats } from "./PassportMapService.js";
 import { buildUnifiedStamps, filterUnifiedStamps, type UnifiedStamp, type StampSource } from "./UnifiedStampService.js";
@@ -250,6 +250,14 @@ export interface TrustProjection {
   strengths: string[];
   /** TABLE 12 per-domain trust presentations (never raw scores). */
   domains: DomainTrust[];
+  /**
+   * True when `label`, `publicLevel`, `strengths` and `domains` are the
+   * NEW-ACCOUNT / neutral-50 defaults because `trust_profiles` could not be
+   * READ — not because this traveller has no history. `unreadable` carries the
+   * same fact at the projection level; this one rides with the section so a
+   * consumer holding only the trust block still knows.
+   */
+  degraded?: boolean;
 }
 
 export interface CredentialProjection {
@@ -309,7 +317,7 @@ export interface MemoryProjection {
  * whose failure mode is a zero or an empty array indistinguishable from the
  * truthful version of the same value.
  */
-export type PassportUnreadableSection = "stats" | "stamps" | "memories";
+export type PassportUnreadableSection = "stats" | "stamps" | "memories" | "trust";
 
 export interface PassportProjection {
   userId: string;
@@ -1073,7 +1081,17 @@ async function buildTrust(
   // The canonical category scores + overall drive the TABLE 12 per-domain
   // presentation for EVERY context (public included) — domains carry only words,
   // never numbers, so they are safe to project to any viewer (§9/§10).
-  const profile = await getTrustProfile(sc, userId).catch(() => null);
+  // The `.catch` arm is the LAST resort, not the failure path: a PostgREST
+  // failure RESOLVES, so it fires only on a genuine throw. The unreadable case
+  // now arrives as `state: "unavailable"` and is REPORTED (`degraded`) rather
+  // than silently taking the new-account default — a Highly Trusted traveller
+  // shown to their peers as "New Traveler" is a claim about a person made out
+  // of a database hiccup.
+  const profileRead = await getTrustProfileResult(sc, userId).catch(
+    () => ({ state: "unavailable", reason: "threw" }) as TrustProfileRead,
+  );
+  const profile = profileRead.state === "ok" ? profileRead.profile : null;
+  const degraded = profileRead.state === "unavailable";
   const overallForDomains = profile && Number.isFinite(Number(profile.overall_score)) ? Number(profile.overall_score) : 50;
   const domains = buildDomainTrust(overallForDomains, profile?.categories as Record<string, number> | undefined, isBuddy);
 
@@ -1081,7 +1099,11 @@ async function buildTrust(
     const badge = await getPublicTrustBadge(sc, userId);
     // Non-stigmatizing copy for low-evidence accounts (§10).
     const label = confidence === "low" ? (verified ? "New Traveler · Verified" : "New Traveler") : badge.label;
-    return { label, publicLevel: badge.level, score: null, confidence, strengths: badge.strengths, domains };
+    return {
+      label, publicLevel: badge.level, score: null, confidence,
+      strengths: badge.strengths, domains,
+      ...(degraded || badge.profileUnavailable ? { degraded: true } : {}),
+    };
   }
 
   const summary = await getSafeTrustSummary(sc, userId);
@@ -1103,7 +1125,11 @@ async function buildTrust(
     }
   }
 
-  return { label, publicLevel: summary.publicLevel, score, confidence, strengths: summary.strengths, domains };
+  return {
+    label, publicLevel: summary.publicLevel, score, confidence,
+    strengths: summary.strengths, domains,
+    ...(degraded || summary.profileUnavailable ? { degraded: true } : {}),
+  };
 }
 
 function buildCredentials(
@@ -1863,6 +1889,10 @@ export async function buildPassportProjection(
 
   // 6. Trust + credentials.
   const trust = await buildTrust(sc, userId, context, stats, identity.verified, buddyRep !== null);
+  // A trust block built from an unreadable `trust_profiles` is the new-account
+  // default, not a reading — and `buildProjectionCachePolicy` must not cache it
+  // as though it were.
+  if (trust.degraded === true) markUnreadable("trust");
   const credentials = buildCredentials(profile, trust, stats, reputation, buddyRep);
 
   // 7. Stamps — BOTH gates, in order (§22):

@@ -412,18 +412,60 @@ export async function getDisplayTrustScore(
   return Number.isFinite(n) ? Math.round(n) : null;
 }
 
-/** Load current trust profile without recalculating */
+/**
+ * The THREE-state read of `trust_profiles`: the profile was READ, the user has
+ * no profile yet, or the row could not be read AT ALL.
+ *
+ * ── WHY THIS EXISTS ─────────────────────────────────────────────────────────
+ * `lib/http.ts` and `services/ranking/CreatorActivityScoreService.ts` both cite
+ * `TrustProfileRead` / `getTrustProfileResult` HERE as the canonical union for
+ * exactly this distinction ("ok | absent | unavailable, with the failure
+ * carrying its own reason") and copy it. It did not exist. `getTrustProfile`
+ * was a TWO-state read: supabase-js RESOLVES on a database error, `.error` was
+ * never bound, and `if (!data) return null` collapsed an unreadable row onto
+ * the same `null` a brand-new account produces. Every consumer then applied the
+ * new-account default, so an unreadable `trust_profiles` displayed a Highly
+ * Trusted traveller as "New Traveler" — a downgrade shown to their peers as
+ * fact, built out of a database hiccup, with nothing logged.
+ *
+ * `getTrustProfile` keeps its `| null` signature (both non-ok states collapse to
+ * null) so callers that cannot express the difference are unchanged; callers
+ * that CAN read this instead.
+ */
+export type TrustProfileRead =
+  | { state: "ok"; profile: TrustScoreResult }
+  | { state: "absent" }
+  | { state: "unavailable"; reason: string };
+
+export async function getTrustProfileResult(
+  db: SupabaseClient,
+  userId: string,
+): Promise<TrustProfileRead> {
+  const { data, error } = await db
+    .from("trust_profiles")
+    .select("*")
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (error) {
+    const reason = String((error as any).message ?? (error as any).code ?? "db_error");
+    logger.warn({ err: error, userId }, "trust_profiles unreadable — not a new account");
+    return { state: "unavailable", reason };
+  }
+  if (!data) return { state: "absent" };
+  return { state: "ok", profile: shapeProfile(userId, data) };
+}
+
+/** Load current trust profile without recalculating. `null` for absent OR unreadable. */
 export async function getTrustProfile(
   db: SupabaseClient,
   userId: string,
 ): Promise<TrustScoreResult | null> {
-  try {
-    const { data } = await db
-      .from("trust_profiles")
-      .select("*")
-      .eq("user_id", userId)
-      .maybeSingle();
-    if (!data) return null;
+  const read = await getTrustProfileResult(db, userId);
+  return read.state === "ok" ? read.profile : null;
+}
+
+function shapeProfile(userId: string, data: unknown): TrustScoreResult {
+  {
     const d = data as any;
     const num = (v: unknown): number | null => {
       if (v === null || v === undefined) return null;
@@ -451,7 +493,5 @@ export async function getTrustProfile(
         passport_authenticity: d.passport_authenticity,
       },
     };
-  } catch {
-    return null;
   }
 }

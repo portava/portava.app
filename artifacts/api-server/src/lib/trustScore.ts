@@ -25,7 +25,8 @@
  */
 import {
   getDisplayTrustScore,
-  getTrustProfile,
+  getTrustProfileResult,
+  type TrustProfileRead,
   type TrustScoreResult as CanonicalTrustResult,
 } from "../services/trust/TrustScoreService.js";
 import { publicTrustLabel } from "../services/trust/TrustPrivacyGuard.js";
@@ -61,6 +62,18 @@ export interface TrustScoreResult {
   label: string;
   /** Itemized factor breakdown projected from the nine canonical categories. */
   breakdown: TrustScoreBreakdown;
+  /**
+   * True when `label` ("New Traveler") and the empty `breakdown` are the
+   * NEW-ACCOUNT default because `trust_profiles` could not be READ.
+   *
+   * `getTrustProfile` used to return `null` for an unreadable row and for a
+   * user who genuinely has no profile — supabase-js RESOLVES on a database
+   * error, so `.error` was never bound — and this adapter turned both into the
+   * same identity card. A traveller who had earned "Highly Trusted" was
+   * displayed to themselves and to buddies as "New Traveler", silently, for as
+   * long as the read kept failing.
+   */
+  degraded?: boolean;
 }
 
 /**
@@ -126,12 +139,14 @@ export async function computeTrustScore(
   sc: any,
   _preloadedProfileRow?: Record<string, any> | null,
 ): Promise<TrustScoreResult> {
-  let profile: CanonicalTrustResult | null = null;
-  try {
-    profile = await getTrustProfile(sc, userId);
-  } catch {
-    profile = null;
-  }
+  // A PostgREST failure RESOLVES, so `getTrustProfileResult` reports it as
+  // `state: "unavailable"`; the catch is the last resort for a genuine throw,
+  // and it lands on the SAME state rather than on the new-account default.
+  const read: TrustProfileRead = await getTrustProfileResult(sc, userId).catch(
+    () => ({ state: "unavailable", reason: "threw" }) as TrustProfileRead,
+  );
+  const profile: CanonicalTrustResult | null = read.state === "ok" ? read.profile : null;
+  const degraded = read.state === "unavailable";
 
   // Score is the SAME helper TrustScreen reads — identical rounding, identical
   // source — so the identity card, TrustScreen and the buddy card cannot drift.
@@ -145,5 +160,5 @@ export async function computeTrustScore(
   const label = publicTrustLabel(profile?.public_level);
   const breakdown = breakdownFromCategories(profile?.categories as Record<string, number> | undefined);
 
-  return { score, label, breakdown };
+  return { score, label, breakdown, ...(degraded ? { degraded: true } : {}) };
 }
