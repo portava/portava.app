@@ -181,6 +181,17 @@ function recordWallEvent(
 
 export interface WallViewerContext {
   followedCreatorIds: Set<string>;
+  /**
+   * Whether `followedCreatorIds` is an ANSWER or merely an absence.
+   *
+   * supabase-js resolves on a database error, so an unreadable `user_follows`
+   * yields exactly the same empty set as a viewer who follows nobody. The two
+   * are not interchangeable: Following treats an empty follow set as the true
+   * end of the feed and reports `caughtUp`, which is a positive claim about
+   * people the server could not look up. `false` here means "unknown", and the
+   * `caughtUp` claim is withheld.
+   */
+  followGraphKnown: boolean;
   viewerTripIds: Set<string>;
   currentCity: string | null;
   currentCountry: string | null;
@@ -203,6 +214,9 @@ export interface WallViewerContext {
 export async function loadViewerContext(sc: any, viewerId: string): Promise<WallViewerContext> {
   const ctx: WallViewerContext = {
     followedCreatorIds: new Set<string>(),
+    // Optimistic default, downgraded by the read below. Starting at `false`
+    // would make every caller that skips loadViewerContext look degraded.
+    followGraphKnown: true,
     viewerTripIds: new Set<string>(),
     currentCity: null,
     currentCountry: null,
@@ -211,28 +225,54 @@ export async function loadViewerContext(sc: any, viewerId: string): Promise<Wall
     preferredCities: new Set<string>(),
     interests: new Set<string>(),
   };
-  // Each read is independent and fail-soft — a missing signal degrades ranking
-  // quality, never the feed itself (spec §34).
+  // Each read below is independent, and every one of them BINDS `error`:
+  // supabase-js resolves on a database error, so a `try/catch` alone is dead
+  // code for the failure that matters and an unreadable table arrives as an
+  // empty result. Where an empty result is a merely poorer ranking that is
+  // fine and is said so per read; where it is a CLAIM (the follow graph, in
+  // Following) the failure is recorded instead of being absorbed (spec §34).
   try {
-    const { data } = await sc
+    const { data, error } = await sc
       .from("user_follows")
       .select("following_id")
       .eq("follower_id", viewerId);
-    for (const r of (data as any[]) ?? []) ctx.followedCreatorIds.add(String(r.following_id));
+    if (error) {
+      // NOT "degrades ranking quality, never the feed". In Following an empty
+      // followedCreatorIds is taken as the true end of the feed and becomes
+      // `caughtUp: true` — "nothing new from the people you follow", asserted
+      // about a relationship we just failed to read. Mark it unknown.
+      ctx.followGraphKnown = false;
+      logger.warn(
+        { err: error, viewerId, code: "wall_follow_graph_unknown" },
+        "wall: follow graph read failed — Following will not claim caughtUp",
+      );
+    } else {
+      for (const r of (data as any[]) ?? []) ctx.followedCreatorIds.add(String(r.following_id));
+    }
   } catch (err) {
-    logger.warn({ err }, "wall: follow graph read failed");
+    ctx.followGraphKnown = false;
+    logger.warn({ err, viewerId, code: "wall_follow_graph_unknown" }, "wall: follow graph read threw");
   }
   try {
-    const { data } = await sc
+    const { data, error } = await sc
       .from("trip_members")
       .select("trip_id, status, role")
       .eq("user_id", viewerId);
+    // Fail-closed and harmless: an empty viewerTripIds WITHHOLDS trip-only
+    // posts. The viewer sees less than they are entitled to, never more, and
+    // no claim is attached to the absence — but it is logged so a permanently
+    // trip-blind Wall is visible rather than looking like a quiet viewer.
+    if (error) {
+      logger.warn(
+        { err: error, viewerId }, "wall: trip membership read failed — trip-only posts withheld this request",
+      );
+    }
     for (const r of (data as any[]) ?? []) {
       const status = (r as any).status;
       if (status == null || status === "accepted") ctx.viewerTripIds.add(String((r as any).trip_id));
     }
   } catch (err) {
-    logger.warn({ err }, "wall: trip membership read failed");
+    logger.warn({ err, viewerId }, "wall: trip membership read threw — trip-only posts withheld this request");
   }
   try {
     // `current_country` DOES NOT EXIST on profiles — it is a column of
@@ -284,12 +324,16 @@ export async function loadViewerContext(sc: any, viewerId: string): Promise<Wall
   // Upcoming/active trip destination cities — a real-world discovery signal
   // (spec §13). Reads only the viewer's OWN trips, so nothing else leaks.
   try {
-    const { data } = await sc
+    const { data, error } = await sc
       .from("trips")
       .select("destination_city, status")
       .eq("owner_id", viewerId)
       .in("status", ["planning", "upcoming", "active"])
       .limit(50);
+    // Ranking signal only: an empty set means destination content is not
+    // boosted. Nothing is withheld and nothing is claimed, so the empty answer
+    // is genuinely harmless here — it is logged, not escalated.
+    if (error) logger.warn({ err: error, viewerId }, "wall: upcoming trips read failed — no destination boost");
     for (const r of (data as any[]) ?? []) {
       const c = (r as any).destination_city;
       if (c) ctx.upcomingTripCities.add(String(c).trim().toLowerCase());
@@ -302,11 +346,17 @@ export async function loadViewerContext(sc: any, viewerId: string): Promise<Wall
   try {
     const seeds = [...ctx.followedCreatorIds].slice(0, 200);
     if (seeds.length > 0) {
-      const { data } = await sc
+      const { data, error } = await sc
         .from("user_follows")
         .select("following_id")
         .in("follower_id", seeds)
         .limit(1000);
+      // Explanation signal only ("followed by people you follow"). An empty set
+      // costs a discovery EXPLANATION, never an item and never a claim — so
+      // unlike the primary read above this one does not touch followGraphKnown.
+      if (error) {
+        logger.warn({ err: error, viewerId }, "wall: second-degree follow read failed — no mutual-follow explanations");
+      }
       for (const r of (data as any[]) ?? []) {
         const id = String((r as any).following_id);
         // Not the viewer, and not someone they already follow (that is not
@@ -487,9 +537,20 @@ async function loadCandidates(
   const empty: LoadedCandidates = { candidates: [], signals: new Map(), placeByObject: new Map() };
   const followed = [...viewer.followedCreatorIds];
 
-  // Following: only followed authors. With no follows there is nothing to show —
-  // and that IS the true end (caught up immediately).
-  if (mode === "following" && followed.length === 0) return { ...empty, followingReachedEnd: true };
+  // Following: only followed authors. With no follows there is nothing to show.
+  // That is the true end ONLY when the follow graph was actually READ: an
+  // unreadable `user_follows` produces the identical empty set, and treating it
+  // as the end turns a database failure into "you're all caught up" — a claim
+  // about people the server never managed to look up. Unknown => the page is
+  // still empty (honest degradation) but `followingReachedEnd` is explicitly
+  // false, so buildFollowing reports caughtUp: false.
+  if (mode === "following" && followed.length === 0) {
+    // EXPLICIT false when unknown, never omission: buildFollowing reads
+    // `opts.reachedEnd ?? true`, so leaving it undefined means "the caller
+    // fetched the whole set" and lands right back on caughtUp: true. Absence is
+    // the permissive value here.
+    return { ...empty, followingReachedEnd: viewer.followGraphKnown };
+  }
 
   let rows: any[] = [];
   let followingReachedEnd: boolean | undefined;
