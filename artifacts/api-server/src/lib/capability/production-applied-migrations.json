@@ -105,6 +105,10 @@
   {
    "version": "20260908020748",
    "name": "2430_intel_live_scope_promotion_writer"
+  },
+  {
+   "version": "20260908023317",
+   "name": "2550_discovery_trip_projection_consumer_flag"
   }
  ]
 }

@@ -853,3 +853,53 @@ write, pending the `MEDIA_CANONICAL_FLAG` owner decision.
 `intel_live_scope_promotion_enabled` is FALSE, and the live read path answers
 byte-identically to before. 2430 built the write path a human decision goes
 through; it did not make the decision.
+
+
+---
+
+## 2026-09-08 — `2550`: Discovery's flag existed in the tree and nowhere else
+
+Found while checking Discovery's deployment readiness (not from a ledger entry):
+`discovery_trip_projection_enabled` had **no row in either database**, while
+`lib/discoveryTripProjectionConsumer.ts` documents it as seeded by `2550`. The
+migration was written and never applied anywhere — so Discovery's capability
+could never become ready, and the consumer sat permanently on its legacy branch.
+
+Applied to CI then production, both green. Preconditions verified first:
+`trips.version` present (2420), and **all 20** of
+`TRIP_DISCOVERY_SOURCE_COLUMNS` present — the migration's own non-vacuity check,
+which only runs on a database that has 2420 and would have caught a drift
+between the SQL and the TypeScript constant.
+
+Production after: flag present and **FALSE**, 43 trips, 12 discoverable, 0 with
+a NULL `version`, 184 flags.
+
+### What this does not do
+
+Nothing a user can see. With the flag FALSE the legacy `trips` reads in
+`routes/discoverySearch.ts` run byte-for-byte as before.
+
+Worth recording because flipping it is **not** a purely technical act: the
+projection is built on `toPrivateTripPreview`, so the owner's
+`show_exact_dates` / `show_destination_city` / `show_header_publicly` toggles
+would begin applying to a Discovery searcher — they do **not** today. Production
+has 12 discoverable trips and **0** with any toggle off, so the change is
+unobservable right now and real the moment an owner sets one. That is a
+deliberate Trips-lane choice in the more private direction, and it is an owner's
+call to make, not a side effect of applying a migration.
+
+### The freshness tripwire caught its first real drift
+
+Updating `production-applied-migrations.json` before refreshing the snapshot made
+`checkFlagSchemaPrerequisites` fail exactly as designed:
+
+```
+STALE SNAPSHOT: 1 migration(s) recorded as applied to production AFTER this
+snapshot was captured (watermark 20260908020748, newest applied 20260908023317):
+20260908023317 2550_discovery_trip_projection_consumer_flag.
+```
+
+That is a better proof than the synthetic fixture in the test suite: the guard
+fired on genuine drift, in the workflow it was written for, before anyone could
+read a stale answer as current. Snapshot then refreshed and re-proved complete
+(tables/functions/flags each reproducing production's own md5).

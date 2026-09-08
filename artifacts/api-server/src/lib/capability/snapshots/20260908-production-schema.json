@@ -3,12 +3,12 @@
  "projectRef": "ajrurzioarfkagpuxfnb",
  "projectName": "travel-buddy (PRODUCTION)",
  "capturedAt": "2026-09-08",
- "productionMigrationWatermark": "20260908020748",
+ "productionMigrationWatermark": "20260908023317",
  "method": "information_schema.columns (table_schema=public, views included); pg_proc in schema public excluding extension-owned functions (pg_depend deptype=e); pg_type typtype=e in public; public.feature_flags(flag, enabled)",
  "checksums": {
   "tables": "d18af75500cad4a78657db44c2fdfb68",
   "functions": "e5d30e48278a52e85cb478519341aca1",
-  "flags": "77b0bd2c76383bffc8d17da4f21f7941"
+  "flags": "acc4736276cc79f97e702a1998d433a2"
  },
  "tables": {
   "activity_events": [
@@ -6032,6 +6032,7 @@
   "wall_rab_integration_enabled": false,
   "locate_friends_enabled": false,
   "intel_presence_verification_enabled": false,
-  "intel_live_scope_promotion_enabled": false
+  "intel_live_scope_promotion_enabled": false,
+  "discovery_trip_projection_enabled": false
  }
 }
