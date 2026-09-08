@@ -214,10 +214,24 @@ export function makeCallStore(sc: SupabaseClient): CallStoreEx {
     },
 
     async listOpenSessions() {
-      const { data } = await sc
+      // THE SWEEPER'S ONLY INPUT. supabase-js RESOLVES on a database error, so
+      // an unbound `.error` here handed the sweep an EMPTY list — and an empty
+      // list is exactly what "there is nothing stale to do" looks like. The
+      // sweep then returned { missed: 0, capped: 0, ghosted: 0 }, the scheduler
+      // logged nothing (it only logs when a counter is non-zero) and its
+      // `.catch()` never fired because nothing was thrown. So an unreadable
+      // `call_sessions` presented as a clean pass, indefinitely: overdue rings
+      // never flipped to `missed`, calls never hit the 4-hour cap, and ghost
+      // sessions were never healed — while the sweeper reported success.
+      //
+      // Throwing is what makes the difference observable. applyTransition in
+      // this same file already sets that precedent, and the scheduler's
+      // existing `.catch()` becomes live code instead of dead code.
+      const { data, error } = await sc
         .from("call_sessions")
         .select(SESSION_COLS)
         .in("status", ["ringing", "active"]);
+      if (error) throw new Error(`listOpenSessions failed: ${error.message}`);
       return (((data as any[]) ?? [])).map(mapSessionRow);
     },
 
@@ -320,18 +334,30 @@ export function makeCallStore(sc: SupabaseClient): CallStoreEx {
     },
 
     async findOpenDirectSessionsBetween(userA, userB) {
-      const { data: sessions } = await sc
+      // THIS READ DECIDES WHICH LIVE CALLS A BLOCK TEARS DOWN. It is the only
+      // input to forceEndDirectCallsBetween, so an empty answer means "these two
+      // are not on a call" and the block hook does nothing at all. supabase-js
+      // resolves on a database error, so an unreadable `call_sessions` or
+      // `call_participants` produced exactly that empty answer — A BLOCKS B
+      // MID-CALL AND THE CALL KEEPS RUNNING, with the enclosing try/catch
+      // (which cannot fire on a resolved error) reporting nothing.
+      //
+      // A safety teardown may not be skipped on a guess. Both reads are observed
+      // and throw, so the caller learns the teardown did NOT happen.
+      const { data: sessions, error: sessionsErr } = await sc
         .from("call_sessions")
         .select(SESSION_COLS)
         .in("status", ["ringing", "active"])
         .in("context_type", ["telegraph_dm", "rent_a_buddy"]);
+      if (sessionsErr) throw new Error(`findOpenDirectSessionsBetween sessions read failed: ${sessionsErr.message}`);
       const open = (((sessions as any[]) ?? [])).map(mapSessionRow);
       if (open.length === 0) return [];
-      const { data: parts } = await sc
+      const { data: parts, error: partsErr } = await sc
         .from("call_participants")
         .select("call_id, user_id")
         .in("call_id", open.map((s) => s.id))
         .in("user_id", [userA, userB]);
+      if (partsErr) throw new Error(`findOpenDirectSessionsBetween participants read failed: ${partsErr.message}`);
       const byCall = new Map<string, Set<string>>();
       for (const p of (parts as any[]) ?? []) {
         if (!byCall.has(p.call_id)) byCall.set(p.call_id, new Set());
