@@ -293,3 +293,58 @@ deliberately did not touch:
   first, and they are the proof the rule is expressible.
 
 So the residue is not leftover work. It is the set that was already correct.
+
+
+---
+
+## 2026-09-08 — Trust: `2370` + `2371` applied to production
+
+### `2370_trust_tables_privileges`
+
+**Before, measured:** all seven trust tables — `trust_admin_actions`, `trust_caps`,
+`trust_events`, `trust_profiles`, `trust_restrictions`, `trust_reviews`,
+`trust_settings` — granted the **full blanket privilege set to `anon` AND
+`authenticated`**: DELETE, INSERT, MAINTAIN, REFERENCES, SELECT, TRIGGER,
+TRUNCATE, UPDATE. Supabase's `ALTER DEFAULT PRIVILEGES` set that at CREATE TABLE
+time and no migration took it back.
+
+Two of the seven (`trust_admin_actions`, `trust_reviews`) already had RLS on with
+**zero policies**, so reads were denied — but **RLS does not police TRUNCATE**, so
+the destructive capability was live on all seven regardless of policy.
+
+**The gate's decisive check** was the one that could have broken the feature:
+`2370` issues `ENABLE ROW LEVEL SECURITY`, which on a table where RLS is off and
+no policy exists is a deny-all trap. Measured first: **RLS is already enabled on
+all seven**, so the clause is a no-op.
+
+**Nothing can break, established rather than assumed:** every access path is
+server-side. Five routes name a trust table (`admin.ts`, `events.ts`,
+`rentABuddyMarketplace.ts`, `pulse.ts`, `trust-admin.ts`) and all five use the
+service client, as do the trust services. A repo-wide search finds **zero direct
+client reads** of any `trust_*` table outside `artifacts/api-server`.
+
+| after, on production | |
+|---|---|
+| privileges held by `anon` / `authenticated` / PUBLIC on trust tables | **0** |
+| `service_role` privileges | 28 — four verbs across seven tables |
+| `service_role` TRUNCATE | **0** |
+| `trust_events` rows | 5, intact |
+
+**Honest effect: no user-visible change. A live privilege exposure closed.**
+
+### `2371_trust_profiles_evidence`
+
+Two nullable, default-less columns. NULL means "not yet measured", 0 means
+"measured, no evidence" — the distinction is load-bearing and is why there is no
+backfill.
+
+This one is not a defect being fixed so much as a degradation being lifted, and
+the reason is worth recording: `TrustScoreService.ts:350-358` **already handles
+the absence correctly**. The evidence write is deliberately kept out of the score
+upsert, because folding it in would make PostgREST reject the whole statement and
+stop every score persist on a database without 2371 — "silently, exactly as
+lib/mediaAssets did for three weeks". It logs a warning naming the migration.
+
+So production was degraded-but-safe, not silently broken, and applying restores
+the evidence fields. `trust_engine_enabled` was one of the eleven flags ON in
+production over missing schema; this is one of them closed.
