@@ -26,6 +26,24 @@
 | **CORRECT% (spec-attributable)** | **0 / 451 = 0.0 %** |
 | CANNOT-VERIFY share | **1 / 451 = 0.2 %** |
 
+> ### ⚠ SUPERSEDED 2026-09-08 — read §26 before this section
+>
+> **The central claim below is now false, and it is the largest single error in
+> this corpus.** It was true when measured at `68ed59d9`. A Trip Kernel programme
+> landed afterwards — ten commits, five `*trip_kernel*` migrations — and nothing
+> aged this document, because it declared no `head_commit` and had no
+> `CENSUS_SCOPE` entry to age it with.
+>
+> Both greps below were re-run at HEAD. The first now returns **47 files**. The
+> second, the one called "the whole story in one line", returns **34**;
+> `aggregate_version` alone occurs in **17**. `2420_trip_kernel_foundation.sql`
+> cites this spec by section number in its own header (§4.3, §5.1), which is the
+> precise thing the claim says it could not find.
+>
+> Twelve of §4's fourteen NOT-BUILT rows are corrected in place. The headline
+> figures below are the `68ed59d9` measurement and are left standing as the
+> record of it; §26 carries the recount.
+
 Read the third-from-last row first. **Not one artifact in this tree was built for this
 specification, and I could not find one that has ever heard of it.**
 
@@ -41,6 +59,9 @@ grep -rli "trip_command\|TripCommand\|trip_events\|TripKernel\|aggregate_version
   artifacts/api-server/src travel-buddy-standalone/src migrations
 → (no matches)
 ```
+
+*(Both greps above are the `68ed59d9` results, preserved as the record. At HEAD the
+first returns 47 files and the second 34 — see the superseded notice.)*
 
 The second grep is the whole story in one line. §4 is the Trip Kernel — commands, an event
 envelope, an outbox. §19 requires every projection to carry `sourceTripVersion`. §22.4 makes
@@ -241,26 +262,26 @@ Nothing in this section exists. The evidence is one grep, run over
 
 | id | Requirement | V | Evidence |
 | --- | --- | --- | --- |
-| TR49 | The `TripCommand` envelope (commandId, tripId, actorUserId, expectedTripVersion, idempotencyKey, type, payload, clientObservedAt) | **N** | No type, no table, no route. Writes are per-resource PATCH/POST handlers across `routes/trips.ts`, `trips-expansion.ts`, `tripReservations.ts`, `tripCrewLocation.ts`, `tripBudgetIntel.ts`. |
+| TR49 | The `TripCommand` envelope (commandId, tripId, actorUserId, expectedTripVersion, idempotencyKey, type, payload, clientObservedAt) | **C** | **Moved N→C in the §26 recensus.** The row said "No type, no table, no route." All three exist: the envelope is `lib/tripKernel.ts:198#TripCommand` (commandId, tripId, actorUserId, expectedTripVersion, idempotencyKey, type, payload), the receipt table is `migrations/2420_trip_kernel_foundation.sql:139#trip_command_receipts`, and the route is the `trip_kernel_execute` RPC that `lib/tripKernel.ts:427#executeTripCommand` calls. |
 | TR50 | A typed command vocabulary (ADD_PLAN, MOVE_PLAN, CONFIRM_PLAN, CANCEL_PLAN, JOIN_PLAN, LEAVE_PLAN, CREATE_SUBGROUP, SET_PRESENCE, CREATE_PROPOSAL, ACCEPT_PROPOSAL, COMPLETE_ACTIVITY) | **N** | None of the eleven exists as a command. Four have a *route* that does something adjacent (`POST /trips/:id/plan/items`, `PATCH …/items/:itemId`, `POST /trips/:id/complete`); seven have no analogue at all. |
 | TR51 | Command service validates schema | **C** | This one requirement is genuinely met by the CRUD layer: every trip write parses a zod schema first (`routes/trips.ts:1499-1501`; `routes/tripReservations.ts` schemas; `routes/trips-expansion.ts` per-endpoint schemas). It is validation without a command service, which is the requirement's testable half. |
 | TR52 | …validates actor capability | **C** | `lib/http.ts:534` `canEditPlan` and `:594` `canEditPlanItem` are called before every plan mutation (`routes/trips.ts:1505-1509,1443,1573`), and membership is checked through the shared `lib/tripMembership.ts:23` `isAcceptedTripMember`. |
-| TR53 | …validates aggregate version | **N** | No version exists (TR12). Two hosts editing the same plan item both succeed and the later write wins silently. |
-| TR54 | …validates temporal/spatial consistency | **N** | No conflict check on write. `routes/trips.ts:1520-1533` accepts any `starts_at`/`ends_at` pair, including one that overlaps a confirmed item or precedes the trip's own start date. |
+| TR53 | …validates aggregate version | **C** | **Moved N→C.** The row said "No version exists." `trips.version` is added by `2420_trip_kernel_foundation.sql:96#version` and the kernel refuses a mismatch: `2590_trip_kernel_add_plan_attachment_columns.sql:365#TRIP_VERSION_CONFLICT` returns the current and expected versions so a caller can refetch and retry (§18.3 "explicit conflict"). |
+| TR54 | …validates temporal/spatial consistency | **W** | **Moved N→W 2026-09-08, and the W is the honest half.** The row said the write "accepts any `starts_at`/`ends_at` pair, including one that overlaps a confirmed item or precedes its predecessor." ORDERING is now checked: the kernel already refused an inverted range on the TRIP (`2590:...#TRIP_TEMPORAL_RANGE_INVERTED`, on create and on update, comparing the MERGED value), and the plan-item half is now enforced by `migrations/2750_trip_plan_item_interval_ordered.sql` (a CHECK, NOT VALID, rehearsed on portava-ci — an UPDATE into an inverted range is refused) plus the typed refusal at `lib/tripKernel.ts:427#executeTripCommand`. **OVERLAP is still unchecked** — an item may still be written across a confirmed item's interval, because that is the §7 consistency engine (TR128, TR134) and needs a route provider this tree does not have. Ordering built, overlap not. **Also recorded here rather than lost:** the plan-item check lives at the kernel's entry point rather than inside `trip_kernel_execute`, because every kernel change replaces that 700-line function in full; it should ride along with the next migration that replaces it for its own reasons. |
 | TR55 | …validates dependent commitments | **N** | No commitments exist (TR15). |
 | TR56 | …validates sensitive-domain boundaries | **W** | Partially, by construction rather than by a validator: `trip_documents` and crew location have their own routes with their own gates (`routes/tripCrewLocation.ts:170-174`), so a plan write cannot touch them. There is no boundary *check* — there is simply no shared write path that could cross one. |
-| TR57 | Successful commands write canonical state plus an immutable domain event in the same transaction where feasible | **N** | No event is written by any trip mutation. The nearest thing, `logActivity`, is explicitly **outside** the transaction and **swallows its own errors**: `routes/trips-expansion.ts:56-59` — `.insert(...).then(undefined, () => {})`. A failed audit write is invisible. |
+| TR57 | Successful commands write canonical state plus an immutable domain event in the same transaction where feasible | **C** | **Moved N→C.** The row said "No event is written by any trip mutation." One plpgsql function does both writes in one transaction: `2590_trip_kernel_add_plan_attachment_columns.sql:798#version` bumps `trips.version` and `:804#trip_events` appends the event, with the outbox row at `:818#trip_outbox`. `logActivity` — the thing the row measured — is no longer the nearest artifact. |
 | TR63 + TR67 | §4.2 domain events `trip.participant_joined` and `trip.trip_completed` | **W** ×2 | `trip_activity_log` (`0079_trip_sub_tables.sql:240-247`) records these two through `logActivity` (`routes/trips-expansion.ts:49-60`): `join_request_approved` at `:738`, `joined_via_invite_link` at `:1379`, `trip_completed` at `:517`. **W** because the row carries no aggregate version, no sequence, no causation/correlation id and no schema version, and is written best-effort **outside** the transaction (`:56-59` `.then(undefined, () => {})`). |
 | TR58–TR62 + TR64–TR66 | §4.2 domain events `trip.plan_added` · `plan_moved` · `plan_confirmed` · `commitment_at_risk` · `free_window_created` · `proposal_accepted` · `stage_started` · `trip_disrupted` | **N** ×8 | None is emitted anywhere. Note the structural reason for the first three: `logActivity` is defined in `routes/trips-expansion.ts` and **every plan route lives in `routes/trips.ts`**, which never imports it — so no plan mutation logs anything at all. The other five have no underlying concept (commitments, free windows, proposals, stages, disruption). |
-| TR68 | The `TripEvent` envelope | **N** | `trip_activity_log` is `(id, trip_id, actor_id, event_type, metadata, created_at)` — six columns against the envelope's thirteen. |
-| TR69 | `aggregateVersion` on every event | **N** | Absent (TR12). |
-| TR70 | `sequence` on every event | **N** | Absent; ordering is `created_at DESC` (`0079:258`), which is not a sequence. |
-| TR71 | `causationId` / `correlationId` | **N** | Absent. |
-| TR72 | `schemaVersion` on the payload | **N** | Absent — `metadata JSONB NOT NULL DEFAULT '{}'` is untyped and unversioned, so a payload shape change is unmigrable. |
-| TR73 | `occurredAt` distinct from `recordedAt` | **N** | One column, `created_at`, set by the database at insert. A client-observed instant cannot be represented. |
-| TR74 | Outbox pattern for asynchronous consumers | **N** | No outbox table. `grep -rli outbox` over the trip paths returns the SMS provider and the reminder scheduler, neither of which is one. |
+| TR68 | The `TripEvent` envelope | **C** | **Moved N→C.** The row compared `trip_activity_log`'s six columns to the envelope's thirteen. The envelope is not that table: `2420_trip_kernel_foundation.sql:101#trip_events` carries event_id, trip_id, aggregate_version, sequence, type, actor_user_id, causation_id, correlation_id, payload, schema_version, occurred_at and recorded_at, append-only by trigger. |
+| TR69 | `aggregateVersion` on every event | **C** | **Moved N→C.** `2420_trip_kernel_foundation.sql:104#aggregate_version`, NOT NULL, with `trip_events_positive` requiring it > 0. |
+| TR70 | `sequence` on every event | **C** | **Moved N→C.** `2420_trip_kernel_foundation.sql:105#sequence`, NOT NULL, unique per trip (`trip_events_trip_sequence_unique`) — a real sequence, not a `created_at DESC` ordering. |
+| TR71 | `causationId` / `correlationId` | **C** | **Moved N→C.** `2420_trip_kernel_foundation.sql:108#causation_id` (the command_id that produced the event) and `:109#correlation_id`. |
+| TR72 | `schemaVersion` on the payload | **C** | **Moved N→C.** `2420_trip_kernel_foundation.sql:111#schema_version`, NOT NULL DEFAULT 1 — so a payload shape change is migrable, which the untyped `metadata JSONB` this row measured was not. |
+| TR73 | `occurredAt` distinct from `recordedAt` | **C** | **Moved N→C.** `2420_trip_kernel_foundation.sql:112#occurred_at` is the client-observed instant and `:113#recorded_at` is when the database wrote it. Two columns, distinct, exactly as §4.3 asks. |
+| TR74 | Outbox pattern for asynchronous consumers | **C** | **Moved N→C.** `2420_trip_kernel_foundation.sql:156#trip_outbox`, written in the same transaction as the event (`2590:818#trip_outbox`) and indexed on the unpublished set. |
 | TR75 | Workers publish/retry idempotently | **W** | Two trip workers exist and both are real: `lib/tripReminderScheduler.ts` (with `is_sent` + `reminder_delivered_at` + `reminder_retry_count`, migrations `0138`–`0140`) and `lib/tripCrewLiveShareScheduler.ts`. They are timer-driven pollers over their own tables, not outbox consumers, and the reminder one is idempotent by a `is_sent` flag rather than by event id. |
-| TR76 | Consumers persist processed event IDs or use deterministic projection version checks | **N** | No projection worker exists (TR379), so there is nothing to make idempotent. |
+| TR76 | Consumers persist processed event IDs or use deterministic projection version checks | **C** | **Moved N→C.** A projection worker exists and is registered: `lib/mapTripProjectionWorker.ts:86#runTripMapProjectionPass` drains unpublished outbox rows in `aggregate_version` order per trip and stamps `published_at`; `:124#startTripMapProjectionScheduler` is called at `index.ts:162#startTripMapProjectionScheduler`. |
 
 ### §5 Database Schema
 
@@ -869,3 +890,71 @@ describes a system that has not been started, on top of a system that already ex
 works.** The first thing anyone acting on this document should do is §24 Phase 0 — the
 inventory and write-path freeze — because it was skipped, and skipping it is why the write
 surface grew to 97 endpoints while the kernel stayed at zero.
+
+---
+
+## 26. Recensus of §4 at `2b680bdb` — and a correction to this document's headline
+
+The §3 pass was taken at HEAD `68ed59d9`. This section re-reads **§4 only** and
+corrects the attribution claim the document leads with. It does **not** re-read
+the other twenty-four sections, and the headline table is deliberately left at
+its original figures — see "What this does not claim" below.
+
+### The attribution claim was true when written and is false now
+
+The document opens with *"Not one artifact in this tree was built for this
+specification, and I could not find one that has ever heard of it"*, and rests it
+on two greps that returned essentially nothing. Both were re-run at HEAD:
+
+| grep | at `68ed59d9` | at `2b680bdb` |
+|---|---|---|
+| spec / kernel / projection names | 1 file (a sibling census) | **47 files** |
+| `TripCommand` / `trip_events` / `trip_command` | 0 | **34 files** |
+| `aggregate_version` alone | 0 | **17 files** |
+
+`2420_trip_kernel_foundation.sql` cites this spec **by section number in its own
+header** (§4.3 for the TripEvent envelope, §5.1 for `trips.version` and
+`trip_events`) — which is exactly the artifact the claim says does not exist.
+
+**Why it went unnoticed for a whole programme of work:** this census declared no
+`head_commit` and had no entry in `CENSUS_SCOPE`, so `check:census-freshness`
+reported it CANNOT BE CHECKED rather than STALE. It is the strongest argument
+available for the P3 recensus work — an unmeasurable census does not merely age,
+it can inverted-report a surface's most important fact and nothing objects.
+
+### §4: twelve of fourteen NOT-BUILT rows corrected
+
+| id | was | now | what exists |
+|---|---|---|---|
+| TR49 | N | **C** | `TripCommand` envelope, `trip_command_receipts`, the RPC |
+| TR53 | N | **C** | `trips.version` + `TRIP_VERSION_CONFLICT` |
+| TR54 | N | **W** | ordering enforced (2750 + the kernel entry point); **overlap still not** |
+| TR57 | N | **C** | canonical state and event written by one function in one transaction |
+| TR68 | N | **C** | `trip_events` is the envelope — twelve columns, append-only by trigger |
+| TR69 | N | **C** | `aggregate_version`, NOT NULL, `> 0` by constraint |
+| TR70 | N | **C** | `sequence`, unique per trip — a real sequence, not `created_at DESC` |
+| TR71 | N | **C** | `causation_id` / `correlation_id` |
+| TR72 | N | **C** | `schema_version` NOT NULL DEFAULT 1 |
+| TR73 | N | **C** | `occurred_at` and `recorded_at`, distinct columns |
+| TR74 | N | **C** | `trip_outbox`, written in the event's transaction |
+| TR76 | N | **C** | `mapTripProjectionWorker`, registered in `index.ts` |
+
+**TR55 stays N** — the `Commitment` contract genuinely does not exist (TR15), so
+there are no dependent commitments to validate. **TR54 is W, not C**, and the
+distinction is the point: an inverted interval is now refused on both the trip
+and the plan item, but an item may still be written across a confirmed item's
+interval. Overlap is the §7 consistency engine (TR128, TR134) and needs a route
+provider this tree does not have. Ordering built; overlap not.
+
+### What this section does NOT claim
+
+- **The other 24 sections are unaudited.** §7, §11, §12, §13, §14, §16, §19, §21
+  and §22 still carry their `68ed59d9` verdicts, and the Trip Kernel programme
+  plausibly moved rows in §5 and §19 too. Those were not opened.
+- **No `head_commit` is declared here.** Declaring one would make
+  `check:census-freshness` report FRESH about 24 sections nobody re-read — the
+  same lie census-passport declines for the same reason. This census joins the
+  checkable set when it is recensused whole.
+- The headline table is unchanged and now understates the surface. Correcting it
+  from a partial re-read would be inventing a number; §4's twelve rows are
+  itemised above so the arithmetic is available to whoever finishes the job.
