@@ -138,6 +138,24 @@ Seven comment-only mentions name no route that exists:
 | `/api/visuals` | `src/services/visuals.ts:2` |
 | `/api/discovery/places` | `app/map/index.tsx:1046` |
 
+### Reading a chain in the JSON
+
+Each wired route carries `callSite`, `clientFn`, `consumers` (files importing that
+function) and `screens`. **`consumers` is one import hop.** A screen two hops away shows
+an empty `screens` while `consumers` names the component - worked example:
+
+```
+POST /api/threads/:threadId/telegraph/suggestions/:suggestionId/dismiss
+  server   artifacts/api-server/src/routes/telegraphChat.ts:151
+  client   dismissSuggestion()  src/services/telegraphChat.ts:139 (fetch at :144)
+  compnt   src/components/TelegraphSuggestionTray.tsx:260
+  screen   app/messages/[id].tsx:1994          <- second hop, not in `screens`
+```
+
+So `screens: []` means "not reached in one hop", never "unreachable". 402 of the 849
+wired routes reach an `app/` screen within a single hop; the rest reach one through a
+component, as above.
+
 ## Findings
 
 ### MOCK-DATA SEED - fixed
