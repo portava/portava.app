@@ -2,6 +2,7 @@ import { Router } from "express";
 import rateLimit from "express-rate-limit";
 import { getServiceClient } from "../lib/supabase";
 import { isFlagEnabled, isKillSwitchEngaged } from "../lib/featureFlags.js";
+import { asyncHandler } from "../lib/asyncHandler.js";
 import { logger } from "../lib/logger";
 
 const router = Router();
@@ -55,7 +56,7 @@ export function _resetAuthRateLimits(): void {
  * Uses the admin API so we can look up by email without the user being signed in.
  * Rate-limited by intentional delay and per-IP cap to discourage enumeration.
  */
-router.post("/auth/lookup-username", lookupUsernameLimiter, async (req, res) => {
+router.post("/auth/lookup-username", lookupUsernameLimiter, asyncHandler(async (req, res) => {
   const { email } = req.body ?? {};
   if (!email || typeof email !== "string" || !email.includes("@")) {
     res.status(400).json({ error: "A valid email address is required." });
@@ -118,7 +119,7 @@ router.post("/auth/lookup-username", lookupUsernameLimiter, async (req, res) => 
     logger.error({ err }, "lookup-username error");
     res.status(500).json({ error: "Something went wrong. Please try again." });
   }
-});
+}));
 
 /**
  * GET /api/auth/signup-status
@@ -132,10 +133,25 @@ router.post("/auth/lookup-username", lookupUsernameLimiter, async (req, res) => 
  * the app never shows a signup form that is about to 403. invite_only_beta is
  * an ordinary capability flag and stays fail-open (defaults to false).
  */
-router.get("/auth/signup-status", async (_req, res) => {
+router.get("/auth/signup-status", asyncHandler(async (_req, res) => {
   const client = getServiceClient();
   if (!client) {
-    res.json({ signupsEnabled: true, inviteOnly: false });
+    // NO CLIENT MEANS THE STOP CANNOT BE READ, WHICH IS NOT THE SAME AS THE
+    // STOP BEING OFF. This used to answer `{ signupsEnabled: true }`, which is
+    // the one answer the docblock above forbids on both counts: it disengages
+    // an emergency stop precisely when the database is unreachable — the case
+    // isKillSwitchEngaged exists to close (check-flag-polarity.mjs classifies
+    // `disable_signups` STOP for exactly this) — and it contradicts the
+    // endpoint's stated contract that it matches what POST /auth/signup will
+    // do, because that route answers 503 `service_unavailable` with no client.
+    // The app then rendered a signup form guaranteed to fail on submit.
+    //
+    // `invite_only_beta` is CLASSIFIED CAPABILITY and stays false here: its
+    // false-on-unreadable is a recorded rollout decision (opening signup to
+    // everyone rather than narrowing it to invitees), and it is not this
+    // handler's place to reverse it. The two flags fail in OPPOSITE directions
+    // on purpose, which is the whole point of the classification.
+    res.status(503).json({ signupsEnabled: false, inviteOnly: false });
     return;
   }
 
@@ -148,7 +164,7 @@ router.get("/auth/signup-status", async (_req, res) => {
     signupsEnabled: !disabledFlag,
     inviteOnly:     inviteOnlyFlag,
   });
-});
+}));
 
 /**
  * POST /api/auth/signup
@@ -167,7 +183,7 @@ router.get("/auth/signup-status", async (_req, res) => {
  * Uses admin.createUser (service role) so the ECC P-256 JWT rotation that
  * breaks PostgREST RLS does not affect account creation.
  */
-router.post("/auth/signup", signupLimiter, async (req, res) => {
+router.post("/auth/signup", signupLimiter, asyncHandler(async (req, res) => {
   const { email, password } = req.body ?? {};
 
   if (!email || typeof email !== "string" || !email.includes("@")) {
@@ -214,6 +230,6 @@ router.post("/auth/signup", signupLimiter, async (req, res) => {
     logger.error({ err }, "auth/signup unexpected error");
     res.status(500).json({ error: "signup_failed" });
   }
-});
+}));
 
 export default router;
