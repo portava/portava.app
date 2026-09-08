@@ -13,12 +13,14 @@ import type { AirportProfile } from "./AirportProfileService.js";
 import type { LayoverSession } from "./LayoverSessionService.js";
 import {
   assess,
-  computeReturnDeadline,
   travelTimeSourceFor,
-  LAYOVER_ENGINE_VERSION,
   type SafetyRating,
   type TravelTimeSource,
 } from "./LayoverSafetyEngine.js";
+import {
+  certifySessionFeasibility,
+  certificationHeader,
+} from "./LayoverFeasibility.js";
 import { sanitizeRecommendation, type SafeRecommendation } from "./LayoverPrivacyGuard.js";
 import { localHour } from "./AirportTime.js";
 
@@ -309,6 +311,12 @@ export async function generateRecommendations(
 ): Promise<GenerateResult> {
   const city = airport.city ?? session.manualCity ?? "Unknown";
 
+  // The certified feasibility for this session at this instant. Every card
+  // below is rated against THIS record's deadline — previously each candidate
+  // re-derived it, and the audit event derived it a third time. One record,
+  // one deadline, one audit trail.
+  const certified = certifySessionFeasibility(airport, session, { nowMs });
+
   // 1. Inside-airport suggestions (always generated)
   const insideCandidates = insideAirportCandidates(session);
 
@@ -363,7 +371,7 @@ export async function generateRecommendations(
   let sortOrder = 0;
 
   for (const candidate of allCandidates) {
-    const a = assess(airport, session, candidate, nowMs);
+    const a = assess(airport, session, candidate, nowMs, certified.deadline);
     keys.push(recommendationKey(candidate));
     sources.push(travelTimeSourceFor(candidate));
     const row = {
@@ -476,7 +484,7 @@ export async function generateRecommendations(
   // §23 "audit all server-side changes to certification fields"): the rules
   // version, the inputs the deadline was derived from, and what was written.
   {
-    const { cutoffMs, breakdown, hardReturnTime } = computeReturnDeadline(airport, session);
+    const { cutoffMs, breakdown, hardReturnTime } = certified.deadline;
     const ratings: Record<string, number> = {};
     for (const r of rows) ratings[r.safety_rating] = (ratings[r.safety_rating] ?? 0) + 1;
     const { error: evtError } = await db.from("layover_events").insert({
@@ -490,7 +498,11 @@ export async function generateRecommendations(
         // gap between the two is auditable rather than invisible.
         count: rows.length,
         moderationHidden: keys.filter((k) => statusByKey.get(k) === USER_HIDDEN_RECOMMENDATION_STATUS).length,
-        engineVersion: LAYOVER_ENGINE_VERSION,
+        // Spec §2.1 "versioned, explainable and replayable" / §20 DecisionRecord:
+        // the certification header identifies the exact computation the ratings
+        // and deadlines written above came out of, and `inputHash` is what makes
+        // a replay checkable rather than a re-derivation that happens to agree.
+        ...certificationHeader(certified),
         stableIds: Boolean(opts.stableIds),
         inputs: {
           airportId: airport.id,

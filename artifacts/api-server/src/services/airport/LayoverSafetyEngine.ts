@@ -107,6 +107,25 @@ export const TRAVEL_TIME_SOURCES = ["inside_airport", "category_default", "measu
 export type TravelTimeSource = (typeof TRAVEL_TIME_SOURCES)[number];
 
 /**
+ * Is a source a real route for THIS place from THIS airport, or a stand-in?
+ *
+ * Declared once, here, beside `TRAVEL_TIME_SOURCES`, for one reason: nothing
+ * outside this file may write or compare the "measured" string — that is the
+ * tripwire `src/test/layoverTravelTimeProvenance.test.ts` holds, because the
+ * persisted read path infers provenance and the inference is exact only while
+ * no producer exists. A consumer that needs to know whether a figure is routed
+ * asks this table instead of re-spelling the value. This is a CLASSIFICATION
+ * of the three declared sources, not a producer of any of them: adding a
+ * routed producer still means adding a column, updating getRecommendations and
+ * changing that test's expectation.
+ */
+export const TRAVEL_TIME_SOURCE_IS_ROUTED: Record<TravelTimeSource, boolean> = {
+  inside_airport:   false,
+  category_default: false,
+  measured:         true,
+};
+
+/**
  * Resolve the provenance of a travel-time figure, failing CLOSED: an absent
  * source is treated as the least-trusted kind that applies, never as measured.
  *
@@ -212,6 +231,32 @@ function timeOfDayExtra(at: Date, timezone?: string): number {
   return extra;
 }
 
+/**
+ * Exactly the airport fields this engine reads, and exactly the session fields
+ * it reads. Declared as narrowings rather than the full domain types so that
+ * the certified input set in LayoverFeasibility can be checked against them by
+ * the compiler: if the arithmetic ever starts reading a field, it has to be
+ * added here, which makes it visible in the record and in its input hash.
+ * `AirportProfile` and `LayoverSession` satisfy these, so every existing
+ * caller is unaffected.
+ */
+export type EngineAirport = Pick<AirportProfile,
+  | "timezone" | "verified"
+  | "domesticBufferMin" | "internationalBufferMin"
+  | "immigrationExtraMin" | "checkedBagsExtraMin" | "trafficExtraMin"
+>;
+export type EngineSession = Pick<LayoverSession,
+  | "arrivalTime" | "departureTime" | "boardingTime"
+  | "flightType" | "immigrationRequired" | "checkedBags" | "wantsToLeave"
+>;
+
+/** The certified deadline computation, as `computeReturnDeadline` returns it. */
+export interface ReturnDeadline {
+  cutoffMs: number;
+  breakdown: SafetyAssessment["breakdown"];
+  hardReturnTime: Date;
+}
+
 export function computeBuffer(
   airport: Pick<AirportProfile,
     "domesticBufferMin" | "internationalBufferMin" |
@@ -257,14 +302,11 @@ export function layoverCutoffMs(
  *     may publish the two together without them contradicting each other.
  */
 export function computeReturnDeadline(
-  airport: Pick<AirportProfile,
-    "domesticBufferMin" | "internationalBufferMin" |
-    "immigrationExtraMin" | "checkedBagsExtraMin" | "trafficExtraMin" | "timezone"
-  >,
+  airport: EngineAirport,
   session: Pick<LayoverSession,
     "flightType" | "immigrationRequired" | "checkedBags" | "departureTime" | "boardingTime"
   >,
-): { cutoffMs: number; breakdown: SafetyAssessment["breakdown"]; hardReturnTime: Date } {
+): ReturnDeadline {
   const cutoffMs  = layoverCutoffMs(session);
   const breakdown = computeBuffer(airport, session, new Date(cutoffMs), airport.timezone);
   return {
@@ -278,12 +320,22 @@ export function computeReturnDeadline(
  * Assess a single activity against the current session state.
  */
 export function assess(
-  airport: AirportProfile,
-  session: LayoverSession,
+  airport: EngineAirport,
+  session: EngineSession,
   candidate: ActivityCandidate,
   nowMs = Date.now(),
+  /**
+   * The already-certified deadline for this session, when the caller holds
+   * one. Passing it is how "one computation per request" is made literally
+   * true: without it every candidate in a list re-derives the same deadline.
+   * It is the SAME function's output either way — `computeReturnDeadline` is
+   * pure and depends on nothing but these two arguments — so this is a reuse,
+   * not a second path, and `layoverFeasibilityRecord.test.ts` pins that
+   * passing it and omitting it give identical assessments.
+   */
+  certified?: ReturnDeadline,
 ): SafetyAssessment {
-  const { cutoffMs, breakdown, hardReturnTime } = computeReturnDeadline(airport, session);
+  const { cutoffMs, breakdown, hardReturnTime } = certified ?? computeReturnDeadline(airport, session);
   const availableMin   = Math.max(0, Math.round((cutoffMs - nowMs) / 60000));
 
   const bufferMin      = breakdown.totalBuffer;
@@ -343,8 +395,8 @@ export function assess(
  * Safe activities come first; within same rating, shorter travel time wins.
  */
 export function rankActivities(
-  airport: AirportProfile,
-  session: LayoverSession,
+  airport: EngineAirport,
+  session: EngineSession,
   candidates: ActivityCandidate[],
   nowMs = Date.now(),
 ): Array<ActivityCandidate & { assessment: SafetyAssessment }> {
@@ -355,8 +407,10 @@ export function rankActivities(
     airport_only:       3,
   };
 
+  // One deadline for the whole list, not one per candidate.
+  const certified = computeReturnDeadline(airport, session);
   return candidates
-    .map((c) => ({ ...c, assessment: assess(airport, session, c, nowMs) }))
+    .map((c) => ({ ...c, assessment: assess(airport, session, c, nowMs, certified) }))
     .sort((a, b) => {
       const rDiff = RATING_ORDER[a.assessment.rating] - RATING_ORDER[b.assessment.rating];
       if (rDiff !== 0) return rDiff;
@@ -462,8 +516,8 @@ const TIER_META: Record<LayoverTier, { label: string; blurb: string }> = {
  * All hour-of-day logic runs in the airport's timezone.
  */
 export function computeWindow(
-  airport: AirportProfile,
-  session: LayoverSession,
+  airport: EngineAirport,
+  session: EngineSession,
   nowMs = Date.now(),
 ): LayoverWindow {
   const arrivalMs = new Date(session.arrivalTime).getTime();
@@ -555,8 +609,8 @@ export const TRAVEL_TIME_UNMEASURED_UNKNOWN =
 
 /** "Can I Leave the Airport?" decision, phrased as guidance. */
 export function adviseLeaving(
-  airport: AirportProfile,
-  session: LayoverSession,
+  airport: Pick<AirportProfile, "verified">,
+  session: Pick<LayoverSession, "wantsToLeave" | "flightType" | "checkedBags">,
   window: LayoverWindow,
   facts: LeaveAdviceFacts = {},
 ): LeaveAdvice {

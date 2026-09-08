@@ -69,12 +69,19 @@ import {
   emitLayoverEvent,
   type LayoverSession,
 } from "../services/airport/LayoverSessionService.js";
+import { safetyLabel } from "../services/airport/LayoverSafetyEngine.js";
+// Every feasibility number this file publishes comes from ONE call to
+// `certifySessionFeasibility` per request. `assess`, `computeWindow` and
+// `adviseLeaving` are deliberately NOT imported here any more: four handlers
+// each assembling their own combination of the three is how the census's
+// headline defect 2 happened (a buffer from one anchor published beside a
+// deadline from another). See services/airport/LayoverFeasibility.ts.
 import {
-  assess,
-  safetyLabel,
-  computeWindow,
-  adviseLeaving,
-} from "../services/airport/LayoverSafetyEngine.js";
+  certifySessionFeasibility,
+  certificationHeader,
+  type LayoverFeasibilityRecord,
+  type LandsideProbe,
+} from "../services/airport/LayoverFeasibility.js";
 import {
   wallTimeToUtc,
   formatLocalTime,
@@ -779,37 +786,52 @@ router.get("/airport/sessions/:id/safety", async (req, res) => {
   const airport = await airportOr503(sc, res, session);
   if (!airport) return;
 
-  // Assess a generic "leaving airport" activity to get overall safety. The
-  // 20-minute leg is a category constant, not a route from this airport, and
-  // the response says so (travelTimeSource) rather than letting the rating
-  // pose as measured — spec §2.1 "never fabricate freshness".
-  const travelTimeSource = "category_default" as const;
-  const a = assess(airport, session, {
-    title:          "Leaving airport",
-    travelTimeMin:  20,
-    travelTimeSource,
+  // The generic "leaving airport" probe. The 20-minute leg is a category
+  // constant, not a route from this airport, and the response says so
+  // (travelTimeSource) rather than letting the rating pose as measured —
+  // spec §2.1 "never fabricate freshness". It is now a NAMED INPUT of the
+  // certified record, so it is covered by the record's inputHash instead of
+  // being a literal only this handler knew about.
+  const probe: LandsideProbe = {
+    title:           "Leaving airport",
+    travelTimeMin:   20,
     activityTimeMin: 30,
-    insideAirport:  false,
+    travelTimeSource: "category_default",
+  };
+  const record = certifySessionFeasibility(airport, session, {
+    nowMs: Date.now(),
+    landsideProbe: probe,
   });
-
-  const window = computeWindow(airport, session);
-  const advice = adviseLeaving(airport, session, window, { travelTimeSource });
+  const a = record.landside!;
 
   res.json({
     featureEnabled:  true,
     overallRating:   a.rating,
     overallLabel:    safetyLabel(a.rating),
-    travelTimeSource,
+    travelTimeSource: probe.travelTimeSource,
     availableMinutes: a.availableMinutes,
-    usableMinutes:   window.usableMinutes,
+    usableMinutes:   record.envelope.usableMinutes,
+    // One computation, one buffer, one deadline: both of these come out of
+    // `record.deadline`, which is the only place either was derived.
     returnBufferMin: a.returnBufferMin,
-    hardReturnTime:  window.hardReturnTime.toISOString(),
+    hardReturnTime:  record.deadline.hardReturnTime.toISOString(),
     warningReason:   a.warningReason,
     breakdown:       a.breakdown,
     layoverMinutes:  session.layoverMinutes,
-    tier:            window.tier,
-    tierLabel:       window.tierLabel,
-    advice,
+    tier:            record.envelope.tier,
+    tierLabel:       record.envelope.tierLabel,
+    advice:          {
+      verdict:     record.verdict,
+      reasons:     record.reasons,
+      unknowns:    record.unknowns,
+      reasonCodes: record.reasonCodes,
+      disclaimer:  record.disclaimer,
+      engineVersion: record.engineVersion,
+    },
+    // Spec §2.1 "versioned, explainable and replayable" — the fields that let
+    // a stored answer be traced to the rules and inputs that produced it.
+    certification: certificationHeader(record),
+    estimates:     record.estimates,
   });
 });
 
@@ -969,8 +991,8 @@ router.post("/airport/sessions/:id/return-deadline", async (req, res) => {
   const airport = await airportOr503(sc, res, session);
   if (!airport) return;
 
-  const window     = computeWindow(airport, session);
-  const hardReturn = window.hardReturnTime;
+  const record     = certifySessionFeasibility(airport, session, { nowMs: Date.now() });
+  const hardReturn = record.deadline.hardReturnTime;
   const remindAt   = new Date(hardReturn.getTime() - parsed.data.minutesBefore * 60000);
 
   // Persist the reminder instant so the client can (re)schedule local
@@ -982,6 +1004,9 @@ router.post("/airport/sessions/:id/return-deadline", async (req, res) => {
     minutesBefore: parsed.data.minutesBefore,
     hardReturnTime: hardReturn.toISOString(),
     reminderAt: remindAt.toISOString(),
+    // The deadline persisted above is a certification field: record which
+    // rules and which inputs produced it (spec §20 decision ledger).
+    ...certificationHeader(record),
   });
 
   res.json({
@@ -989,8 +1014,9 @@ router.post("/airport/sessions/:id/return-deadline", async (req, res) => {
     hardReturnTime: hardReturn.toISOString(),
     hardReturnLocal: formatLocalTime(airport.timezone, hardReturn),
     reminderAt: remindAt.toISOString(),
-    bufferMinutes: window.returnBufferMin,
+    bufferMinutes: record.deadline.breakdown.totalBuffer,
     reminderMinutesBefore: parsed.data.minutesBefore,
+    certification: certificationHeader(record),
   });
 });
 
@@ -1077,7 +1103,8 @@ function publicAirport(a: any) {
   };
 }
 
-function serializeWindow(w: ReturnType<typeof computeWindow>) {
+function serializeEnvelope(record: LayoverFeasibilityRecord) {
+  const w = record.envelope;
   return {
     ...w,
     hardReturnTime:  w.hardReturnTime.toISOString(),
@@ -1168,7 +1195,8 @@ async function stopsOr503(sc: any, res: any, sessionId: string): Promise<any[] |
 }
 
 /** Does the planned itinerary fit inside the usable window? */
-function computePlanFit(window: ReturnType<typeof computeWindow>, stops: any[]) {
+function computePlanFit(record: LayoverFeasibilityRecord, stops: any[]) {
+  const window = record.envelope;
   const totalPlannedMin = stops.reduce(
     (sum, s) => sum + (s.durationMin ?? 0) + (s.travelMin ?? 0), 0,
   );
@@ -1343,16 +1371,20 @@ router.get("/airport/sessions/:id/overview", async (req, res) => {
 
   const airport = await airportOr503(sc, res, session);
   if (!airport) return;
-  const window  = computeWindow(airport, session);
-  // No facts passed: nothing on this tree measures a route from the airport,
-  // and adviseLeaving reads an absent provenance as "not measured" and says so
-  // in `advice.unknowns` (fail-closed by design — see LeaveAdviceFacts).
-  const advice  = adviseLeaving(airport, session, window);
+  // No landside probe: nothing on this tree measures a route from the airport,
+  // and the certified advice reads an absent provenance as "not measured" and
+  // says so in `advice.unknowns` (fail-closed by design — see LeaveAdviceFacts).
+  // ONE clock read for the whole response. The certified record is FOR an
+  // instant, and `localTimes.airportNow` below must be that same instant —
+  // two independent reads would let the dashboard's "now" and the deadline it
+  // is measured against come from different moments (src/test/splitClockGuard).
+  const nowMs   = Date.now();
+  const now     = new Date(nowMs);
+  const record  = certifySessionFeasibility(airport, session, { nowMs });
   const stops   = await stopsOr503(sc, res, session.id);
   if (!stops) return;
-  const planFit = computePlanFit(window, stops);
+  const planFit = computePlanFit(record, stops);
   const tz      = airport.timezone ?? "UTC";
-  const now     = new Date();
 
   const presence = session.shareCityStatus
     ? await cityPresence(sc, user.id, airport.city !== "Unknown" ? airport.city : session.manualCity)
@@ -1363,8 +1395,17 @@ router.get("/airport/sessions/:id/overview", async (req, res) => {
     featureEnabled: true,
     session,
     airport: publicAirport(airport),
-    window: serializeWindow(window),
-    advice,
+    window: serializeEnvelope(record),
+    advice: {
+      verdict:     record.verdict,
+      reasons:     record.reasons,
+      unknowns:    record.unknowns,
+      reasonCodes: record.reasonCodes,
+      disclaimer:  record.disclaimer,
+      engineVersion: record.engineVersion,
+    },
+    certification: certificationHeader(record),
+    estimates:     record.estimates,
     stops,
     planFit,
     share: {
@@ -1381,7 +1422,7 @@ router.get("/airport/sessions/:id/overview", async (req, res) => {
       departureLocal: formatLocalTime(tz, new Date(session.departureTime)),
       departureDay:   localDayString(tz, new Date(session.departureTime)),
       boardingLocal:  session.boardingTime ? formatLocalTime(tz, new Date(session.boardingTime)) : null,
-      hardReturnLocal: formatLocalTime(tz, window.hardReturnTime),
+      hardReturnLocal: formatLocalTime(tz, record.deadline.hardReturnTime),
     },
   });
 });
@@ -1420,10 +1461,15 @@ async function requireOwnedSession(req: any, res: any): Promise<{ sc: any; user:
 async function respondWithStops(res: any, sc: any, session: LayoverSession) {
   const airport = await airportOr503(sc, res, session);
   if (!airport) return;
-  const window  = computeWindow(airport, session);
+  const record  = certifySessionFeasibility(airport, session, { nowMs: Date.now() });
   const stops   = await stopsOr503(sc, res, session.id);
   if (!stops) return;
-  res.json({ ok: true, stops, planFit: computePlanFit(window, stops) });
+  res.json({
+    ok: true,
+    stops,
+    planFit: computePlanFit(record, stops),
+    certification: certificationHeader(record),
+  });
 }
 
 router.get("/airport/sessions/:id/stops", async (req, res) => {
