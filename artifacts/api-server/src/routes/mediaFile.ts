@@ -265,10 +265,27 @@ router.post(
       // /render/image/sign/ URL with only quality forwarded.  This matches the
       // intuition: width=0 means "I don't want a resized derivative", so
       // forwarding quality alone would produce an unexpected transform URL.
-      if (typeof t.width === "number" && t.width <= 0) {
+      //
+      // ROUNDED FIRST, then tested — the same correction the quality arm below
+      // already carries, which this arm did not. MEASURED: `{ width: 0.1 }`
+      // cleared the `<= 0` test, cleared the `> 0` test, and then
+      // `Math.round(Math.min(0.1, 3000))` produced 0, so `width: 0` was
+      // forwarded to createSignedUrl — a /render/image/sign/ URL asking for a
+      // zero-pixel image. Every value below 0.5 did this. The GET handler never
+      // could (it clamps with `Math.max(parsedWidth, 1)`), so the comment there
+      // claiming the two handlers agree on width=0 was true of the literal 0 and
+      // false of everything that rounds to it.
+      // `!Number.isNaN` rather than `Number.isFinite`: `Math.min(Infinity, 3000)`
+      // already clamps to 3000 and that answer is unchanged from before, while
+      // NaN must fall through to `undefined` exactly as `NaN > 0` used to.
+      const widthRounded =
+        typeof t.width === "number" && !Number.isNaN(t.width)
+          ? Math.round(Math.min(t.width, 3000))
+          : undefined;
+      if (widthRounded !== undefined && widthRounded <= 0) {
         // Drop everything — no transform forwarded.
       } else {
-        const width = typeof t.width === "number" && t.width > 0 ? Math.round(Math.min(t.width, 3000)) : undefined;
+        const width = widthRounded;
         // quality=0 (and sub-unit fractions that round to 0) are dropped entirely
         // — same rule as width=0.  Round first, then guard, so that e.g. 0.1
         // doesn't slip through the > 0 check only to land as quality=0 after
