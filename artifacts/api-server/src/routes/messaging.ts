@@ -1922,12 +1922,26 @@ router.post('/threads/:threadId/messages', async (req, res) => {
   // isBlockedBetween (a blocks-table error is treated as blocked).
   {
     const blockSc = getServiceClient() ?? client;
-    const { data: otherMembers } = await client
+    const { data: otherMembers, error: otherMembersErr } = await client
       .from('message_thread_members')
       .select('user_id')
       .eq('thread_id', threadId)
       .is('left_at', null)
       .neq('user_id', user.id);
+    // isBlockedBetween IS fail-closed — but it is only REACHED when the roster
+    // read produced exactly one other member. supabase-js resolves on a database
+    // error, so an unreadable message_thread_members gave `data: null`, an empty
+    // roster, and the guard was skipped entirely: the fail-closed block check
+    // was never called, and the message went to someone who may have blocked the
+    // sender. A guard's posture is worth nothing if its INPUT can silently make
+    // it unreachable. Whether this is a 1:1 thread is now something we must
+    // KNOW, not something we assume from an empty result.
+    if (otherMembersErr) {
+      req.log.error({ err: otherMembersErr, threadId },
+        'thread roster read failed — cannot determine whether this is a blocked 1:1 thread; refusing the send');
+      sendError(res, 'degraded_unavailable', 'We could not verify this conversation right now. Please try again shortly.');
+      return;
+    }
     const others = ((otherMembers as any[]) ?? []).map((m) => m.user_id as string);
     if (others.length === 1 && others[0] && await isBlockedBetween(blockSc, user.id, others[0])) {
       sendError(res, 'forbidden', 'You cannot message this user'); return;
@@ -1935,11 +1949,22 @@ router.post('/threads/:threadId/messages', async (req, res) => {
   }
 
   // E-2: check thread E2EE flag.
-  const { data: threadMeta } = await client
+  // This flag decides whether the server is allowed to STORE PLAINTEXT. An
+  // unchecked `.error` made an unreadable message_threads read as
+  // `is_e2ee: false`, and the handler below then demanded a plaintext body and
+  // wrote it into a thread whose whole promise is that the server never sees
+  // one. "We could not read the flag" is not "the flag is false".
+  const { data: threadMeta, error: threadMetaErr } = await client
     .from('message_threads')
     .select('is_e2ee')
     .eq('id', threadId)
     .maybeSingle();
+  if (threadMetaErr) {
+    req.log.error({ err: threadMetaErr, threadId },
+      'thread E2EE flag read failed — refusing rather than risking plaintext storage in an E2EE thread');
+    sendError(res, 'degraded_unavailable', 'We could not verify this conversation right now. Please try again shortly.');
+    return;
+  }
   const isE2ee = (threadMeta as any)?.is_e2ee === true;
 
   if (isE2ee) {
@@ -2378,12 +2403,26 @@ router.post('/threads/:threadId/media', async (req, res) => {
   // Fail-closed via isBlockedBetween.
   {
     const blockSc = getServiceClient() ?? client;
-    const { data: otherMembers } = await client
+    const { data: otherMembers, error: otherMembersErr } = await client
       .from('message_thread_members')
       .select('user_id')
       .eq('thread_id', threadId)
       .is('left_at', null)
       .neq('user_id', user.id);
+    // isBlockedBetween IS fail-closed — but it is only REACHED when the roster
+    // read produced exactly one other member. supabase-js resolves on a database
+    // error, so an unreadable message_thread_members gave `data: null`, an empty
+    // roster, and the guard was skipped entirely: the fail-closed block check
+    // was never called, and the message went to someone who may have blocked the
+    // sender. A guard's posture is worth nothing if its INPUT can silently make
+    // it unreachable. Whether this is a 1:1 thread is now something we must
+    // KNOW, not something we assume from an empty result.
+    if (otherMembersErr) {
+      req.log.error({ err: otherMembersErr, threadId },
+        'thread roster read failed — cannot determine whether this is a blocked 1:1 thread; refusing the send');
+      sendError(res, 'degraded_unavailable', 'We could not verify this conversation right now. Please try again shortly.');
+      return;
+    }
     const others = ((otherMembers as any[]) ?? []).map((m) => m.user_id as string);
     if (others.length === 1 && others[0] && await isBlockedBetween(blockSc, user.id, others[0])) {
       sendError(res, 'forbidden', 'You cannot message this user'); return;
@@ -2393,11 +2432,19 @@ router.post('/threads/:threadId/media', async (req, res) => {
   // Finding #14 fix: E2EE threads must never accept plaintext media messages.
   // This endpoint has no attachment-encryption path yet, so fail closed —
   // same posture as the text handler's ciphertext-required guard above.
-  const { data: threadMetaForMedia } = await client
+  const { data: threadMetaForMedia, error: threadMetaForMediaErr } = await client
     .from('message_threads')
     .select('is_e2ee')
     .eq('id', threadId)
     .maybeSingle();
+  if (threadMetaForMediaErr) {
+    // An unreadable flag read as `is_e2ee: false` and let a plaintext media
+    // message through the one gate that exists to stop it.
+    req.log.error({ err: threadMetaForMediaErr, threadId },
+      'thread E2EE flag read failed on the media path — refusing rather than admitting plaintext media to an E2EE thread');
+    sendError(res, 'degraded_unavailable', 'We could not verify this conversation right now. Please try again shortly.');
+    return;
+  }
   if ((threadMetaForMedia as any)?.is_e2ee === true) {
     sendError(res, 'e2ee_thread', 'Media messages are not supported on end-to-end encrypted threads');
     return;
