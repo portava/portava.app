@@ -99,6 +99,17 @@ interface DbOpts {
   errorTables?: Record<string, { code: string; message: string; mode: "all" | "list" }>;
   /** Link VIEWER and OWNER as safe-return contacts so the route authorises. */
   safetyLink?: boolean;
+  /**
+   * Make VIEWER and OWNER friends, so the REAL permission engine grants
+   * `canSeeLocationContext` on the route path.
+   *
+   * WITHOUT THIS THE ROUTE MATRIX IS VACUOUS. A stranger fails the audience
+   * gate anyway, so every route case would pass with Safe Return's
+   * `crewSignal: "excluded"` hand-reverted — the tests would be measuring gate
+   * 2 and reporting on gate 1. Friends clear gate 2, so on the route only the
+   * exclusion stands between Safe Return and Locate storage.
+   */
+  friends?: boolean;
 }
 
 function makeBoundaryDb(opts: DbOpts = {}) {
@@ -130,6 +141,9 @@ function makeBoundaryDb(opts: DbOpts = {}) {
     locate_friends_sessions: crew
       ? [{ id: SESSION, started_at: PAST, expires_at: FUTURE, ended_at: null }]
       : [],
+    // user_friendships is keyed (user_a, user_b) with the ids sorted; OWNER
+    // sorts before VIEWER.
+    user_friendships: opts.friends ? [{ user_a: OWNER, user_b: VIEWER }] : [],
     safe_return_sessions: opts.safetyLink ? [{ id: "sr-1", user_id: VIEWER }] : [],
     safe_return_contacts: opts.safetyLink
       ? [{ id: "src-1", session_id: "sr-1", contact_user_id: OWNER }]
@@ -455,7 +469,7 @@ function assertSafetyShape(body: any) {
 
 function routeCase(name: string, opts: DbOpts) {
   it(name, async () => {
-    const db = makeBoundaryDb({ ...opts, safetyLink: true });
+    const db = makeBoundaryDb({ friends: true, ...opts, safetyLink: true });
     _setTestClient(db, true);
     _setTestServiceClient(db);
     const res = await request(SAFETY_PATH);
@@ -502,6 +516,26 @@ describe("GET /api/me/safe-return/contacts/:userId/passport — Safe Return owns
     flags: { ...SR_ON, locate_friends_enabled: true },
     crewSession: true,
     privacy: { show_current_city: false, show_home_country: false },
+  });
+
+  it("CONTROL: the route fixture really does clear the audience gate — the same db, unexcluded, reads Locate storage", async () => {
+    // No injected resolver: the REAL permission engine runs over the same rows
+    // the route cases use. If this ever stops touching Locate storage, the
+    // route matrix above has gone vacuous and is measuring gate 2 instead of
+    // Safe Return's exclusion.
+    const db = makeBoundaryDb({
+      flags: { safe_return_enabled: true, locate_friends_enabled: true },
+      crewSession: true,
+      friends: true,
+      safetyLink: true,
+    });
+    const p = (await buildPassportProjection(db, OWNER, VIEWER))!;
+    assert.equal(p.travelerState?.state, "with_crew");
+    assert.equal(p.travelerState?.city, null);
+    assert.deepEqual(
+      locateTablesTouched(db).sort(),
+      ["locate_friends_members", "locate_friends_sessions"],
+    );
   });
 
   it("without a safety relationship the route refuses BEFORE projecting anything", async () => {
