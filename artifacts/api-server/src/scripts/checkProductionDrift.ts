@@ -59,7 +59,7 @@
  */
 
 import { readFileSync, readdirSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -153,30 +153,13 @@ export const KNOWN_PRODUCTION_GAPS: Record<string, Gap> = {
     classification: "unapplied",
     note: "Migration 2278. Same shape: registerScopedTrustApplier at index.ts:166, gated by an unseeded flag.",
   },
-  intel_state_snapshot_versions: {
-    classification: "unapplied",
-    note: "Migration 2273. intelReplay targets it. Replayable projection is impossible in production without it.",
-  },
-  intel_presence_verifications: {
-    classification: "unapplied",
-    note:
-      "Migration 2276. Also WRITE-ONLY: written at IntelCaptureService.ts:303 and read " +
-      "by nothing. checkWriterlessReads cannot see this shape — findWriterless only " +
-      "walks the reads map, so a write-only table is invisible to it.",
-  },
 
   // ── Everything else measured in the same comparison ────────────────────────
-  canonical_events: { classification: "unapplied", note: "In portava-ci, absent from production." },
   event_passport_shares: { classification: "unapplied", note: "In portava-ci, absent from production." },
-  hidden_gem_contributions: { classification: "unapplied", note: "In portava-ci, absent from production." },
   input_selection_history: { classification: "unapplied", note: "In portava-ci, absent from production." },
   media_intent_signals: { classification: "unapplied", note: "In portava-ci, absent from production." },
   media_view_requests: { classification: "unapplied", note: "In portava-ci, absent from production." },
   media_view_request_optins: { classification: "unapplied", note: "In portava-ci, absent from production." },
-  locate_friends_sessions: { classification: "unapplied", note: "Locate-Friends storage; in portava-ci, absent from production." },
-  locate_friends_members: { classification: "unapplied", note: "Locate-Friends storage; in portava-ci, absent from production." },
-  locate_friends_positions: { classification: "unapplied", note: "Locate-Friends storage; in portava-ci, absent from production." },
-  locate_friends_audit: { classification: "unapplied", note: "Locate-Friends storage; in portava-ci, absent from production." },
   route_flow_contribution_consent: {
     classification: "unapplied",
     note: "On the check:writerless-reads ratchet as well. Absent from production entirely.",
@@ -208,30 +191,200 @@ export const KNOWN_PRODUCTION_GAPS: Record<string, Gap> = {
   // flips trip_kernel_enabled (seeded false); the only caller is behind that
   // flag. Production also lacks 2334/2337 (authz.is_trip_crew /
   // authz.is_accepted_trip_member), which 2420 depends on — apply in order.
-  trip_events: {
-    classification: "ci-only-by-ruling",
-    note: "Migration 2420 (Trip Kernel event store). Applied to portava-ci 2026-09-07; production apply is an owner decision and needs 2334+2337 first.",
+
+  // ── Added 2026-09-08. Eleven tables built on this branch and applied nowhere.
+  //    Every one was CONFIRMED ABSENT by a read-only live listing of
+  //    production's public schema on 2026-09-08, not inferred from the snapshot
+  //    — the snapshot predates twelve OTHER tables and would have been wrong
+  //    about those (see appliedAfterSnapshot below). "unapplied" means exactly
+  //    what it says here: the file exists in src/migrations and no database
+  //    outside portava-ci has ever run it.
+
+  // Highlights / Memories, migrations 2720-2724.
+  highlight_resurfacing_preferences: {
+    classification: "unapplied",
+    note:
+      "Migration 2720. Per-user control over what may resurface. Queued behind the " +
+      "STORY_HIGHLIGHT_VISIBILITY owner decision, which fixes who a resurfaced " +
+      "highlight may be shown TO; applying the preference table before that is " +
+      "decided would build the control surface for a rule nobody has picked.",
   },
-  trip_command_receipts: {
-    classification: "ci-only-by-ruling",
-    note: "Migration 2420 (Trip Kernel idempotency receipts). Applied to portava-ci 2026-09-07; production apply is an owner decision and needs 2334+2337 first.",
+  highlight_projection_policies: {
+    classification: "unapplied",
+    note:
+      "Migration 2721. The projection policy rows the Highlights/Memories spec " +
+      "s18 requires. Same gate as 2720: it encodes visibility policy, and " +
+      "STORY_HIGHLIGHT_VISIBILITY is open.",
   },
-  trip_outbox: {
-    classification: "ci-only-by-ruling",
-    note: "Migration 2420 (Trip Kernel outbox; no consumer yet). Applied to portava-ci 2026-09-07; production apply is an owner decision and needs 2334+2337 first.",
+  highlight_sources: {
+    classification: "unapplied",
+    note:
+      "Migration 2722. Provenance for a highlight (which memory, which version). " +
+      "Ordered after 2720/2721 because it references the policy identity they " +
+      "establish; not independently applicable.",
+  },
+  highlight_revocation_log: {
+    classification: "unapplied",
+    note:
+      "Migration 2724. Append-only record of revoked derivatives. Depends on " +
+      "2722's source identity — a revocation of nothing is not storable — so it " +
+      "cannot lead the family in.",
+  },
+
+  // Memory command kernel, migrations 2710/2711/2730.
+  memory_domain_events: {
+    classification: "unapplied",
+    note:
+      "Migration 2710, RENAMED from memory_events on this branch: production " +
+      "already holds a DIFFERENT public.memory_events (12 columns, the s4/s15 " +
+      "projection ledger) that ten migrations and the deletion cascade build on. " +
+      "2710's original name would have collided, and CREATE TABLE IF NOT EXISTS " +
+      "would have skipped SILENTLY, leaving the kernel writing into a table with " +
+      "the wrong shape. Unapplied anywhere but portava-ci while the outbox lane " +
+      "certifies it.",
+  },
+  memory_event_outbox: {
+    classification: "unapplied",
+    note:
+      "Migration 2710. Transactional outbox for memory domain events. No worker " +
+      "consumes it yet, so applying it to production would create a table that " +
+      "accumulates nothing — the same shape as trip_outbox above, and held for " +
+      "the same reason.",
+  },
+  memory_command_receipts: {
+    classification: "unapplied",
+    note:
+      "Migration 2710. Idempotency receipts for the memory command bus. Meaningless " +
+      "without the kernel that writes them; applied only with 2710 as a whole.",
+  },
+  memory_command_audit: {
+    classification: "unapplied",
+    note:
+      "Migration 2710. Audit trail for accepted and refused memory commands. Same " +
+      "family, same apply.",
+  },
+  memory_derivative_registry: {
+    classification: "unapplied",
+    note:
+      "Migration 2730. One row per built derivative of the Memory domain " +
+      "(spec s18). Ordered strictly after 2710: a derivative registry keyed on " +
+      "domain-event identity cannot precede the events.",
+  },
+
+  // Layover, migration 2700.
+  layover_certified_computations: {
+    classification: "unapplied",
+    note:
+      "Migration 2700. Append-only record of each certified layover feasibility " +
+      "computation so an answer can be REPLAYED rather than re-derived. Creates " +
+      "one table and alters nothing. Queued behind 2741, which landed in " +
+      "production 2026-09-08; not yet certified through its own gate.",
+  },
+
+  // Sensing, migration 2480.
+  sensing_contribution_sessions: {
+    classification: "unapplied",
+    note:
+      "Migration 2480. The ISSUED half of the Sensing spec s4.2 contribution " +
+      "credential. Its own header says NOT APPLIED, and it is written so the " +
+      "SENSING_AUTH_POSTURE decision (docs/architecture/" +
+      "sensing-auth-posture-decision.md) can be taken on evidence: dry-run inside " +
+      "a ROLLED-BACK transaction on portava-ci, postconditions passed, nothing " +
+      "committed. Under Option B the file is never run at all, so applying it " +
+      "would TAKE the decision.",
   },
 };
 
 /**
- * Table names that a naive `CREATE TABLE` regex extracts from PROSE inside SQL
- * comments, plus the legacy-root `buddy_*` names that were renamed to
- * `rent_buddy_*` long ago. Excluded so the check reports storage, not grammar.
+ * The legacy-root `buddy_*` names, renamed to `rent_buddy_*` long ago. They are
+ * declared by migrations that still sit in the tree and will never exist in
+ * production under these names.
+ *
+ * This set USED to carry a second job: absorbing words the `CREATE TABLE` regex
+ * picked out of PROSE inside SQL comments — "if", "above", "ran", "returns",
+ * "silently", "storage", "time", "not", "exists". That was a losing game. Every
+ * new migration whose comment happened to contain the words "create table" cost
+ * this check a false finding, and the fix each time was to add another English
+ * word to a denylist — which is exactly how a ratchet quietly becomes an
+ * allowlist. Two more had just arrived ("re" from 2490's "the next CREATE TABLE
+ * re-issues", "receives" from 2370's "that every CREATE TABLE receives").
+ *
+ * They are gone because the scan no longer reads comments. stripSqlNoise below
+ * removes them before the regex runs, so the check reports storage rather than
+ * grammar, and this set is back to naming real tables only. Deleting the prose
+ * words is also the proof: if any of them were reachable from real SQL the
+ * check would now report it.
  */
 const NOT_TABLE_NAMES = new Set([
-  "if", "above", "below", "ran", "returns", "silently", "storage", "time", "not", "exists",
   "buddy_addons", "buddy_applications", "buddy_availability", "buddy_bookings",
   "buddy_packages", "buddy_profiles", "buddy_reviews", "buddy_saved", "buddy_waitlist",
 ]);
+
+/**
+ * Blank out everything in a SQL file that is not executable SQL: `--` line
+ * comments, block comments, single-quoted literals and dollar-quoted bodies.
+ *
+ * Replaced with spaces rather than deleted, so byte offsets and line structure
+ * survive and nothing accidentally joins two statements together.
+ *
+ * A hand scanner and not a regex, because the four cases nest in ways a regex
+ * gets wrong in both directions: a `--` inside a string literal is not a
+ * comment, and a quote inside a comment does not open a string. Getting that
+ * backwards would either resurrect the prose findings or, worse, silently drop
+ * a real CREATE TABLE that happened to follow an apostrophe.
+ */
+export function stripSqlNoise(sql: string): string {
+  const out = sql.split("");
+  const blank = (from: number, to: number) => {
+    for (let k = from; k < to && k < out.length; k++) if (out[k] !== "\n") out[k] = " ";
+  };
+  let i = 0;
+  while (i < sql.length) {
+    const two = sql.slice(i, i + 2);
+    if (two === "--") {
+      const end = sql.indexOf("\n", i);
+      const stop = end === -1 ? sql.length : end;
+      blank(i, stop);
+      i = stop;
+      continue;
+    }
+    if (two === "/*") {
+      // Postgres block comments nest.
+      let depth = 1;
+      let j = i + 2;
+      while (j < sql.length && depth > 0) {
+        if (sql.slice(j, j + 2) === "/*") { depth++; j += 2; continue; }
+        if (sql.slice(j, j + 2) === "*/") { depth--; j += 2; continue; }
+        j++;
+      }
+      blank(i, j);
+      i = j;
+      continue;
+    }
+    if (sql[i] === "'") {
+      let j = i + 1;
+      while (j < sql.length) {
+        if (sql[j] === "'" && sql[j + 1] === "'") { j += 2; continue; } // escaped quote
+        if (sql[j] === "'") { j++; break; }
+        j++;
+      }
+      blank(i, j);
+      i = j;
+      continue;
+    }
+    const dollar = /^\$[a-z_0-9]*\$/i.exec(sql.slice(i, i + 40));
+    if (dollar) {
+      const tag = dollar[0];
+      const end = sql.indexOf(tag, i + tag.length);
+      const stop = end === -1 ? sql.length : end + tag.length;
+      blank(i, stop);
+      i = stop;
+      continue;
+    }
+    i++;
+  }
+  return out.join("");
+}
 
 function readProductionSnapshot(): Set<string> {
   const path = join(BASELINE_DIR, PRODUCTION_SNAPSHOT);
@@ -258,11 +411,11 @@ function readProductionSnapshot(): Set<string> {
   return new Set(names);
 }
 
-function declaredTables(): Set<string> {
+export function declaredTables(): Set<string> {
   const out = new Set<string>();
   const re = /create\s+table\s+(?:if\s+not\s+exists\s+)?(?:"?public"?\.)?"?([a-z0-9_]+)"?/gi;
   for (const file of readdirSync(MIGRATIONS_DIR).filter((f) => f.endsWith(".sql"))) {
-    const sql = readFileSync(join(MIGRATIONS_DIR, file), "utf8");
+    const sql = stripSqlNoise(readFileSync(join(MIGRATIONS_DIR, file), "utf8"));
     for (const m of sql.matchAll(re)) {
       const name = m[1].toLowerCase();
       if (!NOT_TABLE_NAMES.has(name)) out.add(name);
@@ -271,14 +424,88 @@ function declaredTables(): Set<string> {
   return out;
 }
 
+/**
+ * The migration files that declare each table, so a gap can be traced to the
+ * file that would close it rather than guessed at.
+ */
+function declaringMigrations(): Map<string, string[]> {
+  const out = new Map<string, string[]>();
+  const re = /create\s+table\s+(?:if\s+not\s+exists\s+)?(?:"?public"?\.)?"?([a-z0-9_]+)"?/gi;
+  for (const file of readdirSync(MIGRATIONS_DIR).filter((f) => f.endsWith(".sql"))) {
+    const sql = stripSqlNoise(readFileSync(join(MIGRATIONS_DIR, file), "utf8"));
+    for (const m of sql.matchAll(re)) {
+      const name = m[1].toLowerCase();
+      if (NOT_TABLE_NAMES.has(name)) continue;
+      const list = out.get(name) ?? [];
+      if (!list.includes(file)) list.push(file);
+      out.set(name, list);
+    }
+  }
+  return out;
+}
+
+/**
+ * A snapshot cannot see the future, and this check kept blaming it for that.
+ *
+ * The snapshot is captured on a date; migrations are applied to production
+ * after it. `trip_map_projections` and `trip_map_projection_applied` were
+ * reported as production drift on 2026-09-08 for one reason only: 2520 was
+ * applied on 2026-09-08 and the snapshot in the tree was taken on 2026-09-07.
+ * They were in production the whole time. A check that reports a table as
+ * MISSING when the honest answer is "my evidence predates it" is manufacturing
+ * findings, and a ratchet entry saying "unapplied" would have been a false
+ * statement committed to the repository.
+ *
+ * So: a gap is EXCUSED, and reported separately rather than silently, when a
+ * migration that declares it appears in production-applied-migrations.json with
+ * a version stamp later than the snapshot's capture date. Both files are
+ * committed, so this stays offline and credential-free. It is narrow on purpose
+ * — nothing is excused because it "looks recent"; the apply has to be recorded,
+ * by name, with a version, in the file whose whole job is recording applies.
+ *
+ * It also self-heals: refresh the snapshot and the excuse evaporates, because
+ * the table is then simply present.
+ */
+export function appliedAfterSnapshot(): Map<string, string> {
+  const captureDate = PRODUCTION_SNAPSHOT.slice(0, 8); // YYYYMMDD from the filename
+  const out = new Map<string, string>();
+  let applied: Array<{ version: string; name: string }>;
+  try {
+    const raw = readFileSync(
+      join(API_SERVER_ROOT, "src", "lib", "capability", "production-applied-migrations.json"),
+      "utf8",
+    );
+    applied = (JSON.parse(raw).migrations ?? []) as Array<{ version: string; name: string }>;
+  } catch {
+    return out; // no ledger, no excuses
+  }
+  const byName = new Map(applied.map((m) => [m.name, m.version]));
+  for (const [table, files] of declaringMigrations()) {
+    for (const file of files) {
+      const version = byName.get(file.replace(/\.sql$/, ""));
+      if (version && version.slice(0, 8) > captureDate) {
+        out.set(table, `${file} applied ${version}, snapshot captured ${captureDate}`);
+        break;
+      }
+    }
+  }
+  return out;
+}
+
 function main(): void {
   const production = readProductionSnapshot();
   const declared = declaredTables();
+  const excused = appliedAfterSnapshot();
 
   const gaps = [...declared].filter((t) => !production.has(t)).sort();
-  const unrecorded = gaps.filter((t) => !(t in KNOWN_PRODUCTION_GAPS));
+  const unrecorded = gaps.filter((t) => !(t in KNOWN_PRODUCTION_GAPS) && !excused.has(t));
+  // Stale means "production has it", and the snapshot is not the only way to
+  // know that. A ratcheted table that appliedAfterSnapshot excuses IS in
+  // production -- we recorded the apply ourselves -- so leaving it on the
+  // ratchet keeps a false "unapplied" claim in the repository, which is the
+  // exact thing this ratchet is supposed to prevent.
   const struckOff = Object.keys(KNOWN_PRODUCTION_GAPS)
-    .filter((t) => production.has(t))
+    .filter((t) => production.has(t) || excused.has(t))
     .sort();
 
   console.log(
@@ -286,6 +513,14 @@ function main(): void {
       `${production.size} table(s) in the production snapshot (${PRODUCTION_SNAPSHOT}).`,
   );
   console.log("  no credentials were used, and no database was contacted.");
+  const excusedHere = [...excused.keys()].filter((t) => !production.has(t)).sort();
+  if (excusedHere.length > 0) {
+    console.log(
+      `  ${excusedHere.length} table(s) are absent from the snapshot only because it predates their apply:`,
+    );
+    for (const t of excusedHere) console.log(`    ${t} — ${excused.get(t)}`);
+    console.log("  Refresh the snapshot and these stop needing an explanation.");
+  }
   console.log("");
 
   let failed = false;
@@ -312,6 +547,30 @@ function main(): void {
     console.error("\n  Remove them from KNOWN_PRODUCTION_GAPS. A ratchet nobody prunes stops being read.");
   }
 
+  // A third way this ratchet rots, and the one nothing was watching: an entry
+  // for a table that NOTHING IN THE TREE DECLARES. It is not drift, it is not a
+  // gap, it is a sentence about storage no migration asks for -- and it inflates
+  // the "must reach zero" count with work that does not exist. `unmerged-pr` is
+  // exempt by definition: those tables are declared in a PR's migration, which
+  // is precisely why they are not declared here.
+  const undeclared = Object.entries(KNOWN_PRODUCTION_GAPS)
+    .filter(([t, g]) => g.classification !== "unmerged-pr" && !declared.has(t) && !production.has(t))
+    .map(([t]) => t)
+    .sort();
+
+  if (undeclared.length > 0) {
+    failed = true;
+    console.error(
+      `\n✖ ${undeclared.length} ratcheted table(s) are declared by NO migration in the tree:`,
+    );
+    for (const t of undeclared) console.error(`    ${t}`);
+    console.error(
+      "\n  Either the migration was deleted and the entry should go with it, or the\n" +
+        "  entry names a table that never existed. Reclassify as unmerged-pr only if a\n" +
+        "  real unmerged PR declares it.",
+    );
+  }
+
   const unapplied = Object.entries(KNOWN_PRODUCTION_GAPS).filter(
     ([t, g]) => g.classification === "unapplied" && !production.has(t),
   );
@@ -334,4 +593,19 @@ function main(): void {
   process.exit(failed ? 1 : 0);
 }
 
-main();
+// Only when RUN, never when imported. This module used to call main()
+// unconditionally at import time, and main() ends in process.exit — so the
+// first test file that imported it to unit-test its extraction functions
+// reported "1 test, 1 pass" and exited 0 while ten assertions had never been
+// reached. A false green produced by the check's own entry point.
+const invokedDirectly = (() => {
+  const entry = process.argv[1];
+  if (!entry) return false;
+  try {
+    return resolve(entry) === fileURLToPath(import.meta.url);
+  } catch {
+    return false;
+  }
+})();
+
+if (invokedDirectly) main();

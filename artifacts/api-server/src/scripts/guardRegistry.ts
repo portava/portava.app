@@ -406,12 +406,17 @@ export const GUARDS: readonly GuardEntry[] = [
   {
     checker: "src/scripts/checkProductionDrift.ts",
     responsibility: "Reports where the live production schema has drifted from the committed canonical schema.",
-    reach: {
-      kind: "manual",
-      reason:
-        "Reads PRODUCTION over the Management API. CI has no production credentials and must not be given any — the " +
-        "Supabase guard front door exists precisely to refuse that. Run by a human against declared production when a " +
-        "drift question is being asked; its findings become migrations, which ARE checked.",
+    // WAS MANUAL, on the stated ground that it "reads PRODUCTION over the
+    // Management API". That had stopped being true: it compares src/migrations
+    // against the committed baseline/*_production_tables.txt snapshot and prints
+    // "no credentials were used, and no database was contacted" on every run.
+    // check:guard-reachability caught it the moment the checker started exiting
+    // 0 — a MANUAL claim that nothing had ever tested, because a guard that
+    // always failed was never asked whether it could be wired.
+    reach: { kind: "check-all", script: "check:production-drift" },
+    inspects: {
+      countPattern: "Compared (\\d+) table\\(s\\) declared in src/migrations",
+      unit: "tables declared in src/migrations",
     },
   },
   {

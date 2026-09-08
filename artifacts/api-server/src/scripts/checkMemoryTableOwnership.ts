@@ -79,6 +79,11 @@ const KERNEL_SIDE = new Set([
   "test/memoryCommandKernelFake.ts",
   "test/memoryCommandRoutes.test.ts",
   "test/memoryOutbox.test.ts",
+  // Asserts that the production-drift ratchet does NOT excuse the kernel's
+  // tables: they have no recorded production apply, and an excuse for them
+  // would mean the drift check had stopped requiring one. It names the kernel
+  // log only, as data in an assertion list.
+  "test/productionDriftExtraction.test.ts",
 ]);
 
 /**
@@ -97,6 +102,13 @@ const BOTH_ALLOWED = new Set([
   // this check on its own registration, which is the correct answer -- a string
   // is not a comment, and the strip-comments pass rightly left it alone.
   "scripts/guardRegistry.ts",
+  // The production-drift ratchet. Its memory_domain_events entry has to explain
+  // WHY that table is not called memory_events -- production already holds a
+  // different table under that name, and CREATE TABLE IF NOT EXISTS would have
+  // skipped SILENTLY against it. Splitting the note in two would leave the
+  // ratchet stating a rename with the reason for it removed, which is the one
+  // sentence a future reader most needs. Same judgement as 2710's header.
+  "scripts/checkProductionDrift.ts",
 ]);
 
 /** The migrations that belong to the kernel; no object in them may say memory_events_*. */

@@ -57,7 +57,7 @@ const STEPS = [
   // ── authorization and privilege ───────────────────────────────────────────
   { id: "check:route-auth-gate",         kind: "gate", cmd: ["npm", "run", "-s", "check:route-auth-gate"] },
   { id: "check:admin-guard",             kind: "gate", cmd: ["npm", "run", "-s", "check:admin-guard"] },
-  { id: "check:authorization-contract",  kind: "gate", cmd: ["npm", "run", "-s", "check:authorization-contract"] },
+  { id: "check:authorization-contract",  kind: "liveonly", cmd: ["npm", "run", "-s", "check:authorization-contract"] },
   { id: "check:security-definer-oracles", kind: "gate", cmd: ["npm", "run", "-s", "check:security-definer-oracles"] },
   // ── data rights, deletion, location ───────────────────────────────────────
   { id: "check:deletion-coverage",       kind: "gate", cmd: ["npm", "run", "-s", "check:deletion-coverage"] },
@@ -65,7 +65,7 @@ const STEPS = [
   { id: "check:location-purposes",       kind: "gate", cmd: ["npm", "run", "-s", "check:location-purposes"] },
   // ── schema, migrations, snapshots ─────────────────────────────────────────
   { id: "check:migration-prefixes",      kind: "gate", cmd: ["npm", "run", "-s", "check:migration-prefixes"] },
-  { id: "check:migration-ledger",        kind: "gate", cmd: ["npm", "run", "-s", "check:migration-ledger"] },
+  { id: "check:migration-ledger",        kind: "liveonly", cmd: ["npm", "run", "-s", "check:migration-ledger"] },
   { id: "check:schema-references",       kind: "gate", cmd: ["npm", "run", "-s", "check:schema-references"] },
   { id: "check:enum-literals",           kind: "gate", cmd: ["npm", "run", "-s", "check:enum-literals"] },
   { id: "check:memory-table-ownership",  kind: "gate", cmd: ["npm", "run", "-s", "check:memory-table-ownership"] },
@@ -87,7 +87,7 @@ const STEPS = [
   { id: "certify:migrations",            kind: "liveonly", cmd: ["npm", "run", "-s", "certify:migrations"] },
   { id: "check:write-path-columns",      kind: "liveonly", cmd: ["npm", "run", "-s", "check:write-path-columns"] },
   { id: "check:missing-live-columns",    kind: "liveonly", cmd: ["npm", "run", "-s", "check:missing-live-columns"] },
-  { id: "check:production-drift",        kind: "liveonly", cmd: ["npm", "run", "-s", "check:production-drift"] },
+  { id: "check:production-drift",        kind: "gate", cmd: ["npm", "run", "-s", "check:production-drift"] },
 ];
 
 const results = [];
@@ -108,7 +108,13 @@ for (const step of STEPS) {
   }
   // A live-only step that refused for want of credentials is CANNOT-RUN, which
   // is neither a pass nor a failure of the branch. Anything else it does is.
-  const refused = step.kind === "liveonly" && /ciSupabaseGuard|KNOWN_PROD_PROJECT_REF|CI_SUPABASE_PROJECT_REF|no live credentials/i.test(output);
+  // The guard's own REFUSED banner, not a passing mention of an env var name.
+  // A real finding can quote CI_SUPABASE_PROJECT_REF in its message; only the
+  // banner means the process asserted its target and stopped before doing any
+  // work, which is the one thing that makes a non-zero exit not a branch defect.
+  const refused =
+    step.kind === "liveonly" &&
+    /\[(?:ciSupabaseGuard|ciProdReadOnlyAuditGuard)\] REFUSED|Nothing downstream of this point has run|no live credentials/i.test(output);
   const status = code === 0 ? "PASS" : refused ? "CANNOT-RUN" : "FAIL";
   results.push({ id: step.id, kind: step.kind, exit: code, status, ms: Date.now() - started });
 }

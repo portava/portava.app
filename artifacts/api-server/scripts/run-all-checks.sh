@@ -173,6 +173,15 @@ run_check "check:census-freshness" pnpm run check:census-freshness
 # have written domain events into the projection family's table. Every reference
 # is classified here, and no object name may straddle the two.
 run_check "check:memory-table-ownership" pnpm run check:memory-table-ownership
+# check:production-drift — every table src/migrations declares, checked against a
+# committed snapshot of production's public schema. Offline and credential-free by
+# construction: CI holds no production secret and must not. It was registered as a
+# MANUAL guard on the belief that it reads production live; it does not, and while
+# it was failing nobody noticed the claim was untested. Two of its findings on
+# 2026-09-08 were false for a reason worth stating here — the snapshot predates
+# migrations we applied ourselves — which the checker now excuses from the applied
+# ledger rather than reporting as missing storage.
+run_check "check:production-drift" pnpm run check:production-drift
 # check:flag-polarity — every feature flag is classified STOP/CAPABILITY/CONFIG
 # and read through the reader that classification demands. Wired 2026-08-10
 # after c89f09a7 converted eleven emergency stops that had been reading

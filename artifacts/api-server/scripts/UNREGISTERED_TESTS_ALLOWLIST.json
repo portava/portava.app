@@ -70,6 +70,7 @@
   "src/test/mediaNoveltyRanking.test.ts",
   "src/test/mediaUploadHardening.test.ts",
   "src/test/meetupRlsLive.test.ts",
+  "src/test/memoryKernelTransactionLive.test.ts",
   "src/test/memoryLifecycleLive.test.ts",
   "src/test/memoryProjectionLifecycleLive.test.ts",
   "src/test/messaging.test.ts",
