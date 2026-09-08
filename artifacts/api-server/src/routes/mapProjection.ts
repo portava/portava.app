@@ -567,10 +567,25 @@ router.get(
 
     // ONE shared, fail-closed block set for every source. If it cannot be read,
     // nobody is returned — matching /api/map/search.
+    //
+    // `enabled: false` WITH A REFUSAL, not `enabled: true, objects: []`. This
+    // is the same reasoning spelled out above loadProtectedZones, applied to
+    // the other input that can fail: the client (useMapEntities.ts) treats an
+    // `enabled: true` answer as OWNING every layer and never re-fetches, so an
+    // empty `true` does not fail closed — it BLANKS THE MAP, declining the
+    // legacy per-layer path the user was on a second earlier. An unreadable
+    // `blocks` is a far more ordinary event than an unapplied migration (a
+    // connection blip, an RLS change, a grant change), so this branch is the
+    // more likely of the two to be taken in production.
+    //
+    // `fetchBlockedSet` returns null for a READ FAILURE specifically so this
+    // caller can tell it apart from "this user blocks nobody"; answering with
+    // an empty served payload threw that distinction away at the last step.
     const blockedSet = await fetchBlockedSet(sc, user.id);
     if (blockedSet === null) {
       res.json({
-        enabled: true,
+        enabled: false,
+        refusal: "block_set_unreadable",
         objects: [],
         viewport: { bbox, zoom },
         total: 0,

@@ -160,9 +160,25 @@ router.get("/map/search", asyncHandler(async (req, res) => {
   const cursor = req.query.cursor ? String(req.query.cursor) : null;
 
   // One shared, fail-closed block set for every source.
+  //
+  // `enabled: false` WITH A NAMED REFUSAL, not `enabled: true, results: []`.
+  // "Nothing matched your search" is a claim about the world, and an unreadable
+  // `blocks` table cannot support it: the honest answer is that the server
+  // cannot tell whether it is safe to show anything. The gateway
+  // (routes/mapProjection.ts) reached the same conclusion for the §24 policy —
+  // the client treats an `enabled: true` answer as authoritative and stops
+  // asking — and `blocks` failing is the more ordinary event of the two.
+  //
+  // `fetchBlockedSet` returns null for a READ FAILURE precisely so this caller
+  // can tell it from "this user blocks nobody"; serving an empty payload threw
+  // that distinction away at the last step.
   const blockedSet = await fetchBlockedSet(sc, user.id);
   if (blockedSet === null) {
-    res.json({ enabled: true, results: [], viewport: { lat, lng, radiusKm }, total: 0, nextCursor: null, generatedAt });
+    res.json({
+      enabled: false,
+      refusal: "block_set_unreadable",
+      results: [], viewport: { lat, lng, radiusKm }, total: 0, nextCursor: null, generatedAt,
+    });
     return;
   }
 
