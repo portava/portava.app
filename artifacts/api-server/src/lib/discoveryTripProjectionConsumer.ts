@@ -117,14 +117,25 @@ export const DISCOVERY_TRIP_PROJECTION_COLUMNS: readonly string[] =
  * The schema half of `capability = FLAG_ENABLED && SCHEMA_CAPABILITY_READY`.
  *
  * NOT YET AN ENTRY IN lib/capability/registry.ts — that file is owned by
- * another lane and this one may not edit it. The definition lives here, is
- * consumed here, and the registry entry is a reported handover (see the lane
- * report): copy this constant into CAPABILITIES with
- * `consumers: ["routes/discoverySearch.ts"]`. Until then the CI ratchet
- * (scripts/checkFlagSchemaPrerequisites.ts) has nothing to say about this flag
- * anyway: it reports flags that are ON IN PRODUCTION over absent schema, and
- * `discovery_trip_projection_enabled` has no production row at all (2550 is
- * unapplied there, measured 2026-09-07).
+ * another lane and this one may not edit it. The definition lives here and is
+ * consumed here, which is the shape MAP_TRIP_PROJECTION_CAPABILITY already
+ * uses; the registry entry is a one-line reported handover:
+ *
+ *     import { DISCOVERY_TRIP_PROJECTION } from "../discoveryTripProjectionConsumer.js";
+ *     [DISCOVERY_TRIP_PROJECTION.flag]: DISCOVERY_TRIP_PROJECTION,
+ *
+ * That is safe to add, and it was checked rather than hoped: scanFlagReads
+ * resolves FOUR read sites for this flag — the isFlagEnabled call below, and
+ * discoveryTripProjectionGate followed through into routes/discoverySearch.ts
+ * at both surfaces — so the entry cannot trip the ratchet's
+ * "REGISTRY OVER A DEAD FLAG" rule (which is what a zero-read-site entry does).
+ *
+ * Leaving it unregistered is safe meanwhile but strictly worse: the ratchet
+ * would classify the capability `latent` rather than `guarded`, and the
+ * refusal is invisible to checkFlagSchemaPrerequisites. What it CANNOT be is
+ * `unguarded`, because that class is flags ON IN PRODUCTION over absent
+ * schema, and `discovery_trip_projection_enabled` has no production row at all
+ * (2550 unapplied there, measured 2026-09-07).
  */
 export const DISCOVERY_TRIP_PROJECTION: CapabilityDefinition = {
   flag: DISCOVERY_TRIP_PROJECTION_FLAG,
