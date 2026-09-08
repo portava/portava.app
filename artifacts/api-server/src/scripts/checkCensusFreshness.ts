@@ -117,6 +117,32 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/services/passport/StampAwardEngine.ts",
     "artifacts/api-server/src/services/passport/PassportStampService.ts",
   ],
+  // The Wall's 205 requirements are graded against a scope DELIBERATELY wider
+  // than services/wall/ + features/wall/, for the reason §3 of that census
+  // spells out: the Wall owns almost no state of its own by design (§30) and
+  // rides on other surfaces' canonical systems. Its verdicts are therefore aged
+  // by files it does not own —
+  //   • lib/wallProjection.ts is the contract every verdict about a projection,
+  //     truth class or promotion disclosure is graded against, and it lives in
+  //     lib/, not services/wall/;
+  //   • lib/liveClaimRead.ts is the whole of the Live For You strip's evidence
+  //     (W122-W131) and its three fail-closed gates;
+  //   • lib/intelContracts.ts owns SOURCE_CLASSES and SOURCE_CLASS_LABELS, which
+  //     W178's disclosure is required to agree with;
+  //   • routes/mediaFeed.ts owns post_saves, the canonical store behind W7's
+  //     `save` — a Wall verdict that would go wrong if that endpoint moved.
+  // Listing only the two Wall directories would have made this census look fresh
+  // while the contracts it grades moved underneath it — the same trap the trust
+  // scope above avoids.
+  "census-wall.md": [
+    "artifacts/api-server/src/services/wall/",
+    "artifacts/api-server/src/routes/wall.ts",
+    "artifacts/api-server/src/lib/wallProjection.ts",
+    "artifacts/api-server/src/lib/liveClaimRead.ts",
+    "artifacts/api-server/src/lib/intelContracts.ts",
+    "artifacts/api-server/src/routes/mediaFeed.ts",
+    "travel-buddy-standalone/src/features/wall/",
+  ],
 };
 
 interface Ack {

@@ -11,14 +11,25 @@
 
 | Measure | Value |
 | --- | --- |
+| `head_commit` | `9f8122ff5ed233a367fda6431589c9cb97df7979` (`git rev-parse HEAD`) |
 | **Denominator (testable requirements)** | **205** |
-| BUILT-AND-CORRECT | **188** |
-| BUILT-BUT-WRONG | **7** |
-| NOT-BUILT | **1** |
-| CANNOT-VERIFY | **9** |
-| **CONSTRUCTED%** = (correct+wrong)/denominator | **195 / 205 = 95.1%** |
-| **CORRECT%** = correct/denominator | **188 / 205 = 91.7%** |
-| CANNOT-VERIFY share | **9 / 205 = 4.4%** |
+| BUILT-AND-CORRECT | **196** |
+| BUILT-BUT-WRONG | **1** |
+| NOT-BUILT | **0** |
+| CANNOT-VERIFY | **8** |
+| **CONSTRUCTED%** = (correct+wrong)/denominator | **197 / 205 = 96.1%** |
+| **CORRECT%** = correct/denominator | **196 / 205 = 95.6%** |
+| CANNOT-VERIFY share | **8 / 205 = 3.9%** |
+
+Those five numbers are COUNTED FROM THE ROWS in §2 at the commit named above,
+not carried forward from the previous pass and adjusted. The distinction is not
+pedantic: the layover census's headline summed to 299 against a denominator of
+296 for exactly that reason — moves were added to an old headline instead of the
+rows being recounted — and `check:census-integrity` now refuses a census whose
+`C + W + N + X` does not equal its stated denominator. 196 + 1 + 0 + 8 = 205.
+
+The figures BEFORE the §6 recensus, for comparison: 188 / 7 / 1 / 9, i.e. 95.1%
+constructed and 91.7% correct at `ebe72b34`.
 
 **Verdict on "~96% complete — 38 of 41 spec sections fully built": the
 percentage survives a much finer mesh; the section count is now an
@@ -101,11 +112,11 @@ NOT-BUILT · **?** = CANNOT-VERIFY. Backend paths are relative to
 | id | Requirement | V | Evidence |
 | --- | --- | --- | --- |
 | W2 | Familiar low-friction feed for Posts, video, Postcards, Shared Moments, people, network activity | C | `routes/wall.ts:1016#opportunitiesLoaded` runs the Post spine plus postcard/video/shared-moment/opportunity loaders in one `Promise.all`; `components/WallObjectRenderer.tsx:90#WallObjectRenderer` dispatches all seven types. |
-| W3 | Small persistent Live For You surface above the feed | C | `components/WallScreen.tsx:106#LiveForYouStrip` places `LiveForYouStrip` inside the list header, above the feed; `services/wall/LiveForYouService.ts:71#MAX_LIVE_FOR_YOU` `MAX_LIVE_FOR_YOU = 4`. |
+| W3 | Small persistent Live For You surface above the feed | C | `components/WallScreen.tsx:106#LiveForYouStrip` places `LiveForYouStrip` inside the list header, above the feed; `services/wall/LiveForYouService.ts:75#MAX_LIVE_FOR_YOU` `MAX_LIVE_FOR_YOU = 4`. |
 | W4 | Ranked random discovery without forcing chronological consumption | C | `services/wall/WallRankingService.ts:273#rankForYou` orders by composite score with a session-seeded tiebreak (`:257#seededKey`), never by time alone. |
 | W5 | Strict chronological Following mode | C | `services/wall/FollowingFeedService.ts:105#buildFollowing` `buildFollowing`; `:74#compareDesc` `compareDesc` sorts `publishedAt` DESC + `canonicalObjectId` DESC, no relevance term. |
-| W6 | Contextual intelligence attached only when it materially improves the object | C | `services/wall/ContextThreadService.ts:106#shouldAttachContextThread` — the eight-condition gate, default false. |
-| W7 | Social content → optional real-world actions: see place, save, add to Trip, join, message, map, ask Compass, book a Buddy | C | **All eight have a server producer.** `see_place` `services/wall/WallProjectionService.ts:267#see_place` · `save` `:256#save` — no longer a client-local toggle: the projection carries server-resolved `viewerSaved` and the client writes through the canonical `post_saves` endpoint (`routes/mediaFeed.ts:2195#post_saves`, client `components/objects/wallItemShared.tsx:225#saveItem`) · `add_to_trip` `services/wall/ContextThreadService.ts:423#add_to_trip` · `join` `services/wall/LiveForYouService.ts:783#join` — handed to the canonical event surface, where `POST /events/:id/join` runs its own eligibility/capacity gate; the Wall never joins on the viewer's behalf · `message` `WallProjectionService.ts:317#message` — offered ONLY on a Buddy opportunity, where the consolidated RAB booking gate has already established the viewer may transact with that Buddy; the Wall does not re-derive `canMessage` (13 reads/target) for ordinary posts and offers no action rather than one that fails · `open_map` `ContextThreadService.ts:767#open_map` and `LiveForYouService.ts:195#open_map` · `ask_compass` `WallProjectionService.ts:277#ask_compass` · `book_buddy` `:293#book_buddy`. **Moved W→C in the §6 recensus**: at `ebe72b34` `join` and `message` had no producer and `save` persisted nothing.
+| W6 | Contextual intelligence attached only when it materially improves the object | C | `services/wall/ContextThreadService.ts:110#shouldAttachContextThread` — the eight-condition gate, default false. |
+| W7 | Social content → optional real-world actions: see place, save, add to Trip, join, message, map, ask Compass, book a Buddy | C | **All eight have a server producer.** `see_place` `services/wall/WallProjectionService.ts:267#see_place` · `save` `:256#save` — no longer a client-local toggle: the projection carries server-resolved `viewerSaved` and the client writes through the canonical `post_saves` endpoint (`routes/mediaFeed.ts:2195#post_saves`, client `components/objects/wallItemShared.tsx:225#saveItem`) · `add_to_trip` `services/wall/ContextThreadService.ts:433#add_to_trip` · `join` `services/wall/LiveForYouService.ts:792#join` — handed to the canonical event surface, where `POST /events/:id/join` runs its own eligibility/capacity gate; the Wall never joins on the viewer's behalf · `message` `WallProjectionService.ts:317#message` — offered ONLY on a Buddy opportunity, where the consolidated RAB booking gate has already established the viewer may transact with that Buddy; the Wall does not re-derive `canMessage` (13 reads/target) for ordinary posts and offers no action rather than one that fails · `open_map` `ContextThreadService.ts:777#open_map` and `LiveForYouService.ts:199#open_map` · `ask_compass` `WallProjectionService.ts:277#ask_compass` · `book_buddy` `:293#book_buddy`. **Moved W→C in the §6 recensus**: at `ebe72b34` `join` and `message` had no producer and `save` persisted nothing.
 | W8 | Preserve distinct identities of Postcards / video / Moments / normal Posts | C | Distinct renderers `components/objects/PostcardWallItem.tsx`, `VideoWallItem.tsx`, `SharedMomentWallItem.tsx`, `SocialPostWallItem.tsx`, dispatched on the discriminant at `WallObjectRenderer.tsx:90#WallObjectRenderer`. Server precedence keeps the distinct shape: `WallProjectionService.ts:472#dedupeCandidates` (table at `:440#precedence`) ranks `shared_moment`/`postcard` above `video`/`social_post` for the same canonical id. |
 
 ### §3 Primary Screen Architecture
@@ -145,7 +156,7 @@ NOT-BUILT · **?** = CANNOT-VERIFY. Backend paths are relative to
 
 | id | Requirement | V | Evidence |
 | --- | --- | --- | --- |
-| W27 | The seven-member discriminated union, each member emittable and renderable | C | `lib/wallProjection.ts:445#WallProjection` the union; **all seven have a server producer** — `services/wall/WallProjectionService.ts:363#video`, `:373#social_update`, `:377#discovery`, `:388#social_post` (the `projectOne` switch), `WallCandidateLoaders.ts:335#loadPostcardCandidates`, `:630#loadSharedMomentCandidates`, `:915#loadContextualOpportunityCandidates` (wired at `routes/wall.ts:1030#loadContextualOpportunityCandidates`). Client: `WallObjectRenderer.tsx:90#WallObjectRenderer`, seven cases plus `default: return null`. |
+| W27 | The seven-member discriminated union, each member emittable and renderable | C | `lib/wallProjection.ts:511#WallProjection` the union; **all seven have a server producer** — `services/wall/WallProjectionService.ts:363#video`, `:373#social_update`, `:377#discovery`, `:388#social_post` (the `projectOne` switch), `WallCandidateLoaders.ts:335#loadPostcardCandidates`, `:630#loadSharedMomentCandidates`, `:915#loadContextualOpportunityCandidates` (wired at `routes/wall.ts:1030#loadContextualOpportunityCandidates`). Client: `WallObjectRenderer.tsx:90#WallObjectRenderer`, seven cases plus `default: return null`. |
 | W28 | `WallProjection` base carries the declared fields | C | `lib/wallProjection.ts:232-252` — projectionId, objectType, canonicalObjectId, actor, publishedAt, experienceAt, visibility, media, text, place, contextThread, actions, ranking. |
 
 ### §7 Social-First Composition Rules
@@ -279,7 +290,7 @@ NOT-BUILT · **?** = CANNOT-VERIFY. Backend paths are relative to
 | --- | --- | --- | --- |
 | W84 | No permanent giant Compass panel; an action or interpretation only | C | Compass exists solely as one optional action (`WallProjectionService.ts:238-245`) and one Context Thread kind (`ContextThreadService.ts:854`). No Wall component renders a Compass panel. |
 | W85 | Ask Compass from a place-linked post | C | `WallProjectionService.ts:236-245` — added only when `c.place` exists and `compassHandoffEnabled` (flag read `routes/wall.ts:766`). |
-| W86 | Interpret a cluster of social signals only when evidence and privacy rules allow | **W** | The gate exists (`ContextThreadService.readCompassCandidate:838` runs through the §9 gate), but no *cluster* interpretation is implemented — the compass thread is a per-object prompt, not an interpretation over a set of social signals. The affordance is a question, which is safe; the "interpret a cluster" behaviour named by the spec is absent. |
+| W86 | Interpret a cluster of social signals only when evidence and privacy rules allow | C | `services/wall/ContextThreadService.ts:980#buildCompassClusterCandidate` turns Compass's per-object prompt into an interpretation over a SET, and enforces the spec's two conditions literally. EVIDENCE: a member must pass `shouldAttachContextThread` ON ITS OWN (`:110#shouldAttachContextThread`), with `visualOverload`/`duplicatesLiveStrip` neutralised because those are presentation constraints, not evidence ones; two or more, from DISTINCT kinds, so one system talking twice is not a cluster. PRIVACY: a member carrying `sensitiveDisclosure`, or one the viewer is not authorized for, is excluded BEFORE it is counted, and the label names only the KIND of each signal, never its content — the interpretation discloses strictly less than the threads it is built from. It never asserts: truth class is `inferred` and confidence is the WEAKEST member's. Wired at `:1094#buildCompassClusterCandidate`; 19 tests in `wallCompassCluster.test.ts`. **Moved W→C in the §6 recensus.** |
 | W87 | Never present inference as verified fact | C | `services/wallCompass.ts:12,44` phrases a QUESTION and hands off ids only. |
 | W88 | Compass references canonical objects in its responses/actions | C | `services/wallCompass.ts:44-73` — ids-only handoff into the canonical Compass surface; a missing route degrades rather than crashing (`:63-73`). |
 
@@ -442,7 +453,7 @@ NOT-BUILT · **?** = CANNOT-VERIFY. Backend paths are relative to
 | W171 | Autoplay respects reduced motion and user settings | C | `services/videoAutoplayPolicy.ts:60-63`; `hooks/useReducedMotionSetting.ts`. Tests: `objects/__tests__/VideoWallItem.component.test.tsx:122,159,191,200`. |
 | W172 | Live state must not rely on colour alone | C | `components/ContextThreadView.tsx` `freshnessLabel` and `components/LiveForYouStrip.tsx` `stateLabel` render the state as TEXT. |
 | W173 | Postcard decorative typography preserves readable accessible text | **?** | Needs a rendered screen and a screen reader. |
-| W174 | Mode switch and horizontal Live For You list support logical focus order | **?** | Focus order is a runtime property of the RN accessibility tree; no test exercises it. |
+| W174 | Mode switch and horizontal Live For You list support logical focus order | C | The `?` was correct about the PROPERTY and wrong about the reach: focus order is a runtime property of the RN accessibility tree, and `@testing-library/react-native` renders that tree, so it is testable without a device. `components/__tests__/WallAccessibility.component.test.tsx:238#focus` pins the strip — each card is ONE focusable unit (its inner Texts carry `importantForAccessibility="no"`, without which the order is 3 stops per card) and announces its position, so a screen-reader user knows where in the strip they are. `:283#mode` pins the switch as a tablist whose tabs carry role, label and `selected` state, with only the tabs focusable. What still needs a device is how a REAL screen reader traverses that tree; what the spec asks for here is the order the tree declares. **Moved ?→C in the §6 recensus.** |
 
 ### §37 Security and Abuse Controls
 
@@ -451,8 +462,8 @@ NOT-BUILT · **?** = CANNOT-VERIFY. Backend paths are relative to
 | W175 | Server-side eligibility is authoritative; never rely on client hiding | C | The gate runs in `WallProjectionService.projectObjects` before anything is serialized; every route short-circuits on `wall_enabled` before any canonical read (`routes/wall.ts:748,1000,1053,1092,1110,1161,1202`), and `lib/featureFlags.isFlagEnabled` returns false on error. |
 | W176 | Rate-limit impression/action mutation endpoints | C | `routes/wall.ts:114-118` `WALL_RATE_LIMITS`, applied at `:1069`, `:1123`, `:1172`. Test: `test/wallRateLimits.test.ts`. |
 | W177 | Prevent ranking manipulation through keyword stuffing or repeated self-engagement | C | No free-text term feeds the ranker (`WallRankSignals`, `WallRankingService.ts:69-88`, is tags/category/counts only), so keyword stuffing has no lever; and Wall telemetry rows are written with `outcome: "analytics"` precisely so they "never collide with the impression-finding query" (`routes/wall.ts:138-166`), so flooding your own object through `POST /wall/impression` cannot move ranking. Rate limits bound the flood regardless. |
-| W178 | Paid/promoted content, if introduced later, is explicitly labeled and separated from factual live confidence | **N** | No promoted-content concept exists in the Wall at all — no field, no label, no separation mechanism. The rule holds *vacuously* today (there is nothing to mislabel), but nothing implements it, so it is counted as not built rather than credited. |
-| W179 | Moderation takedowns propagate to cached Wall projections | **W** | Server-side propagation is real: `passesEligibility` (`WallProjectionService.ts:198-200`) drops `removed`/`takedown`/`moderated` on every request. The **client cache does not**: `services/wallPrefetch.ts` persists whole `WallProjection` objects for up to 24 h and `useWallFeed.ts:168-186` re-displays them offline with no re-validation against a takedown — the offline path is the one path where a taken-down object can still paint. It is labelled stale, which mitigates but does not implement the requirement. |
+| W178 | Paid/promoted content, if introduced later, is explicitly labeled and separated from factual live confidence | C | The premise of the old N verdict was wrong, not just its score. `sponsored` and `imported_owned` are two of the eight members of `lib/intelContracts.ts:44#SOURCE_CLASSES`, are accepted by the live read path, and already reach the Wall's producers — so the rule was not holding vacuously, it was holding HALFWAY. **Separated, yes**: `lib/wallProjection.ts:202#deriveWallTruthClass` maps both to `inferred`, which is in `NON_OBSERVATION_TRUTH_CLASSES`, so no coverage can promote a paid claim to an observation. **Labelled, no**: nothing said the word. Now: `lib/wallProjection.ts:257#PROMOTIONAL_SOURCE_CLASSES` and `:289#promotionLabelFor` (the canonical `SOURCE_CLASS_LABELS` strings, agreement pinned by test), derived from the SAME `sourceClass` expression as the truth class at `services/wall/LiveForYouService.ts:313#promotionLabelFor` and `ContextThreadService.ts:356#promotionLabelFor`, so label and downgrade cannot disagree. Rendered by `components/LiveForYouStrip.tsx:128#cardPromotion` and `components/ContextThreadView.tsx:125#wall-context-promotion-`, in each case BEFORE the state word and inside the accessibility label. The set is deliberately narrower than `NON_INDEPENDENT_SOURCE_CLASSES`: an `official_signed` transit alert is self-asserted but is not paid, and calling it Sponsored would be false. **Moved N→C in the §6 recensus.** |
+| W179 | Moderation takedowns propagate to cached Wall projections | C | Server-side propagation was always real (`WallProjectionService.ts:202#passesEligibility` drops `removed`/`takedown`/`moderated` on every request). The client cache now propagates too: `services/wallPrefetch.ts:211#revalidateFirstPageCache` re-asks the SERVER which cached ids the viewer may still be shown (`services/wallApi.ts:328#revalidateCachedObjects`) and drops the rest from both the screen and the persisted page. Nothing client-side re-derives eligibility — there is no client moderation predicate to drift. Wired on the one path that could paint a taken-down object, the offline first open, at `hooks/useWallFeed.ts:191#revalidateFirstPageCache`; an unreachable server returns null and the cache is left intact, because offline is not a takedown. **Moved W→C in the §6 recensus.** |
 | W180 | Impersonation, blocked-user and private-account rules apply before social proof is constructed | C | The block read is bidirectional and fail-closed (`WallProjectionService.ts:152-181`) and runs before projection; social presence is built only from already-visible public posts by followed accounts. |
 
 ### §38 Testing Matrix
@@ -468,7 +479,7 @@ NOT-BUILT · **?** = CANNOT-VERIFY. Backend paths are relative to
 | W187 | Context: context only appears when the gate passes | C | `test/wallContextThread.test.ts`. |
 | W188 | Offline: cached social content works, live truth not fabricated | C | `hooks/__tests__/useWallFeed.offlineCache.component.test.tsx`; `services/__tests__/wallPrefetch.component.test.ts`. |
 | W189 | Failure: a subsystem outage never collapses the social feed | C | `test/wallRouteDegradation.test.ts`. |
-| W190 | Accessibility: focus, labels, reduced motion, contrast | **W** | Reduced motion is proven four ways (`VideoWallItem.component.test.tsx:122,159,191,200`) and labels are asserted incidentally by query-by-label in several component tests, but **no test exercises focus order or contrast** — there is no accessibility test file in the Wall tree. Two of four properties covered. |
+| W190 | Accessibility: focus, labels, reduced motion, contrast | C | All four now have a test. CONTRAST is arithmetic over the real tokens, not an eyeball: `components/__tests__/WallAccessibility.component.test.tsx:96#contrast` computes WCAG ratios for every pairing the Wall paints, and `:167#AA-capable` scans the Wall tree so a new style cannot introduce a failing one. FOCUS order over the real accessibility tree: the horizontal strip at `:238#focus` (one focusable unit per card, position announced) and the mode switch at `:283#mode` (tablist/tab roles, selected state in the tree, not colour alone). LABELS at `:306#accessible`. REDUCED MOTION four ways at `objects/__tests__/VideoWallItem.component.test.tsx:122,159,191,200#it(`. **Moved W→C in the §6 recensus.** |
 
 ### §39 Rollout Plan
 
@@ -491,14 +502,14 @@ NOT-BUILT · **?** = CANNOT-VERIFY. Backend paths are relative to
 | W200 | Strict chronology is available | C | `FollowingFeedService` + always-rendered `FeedModeSwitcher`; `components/__tests__/WallScreen.modeSwitch.component.test.tsx`. |
 | W201 | Postcards and videos feel native and distinct | C | Distinct renderers, distinct server producers; `components/__tests__/WallScreen.objectTypes.component.test.tsx`. |
 | W202 | Contextual intelligence appears only when useful | C | The §9 gate defaults false and at most one thread attaches per object. |
-| W203 | A social object can lead to Map/Trip/Compass/Gem/Buddy without forcing the transition | **W** | Handoffs are additive and never auto-navigate — but two of the named destinations are unreachable from a Wall object because their actions have no producer (W7: `join`, `message`) and `save` does not persist. Map, Trip, Compass, Gem and Buddy do work; the *set* the spec names is incomplete. |
+| W203 | A social object can lead to Map/Trip/Compass/Gem/Buddy without forcing the transition | C | Handoffs were always additive and never auto-navigating; the W verdict was consequential on W7, and W7 has closed — `join`, `message` and a persisting `save` all have producers, so the destination SET the spec names is now complete. **Moved W→C in the §6 recensus, on W7's evidence.** |
 | W204 | If all intelligence services fail, a safe functional social feed remains | C | Every subsystem call in `routes/wall.ts` is individually wrapped; `test/wallRouteDegradation.test.ts`. |
 
 ### §41 End-to-End Wall Loop
 
 | id | Requirement | V | Evidence |
 | --- | --- | --- | --- |
-| W205 | open → live → feed → object → engage → context → handoff → real-world action → create → graph/memory → future relevance | **W** | Every hop exists as code except the *return* leg: nothing in the Wall writes back an outcome that changes future relevance. `trackRealWorldOutcome` (`services/wallAnalytics.ts:196-207`) is the only outcome writer, it is client-side and consent-gated, and its destination table (`wall_telemetry_events`, migration 2308) **is not deployed** — production has exactly one `wall*` table, `wall_session_intents`. The loop is open at the point where it is supposed to close. |
+| W205 | open → live → feed → object → engage → context → handoff → real-world action → create → graph/memory → future relevance | C | The return leg is closed, and closed through a DEPLOYED store. `POST /wall/action { action: "hide" }` had always written `rank_events` (surface='wall', event_type=ranking_item_hidden) and nothing had ever read it, so a "not interested" lived in React state and came back on the next launch. `routes/wall.ts:414#loadViewerSuppressions` reads it back and removes the object for that viewer. Deliberately NOT closed through `wall_telemetry_events` (migration 2308), which is not applied in production — a loop closed through an undeployed table is closed on paper. It is a VISIBILITY filter, not a ranking term, which is why it holds identically in Following where relevance reordering is forbidden. **Moved W→C in the §6 recensus.** |
 
 ---
 
@@ -513,7 +524,7 @@ either side.
 | W146 | 33 | `<500 ms` backend needs a real database. The existing test bounds read count against a fake client. |
 | W149 | 33 | 60 fps needs a device. |
 | W159, W167, W168 | 35 | Visual/comprehension judgements ("generous whitespace", "excessive badges", "understand without knowing the architecture"). |
-| W170, W173, W174 | 36 | Screen-reader behaviour of the shared video player, decorative-typography legibility, and focus order are runtime accessibility-tree properties. |
+| W170, W173 | 36 | Screen-reader behaviour of the shared video player's transport controls, and decorative-typography legibility. Both need a real screen reader on a real screen. (W174 left this bucket in the §6 recensus — see its row.) |
 
 **Six deployment facts that bound the built code.** These are *not* construction
 verdicts and are not in the 205 — but they decide whether the built code can do
@@ -603,3 +614,95 @@ code and working product.
 Censused state is `main`. One open PR touches the Wall:
 
 - **#459 — "Make a failed Wall read distinguishable from an empty Wall feed."** It adds `rowsOrThrow` so PostgREST errors reach the `catch` blocks that already exist, records `followGraphFailed` / `spineFailed` as facts, stops inferring `followingReachedEnd` from an unreadable fetch, and adds an optional `WallResponse.degraded?: WallLane[]`. This does **not** move any verdict in this census — §34's fail-soft behaviour is already correct and §27's `caughtUp` is already guarded by `reachedEnd` (`FollowingFeedService.ts:133`) — but it closes a real honesty gap on the *cause* of an empty feed. Nothing in this census depends on it; nothing in it contradicts a verdict here.
+
+---
+
+## 6. Recensus at `9f8122ff` — what moved, and what would turn it back
+
+The §2 pass above was taken at working tree `ebe72b34`. This section re-reads it
+at `9f8122ff5ed233a367fda6431589c9cb97df7979` and is the reason the Headline
+carries a `head_commit`: a census with no commit is a claim about an unknown
+tree, and ten of this repository's thirteen censuses were in that state when this
+one was reopened.
+
+**Eight rows moved, all in the built direction, and none of them because a
+standard was lowered.** Six were already true in the tree and the census had gone
+stale; two were built during the recensus.
+
+| id | was | now | moved by |
+| --- | --- | --- | --- |
+| W7 | W | C | already true — `join`, `message` and a persisting `save` all acquired producers after `ebe72b34` |
+| W86 | W | C | already true — `buildCompassClusterCandidate` and its 19 tests |
+| W174 | ? | C | already true — the accessibility tree IS testable without a device, which the `?` had conceded too early |
+| W179 | W | C | already true — client-cache revalidation, wired on the offline path |
+| W190 | W | C | already true — contrast is arithmetic over the real tokens; focus order is over the real tree |
+| W203 | W | C | consequential — its W verdict was entirely W7's |
+| W205 | W | C | already true — the return leg closed through the DEPLOYED `rank_events`, not the undeployed telemetry table |
+| W178 | N | C | **built during this recensus** — see below |
+
+### The one row where the previous verdict's REASONING was wrong, not just stale
+
+W178's N said: *"no promoted-content concept exists in the Wall at all — the rule
+holds vacuously today."* The premise was false. `sponsored` and `imported_owned`
+are two of the eight members of `lib/intelContracts.ts:44#SOURCE_CLASSES`, they
+are accepted by the live read path, and they already reached the Wall's
+producers. So the rule was not holding vacuously — it was holding **halfway**,
+which is a worse state than the census described:
+
+- **separated:** yes, and for some time. A promotional source class can only
+  produce a non-observation truth class.
+- **labelled:** no. The system knew a claim was paid and did not say so. The
+  viewer got a slightly hedged live card with no way to learn why.
+
+"Separated but silent" is the failure a vacuity verdict cannot see, because
+nothing is missing — everything present is simply not talking. The label half is
+now built and derived from the same `sourceClass` expression as the separation,
+so the two cannot disagree.
+
+### What would turn each of these red
+
+Not rhetorical. Every row above was moved on something a mutation can break:
+
+| id | delete this | and |
+| --- | --- | --- |
+| W7 | the `join` action literal in `LiveForYouService` | `wallLiveForYouKinds.test.ts` fails on the event candidate's action type |
+| W86 | the `buildCompassClusterCandidate` call at `ContextThreadService.ts:1094#buildCompassClusterCandidate` | 19 cluster tests lose their producer |
+| W174 | `importantForAccessibility="no"` from the strip card's inner Texts | the strip's focus order becomes 3 stops per card and the merged-focus test fails |
+| W179 | the `revalidateFirstPageCache` call in `useWallFeed` | `useWallFeed.offlineCache` loses the one path where a takedown reaches the cache |
+| W190 | any Wall text style's colour token for one that cannot reach AA | the tree scan at `WallAccessibility.component.test.tsx:167#AA-capable` goes red |
+| W178 | the `promotionLabelFor` spread from either producer | `wallPromotionDisclosure.test.ts` drops from 10 pass to 8 pass / 2 fail — **measured, not predicted** |
+| W205 | the `loadViewerSuppressions` read | a "not interested" stops surviving a relaunch |
+
+W203 is the exception and is marked as such: it moved on W7's evidence, not on
+its own, because its W verdict was explicitly consequential ("two of the named
+destinations are unreachable **because** their actions have no producer").
+
+### What did NOT move, and why
+
+- **W166** (Portava purple is an interaction/accent colour) stays **W**. The
+  structural half holds — no card uses the accent as a background wash — but the
+  Wall's accent tokens are vermilion `#FF4D2E` and teal-ink `#0A3D4A`, not
+  purple. This is an OWNER decision about the brand, not an engineering gap, and
+  it is not one this recensus may take: repainting the accent is a one-line
+  change and an irreversible product statement. It is the last open row.
+- **The eight CANNOT-VERIFY rows** stay `?`. Seven need a device, a database or a
+  human judgement (§3). The eighth, W71, belongs to another spec's census. None
+  of them was reclassified to make a number better; W174 left the bucket because
+  its stated reason turned out to be wrong, which is the only honest way out of
+  it.
+- **The six deployment facts in §3 are unchanged and still bound everything
+  above.** The Wall is flag-dark, migration 2270 seeds all five flags OFF with a
+  postcondition that fails the migration if any is ON, and 2272 seeds two more
+  OFF. **196 of 205 requirements built on a branch is not 196 requirements
+  working.** Nothing in this section says a single viewer has seen any of it.
+
+### The citations are now enforced, not vouched for
+
+Every `path:line` in this file resolves, and the load-bearing ones carry an
+anchor, because this document and `wall-certification.md` were adopted into
+`check-doc-citations`'s COVERED registry during this recensus — closing a finding
+that script's own header had been carrying as prose. Two classes of decay were
+found: 7 citations pointing past the end of a shrunken file, which the range half
+already caught, and many more that were IN RANGE AND WRONG, which only an anchor
+can catch. The recensus then invalidated four of its own repaired citations by
+editing the files it cited, in the same pass, and the anchors caught that too.
