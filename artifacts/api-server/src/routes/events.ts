@@ -186,6 +186,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { requireUser, sendError, type ApiErrorCode } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
+import { logger } from "../lib/logger.js";
 import { detectAndStoreLanguage, invalidateContentTranslations } from "../services/contentTranslation.js";
 import { nameVisibilitySet, sanitizeIdentity } from "../lib/publicIdentity.js";
 import { isFlagEnabled, isKillSwitchEngaged } from "../lib/featureFlags.js";
@@ -4349,11 +4350,37 @@ async function createEventChatThread(sc: any, eventId: string, title: string, ho
 
     if (threadErr || !(thread as any)?.id) {
       // Roll back the claim so another caller can retry.
-      await sc.from("events").update({ chat_thread_id: null, updated_at: new Date().toISOString() }).eq("id", eventId);
+      //
+      // Conditional on the claim still being OURS, and `.error`-checked: the
+      // rollback is the only thing standing between a failed insert and a
+      // PERMANENT dead end — events.chat_thread_id pointing at a message_threads
+      // row that does not exist, which no later call can repair because the
+      // claim (`.is("chat_thread_id", null)`) can never be won again. Unchecked,
+      // a rollback the database refused looked exactly like one that worked.
+      const { error: rbErr } = await sc
+        .from("events")
+        .update({ chat_thread_id: null, updated_at: new Date().toISOString() })
+        .eq("id", eventId)
+        .eq("chat_thread_id", candidateId);
+      if (rbErr) {
+        logger.error(
+          { err: rbErr, eventId, candidateId },
+          "event chat: thread insert failed AND its claim could not be rolled back — " +
+          "events.chat_thread_id now points at a thread that does not exist",
+        );
+      }
       return null;
     }
 
-    await sc.from("message_thread_members").insert({ thread_id: candidateId, user_id: hostId });
+    // The host must be a member of the thread they just created; unchecked, this
+    // produced a live thread its own creator could not see.
+    const { error: memberErr } = await sc
+      .from("message_thread_members")
+      .insert({ thread_id: candidateId, user_id: hostId });
+    if (memberErr) {
+      logger.warn({ err: memberErr, eventId, threadId: candidateId, hostId },
+        "event chat: host could not be added to the thread they created");
+    }
     return candidateId;
   } catch { return null; }
 }
