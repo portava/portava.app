@@ -47,6 +47,7 @@
     "check:sentry-otel-deps": "node --import tsx/esm src/scripts/checkSentryOtelDeps.ts",
     "check:test-registration": "node scripts/check-test-registration.mjs",
     "check:security": "bash scripts/run-security-checks.sh",
+    "measure:layover-cutover-sql": "node --import tsx/esm src/scripts/emitLayoverCutoverSql.ts",
     "check:layover-cutover": "node --import tsx/esm src/scripts/checkLayoverCutover.ts",
     "check:guard-reachability": "node --import tsx/esm src/scripts/checkGuardReachability.ts",
     "check:guard-coverage": "node scripts/check-guard-coverage.mjs",

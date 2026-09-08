@@ -44,6 +44,9 @@ const REAL_MIGRATIONS = join(API_ROOT, "src", "migrations");
 const REAL_SRC = join(API_ROOT, "src");
 const REAL_ROLLBACKS = join(REPO_ROOT, "db", "rollback");
 const REAL_SNAPSHOT = join(API_ROOT, "src", "lib", "capability", "snapshots", "20260908-production-schema.json");
+const REAL_MEASUREMENT = join(API_ROOT, "src", "lib", "capability", "layover-cutover-measurement.json");
+/** Sentinel for "remove this key" in a crafted measurement, distinct from any real value. */
+const DELETE_KEY = Symbol.for("layoverCutover.deleteKey") as unknown as unknown;
 const REAL_APPLIED = join(API_ROOT, "src", "lib", "capability", "production-applied-migrations.json");
 
 const MIGRATION = "2411_layover_recommendation_rec_key_backfill.sql";
@@ -152,7 +155,12 @@ describe("layover cutover checker — the real tree", () => {
     const { code, out } = run({}, ["--verdict"]);
     assert.equal(code, 1, out);
     assert.match(out, /NOT SAFE TO APPLY/);
-    assert.match(out, /EFFECT UNPROVEN/);
+    // Was /EFFECT UNPROVEN/ — the message when no measurement existed at all. The
+    // artifact is now committed, so the blocker has moved from "we have no
+    // evidence" to "we measured, and 2411 preserves nothing". That is a better
+    // blocker, and the control has to assert the one actually in force or it
+    // would keep passing on a message the checker no longer emits.
+    assert.match(out, /VACUOUS FOR ITS PURPOSE: legacyModerated = 0/);
     // REVERSIBILITY was the second blocker and has cleared, so the scope finding
     // is no longer expected here. It must still be REACHABLE — that is the case
     // below, which crafts the false claim rather than relying on the real file
@@ -210,14 +218,20 @@ describe("condition 1 — DEPENDENCY", () => {
 // ── 2. NON-VACUITY ───────────────────────────────────────────────────────────
 
 describe("condition 2 — NON_VACUITY", () => {
+  /**
+   * A crafted measurement that is FRESH in every dimension except the one the
+   * case is testing.
+   *
+   * It is built from the REAL committed artifact rather than typed out, because a
+   * hand-written fixture goes stale the moment a freshness rule is added: these
+   * cases started failing on a missing derivationChecksum — a rule they are not
+   * about — and a case that fails for the wrong reason proves nothing about the
+   * right one. Only `legacyModerated` is overridden, to 4, so the shared fixture
+   * describes a world where 2411 would actually preserve something.
+   */
   const measurement = (extra: Record<string, unknown>) => writeJson("meas", "m.json", {
-    measuredAt: "2026-09-08",
-    projectRef: realSnapshot().projectRef,
-    legacyRows: 30,
+    ...JSON.parse(readFileSync(REAL_MEASUREMENT, "utf8")),
     legacyModerated: 4,
-    ambiguousDerivations: 0,
-    ambiguousModerated: 0,
-    collidingDerivedKeys: 0,
     ...extra,
   });
 
@@ -272,6 +286,101 @@ describe("condition 2 — NON_VACUITY", () => {
     assert.match(out, /GO {5}NON_VACUITY/);
     assert.match(out, /DRIFT: NON_VACUITY: recorded NO_GO, now GO/);
     assert.match(out, /Strike NON_VACUITY from RECORDED/);
+  });
+
+  // ── measurement FRESHNESS ──────────────────────────────────────────────────
+  //
+  // The artifact is evidence about a moment. Every input whose change would
+  // invalidate it is recorded IN it, and each of these proves the corresponding
+  // rule actually fires — a freshness rule nobody has watched fail is a comment.
+
+  const withMeasurement = (name: string, patch: Record<string, unknown>, extraEnv: Record<string, string> = {}) => {
+    const m = JSON.parse(readFileSync(REAL_MEASUREMENT, "utf8"));
+    for (const [k, v] of Object.entries(patch)) {
+      if (v === DELETE_KEY) delete m[k]; else m[k] = v;
+    }
+    const p = join(tmp, `measure-${name}.json`);
+    writeFileSync(p, JSON.stringify(m));
+    return run({ LAYOVER_CUTOVER_MEASUREMENT: p, ...extraEnv }, ["--verdict"]);
+  };
+
+  it("FAILS when the rec_key DERIVATION changed after the count was taken", () => {
+    // Counts taken under one algorithm are not evidence about another: if the
+    // CASE expression moved, every "ambiguous" and "colliding" number was
+    // computed for a migration that no longer exists.
+    const { code, out } = withMeasurement("drift", { derivationChecksum: "deadbeefdeadbeef" });
+    assert.notEqual(code, 0);
+    assert.match(out, /derivationChecksum deadbeefdeadbeef does not match/);
+  });
+
+  it("FAILS when the measurement carries no derivationChecksum at all", () => {
+    const { code, out } = withMeasurement("nochecksum", { derivationChecksum: DELETE_KEY });
+    assert.notEqual(code, 0);
+    assert.match(out, /carries no derivationChecksum/);
+  });
+
+  it("FAILS a count taken PAST the cutover", () => {
+    // 2411 raises unless the flag is FALSE, so a count taken with it TRUE
+    // describes a state the migration refuses to run in.
+    const { code, out } = withMeasurement("pastcutover", {
+      flagState: { layover_stable_recommendation_ids_enabled: true },
+    });
+    assert.notEqual(code, 0);
+    assert.match(out, /was true when measured/);
+  });
+
+  it("FAILS when the measurement records no flag state", () => {
+    const { code, out } = withMeasurement("noflag", { flagState: DELETE_KEY });
+    assert.notEqual(code, 0);
+    assert.match(out, /records no flagState/);
+  });
+
+  it("FAILS a count taken before 2410's prerequisites existed", () => {
+    const { code, out } = withMeasurement("nopre", {
+      prerequisiteState: { recKeyColumn: false, uniqueIndex: true },
+    });
+    assert.notEqual(code, 0);
+    assert.match(out, /does not record BOTH 2410 prerequisites/);
+  });
+
+  it("FAILS a measurement older than the age threshold", () => {
+    // This needs a crafted snapshot: the "measured before the snapshot was
+    // captured" rule sits ahead of the age rule and would otherwise answer for
+    // it, so the age rule would ship never having been watched fail.
+    const snap = JSON.parse(readFileSync(REAL_SNAPSHOT, "utf8"));
+    snap.capturedAt = "2026-05-01";
+    const sp = join(tmp, "snap-old.json");
+    writeFileSync(sp, JSON.stringify(snap));
+    const { code, out } = withMeasurement(
+      "old",
+      { measuredAt: "2026-06-01", schemaWatermark: "99999999999999" },
+      { LAYOVER_CUTOVER_SNAPSHOT: sp },
+    );
+    assert.notEqual(code, 0);
+    assert.match(out, /day\(s\) ago, past the 30-day threshold/);
+  });
+
+  it("FAILS when migrations landed after the count was taken", () => {
+    const { code, out } = withMeasurement("behind", { schemaWatermark: "20260101000000" });
+    assert.notEqual(code, 0);
+    assert.match(out, /schemaWatermark 20260101000000 is behind/);
+  });
+
+  it("the REAL artifact passes every freshness rule, and still blocks on its own numbers", () => {
+    // The positive control. Without it, a freshness rule that rejected every
+    // measurement would pass all seven cases above while making the artifact
+    // mechanism unusable — and the blocker below would look like freshness when
+    // it is really the measured fact.
+    const { code, out } = run({}, ["--verdict"]);
+    assert.equal(code, 1, out);
+    assert.doesNotMatch(out, /STALE MEASUREMENT/);
+    assert.doesNotMatch(out, /carries no/);
+    assert.match(out, /derivationChecksum \w+ matches 2411's current rec_key derivation/);
+    assert.match(out, /was FALSE when measured, matching the snapshot/);
+    assert.match(out, /observed both 2410 prerequisites/);
+    // and the ONE thing blocking it is the measured fact, not the paperwork
+    assert.match(out, /VACUOUS FOR ITS PURPOSE: legacyModerated = 0/);
+    assert.match(out, /VERDICT: NOT SAFE TO APPLY\. Blocked by: NON_VACUITY\./);
   });
 });
 

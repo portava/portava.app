@@ -37,6 +37,18 @@ export const MIGRATION_BASENAME = "2411_layover_recommendation_rec_key_backfill"
 export const PREDECESSOR_BASENAME = "2410_layover_recommendation_identity";
 export const TARGET_TABLE = "layover_recommendations";
 export const TARGET_COLUMN = "rec_key";
+import { extractDerivation, derivationChecksum } from "./layoverCutoverMeasure.js";
+
+/**
+ * How old a cutover measurement may be before it stops counting as evidence.
+ *
+ * Layover recommendations are generated per session and swept, so the population
+ * turns over: a month-old count describes rows that may no longer exist. Thirty
+ * days is deliberately generous — the point is that an unbounded artifact would
+ * silently become folklore, not that any particular number is exact.
+ */
+export const MEASUREMENT_MAX_AGE_DAYS = 30;
+
 export const CUTOVER_FLAG = "layover_stable_recommendation_ids_enabled";
 export const KEY_FUNCTION = "recommendationKey";
 export const WRITER_FILE = "services/airport/LayoverRecommendationService.ts";
@@ -149,6 +161,14 @@ interface Snapshot {
 interface Measurement {
   measuredAt?: string;
   projectRef?: string;
+  /** sha256 prefix of 2411's own rec_key CASE expression, at measurement time. */
+  derivationChecksum?: string;
+  /** The applied-migration watermark when the count was taken. */
+  schemaWatermark?: string;
+  /** The cutover flag's production value when the count was taken. */
+  flagState?: Record<string, unknown>;
+  /** 2410's column and unique index, as observed. */
+  prerequisiteState?: { recKeyColumn?: unknown; uniqueIndex?: unknown };
   legacyRows?: number;
   legacyModerated?: number;
   ambiguousDerivations?: number;
@@ -254,7 +274,7 @@ export function evaluateCutover(paths: CutoverPaths): CutoverReport {
 
   const conditions: ConditionResult[] = [
     conditionDependency(extraction, snapshot, selfCreated, appliedCorpus, notes),
-    conditionNonVacuity(extraction, snapshot, selfCreated, paths.measurementPath),
+    conditionNonVacuity(extraction, snapshot, selfCreated, paths.measurementPath, rawMigration),
     conditionBackfill(extraction, migrationSql, rawMigration, paths, snapshot),
     conditionReversibility(rawMigration, migrationSql, paths.rollbackDir),
     conditionOrdering(allSql, appliedNames, allCorpus, extraction, snapshot),
@@ -380,6 +400,12 @@ function conditionNonVacuity(
   snapshot: Snapshot,
   self: CreatedObjects,
   measurementPath: string,
+  /**
+   * The RAW migration text, not the comment-stripped copy: extractDerivation is
+   * the same function emitLayoverCutoverSql.ts uses to build the query, and it
+   * must see the same bytes, or the checksums would compare two different things.
+   */
+  rawMigrationSql: string,
 ): ConditionResult {
   const blockers: string[] = [];
   const evidence: string[] = [];
@@ -437,6 +463,86 @@ function conditionNonVacuity(
         blockers.push(
           `STALE MEASUREMENT: measured ${m.measuredAt}, snapshot captured ${snapshot.capturedAt}. ` +
             `Production moved after the count was taken.`,
+        );
+      } else if (m.measuredAt) {
+        // AGE. A count is evidence about the moment it was taken. Layover
+        // recommendations are generated per session and swept, so a month-old
+        // count describes a population that has turned over.
+        const ageDays = Math.floor((Date.now() - Date.parse(`${m.measuredAt}T00:00:00Z`)) / 86_400_000);
+        if (!Number.isFinite(ageDays)) {
+          blockers.push(`measurement measuredAt "${m.measuredAt}" is not a parseable date.`);
+        } else if (ageDays > MEASUREMENT_MAX_AGE_DAYS) {
+          blockers.push(
+            `STALE MEASUREMENT: taken ${ageDays} day(s) ago, past the ${MEASUREMENT_MAX_AGE_DAYS}-day threshold. ` +
+              `Re-run measure:layover-cutover-sql against production and commit the result.`,
+          );
+        } else {
+          evidence.push(`measurement is ${ageDays} day(s) old (threshold ${MEASUREMENT_MAX_AGE_DAYS})`);
+        }
+      }
+
+      // DERIVATION DRIFT. Counts taken under one rec_key algorithm are not
+      // evidence about another: if the CASE expression changed, every "ambiguous"
+      // and "colliding" number was computed for a migration that no longer
+      // exists. Lifted from 2411 itself, so the comparison cannot be fooled by a
+      // retyped copy going out of date.
+      const liveDerivation = extractDerivation(rawMigrationSql);
+      if (!liveDerivation) {
+        blockers.push("could not lift 2411's rec_key derivation, so the measurement's derivationChecksum cannot be verified.");
+      } else if (!m.derivationChecksum) {
+        blockers.push(
+          "measurement carries no derivationChecksum. Without it a count taken under an older rec_key derivation " +
+            "cannot be told from one taken under the current one.",
+        );
+      } else if (m.derivationChecksum !== derivationChecksum(liveDerivation)) {
+        blockers.push(
+          `STALE MEASUREMENT: derivationChecksum ${m.derivationChecksum} does not match 2411's current derivation ` +
+            `(${derivationChecksum(liveDerivation)}). The algorithm changed after the count was taken, so the count is ` +
+            `evidence about a migration that no longer exists.`,
+        );
+      } else {
+        evidence.push(`derivationChecksum ${m.derivationChecksum} matches 2411's current rec_key derivation`);
+      }
+
+      // FLAG STATE. 2411 refuses to run once the cutover flag is TRUE, so a
+      // measurement taken past the cutover describes a world the migration will
+      // not run in.
+      const measuredFlag = m.flagState?.[CUTOVER_FLAG];
+      if (measuredFlag === undefined) {
+        blockers.push(`measurement records no flagState for ${CUTOVER_FLAG}; the migration's own precondition depends on it.`);
+      } else if (measuredFlag !== false) {
+        blockers.push(
+          `STALE MEASUREMENT: ${CUTOVER_FLAG} was ${String(measuredFlag)} when measured. 2411 raises unless it is ` +
+            `FALSE, so this count describes a state the migration refuses to run in.`,
+        );
+      } else if (snapshot.flags && snapshot.flags[CUTOVER_FLAG] !== false) {
+        blockers.push(
+          `${CUTOVER_FLAG} is ${String(snapshot.flags[CUTOVER_FLAG])} in the committed snapshot but FALSE in the ` +
+            `measurement. One of them is out of date.`,
+        );
+      } else {
+        evidence.push(`${CUTOVER_FLAG} was FALSE when measured, matching the snapshot`);
+      }
+
+      // PREREQUISITE STATE. 2410's column and index must have existed, or the
+      // count was taken against a shape the backfill cannot run on.
+      const pre = m.prerequisiteState;
+      if (!pre || pre.recKeyColumn !== true || pre.uniqueIndex !== true) {
+        blockers.push(
+          `measurement does not record BOTH 2410 prerequisites as present (recKeyColumn=${String(pre?.recKeyColumn)}, ` +
+            `uniqueIndex=${String(pre?.uniqueIndex)}). A count taken before 2410 landed is not a count of what 2411 would do.`,
+        );
+      } else {
+        evidence.push("measurement observed both 2410 prerequisites (rec_key column, unique index) present");
+      }
+
+      // SCHEMA WATERMARK. Recorded and compared where available; a migration
+      // applied after the count is the same hazard the snapshot tripwire catches.
+      if (m.schemaWatermark && snapshot.productionMigrationWatermark &&
+          m.schemaWatermark < snapshot.productionMigrationWatermark) {
+        blockers.push(
+          `STALE MEASUREMENT: schemaWatermark ${m.schemaWatermark} is behind the snapshot's ` +
+            `${snapshot.productionMigrationWatermark}; migrations landed after the count was taken.`,
         );
       }
       const legacyRows = m.legacyRows;
