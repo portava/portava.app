@@ -148,7 +148,14 @@ export const DISCOVERY_TRIP_PROJECTION: CapabilityDefinition = {
       trips: { columns: DISCOVERY_TRIP_PROJECTION_COLUMNS },
     },
   },
-  consumers: ["routes/discoverySearch.ts"],
+  // The file that REACHES the capability, not the routes above it -- the same
+  // shape MEDIA_CANONICAL uses (`consumers: ["lib/mediaAssets.ts"]`, not the
+  // media routes). routes/discoverySearch.ts names the flag and calls the gate,
+  // but it reaches lib/capability only through this wrapper, and the ratchet's
+  // consumer rule tests for the reach rather than the mention. Listing the
+  // route made checkFlagSchemaPrerequisites fail
+  // "REGISTRY WITHOUT A CONSUMER: does not reach lib/capability" -- correctly.
+  consumers: ["lib/discoveryTripProjectionConsumer.ts"],
   note:
     "With the flag ON over a database without trips.version, both projection readers 42703 and every trips " +
     "and plans search answers []. Refusing keeps the pre-2420 legacy read authoritative, which is a correct " +

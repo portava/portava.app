@@ -30,6 +30,7 @@
  * it is a comment.
  */
 import type { CapabilityDefinition } from "./schemaRequirement.js";
+import { DISCOVERY_TRIP_PROJECTION } from "../discoveryTripProjectionConsumer.js";
 
 /** The `media_assets` columns migration 2250 adds. Nothing before it does. */
 export const MEDIA_CANONICAL_ASSET_COLUMNS = [
@@ -69,6 +70,13 @@ export const MEDIA_CANONICAL: CapabilityDefinition = {
 /** flag → definition. The ratchet and the tests enumerate this. */
 export const CAPABILITIES: Readonly<Record<string, CapabilityDefinition>> = Object.freeze({
   [MEDIA_CANONICAL.flag]: MEDIA_CANONICAL,
+  // Registered because it has read sites the ratchet can SEE: scanFlagReads
+  // resolves four (the isFlagEnabled call in the consumer, plus
+  // discoveryTripProjectionGate followed into routes/discoverySearch.ts at both
+  // the trips and plans surfaces). That is the difference from
+  // MAP_TRIP_PROJECTION_CAPABILITY below, which reaches its flag only through
+  // the definition and would trip "REGISTRY OVER A DEAD FLAG" at zero sites.
+  [DISCOVERY_TRIP_PROJECTION.flag]: DISCOVERY_TRIP_PROJECTION,
   // NOT registered here, deliberately: MAP_TRIP_PROJECTION_CAPABILITY
   // (lib/mapProjectionTripContract.ts). resolveCapability takes the definition
   // directly, so the Map reader is fully guarded either way.
