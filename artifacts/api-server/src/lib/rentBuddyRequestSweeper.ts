@@ -51,6 +51,7 @@ import { logger as rootLogger } from "./logger.js";
 import { notifyBookingParty } from "./bookingNotify.js";
 import { isFlagEnabled } from "./featureFlags.js";
 import { AWAITING_BUDDY_STATUSES } from "./rentBuddyBookingStatus.js";
+import { affectedIds, affectedRows } from "./affectedRows.js";
 
 /** Master feature flag that gates the whole Rent-a-Buddy surface. */
 const RAB_MASTER_FLAG = "rent_buddy_enabled";
@@ -163,20 +164,41 @@ export async function runBuddyRequestSweep(client?: any): Promise<BuddyRequestSw
   let expiredCount = 0;
   if (staleRequests && staleRequests.length > 0) {
     const ids = staleRequests.map((r: any) => r.id as string);
-    const { error: expireErr } = await serviceClient
+    // The status guard is repeated on the WRITE, not just the read. Without it
+    // a booking a buddy accepted between the SELECT and the UPDATE was still
+    // stomped to 'expired'; with it, that booking simply drops out of the
+    // match — and the RETURNING rows below are then the honest answer to
+    // "which of these did this sweep actually expire?".
+    const { data: expiredRows, error: expireErr } = await serviceClient
       .from("rent_buddy_bookings")
       .update({ status: "expired", updated_at: now })
-      .in("id", ids);
+      .in("id", ids)
+      .in("status", [...AWAITING_BUDDY_STATUSES])
+      .select("id");
 
     if (!expireErr) {
+      // Drive the events, the notifications AND the count off the rows the
+      // WRITE changed, not the rows the READ found. supabase-js resolves a
+      // partial (or empty) match as `{ error: null }`, so the old code — which
+      // looped over `staleRequests` and set `expiredCount = staleRequests.length`
+      // — told every traveler in the read set that their booking had expired
+      // even when the update moved none of them.
+      const expiredIds = affectedIds(expiredRows);
+      if (expiredIds.size < staleRequests.length) {
+        logger.warn(
+          { selected: staleRequests.length, expired: expiredIds.size },
+          "request-expiry matched fewer rows than it selected — notifying only the bookings that really expired",
+        );
+      }
       for (const bk of staleRequests) {
+        if (!expiredIds.has(bk.id as string)) continue;
         void serviceClient.from("buddy_booking_events").insert({
           booking_id: bk.id, actor_user_id: bk.traveler_id, event: "request_expired",
           from_status: bk.status as string, to_status: "expired", metadata: {},
         });
         await notifyBookingParty(serviceClient, bk.traveler_id as string, "rent_buddy.booking_expired", bk.id as string);
       }
-      expiredCount = staleRequests.length;
+      expiredCount = expiredIds.size;
     }
   }
 
@@ -193,10 +215,15 @@ export async function runBuddyRequestSweep(client?: any): Promise<BuddyRequestSw
 
   if (pendingConfirm && pendingConfirm.length > 0) {
     const ids2 = pendingConfirm.map((r: any) => r.id as string);
-    const { error: autoCompleteErr } = await serviceClient
+    // Status guard repeated on the write (see phase 1): a booking that was
+    // DISPUTED between the select and the update must not be auto-completed
+    // out of its dispute, and the RETURNING rows are then the real set.
+    const { data: completedRows, error: autoCompleteErr } = await serviceClient
       .from("rent_buddy_bookings")
       .update({ status: "completed", updated_at: now })
-      .in("id", ids2);
+      .in("id", ids2)
+      .eq("status", "completed_pending_traveler_confirmation")
+      .select("id");
 
     if (!autoCompleteErr) {
       // Resolve buddy user IDs in one batch for completion notifications.
@@ -221,7 +248,17 @@ export async function runBuddyRequestSweep(client?: any): Promise<BuddyRequestSw
         logger.error({ err }, "buddy-profile lookup threw during auto-completion — traveler notifications still proceed");
       }
 
+      // Same rule as phase 1: both parties are told a booking COMPLETED, and
+      // that claim may only be made about bookings this update actually moved.
+      const completedIds = affectedIds(completedRows);
+      if (completedIds.size < pendingConfirm.length) {
+        logger.warn(
+          { selected: pendingConfirm.length, completed: completedIds.size },
+          "auto-completion matched fewer rows than it selected — notifying only the bookings that really completed",
+        );
+      }
       for (const bk of pendingConfirm) {
+        if (!completedIds.has(bk.id as string)) continue;
         void serviceClient.from("buddy_booking_events").insert({
           booking_id: bk.id, actor_user_id: bk.traveler_id, event: "auto_completed",
           from_status: "completed_pending_traveler_confirmation", to_status: "completed",
@@ -233,7 +270,7 @@ export async function runBuddyRequestSweep(client?: any): Promise<BuddyRequestSw
           await notifyBookingParty(serviceClient, buddyUserId, "rent_buddy.booking_completed", bk.id as string);
         }
       }
-      autoCompletedCount = pendingConfirm.length;
+      autoCompletedCount = completedIds.size;
     }
   }
   } catch (err) {
@@ -314,13 +351,24 @@ export async function runBuddyRequestSweep(client?: any): Promise<BuddyRequestSw
       }
 
       // Dispute row is confirmed — now promote the booking to disputed.
-      const { error: updateError } = await serviceClient
+      const { data: promoted, error: updateError } = await serviceClient
         .from("rent_buddy_bookings")
         .update({ status: "disputed", updated_at: now })
-        .eq("id", bk.id as string);
+        .eq("id", bk.id as string)
+        .eq("status", "no_show_pending")
+        .select("id");
 
       if (updateError) {
         console.error("[sweep] failed to promote booking to disputed after dispute insert", bk.id, updateError);
+        continue;
+      }
+      // Zero matched rows: the booking left no_show_pending (resolved, cancelled
+      // or deleted) between the select and this write. Nothing was escalated, so
+      // it must not be counted as an escalation nor written into the booking's
+      // event log as one — the dispute row above is idempotent and the next pass
+      // reuses it if the booking really is still pending.
+      if (affectedRows(promoted) === 0) {
+        console.error("[sweep] no-show escalation matched no row — booking left no_show_pending concurrently", bk.id);
         continue;
       }
 
@@ -403,17 +451,28 @@ async function expireStaleOpenRows(
   if (rows.length === 0) return 0;
 
   const ids = rows.map((r) => r.id);
-  const { error: updErr } = await serviceClient
+  // `.eq(openStatus)` on the write as well as the read, and `.select()` so the
+  // count returned is the number of rows this call EXPIRED — not the number it
+  // had selected a moment earlier. The count feeds the sweep status and the
+  // scheduler log; reporting the read set there made a write that moved
+  // nothing look like a drained backlog.
+  const { data: updated, error: updErr } = await serviceClient
     .from(table)
     .update({ status: "expired", updated_at: now })
-    .in("id", ids);
+    .in("id", ids)
+    .eq("status", openStatus)
+    .select("id");
 
   if (updErr) {
     logger.error({ err: updErr, table }, "stale open-row expire update failed");
     return 0;
   }
 
-  return ids.length;
+  const expired = affectedRows(updated);
+  if (expired < ids.length) {
+    logger.warn({ table, selected: ids.length, expired }, "stale open-row expiry matched fewer rows than selected");
+  }
+  return expired;
 }
 
 // ── Scheduler ─────────────────────────────────────────────────────────────────
