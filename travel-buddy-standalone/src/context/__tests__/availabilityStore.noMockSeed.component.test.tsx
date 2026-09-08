@@ -36,8 +36,10 @@ import { mockAvailability } from '../../data/events.ts';
 const mockGetMyAvailability = jest.fn();
 const mockPatchMyAvailability = jest.fn();
 
-// Intentionally exhaustive — availability.ts imports Supabase helpers at module
-// level, and requireActual would execute that chain and crash the JSDOM suite.
+// NOTE: intentionally exhaustive — availability.ts imports Supabase helpers at
+// module level, so spreading jest.requireActual would execute that import chain
+// and crash the JSDOM suite. Only the three functions AvailabilityStore calls
+// are needed here.
 jest.mock('../../services/availability.ts', () => ({
   getMyAvailability: (...args: unknown[]) => mockGetMyAvailability(...args),
   patchMyAvailability: (...args: unknown[]) => mockPatchMyAvailability(...args),
