@@ -17,10 +17,22 @@ import { requireUser, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { isUuid } from "../lib/followDecisions.js";
 import { resolveAppeal, isDeferred } from "../services/appeals/resolveAppeal.js";
+import { listPendingRestorations } from "../services/appeals/pendingRestorations.js";
 
 import { requireAdmin } from "../lib/requireAdmin.js";
 
 const router = Router();
+
+/**
+ * What the appellant is told when the appeal is upheld but the restoration did
+ * not happen. It must never be omitted from a deferred approval — "your appeal
+ * was approved" alone reads as "you have your trip back".
+ */
+const RESTORATION_PENDING_SENTENCE =
+  "A moderator still needs to restore this by hand.";
+
+/** Where an admin can see every restoration an approved appeal still owes. */
+const RESTORATION_QUEUE_PATH = "/api/appeals/restorations/pending";
 
 // ── POST /api/appeals ─────────────────────────────────────────────────────────
 
@@ -126,6 +138,49 @@ router.get("/appeals/me", asyncHandler(async (req, res) => {
     })),
     page,
     limit,
+  });
+}));
+
+// ── GET /api/appeals/restorations/pending ─────────────────────────────────────
+// Admin-only — the restorations an APPROVED appeal owes and the database does
+// not show.
+//
+// This is the operator surface for `restore_requires_policy`. Before it, a
+// deferred restoration existed only as a `req.log.error` line at the moment the
+// appeal was approved: nobody could ask "what are we still holding?" and get an
+// answer, so the debt was real, unbounded and invisible. Being unable to
+// perform the restoration is a decision; being unable to SEE the ones we owe is
+// just a missing endpoint.
+//
+// Declared before GET /api/appeals so no future `/appeals/:something` route can
+// swallow it.
+router.get("/appeals/restorations/pending", asyncHandler(async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const { sc } = admin;
+
+  const page   = Math.max(1, parseInt((req.query.page as string) ?? "1"));
+  const limit  = Math.min(200, Math.max(1, parseInt((req.query.limit as string) ?? "50")));
+  const offset = (page - 1) * limit;
+
+  const result = await listPendingRestorations(sc, { limit, offset });
+
+  // A failed read is NOT an empty queue. Returning `pending: []` here would tell
+  // an operator that nothing is owed, which is the same lie one layer up as the
+  // appeal that reported a restoration it never performed.
+  if (!result.ok) {
+    req.log.error({ reason: result.reason }, "pending restoration queue read failed");
+    sendError(res, "db_error", result.reason);
+    return;
+  }
+
+  res.json({
+    pending: result.pending,
+    page,
+    limit,
+    // `scanned` larger than `pending.length` is the honest statement that the
+    // rest of the page was checked and found already restored.
+    scanned: result.scanned,
   });
 }));
 
@@ -318,10 +373,13 @@ router.patch("/appeals/:id", asyncHandler(async (req, res) => {
       event_type:        "appeal.approved",
       category:          "admin",
       title:             "Appeal approved",
+      // A deferred restoration ALWAYS says so, note or no note. The previous
+      // wording dropped the "still needs to be restored" sentence the moment a
+      // moderator supplied a resolution note — so the appellant most likely to
+      // be reassured by a personal note was the one who never learned the
+      // removal had not actually been undone.
       body:              restorationDeferred
-        ? (resolutionNote
-            ? `Your appeal was approved. ${resolutionNote}`
-            : "Your appeal was approved. A moderator still needs to restore this by hand.")
+        ? `Your appeal was approved.${resolutionNote ? ` ${resolutionNote}` : ""} ${RESTORATION_PENDING_SENTENCE}`
         : (resolutionNote
             ? `Your appeal was approved. ${resolutionNote}`
             : "Your appeal was approved and the action has been reversed."),
@@ -370,7 +428,15 @@ router.patch("/appeals/:id", asyncHandler(async (req, res) => {
           // The admin who approved must see, in the response to their own
           // request, that the restoration is still owed.
           restored:       !restorationDeferred,
-          ...(restorationDeferred ? { restorationRequired: (reversal as any).reason } : {}),
+          ...(restorationDeferred
+            ? {
+                restorationRequired: (reversal as any).reason,
+                // Point the admin who just approved it at the queue, so the
+                // owed restoration is something they can go and look at rather
+                // than a sentence that scrolls past once.
+                restorationQueue:    RESTORATION_QUEUE_PATH,
+              }
+            : {}),
         }
       : {}),
   });

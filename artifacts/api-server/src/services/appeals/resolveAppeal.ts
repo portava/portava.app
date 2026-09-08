@@ -91,6 +91,124 @@ function matchedNothing(
   };
 }
 
+// ── Restoration classification ───────────────────────────────────────────────
+// These are PURE and READ-ONLY, and they are the single place that decides
+// whether a membership restoration is still owed. `resolveAppeal` uses them to
+// answer one appeal; `pendingRestorations.ts` uses the SAME functions to build
+// the operator queue. Two copies of this judgement would drift, and the shape
+// of the drift would be a queue that says "nothing pending" about an appeal
+// whose restoration never happened — the same class of lie as the original
+// defect, one layer up.
+
+/** The OPEN owner decision that blocks trip-membership restoration. */
+export const RESTORE_SEMANTICS_DECISION = "APPEAL_RESTORE_SEMANTICS";
+
+/**
+ * The target types whose moderated action is a DELETE rather than a flag, so
+ * no UPDATE can ever reverse one. These are the only appeals that can end
+ * `approved` with the restoration still owed.
+ */
+export const MEMBERSHIP_RESTORE_TARGET_TYPES = ["trip_membership", "event_membership"] as const;
+export type MembershipRestoreTargetType = (typeof MEMBERSHIP_RESTORE_TARGET_TYPES)[number];
+
+/** The restoration has NOT happened and this code cannot perform it. */
+export interface RestorationOwed {
+  owed: true;
+  reason: string;
+  /** The command that would carry it — named only where one has been named. */
+  requiredCommand: "ADMIN_RESTORE_PARTICIPANT" | null;
+  /** The owner decision that must land first, where the block IS a decision. */
+  blockedOn: typeof RESTORE_SEMANTICS_DECISION | null;
+}
+
+export type RestorationClassification = { owed: false } | RestorationOwed;
+
+/**
+ * Is a trip-membership restoration still owed, given the member row (or its
+ * absence)? Never writes, never picks a role.
+ *
+ *   row absent          the member really was removed. Putting them back is an
+ *                       INSERT — ADMIN_RESTORE_PARTICIPANT — and the role they
+ *                       return to is APPEAL_RESTORE_SEMANTICS, still open.
+ *   row present, other  they were never removed, and the legacy
+ *   than 'member'       `SET role='member'` would DEMOTE them. Rewriting that
+ *                       role is exactly the role invention this must not do.
+ *   row present,
+ *   role 'member'       nothing was removed and nothing is owed.
+ */
+export function classifyTripMembershipRestoration(
+  memberRow: { role?: string | null } | null | undefined,
+): RestorationClassification {
+  if (memberRow == null) {
+    return {
+      owed: true,
+      requiredCommand: "ADMIN_RESTORE_PARTICIPANT",
+      blockedOn: RESTORE_SEMANTICS_DECISION,
+      reason:
+        "trip_members row absent (member was removed by DELETE); restoring it requires " +
+        `ADMIN_RESTORE_PARTICIPANT and the owner decision ${RESTORE_SEMANTICS_DECISION}`,
+    };
+  }
+  const role = memberRow.role ?? null;
+  if (role !== "member") {
+    return {
+      owed: true,
+      requiredCommand: "ADMIN_RESTORE_PARTICIPANT",
+      blockedOn: RESTORE_SEMANTICS_DECISION,
+      reason:
+        `trip_members row present with role '${role}' — nothing was removed, and rewriting ` +
+        `that role would be choosing a restoration role (owner decision ${RESTORE_SEMANTICS_DECISION})`,
+    };
+  }
+  return { owed: false };
+}
+
+/**
+ * The event twin. Removal DELETEs the RSVP row, so an absent row means the
+ * restoration is owed — and re-creating it is an INSERT whose capacity and
+ * waitlist meaning is a product decision, not one this code may take.
+ * No command has been named for it, hence `requiredCommand: null`.
+ */
+export function classifyEventMembershipRestoration(
+  rsvpRow: { status?: string | null } | null | undefined,
+): RestorationClassification {
+  if (rsvpRow == null) {
+    return {
+      owed: true,
+      requiredCommand: null,
+      blockedOn: null,
+      reason:
+        "event_rsvps row absent (the RSVP was removed by DELETE); re-creating it is an INSERT " +
+        "whose capacity and waitlist semantics are not decided here",
+    };
+  }
+  return { owed: false };
+}
+
+/**
+ * Build the deferred result and say so where an operator can see it. The
+ * `action` is deliberately not a `*_restored` name and `restored` is an
+ * explicit `false`, so no caller can read success out of `ok` alone.
+ */
+function deferRestoration(appeal: Appeal, reason: string): ReversalDeferred {
+  console.error(
+    `[resolveAppeal] restore_requires_policy appeal=${appeal.id} ` +
+    `target_type=${appeal.target_type} target=${appeal.target_id} user=${appeal.appellant_id} — ${reason}`,
+  );
+  return {
+    ok: true,
+    action: "restore_requires_policy",
+    restored: false,
+    reason,
+    evidence: {
+      appealId:   appeal.id,
+      targetType: appeal.target_type,
+      targetId:   appeal.target_id,
+      userId:     appeal.appellant_id,
+    },
+  };
+}
+
 export async function resolveAppeal(
   sc: any,
   appeal: Appeal,
@@ -219,19 +337,8 @@ export async function resolveAppeal(
         // here — does event capacity still apply, does the appellant land on
         // the waitlist, does a closed event reopen for them — is a product
         // decision this function must not make on a moderator's behalf.
-        const reason =
-          "event_rsvps row absent (the RSVP was removed by DELETE); re-creating it is an INSERT " +
-          "whose capacity and waitlist semantics are not decided here";
-        console.error(
-          `[resolveAppeal] restore_requires_policy appeal=${appeal.id} event=${target_id} user=${appellant_id} — ${reason}`,
-        );
-        return {
-          ok: true,
-          action: "restore_requires_policy",
-          restored: false,
-          reason,
-          evidence: { appealId: appeal.id, targetType: target_type, targetId: target_id, userId: appellant_id },
-        };
+        const owed = classifyEventMembershipRestoration(null) as RestorationOwed;
+        return deferRestoration(appeal, owed.reason);
       }
       return { ok: true, action: "event_membership_restored" };
     }
@@ -272,43 +379,12 @@ export async function resolveAppeal(
         return { ok: false, action: "noop", reason: `trip member read failed: ${readErr.message}` };
       }
 
-      const evidence = {
-        appealId:   appeal.id,
-        targetType: target_type,
-        targetId:   target_id,
-        userId:     appellant_id,
-      };
-
-      const currentRole = (memberRow as any)?.role ?? null;
-
-      // No row: the member really was removed. There is nothing to update and
-      // no command that can put them back. Say so; do not claim a restoration.
-      // Do not INSERT a row here — that would be choosing the role.
-      if (memberRow == null) {
-        const reason =
-          "trip_members row absent (member was removed by DELETE); restoring it requires " +
-          "ADMIN_RESTORE_PARTICIPANT and the owner decision APPEAL_RESTORE_SEMANTICS";
-        console.error(
-          `[resolveAppeal] restore_requires_policy appeal=${appeal.id} trip=${target_id} user=${appellant_id} — ${reason}`,
-        );
-        return { ok: true, action: "restore_requires_policy", restored: false, reason, evidence };
-      }
-
-      // A row exists, so the appellant was never removed (or has since rejoined).
-      // If it holds any role other than 'member', running the legacy UPDATE
-      // would overwrite that role with 'member' — demoting an owner, co_host,
-      // host or viewer under the banner of "restoring" them. Picking 'member'
-      // for them is precisely the role invention APPEAL_RESTORE_SEMANTICS has
-      // to settle, so refuse and report instead of writing.
-      if (currentRole !== "member") {
-        const reason =
-          `trip_members row present with role '${currentRole}' — nothing was removed, and rewriting ` +
-          "that role would be choosing a restoration role (owner decision APPEAL_RESTORE_SEMANTICS)";
-        console.error(
-          `[resolveAppeal] restore_requires_policy appeal=${appeal.id} trip=${target_id} user=${appellant_id} — ${reason}`,
-        );
-        return { ok: true, action: "restore_requires_policy", restored: false, reason, evidence };
-      }
+      // Both refusals below — "row is gone" and "row holds another role, and
+      // rewriting it would be inventing one" — come from the shared classifier
+      // that also builds the operator queue, so the queue and this answer can
+      // never disagree about whether a restoration is still owed.
+      const classified = classifyTripMembershipRestoration(memberRow as any);
+      if (classified.owed) return deferRestoration(appeal, classified.reason);
 
       // Role is already 'member': the legacy UPDATE cannot change it, so it is
       // safe to run, and its RETURNING rows are the affected-row count this
@@ -326,12 +402,11 @@ export async function resolveAppeal(
       if (affected === 0) {
         // The row was deleted between the read and the write. Still not a
         // restoration, and still not ours to invent a role for.
-        const reason =
-          "trip_members row disappeared between read and write; the update matched zero rows";
-        console.error(
-          `[resolveAppeal] restore_requires_policy appeal=${appeal.id} trip=${target_id} user=${appellant_id} — ${reason}`,
+        return deferRestoration(
+          appeal,
+          "trip_members row disappeared between read and write; the update matched zero rows " +
+          `(restoring it requires ADMIN_RESTORE_PARTICIPANT and the owner decision ${RESTORE_SEMANTICS_DECISION})`,
         );
-        return { ok: true, action: "restore_requires_policy", restored: false, reason, evidence };
       }
 
       // The membership is intact and was already 'member'. Nothing was removed
