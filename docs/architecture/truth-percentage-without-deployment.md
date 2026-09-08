@@ -85,3 +85,54 @@ number by less than one point.
 Nine of the 26 credit work in **someone else's unmerged branch**. If "removing
 merge" means only "ignore that this branch is unmerged" rather than "count every
 branch", subtract those nine: 1445 / 3284 = **44.0 %**.
+
+---
+
+## Re-measurement, 2026-09-08 (later the same day)
+
+The measurement above was taken before that day's Wall and Passport work. It is
+re-run here rather than reasoned forward from, because the baseline it used
+(C 1428 / 2920 parsed / 3284 denominators) is `check:census-integrity`'s own
+recount at a particular commit and the only honest way to compare is to run it
+again.
+
+| Measure | Earlier | Now |
+|---|---|---|
+| BUILT-AND-CORRECT (parsed) | 1428 | **1447** |
+| parsed rows | 2920 | 2921 |
+| stated denominators | 3284 | 3290 |
+| CORRECT % of parsed rows | 48.9 % | **49.5 %** |
+| **CORRECT % of stated denominators** | **43.5 %** | **44.0 %** |
+| CONSTRUCTED % of denominators | 66.3 % | 66.3 % |
+
+**+19 correct rows, and only two of them were built.** That is the number worth
+reading, not the half point.
+
+| moved | rows | why |
+|---|---|---|
+| Wall | +8 | W7, W86, W174, W179, W190, W203, W205 were **already true** and the census was taken at `ebe72b34`; only **W178** (§37 promoted-content disclosure) was built |
+| Passport | +5 | P95, P99, P100, P101 were scored "the variant exists and nothing calls it" when every variant already had a caller; only **P98** (the map's batch projection) was built |
+| other lanes | +6 | movement in censuses this pass did not touch |
+
+So of the 13 rows this pass moved, **11 moved because a census had not been
+re-read** and 2 moved because code was written. The tree was further along than
+the documentation said, in both surfaces, in the same direction.
+
+### What that says about the number, and what it does not
+
+It does NOT say the percentage is meaningless. It says the percentage has an
+error bar that only a recensus can collapse, and that the error bar points
+**upward** — a stale census under-reports, because rows are written when
+something is missing and nobody returns to unwrite them when it lands.
+
+Ten of thirteen censuses still declare no `head_commit` and are CANNOT BE
+CHECKED by `check:census-freshness`. Wall and Trust are the only two with a
+commit AND a scope; Passport now has a corrected P98/P169 and deliberately still
+has no commit, because 167 of its 169 rows have not been re-read and declaring
+one would make the freshness check report FRESH about them.
+
+**Until those ten are recensused, 44.0 % is a floor, not a measurement.** The
+honest form of this document's headline is: the gap between 44 % and 100 % is not
+waiting on a deploy — that finding stands and this pass reinforced it, since
+neither thing built today needed one — but some unknown part of the gap is
+waiting only on someone re-reading a document against the code.
