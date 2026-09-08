@@ -176,7 +176,9 @@ describe("saveGem — an unreadable hidden_gem_saves is not 'not saved yet'", ()
       rows: { hidden_gem_saves: [{ gem_id: GEM, user_id: USER }], hidden_gems: [{ id: GEM, save_count: 7 }] },
       inserted,
     });
-    assert.deepEqual(await saveGem(db, GEM, USER), { alreadySaved: true });
+    // Field assertion, not deepEqual: saveGem also reports `saveCountIncremented`
+    // (see hiddenGemSaveCountTruth.test.ts). What THIS case is about is the dedup.
+    assert.equal((await saveGem(db, GEM, USER)).alreadySaved, true);
     assert.equal((inserted["hidden_gem_saves"] ?? []).length, 0);
   });
 
@@ -186,7 +188,7 @@ describe("saveGem — an unreadable hidden_gem_saves is not 'not saved yet'", ()
       rows: { hidden_gem_saves: [], hidden_gems: [{ id: GEM, save_count: 7 }] },
       inserted,
     });
-    assert.deepEqual(await saveGem(db, GEM, USER), { alreadySaved: false });
+    assert.equal((await saveGem(db, GEM, USER)).alreadySaved, false);
     assert.equal((inserted["hidden_gem_saves"] ?? []).length, 1);
   });
 
