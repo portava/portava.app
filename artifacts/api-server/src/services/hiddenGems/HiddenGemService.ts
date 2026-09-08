@@ -250,6 +250,28 @@ export async function listGems(db: SupabaseClient, opts: GemListOptions = {}) {
 }
 
 /** Shared patch builder. */
+/**
+ * The owner-edit column allowlist, and the APPLICATION half of the
+ * self-publish boundary.
+ *
+ * `hidden_gems.status` (publication), `verification_level`, `moderation_status`
+ * and `guide_verified_by` are set by verification/moderation through the
+ * service role. The public Discovery feed and Compass read gems where
+ * status = 'active', so a self-set status injects unmoderated, self-"verified"
+ * content into Discovery. Migration 2147 grants authenticated column-UPDATE on
+ * exactly the fields below and revokes the rest; that grant is asserted by
+ * src/test/hiddenGemSelfPublish.test.ts, which is a LIVE-DB suite and does not
+ * run without CI credentials (it refuses, loudly, rather than passing vacuously).
+ *
+ * This function is the half that runs on every request and IS testable here:
+ * updateGem passes a caller-supplied patch straight into it, so anything not
+ * listed is dropped before the UPDATE is built. Both halves must hold — the
+ * route reaches hidden_gems through the SERVICE client, which bypasses RLS, so
+ * on that path this allowlist is the only thing standing between a caller and
+ * `status`.
+ *
+ * See src/test/hiddenGemUpdateBoundary.test.ts.
+ */
 function buildPatch(patch: Partial<{
   name: string;
   description: string;
@@ -312,12 +334,27 @@ export async function updateGemAsGuide(
   guideId: string,
   patch: Pick<GemPatch, "safetyNotes" | "bestTimeToGo" | "localEtiquette" | "vibeTags">,
 ) {
-  // Verify guide is active
-  const { data: guideRow } = await db
+  // Verify guide is active.
+  //
+  // supabase-js RESOLVES on a database error, so an unreadable
+  // local_guide_profiles arrives as `guideRow === null` — the same shape as
+  // "this user is not a guide". The refusal below is therefore the answer in
+  // both cases, and that is the RIGHT direction (an unverifiable guide claim
+  // must not license editing someone else's gem). It was silent, which is the
+  // part that was accidental: a permanently unreadable guide table would revoke
+  // every guide in the system and look exactly like nobody having applied.
+  const { data: guideRow, error: guideErr } = await db
     .from("local_guide_profiles")
     .select("status, city_expertise")
     .eq("user_id", guideId)
     .maybeSingle();
+
+  if (guideErr) {
+    logger.warn(
+      { err: guideErr, guideId, gemId, code: "guide_status_unreadable" },
+      "updateGemAsGuide: local_guide_profiles unreadable — refusing the edit (fail-closed)",
+    );
+  }
 
   if (!guideRow || (guideRow as any).status !== "active") {
     throw Object.assign(new Error("Not an active local guide"), { code: "not_a_guide" });
