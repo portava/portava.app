@@ -6,20 +6,33 @@ its gate before the next begins. Updated as rows land.
 `prod ✓` = applied to production `ajrurzioarfkagpuxfnb`.
 `ci ✓` = applied to portava-ci `hwokxgbmezheskbzskfr`.
 
+**Applied-ness re-read from `supabase_migrations.schema_migrations` on
+2026-09-08**, not carried forward from this file. Rows 5-10 and 12 were still
+marked `queued` or `in progress` here while production had already had them for a
+day — the queue was describing work that was done. Their `Post-check` column now
+says "not re-run by me": the migrations landed in an earlier session and I have
+verified only that the ledger records them, not that their own postconditions
+passed. Row 11 is the exception; its whole gate is mine and is described there.
+
+Not applied to production as of 2026-09-08: `2335`, `2510`, `2411`, `2450`,
+`2500`, `2600`. Of those, `2411` was MEASURED and found OPTIONAL (30 rows, all
+unkeyed, nothing to preserve) and `2600` encodes the open `EVENT_START_TRANSITION`
+owner decision — neither is a backlog item.
+
 | # | Migration | Depends on | CI | Prod pre-check | Applied | Post-check | Result |
 |---|---|---|---|---|---|---|---|
 | 1 | `2460` meetup self-invite defuse | 2182 (authz) | ✓ | owner=postgres, no FORCE RLS, `mi_own` FOR ALL, 5 policies | **prod ✓** | in-transaction; inertness re-verified on CI (still 42P17) | **applied** |
 | 2 | `2461` meetup recursion repair | **2460** | ✓ | `mi_own` WITH CHECK requires an invite | **prod ✓** | self-proving: reads all 4 tables as `authenticated` inside the transaction | **applied** |
 | 3 | `2462` vote write boundary | **2461** | ✓ | non-service read of votes must not raise | **prod ✓** | self-proving: unadmitted INSERT must return 42501 | **applied** |
 | 4 | `2334` route-plan crew visibility | 2182 | ✓ | authz present, 4 route tables, `trip_members.status`, **13 policies** | **prod ✓** | 5 routed through helper, 0 referencing `trip_members`, 13 policies | **applied** |
-| 5 | `2337` crew RLS convergence (29 policies / 19 tables) | **2334** | ✓ | applied from the file's exact bytes, not retyped | in progress | shape-scoped, not count-scoped | — |
-| 6 | `2530` highlights `trip_only` | **2337** (`shares_accepted_trip`) | — | before-state captured: the `tm1 JOIN tm2` self-join is live | queued | shape-agnostic; refuses a shape it does not recognise | — |
-| 7 | `2531` crew_session owner-only | — | — | before-state captured: `auth.uid() = ANY(allowed_member_ids)` is live | queued | — | — |
-| 8 | `2532` pg_policies snapshot v2 | — | — | diagnostic only | queued | — | — |
-| 9 | `2533` drop `shares_trip_with` oracle | — | — | zero app callers verified repo-wide | queued | anon/authenticated cannot execute | — |
-| 10 | `2534` `can_see_trip` status gate + checklist write boundary | **2337** | — | 17 dependent policies enumerated | queued | before/after admission matrix | — |
-| 11 | `2535` trip_reminders write boundary | `trip_reminders_insert`, `can_see_trip` | — | 4 postconditions all fail today (proven) | queued | no FOR ALL survives; both write verbs gated | — |
-| 12 | `2420` trip kernel foundation | **2334 → 2337** | ✓ | production has no `trips.version` | queued | — | — |
+| 5 | `2337` crew RLS convergence (29 policies / 19 tables) | **2334** | ✓ | applied from the file's exact bytes, not retyped | **prod ✓** `20260907185750` | not re-run by me | **applied** |
+| 6 | `2530` highlights `trip_only` | **2337** (`shares_accepted_trip`) | — | before-state captured: the `tm1 JOIN tm2` self-join is live | **prod ✓** `20260907223359` | not re-run by me | **applied** |
+| 7 | `2531` crew_session owner-only | — | — | before-state captured: `auth.uid() = ANY(allowed_member_ids)` is live | **prod ✓** `20260907190129` | not re-run by me | **applied** |
+| 8 | `2532` pg_policies snapshot v2 | — | — | diagnostic only | **prod ✓** `20260907222834` | not re-run by me | **applied** |
+| 9 | `2533` drop `shares_trip_with` oracle | — | — | zero app callers verified repo-wide | **prod ✓** `20260907222934` | not re-run by me | **applied** |
+| 10 | `2534` `can_see_trip` status gate + checklist write boundary | **2337** | — | 17 dependent policies enumerated | **prod ✓** `20260907223139` | not re-run by me; its repair of `trip_reminders_insert` was DECORATIVE until 2535 landed | **applied** |
+| 11 | `2535` trip_reminders write boundary | **2534**, `authz.is_trip_crew` | **ci ✓** | 2 policies, `trip_reminders_own` FOR ALL / with_check NULL, 0 rows, deps present | **prod ✓** `20260908103147` | 4 policies, 0 FOR ALL, 0 write policy without WITH CHECK, 0 gating on the read predicate — re-run independently after apply; live smoke returns **42501**, not 23503 | **applied 2026-09-08** |
+| 12 | `2420` trip kernel foundation | **2334 → 2337** | ✓ | production has no `trips.version` | **prod ✓** `20260908005403` | not re-run by me | **applied** |
 | 13 | `2450` trip/participant families | **2420** | — | — | queued | — | — |
 | 14 | `2500` `JOIN_VIA_LINK` + host | **2450** | — | — | queued | — | — |
 | 15 | `2490` destructive privilege boundary | none | ✓ | 375 app-owned offenders → **0**; 3 extension-owned excluded | **APPLIED prod 20260908011416** | vacuity guard ≥300 relations; 3472 `has_table_privilege` probes, 0 held | ✓ |
