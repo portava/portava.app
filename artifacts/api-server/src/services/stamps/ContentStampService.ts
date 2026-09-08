@@ -33,6 +33,53 @@ export type StampableEntityType = (typeof STAMPABLE_TYPES)[number];
 export interface StampResult {
   stampCount: number;
   isStamped: boolean;
+  /**
+   * True when `stampCount` is a PLACEHOLDER, not a measurement: the count read
+   * resolved an error and there is no honest number to put here.
+   *
+   * supabase-js RESOLVES on a database error, and `select(…, { count: "exact",
+   * head: true })` yields `count: null` when it does — so `count ?? 0` turned an
+   * unreadable table into a confident `stampCount: 0`, returned alongside
+   * `isStamped: true` from a stamp that had just SUCCEEDED. "0 people stamped
+   * this, and you are one of them" is not a degraded answer, it is a
+   * self-contradictory one, and nothing on the response said so. The field is
+   * optional and additive: existing callers destructure `{ stampCount }` and are
+   * unaffected.
+   */
+  countUnavailable?: boolean;
+}
+
+/**
+ * The one count read, with its error OBSERVED. Returns the placeholder zero and
+ * says that is what it is, rather than letting `count ?? 0` pass a failure off
+ * as a measurement.
+ */
+async function countForEntity(
+  db: SupabaseClient,
+  entityType: StampableEntityType,
+  entityId: string,
+): Promise<{ count: number; unavailable: boolean }> {
+  const { count, error } = await db
+    .from("content_stamps")
+    .select("id", { count: "exact", head: true })
+    .eq("entity_type", entityType)
+    .eq("entity_id", entityId);
+  if (error) {
+    logger.warn(
+      { err: error, entityType, entityId },
+      "content_stamps count unreadable — stampCount is a placeholder, not a measurement",
+    );
+    return { count: 0, unavailable: true };
+  }
+  return { count: count ?? 0, unavailable: false };
+}
+
+/** Attach `countUnavailable` only when it is true, so the healthy shape is unchanged. */
+function withCount(
+  c: { count: number; unavailable: boolean },
+  isStamped: boolean,
+): StampResult {
+  return { stampCount: c.count, isStamped, ...(c.unavailable ? { countUnavailable: true } : {}) };
 }
 
 /**
@@ -53,13 +100,7 @@ export async function stampEntity(
     );
   if (error) throw error;
 
-  const { count } = await db
-    .from("content_stamps")
-    .select("id", { count: "exact", head: true })
-    .eq("entity_type", entityType)
-    .eq("entity_id", entityId);
-
-  return { stampCount: count ?? 0, isStamped: true };
+  return withCount(await countForEntity(db, entityType, entityId), true);
 }
 
 /**
@@ -80,13 +121,7 @@ export async function unstampEntity(
     .eq("entity_id", entityId);
   if (error) throw error;
 
-  const { count } = await db
-    .from("content_stamps")
-    .select("id", { count: "exact", head: true })
-    .eq("entity_type", entityType)
-    .eq("entity_id", entityId);
-
-  return { stampCount: count ?? 0, isStamped: false };
+  return withCount(await countForEntity(db, entityType, entityId), false);
 }
 
 /**
@@ -128,12 +163,8 @@ export async function getStampState(
   entityType: StampableEntityType,
   entityId: string,
 ): Promise<StampResult> {
-  const [{ count }, { data: mine }] = await Promise.all([
-    db
-      .from("content_stamps")
-      .select("id", { count: "exact", head: true })
-      .eq("entity_type", entityType)
-      .eq("entity_id", entityId),
+  const [c, mineRead] = await Promise.all([
+    countForEntity(db, entityType, entityId),
     db
       .from("content_stamps")
       .select("id")
@@ -142,7 +173,17 @@ export async function getStampState(
       .eq("entity_id", entityId)
       .maybeSingle(),
   ]);
-  return { stampCount: count ?? 0, isStamped: !!mine };
+  // `isStamped` stays fail-closed on an unreadable own-stamp row (the user is
+  // shown "not stamped" and a re-tap is an idempotent upsert), but the failure
+  // is no longer silent, and the COUNT — which is the number this response
+  // exists to carry — says when it is a placeholder.
+  if ((mineRead as any).error) {
+    logger.warn(
+      { err: (mineRead as any).error, userId, entityType, entityId },
+      "content_stamps own-stamp read unreadable — reporting isStamped:false",
+    );
+  }
+  return withCount(c, !!(mineRead as any).data);
 }
 
 /**
@@ -243,7 +284,7 @@ export async function batchGetStampState(
 ): Promise<Record<string, StampResult>> {
   if (entityIds.length === 0) return {};
 
-  const [{ data: allStamps }, { data: myStamps }] = await Promise.all([
+  const [allRead, myRead] = await Promise.all([
     db
       .from("content_stamps")
       .select("entity_id")
@@ -257,15 +298,35 @@ export async function batchGetStampState(
       .in("entity_id", entityIds),
   ]);
 
-  const mySet = new Set<string>((myStamps ?? []).map((r: any) => r.entity_id as string));
+  // A failed batch read gave EVERY entity on the page `stampCount: 0` — one
+  // hiccup rewriting a whole feed's worth of counts to zero, silently.
+  const countsUnavailable = Boolean((allRead as any).error);
+  if (countsUnavailable) {
+    logger.warn(
+      { err: (allRead as any).error, entityType, n: entityIds.length },
+      "content_stamps batch count unreadable — every stampCount on this page is a placeholder",
+    );
+  }
+  if ((myRead as any).error) {
+    logger.warn(
+      { err: (myRead as any).error, userId, entityType },
+      "content_stamps batch own-stamp read unreadable — reporting isStamped:false",
+    );
+  }
+
+  const mySet = new Set<string>((((myRead as any).data ?? []) as any[]).map((r: any) => r.entity_id as string));
   const countMap: Record<string, number> = {};
-  for (const r of (allStamps ?? []) as any[]) {
+  for (const r of (((allRead as any).data ?? []) as any[])) {
     countMap[r.entity_id] = (countMap[r.entity_id] ?? 0) + 1;
   }
 
   const result: Record<string, StampResult> = {};
   for (const id of entityIds) {
-    result[id] = { stampCount: countMap[id] ?? 0, isStamped: mySet.has(id) };
+    result[id] = {
+      stampCount: countMap[id] ?? 0,
+      isStamped: mySet.has(id),
+      ...(countsUnavailable ? { countUnavailable: true } : {}),
+    };
   }
   return result;
 }
