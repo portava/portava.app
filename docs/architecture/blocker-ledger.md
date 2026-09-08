@@ -669,3 +669,63 @@ traveler-recommendation payload that pins the existing four-way title behaviour
 private-non-followed), THEN adopt `presentedName`. In that order. The value of
 the fix is smaller than the value of that harness existing, which is the honest
 reason to do it in that order rather than the reverse.
+
+---
+
+## `VISA_BUDDY_CAPABILITY` — the seventh capability, and the one the tree argues against
+
+Raised 2026-09-08 by the Passport pass. `census-passport` P59 is the LAST
+NOT-BUILT row in that census (150 C / 17 W / 1 N / 1 ?).
+
+### The measurement
+
+Passport spec §11 names seven capabilities derived from trust evidence + domain
+policy. Six exist and are derived server-side in
+`services/passport/PassportProjectionService.ts:659#buildOwnerCapabilities`:
+
+```
+canJoinPublicTrip · canHostTrip · canCreateLargePlan
+canUseCrewLocation · canContributeLiveIntel · canBecomeBuddy
+```
+
+The seventh, `canProvideVisaBuddyService`, does not exist. A repo-wide search for
+`canProvideVisaBuddyService`, `VisaBuddy` and `visa_buddy` returns nothing in
+either tree.
+
+### Why this is not "add a line to buildOwnerCapabilities"
+
+**There is no visa product.** The six existing capabilities each gate something
+that exists — trips, plans, crew location, live intel, RAB. A seventh boolean
+would gate nothing, be read by nothing, and be exactly the producer-with-no-
+consumer shape this ledger's P2 section exists to track.
+
+**And the tree's only current posture on visas is the opposite one.** The three
+places the word appears are Layover disclaimers:
+`services/airport/LayoverSafetyEngine.ts:585` — *"Verify visa rules"* — and
+`:619`, `:628`, whose comment states that entry is **never confirmed on this
+tree**. A capability asserting that a user may PROVIDE visa assistance would be
+the first thing in the product implying the platform stands behind that, and it
+would do so as a derived boolean nobody decided to publish.
+
+### The question
+
+What evidence qualifies a person to provide visa assistance to another person?
+
+That is not an engineering threshold like `rank >= 3`. It is a policy question
+with a plausible regulatory dimension — immigration advice is a licensed activity
+in several of the markets this product names — and picking a trust rank for it
+would be inventing that policy in a formula, silently, in a file whose other six
+lines are uncontroversial.
+
+| | Meaning | What it needs |
+|---|---|---|
+| **DROP** | the spec line is aspirational; the product has no visa service and will not derive a capability for one | one sentence in the spec, and P59 becomes a scored-out row rather than a gap |
+| **DEFINE** | there is to be a visa-assistance service | a product definition FIRST (what is offered, by whom, with what disclaimer), then the qualifying evidence, then the capability |
+
+### Why engineering is not choosing
+
+Adding the boolean takes the decision by making DEFINE true, and takes it with a
+threshold nobody set. Leaving it takes nothing and costs one row in one census.
+
+**What is buildable now, either way: nothing.** Under DROP there is no code. Under
+DEFINE the capability is the last step, not the first.
