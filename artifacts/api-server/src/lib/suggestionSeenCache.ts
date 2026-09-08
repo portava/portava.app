@@ -49,16 +49,50 @@ function getEntry(userId: string): Entry | null {
 }
 
 /* ---------------------------------------------------------------------------
- * DB helpers (fire-and-forget; all errors swallowed)
+ * DB helpers (fire-and-forget — but NOT silent)
  * ---------------------------------------------------------------------------
+ *
+ * WHAT A SWALLOWED WRITE HERE ACTUALLY COSTS
+ * ------------------------------------------
+ * These two writes used to be `await sc.from(…).upsert(…)` with `{ error }`
+ * unread inside an empty `catch`. supabase-js RESOLVES on a database error, so
+ * the catch was dead code for the failure that matters and the L2 leg could
+ * fail on every single request while the process reported nothing. A cache that
+ * silently never writes is a performance bug shaped exactly like working code.
+ *
+ * The cost was measured against the only consumer (routes/follows.ts suggestion
+ * strip), not assumed:
+ *
+ *   NOT a safety bug. Nothing about a PRIVACY decision is cached here — the set
+ *   holds profile ids ALREADY SERVED, and the consumer only uses it to
+ *   DEPRIORITISE candidates that have gone through the block / already-following
+ *   / account-status filters on every request. A stale or oversized set can only
+ *   ever remove candidates, never admit one, so serving a stale entry cannot
+ *   disclose anything.
+ *
+ *   NOT an empty strip either. The consumer re-checks in-process: if excluding
+ *   the seen ids would empty the pool it calls clearSeen() and uses the full
+ *   pool. So a failed `clearSeenFromDb` cannot strand a user with no
+ *   suggestions.
+ *
+ *   IT IS a freshness bug, and a permanent one. L1 is per-process: after a
+ *   deploy, a restart, or simply on a second instance, L2 is the only shared
+ *   memory of what a user has already been shown. If persistSeenIds never
+ *   lands, "genuinely fresh faces" degrades to the same faces after every
+ *   restart, for everyone, forever — with no error, no metric and no symptom
+ *   anyone can name.
+ *
+ * So the writes stay fire-and-forget (the response path must never block on
+ * them) and stop being silent: every leg binds `error` and reports it.
  */
 
 async function persistSeenIds(userId: string, entry: Entry): Promise<void> {
   try {
     const { getServiceClient } = await import("./supabase.js");
+    const { logger } = await import("./logger.js");
     const sc = getServiceClient();
     if (!sc) return;
-    await sc.from("user_suggestion_seen").upsert(
+    const { error } = await sc.from("user_suggestion_seen").upsert(
       {
         user_id: userId,
         seen_ids: Array.from(entry.ids),
@@ -67,19 +101,35 @@ async function persistSeenIds(userId: string, entry: Entry): Promise<void> {
       },
       { onConflict: "user_id" },
     );
-  } catch {
-    /* fire-and-forget — never block the response path */
+    if (error) {
+      logger.warn(
+        { err: error, userId, count: entry.ids.size, code: "suggestion_seen_persist_failed" },
+        "suggestionSeenCache: L2 persist failed — seen state will not survive a restart",
+      );
+    }
+  } catch (err) {
+    // Reached only by a genuine throw (the dynamic import, not the query).
+    const { logger } = await import("./logger.js");
+    logger.warn({ err, userId, code: "suggestion_seen_persist_failed" }, "suggestionSeenCache: L2 persist threw");
   }
 }
 
 async function clearSeenFromDb(userId: string): Promise<void> {
   try {
     const { getServiceClient } = await import("./supabase.js");
+    const { logger } = await import("./logger.js");
     const sc = getServiceClient();
     if (!sc) return;
-    await sc.from("user_suggestion_seen").delete().eq("user_id", userId);
-  } catch {
-    /* fire-and-forget */
+    const { error } = await sc.from("user_suggestion_seen").delete().eq("user_id", userId);
+    if (error) {
+      logger.warn(
+        { err: error, userId, code: "suggestion_seen_clear_failed" },
+        "suggestionSeenCache: L2 clear failed — a stale seen set can be reloaded after a restart",
+      );
+    }
+  } catch (err) {
+    const { logger } = await import("./logger.js");
+    logger.warn({ err, userId, code: "suggestion_seen_clear_failed" }, "suggestionSeenCache: L2 clear threw");
   }
 }
 
@@ -109,7 +159,19 @@ export async function getSeenIds(userId: string): Promise<Set<string>> {
       .select("seen_ids, expires_at")
       .eq("user_id", userId)
       .maybeSingle();
-    if (error || !data) return new Set();
+    if (error) {
+      // "no row yet" and "the table could not be read" both land on an empty
+      // set, and an empty set means the strip stops deduplicating and may
+      // repeat faces. Harmless, but it is a DIFFERENT harmless from a first-time
+      // user, so say which one this was.
+      const { logger } = await import("./logger.js");
+      logger.warn(
+        { err: error, userId, code: "suggestion_seen_read_failed" },
+        "suggestionSeenCache: L2 read failed — treating as no seen state (suggestions may repeat)",
+      );
+      return new Set();
+    }
+    if (!data) return new Set();
     const row = data as { seen_ids: string[] | null; expires_at: string };
     const expiresAt = new Date(row.expires_at).getTime();
     if (expiresAt < Date.now()) {
