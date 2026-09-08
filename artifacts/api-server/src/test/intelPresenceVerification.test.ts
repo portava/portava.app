@@ -19,12 +19,12 @@
  */
 import { describe, it, before } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
-import { join, dirname } from "node:path";
+import { readFileSync, readdirSync } from "node:fs";
+import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { writeObservation, resolvePresenceAttestation, resolvePresenceForCapture } from "../services/intel/IntelCaptureService.js";
 import { acceptMission } from "../services/intel/CoverageService.js";
-import { verifyPresence, distanceBucket, dwellBucket, claimMatchesFamily, GEOFENCE_RADIUS_M } from "../services/intel/PresenceVerifier.js";
+import { verifyPresence, distanceBucket, dwellBucket, claimMatchesFamily, GEOFENCE_RADIUS_M, RECEIPT_ADMISSIBLE_MODERATION_STATES } from "../services/intel/PresenceVerifier.js";
 import {
   mintMissionNonce, verifyMissionNonce, deriveMissionNonceDigest, isWellFormedMissionNonceToken,
   MISSION_NONCE_TOKEN_HEX_LENGTH,
@@ -372,6 +372,60 @@ describe("I3 presence — flag ON, rung P3 (receipt media)", () => {
     const noRef = await capture(withReceipt(), { presenceLevel: "P3" });
     assert.equal(noRef.presence_level, "P2");
     assert.ok(noRef.presence_attestation.verifier.refusals.includes("receipt:no_reference"));
+  });
+
+  // ── The §36 vocabulary, which a JS-side membership test cannot fail loudly on ──
+  // The admitted set was the inline literals ["pending", "approved"], both LEGACY
+  // (0191). Migration 2250 reconciled media_assets.moderation_status onto §36
+  // MediaModerationStatus — where the promoted state is 'active', not 'approved' —
+  // and it IS applied to the live CI schema. An `Array.includes` against a value
+  // the column no longer produces raises nothing and matches nothing: the P3 rung
+  // simply stopped existing for canonical rows.
+  it("a receipt in the CANONICAL promoted state ('active', 2250) reaches P3 — not 'moderation_blocked'", async () => {
+    const obs = await capture(withReceipt({ moderation_status: "active" }), claimP3);
+    assert.equal(obs.presence_level, "P3",
+      `a §36 'active' receipt was refused: ${JSON.stringify(obs.presence_attestation.verifier.refusals)}`);
+    assert.equal(obs.presence_attestation.verifier.method, "receipt");
+  });
+
+  it("a receipt in the CANONICAL undecided state ('processing') reaches P3, exactly as legacy 'pending' does", async () => {
+    for (const state of ["pending", "processing"]) {
+      const obs = await capture(withReceipt({ moderation_status: state }), claimP3);
+      assert.equal(obs.presence_level, "P3", `${state} was refused`);
+    }
+  });
+
+  it("the canonical BLOCKED states are still refused — this widened nothing", async () => {
+    for (const state of ["flagged", "limited", "rejected", "removed", "owner_deleted"]) {
+      const obs = await capture(withReceipt({ moderation_status: state }), claimP3);
+      assert.equal(obs.presence_level, "P2", `${state} was admitted`);
+      assert.ok(obs.presence_attestation.verifier.refusals.includes("receipt:moderation_blocked"), state);
+    }
+  });
+
+  it("the admitted set is a SUBSET of what the column can hold, read out of the migrations", () => {
+    // Derived, not restated: the CHECK vocabulary is parsed from 0191 + 2250, so
+    // an ALTER that drops a label makes this red instead of leaving a dead literal.
+    const dir = resolve(dirname(fileURLToPath(import.meta.url)), "../migrations");
+    const vocab = new Set<string>();
+    let found = 0;
+    for (const f of readdirSync(dir)) {
+      if (!f.endsWith(".sql")) continue;
+      const sql = readFileSync(join(dir, f), "utf8");
+      for (const m of sql.matchAll(/moderation_status\s+IN\s*\(([\s\S]*?)\)/gi)) {
+        // media_assets only — 0103_post_media declares the same column on another table.
+        if (!/media_assets|0191|2250/.test(f) && !/media_assets/.test(sql.slice(Math.max(0, m.index! - 600), m.index!))) continue;
+        for (const lit of m[1].matchAll(/'([a-z_]+)'/g)) vocab.add(lit[1]);
+        found++;
+      }
+    }
+    assert.ok(found >= 1, "no media_assets moderation_status CHECK found — this test inspected nothing");
+    assert.ok(vocab.size >= 6, `only ${vocab.size} labels parsed: ${[...vocab]}`);
+    for (const s of RECEIPT_ADMISSIBLE_MODERATION_STATES) {
+      assert.ok(vocab.has(s), `'${s}' is admitted by the receipt rung but the column cannot hold it — a dead literal`);
+    }
+    // ...and the canonical promoted state is actually admitted (the regression).
+    assert.ok(RECEIPT_ADMISSIBLE_MODERATION_STATES.has("active"), "the §36 promoted state is not admitted");
   });
 
   it("a receipt without P2 (no dwell/interaction) is still P1 — rungs are cumulative", async () => {

@@ -367,6 +367,44 @@ async function checkInteraction(
 }
 
 /**
+ * Moderation states a RECEIPT may be in and still count as P3 evidence.
+ *
+ * THE DEFECT THIS NAMES. The check was the inline literal set
+ * `["pending", "approved"]`. Both of those are LEGACY values: migration 2250
+ * reconciled media_assets.moderation_status onto the §36 MediaModerationStatus
+ * vocabulary and widened the CHECK to
+ *
+ *   'processing','active','limited','rejected','removed','owner_deleted'   (§36)
+ *   'pending','approved','flagged'                        (legacy, kept for old rows)
+ *
+ * 2250 is applied to the live CI schema (src/scripts/checkEnumLiterals.ts records
+ * media_assets.moderation_status:'active' as legal there), and
+ * scripts/backfill-media-assets.ts writes 'active'. So a promoted, perfectly
+ * usable receipt in the CANONICAL state was refused as "moderation_blocked" —
+ * silently and forever, because a JS-side membership test raises nothing when
+ * its literal is one the column never holds. It simply matches nothing.
+ *
+ * The set below is the SAME POLICY expressed in both vocabularies, pair for
+ * pair, so behaviour is identical whichever the row carries:
+ *
+ *   undecided / not yet moderated   pending  ↔ processing
+ *   promoted                        approved ↔ active
+ *
+ * Everything else stays refused (flagged ↔ limited, rejected, removed,
+ * owner_deleted) — this widens nothing. `intelPresenceVerification.test.ts`
+ * pins the set against the CHECK vocabulary read out of the migrations, so a
+ * future ALTER cannot leave it behind again.
+ */
+export const RECEIPT_ADMISSIBLE_MODERATION_STATES: ReadonlySet<string> = new Set([
+  // legacy (0191)
+  "pending",
+  "approved",
+  // §36 canonical (2250)
+  "processing",
+  "active",
+]);
+
+/**
  * Receipt (P3): a media asset the ACTOR OWNS, ready, not moderation-blocked,
  * not private (Appendix B: private/blocked/processing/failed/removed media fail
  * closed), captured inside the observation window [observed_at − claim TTL,
@@ -385,7 +423,7 @@ async function checkReceipt(
   if (!asset) return refuse("not_found");
   if ((asset as any).owner_user_id !== req.actorId) return refuse("not_owner");
   if ((asset as any).processing_status !== "ready") return refuse("not_ready");
-  if (!["pending", "approved"].includes(String((asset as any).moderation_status))) return refuse("moderation_blocked");
+  if (!RECEIPT_ADMISSIBLE_MODERATION_STATES.has(String((asset as any).moderation_status))) return refuse("moderation_blocked");
   if ((asset as any).visibility === "private") return refuse("media_private");
 
   const prov = (asset as any).provenance;
