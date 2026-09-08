@@ -33,8 +33,8 @@ ENABLED. FLAG ENABLED is not PRODUCTION REALIZED.**
 | Server deployed | **NO** | no deploy performed in this session |
 | Mobile deployed | **NO** | — |
 | Migrations applied to production | **35** | `production-applied-migrations.json`, reconciled against `supabase_migrations.schema_migrations` |
-| Migrations written, NOT applied to PRODUCTION | **10** | 2700, 2710, 2711, 2720–2724, 2730, 2740 |
-| Of those, applied to **portava-ci** | **7** | 2710 `20260908142429`, 2711 `20260908142652`, 2700 `20260908145925`, 2740 `20260908150439`, 2730 `20260908151001`, 2720 `20260908151339`, 2721 `20260908151706` — CI is not production and this row exists so the two are never read as one |
+| Migrations written, NOT applied to PRODUCTION | **10** (unchanged — nine of them now exist on CI, which is not production) | 2700, 2710, 2711, 2720–2724, 2730, 2740 |
+| Of those, applied to **portava-ci** | **9** | 2710 `20260908142429`, 2711 `20260908142652`, 2700 `20260908145925`, 2740 `20260908150439`, 2730 `20260908151001`, 2720 `20260908151339`, 2721 `20260908151706`, 2722 `20260908151954`, 2724 `20260908152035` — CI is not production and this row exists so the two are never read as one |
 
 ## Per-surface
 
