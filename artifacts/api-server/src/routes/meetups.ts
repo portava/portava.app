@@ -698,13 +698,34 @@ router.post("/meetups/:meetupId/rsvp", async (req, res) => {
   if (!parsed.success) { sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid body"); return; }
 
   if (meetupRow.age_limit_enabled && parsed.data.status !== "declined") {
+    // FAIL CLOSED. This block used to be `if (sc) { … }` with no else: when
+    // getServiceClient() answered null the age gate was SKIPPED ENTIRELY and the
+    // RSVP was written. A safety gate that cannot run has not found the caller
+    // eligible — it has not run. Every other route in this file refuses when the
+    // service client is missing; this one admitted.
     const sc = getServiceClient();
-    if (sc) {
-      const { data: profileRow } = await sc
+    if (!sc) {
+      sendError(res, "degraded_unavailable", "Age check is temporarily unavailable for this meetup");
+      return;
+    }
+    {
+      // `.error` is checked for the same reason: supabase-js RESOLVES on a
+      // database error, so an unreadable `profiles` produced `data: null` — the
+      // exact shape "this user has no date of birth" has. It happened to deny
+      // (a null DOB is `dob_missing`), but it denied with a FABRICATED verdict
+      // about the caller's own profile, telling them to add a date of birth they
+      // may well already have. A check that could not run says so, and says it
+      // retryably.
+      const { data: profileRow, error: profileErr } = await sc
         .from("profiles")
         .select("date_of_birth")
         .eq("id", user.id)
         .maybeSingle();
+      if (profileErr) {
+        req.log?.warn?.({ err: profileErr, meetupId }, "age gate: profiles read failed — RSVP refused, not admitted");
+        sendError(res, "degraded_unavailable", "Age check is temporarily unavailable for this meetup");
+        return;
+      }
       const dob = (profileRow as any)?.date_of_birth ?? null;
       const eligibility = getAgeEligibilityReason(dob, true, meetupRow.min_age, meetupRow.max_age);
       if (!eligibility.eligible) {
