@@ -1,5 +1,5 @@
 {
- "$comment": "GENERATED SNAPSHOT of PRODUCTION public schema + feature_flags — do not edit by hand. Read-only capture; see lib/capability/README in flagSchemaPrerequisites.md for the refresh procedure. Refreshed 2026-09-08 after 2334/2337/2370/2371/2410/2420/2460/2461/2462/2490/2520/2530/2531/2532/2533/2534/2610/2640 were applied to production; the previous capture (20260907) predated all of them and made the ratchet judge a production that no longer existed. Completeness of this refresh was PROVED, not assumed: the per-table digest, the function list and the flag list each reproduce production's own md5 over the identical construction.",
+ "$comment": "GENERATED SNAPSHOT of PRODUCTION public schema + feature_flags — do not edit by hand. Read-only capture; see lib/capability/README in flagSchemaPrerequisites.md for the refresh procedure. Refreshed 2026-09-08 (second refresh of the day) after 2120/2219/2252/2273/2274/2275/2276 were applied to production alongside the earlier batch. Completeness PROVED, not assumed: the per-table digest, the function list and the flag list each reproduce production's own md5 over the identical construction. Function and flag digests are compared under COLLATE \"C\" because Postgres's default collation orders case-insensitively while a codepoint sort does not — comparing them under the default collation reports a spurious mismatch on identical data.",
  "projectRef": "ajrurzioarfkagpuxfnb",
  "projectName": "travel-buddy (PRODUCTION)",
  "capturedAt": "2026-09-08",
@@ -1896,7 +1896,14 @@
    "superseded_by",
    "schema_version",
    "created_at",
-   "promotion_source"
+   "promotion_source",
+   "observation_id",
+   "qualifiers_json",
+   "asserted_confidence",
+   "source_label",
+   "lineage",
+   "updated_at",
+   "version"
   ],
   "intel_confirmations": [
    "id",
@@ -1971,7 +1978,9 @@
    "accepted_by",
    "deadline",
    "created_at",
-   "updated_at"
+   "updated_at",
+   "nonce",
+   "nonce_consumed_at"
   ],
   "intel_observations": [
    "id",
@@ -1996,7 +2005,8 @@
    "schema_version",
    "created_at",
    "group_key",
-   "party_size_bucket"
+   "party_size_bucket",
+   "lifecycle_state"
   ],
   "intel_reward_ledger": [
    "id",
@@ -2023,7 +2033,11 @@
    "distinct_actors",
    "observed_at",
    "expires_at",
-   "computed_at"
+   "computed_at",
+   "conflict_state",
+   "confidence_components",
+   "algorithm_version",
+   "input_claim_versions"
   ],
   "job_health": [
    "job",
@@ -5524,6 +5538,101 @@
    "created_at",
    "published_at",
    "attempts"
+  ],
+  "canonical_events": [
+   "id",
+   "verb",
+   "actor_id",
+   "subject_kind",
+   "subject_id",
+   "occurred_at",
+   "source_count",
+   "freshness_seconds",
+   "confidence",
+   "privacy_eligible",
+   "expires_at",
+   "payload",
+   "created_at"
+  ],
+  "hidden_gem_contributions": [
+   "id",
+   "gem_id",
+   "user_id",
+   "contribution_type",
+   "notes",
+   "created_at",
+   "updated_at"
+  ],
+  "intel_presence_verifications": [
+   "id",
+   "observation_id",
+   "actor_id",
+   "method",
+   "level_reached",
+   "evidence",
+   "verified_at",
+   "created_at"
+  ],
+  "intel_state_snapshot_versions": [
+   "id",
+   "subject_id",
+   "zone_id",
+   "claim_type",
+   "value",
+   "confidence",
+   "confidence_band",
+   "source_count",
+   "distinct_actors",
+   "privacy_eligible",
+   "privacy_reason",
+   "observed_at",
+   "expires_at",
+   "confidence_components",
+   "algorithm_version",
+   "input_claim_versions",
+   "conflict_state",
+   "generated_at"
+  ],
+  "locate_friends_audit": [
+   "id",
+   "event",
+   "session_id",
+   "actor_id",
+   "rung",
+   "precision",
+   "at",
+   "expires_at"
+  ],
+  "locate_friends_members": [
+   "session_id",
+   "user_id",
+   "opted_in_at",
+   "consent_source",
+   "left_at"
+  ],
+  "locate_friends_positions": [
+   "session_id",
+   "user_id",
+   "rung",
+   "precision",
+   "lat",
+   "lng",
+   "proximity_bucket",
+   "checkpoint_label",
+   "observed_at",
+   "written_at",
+   "expires_at"
+  ],
+  "locate_friends_sessions": [
+   "id",
+   "group_scope_kind",
+   "group_scope_id",
+   "created_by",
+   "started_at",
+   "expires_at",
+   "ended_at",
+   "ceiling",
+   "label"
   ]
  },
  "functions": [
@@ -5548,6 +5657,7 @@
   "can_see_post",
   "can_see_postcard",
   "can_see_trip",
+  "canonical_events_append_only",
   "claim_invite_link_slot",
   "claim_invite_link_slot_for_user",
   "claim_journey_revocation_jobs_v1",
@@ -5582,6 +5692,7 @@
   "ingest_journey_observation_v2",
   "intel_append_only",
   "intel_append_only_stmt",
+  "intel_claims_bump_version",
   "is_accepted_trip_member",
   "is_valid_journey_world_ref",
   "issue_journey_shadow_session_v1",
@@ -5902,6 +6013,8 @@
   "wall_enabled": false,
   "wall_input_intelligence_enabled": false,
   "wall_live_for_you_enabled": false,
-  "wall_rab_integration_enabled": false
+  "wall_rab_integration_enabled": false,
+  "locate_friends_enabled": false,
+  "intel_presence_verification_enabled": false
  }
 }

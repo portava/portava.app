@@ -647,3 +647,74 @@ layover/trust flags are retired; `safe_return_enabled`'s schema half is closed
 but its **class-B half is not**: the locate-friends read in
 `PassportProjectionService` is still not gated on `locate_friends_enabled`.
 Applying 2219 removed the crash, not the ungated cross-feature read.
+
+
+---
+
+## 2026-09-08 — the intel chain `2120` `2273` `2274` `2275` `2276`: the Live spine gets its schema
+
+Five class-A applies. Every one was already applied and verified on portava-ci
+and absent only in production. Production's intel tables were **empty** (0
+snapshots, 0 claims, 0 observations), which both minimised the risk and
+confirmed what the flags had been claiming: the spine has never produced
+anything.
+
+| migration | what it adds | postconditions |
+|---|---|---|
+| `2120` | `canonical_events` + append-only triggers | **none in file** — supplied externally |
+| `2273` | Table-17 lineage cols + `intel_state_snapshot_versions` | strict: grant **equality**, trigger **enabled** check |
+| `2274` | Table-5 claim cols, version trigger, nullable actor | strict: policy shape, non-owner write grants |
+| `2275` | `intel_state_snapshots.conflict_state` | column present, no NULLs |
+| `2276` | presence verifications + mission nonce + flag OFF | `has_table_privilege` checks |
+
+### `2120` proved append-only, including the case that catches a missing trigger
+
+The file documents its own test: a row-level trigger does **not** fire for
+`UPDATE ... WHERE false`, so a statement-level trigger is required to make the
+property hold for a statement that touches nothing. Both were checked:
+
+| probe | result |
+|---|---|
+| insert a valid verb | ok |
+| insert `'not_a_canonical_verb'` | **refused 23514** |
+| `UPDATE` all rows | **refused P0001** |
+| `UPDATE ... WHERE false` | **refused P0001** ← the statement-level trigger |
+| `DELETE` | **refused P0001** |
+| `TRUNCATE` | **refused P0001** |
+
+### Applied out of numeric order, and put back
+
+`2275` was applied before `2273`. Both are written order-tolerantly
+(`ADD COLUMN IF NOT EXISTS`, guarded constraint adds), so the objects are the
+same either way — but `COMMENT ON COLUMN conflict_state` appears in **both**,
+and last writer wins. Running 2273 second would have left 2273's comment
+("written NULL") standing over a column that 2275 had given `DEFAULT 'none'`.
+So 2273 was applied with 2275's comment re-issued at the end, and the end state
+is byte-identical to applying 2273 → 2275 in order. Verified after:
+`conflict_state` default is `'none'::text`.
+
+### A hypothesis that did not survive checking
+
+`2274`'s postcondition asserts no non-owner holds UPDATE/DELETE/**TRUNCATE** on
+`intel_observations`. Before 2490, `anon` held TRUNCATE on 375 tables — so it
+looked like 2490 had silently unblocked 2274, which would have been a real
+undocumented dependency. It had not: `2130` creates the intel family with
+`REVOKE ALL` before its narrow `GRANT`, so `intel_observations` was among the
+~43 tables already hardened, and 2274's postcondition would have passed before
+2490 too. Recorded because the claim was attractive and false.
+
+### Result
+
+**ON-and-dead unguarded flags: 11 → 4.** The four survivors —
+`intel_claim_projection_crowd`, `intel_limited_live`, `intel_live_label_crowd`,
+`intel_capture_quick_signal` — are now blocked on **`2430` alone**, for its two
+`intel_live_promoted_scopes` columns.
+
+`2430` is the one member of this set that is **absent on BOTH databases**. It
+has never been rehearsed anywhere, so it does not inherit its siblings' CI
+evidence and needs a CI rehearsal before it can be considered. That is why it is
+not in this batch.
+
+Still true, and worth repeating: the schema exists, the features do not run. The
+branch is unmerged, `intel_presence_verification_enabled` and
+`locate_friends_enabled` are seeded FALSE, and every new table is at 0 rows.

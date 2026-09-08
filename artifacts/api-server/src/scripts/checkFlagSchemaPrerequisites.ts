@@ -152,80 +152,35 @@ const KNOWN: Record<string, Known> = {
   // ── Unguarded: ON in production, the code runs and fails ────────────────────
   intel_claim_projection_crowd: {
     classification: "unguarded",
-    objects: [
-      "canonical_events", "canonical_events.actor_id", "canonical_events.id", "canonical_events.payload", "canonical_events.verb",
-      "intel_claims.updated_at", "intel_claims.version",
-      "intel_live_promoted_scopes.expires_at", "intel_live_promoted_scopes.withdrawn_at",
-      "intel_state_snapshot_versions",
-      "intel_state_snapshots.conflict_state",
-    ],
+    objects: ["intel_live_promoted_scopes.expires_at", "intel_live_promoted_scopes.withdrawn_at"],
     note:
-      "The Live spine. lib/intelProjectionScheduler.ts:64 selects updated_at/version (2274) → 42703 on every tick, " +
-      "logger.warn, reason:'error'; lib/intelProjection.ts:386 inserts intel_state_snapshot_versions (2273) → PGRST205, tally.skipped. " +
-      "canonical_events (2120) is read by lib/intelOutcomes.ts and lib/intelDomainEvents.ts. HANDOVER: intel owner; consumers are " +
-      "lib/intelProjection.ts, lib/intelProjectionScheduler.ts, lib/liveClaimRead.ts.",
+      "The Live spine. 2120/2273/2274/2275 were applied to production 2026-09-08, so canonical_events, the version " +
+      "table, the claim version columns and conflict_state all exist now and the scheduler no longer 42703s on them. " +
+      "What is left is 2430 alone: lib/liveClaimRead.ts selects the promoted-scope columns. 2430 is ABSENT ON BOTH " +
+      "DATABASES — unlike its siblings it has never been rehearsed anywhere, so it does not inherit their CI evidence. " +
+      "HANDOVER: intel owner; consumers are lib/intelProjection.ts, lib/intelProjectionScheduler.ts, lib/liveClaimRead.ts.",
   },
   intel_limited_live: {
     classification: "unguarded",
-    objects: ["intel_live_promoted_scopes.expires_at", "intel_live_promoted_scopes.withdrawn_at", "intel_state_snapshots.conflict_state"],
+    objects: ["intel_live_promoted_scopes.expires_at", "intel_live_promoted_scopes.withdrawn_at"],
     note:
-      "lib/liveClaimRead.ts:260 selects 2430's scope columns (42703 → no Live claim can be served); " +
-      "lib/mapProducers/safetyNoticeProducer.ts:223 selects conflict_state (2275). HANDOVER: intel owner (lib/liveClaimRead.ts).",
+      "lib/liveClaimRead.ts:260 selects 2430's scope columns, so no Live claim can be served. conflict_state (2275) was applied " +
+      "2026-09-08 and is no longer part of this. 2430 is absent on BOTH databases and has never been rehearsed. HANDOVER: intel owner.",
   },
   intel_live_label_crowd: {
     classification: "unguarded",
-    objects: ["intel_live_promoted_scopes.expires_at", "intel_live_promoted_scopes.withdrawn_at", "intel_state_snapshots.conflict_state"],
-    note: "Same sites as intel_limited_live: both are read in liveLabelsServable (lib/liveClaimRead.ts:311-317). HANDOVER: intel owner.",
+    objects: ["intel_live_promoted_scopes.expires_at", "intel_live_promoted_scopes.withdrawn_at"],
+    note:
+      "Same remaining site as intel_limited_live: both read the 2430 scope columns in liveLabelsServable (lib/liveClaimRead.ts:311-317). " +
+      "HANDOVER: intel owner.",
   },
   intel_capture_quick_signal: {
     classification: "unguarded",
-    objects: [
-      "intel_claims.observation_id",
-      "intel_live_promoted_scopes.expires_at", "intel_live_promoted_scopes.withdrawn_at",
-      "intel_presence_verifications", "intel_presence_verifications.actor_id", "intel_presence_verifications.evidence",
-      "intel_presence_verifications.level_reached", "intel_presence_verifications.method",
-      "intel_presence_verifications.observation_id", "intel_presence_verifications.verified_at",
-      "intel_state_snapshots.conflict_state",
-    ],
+    objects: ["intel_live_promoted_scopes.expires_at", "intel_live_promoted_scopes.withdrawn_at"],
     note:
-      "services/intel/IntelCaptureService.ts:303 inserts intel_presence_verifications (2276) and :534 selects intel_claims.observation_id (2274). " +
+      "services/intel/IntelCaptureService.ts. 2274 and 2276 were applied to production 2026-09-08, so intel_claims.observation_id and " +
+      "the intel_presence_verifications table now exist and the insert no longer PGRST205s. Only 2430's scope columns remain. " +
       "HANDOVER: intel owner (services/intel/IntelCaptureService.ts).",
-  },
-  intel_trail_followup: {
-    classification: "unguarded",
-    objects: [
-      "intel_claims.observation_id",
-      "intel_presence_verifications", "intel_presence_verifications.actor_id", "intel_presence_verifications.evidence",
-      "intel_presence_verifications.level_reached", "intel_presence_verifications.method",
-      "intel_presence_verifications.observation_id", "intel_presence_verifications.verified_at",
-    ],
-    note: "Same IntelCaptureService sites as intel_capture_quick_signal (read via SURFACE_FLAG). HANDOVER: intel owner.",
-  },
-  hidden_gems_enabled: {
-    classification: "unguarded",
-    objects: [
-      "hidden_gem_contributions", "hidden_gem_contributions.contribution_type", "hidden_gem_contributions.gem_id",
-      "hidden_gem_contributions.id", "hidden_gem_contributions.notes", "hidden_gem_contributions.updated_at",
-      "hidden_gem_contributions.user_id",
-    ],
-    note:
-      "services/hiddenGems/HiddenGemContributionService.ts:82-188 reads and upserts hidden_gem_contributions (2252, not in production). " +
-      "HANDOVER: hidden-gems owner (the contribution service). " +
-      "trip_kernel_execute() WAS listed here as a FLOOR false positive; 2420 was applied to production 2026-09-08 so the function now " +
-      "exists and the object is no longer absent-and-referenced. The false-positive reasoning is preserved in git history rather than " +
-      "in a list entry that no longer describes anything.",
-  },
-  safe_return_enabled: {
-    classification: "unguarded",
-    objects: [
-      "locate_friends_members", "locate_friends_members.left_at", "locate_friends_members.session_id", "locate_friends_members.user_id",
-      "locate_friends_sessions", "locate_friends_sessions.ended_at", "locate_friends_sessions.expires_at",
-      "locate_friends_sessions.id", "locate_friends_sessions.started_at",
-    ],
-    note:
-      "routes/safeReturn.ts reaches services/passport/PassportProjectionService.ts:1342-1353, which reads the locate_friends tables (2219, " +
-      "not in production; locate_friends_enabled has no row there but that read is not gated on it). HANDOVER: passport owner " +
-      "(services/passport/**) — gate the locate-friends read on its own flag or register a capability.",
   },
 };
 
