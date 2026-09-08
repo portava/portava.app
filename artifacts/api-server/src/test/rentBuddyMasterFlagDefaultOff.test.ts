@@ -114,6 +114,15 @@ describe("rent_buddy_enabled defaults OFF after a clean migration", () => {
 
   it("the flag is actually read by the access gate (not a dead default)", () => {
     const rollout = readFileSync(resolve(MIGRATIONS, "../routes/rentABuddyRollout.ts"), "utf8");
-    assert.match(rollout, /getFlag\([^)]*,\s*["']rent_buddy_enabled["']\)/, "checkRentBuddyAccess must read rent_buddy_enabled so the OFF default gates access");
+    // The flag is named as a LITERAL at the read, and read through the shared
+    // fail-closed capability reader. It used to go through a local wrapper that
+    // took the flag name as a parameter, which made the read unattributable to
+    // scripts/check-flag-polarity.mjs — the guard that verifies a stop is never
+    // read with capability polarity.
+    assert.match(
+      rollout,
+      /isFlagEnabled\(\s*sc\s*,\s*["']rent_buddy_enabled["']\s*\)/,
+      "checkRentBuddyAccess must read rent_buddy_enabled so the OFF default gates access",
+    );
   });
 });

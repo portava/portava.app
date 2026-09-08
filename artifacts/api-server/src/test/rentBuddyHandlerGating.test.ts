@@ -308,7 +308,10 @@ describe("the flag this suite gates on is a real, seeded flag", () => {
     const rollout = readFileSync(resolve(ROUTES, "rentABuddyRollout.ts"), "utf8");
     assert.match(
       rollout,
-      new RegExp(`getFlag\\([^)]*,\\s*["']${MASTER_FLAG}["']\\)`),
+      // Literal flag name at the read site: a wrapper taking the name as a
+      // parameter would satisfy a looser pattern while hiding which flag —
+      // and which POLARITY — is being read.
+      new RegExp(`isFlagEnabled\\(\\s*sc\\s*,\\s*["']${MASTER_FLAG}["']\\s*\\)`),
       `checkRentBuddyAccess must gate on ${MASTER_FLAG}, the same flag requireRentBuddyEnabled reads`,
     );
   });

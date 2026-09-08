@@ -169,32 +169,31 @@ export function invalidateGcCache(): void {
 // ── Feature flag helpers ───────────────────────────────────────────────────────
 
 /**
- * Read a CAPABILITY flag — one whose `true` OPENS something.
+ * ── WHICH READER, AND WHY IT MUST BE A LITERAL ───────────────────────────────
  *
- * False on an unreadable flag is the safe default here (the capability stays
- * shut), which is exactly `isFlagEnabled`. This used to be a local read that
- * destructured only `data`, so the polarity happened to be right for these
- * flags by accident; it is now the shared fail-closed reader, which also
- * survives a THROWN read rather than propagating it out of the access check.
- */
-async function getFlag(sc: any, flag: string): Promise<boolean> {
-  return isFlagEnabled(sc, flag);
-}
-
-/**
- * Read a RESTRICTION flag — one whose `true` CLOSES something down
- * (RENT_BUDDY_ADMIN_ONLY_MODE, RENT_BUDDY_MVP_MODE, RENT_BUDDY_BETA_ONLY_MODE).
+ * Every feature_flags read below names its flag as a LITERAL and picks its
+ * reader by that flag's POLARITY. There used to be one local helper taking the
+ * flag name as a parameter and destructuring only `data`, so every flag in this
+ * file was read with capability polarity — false on a DB error — whatever the
+ * flag actually meant.
  *
- * These invert the meaning of the value, so they invert the safe failure too:
- * reading them through the capability reader returned false on a DB error and
- * LIFTED the restriction — admin-only mode, MVP mode and beta-only mode all
- * disengaging together on one failed read. `isKillSwitchEngaged` is the reader
- * whose whole purpose is this polarity: error ⇒ engaged, absent row ⇒ not
- * configured, so nothing changes for a healthy database.
+ * CAPABILITY flags (`true` OPENS something) go through `isFlagEnabled`: an
+ * unreadable flag leaves the capability shut, which is the safe answer.
+ *
+ * RESTRICTION flags (`true` CLOSES something down) go through
+ * `isKillSwitchEngaged`: they invert the meaning of the value, so they invert
+ * the safe failure too. Read through the capability reader they returned false
+ * on a DB error and LIFTED — RENT_BUDDY_ADMIN_ONLY_MODE, RENT_BUDDY_MVP_MODE and
+ * RENT_BUDDY_BETA_ONLY_MODE all disengaging together on one failed read, opening
+ * the whole surface to everybody. `isKillSwitchEngaged` exists for exactly this
+ * polarity: error ⇒ engaged, absent row ⇒ not configured, so nothing changes for
+ * a healthy database.
+ *
+ * A wrapper taking the flag name as a PARAMETER cannot express that split, and
+ * makes the read unattributable to `scripts/check-flag-polarity.mjs` — the thing
+ * that VERIFIES this property rather than merely asserting it. Hence a literal
+ * at every call site and no indirection.
  */
-async function getRestrictionFlag(sc: any, flag: string): Promise<boolean> {
-  return isKillSwitchEngaged(sc, flag);
-}
 
 // ── Admin guard ────────────────────────────────────────────────────────────────
 
@@ -239,13 +238,13 @@ export async function checkRentBuddyAccess(opts: {
   const { sc, userId, city, category, action = "read", isTestUser = false } = opts;
 
   // 1. Global feature flag
-  const rentBuddyEnabled = await getFlag(sc, "rent_buddy_enabled");
+  const rentBuddyEnabled = await isFlagEnabled(sc, "rent_buddy_enabled");
   if (!rentBuddyEnabled) {
     return { allowed: false, code: "feature_disabled", message: "Rent a Buddy is not available yet.", httpStatus: 403 };
   }
 
   // 2. Admin-only mode
-  const adminOnlyMode = await getRestrictionFlag(sc, "RENT_BUDDY_ADMIN_ONLY_MODE");
+  const adminOnlyMode = await isKillSwitchEngaged(sc, "RENT_BUDDY_ADMIN_ONLY_MODE");
   if (adminOnlyMode && !isTestUser) {
     if (!userId) {
       return { allowed: false, code: "unauthenticated", message: "Sign in to access Rent a Buddy.", httpStatus: 401 };
@@ -309,7 +308,7 @@ export async function checkRentBuddyAccess(opts: {
   }
 
   // 4. MVP mode — category whitelist
-  const mvpMode = await getRestrictionFlag(sc, "RENT_BUDDY_MVP_MODE");
+  const mvpMode = await isKillSwitchEngaged(sc, "RENT_BUDDY_MVP_MODE");
   if (mvpMode && category && !MVP_ALLOWED_CATEGORIES.has(category)) {
     return {
       allowed: false,
@@ -321,7 +320,7 @@ export async function checkRentBuddyAccess(opts: {
 
   // 4b. MVP mode — group bookings gate
   if (mvpMode && action === "book" && (category === "group" || (opts.groupSize != null && opts.groupSize > 4))) {
-    const groupEnabled = await getFlag(sc, "RENT_BUDDY_GROUP_BOOKINGS_ENABLED");
+    const groupEnabled = await isFlagEnabled(sc, "RENT_BUDDY_GROUP_BOOKINGS_ENABLED");
     if (!groupEnabled) {
       return {
         allowed: false,
@@ -334,7 +333,7 @@ export async function checkRentBuddyAccess(opts: {
 
   // 4c. MVP mode — package bookings gate
   if (mvpMode && action === "package-book") {
-    const packagesEnabled = await getFlag(sc, "RENT_BUDDY_PACKAGES_ENABLED");
+    const packagesEnabled = await isFlagEnabled(sc, "RENT_BUDDY_PACKAGES_ENABLED");
     if (!packagesEnabled) {
       return {
         allowed: false,
@@ -347,7 +346,7 @@ export async function checkRentBuddyAccess(opts: {
 
   // 4d. MVP mode — offer bookings gate
   if (mvpMode && action === "offer-accept") {
-    const offersEnabled = await getFlag(sc, "RENT_BUDDY_OFFERS_ENABLED");
+    const offersEnabled = await isFlagEnabled(sc, "RENT_BUDDY_OFFERS_ENABLED");
     if (!offersEnabled) {
       return {
         allowed: false,
@@ -379,7 +378,7 @@ export async function checkRentBuddyAccess(opts: {
 
   // 5. Nightlife global flag
   if (category === "nightlife") {
-    const nightlifeEnabled = await getFlag(sc, "RENT_BUDDY_NIGHTLIFE_ENABLED");
+    const nightlifeEnabled = await isFlagEnabled(sc, "RENT_BUDDY_NIGHTLIFE_ENABLED");
     if (!nightlifeEnabled || gc.nightlife_paused) {
       return {
         allowed: false,
@@ -485,7 +484,7 @@ export async function checkRentBuddyAccess(opts: {
   }
 
   // 7. Beta-only mode (global) — blocks all non-read actions for non-beta users
-  const betaOnlyMode = await getRestrictionFlag(sc, "RENT_BUDDY_BETA_ONLY_MODE");
+  const betaOnlyMode = await isKillSwitchEngaged(sc, "RENT_BUDDY_BETA_ONLY_MODE");
   if (betaOnlyMode && action !== "read" && !isTestUser) {
     if (!userId) {
       return { allowed: false, code: "unauthenticated", message: "Sign in to access Rent a Buddy.", httpStatus: 401 };
