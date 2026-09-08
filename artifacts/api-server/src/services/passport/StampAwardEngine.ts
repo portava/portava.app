@@ -265,11 +265,30 @@ async function _awardStampCore(
   const idemKey = buildIdempotencyKey(userId, definition.id, sourceType, sourceId);
 
   // 3. Check idempotency — has this exact event already been awarded?
-  const { data: existingEvent } = await sc
+  //
+  // FAIL CLOSED. supabase-js RESOLVES on a database error, so discarding
+  // `error` here made an unreadable stamp_award_events indistinguishable from
+  // "this award has not happened yet" — and the code walked on toward awarding
+  // it a second time.
+  //
+  // The unique index `stamp_award_events_idempotency_key_key` does stop a
+  // duplicate landing, and that is a genuine backstop, not a reason to ignore
+  // the error: a constraint bounds the damage, it does not make the CLASSIFICATION
+  // correct. "The database could not answer" is not "there is no record", and
+  // reporting it as `already_awarded` or as a fresh award are both false
+  // statements about the user's passport.
+  //
+  // `eligibility_unavailable` is the same word checkEligibility already uses for
+  // this exact fact, so the dry-run path and the write path cannot drift apart
+  // in how they describe it.
+  const { data: existingEvent, error: existingEventErr } = await sc
     .from("stamp_award_events")
     .select("id, status")
     .eq("idempotency_key", idemKey)
     .maybeSingle();
+  if (existingEventErr) {
+    return { awarded: false, reason: "eligibility_unavailable" };
+  }
 
   // Recovery path: if the award event was committed but the user_stamp row is
   // missing (e.g. the DB went down between step 6 and step 7), skip directly to
@@ -298,7 +317,16 @@ async function _awardStampCore(
       ? (stampQuery as any).is("source_id", null)
       : (stampQuery as any).eq("source_id", resolvedSourceId);
 
-    const { data: existingStampForEvent } = await (stampQuery as any).maybeSingle();
+    // FAIL CLOSED. An unreadable user_stamps answered "no stamp row" and the
+    // heal proceeded to INSERT one — so a read failure here manufactured a
+    // second stamp for an award that already had one. This is the more
+    // dangerous of the two: the heal path exists precisely because the award
+    // event is already committed, so the code is primed to write.
+    const { data: existingStampForEvent, error: existingStampForEventErr } =
+      await (stampQuery as any).maybeSingle();
+    if (existingStampForEventErr) {
+      return { awarded: false, reason: "eligibility_unavailable" };
+    }
 
     if (existingStampForEvent) {
       return { awarded: false, reason: "already_awarded" };
@@ -310,13 +338,18 @@ async function _awardStampCore(
   if (!skipToStampInsert) {
     // 4. For non-repeatable stamps: check if user already has one
     if (!definition.is_repeatable) {
-      const { data: existingStamp } = await sc
+      // FAIL CLOSED: an unreadable user_stamps read as "not earned yet" and a
+      // NON-REPEATABLE stamp was awarded again.
+      const { data: existingStamp, error: existingStampErr } = await sc
         .from("user_stamps")
         .select("id")
         .eq("user_id", userId)
         .eq("stamp_definition_id", definition.id)
         .eq("is_revoked", false)
         .maybeSingle();
+      if (existingStampErr) {
+        return { awarded: false, reason: "eligibility_unavailable" };
+      }
 
       if (existingStamp) {
         return { awarded: false, reason: "already_earned" };
