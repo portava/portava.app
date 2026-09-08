@@ -5,6 +5,13 @@
  * Run: SUPABASE_URL=… SUPABASE_SERVICE_ROLE_KEY=… \
  *        node --import tsx/esm src/scripts/check-media-bucket-privacy.ts
  */
+// The read-only audit front door, the same one checkMediaUrlsExternalOnly.ts
+// imports. It refuses any target .github/scripts/assert-nonprod-supabase.sh has
+// not sanctioned, which is what this file needs: it was on the EXEMPT list, and
+// then check:security named it from a script a workflow runs — putting a
+// hand-run live-Storage audit onto the CI surface with credentials nobody chose.
+// A front door is the answer to that, not an exemption saying CI never runs it.
+import "../lib/ciProdReadOnlyAuditGuard.mjs";
 import { createClient } from "@supabase/supabase-js";
 
 const url = process.env.SUPABASE_URL;

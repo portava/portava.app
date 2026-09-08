@@ -1344,6 +1344,35 @@ const CONST_DECL = /(?:const|let)\s+([A-Za-z_$][\w$]*)\s*(?::[^=\n]+)?=\s*(['"`]
  * problem in prose. A check that cannot tell code from commentary about code
  * will be ignored, and an ignored check enforces nothing.
  */
+/**
+ * Replace the CONTENTS of string literals with spaces, keeping the quotes and
+ * the file's length and line structure. Used only where the question is "is this
+ * a definition", which a string can never be.
+ */
+function maskStringContents(src) {
+  let out = '';
+  let i = 0;
+  while (i < src.length) {
+    const c = src[i];
+    if (c === '"' || c === "'" || c === '`') {
+      const quote = c;
+      out += quote;
+      i++;
+      while (i < src.length) {
+        if (src[i] === '\\') { out += '  '; i += 2; continue; }
+        if (src[i] === quote) break;
+        out += src[i] === '\n' ? '\n' : ' ';
+        i++;
+      }
+      if (i < src.length) { out += quote; i++; }
+      continue;
+    }
+    out += c;
+    i++;
+  }
+  return out;
+}
+
 function stripComments(src) {
   let out = '';
   let i = 0;
@@ -1424,10 +1453,23 @@ for (const abs of scanFiles) {
   for (const m of src.matchAll(CONST_DECL)) consts.set(m[1], m[3]);
 
   // Shadow helper definitions.
+  //
+  // STRING CONTENTS MASKED FIRST. A function DEFINITION cannot occur inside a
+  // string literal, and matching the raw text reports one that does:
+  // src/scripts/lib/layoverCutoverEvaluate.ts searches a source file for the
+  // needle "export async function isFlagEnabled" in order to CHECK that reader's
+  // polarity, and this rule read its own needle as a competing definition. A
+  // guard that fails on a file auditing the very thing the guard cares about is
+  // the kind that gets an exemption bolted on instead of a fix.
+  //
+  // Narrowed only to strings, and only for the DEFINITION question. A flag NAME
+  // in a string is still a use — that is how nearly every read in this tree is
+  // written — so `maskStringContents` is not applied anywhere else.
+  const defSrc = maskStringContents(src);
   for (const fn of [STOP_READER, ...CAP_READERS]) {
     const defRe = new RegExp(`(?:async\\s+function|function|const)\\s+${fn}\\b`, 'g');
     if (SHARED_HELPER_FILES.has(rel)) continue;
-    if (defRe.test(src)) shadowsFound.add(`${rel}::${fn}`);
+    if (defRe.test(defSrc)) shadowsFound.add(`${rel}::${fn}`);
   }
   const shadowedHere = new Set(
     [...shadowsFound].filter((k) => k.startsWith(`${rel}::`)).map((k) => k.split('::')[1]),

@@ -104,14 +104,24 @@ const MEASUREMENT = process.env.LAYOVER_CUTOVER_MEASUREMENT
  * snapshots/20260908-production-schema.json and the applied record at watermark
  * 20260908023317.
  *
- * Two conditions are NO_GO and both are honest blockers, not gaps in the check:
+ * ONE condition is NO_GO, and it is an honest blocker, not a gap in the check:
  *
  *   NON_VACUITY     2411 declares no schema object at all, so its whole effect
  *                   is a row count, and no committed artifact carries one. Its
  *                   header records legacy_moderated = 0 on 2026-09-08 — i.e. it
  *                   would set 30 keys and preserve ZERO moderation states — but
  *                   that is prose. Blocked on OPERATIONAL DATA (see MEASUREMENT).
- *   REVERSIBILITY   the rollback claims a scope its SQL does not implement.
+ *                   Not resolvable from this repository: someone has to run the
+ *                   precondition query against production and commit the answer.
+ *
+ * REVERSIBILITY was the second, and it CLEARED — struck in the change that
+ * cleared it, which is what the drift rule exists to force. The rollback claimed
+ * to refuse rows keyed by the service; its UPDATE implements no such term, and
+ * 2411 writes no provenance that would let one exist. The claim is now replaced
+ * by the loss it actually takes ("THIS REVERT NULLS rec_key ON EVERY UNREFERENCED
+ * KEYED ROW, whoever keyed it"), which is what the migration gate means by "an
+ * irreversible step is allowed, but must not be silent". Nothing about the SQL
+ * changed — the danger it always carried is now written down instead of denied.
  *
  * Strike an entry here in the SAME change that clears the blocker, never before.
  */
@@ -119,7 +129,7 @@ const RECORDED: Record<ConditionId, Verdict> = {
   DEPENDENCY: "GO",
   NON_VACUITY: "NO_GO",
   BACKFILL_COMPLETENESS: "GO",
-  REVERSIBILITY: "NO_GO",
+  REVERSIBILITY: "GO",
   ORDERING_COLLISION: "GO",
   WRITER_READINESS: "GO",
   FLAG_POSTURE: "GO",

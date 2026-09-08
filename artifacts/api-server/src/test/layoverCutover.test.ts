@@ -140,15 +140,24 @@ describe("layover cutover checker — the real tree", () => {
     const objects = /yielded (\d+) object\(s\)/.exec(r.stdout);
     assert.ok(objects && Number(objects[1]) >= 10, `implausible object count: ${objects?.[1]}`);
     // Green here is the RATCHET, not a safety verdict. Say so out loud.
-    assert.match(r.stdout, /VERDICT: NOT SAFE TO APPLY\. Blocked by: NON_VACUITY, REVERSIBILITY\./);
+    // REVERSIBILITY cleared when the rollback's false scope claim was replaced by
+    // the loss it actually takes; NON_VACUITY is blocked on operational data that
+    // is not in this repository and must not be invented. Asserting the exact
+    // blocker LIST rather than "non-empty" is what makes this case notice when one
+    // clears — a record that only ever shrinks quietly outlives what it described.
+    assert.match(r.stdout, /VERDICT: NOT SAFE TO APPLY\. Blocked by: NON_VACUITY\./);
   });
 
-  it("CONTROL — --verdict on the real tree exits 1 and names both blockers", () => {
+  it("CONTROL — --verdict on the real tree exits 1 and names the blocker", () => {
     const { code, out } = run({}, ["--verdict"]);
     assert.equal(code, 1, out);
     assert.match(out, /NOT SAFE TO APPLY/);
     assert.match(out, /EFFECT UNPROVEN/);
-    assert.match(out, /ROLLBACK SCOPE CLAIM IS NOT IMPLEMENTED/);
+    // REVERSIBILITY was the second blocker and has cleared, so the scope finding
+    // is no longer expected here. It must still be REACHABLE — that is the case
+    // below, which crafts the false claim rather than relying on the real file
+    // still carrying it.
+    assert.doesNotMatch(out, /NO-GO {2}REVERSIBILITY/);
   });
 
   it("CONTROL — --report on the real tree exits 0 and prints the evidence for every GO", () => {
@@ -384,23 +393,46 @@ describe("condition 4 — REVERSIBILITY", () => {
     assert.match(out, /does not refuse to run while layover_stable_recommendation_ids_enabled is TRUE/);
   });
 
-  it("CLEARS — a rollback that stops claiming a scope it does not implement, and the RATCHET goes red for that too", () => {
-    // An irreversible or over-broad step is ALLOWED. It must not be SILENT, and
-    // it must not be described as something it is not. Drop the false claim and
-    // the condition clears — which is the whole point of the blocker.
-    const honest = realRollback()
-      .replace(
-        /It also refuses to touch a row that was keyed by the SERVICE[\s\S]*?than widening this\./,
-        "LOSS TAKEN, DECLARED: 2411 writes no provenance, so nothing on a row says which key came from it. This\n" +
-          "nulls every rec_key not referenced by a plan stop, including any the service wrote. Regenerable data\n" +
-          "only; if you need a narrower revert, do it by explicit id list.",
-      );
-    assert.doesNotMatch(honest, /keyed by the SERVICE|refuses to touch/);
-    const dir = mirrorWith(REAL_ROLLBACKS, "rb-honest", { [ROLLBACK]: honest });
+  it("FAILS a rollback that CLAIMS a scope its SQL does not implement", () => {
+    // The finding that blocked REVERSIBILITY until it was fixed: the real file
+    // said it "refuses to touch a row that was keyed by the SERVICE", narrowed to
+    // rows "whose session has no keyed row written after the backfill", while its
+    // UPDATE carried only `rec_key IS NOT NULL` and a plan-stop NOT EXISTS. 2411
+    // writes no provenance, so no term can tell the two apart.
+    //
+    // The claim now lives only in a fixture. Leaving this case pointed at the real
+    // file would have retired the proof the moment the defect was fixed — the
+    // guard would have kept its green and lost its regression test in one step.
+    const claiming = realRollback().replace(
+      /-- SCOPE, STATED AS WHAT THE SQL ACTUALLY DOES\.[\s\S]*?-- If you need a narrower revert, do it by explicit id list\. Do not widen this\./,
+      "-- It also refuses to touch a row that was keyed by the SERVICE rather than by\n" +
+        "-- 2411: the scope is narrowed to rows whose session has no keyed row written\n" +
+        "-- after the backfill.",
+    );
+    assert.match(claiming, /keyed by the SERVICE/, "premise: the fixture carries the claim");
+    assert.doesNotMatch(claiming, /THIS REVERT NULLS/, "premise: and declares no loss");
+
+    const dir = mirrorWith(REAL_ROLLBACKS, "rb-claiming", { [ROLLBACK]: claiming });
     const { code, out } = run({ LAYOVER_CUTOVER_ROLLBACK_DIR: dir });
     assert.notEqual(code, 0, out);
-    assert.match(out, /GO {5}REVERSIBILITY/);
-    assert.match(out, /DRIFT: REVERSIBILITY: recorded NO_GO, now GO/);
+    assert.match(out, /NO-GO {2}REVERSIBILITY/);
+    assert.match(out, /ROLLBACK SCOPE CLAIM IS NOT IMPLEMENTED/);
+    // and the ratchet must see it as drift AWAY from the recorded GO
+    assert.match(out, /DRIFT: REVERSIBILITY: recorded GO, now NO_GO/);
+  });
+
+  it("ACCEPTS the same claim once the LOSS is declared — the real file's fix", () => {
+    // An over-broad or irreversible step is ALLOWED. It must not be SILENT, and it
+    // must not be described as something it is not.
+    //
+    // The rule keys on the DECLARED LOSS rather than on the absence of the claim,
+    // and that is load-bearing: an honest correction QUOTES the claim it disowns,
+    // so a rule that only looked for the phrase failed the real fix. Matching prose
+    // cannot tell "we do this" from "we used to say we did, and here is the truth".
+    const { code } = run({});
+    assert.equal(code, 0, "the real rollback declares its loss, so the ratchet is green");
+    assert.match(realRollback(), /refuses to touch/, "and it still quotes the claim it disowns");
+    assert.match(realRollback(), /THIS REVERT NULLS rec_key ON EVERY UNREFERENCED KEYED ROW, whoever keyed it/);
   });
 });
 

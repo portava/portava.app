@@ -344,6 +344,19 @@ const READ_ONLY_AUDIT_ENTRY_POINTS = [
       'the point: the cache-dominance figure it reports is meaningless against an empty CI project.',
   },
   {
+    file: 'src/scripts/check-media-bucket-privacy.ts',
+    reason:
+      'Reports the public/private state of the media buckets against the media_private_buckets_enabled flag ' +
+      '(audit SEC-02). Everything it sends, in full: ONE PostgREST SELECT of feature_flags.enabled for that one ' +
+      'flag, and storage.getBucket for each of post-media and profile-media. No INSERT/UPDATE/DELETE, no ' +
+      '.insert/.update/.upsert/.delete/.rpc, and nothing that mutates a bucket — it reads the flags and prints a ' +
+      'cutover verdict for a human. Moved here from the hand-run EXEMPT list once check:security named it from a ' +
+      'script a workflow runs: an exemption reading "CI never invokes it" stops being true the moment anything in ' +
+      'CI mentions the path, and a front door that refuses an unsanctioned target survives that change where a ' +
+      'list entry does not. It exits 2 rather than reporting a state it could not establish.',
+  },
+
+  {
     file: 'src/scripts/checkMediaUrlsExternalOnly.ts',
     reason:
       'ENFORCES the 2026-08-12 ruling that posts.media_urls holds EXTERNAL references only, post_media being ' +
@@ -604,7 +617,6 @@ const EXEMPT = [
     ['src/scripts/backfill-media-assets.ts', 'one-shot backfill of media asset rows'],
     ['src/scripts/backfillLandmarkCategories.ts', 'one-shot backfill of landmark categories'],
     ['src/scripts/backfillStampCountries.ts', 'one-shot backfill of stamp country codes'],
-    ['src/scripts/check-media-bucket-privacy.ts', 'manual audit of storage bucket privacy flags'],
     ['src/scripts/fix-demo-events-city.ts', 'manual repair of demo event city fields'],
     ['src/scripts/fix-demo-memories.ts', 'manual repair of demo memory rows'],
     ['src/scripts/fix-demo-stamps.ts', 'manual repair of demo stamp rows'],
@@ -680,6 +692,18 @@ const EXEMPT = [
   // it refuses an EXEMPT entry for a file it no longer classifies as reaching
   // Supabase, precisely so a narrowed pattern cannot quietly retire exemptions
   // that are still load-bearing.
+  {
+    file: 'src/test/guardReachability.test.ts',
+    pinnedTestEnv: true,
+    reason:
+      'The mutation suite for check:guard-reachability. It sets SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY as CHILD ' +
+      'PROCESS environment for a spawned checker — to hardcoded literals, the loopback discard port and "dummy" — ' +
+      'in the one case that proves the manual-claim verdict does NOT move with the ambient environment. That case ' +
+      'exists because the verdict once DID move, so the credential names have to appear in it. The test constructs ' +
+      'no client and issues no request; it reads the spawned process\'s exit code and printed counts. EXEMPTION ' +
+      'MEANS UNGUARDED, NOT SAFE.',
+  },
+
   {
     file: 'src/test/guardCoverageReachability.test.ts',
     // pinnedTestEnv for the same reason as the entries below: `pnpm test` names

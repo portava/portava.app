@@ -506,6 +506,37 @@ jobs:
           fi
           echo "GATE live_pulse: PERMITTED — verdict line present."
 
+      # check:security — the security/privacy guard subset as ONE attributable
+      # suite. It overlaps check:all above on purpose: what it adds is not more
+      # coverage but a security-shaped VERDICT — only exit 0 passes, a check that
+      # CANNOT RUN fails rather than skips, and the security guards that remain
+      # UNENFORCED are counted by name on every run, so "all security checks
+      # passed" cannot be read as more than it means.
+      #
+      # It runs HERE and not in ci.yml because it contains
+      # check:authorization-contract, which reads the live CI database. In a
+      # credential-free job that exits 2 and the suite fails — by design, since an
+      # unrunnable security check must never read as a clean one.
+      - name: 'check:security (security + privacy guard subset)'
+        shell: bash
+        run: |
+          set -uo pipefail
+          LOG="$RUNNER_TEMP/api-check-security.log"
+
+          bash .github/scripts/pnpm-run.sh artifacts/api-server @workspace/api-server check:security 2>&1 | tee "$LOG"
+          rc=${PIPESTATUS[0]}
+
+          {
+            echo "### api-server check:security"
+            echo ""
+            grep -E '^(✔ PASSED|✘ FAILED|NOT ENFORCED|UNKNOWN)' "$LOG" || echo "(no labelled lines — read the log)"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::api-server check:security failed (exit $rc). The ✘ FAILED lines above name the specific check. An exit code other than 0 is never a pass here — 2 means the check could not run, which is a block and not a skip."
+            exit "$rc"
+          fi
+
   # ───────────────────────────────────────────────────────────────────────────
   # Migration / schema drift.
   #

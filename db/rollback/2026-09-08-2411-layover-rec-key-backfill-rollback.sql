@@ -11,11 +11,29 @@
 -- their moderation state — the opposite of what 2411 exists to protect. The
 -- guard below refuses in that case.
 --
--- It also refuses to touch a row that was keyed by the SERVICE rather than by
--- 2411: `created_at` is not a reliable discriminator, so the scope is narrowed
--- to rows that carry no plan-stop reference and whose session has no keyed row
--- written after the backfill. If you need a narrower revert than that, do it by
--- explicit id list rather than widening this.
+-- SCOPE, STATED AS WHAT THE SQL ACTUALLY DOES.
+--
+-- This header used to claim the revert "refuses to touch a row that was keyed by
+-- the SERVICE rather than by 2411", narrowed to rows "whose session has no keyed
+-- row written after the backfill". THAT SECOND TERM IS NOT IMPLEMENTED AND
+-- CANNOT BE: the UPDATE below carries only `rec_key IS NOT NULL` and a
+-- `layover_plan_stops NOT EXISTS`, and 2411 writes no provenance — no marker, no
+-- timestamp of its own — so no predicate can tell a key it wrote from a key the
+-- service wrote. `created_at` is the row's, not the key's.
+--
+-- A false scope claim is worse than a declared loss, so here is the loss:
+--
+--   THIS REVERT NULLS rec_key ON EVERY UNREFERENCED KEYED ROW, whoever keyed it.
+--   A row keyed by LayoverRecommendationService and not yet attached to a plan
+--   stop is indistinguishable from a row keyed by 2411 and will be nulled too.
+--
+-- What bounds the damage is the flag guard above, not this scope: while
+-- `layover_stable_recommendation_ids_enabled` is FALSE the service does not key
+-- rows at all, so the two populations cannot overlap and the loss is empty. That
+-- is an accident of flag state, and it is the ONLY thing making this revert safe
+-- — which is exactly why the guard refuses once the flag is TRUE.
+--
+-- If you need a narrower revert, do it by explicit id list. Do not widen this.
 
 BEGIN;
 

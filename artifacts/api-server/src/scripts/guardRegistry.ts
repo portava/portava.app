@@ -230,6 +230,41 @@ export const GUARDS: readonly GuardEntry[] = [
     },
   },
   {
+    // Not discovered by discoverGuards (a .sh aggregator, not a check*.ts), so
+    // this entry is voluntary. It is here because an aggregator that nothing runs
+    // is the same defect as a guard that nothing runs, and the registry is where
+    // that question is answered.
+    checker: "scripts/run-security-checks.sh",
+    responsibility:
+      "The security- and privacy-relevant guards run as one attributable suite: only exit 0 passes, a check that " +
+      "cannot run FAILS rather than skips, and the security guards that remain unenforced are counted by name on " +
+      "every run.",
+    // workflow, not test-control: test-control requires the control to assert
+    // exit 0, and this suite contains check:authorization-contract, which reads
+    // the live CI database and exits 2 without credentials. Asserting 0 in a
+    // credential-free run would mean relaxing the very contract the suite exists
+    // to enforce. It runs in live-db.yml's credentialed job instead.
+    // Seams, for a reader looking for the failure paths:
+    // SECURITY_SUITE_CHECKS, SECURITY_SUITE_UNENFORCED.
+    reach: { kind: "workflow", script: "check:security" },
+  },
+
+  {
+    checker: "src/scripts/checkLayoverCutover.ts",
+    responsibility:
+      "Migration 2411 is never applied to production while a cutover condition is unmet — dependency, non-vacuity, " +
+      "backfill completeness, reversibility, apply order, writer readiness or flag posture.",
+    reach: {
+      kind: "test-control",
+      test: "src/test/layoverCutover.test.ts",
+      seams: [
+        "LAYOVER_CUTOVER_MIGRATION_DIR", "LAYOVER_CUTOVER_SNAPSHOT", "LAYOVER_CUTOVER_APPLIED",
+        "LAYOVER_CUTOVER_ROLLBACK_DIR", "LAYOVER_CUTOVER_SRC", "LAYOVER_CUTOVER_MEASUREMENT",
+      ],
+    },
+  },
+
+  {
     checker: "src/scripts/checkGuardReachability.ts",
     responsibility: "Every guard in this tree is reached by something that would go red if it started failing.",
     reach: {

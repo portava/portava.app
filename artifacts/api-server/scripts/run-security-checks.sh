@@ -286,9 +286,28 @@ security_unenforced() {
     return
   fi
 
+  # A GUARD MARKED --needs-credentials IS NOT EXECUTED HERE.
+  #
+  # It was, and check:guard-coverage caught it one commit later: naming
+  # check-media-bucket-privacy.ts from a script a workflow runs put that file on
+  # the CI SURFACE, and it reads live Storage config without importing the
+  # Supabase credential front door. Running a live-project audit inside the
+  # credentialed job — to count its findings, of all reasons — is precisely what
+  # that front door exists to prevent, and it would have handed a hand-run tool a
+  # credentialed target nobody chose.
+  #
+  # So these are reported as UNKNOWN without being run. UNKNOWN is not 0 and never
+  # reads as clean; the whole point of this section is that the gap is counted,
+  # and a count nobody can obtain is itself the honest answer.
   local log="$LOG_DIR/unenforced.$(slug "$guard").log"
-  "${cmd[@]}" >"$log" 2>&1
-  local rc=$?
+  local rc=0
+  if [ "$needs_creds" -eq 1 ]; then
+    rc="not-run"
+    : >"$log"
+  else
+    "${cmd[@]}" >"$log" 2>&1
+    rc=$?
+  fi
 
   local count="UNKNOWN"
   if [ -n "$count_ere" ]; then
@@ -299,7 +318,7 @@ security_unenforced() {
   local detail
   if [ "$count" = "UNKNOWN" ]; then
     if [ "$needs_creds" -eq 1 ]; then
-      detail="findings UNKNOWN — needs live credentials this environment does not have (exit $rc)"
+      detail="findings UNKNOWN — NOT RUN: it reads live project state, and this suite must not hand a hand-run audit a credentialed target (see check:guard-coverage)"
     else
       detail="findings UNKNOWN — its output did not yield a count (exit $rc). UNKNOWN is not 0."
     fi

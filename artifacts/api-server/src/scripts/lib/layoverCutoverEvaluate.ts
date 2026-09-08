@@ -701,7 +701,24 @@ function conditionReversibility(rawMigration: string, migrationSql: string, roll
 
   // Does the rollback CLAIM a narrowing it does not implement?
   const claimsServiceExclusion = /keyed by the SERVICE|refuses to touch/i.test(rawRollback);
-  if (claimsServiceExclusion && !marksProvenance && discriminators.length === 0) {
+  /**
+   * A POSITIVE MARKER, not the absence of a phrase.
+   *
+   * The first version of this rule keyed only on the claim's wording, so the
+   * correct fix — replacing a false scope claim with the loss it actually takes —
+   * still tripped it, because an honest correction QUOTES the claim it is
+   * disowning. Matching prose cannot tell "we do this" from "we used to say we
+   * did this, and here is what we really do".
+   *
+   * So the rule now asks for something a file can only carry deliberately: an
+   * explicit DECLARED LOSS. It must name the loss in the imperative — what gets
+   * nulled, and whose — which is exactly what the migration gate means by "an
+   * irreversible step is allowed, but must not be silent". The alternative
+   * remains implementing the narrowing (a real discriminator, or provenance
+   * written by the migration); either clears this.
+   */
+  const declaresLoss = /THIS REVERT NULLS[\s\S]{0,400}?whoever keyed it/i.test(rawRollback);
+  if (claimsServiceExclusion && !declaresLoss && !marksProvenance && discriminators.length === 0) {
     blockers.push(
       `ROLLBACK SCOPE CLAIM IS NOT IMPLEMENTED. ${named} states it "refuses to touch a row that was keyed by the ` +
         `SERVICE rather than by 2411", and describes a narrowing to rows "whose session has no keyed row written ` +
