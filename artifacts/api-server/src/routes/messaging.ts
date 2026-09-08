@@ -1025,17 +1025,38 @@ router.post('/message-requests/:requestId/decline', async (req, res) => {
   // recipient the very same request back. Nothing retries, because nothing
   // observed a failure.
   //
-  // The fix is scoped to what was MEASURED: the error was never bound, so it was
-  // never seen. The non-atomic `status !== 'pending'` check above is a separate,
-  // pre-existing double-submit race and is deliberately left alone here.
-  const { error: declineErr } = await sc
+  // The `status !== 'pending'` check above is a READ, and the write below used to
+  // trust it. Between the two, a second decline — or an accept — can land, and
+  // both requests then answer 200 for a transition only one of them made. The
+  // transition is now a COMPARE-AND-SWAP: `.eq('status','pending')` moves the
+  // test into the write itself, and `.select('id')` is what makes the outcome
+  // observable, because without it PostgREST returns data: null and a caller
+  // cannot tell one affected row from none.
+  //
+  // This is the fix Lane Y measured and then had to withdraw, because the fake
+  // in telegraphStreamEndpoints.test.ts answered {data: null} for EVERY update
+  // and read the swap as "matched nothing". The fake was taught the client's
+  // actual behaviour in the same change; a double that cannot express a client
+  // behaviour will otherwise veto the repair of a real defect.
+  const { data: declined, error: declineErr } = await sc
     .from('message_requests')
     .update({ status: 'declined', responded_at: now })
-    .eq('id', requestId);
+    .eq('id', requestId)
+    .eq('status', 'pending')
+    .select('id');
 
   if (declineErr) {
     req.log.error({ err: declineErr, requestId }, 'message_requests decline update failed');
     sendError(res, 'db_error', declineErr.message);
+    return;
+  }
+
+  if (!Array.isArray(declined) || declined.length === 0) {
+    // Zero rows means the request stopped being `pending` between the read and
+    // the write. Nothing was changed, so nothing may be reported as changed —
+    // and in particular the realtime `request.declined` below must not fire.
+    req.log.warn({ requestId }, 'message_requests decline lost a race — no longer pending');
+    sendError(res, 'invalid_payload', 'Request is no longer pending');
     return;
   }
 
@@ -1081,14 +1102,27 @@ router.post('/message-requests/:requestId/cancel', async (req, res) => {
   // reported to the sender as HTTP 200 `{ status: 'cancelled' }` while the
   // request stayed `pending` and kept sitting in the recipient's inbox — a
   // withdrawal the recipient never saw withdrawn.
-  const { error: cancelErr } = await sc
+  // Compare-and-swap, for the same reason as decline: the `status !== 'pending'`
+  // test above is a READ, and an accept or decline can land between it and this
+  // write. `.eq('status','pending')` moves the test into the write;
+  // `.select('id')` is what makes the outcome observable at all, since PostgREST
+  // returns data: null without it.
+  const { data: cancelled, error: cancelErr } = await sc
     .from('message_requests')
     .update({ status: 'cancelled' })
-    .eq('id', requestId);
+    .eq('id', requestId)
+    .eq('status', 'pending')
+    .select('id');
 
   if (cancelErr) {
     req.log.error({ err: cancelErr, requestId }, 'message_requests cancel update failed');
     sendError(res, 'db_error', cancelErr.message);
+    return;
+  }
+
+  if (!Array.isArray(cancelled) || cancelled.length === 0) {
+    req.log.warn({ requestId }, 'message_requests cancel lost a race — no longer pending');
+    sendError(res, 'invalid_payload', 'Request is no longer pending');
     return;
   }
 
