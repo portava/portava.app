@@ -75,6 +75,10 @@ type Rows = Record<string, any[]>;
 function makeClient(rows: Rows, failTables: ReadonlySet<string>, updates?: Array<{ table: string; patch: any }>) {
   function chain(table: string) {
     const filters: Array<(r: any) => boolean> = [];
+    // An INSERT ... .select().single() must return the inserted row. Without
+    // this the fake answers `null` and a perfectly correct legacy path throws —
+    // the harness, not the code, would be the thing under test.
+    let inserted: any = null;
     function settle(single: boolean) {
       if (failTables.has(table)) {
         return Promise.resolve({
@@ -82,6 +86,10 @@ function makeClient(rows: Rows, failTables: ReadonlySet<string>, updates?: Array
           error: { message: `${table} read failed`, code: "57014" },
           count: null,
         });
+      }
+      if (inserted) {
+        const row = { id: `${table}-inserted`, ...inserted };
+        return Promise.resolve({ data: single ? row : [row], error: null, count: 1 });
       }
       const out = (rows[table] ?? []).filter((r) => filters.every((f) => f(r)));
       return Promise.resolve({ data: single ? (out[0] ?? null) : out, error: null, count: out.length });
@@ -98,7 +106,8 @@ function makeClient(rows: Rows, failTables: ReadonlySet<string>, updates?: Array
       ilike() { return b; },
       contains() { return b; }, overlaps() { return b; },
       order() { return b; }, range() { return b; }, limit() { return b; },
-      upsert() { return b; }, insert() { return b; },
+      upsert() { return b; },
+      insert(payload: any) { inserted = Array.isArray(payload) ? payload[0] : payload; return b; },
       update(patch: any) { updates?.push({ table, patch }); return b; },
       delete() { return b; },
       or(expr: string) {
@@ -415,5 +424,111 @@ describe("syncEventState — the waitlist offer check", () => {
     await rsvpCantGo();
     assert.equal(updates.some((u) => u.table === "events" && u.patch?.state === "open"), true,
       "an expired offer must let the event reopen");
+  });
+});
+
+
+// ── POST /events/:id/add-to-trip must go through the Trip Kernel ─────────────
+
+const TRIP = "aaaaaaaa-2222-4000-a000-000000000010";
+const PLAN = "bbbbbbbb-2222-4000-a000-000000000011";
+
+/**
+ * Adding a plan item IS a change to the trip aggregate. A direct INSERT makes
+ * the row appear while `trips.version` does not move, no `trip.plan_added` event
+ * is emitted, nothing lands in `trip_outbox`, and the Map projection therefore
+ * keeps serving a stale trip while looking perfectly healthy. These cases prove
+ * the route issues ADD_PLAN when the kernel is available, and that the legacy
+ * INSERT still works byte-for-byte when the flag is off.
+ */
+function kernelRows(kernelOn: boolean): Rows {
+  return {
+    feature_flags: [{ flag: "events_enabled", enabled: true }, { flag: "trip_kernel_enabled", enabled: kernelOn }],
+    events: [{
+      id: EVENT, host_id: HOST, state: "open", visibility: "public",
+      starts_at: EV.starts_at, ends_at: null, title: "Rooftop set",
+      location_name: "The Roof", location_lat: 51.5, location_lng: -0.12,
+    }],
+    trip_members: [{ trip_id: TRIP, user_id: ME, role: "owner" }],
+    trip_plan_items: [],
+    blocks: [], event_roles: [], profiles: [], event_rsvps: [],
+  };
+}
+
+async function addToTrip() {
+  return fetch(`${base}/events/${EVENT}/add-to-trip`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${TOK}`, "content-type": "application/json" },
+    body: JSON.stringify({ tripId: TRIP }),
+  });
+}
+
+describe("POST /events/:id/add-to-trip — Trip Kernel gating", () => {
+  it("issues ADD_PLAN through the kernel when trip_kernel_enabled is ON", async () => {
+    const calls: any[] = [];
+    const c: any = makeClient(kernelRows(true), new Set());
+    // Record the RPC the kernel client makes, and answer as the kernel would.
+    c.rpc = (fn: string, args: any) => {
+      calls.push({ fn, args });
+      return Promise.resolve({
+        data: {
+          ok: true, duplicate: false, version: 7, event_id: "evt-1", sequence: 1,
+          contract_version: 1,
+          result: { id: PLAN, title: "Rooftop set", category: "activity", status: "tentative",
+                    source_type: "event", source_id: EVENT, starts_at: EV.starts_at, ends_at: null,
+                    location_name: "The Roof", lat: 51.5, lng: -0.12 },
+        },
+        error: null,
+      });
+    };
+    _setTestClient(c, true);
+    _setTestServiceClient(c);
+
+    const res = await addToTrip();
+    assert.equal(res.status, 201, await res.text());
+
+    const kernelCalls = calls.filter((k) => k.fn === "trip_kernel_execute");
+    assert.equal(kernelCalls.length, 1, "the route must issue exactly one kernel command");
+    const cmd = kernelCalls[0].args?.p_command ?? kernelCalls[0].args?.command ?? kernelCalls[0].args;
+    assert.equal(cmd.type, "ADD_PLAN");
+    assert.equal(cmd.trip_id, TRIP);
+    assert.equal(cmd.actor_user_id, ME, "the actor is the caller, never the body");
+    assert.equal(cmd.actor_role, "user", "adding an event to your own trip is not an admin act");
+    // Derived, not random: a double-tap must replay the receipt rather than add twice.
+    assert.equal(cmd.idempotency_key, `event-to-trip:${TRIP}:${EVENT}`);
+    assert.equal(cmd.payload.source_type, "event");
+    assert.equal(cmd.payload.source_id, EVENT);
+    // The aggregate version reaches the client so it can hold an If-Match token.
+    assert.equal(res.headers.get("x-trip-version"), "7");
+  });
+
+  it("refuses when the kernel refuses, instead of falling back to a direct insert", async () => {
+    // A refusal must be LOUDER than the legacy write, not weaker — the legacy
+    // path would have written the row and left the aggregate behind.
+    const c: any = makeClient(kernelRows(true), new Set());
+    c.rpc = () => Promise.resolve({
+      data: { ok: false, reason: "TRIP_AUTH_NOT_CREW", contract_version: 1 },
+      error: null,
+    });
+    _setTestClient(c, true);
+    _setTestServiceClient(c);
+    const res = await addToTrip();
+    assert.notEqual(res.status, 201);
+    const body: any = await res.json().catch(() => ({}));
+    assert.equal(body?.error, "forbidden");
+  });
+
+  it("uses the legacy INSERT when trip_kernel_enabled is OFF", async () => {
+    // The flag-off twin must still work, or turning the kernel off would break
+    // the feature rather than restore the previous behaviour.
+    const calls: any[] = [];
+    const c: any = makeClient(kernelRows(false), new Set());
+    c.rpc = (fn: string) => { calls.push(fn); return Promise.resolve({ data: null, error: null }); };
+    _setTestClient(c, true);
+    _setTestServiceClient(c);
+    const res = await addToTrip();
+    assert.equal(res.status, 201, await res.text());
+    assert.equal(calls.filter((f) => f === "trip_kernel_execute").length, 0,
+      "with the flag off no kernel command may be issued");
   });
 });

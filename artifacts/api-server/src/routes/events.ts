@@ -190,6 +190,7 @@ import { detectAndStoreLanguage, invalidateContentTranslations } from "../servic
 import { nameVisibilitySet, sanitizeIdentity } from "../lib/publicIdentity.js";
 import { isFlagEnabled, isKillSwitchEngaged } from "../lib/featureFlags.js";
 import { isBlockedBetween } from "../lib/blockGuard.js";
+import { tripKernelClient, executeTripCommand, TRIP_VERSION_RESPONSE_HEADER } from "../lib/tripKernel.js";
 import { readBlockExclusions, sendExclusionsUnavailable } from "../lib/exclusionSet.js";
 import { appStorageUrlInfo } from "../lib/mediaUrl.js";
 import { sendPushWithRetry } from "../lib/pushWithRetry.js";
@@ -6143,24 +6144,90 @@ router.post("/events/:id/add-to-trip", async (req, res) => {
   }
 
   const e = ev as any;
-  const { data: item, error: itemErr } = await sc.from("trip_plan_items").insert({
-    trip_id:       tripId,
-    title:         e.title ?? "Event",
-    category:      "activity",
-    status:        "tentative",
-    source_type:   "event",
-    source_id:     id,
-    starts_at:     e.starts_at ?? null,
-    ends_at:       e.ends_at ?? null,
-    location_name: e.location_name ?? null,
-    lat:           e.location_lat ?? null,
-    lng:           e.location_lng ?? null,
-    sort_order:    0,
-  }).select("id, title, category, status, source_type, source_id, starts_at, ends_at, location_name, lat, lng").single();
 
-  if (itemErr) { sendError(res, "db_error", itemErr.message); return; }
+  // Adding a plan item IS a change to the trip aggregate, so it goes through the
+  // Trip Kernel as ADD_PLAN when the kernel is available. The kernel is what
+  // bumps `trips.version`, emits `trip.plan_added` into `trip_events`, publishes
+  // to `trip_outbox` (which the Map projection drains) and writes the receipt.
+  // A direct INSERT does none of that: the row appears, the aggregate version
+  // does not move, and every downstream consumer keeps serving a stale trip
+  // while looking perfectly healthy.
+  //
+  // actorRole is "user" and the actor is the caller — this is the traveller
+  // adding an event to their own trip, not an administrative act. The kernel
+  // re-checks crew membership itself (TRIP_AUTH_NOT_CREW); the route's own
+  // membership check above stays because it produces a better message and
+  // short-circuits before the event lookup, but the KERNEL is the authority.
+  //
+  // expectedTripVersion is null deliberately. The client here is pressing "add
+  // this event to my trip" from the event screen; it holds no trip version, so
+  // an If-Match would mean "abandon the add if any crew member touched the trip
+  // since this screen loaded" — which would fail constantly on an active trip
+  // and is not what the gesture means.
+  //
+  // The idempotency key is derived from (trip, event) rather than random, so a
+  // double-tap replays the receipt instead of adding the same event twice. That
+  // is the same guarantee the `existingItem` check above gives, made durable:
+  // that check races with itself, the key does not.
+  const kernel = await tripKernelClient(sc);
+  let it: any;
+  if (kernel) {
+    const r = await executeTripCommand(kernel, {
+      commandId: randomUUID(),
+      tripId,
+      actorUserId: user.id,
+      actorRole: "user",
+      expectedTripVersion: null,
+      idempotencyKey: `event-to-trip:${tripId}:${id}`,
+      type: "ADD_PLAN",
+      payload: {
+        title:         e.title ?? "Event",
+        category:      "activity",
+        status:        "tentative",
+        source_type:   "event",
+        source_id:     id,
+        starts_at:     e.starts_at ?? null,
+        ends_at:       e.ends_at ?? null,
+        location_name: e.location_name ?? null,
+        lat:           e.location_lat ?? null,
+        lng:           e.location_lng ?? null,
+        sort_order:    0,
+      },
+    });
+    if (!r.ok) {
+      // A refusal is LOUDER than the legacy insert, not weaker: the legacy path
+      // would have written the row and left the aggregate behind.
+      if (r.reason === "TRIP_AUTH_NOT_CREW") {
+        sendError(res, "forbidden", "You must be an accepted trip member to add events");
+        return;
+      }
+      req.log.warn({ reason: r.reason, detail: r.detail, tripId, eventId: id }, "ADD_PLAN refused");
+      sendError(res, "db_error", `Could not add this event to the trip (${r.reason})`);
+      return;
+    }
+    res.setHeader(TRIP_VERSION_RESPONSE_HEADER, String(r.version));
+    it = r.result;
+  } else {
+    // trip-kernel:legacy-path — the flag-off twin of ADD_PLAN above. Byte-for-byte
+    // the previous behaviour, so turning the flag off restores it exactly.
+    const { data: item, error: itemErr } = await sc.from("trip_plan_items").insert({
+      trip_id:       tripId,
+      title:         e.title ?? "Event",
+      category:      "activity",
+      status:        "tentative",
+      source_type:   "event",
+      source_id:     id,
+      starts_at:     e.starts_at ?? null,
+      ends_at:       e.ends_at ?? null,
+      location_name: e.location_name ?? null,
+      lat:           e.location_lat ?? null,
+      lng:           e.location_lng ?? null,
+      sort_order:    0,
+    }).select("id, title, category, status, source_type, source_id, starts_at, ends_at, location_name, lat, lng").single();
 
-  const it = item as any;
+    if (itemErr) { sendError(res, "db_error", itemErr.message); return; }
+    it = item as any;
+  }
   res.status(201).json({
     planItemId: it.id,
     tripId,

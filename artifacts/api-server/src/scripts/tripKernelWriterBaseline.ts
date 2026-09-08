@@ -29,7 +29,7 @@
  *
  * SURVEYED 2026-09-08 on claude/portava-continuation-uqta94 by
  * `check:trip-kernel-writers --print-baseline`. 47 direct writes in 18 files;
- * 40 kernel-gated, 5 declared non-aggregate, 2 ungated (was 8 ungated before
+ * 41 kernel-gated, 5 declared non-aggregate, 1 ungated (was 8 ungated before
  * the fifth pass declared the five reminder / derived-column writes
  * non-aggregate per column and gated the appeal trip restore) (was 40 before the trip and participant families landed
  * in migration 2450, 32 before routes/trips-expansion.ts and routes/requests.ts
@@ -245,7 +245,7 @@ export const TRIP_KERNEL_DIRECT_WRITERS: Record<string, WriterBaseline> = {
   "routes/admin.ts":                       { direct: 3, ungated: 0, nonAggregate: 1 }, // 2 x visibility hide KERNEL-GATED (fourth pass) -> ADMIN_HIDE_TRIP (admin); 1 x reminder reset DECLARED NON-AGGREGATE per column (fifth pass)
   "routes/airport.ts":                     { direct: 3, ungated: 0 }, // ALL KERNEL-GATED (fourth pass): mirror -> UPDATE_PLAN / ADD_PLAN; session plan -> ADD_PLAN (crew)
   "routes/compass.ts":                     { direct: 1, ungated: 0 }, // KERNEL-GATED (fourth pass): proposal confirm -> ADD_PLAN (crew)
-  "routes/events.ts":                      { direct: 1, ungated: 1 }, // -> ADD_PLAN
+  "routes/events.ts":                      { direct: 1, ungated: 0 }, // KERNEL-GATED (sixth pass): add-event-to-trip trip_plan_items INSERT -> ADD_PLAN (crew, actor = caller, idempotency key event-to-trip:<trip>:<event> so a double-tap replays)
   "routes/hiddenGems.ts":                  { direct: 1, ungated: 0 }, // KERNEL-GATED (fourth pass): -> ADD_PLAN (crew); needs 2590 for added_by/description/city/country
   "routes/plan.ts":                        { direct: 2, ungated: 0 }, // BOTH KERNEL-GATED (fourth pass): meetup / place add-to-trip-plan -> ADD_PLAN (crew)
   "routes/requests.ts":                    { direct: 3, ungated: 0 }, // ALL KERNEL-GATED (contract v2): accept -> ACCEPT_INVITE; decline -> DECLINE_INVITE; cancel -> REMOVE_PARTICIPANT
