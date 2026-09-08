@@ -19,6 +19,12 @@
  *                     hard-deleted. `contentHidden = true` was unconditional,
  *                     and it also GATES an adjudicated content_removed Trust
  *                     penalty — so a phantom removal charged a real user.
+ *   global controls   `all_bookings_paused` and its siblings are the
+ *                     platform-wide Rent-A-Buddy kill switches, stored in a
+ *                     singleton row id = 1. A missing row matched nothing, and
+ *                     getGlobalControls() falls back to all-false — so the
+ *                     switch read back OFF while {ok:true} and a
+ *                     "global_controls_updated" audit row said it was ON.
  *   buddy limits      rent_buddy_user_limits rows are created by the sibling
  *                     POST (an upsert). PATCHing a user who has no row matched
  *                     nothing, answered {ok:true} and wrote a "limits_updated"
@@ -48,6 +54,7 @@ import { _setTestClient } from "../lib/http.js";
 import { _setTestServiceClient } from "../lib/supabase.js";
 import adminRouter from "../routes/admin.js";
 import rentBuddyRouter from "../routes/rentABuddy.js";
+import rentBuddyRolloutRouter from "../routes/rentABuddyRollout.js";
 
 const ADMIN_ID  = "bbbbbbbb-0000-0000-0000-000000000002";
 const TARGET_ID = "aaaaaaaa-0000-0000-0000-000000000001";
@@ -136,6 +143,7 @@ before(async () => {
   });
   app.use(adminRouter);
   app.use(rentBuddyRouter);
+  app.use(rentBuddyRolloutRouter);
   server = http.createServer(app);
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
   base = `http://127.0.0.1:${(server.address() as any).port}`;
@@ -269,5 +277,43 @@ describe("PATCH /rent-a-buddy/admin/users/:userId/limits", () => {
     assert.equal(body.ok, true);
     assert.equal(db.tables.rent_buddy_user_limits[0].rent_buddy_disabled, true);
     assert.equal(db.tables.rent_buddy_admin_actions.length, 1);
+  });
+});
+
+// ── Rent-A-Buddy global kill switches ───────────────────────────────────────
+
+describe("PATCH /admin/rent-buddy/global-controls", () => {
+  it("a missing singleton row is refused, and no audit row claims the pause", async () => {
+    const db = install({
+      rent_buddy_global_controls: [],           // the singleton is not there
+      rent_buddy_launch_audit_log: [],
+    });
+
+    const { status, body } = await call("PATCH", "/admin/rent-buddy/global-controls", {
+      all_bookings_paused: true,
+    });
+
+    assert.equal(status, 404, `expected a refusal, got ${status} ${JSON.stringify(body)}`);
+    assert.notEqual(body.ok, true);
+    assert.equal(
+      (db.tables.rent_buddy_launch_audit_log ?? []).length,
+      0,
+      "a global_controls_updated audit row must not record a pause that never took effect",
+    );
+  });
+
+  it("the singleton row really is paused", async () => {
+    const db = install({
+      rent_buddy_global_controls: [{ id: 1, all_bookings_paused: false }],
+      rent_buddy_launch_audit_log: [],
+    });
+
+    const { status, body } = await call("PATCH", "/admin/rent-buddy/global-controls", {
+      all_bookings_paused: true,
+    });
+
+    assert.equal(status, 200, `got ${status} ${JSON.stringify(body)}`);
+    assert.equal(body.ok, true);
+    assert.equal(db.tables.rent_buddy_global_controls[0].all_bookings_paused, true);
   });
 });

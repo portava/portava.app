@@ -1133,10 +1133,36 @@ router.patch("/admin/rent-buddy/global-controls", asyncHandler(async (req, res) 
     if ((req.body ?? {})[field] !== undefined) patch[field] = (req.body as any)[field];
   }
 
-  await admin.sc
+  // `all_bookings_paused` and its siblings are the platform-wide kill switches
+  // for Rent-A-Buddy. This UPDATE targets the singleton row id = 1, and if that
+  // row is not there it matches nothing — which PostgREST reports with NO error
+  // at all, so neither the missing error check nor the missing affected-row
+  // check would have said a word. Worse, getGlobalControls() above falls back to
+  // an all-false object when the row is absent, so the switch an admin just
+  // "set" reads back as OFF: bookings keep flowing while {ok:true} and a
+  // "global_controls_updated" audit row say the platform was paused.
+  //
+  // `.select("id")` makes the statement RETURNING so the rows it touched can be
+  // counted. Nothing touched => refuse, and write no audit row for a pause that
+  // did not happen.
+  const { data: controlRows, error: controlsErr } = await admin.sc
     .from("rent_buddy_global_controls")
     .update(patch)
-    .eq("id", 1);
+    .eq("id", 1)
+    .select("id");
+  if (controlsErr) { sendError(res, "db_error", controlsErr.message); return; }
+  if (!Array.isArray(controlRows) || controlRows.length === 0) {
+    req.log?.error(
+      { adminId: admin.userId, patch },
+      "rent-buddy global controls PATCH matched no row (id = 1 missing) — NO control was changed",
+    );
+    sendError(
+      res,
+      "not_found",
+      "The rent_buddy_global_controls singleton (id = 1) does not exist, so no control was changed.",
+    );
+    return;
+  }
 
   invalidateGcCache();
 

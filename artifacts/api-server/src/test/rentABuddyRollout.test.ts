@@ -184,8 +184,16 @@ function makeClient(userId: string, role = "user") {
       _rangeFrom: 0,
       _rangeTo: 999,
       _count: false,
+      /**
+       * `.select()` after `.update()` makes the statement RETURNING. Modelling
+       * it matters: without it every UPDATE resolves `{ data: null }` whether
+       * it matched the row or no row at all, so a handler that checks its
+       * affected-row count cannot be tested — and neither can the defect where
+       * a zero-row no-op is reported as a successful write.
+       */
+      _returning: false,
 
-      select(cols?: string, opts?: any) { if (opts?.count) this._count = true; return this; },
+      select(cols?: string, opts?: any) { if (opts?.count) this._count = true; this._returning = true; return this; },
       insert(data: any) { this._insertData = data; return this; },
       update(data: any) { this._updateData = data; return this; },
       upsert(data: any, _opts?: any) { this._upsertData = data; return this; },
@@ -289,8 +297,10 @@ function makeClient(userId: string, role = "user") {
 
         // ── Updates ──
         if (this._updateData !== null) {
+          const touched: any[] = [];
           const applyUpdate = (obj: any) => {
             if (this._updateData !== "__delete__") Object.assign(obj, this._updateData);
+            touched.push(obj);
           };
 
           if (t === "rent_buddy_city_rollouts") {
@@ -316,7 +326,13 @@ function makeClient(userId: string, role = "user") {
             }
           }
           if (t === "rent_buddy_global_controls") {
-            applyUpdate(state.globalControls);
+            // Honour the `.eq("id", 1)` filter: the singleton is addressed by id,
+            // and a fake that ignores that can never express "the row is not
+            // there", which is the case the handler now refuses.
+            const wantsId = this._filters.find(([op, col]) => op === "eq" && col === "id");
+            if (state.globalControls && (!wantsId || state.globalControls.id === wantsId[2])) {
+              applyUpdate(state.globalControls);
+            }
           }
           if (t === "rent_buddy_bookings") {
             for (const [op, col, val] of this._filters) {
@@ -325,7 +341,8 @@ function makeClient(userId: string, role = "user") {
               }
             }
           }
-          return { data: null, error: null };
+          if (!this._returning) return { data: null, error: null };
+          return { data: this._maybeSingle ? (touched[0] ?? null) : touched, error: null };
         }
 
         // ── Selects ──
