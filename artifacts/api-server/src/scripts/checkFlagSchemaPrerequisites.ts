@@ -62,6 +62,7 @@
  *   pnpm run check:flag-schema-prerequisites -- --report # full listing, no verdict
  */
 import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildCanonicalSchema, hasColumn, isModelled, stripSqlComments } from "./lib/canonicalSchema.js";
@@ -101,6 +102,124 @@ const SRC = join(API_ROOT, "src");
 const SNAPSHOT = process.env.FLAG_SCHEMA_SNAPSHOT
   ? resolve(process.env.FLAG_SCHEMA_SNAPSHOT)
   : join(SRC, "lib", "capability", "snapshots", "20260908-production-schema.json");
+/**
+ * The repository's record of what has been applied to PRODUCTION. See the file's
+ * own $comment. FLAG_SCHEMA_APPLIED overrides it for the staleness test.
+ */
+const APPLIED_MIGRATIONS = process.env.FLAG_SCHEMA_APPLIED
+  ? resolve(process.env.FLAG_SCHEMA_APPLIED)
+  : join(SRC, "lib", "capability", "production-applied-migrations.json");
+
+/**
+ * THE STALE-SNAPSHOT TRIPWIRE.
+ *
+ * On 2026-09-08 this script reported GREEN while grading a snapshot captured
+ * before eighteen migrations had been applied. Four of its KNOWN entries
+ * described defects that no longer existed and it could not tell. A frozen
+ * snapshot has no way to notice that the world moved underneath it, so the
+ * repository has to notice for it.
+ *
+ * Two independent failures are detected, both entirely OFFLINE — this makes no
+ * live database connection and ordinary CI does not gain a production
+ * dependency:
+ *
+ *   1. STALE. production-applied-migrations.json is the record committed
+ *      alongside each apply. If its newest version is later than the snapshot's
+ *      productionMigrationWatermark, a migration landed after the capture and
+ *      every answer below is suspect.
+ *
+ *   2. HAND-EDITED / PARTIALLY REFRESHED. The snapshot carries checksums of its
+ *      own tables, functions and flags. They are RECOMPUTED here and compared.
+ *      A partial refresh is more dangerous than a stale one, because it looks
+ *      current; this is what makes the file's "do not edit by hand" enforceable
+ *      rather than advisory.
+ *
+ * REFRESH PROCEDURE (documented here because a guard that fails without saying
+ * how to fix it just gets disabled):
+ *
+ *   npm run refresh:production-snapshot     # see scripts/refresh-production-snapshot.md
+ *
+ * A snapshot with neither field is treated as legacy and only WARNS, so an old
+ * capture does not hard-fail a checkout that has not been refreshed yet.
+ */
+function checkSnapshotFreshness(snapshotPath: string): string[] {
+  const problems: string[] = [];
+  let raw: any;
+  try {
+    raw = JSON.parse(readFileSync(snapshotPath, "utf8"));
+  } catch (e) {
+    return [`snapshot ${snapshotPath} is not readable JSON: ${String(e)}`];
+  }
+
+  // ── 1. checksum self-consistency ──────────────────────────────────────────
+  if (raw.checksums) {
+    const tables: Record<string, string[]> = raw.tables ?? {};
+    const per = Object.keys(tables)
+      .sort()
+      .map((t) => `${t}:${createHash("md5").update((tables[t] ?? []).join(",")).digest("hex")}`)
+      .join("\n");
+    const tablesSum = createHash("md5").update(per).digest("hex");
+    const fnSum = createHash("md5").update([...(raw.functions ?? [])].sort().join(",")).digest("hex");
+    const flags: Record<string, boolean> = raw.flags ?? {};
+    const flagSum = createHash("md5")
+      .update(Object.keys(flags).sort().map((f) => `${f}=${flags[f] ? "true" : "false"}`).join(","))
+      .digest("hex");
+
+    if (tablesSum !== raw.checksums.tables) {
+      problems.push(
+        `SNAPSHOT CHECKSUM MISMATCH (tables): recorded ${raw.checksums.tables}, recomputed ${tablesSum}. ` +
+          `The snapshot was edited by hand or refreshed only partially — a partial refresh is worse than a stale one because it looks current.`,
+      );
+    }
+    if (fnSum !== raw.checksums.functions) {
+      problems.push(`SNAPSHOT CHECKSUM MISMATCH (functions): recorded ${raw.checksums.functions}, recomputed ${fnSum}.`);
+    }
+    if (flagSum !== raw.checksums.flags) {
+      problems.push(`SNAPSHOT CHECKSUM MISMATCH (flags): recorded ${raw.checksums.flags}, recomputed ${flagSum}.`);
+    }
+  } else {
+    console.log("  (legacy snapshot: no checksums recorded — cannot verify it was not hand-edited)");
+  }
+
+  // ── 2. staleness against the repository's own record of production ────────
+  const watermark: string | undefined = raw.productionMigrationWatermark;
+  if (!watermark) {
+    console.log("  (legacy snapshot: no productionMigrationWatermark — cannot detect staleness)");
+    return problems;
+  }
+  if (!existsSync(APPLIED_MIGRATIONS)) {
+    problems.push(`production-applied-migrations.json missing at ${APPLIED_MIGRATIONS}; staleness cannot be checked.`);
+    return problems;
+  }
+  let applied: any;
+  try {
+    applied = JSON.parse(readFileSync(APPLIED_MIGRATIONS, "utf8"));
+  } catch (e) {
+    return [...problems, `production-applied-migrations.json is not readable JSON: ${String(e)}`];
+  }
+  const versions: string[] = (applied.migrations ?? [])
+    .map((m: any) => String(m?.version ?? ""))
+    .filter(Boolean);
+  if (versions.length === 0) {
+    problems.push("production-applied-migrations.json lists no migrations; the tripwire would never fire.");
+    return problems;
+  }
+  // Versions are zero-padded timestamps, so lexicographic order IS chronological.
+  const newest = versions.reduce((a, b) => (b > a ? b : a));
+  if (newest > watermark) {
+    const late = (applied.migrations ?? [])
+      .filter((m: any) => String(m?.version ?? "") > watermark)
+      .map((m: any) => `${m.version} ${m.name}`);
+    problems.push(
+      `STALE SNAPSHOT: ${late.length} migration(s) recorded as applied to production AFTER this snapshot was captured ` +
+        `(watermark ${watermark}, newest applied ${newest}): ${late.join(", ")}. ` +
+        `Every answer below is graded against a production that no longer exists. ` +
+        `Refresh: see artifacts/api-server/scripts/refresh-production-snapshot.md`,
+    );
+  }
+  return problems;
+}
+
 const BASELINE = join(API_ROOT, "baseline", "20260819_baseline_structure.sql");
 const MIGRATION_DIRS = [join(API_ROOT, "migrations"), join(SRC, "migrations")];
 const REPORT = process.argv.includes("--report");
@@ -187,6 +306,13 @@ function main(): void {
   if (!existsSync(SNAPSHOT)) {
     console.error(`check:flag-schema-prerequisites: snapshot missing at ${SNAPSHOT}.`);
     process.exit(2);
+  }
+  const freshness = checkSnapshotFreshness(SNAPSHOT);
+  if (freshness.length) {
+    console.error(`\ncheck:flag-schema-prerequisites: the snapshot cannot be trusted:`);
+    for (const f of freshness) console.error(`  • ${f}`);
+    console.error("");
+    process.exit(1);
   }
   const snap = loadProductionSnapshot(SNAPSHOT);
   const canon = buildCanonicalSchema(BASELINE, MIGRATION_DIRS);

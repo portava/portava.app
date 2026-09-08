@@ -3,7 +3,13 @@
  "projectRef": "ajrurzioarfkagpuxfnb",
  "projectName": "travel-buddy (PRODUCTION)",
  "capturedAt": "2026-09-08",
+ "productionMigrationWatermark": "20260908020748",
  "method": "information_schema.columns (table_schema=public, views included); pg_proc in schema public excluding extension-owned functions (pg_depend deptype=e); pg_type typtype=e in public; public.feature_flags(flag, enabled)",
+ "checksums": {
+  "tables": "d18af75500cad4a78657db44c2fdfb68",
+  "functions": "e5d30e48278a52e85cb478519341aca1",
+  "flags": "77b0bd2c76383bffc8d17da4f21f7941"
+ },
  "tables": {
   "activity_events": [
    "id",

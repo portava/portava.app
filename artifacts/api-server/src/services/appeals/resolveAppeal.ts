@@ -6,7 +6,9 @@
  * Unknown target_types return a no-op with a log warning — never throw.
  */
 
+import { randomUUID } from "node:crypto";
 import { recordTrustEvent } from "../trust/TrustEventService.js";
+import { executeTripCommand, tripKernelClient } from "../../lib/tripKernel.js";
 
 export interface Appeal {
   id: string;
@@ -149,6 +151,48 @@ export async function resolveAppeal(
     }
 
     case "trip": {
+      // Restoring a moderated trip is a change to the Trip aggregate: it moves
+      // trips.status, which every crew member reads and which lib/tripStatus.ts
+      // and the lifecycle rules in §3.1 govern. It is a Trip Command.
+      //
+      // UPDATE_TRIP is the command, and its `owner` capability is EXACTLY the
+      // authorization the legacy statement expressed as `.eq("owner_id",
+      // appellant_id)` — the appellant restores their own trip, nobody else's.
+      // So the actor is the appellant, actor_role 'user'; this is not an admin
+      // command (the admin approved the appeal, they are not the one changing
+      // the trip) and there is no admin-family restore command to use.
+      //
+      // expectedTripVersion is null on purpose. There is no client holding a
+      // version here — the trigger is an admin approving an appeal, out of band
+      // — so an If-Match would mean "abandon the restore if anyone touched the
+      // trip since we read it", which is not what an appeal resolution should
+      // do. The idempotency key is the APPEAL, so re-resolving the same appeal
+      // replays the receipt instead of emitting a second trip.updated.
+      const kernel = await tripKernelClient(sc);
+      if (kernel) {
+        const r = await executeTripCommand(kernel, {
+          commandId: randomUUID(),
+          tripId: target_id,
+          actorUserId: appellant_id,
+          actorRole: "user",
+          expectedTripVersion: null,
+          idempotencyKey: `appeal:${appeal.id}:trip`,
+          type: "UPDATE_TRIP",
+          payload: { patch: { status: "planning" }, updated_at: new Date().toISOString() },
+        });
+        // Two rejections are LOUDER than the legacy write, not weaker, and both
+        // are reported as the noop this function already has a contract for:
+        //   TRIP_AUTH_NOT_OWNER          the appellant does not own the trip —
+        //     the legacy UPDATE matched 0 rows and still answered
+        //     "trip_restored", so the appeal closed while nothing was restored.
+        //   TRIP_LIFECYCLE_INVALID_TRANSITION  the trip is cancelled or
+        //     archived. §3.1 makes those terminal; the legacy UPDATE walked
+        //     straight out of them, which is a state the kernel refuses to
+        //     produce and no other code path can produce either.
+        if (!r.ok) return { ok: false, action: "noop", reason: `trip restore refused: ${r.reason}` };
+        return { ok: true, action: "trip_restored" };
+      }
+      // trip-kernel:legacy-path — the flag-off twin of UPDATE_TRIP above.
       const { error } = await sc
         .from("trips")
         .update({ status: "planning", updated_at: new Date().toISOString() })

@@ -357,6 +357,12 @@ describe("buildTravelerState — derived §5 activity states with validFrom/vali
   it("with_crew: an active un-expired locate session; never exposes a city", async () => {
     const db = makePassportDb({
       profiles: [{ ...baseProfile }],
+      // §5 with_crew is a read of Locate My Friends storage and is behind the
+      // LOCATE_FRIENDS_CREW_PRESENCE capability (flag + 2219 schema); the fake
+      // client answers the schema probe, so the flag row is what the fixture
+      // has to state. Without it the capability refuses and there is no crew
+      // signal to assert on — which is the point of the gate.
+      feature_flags: [{ flag: "locate_friends_enabled", enabled: true }],
       locate_friends_members: [{ session_id: "s1", user_id: OWNER, left_at: null }],
       locate_friends_sessions: [{ id: "s1", started_at: PAST, expires_at: FUTURE, ended_at: null }],
     });
@@ -371,6 +377,7 @@ describe("buildTravelerState — derived §5 activity states with validFrom/vali
   it("with_crew: a member who has left is not with a crew", async () => {
     const db = makePassportDb({
       profiles: [{ ...baseProfile }],
+      feature_flags: [{ flag: "locate_friends_enabled", enabled: true }],
       locate_friends_members: [{ session_id: "s1", user_id: OWNER, left_at: PAST }],
       locate_friends_sessions: [{ id: "s1", started_at: PAST, expires_at: FUTURE, ended_at: null }],
     });
@@ -406,6 +413,12 @@ describe("buildTravelerState — derived §5 activity states with validFrom/vali
       profiles: [{ ...baseProfile }],
       event_rsvps: [{ event_id: "e1", user_id: OWNER, status: "going" }],
       events: [{ id: "e1", city: "Da Nang", starts_at: PAST, ends_at: FUTURE, state: "started" }],
+      // §5 with_crew is a read of Locate My Friends storage and is behind the
+      // LOCATE_FRIENDS_CREW_PRESENCE capability (flag + 2219 schema); the fake
+      // client answers the schema probe, so the flag row is what the fixture
+      // has to state. Without it the capability refuses and there is no crew
+      // signal to assert on — which is the point of the gate.
+      feature_flags: [{ flag: "locate_friends_enabled", enabled: true }],
       locate_friends_members: [{ session_id: "s1", user_id: OWNER, left_at: null }],
       locate_friends_sessions: [{ id: "s1", started_at: PAST, expires_at: FUTURE, ended_at: null }],
       route_plans: [{ id: "rp1", owner_user_id: OWNER, status: "active" }],
@@ -419,6 +432,12 @@ describe("buildTravelerState — derived §5 activity states with validFrom/vali
     const db = makePassportDb({
       profiles: [{ ...baseProfile }],
       quick_availability_status: [{ user_id: OWNER, status: "busy", expires_at: FUTURE }],
+      // §5 with_crew is a read of Locate My Friends storage and is behind the
+      // LOCATE_FRIENDS_CREW_PRESENCE capability (flag + 2219 schema); the fake
+      // client answers the schema probe, so the flag row is what the fixture
+      // has to state. Without it the capability refuses and there is no crew
+      // signal to assert on — which is the point of the gate.
+      feature_flags: [{ flag: "locate_friends_enabled", enabled: true }],
       locate_friends_members: [{ session_id: "s1", user_id: OWNER, left_at: null }],
       locate_friends_sessions: [{ id: "s1", started_at: PAST, expires_at: FUTURE, ended_at: null }],
     });
