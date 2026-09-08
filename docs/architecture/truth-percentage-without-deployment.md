@@ -78,9 +78,34 @@ flip or a merge. It is code that does not do what its spec says, code with no
 caller, and requirements with nothing written for them at all.
 
 It does not say the deployment gap is unimportant — 0 of 21 surfaces are
-`PRODUCTION_REALIZED` and that dominates what a *user* can do. It says the two
-gaps are nearly disjoint: closing every deployment gap tomorrow would move this
-number by less than one point.
+`PRODUCTION_REALIZED` and that dominates what a *user* would be able to do. It
+says the two gaps are nearly disjoint: closing every deployment gap tomorrow
+would move this number by less than one point.
+
+> **STANDING FACT, recorded 2026-09-08 because several documents reason against
+> it without saying so: the production database holds TEST ACCOUNTS. Portava has
+> not launched.**
+>
+> Measured read-only the same day: 58 rows in `profiles` with
+> `account_status='active'`, 5 rows in `trust_events`, 2 in `trust_profiles`,
+> 0 in `trust_caps` and `trust_restrictions`; `census-discovery` §5 records 13
+> `surface='discovery'` serve rows ever, last on 2026-08-15.
+>
+> Three consequences, and the third is the one that keeps being got wrong:
+>
+> 1. **A production row count is not usage.** "5 trust events" measures test
+>    traffic. No census may infer product adoption, load or ranking quality from
+>    these tables, and `media-v2-certification.md:123` is right that ranking
+>    quality is a live-traffic measurement that cannot be taken yet.
+> 2. **An empty table is not evidence a writer is broken** — and it is not
+>    evidence it works either. Emptiness is uninformative here in both
+>    directions, which is why the writerless-reads ratchet is a source check and
+>    not a row count.
+> 3. **A defect that reaches "every user" today reaches nobody.** Severity
+>    language calibrated to live harm overstates every pre-launch finding — the
+>    Passport trust-constant row above was written that way and is corrected.
+>    The right register is "this will meet its first real user at launch", which
+>    is a reason to fix it and not a reason to page anyone.
 
 Nine of the 26 credit work in **someone else's unmerged branch**. If "removing
 merge" means only "ignore that this branch is unmerged" rather than "count every

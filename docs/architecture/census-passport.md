@@ -59,13 +59,27 @@ implementation at all.
 But **21 requirements exist and diverge**, which is why CORRECT% is 85.8% rather
 than 98%. Three of them matter more than the rest:
 
-1. **Trust presents a constant as a measurement (§9/§10).** `trust_engine_enabled`
-   is seeded false, so nothing writes `trust_events`, `trust_profiles` is empty,
-   and `buildDomainTrust` substitutes the neutral 50 for the overall score and for
-   every missing category (`PassportProjectionService.ts:958,965`). Since
-   `presentationWord(50)` returns "Established" (`:933`), **every Portava user is
-   currently described as an Established member of the community across all six
-   trust domains on the strength of a hard-coded number.** §9 demands
+1. **Trust presents a constant as a measurement (§9/§10).**
+   *Corrected 2026-09-08 — the defect is real and the stated cause was wrong.*
+   This read *"`trust_engine_enabled` is seeded false, so nothing writes
+   `trust_events`, `trust_profiles` is empty"*. `false` is the SEED value
+   (migration `0166_feature_flags_reconcile.sql:25`). Measured read-only against
+   production the same day: the flag is **TRUE and has been since 2026-07-17**,
+   `trust_events` holds **5** rows (`pulse_post_created` ×4, `first_event_joined`
+   ×1, last one 2026-08-16) and `trust_profiles` holds **2**, against **58**
+   profile rows. So the engine is not switched off; it is switched on and almost
+   silent — 2 of 58 accounts have ever been scored.
+   The defect itself is unchanged: `buildDomainTrust` substitutes the neutral 50
+   for the overall score and for every missing category
+   (`PassportProjectionService.ts:958,965`), and `presentationWord(50)` returns
+   "Established" (`:933`), so **56 of those 58 accounts are described as an
+   Established member of the community across all six trust domains on the
+   strength of a hard-coded number** — and that is not waiting on a flag flip.
+   **It has harmed nobody, and the reason matters: those 58 are TEST ACCOUNTS.**
+   Portava has not launched (see the standing note in
+   `truth-percentage-without-deployment.md`). This is a defect that will meet its
+   first real user at launch, not one that is misleading anyone today, and no row
+   in this census should be read as a claim about live usage. §9 demands
    "domain-specific, confidence-aware and explainable"; the confidence band is
    real but is computed from stamps and trips rather than from trust evidence
    (`:983-985`), so a high-evidence 82 and a no-evidence default are not
