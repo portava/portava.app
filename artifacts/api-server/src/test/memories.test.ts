@@ -97,9 +97,19 @@ function makeClient(state: FakeState) {
     let pendingDelete = false;
     let countMode = false;
 
+    // PostgREST returns the AFFECTED ROWS from a write when the caller chains
+    // .select() (supabase-js sends Prefer: return=representation for it), and
+    // returns nothing when it does not. The fake modelled only the second half:
+    // `.delete().select("id")` came back as `data: []`, which is the signature
+    // of a delete that matched NOTHING. Routes that check the row count to tell
+    // "removed" from "matched nothing" would have been forced to weaken
+    // themselves to satisfy the double, so the double is fixed instead.
+    let selectedAfterWrite = false;
+
     const builder: any = {
       select(_cols?: string, opts?: any) {
         if (opts?.count === "exact" && opts?.head) countMode = true;
+        if (pendingInsert || pendingUpdate || pendingUpsert || pendingDelete) selectedAfterWrite = true;
         return builder;
       },
       insert(row: any) { pendingInsert = row; return builder; },
@@ -164,9 +174,9 @@ function makeClient(state: FakeState) {
       }
       if (pendingDelete) {
         const arr: FakeRow[] = (state as any)[table] ?? [];
-        const keep = arr.filter((r) => !filters.every((f) => f(r)));
-        (state as any)[table] = keep;
-        return { data: null, error: null, count: null };
+        const gone = arr.filter((r) => filters.every((f) => f(r)));
+        (state as any)[table] = arr.filter((r) => !filters.every((f) => f(r)));
+        return { data: selectedAfterWrite ? (gone[0] ?? null) : null, error: null, count: null };
       }
       const matched = rows();
       if (countMode) return { data: null, error: null, count: matched.length };
@@ -189,9 +199,10 @@ function makeClient(state: FakeState) {
       }
       if (pendingDelete) {
         const arr: FakeRow[] = (state as any)[table] ?? [];
-        const keep = arr.filter((r) => !filters.every((f) => f(r)));
-        (state as any)[table] = keep;
-        return { data: [], error: null, count: 0 };
+        const gone = arr.filter((r) => filters.every((f) => f(r)));
+        (state as any)[table] = arr.filter((r) => !filters.every((f) => f(r)));
+        // With .select() PostgREST returns the deleted rows; without it, nothing.
+        return { data: selectedAfterWrite ? gone : null, error: null, count: gone.length };
       }
       const matched = rows();
       if (countMode) return { data: null, error: null, count: matched.length };

@@ -217,45 +217,120 @@ async function canReadMemory(
     return false;
   }
 
+  // EVERY GATE READ BELOW BINDS AND INSPECTS `.error`.
+  //
+  // supabase-js RESOLVES on a database error, so the old `Boolean(data)` /
+  // `if (!data) return false` forms turned an unreadable follow graph, crew or
+  // circle into a confident "not permitted". The DENIAL is right — withholding
+  // is the safe answer — but it was indistinguishable from a real one at every
+  // level: no different value, no log, nothing an operator could see. These are
+  // the four entries routes/memories.ts carries on the unchecked-reads ledger.
+  //
+  // The verdict is deliberately unchanged (still `false`), because this helper
+  // is called per-row across the discovery feed and the profile listing, where
+  // a per-row "undecidable" has no honest rendering. What changes is that the
+  // failure is now VISIBLE.
+  const denyUnreadable = (table: string, err: unknown): false => {
+    logger.error(
+      { err, table, memoryId: memory?.id, viewerId, visibility: vis, surface },
+      "memories: visibility gate read failed — withholding the memory (indistinguishable from a real deny in the response)",
+    );
+    return false;
+  };
+
   if (vis === "friends_only") {
-    const { data } = await sc
+    const { data, error } = await sc
       .from("user_follows")
       .select("following_id")
       .eq("follower_id", memory.owner_id)
       .eq("following_id", viewerId)
       .maybeSingle();
+    if (error) return denyUnreadable("user_follows", error);
     if (!data) return false;
-    const { data: back } = await sc
+    const { data: back, error: backErr } = await sc
       .from("user_follows")
       .select("following_id")
       .eq("follower_id", viewerId)
       .eq("following_id", memory.owner_id)
       .maybeSingle();
+    if (backErr) return denyUnreadable("user_follows", backErr);
     return Boolean(back);
   }
 
   if (vis === "trip_crew") {
     if (!memory.trip_id) return false;
-    const { data } = await sc
-      .from("trip_members")
-      .select("user_id")
-      .eq("trip_id", memory.trip_id)
-      .eq("user_id", viewerId)
-      .maybeSingle();
-    return Boolean(data);
+    // THE OLD PREDICATE WAS `trip_members WHERE trip_id = … AND user_id = viewer`
+    // AND NOTHING ELSE — no role filter, no status filter, and no check on the
+    // MEMORY OWNER at all. Any row admitted: role='invited' (never accepted the
+    // invitation), status='removed' (thrown off the trip), any role whatsoever.
+    // requireTripMember (lib/http.ts, the definition of record) accepts
+    //     role IN (owner, co_host, member, viewer)
+    //     AND (status IS NULL OR status = 'accepted')
+    // and falls back to trips.owner_id when no row exists. Migration 2530
+    // repaired the identical shape in the RLS policy behind highlights;
+    // routes/highlights.ts and routes/stories.ts carry the app-side rule. This
+    // is the third copy, and it was the loosest of the three.
+    const crew = await acceptedCrewOfTrip(sc, memory.trip_id);
+    if (!crew.ok) return denyUnreadable("trip_members", crew.error);
+    return crew.ids.has(viewerId) && crew.ids.has(memory.owner_id as string);
   }
 
   if (vis === "circle_only") {
-    const { data } = await sc
+    const { data, error } = await sc
       .from("circle_memberships")
       .select("other_id")
       .eq("user_id", memory.owner_id)
       .eq("other_id", viewerId)
       .maybeSingle();
+    if (error) return denyUnreadable("circle_memberships", error);
     return Boolean(data);
   }
 
   return false;
+}
+
+/* ============================================================================
+ * Trip crew — requireTripMember's rule, the third app-side copy.
+ *
+ * See the note in canReadMemory's trip_crew branch. The rule is duplicated
+ * rather than imported because that is already this repo's shape for it
+ * (lib/circleAccessGuard.ts, lib/mediaEligibility.ts, routes/geofence.ts,
+ * routes/highlights.ts, routes/stories.ts); one home for all of them is worth
+ * doing and is not this change.
+ *
+ * FAIL CLOSED: both reads check `.error` and the caller withholds.
+ * ============================================================================ */
+const ACCEPTED_TRIP_ROLES = new Set(["owner", "co_host", "member", "viewer"]);
+
+function isAcceptedMembershipRow(r: { role?: string | null; status?: string | null }): boolean {
+  if (!r.role || !ACCEPTED_TRIP_ROLES.has(r.role)) return false;
+  return r.status == null || r.status === "accepted";
+}
+
+/**
+ * The accepted crew of `tripId` — accepted trip_members rows, plus the
+ * trips.owner_id fallback when the owner holds no row (the row wins when one
+ * exists, so an owner whose own row says status='removed' is NOT crew).
+ */
+async function acceptedCrewOfTrip(
+  sc: any,
+  tripId: string,
+): Promise<{ ok: true; ids: Set<string> } | { ok: false; error: unknown }> {
+  const [rows, trip] = await Promise.all([
+    sc.from("trip_members").select("user_id, role, status").eq("trip_id", tripId),
+    sc.from("trips").select("owner_id").eq("id", tripId).maybeSingle(),
+  ]);
+  if (rows.error) return { ok: false, error: rows.error };
+  if (trip.error) return { ok: false, error: trip.error };
+  const ids = new Set<string>();
+  const rowUsers = new Set<string>();
+  for (const r of (rows.data ?? []) as any[]) {
+    rowUsers.add(r.user_id as string);
+    if (isAcceptedMembershipRow(r)) ids.add(r.user_id as string);
+  }
+  const ownerId = (trip.data as any)?.owner_id as string | null | undefined;
+  if (ownerId && !rowUsers.has(ownerId)) ids.add(ownerId);
+  return { ok: true, ids };
 }
 
 /** Check blocks in both directions. Returns true if blocked. */
@@ -823,13 +898,21 @@ router.patch("/memories/:id", async (req, res) => {
 
   const precisionEnabled = await isFlagEnabled(sc, "memory_location_precision_enabled");
 
-  const { data: existing } = await sc
+  // An unreadable `memories` table is not a missing memory: supabase-js RESOLVES
+  // on a DB error, so `const { data: existing }` bound null and this answered
+  // "Memory not found" for an outage. §28.11.
+  const { data: existing, error: existingErr } = await sc
     .from("memories")
     .select("id, owner_id")
     .eq("id", id)
     .neq("state", "deleted")
     .maybeSingle();
 
+  if (existingErr) {
+    req.log.error({ err: existingErr, memoryId: id }, "memories: memory read failed");
+    sendError(res, "db_error", existingErr.message);
+    return;
+  }
   if (!existing) { sendError(res, "not_found", "Memory not found"); return; }
   if ((existing as any).owner_id !== user.id) { sendError(res, "forbidden", "Not your memory"); return; }
 
@@ -883,13 +966,21 @@ router.delete("/memories/:id", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
-  const { data: existing } = await sc
+  // An unreadable `memories` table is not a missing memory: supabase-js RESOLVES
+  // on a DB error, so `const { data: existing }` bound null and this answered
+  // "Memory not found" for an outage. §28.11.
+  const { data: existing, error: existingErr } = await sc
     .from("memories")
     .select("id, owner_id")
     .eq("id", id)
     .neq("state", "deleted")
     .maybeSingle();
 
+  if (existingErr) {
+    req.log.error({ err: existingErr, memoryId: id }, "memories: memory read failed");
+    sendError(res, "db_error", existingErr.message);
+    return;
+  }
   if (!existing) { sendError(res, "not_found", "Memory not found"); return; }
   if ((existing as any).owner_id !== user.id) { sendError(res, "forbidden", "Not your memory"); return; }
 
@@ -900,11 +991,31 @@ router.delete("/memories/:id", async (req, res) => {
   // memories by owner_id with no state filter and removes the items' storage
   // objects, so soft-deleted memories are hard-erased when the account goes
   // (audit MEM·H2).
-  await sc
+  // THE WRITE THAT MAKES THE DELETION REAL, AND ITS RESULT WAS THROWN AWAY.
+  //
+  // No `error` binding and no `.select()`: supabase-js RESOLVES on a failure, so
+  // a rejected update produced 204 "deleted" for a memory still published, still
+  // on the owner's profile and still in the discovery feed. An UPDATE without
+  // .select() also returns `data: null`, so even a bound `error` would not have
+  // said whether any row was touched. `.select("id")` is what turns this into an
+  // answer. Deleting your own content is the operation that must not lie.
+  const { data: deleted, error: delErr } = await sc
     .from("memories")
     .update({ state: "deleted", updated_at: new Date().toISOString() })
     .eq("id", id)
-    .eq("owner_id", user.id);
+    .eq("owner_id", user.id)
+    .select("id");
+
+  if (delErr) {
+    req.log.error({ err: delErr, memoryId: id }, "memories: delete failed");
+    sendError(res, "db_error", delErr.message);
+    return;
+  }
+  if (!deleted || (deleted as any[]).length === 0) {
+    req.log.error({ memoryId: id, ownerId: user.id }, "memories: delete matched zero rows — memory NOT deleted");
+    sendError(res, "db_error", "The memory could not be deleted. Please try again.", { exposeDetail: true });
+    return;
+  }
 
   res.status(204).send();
 });
@@ -928,13 +1039,21 @@ router.post("/memories/:id/items", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
-  const { data: existing } = await sc
+  // An unreadable `memories` table is not a missing memory: supabase-js RESOLVES
+  // on a DB error, so `const { data: existing }` bound null and this answered
+  // "Memory not found" for an outage. §28.11.
+  const { data: existing, error: existingErr } = await sc
     .from("memories")
     .select("id, owner_id")
     .eq("id", id)
     .neq("state", "deleted")
     .maybeSingle();
 
+  if (existingErr) {
+    req.log.error({ err: existingErr, memoryId: id }, "memories: memory read failed");
+    sendError(res, "db_error", existingErr.message);
+    return;
+  }
   if (!existing) { sendError(res, "not_found", "Memory not found"); return; }
   if ((existing as any).owner_id !== user.id) { sendError(res, "forbidden", "Not your memory"); return; }
 
@@ -968,13 +1087,21 @@ router.delete("/memories/:id/items/:itemId", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
-  const { data: existing } = await sc
+  // An unreadable `memories` table is not a missing memory: supabase-js RESOLVES
+  // on a DB error, so `const { data: existing }` bound null and this answered
+  // "Memory not found" for an outage. §28.11.
+  const { data: existing, error: existingErr } = await sc
     .from("memories")
     .select("id, owner_id")
     .eq("id", id)
     .neq("state", "deleted")
     .maybeSingle();
 
+  if (existingErr) {
+    req.log.error({ err: existingErr, memoryId: id }, "memories: memory read failed");
+    sendError(res, "db_error", existingErr.message);
+    return;
+  }
   if (!existing) { sendError(res, "not_found", "Memory not found"); return; }
   if ((existing as any).owner_id !== user.id) { sendError(res, "forbidden", "Not your memory"); return; }
 
@@ -988,8 +1115,25 @@ router.delete("/memories/:id/items/:itemId", async (req, res) => {
 
   if (!item) { sendError(res, "not_found", "Item not found"); return; }
 
-  // Delete the DB row first so the item is immediately inaccessible
-  await sc.from("memory_items").delete().eq("id", itemId).eq("memory_id", id);
+  // Delete the DB row first so the item is immediately inaccessible.
+  //
+  // The result of this delete was discarded, and the storage object is removed
+  // UNCONDITIONALLY below. So a failed row delete did not merely leave the item
+  // in place: it left the row pointing at bytes that had just been erased, i.e.
+  // a permanently broken item in the memory, and answered 204. Ordering makes
+  // the check load-bearing — nothing downstream can repair it.
+  const { data: removed, error: rmErr } = await sc
+    .from("memory_items").delete().eq("id", itemId).eq("memory_id", id).select("id");
+  if (rmErr) {
+    req.log.error({ err: rmErr, memoryId: id, itemId }, "memories: item delete failed — storage object left in place");
+    sendError(res, "db_error", rmErr.message);
+    return;
+  }
+  if (!removed || (removed as any[]).length === 0) {
+    req.log.error({ memoryId: id, itemId }, "memories: item delete matched zero rows — storage object left in place");
+    sendError(res, "db_error", "The item could not be removed. Please try again.", { exposeDetail: true });
+    return;
+  }
 
   // Delete the storage object — derive path from public URL.
   // URL format: https://<host>/storage/v1/object/public/post-media/<path>
@@ -1033,13 +1177,18 @@ router.get("/memories/:id/tags", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
-  const { data: memory } = await sc
+  const { data: memory, error: memoryErr } = await sc
     .from("memories")
     .select("id, owner_id, visibility, state")
     .eq("id", id)
     .neq("state", "deleted")
     .maybeSingle();
 
+  if (memoryErr) {
+    req.log.error({ err: memoryErr, memoryId: id }, "memories: memory read failed");
+    sendError(res, "db_error", memoryErr.message);
+    return;
+  }
   if (!memory) { sendError(res, "not_found", "Memory not found"); return; }
 
   const isOwner = memory.owner_id === user.id;
@@ -1101,13 +1250,23 @@ router.patch("/memories/:id/tags/:userId", async (req, res) => {
 
   const newStatus = parsed.data.action === "approve" ? "approved" : "removed";
 
-  const { error } = await sc
+  // `.select()`: an UPDATE without it returns data:null, so `error === null` did
+  // not mean a row changed. Approving or removing your own tag on somebody
+  // else's Memory is a consent decision; reporting it as applied when nothing
+  // was written leaves the tag standing while the person believes it is gone.
+  const { data: updatedTag, error } = await sc
     .from("memory_tags")
     .update({ status: newStatus })
     .eq("memory_id", id)
-    .eq("tagged_user_id", user.id);
+    .eq("tagged_user_id", user.id)
+    .select("memory_id");
 
-  if (error) { sendError(res, "db_error", error.message); return; }
+  if (error) { req.log.error({ err: error, memoryId: id }, "memories: tag update failed"); sendError(res, "db_error", error.message); return; }
+  if (!updatedTag || (updatedTag as any[]).length === 0) {
+    req.log.error({ memoryId: id, userId: user.id, newStatus }, "memories: tag update matched zero rows — the tag is unchanged");
+    sendError(res, "db_error", "Your tag could not be updated. Please try again.", { exposeDetail: true });
+    return;
+  }
 
   res.json({ status: newStatus });
 });
@@ -1125,13 +1284,18 @@ router.post("/memories/:id/like", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
-  const { data: memory } = await sc
+  const { data: memory, error: memoryErr } = await sc
     .from("memories")
     .select("id, owner_id, visibility, allowed_user_ids, hidden_user_ids, trip_id, state")
     .eq("id", id)
     .neq("state", "deleted")
     .maybeSingle();
 
+  if (memoryErr) {
+    req.log.error({ err: memoryErr, memoryId: id }, "memories: memory read failed");
+    sendError(res, "db_error", memoryErr.message);
+    return;
+  }
   if (!memory) { sendError(res, "not_found", "Memory not found"); return; }
 
   if (memory.owner_id !== user.id) {
@@ -1150,14 +1314,15 @@ router.post("/memories/:id/like", async (req, res) => {
     return;
   }
 
-  const { count } = await sc.from("memory_likes").select("memory_id", { count: "exact", head: true }).eq("memory_id", id);
+  const { count, error: countErr } = await sc.from("memory_likes").select("memory_id", { count: "exact", head: true }).eq("memory_id", id);
+  if (countErr) req.log.warn({ err: countErr, memoryId: id }, "memories: like count unreadable after a successful like");
 
   notifyLike(sc, id, memory.owner_id, user.id);
 
   // Phase 14 — link like back to the originating Compass recommendation.
   void linkOutcomeSignal(sc, user.id, id, "liked", "route:memory_like");
 
-  res.json({ likedByMe: true, likeCount: count ?? 0 });
+  res.json({ likedByMe: true, likeCount: countErr ? null : (count ?? 0) });
 });
 
 // ── DELETE /memories/:id/like ─────────────────────────────────────────────────
@@ -1173,11 +1338,22 @@ router.delete("/memories/:id/like", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
-  await sc.from("memory_likes").delete().eq("memory_id", id).eq("user_id", user.id);
+  // Discarded, so a failed delete answered 200 { likedByMe: false } with the
+  // like still stored — the client renders an empty heart until the next
+  // refresh contradicts it.
+  const { error: unlikeErr } = await sc
+    .from("memory_likes").delete().eq("memory_id", id).eq("user_id", user.id);
+  if (unlikeErr) {
+    req.log.error({ err: unlikeErr, memoryId: id }, "memories: unlike write failed");
+    sendError(res, "db_error", "Could not remove the like. Please try again.", { exposeDetail: true });
+    return;
+  }
 
-  const { count } = await sc.from("memory_likes").select("memory_id", { count: "exact", head: true }).eq("memory_id", id);
+  // `count ?? 0` on an errored count is a fabricated zero; report null instead.
+  const { count, error: countErr } = await sc.from("memory_likes").select("memory_id", { count: "exact", head: true }).eq("memory_id", id);
+  if (countErr) req.log.warn({ err: countErr, memoryId: id }, "memories: like count unreadable after a successful unlike");
 
-  res.json({ likedByMe: false, likeCount: count ?? 0 });
+  res.json({ likedByMe: false, likeCount: countErr ? null : (count ?? 0) });
 });
 
 // ── POST /memories/:id/save ───────────────────────────────────────────────────
@@ -1193,13 +1369,18 @@ router.post("/memories/:id/save", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
-  const { data: memory } = await sc
+  const { data: memory, error: memoryErr } = await sc
     .from("memories")
     .select("id, owner_id, visibility, allowed_user_ids, hidden_user_ids, trip_id, state")
     .eq("id", id)
     .neq("state", "deleted")
     .maybeSingle();
 
+  if (memoryErr) {
+    req.log.error({ err: memoryErr, memoryId: id }, "memories: memory read failed");
+    sendError(res, "db_error", memoryErr.message);
+    return;
+  }
   if (!memory) { sendError(res, "not_found", "Memory not found"); return; }
 
   if (memory.owner_id !== user.id) {
@@ -1234,7 +1415,13 @@ router.delete("/memories/:id/save", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
-  await sc.from("memory_saves").delete().eq("memory_id", id).eq("user_id", user.id);
+  const { error: unsaveErr } = await sc
+    .from("memory_saves").delete().eq("memory_id", id).eq("user_id", user.id);
+  if (unsaveErr) {
+    req.log.error({ err: unsaveErr, memoryId: id }, "memories: unsave write failed");
+    sendError(res, "db_error", "Could not remove the save. Please try again.", { exposeDetail: true });
+    return;
+  }
 
   res.json({ savedByMe: false });
 });
