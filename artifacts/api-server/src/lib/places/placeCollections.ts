@@ -235,13 +235,36 @@ export async function enqueueLivingCacheInvalidation(
   const client = sc ?? getServiceClient();
   if (!client) return;
   try {
-    await client
+    // supabase-js resolves on a database error, so this `catch` was dead code
+    // for a refused enqueue and the queue row could fail to appear on every
+    // call with nothing to show for it.
+    //
+    // What that costs, stated precisely rather than dramatically: the precompute
+    // worker never rebuilds place_best_of / place_living_cache for this place,
+    // so the page keeps serving whatever was last computed until the next
+    // successful enqueue. It is a FRESHNESS failure, not a disclosure one — the
+    // living page is read through its own cached_at revalidation and the
+    // visibility filters run when the payload is assembled, so a stale entry
+    // cannot surface something the current filters would withhold. Still
+    // best-effort; no longer silent.
+    const { error } = await client
       .from("place_cache_invalidation_queue")
       .upsert(
         { place_id: placeId, queued_at: new Date().toISOString(), status: "pending" },
         { onConflict: "place_id" },
       );
-  } catch {
-    // best-effort
+    if (error) {
+      const { logger } = await import("../logger.js");
+      logger.warn(
+        { err: error, placeId, code: "living_cache_enqueue_failed" },
+        "enqueueLivingCacheInvalidation: queue row not written — this place will not be recomputed",
+      );
+    }
+  } catch (err) {
+    const { logger } = await import("../logger.js");
+    logger.warn(
+      { err, placeId, code: "living_cache_enqueue_failed" },
+      "enqueueLivingCacheInvalidation: enqueue threw — this place will not be recomputed",
+    );
   }
 }

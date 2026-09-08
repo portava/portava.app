@@ -1038,14 +1038,33 @@ router.post("/hidden-gems/:id/verify-visit", async (req, res) => {
           const gem = await getGem(sc, req.params.id);
           if (!gem) return;
 
-          // Insert a Pulse post tagged to the gem's city — no exact coords
-          await sc.from("posts").insert({
+          // Insert a Pulse post tagged to the gem's city — no exact coords.
+          //
+          // supabase-js resolves on a database error, so the `catch` below was
+          // dead code for a refused insert. The cost is user-visible and was
+          // invisible to us: the traveller checked in, the response said the
+          // check-in succeeded (it did), and the post they expect to see on
+          // Pulse simply never exists. Non-fatal by design — the check-in is the
+          // action, the post is a side effect, and failing the request over it
+          // would be worse — but no longer silent.
+          const { error: postErr } = await sc.from("posts").insert({
             author_id: user.id,
             content: `Just verified a hidden gem: "${(gem as any).name}" in ${(gem as any).city} 📍`,
             visibility: "public",
             category: "hidden_gem_checkin",
           });
-        } catch { /* non-fatal */ }
+          if (postErr) {
+            req.log?.warn(
+              { err: postErr, gemId: req.params.id, userId: user.id, code: "gem_checkin_pulse_post_failed" },
+              "hiddenGems: check-in Pulse post not written — the check-in itself still stands",
+            );
+          }
+        } catch (err) {
+          req.log?.warn(
+            { err, gemId: req.params.id, userId: user.id, code: "gem_checkin_pulse_post_failed" },
+            "hiddenGems: check-in Pulse post threw — the check-in itself still stands",
+          );
+        }
       })();
     }
 

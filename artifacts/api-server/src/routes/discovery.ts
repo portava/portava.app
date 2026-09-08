@@ -70,6 +70,7 @@ import { annotateNewToMe, recordDiscoveryAlreadyKnown } from "../lib/placeIdBrid
 // (2361, seeded OFF): with the flag off withDiscoveryCandidates returns the very
 // array it was handed, so the served JSON is byte-identical.
 import { withDiscoveryCandidates } from "../lib/discoveryCandidate.js";
+import { logger } from "../lib/logger.js";
 
 const router = Router();
 
@@ -939,7 +940,24 @@ async function queryDbPlaces(
       // size. Cap to 60 AFTER filtering (discovery_places is small, so 200 is cheap).
       .limit(200);
 
-    if (error || !data) return [];
+    // "no community places in this city" and "discovery_places could not be
+    // read" are the same empty array to every caller of this funnel. The
+    // DIRECTION is left alone and is defensible: the discovery feed merges this
+    // half with OSM/Foursquare results, so an unreadable community table costs
+    // the feed its community rows and never renders the page as "there is
+    // nothing here" — and failing the whole request over it would be worse.
+    //
+    // What was not defensible is that it was SILENT. A city whose community rows
+    // stopped appearing looks exactly like a city that has none, from the
+    // outside and from the inside alike. The refusal stands; it now says so.
+    if (error) {
+      logger.warn(
+        { err: error, code: "discovery_places_read_failed", city: cityBase, category },
+        "discovery: discovery_places read failed — this request serves external results only",
+      );
+      return [];
+    }
+    if (!data) return [];
 
     const dbPlaces = (data as any[])
       .filter((row: any) => {
@@ -1085,7 +1103,18 @@ async function queryCanonicalPlaces(
     // Deterministic order so pagination/results are stable across requests.
     const { data, error } = await q.order("normalized_name", { ascending: true }).limit(400);
 
-    if (error || !data) return [];
+    // Same call as queryDbPlaces above, on the canonical `places` table: an
+    // unreadable table and a city with no canonical places are one empty array.
+    // The direction stands (the feed still merges external results, so this is
+    // never a "nothing here" claim); the silence does not.
+    if (error) {
+      logger.warn(
+        { err: error, code: "canonical_places_read_failed", city: cityBase, category },
+        "discovery: places read failed — this request serves external results only",
+      );
+      return [];
+    }
+    if (!data) return [];
 
     return (data as any[])
       .filter((row: any) => {

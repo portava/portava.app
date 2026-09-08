@@ -7,6 +7,9 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { recordTrustEvent } from "../trust/TrustEventService.js";
+import { logger as rootLogger } from "../../lib/logger.js";
+
+const logger = rootLogger.child({ service: "LocalGuideService" });
 
 /**
  * Compute guide level 0-5 from stats.
@@ -203,7 +206,12 @@ export async function recomputeGuideAccuracy(
       (profile as any).helpful_votes ?? 0,
       accuracy,
     );
-    await db
+    // supabase-js resolves on a database error, so the `catch` below never fired
+    // for a refused write: a guide's accuracy_score and level could silently stop
+    // moving, which reads from the outside as a guide whose accuracy simply never
+    // changes. Still non-fatal (the caller's moderation action must succeed
+    // regardless), now reported.
+    const { error: levelErr } = await db
       .from("local_guide_profiles")
       .update({
         accuracy_score: accuracy,
@@ -211,8 +219,17 @@ export async function recomputeGuideAccuracy(
         updated_at: new Date().toISOString(),
       })
       .eq("user_id", guideId);
-  } catch {
-    /* non-fatal — the caller's moderation action must still succeed */
+    if (levelErr) {
+      logger.warn(
+        { err: levelErr, guideId, accuracy, newLevel, code: "guide_level_update_failed" },
+        "recomputeGuideAccuracy: guide level/accuracy not written — the moderation action still stands",
+      );
+    }
+  } catch (err) {
+    logger.warn(
+      { err, guideId, code: "guide_level_update_failed" },
+      "recomputeGuideAccuracy: guide level/accuracy update threw — the moderation action still stands",
+    );
   }
 
   return accuracy;
