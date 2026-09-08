@@ -303,7 +303,11 @@ before(async () => {
     next();
   });
   app.use("/api", messagingRouter);
-  await new Promise<void>((resolve) => { server = app.listen(0, "127.0.0.1", resolve); });
+  // `resolve` takes an argument; Express's listen callback is declared `() => void`,
+  // so it is wrapped rather than passed. The bind must still be awaited THROUGH the
+  // listening callback — passing the address makes it deferred, and a test that
+  // reads server.address() before it fires gets null.
+  await new Promise<void>((resolve) => { server = app.listen(0, "127.0.0.1", () => resolve()); });
   const addr = server.address() as { port: number };
   base = `http://127.0.0.1:${addr.port}`;
 });

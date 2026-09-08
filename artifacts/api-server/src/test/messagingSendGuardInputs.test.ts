@@ -194,7 +194,10 @@ before(async () => {
     next();
   });
   app.use("/api", messagingRouter);
-  await new Promise<void>((r) => { server = app.listen(0, "127.0.0.1", r); });
+  // Wrapped for the same reason as the sibling suites: the listen callback is
+  // typed `() => void` and a promise resolver is not. Still awaited through the
+  // listening callback, which is what makes server.address() safe below.
+  await new Promise<void>((r) => { server = app.listen(0, "127.0.0.1", () => r()); });
   base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
 });
 

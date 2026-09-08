@@ -6,7 +6,7 @@
     "baseline never sits above reality. Do not hand-edit."
   ],
   "project": "artifacts/api-server/tsconfig.test.json",
-  "total": 880,
+  "total": 878,
   "files": {
     "src/test/accessControl.test.ts": 1,
     "src/test/accountDeletionCascade.test.ts": 1,
@@ -47,7 +47,6 @@
     "src/test/discoveryServePointReport.test.ts": 2,
     "src/test/discoveryShadow.test.ts": 7,
     "src/test/entryRequirements.test.ts": 20,
-    "src/test/eventWaitlistSweeper.test.ts": 2,
     "src/test/events.test.ts": 2,
     "src/test/featured.test.ts": 1,
     "src/test/friendRequestReactivate.test.ts": 1,
