@@ -45,7 +45,25 @@
  *   9.  a state classified more reachable than its own best writer;
  *   10. a scheduler-driven transition whose scheduler is never started;
  *   11. the PIN below;
- *   12. vacuity.
+ *   12. vacuity;
+ *   13. a writer, consumer or hold-flag reader whose only mention of the thing
+ *       it is cited for is inside a COMMENT;
+ *   14. an RPC writer whose sqlFile merely NAMES the function instead of
+ *       defining it;
+ *   15. a column-DEFAULT writer whose evidence does not quote the one insert it
+ *       is a claim about, or whose CREATE TABLE does not give that column that
+ *       default;
+ *   16. a derived lifecycle whose declared accessor no writer of the machine
+ *       defines.
+ *
+ * ── EVERY QUESTION HERE IS A QUESTION ABOUT CODE ─────────────────────────────
+ * Rules 4, 5 and 8 used to be `rawFileText.includes(…)`, which is the same
+ * mistake `callsFunction` was extracted to fix in rule 10 and which six guards
+ * in this tree have now shipped: a commented-out write, a state named only in
+ * prose and a flag mentioned in a docblock all counted. They are read through
+ * `codeOnly` now. Rules 14 and 16 go one step further and mask string CONTENTS
+ * as well, because "is this DEFINED here?" must not be answered by a name that
+ * appears inside a log message, a GRANT or another function's quoted body.
  *
  * ── THE PIN ──────────────────────────────────────────────────────────────────
  * `events.state = 'started'` must be classified OWNER_BLOCKED, naming
@@ -98,9 +116,9 @@ const SRC = process.env.STATE_MACHINE_SRC ? resolve(process.env.STATE_MACHINE_SR
 
 /** Non-vacuity floors. A check that examines nothing must not report success. */
 const MIN_FILES_SCANNED = 100;
-const MIN_MACHINES = 4;
-const MIN_STATES = 25;
-const MIN_TRANSITIONS = 20;
+const MIN_MACHINES = 6;
+const MIN_STATES = 40;
+const MIN_TRANSITIONS = 40;
 /** A reason that does not say anything is not a reason. */
 const MIN_REASON = 40;
 
@@ -202,6 +220,178 @@ export function mirrorStates(ts: string, symbol: string): string[] | null {
  */
 export { callsFunction };
 
+// ── code-aware reading ───────────────────────────────────────────────────────
+
+/**
+ * WHY THIS FILE HAS ITS OWN SCANNER AS WELL AS `stripComments`.
+ *
+ * Every question this guard asks about a file is a question about CODE, and the
+ * family bug it was born from is answering one of those by matching RAW TEXT.
+ * `callsFunction` (built on `src/scripts/lib/stripComments.ts`) fixed that for
+ * "is this scheduler started?". Rules 4, 5 and 8 still used `text.includes(…)`
+ * on the raw file, so a writer that had been commented out, a consumer that
+ * only NAMES the state in prose, and a hold flag mentioned in a docblock all
+ * still counted. Those are the same defect wearing different hats.
+ *
+ * `stripComments` alone cannot be used for them, and this was measured rather
+ * than assumed: it looks for `/*` BEFORE `//` on each line, so the perfectly
+ * ordinary line
+ *
+ *     // client's /api/buddy-bookings(star) URLs reach them through …
+ *
+ * in `routes/rentABuddySpec.ts:852` opens a block comment that never closes on
+ * that line, and everything down to the next `(star)/` — 1400 lines, including the
+ * dispute-resolution writer this registry cites — vanishes. Its own header
+ * calls that direction deliberate and safe, and for "is this called?" it is: a
+ * false NO fails loudly. For "does this writer still exist?" a false NO is a
+ * guard that goes red on correct code, which gets it deleted.
+ *
+ * So this scanner walks the file once, in order, and decides at each position
+ * whether it is inside a line comment, a block comment or a string — which is
+ * the only way `//` inside a string and `/*` inside a `//` both come out right.
+ * It replaces removed text with spaces rather than deleting it, so offsets and
+ * line numbers survive.
+ *
+ * `maskStrings` is the DEFINITION/OCCURRENCE distinction:
+ *
+ *   false  strings are kept. "Does this file contain this write?" — the write
+ *          IS a string (`.update({ status: "expired" … })`), so masking it
+ *          would delete the very evidence being looked for.
+ *   true   string CONTENTS are blanked. "Does this file DEFINE this function?"
+ *          — a name inside a log message, an error string or a SQL body quoted
+ *          into another statement is a mention, not a definition, and the whole
+ *          point of the question is to tell those apart.
+ */
+type Lang = "ts" | "sql";
+
+export function codeOnly(text: string, lang: Lang, maskStrings: boolean): string {
+  const out = text.split("");
+  const n = text.length;
+  const blank = (a: number, b: number): void => {
+    for (let k = Math.max(a, 0); k < Math.min(b, n); k++) if (out[k] !== "\n") out[k] = " ";
+  };
+  let i = 0;
+  while (i < n) {
+    const c = text[i]!;
+    const d = text[i + 1];
+    // line comment: `//` in TS, `--` in SQL
+    if ((lang === "ts" && c === "/" && d === "/") || (lang === "sql" && c === "-" && d === "-")) {
+      let j = text.indexOf("\n", i);
+      if (j === -1) j = n;
+      blank(i, j);
+      i = j;
+      continue;
+    }
+    // block comment (both languages)
+    if (c === "/" && d === "*") {
+      const end = text.indexOf("*/", i + 2);
+      const j = end === -1 ? n : end + 2;
+      blank(i, j);
+      i = j;
+      continue;
+    }
+    // dollar-quoted SQL body: $$ … $$ or $tag$ … $tag$
+    if (lang === "sql" && c === "$") {
+      const m = /^\$(?:[A-Za-z_]\w*)?\$/.exec(text.slice(i, i + 64));
+      if (m) {
+        const tag = m[0];
+        const end = text.indexOf(tag, i + tag.length);
+        const bodyEnd = end === -1 ? n : end;
+        if (maskStrings) blank(i + tag.length, bodyEnd);
+        i = end === -1 ? n : end + tag.length;
+        continue;
+      }
+    }
+    if (c === "'" || c === '"' || (lang === "ts" && c === "`")) {
+      let j = i + 1;
+      while (j < n) {
+        const q = text[j]!;
+        if (lang === "ts" && q === "\\") { j += 2; continue; }
+        // SQL escapes a quote by doubling it
+        if (lang === "sql" && q === c && text[j + 1] === c) { j += 2; continue; }
+        if (q === c) { j += 1; break; }
+        // an unterminated single/double-quoted literal must not swallow the file
+        if (q === "\n" && c !== "`") { break; }
+        j += 1;
+      }
+      if (maskStrings) blank(i + 1, j - 1);
+      i = j;
+      continue;
+    }
+    i += 1;
+  }
+  return out.join("");
+}
+
+/** Comments gone, strings kept — for "does this file contain this write?". */
+export function codeText(text: string, lang: Lang = "ts"): string {
+  return codeOnly(text, lang, false);
+}
+
+/**
+ * Is `name` DEFINED as a function in this TypeScript — not merely called,
+ * imported or mentioned?
+ *
+ * A DEFINITION question, so string CONTENTS are masked as well as comments:
+ * `"export async function getRestrictionState("` appears inside this guard's
+ * own test fixtures as a string, and a rule that accepted that would let a
+ * registry point its accessor at any file that happens to quote the signature.
+ */
+export function definesTsFunction(ts: string, name: string): boolean {
+  const body = codeOnly(ts, "ts", true);
+  const n = name.replace(/[.$*+?()[\]{}|^\\]/g, "\\$&");
+  return new RegExp(
+    `(?:export\\s+)?(?:default\\s+)?(?:async\\s+)?function\\s*\\*?\\s*${n}\\s*[(<]` +
+      `|(?:const|let|var)\\s+${n}\\s*(?::[^=;]+)?=\\s*(?:async\\s*)?(?:function|\\()`,
+  ).test(body);
+}
+
+/**
+ * Is `name` DEFINED as a SQL function here — not merely named?
+ *
+ * `sql.includes(name)` was the old rule, and an RPC name appears in a comment
+ * above the function, in a GRANT, in a RAISE NOTICE and inside any other
+ * function's quoted body. None of those is a definition; a registry entry whose
+ * `via` was renamed would still have passed on the leftover GRANT line. Comments
+ * are dropped and string / dollar-quoted BODIES are blanked before the match, so
+ * only a real `CREATE [OR REPLACE] FUNCTION <name>(` counts.
+ */
+export function definesSqlFunction(sql: string, name: string): boolean {
+  const bare = name.replace(/^public\./, "");
+  const re = new RegExp(
+    `CREATE\\s+(?:OR\\s+REPLACE\\s+)?FUNCTION\\s+(?:[A-Za-z_]\\w*\\s*\\.\\s*)?${bare.replace(/[.$*+?()[\]{}|^\\]/g, "\\$&")}\\s*\\(`,
+    "i",
+  );
+  return re.test(codeOnly(sql, "sql", true));
+}
+
+/**
+ * The `CREATE TABLE <table> ( … )` block, or null.
+ *
+ * Used so a column DEFAULT is read from the RIGHT table: `DEFAULT 'active'` on a
+ * `status` column occurs twice in 0167 (sessions and live shares) and matching
+ * the file as a whole would let either entry vouch for the other.
+ */
+export function createTableBlock(sql: string, table: string): string | null {
+  const re = new RegExp(`CREATE TABLE\\s+(?:IF NOT EXISTS\\s+)?(?:public\\s*\\.\\s*)?${table}\\b`, "i");
+  const m = re.exec(sql);
+  if (!m) return null;
+  const from = m.index;
+  const end = sql.indexOf("\n);", from);
+  return sql.slice(from, end === -1 ? sql.length : end + 3);
+}
+
+/** Does the CREATE TABLE block give `column` a DDL DEFAULT of `state`? */
+export function columnDefaultsTo(block: string, column: string, state: string): boolean {
+  const body = codeOnly(block, "sql", false);
+  const re = new RegExp(`\\b${column}\\b[^,\\n]*DEFAULT\\s+'${state}'`, "i");
+  for (const line of body.split("\n")) if (re.test(line)) return true;
+  // pg_dump writes `status text DEFAULT 'pending'::text NOT NULL,` on one line;
+  // a hand-written migration may wrap. Fall back to the whole block, still
+  // scoped to this table.
+  return new RegExp(`\\b${column}\\b[\\s\\S]{0,120}?DEFAULT\\s+'${state}'`, "i").test(body);
+}
+
 // ── the check ────────────────────────────────────────────────────────────────
 
 function main(): void {
@@ -265,6 +455,23 @@ function main(): void {
       }
       if (m.vocabulary.columns.length === 0) {
         problems.push(`${m.key}: derived lifecycle declares no columns, so nothing about it is checkable.`);
+      }
+      // An accessor is only a stand-in for the missing state name if it really
+      // exists — and it must be defined by this machine's OWN writers, so the
+      // registry cannot borrow an unrelated function's name to excuse a consumer.
+      for (const acc of m.vocabulary.accessors ?? []) {
+        const homes = [...new Set(m.transitions.map((t) => t.writer.file))];
+        const defined = homes.some((f) => {
+          const text = note(join(SRC, f));
+          return text !== null && definesTsFunction(text, acc);
+        });
+        if (!defined) {
+          problems.push(
+            `${m.key}: derived accessor ${acc} is not DEFINED in any of this machine's writer files ` +
+              `(${homes.join(", ")}). An accessor that does not exist cannot stand in for a state name ` +
+              `that does not exist either.`,
+          );
+        }
       }
     }
 
@@ -344,16 +551,23 @@ function main(): void {
       }
 
       const wAbs = join(SRC, t.writer.file);
-      const wText = note(wAbs);
-      if (wText === null) {
+      const wRaw = note(wAbs);
+      // Rule 4 asks whether the WRITE is still there. A commented-out write is
+      // not a write — that is the whole family bug — so the question is put to
+      // the code, with string literals kept, because the write IS a literal.
+      const wText = wRaw === null ? null : codeText(wRaw, wAbs.endsWith(".sql") ? "sql" : "ts");
+      if (wText === null || wRaw === null) {
         problems.push(`${label}: declared writer ${t.writer.file} does not exist.`);
       } else {
         for (const ev of t.writer.evidence) {
           if (!wText.includes(ev)) {
             problems.push(
-              `${label}: ${t.writer.file} no longer contains ${JSON.stringify(ev)}. ` +
-                `Either the writer moved and the registry is stale, or the transition was removed and ` +
-                `"${t.to}" just became unreachable without anything else noticing.`,
+              wRaw.includes(ev)
+                ? `${label}: ${t.writer.file} contains ${JSON.stringify(ev)} only inside a COMMENT. ` +
+                    `A commented-out write is not a writer, and "${t.to}" is unreachable through it.`
+                : `${label}: ${t.writer.file} no longer contains ${JSON.stringify(ev)}. ` +
+                    `Either the writer moved and the registry is stale, or the transition was removed and ` +
+                    `"${t.to}" just became unreachable without anything else noticing.`,
             );
           }
         }
@@ -373,8 +587,14 @@ function main(): void {
             if (sText === null) {
               problems.push(`${label}: ${t.writer.sqlFile} (which should define ${t.writer.via}) does not exist.`);
             } else {
-              if (!sText.includes(t.writer.via)) {
-                problems.push(`${label}: ${t.writer.sqlFile} does not define ${t.writer.via}.`);
+              // A DEFINITION question: the name must be CREATEd here, not merely
+              // named in a comment, a GRANT or another function's quoted body.
+              if (!definesSqlFunction(sText, t.writer.via)) {
+                problems.push(
+                  `${label}: ${t.writer.sqlFile} does not DEFINE ${t.writer.via} ` +
+                    `(no CREATE [OR REPLACE] FUNCTION for it outside comments and string bodies). ` +
+                    `${sText.includes(t.writer.via) ? "The name does appear there — as a mention, which is not a writer." : ""}`,
+                );
               }
               // A derived lifecycle has no state literal to find in SQL.
               if (m.vocabulary.kind !== "derived" && !sText.includes(`'${t.to}'`)) {
@@ -383,6 +603,57 @@ function main(): void {
                     `An RPC named in the registry that does not produce the state is not a writer.`,
                 );
               }
+            }
+          }
+        } else if (t.writer.columnDefault) {
+          // ── the row is created in this state BY THE SCHEMA ──────────────────
+          //
+          // `SafeReturnService.createSession` inserts a `safe_return_sessions`
+          // row and never mentions `status`; the row is `pending` because the
+          // COLUMN says so. The ordinary rule ("evidence must name the state")
+          // cannot be satisfied honestly here, and the only text in that file
+          // naming `pending` is a docblock — so the rule as written invites
+          // exactly the citation this guard exists to refuse: a comment used as
+          // proof of a write. The honest answer is to check the two halves that
+          // are actually true — the writer inserts into the table, and the DDL
+          // gives the column that default — and to check the default INSIDE the
+          // right CREATE TABLE, because `DEFAULT 'active'` on a `status` column
+          // appears twice in 0167 and either table would otherwise vouch for the
+          // other.
+          const cd = t.writer.columnDefault;
+          // ONE evidence entry must contain BOTH the table and the insert,
+          // contiguously. Two separate tokens are not enough and this was
+          // measured: with `.from("safe_return_live_shares")` and `.insert({`
+          // listed as separate evidence, repointing startShare's insert at
+          // another table left the guard GREEN, because both tokens still
+          // occurred elsewhere in a file that reads that table four times. A
+          // column DEFAULT is a claim about ONE statement, so the evidence has
+          // to quote that one statement.
+          if (
+            !t.writer.evidence.some((e) => e.includes(`.from("${m.storage}")`) && e.includes(".insert("))
+          ) {
+            problems.push(
+              `${label}: a column-DEFAULT writer's claim is about ONE statement — that THIS insert goes ` +
+                `into ${m.storage} — so a single evidence entry must quote both ` +
+                `.from("${m.storage}") and .insert( together. Listing them separately passes on any file ` +
+                `that happens to contain each somewhere, which is how a writer repointed at another table ` +
+                `stays green. (A column DEFAULT also applies only on INSERT: an UPDATE that omits the ` +
+                `column leaves the row in whatever state it already had.)`,
+            );
+          }
+          const ddl = note(join(API_ROOT, cd.file));
+          if (ddl === null) {
+            problems.push(`${label}: column-DEFAULT source ${cd.file} does not exist.`);
+          } else {
+            const block = createTableBlock(ddl, m.storage);
+            if (block === null) {
+              problems.push(`${label}: ${cd.file} has no CREATE TABLE ${m.storage}, so its DEFAULT proves nothing here.`);
+            } else if (!columnDefaultsTo(block, cd.column, t.to)) {
+              problems.push(
+                `${label}: ${cd.file}'s CREATE TABLE ${m.storage} does not give ${cd.column} a DEFAULT of ` +
+                  `'${t.to}'. The writer never sets the column, so if the schema default is not "${t.to}" ` +
+                  `then nothing writes "${t.to}" at all and this transition is a fiction.`,
+              );
             }
           }
         } else if (m.vocabulary.kind === "derived") {
@@ -501,10 +772,14 @@ function main(): void {
           const reader = note(join(SRC, h.readBy));
           if (reader === null) {
             problems.push(`${m.key}.${s.name}: hold reader ${h.readBy} does not exist.`);
-          } else if (!reader.includes(h.flag)) {
+          } else if (!codeText(reader).includes(h.flag)) {
             problems.push(
-              `${m.key}.${s.name}: ${h.readBy} never reads ${h.flag}, so the writer is not actually gated ` +
-                `by the flag this entry claims holds it.`,
+              reader.includes(h.flag)
+                ? `${m.key}.${s.name}: ${h.readBy} names ${h.flag} only in a COMMENT. A flag a file talks ` +
+                    `about is not a flag a file reads, and a HOLD claimed on an unread flag is a state ` +
+                    `nothing gates — which is the opposite of a hold.`
+                : `${m.key}.${s.name}: ${h.readBy} never reads ${h.flag}, so the writer is not actually gated ` +
+                    `by the flag this entry claims holds it.`,
             );
           }
         }
@@ -523,15 +798,29 @@ function main(): void {
             `the difference between a gate nobody can open and a label nobody uses.`,
         );
       }
+      // A derived lifecycle's state names appear nowhere in the code, so a
+      // consumer proves itself by reading one of the derivation columns or by
+      // calling one of the declared accessors instead. Requiring the label there
+      // would fail correct code — which is how a guard gets switched off.
+      const derived = m.vocabulary.kind === "derived" ? m.vocabulary : null;
+      const consumerTokens = derived
+        ? [s.name, ...derived.columns, ...(derived.accessors ?? [])]
+        : [s.name];
       for (const c of s.consumers ?? []) {
         const abs = join(SRC, c);
         const text = note(abs);
+        const code = text === null ? "" : codeText(text, abs.endsWith(".sql") ? "sql" : "ts");
         if (text === null) {
           problems.push(`${m.key}.${s.name}: declared consumer ${c} does not exist.`);
-        } else if (!text.includes(s.name)) {
+        } else if (!consumerTokens.some((tok) => code.includes(tok))) {
           problems.push(
-            `${m.key}.${s.name}: declared consumer ${c} never mentions "${s.name}" — it stopped consuming, ` +
-              `or it never did.`,
+            consumerTokens.some((tok) => text.includes(tok))
+              ? `${m.key}.${s.name}: declared consumer ${c} names ${consumerTokens.map((t2) => `"${t2}"`).join(" / ")} ` +
+                  `only in a COMMENT. Prose about a state is not a consumer of it, and a consumer list ` +
+                  `built from prose cannot show what the missing state COSTS — which is the only thing ` +
+                  `the list is for.`
+              : `${m.key}.${s.name}: declared consumer ${c} never mentions ` +
+                  `${consumerTokens.map((t2) => `"${t2}"`).join(" / ")} — it stopped consuming, or it never did.`,
           );
         }
       }

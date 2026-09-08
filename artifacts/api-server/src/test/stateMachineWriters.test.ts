@@ -14,14 +14,24 @@
  */
 import { strict as assert } from "node:assert";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, writeFileSync, mkdirSync, readFileSync } from "node:fs";
+import { cpSync, mkdtempSync, writeFileSync, mkdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { STATE_MACHINES } from "../lib/stateMachines/registry.js";
-import { callsFunction, enumStates, checkStates, mirrorStates } from "../scripts/checkStateMachineWriters.js";
+import {
+  callsFunction,
+  checkStates,
+  codeText,
+  columnDefaultsTo,
+  createTableBlock,
+  definesSqlFunction,
+  definesTsFunction,
+  enumStates,
+  mirrorStates,
+} from "../scripts/checkStateMachineWriters.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const API_ROOT = resolve(HERE, "..", "..");
@@ -358,4 +368,299 @@ test("callsFunction ignores a call that has been commented out", () => {
   assert.equal(callsFunction("  startX(); // was: startY()", "startX"), true);
   // The import alone is not a call.
   assert.equal(callsFunction('import { startX } from "./x.js";', "startX"), false);
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PART TWO — the tree, not the registry
+//
+// Everything above mutates the REGISTRY through the STATE_MACHINE_REGISTRY
+// seam. That proves the rules fire, but it never proves the thing the guard is
+// actually for: that a real edit to real code turns it red. The brief for this
+// guard's predecessor was failed by exactly that gap — the check was green
+// while `startTrustMaintenanceScheduler();` sat commented out in index.ts.
+//
+// So these cases mutate a COPY OF THE TREE and point the checker at it with
+// STATE_MACHINE_SRC. A copy rather than the working tree because several lanes
+// are editing these files concurrently; restoring a file after a spawn would
+// race with them and could silently discard someone's work. The copy is proven
+// faithful first (the control below), so a failure in a mutated copy is a
+// failure the same edit would cause in the real tree.
+// ═══════════════════════════════════════════════════════════════════════════
+
+let TREE: string | null = null;
+function tree(): string {
+  if (TREE === null) {
+    const dst = join(TMP, "tree");
+    cpSync(join(API_ROOT, "src"), dst, { recursive: true });
+    TREE = dst;
+  }
+  return TREE;
+}
+
+/** Edit one file in the copied tree, run the body, then put it back. */
+function withTreeEdit(rel: string, edit: (src: string) => string, body: () => void): void {
+  const p = join(tree(), rel);
+  const original = readFileSync(p, "utf8");
+  const mutated = edit(original);
+  assert.notEqual(mutated, original, `the mutation of ${rel} changed nothing — the fixture is stale`);
+  try {
+    writeFileSync(p, mutated);
+    body();
+  } finally {
+    writeFileSync(p, original);
+  }
+}
+
+test("CONTROL: the copied tree is faithful — the real registry still passes against it", () => {
+  const r = run(null, { STATE_MACHINE_SRC: tree() });
+  assert.equal(r.code, 0, `the copy must behave like the tree it was copied from. Output:\n${r.out}`);
+  assert.ok(r.out.includes("0 MISSING_WRITER"), r.out);
+});
+
+test("MUTATION: deleting a real writer turns the guard red and names the state it stranded", () => {
+  // rentBuddyRequestSweeper is the only thing that expires an unanswered
+  // Rent-a-Buddy request. Delete the write and `expired` has no producer at all.
+  withTreeEdit(
+    "lib/rentBuddyRequestSweeper.ts",
+    (s) => s.replace('.update({ status: "expired", updated_at: now })', ".update({ updated_at: now })"),
+    () => {
+      const r = run(null, { STATE_MACHINE_SRC: tree() });
+      assert.equal(r.code, 1, `deleting a writer must fail the guard. Output:\n${r.out}`);
+      assert.ok(r.out.includes("no longer contains"), r.out);
+      assert.ok(r.out.includes("expired"), r.out);
+    },
+  );
+});
+
+test("MUTATION: COMMENTING a real writer out is caught too — the family bug, in this rule", () => {
+  // The whole point. `text.includes(evidence)` says the write is still there;
+  // it is there as prose. Six guards in this tree shipped this exact mistake.
+  withTreeEdit(
+    "services/safeReturn/SafeReturnService.ts",
+    (s) =>
+      s.replace(
+        '.update({ status: "missed", last_prompt_at: now, updated_at: now })',
+        '// .update({ status: "missed", last_prompt_at: now, updated_at: now })',
+      ),
+    () => {
+      const r = run(null, { STATE_MACHINE_SRC: tree() });
+      assert.equal(r.code, 1, `a commented-out write must fail the guard. Output:\n${r.out}`);
+      assert.ok(r.out.includes("only inside a COMMENT"), r.out);
+      assert.ok(r.out.includes('"missed" is unreachable through it'), r.out);
+    },
+  );
+});
+
+test("MUTATION: commenting out a scheduler start turns the guard red", () => {
+  // The measured regression that produced src/scripts/lib/callsFunction.ts.
+  withTreeEdit(
+    "index.ts",
+    (s) => s.replace("\n  startBuddyRequestSweeper();", "\n  // startBuddyRequestSweeper();"),
+    () => {
+      const r = run(null, { STATE_MACHINE_SRC: tree() });
+      assert.equal(r.code, 1, `an unstarted sweeper must fail the guard. Output:\n${r.out}`);
+      assert.ok(r.out.includes("startBuddyRequestSweeper is never CALLED from index.ts"), r.out);
+    },
+  );
+});
+
+test("MUTATION: deleting the admin dispute-resolution writer strands `cancelled`", () => {
+  // The only producer of bare `cancelled` on a booking. rentABuddySpec.ts also
+  // happens to be the file whose line 852 (`/api/buddy-bookings/*` inside a
+  // `//` comment) defeats a naive comment stripper, so this case doubles as
+  // proof that the scanner reads past it.
+  withTreeEdit(
+    "routes/rentABuddySpec.ts",
+    (s) =>
+      s.replace(
+        'const newBookingStatus = favorTraveler === true ? "cancelled" : "completed";',
+        'const newBookingStatus = "completed";',
+      ),
+    () => {
+      const r = run(null, { STATE_MACHINE_SRC: tree() });
+      assert.equal(r.code, 1, `deleting the only writer of bare cancelled must fail. Output:\n${r.out}`);
+      assert.ok(r.out.includes("no longer contains"), r.out);
+      assert.ok(r.out.includes("cancelled"), r.out);
+    },
+  );
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PART THREE — the machines added in P11, and the rules they needed
+// ═══════════════════════════════════════════════════════════════════════════
+
+test("RAB: a registered booking state the enum cannot hold FAILS", () => {
+  const reg = copy();
+  machine(reg, "RAB_BOOKING_STATUS").states.push({ name: "refunded", classification: "REACHABLE" });
+  expectFailure(reg, `registered state "refunded" is NOT in rent_buddy_bookings.status's vocabulary`);
+});
+
+test("RAB: a booking state the enum DOES hold cannot be omitted", () => {
+  const reg = copy();
+  const m = machine(reg, "RAB_BOOKING_STATUS");
+  m.states = m.states.filter((s: any) => s.name !== "no_show_pending");
+  m.transitions = m.transitions.filter((t: any) => t.to !== "no_show_pending" && !t.from.includes("no_show_pending"));
+  expectFailure(reg, `rent_buddy_bookings.status admits "no_show_pending" and the registry does not mention it`);
+});
+
+test("RAB: the master switch must really be seeded FALSE by the migration cited", () => {
+  const reg = copy();
+  // 0090 is real, and really seeds this flag — TRUE, with ON CONFLICT DO UPDATE.
+  // It is why production carried the switch ON for a feature that is not
+  // launch-ready, and why 2210 exists. Citing it here must not pass for a hold.
+  state(reg, "RAB_BOOKING_STATUS", "requested").hold.seededFalseIn =
+    "src/migrations/0090_rent_buddy_rollout_tables.sql";
+  expectFailure(reg, "does not seed rent_buddy_enabled FALSE");
+});
+
+test("RAB: a hold whose flag is only NAMED IN A COMMENT by its reader FAILS", () => {
+  const reg = copy();
+  // WallCandidateLoaders.ts:895 mentions `rent_buddy_enabled` in a docblock and
+  // nowhere else. A file that talks about the flag does not read it.
+  state(reg, "RAB_BOOKING_STATUS", "scheduled").hold.readBy = "services/wall/WallCandidateLoaders.ts";
+  expectFailure(reg, "names rent_buddy_enabled only in a COMMENT");
+});
+
+test("a declared consumer that names the state only in a COMMENT FAILS", () => {
+  const reg = copy();
+  // lib/intelConflict.ts says "conflicting" twice, both times in prose.
+  state(reg, "INTEL_CLAIMS_STATUS", "conflicting").consumers = ["lib/intelConflict.ts"];
+  expectFailure(reg, "only in a COMMENT");
+});
+
+test("SAFE RETURN: a column-DEFAULT writer whose column has no such default FAILS", () => {
+  const reg = copy();
+  const t = machine(reg, "SAFE_RETURN_SESSION_STATUS").transitions.find((x: any) => x.to === "pending");
+  t.writer.columnDefault.column = "trigger_reason";
+  expectFailure(reg, "does not give trigger_reason a DEFAULT of 'pending'");
+});
+
+test("SAFE RETURN: the DEFAULT is read from the RIGHT table, not from anywhere in the file", () => {
+  const reg = copy();
+  // 0167 declares BOTH safe_return_sessions (DEFAULT 'pending') and
+  // safe_return_live_shares (DEFAULT 'active') with a `status` column. A
+  // file-wide match would let the live-share default vouch for the session one.
+  const t = machine(reg, "SAFE_RETURN_LIVE_SHARE_STATUS").transitions.find((x: any) => x.to === "active");
+  t.to = "stopped";
+  t.writer.evidence = ['.from("safe_return_live_shares")', ".insert({", "export async function startShare("];
+  expectFailure(reg, "does not give status a DEFAULT of 'stopped'");
+});
+
+test("SAFE RETURN: a column-DEFAULT writer whose evidence does not quote ONE statement FAILS", () => {
+  // Measured, not assumed. With `.from("safe_return_live_shares")` and
+  // `.insert({` listed as two separate tokens, repointing startShare's insert
+  // at a different table left the checker at exit 0 — that file reads the table
+  // four times and calls `.insert({` four times, so both tokens survived an
+  // edit that made the transition false. The claim is about one statement, so
+  // the evidence must quote one statement.
+  for (const evidence of [
+    ['.from("safe_return_sessions")', "export async function createSession("],
+    [".insert({", "export async function createSession("],
+    ['.from("safe_return_sessions")', ".insert({", "export async function createSession("],
+  ]) {
+    const reg = copy();
+    machine(reg, "SAFE_RETURN_SESSION_STATUS").transitions.find((x: any) => x.to === "pending").writer.evidence =
+      evidence;
+    expectFailure(reg, "must quote both");
+  }
+});
+
+test("SAFE RETURN: repointing the live-share insert at another table turns the guard red", () => {
+  withTreeEdit(
+    "services/safeReturn/SafeReturnLiveShareService.ts",
+    (s) => s.replace('.from("safe_return_live_shares")\n      .insert({', '.from("share_rows")\n      .insert({'),
+    () => {
+      const r = run(null, { STATE_MACHINE_SRC: tree() });
+      assert.equal(r.code, 1, `an insert that no longer targets the table must fail. Output:\n${r.out}`);
+      assert.ok(r.out.includes("no longer contains"), r.out);
+      assert.ok(r.out.includes("active"), r.out);
+    },
+  );
+});
+
+test("an RPC writer whose sqlFile MENTIONS but does not DEFINE the function FAILS", () => {
+  const reg = copy();
+  const t = machine(reg, "INTEL_LIVE_SCOPE_LIFECYCLE").transitions.find((x: any) => x.to === "expired");
+  // 2174 is a real migration that really names intel promotion functions — but
+  // it does not create this one. Mention is not definition.
+  t.writer.sqlFile = "src/migrations/2174_intel_system_claim_promotion.sql";
+  expectFailure(reg, "does not DEFINE system_expire_intel_live_scopes");
+});
+
+test("a derived accessor that no writer of the machine defines FAILS", () => {
+  const reg = copy();
+  machine(reg, "TRUST_RESTRICTION_LIFECYCLE").vocabulary.accessors = ["getRestrictionStateThatWasRenamed"];
+  expectFailure(reg, "is not DEFINED in any of this machine's writer files");
+});
+
+test("five machines is below the floor — the vacuity guard tracks what is registered", () => {
+  expectFailure(copy().slice(0, 5), "FAIL — VACUOUS");
+});
+
+// ── the code-aware readers, directly ─────────────────────────────────────────
+
+test("codeText sees a write in code and refuses one in a comment", () => {
+  const sweeper = readFileSync(join(API_ROOT, "src/lib/rentBuddyRequestSweeper.ts"), "utf8");
+  assert.ok(codeText(sweeper).includes('.update({ status: "expired", updated_at: now })'));
+  assert.ok(!codeText('  // .update({ status: "expired" })').includes('.update({ status: "expired" })'));
+  assert.ok(!codeText('/*\n .update({ status: "x" })\n*/').includes('.update({ status: "x" })'));
+});
+
+test("codeText survives `/*` inside a line comment — where stripComments does not", () => {
+  // Measured, not imagined. routes/rentABuddySpec.ts:852 reads
+  //     // client's /api/buddy-bookings/(star) URLs reach them through …
+  // and src/scripts/lib/stripComments.ts looks for `/(star)` before `//`, so that
+  // line opens a block comment that swallows the next ~1400 lines — including
+  // the dispute-resolution writer this registry cites. Its conservative
+  // direction is right for "is this called?" and wrong for "does this exist?":
+  // a false NO there is a guard that reddens on correct code.
+  const spec = readFileSync(join(API_ROOT, "src/routes/rentABuddySpec.ts"), "utf8");
+  const write = 'const newBookingStatus = favorTraveler === true ? "cancelled" : "completed";';
+  assert.ok(spec.includes(write));
+  assert.ok(codeText(spec).includes(write), "the scanner must read past the /* inside a // comment");
+
+  assert.ok(codeText('// see /api/a/*\nconst x = "keepme";').includes('"keepme"'));
+  // and a `//` inside a string must not truncate the line
+  assert.ok(codeText('const u = "http://x"; const y = "keepme";').includes('"keepme"'));
+});
+
+test("definesSqlFunction separates a definition from a mention", () => {
+  const sql = readFileSync(join(API_ROOT, "src/migrations/2430_intel_live_scope_promotion_writer.sql"), "utf8");
+  assert.equal(definesSqlFunction(sql, "system_promote_intel_live_scope"), true);
+  assert.equal(definesSqlFunction(sql, "system_promote_admissible_intel_claims"), false);
+  assert.equal(
+    definesSqlFunction("-- system_ghost()\nGRANT EXECUTE ON FUNCTION public.system_ghost(uuid) TO service_role;", "system_ghost"),
+    false,
+  );
+  // a name quoted INSIDE another function's body is a mention, not a definition
+  assert.equal(
+    definesSqlFunction("CREATE FUNCTION a() AS $$ BEGIN RAISE NOTICE 'CREATE FUNCTION system_ghost()'; END $$;", "system_ghost"),
+    false,
+  );
+});
+
+test("definesTsFunction masks string contents, because it asks a DEFINITION question", () => {
+  const svc = readFileSync(join(API_ROOT, "src/services/trust/TrustRestrictionService.ts"), "utf8");
+  assert.equal(definesTsFunction(svc, "getRestrictionState"), true);
+  assert.equal(definesTsFunction(svc, "getRestrictionStateThatWasRenamed"), false);
+  assert.equal(definesTsFunction('const s = "export async function ghostFn(";', "ghostFn"), false);
+  assert.equal(definesTsFunction("// export function ghostFn() {}", "ghostFn"), false);
+  assert.equal(definesTsFunction("export async function ghostFn(a: string) {}", "ghostFn"), true);
+});
+
+test("createTableBlock / columnDefaultsTo scope a DEFAULT to one table", () => {
+  const ddl = readFileSync(join(API_ROOT, "src/migrations/0167_safety_ddl_reconcile.sql"), "utf8");
+  const sessions = createTableBlock(ddl, "safe_return_sessions");
+  const shares = createTableBlock(ddl, "safe_return_live_shares");
+  assert.ok(sessions && shares);
+  assert.equal(columnDefaultsTo(sessions!, "status", "pending"), true);
+  assert.equal(columnDefaultsTo(sessions!, "status", "active"), false);
+  assert.equal(columnDefaultsTo(shares!, "status", "active"), true);
+  assert.equal(columnDefaultsTo(shares!, "status", "pending"), false);
+  assert.equal(createTableBlock(ddl, "no_such_table"), null);
+  // the pg_dump form, on one line, with a ::text cast
+  const dump = readFileSync(join(API_ROOT, "baseline/20260819_baseline_structure.sql"), "utf8");
+  const dumped = createTableBlock(dump, "safe_return_sessions");
+  assert.ok(dumped);
+  assert.equal(columnDefaultsTo(dumped!, "status", "pending"), true);
 });

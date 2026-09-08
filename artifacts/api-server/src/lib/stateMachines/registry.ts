@@ -63,6 +63,29 @@
  *                   exemption: writing it down is how you report the finding,
  *                   not how you silence it.
  *
+ * ── WHAT P11 ADDED, AND WHAT IT TAUGHT ───────────────────────────────────────
+ * Three machines: RAB_BOOKING_STATUS (14 states), SAFE_RETURN_SESSION_STATUS
+ * (5) and SAFE_RETURN_LIVE_SHARE_STATUS (3). Two things had to change to
+ * register them honestly rather than plausibly.
+ *
+ * FIRST, a flag seeded FALSE is not a flag that IS false. Read only the code,
+ * Safe Return looks exactly like a HOLD: every route refuses unless
+ * `safe_return_enabled` is on, and both migrations that seed it seed it FALSE.
+ * The 2026-09-08 production snapshot says it is TRUE, and the flag matrix
+ * records it as an ON flag whose missing schema 2219 supplied. Five HOLD states
+ * there would have been a tidy, checkable, false report. Rent-a-Buddy is the
+ * mirror image: `rent_buddy_enabled` is seeded FALSE by 2210 AND measured FALSE
+ * in the same snapshot, so its user paths really are held. Where the two
+ * disagree, the measurement wins, and the entry says which measurement.
+ *
+ * SECOND, some rows are created in a state by the SCHEMA. `createSession`
+ * inserts a `safe_return_sessions` row without mentioning `status`; the row is
+ * `pending` because the column says so. The evidence rule ("cite a line naming
+ * the state") could only have been satisfied there by quoting a DOCBLOCK — a
+ * comment offered as proof of a write, which is the substitution this whole
+ * lane exists to refuse. `StateWriter.columnDefault` says so out loud instead,
+ * and the checker verifies the DEFAULT inside the right CREATE TABLE.
+ *
  * ── WHAT IS NOT REGISTERED, AND WHY ──────────────────────────────────────────
  * MEDIA (`media_assets.moderation_status`) is deliberately absent. Its state
  * set is not stable: migration 0191 shipped
@@ -118,7 +141,28 @@ export const CLASSIFICATION_RANK: Record<StateClassification, number> = {
 export type StateVocabulary =
   | { kind: "pgEnum"; file: string; symbol: string }
   | { kind: "sqlCheck"; file: string; anchor: string }
-  | { kind: "derived"; file: string; columns: readonly string[]; derivation: string };
+  | {
+      kind: "derived";
+      file: string;
+      columns: readonly string[];
+      derivation: string;
+      /**
+       * Functions that turn the columns into the state, for machines whose state
+       * NAMES appear nowhere in the code.
+       *
+       * A consumer of `trust_restrictions.active` cannot mention "active" — the
+       * state IS `lifted_at IS NULL AND (expires_at IS NULL OR expires_at > now())`
+       * — and services/interactionPermissions.ts, which is the enforcement point
+       * for the whole lifecycle, names it only in two unrelated comments. Under a
+       * name-matching consumer rule that file reads as "not a consumer", which is
+       * false: it calls getRestrictionState and refuses the interaction on the
+       * answer. So a derived machine names its accessors, the checker proves each
+       * one is DEFINED in one of the machine's own writer files, and a consumer
+       * may prove itself by calling one instead of by spelling a label that does
+       * not exist.
+       */
+      accessors?: readonly string[];
+    };
 
 /** A TS constant that mirrors the SQL vocabulary; drift between them is a bug. */
 export type VocabularyMirror = { file: string; symbol: string };
@@ -141,6 +185,25 @@ export type StateWriter = {
   via?: string;
   /** Path under artifacts/api-server that defines `via`. */
   sqlFile?: string;
+  /**
+   * The row is CREATED in this state by the column's DDL DEFAULT, not by any
+   * literal in the writer.
+   *
+   * `SafeReturnService.createSession` inserts a `safe_return_sessions` row
+   * without ever naming `status`; the row is `pending` because
+   * `status TEXT NOT NULL DEFAULT 'pending'` says so. The ordinary rule —
+   * evidence must name the state — cannot be met honestly, and the only text in
+   * that file naming "pending" is a docblock, so obeying the rule would mean
+   * citing a COMMENT as proof of a write. That is precisely the defect this
+   * whole lane is about, so the modelling is made explicit instead: the writer
+   * shows it inserts into the table, and `file` must give `column` that DEFAULT
+   * inside the CREATE TABLE for THIS storage.
+   */
+  columnDefault?: {
+    /** Path under artifacts/api-server holding the CREATE TABLE. */
+    file: string;
+    column: string;
+  };
 };
 
 export type StateTransition = {
@@ -806,6 +869,7 @@ export const STATE_MACHINES: readonly StateMachineEntry[] = [
         "lifted_by => expired. Enforcement reads the timestamps directly (getRestrictionState, " +
         "services/interactionPermissions.ts), which is why an expired row was never ENFORCED past its date " +
         "even before the sweep had a caller — it just kept showing as active in the admin view.",
+      accessors: ["getRestrictionState"],
     },
     note:
       "Registered because it is the near-miss version of this defect and shows the check has teeth beyond " +
@@ -943,6 +1007,606 @@ export const STATE_MACHINES: readonly StateMachineEntry[] = [
         to: "city_trusted",
         classification: "REACHABLE",
         writer: { file: "services/trust/TrustScoreService.ts", evidence: ['if (score >= s.level_city_trusted)   return "city_trusted";'] },
+      },
+    ],
+  },
+  // ══════════════════════════════════════════════════════════════════════════
+  // RENT-A-BUDDY BOOKINGS — a lifecycle held OFF at the door, swept from inside
+  // ══════════════════════════════════════════════════════════════════════════
+  {
+    key: "RAB_BOOKING_STATUS",
+    storage: "rent_buddy_bookings",
+    field: "status",
+    vocabulary: {
+      kind: "pgEnum",
+      file: "baseline/20260819_baseline_structure.sql",
+      symbol: "public.rent_buddy_booking_status",
+    },
+    note:
+      "Fourteen states, and the thing that makes them classifiable is a MEASUREMENT rather than a reading " +
+      "of the code: `rent_buddy_enabled` is FALSE in production " +
+      "(lib/capability/snapshots/20260908-production-schema.json, captured 2026-09-08, watermark " +
+      "20260908073559). Migration 2210 forces it FALSE and says why — 0090 had forced it TRUE, so every " +
+      "clean run and every restore left the master switch ON for a feature that is not launch-ready. So " +
+      "every USER path into this lifecycle is a HOLD, not a gap: the writers are built, correct and " +
+      "switched off by an owner's deliberate default.\n" +
+      "\n" +
+      "The interesting half is that the machine is NOT inert. rentBuddyRequestSweeper's phases 1-3 are " +
+      "documented as ungated on purpose ('they govern already-created bookings and stay ungated as " +
+      "before' — lib/rentBuddyRequestSweeper.ts:39-41) and the sweeper IS started from index.ts, so " +
+      "`expired`, `completed` and `disputed` have a writer that runs today over whatever rows the period " +
+      "when 0090 had the flag TRUE left behind. Those three are REACHABLE and the rest are HOLD, and " +
+      "that difference is the entire point of classifying by the WRITER'S OWN gate rather than by whether " +
+      "a row happens to exist: 'nothing is in this state' has four different causes here and they need " +
+      "four different people.\n" +
+      "\n" +
+      "Two states are neither. `cancelled` is written ONLY by admin dispute resolution " +
+      "(rentABuddySpec.ts, `profiles.role === 'admin'`), which is exempt from the master switch by design " +
+      "— an admin queue that hides its rows cannot moderate them — so it is OPS_DRIVEN. `confirmed` has " +
+      "no producer anywhere and is DECLARED_UNUSED: lib/rentBuddyBookingStatus.ts already records that " +
+      "the accept route writes `scheduled`, and rentABuddy.ts:4463 records a counter that sat pinned at " +
+      "zero because it filtered on `confirmed`. Deleting it is a schema decision about rows that may " +
+      "already carry it, not a code change.",
+    states: [
+      {
+        name: "requested",
+        classification: "HOLD",
+        reason:
+          "The canonical creation route POST /rent-a-buddy/bookings writes it, and every creation path " +
+          "clears the master switch first — three call requireRentBuddyEnabled directly, the other two " +
+          "reach it as step 1 of checkRentBuddyAccess (rentABuddyRollout.ts:242). 2210 seeds " +
+          "rent_buddy_enabled FALSE and the production snapshot measures it FALSE, so no new booking is " +
+          "created at all while the switch is off. Nothing is owed by engineering; the flag is an owner's " +
+          "launch decision gated on KYC, payments, safety and moderation being ready.",
+        hold: {
+          flag: "rent_buddy_enabled",
+          seededFalseIn: "src/migrations/2210_rent_buddy_default_off.sql",
+          readBy: "routes/rentABuddy.ts",
+        },
+      },
+      {
+        name: "pending",
+        classification: "HOLD",
+        reason:
+          "The second, older creation label. migrations/0113_rent_buddy_lifecycle_fixes.sql:17-21 says the " +
+          "spec requires `requested` on creation and that `pending` is kept for backward compatibility, " +
+          "and four creation paths (offer-accept, package-book, the spec request route, rebook) still " +
+          "write it. All of them are behind the same master switch, measured FALSE in production, so this " +
+          "is the same hold as `requested` and not a separate one.",
+        hold: {
+          flag: "rent_buddy_enabled",
+          seededFalseIn: "src/migrations/2210_rent_buddy_default_off.sql",
+          readBy: "routes/rentABuddy.ts",
+        },
+      },
+      {
+        name: "scheduled",
+        classification: "HOLD",
+        reason:
+          "Written by the buddy's accept route, which takes requireRentBuddyEnabled. It is the POST-ACCEPT " +
+          "half of the mismatch lib/rentBuddyBookingStatus.ts documents: guards used to list `confirmed` " +
+          "here, which no route writes, so a booking that HAD been accepted still failed every " +
+          "accepted-state test. The state is sound; only the switch holds it.",
+        hold: {
+          flag: "rent_buddy_enabled",
+          seededFalseIn: "src/migrations/2210_rent_buddy_default_off.sql",
+          readBy: "routes/rentABuddy.ts",
+        },
+      },
+      {
+        name: "confirmed",
+        classification: "DECLARED_UNUSED",
+        reason:
+          "No producer in TS, in SQL or in a trigger: the accept route writes `scheduled`, and " +
+          "rentABuddy.ts:4463 carries the epitaph — a buddy dashboard counter filtered on " +
+          "`.eq(\"status\",\"confirmed\")` and was therefore pinned at 0 for every buddy, forever. It is " +
+          "READ in five places, and not one of them is starved, because every set that admits it also " +
+          "admits `scheduled`, which IS written: ACCEPTED_STATUSES, THREAD_ALLOWED_STATUSES, the wall's " +
+          "ENGAGED_BOOKING_STATUSES (with in_progress/completed), PassportProjectionService's relationship " +
+          "probe (with completed/in_progress) and interactionPermissions' pre-booking window (with " +
+          "requested/pending/scheduled). It is retained deliberately for rows that may already carry it — " +
+          "removing the label is a schema decision about existing data, not an engineering task.",
+        consumers: [
+          "lib/rentBuddyBookingStatus.ts",
+          "routes/rentABuddy.ts",
+          "services/wall/WallCandidateLoaders.ts",
+          "services/passport/PassportProjectionService.ts",
+          "services/interactionPermissions.ts",
+        ],
+      },
+      {
+        name: "in_progress",
+        classification: "HOLD",
+        reason:
+          "The buddy starts the session (POST /rent-a-buddy/bookings/:id/start), behind " +
+          "requireRentBuddyEnabled, and only from `confirmed`/`scheduled` — both of which are themselves " +
+          "behind the same switch. Held, not missing: the route is complete and refuses correctly.",
+        hold: {
+          flag: "rent_buddy_enabled",
+          seededFalseIn: "src/migrations/2210_rent_buddy_default_off.sql",
+          readBy: "routes/rentABuddy.ts",
+        },
+      },
+      {
+        name: "completed_pending_traveler_confirmation",
+        classification: "HOLD",
+        reason:
+          "Written when the BUDDY marks the session complete, which opens a 24-hour dispute window before " +
+          "the money settles. Behind requireRentBuddyEnabled. The state is the reason the sweeper's phase " +
+          "2 exists at all, and lib/rentBuddyBookingStatus.ts records that THREAD_ALLOWED_STATUSES used to " +
+          "omit it — the two parties were refused a chat thread at exactly the moment they most needed one.",
+        hold: {
+          flag: "rent_buddy_enabled",
+          seededFalseIn: "src/migrations/2210_rent_buddy_default_off.sql",
+          readBy: "routes/rentABuddy.ts",
+        },
+      },
+      { name: "completed", classification: "REACHABLE", terminal: true },
+      { name: "expired", classification: "REACHABLE", terminal: true },
+      {
+        name: "declined",
+        classification: "HOLD",
+        terminal: true,
+        reason:
+          "The buddy's refusal of a request, from `requested`/`pending` only, behind " +
+          "requireRentBuddyEnabled. Terminal by design — a declined request is re-made, not revived — and " +
+          "held only by the master switch measured FALSE in production.",
+        hold: {
+          flag: "rent_buddy_enabled",
+          seededFalseIn: "src/migrations/2210_rent_buddy_default_off.sql",
+          readBy: "routes/rentABuddy.ts",
+        },
+      },
+      {
+        name: "cancelled",
+        classification: "OPS_DRIVEN",
+        terminal: true,
+        manual: true,
+        reason:
+          "Bare `cancelled` is NOT what the cancel route writes — that writes `cancelled_by_traveler` or " +
+          "`cancelled_by_buddy`. Its one producer is admin dispute resolution in rentABuddySpec.ts " +
+          "(`favorTraveler === true ? \"cancelled\" : \"completed\"`, behind a profiles.role admin check), " +
+          "which is deliberately exempt from the master switch because an admin queue that hides its rows " +
+          "cannot moderate them. rentABuddyRollout.ts:50-57 records what that distinction cost: the " +
+          "cancel-rate metric counted only bare `cancelled`, so it read ~zero and the graduation gate was " +
+          "falsely lenient.",
+      },
+      {
+        name: "cancelled_by_traveler",
+        classification: "HOLD",
+        terminal: true,
+        reason:
+          "Written by POST /rent-a-buddy/bookings/:id/cancel when the traveller is the actor, behind " +
+          "requireRentBuddyEnabled. Kept distinct from the buddy's label on purpose: the two carry " +
+          "different trust events and only the buddy's counts against buddy reliability, so collapsing " +
+          "them would charge people for something they did not do.",
+        hold: {
+          flag: "rent_buddy_enabled",
+          seededFalseIn: "src/migrations/2210_rent_buddy_default_off.sql",
+          readBy: "routes/rentABuddy.ts",
+        },
+      },
+      {
+        name: "cancelled_by_buddy",
+        classification: "HOLD",
+        terminal: true,
+        reason:
+          "The same route with the buddy as actor; additionally increments the buddy's cancel_count. " +
+          "Behind requireRentBuddyEnabled, which the production snapshot measures FALSE — so like its " +
+          "sibling it is switched off, not unwritten.",
+        hold: {
+          flag: "rent_buddy_enabled",
+          seededFalseIn: "src/migrations/2210_rent_buddy_default_off.sql",
+          readBy: "routes/rentABuddy.ts",
+        },
+      },
+      { name: "disputed", classification: "REACHABLE" },
+      {
+        name: "no_show_pending",
+        classification: "HOLD",
+        reason:
+          "A reported no-show inside its two-hour grace period, written by the no-show routes in both " +
+          "rentABuddy.ts and rentABuddySpec.ts, each behind requireRentBuddyEnabled. It is the only state " +
+          "here whose EXIT is automatic — the sweeper escalates it to `disputed` — so a hold on the " +
+          "entrance is what keeps the ungated exit with nothing to do.",
+        hold: {
+          flag: "rent_buddy_enabled",
+          seededFalseIn: "src/migrations/2210_rent_buddy_default_off.sql",
+          readBy: "routes/rentABuddy.ts",
+        },
+      },
+    ],
+    transitions: [
+      {
+        from: [],
+        to: "requested",
+        classification: "HOLD",
+        writer: {
+          file: "routes/rentABuddy.ts",
+          evidence: [
+            'status: "requested",\n      safety_status: "normal",',
+            'to_status: "requested",',
+          ],
+        },
+        reason:
+          "POST /rent-a-buddy/bookings, gated by requireRentBuddyEnabled on `rent_buddy_enabled`, which " +
+          "2210 seeds FALSE and the 2026-09-08 production snapshot measures FALSE. The route is complete " +
+          "and writes a booking event; it simply never runs while the lane is dark.",
+      },
+      {
+        from: [],
+        to: "pending",
+        classification: "HOLD",
+        writer: {
+          file: "routes/rentABuddyMarketplace.ts",
+          evidence: ['.from("rent_buddy_bookings")', 'status: "pending",\n      offer_id: offerId,'],
+        },
+        reason:
+          "POST /rent-a-buddy/offers/:offerId/accept creates the booking from an accepted offer. It takes " +
+          "the master switch through checkRentBuddyAccess step 1 rather than requireRentBuddyEnabled " +
+          "directly, which is the same gate on the same flag — the comment at rentABuddyMarketplace.ts:" +
+          "1184-1191 records that this path previously had NO gates at all.",
+      },
+      {
+        from: ["requested", "pending"],
+        to: "scheduled",
+        classification: "HOLD",
+        writer: {
+          file: "routes/rentABuddy.ts",
+          evidence: ['.update({ status: "scheduled", confirmed_at: now, updated_at: now })'],
+        },
+        reason:
+          "The buddy's accept, behind requireRentBuddyEnabled. Refuses anything but requested/pending and " +
+          "refuses a request past its 48-hour expires_at, so it cannot resurrect an expired one.",
+      },
+      {
+        from: ["requested", "pending"],
+        to: "declined",
+        classification: "HOLD",
+        writer: {
+          file: "routes/rentABuddy.ts",
+          evidence: ['.update({ status: "declined", decline_reason: decline_reason ?? null, updated_at: now })'],
+        },
+        reason:
+          "The buddy's refusal, behind requireRentBuddyEnabled, from requested/pending only. Also records " +
+          "the responsiveness signal — a decline answers the traveller just as an accept does.",
+      },
+      {
+        from: ["requested", "pending"],
+        to: "expired",
+        classification: "REACHABLE",
+        writer: {
+          file: "lib/rentBuddyRequestSweeper.ts",
+          evidence: [
+            '.update({ status: "expired", updated_at: now })\n      .in("id", ids)\n' +
+              '      .in("status", [...AWAITING_BUDDY_STATUSES])',
+          ],
+        },
+        scheduler: { starts: "startBuddyRequestSweeper", from: "index.ts" },
+      },
+      {
+        from: ["scheduled", "confirmed"],
+        to: "in_progress",
+        classification: "HOLD",
+        writer: {
+          file: "routes/rentABuddy.ts",
+          evidence: ['.update({ status: "in_progress", started_at: now, updated_at: now })'],
+        },
+        reason:
+          "The buddy confirms the meetup started, behind requireRentBuddyEnabled. `confirmed` is listed as " +
+          "a source because the route really does admit it for legacy rows, even though nothing writes it " +
+          "any more — the guard and the producer disagree, and this records which side is which.",
+      },
+      {
+        from: ["in_progress"],
+        to: "completed_pending_traveler_confirmation",
+        classification: "HOLD",
+        writer: {
+          file: "routes/rentABuddy.ts",
+          evidence: ['const finalStatus = isBuddyCompleting ? "completed_pending_traveler_confirmation" : "completed";'],
+        },
+        reason:
+          "POST /rent-a-buddy/bookings/:id/complete when the BUDDY is completing, behind " +
+          "requireRentBuddyEnabled; opens the 24-hour dispute window. Held by the master switch, like " +
+          "every other party-driven transition in this lane.",
+      },
+      {
+        from: ["in_progress"],
+        to: "completed",
+        classification: "HOLD",
+        writer: {
+          file: "routes/rentABuddy.ts",
+          evidence: ['const finalStatus = isBuddyCompleting ? "completed_pending_traveler_confirmation" : "completed";'],
+        },
+        reason:
+          "The same statement's other branch: a TRAVELLER completing goes straight to `completed` with no " +
+          "dispute window, which is the backward-compatible path. Behind requireRentBuddyEnabled.",
+      },
+      {
+        from: ["completed_pending_traveler_confirmation"],
+        to: "completed",
+        classification: "REACHABLE",
+        writer: {
+          file: "lib/rentBuddyRequestSweeper.ts",
+          evidence: [
+            '.update({ status: "completed", updated_at: now })',
+            '.eq("status", "completed_pending_traveler_confirmation")',
+          ],
+        },
+        scheduler: { starts: "startBuddyRequestSweeper", from: "index.ts" },
+      },
+      {
+        from: ["completed_pending_traveler_confirmation"],
+        to: "completed",
+        classification: "HOLD",
+        writer: {
+          file: "routes/rentABuddy.ts",
+          evidence: ['.update({ status: "completed", updated_at: now })', 'event: "traveler_confirmed",'],
+        },
+        reason:
+          "POST /rent-a-buddy/bookings/:id/traveler-confirm — the traveller closing the dispute window " +
+          "early — behind requireRentBuddyEnabled. Registered alongside the sweeper's ungated route into " +
+          "the same state precisely because they have different gates: the state is REACHABLE on the " +
+          "strength of the sweeper, and this transition is not.",
+      },
+      {
+        from: ["requested", "pending", "scheduled", "confirmed"],
+        to: "cancelled_by_traveler",
+        classification: "HOLD",
+        writer: {
+          file: "routes/rentABuddy.ts",
+          evidence: ['const cancelStatus = isTravelerCancel ? "cancelled_by_traveler" : "cancelled_by_buddy";'],
+        },
+        reason:
+          "POST /rent-a-buddy/bookings/:id/cancel with the traveller as actor, behind " +
+          "requireRentBuddyEnabled. Its from-set is CANCELLABLE_STATUSES, which had to be widened to " +
+          "include `requested` — until then the booking the canonical route creates could not be " +
+          "cancelled by either party until the buddy had accepted it.",
+      },
+      {
+        from: ["requested", "pending", "scheduled", "confirmed"],
+        to: "cancelled_by_buddy",
+        classification: "HOLD",
+        writer: {
+          file: "routes/rentABuddy.ts",
+          evidence: ['const cancelStatus = isTravelerCancel ? "cancelled_by_traveler" : "cancelled_by_buddy";'],
+        },
+        reason:
+          "The same route with the buddy as actor, behind requireRentBuddyEnabled; additionally " +
+          "increments the buddy's cancel_count, which is why the two labels are not one label.",
+      },
+      {
+        from: ["scheduled", "confirmed", "in_progress"],
+        to: "no_show_pending",
+        classification: "HOLD",
+        writer: {
+          file: "routes/rentABuddy.ts",
+          evidence: ['.update({ status: "no_show_pending", no_show_grace_expires_at: graceExpiry, updated_at: now })'],
+        },
+        reason:
+          "Either party reports a no-show, behind requireRentBuddyEnabled; enters a two-hour grace period " +
+          "rather than opening a dispute at once, so the other party can answer first. Mirrored by the " +
+          "same guard in rentABuddySpec.ts.",
+      },
+      {
+        from: ["no_show_pending"],
+        to: "disputed",
+        classification: "REACHABLE",
+        writer: {
+          file: "lib/rentBuddyRequestSweeper.ts",
+          evidence: ['.update({ status: "disputed", updated_at: now })', '.eq("status", "no_show_pending")'],
+        },
+        scheduler: { starts: "startBuddyRequestSweeper", from: "index.ts" },
+      },
+      {
+        from: ["in_progress", "completed_pending_traveler_confirmation"],
+        to: "disputed",
+        classification: "HOLD",
+        writer: {
+          file: "routes/rentABuddy.ts",
+          evidence: ['.update({ status: "disputed", updated_at: now })', 'event: "dispute_opened",'],
+        },
+        reason:
+          "Either party files a dispute, behind requireRentBuddyEnabled. Deliberately refuses `completed` " +
+          "and the cancelled labels — disputing a terminal booking would corrupt the final state — and " +
+          "refuses once the dispute window on a completed_pending_traveler_confirmation booking has closed.",
+      },
+      {
+        from: ["disputed"],
+        to: "cancelled",
+        classification: "OPS_DRIVEN",
+        writer: {
+          file: "routes/rentABuddySpec.ts",
+          evidence: [
+            'const newBookingStatus = favorTraveler === true ? "cancelled" : "completed";',
+            ".update({ status: newBookingStatus, updated_at: new Date().toISOString() })",
+          ],
+        },
+        reason:
+          "Admin dispute resolution in favour of the traveller. Gated on profiles.role === 'admin' and " +
+          "exempt from the master switch by the lane's stated rule — an admin queue that hides its rows " +
+          "cannot moderate them, and disputes outlive a flag flip. It also compensates the buddy's " +
+          "completed_count, but only when the booking really passed through mark-complete.",
+      },
+      {
+        from: ["disputed"],
+        to: "completed",
+        classification: "OPS_DRIVEN",
+        writer: {
+          file: "routes/rentABuddySpec.ts",
+          evidence: [
+            'const newBookingStatus = favorTraveler === true ? "cancelled" : "completed";',
+            ".update({ status: newBookingStatus, updated_at: new Date().toISOString() })",
+          ],
+        },
+        reason:
+          "The same admin adjudication resolving against the traveller. Registered separately from the " +
+          "sweeper's route into `completed` because they are different powers: this one is a person's " +
+          "decision on a contested booking, the sweeper's is a clock running out.",
+      },
+    ],
+  },
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // SAFE RETURN SESSIONS — the counter-measurement: a flag the SNAPSHOT says is ON
+  // ══════════════════════════════════════════════════════════════════════════
+  {
+    key: "SAFE_RETURN_SESSION_STATUS",
+    storage: "safe_return_sessions",
+    field: "status",
+    vocabulary: {
+      kind: "sqlCheck",
+      file: "src/migrations/0167_safety_ddl_reconcile.sql",
+      anchor: "CHECK (status IN ('pending', 'active', 'safe'",
+    },
+    note:
+      "Registered as the CORRECTION this registry has to be able to make. Read only the code, this looks " +
+      "exactly like the Rent-a-Buddy hold: every route in routes/safeReturn.ts refuses unless " +
+      "`safe_return_enabled` is on, and BOTH migrations that seed that flag " +
+      "(src/migrations/0037_feature_flags.sql:46, src/migrations/0166_feature_flags_reconcile.sql:16) " +
+      "seed it FALSE. Classifying from that alone gives five HOLD states and a false report. The " +
+      "production snapshot says otherwise: `safe_return_enabled` is TRUE " +
+      "(lib/capability/snapshots/20260908-production-schema.json), and " +
+      "docs/architecture/on-and-dead-flag-matrix.md carries it as an ON flag retired from the ON-and-dead " +
+      "list on 2026-09-08 when 2219 supplied its missing schema. A seeded default is what a fresh " +
+      "database starts with, not what production is; ON CONFLICT DO NOTHING means an operator's later " +
+      "enable is exactly what those migrations are written to preserve. So every state here is " +
+      "REACHABLE, and HOLD would have been the tidier-looking lie.\n" +
+      "\n" +
+      "The class-B defect the same page records — routes/safeReturn.ts reaching " +
+      "PassportProjectionService's locate-friends read without gating on `locate_friends_enabled` — is " +
+      "real and still owed, but it is a read crossing a feature boundary, not a state with no writer, so " +
+      "it is not this registry's finding to carry.",
+    states: [
+      { name: "pending", classification: "REACHABLE" },
+      { name: "active", classification: "REACHABLE" },
+      { name: "safe", classification: "REACHABLE", terminal: true },
+      { name: "missed", classification: "REACHABLE" },
+      { name: "cancelled", classification: "REACHABLE", terminal: true },
+    ],
+    transitions: [
+      {
+        from: [],
+        to: "pending",
+        classification: "REACHABLE",
+        writer: {
+          file: "services/safeReturn/SafeReturnService.ts",
+          evidence: [
+            '.from("safe_return_sessions")\n      .insert({',
+            "export async function createSession(",
+          ],
+          columnDefault: { file: "src/migrations/0167_safety_ddl_reconcile.sql", column: "status" },
+        },
+      },
+      {
+        from: ["pending"],
+        to: "active",
+        classification: "REACHABLE",
+        writer: {
+          file: "services/safeReturn/SafeReturnService.ts",
+          evidence: ['.update({ status: "active", timer_start_at: now, updated_at: now })'],
+        },
+      },
+      {
+        from: ["active", "missed"],
+        to: "active",
+        classification: "REACHABLE",
+        writer: {
+          file: "services/safeReturn/SafeReturnService.ts",
+          evidence: ['.update({ timer_end_at: newEnd, status: "active", updated_at: now })'],
+        },
+      },
+      {
+        from: ["pending", "active", "missed"],
+        to: "safe",
+        classification: "REACHABLE",
+        writer: {
+          file: "services/safeReturn/SafeReturnService.ts",
+          evidence: ['status: "safe",', '.in("status", ["active", "missed", "pending"])'],
+        },
+      },
+      {
+        from: ["pending", "active"],
+        to: "cancelled",
+        classification: "REACHABLE",
+        writer: {
+          file: "services/safeReturn/SafeReturnService.ts",
+          evidence: ['.update({ status: "cancelled", closed_at: now, updated_at: now })'],
+        },
+      },
+      {
+        from: ["active"],
+        to: "missed",
+        classification: "REACHABLE",
+        writer: {
+          file: "services/safeReturn/SafeReturnService.ts",
+          evidence: ['.update({ status: "missed", last_prompt_at: now, updated_at: now })'],
+        },
+        scheduler: { starts: "startSafeReturnScheduler", from: "index.ts" },
+      },
+    ],
+  },
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // SAFE RETURN LIVE SHARES — three states, one of them written by the schema
+  // ══════════════════════════════════════════════════════════════════════════
+  {
+    key: "SAFE_RETURN_LIVE_SHARE_STATUS",
+    storage: "safe_return_live_shares",
+    field: "status",
+    vocabulary: {
+      kind: "sqlCheck",
+      file: "src/migrations/0167_safety_ddl_reconcile.sql",
+      anchor: "CHECK (status IN ('active', 'stopped'",
+    },
+    note:
+      "Small, complete, and worth registering for one reason: `active` is written by NOBODY in " +
+      "TypeScript. startShare inserts session_id, user_id, the recipient and expires_at, and the row is " +
+      "`active` because the column says so. The only text in that service naming 'active' as the initial " +
+      "state is a comment — so the ordinary evidence rule ('cite a line that names the state') can be " +
+      "satisfied here ONLY by citing prose, which is precisely the substitution this whole lane exists " +
+      "to refuse. The registry says `columnDefault` instead and the checker verifies the DEFAULT inside " +
+      "the right CREATE TABLE, which matters here because `DEFAULT 'active'` on a `status` column occurs " +
+      "twice in 0167 and the file-wide match would let either table vouch for the other. Both flags " +
+      "involved (`safe_return_enabled`, `safe_return_live_share_enabled`) are measured TRUE in the " +
+      "2026-09-08 production snapshot, so all three states are genuinely reachable.",
+    states: [
+      { name: "active", classification: "REACHABLE" },
+      { name: "stopped", classification: "REACHABLE", terminal: true },
+      { name: "expired", classification: "REACHABLE", terminal: true },
+    ],
+    transitions: [
+      {
+        from: [],
+        to: "active",
+        classification: "REACHABLE",
+        writer: {
+          file: "services/safeReturn/SafeReturnLiveShareService.ts",
+          evidence: [
+            '.from("safe_return_live_shares")\n      .insert({',
+            "export async function startShare(",
+          ],
+          columnDefault: { file: "src/migrations/0167_safety_ddl_reconcile.sql", column: "status" },
+        },
+      },
+      {
+        from: ["active"],
+        to: "stopped",
+        classification: "REACHABLE",
+        writer: {
+          file: "services/safeReturn/SafeReturnLiveShareService.ts",
+          evidence: ['.update({ status: "stopped", stopped_at: now })'],
+        },
+      },
+      {
+        from: ["active"],
+        to: "expired",
+        classification: "REACHABLE",
+        writer: {
+          file: "services/safeReturn/SafeReturnLiveShareService.ts",
+          evidence: ['.update({ status: "expired" })'],
+        },
+        scheduler: { starts: "startSafeReturnScheduler", from: "index.ts" },
       },
     ],
   },
