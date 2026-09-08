@@ -53,6 +53,26 @@ export interface AirportProfile {
   checkedBagsExtraMin: number;
   trafficExtraMin: number;
   verified: boolean;
+  /**
+   * Spec §15 "terminal/gate context is pinned" at CONNECTION_AT_RISK (census
+   * L143, scored NOT-BUILT for "no gate data"). `airport_profiles.terminal_info`
+   * is a JSONB column that has existed since 0127:27 and was never read into
+   * the profile, so no surface could pin anything even where a curator had
+   * filled it in.
+   *
+   * NULL when there is nothing to pin — and an EMPTY OBJECT NORMALISES TO NULL,
+   * because `terminal_info` defaults to `'{}'` and every one of the 3,206
+   * production rows carries that default (measured 2026-09-07: 0 rows with
+   * terminal_info). Returning `{}` would let a client render an empty
+   * "terminal information" panel that looks like data and is not.
+   *
+   * OPTIONAL, and the reason is an ownership boundary, not a design choice:
+   * `routes/airport.ts:151-172` builds an `AirportProfile` by hand from the
+   * same row instead of calling `airportRowToProfile` below, and that file
+   * belongs to another lane. A required field would break its build. The
+   * wiring that closes the gap is one line there — see `airportRowToProfile`.
+   */
+  terminalInfo?: Record<string, unknown> | null;
 }
 
 /** Convert a static airport record to an AirportProfile with fallback buffer values. */
@@ -75,6 +95,8 @@ function staticToProfile(s: StaticAirport): AirportProfile {
     checkedBagsExtraMin:    15,
     trafficExtraMin:        20,
     verified:               false,
+    // The static dataset carries no terminal or gate detail at all.
+    terminalInfo:           null,
   };
 }
 
@@ -88,7 +110,19 @@ const FALLBACK_PROFILE: Omit<AirportProfile, "id" | "iataCode" | "name" | "city"
   checkedBagsExtraMin: 15,
   trafficExtraMin: 20,
   verified: false,
+  terminalInfo: null,
 };
+
+/**
+ * The ONE mapping from an `airport_profiles` row to a profile.
+ *
+ * Exported because `routes/airport.ts:151-172` currently repeats it by hand,
+ * which is how `terminal_info` came to be selected by `select("*")` on both
+ * paths and read by neither. Callers should use this.
+ */
+export function airportRowToProfile(row: any): AirportProfile {
+  return rowToProfile(row);
+}
 
 function rowToProfile(row: any): AirportProfile {
   return {
@@ -109,7 +143,15 @@ function rowToProfile(row: any): AirportProfile {
     checkedBagsExtraMin:    row.checked_bags_extra_min   ?? 15,
     trafficExtraMin:        row.traffic_extra_min         ?? 20,
     verified:               Boolean(row.verified),
+    terminalInfo:           normaliseTerminalInfo(row.terminal_info),
   };
+}
+
+/** `{}` and every non-object are NOTHING TO PIN. See AirportProfile.terminalInfo. */
+function normaliseTerminalInfo(raw: unknown): Record<string, unknown> | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const obj = raw as Record<string, unknown>;
+  return Object.keys(obj).length > 0 ? obj : null;
 }
 
 /** Resolve by IATA code (e.g. "TPE", "NRT"). Case-insensitive. */
