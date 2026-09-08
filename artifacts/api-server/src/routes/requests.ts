@@ -395,9 +395,42 @@ router.post("/me/requests/circle_invite/:id/accept", async (req, res) => {
   if (inv.status !== "pending") { sendError(res, "invalid_payload", `Invite is already ${inv.status}`); return; }
   if (inv.recipient_id !== user.id) { sendError(res, "forbidden", "Only the recipient may accept this invite"); return; }
 
-  // Age eligibility check — look up the circle owner's age settings
+  // ── Age eligibility check — the circle owner's age settings ──────────────
+  //
+  // "This circle has no age limit" is the PERMISSIVE answer, and this route
+  // used to reach it by two paths that had not read anything:
+  //
+  //   `if (serviceClient)` with no else — a boot-order or configuration problem
+  //     meant no client, the whole gate was SKIPPED, and the invite was accepted
+  //     as though the owner had set no limit. Silently.
+  //   an unbound `.error` — supabase-js RESOLVES on a database error, so an
+  //     unreadable `circle_age_settings` bound `data: null`, fell through
+  //     `ageSettings?.age_limit_enabled` and accepted the invite the same way.
+  //
+  // A row that is genuinely ABSENT and a row that could not be READ are
+  // opposite facts here: the first means the owner set no limit, the second
+  // means we do not know whether they did. This is the same defect, and the
+  // same fix, as GET /circle-age-settings/:ownerId in routes/circleAgeSettings.ts
+  // (commit 04dcbde5) — which is the read this path is the write side of. Both
+  // now refuse with a retryable 503 rather than joining someone to another
+  // user's trusted circle on a guess.
+  //
+  // NOTE ON COVERAGE, so it is not implied where it does not exist: the
+  // `!serviceClient` branch is verified BY INSPECTION ONLY. `getServiceClient()`
+  // answers from the environment, so `_setTestServiceClient(null)` does not
+  // produce a null client — a test built that way gets a real client pointed at
+  // an unreachable host and passes off the read-error branch instead. See the
+  // same note in commit 04dcbde5.
   const serviceClient = getServiceClient();
-  if (serviceClient) {
+  if (!serviceClient) {
+    req.log.error(
+      { inviteId: id, ownerId: inv.owner_id },
+      "circle invite accept: no service client — refusing rather than skipping the age gate",
+    );
+    sendError(res, "degraded_unavailable", "Age settings are temporarily unavailable");
+    return;
+  }
+  {
     const [ageSettingsRes, profileRes] = await Promise.all([
       serviceClient
         .from("circle_age_settings")
@@ -411,6 +444,29 @@ router.post("/me/requests/circle_invite/:id/accept", async (req, res) => {
         .maybeSingle(),
     ]);
 
+    if (ageSettingsRes.error) {
+      req.log.error(
+        { err: ageSettingsRes.error, inviteId: id, ownerId: inv.owner_id },
+        "circle invite accept: circle_age_settings read failed — refusing rather than accepting as 'no age limit'",
+      );
+      sendError(res, "degraded_unavailable", "Age settings are temporarily unavailable");
+      return;
+    }
+    if (profileRes.error) {
+      // Direction was ALREADY fail-closed here (a null DOB makes
+      // getAgeEligibilityReason return eligible:false), but the 403 it produced
+      // told the acceptor "your profile needs a date of birth" — a statement
+      // about their profile, made from a read of it that failed. A retryable
+      // 503 refuses just as firmly and does not say something untrue.
+      req.log.error(
+        { err: profileRes.error, inviteId: id, userId: user.id },
+        "circle invite accept: profile read failed — refusing without claiming the acceptor has no date of birth",
+      );
+      sendError(res, "degraded_unavailable", "Age settings are temporarily unavailable");
+      return;
+    }
+
+    // A SUCCESSFUL read that found no row: the owner has set no age limit.
     const ageSettings = ageSettingsRes.data as any;
     if (ageSettings?.age_limit_enabled) {
       const dob = (profileRes.data as any)?.date_of_birth ?? null;

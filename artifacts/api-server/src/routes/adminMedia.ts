@@ -31,7 +31,7 @@ import { asyncHandler } from "../lib/asyncHandler.js";
 import { sendError } from "../lib/http.js";
 import { requireAdmin } from "../lib/requireAdmin.js";
 import { resolveStoragePath } from "../lib/storagePath.js";
-import { resolveContentOwner } from "../lib/contentOwner.js";
+import { resolveContentOwnerDetailed, type ContentOwnerOutcome } from "../lib/contentOwner.js";
 import { logModerationAction, auditReportAction } from "../lib/moderationAudit.js";
 import { affectedRows } from "../lib/affectedRows.js";
 
@@ -656,6 +656,56 @@ router.post("/admin/media/:id/moderate", asyncHandler(async (req, res) => {
   const { action, target, reason } = parsed.data;
   const now = new Date().toISOString();
 
+  /**
+   * What happened to the user-scoped audit row for this action. Reported to the
+   * operator in the response, because until now it was reported to nobody.
+   *
+   * ── THE DEFECT THIS REPLACES ───────────────────────────────────────────────
+   * Every branch below read the content owner and then wrote the audit row
+   * inside `if (ownerId) { … }` — with NO else and NO log — AFTER the content
+   * status change had already committed. `resolveContentOwner` returns null for
+   * four different reasons, one of which is "the lookup could not RUN"
+   * (supabase-js resolves on a database error; see lib/contentOwner.ts). So a
+   * moderator could remove a post, get `{ ok: true }`, and leave behind no
+   * moderation_actions row at all, with nothing written anywhere saying so.
+   * That is a moderation action that is not accountable to anyone, produced by
+   * a blink.
+   *
+   * The status flip cannot be un-committed by the time the owner is resolved,
+   * so this does not pretend to fail closed on the status-flip branches — it
+   * makes the skip LOUD and puts it in the response. The `delete` branch IS
+   * different: there the audit genuinely precedes the destruction, so a failed
+   * lookup refuses before any bytes are removed (see that branch).
+   */
+  type AuditOutcome = "recorded" | "skipped_no_owner" | "skipped_owner_lookup_failed" | "not_applicable";
+  let auditOutcome: AuditOutcome = "not_applicable";
+
+  /**
+   * Resolve the owner and say, out loud, which of the four outcomes happened.
+   * `lookup_failed` is NOT a fact about the content and never reports as
+   * "unowned".
+   */
+  const resolveOwnerLoudly = async (
+    entityType: string,
+  ): Promise<{ ownerId: string | null; outcome: ContentOwnerOutcome }> => {
+    const r = await resolveContentOwnerDetailed(sc, entityType, id);
+    if (r.outcome === "lookup_failed") {
+      auditOutcome = "skipped_owner_lookup_failed";
+      req.log.error(
+        { err: r.error, entityType, id, action, adminUserId: userId },
+        "admin media moderate: owner lookup COULD NOT RUN — this moderation action has NO audit row, " +
+          "and the reason is an unreadable database, not unowned content",
+      );
+    } else if (!r.ownerUserId) {
+      auditOutcome = "skipped_no_owner";
+      req.log.warn(
+        { entityType, id, action, outcome: r.outcome, adminUserId: userId },
+        "admin media moderate: no accountable user for this content — user-scoped audit row skipped",
+      );
+    }
+    return { ownerId: r.ownerUserId, outcome: r.outcome };
+  };
+
   // Moderating content off the audit trail is how it goes unaccountable. Every
   // status-flip branch below writes the SAME owner-scoped moderation_actions row
   // the routes/admin.ts report paths write, via the shared helper, fail-closed.
@@ -685,14 +735,16 @@ router.post("/admin/media/:id/moderate", asyncHandler(async (req, res) => {
     }
 
     // Audit against the post OWNER (fail-closed). Skip the user-scoped row only
-    // when no accountable owner resolves — never fabricate one.
-    const ownerId = await resolveContentOwner(sc, "post", id);
+    // when no accountable owner resolves — never fabricate one, and never skip
+    // it in silence (see resolveOwnerLoudly / auditOutcome above).
+    const { ownerId } = await resolveOwnerLoudly("post");
     if (ownerId) {
       const audit = await logModerationAction(
         sc, ownerId, userId, contentActionType, reason ?? null,
         { target: "post", target_type: "post", target_id: id },
       );
       if (!audit.ok) { sendError(res, "db_error", `Audit write failed: ${audit.error}`, { exposeDetail: true }); return; }
+      auditOutcome = "recorded";
     }
 
   } else if (target === "post_media" && action === "delete") {
@@ -733,7 +785,24 @@ router.post("/admin/media/:id/moderate", asyncHandler(async (req, res) => {
     // Resolved through the shared rule rather than reading post_media.user_id
     // inline, so this and the report paths cannot drift apart. The row is
     // already loaded above, so the lookup is the only extra cost.
-    const ownerId = await resolveContentOwner(sc, "post_media", id);
+    //
+    // THIS BRANCH CAN STILL FAIL CLOSED, and now does. The audit here genuinely
+    // precedes the destruction, so an owner lookup that could not RUN is
+    // refused outright rather than deleting bytes that moderation_actions would
+    // then hold no record of — and this file's own comment (§F) says a wrongly
+    // deleted object cannot even be identified afterwards. Content that is
+    // genuinely unowned (`not_found` / `unowned`) still deletes, skipping the
+    // user-scoped row: refusing there would make orphaned media undeletable,
+    // which is exactly the media most likely to need removing.
+    const { ownerId, outcome } = await resolveOwnerLoudly("post_media");
+    if (outcome === "lookup_failed") {
+      sendError(
+        res,
+        "degraded_unavailable",
+        "Could not determine the media owner, so this deletion cannot be audited. Please try again.",
+      );
+      return;
+    }
     if (ownerId) {
       const { error: auditErr } = await sc.from("moderation_actions").insert({
         target_user_id: ownerId,
@@ -746,6 +815,7 @@ router.post("/admin/media/:id/moderate", asyncHandler(async (req, res) => {
         metadata: { target: "post_media", media_id: id, bucket, path: ref.kind === "path" ? ref.path : null },
       });
       if (auditErr) { sendError(res, "db_error", `Audit write failed: ${auditErr.message}`, { exposeDetail: true }); return; }
+      auditOutcome = "recorded";
     }
 
     const paths = [ref, thumbRef]
@@ -790,13 +860,14 @@ router.post("/admin/media/:id/moderate", asyncHandler(async (req, res) => {
     }
 
     // Audit against the media OWNER (fail-closed), same as the delete branch.
-    const ownerId = await resolveContentOwner(sc, "post_media", id);
+    const { ownerId } = await resolveOwnerLoudly("post_media");
     if (ownerId) {
       const audit = await logModerationAction(
         sc, ownerId, userId, contentActionType, reason ?? null,
         { target: "post_media", target_type: "post_media", target_id: id },
       );
       if (!audit.ok) { sendError(res, "db_error", `Audit write failed: ${audit.error}`, { exposeDetail: true }); return; }
+      auditOutcome = "recorded";
     }
 
   } else if (target === "hidden_gem") {
@@ -818,13 +889,14 @@ router.post("/admin/media/:id/moderate", asyncHandler(async (req, res) => {
     }
 
     // Audit against the Gem SUBMITTER (fail-closed).
-    const ownerId = await resolveContentOwner(sc, "hidden_gem", id);
+    const { ownerId } = await resolveOwnerLoudly("hidden_gem");
     if (ownerId) {
       const audit = await logModerationAction(
         sc, ownerId, userId, contentActionType, reason ?? null,
         { target: "hidden_gem", target_type: "hidden_gem", target_id: id },
       );
       if (!audit.ok) { sendError(res, "db_error", `Audit write failed: ${audit.error}`, { exposeDetail: true }); return; }
+      auditOutcome = "recorded";
     }
 
   } else if (target === "report") {
@@ -869,6 +941,7 @@ router.post("/admin/media/:id/moderate", asyncHandler(async (req, res) => {
       reason:     reason ?? null,
     });
     if (!auditR.ok) { sendError(res, "db_error", `Audit write failed: ${auditR.error}`, { exposeDetail: true }); return; }
+    auditOutcome = auditR.audit;
 
     const { data: updated, error } = await sc
       .from("reports")
@@ -888,7 +961,10 @@ router.post("/admin/media/:id/moderate", asyncHandler(async (req, res) => {
     }
   }
 
-  res.json({ ok: true, id, action, target });
+  // `audit` is additive and is the whole point of the change above: an operator
+  // who moderates content is told whether the action left an accountable record,
+  // instead of getting an unqualified `ok: true` for an action with no audit row.
+  res.json({ ok: true, id, action, target, audit: auditOutcome });
 }));
 
 export default router;

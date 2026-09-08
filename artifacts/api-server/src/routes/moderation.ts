@@ -20,7 +20,7 @@ import { asyncHandler } from "../lib/asyncHandler.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { moderationReportRateLimit } from "../lib/rateLimit.js";
 
-import { resolveContentOwner } from "../lib/contentOwner.js";
+import { resolveContentOwnerDetailed, type ContentOwnerResolution } from "../lib/contentOwner.js";
 
 const router = Router();
 
@@ -60,12 +60,17 @@ const ReportSchema = z.object({
 // agree on who owns a piece of content. This used to be a second, independent
 // implementation; see lib/contentOwner.ts for why having several was a problem.
 
-async function resolveSubjectUserId(
+// Returns the DETAILED resolution, not just the id. `resolveContentOwner`
+// collapses "this content has no owner" and "the owner lookup could not run"
+// into the same null, and this route makes TWO decisions on that value — the
+// attribution written into the row, and the self-report guard below — so it
+// needs to know which one happened.
+async function resolveSubjectOwner(
   sc: NonNullable<ReturnType<typeof getServiceClient>>,
   subjectType: (typeof SUBJECT_TYPES)[number],
   subjectId: string,
-): Promise<string | null> {
-  return resolveContentOwner(sc, subjectType, subjectId);
+): Promise<ContentOwnerResolution> {
+  return resolveContentOwnerDetailed(sc, subjectType, subjectId);
 }
 
 /* ===========================================================================
@@ -153,18 +158,56 @@ router.post("/moderation/report", asyncHandler(async (req, res) => {
   // report filed without attribution is recoverable by a moderator; a report
   // refused because an owner lookup blinked is gone. So the fix is the operator
   // signal that was missing, not a new way to lose a report.
-  const subjectUserId = await resolveSubjectUserId(sc, subjectType, subjectId);
+  const subjectOwner = await resolveSubjectOwner(sc, subjectType, subjectId);
+  const subjectUserId = subjectOwner.ownerUserId;
+
   if (!subjectUserId && subjectType !== "place") {
-    req.log.error(
-      { subjectType, subjectId, reporterId: user.id },
-      "moderation report has no accountable subject user — the content row is missing or the owner lookup failed; this report will not be attributed to anyone",
-    );
+    // The two cases are now told apart, because the old message said "the
+    // content row is missing OR the owner lookup failed" — it could not tell,
+    // because the resolver had not told it. One is a fact about the content;
+    // the other is an operations event, and only one of them is worth paging
+    // anyone about.
+    if (subjectOwner.outcome === "lookup_failed") {
+      req.log.error(
+        { err: subjectOwner.error, subjectType, subjectId, reporterId: user.id },
+        "moderation report: the subject-owner lookup COULD NOT RUN — the report is filed unattributed " +
+          "because the database was unreadable, NOT because the content is unowned",
+      );
+    } else {
+      req.log.error(
+        { subjectType, subjectId, reporterId: user.id, outcome: subjectOwner.outcome },
+        "moderation report has no accountable subject user — the content row is missing; this report will not be attributed to anyone",
+      );
+    }
   }
 
-  // Second self-report guard after resolution (for non-user subject types)
+  // Second self-report guard after resolution (for non-user subject types).
+  //
+  // ── WHY THIS STILL DOES NOT REFUSE ON A FAILED LOOKUP ─────────────────────
+  // The guard is `subjectUserId === user.id`, so a null owner passes it. When
+  // the owner lookup FAILED, that null is not evidence the reporter is someone
+  // else — the guard did not run, and a self-report goes through.
+  //
+  // Closing it by refusing is the wrong trade here, and deliberately not taken:
+  // this is the abuse-reporting intake path, governed by the same documented
+  // fail-OPEN posture as the duplicate-collapse read above. A report filed by
+  // someone against their own content is a nuisance a moderator can dismiss in
+  // one click; a report REFUSED because an owner lookup blinked is gone, and
+  // the person who needed to file it has no way of knowing it did not land.
+  //
+  // So the fix is the operator signal that was missing, not a new way to lose a
+  // report: the skipped guard is now stated as such, at ERROR, and separately
+  // from the ordinary "this content has no owner" case.
   if (subjectUserId && subjectUserId === user.id) {
     sendError(res, "invalid_payload", "Cannot report your own content");
     return;
+  }
+  if (subjectOwner.outcome === "lookup_failed") {
+    req.log.error(
+      { subjectType, subjectId, reporterId: user.id },
+      "moderation report: the self-report guard DID NOT RUN (subject owner unresolvable) — " +
+        "this report may be a self-report and was filed anyway; attribute by hand",
+    );
   }
 
   const insertRow: Record<string, unknown> = {
