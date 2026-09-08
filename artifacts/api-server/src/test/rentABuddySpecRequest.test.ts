@@ -107,6 +107,12 @@ function makeClient() {
       ilike(col: string, val: any) { this._filters.push(["eq", col, val]); return this; },
       or() { return this; },
       order() { return this; },
+      // PostgREST `.is("category", null)` — reached since this route began
+      // enforcing rent_buddy_city_restrictions through the shared
+      // enforceCityRestrictions helper, whose city-wide lookup asks for the row
+      // with a NULL category. Without this method the route crashes with a
+      // TypeError and a 500-from-crash would masquerade as a refusal.
+      is(col: string, val: any) { this._filters.push(["is", col, val]); return this; },
       // PostgREST `.limit()` — reached since the block check became
       // lib/blockGuard's single `.or(...).limit(1)` query (one query instead of
       // two `.maybeSingle()` reads, because a MUTUAL block is two rows and
@@ -148,6 +154,14 @@ function makeClient() {
           const enabled = state.featureFlags[flag as string];
           if (enabled === undefined) return { data: null, error: null };
           return { data: { flag, enabled }, error: null };
+        }
+
+        // rent_buddy_city_restrictions — no restriction rows in these fixtures,
+        // so the helper finds nothing and enforces nothing. Answered explicitly
+        // (rather than by falling through to the empty default) so that a future
+        // fixture can seed a row here and have it actually apply.
+        if (t === "rent_buddy_city_restrictions") {
+          return { data: this._maybeSingle ? null : [], error: null };
         }
 
         if (t === "rent_buddy_city_rollouts") {

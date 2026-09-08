@@ -7,7 +7,7 @@ import { getServiceClient } from "../lib/supabase.js";
 // rentABuddy.ts (which already gates its own 70 handlers with it). Imported
 // rather than re-implemented so this router cannot drift from the meaning of
 // `rent_buddy_enabled`. See its doc comment for why admin routes are exempt.
-import { findBlockingAvailabilityException, sendBuddyUnavailable, getUserLimits, deriveServiceCountry, resolveLaunchControlFromRows, requireRentBuddyEnabled, recordBookingEvent, NO_SHOW_REPORTABLE_STATUSES } from "./rentABuddy.js";
+import { findBlockingAvailabilityException, sendBuddyUnavailable, getUserLimits, deriveServiceCountry, resolveLaunchControlFromRows, requireRentBuddyEnabled, recordBookingEvent, NO_SHOW_REPORTABLE_STATUSES, enforceCityRestrictions } from "./rentABuddy.js";
 import { adjustBuddyCounter } from "../services/rentBuddy/ReliabilityCounters.js";
 import { requireBookingKyc } from "../lib/rentBuddyKycGate.js";
 import { TRAINING_CHECKLIST_ITEMS } from "./rentABuddy.js";
@@ -515,9 +515,24 @@ router.post("/rent-a-buddy/buddies/:buddyId/request", asyncHandler(async (req, r
   // nothing changes for a compliant traveler.
   const serviceCountry = deriveServiceCountry(bp);
   {
-    const { data: launchRows } = await serviceClient
+    // FAIL CLOSED on an unreadable table. supabase-js RESOLVES on a DB error, so
+    // `{ data: null }` becomes `[]` below — byte-identical to "no launch control
+    // is configured anywhere". That is the permissive answer at an admin policy
+    // gate: it waives the server-derived-country requirement immediately below
+    // AND every age / ID / phone / full-payment rule an admin has set for this
+    // region. The canonical POST /rent-a-buddy/bookings refuses this booking
+    // (sendLaunchControlsUnavailable, 503 + retryable); this alias must refuse
+    // exactly where the canonical route refuses.
+    const { data: launchRows, error: launchRowsErr } = await serviceClient
       .from("rent_buddy_launch_controls")
       .select("*");
+    if (launchRowsErr) {
+      return res.status(503).json({
+        error: "restrictions_unavailable",
+        retryable: true,
+        message: "Booking availability for this location could not be verified right now. Please try again shortly.",
+      });
+    }
 
     // Fail closed on unresolved country — same invariant as the canonical gate
     // (rentABuddy.ts:1098-1111). Now that the country is server-derived and
@@ -563,7 +578,32 @@ router.post("/rent-a-buddy/buddies/:buddyId/request", asyncHandler(async (req, r
       if (launchCtrl.fullPaymentRequired && paymentMode !== "full_in_app") {
         return res.status(403).json({ error: "payment_mode_required", message: "Full in-app payment is required for this location." });
       }
+
+    } else if ((launchRows ?? []).length > 0) {
+      // DENY BY DEFAULT, matching enforceBookingCreationGates. Launch controls
+      // are configured but none matches this city/country/category, which means
+      // an admin has not opened this combination. The canonical route refuses
+      // here; this alias used to seat the booking, so a region an admin had
+      // simply not listed was bookable through the shorthand and not through
+      // the main route.
+      return res.status(403).json({
+        error: "location_unavailable",
+        message: "Rent a Buddy is not yet available in this location or category.",
+      });
     }
+
+    // ── City/category restrictions (admin policy — fail CLOSED) ───────────────
+    // THE GAP. rent_buddy_city_restrictions was read by
+    // enforceBookingCreationGates and by nothing else, and this route does not
+    // run that gate stack — so `require_public_meetup`, `disable_deposit_cash`
+    // and `require_full_in_app` were enforced on POST /rent-a-buddy/bookings,
+    // on rebook, on offer-accept and on package-book, and ignored here. A
+    // traveller refused a private meetup or a cash split by the canonical route
+    // could seat exactly that booking through /api/buddies/:buddyId/request.
+    // Same helper, same refusals, same fail-closed load error.
+    if (!await enforceCityRestrictions({
+      sc: serviceClient, res, city, category, meetupLocation, meetupType, paymentMode,
+    })) return;
 
     // ── C1: per-user forced public meetup ─────────────────────────────────────
     // rent_buddy_user_limits.public_meetup_required is written by the auto-

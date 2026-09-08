@@ -1554,6 +1554,63 @@ function sendPreconditionUnavailable(res: any, message: string): void {
 
 
 /**
+ * Enforce the `rent_buddy_city_restrictions` row for one booking's city and
+ * category. Sends the matching refusal and returns false when a restriction
+ * blocks; returns true when nothing applies.
+ *
+ * Extracted from enforceBookingCreationGates so the ONE booking-creation path
+ * that does not run that gate stack — rentABuddySpec's
+ * POST /rent-a-buddy/buddies/:buddyId/request, the shorthand the mobile client
+ * reaches as /api/buddies/:buddyId/request — enforces the SAME restrictions
+ * from the SAME code. It did not read this table at all, so
+ * `require_public_meetup`, `disable_deposit_cash` and `require_full_in_app`
+ * were admin policy that one booking route honoured and another ignored: a
+ * traveller refused a private meetup by POST /rent-a-buddy/bookings could seat
+ * exactly that booking through the alias.
+ *
+ * FAIL CLOSED on a load error, unchanged: a restriction we cannot read might be
+ * one that should block this booking, so the refusal covers this one booking
+ * and nothing else (shape 1 of lib/exclusionSet.ts).
+ */
+export async function enforceCityRestrictions(opts: {
+  sc: any;
+  res: any;
+  city: string | null | undefined;
+  category: string | null | undefined;
+  meetupLocation?: any;
+  meetupType?: string | null;
+  paymentMode?: string | null;
+}): Promise<boolean> {
+  const { sc: serviceClient, res, city, category, meetupLocation, meetupType, paymentMode } = opts;
+
+  const restriction = await loadCityRestriction(serviceClient, city, category);
+  if (restriction.error) {
+    res.status(503).json({ error: "restrictions_unavailable", message: "Booking restrictions for this location could not be verified right now. Please try again shortly." });
+    return false;
+  }
+  if (!restriction.row) return true;
+
+  const r = restriction.row as any;
+  const meetupIsPrivate =
+    (meetupLocation != null && isPrivateLocation(meetupLocation)) ||
+    (meetupType === "private");
+  if (r.require_public_meetup && meetupIsPrivate) {
+    res.status(400).json({ error: "public_meetup_required", message: "Bookings in this location must start at a public meeting place (venue entrance, hotel lobby, landmark, etc.). Private rooms and homes are not allowed." });
+    return false;
+  }
+  const effectivePaymentMode = paymentMode ?? "full_in_app";
+  if (r.disable_deposit_cash && effectivePaymentMode === "deposit_plus_cash") {
+    res.status(403).json({ error: "cash_payment_unavailable", message: "Cash / off-platform payment is not available for bookings in this location. Full in-app payment is required." });
+    return false;
+  }
+  if (r.require_full_in_app && effectivePaymentMode !== "full_in_app") {
+    res.status(403).json({ error: "full_payment_required", message: "Full in-app payment is required for bookings in this location." });
+    return false;
+  }
+  return true;
+}
+
+/**
  * The SINGLE implementation of the gate stack that POST /rent-a-buddy/bookings
  * runs once the buddy, city and category are known. Extracted (audit RAB-1 /
  * RAB-2) so every other creation path — rebook, package-book, offer-accept —
@@ -1726,32 +1783,9 @@ export async function enforceBookingCreationGates(opts: {
   }
 
   // ── City/category restrictions (admin policy — fail CLOSED) ─────────────────
-  // Enforced here so every creation path honours it uniformly and no ordinary
-  // user can bypass. A load error rejects THIS booking rather than allowing it.
-  const restriction = await loadCityRestriction(serviceClient, city, category);
-  if (restriction.error) {
-    res.status(503).json({ error: "restrictions_unavailable", message: "Booking restrictions for this location could not be verified right now. Please try again shortly." });
-    return false;
-  }
-  if (restriction.row) {
-    const r = restriction.row as any;
-    const meetupIsPrivate =
-      (meetupLocation != null && isPrivateLocation(meetupLocation)) ||
-      (meetupType === "private");
-    if (r.require_public_meetup && meetupIsPrivate) {
-      res.status(400).json({ error: "public_meetup_required", message: "Bookings in this location must start at a public meeting place (venue entrance, hotel lobby, landmark, etc.). Private rooms and homes are not allowed." });
-      return false;
-    }
-    const effectivePaymentMode = paymentMode ?? "full_in_app";
-    if (r.disable_deposit_cash && effectivePaymentMode === "deposit_plus_cash") {
-      res.status(403).json({ error: "cash_payment_unavailable", message: "Cash / off-platform payment is not available for bookings in this location. Full in-app payment is required." });
-      return false;
-    }
-    if (r.require_full_in_app && effectivePaymentMode !== "full_in_app") {
-      res.status(403).json({ error: "full_payment_required", message: "Full in-app payment is required for bookings in this location." });
-      return false;
-    }
-  }
+  if (!await enforceCityRestrictions({
+    sc: serviceClient, res, city, category, meetupLocation, meetupType, paymentMode,
+  })) return false;
 
   // ── Self-booking block — a buddy cannot book themselves ─────────────────────
   const buddyUserId = (buddyProfile as any)?.user_id;
