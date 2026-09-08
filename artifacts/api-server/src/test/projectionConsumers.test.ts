@@ -32,8 +32,9 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, dirname, resolve } from "node:path";
+import { join, dirname, resolve, relative } from "node:path";
 import { fileURLToPath } from "node:url";
+import { callsFunction } from "../scripts/lib/callsFunction.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const API_ROOT = resolve(HERE, "..", "..");
@@ -154,5 +155,109 @@ describe("projection consumer ratchet", () => {
     const { code, out } = withRegistry("empty", []);
     assert.notEqual(code, 0);
     assert.match(out, /VACUOUS/);
+  });
+
+  it("FAILS a scheduler whose start call has been COMMENTED OUT", () => {
+    // The false negative this rule shipped with. `new RegExp(name + "\\s*\\(")`
+    // against the raw file matches inside a comment, so commenting out
+    // `startTripMapProjectionScheduler();` in index.ts left the check GREEN at
+    // exit 0 — on precisely the regression rule 5 exists to catch, and on the
+    // single most likely way a scheduler ever stops running (someone disables it
+    // while debugging and does not put it back). Measured first in the sibling
+    // checkStateMachineWriters.ts, then found here.
+    //
+    // The entry point is a crafted file rather than a mutated src/index.ts so the
+    // proof does not depend on editing the running tree; `from` is resolved
+    // against SRC, so a relative path out of it reaches the temp dir.
+    const entry = join(tmp, "commentedEntry.ts");
+    writeFileSync(
+      entry,
+      [
+        "// startTripMapProjectionScheduler();",
+        "/* startTripMapProjectionScheduler(); */",
+        "/*",
+        " * startTripMapProjectionScheduler();",
+        " */",
+        "export const nothingHere = true;",
+      ].join("\n"),
+    );
+    const { code, out } = withRegistry("commented", [{
+      key: "COMMENTED_OUT",
+      kind: "projection",
+      storage: ["trip_map_projections"],
+      producers: ["lib/mapTripProjectionWorker.ts"],
+      producerFunctions: ["trip_map_projection_drain"],
+      consumers: ["lib/mapProjectionTripRead.ts"],
+      scheduler: { starts: "startTripMapProjectionScheduler", from: relative(join(API_ROOT, "src"), entry) },
+    }]);
+    assert.notEqual(code, 0, "a commented-out start call is not a start call");
+    assert.match(out, /is never CALLED from/);
+  });
+
+  it("PASSES the same entry point once the call is real (the control)", () => {
+    // Without this, the case above would also pass against a checker that had
+    // simply stopped detecting calls at all.
+    const entry = join(tmp, "realEntry.ts");
+    writeFileSync(
+      entry,
+      ["// startTripMapProjectionScheduler();", "startTripMapProjectionScheduler();"].join("\n"),
+    );
+    const { code } = withRegistry("realcall", [{
+      key: "REAL_CALL",
+      kind: "projection",
+      storage: ["trip_map_projections"],
+      producers: ["lib/mapTripProjectionWorker.ts"],
+      producerFunctions: ["trip_map_projection_drain"],
+      consumers: ["lib/mapProjectionTripRead.ts"],
+      scheduler: { starts: "startTripMapProjectionScheduler", from: relative(join(API_ROOT, "src"), entry) },
+    }]);
+    // Only the UNREGISTERED-PROJECTION discovery rule should still fire here
+    // (this crafted registry names one projection while the tree has more), so
+    // assert on the scheduler verdict specifically rather than on exit 0.
+    assert.equal(code === 0 || code === 1, true);
+    const { out } = withRegistry("realcall", [{
+      key: "REAL_CALL",
+      kind: "projection",
+      storage: ["trip_map_projections"],
+      producers: ["lib/mapTripProjectionWorker.ts"],
+      producerFunctions: ["trip_map_projection_drain"],
+      consumers: ["lib/mapProjectionTripRead.ts"],
+      scheduler: { starts: "startTripMapProjectionScheduler", from: relative(join(API_ROOT, "src"), entry) },
+    }]);
+    assert.doesNotMatch(out, /REAL_CALL: startTripMapProjectionScheduler is never CALLED/);
+  });
+});
+
+describe("callsFunction — the shared comment-aware detector", () => {
+  it("finds a real call", () => {
+    assert.equal(callsFunction("startX();", "startX"), true);
+    assert.equal(callsFunction("  await startX( a, b );", "startX"), true);
+  });
+
+  it("does NOT find a line-commented call", () => {
+    assert.equal(callsFunction("// startX();", "startX"), false);
+    assert.equal(callsFunction("const y = 1; // startX();", "startX"), false);
+  });
+
+  it("does NOT find a block-commented call, single or multi line", () => {
+    assert.equal(callsFunction("/* startX(); */", "startX"), false);
+    assert.equal(callsFunction("/*\n startX();\n*/", "startX"), false);
+    assert.equal(callsFunction("a();\n/*\nstartX();\n*/\nb();", "startX"), false);
+  });
+
+  it("finds a real call on a line that also carries a comment", () => {
+    assert.equal(callsFunction("startX(); // kicks the drain", "startX"), true);
+  });
+
+  it("does not match a longer identifier that merely ends with the name", () => {
+    assert.equal(callsFunction("dontStartX();", "startX"), false);
+  });
+
+  it("errs toward NOT finding rather than toward finding", () => {
+    // A `//` inside a string truncates the rest of that line. That is the
+    // deliberate direction: ambiguity must fail the guard loudly, never pass it
+    // quietly. Pinned so a future \"improvement\" that flips the direction has to
+    // argue with this case.
+    assert.equal(callsFunction('const u = "https://x"; startX();', "startX"), false);
   });
 });

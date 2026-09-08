@@ -44,6 +44,7 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { callsFunction } from "./lib/callsFunction.js";
 import { PROJECTIONS as REAL_PROJECTIONS, type ProjectionEntry } from "../lib/projections/registry.js";
 
 /**
@@ -194,9 +195,13 @@ function main(): void {
       if (!existsSync(entry)) {
         problems.push(`${p.key}: scheduler entry point ${p.scheduler.from} does not exist.`);
       } else {
-        const src = readFileSync(entry, "utf8");
-        const called = new RegExp(`${p.scheduler.starts}\\s*\\(`).test(src);
-        if (!called) {
+        // COMMENT-AWARE, and not optionally so. `new RegExp(name + "\\s*\\(")`
+        // against the raw file matches inside a comment, so commenting out
+        // `startTripMapProjectionScheduler();` in index.ts left this check green
+        // at exit 0 while the producer never ran and the projection table stayed
+        // empty for ever — the exact defect rule 5 exists to catch. The identical
+        // bug was measured first in checkStateMachineWriters.ts.
+        if (!callsFunction(readFileSync(entry, "utf8"), p.scheduler.starts)) {
           problems.push(
             `${p.key}: ${p.scheduler.starts} is never CALLED from ${p.scheduler.from}. ` +
               `An unstarted producer fills nothing, and the consumer then reads an empty table forever.`,

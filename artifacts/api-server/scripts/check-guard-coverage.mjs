@@ -136,6 +136,51 @@ const CREDENTIAL_NAME_RE = new RegExp(
 );
 const CREATE_CLIENT_RE = /(?:^|[^A-Za-z0-9_$.])createClient[ \t]*\(/;
 
+/**
+ * The file with its comments removed, for the reachability scan.
+ *
+ * A credential name inside a comment is not a use of that credential, and a
+ * `createClient(` inside a comment constructs nothing. Scanning the raw text
+ * classified 32 unit tests as able to reach Supabase because their header says
+ * how to RUN them. That is a guard failing on correct code, which is how guards
+ * get deleted.
+ *
+ * Deliberately conservative in the direction that keeps the guarded set LARGER:
+ * string literals are NOT parsed, so a `//` inside a string (a URL, say)
+ * truncates the rest of that line — which can only ever make this script see
+ * LESS credential usage on that line than is there... except that the whole
+ * point is the opposite direction, so read that again: dropping the tail of a
+ * line can only cause a file to be classified UNREACHABLE that should have been
+ * REACHABLE. That is the one way this can be wrong, and it is bounded to lines
+ * where a string literal contains `//` AND a credential name appears after it
+ * on the same line. No file in the tree does that today; the CI-surface rule
+ * below and the exemption list are the backstop if one ever does.
+ */
+function stripComments(text) {
+  let out = '';
+  let inBlock = false;
+  for (const raw of text.split('\n')) {
+    let line = raw;
+    if (inBlock) {
+      const end = line.indexOf('*/');
+      if (end === -1) { out += '\n'; continue; }
+      line = line.slice(end + 2);
+      inBlock = false;
+    }
+    for (;;) {
+      const begin = line.indexOf('/*');
+      if (begin === -1) break;
+      const end = line.indexOf('*/', begin + 2);
+      if (end === -1) { line = line.slice(0, begin); inBlock = true; break; }
+      line = line.slice(0, begin) + line.slice(end + 2);
+    }
+    const slashes = line.indexOf('//');
+    if (slashes !== -1) line = line.slice(0, slashes);
+    out += line + '\n';
+  }
+  return out;
+}
+
 /** An `import "…/ciSupabaseGuard.mjs";` statement — not a mention of the name. */
 const GUARD_IMPORT_RE = /^[ \t]*import[ \t]+["'][^"']*ciSupabaseGuard\.mjs["'][ \t]*;?[ \t]*$/m;
 /** The same, for the read-only audit front door. */
@@ -523,10 +568,27 @@ const EXEMPT = [
   //
   // NOTE for whoever next re-derives the patterns: matching the bare text
   // SUPABASE_ also matches error messages and comments, so the "can reach
-  // Supabase directly" population is an over-count, and some other exemptions
-  // here may rest on the same kind of false positive. Narrowing the pattern
-  // would shrink the guarded set, so it is deliberately NOT done in this change
-  // — it needs its own review.
+  // Supabase directly" population was an over-count, and some exemptions here
+  // may still rest on that kind of false positive.
+  //
+  // THE COMMENT HALF OF THAT HAS SINCE BEEN FIXED (see stripComments below):
+  // the reachability scan now runs over the file with comments removed. That
+  // was the review this note asked for, and it was forced by measurement, not
+  // by tidiness — 32 pure unit tests were being flagged whose ONLY mention of a
+  // credential name is the run instruction in their own doc comment:
+  //
+  //   * Run: SUPABASE_URL=http://127.0.0.1:9 SUPABASE_SERVICE_ROLE_KEY=dummy \
+  //
+  // Those files construct no client and issue no request. With them flagged,
+  // check:guard-coverage — the FIRST check in check:all — was red on nothing,
+  // and this script's own siblings say what happens next: "a permanently-red
+  // check is one `|| true` away from being no check at all".
+  //
+  // THE STRING-LITERAL HALF IS DELIBERATELY NOT FIXED. The trips.ts precedent
+  // above was a string literal in an error message, and a string holding a
+  // credential name is code that ran; only a comment is guaranteed not to be.
+  // So a file naming SUPABASE_SERVICE_ROLE_KEY inside a string is still
+  // REACHABLE here, and still has to be judged by a human.
 
   // ── Manual seed / backfill / ops tooling. CI invokes none of it. ──────────
   //
@@ -610,9 +672,48 @@ const EXEMPT = [
   //
   // The exemption is NOT taken on trust — assertPinnedTestEnv() below re-reads
   // package.json on every run and fails if the pin is gone.
+  //
+  // Three entries left this list when the reachability scan became
+  // comment-aware: dailyBriefCleanup, eventAgendaItems and stamps mentioned a
+  // credential name ONLY in a comment, so they were never reachable and never
+  // needed an exemption. The check's own staleness rule is what surfaced them —
+  // it refuses an EXEMPT entry for a file it no longer classifies as reaching
+  // Supabase, precisely so a narrowed pattern cannot quietly retire exemptions
+  // that are still load-bearing.
+  {
+    file: 'src/test/guardCoverageReachability.test.ts',
+    // pinnedTestEnv for the same reason as the entries below: `pnpm test` names
+    // it and pins SUPABASE_URL on the command line.
+    pinnedTestEnv: true,
+    reason:
+      'The mutation suite for THIS script. It is classified reachable because it writes probe files whose ' +
+      'CONTENT quotes credential names as fixture text — including one case that exists specifically to prove ' +
+      'a credential name in a string literal is still treated as reachable, which is the narrowing this ' +
+      'script must NOT do. Building those fixtures by concatenation to dodge the pattern would be evading ' +
+      'the guard this file exists to defend, so the fixture text stays literal and the exemption is taken ' +
+      'openly. The test constructs no client and issues no request; it spawns this script as a child ' +
+      'process and reads its exit code and printed counts. EXEMPTION MEANS UNGUARDED, NOT SAFE.',
+  },
+
+  {
+    file: 'src/test/snapshotFreshnessGuard.test.ts',
+    // pinnedTestEnv because the CI-surface rule requires it of any exemption CI
+    // invokes, and because the premise is true here as well: `pnpm test` names
+    // this file and pins SUPABASE_URL on the command line. Its own hardcoded
+    // override is an ADDITIONAL, stronger pin on top of that, not a substitute
+    // for it — so the conditional re-check of package.json still applies.
+    pinnedTestEnv: true,
+    reason:
+      'Registered unit test that spawns src/scripts/checkFlagSchemaPrerequisites.ts as a CHILD PROCESS and ' +
+      'sets SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY for it to hardcoded literals — the loopback discard ' +
+      'port and the string "dummy" — AFTER spreading process.env, so the override wins and the child cannot ' +
+      'inherit whatever an operator .env names. That is a stronger pin than the pinnedTestEnv entries below, ' +
+      'which rely on package.json: this one is in the file itself and moves with it. The test constructs no ' +
+      'client and issues no request of its own. EXEMPTION MEANS UNGUARDED, NOT SAFE — if this file is ever ' +
+      'changed to pass the ambient credentials through, the exemption is void and it must import the guard.',
+  },
+
   ...[
-    'src/test/dailyBriefCleanup.test.ts',
-    'src/test/eventAgendaItems.test.ts',
     'src/test/events-extension.test.ts',
     'src/test/mediaAccess.test.ts',
     'src/test/mediaFileWidthTransform.test.ts',
@@ -622,7 +723,6 @@ const EXEMPT = [
     'src/test/mediaUploadHardening.test.ts',
     'src/test/messaging.test.ts',
     'src/test/ogImageVisibility.test.ts',
-    'src/test/stamps.test.ts',
     'src/test/storyMediaOwnership.test.ts',
   ].map((file) => ({
     file,
@@ -831,10 +931,15 @@ for (const abs of sourceFiles) {
 
   if (GUARD_MACHINERY.has(rel)) continue; // the guard is not its own client
 
-  const importsStrictGuard = GUARD_IMPORT_RE.test(text);
-  const importsReadOnlyGuard = READONLY_GUARD_IMPORT_RE.test(text);
+  // Comments stripped for BOTH questions. A commented-out credential name is
+  // not a use of it, and — the direction that matters more — a commented-out
+  // guard import is not a guard: `// import "…/ciSupabaseGuard.mjs";` must not
+  // count as opting in.
+  const code = stripComments(text);
+  const importsStrictGuard = GUARD_IMPORT_RE.test(code);
+  const importsReadOnlyGuard = READONLY_GUARD_IMPORT_RE.test(code);
   const importsGuard = importsStrictGuard || importsReadOnlyGuard;
-  const canReach = CREDENTIAL_NAME_RE.test(text) || CREATE_CLIENT_RE.test(text);
+  const canReach = CREDENTIAL_NAME_RE.test(code) || CREATE_CLIENT_RE.test(code);
 
   if (importsReadOnlyGuard) readOnlyImporters.add(rel);
 

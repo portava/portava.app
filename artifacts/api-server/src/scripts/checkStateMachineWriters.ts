@@ -68,6 +68,7 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { callsFunction } from "./lib/callsFunction.js";
 import {
   STATE_MACHINES as REAL_MACHINES,
   CLASSIFICATION_RANK,
@@ -193,30 +194,13 @@ export function mirrorStates(ts: string, symbol: string): string[] | null {
  * It errs toward NOT finding the call (a `//` inside a string literal truncates
  * the rest of that line), which fails loudly rather than passing quietly.
  */
-export function callsFunction(text: string, name: string): boolean {
-  const re = new RegExp(`\\b${name}\\s*\\(`);
-  let inBlock = false;
-  for (const raw of text.split("\n")) {
-    let line = raw;
-    if (inBlock) {
-      const end = line.indexOf("*/");
-      if (end === -1) continue;
-      line = line.slice(end + 2);
-      inBlock = false;
-    }
-    for (;;) {
-      const begin = line.indexOf("/*");
-      if (begin === -1) break;
-      const end = line.indexOf("*/", begin + 2);
-      if (end === -1) { line = line.slice(0, begin); inBlock = true; break; }
-      line = line.slice(0, begin) + line.slice(end + 2);
-    }
-    const slashes = line.indexOf("//");
-    if (slashes !== -1) line = line.slice(0, slashes);
-    if (re.test(line)) return true;
-  }
-  return false;
-}
+/**
+ * Lifted to src/scripts/lib/callsFunction.ts once checkProjectionConsumers.ts
+ * was found to carry the identical bug. Re-exported here because the mutation
+ * fixtures in src/test/stateMachineWriters.test.ts import it from this module,
+ * and the proof that a commented-out call is not a call belongs with them.
+ */
+export { callsFunction };
 
 // ── the check ────────────────────────────────────────────────────────────────
 
