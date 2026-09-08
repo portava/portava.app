@@ -69,6 +69,23 @@ export const MEDIA_CANONICAL: CapabilityDefinition = {
 /** flag → definition. The ratchet and the tests enumerate this. */
 export const CAPABILITIES: Readonly<Record<string, CapabilityDefinition>> = Object.freeze({
   [MEDIA_CANONICAL.flag]: MEDIA_CANONICAL,
+  // NOT registered here, deliberately: MAP_TRIP_PROJECTION_CAPABILITY
+  // (lib/mapProjectionTripContract.ts). resolveCapability takes the definition
+  // directly, so the Map reader is fully guarded either way.
+  //
+  // Registering it was tried and reverted. checkFlagSchemaPrerequisites then
+  // fails "REGISTRY OVER A DEAD FLAG: nothing in the tree reads it", because
+  // its readSites counter looks for the flag NAME at a read site and the Map
+  // reader reaches its flag through the capability definition instead. The
+  // ratchet's badConsumers check does verify the consumer reaches
+  // lib/capability, so the guard is seen; only the literal is not.
+  //
+  // The rule is right and was left alone rather than widened to admit the
+  // entry. It is also accurate today: production has no row for
+  // map_trip_projection_read_enabled and no trip_map_projections table, so the
+  // capability can never be ready there yet. Unregistered, the flag classifies
+  // as `latent`, which is what it is. Register it when 2520 -> 2610 are applied
+  // and the flag has a row.
 });
 
 export function capabilityFor(flag: string): CapabilityDefinition | null {

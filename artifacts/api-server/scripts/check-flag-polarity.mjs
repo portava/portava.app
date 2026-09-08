@@ -1043,6 +1043,21 @@ const UNRESOLVABLE = [
 // ─────────────────────────────────────────────────────────────────────────────
 const V = 'verified by hand at c89f09a77';
 const DIRECT_READS = [
+  // ── The capability contract's own four-state flag read ───────────────────
+  {
+    file: 'lib/capability/schemaCapability.ts',
+    shape: 'var',
+    covers: ['media_canonical_enabled', 'map_trip_projection_read_enabled'],
+    reason:
+      'readFlagState() — the capability contract reads feature_flags through a flag name passed in by ' +
+      'the caller, so no literal is resolvable at this site. Fail-closed by construction and verified by ' +
+      'hand: off, ABSENT and unreadable all resolve to enabled:false, which is the whole point of a ' +
+      'four-state read (lib/capability/capabilityContract.test.ts pins each of the four). `covers` is the ' +
+      'machine-checked list of every flag that reaches feature_flags through here, and it is what stops ' +
+      'those flags being reported seeded-but-never-read: they ARE read, through this one site. Add a flag ' +
+      'here when you add it to CAPABILITIES in lib/capability/registry.ts.',
+  },
+
   // ── Reads whose failure direction is genuinely fail-closed ───────────────
   { file: 'compass/CompassFallbackFeedBuilder.ts', flag: 'COMPASS_FALLBACK_MODE_ENABLED', reason: `Read directly, error branch ${V}: try/catch → false. Fail-closed.` },
   { file: 'lib/creatorActivityScoreScheduler.ts',  flag: 'ACTIVITY_DISCOVERY_BOOST_ENABLED', reason: `Read directly, error branch ${V}: catch → false, with an inline comment stating the job is skipped rather than run on a degraded connection. Fail-closed.` },
