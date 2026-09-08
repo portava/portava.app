@@ -430,11 +430,32 @@ router.get("/circle/settings", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
-  const { data } = await sc
+  // ── "YOUR LOCATION SHARING IS OFF" MUST NOT BE ASSEMBLED OUT OF DEFAULTS ──
+  // `.error` was never bound. supabase-js RESOLVES on a database error, so an
+  // unreadable circle_visibility_settings row arrived as `data: null` and every
+  // `?? false` below turned into a confident privacy claim: sharing OFF, not
+  // paused, no consent on record, mode status_only. This is the screen a person
+  // opens to check whether they are broadcasting their location. Being shown
+  // "off" while sharing is in fact ON, and being shown "not paused" while it is
+  // running, are the two answers that stop someone acting -- the reassuring
+  // reading is the false one, so emptiness is not a safe default here.
+  //
+  // The absent row is a REAL state (a user who has never touched Circle) and
+  // still answers with the defaults below; only a read that FAILED refuses.
+  const { data, error: settingsErr } = await sc
     .from("circle_visibility_settings")
     .select("global_enabled, visibility_mode, trip_sharing_default, event_sharing_default, is_paused, paused_until, consent_version, consented_at, updated_at")
     .eq("user_id", user.id)
     .maybeSingle();
+
+  if (settingsErr) {
+    req.log?.error?.(
+      { err: settingsErr, userId: user.id },
+      "circle settings read failed — refusing to report 'sharing is off' from a read that did not answer",
+    );
+    sendError(res, "degraded_unavailable", "Your Circle settings are temporarily unavailable. Please try again.");
+    return;
+  }
 
   res.status(200).json({
     globalEnabled:        (data as any)?.global_enabled         ?? false,
@@ -1188,7 +1209,26 @@ router.post("/circle/contexts/:type/:id/check-in", async (req, res) => {
     approximate_label: parsed.data.approximateLabel ?? null,
   };
 
-  const [checkinResult] = await Promise.all([
+  // ── THE SECOND WRITE WAS DESTRUCTURED AWAY ────────────────────────────────
+  // This was `const [checkinResult] = await Promise.all([...])`: the presence
+  // upsert's result was dropped on the floor by the array pattern, so its
+  // `.error` could not be observed even in principle. supabase-js resolves a
+  // failed write as `{ error }`, so a `circle_presence` upsert that never landed
+  // produced a 201 that named a check-in id.
+  //
+  // circle_presence is the row the CIRCLE reads (lib/circleAccessGuard.ts step 8,
+  // GET .../my-presence, the compass-suggestions "circle_active" card). The
+  // check-in log is the private audit trail; the presence row is the part other
+  // people see. So a silent failure here means the member's circle keeps seeing
+  // the PREVIOUS venue_label and approximate_label -- a stale location, presented
+  // as current, for someone who believes they have just told everyone where they
+  // moved to. Nothing about that is a safe degradation.
+  //
+  // Direction: NOT fatal. The check-in row is written and is the durable record,
+  // and refusing after it has committed would invite a duplicate on retry. The
+  // failure is stated instead -- ERROR log plus `presenceUpdated` in the body,
+  // the same shape routes/blocks.ts uses for its `cleanup` residue.
+  const [checkinResult, presenceResult] = await Promise.all([
     sc.from("circle_checkins").insert(checkinPayload).select("id, checkin_type, created_at").maybeSingle(),
     // Update presence snapshot
     sc.from("circle_presence").upsert(
@@ -1209,6 +1249,15 @@ router.post("/circle/contexts/:type/:id/check-in", async (req, res) => {
   ]);
 
   if (checkinResult.error) { sendError(res, "db_error", checkinResult.error.message); return; }
+
+  const presenceErr = (presenceResult as any)?.error ?? null;
+  if (presenceErr) {
+    req.log?.error?.(
+      { err: presenceErr, userId: user.id, contextType: type, contextId: id },
+      "circle check-in recorded, but the circle_presence snapshot was NOT updated — " +
+        "the member's circle is still being shown their previous status/venue",
+    );
+  }
 
   void writeAuditEvent(sc, {
     actorUserId:  user.id,
@@ -1245,6 +1294,7 @@ router.post("/circle/contexts/:type/:id/check-in", async (req, res) => {
     id:          (checkinResult.data as any)?.id           ?? null,
     checkinType: (checkinResult.data as any)?.checkin_type ?? null,
     createdAt:   (checkinResult.data as any)?.created_at   ?? null,
+    presenceUpdated: !presenceErr,
   });
 });
 
@@ -1679,20 +1729,35 @@ router.post("/circle/contexts/:type/:id/need-help", async (req, res) => {
 
       // Resolve the host for this context using canonical owner columns.
       // trips: owner_id  — events: host_id  (consistent with trips.ts / admin.ts)
+      // AN UNREADABLE HOST IS NOT "THERE IS NO HOST". Both reads bound only
+      // `data`, and supabase-js RESOLVES on a database error -- so a `trips` or
+      // `events` blip produced `hostId = null`, the `if (hostId && ...)` below
+      // skipped the alert entirely, and the bare `catch {}` this block used to
+      // end with recorded nothing (it could not: nothing was thrown). The
+      // emergency alert for a member who pressed "I need help" reached NOBODY,
+      // and the only trace of it was a 200 saying "Your circle has been
+      // notified".
+      //
+      // The presence row (needs_help = true) IS written and checked before the
+      // response, so the circle can still SEE the state; what vanished silently
+      // was the push to the host. That failure is now stated at ERROR, which is
+      // what this file's own logCircleFanoutFailure exists for.
       let hostId: string | null = null;
       if (type === "trip") {
-        const { data: trip } = await sc
+        const { data: trip, error: tripErr } = await sc
           .from("trips")
           .select("owner_id")
           .eq("id", id)
           .maybeSingle();
+        if (tripErr) throw new Error(`need-help host lookup failed (trips): ${tripErr.message ?? tripErr.code ?? "unknown"}`);
         hostId = (trip as any)?.owner_id ?? null;
       } else {
-        const { data: ev } = await sc
+        const { data: ev, error: evErr } = await sc
           .from("events")
           .select("host_id")
           .eq("id", id)
           .maybeSingle();
+        if (evErr) throw new Error(`need-help host lookup failed (events): ${evErr.message ?? evErr.code ?? "unknown"}`);
         hostId = (ev as any)?.host_id ?? null;
       }
 
@@ -1701,8 +1766,28 @@ router.post("/circle/contexts/:type/:id/need-help", async (req, res) => {
         await sendCircleNotifications(sc, [hostId], "circle.need_help_host_alert", {
           actor: actorName, contextTitle, contextType: type, contextId: id,
         });
+      } else if (!hostId) {
+        req.log?.warn?.(
+          { contextType: type, contextId: id, userId: user.id },
+          "need-help: no host on record for this context — no host alert was sent",
+        );
       }
-    } catch { /* non-fatal — safety alert must never silently break the response */ }
+    } catch (err) {
+      // Was a bare `catch {}` whose comment claimed the alert "must never
+      // silently break the response". It did not break the response; it broke
+      // silently. The response is already sent by the time this runs, so the log
+      // is the only place this can go -- which is the whole point.
+      //
+      // Logged at ERROR here rather than through logCircleFanoutFailure, which
+      // logs at WARN. That level is right for the eleven other fan-outs in this
+      // file (somebody paused sharing, somebody checked in); it is not right for
+      // an emergency alert that reached nobody. The helper is left alone rather
+      // than re-levelled, because raising it would re-level all eleven.
+      req.log?.error?.(
+        { err, contextType: type, contextId: id, userId: user.id },
+        "need-help host alert FAILED — the emergency alert reached NOBODY, and the caller was told their circle was notified",
+      );
+    }
   })();
 
   // IMPORTANT: response MUST NOT expose needs_help bool, GPS, or emergency details.

@@ -290,16 +290,37 @@ router.post("/friend-requests/:requestId/decline", async (req, res) => {
     return;
   }
 
-  // Anti-retaliation cooldown: requester cannot re-send for 24 hours after a decline
+  // Anti-retaliation cooldown: requester cannot re-send for 24 hours after a decline.
+  //
+  // `.then(undefined, () => {})` IS A REJECTION HANDLER, AND THIS CLIENT DOES NOT
+  // REJECT. supabase-js resolves a failed write as `{ error }` -- even a network
+  // failure resolves, because postgrest-js catches fetch errors itself -- so the
+  // second argument to `.then` never ran, and the resolved `{ error }` was
+  // discarded by the empty first slot. The one row that stops the declined
+  // requester from re-sending immediately could fail to write and leave no trace
+  // anywhere: not in the response, not in the log. The person who just declined
+  // is then re-asked, and the cooldown they were owed never existed.
+  //
+  // Direction unchanged -- a failed cooldown must not fail the decline, which
+  // HAS been committed above and is the protection that matters. What changes is
+  // that the failure is now observed and stated, the same way routes/blocks.ts
+  // reports its own anti-retaliation cooldown write (`cleanup.residual`).
   const cooldownExpiry = new Date(nowMs + 24 * 60 * 60 * 1000).toISOString();
-  await sc.from("user_interaction_cooldowns").upsert({
+  const { error: cooldownErr } = await sc.from("user_interaction_cooldowns").upsert({
     user_id:        fr.requester_id,
     target_user_id: user.id,
     cooldown_type:  "friend_request",
     expires_at:     cooldownExpiry,
-  }, { onConflict: "user_id,target_user_id,cooldown_type" }).then(undefined, () => {});
+  }, { onConflict: "user_id,target_user_id,cooldown_type" });
+  if (cooldownErr) {
+    req.log.error(
+      { err: cooldownErr, requestId, requesterId: fr.requester_id },
+      "friend request declined, but the 24h anti-retaliation cooldown was NOT written -- " +
+        "the requester can re-send immediately",
+    );
+  }
 
-  res.status(200).json({ status: "declined", requestId });
+  res.status(200).json({ status: "declined", requestId, cooldownApplied: !cooldownErr });
 });
 
 /* ===========================================================================
@@ -757,7 +778,18 @@ router.post("/circle-invites", async (req, res) => {
     if (s === "pending") { res.status(200).json({ inviteId: (existing as any).id, status: "pending", idempotent: true }); return; }
     if (s === "accepted") { res.status(200).json({ inviteId: (existing as any).id, status: "accepted" }); return; }
     const now = new Date().toISOString();
-    await sc.from("circle_invites").update({ status: "pending", responded_at: null }).eq("id", (existing as any).id);
+    // A WRITE WITH NO `.error` CHECK REPORTS SUCCESS BLIND. supabase-js resolves
+    // a failed UPDATE as `{ error }`, and this one was awaited into nothing --
+    // so a reactivation that never happened answered 200 `reactivated: true`,
+    // leaving the invite in its declined/cancelled state while both the inviter
+    // and the client believed a pending invitation existed.
+    const { error: reactivateErr } = await sc
+      .from("circle_invites").update({ status: "pending", responded_at: null }).eq("id", (existing as any).id);
+    if (reactivateErr) {
+      req.log.error({ err: reactivateErr, inviteId: (existing as any).id }, "circle invite reactivation update failed");
+      sendError(res, "db_error", reactivateErr.message);
+      return;
+    }
     res.status(200).json({ inviteId: (existing as any).id, status: "pending", reactivated: true });
     return;
   }
@@ -791,23 +823,67 @@ router.post("/circle-invites/:inviteId/accept", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
-  const { data: inv } = await sc
+  // An unreadable `circle_invites` resolves as `{ data: null }`, which this
+  // handler read as "no such invite" and answered 404 -- telling the recipient
+  // their invitation does not exist because the database blinked. The direction
+  // is safe (nothing is joined), the CLAIM is not.
+  const { data: inv, error: invErr } = await sc
     .from("circle_invites").select("id, owner_id, recipient_id, status")
     .eq("id", inviteId).maybeSingle();
 
+  if (invErr) {
+    req.log.error({ err: invErr, inviteId }, "circle invite accept: invite read failed — refusing to report 'not found'");
+    sendError(res, "degraded_unavailable", "We could not look up that circle invite right now. Please try again shortly.");
+    return;
+  }
   if (!inv) { sendError(res, "not_found", "Circle invite not found"); return; }
   if ((inv as any).recipient_id !== user.id) { sendError(res, "forbidden", "Only the recipient can accept this invite"); return; }
   if ((inv as any).status !== "pending") { sendError(res, "invalid_payload", `Invite is already ${(inv as any).status}`); return; }
 
   const now = new Date().toISOString();
-  await sc.from("circle_invites").update({ status: "accepted", responded_at: now }).eq("id", inviteId);
 
-  // Explicit membership creation — the ONLY path that writes to circle_memberships.
+  // ── WHAT THIS ROUTE OWES, AND WHY THE TWO WRITES ARE NOW IN THIS ORDER ─────
+  // This handler's own banner says it is THE ONLY PLACE that creates a
+  // circle_memberships row. It used to do two writes and believe both:
+  //
+  //   1. flip the invite to 'accepted'  — awaited into nothing, `.error` never
+  //      bound, so a failed flip was invisible;
+  //   2. upsert circle_memberships      — `.error` bound, LOGGED, and then
+  //      fallen straight past into `res.json({ status: "accepted" })`.
+  //
+  // (2) is the ERROR-INERT half and the damaging one: the error was observed,
+  // and the observation changed nothing about what the caller was told. Someone
+  // accepting an invitation into another user's trusted circle got "accepted"
+  // for a membership row that does not exist -- they are not in the circle, they
+  // will not see circle-visibility posts, presence or events, and every retry
+  // now answers 400 `Invite is already accepted` because step (1) DID land.
+  // That is an unrecoverable dead end reached by reporting success.
+  //
+  // The membership upsert therefore goes FIRST and is fatal. It is idempotent on
+  // (user_id, other_id), so a retry after any failure below re-runs it safely,
+  // and if it fails NOTHING has changed -- the invite is still pending and the
+  // retry is the ordinary path, not a special case. The status flip follows and
+  // is also checked: if it fails the membership exists but the invite still
+  // reads pending, which the next accept resolves by re-upserting the same row.
+  // The state after a partial failure is now always retry-recoverable, which is
+  // what the old order could not say.
   const { error: cmErr } = await sc
     .from("circle_memberships")
     .upsert({ user_id: (inv as any).owner_id, other_id: user.id, created_at: now });
 
-  if (cmErr) req.log.error({ err: cmErr }, "circle_memberships upsert failed after invite accept");
+  if (cmErr) {
+    req.log.error({ err: cmErr, inviteId }, "circle_memberships upsert failed — invite NOT accepted");
+    sendError(res, "db_error", cmErr.message);
+    return;
+  }
+
+  const { error: acceptErr } = await sc
+    .from("circle_invites").update({ status: "accepted", responded_at: now }).eq("id", inviteId);
+  if (acceptErr) {
+    req.log.error({ err: acceptErr, inviteId }, "circle invite accept: status flip failed after membership was created");
+    sendError(res, "db_error", acceptErr.message);
+    return;
+  }
 
   // Fire-and-forget: sync group chat membership for this circle.
   syncCircleChatMembers((inv as any).owner_id, sc).catch((e) => req.log.error({ err: e }, "syncCircleChatMembers failed"));
@@ -829,16 +905,33 @@ router.post("/circle-invites/:inviteId/decline", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
-  const { data: inv } = await sc
+  const { data: inv, error: invErr } = await sc
     .from("circle_invites").select("id, recipient_id, status")
     .eq("id", inviteId).maybeSingle();
 
+  if (invErr) {
+    req.log.error({ err: invErr, inviteId }, "circle invite decline: invite read failed — refusing to report 'not found'");
+    sendError(res, "degraded_unavailable", "We could not look up that circle invite right now. Please try again shortly.");
+    return;
+  }
   if (!inv) { sendError(res, "not_found", "Circle invite not found"); return; }
   if ((inv as any).recipient_id !== user.id) { sendError(res, "forbidden", "Only the recipient can decline this invite"); return; }
   if ((inv as any).status !== "pending") { sendError(res, "invalid_payload", `Invite is already ${(inv as any).status}`); return; }
 
   const now = new Date().toISOString();
-  await sc.from("circle_invites").update({ status: "declined", responded_at: now }).eq("id", inviteId);
+  // DECLINING IS A REFUSAL OF ENTRY, AND THIS ONE WAS REPORTED BLIND. The update
+  // was awaited into nothing: a failed write left the invite PENDING -- still in
+  // the recipient's inbox, still acceptable, still counting as an outstanding
+  // invitation to that user's trusted circle -- while the response said
+  // `{ status: "declined" }`. Refusing to join is exactly the answer that must
+  // not be assumed, so a failed write is now reported instead of asserted.
+  const { error: declineErr } = await sc
+    .from("circle_invites").update({ status: "declined", responded_at: now }).eq("id", inviteId);
+  if (declineErr) {
+    req.log.error({ err: declineErr, inviteId }, "circle invite decline update failed — the invite is still PENDING");
+    sendError(res, "db_error", declineErr.message);
+    return;
+  }
 
   res.status(200).json({ status: "declined" });
 });
@@ -865,21 +958,76 @@ router.delete("/circles/:circleOwnerId/members/:memberId", async (req, res) => {
     sendError(res, "invalid_payload", "Cannot remove yourself from your own circle"); return;
   }
 
-  const { data: membership } = await sc
+  const { data: membership, error: membershipErr } = await sc
     .from("circle_memberships")
     .select("other_id")
     .eq("user_id", circleOwnerId)
     .eq("other_id", memberId)
     .maybeSingle();
 
+  // An unreadable circle_memberships resolved as `{ data: null }` and was
+  // reported as "Membership not found" -- an owner trying to eject someone from
+  // their trusted circle was told that person is not in it. Nothing destructive
+  // followed, but the claim is false and the owner stops trying.
+  if (membershipErr) {
+    req.log.error(
+      { err: membershipErr, circleOwnerId, memberId },
+      "circle member removal: membership read failed — refusing to report 'not a member'",
+    );
+    sendError(res, "degraded_unavailable", "We could not check that membership right now. Please try again shortly.");
+    return;
+  }
   if (!membership) { sendError(res, "not_found", "Membership not found"); return; }
 
-  await sc.from("circle_memberships").delete().eq("user_id", circleOwnerId).eq("other_id", memberId);
+  // ── THE REMOVAL ITSELF WAS ASSERTED, NOT OBSERVED ─────────────────────────
+  // This delete was awaited into nothing. supabase-js resolves a failed DELETE
+  // as `{ error }`, so the row could survive and the response still said
+  // `{ status: "removed" }` with a 200. The person the owner just ejected from
+  // their trusted circle keeps a circle_memberships row -- which is what
+  // lib/privacyResolver.ts, routes/events.ts, routes/groupChat.ts,
+  // routes/meetups.ts and compass all read to grant circle-visibility access to
+  // posts, events, meetups and group chat. A revocation that did not happen,
+  // reported as done, is the worst lie this route can tell, and the unfriend
+  // handler directly below already checks its delete: the file disagreed with
+  // itself.
+  //
+  // `.select("other_id")` is added so `error === null` is not the only evidence:
+  // PostgREST answers a zero-row DELETE with the same 204 as a successful one,
+  // and the membership was READ as present two statements ago, so zero rows
+  // deleted here means something removed it in between (a concurrent removal --
+  // benign, same end state) OR the filters did not match. The returned rows make
+  // that observable instead of assumed; the end state ("not a member") is true
+  // in both zero-row cases, so only a real error refuses.
+  const { error: deleteErr } = await sc
+    .from("circle_memberships")
+    .delete()
+    .eq("user_id", circleOwnerId)
+    .eq("other_id", memberId)
+    .select("other_id");
+
+  if (deleteErr) {
+    req.log.error(
+      { err: deleteErr, circleOwnerId, memberId },
+      "circle member removal FAILED — the member still has circle access and must not be told otherwise",
+    );
+    sendError(res, "db_error", deleteErr.message);
+    return;
+  }
 
   res.status(200).json({ status: "removed", memberId });
 
   // Immediately revoke chat access by syncing — sets left_at for the removed member.
-  syncCircleChatMembers(circleOwnerId, sc).catch(() => {});
+  // The empty `.catch(() => {})` here swallowed a REAL rejection (this is an
+  // ordinary async function, not a PostgrestBuilder, so it genuinely can reject),
+  // and it swallowed it on the REVOKE path while the accept path two handlers up
+  // logs the same failure. A removed member silently keeping their circle chat
+  // seat is precisely the outcome that needed a log.
+  syncCircleChatMembers(circleOwnerId, sc).catch((e) =>
+    req.log.error(
+      { err: e, circleOwnerId, memberId },
+      "syncCircleChatMembers failed after circle removal — the removed member may retain chat access",
+    ),
+  );
 });
 
 /* ===========================================================================

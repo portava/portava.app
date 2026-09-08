@@ -365,9 +365,28 @@ router.patch("/appeals/:id", asyncHandler(async (req, res) => {
 
   // ── Notify on approval (reversal already succeeded above) ─────────────────
 
+  // ── THE APPELLANT'S ONLY NOTICE, WRITTEN INTO A VOID ──────────────────────
+  // Both notification inserts below were `.then(() => {}).catch(() => {})`.
+  // supabase-js RESOLVES on a database error, so the `.catch` was dead code for
+  // the failure that actually happens, and the `.then(() => {})` threw away the
+  // `{ error }` that WAS delivered. The result: the one message telling a person
+  // their appeal was approved (and, when restoration is deferred, that their
+  // content still has to be restored by hand) or denied could fail to write with
+  // no log line, no response field, and no exception -- while the moderator's
+  // response said the appeal was resolved.
+  //
+  // Direction unchanged and deliberately so: the appeal state transition is
+  // already committed above and a notification failure must not undo or block
+  // it. NOTHING here touches what "approved" does or what gets restored -- that
+  // is a separate, open decision (APPEAL_RESTORE_SEMANTICS) and this change does
+  // not enter it. The only thing that changes is that a failure to notify is now
+  // observed, logged at ERROR, and reported to the moderator in `notified`, so
+  // "the appellant was told" stops being an assumption.
+  let notified: boolean | undefined = undefined;
+
   if (state === "approved") {
     // Notify appellant
-    await sc.from("notifications").insert({
+    const { error: notifyErr } = await sc.from("notifications").insert({
       user_id:           (appeal as any).appellant_id,
       actor_id:          adminId,
       event_type:        "appeal.approved",
@@ -394,12 +413,22 @@ router.patch("/appeals/:id", asyncHandler(async (req, res) => {
         restored:       !restorationDeferred,
         ...(restorationDeferred ? { restorationPending: (reversal as any).reason } : {}),
       },
-    }).then(() => {}).catch(() => {});
+    });
+    notified = !notifyErr;
+    if (notifyErr) {
+      req.log?.error?.(
+        { err: notifyErr, appealId: id, appellantId: (appeal as any).appellant_id, restorationDeferred },
+        "appeal APPROVED but the appellant was NOT notified — " +
+          (restorationDeferred
+            ? "they have not been told the restoration is still outstanding"
+            : "they have not been told the action was reversed"),
+      );
+    }
   }
 
   if (state === "denied") {
     // Notify appellant of denial
-    await sc.from("notifications").insert({
+    const { error: notifyErr } = await sc.from("notifications").insert({
       user_id:           (appeal as any).appellant_id,
       actor_id:          adminId,
       event_type:        "appeal.denied",
@@ -414,7 +443,14 @@ router.patch("/appeals/:id", asyncHandler(async (req, res) => {
         targetType:     (appeal as any).target_type,
         resolutionNote: resolutionNote ?? null,
       },
-    }).then(() => {}).catch(() => {});
+    });
+    notified = !notifyErr;
+    if (notifyErr) {
+      req.log?.error?.(
+        { err: notifyErr, appealId: id, appellantId: (appeal as any).appellant_id },
+        "appeal DENIED but the appellant was NOT notified — they do not know the outcome",
+      );
+    }
   }
 
   res.json({
@@ -422,6 +458,7 @@ router.patch("/appeals/:id", asyncHandler(async (req, res) => {
     state:          (updated as any).state,
     resolutionNote: (updated as any).resolution_note ?? null,
     updatedAt:      (updated as any).updated_at,
+    ...(notified === undefined ? {} : { notified }),
     ...(reversal
       ? {
           reversalAction: reversal.action,

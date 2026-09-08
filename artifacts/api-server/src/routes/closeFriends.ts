@@ -95,13 +95,31 @@ router.post("/users/me/close-friends", asyncHandler(async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
-  // Verify the target user exists
-  const { data: profile } = await sc
+  // ── TWO READS THAT COULD NOT FAIL VISIBLY ─────────────────────────────────
+  // Both of these bound only `data`. supabase-js RESOLVES on a database error,
+  // so `data` is null when the row is absent AND when the read did not happen,
+  // and each check below spent those two outcomes on the same refusal. The
+  // DIRECTION was safe -- nobody is added to a Close Friends audience by a read
+  // that failed -- but the STATEMENT made to the caller was false and specific:
+  // "User not found" about a user who exists, and "You must follow this user"
+  // to someone who already does. Close Friends is the audience for a user's
+  // most restricted stories (lib/mediaAccess.ts isCloseFriend, routes/stories.ts),
+  // so being told your own follow relationship does not exist is exactly the
+  // kind of claim that must come from a read that answered.
+  //
+  // Both now refuse with the retryable 503 reserved for "the check could not be
+  // performed", leaving the genuine 404 and the genuine 403 to mean what they say.
+  const { data: profile, error: profileErr } = await sc
     .from("profiles")
     .select("id")
     .eq("id", friendId)
     .maybeSingle();
 
+  if (profileErr) {
+    req.log.error({ err: profileErr, friendId }, "close friends add: profile existence read failed — refusing to report 'not found'");
+    sendError(res, "degraded_unavailable", "We could not verify that user right now. Please try again shortly.");
+    return;
+  }
   if (!profile) {
     sendError(res, "not_found", "User not found");
     return;
@@ -109,13 +127,18 @@ router.post("/users/me/close-friends", asyncHandler(async (req, res) => {
 
   // Require that the caller follows the target user (or is mutually followed).
   // This prevents adding arbitrary strangers to the close friends list.
-  const { data: followRow } = await sc
+  const { data: followRow, error: followErr } = await sc
     .from("user_follows")
     .select("following_id")
     .eq("follower_id", user.id)
     .eq("following_id", friendId)
     .maybeSingle();
 
+  if (followErr) {
+    req.log.error({ err: followErr, friendId }, "close friends add: follow-edge read failed — refusing to report 'you do not follow them'");
+    sendError(res, "degraded_unavailable", "We could not verify your follow relationship right now. Please try again shortly.");
+    return;
+  }
   if (!followRow) {
     sendError(res, "forbidden", "You must follow this user before adding them to Close Friends");
     return;

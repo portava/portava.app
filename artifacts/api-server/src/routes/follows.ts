@@ -1746,11 +1746,11 @@ router.get("/users/:userId", async (req, res) => {
       needBlockCheck
         ? sc.from("blocks").select("blocker_id", { count: "exact", head: true })
             .eq("blocker_id", callerId!).eq("blocked_id", target)
-        : Promise.resolve({ count: 0 }),
+        : Promise.resolve({ count: 0, error: null }),
       needBlockCheck
         ? sc.from("blocks").select("blocker_id", { count: "exact", head: true })
             .eq("blocker_id", target).eq("blocked_id", callerId!)
-        : Promise.resolve({ count: 0 }),
+        : Promise.resolve({ count: 0, error: null }),
     ]);
 
   if (profileRes.error || !profileRes.data) {
@@ -1769,6 +1769,39 @@ router.get("/users/:userId", async (req, res) => {
   // Deactivated is also unavailable unless it is the owner checking their own profile.
   if (acctStatus === "deactivated" && !isOwnProfile) {
     res.status(404).json({ unavailable: true, reason: "deleted" });
+    return;
+  }
+
+  // ── THE BLOCK GATE MUST NOT BE ANSWERED BY A READ THAT FAILED ──────────────
+  // `blocks` is an EXCLUSION table: a row means DENY, so "no row" means ALLOW.
+  // These two reads are `{ count: "exact", head: true }` and supabase-js
+  // RESOLVES on a database error rather than throwing -- a failed count comes
+  // back as `{ count: null, error }`. `.error` was never bound, so
+  // `(res.count ?? 0) > 0` turned an unreadable `blocks` table into `false` on
+  // BOTH directions and the handler fell straight through to serving the full
+  // passport. A person who had blocked this caller had their profile, home
+  // city, travel styles, follower counts and shared-destination reason handed
+  // over because the database blinked. That is fail-open by construction, and
+  // it is the exact shape lib/blockGuard.ts was written to stamp out (this call
+  // site cannot use `isBlockedBetween` because it needs the DIRECTION to decide
+  // between `isBlocker: true` and `isBlocker: false`).
+  //
+  // There is no honest answer available from a failed read. "Not blocked" may be
+  // untrue and leaks a profile; "blocked" would be a fabrication that hides a
+  // profile nobody hid. So the endpoint reports that it could not tell, with the
+  // same posture GET /users/:userId/block-status already takes (routes/blocks.ts)
+  // and the retryable 503 code reserved for "the check could not be performed".
+  if ((callerBlockedTargetRes as any).error || (targetBlockedCallerRes as any).error) {
+    req.log?.error?.(
+      {
+        err: (callerBlockedTargetRes as any).error ?? (targetBlockedCallerRes as any).error,
+        callerId,
+        target,
+      },
+      "profile fetch: block-state read FAILED -- refusing to serve a profile rather than " +
+        "reporting 'not blocked' from a read that did not answer",
+    );
+    sendError(res, "degraded_unavailable", "This profile is temporarily unavailable. Please try again.");
     return;
   }
 
@@ -1871,14 +1904,48 @@ router.get("/users/by-handle/:handle", async (req, res) => {
       needBlockCheck
         ? sc.from("blocks").select("blocker_id", { count: "exact", head: true })
             .eq("blocker_id", callerId!).eq("blocked_id", target)
-        : Promise.resolve({ count: 0 }),
+        : Promise.resolve({ count: 0, error: null }),
       needBlockCheck
         ? sc.from("blocks").select("blocker_id", { count: "exact", head: true })
             .eq("blocker_id", target).eq("blocked_id", callerId!)
-        : Promise.resolve({ count: 0 }),
+        : Promise.resolve({ count: 0, error: null }),
     ]);
 
-  // Guard: blocks.
+  // ── THE BLOCK GATE MUST NOT BE ANSWERED BY A READ THAT FAILED ──────────────
+  // `blocks` is an EXCLUSION table: a row means DENY, so "no row" means ALLOW.
+  // These two reads are `{ count: "exact", head: true }` and supabase-js
+  // RESOLVES on a database error rather than throwing -- a failed count comes
+  // back as `{ count: null, error }`. `.error` was never bound, so
+  // `(res.count ?? 0) > 0` turned an unreadable `blocks` table into `false` on
+  // BOTH directions and the handler fell straight through to serving the full
+  // passport. A person who had blocked this caller had their profile, home
+  // city, travel styles, follower counts and shared-destination reason handed
+  // over because the database blinked. That is fail-open by construction, and
+  // it is the exact shape lib/blockGuard.ts was written to stamp out (this call
+  // site cannot use `isBlockedBetween` because it needs the DIRECTION to decide
+  // between `isBlocker: true` and `isBlocker: false`).
+  //
+  // There is no honest answer available from a failed read. "Not blocked" may be
+  // untrue and leaks a profile; "blocked" would be a fabrication that hides a
+  // profile nobody hid. So the endpoint reports that it could not tell, with the
+  // same posture GET /users/:userId/block-status already takes (routes/blocks.ts)
+  // and the retryable 503 code reserved for "the check could not be performed".
+  if ((callerBlockedTargetRes as any).error || (targetBlockedCallerRes as any).error) {
+    req.log?.error?.(
+      {
+        err: (callerBlockedTargetRes as any).error ?? (targetBlockedCallerRes as any).error,
+        callerId,
+        target,
+      },
+      "profile fetch: block-state read FAILED -- refusing to serve a profile rather than " +
+        "reporting 'not blocked' from a read that did not answer",
+    );
+    sendError(res, "degraded_unavailable", "This profile is temporarily unavailable. Please try again.");
+    return;
+  }
+
+  // Guard: blocks. Same read, same refusal, same reason as GET /users/:userId --
+  // this handler is the by-handle twin and carried an identical copy of the bug.
   const callerBlockedTarget = ((callerBlockedTargetRes as any).count ?? 0) > 0;
   const targetBlockedCaller = ((targetBlockedCallerRes as any).count ?? 0) > 0;
   if (targetBlockedCaller) {
