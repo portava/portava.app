@@ -2381,10 +2381,33 @@ router.post("/rent-a-buddy/bookings/:bookingId/accept", async (req, res) => {
   }
 
   const now = new Date().toISOString();
-  await serviceClient
+  // Compare-and-set. Same rule as /cancel and /complete: the required source
+  // status rides in the SAME statement as the write, and `.select("id")` makes
+  // it RETURNING so a zero-row match is visible. Checking the status in JS and
+  // then writing unconditionally lets a concurrent transition be stomped —
+  // and, because supabase-js RESOLVES on a DB error, let a failed write answer
+  // 200.
+  // Here it would also RESURRECT a booking: the sweeper expires an unanswered
+  // request with its own compare-and-set, and an unguarded accept landing after
+  // it wrote `scheduled` straight over `expired`, committing the buddy to a
+  // session the traveller had already been told was dead.
+  const { data: acceptedRows, error: acceptErr } = await serviceClient
     .from("rent_buddy_bookings")
     .update({ status: "scheduled", confirmed_at: now, updated_at: now })
-    .eq("id", bookingId);
+    .eq("id", bookingId)
+    .in("status", ["pending", "requested"])
+    .select("id");
+
+  if (acceptErr) {
+    req.log?.error?.({ err: acceptErr, bookingId }, "accept: booking update failed");
+    return res.status(500).json({ error: "update_failed", message: "The booking could not be accepted." });
+  }
+  if (affectedRows(acceptedRows) === 0) {
+    return res.status(409).json({
+      error: "invalid_transition",
+      message: "The booking changed state before this acceptance was applied. Refresh and try again.",
+    });
+  }
 
   recordBookingEvent(serviceClient, req.log, {
     booking_id: bookingId, actor_user_id: auth.user.id, event: "accepted",
@@ -2482,10 +2505,29 @@ router.post("/rent-a-buddy/bookings/:bookingId/decline", async (req, res) => {
   }
 
   const { decline_reason } = req.body ?? {};
-  await serviceClient
+  // Compare-and-set. Same rule as /cancel and /complete: the required source
+  // status rides in the SAME statement as the write, and `.select("id")` makes
+  // it RETURNING so a zero-row match is visible. Checking the status in JS and
+  // then writing unconditionally lets a concurrent transition be stomped —
+  // and, because supabase-js RESOLVES on a DB error, let a failed write answer
+  // 200.
+  const { data: declinedRows, error: declineErr } = await serviceClient
     .from("rent_buddy_bookings")
     .update({ status: "declined", decline_reason: decline_reason ?? null, updated_at: now })
-    .eq("id", req.params.bookingId);
+    .eq("id", req.params.bookingId)
+    .in("status", ["pending", "requested"])
+    .select("id");
+
+  if (declineErr) {
+    req.log?.error?.({ err: declineErr, bookingId: req.params.bookingId }, "decline: booking update failed");
+    return res.status(500).json({ error: "update_failed", message: "The booking could not be declined." });
+  }
+  if (affectedRows(declinedRows) === 0) {
+    return res.status(409).json({
+      error: "invalid_transition",
+      message: "The booking changed state before this decline was applied. Refresh and try again.",
+    });
+  }
 
   recordBookingEvent(serviceClient, req.log, {
     booking_id: req.params.bookingId, actor_user_id: auth.user.id, event: "declined",
@@ -2627,10 +2669,33 @@ router.post("/rent-a-buddy/bookings/:bookingId/start", async (req, res) => {
   }
 
   const now = new Date().toISOString();
-  await serviceClient
+  // Compare-and-set. Same rule as /cancel and /complete: the required source
+  // status rides in the SAME statement as the write, and `.select("id")` makes
+  // it RETURNING so a zero-row match is visible. Checking the status in JS and
+  // then writing unconditionally lets a concurrent transition be stomped —
+  // and, because supabase-js RESOLVES on a DB error, let a failed write answer
+  // 200.
+  // A booking the traveller cancelled between the read and this write would
+  // otherwise be resurrected into `in_progress`, and every safety and
+  // completion path downstream treats in_progress as a session that is
+  // happening.
+  const { data: startedRows, error: startErr } = await serviceClient
     .from("rent_buddy_bookings")
     .update({ status: "in_progress", started_at: now, updated_at: now })
-    .eq("id", bookingId);
+    .eq("id", bookingId)
+    .in("status", ["confirmed", "scheduled"])
+    .select("id");
+
+  if (startErr) {
+    req.log?.error?.({ err: startErr, bookingId }, "start: booking update failed");
+    return res.status(500).json({ error: "update_failed", message: "The booking could not be started." });
+  }
+  if (affectedRows(startedRows) === 0) {
+    return res.status(409).json({
+      error: "invalid_transition",
+      message: "The booking changed state before this start was applied. Refresh and try again.",
+    });
+  }
 
   recordBookingEvent(serviceClient, req.log, {
     booking_id: bookingId, actor_user_id: auth.user.id, event: "started",
@@ -3181,16 +3246,52 @@ router.post("/rent-a-buddy/bookings/:bookingId/confirm-cash", async (req, res) =
       return res.json({ ok: true, disputed: false, notDisputable: true, currentStatus: b.status });
     }
 
-    await serviceClient.from("rent_buddy_bookings")
+    // COMPARE-AND-SET, and the dispute row is only written for a transition
+    // that really happened. The old order wrote `disputed` unguarded and then
+    // inserted unconditionally, so a booking that had left the disputable set
+    // between the read and the write was stomped, and a booking that already
+    // had an open dispute gained a SECOND one — which makes resolve-dispute's
+    // `.maybeSingle()` raise and the booking unresolvable through the API.
+    const { data: cashDisputedRows, error: cashDisputeErr } = await serviceClient
+      .from("rent_buddy_bookings")
       .update({ status: "disputed", updated_at: new Date().toISOString() })
-      .eq("id", bookingId);
+      .eq("id", bookingId)
+      .in("status", disputableStatuses)
+      .select("id");
 
-    await serviceClient.from("rent_buddy_disputes").insert({
+    if (cashDisputeErr) {
+      req.log?.error?.({ err: cashDisputeErr, bookingId }, "confirm-cash: dispute transition failed");
+      return res.status(500).json({ error: "update_failed", message: "The cash dispute could not be opened." });
+    }
+    if (affectedRows(cashDisputedRows) === 0) {
+      // Lost the race. The cash confirmation itself is already recorded.
+      return res.json({ ok: true, disputed: false, notDisputable: true, currentStatus: b.status });
+    }
+
+    const { error: cashDisputeInsertErr } = await serviceClient.from("rent_buddy_disputes").insert({
       booking_id: bookingId,
       raised_by: auth.user.id,
       reason: "cash_balance_disagreement",
       status: "open",
     });
+    if (cashDisputeInsertErr) {
+      // The booking IS disputed now; an admin must still be able to find the
+      // case. Reported loudly rather than swallowed, which is what a resolved
+      // supabase-js error would otherwise be.
+      req.log?.error?.({ err: cashDisputeInsertErr, bookingId },
+        "confirm-cash: booking moved to disputed but the rent_buddy_disputes row was not written");
+    }
+
+    // Every other transition in this file writes a booking event; this one did
+    // not, so a cash-balance dispute appeared nowhere in the evidence log
+    // GET /rent-a-buddy/bookings/:bookingId/events serves to both parties —
+    // the one record either side could point at to show a dispute was opened.
+    recordBookingEvent(serviceClient, req.log, {
+      booking_id: bookingId, actor_user_id: auth.user.id, event: "dispute_opened",
+      from_status: b.status, to_status: "disputed",
+      metadata: { reason: "cash_balance_disagreement", source: "confirm_cash" },
+    });
+
     return res.json({ ok: true, disputed: true });
   }
 
@@ -3735,10 +3836,51 @@ router.post("/rent-a-buddy/bookings/:bookingId/dispute", async (req, res) => {
   if (disputeErr) return sendError(res, "db_error", disputeErr.message);
 
   const now = new Date().toISOString();
-  await serviceClient
+  // ── COMPARE-AND-SET, with the orphan dispute cleaned up ────────────────────
+  //
+  // The dispute row is inserted first (above) so a booking can never reach
+  // `disputed` with nothing to resolve it. That leaves the reverse hole, which
+  // this closes: the transition was `.update({status}).eq("id", …)` with no
+  // predicate, no `.select()` and no error check, so two concurrent /dispute
+  // calls both passed the JS status check and both INSERTED, leaving TWO open
+  // disputes on one booking. rentABuddySpec's resolve-dispute reads the open
+  // dispute with `.in("status", ["open","reviewing"]).maybeSingle()`, and
+  // maybeSingle RAISES on more than one row — so the second dispute made the
+  // booking permanently unresolvable through the API, and a failed transition
+  // left an open dispute attached to a booking that was never disputed.
+  //
+  // Zero rows or an error means this request disputed nothing, so the row it
+  // just created is deleted (it has been visible to nobody) and the caller is
+  // told.
+  const { data: disputedRows, error: disputeUpdErr } = await serviceClient
     .from("rent_buddy_bookings")
     .update({ status: "disputed", updated_at: now })
-    .eq("id", bookingId);
+    .eq("id", bookingId)
+    .in("status", disputableStatuses)
+    .select("id");
+
+  if (disputeUpdErr || affectedRows(disputedRows) === 0) {
+    const orphanId = (dispute as any)?.id ?? null;
+    if (orphanId) {
+      const { error: cleanupErr } = await serviceClient
+        .from("rent_buddy_disputes")
+        .delete()
+        .eq("id", orphanId)
+        .eq("status", "open");
+      if (cleanupErr) {
+        req.log?.error?.({ err: cleanupErr, bookingId, disputeId: orphanId },
+          "dispute: transition failed and the orphan dispute row could not be removed — a second open dispute on this booking will break resolve-dispute");
+      }
+    }
+    if (disputeUpdErr) {
+      req.log?.error?.({ err: disputeUpdErr, bookingId }, "dispute: booking update failed");
+      return res.status(500).json({ error: "update_failed", message: "The dispute could not be opened." });
+    }
+    return res.status(409).json({
+      error: "invalid_transition",
+      message: "The booking changed state before this dispute was opened. Refresh and try again.",
+    });
+  }
 
   recordBookingEvent(serviceClient, req.log, {
     booking_id: bookingId, actor_user_id: auth.user.id, event: "dispute_opened",
@@ -3852,10 +3994,33 @@ router.post("/rent-a-buddy/bookings/:bookingId/no-show", async (req, res) => {
   const now = new Date(nowMs).toISOString();
   const graceExpiry = new Date(nowMs + 2 * 3600 * 1000).toISOString();
 
-  await serviceClient
+  // Compare-and-set. Same rule as /cancel and /complete: the required source
+  // status rides in the SAME statement as the write, and `.select("id")` makes
+  // it RETURNING so a zero-row match is visible. Checking the status in JS and
+  // then writing unconditionally lets a concurrent transition be stomped —
+  // and, because supabase-js RESOLVES on a DB error, let a failed write answer
+  // 200.
+  const { data: pendingRows, error: noShowUpdErr } = await serviceClient
     .from("rent_buddy_bookings")
     .update({ status: "no_show_pending", no_show_grace_expires_at: graceExpiry, updated_at: now })
-    .eq("id", bookingId);
+    .eq("id", bookingId)
+    .in("status", [...noShowAllowedStatuses])
+    .select("id");
+
+  if (noShowUpdErr) {
+    req.log?.error?.({ err: noShowUpdErr, bookingId }, "no-show: booking update failed");
+    return res.status(500).json({ error: "update_failed", message: "The no-show report could not be applied." });
+  }
+  if (affectedRows(pendingRows) === 0) {
+    // The safety check-in above stands — it is a report, and it happened — but
+    // no transition did, so no grace period is claimed and the sweeper is not
+    // handed a booking it should escalate.
+    return res.status(409).json({
+      error: "invalid_transition",
+      message: "The booking changed state before this no-show report was applied. Refresh and try again.",
+      currentStatus: (booking as any).status,
+    });
+  }
 
   recordBookingEvent(serviceClient, req.log, {
     booking_id: bookingId, actor_user_id: auth.user.id, event: "no_show_reported",
@@ -7247,10 +7412,34 @@ router.post("/rent-a-buddy/bookings/:bookingId/traveler-confirm", async (req, re
   }
 
   const now = new Date().toISOString();
-  await serviceClient
+  // Compare-and-set. Same rule as /cancel and /complete: the required source
+  // status rides in the SAME statement as the write, and `.select("id")` makes
+  // it RETURNING so a zero-row match is visible. Checking the status in JS and
+  // then writing unconditionally lets a concurrent transition be stomped —
+  // and, because supabase-js RESOLVES on a DB error, let a failed write answer
+  // 200.
+  // This one matters most of the six: without the predicate a traveller who had
+  // opened a dispute (or whose no-show report had escalated) in the moment
+  // between the read and the write would write `completed` straight over
+  // `disputed`, taking the outcome away from the admin resolution route. That
+  // is exactly the abuse /safety/end-early's status guard was added to close.
+  const { data: confirmedRows, error: confirmErr } = await serviceClient
     .from("rent_buddy_bookings")
     .update({ status: "completed", updated_at: now })
-    .eq("id", bookingId);
+    .eq("id", bookingId)
+    .eq("status", "completed_pending_traveler_confirmation")
+    .select("id");
+
+  if (confirmErr) {
+    req.log?.error?.({ err: confirmErr, bookingId }, "traveler-confirm: booking update failed");
+    return res.status(500).json({ error: "update_failed", message: "The booking could not be confirmed." });
+  }
+  if (affectedRows(confirmedRows) === 0) {
+    return res.status(409).json({
+      error: "invalid_transition",
+      message: "The booking changed state before this confirmation was applied. Refresh and try again.",
+    });
+  }
 
   recordBookingEvent(serviceClient, req.log, {
     booking_id: bookingId, actor_user_id: auth.user.id, event: "traveler_confirmed",
