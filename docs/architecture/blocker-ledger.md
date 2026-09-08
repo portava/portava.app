@@ -122,6 +122,7 @@ zone covering the viewport, Crowd Flow refuses rather than approximating.
 | `GEM_MODERATION_AUDIT_ORDERING` | *nothing* | **OWNER** | Already loud | **NEW 2026-09-08.** Whether moderation blocks on an unwritable audit table — see below |
 | `SAVE_COUNT_UNSAVE_ASYMMETRY` | *needs an RPC* | **OWNER** | Partly | **NEW 2026-09-08.** `save_count` drifts upward for ever; the correct fix needs a schema change — see below |
 | `RAB_EARNINGS_LEDGER_VOIDING` | *nothing* | **OWNER** | Yes, safely | **NEW 2026-09-08.** Declined, expired and cancelled bookings still show estimated earnings — see below |
+| `TRUST_OVERRIDE_PIN_OR_CAP` | *nothing* | **OWNER** | Nothing live turns on it | **NEW 2026-09-08.** The last open row in census-trust, and the only thing between Trust and 100 % — see below |
 | `MESSAGING_DEGRADED_READ_POSTURE` | *nothing* | **OWNER** | Yes, safely | **NEW 2026-09-08.** 43 enrichment reads across ~15 endpoints: 503 or degrade visibly — see below |
 | `TRIP_CREW_SIGNAL_ROLE_COVERAGE` | *nothing* | **OWNER** | Yes, but it WIDENS a gate | **NEW 2026-09-08.** `lib/tripMembership.ts` omits `co_host` and `viewer` while claiming to mirror `getMemberRole` — see below |
 | `LAYOVER_RETURN_REMINDER_DELIVERY` | *nothing* | **OWNER** | Yes, safely | **NEW 2026-09-08.** The server-side push path for the return deadline is dead code — see below |
@@ -521,3 +522,49 @@ denied for function" for every end-user token.
 
 The third member of that set, `increment_hashtag_usage_count`, was NOT inside a
 HOLD area and was closed under the full migration gate — see `2551`.
+
+---
+
+## `TRUST_OVERRIDE_PIN_OR_CAP` — what an admin "override" of a trust score means
+
+**New 2026-09-08.** census-trust C22, and the last row standing between the Trust
+surface and 100 %. Six of its eight open rows were closed by engineering on
+2026-09-08; of the two left, A6 is a production measurement that needs a deploy,
+and this one needs a sentence from an owner.
+
+### The measurement
+
+`TrustScoreService.adminOverrideScore` is described as overriding a category
+score. It does not override it. It writes a **ceiling** into `trust_caps`, and
+`recalculateTrustScore` then recomputes the score from events — so:
+
+- an override **below** the event-derived score holds, because the ceiling clamps;
+- an override **above** it does **not**, because the recomputation moves the
+  score back up underneath a ceiling that is not binding;
+- `trust_caps` has **no floor column**, so there is nowhere to store the other
+  half even if the answer were "pin".
+
+Nothing is wired to a route, so **no live behaviour turns on this today**. That
+is why it is safe to leave open, and also why it is cheap to decide.
+
+### The question
+
+Does **override** mean:
+
+| | Meaning | What an admin can do | What it needs |
+|---|---|---|---|
+| **PIN** | the admin's number wins until it is lifted | **grant** standing as well as withhold it — vouch for a user the events have not caught up with | a floor alongside the ceiling: a schema change to `trust_caps`, and a recompute that respects it |
+| **CAP** | the admin sets a maximum; events move the score freely below it | only **withhold** standing — never grant it | nothing. This is what the code already does; the fix is to rename the function and say so |
+
+These are different products, not two spellings of one. A pin lets a human put
+their judgement above the ledger; a cap says the ledger is the only thing that
+can raise a score and a human may only limit it. Both are defensible.
+
+### Why engineering is not choosing
+
+Building the floor takes the decision by making "pin" true. Renaming to
+`adminCapScore` takes it by making "cap" true. There is no implementation that
+leaves the question open — which is precisely the condition for an OWNER row.
+
+**What is buildable now, either way:** nothing. The correct next commit depends
+on the answer, and no code change improves the situation before it.

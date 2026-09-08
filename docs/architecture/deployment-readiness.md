@@ -61,7 +61,7 @@ ENABLED. FLAG ENABLED is not PRODUCTION REALIZED.**
 | RAB | prior | prior | yes | yes (2305, 2330) | **no** | no | no | `rent_buddy_enabled` | **no** |
 | Events / Meetups | prior | prior | yes | yes (2460–2462) | **no** | no | no | — | **no** |
 | Safety (Safe Return, SOS) | partial | partial | yes | yes (2741) | **no** | no | no | FALSE | **no** |
-| Trust | prior | prior | yes | yes (2370, 2371, 2540, 2650, 2660) | **no** | no | no | — | **no** |
+| Trust | yes | **yes — all four restriction types now gated** | yes | yes (2370, 2371, 2540, 2650, 2660) | **no** | no | no | `trust_engine_enabled` **TRUE in production** | **no** |
 | Intel / Sensing | prior | prior | yes | partial (2481 owner-blocked) | **no** | no | no | — | **no** |
 | Media | prior | prior | yes | **no (2470 owner-blocked)** | **no** | no | no | `media_canonical_enabled` TRUE with columns ABSENT | **no** |
 
@@ -92,6 +92,19 @@ new "yes".
   on a database that has not run this, so the order is schema first. `Branch
   wired` for that row therefore means "every route consults one certified record
   per request", not "the record is stored anywhere".
+
+**Trust is the closest surface to done, and the gap it leaves is instructive.**
+It went 84.6 % → 96.2 % correct on 2026-09-08 (census-trust §10) with six rows
+closed, and it is the only surface at 100 % CONSTRUCTED. The two rows left are
+the two kinds of thing engineering cannot close: **A6** is defined as a
+measurement *"in production"*, so it needs this branch merged and deployed and
+then a single stamp awarded; **C22** is an owner decision about whether an admin
+"override" means PIN or CAP (`TRUST_OVERRIDE_PIN_OR_CAP` on the blocker ledger).
+
+Note what that does NOT change: every row of this table still ends
+`PRODUCTION_REALIZED = no`. Trust's own engine flag is TRUE in production —
+unusually — and the code that would use it is on an unmerged branch. 96.2 % of a
+surface that nothing runs.
 
 A live confirmation worth recording because so much depends on it: production's
 `public.profiles` has **182 inbound `ON DELETE CASCADE` foreign keys and ZERO
