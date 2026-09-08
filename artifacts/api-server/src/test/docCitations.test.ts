@@ -243,6 +243,65 @@ describe("evaluateCitations over a synthetic tree", () => {
 
 // ---------------------------------------------------------------------------
 
+describe("an anchored citation that goes OUT OF RANGE is still an anchored citation", () => {
+  /**
+   * THE DEFECT THIS PINS, AND HOW IT WAS FOUND.
+   *
+   * `anchored` used to be incremented AFTER the range checks, so a citation
+   * whose file had shrunk past the cited line bailed out before ever being
+   * counted. MIN_ANCHORED_CITATIONS sits AT the measured count by the
+   * SHRINK-ONLY rule, so one moved file dropped the count below the floor and
+   * the checker exited 2 with "restore the anchors, or lower the floor" — about
+   * a citation whose anchor nobody had touched. The failure was real; the
+   * diagnosis pointed at the wrong thing, and at an exit code that means "this
+   * checker could not run honestly" rather than "your citation is stale".
+   *
+   * Found by mutation, not by reading: changing a live citation in
+   * wall-certification.md from `WallDiversityService.ts:218#applyFeedDiversity`
+   * to `:263` in a 254-line file produced exit 2 and that message. With the
+   * count taken first, the same mutation now produces exit 1 and names the
+   * range failure. The floor asks how many claims in the corpus are ANCHORED,
+   * which is a property of the text; whether an anchor currently HOLDS is what
+   * badAnchor is for.
+   */
+  const tree: Record<string, string> = {
+    "docs/x/GUIDE.md": [
+      "anchored and true: `src/thing.ts:2#beta`",
+      "anchored, file has shrunk past it: `src/thing.ts:99#beta`",
+      "anchored, file gone entirely: `src/ghost.ts:1#beta`",
+      "not anchored, also past the end: `src/thing.ts:98`",
+    ].join("\n"),
+    "src/thing.ts": ["alpha", "beta", "gamma"].join("\n"),
+  };
+  const byBasename = new Map<string, string[]>([
+    ["thing.ts", ["src/thing.ts"]],
+    ["GUIDE.md", ["docs/x/GUIDE.md"]],
+  ]);
+  const readFile = (rel: string): string | null => tree[rel] ?? null;
+  const res = evaluateCitations({ coveredFiles: ["docs/x/GUIDE.md"], readFile, byBasename });
+
+  it("counts all three anchored citations, including the two that cannot resolve", () => {
+    assert.equal(res.total, 4);
+    assert.equal(res.anchored, 3);
+  });
+
+  it("reports both unresolvable citations as RANGE failures", () => {
+    assert.deepEqual(
+      res.badRange.map((f) => f.cited).sort(),
+      ["src/ghost.ts:1#beta", "src/thing.ts:98", "src/thing.ts:99#beta"],
+    );
+  });
+
+  it("charges neither of them a second time as a broken anchor", () => {
+    // One defect, one finding. A citation pointing past the end of its file is
+    // stale for one reason, and reporting it twice would inflate the count the
+    // CLI prints and make the fix look bigger than it is.
+    assert.deepEqual(res.badAnchor, []);
+  });
+});
+
+// ---------------------------------------------------------------------------
+
 describe("the real corpus — every covered citation resolves and every anchor holds", () => {
   const { files, missing } = resolveCoveredFiles(REPO_ROOT, COVERED);
 

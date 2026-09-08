@@ -55,18 +55,31 @@
  * day one, and a permanently-red check is one `|| true` away from being no
  * check at all.
  *
- * KNOWN, NOT ADOPTED — say it here rather than let it be rediscovered.
- * The whole of docs/architecture/ was the intended second corpus. It is not
- * covered because running this over it finds 17 out-of-range citations in ONE
- * file, docs/architecture/wall-certification.md — every one of them a
- * `WallObjectRenderer.tsx:216`-style number pointing past the end of a file
- * that has since shrunk (216/329/444 into a 131-line file; LiveForYouService.ts
- * :700-705, :675-686, :770-778 into a 465-line file; four *.test.ts citations
- * past their file's end). Those are real findings and they belong to the Wall
- * unit, not to this one. Adopting that file here would ship a red check that
- * this PR cannot honestly fix, so the two architecture files this unit does
- * vouch for are named individually instead, and the finding is recorded here
- * for whoever opens the Wall certification next.
+ * THE WALL FINDING, NOW CLOSED.
+ * This header used to record a finding rather than enforce it: running this
+ * script over docs/architecture/ found out-of-range citations concentrated in
+ * docs/architecture/wall-certification.md — `WallObjectRenderer.tsx:216`-style
+ * numbers pointing past the end of a file that had since shrunk to 131 lines —
+ * and the note said they "belong to the Wall unit, not to this one". The Wall
+ * recensus opened that file. Both Wall documents are now COVERED, and the
+ * citations that failed were not deleted to make the check green; they were
+ * re-read against the tree and replaced with the place the code actually is,
+ * carrying an ANCHOR so the next move is loud instead of silent.
+ *
+ * Two classes of decay were found, and only one of them was visible before:
+ *   OUT OF RANGE — 7 citations pointing past a shrunken file. The range half
+ *                  already caught these; they are why the note existed.
+ *   IN RANGE, WRONG — many more. `applyFeedDiversity:263-299` in a file where
+ *                  the function now starts at 218, `LiveForYouService.ts:68`
+ *                  for a constant that moved to 71, `ContextThreadService.ts
+ *                  :105-117` for a gate now at 106. Every one of these PASSES a
+ *                  range check and points a reader at the wrong lines. Only an
+ *                  anchor can fail on them, which is why the fixes carry one.
+ *
+ * The rest of docs/architecture/ is still NOT adopted: it is ~50 more files of
+ * unvetted citations, and a directory entry here would sweep them in unread.
+ * Adopting a file means someone read its citations. Adopt them a census at a
+ * time, the way these two were.
  *
  * Exit codes:
  *   0  clean
@@ -111,6 +124,18 @@ export const COVERED = [
     file: 'docs/architecture/01_Portava_Discovery_Engine.md',
   },
   {
+    // The Wall census. Its 265 citations are the evidence for every one of its
+    // 205 requirement verdicts — a verdict whose citation has rotted is a
+    // verdict nobody can re-check, which is the whole failure mode a census
+    // exists to prevent. Adopted by the recensus that re-read them.
+    file: 'docs/architecture/census-wall.md',
+  },
+  {
+    // The Wall certification the census reconciles against. This is the file
+    // the header's old "KNOWN, NOT ADOPTED" note was about.
+    file: 'docs/architecture/wall-certification.md',
+  },
+  {
     // Source, not documentation — and covered for exactly the reason the docs
     // are. This module's header explains WHY `served: false` must replace the
     // Supabase client rather than gate this module's own emitters, and the
@@ -136,11 +161,19 @@ export const COVERED = [
 // written as 40 against a measured 42, and a floor with slack is a floor that
 // absorbs two silent regressions before it says anything. 2026-09-05 re-anchored
 // the six stale `discoveryServePointReport.ts` citations plus the governor,
-// momentum, photo-route and ranked-set ones; the measured count is now 55, so
-// the floor is 55. Whoever adds anchors next should move this number up with
-// them in the same PR — that is the ratchet doing its job, not a chore.
+// momentum, photo-route and ranked-set ones, taking the count to 55.
+//
+// The Wall recensus adopted census-wall.md and wall-certification.md and
+// anchored every citation it repaired — 41 more — so the measured count is 96
+// and the floor is 96. Those anchors are not decoration: the Wall's decay was
+// mostly IN-RANGE-BUT-WRONG (a function that moved from 263 to 218 inside a
+// file long enough for both to pass a range check), which is invisible to
+// everything in this script except the anchor half.
+//
+// Whoever adds anchors next should move this number up with them in the same
+// PR — that is the ratchet doing its job, not a chore.
 // ---------------------------------------------------------------------------
-export const MIN_ANCHORED_CITATIONS = 55;
+export const MIN_ANCHORED_CITATIONS = 96;
 
 const SKIP_DIRS = new Set(['.git', 'node_modules']);
 
@@ -398,6 +431,17 @@ export function evaluateCitations({ coveredFiles, readFile, byBasename }) {
     for (const o of docOrphans) orphans.push({ doc: docRel, ...o });
     for (const c of citations) {
       total += 1;
+      // COUNT THE ANCHOR BEFORE ANY `continue`. The floor asks "how many claims
+      // in this corpus are anchored", not "how many anchors currently hold" —
+      // and the two used to be conflated, because a citation whose FILE moved
+      // out of range bailed out below without ever being counted. With the
+      // floor sitting AT the measured count (as SHRINK-ONLY requires), that
+      // made every out-of-range anchored citation report itself as a floor
+      // breach: exit 2, "restore the anchors", about a citation whose anchor
+      // was never touched. A wrong diagnosis on a real failure is its own
+      // defect. Found by mutating a live citation from :218 to :263 in a
+      // 254-line file and reading the message it produced.
+      if (c.anchor !== undefined) anchored += 1;
       const label = `${c.file}:${c.spec}${c.anchor ? '#' + c.anchor : ''}` +
         (c.inherited ? ' (inherited)' : '');
       const candidates = resolveCitationPath(c.file, byBasename, fromDir);
@@ -427,7 +471,6 @@ export function evaluateCitations({ coveredFiles, readFile, byBasename }) {
         });
       }
       if (c.anchor === undefined) continue;
-      anchored += 1;
       // An anchored citation must hold for at least one candidate path; an
       // ambiguous path that anchors nowhere is a failure, not a pass.
       const holding = inRange.filter((s) => anchorHolds(s.lines, ranges, c.anchor));
