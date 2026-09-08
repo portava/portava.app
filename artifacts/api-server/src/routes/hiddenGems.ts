@@ -894,7 +894,15 @@ router.post("/hidden-gems/:id/save", async (req, res) => {
 
   try {
     const result = await saveGem(sc, req.params.id, user.id);
-    res.json({ ok: true, alreadySaved: result.alreadySaved });
+    // `saveCountIncremented` is reported, not inferred. The save row is durable
+    // either way (that is what `ok`/`alreadySaved` claim); the counter is a
+    // separate fact, and a false here means hidden_gems.save_count is now
+    // behind hidden_gem_saves for this gem. See saveGem() for why that matters.
+    res.json({
+      ok: true,
+      alreadySaved: result.alreadySaved,
+      saveCountIncremented: result.saveCountIncremented,
+    });
   } catch (err: any) {
     sendError(res, "db_error", err.message);
   }
