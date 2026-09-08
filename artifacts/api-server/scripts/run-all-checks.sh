@@ -138,6 +138,16 @@ run_check "check:route-auth-gate" pnpm run check:route-auth-gate
 # admits 'owner', and adminVisuals still requires ai_visual_admin_review_enabled on
 # top of the role.
 run_check "check:admin-guard" pnpm run check:admin-guard
+# check:security-definer-oracles — a SECURITY DEFINER function in `public` that
+# nothing in the database references is an authorization answer served over
+# PostgREST as POST /rpc/<name>, with EXECUTE granted to anon and authenticated
+# by Supabase's default privileges. migration 2533 dropped public.shares_trip_with
+# for exactly that shape; this is the check that catches the next one in the diff.
+# The remedy it asks for is a DROP, never a REVOKE: revoking EXECUTE on a definer
+# function that an RLS policy calls makes the policy itself raise "permission
+# denied for function" for every end-user token, measured on CI for both
+# `language sql` and `language plpgsql` before the guard was written.
+run_check "check:security-definer-oracles" pnpm run check:security-definer-oracles
 # check:flag-polarity — every feature flag is classified STOP/CAPABILITY/CONFIG
 # and read through the reader that classification demands. Wired 2026-08-10
 # after c89f09a7 converted eleven emergency stops that had been reading

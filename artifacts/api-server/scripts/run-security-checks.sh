@@ -486,6 +486,38 @@ default_checks() {
     --report-ere '^check-admin-guard — ([0-9]+) route file\(s\) inspected' \
     -- pnpm run check:admin-guard
 
+  # SECURITY DEFINER ORACLES: a definer function in `public` that nothing in the
+  # database references is an authorization answer exposed over PostgREST as
+  # POST /rpc/<name>, with EXECUTE granted to anon and authenticated by
+  # Supabase's default privileges. That is not a hypothetical shape here --
+  # migration 2533 dropped public.shares_trip_with for exactly it. Gated rather
+  # than disclosed, because the population it guards is a RATCHET: four
+  # functions are ledgered today with a written reason each, and a fifth
+  # appearing in a diff is a new door, not a new note.
+  #
+  # The remedy this check asks for is a DROP, never a REVOKE. Revoking EXECUTE
+  # on a definer function that an RLS POLICY calls makes the policy itself raise
+  # "permission denied for function" for every end-user token -- measured on the
+  # CI project for both `language sql` and `language plpgsql`, transcript in the
+  # checker's header. A future session reading a "SECURITY DEFINER callable by
+  # anon" advisory must read that before writing a migration.
+  #
+  # Three required lines, none redundant. The PASSED sentence alone is what this
+  # printed for a corpus it could not parse: if the CREATE FUNCTION shape ever
+  # changes, zero functions are found and every one of them is trivially
+  # referenced, which is a clean bill for a tree it can no longer see. So the
+  # function count and the policy count are required as well as the verdict, and
+  # the check refuses below its own floors.
+  security_check "check:security-definer-oracles" \
+    --guard "src/scripts/checkSecurityDefinerOracles.ts" \
+    --codes "0 = every unreferenced SECURITY DEFINER function is ledgered with a classified reason; 1 = one is not, a ledger entry went stale, or the scan was vacuous" \
+    --require '[1-9][0-9]* corpus file\(s\) read' \
+    --require '[1-9][0-9]* SECURITY DEFINER function\(s\) alive' \
+    --require '[1-9][0-9]* surviving policy/policies' \
+    --require 'check:security-definer-oracles PASSED$' \
+    --report-ere '([0-9]+) SECURITY DEFINER function\(s\) alive' \
+    -- pnpm run check:security-definer-oracles
+
   # LOCATION PRIVACY: every coordinate-holding table is claimed by a documented
   # purpose. Green today, and gated here as a ratchet — a NEW coordinate-holding
   # table with no purpose fails. Nothing here encodes a guess at the open

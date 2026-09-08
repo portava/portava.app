@@ -451,6 +451,22 @@ export const GUARDS: readonly GuardEntry[] = [
     reach: { kind: "check-all", script: "check:admin-guard" },
   },
   {
+    checker: "src/scripts/checkSecurityDefinerOracles.ts",
+    inspects: {
+      countPattern: "(\\d+) SECURITY DEFINER function\\(s\\) alive",
+      unit: "SECURITY DEFINER functions alive at the end of the migration corpus",
+    },
+    responsibility:
+      "Every SECURITY DEFINER function in `public` is called by something in the database or the application — " +
+      "an uncalled one is an authorization answer served over PostgREST to whoever asks.",
+    // The remedy it asks for is a DROP, never a REVOKE. Revoking EXECUTE on a
+    // definer function that a POLICY calls makes the policy raise "permission
+    // denied for function" for every end-user token; that was measured on CI
+    // for both language sql and language plpgsql before this guard was written,
+    // because the obvious reading of the Supabase advisory is the wrong one.
+    reach: { kind: "check-all", script: "check:security-definer-oracles" },
+  },
+  {
     checker: "src/scripts/check-media-bucket-privacy.ts",
     responsibility: "Reports Storage buckets whose public/private flag disagrees with the media privacy contract.",
     reach: {
