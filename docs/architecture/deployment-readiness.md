@@ -119,6 +119,51 @@ just shape:
 - `2741` widened two CHECK constraints so the abort route's ledger row is legal.
   Nothing writes the new values yet; the flag is FALSE.
 
+## Eighteen capability flags the server reads that production has no row for
+
+Measured 2026-09-08: every `isFlagEnabled` / `isKillSwitchEngaged` call site in
+`artifacts/api-server/src` (79 distinct flag names, tests and scripts excluded)
+against a read-only listing of production's 185 `feature_flags` rows.
+
+**Eighteen flags the code reads are ABSENT from production.** `isFlagEnabled`
+fails closed, so each reads as OFF — and every one of the eighteen is an
+`*_enabled` capability flag, not a `*_disabled` kill switch. That direction was
+checked, not assumed: an absent KILL SWITCH would read as NOT ENGAGED, i.e. the
+feature ON, which is the dangerous polarity. There are none.
+
+| Flag | Seeded by | Applied to production |
+|---|---|---|
+| `highlights_feed_bounded_enabled` | `2339_highlights_feed_bound` | no |
+| `intel_outcome_attribution_enabled` | `2277_intel_outcomes_attribution` | no |
+| `layover_presence_ladder_enabled` | `2740_layover_presence_ladder_flag` | **ci only** |
+| `location_snapshot_purge_enabled` | `2129_location_snapshot_purge_flag` | no |
+| `map_contributions_enabled` | `2216_map_observations` | no |
+| `map_crowd_flow_enabled` | `2218_crowd_flow` | no |
+| `map_display_resolver_enabled` | `2350_map_sensing_projection_flags` | no |
+| `map_experience_state_enabled` | `2350_map_sensing_projection_flags` | no |
+| `map_projection_enabled` | `2201_map_projection_flag` | no |
+| `map_telemetry_enabled` | `2202_map_telemetry` | no |
+| `map_world_intelligence_enabled` | `2295_map_world_intelligence_flag` | no |
+| `map_world_moments_enabled` | `2350_map_sensing_projection_flags` | no |
+| `media_canonical_schema_fallback_enabled` | `2336_media_canonical_control_flags` | no |
+| `media_evidence_enabled` | `2255_media_evidence_seam` | no |
+| `memory_location_precision_enabled` | `2338_memory_location_precision` | no |
+| `memory_public_feed_projection_enabled` | `2338_memory_location_precision` | no |
+| `passport_event_share_enabled` | `2294_event_passport_shares` | no |
+| `passport_telemetry_enabled` | `2287_passport_telemetry_events` | no |
+
+**Every one is seeded by a migration that exists in this tree.** None of those
+fourteen migrations is in the live queue above, which tracks ten — so the queue
+is not the inventory of unapplied work, and this table is the reason to say so
+out loud.
+
+The operational consequence is not that these features are off. It is that an
+operator cannot turn them on. A flag with no row is invisible in the
+`feature_flags` table: there is nothing to flip, and enabling any of these
+requires applying a migration first. "Behind a flag, seeded FALSE" and "no row at
+all" behave identically today and are not the same state, and only one of them
+survives someone changing a default.
+
 ## The blocking sequence
 
 1. **Merge.** Fast-forward, zero conflicts, available now. It stops being a
