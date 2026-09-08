@@ -139,6 +139,28 @@ describe("§21 — the universal display-name rule", () => {
     assert.equal(out.get("a")?.handle, null);
   });
 
+  it("a whitespace-only name falls through to the handle, not a blank pin", async () => {
+    // The choke point (`presentedName`) trims; the inline `display_name ?? name`
+    // this function briefly used did not. A pin labelled "   " is a pin nobody
+    // can identify, and it was reachable from any profile whose name was spaces.
+    const out = await buildMapPresenceProjections(
+      client(["a"]) as never,
+      [row({ id: "a", display_name: "   ", name: "  " })],
+    );
+    assert.equal(out.get("a")?.displayName, "wanderer");
+  });
+
+  it("an opted-in owner with NO name shows a bare handle, not @handle", async () => {
+    // The asymmetry, pinned. `@` marks "this is a handle, not a name" and is for
+    // the case where a name was WITHHELD. An owner who opted in and simply has
+    // no name withheld nothing, so their handle is shown plainly.
+    const out = await buildMapPresenceProjections(
+      client(["a"]) as never,
+      [row({ id: "a", name: null, display_name: null })],
+    );
+    assert.equal(out.get("a")?.displayName, "wanderer");
+  });
+
   it("a FAILED visibility read falls back to @handle for everyone", async () => {
     // Fail-closed on the name. Showing a handle to someone who opted in to their
     // real name is a cosmetic regression; showing a real name to someone who did

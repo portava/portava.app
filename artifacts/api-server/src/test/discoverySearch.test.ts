@@ -66,7 +66,15 @@ interface FakeState {
   blocks?: { blocker_id: string; blocked_id: string }[];
   events?: any[];
   hashtags?: any[];
-  profile_privacy_settings?: { user_id: string; allow_profile_discovery: boolean }[];
+  // `show_real_name` is the column `nameVisibilitySet` actually selects, and it
+  // is what every fixture below sets — but the type only named
+  // `allow_profile_discovery`, so 14 fixtures were type-errors sitting in this
+  // file's baseline. That is the shape check-test-typecheck exists to catch: a
+  // fixture describing a row production never emits. Here the fixture was right
+  // and the TYPE was wrong, so the type is corrected rather than the baseline
+  // raised. Both columns are optional because different suites set one or the
+  // other.
+  profile_privacy_settings?: { user_id: string; allow_profile_discovery?: boolean; show_real_name?: boolean }[];
   user_follows?: any[];
   event_rsvps?: any[];
   trips?: any[];

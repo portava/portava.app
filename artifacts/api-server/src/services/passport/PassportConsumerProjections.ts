@@ -132,10 +132,15 @@ import {
   type AvailabilityWindow,
   type ViewerRelationship,
 } from "./OpenToPlansService.js";
-// The canonical universal display-name gate. Imported directly rather than
-// reached through the assembler because buildMapPresenceProjections (bottom of
-// this file) must not touch the assembler at all — see its header.
-import { nameVisibilitySet } from "../../lib/publicIdentity.js";
+// The canonical universal display-name CHOKE POINT. Imported directly rather
+// than reached through the assembler because buildMapPresenceProjections
+// (bottom of this file) must not touch the assembler at all — see its header.
+// `presentedName` rather than a local `display_name ?? name`: this module is
+// inside services/passport/, where passportProjectionNameVisibility.test.ts
+// forbids reading either column off an unsanitized row. That guard exists
+// because `buildIdentity` once returned `display_name ?? name` to every viewer
+// including anonymous ones, and it caught this function doing the same thing.
+import { nameVisibilitySet, presentedName } from "../../lib/publicIdentity.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Variant kinds
@@ -986,14 +991,27 @@ export async function buildMapPresenceProjections(
 
   for (const prof of rows) {
     const handle = prof.handle ?? null;
+    const allowed = allowedRealNames.has(prof.id);
+    // THE REAL NAME IS RESOLVED BY THE CHOKE POINT, NOT HERE. `presentedName`
+    // returns the name only when `allowed`, applies the canonical
+    // `display_name ?? name ?? full_name` order, and TRIMS — so a
+    // whitespace-only name falls through to the handle instead of painting a
+    // blank pin. Writing `prof.display_name ?? prof.name` inline would be a
+    // fourth local copy of a rule that already has three, and this module sits
+    // where the guard against exactly that runs.
+    const realName = presentedName(prof, allowed);
     out.set(prof.id, {
       id: prof.id,
       handle,
-      // Universal display-name rule: a real name only where the owner opted in;
-      // otherwise the handle, and only then the fallback word.
-      displayName: allowedRealNames.has(prof.id)
-        ? (prof.display_name ?? prof.name ?? handle ?? MAP_PRESENCE_FALLBACK_NAME)
-        : (handle ? `@${handle}` : MAP_PRESENCE_FALLBACK_NAME),
+      // The fallback is ASYMMETRIC on purpose, and the asymmetry is inherited
+      // from lib/mapTravelers rather than invented: an owner who opted in but
+      // has no name shows their bare handle, while one who did not opt in shows
+      // `@handle`. The `@` marks "this is a handle, not a name" precisely where
+      // a name was withheld.
+      displayName: realName
+        ?? (allowed
+          ? (handle ?? MAP_PRESENCE_FALLBACK_NAME)
+          : (handle ? `@${handle}` : MAP_PRESENCE_FALLBACK_NAME)),
       // A flag-only gate, and that is correct HERE and would not be elsewhere:
       // the caller's candidates are already private-excluded and
       // viewer-independent (a map pin carries no follow/friend context), so the
