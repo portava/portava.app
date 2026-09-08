@@ -709,6 +709,41 @@ const EXEMPT = [
   })),
 
   {
+    file: 'src/test/rabLifecycleNoShowAttribution.test.ts',
+    pinnedTestEnv: true,
+    reason:
+      'Registered unit test that proves the no-show attribution path over a REAL createClient, for the same ' +
+      'reason as rabLifecycleCounters below: the question is whether the route ISSUES the write the sweeper ' +
+      'later reads, and a hand-written double answers that question by construction rather than by ' +
+      'measurement. Same two in-file pins: the client is given its own transport ' +
+      '(global: { fetch: makeRecordingFetch(...) }), so the installed fetch is never reached and no request ' +
+      'leaves the process, and the URL is the hardcoded literal "http://supabase.test" declared in the file ' +
+      'rather than read from the environment. pinnedTestEnv because the test script names it and the ' +
+      'CI-surface rule requires the flag of any exemption CI invokes. EXEMPTION MEANS UNGUARDED, NOT SAFE — ' +
+      'void the moment the real fetch is let through or the URL comes from the environment.',
+  },
+
+  {
+    file: 'src/test/rabLifecycleCounters.test.ts',
+    pinnedTestEnv: true,
+    reason:
+      'Registered unit test that drives the real Rent-a-Buddy routes over a REAL createClient, deliberately. ' +
+      'What it proves is that three lifecycle counters move with the WRITE the route issues rather than with a ' +
+      'read set, and a hand-written double cannot tell a CONSTRUCTED PostgrestBuilder from a SENT request — ' +
+      'that distinction is precisely how twenty unissued writes stayed green for months, so the fake that ' +
+      'cannot see it is the wrong instrument here. Two facts in the file itself, both stronger than the CI ' +
+      'pin, keep it off the network: the client is handed its OWN transport, ' +
+      'createClient(SUPA_URL, SUPA_KEY, { global: { fetch: makeRecordingFetch(...) } }), so the installed ' +
+      'fetch is never consulted and no request can leave the process; and SUPA_URL is the hardcoded literal ' +
+      '"http://supabase.test" declared in the file, never read from the environment, so an operator .env ' +
+      'cannot redirect it. It carries pinnedTestEnv because CI does invoke it — the test script names it — ' +
+      'and the CI-surface rule requires that flag of any exemption CI runs; the loopback pin is a third, ' +
+      'weaker pin on top of the two above. EXEMPTION MEANS UNGUARDED, NOT SAFE — if this file is ever changed ' +
+      'to let the real fetch through, or to take its URL from the environment, the exemption is void and it ' +
+      'must import the guard.',
+  },
+
+  {
     file: 'src/test/guardReachability.test.ts',
     pinnedTestEnv: true,
     reason:

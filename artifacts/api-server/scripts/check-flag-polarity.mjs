@@ -243,6 +243,92 @@ const CLASSIFIED = [
       'opposite call from disable_signups, which sits two lines away in routes/auth.ts and IS a stop. This is ' +
       'the entry that justifies the whole file: no name-pattern rule would ever have looked at this flag.',
   },
+
+  // ── The Rent-a-Buddy rollout flags. ────────────────────────────────────────
+  //
+  // These seven were carried as a `covers` list on a DIRECT_READS 'var' entry
+  // until 2026-09-08, because routes/rentABuddyRollout.ts read them all through
+  // one local getFlag(sc, flag) helper and this check cannot follow a flag name
+  // through a parameter. A `covers` list WAIVES the polarity rule: it says "a
+  // human read these at their call sites once", and it kept saying so after the
+  // call sites changed. It was hiding a real defect — all three *_MODE
+  // restrictions were read with CAPABILITY polarity, so one unreadable
+  // feature_flags row disengaged admin-only, MVP and beta-only mode together.
+  // The helper is gone (routes/rentABuddyRollout.ts now names every flag as a
+  // literal at its read site), so each of these is CLASSIFIED with the kind of
+  // the reader it actually goes through, and the polarity rule VERIFIES rather
+  // than waives. Line numbers below were read off the file, not carried over.
+  {
+    flag: 'RENT_BUDDY_ADMIN_ONLY_MODE',
+    kind: 'STOP',
+    reason:
+      'LAUNCH-PHASE RESTRICTION, READ AS A STOP. `true` narrows the whole Rent-a-Buddy surface to admins. ' +
+      'Read through isKillSwitchEngaged at routes/rentABuddyRollout.ts:247, so an unreadable row ENGAGES the ' +
+      'restriction and non-admins are refused. This is the OPPOSITE call from invite_only_beta above, which ' +
+      'is CLASSIFIED CAPABILITY on the reasoning that opening signup on a failed read is a rollout decision ' +
+      'rather than an outage. The difference is what the two admit: signup admits a row, this admits a ' +
+      'stranger to an in-person meeting with another stranger, and the surface it guards is off by declared ' +
+      'default anyway (src/migrations/2210_rent_buddy_default_off.sql), so nobody is served by the ' +
+      'restriction lifting itself. Before 82f603cf all three RENT_BUDDY_*_MODE flags were read with ' +
+      'capability polarity and disengaged together on one failed feature_flags read.',
+  },
+  {
+    flag: 'RENT_BUDDY_MVP_MODE',
+    kind: 'STOP',
+    reason:
+      'RESTRICTION. `true` narrows Rent-a-Buddy to the MVP category whitelist (rentABuddyRollout.ts:312) and ' +
+      'additionally requires ID verification of the BOOKING TRAVELLER (:359-:375). Read through ' +
+      'isKillSwitchEngaged at :311, so an unreadable row keeps the narrowing in place. False-on-error would ' +
+      'open every category AND drop the verification requirement in one step — the widest single fail-open ' +
+      'in this file, and it also silently disarms the three gates below, each of which is only consulted ' +
+      'while MVP mode is engaged.',
+  },
+  {
+    flag: 'RENT_BUDDY_BETA_ONLY_MODE',
+    kind: 'STOP',
+    reason:
+      'RESTRICTION. `true` requires an active rent_buddy_beta_access row for every non-read action ' +
+      '(rentABuddyRollout.ts:487-:505). Read through isKillSwitchEngaged, so an unreadable row keeps beta ' +
+      'gating engaged; the beta-access lookup that follows denies on a null row, so the two agree in the ' +
+      'same direction rather than one undoing the other.',
+  },
+  {
+    flag: 'RENT_BUDDY_GROUP_BOOKINGS_ENABLED',
+    kind: 'CAPABILITY',
+    reason:
+      'Ordinary capability gate, consulted only while MVP mode is engaged: `true` re-opens the group ' +
+      'bookings (category "group", or groupSize > 4) that MVP mode otherwise refuses with 403 ' +
+      'group_bookings_unavailable. Read through isFlagEnabled at rentABuddyRollout.ts:323, so an unreadable ' +
+      'row leaves group bookings shut — the safe direction. Listed despite the _ENABLED suffix because ' +
+      'SCREAMING_CASE deliberately gets no convention in this file.',
+  },
+  {
+    flag: 'RENT_BUDDY_PACKAGES_ENABLED',
+    kind: 'CAPABILITY',
+    reason:
+      'Capability gate for action:"package-book" while MVP mode is engaged (rentABuddyRollout.ts:336); ' +
+      'false-on-error refuses the package booking with 403 packages_unavailable, so isFlagEnabled is the ' +
+      'correct reader.',
+  },
+  {
+    flag: 'RENT_BUDDY_OFFERS_ENABLED',
+    kind: 'CAPABILITY',
+    reason:
+      'Capability gate for action:"offer-accept" while MVP mode is engaged (rentABuddyRollout.ts:349); ' +
+      'false-on-error refuses the offer acceptance with 403 offers_unavailable, so isFlagEnabled is the ' +
+      'correct reader.',
+  },
+  {
+    flag: 'RENT_BUDDY_NIGHTLIFE_ENABLED',
+    kind: 'CAPABILITY',
+    reason:
+      'Capability gate for the nightlife category, the highest-risk one in the product. False-on-error ' +
+      'refuses nightlife (403 nightlife_disabled at rentABuddyRollout.ts:381-:390), which is the safe ' +
+      'direction, so isFlagEnabled is correct. Note it is ORed against the ' +
+      'rent_buddy_global_controls.nightlife_paused kill switch, which lives in a different table and, as of ' +
+      '82f603cf, engages when that row is unreadable — so nightlife is refused whether the flag row or the ' +
+      'controls row is the one that cannot be read.',
+  },
   {
     flag: 'rent_buddy_allow_bookings_without_kyc',
     kind: 'CAPABILITY',
@@ -1155,25 +1241,6 @@ const DIRECT_READS = [
   { file: 'routes/admin.ts',              shape: 'management', reason: `Admin dashboard listing all flags for display (select flag/enabled/description/updated_at, no filter). Not a gate — it reports flag state. ${V}.` },
   { file: 'routes/adminCompass.ts',       shape: 'management', reason: `Admin upsert of Compass flags by variable. A write. ${V}.` },
   { file: 'routes/circle.ts',             shape: 'management', reason: `POST /admin/circle/kill-switch — the OPERATOR'S CONTROL SURFACE for find_your_circle_disabled. It upserts the stop; it does not read it to gate. Fails LOUDLY (db_error) on write failure, which is correct: an operator flipping a stop must learn if it did not take. ${V}.` },
-  { file: 'routes/rentABuddyRollout.ts',  shape: 'var',
-    covers: [
-      'RENT_BUDDY_MVP_MODE',
-      // Added 2026-08-12. These six were ALWAYS read through this same helper —
-      // getFlag(sc, "<literal>") at :171, :245, :258, :271, :304 and :410, each
-      // gating a 403 — but they were never listed here because the seed scanner
-      // could not see them being seeded (0090:197-203, behind a semicolon in a
-      // description) and so R6 never asked. Fixing the matcher surfaced them as
-      // "seeded but never read", which was wrong in the informative direction:
-      // they are read, by a helper this check cannot follow, which is exactly
-      // what a `covers` list is for.
-      'RENT_BUDDY_ADMIN_ONLY_MODE',       // :171  admin-only rollout gate
-      'RENT_BUDDY_BETA_ONLY_MODE',        // :410  beta-only rollout gate
-      'RENT_BUDDY_GROUP_BOOKINGS_ENABLED',// :245  403 group_bookings_unavailable
-      'RENT_BUDDY_PACKAGES_ENABLED',      // :258  403 packages_unavailable
-      'RENT_BUDDY_OFFERS_ENABLED',        // :271  403 offers_unavailable
-      'RENT_BUDDY_NIGHTLIFE_ENABLED',     // :304  403 when off
-    ],
-    reason: `Local getFlag(sc, flag) helper reading rollout flags by parameter. ${V}: no try/catch, \`!!data?.enabled\`; reads only rent_buddy_* CAPABILITY flags from admin rollout routes. Every name in \`covers\` was verified at its call site by the 2026-08-12 census (docs/ops/flag-disposition.md), which read each one in context rather than trusting the string match.` },
   // notifications.ts and admin.ts (safe-return) previously wrote flags via a raw
   // `.update({enabled}).eq("flag", <var>)`; audit FLAG-1/2 moved both onto the
   // audited toggle_feature_flag_with_audit RPC, so those var-shaped direct
