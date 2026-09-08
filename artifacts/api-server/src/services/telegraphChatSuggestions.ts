@@ -10,9 +10,14 @@
  *   - Trip context only available if user is an accepted trip member
  *   - Circle context only available if user is an accepted circle member
  *   - Non-members get canShowRecommendation: false
+ *   - An UNREADABLE `profiles` row (a resolved PostgREST error, not an absent
+ *     row) gets canShowRecommendation: false and reason
+ *     "telegraph_settings_unavailable" — the opt-out defaults to ON, so a read
+ *     failure must not be allowed to look like consent.
  */
 
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { logger } from "../lib/logger.js";
 import type { IntentResult } from "./telegraphIntent.js";
 
 export interface TelegraphChatPrivacyVerdict {
@@ -146,8 +151,21 @@ export async function resolvePrivacyVerdict(
     }
   }
 
-  // Availability: only if user has enabled sharing
-  const { data: profile } = await client
+  // ── The user's own telegraph opt-out (FAIL-CLOSED on an unreadable read) ──
+  //
+  // `show_telegraph_*` are OPT-OUTS: the product default is on, so the test is
+  // `!== false` and an ABSENT column or row correctly means "enabled". That is
+  // right for a user who has never touched the setting, and it was wrong for a
+  // user who has: supabase-js RESOLVES on a database error, so a failed read
+  // arrives as `profile === null`, `undefined !== false` is true, and a user who
+  // set `show_telegraph_dm = false` had suggestions generated into their chat —
+  // and persisted, since routes/telegraphChat.ts inserts the shown cards.
+  //
+  // An opt-out we could not read is not an opt-out we may ignore. On a read
+  // error the verdict withholds, and it says so in `reason` with a value
+  // distinct from "telegraph_disabled": a caller (or a log reader) must be able
+  // to tell "this user turned it off" apart from "we could not find out".
+  const { data: profile, error: profileErr } = await client
     .from("profiles")
     .select("show_telegraph_dm, show_telegraph_trip, show_telegraph_circle")
     .eq("id", userId)
@@ -160,7 +178,14 @@ export async function resolvePrivacyVerdict(
         ? "show_telegraph_circle"
         : "show_telegraph_dm";
 
-  const telegraphEnabled = (profile as any)?.[settingKey] !== false;
+  if (profileErr) {
+    logger.error(
+      { err: profileErr, userId, threadId, threadType },
+      "telegraphChatSuggestions: could not read the viewer's show_telegraph_* opt-outs — " +
+        "suppressing suggestions rather than assuming consent",
+    );
+  }
+  const telegraphEnabled = !profileErr && (profile as any)?.[settingKey] !== false;
 
   // Non-members of trip/circle chats cannot see suggestions
   if (threadType === "trip" && !canUseTripContext) {
@@ -195,7 +220,11 @@ export async function resolvePrivacyVerdict(
     canUseCircleContext,
     canShowRecommendation: telegraphEnabled,
     canUseAvailability: false, // availability feature gated in future
-    reason: telegraphEnabled ? "ok" : "telegraph_disabled",
+    reason: profileErr
+      ? "telegraph_settings_unavailable"
+      : telegraphEnabled
+        ? "ok"
+        : "telegraph_disabled",
     tripId,
     circleOwnerId,
     tripDestination,

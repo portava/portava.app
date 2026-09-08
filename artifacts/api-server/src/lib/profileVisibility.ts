@@ -9,8 +9,39 @@
  *   "unavailable"    — account is deactivated, suspended, or deleted
  *
  * SAFETY: block check is FAIL-CLOSED (throws on DB error, not on missing table).
- * Account-state and privacy-settings checks are FAIL-OPEN (table missing → skip).
+ * Account-state check is FAIL-OPEN (table missing → skip).
+ *
+ * ── PRIVACY SETTINGS: WHY AN UNREADABLE TABLE IS NOT "NO RESTRICTIONS" ──────
+ * `profile_privacy_settings` holds the opt-OUTS. Every consumer of the row
+ * reads it as `privacySettings?.show_X === false`, so a `null` row means "no
+ * restriction configured" and everything is disclosed. supabase-js RESOLVES on
+ * a database error, which makes an unreadable table indistinguishable from an
+ * unconfigured one — so until 2026-09-08 an outage on that one table PUBLISHED
+ * profiles their owners had restricted: `profile_visibility` fell back to the
+ * `profiles` row (commonly "public" → "full"), and every `show_*` opt-out was
+ * silently ignored.
+ *
+ * That is the permissive direction, so it is closed here, and closing it costs
+ * the VIEWER visibility rather than costing the request: a failed read of the
+ * settings table now yields RESTRICTED_PRIVACY_SETTINGS — a synthetic row with
+ * every disclosure switch off and `profile_visibility: "private"`. Two
+ * properties make that the right instrument:
+ *
+ *   • It needs no change at any of the ~10 call sites. They already ask
+ *     `show_followers === false` / `profile_visibility === "private"`, and the
+ *     substitute answers both correctly without a new branch to forget.
+ *   • It does NOT fail the request. An approved friendship still grants
+ *     "followers_only" (friendship is owner-approved at every non-public
+ *     tier); a stranger gets "limited_preview" — an empty list, not a 500.
+ *
+ * The substitute is NEVER handed to the profile OWNER (see the self-view branch
+ * below): an owner's own settings screen rendered from an all-off synthetic row
+ * would show them a lie they could save back over their real settings. The
+ * owner gets `privacySettings: null` plus `privacySettingsUnavailable: true`,
+ * so an owner-facing caller can say "could not load" instead of "all off".
  */
+
+import { logger } from "./logger.js";
 
 export type VisibilityLevel = "full" | "followers_only" | "limited_preview" | "blocked" | "unavailable";
 
@@ -39,7 +70,51 @@ export interface PrivacySettings {
 export interface ProfileVisibilityResult {
   visibility: VisibilityLevel;
   privacySettings: PrivacySettings | null;
+  /**
+   * True when `profile_privacy_settings` could not be READ (a resolved
+   * PostgREST error), as opposed to the user simply having no row.
+   *
+   * `privacySettings` alone cannot carry that distinction: `null` is what an
+   * unconfigured user looks like. A caller that renders settings back to their
+   * owner MUST branch on this rather than presenting the fallback as fact.
+   */
+  privacySettingsUnavailable?: boolean;
 }
+
+/**
+ * The privacy row assumed when `profile_privacy_settings` cannot be read for a
+ * NON-OWNER viewer. Every disclosure switch is off and the tier is the
+ * approval-required one, so an outage withholds rather than publishes.
+ *
+ * `allow_messages_from: "nobody"` is the restrictive member of the enum
+ * validated at routes/profile.ts (`everyone | friends | followers | nobody`).
+ * `delayed_posting_default` is not a disclosure control — it schedules the
+ * owner's own posts — so it keeps the column's own default rather than being
+ * flipped for the sake of symmetry.
+ *
+ * Frozen: it is handed out by reference to every caller of a failed read, and a
+ * caller that mutated it would poison every subsequent one.
+ */
+export const RESTRICTED_PRIVACY_SETTINGS: Readonly<PrivacySettings> = Object.freeze({
+  profile_visibility:      "private",
+  show_real_name:          false,
+  show_current_city:       false,
+  show_home_country:       false,
+  show_visited_places:     false,
+  show_upcoming_trips:     false,
+  show_past_trips:         false,
+  show_posts:              false,
+  show_stamps:             false,
+  show_friends:            false,
+  show_followers:          false,
+  allow_messages_from:     "nobody",
+  allow_friend_requests:   false,
+  allow_follow:            false,
+  allow_tagging:           false,
+  allow_profile_discovery: false,
+  delayed_posting_default: false,
+  precise_location_visible: false,
+});
 
 function isTableMissingErr(e: any): boolean {
   if (!e) return false;
@@ -62,19 +137,48 @@ export async function resolveProfileVisibility(
   targetProfileRow: { is_private?: boolean | null; passport_visibility?: string | null; account_status?: string | null },
 ): Promise<ProfileVisibilityResult> {
   // ── Owner always gets full access ─────────────────────────────────────────
+  //
+  // The owner's access does not depend on this read — it is "full" either way —
+  // so the read's failure is not a disclosure question. It is a TRUTHFULNESS
+  // question: the settings are handed back for the owner's own rendering, and
+  // `null` there says "you have configured nothing", which an unreadable table
+  // must not be allowed to say. Hence the explicit `privacySettingsUnavailable`
+  // rather than the restricted substitute — see the module header.
   if (viewerId === targetId) {
-    let ps: any = null;
+    let ps: PrivacySettings | null = null;
+    let unavailable = false;
     try {
+      // `.error` is the real failure path: supabase-js RESOLVES on a database
+      // error, and postgrest-js catches fetch errors itself, so a network fault
+      // resolves too (measured against 2.108.2: `{ error: { message:
+      // "TypeError: fetch failed", code: "" }, status: 0 }`). The surrounding
+      // catch is only for a client that is not a PostgREST builder at all. It
+      // is treated the same way here because the consequence — withholding one
+      // profile — is proportionate either way.
       const res = await sc
         .from("profile_privacy_settings")
         .select("*")
         .eq("user_id", targetId)
         .maybeSingle();
-      ps = res.data ?? null;
-    } catch {
-      ps = null;
+      if (res.error && isTableMissingErr(res.error)) {
+        // The table does not exist. "You have configured nothing" is then the
+        // truth, not a cover story, so this is NOT reported as unavailable.
+        logger.warn({ err: res.error, targetId }, "profileVisibility: profile_privacy_settings table absent (self-view)");
+      } else if (res.error) {
+        unavailable = true;
+        logger.error(
+          { err: res.error, targetId },
+          "profileVisibility: owner self-view could not read profile_privacy_settings — " +
+            "returning privacySettingsUnavailable rather than an empty settings row",
+        );
+      } else {
+        ps = (res.data as PrivacySettings | null) ?? null;
+      }
+    } catch (err) {
+      unavailable = true;
+      logger.error({ err, targetId }, "profileVisibility: owner self-view privacy read threw");
     }
-    return { visibility: "full", privacySettings: ps };
+    return { visibility: "full", privacySettings: ps, privacySettingsUnavailable: unavailable };
   }
 
   // ── 1. Account status — profile row first (fast path), then state table ───
@@ -108,16 +212,43 @@ export async function resolveProfileVisibility(
     }
   }
 
-  // ── 3. Privacy settings ────────────────────────────────────────────────────
+  // ── 3. Privacy settings (FAIL-CLOSED — see module header) ─────────────────
+  //
+  // A read failure here used to leave `privacySettings = null`, which is the
+  // shape of a user who configured nothing: the tier fell back to the profiles
+  // row and every `show_*` opt-out downstream was skipped. `isTableMissingErr`
+  // still distinguishes the one case where "no settings" is the honest answer —
+  // the table does not exist at all (a tree without migration 0069 applied) —
+  // from a table that exists and could not be read.
   let privacySettings: PrivacySettings | null = null;
+  let privacySettingsUnavailable = false;
   try {
     const { data: ps, error: psErr } = await sc
       .from("profile_privacy_settings")
       .select("*")
       .eq("user_id", targetId)
       .maybeSingle();
-    if (!psErr) privacySettings = ps ?? null;
-  } catch { /* table missing → null */ }
+    if (!psErr) {
+      privacySettings = (ps as PrivacySettings | null) ?? null;
+    } else if (isTableMissingErr(psErr)) {
+      logger.warn(
+        { err: psErr, targetId },
+        "profileVisibility: profile_privacy_settings table absent — no privacy row exists to honour",
+      );
+    } else {
+      privacySettingsUnavailable = true;
+      privacySettings = RESTRICTED_PRIVACY_SETTINGS;
+      logger.error(
+        { err: psErr, targetId, viewerId },
+        "profileVisibility: profile_privacy_settings unreadable — withholding under " +
+          "RESTRICTED_PRIVACY_SETTINGS rather than disclosing as if unconfigured",
+      );
+    }
+  } catch (err) {
+    privacySettingsUnavailable = true;
+    privacySettings = RESTRICTED_PRIVACY_SETTINGS;
+    logger.error({ err, targetId, viewerId }, "profileVisibility: privacy read threw — withholding");
+  }
 
   // ── 4. Effective visibility level ─────────────────────────────────────────
   // Derive effective visibility: privacy settings row wins; fall back to the
@@ -132,7 +263,7 @@ export async function resolveProfileVisibility(
       : "public");
 
   if (profileVis === "public") {
-    return { visibility: "full", privacySettings };
+    return { visibility: "full", privacySettings, privacySettingsUnavailable };
   }
 
   // Non-public tiers — decide what grants access:
@@ -159,11 +290,11 @@ export async function resolveProfileVisibility(
     const grantedByFriend = Boolean(friendRes.data);
     const grantedByFollow = followTierGrantsAccess && Boolean(followRes.data);
     if (grantedByFriend || grantedByFollow) {
-      return { visibility: "followers_only", privacySettings };
+      return { visibility: "followers_only", privacySettings, privacySettingsUnavailable };
     }
   }
 
-  return { visibility: "limited_preview", privacySettings };
+  return { visibility: "limited_preview", privacySettings, privacySettingsUnavailable };
 }
 
 /**
