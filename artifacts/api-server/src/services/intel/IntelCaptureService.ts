@@ -37,6 +37,7 @@ import {
   type PartySizeBucket,
 } from "../../lib/intelContracts.js";
 import { PHASE1_CAPTURE_CLAIM_TYPES, validateClaimValue } from "../../lib/quickSignal.js";
+import { projectClaimValue } from "../../lib/intelValueProjection.js";
 import { PHASE1_TRAIL_CAPTURE_CLAIM_TYPES, validateTrailClaimValue, mustAggregate } from "../../lib/trailFollowup.js";
 import { deriveGroupKey, type GroupIdentity } from "../../lib/intelGroupKey.js";
 import { isSharedCrewMember } from "../../lib/tripMembership.js";
@@ -340,6 +341,21 @@ export async function writeObservation(sc: any, actorId: string, input: CaptureI
     return { ok: false, reason: "invalid_claim_type", detail: `${input.claimType} is not a contracted claim on the ${surface} capture surface` };
   if (!validateForSurface(surface, input.claimType, input.value)) return { ok: false, reason: "invalid_value", detail: input.claimType };
 
+  // ── KEY PROJECTION (lib/intelValueProjection) ──────────────────────────────
+  // The validators above check the keys they NAME; none of them rejects an extra
+  // one. `value` is a client-supplied `z.record(z.string(), z.unknown())`, and it
+  // does not stay here — 2174's promote copies `o.value` verbatim into
+  // intel_claims.value, the aggregator carries it to intel_state_snapshots.value,
+  // and lib/intelApiProjection emits that as a REDISTRIBUTABLE field. So an
+  // unnamed key (free text, a coordinate) rode a validated claim all the way to a
+  // column lib/dataRights classifies personal:false. Project to the named keys —
+  // then re-validate, so a projection that dropped something required refuses the
+  // write rather than storing a shape nothing downstream can read.
+  const projectedValue = projectClaimValue(input.claimType, input.value);
+  if (!projectedValue || !validateForSurface(surface, input.claimType, projectedValue)) {
+    return { ok: false, reason: "invalid_value", detail: input.claimType };
+  }
+
   const visibility: Visibility = input.visibility && VISIBILITIES.includes(input.visibility) ? input.visibility : "private";
   // Fail-closed subject resolution — never let the places FK throw a 500.
   const { data: subj, error: subjErr } = await sc.from("places").select("id").eq("id", input.subjectId).maybeSingle();
@@ -409,7 +425,8 @@ export async function writeObservation(sc: any, actorId: string, input: CaptureI
     subject_id: input.subjectId,
     zone_id: input.zoneId ?? null,
     claim_type: input.claimType,
-    value: input.value,
+    // The PROJECTED value — never the raw client object. See the projection above.
+    value: projectedValue,
     source_class: disclosureSourceClass(commercialDisclosure),
     capture_surface: surface,
     visibility,
