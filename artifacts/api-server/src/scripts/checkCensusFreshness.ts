@@ -143,6 +143,33 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/routes/mediaFeed.ts",
     "travel-buddy-standalone/src/features/wall/",
   ],
+  // Discovery has NO SPEC. Its 67 rows are 25 inbound obligations from other
+  // surfaces' specs, 9 rows shared with the Global Input Intelligence census,
+  // and 33 contracts its own code asserts — so the scope is wider than
+  // routes/discovery*.ts in two directions.
+  //
+  //   • the A-rows are aged by the CONTRACTS they wait on, not only by
+  //     Discovery's own code: A10 turned out to be stale precisely because
+  //     lib/tripDiscoveryProjection.ts appeared and nothing aged the census;
+  //   • the B-rows grade the shared input-intelligence path, whose failing half
+  //     is sometimes in lib/inputAssistance/.
+  //
+  // Listing only the two routes would have kept this census looking fresh while
+  // the contract it grades was published underneath it — which is exactly what
+  // happened between 507f8427 and 090684ab.
+  "census-discovery.md": [
+    "artifacts/api-server/src/routes/discovery.ts",
+    "artifacts/api-server/src/routes/discoverySearch.ts",
+    "artifacts/api-server/src/lib/discoveryCandidate.ts",
+    "artifacts/api-server/src/lib/discoveryPde.ts",
+    "artifacts/api-server/src/lib/discoveryShadow.ts",
+    "artifacts/api-server/src/lib/discoveryServeLog.ts",
+    "artifacts/api-server/src/lib/discoveryModifiers.ts",
+    "artifacts/api-server/src/lib/discoveryTripProjectionConsumer.ts",
+    // The contracts the A-rows wait on, so publishing one ages this census.
+    "artifacts/api-server/src/lib/tripDiscoveryProjection.ts",
+    "artifacts/api-server/src/lib/inputAssistance/",
+  ],
 };
 
 interface Ack {

@@ -16,6 +16,16 @@ production** (§5): the last `surface='discovery'` serve was 2026-08-15, thirtee
 
 ---
 
+## 0. Provenance
+
+| Field | Value |
+| --- | --- |
+| `head_commit` | `090684ab54489d23707a0fd5e3f8ed661072a34f` (`git rev-parse HEAD`) |
+| Originally censused at | working tree `507f8427` plus uncommitted sibling work, 2026-09-07 |
+| Recensused | 2026-09-08 — see §8 for the method and what it does not claim |
+
+---
+
 ## 1. The denominator, and how it was built
 
 No single document says what Discovery must do. The 67 rows below come from three sources,
@@ -53,7 +63,7 @@ with `docs/`, `db/` or `travel-buddy-standalone/`.
 | A07 | Sensing `:129` — *"Safety constraints outrank opportunity/vibe. A dangerous place must never simultaneously be promoted as 'best move now'"* — Discovery half | **N** | No safety term reaches the ranker (A01 evidence). There is also no world safety state to consume — census-sensing S66 records the Compass half as W and the producer side as absent. Not gated by the hold (a constraint, not an optimisation), but unbuildable until a safety projection exists. |
 | A08 | GII `:8` — *"This is not owned by Discovery… Those surfaces consume it through a shared platform layer"*; `:7` core rule; census-input-intelligence G6 — *"four independent engines are still live and unmigrated"* | **W** | **Measured: Discovery owns ONE of the four.** The four G6 engines are `travel-buddy-standalone/src/hooks/useSearchSuggestions.ts` (→ `GET /api/discovery/suggest`, Discovery's), `hooks/useGooglePlacesAutocomplete.ts` (→ `/api/places/google-autocomplete`, Places), `hooks/usePlaceSearch.ts` (→ `/api/places/search`, Places) and `components/MentionInput.tsx` (mentions). Server side, `routes/discoverySearch.ts:2006` `/discovery/suggest` is **not a parallel matcher** — it calls the same `dispatchSearch` (`:1593`) the gateway calls (`lib/inputAssistance/gateway.ts:27,384`) — but it *is* a second route, and the client runs it **on every keystroke in parallel with the gateway** as a deliberate fallback: `hooks/useGlobalSearchSuggestions.ts:10-12` — *"The legacy hook ALWAYS runs and is the fallback — its proven behavior is never removed"*; `app/search.tsx:24,154` consumes that wrapper. Two requests per keystroke, one canonical path. **Not closed here**: the consolidation is a client change (stop invoking the legacy hook when the gateway is `available`), it removes a fallback users currently have, and the server route cannot be retired while the fallback references it. Owner decision (§6 D1). |
 | A09 | Trips `:12` — *"No Map, Compass, Telegraph, Discovery, Buddy, or UI component may independently invent canonical trip state"* | **C** | Every `.from(...)` literal in `routes/discovery.ts` enumerated: `discovery_places` ×8, `discovery_place_saves` ×3, `discovery_place_reports`, `place_votes`, `places`, `profiles` ×2, `reviews`, `collections`, `collection_items`, `user_location_state` — no `trip*` table; `routes/discoverySearch.ts:772,838` read `trips` / `trip_plan_items` with `.select` only; **zero `.rpc(` calls** across `routes/discovery*.ts` and `lib/discovery*.ts`. Caveat recorded per `scripts/checkWriterlessReads.ts:39-41`: a literal grep is a floor; no dynamic `.from(expr)` was found in these files either. |
-| A10 | Trips `:25`, `:488` — *"Map, Compass, Discovery… consume explicit Trip projections/contracts rather than duplicating Trip semantics"* | **W** | Discovery re-derives trip visibility itself: `routes/discoverySearch.ts:772-773` (`visibility='public'` + `show_in_discovery`), `:838-860` (plans admitted by the parent trip's visibility or caller ownership). Correct today, and exactly the duplication the clause forbids. No `TripDiscoveryProjection` exists (census-trips TR-family; cross-cutting T-02 *"zero occurrences"*). Not closable from Discovery: the projection is Trips' to publish, and a Discovery-authored one would be Discovery inventing Trip semantics. Owner/Trips decision (§6 D3). |
+| A10 | Trips `:25`, `:488` — *"Map, Compass, Discovery… consume explicit Trip projections/contracts rather than duplicating Trip semantics"* | **W** | **Stays W; its REASON is superseded — recensused 2026-09-08.** The row said *"No `TripDiscoveryProjection` exists … Not closable from Discovery: the projection is Trips' to publish"* and filed it as owner decision D3. Both halves are now false. **The projection exists and Trips publishes it**: `lib/tripDiscoveryProjection.ts:225#searchTripDiscoveryProjections` and `:252#readTripDiscoveryProjections`, over `TRIP_DISCOVERY_SOURCE_COLUMNS` (`:136#TRIP_DISCOVERY_SOURCE_COLUMNS`). **Discovery consumes it**: `lib/discoveryTripProjectionConsumer.ts` — the switch, the §19.1 acceptance check and the card mapping, wired into both search paths at `routes/discoverySearch.ts:822#discoveryTripProjectionGate` (trips) and `:948#discoveryTripProjectionGate` (plans). **Why it is still W, and why that is a DIFFERENT kind of open than before:** the consumer is behind a CAPABILITY, not a bare flag — `capability = discovery_trip_projection_enabled (migration 2550, seeded FALSE) && SCHEMA_CAPABILITY_READY`, because `TRIP_DISCOVERY_SOURCE_COLUMNS` ends in `trips.version` which migration 2420 adds and production does not have. Both projection readers fail CLOSED on a resolved `.error`, so an ungated switch would turn every production trip search into `[]` on a 42703, silently. Until 2420 is applied and the flag lit, the LIVE path is still the duplication this clause forbids (`routes/discoverySearch.ts:847#show_in_discovery`, `:976#show_in_discovery`). **So this moved from an OWNER-blocked row to a DEPLOYMENT-gated one** — nothing here is waiting on a decision any more, and D3 in §6 is discharged. |
 | A11 | Trips `:185` — *"Discovery, Compass, Saved Ideas, and Buddy matching consume these [Temporal Freedom] windows rather than independently calculating 'free time'"* | **N** | `FreedomWindow`: zero occurrences (census-trips TR131 N). Discovery's own arithmetic: `lib/portavaRank.ts:86` (`availableMinutes` — *"Minutes of free window (layover mode / availability) — actionability cap"*) and `:245-248` (*"must start within the window"*). No engine to consume. |
 | A12 | Trips `:175` — *"Public Trip content must not leak lodging detail, exact private location, future absence from home, safety state, or unconsented participant data"* — the Discovery leg | **C** | `routes/discoverySearch.ts:770` selects `id, title, destination_city, destination_country, owner_id, cover_url, start_date, status, visibility, created_at` — no lodging, no coordinates, no safety column, no participant list — and only public rows (`:772`). Recorded, not hidden: `start_date` + destination on a public trip is a Trips-domain public field; whether that is "future absence" is a Trips ruling (census-trips settled only the lodging clause, TR117). |
 | A13 | Layover `:66` — *"All surfaces consume the same certified LayoverSnapshot / RecommendationContract; no duplicate time-budget logic"*; `:803` — *"One canonical LayoverSnapshot drives Trips, Compass, Discovery, Map and Safe Return"* | **N** | `LayoverSnapshot`: zero occurrences. `grep -rIn -i layover routes/discovery*.ts lib/discovery*.ts` → nothing; Discovery has no layover reference at all. The duplicate time-budget logic named in L-02 is A11's `portavaRank.ts:86,245`. |
@@ -109,7 +119,7 @@ with `docs/`, `db/` or `travel-buddy-standalone/`.
 | C19 | Display-name redaction shape (`.agents/memory/display-name-privacy.md`: null name + separate handle) | **W → partially closed** | **Measured, and the lead was half wrong:** the search list's shape is `title` = name-or-bare-handle, `subtitle` = `@handle` (`routes/discoverySearch.ts:650#subtitle`) — there is no `name` field — which is the **same** shape as Compass (`routes/compass.ts:3578-3589`, `title` bare username / `displayName` null). Discovery's one divergent shape is the community byline, which bakes the literal `@username` **into `name`** (`discovery.ts:2748#name`). It cannot be changed in place: `travel-buddy-standalone/src/components/DiscoveryWall.tsx:407` renders `By {submittedBy.name}` raw, so a null there is a blank byline — a user-visible change with no flag. **Now:** the canonical shape is emitted **additively** as `displayName` (`routes/discovery.ts:2751#displayName`: real name iff self or opted-in, else null, never a handle) alongside the unchanged legacy field, from one `nameAllowed` decision (`:2694`) so the two fields cannot disagree about *whether* a name is withheld (pinned: *"the two byline fields never disagree…"*). The legacy `name` stays until the client resolves the byline through `displayIdentity(displayName, handle)` (§6 D2). Stays W until then. |
 | C20 | Engine mode resolves to `legacy` on every failure path (`lib/discoveryEngineMode.ts` header) | **C** | `:151-175`; tests A–L. |
 | C21 | An unreadable/absent/malformed cohort includes NOBODY; `kind:"all"` must be typed (`lib/discoveryCohort.ts` header) | **C** | `:85` `COHORT_NONE`, `:102` `NOBODY(...)` for every parse failure; tests N2–N6. |
-| C22 | Shadow never changes what was served and writes only to `discovery_shadow_serves` (`lib/discoveryShadow.ts` header) | **C** | `routes/discovery.ts:1754` (`served: false`), `:1760` after the response; `lib/discoveryShadow.ts:186` the single insert; tests G, I. |
+| C22 | Shadow never changes what was served and writes only to `discovery_shadow_serves` (`lib/discoveryShadow.ts` header) | **C** | `routes/discovery.ts:1791#served` (`served: false`, handed a client that cannot write), invoked after the response is sent (`:1769#served`); `lib/discoveryShadow.ts:186#discovery_shadow_serves` the single insert; tests G, I. (Re-anchored 2026-09-08: both line numbers had drifted 30-odd lines when the silent-write burn-down `2550b8ba` edited this file. The claim held; the pointers did not.) |
 | C23 | `rankForViewer(..., { served: false })` performs no write; the suppression is load-bearing (`lib/discoveryPde.ts:84-90`) | **C** | Tests D, D2 (positive control), S, S2. |
 | C24 | Modifiers flag OFF → inert record, no momentum or confidence read (`lib/discoveryModifiers.ts:37-50`) | **C** | `:68` (*"Everything below is inert when false"*), `:130` the one read. |
 | C25 | Serve log inert until seeded; a rejected insert is reported, never thrown (`lib/discoveryServeLog.ts:23-45`) | **C** | `:200-205` cached fail-closed read; tests A, B, B2, J, K. **Deployment:** the flag is **ON in production** and the writer is live — but `surface='discovery'` holds 13 rows ever, last 2026-08-15 (§5). Not a silent write loss (rows landed when the surface was reached); the surface is not reached. |
@@ -205,7 +215,7 @@ production.
 |---|---|---|
 | D1 | **Retire the legacy typeahead fallback.** `useGlobalSearchSuggestions` runs `useSearchSuggestions` on every keystroke alongside the gateway. Stopping it when the gateway reports `available` halves request volume and closes A08 — and removes a fallback users have today. If taken, `GET /discovery/suggest` can then be retired. Client change (`travel-buddy-standalone/src/hooks/`). | A08 |
 | D2 | **Migrate the community byline to `displayName`.** `DiscoveryWall.tsx:407` and `useCommunityDiscovery.ts:37` should resolve `displayIdentity(displayName, handle)`; then `name` can stop carrying `@username` and C19 closes. Client change, then a server follow-up. | C19 |
-| D3 | **Trips publishes a `TripDiscoveryProjection`** (or names the existing `toAuthorizedTripView` as it); Discovery's `searchTrips`/`searchPlans` then consume it instead of re-deriving visibility. Trips-owned. | A10 |
+| D3 | ~~**Trips publishes a `TripDiscoveryProjection`**; Discovery's `searchTrips`/`searchPlans` consume it instead of re-deriving visibility. Trips-owned.~~ **DISCHARGED 2026-09-08** — Trips published it (`lib/tripDiscoveryProjection.ts`) and Discovery consumes it (`lib/discoveryTripProjectionConsumer.ts`, wired at `routes/discoverySearch.ts:822#discoveryTripProjectionGate` and `:948#discoveryTripProjectionGate`). Nothing here awaits a decision. What remains is deployment: migration **2420** (`trips.version`, which the projection's column list requires) is unapplied in production, and `discovery_trip_projection_enabled` (**2550**) is seeded FALSE. See A10. | A10 |
 | D4 | **Whether the search list should be assembler-built.** Routing list rows through `buildConsumerProjection` ends the last identity duplication but costs N+1 assembler calls per search and changes the response shape of a live route. | A15 |
 | D5 | **Emoji in queries.** Stripping them changes which results a query returns. | B02 |
 | D6 | **Drop the decorative `discovery_places` client write policies** (`auth_insert`, `own_*`, `owner_*`) so the boundary is not one re-`GRANT` from a column-unconstrained forge. 2153 deliberately left them; a 236x migration can remove them idempotently. Hardening, not a defect today. | C28 |
@@ -255,3 +265,63 @@ column constraint) do exactly what the sibling's three did.
 The coordinator runs the one authoritative full suite once the tree is quiescent (`a7012986` was
 green — 13872/3395, 0 fail — before F5). The suites named in §7 were run directly after every edit,
 judged by exit code; `check:test-registration` was the last command run.
+
+---
+
+## 8. Recensus at `090684ab` — and the census is now checkable
+
+The §2 pass above was taken at working tree `507f8427` *plus uncommitted
+sibling-agent work*, which is not a commit anyone can check out. This section
+re-reads it at `090684ab54489d23707a0fd5e3f8ed661072a34f` and adds the
+`head_commit` row §0 now carries, so `check:census-freshness` can age it instead
+of reporting CANNOT BE CHECKED.
+
+### Method — a diff review, which is stronger than the Wall's re-read
+
+Discovery's scope is five files, and **ten commits** touched them between
+`507f8427` and `090684ab`. Small enough to review as a diff rather than by
+re-opening 67 rows, so that is what was done, plus:
+
+- every one of the **139 citations** was machine-verified to resolve in range
+  (`check:doc-citations`, which now covers all of `docs/architecture/`);
+- the **contracts the seven blocked `N` rows wait on** were re-grepped:
+  `TemporalFreedom` / `freeTimeWindow` (A11), `LayoverSnapshot` (A13, A14) and
+  any Telegraph content-capability contract (A20, A21) have **zero occurrences**
+  in the tree. All seven remain blocked on another surface, unchanged;
+- the three explicit owner holds (A01, A05, A18) are unchanged.
+
+### What moved
+
+**No verdict changed. One row's REASON was wrong, and one owner decision is
+discharged.**
+
+**A10** said *"No `TripDiscoveryProjection` exists … Not closable from Discovery:
+the projection is Trips' to publish"* and filed it as owner decision **D3**. Both
+halves are now false. Trips published it (`lib/tripDiscoveryProjection.ts`) and
+Discovery consumes it (`lib/discoveryTripProjectionConsumer.ts`), wired into both
+search paths behind a capability — not a bare flag — because
+`TRIP_DISCOVERY_SOURCE_COLUMNS` ends in `trips.version`, which migration 2420
+adds and production does not have.
+
+It stays **W**, because the live path is still the duplication the clause
+forbids until 2420 is applied and `discovery_trip_projection_enabled` (2550,
+seeded FALSE) is lit. But it changed KIND: **from an owner-blocked row to a
+deployment-gated one**, and **D3 is discharged**. That distinction is the whole
+point of separating the two — an owner row waits on a person, a deployment row
+waits on an apply, and treating them alike is how a decision nobody needs to make
+stays on a list for months.
+
+**C22** was re-anchored: both `routes/discovery.ts` line numbers had drifted
+about thirty lines when the silent-write burn-down (`2550b8ba`) edited that file.
+The claim held; the pointers did not — which is the in-range-but-wrong class, and
+the reason the repaired citations now carry anchors.
+
+### What this section does NOT claim
+
+It does not claim all 46 `C` rows were re-opened and re-read. It claims the diff
+of the scope was reviewed, every citation resolves, and the specific facts the
+open rows depend on were re-checked. That is the basis on which the `head_commit`
+is declared, and it is stated here so the declaration can be judged rather than
+trusted.
+
+Discovery remains **dark in production** (§5). Nothing above changes that.
