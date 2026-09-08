@@ -109,7 +109,10 @@ function makeClient(tables: Record<string, Row[]>): { db: Db; client: any } {
     };
     async function run(): Promise<{ data: any; error: any; count?: number }> {
       if (verb === "select") {
-        const m = match();
+        // COPIES, not live references: a read must not hand back an object the
+        // race hook below can then mutate under the caller. That would let a
+        // test pass at the caller's pre-check rather than at the write.
+        const m = match().map((r) => ({ ...r }));
         const out = { data: single ? (m[0] ?? null) : m, error: null, count: m.length };
         const hook = db.afterSelect[table];
         if (hook) { delete db.afterSelect[table]; hook(db); }

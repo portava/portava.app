@@ -109,7 +109,13 @@ function makeClient(tables: Record<string, Row[]>): { db: Db; client: any } {
     const match = () => src(table).filter((r) => preds.every((p) => p(r)));
     async function run(): Promise<{ data: any; error: any; count?: number }> {
       if (verb === "select") {
-        const m = match();
+        // COPIES, not live references. A read that handed back the stored
+        // object would let the race hook below mutate the value the caller has
+        // already "read" — and then a compare-and-swap test would pass at the
+        // handler's PRE-CHECK instead of at the write, which is the vacuous
+        // green this whole file exists to avoid. PostgREST hands back a
+        // snapshot; so does this.
+        const m = match().map((r) => ({ ...r }));
         const out = { data: single ? (m[0] ?? null) : m, error: null, count: m.length };
         const hook = db.afterSelect[table];
         if (hook) { delete db.afterSelect[table]; hook(db); }
