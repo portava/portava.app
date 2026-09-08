@@ -189,6 +189,8 @@ import { getServiceClient } from "../lib/supabase.js";
 import { detectAndStoreLanguage, invalidateContentTranslations } from "../services/contentTranslation.js";
 import { nameVisibilitySet, sanitizeIdentity } from "../lib/publicIdentity.js";
 import { isFlagEnabled, isKillSwitchEngaged } from "../lib/featureFlags.js";
+import { isBlockedBetween } from "../lib/blockGuard.js";
+import { readBlockExclusions, sendExclusionsUnavailable } from "../lib/exclusionSet.js";
 import { appStorageUrlInfo } from "../lib/mediaUrl.js";
 import { sendPushWithRetry } from "../lib/pushWithRetry.js";
 import { linkOutcomeSignal } from "../compass/CompassOutcomeEngine.js";
@@ -303,14 +305,18 @@ async function canManageAttendance(sc: any, eventId: string, userId: string): Pr
   return role === "host" || role === "co_host" || role === "moderator";
 }
 
-/** Check if blocked relationship exists in either direction */
+/**
+ * Is there a block in either direction?
+ *
+ * Delegates to lib/blockGuard.isBlockedBetween rather than repeating the query.
+ * This function used to run its own copy and DISCARD `error`, so an unreadable
+ * `blocks` table read as "not blocked" and admitted the pair — on a path whose
+ * only caller is checkEventEligibility, an authorization gate. The shared
+ * helper answers `true` when it cannot read, so an outage denies the
+ * interaction instead of allowing it.
+ */
 async function isBlocked(sc: any, userA: string, userB: string): Promise<boolean> {
-  const { data } = await sc
-    .from("blocks")
-    .select("id")
-    .or(`and(blocker_id.eq.${userA},blocked_id.eq.${userB}),and(blocker_id.eq.${userB},blocked_id.eq.${userA})`)
-    .limit(1);
-  return ((data as any[]) ?? []).length > 0;
+  return isBlockedBetween(sc, userA, userB);
 }
 
 /** Get going_count for event */
@@ -365,13 +371,27 @@ async function syncAttendee(sc: any, eventId: string, userId: string, status: st
  */
 export const TRUST_SCORE_WHEN_NO_PROFILE = 50;
 
+/**
+ * Is a waitlist offer still live on this event?
+ *
+ * The only caller is syncEventState, which reopens a full/waitlisted event to
+ * "open" when the answer is false. The slot is RESERVED for whoever holds the
+ * offer, so a false answer gives their place away.
+ *
+ * The read discarded `error`, so an unreadable event_waitlist answered "no
+ * offer" and released the reservation. It now answers TRUE when it cannot read:
+ * the event stays full/waitlist, which is the recoverable direction — the next
+ * sync reopens it once the table is readable, whereas a wrongly-released slot
+ * has already been taken by someone else.
+ */
 async function hasActiveWaitlistOffer(sc: any, eventId: string): Promise<boolean> {
-  const { data } = await sc
+  const { data, error } = await sc
     .from("event_waitlist")
     .select("user_id")
     .eq("event_id", eventId)
     .gt("offer_expires_at", new Date().toISOString())
     .limit(1);
+  if (error) return true;
   return ((data as any[]) ?? []).length > 0;
 }
 
@@ -467,14 +487,22 @@ export async function checkEventEligibility(
   if (await isBlocked(sc, userId, ev.host_id)) {
     return { ok: false, errorCode: "forbidden", message: "Cannot join this event" };
   }
-  // Ban check
-  const { data: bannedRole } = await sc
+  // Ban check. FAIL CLOSED, for the same reason as the trust_profiles read
+  // below: supabase-js RESOLVES on a database error, so discarding `error` here
+  // made an unreadable event_roles indistinguishable from "this user is not
+  // banned" — and a banned caller was admitted to the event during any blip.
+  // A ban is the single most deliberate exclusion an organiser can express;
+  // it must not evaporate because a table could not be read.
+  const { data: bannedRole, error: bannedErr } = await sc
     .from("event_roles")
     .select("role")
     .eq("event_id", ev.id)
     .eq("user_id", userId)
     .eq("role", "banned")
     .maybeSingle();
+  if (bannedErr) {
+    return { ok: false, errorCode: "forbidden", message: "Event access check is temporarily unavailable" };
+  }
   if (bannedRole) return { ok: false, errorCode: "forbidden", message: "You are banned from this event" };
 
   // Trust / age / verified gates
@@ -657,8 +685,12 @@ router.post("/events", async (req, res) => {
     const ticketErr = checkTicketUrl((b as any).ticketUrl ?? (b as any).priceUrl);
     if (ticketErr) { sendError(res, "invalid_payload", ticketErr); return; }
 
-    const isDuplicate = await checkDuplicateEvent(sc, user.id, b.locationName, b.startsAt ?? null);
-    if (isDuplicate) { sendError(res, "duplicate_event", "An event with the same host, location, and time already exists"); return; }
+    const dup = await checkDuplicateEvent(sc, user.id, b.locationName, b.startsAt ?? null);
+    if (dup === "unavailable") {
+      sendError(res, "degraded_unavailable", "Could not check for a duplicate event. Please try again.");
+      return;
+    }
+    if (dup === "duplicate") { sendError(res, "duplicate_event", "An event with the same host, location, and time already exists"); return; }
   }
 
   const initialState = b.publishNow ? "open" : "draft";
@@ -805,16 +837,22 @@ router.get("/events", async (req, res) => {
   const rows = (events as any[]) ?? [];
   const otherHostIds = [...new Set(rows.map((e: any) => e.host_id as string))].filter((h) => h !== user.id);
 
-  // Blocks in either direction — two batched queries
-  const blockedHosts = new Set<string>();
-  if (otherHostIds.length > 0) {
-    const [b1, b2] = await Promise.all([
-      sc.from("blocks").select("blocked_id").eq("blocker_id", user.id).in("blocked_id", otherHostIds),
-      sc.from("blocks").select("blocker_id").eq("blocked_id", user.id).in("blocker_id", otherHostIds),
-    ]);
-    for (const b of (((b1 as any).data as any[]) ?? [])) blockedHosts.add(b.blocked_id as string);
-    for (const b of (((b2 as any).data as any[]) ?? [])) blockedHosts.add(b.blocker_id as string);
+  // Blocks in either direction. Both queries discarded `error`, so an
+  // unreadable `blocks` table produced an EMPTY blockedHosts set — identical to
+  // "nobody is blocked" — and the feed served events hosted by people the
+  // caller has blocked, or who have blocked them.
+  //
+  // Every row in this response is attributable to a host and every host is
+  // block-scoped, so there is no narrower honest answer available here: showing
+  // the page unfiltered leaks, and showing an empty page is a false statement
+  // ("there are no events") that the client renders and caches as fact. This is
+  // shape 3 in lib/exclusionSet — refuse, retryably.
+  const blockExclusions = await readBlockExclusions(sc, user.id, { among: otherHostIds });
+  if (!blockExclusions.ok) {
+    sendExclusionsUnavailable(req, res, blockExclusions, "GET /events feed host filter");
+    return;
   }
+  const blockedHosts = blockExclusions.ids;
 
   // Friendships, only for hosts of friends_only events
   const friendsOnlyHosts = [...new Set(
@@ -1834,8 +1872,15 @@ router.post("/events/drafts/:draftId/publish", async (req, res) => {
     if (ticketErr) { publishRejectedReason = { type: "ticket_url", detail: ticketErr }; }
   }
   if (!publishRejectedReason) {
-    const isDuplicate = await checkDuplicateEvent(sc, user.id, b.locationName, b.startsAt ?? null);
-    if (isDuplicate) { publishRejectedReason = { type: "duplicate", detail: "duplicate" }; }
+    const dup = await checkDuplicateEvent(sc, user.id, b.locationName, b.startsAt ?? null);
+    if (dup === "unavailable") {
+      // Not recorded as a publish rejection: nothing was rejected, the check
+      // could not run. Reporting it as "duplicate" would write a false reason
+      // into event_activity_log and tell the host their event already exists.
+      sendError(res, "degraded_unavailable", "Could not check for a duplicate event. Please try again.");
+      return;
+    }
+    if (dup === "duplicate") { publishRejectedReason = { type: "duplicate", detail: "duplicate" }; }
   }
 
   // We must have a valid events.id FK to write to event_activity_log.
@@ -3941,14 +3986,30 @@ function checkTicketUrl(url?: string | null): string | null {
   return null;
 }
 
+/**
+ * Has this host already got an event at the same place within +/-3h?
+ *
+ * Returns a THREE-state answer, not a boolean, and that is the fix. The read
+ * discarded `error`, so an unreadable `events` table answered "no duplicate"
+ * and the duplicate was created.
+ *
+ * The tempting repair — answer "duplicate" on error — is worse than the defect:
+ * it tells a host "an event with the same host, location, and time already
+ * exists", which is a fabricated verdict about their data, and it blocks a
+ * legitimate creation. A guard that could not be EVALUATED has not found
+ * anything; it has failed to look. So the third state is reported honestly and
+ * the callers refuse the write retryably instead of inventing either answer.
+ */
+type DuplicateCheck = "ok" | "duplicate" | "unavailable";
+
 async function checkDuplicateEvent(
   sc: any,
   hostId: string,
   locationName: string | null | undefined,
   startsAt: string | null | undefined,
   excludeId?: string,
-): Promise<boolean> {
-  if (!locationName || !startsAt) return false;
+): Promise<DuplicateCheck> {
+  if (!locationName || !startsAt) return "ok";
   const windowStart = new Date(new Date(startsAt).getTime() - 3 * 60 * 60 * 1000).toISOString();
   const windowEnd   = new Date(new Date(startsAt).getTime() + 3 * 60 * 60 * 1000).toISOString();
   let q = sc.from("events")
@@ -3959,8 +4020,9 @@ async function checkDuplicateEvent(
     .lte("starts_at", windowEnd)
     .not("state", "in", '("cancelled","archived")');
   if (excludeId) q = q.neq("id", excludeId);
-  const { data } = await q;
-  return Array.isArray(data) && data.length > 0;
+  const { data, error } = await q;
+  if (error) return "unavailable";
+  return Array.isArray(data) && data.length > 0 ? "duplicate" : "ok";
 }
 
 /** Check if userId is an active member of circle circleId (accepted/active status).
@@ -4356,8 +4418,12 @@ router.post("/events/:id/publish", async (req, res) => {
     sendError(res, "invalid_payload", ticketErr); return;
   }
 
-  const isDuplicate = await checkDuplicateEvent(sc, user.id, e.location_name, e.starts_at, id);
-  if (isDuplicate) {
+  const dup = await checkDuplicateEvent(sc, user.id, e.location_name, e.starts_at, id);
+  if (dup === "unavailable") {
+    sendError(res, "degraded_unavailable", "Could not check for a duplicate event. Please try again.");
+    return;
+  }
+  if (dup === "duplicate") {
     await logEventActivity(sc, id, user.id, "publish_rejected_duplicate", {});
     sendError(res, "duplicate_event", "An event with the same host, location, and time already exists"); return;
   }
