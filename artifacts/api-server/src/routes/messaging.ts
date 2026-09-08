@@ -507,12 +507,29 @@ router.post('/users/:userId/message-request', async (req, res) => {
     return;
   }
 
-  const { data: existing } = await sc
+  // One request per (sender, recipient) is the anti-harassment property of this
+  // endpoint: a pending or accepted row short-circuits to a 200 instead of
+  // delivering another request to the recipient. supabase-js resolves on a DB
+  // error, so an unreadable message_requests returns the same `null` a
+  // first-ever request does, and the INSERT below then delivers a SECOND
+  // unsolicited request from the same sender. That reaches another person and
+  // cannot be recalled, so an unreadable table refuses the send.
+  const { data: existing, error: existingErr } = await sc
     .from('message_requests')
     .select('id, status')
     .eq('sender_id', user.id)
     .eq('recipient_id', recipientId)
     .maybeSingle();
+
+  if (existingErr) {
+    req.log.error({ err: existingErr, recipientId }, 'message-request: existing-request check unavailable');
+    sendError(
+      res,
+      'degraded_unavailable',
+      'We could not check your existing requests right now. Please try again shortly.',
+    );
+    return;
+  }
 
   if (existing) {
     const ex = existing as any;
@@ -800,11 +817,28 @@ router.post('/message-requests/:requestId/accept', async (req, res) => {
   // request can be accepted into a reused existing direct thread that is e2ee;
   // inserting the plaintext preview_text there would break the E2EE invariant
   // (audit MSG-3). Skip the preview insert for e2ee threads.
-  const { data: acceptThreadMeta } = await sc
+  //
+  // The E2EE invariant makes this read a WRITE PRECONDITION, and the unsafe
+  // direction is the permissive one: supabase-js resolves on a DB error, so an
+  // unreadable message_threads yields `{ data: null }`, `?.is_e2ee === true`
+  // evaluates to FALSE, and the plaintext preview is inserted into what may
+  // well be an e2ee thread — server-readable plaintext persisted into an
+  // end-to-end-encrypted conversation, exactly the breach MSG-3 forbids, and
+  // not undoable once written. Treat "cannot prove this thread is not e2ee" as
+  // e2ee and skip the preview; the accept itself has already succeeded and been
+  // responded to, so nothing else is lost.
+  const { data: acceptThreadMeta, error: acceptThreadMetaErr } = await sc
     .from('message_threads')
     .select('is_e2ee')
     .eq('id', threadId)
     .maybeSingle();
+  if (acceptThreadMetaErr) {
+    req.log.error(
+      { err: acceptThreadMetaErr, threadId },
+      'message-request accept: could not read thread e2ee flag; skipping preview insert',
+    );
+    return;
+  }
   const threadIsE2ee = (acceptThreadMeta as any)?.is_e2ee === true;
   if (previewBody && !threadIsE2ee) {
     const { data: senderProfile } = await sc
@@ -1886,12 +1920,28 @@ router.post('/threads/:threadId/messages', async (req, res) => {
 
   // Validate reply reference belongs to the same thread (prevents cross-thread metadata exposure).
   if (replyToId) {
-    const { data: refMsg } = await sc
+    // An unreadable `messages` resolves as `{ data: null }`, which is also what
+    // a genuinely cross-thread replyToId returns. The refusal is right either
+    // way — the reply reference must never be persisted unverified — but the
+    // two must not wear the same clothes: telling the sender their message
+    // reference is invalid, when in truth the check could not run, makes them
+    // edit a message that was fine. 503 + retryable says "try again"; 400 says
+    // "this is wrong".
+    const { data: refMsg, error: refMsgErr } = await sc
       .from('messages')
       .select('id')
       .eq('id', replyToId)
       .eq('thread_id', threadId)
       .maybeSingle();
+    if (refMsgErr) {
+      req.log.error({ err: refMsgErr, threadId, replyToId }, 'reply-reference check unavailable');
+      sendError(
+        res,
+        'degraded_unavailable',
+        'We could not verify the message you are replying to. Please try again shortly.',
+      );
+      return;
+    }
     if (!refMsg) {
       sendError(res, 'invalid_payload', 'Referenced message does not belong to this thread');
       return;

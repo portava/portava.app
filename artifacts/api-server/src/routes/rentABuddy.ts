@@ -1462,6 +1462,22 @@ function sendLaunchControlsUnavailable(res: any): void {
   });
 }
 
+/**
+ * Refuse ONE mutation because the row it is meant to be idempotent against
+ * could not be read.
+ *
+ * Same shape and reasoning as sendLaunchControlsUnavailable: 503 + `retryable`,
+ * never 500 and never a silent pass. supabase-js RESOLVES on a DB error, so
+ * every "does a row already exist?" guard in this file gets `{ data: null }` —
+ * byte-identical to "no such row" — when its table is unreadable, and each of
+ * those guards is the last thing standing between a retry and a second
+ * irreversible row (a duplicate review, a re-asked tag consent, a second open
+ * change request). The PostgREST message is never echoed: it names tables.
+ */
+function sendPreconditionUnavailable(res: any, message: string): void {
+  res.status(503).json({ error: "precondition_unavailable", retryable: true, message });
+}
+
 
 /**
  * The SINGLE implementation of the gate stack that POST /rent-a-buddy/bookings
@@ -3237,13 +3253,23 @@ router.post("/rent-a-buddy/bookings/:bookingId/review", async (req, res) => {
   // reviewee must be a profiles.id (user ID), NOT a rent_buddy_profiles.id
   const revieweeId: string = isTraveler ? buddyUserId : b.traveler_id;
 
-  // One-review-per-booking enforcement at API level (DB also has a unique constraint)
-  const { data: existingReview } = await serviceClient
+  // One-review-per-booking enforcement at API level (DB also has a unique constraint).
+  // An unreadable rent_buddy_reviews resolves as `{ data: null }` — the same
+  // shape as "not yet reviewed" — so ignoring `error` lets a second review be
+  // attempted for the same booking. It is also the row COUNT on this booking
+  // that lifts the double-blind (`count >= 2` below), so a duplicate would
+  // unblind a booking where only one side has actually reviewed, exposing the
+  // reviewer's rating to the counterparty before their own is committed.
+  const { data: existingReview, error: existingReviewErr } = await serviceClient
     .from("rent_buddy_reviews")
     .select("id")
     .eq("booking_id", bookingId)
     .eq("reviewer_id", auth.user.id)
     .maybeSingle();
+  if (existingReviewErr) {
+    req.log?.error({ err: existingReviewErr, bookingId }, "review: duplicate-review check unavailable");
+    return sendPreconditionUnavailable(res, "We could not check whether you have already reviewed this booking. Please try again shortly.");
+  }
   if (existingReview) {
     return res.status(409).json({ error: "already_reviewed", message: "You have already submitted a review for this booking." });
   }
@@ -5924,13 +5950,24 @@ router.post("/rent-a-buddy/bookings/:bookingId/tag-consent", async (req, res) =>
     return res.status(403).json({ error: "consent_blocked", message: "Tagging consent is paused due to an active safety flag." });
   }
 
-  const { data: existing } = await serviceClient
+  // This row IS the consent record, including a `declined` one. An unreadable
+  // rent_buddy_tag_consents resolves as `{ data: null }`, indistinguishable
+  // from "never asked", so ignoring `error` inserts a NEW pending consent —
+  // re-asking to tag someone who has already declined to be tagged, and
+  // presenting the requester with a fresh pending state over a settled refusal.
+  // A consent decision must never be overwritten by a failed read.
+  const { data: existing, error: existingErr } = await serviceClient
     .from("rent_buddy_tag_consents")
     .select("id, consent_status")
     .eq("booking_id", bookingId)
     .eq("requester_id", user.id)
     .eq("target_id", targetUserId)
     .maybeSingle();
+
+  if (existingErr) {
+    req.log?.error({ err: existingErr, bookingId, targetUserId }, "tag-consent: existing-consent check unavailable");
+    return sendPreconditionUnavailable(res, "We could not check the existing tagging consent for this booking. Please try again shortly.");
+  }
 
   if (existing) {
     return res.json({ consentId: (existing as any).id, status: (existing as any).consent_status, alreadyExists: true });
@@ -7093,14 +7130,22 @@ router.post("/rent-a-buddy/bookings/:bookingId/change-request", async (req, res)
     if (blocking) return sendBuddyUnavailable(res, blocking.exception_type);
   }
 
-  // Check for an already-open pending change request on the same field
-  const { data: existingOpen } = await serviceClient
+  // "Respond to the open one before raising another" is enforced only here.
+  // An unreadable buddy_booking_change_requests resolves as `{ data: null }`,
+  // the same shape as "none open", so ignoring `error` raises a SECOND pending
+  // change request on the same field — two live, conflicting proposals for the
+  // same booking date or price, either of which the counterparty can accept.
+  const { data: existingOpen, error: existingOpenErr } = await serviceClient
     .from("buddy_booking_change_requests")
     .select("id")
     .eq("booking_id", bookingId)
     .eq("change_field", changeField)
     .eq("status", "pending")
     .maybeSingle();
+  if (existingOpenErr) {
+    req.log?.error({ err: existingOpenErr, bookingId, changeField }, "change-request: open-request check unavailable");
+    return sendPreconditionUnavailable(res, "We could not check for an existing change request on this booking. Please try again shortly.");
+  }
   if (existingOpen) {
     return res.status(409).json({
       error: "conflict",
@@ -7275,11 +7320,22 @@ router.post("/rent-a-buddy/bookings/:bookingId/rebook", async (req, res) => {
   // booking's start_time (see insert below). Clients may omit it to carry the
   // same time slot forward without having to re-send it.
 
-  const { data: original } = await serviceClient
+  // `original` is not merely looked up — every gate below reads FROM it: the
+  // traveler-ownership check, the completed-status check, the buddy profile,
+  // the city/country/category carried into enforceBookingCreationGates, and the
+  // fields copied into the NEW booking row. An unreadable rent_buddy_bookings
+  // resolves as `{ data: null }`, identical to "no such booking", and the 404
+  // below then tells a traveller their completed booking does not exist. The
+  // refusal direction is right; the code is not. 503 + retryable says so.
+  const { data: original, error: originalErr } = await serviceClient
     .from("rent_buddy_bookings")
     .select("*")
     .eq("id", bookingId)
     .maybeSingle();
+  if (originalErr) {
+    req.log?.error({ err: originalErr, bookingId }, "rebook: original booking read unavailable");
+    return sendPreconditionUnavailable(res, "We could not load the original booking right now. Please try again shortly.");
+  }
   if (!original) return res.status(404).json({ error: "not_found", message: "Booking not found." });
   if ((original as any).traveler_id !== auth.user.id) {
     return res.status(403).json({ error: "forbidden", message: "Not your booking." });

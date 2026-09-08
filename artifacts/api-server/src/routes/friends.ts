@@ -80,13 +80,26 @@ router.post("/users/:userId/friend-request", async (req, res) => {
     return;
   }
 
-  // Check for an existing request in this direction
-  const { data: existing } = await sc
+  // Check for an existing request in this direction.
+  // supabase-js resolves on a DB error, so an unreadable friend_requests hands
+  // back the same `null` "never asked before" does. Reading that as "no prior
+  // request" walks past BOTH short-circuits and the reactivate branch and
+  // INSERTs a brand-new pending row — which means the recipient of a request
+  // they already declined receives a fresh one, with the declined state
+  // bypassed rather than re-activated. That notification cannot be recalled,
+  // so an unreadable table refuses the send.
+  const { data: existing, error: existingErr } = await sc
     .from("friend_requests")
     .select("id, status")
     .eq("requester_id", user.id)
     .eq("recipient_id", recipientId)
     .maybeSingle();
+
+  if (existingErr) {
+    req.log.error({ err: existingErr, recipientId }, "friend request: outgoing-request check unavailable");
+    sendError(res, "degraded_unavailable", "We could not check your existing friend requests right now. Please try again shortly.");
+    return;
+  }
 
   if (existing) {
     if (existing.status === "pending") {
@@ -111,14 +124,26 @@ router.post("/users/:userId/friend-request", async (req, res) => {
     return;
   }
 
-  // Check if target already sent us a request → auto-accept both sides
-  const { data: incoming } = await sc
+  // Check if target already sent us a request → auto-accept both sides.
+  // An unreadable friend_requests resolves as `{ data: null }`, identical to
+  // "they never asked us". Treating it that way skips the auto-accept and
+  // INSERTs a second, opposite-direction pending request: two people who both
+  // want to be friends end up with two crossed pending requests and NO
+  // user_friendships row, and neither side's UI offers an accept because each
+  // sees only its own outgoing request. Refuse rather than create that state.
+  const { data: incoming, error: incomingErr } = await sc
     .from("friend_requests")
     .select("id")
     .eq("requester_id", recipientId)
     .eq("recipient_id", user.id)
     .eq("status", "pending")
     .maybeSingle();
+
+  if (incomingErr) {
+    req.log.error({ err: incomingErr, recipientId }, "friend request: incoming-request check unavailable");
+    sendError(res, "degraded_unavailable", "We could not check your existing friend requests right now. Please try again shortly.");
+    return;
+  }
 
   if (incoming) {
     const now = new Date().toISOString();
@@ -663,9 +688,22 @@ router.post("/circle-invites", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
-  const { data: existing } = await sc
+  // An unreadable circle_invites resolves as `{ data: null }`, which is also
+  // "never invited". Reading it that way skips the pending/accepted
+  // short-circuits AND the reactivate branch, and INSERTs a fresh invite — so
+  // someone who declined an invitation into this user's trusted circle is
+  // re-invited, with their decline neither seen nor reactivated. A circle grants
+  // standing privileges (circle-visibility events and posts), and the invite
+  // notification cannot be recalled, so an unreadable table refuses.
+  const { data: existing, error: existingErr } = await sc
     .from("circle_invites").select("id, status")
     .eq("owner_id", user.id).eq("recipient_id", recipientId).maybeSingle();
+
+  if (existingErr) {
+    req.log.error({ err: existingErr, recipientId }, "circle invite: existing-invite check unavailable");
+    sendError(res, "degraded_unavailable", "We could not check your existing circle invites right now. Please try again shortly.");
+    return;
+  }
 
   if (existing) {
     const s = (existing as any).status;
