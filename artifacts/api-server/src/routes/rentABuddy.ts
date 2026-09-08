@@ -120,6 +120,24 @@ type RouteLog = { error?: (...args: any[]) => void } | undefined;
  * LOGGED rather than swallowed: a booking event that silently does not land is
  * exactly the defect this replaces.
  */
+/**
+ * The only booking states a no-show can be reported from.
+ *
+ * A session that never started cannot have a no-show (that is what /cancel is
+ * for, and writing one would fabricate an incident), and every later state is
+ * terminal or already under adjudication. Exported because
+ * rentABuddySpec's POST /bookings/:id/report-no-show is the SAME action reached
+ * through the mobile alias, and it carried a hand-written DENYLIST instead —
+ * `no_show_pending | disputed | completed | cancelled` — which admitted
+ * `requested`, `pending`, `expired`, `declined`, `cancelled_by_traveler`,
+ * `cancelled_by_buddy` and `completed_pending_traveler_confirmation`. A
+ * denylist that names bare `cancelled` while the cancel route writes
+ * `cancelled_by_traveler` is a denylist with a hole in it.
+ */
+export const NO_SHOW_REPORTABLE_STATUSES = ["confirmed", "scheduled", "in_progress"] as const;
+
+export { recordBookingEvent };
+
 function recordBookingEvent(
   serviceClient: any,
   log: RouteLog,
@@ -3774,8 +3792,8 @@ router.post("/rent-a-buddy/bookings/:bookingId/no-show", async (req, res) => {
     return res.status(409).json({ error: "already_reported", status: (booking as any).status });
   }
 
-  const noShowAllowedStatuses = ["confirmed", "scheduled", "in_progress"];
-  if (!noShowAllowedStatuses.includes((booking as any).status)) {
+  const noShowAllowedStatuses = NO_SHOW_REPORTABLE_STATUSES;
+  if (!noShowAllowedStatuses.includes((booking as any).status as any)) {
     return res.status(409).json({
       error: "invalid_transition",
       message: "No-show can only be reported for confirmed or in-progress bookings.",

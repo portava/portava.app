@@ -343,7 +343,52 @@ export async function runBuddyRequestSweep(client?: any): Promise<BuddyRequestSw
         console.error("[sweep] no_show_reported event lookup failed for booking", bk.id, noShowEventErr);
         continue;
       }
-      const reporterUserId: string = (noShowEvent as any)?.actor_user_id ?? (bk.traveler_id as string);
+
+      // SECOND SOURCE, before the fallback.
+      //
+      // `buddy_booking_events` is written fire-and-forget by both no-show
+      // routes, and — for every booking reported through
+      // rentABuddySpec's POST /bookings/:id/report-no-show before that route
+      // gained its producer — was never written at all. An ABSENT row therefore
+      // does not mean "the traveller reported it"; it means the primary record
+      // is missing, and taking the fallback on it does the one thing the comment
+      // above forbids.
+      //
+      // rent_buddy_safety_events IS written on that path, awaited, and its error
+      // is checked before the booking is moved, so a no_show row there is a
+      // reliable record of WHO filed. Consult it before assuming.
+      let reporterUserId: string | null = (noShowEvent as any)?.actor_user_id ?? null;
+      let reporterAssumed = false;
+      if (!reporterUserId) {
+        const { data: safetyEvent, error: safetyEventErr } = await serviceClient
+          .from("rent_buddy_safety_events")
+          .select("actor_user_id")
+          .eq("booking_id", bk.id as string)
+          .eq("event_type", "no_show")
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        // Same rule as the primary read: an unreadable table is not evidence of
+        // anything, so skip rather than attribute. The next pass retries.
+        if (safetyEventErr) {
+          console.error("[sweep] rent_buddy_safety_events no-show lookup failed for booking", bk.id, safetyEventErr);
+          continue;
+        }
+        reporterUserId = (safetyEvent as any)?.actor_user_id ?? null;
+      }
+      if (!reporterUserId) {
+        // Neither record exists. The dispute still has to be opened — the
+        // booking cannot sit in no_show_pending forever — but the attribution is
+        // an ASSUMPTION, and it is marked as one in the escalation event so the
+        // moderator adjudicating from this record can see that `raised_by` was
+        // not evidenced.
+        reporterUserId = bk.traveler_id as string;
+        reporterAssumed = true;
+        logger.warn(
+          { bookingId: bk.id },
+          "no-show escalation found no report record — raised_by assumed to be the traveller",
+        );
+      }
 
       // Resolve or create the dispute row FIRST. If the insert fails we skip the
       // booking update entirely, so the booking stays no_show_pending and
@@ -409,7 +454,7 @@ export async function runBuddyRequestSweep(client?: any): Promise<BuddyRequestSw
         const { error: eventInsertError } = await serviceClient.from("buddy_booking_events").insert({
           booking_id: bk.id, actor_user_id: reporterUserId, event: "no_show_escalated",
           from_status: "no_show_pending", to_status: "disputed",
-          metadata: { reason: "grace_period_expired", dispute_id: disputeId },
+          metadata: { reason: "grace_period_expired", dispute_id: disputeId, raised_by_assumed: reporterAssumed },
         });
         if (eventInsertError) {
           console.error("[sweep] failed to write no_show_escalated event for booking", bk.id, eventInsertError);

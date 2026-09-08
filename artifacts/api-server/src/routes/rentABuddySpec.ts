@@ -7,7 +7,7 @@ import { getServiceClient } from "../lib/supabase.js";
 // rentABuddy.ts (which already gates its own 70 handlers with it). Imported
 // rather than re-implemented so this router cannot drift from the meaning of
 // `rent_buddy_enabled`. See its doc comment for why admin routes are exempt.
-import { findBlockingAvailabilityException, sendBuddyUnavailable, getUserLimits, deriveServiceCountry, resolveLaunchControlFromRows, requireRentBuddyEnabled } from "./rentABuddy.js";
+import { findBlockingAvailabilityException, sendBuddyUnavailable, getUserLimits, deriveServiceCountry, resolveLaunchControlFromRows, requireRentBuddyEnabled, recordBookingEvent, NO_SHOW_REPORTABLE_STATUSES } from "./rentABuddy.js";
 import { adjustBuddyCounter } from "../services/rentBuddy/ReliabilityCounters.js";
 import { requireBookingKyc } from "../lib/rentBuddyKycGate.js";
 import { TRAINING_CHECKLIST_ITEMS } from "./rentABuddy.js";
@@ -788,15 +788,31 @@ router.post("/rent-a-buddy/bookings/:bookingId/report-no-show", asyncHandler(asy
   const isParty = b.traveler_id === auth.user.id || (callerBp && b.buddy_id === (callerBp as any).id);
   if (!isParty) return res.status(403).json({ error: "forbidden" });
 
-  // Reject if the booking is already in a terminal or no-show/disputed state.
-  // completed and cancelled are final — a no-show report would corrupt the booking's end state.
-  if (
-    b.status === "no_show_pending" ||
-    b.status === "disputed" ||
-    b.status === "completed" ||
-    b.status === "cancelled"
-  ) {
+  // Already-in-process states get their own code so a client can tell an
+  // idempotency conflict from a genuinely invalid transition (same shape as the
+  // canonical /no-show route).
+  if (b.status === "no_show_pending" || b.status === "disputed") {
     return res.status(409).json({ error: "already_reported", status: b.status });
+  }
+
+  // ALLOWLIST, shared with the canonical route.
+  //
+  // This was a hand-written denylist — no_show_pending | disputed | completed |
+  // cancelled — which is the same action reached through a different URL with a
+  // different and much wider notion of "reportable". It admitted `requested`,
+  // `pending`, `expired` and `declined` (a session that never started cannot
+  // have a no-show; writing one fabricates an incident and pushes the booking
+  // into no_show_pending, from which the sweeper opens a real dispute), and it
+  // admitted `cancelled_by_traveler` / `cancelled_by_buddy` because it named
+  // only bare `cancelled`, which is the value ONLY admin dispute-resolution
+  // writes. It also admitted `completed_pending_traveler_confirmation`, letting
+  // a no-show be filed against a session both parties had just finished.
+  if (!NO_SHOW_REPORTABLE_STATUSES.includes(b.status as any)) {
+    return res.status(409).json({
+      error: "invalid_transition",
+      message: "No-show can only be reported for confirmed or in-progress bookings.",
+      currentStatus: b.status,
+    });
   }
 
   // Resolve the no-show target's user_id:
@@ -835,12 +851,60 @@ router.post("/rent-a-buddy/bookings/:bookingId/report-no-show", asyncHandler(asy
   const now = new Date(nowMs).toISOString();
   const graceExpiry = new Date(nowMs + 2 * 3600 * 1000).toISOString();
 
-  const { error: updateError } = await serviceClient
+  const { data: movedRows, error: updateError } = await serviceClient
     .from("rent_buddy_bookings")
     .update({ status: "no_show_pending", no_show_grace_expires_at: graceExpiry, updated_at: now })
-    .eq("id", bookingId);
+    .eq("id", bookingId)
+    .in("status", [...NO_SHOW_REPORTABLE_STATUSES])
+    .select("id");
 
   if (updateError) return sendError(res, "db_error", updateError.message);
+  if (affectedRows(movedRows) === 0) {
+    // The booking left a reportable state between the read and this write. The
+    // safety event above stands (it is a report, and it happened), but no
+    // transition did, so no grace period is claimed and the sweeper is not
+    // handed a booking it should escalate.
+    return res.status(409).json({
+      error: "invalid_transition",
+      message: "The booking changed state before this no-show report was applied. Refresh and try again.",
+      currentStatus: b.status,
+    });
+  }
+
+  // ── The `no_show_reported` event — the sweeper's ONLY attribution input ─────
+  //
+  // THE DEFECT. This path never wrote one. rentBuddyRequestSweeper phase 3
+  // derives the no-show dispute's `raised_by` from the LATEST
+  // buddy_booking_events row with event = 'no_show_reported', "do NOT assume
+  // traveler; either party can file a no-show report" — and with no such row it
+  // takes its `?? bk.traveler_id` fallback. rentABuddySpec's own dispute
+  // resolution then gates the buddy's no_show_count on
+  // `raised_by === traveler_id`. So a BUDDY reporting a traveller's no-show
+  // through THIS route opened a dispute in the traveller's name and, when an
+  // admin resolved it in the traveller's favour, incremented the BUDDY's
+  // no_show_count for the traveller's absence.
+  //
+  // That is the same dead-producer/broken-consumer pair that was repaired for
+  // POST /bookings/:id/no-show; this alias was the other producer, and it was
+  // not dead, it was never written. Its absence also meant a no-show filed here
+  // appeared nowhere in the evidence log
+  // GET /rent-a-buddy/bookings/:bookingId/events serves to both parties.
+  //
+  // Shares rentABuddy.ts's writer so the two producers cannot drift: issued
+  // (a `.then()` continuation, not a bare `void` on a thenable) and logged on
+  // failure, but never able to fail a safety report that is already committed.
+  recordBookingEvent(serviceClient, req.log, {
+    booking_id: bookingId,
+    actor_user_id: auth.user.id,
+    event: "no_show_reported",
+    from_status: b.status,
+    to_status: "no_show_pending",
+    metadata: {
+      reported_by: auth.user.id === b.traveler_id ? "traveler" : "buddy",
+      grace_expires_at: graceExpiry,
+      safety_event_id: (data as any)?.id ?? null,
+    },
+  });
 
   return res.status(201).json({ safetyEvent: data, gracePeriodExpiresAt: graceExpiry });
 }));
