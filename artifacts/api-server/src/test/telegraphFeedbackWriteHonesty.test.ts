@@ -207,6 +207,35 @@ describe("POST /telegraph/recommendations/:id/feedback — 'applied' must mean s
     );
   });
 
+  it("refuses when the UPDATE matched no row, instead of answering 201 for a write that hit nothing", async () => {
+    // The same silent loss by a different cause. getOrCreateInferred's
+    // blank-profile insert is BEST-EFFORT: when it fails the row does not
+    // exist, and the UPDATE below then applies to zero rows while resolving
+    // perfectly cleanly -- `{ data: [], error: null }`, which an error check
+    // alone reads as success. `.select("user_id")` plus a row-count branch is
+    // what makes it visible; without the select PostgREST returns data: null
+    // and no caller can tell one affected row from none.
+    //
+    // This case was RECORDED AS STILL OPEN one change ago, because
+    // src/test/intelligence.test.ts's fake never persisted its
+    // user_preference_profiles insert, so the row-count branch reported zero
+    // rows for every feedback case there and reddened seven of them. That
+    // fixture was taught the client's real behaviour; the fix then landed.
+    state.profile = null;
+    state.failBlankInsert = { message: "insert or update on table violates foreign key constraint" };
+
+    const r = await sendFeedback();
+
+    assert.equal(state.updatesAttempted, 1, "fixture check: the handler must have reached its UPDATE");
+    assert.equal(state.profile, null, "fixture check: no profile row exists, so the UPDATE can match nothing");
+    assert.equal(r.status, 500, `expected the db_error status, got ${r.status}: ${JSON.stringify(r.body)}`);
+    assert.equal(
+      r.body?.error, "db_error",
+      "an express crash also answers 500 but carries no 'error' field \u2014 the code is what distinguishes them",
+    );
+    assert.notEqual(r.body?.ok, true, "the response must not claim the feedback was applied");
+  });
+
   it("positive control: a healthy write answers 201 and the stored profile really changes", async () => {
     const r = await sendFeedback();
     assert.equal(r.status, 201, JSON.stringify(r.body));

@@ -124,25 +124,39 @@ router.post("/telegraph/recommendations/:id/feedback", async (req, res) => {
   // cannot be READ, precisely so it is not overwritten with defaults. Leaving
   // the WRITE unobserved made that care one-sided.
   //
-  // STILL OPEN, and deliberately not fixed here: `.eq("user_id", …)` matching
-  // NO row is the same silent loss by a different cause — the blank-profile
-  // insert in getOrCreateInferred is best-effort, so when it fails the row does
-  // not exist and this UPDATE applies to zero rows while resolving cleanly.
-  // Catching that needs `.select("user_id")` and a row-count branch, which
-  // src/test/intelligence.test.ts's fake client cannot express (its
-  // user_preference_profiles insert is never persisted into the fake state, so
-  // every feedback case would report zero rows). Fixing it means editing that
-  // fixture, which is out of this change's scope; recorded rather than dropped.
-  const { error: saveErr } = await client
+  // ZERO ROWS IS THE SAME LOSS BY A DIFFERENT CAUSE, and it is closed here too.
+  // The blank-profile insert in getOrCreateInferred is best-effort, so when it
+  // fails the row does not exist and this UPDATE applies to nothing while
+  // resolving perfectly cleanly. `.select("user_id")` is what makes that
+  // visible: without it PostgREST returns data: null and no caller can tell one
+  // affected row from none.
+  //
+  // This was recorded as STILL OPEN one change ago, because
+  // src/test/intelligence.test.ts's fake never persisted its
+  // user_preference_profiles insert into fake state, so the row-count branch
+  // would have reported zero rows for every feedback case and reddened seven of
+  // them. The fake was taught to persist that insert in the same change that
+  // landed this. The fixture was the obstacle, not the fix.
+  const { data: saved, error: saveErr } = await client
     .from("user_preference_profiles")
     .update({
       inferred_preferences_json: JSON.stringify(updated),
       updated_at: now,
     })
-    .eq("user_id", user.id);
+    .eq("user_id", user.id)
+    .select("user_id");
 
   if (saveErr) {
     fbLogger.error({ err: saveErr, userId: user.id, recommendationId }, "inferred preference profile write failed — feedback not applied");
+    sendError(res, "db_error", "Could not save your preference profile — feedback not applied");
+    return;
+  }
+
+  if (!Array.isArray(saved) || saved.length === 0) {
+    fbLogger.error(
+      { userId: user.id, recommendationId },
+      "inferred preference profile UPDATE matched no row — the profile does not exist, feedback not applied",
+    );
     sendError(res, "db_error", "Could not save your preference profile — feedback not applied");
     return;
   }
