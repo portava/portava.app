@@ -93,6 +93,33 @@
  * false` is CORRECT for a capability gate and WRONG for a stop. That is real
  * work and it is not done.
  *
+ * ONE OF THOSE THREE PREREQUISITES IS NOW DONE, and it moved a real number.
+ * `Promise.allSettled` was invisible: judgePromiseAll called noteUnresolved on
+ * every element unconditionally, and a `.map` normaliser between the await and
+ * the binding meant the array-binding branch was never reached in the first
+ * place. So the twelve reads at the top of resolveInteractionPermissions --
+ * including one on user_restrictions, an EXCLUSION_TABLE -- were not judged
+ * clean, they were not seen, and the one `unresolved` number could not tell
+ * those apart. Measured on that file as it stood before its fix: 2 sites judged
+ * and 13 unresolved BEFORE, 15 judged and 0 unresolved AFTER, with six
+ * previously-invisible unchecked gate reads (profiles, user_friendships,
+ * friend_requests x2, user_follows x2) appearing.
+ *
+ * The unwrap is deliberately narrow. A `.map` callback qualifies as a
+ * normaliser only if it BOTH reads the settled wrapper (status/value/reason)
+ * AND builds an object literal carrying both `data` and `error`; anything else
+ * keeps its unresolved verdict, because "I cannot see this" is the safe answer
+ * and only a proven normaliser may override it. `settledUnresolved` is split
+ * out of `unresolved` and printed on every run for the same reason the ledger
+ * prints its direction counts: 51 of the 59 unresolved sites are un-normalised
+ * allSettled elements, which is a DIFFERENT ignorance from "this consumer was
+ * too complex to judge", and rolled into one number it was unreadable.
+ *
+ * What remains for ERROR-INERT is member-access coverage and the per-site
+ * direction call. Scoped to EXCLUSION_TABLES the direction needs no judgement
+ * -- a row there means DENY, so a literal-permissive error branch is fail-open
+ * by construction -- and that is the tractable next slice.
+ *
  * DELIBERATELY OUT OF SCOPE, with the number printed on every run so the blind
  * spot is measured rather than implied: inline membership/ownership checks in
  * route handlers, entity loads (`if (!post) 404`), listings, and enrichment.
@@ -554,6 +581,16 @@ export interface FileScan {
   delegated: number;
   unresolved: number;
   throwOnError: number;
+  /**
+   * Of `unresolved`, how many are elements of a `Promise.allSettled` whose
+   * result was never normalised back to `{data, error}`. Split out because it
+   * is a DIFFERENT ignorance from the rest: "the instrument cannot see this
+   * shape at all", not "this consumer was too complex to judge". Rolled into
+   * one number it was 72 deep and unreadable.
+   */
+  settledUnresolved: number;
+  /** allSettled results a `.map` normaliser made judgeable again. */
+  settledNormalised: number;
   /** `file:line <parent kind>` for each unresolved consumer, so the blind spot can be read. */
   unresolvedSamples: string[];
 }
@@ -604,7 +641,7 @@ function collectWritesByFunction(sf: ts.SourceFile): Map<string, Set<string>> {
 
 export function scanSource(src: string, file: string): FileScan {
   const sf = ts.createSourceFile(file, src, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
-  const out: FileScan = { reads: [], sitesJudged: 0, delegated: 0, unresolved: 0, throwOnError: 0, unresolvedSamples: [] };
+  const out: FileScan = { reads: [], sitesJudged: 0, delegated: 0, unresolved: 0, throwOnError: 0, settledUnresolved: 0, settledNormalised: 0, unresolvedSamples: [] };
   const writesByFn = collectWritesByFunction(sf);
   const noteUnresolved = (node: ts.Node): void => {
     out.unresolved++;
@@ -665,10 +702,64 @@ export function scanSource(src: string, file: string): FileScan {
     if (c.shape) record(chainNode, info, c.shape);
   };
 
+  /**
+   * `.map(cb)` applied to a `Promise.allSettled` result, where cb turns each
+   * `{status, value|reason}` back into `{data, error}`. That callback is a
+   * NORMALISER: downstream of it every element has the shape a plain
+   * `Promise.all` would have produced, so the elements become judgeable again.
+   *
+   * The test is deliberately narrow, because "settled, therefore unresolved" is
+   * the SAFE answer and this is the only thing that may override it. Both must
+   * hold: the callback reads the settled wrapper (status / value / reason), and
+   * it builds an object literal carrying BOTH `data` and `error`. A callback
+   * that maps to anything else is not a normaliser and keeps its unresolved
+   * verdict — this widens what the checker can see without widening what it
+   * claims to know.
+   */
+  function isSettledNormaliser(cb: ts.Node): boolean {
+    let readsWrapper = false;
+    let buildsDataAndError = false;
+    const walk = (n: ts.Node): void => {
+      if (ts.isPropertyAccessExpression(n) && /^(status|value|reason)$/.test(n.name.text)) readsWrapper = true;
+      if (ts.isObjectLiteralExpression(n)) {
+        const names = new Set(
+          n.properties
+            .map((pr) => (pr.name && (ts.isIdentifier(pr.name) || ts.isStringLiteral(pr.name)) ? pr.name.text : null))
+            .filter((x): x is string => x !== null),
+        );
+        if (names.has("data") && names.has("error")) buildsDataAndError = true;
+      }
+      ts.forEachChild(n, walk);
+    };
+    walk(cb);
+    return readsWrapper && buildsDataAndError;
+  }
+
   function judgePromiseAll(awaitNode: ts.AwaitExpression, arr: ts.ArrayLiteralExpression, settled: boolean): void {
     let cur: ts.Node = awaitNode;
     let parent: ts.Node = cur.parent;
-    while (ts.isParenthesizedExpression(parent) || ts.isAsExpression(parent)) { cur = parent; parent = cur.parent; }
+    for (;;) {
+      if (ts.isParenthesizedExpression(parent) || ts.isAsExpression(parent)) { cur = parent; parent = cur.parent; continue; }
+      // (await Promise.allSettled([...])).map(normalise)
+      if (
+        settled &&
+        ts.isPropertyAccessExpression(parent) &&
+        parent.expression === cur &&
+        parent.name.text === "map" &&
+        ts.isCallExpression(parent.parent) &&
+        parent.parent.expression === parent
+      ) {
+        const cb = parent.parent.arguments[0];
+        if (cb && isSettledNormaliser(cb)) {
+          settled = false;               // the wrapper is gone; judge as a plain Promise.all
+          out.settledNormalised++;
+          cur = parent.parent;
+          parent = cur.parent;
+          continue;
+        }
+      }
+      break;
+    }
     const elements = arr.elements;
     const chainAt = (i: number): { node: ts.Expression; info: ChainInfo } | null => {
       const el = elements[i];
@@ -683,7 +774,7 @@ export function scanSource(src: string, file: string): FileScan {
         const c = chainAt(i);
         if (!c) return;
         if (c.info.methods.includes("throwOnError")) { out.throwOnError++; return; }
-        if (settled) { noteUnresolved(c.node); return; } // allSettled wraps in {status,value}; out of scope
+        if (settled) { out.settledUnresolved++; noteUnresolved(c.node); return; } // allSettled wraps in {status,value} and no normaliser was found
         if (ts.isOmittedExpression(el)) { out.sitesJudged++; record(c.node, c.info, "discarded"); return; }
         if (ts.isObjectBindingPattern(el.name)) { out.sitesJudged++; const s = judgeObjectPattern(el.name, scope, parent.getEnd()); if (s) record(c.node, c.info, s); return; }
         if (ts.isIdentifier(el.name)) { out.sitesJudged++; const s = judgeIdentifierBinding(scope, el.name.text, parent.getEnd()); if (s) record(c.node, c.info, s); return; }
@@ -691,7 +782,17 @@ export function scanSource(src: string, file: string): FileScan {
       });
       return;
     }
-    for (let i = 0; i < elements.length; i++) { const c = chainAt(i); if (c) noteUnresolved(c.node); }
+    // Not an array-binding consumer at all -- e.g. a `.map` that is NOT a
+    // normaliser still sits between the await and the binding, so the branch
+    // above is never reached. Every element is unseen, and when the source was
+    // allSettled that ignorance belongs in the settled counter rather than in
+    // the general one.
+    for (let i = 0; i < elements.length; i++) {
+      const c = chainAt(i);
+      if (!c) continue;
+      if (settled) out.settledUnresolved++;
+      noteUnresolved(c.node);
+    }
   }
 
   const visit = (n: ts.Node): void => {
@@ -749,12 +850,14 @@ export interface TreeScan {
   delegated: number;
   unresolved: number;
   throwOnError: number;
+  settledUnresolved: number;
+  settledNormalised: number;
   unresolvedSamples: string[];
   parseFailures: string[];
 }
 
 export function scanTree(root: string = SRC_ROOT, dirs: string[] = SCOPE_DIRS): TreeScan {
-  const result: TreeScan = { reads: [], outOfScope: [], filesScanned: 0, sitesJudged: 0, delegated: 0, unresolved: 0, throwOnError: 0, unresolvedSamples: [], parseFailures: [] };
+  const result: TreeScan = { reads: [], outOfScope: [], filesScanned: 0, sitesJudged: 0, delegated: 0, unresolved: 0, throwOnError: 0, settledUnresolved: 0, settledNormalised: 0, unresolvedSamples: [], parseFailures: [] };
   for (const d of dirs) {
     const dir = join(root, d);
     if (!existsSync(dir)) continue;
@@ -771,6 +874,8 @@ export function scanTree(root: string = SRC_ROOT, dirs: string[] = SCOPE_DIRS): 
       result.delegated += one.delegated;
       result.unresolved += one.unresolved;
       result.throwOnError += one.throwOnError;
+      result.settledUnresolved += one.settledUnresolved;
+      result.settledNormalised += one.settledNormalised;
       result.unresolvedSamples.push(...one.unresolvedSamples);
     }
   }
@@ -882,6 +987,7 @@ if (isMain) {
   }
   const stats = {
     filesScanned: scan.filesScanned, sitesJudged: scan.sitesJudged, delegated: scan.delegated, unresolved: scan.unresolved, throwOnError: scan.throwOnError,
+    settledUnresolved: scan.settledUnresolved, settledNormalised: scan.settledNormalised,
     inScope: scan.reads.length, outOfScope: scan.outOfScope.length, benign: verdict.benign.length, ledgered: verdict.ledgered.length, ledgerDirection: dirCounts,
   };
 
@@ -891,7 +997,9 @@ if (isMain) {
     const summary =
       `scanned ${stats.filesScanned} file(s); judged ${stats.sitesJudged} read site(s): ${stats.inScope} in scope ` +
       `(${stats.benign} benign, ${stats.ledgered} ledgered known defects: ${dirCounts.open} FAIL-OPEN / ${dirCounts.closed} FAIL-CLOSED / ${dirCounts.unclassified} UNCLASSIFIED), ` +
-      `${stats.outOfScope} out of scope; ${stats.delegated} delegated to a caller, ${stats.unresolved} unresolved, ${stats.throwOnError} throwOnError`;
+      `${stats.outOfScope} out of scope; ${stats.delegated} delegated to a caller, ${stats.unresolved} unresolved ` +
+      `(${stats.settledUnresolved} of them un-normalised Promise.allSettled elements the checker CANNOT SEE, not reads it judged clean), ` +
+      `${stats.settledNormalised} allSettled result(s) recovered by a .map normaliser, ${stats.throwOnError} throwOnError`;
     const show = (r: UncheckedRead, tag: string): void => {
       console.log(`  ${r.file}:${r.line}  [${tag}]  ${r.key}\n      ${r.excerpt}`);
     };

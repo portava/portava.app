@@ -54,6 +54,95 @@ const keysOf = (src: string, file = "routes/fixture.ts"): string[] => reads(src,
 
 // ── 1. Consumer shapes ──────────────────────────────────────────────────────
 
+describe("scanSource — Promise.allSettled and the .map normaliser", () => {
+  // A Promise.allSettled element is wrapped in {status, value|reason}, so the
+  // checker cannot judge it and says so. Twelve reads in
+  // services/interactionPermissions.ts sat in that blind spot -- one of them on
+  // user_restrictions, an EXCLUSION_TABLE -- indistinguishable from reads the
+  // instrument genuinely cannot judge. The repair is narrow: a `.map` callback
+  // that reads the settled wrapper AND rebuilds {data, error} has normalised
+  // the elements back to the shape a plain Promise.all produces, so judging
+  // resumes. Anything else keeps the unresolved verdict, because "I cannot see
+  // this" is the safe answer and only a proven normaliser may override it.
+  const settled = (mapBody: string) => `
+    const [aRes, bRes] = (await Promise.allSettled([
+      sc.from("blocks").select("id").eq("id", x).maybeSingle(),
+      sc.from("user_restrictions").select("id").eq("id", y).maybeSingle(),
+    ])).map(${mapBody}) as any;
+    use(aRes.data, bRes.data);
+  `;
+
+  const NORMALISER = '(r) => (r.status === "fulfilled" ? r.value : { data: null, error: r.reason })';
+
+  it("a genuine normaliser makes both elements judgeable again", () => {
+    const scan = scanSource(settled(NORMALISER), "routes/fixture.ts");
+    assert.equal(scan.settledNormalised, 1);
+    assert.equal(scan.settledUnresolved, 0);
+    assert.equal(scan.sitesJudged, 2);
+    assert.deepEqual(scan.reads.map((r) => r.table).sort(), ["blocks", "user_restrictions"]);
+    // Both are member-only: .data is read, .error never is.
+    assert.deepEqual([...new Set(scan.reads.map((r) => r.shape))], ["member-only"]);
+  });
+
+  it("without the normaliser the same reads are UNRESOLVED, and counted separately", () => {
+    const src = `
+      const [aRes, bRes] = (await Promise.allSettled([
+        sc.from("blocks").select("id").eq("id", x).maybeSingle(),
+        sc.from("user_restrictions").select("id").eq("id", y).maybeSingle(),
+      ])) as any;
+      use(aRes, bRes);
+    `;
+    const scan = scanSource(src, "routes/fixture.ts");
+    assert.equal(scan.settledUnresolved, 2);
+    assert.equal(scan.settledNormalised, 0);
+    assert.equal(scan.reads.length, 0, "an unresolved read is NOT reported as clean, it is reported as unseen");
+  });
+
+  it("a .map that is not a normaliser does NOT unlock judging", () => {
+    // Reads the wrapper but rebuilds neither data nor error: not a normaliser.
+    const scan = scanSource(settled('(r) => r.status'), "routes/fixture.ts");
+    assert.equal(scan.settledNormalised, 0);
+    assert.equal(scan.settledUnresolved, 2);
+    assert.equal(scan.reads.length, 0);
+  });
+
+  it("a .map that builds {data,error} without reading the wrapper does NOT unlock judging", () => {
+    const scan = scanSource(settled('(r) => ({ data: null, error: null })'), "routes/fixture.ts");
+    assert.equal(scan.settledNormalised, 0);
+    assert.equal(scan.settledUnresolved, 2);
+  });
+
+  it("a normalised allSettled whose elements DO read .error reports nothing", () => {
+    const src = `
+      const [aRes, bRes] = (await Promise.allSettled([
+        sc.from("blocks").select("id").eq("id", x).maybeSingle(),
+        sc.from("user_restrictions").select("id").eq("id", y).maybeSingle(),
+      ])).map(${NORMALISER}) as any;
+      if (aRes.error || bRes.error) throw new Error("degraded");
+      use(aRes.data, bRes.data);
+    `;
+    const scan = scanSource(src, "routes/fixture.ts");
+    assert.equal(scan.settledNormalised, 1);
+    assert.equal(scan.sitesJudged, 2);
+    assert.equal(scan.reads.length, 0, "observing .error is the whole point; these are not defects");
+  });
+
+  it("plain Promise.all is unaffected by the normaliser path", () => {
+    const src = `
+      const [aRes, bRes] = await Promise.all([
+        sc.from("blocks").select("id").eq("id", x).maybeSingle(),
+        sc.from("user_restrictions").select("id").eq("id", y).maybeSingle(),
+      ]);
+      use(aRes.data, bRes.data);
+    `;
+    const scan = scanSource(src, "routes/fixture.ts");
+    assert.equal(scan.settledNormalised, 0);
+    assert.equal(scan.settledUnresolved, 0);
+    assert.equal(scan.sitesJudged, 2);
+    assert.equal(scan.reads.length, 2);
+  });
+});
+
 describe("scanSource — shapes that ignore .error", () => {
   it("data-only: `const { data } = await …maybeSingle()`", () => {
     const r = reads(inGate(`const { data } = await sc.from("trip_members").select("role").eq("id", id).maybeSingle();\n  return !!data;`));
