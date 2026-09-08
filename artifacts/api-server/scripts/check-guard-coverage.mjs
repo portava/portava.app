@@ -692,6 +692,22 @@ const EXEMPT = [
   // it refuses an EXEMPT entry for a file it no longer classifies as reaching
   // Supabase, precisely so a narrowed pattern cannot quietly retire exemptions
   // that are still load-bearing.
+  ...[
+    'src/test/unissuedSupabaseWrites.test.ts',
+    'src/test/unissuedWrites.test.ts',
+  ].map((file) => ({
+    file,
+    pinnedTestEnv: true,
+    reason:
+      'Proves that a `void` supabase write with no .then/.catch/await issues NO HTTP request — PostgrestBuilder ' +
+      'calls _fetch inside then(). That fact can only be established against a REAL client, which is precisely why ' +
+      'the defect survived: a hand-written fake cannot tell "constructed" from "sent", and one in this suite was ' +
+      'written around it. So these call createClient deliberately. They are not reachers in any meaningful sense: ' +
+      'each installs its OWN counting `fetch` through `global.fetch`, so no request can leave the process whatever ' +
+      'the URL, and the URL is the loopback discard port besides. EXEMPTION MEANS UNGUARDED, NOT SAFE — if either ' +
+      'file is ever changed to let the real fetch through, the exemption is void and it must import the guard.',
+  })),
+
   {
     file: 'src/test/guardReachability.test.ts',
     pinnedTestEnv: true,

@@ -302,17 +302,11 @@ export const GUARDS: readonly GuardEntry[] = [
     responsibility:
       "A void supabase mutation with no .then/.catch/await is never SENT — PostgrestBuilder issues its request " +
       "inside then() — so the row is not written at all.",
-    reach: {
-      kind: "manual",
-      reason:
-        "NOT WIRED YET, AND THAT IS A GAP WITH A DATE ON IT, NOT A JUSTIFICATION. It exits 1 on 20 real findings: " +
-        "essentially the whole Rent-A-Buddy booking audit trail, post edit history, the stamp reconciliation log and " +
-        "a delayed-location event. Wiring it into check:all today would make the suite permanently red, which this " +
-        "repository has twice written down as one `|| true` away from being no check at all. A burn-down lane owns " +
-        "the 20; this moves to check-all in the same change that clears them, and its mutation suite " +
-        "(src/test/unissuedSupabaseWrites.test.ts) is registered and green in the meantime so the rule itself is " +
-        "not unproven while it waits.",
-    },
+    // Was MANUAL with "NOT WIRED YET, AND THAT IS A GAP WITH A DATE ON IT" and a
+    // promise to move it in the same change that cleared the 20. The 20 are
+    // cleared, and the manual-run rule in checkGuardReachability is what demanded
+    // this — it refuses a MANUAL entry for a guard that runs cleanly.
+    reach: { kind: "check-all", script: "check:unissued-supabase-writes" },
   },
 
   {

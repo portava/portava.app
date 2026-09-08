@@ -40,12 +40,13 @@
  * Run: SUPABASE_URL=http://127.0.0.1:9 SUPABASE_SERVICE_ROLE_KEY=dummy \
  *      node --import tsx/esm --test src/test/guardCoverageReachability.test.ts
  */
-import { describe, it, after } from "node:test";
+import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { writeFileSync, rmSync, existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { acquireTreeLock } from "./helpers/treeMutationLock.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const API_ROOT = resolve(HERE, "..", "..");
@@ -77,6 +78,12 @@ function runWith(content: string | null) {
 }
 
 let baseline = NaN;
+
+let releaseTree: (() => void) | null = null;
+// This suite and the other tree-scanning suite must not overlap: node:test runs
+// files concurrently, and one writes a probe INTO src/ while the other scans it.
+before(async () => { releaseTree = await acquireTreeLock("guardCoverageReachability"); });
+after(() => { releaseTree?.(); releaseTree = null; });
 
 describe("check:guard-coverage — reachability is judged on code", () => {
   it("CONTROL — the real tree passes, and every reacher is accounted for", () => {

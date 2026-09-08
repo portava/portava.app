@@ -50,6 +50,7 @@ import { mkdtempSync, writeFileSync, rmSync, chmodSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { acquireTreeLock } from "./helpers/treeMutationLock.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const API_ROOT = resolve(HERE, "..", "..");
@@ -77,6 +78,11 @@ const CREDENTIAL_FREE = [
 ];
 
 let tmp = "";
+let releaseTree: (() => void) | null = null;
+// This suite and the other tree-scanning suite must not overlap: node:test runs
+// files concurrently, and one writes a probe INTO src/ while the other scans it.
+before(async () => { releaseTree = await acquireTreeLock("securityCheckSuite"); });
+after(() => { releaseTree?.(); releaseTree = null; });
 before(() => {
   tmp = mkdtempSync(join(tmpdir(), "secsuite-"));
 });

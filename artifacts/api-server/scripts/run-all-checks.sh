@@ -182,6 +182,22 @@ run_check "check:deletion-coverage" pnpm run check:deletion-coverage
 run_check "check:data-rights" pnpm run check:data-rights
 run_check "check:location-purposes" pnpm run check:location-purposes
 run_check "check:silent-supabase-writes" pnpm run check:silent-supabase-writes
+# check:unissued-supabase-writes — the third member of this family, and the one
+# no test could have caught. check:unchecked-supabase-reads catches a read whose
+# error is discarded; check:silent-supabase-writes catches a write whose error is
+# discarded; this catches a write that is NEVER SENT.
+#
+# PostgrestBuilder is a thenable: it calls _fetch inside then(). So
+# `void sc.from(t).insert({...})` with no .then/.catch/await builds a request
+# object and discards it — measured, 0 HTTP calls against a counting fetch. Twenty
+# such sites existed: essentially the whole Rent-A-Buddy booking audit trail, post
+# edit history, the stamp reconciliation log and a delayed-location event.
+#
+# A fake CANNOT see this, and one in this suite was written around it, capturing
+# rows eagerly inside .insert() with a comment noting that _resolve() is never
+# reached. The only witness that tells "constructed" from "sent" is the real
+# client, which is exactly what a suite replaces — hence a static check.
+run_check "check:unissued-supabase-writes" pnpm run check:unissued-supabase-writes
 run_check "check:trip-kernel-writers" pnpm run check:trip-kernel-writers
 run_check "check:test-runner-flags" pnpm run check:test-runner-flags
 run_check "check:write-path-columns" pnpm run check:write-path-columns
