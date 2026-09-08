@@ -34,7 +34,7 @@ ENABLED. FLAG ENABLED is not PRODUCTION REALIZED.**
 | Mobile deployed | **NO** | — |
 | Migrations applied to production | **35** | `production-applied-migrations.json`, reconciled against `supabase_migrations.schema_migrations` |
 | Migrations written, NOT applied to PRODUCTION | **10** | 2700, 2710, 2711, 2720–2724, 2730, 2740 |
-| Of those, applied to **portava-ci** | **6** | 2710 `20260908142429`, 2711 `20260908142652`, 2700 `20260908145925`, 2740 `20260908150439`, 2730 `20260908151001`, 2720 `20260908151339` — CI is not production and this row exists so the two are never read as one |
+| Of those, applied to **portava-ci** | **7** | 2710 `20260908142429`, 2711 `20260908142652`, 2700 `20260908145925`, 2740 `20260908150439`, 2730 `20260908151001`, 2720 `20260908151339`, 2721 `20260908151706` — CI is not production and this row exists so the two are never read as one |
 
 ## Per-surface
 
@@ -50,7 +50,7 @@ ENABLED. FLAG ENABLED is not PRODUCTION REALIZED.**
 | Layover — offline bundle | yes | yes (server) | yes | n/a | **no** | no | **displayed, not cached** | n/a | **no** |
 | Highlights — permission rule | yes | yes | yes | n/a | **no** | no | no | n/a | **no** |
 | Highlights — archive | yes | yes | yes | yes (0026, pre-existing) | **no** | no | no | n/a | **no** |
-| Highlights — consent / resurfacing | yes | partial | yes | **2720 ci only; 2721 still unapplied anywhere** | **no** | no | no | n/a | **no** |
+| Highlights — consent / resurfacing | yes | partial | yes | **ci only (2720, 2721)** | **no** | no | no | LOCATION_PRECISION_DEFAULT unmade — 0 policy rows, so §10 is UNENFORCED, not defaulted | **no** |
 | Memories — command bus / outbox | yes | yes | yes | **ci only (2710, 2711)** | **no** | no | no | `memory_kernel_enabled` FALSE on CI, NO ROW in production | **no** |
 | Memories — projections / retrieval | yes | **no HTTP surface** | yes | **ci only (2730)** | **no** | no | no | n/a | **no** |
 | Trips / Trip Kernel | prior | prior | yes | yes (2420) | **no** | no | no | — | **no** |
