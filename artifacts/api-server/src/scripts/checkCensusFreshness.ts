@@ -28,6 +28,16 @@
  * the paths it is a measurement OF.
  *
  * ── THE ACKNOWLEDGEMENT LEDGER IS NOT A MUTE BUTTON ──────────────────────────
+ *
+ * It was one, for four commits, and the hole is worth stating because the header
+ * had claimed otherwise the whole time. An acknowledgement was keyed on
+ * (census, since) alone, so it silenced EVERY later change to that census's
+ * counted files rather than the one whose harmlessness had been argued. An entry
+ * written to cover a single comment-only change was, four commits later, quietly
+ * covering four changed files, three of which nobody had looked at — while its
+ * `reason` still read as though it described the whole silence. An entry now
+ * covers exactly the paths it NAMES, an entry that names none covers none, and a
+ * counted file that changed without being named makes the census stale again.
  * An entry names a commit range and says why the verdicts cannot have moved.
  * "Not relevant" is not a reason. The entry is validated: it must name a census
  * that exists, its `since` must be the census's CURRENT head_commit (so an
@@ -84,7 +94,26 @@ const CENSUS_SCOPE: Record<string, string[]> = {
   ],
 };
 
-interface Ack { census: string; since: string; reason: string }
+interface Ack {
+  census: string;
+  since: string;
+  reason: string;
+  /**
+   * The counted files this acknowledgement covers, repo-relative.
+   *
+   * WITHOUT THIS THE LEDGER WAS A MUTE BUTTON AFTER ALL. An acknowledgement was
+   * keyed on (census, since) alone, so it silenced EVERY subsequent change to
+   * that census's files — not just the one whose harmlessness had been argued.
+   * Measured 2026-09-08: an entry written to cover ONE comment-only change to
+   * lib/memoryOutbox.ts was, four commits later, quietly covering FOUR changed
+   * files, three of which nobody had looked at. The reason field still read as
+   * though it described the whole silence.
+   *
+   * Now an acknowledgement covers exactly the paths it names, and a counted file
+   * that changed and is NOT named makes the census stale again.
+   */
+  files?: readonly string[];
+}
 
 function git(args: string[]): string {
   return execFileSync("git", args, { cwd: REPO, encoding: "utf8", maxBuffer: 32 * 1024 * 1024 }).trim();
@@ -136,7 +165,26 @@ for (const f of files) {
 
   const ack = acks.find((a) => a.census === f);
   if (ack && ack.since === commit) {
-    rows.push(`  ${f.padEnd(34)} ${changed.length} counted file(s) changed — ACKNOWLEDGED`);
+    // An acknowledgement covers the paths it NAMES and nothing else. An entry
+    // with no `files` covers nothing, which is the honest reading of a ledger
+    // written before the field existed -- it is not grandfathered in.
+    const covered = new Set(ack.files ?? []);
+    const uncovered = changed.filter((c) => !covered.has(c));
+    if (uncovered.length === 0) {
+      rows.push(
+        `  ${f.padEnd(34)} ${changed.length} counted file(s) changed — ACKNOWLEDGED (all named)`,
+      );
+      continue;
+    }
+    stale++;
+    problems.push(
+      `::error::${f} is STALE. Its acknowledgement covers ${covered.size} named file(s), but ` +
+        `${uncovered.length} counted file(s) changed that it does NOT name:\n    ${uncovered.slice(0, 8).join("\n    ")}` +
+        (uncovered.length > 8 ? `\n    …and ${uncovered.length - 8} more` : "") +
+        `\n  An acknowledgement silences the changes whose harmlessness it ARGUES, not every change that ` +
+        `happens to follow it. Either name these files and say why they cannot have moved a verdict, or ` +
+        `re-measure the census.`,
+    );
     continue;
   }
   stale++;
