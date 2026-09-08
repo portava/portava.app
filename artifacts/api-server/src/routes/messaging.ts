@@ -316,6 +316,11 @@ router.get('/users/:userId/message-permission', async (req, res) => {
     allowed: verdict.allowed,
     reason: verdict.reason ?? null,
     relationship_context: verdict.relationship_context,
+    // `relationship_context` is a floor, not the truth, when a relationship read
+    // failed. The client renders this context as statements about a person ("you
+    // are not connected"), so it needs to be able to tell "false" from "we could
+    // not find out" and stay silent rather than assert something untrue.
+    degraded: verdict.degraded === true,
   });
 });
 
