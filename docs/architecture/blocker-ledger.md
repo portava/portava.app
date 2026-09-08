@@ -118,6 +118,25 @@ zone covering the viewport, Crowd Flow refuses rather than approximating.
 | Layover L50 — what BLOCKED means on screen | — | OWNER | No | Whether an unsafe recommendation is hidden, greyed, or shown with a warning |
 | `EVENT_START_TRANSITION` | `2600` (**not applied to production**) | **OWNER** | Yes, safely | Classified 2026-09-08 — see below |
 | `MAP_CANCELLED_TRIP_VISIBILITY` | *nothing* | **OWNER** | Yes, safely | Classified 2026-09-08 — see below |
+| `PASSPORT_CREW_PRESENCE_AUDIENCE` | *nothing* | **OWNER** | Already fail-closed | **NEW 2026-09-08.** Two specs disagree and the code takes neither side — see below |
+
+### `PASSPORT_CREW_PRESENCE_AUDIENCE` — surfaced while separating Safe Return from Locate Friends
+
+Passport spec §5 lists **"With Crew"** as a projected Passport state. Migration
+`2219`'s header states that every read of the locate-friends tables **resolves
+the caller's membership first** — "the API resolves the caller's membership per
+request before returning anything."
+
+**Those two do not agree** for a viewer who is *not* in the session: §5 implies
+the state is projectable to a permitted audience, 2219 implies only participants
+may learn anything from that storage.
+
+**Not decided.** The code implements the **tighter** of the two readings — the
+owner's own view, or a viewer who already clears the §23 / TABLE 24 location
+gate — so **neither eventual answer can be reached by accident**, and whichever
+the owner picks is a widening or a no-op rather than a correction. Recorded in
+the `LOCATE_FRIENDS_CREW_PRESENCE` registry entry's doc comment as well, so it
+is visible at the code that depends on it.
 
 ### `EVENT_START_TRANSITION` — classified OWNER, and why it is not ENGINEERING
 
