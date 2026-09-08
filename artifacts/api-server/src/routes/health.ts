@@ -22,6 +22,8 @@ import { getSweeperStatus as getInviteSlotSweeperStatus } from "../lib/inviteSlo
 import { callSweepFailureState } from "../lib/callSweepScheduler.js";
 import { getLiveShareSweepStatus } from "../lib/tripCrewLiveShareScheduler.js";
 import { getNotificationMaintenanceStatus } from "../lib/notificationMaintenanceScheduler.js";
+import { getServiceClient } from "../lib/supabase.js";
+import { sweepExpiredStories } from "./stories.js";
 
 const router: IRouter = Router();
 
@@ -108,6 +110,66 @@ router.post("/admin/cleanup/weather-cache", asyncHandler(async (req, res) => {
     return;
   }
   res.json({ deleted: deleted ?? 0 });
+}));
+
+/**
+ * POST /admin/cleanup/expired-stories
+ *
+ * Runs sweepExpiredStories: flips `active` stories past their expires_at to
+ * `expired` and deletes the storage objects behind them.
+ *
+ * WHY THIS ENDPOINT EXISTS. sweepExpiredStories has lived in routes/stories.ts
+ * with a docblock reading "Called from the health/cleanup endpoint" and NO
+ * CALLER ANYWHERE except a test. So the 24-hour story was ephemeral in the
+ * product copy and permanent in the database: no row ever left `active`, and
+ * no object was ever removed.
+ *
+ * Two things about the blast radius, stated rather than left to be assumed.
+ * The severity is NOT "story media is publicly fetchable forever" -- that was
+ * the sweep's own comment and it is out of date, because lib/mediaAccess.ts
+ * branch 3d checks expires_at and denies expired story media on the serving
+ * path. What actually accumulates is rows that never leave `active` and storage
+ * objects nothing will ever delete. And AccountDeletionService reasons FROM
+ * this sweep in a comment ("sweepExpiredStories already deletes story bytes on
+ * EXPIRY, but only for..."), which is a premise built on a job that never ran.
+ *
+ * WHY AN OPERATOR ENDPOINT AND NOT A SCHEDULER. A scheduler needs a cadence,
+ * and a cadence for content expiry is a product decision, not a wiring detail.
+ * This mirrors POST /admin/cleanup/weather-cache exactly -- same secret, same
+ * constant-time compare, same shape -- so the capability becomes REACHABLE
+ * without anyone deciding how often it should run. Wiring it to a schedule is
+ * the next step and belongs to whoever owns that cadence.
+ */
+router.post("/admin/cleanup/expired-stories", asyncHandler(async (req, res) => {
+  const secret = process.env.CLEANUP_ADMIN_SECRET;
+  if (!secret) {
+    logger.error("admin/cleanup/expired-stories: CLEANUP_ADMIN_SECRET is not configured — refusing to run");
+    res.status(500).json({ error: "cleanup_secret_not_configured" });
+    return;
+  }
+  const provided = req.headers["x-cleanup-secret"];
+  // Constant-time compare — a plain !== leaks how many leading characters
+  // matched through response timing. See safeSecretEquals in lib/http.ts.
+  if (!safeSecretEquals(provided, secret)) {
+    res.status(401).json({ error: "unauthorized" });
+    return;
+  }
+  const sc = getServiceClient();
+  if (!sc) {
+    logger.error("admin/cleanup/expired-stories: no service client — refusing to run");
+    res.status(503).json({ error: "degraded_unavailable" });
+    return;
+  }
+  try {
+    const expired = await sweepExpiredStories(sc);
+    res.json({ expired });
+  } catch (err) {
+    // sweepExpiredStories THROWS on a read/update error rather than resolving
+    // with a count, so this catch is live code, unlike a catch around a bare
+    // supabase read. A failed sweep must not answer 200 with a fabricated 0.
+    logger.error({ err }, "admin/cleanup/expired-stories: sweep failed");
+    res.status(500).json({ error: "sweep_failed" });
+  }
 }));
 
 // ── GET /healthz/schedulers ──────────────────────────────────────────────────
