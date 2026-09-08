@@ -249,6 +249,94 @@ async function findDirtyUsers(db: any, now: number): Promise<{ dirty: Set<string
 }
 
 /**
+ * Users who have trust events but have NEVER had a score computed — regardless
+ * of how old those events are.
+ *
+ * ── THE GAP THIS CLOSES ──────────────────────────────────────────────────────
+ * The two passes above between them leave a hole that closes over a user
+ * permanently:
+ *
+ *   findDirtyUsers  starts from `trust_events` but only looks back
+ *                   EVENT_LOOKBACK_DAYS (30). It is how a user with NO
+ *                   `trust_profiles` row gets their first score.
+ *   findStaleUsers  starts from `trust_profiles`, so it can only refresh a
+ *                   score that already exists.
+ *
+ * So a user whose only trust event ages past 30 days BEFORE a pass ever runs
+ * falls out of the first query and was never eligible for the second. Their
+ * score is then never computed — not late, never. Nothing reports it, because
+ * every reader substitutes a default for a missing profile
+ * (`TRUST_SCORE_WHEN_NO_PROFILE = 50` in routes/events.ts), so the user simply
+ * gets the substitute forever while their real evidence sits in the table.
+ *
+ * This is not hypothetical. Measured on production 2026-09-08: 5 applied trust
+ * events across 3 users, newest 23 days old, and ONE user with an event and no
+ * `trust_profiles` row. At 30 days that user became permanently uncomputable —
+ * the scheduler has not yet run in production because the branch carrying it is
+ * unmerged, so the window was going to expire before the first pass.
+ *
+ * Deliberately age-independent: the whole point is that these users are missed
+ * BECAUSE their evidence is old. Bounded by the pass budget like every other
+ * query here, and it looks only for events that can actually move a score
+ * (`applied` / `confirmed`), matching findDirtyUsers.
+ *
+ * A NULL `last_recalculated_at` counts as never-computed too: the row exists but
+ * no score was ever written into it, which is the same user-visible state.
+ */
+async function findNeverComputedUsers(db: any, budget: number): Promise<string[]> {
+  if (budget <= 0) return [];
+  let events: any[] = [];
+  try {
+    const { data, error } = await db
+      .from("trust_events")
+      .select("user_id")
+      .in("status", ["applied", "confirmed"])
+      .order("created_at", { ascending: true })
+      .limit(budget * 20);
+    if (error) {
+      logger.warn({ err: error }, "findNeverComputedUsers: trust_events fetch failed (non-fatal)");
+      return [];
+    }
+    events = (data as any[]) ?? [];
+  } catch (err) {
+    logger.warn({ err }, "findNeverComputedUsers: trust_events fetch threw (non-fatal)");
+    return [];
+  }
+
+  const candidates = [...new Set(events.map((e) => e?.user_id).filter(Boolean).map(String))];
+  if (candidates.length === 0) return [];
+
+  // Anyone with a computed score is not our business; anyone without one is.
+  const computed = new Set<string>();
+  for (let i = 0; i < candidates.length; i += ID_CHUNK) {
+    const chunk = candidates.slice(i, i + ID_CHUNK);
+    try {
+      const { data, error } = await db
+        .from("trust_profiles")
+        .select("user_id, last_recalculated_at")
+        .in("user_id", chunk);
+      if (error) {
+        // FAIL CLOSED toward doing nothing rather than toward recomputing
+        // everybody: an unreadable trust_profiles would otherwise make every
+        // candidate look never-computed and schedule a full recalculation
+        // storm. Skipping the chunk costs one pass; the next pass retries.
+        logger.warn({ err: error }, "findNeverComputedUsers: trust_profiles fetch failed — skipping chunk (non-fatal)");
+        for (const id of chunk) computed.add(id);
+        continue;
+      }
+      for (const p of ((data as any[]) ?? [])) {
+        if (p?.user_id && p.last_recalculated_at) computed.add(String(p.user_id));
+      }
+    } catch (err) {
+      logger.warn({ err }, "findNeverComputedUsers: trust_profiles fetch threw — skipping chunk (non-fatal)");
+      for (const id of chunk) computed.add(id);
+    }
+  }
+
+  return candidates.filter((id) => !computed.has(id)).slice(0, budget);
+}
+
+/**
  * Users whose score is simply old. Decay means a score drifts with no new
  * events, so scores must be refreshed periodically or they silently misrepresent
  * the user — in both directions.
@@ -348,10 +436,22 @@ export async function runTrustMaintenance(client?: any): Promise<TrustMaintenanc
   let targets = [...dirty].slice(0, MAX_USERS_PER_PASS);
   const truncated = dirty.size > MAX_USERS_PER_PASS;
 
+  // Users who have evidence but have never had a score computed. Ranked ABOVE
+  // stale refreshes: a stale score is merely out of date, whereas a
+  // never-computed one means every reader is substituting a default for a user
+  // whose real evidence is sitting in the table. Age-independent by design —
+  // these users are missed precisely because their events are old.
+  const neverComputed = await findNeverComputedUsers(db, MAX_USERS_PER_PASS - targets.length);
+  for (const uid of neverComputed) {
+    if (targets.length >= MAX_USERS_PER_PASS) break;
+    if (!dirty.has(uid)) targets.push(uid);
+  }
+
+  const alreadyTargeted = new Set(targets);
   const stale = await findStaleUsers(db, now, MAX_USERS_PER_PASS - targets.length);
   for (const uid of stale) {
     if (targets.length >= MAX_USERS_PER_PASS) break;
-    if (!dirty.has(uid)) targets.push(uid);
+    if (!alreadyTargeted.has(uid)) targets.push(uid);
   }
 
   let usersRecalculated = 0;

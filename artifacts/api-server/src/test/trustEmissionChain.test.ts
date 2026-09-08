@@ -378,13 +378,37 @@ describe("fail-closed: a read that cannot be performed never reads as an empty r
   it("the scheduler counts a failed recalculation instead of writing through it", async () => {
     const f = makeFake();
     await recordStampVerifiedTrustEvent(f.client, { userId: OWNER, userStampId: STAMP_ID, tier: "verified", stampSourceType: "trips" });
-    // First trust_events select in the pass is findDirtyUsers (succeeds); the
-    // next is loadEvents inside recalculateTrustScore — that one fails.
-    let calls = 0;
+    // Target loadEvents inside recalculateTrustScore SEMANTICALLY, not by call
+    // ordinal and not by phase.
+    //
+    // This originally armed on the 2nd `trust_events` access, which meant
+    // "loadEvents" only while the pass happened to issue exactly one candidate
+    // query before it. Adding findNeverComputedUsers made the 2nd access a
+    // candidate query, so the failure landed there and the test stopped
+    // asserting the thing it exists for.
+    //
+    // Keying off "after trust_profiles was read" is also wrong: the pass clears
+    // expired probation — which reads trust_profiles — BEFORE findDirtyUsers,
+    // so that armed the very first candidate query instead.
+    //
+    // What is actually distinctive is the FILTER. loadEvents is the only
+    // trust_events read that scopes to a single user (`.eq("user_id", …)`);
+    // every candidate query selects across users. Arming on that is stable
+    // however many candidate queries are added, and in whatever order.
+    let armed = false;
     const orig = f.client.from;
     f.client.from = (t: string) => {
-      if (t === "trust_events" && ++calls === 2) f.failNext("trust_events", "select", "timeout");
-      return orig(t);
+      const b = orig(t);
+      if (t !== "trust_events") return b;
+      const eq = b.eq.bind(b);
+      b.eq = (col: string, val: any) => {
+        if (col === "user_id" && !armed) {
+          armed = true;
+          f.failNext("trust_events", "select", "timeout");
+        }
+        return eq(col, val);
+      };
+      return b;
     };
     const pass = await runTrustMaintenance(f.client);
     assert.equal(pass.eventsSeen, 1);
