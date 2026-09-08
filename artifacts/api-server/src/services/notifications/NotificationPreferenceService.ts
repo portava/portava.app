@@ -193,35 +193,15 @@ export class NotificationPreferenceService {
     if (error) {
       // Same assume-consent hazard as the single-user read, multiplied by the
       // size of the fan-out: every candidate falls back to DEFAULTS, which
-      // grant push. Callers that must not guess should use
-      // `getPreferencesForUsersResult` and refuse the optional channels.
+      // grant push. The one caller (routes/rentABuddyMarketplace.ts) is owned
+      // elsewhere, so this logs rather than changes the answer — no silent
+      // consent assumption, but the outage is at least visible.
       logger.error({ err: error, userCount: userIds.length }, 'NotificationPreferenceService: batch preferences read failed — every user fell back to DEFAULTS (push ON)');
     }
     for (const row of (data ?? []) as Record<string, any>[]) {
       map.set(row.user_id, rowToPrefs(row.user_id, row));
     }
     return map;
-  }
-
-  /** `getPreferencesForUsers` plus the fact of whether the read worked. */
-  async getPreferencesForUsersResult(
-    userIds: string[],
-  ): Promise<{ prefs: Map<string, NotificationPreferences>; readFailed: boolean }> {
-    const map = new Map<string, NotificationPreferences>();
-    for (const id of userIds) map.set(id, rowToPrefs(id, null));
-    if (userIds.length === 0) return { prefs: map, readFailed: false };
-    const { data, error } = await this.db
-      .from('notification_preferences')
-      .select('*')
-      .in('user_id', userIds);
-    if (error) {
-      logger.error({ err: error, userCount: userIds.length }, 'NotificationPreferenceService: batch preferences read failed');
-      return { prefs: map, readFailed: true };
-    }
-    for (const row of (data ?? []) as Record<string, any>[]) {
-      map.set(row.user_id, rowToPrefs(row.user_id, row));
-    }
-    return { prefs: map, readFailed: false };
   }
 
   /**
