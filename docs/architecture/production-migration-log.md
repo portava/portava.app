@@ -405,3 +405,91 @@ being permanently latent, and that the Trip Kernel has somewhere to write.
 Three of the eleven ON-and-dead flags depended on `trip_kernel_execute()`
 existing — `airport_mode_enabled`, `layover_plans_enabled`, `hidden_gems_enabled`
 — and that half of their requirement is now met.
+
+
+---
+
+## 2026-09-08 — `2490`: `anon` and `authenticated` lose the four privileges RLS does not police
+
+Applied to portava-ci first (`20260908011111`), then production
+(`20260908011416`), from the file's exact bytes
+(md5 `9f314a7f65a020608e7f6455448b5192`).
+
+### What it closes
+
+`anon` — the **unauthenticated** public role — held `TRUNCATE` on hundreds of
+tables in `public`. RLS never consults `TRUNCATE`, `REFERENCES`, `TRIGGER` or
+`MAINTAIN`: a policy cannot restrict, narrow or log them. So every carefully
+written policy on those tables sat behind a privilege that discards the whole
+table without consulting it once.
+
+This is the argument `2333` makes for four derived-memory tables, applied to the
+rest of the schema in one statement instead of forty.
+
+### Production, measured before and after
+
+| check | before | after |
+|---|---|---|
+| app-owned relations granting any of the four to anon/authenticated | **375** | **0** |
+| extension-owned (PostGIS) relations still granting them | 3 | 3 *(unreachable — see below)* |
+| `service_role` privileges in `public` | 3346 | **3346** |
+| client `SELECT/INSERT/UPDATE/DELETE` privileges | 3019 | **3019** |
+| `postgres` default ACL re-issuing the four | 8 | **0** |
+| `supabase_admin` default ACL re-issuing the four | 8 | 8 *(unreachable)* |
+
+The two unchanged middle rows are the point: this migration is privilege-only
+and touches **no DML privilege and no policy**. `service_role` is the server's
+own identity and the purge and account-deletion paths depend on it, so it is
+deliberately untouched.
+
+### Verified by effective privilege, not only by catalog ACL
+
+The counting query above reads `pg_class.relacl`. That misses two things: a
+privilege reachable through **role membership**, and one granted to the
+**`PUBLIC` pseudo-role** (whose grantee is `0` and does not join to `pg_roles`).
+So the result was re-proved with `has_table_privilege`, which resolves both:
+
+**3472 probes** (434 relations x 2 roles x 4 privileges), **0 held** on any
+app-owned relation. The 24 remaining are the three PostGIS relations x 2 roles x
+4 privileges.
+
+### Future tables — proved, not assumed
+
+Revoking on existing tables does nothing for the next one created. The migration
+also fixes the `postgres` default ACL, and that was verified by creating a real
+table and reading its inherited ACL inside a transaction deliberately aborted so
+nothing persisted:
+
+- four-privilege leaks on a brand-new table: **NONE**
+- DML still inherited normally: `anon:SELECT/INSERT`, `authenticated:SELECT/INSERT`,
+  `service_role:SELECT/INSERT`
+
+So the boundary holds going forward *without* breaking ordinary table creation.
+Confirmed afterwards that the probe table left nothing behind (0 relations
+matching, `public` still at 434).
+
+### The residue, stated rather than hidden
+
+Two things this migration cannot reach, both recorded in the file header:
+
+1. **The `supabase_admin` default ACL.** `ALTER DEFAULT PRIVILEGES` may only be
+   issued `FOR ROLE` a role you are a member of, and `postgres` is not a member
+   of `supabase_admin`. A relation created *by supabase_admin* in `public` would
+   inherit the blanket set again. Every application table is created by
+   `postgres`.
+2. **PostGIS's three relations** — `spatial_ref_sys`, `geography_columns`,
+   `geometry_columns`, all owned by `supabase_admin`. They are excluded by
+   **extension ownership** (`pg_depend.deptype = 'e'`), not by name: that states
+   the actual reason `postgres` cannot revoke on them, covers all three without
+   enumerating them, and will cover the next extension object.
+
+   This exclusion was a correction. The first draft named only `spatial_ref_sys`,
+   which would have made the migration **fail its own postcondition** — revoke
+   everything reachable, then RAISE because two PostGIS views still held the
+   grants, aborting and landing nothing. None of the three holds user data.
+
+### Smoke
+
+`trips` 43, `trust_events` 5, `trip_events` 0, 750 policies in `public`,
+relations 434 — all unchanged, and `supabase_migrations` accepted the row, so
+the migration path is still operational.

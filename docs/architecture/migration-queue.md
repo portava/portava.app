@@ -22,7 +22,7 @@ its gate before the next begins. Updated as rows land.
 | 12 | `2420` trip kernel foundation | **2334 → 2337** | ✓ | production has no `trips.version` | queued | — | — |
 | 13 | `2450` trip/participant families | **2420** | — | — | queued | — | — |
 | 14 | `2500` `JOIN_VIA_LINK` + host | **2450** | — | — | queued | — | — |
-| 15 | `2490` destructive privilege boundary | none | — | 385 offenders, 3 extension-owned excluded | queued | vacuity guard ≥300 relations | — |
+| 15 | `2490` destructive privilege boundary | none | ✓ | 375 app-owned offenders → **0**; 3 extension-owned excluded | **APPLIED prod 20260908011416** | vacuity guard ≥300 relations; 3472 `has_table_privilege` probes, 0 held | ✓ |
 | — | `2224`, `2315` → `2333` | each other | — | both tables absent in production | queued | 2333 aborts without them | — |
 
 ## Not queued, and why

@@ -116,7 +116,7 @@ measured, migration self-declares and carries a postcondition, not re-audited.
 | 2470 | media canonical columns, flag-agnostic | absent | **CANNOT-VERIFY** | `blocked_by_owner_decision` — **MEDIA_CANONICAL_FLAG** | V |
 | 2480 | sensing contribution sessions | absent | absent | `ready_for_manual_apply` | M |
 | 2481 | sensing sessions Option A issuer | absent | absent | `blocked_by_owner_decision` — **SENSING_AUTH_POSTURE**. Its CHECK *encodes* Option A; applying it takes the decision | V |
-| 2490 | destructive privilege boundary (schema-wide) | absent | absent | `ready_for_manual_apply` — apply to CI first | V |
+| 2490 | destructive privilege boundary (schema-wide) | **present** | **present** | **`applied`** — CI `20260908011111`, production `20260908011416`. 375 app-owned offenders → 0; `service_role` 3346 and client DML 3019 both unchanged | V |
 | 2250 | media asset canonical model | absent | see 2470 | **`do_not_apply` as written** — its own postcondition asserts `media_canonical_enabled` is FALSE; it is TRUE in production, so it fails on itself. 2470 exists because of this | V |
 
 ### Why 2470 is CANNOT-VERIFY on CI
