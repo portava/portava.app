@@ -23,13 +23,35 @@
  * Files listed in ASYNC_HANDLER_LEGACY_FILES are skipped; they pre-date this
  * policy. Do NOT add new filenames to that list — fix the handler instead.
  *
+ * ── THE LIST HAS TO STAY HONEST BY ITSELF ────────────────────────────────────
+ * An allowlist nothing audits stops being a burn-down and becomes furniture.
+ * Every other allowlist in this repo fails on its own staleness — the unchecked-
+ * reads ledger, the silent-writes baseline, the Supabase guard's EXEMPT list,
+ * the guard registry — and this one did not, so two things could happen with no
+ * signal at all:
+ *
+ *   a file MIGRATED and left on the list stays exempt for ever, and the exemption
+ *   is then protecting nothing while still silencing the file if it regresses;
+ *
+ *   a file DELETED and left on the list is a line a reviewer reads as a
+ *   considered decision about something that is not there.
+ *
+ * Both now FAIL. Measured when the check was added: all 68 listed files still
+ * carried bare handlers — 1,018 of them — so the list was accurate on the day,
+ * which is exactly when to add the mechanism rather than after it has rotted.
+ *
+ * The outstanding handler COUNT is printed too. "68 legacy file(s) skipped" gave
+ * a reader no sense of the size of the debt, and a burn-down whose size is
+ * invisible is not being burned down.
+ *
  * Usage (from artifacts/api-server):
  *   pnpm run check:async-handlers
  * or directly:
  *   node --import tsx/esm src/scripts/checkAsyncHandlers.ts
  *
- * Exit code 0 → no violations found in non-legacy route files
- * Exit code 1 → one or more bare async handlers found in non-legacy files
+ * Exit code 0 → no violations in non-legacy files AND the legacy list is honest
+ * Exit code 1 → a bare async handler in a non-legacy file, or a legacy entry
+ *               naming a file that no longer exists or no longer needs it
  */
 
 import { readdirSync, readFileSync } from "node:fs";
@@ -197,9 +219,29 @@ const violations: Violation[] = [];
 const skippedLegacy: string[] = [];
 const cleanFiles: string[] = [];
 
+/** How many bare handlers each legacy file still carries — the size of the debt. */
+const legacyDebt = new Map<string, number>();
+
+/** Count bare handlers in a file, using the same three primitives as the scan below. */
+function countBareHandlers(src: string): number {
+  let n = 0;
+  ROUTER_METHOD_RE.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = ROUTER_METHOD_RE.exec(src)) !== null) {
+    const openParenIdx = m.index + m[0].length - 1;
+    for (const arg of splitTopLevelArgs(extractParenBlock(src, openParenIdx))) {
+      if (isBareAsyncCallback(arg)) n++;
+    }
+  }
+  return n;
+}
+
 for (const filename of routeFiles) {
   if (ASYNC_HANDLER_LEGACY_FILES.has(filename)) {
     skippedLegacy.push(filename);
+    // The exemption is re-earned on every run: a file that no longer has a bare
+    // handler must leave the list, or the list is claiming a debt that is paid.
+    legacyDebt.set(filename, countBareHandlers(stripComments(readFileSync(join(routesDir, filename), "utf-8"))));
     continue;
   }
 
@@ -240,13 +282,49 @@ for (const filename of routeFiles) {
   }
 }
 
+// ── The legacy list audits itself ─────────────────────────────────────────────
+
+const onDisk = new Set(routeFiles);
+const listProblems: string[] = [];
+
+for (const filename of [...ASYNC_HANDLER_LEGACY_FILES].sort()) {
+  if (!onDisk.has(filename)) {
+    listProblems.push(
+      `ASYNC_HANDLER_LEGACY_FILES names "${filename}", which is not in src/routes/. A stale exemption is a ` +
+        `line a reviewer reads as a considered decision about a file that is not there. Remove it.`,
+    );
+    continue;
+  }
+  if (legacyDebt.get(filename) === 0) {
+    listProblems.push(
+      `ASYNC_HANDLER_LEGACY_FILES names "${filename}", but it no longer contains a single bare async ` +
+        `handler — it has been MIGRATED. Remove it from the list in the same change that finished the ` +
+        `migration. While it stays, the exemption protects nothing and silences the file if it regresses.`,
+    );
+  }
+}
+
+const outstanding = [...legacyDebt.values()].reduce((a, b) => a + b, 0);
+
+if (listProblems.length > 0) {
+  console.error(
+    `\nERROR: the legacy allowlist in src/scripts/asyncHandlerLegacy.ts is out of date ` +
+      `(${listProblems.length} problem(s)). The list is a burn-down, and a burn-down nothing audits ` +
+      `stops shrinking:\n\n` +
+      listProblems.map((p) => `  • ${p}`).join("\n") +
+      `\n`,
+  );
+  process.exit(1);
+}
+
 // ── Report ────────────────────────────────────────────────────────────────────
 
 if (violations.length === 0) {
   console.log(
     `check:async-handlers PASSED\n` +
       `  ${cleanFiles.length} route file(s) clean\n` +
-      `  ${skippedLegacy.length} legacy file(s) skipped (awaiting migration)`,
+      `  ${skippedLegacy.length} legacy file(s) skipped, still carrying ${outstanding} bare handler(s) ` +
+      `(awaiting migration — this number must shrink)`,
   );
   process.exit(0);
 }

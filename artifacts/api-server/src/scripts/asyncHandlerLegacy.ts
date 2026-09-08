@@ -15,6 +15,21 @@
  *   - src/scripts/checkAsyncHandlers.ts  (standalone CI guard)
  */
 
+/**
+ * AUDITED ON EVERY RUN, as of 2026-09-08. checkAsyncHandlers.ts now FAILS if an
+ * entry here names a file that does not exist, or a file that no longer contains
+ * a single bare async handler. Before that mechanism existed, five files on this
+ * list had already been migrated and nobody knew — neighborhoods.ts,
+ * placesCanonical.ts, tripReadiness.ts, tripReservations.ts and verification.ts
+ * were exempt from a policy they already complied with, which meant a
+ * regression in any of them would have been silent. They were removed in the
+ * same change that added the audit.
+ *
+ * The guard also prints how many bare handlers the remaining entries still
+ * carry, because "63 legacy file(s) skipped" gives a reader no sense of the size
+ * of the debt, and a burn-down whose size is invisible is not being burned down.
+ */
+
 /** Bare filenames (no path) of route files with known legacy bare async handlers. */
 export const ASYNC_HANDLER_LEGACY_FILES = new Set([
   "adminCompass.ts",
@@ -83,12 +98,7 @@ export const ASYNC_HANDLER_LEGACY_FILES = new Set([
   "devices.ts",
   "keyPackages.ts",
   // Verification routes — added before asyncHandler was enforced.
-  "verification.ts",
   // Neighborhood + trip-readiness routes — added before asyncHandler was enforced.
-  "neighborhoods.ts",
-  "tripReadiness.ts",
   // Reservations import route — added before asyncHandler was enforced.
-  "tripReservations.ts",
   // Canonical places routes — added before asyncHandler was enforced.
-  "placesCanonical.ts",
 ]);
