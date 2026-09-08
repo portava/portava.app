@@ -55,6 +55,42 @@ export function isDeferred(r: ReversalResult): r is ReversalDeferred {
   return r.ok === true && (r as ReversalDeferred).restored === false;
 }
 
+/**
+ * How many rows a mutation ACTUALLY touched.
+ *
+ * supabase-js does not report an affected-row count unless the statement is
+ * made RETURNING with `.select()`; without it, `data` is null on success and a
+ * statement that matched NOTHING is indistinguishable from one that matched
+ * everything — both resolve `{ data: null, error: null }`. Every restoration
+ * below therefore selects, and every one of them reads this before claiming it
+ * restored anything.
+ */
+function affectedRows(data: unknown): number {
+  if (data == null) return 0;
+  return Array.isArray(data) ? data.length : 1;
+}
+
+/**
+ * The reversal statement matched no row: the target does not exist, or it is
+ * not the appellant's. Either way NOTHING was reversed, so this is a failure —
+ * the route holds the appeal in `under_review` rather than closing it on a
+ * restoration that did not happen.
+ */
+function matchedNothing(
+  appeal: Appeal,
+  what: string,
+): ReversalNoop {
+  console.error(
+    `[resolveAppeal] ${what} matched no row — nothing reversed. ` +
+    `appeal=${appeal.id} target_type=${appeal.target_type} target=${appeal.target_id} user=${appeal.appellant_id}`,
+  );
+  return {
+    ok: false,
+    action: "noop",
+    reason: `${what} matched no row (target missing, already gone, or not owned by the appellant)`,
+  };
+}
+
 export async function resolveAppeal(
   sc: any,
   appeal: Appeal,
@@ -65,7 +101,7 @@ export async function resolveAppeal(
     // ── Content restoration ─────────────────────────────────────────────────
 
     case "post": {
-      const { error } = await sc
+      const { data, error } = await sc
         .from("posts")
         .update({ deleted_at: null, updated_at: new Date().toISOString() })
         .eq("id", target_id)
@@ -75,28 +111,37 @@ export async function resolveAppeal(
         // this function then reported as a silent "noop" — the appeal resolved
         // while the post stayed deleted. The sibling memory case already uses
         // that table's own owner_id, so the per-table naming was known.
-        .eq("author_id", appellant_id);
+        .eq("author_id", appellant_id)
+        .select("id");
       if (error) return { ok: false, action: "noop", reason: `post restore failed: ${error.message}` };
+      // Zero matched rows resolves as `error: null`, so the ownership filter
+      // above fails SILENTLY: the post is someone else's, or gone. The old code
+      // read only `error` and answered "post_restored" either way.
+      if (affectedRows(data) === 0) return matchedNothing(appeal, "post restore");
       return { ok: true, action: "post_restored" };
     }
 
     case "memory": {
-      const { error } = await sc
+      const { data, error } = await sc
         .from("memories")
         .update({ state: "published", updated_at: new Date().toISOString() })
         .eq("id", target_id)
-        .eq("owner_id", appellant_id);
+        .eq("owner_id", appellant_id)
+        .select("id");
       if (error) return { ok: false, action: "noop", reason: `memory restore failed: ${error.message}` };
+      if (affectedRows(data) === 0) return matchedNothing(appeal, "memory restore");
       return { ok: true, action: "memory_restored" };
     }
 
     case "highlight": {
-      const { error } = await sc
+      const { data, error } = await sc
         .from("highlights")
         .update({ deleted_at: null, updated_at: new Date().toISOString() })
         .eq("id", target_id)
-        .eq("owner_id", appellant_id);
+        .eq("owner_id", appellant_id)
+        .select("id");
       if (error) return { ok: false, action: "noop", reason: `highlight restore failed: ${error.message}` };
+      if (affectedRows(data) === 0) return matchedNothing(appeal, "highlight restore");
       return { ok: true, action: "highlight_restored" };
     }
 
@@ -104,15 +149,20 @@ export async function resolveAppeal(
 
     case "trust_score_event": {
       // Dismiss the offending trust event so TrustScoreService excludes it
-      const { error } = await sc
+      const { data, error } = await sc
         .from("trust_events")
         .update({
           status:      "dismissed",
           reviewed_by: null,
         })
         .eq("id", target_id)
-        .eq("user_id", appellant_id);
+        .eq("user_id", appellant_id)
+        .select("id");
       if (error) return { ok: false, action: "noop", reason: `trust event dismiss failed: ${error.message}` };
+      // The trust event was never dismissed — it is not the appellant's, or it
+      // is gone. Returning here also stops the compensating +2 below from being
+      // awarded for an offence that was never actually reversed.
+      if (affectedRows(data) === 0) return matchedNothing(appeal, "trust event dismiss");
 
       // Counter-event: small positive signal to offset the appeal friction
       await recordTrustEvent(sc, {
@@ -133,28 +183,56 @@ export async function resolveAppeal(
     case "no_show": {
       // target_id is event_attendee_states row identified by event+user
       // We update by event_id stored as target_id — look up and clear no_show_at
-      const { error } = await sc
+      const { data, error } = await sc
         .from("event_attendee_states")
         .update({ no_show_at: null, no_show_by: null, updated_at: new Date().toISOString() })
         .eq("event_id", target_id)
-        .eq("user_id", appellant_id);
+        .eq("user_id", appellant_id)
+        .select("event_id, user_id");
       if (error) {
-        // Fallback: try filtering by user_id + event_id encoded as target_id
         return { ok: false, action: "noop", reason: `no_show clear failed: ${error.message}` };
       }
+      // No attendee-state row for this (event, user): the no-show this appeal
+      // contests is not recorded where the clear looked, so nothing was cleared.
+      if (affectedRows(data) === 0) return matchedNothing(appeal, "no_show clear");
       return { ok: true, action: "no_show_cleared" };
     }
 
     // ── Membership restoration ──────────────────────────────────────────────
 
     case "event_membership": {
-      // Restore removed RSVP to attending
-      const { error } = await sc
+      // The EXACT twin of the trip_membership defect below: removing an
+      // attendee DELETES the RSVP row (routes/events.ts host-removal, leave and
+      // cancel paths all `.from("event_rsvps").delete()`), so this UPDATE
+      // matches zero rows in precisely the case the appeal is about — and zero
+      // matched rows resolves as `error: null`, which the old code reported as
+      // "event_membership_restored".
+      const { data, error } = await sc
         .from("event_rsvps")
         .update({ status: "attending", updated_at: new Date().toISOString() })
         .eq("event_id", target_id)
-        .eq("user_id", appellant_id);
+        .eq("user_id", appellant_id)
+        .select("event_id, user_id, status");
       if (error) return { ok: false, action: "noop", reason: `event rsvp restore failed: ${error.message}` };
+      if (affectedRows(data) === 0) {
+        // No RSVP row: re-creating one is an INSERT, and what an insert means
+        // here — does event capacity still apply, does the appellant land on
+        // the waitlist, does a closed event reopen for them — is a product
+        // decision this function must not make on a moderator's behalf.
+        const reason =
+          "event_rsvps row absent (the RSVP was removed by DELETE); re-creating it is an INSERT " +
+          "whose capacity and waitlist semantics are not decided here";
+        console.error(
+          `[resolveAppeal] restore_requires_policy appeal=${appeal.id} event=${target_id} user=${appellant_id} — ${reason}`,
+        );
+        return {
+          ok: true,
+          action: "restore_requires_policy",
+          restored: false,
+          reason,
+          evidence: { appealId: appeal.id, targetType: target_type, targetId: target_id, userId: appellant_id },
+        };
+      }
       return { ok: true, action: "event_membership_restored" };
     }
 
@@ -266,12 +344,17 @@ export async function resolveAppeal(
     // to a safe draft/open state so the owner can review before re-publishing.
 
     case "event": {
-      const { error } = await sc
+      const { data, error } = await sc
         .from("events")
         .update({ state: "open", updated_at: new Date().toISOString() })
         .eq("id", target_id)
-        .eq("host_id", appellant_id);
+        .eq("host_id", appellant_id)
+        .select("id");
       if (error) return { ok: false, action: "noop", reason: `event restore failed: ${error.message}` };
+      // The `host_id` filter is authorization, and a failed authorization here
+      // matched zero rows without an error — the appeal closed reporting
+      // "event_restored" for an event the appellant does not host.
+      if (affectedRows(data) === 0) return matchedNothing(appeal, "event restore");
       return { ok: true, action: "event_restored" };
     }
 
@@ -318,24 +401,31 @@ export async function resolveAppeal(
         return { ok: true, action: "trip_restored" };
       }
       // trip-kernel:legacy-path — the flag-off twin of UPDATE_TRIP above.
-      const { error } = await sc
+      const { data, error } = await sc
         .from("trips")
         .update({ status: "planning", updated_at: new Date().toISOString() })
         .eq("id", target_id)
-        .eq("owner_id", appellant_id);
+        .eq("owner_id", appellant_id)
+        .select("id");
       if (error) return { ok: false, action: "noop", reason: `trip restore failed: ${error.message}` };
+      // The kernel path above refuses a non-owner with TRIP_AUTH_NOT_OWNER; with
+      // the flag OFF the same refusal has to come from the affected-row count,
+      // or the legacy twin stays a false success while the gated one is honest.
+      if (affectedRows(data) === 0) return matchedNothing(appeal, "trip restore");
       return { ok: true, action: "trip_restored" };
     }
 
     // ── Review restoration ──────────────────────────────────────────────────
 
     case "review": {
-      const { error } = await sc
+      const { data, error } = await sc
         .from("reviews")
         .update({ state: "published", updated_at: new Date().toISOString() })
         .eq("id", target_id)
-        .eq("reviewer_id", appellant_id);
+        .eq("reviewer_id", appellant_id)
+        .select("id");
       if (error) return { ok: false, action: "noop", reason: `review restore failed: ${error.message}` };
+      if (affectedRows(data) === 0) return matchedNothing(appeal, "review restore");
       return { ok: true, action: "review_restored" };
     }
 

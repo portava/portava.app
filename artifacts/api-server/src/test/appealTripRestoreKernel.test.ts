@@ -93,8 +93,14 @@ function makeFakeClient(state: State) {
     let verb = "select";
     let payload: any = null;
     let single = false;
+    let returning = false;
     const b: any = {
-      select() { return b; },
+      // `.select()` makes the statement RETURNING. Modelling that is not
+      // decoration: without it an UPDATE resolves `{ data: null }` whether it
+      // matched every row or none, which is the exact blindness the affected-row
+      // check in resolveAppeal exists to remove — a fake that cannot express
+      // "zero matched, no error" cannot test it.
+      select() { returning = true; return b; },
       insert(p: any) { verb = "insert"; payload = p; return b; },
       update(p: any) { verb = "update"; payload = p; return b; },
       delete() { verb = "delete"; return b; },
@@ -107,7 +113,11 @@ function makeFakeClient(state: State) {
       const match = () => src(table).filter((r) => preds.every((p) => p(r)));
       if (verb === "select") { const m = match(); return { data: single ? (m[0] ?? null) : m, error: null }; }
       state.writes.push({ table, verb, payload, filters });
-      if (verb === "update") { for (const r of match()) Object.assign(r, payload); return { data: null, error: null }; }
+      if (verb === "update") {
+        const m = match();
+        for (const r of m) Object.assign(r, payload);
+        return { data: returning ? (single ? (m[0] ?? null) : m) : null, error: null };
+      }
       return { data: null, error: null };
     }
     return b;
