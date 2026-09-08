@@ -196,11 +196,21 @@ async function applyRankingNudge(
   fitDelta: number,
 ): Promise<boolean> {
   try {
-    const { data } = await db
+    // This is a read-modify-WRITE of a whole JSON column. `category_weights` is
+    // upserted back in full a few lines down, so an unchecked read does not
+    // merely lose one nudge: `{ data: null }` from a failed read becomes `{}`,
+    // and the upsert then replaces every category weight this user has
+    // accumulated with a single ±0.x entry for the category that happened to be
+    // nudged. The ranking surface documented above — CompassFeedBuilder,
+    // CompassRecommendationEngine — reads exactly that column, so the user's
+    // learned feed is wiped, not stale. Return false (the caller's "nudge not
+    // applied") and leave the stored weights alone.
+    const { data, error: readErr } = await db
       .from("compass_user_preferences")
       .select("category_weights")
       .eq("user_id", userId)
       .maybeSingle();
+    if (readErr) return false;
     const weights: Record<string, number> =
       ((data as any)?.category_weights as Record<string, number>) ?? {};
     const step = fitDelta > 0 ? WEIGHT_NUDGE_STEP : -WEIGHT_NUDGE_STEP;
