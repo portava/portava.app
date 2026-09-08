@@ -752,6 +752,25 @@ const EXEMPT = [
   },
 
   {
+    file: 'src/test/notificationPushTokenRegistryUnreadable.test.ts',
+    pinnedTestEnv: true,
+    reason:
+      'Registered unit test for the push-token registry read, over a REAL createClient for the same reason '
+      + 'notificationIssuance.test.ts is: the question is whether supabase-js RESOLVES a PostgREST 500 into an '
+      + '{error} the caller then ignores, and a hand-written double cannot answer it -- a double that returns '
+      + 'whatever the test asked for proves the test, not the client. It also keys its induced failure on the '
+      + 'exact projected column (select=push_token) rather than on the table, because notification_devices is read '
+      + 'elsewhere in the same handler and a table-wide failure would trip a different branch. That precision only '
+      + 'exists on the wire. It names NO Supabase credential variable: the URL and key are the in-file literals '
+      + '"http://supabase.test" and "test-service-role-key", and the client is handed an injected counting fetch as '
+      + 'its ONLY transport, so no request can leave the process whatever the environment holds -- a stronger pin '
+      + 'than the CI one, in the same way mediaAccessFailClosed.test.ts is. pinnedTestEnv is set because CI invokes '
+      + 'it and the CI-surface rule requires the flag on any exemption CI runs. EXEMPTION MEANS UNGUARDED, NOT SAFE '
+      + '-- if the injected fetch is ever removed, or either literal ever comes from the environment, the exemption '
+      + 'is void and this file must import the guard.',
+  },
+
+  {
     file: 'src/test/authSignupStatusNoClient.test.ts',
     pinnedTestEnv: true,
     reason:
