@@ -17,17 +17,32 @@
  * The canonical tables are the Trip aggregate's own rows: trips, trip_members,
  * trip_plan_items (tripKernelWriterBaseline.ts).
  *
- * Each write is either GATED — its statement's leading comment carries the
- * token `trip-kernel:legacy-path` (LEGACY_PATH_MARKER) and the file imports
- * lib/tripKernel — or UNGATED. The baseline records both `direct` (all
- * writes) and `ungated` (writes with no kernel path) per file, and the check:
+ * Each write is one of three things:
+ *   GATED         its statement's leading comment carries the token
+ *                 `trip-kernel:legacy-path` (LEGACY_PATH_MARKER) and the file
+ *                 imports lib/tripKernel — a claim that a command exists.
+ *   NON-AGGREGATE its statement's leading comment carries
+ *                 `trip-kernel:non-aggregate(<table>.<column>, ...)`
+ *                 (NON_AGGREGATE_MARKER) — a claim that this write must NOT be
+ *                 a command because bumping trips.version would be wrong here.
+ *                 Unlike the legacy marker this one is CHECKED, not merely
+ *                 recorded: the declared columns must equal the keys of the
+ *                 statement's own payload object literal, on the same table,
+ *                 on an `update`. A payload the check cannot read (a spread, a
+ *                 variable, a computed key) is refused, and so is a bare
+ *                 marker with no column list. That is what stops an exemption
+ *                 from silently widening to writes nobody argued for.
+ *   UNGATED       neither.
+ * The baseline records `direct` (all writes), `ungated` and `nonAggregate` per
+ * file, and the check:
  *
  *   FAILS (exit 1) when a file not in the baseline writes a canonical table —
- *     a NEW direct writer — or when a listed file's `direct` or `ungated`
- *     count GREW, or when a file carries the marker without importing the
- *     kernel (an annotation is a claim that a command exists; the check
- *     refuses a claim the file cannot back). New code must go through
- *     lib/tripKernel.ts.
+ *     a NEW direct writer — or when a listed file's `direct`, `ungated` or
+ *     `nonAggregate` count GREW, or when a file carries the legacy marker
+ *     without importing the kernel (an annotation is a claim that a command
+ *     exists; the check refuses a claim the file cannot back), or when a
+ *     non-aggregate declaration does not match the columns the annotated
+ *     statement actually writes. New code must go through lib/tripKernel.ts.
  *   PASSES (exit 0) when every count is <= its baseline. A count BELOW the
  *     baseline is reported so the baseline can be lowered; a ratchet that is
  *     never tightened stops being read.
@@ -111,6 +126,85 @@ function walk(dir: string, out: string[]): void {
       out.push(p);
     }
   }
+}
+
+/**
+ * Offsets of every `;` in `text` that actually terminates a statement — i.e.
+ * every one NOT inside a line comment, a block comment, a string or a template
+ * literal. Computed once per file.
+ *
+ * WHY THIS EXISTS
+ * A marker binds to one statement by sitting after the previous statement's
+ * `;`. Reading that `;` with a plain lastIndexOf means the FIRST semicolon
+ * anybody types in the prose above a write silently cuts the marker off from
+ * the statement it documents, and the write reappears as ungated. That is
+ * fail-closed, so it is not a hole — but the requirement here is that a
+ * non-aggregate exemption be ARGUED, and an argument that cannot contain a
+ * semicolon is not a serious one.
+ *
+ * A regex literal is skipped with the usual previous-significant-token
+ * heuristic. If that heuristic ever misfires the window moves, the declaration
+ * is still checked column-for-column against the payload, and a marker that
+ * falls outside its window counts as UNGATED — so every failure mode of this
+ * scanner is a louder check, never a quieter one.
+ */
+export function statementSemicolons(text: string): number[] {
+  const out: number[] = [];
+  let prevSignificant = "";
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i];
+    if (ch === "/" && text[i + 1] === "/") {
+      const nl = text.indexOf("\n", i);
+      i = nl === -1 ? text.length : nl;
+      continue;
+    }
+    if (ch === "/" && text[i + 1] === "*") {
+      const close = text.indexOf("*/", i + 2);
+      i = close === -1 ? text.length : close + 1;
+      continue;
+    }
+    if (ch === '"' || ch === "'" || ch === "`") {
+      let j = i + 1;
+      while (j < text.length) {
+        if (text[j] === "\\") { j += 2; continue; }
+        if (text[j] === ch) break;
+        j += 1;
+      }
+      i = j;
+      prevSignificant = ch;
+      continue;
+    }
+    // A `/` here is division when the previous significant token could end an
+    // expression, and a regex literal otherwise.
+    if (ch === "/" && !/[A-Za-z0-9_$)\]]/.test(prevSignificant)) {
+      let j = i + 1;
+      let inClass = false;
+      while (j < text.length && text[j] !== "\n") {
+        if (text[j] === "\\") { j += 2; continue; }
+        if (text[j] === "[") inClass = true;
+        else if (text[j] === "]") inClass = false;
+        else if (text[j] === "/" && !inClass) break;
+        j += 1;
+      }
+      if (j < text.length && text[j] === "/") { i = j; prevSignificant = "/"; continue; }
+      // Unterminated on this line: it was division after all.
+    }
+    if (ch === ";") out.push(i);
+    if (!/\s/.test(ch)) prevSignificant = ch;
+  }
+  return out;
+}
+
+/** The offset just past the last statement-terminating `;` strictly before `at`. */
+function statementStart(semis: number[], at: number, floor: number): number {
+  let lo = 0;
+  let hi = semis.length - 1;
+  let best = -1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (semis[mid] < at) { best = semis[mid]; lo = mid + 1; } else hi = mid - 1;
+  }
+  return Math.max(floor, best + 1);
 }
 
 /**
@@ -231,6 +325,7 @@ export function countCanonicalWrites(
   let gated = 0;
   let nonAggregate = 0;
   const refusedNonAggregate: string[] = [];
+  const semis = statementSemicolons(text);
   for (const m of text.matchAll(LITERAL_FROM_RE)) {
     if (!canonical.has(m[2])) continue;
     const table = m[2];
@@ -245,11 +340,9 @@ export function countCanonicalWrites(
     count += 1;
     // The marker belongs to THIS statement only if it sits after the previous
     // statement's `;` — one marker cannot cover two writes.
-    const lead = text.slice(Math.max(0, at - MARKER_WINDOW), at);
-    const stmt = lead.slice(lead.lastIndexOf(";") + 1);
+    const stmt = text.slice(statementStart(semis, at, Math.max(0, at - MARKER_WINDOW)), at);
     if (stmt.includes(LEGACY_PATH_MARKER)) gated += 1;
-    const wide = text.slice(Math.max(0, at - NON_AGGREGATE_WINDOW), at);
-    const naStmt = wide.slice(wide.lastIndexOf(";") + 1);
+    const naStmt = text.slice(statementStart(semis, at, Math.max(0, at - NON_AGGREGATE_WINDOW)), at);
     const declared = NON_AGGREGATE_RE.exec(naStmt);
     if (declared) {
       const payloadAt = start + (verbMatch.index ?? 0) + verbMatch[0].length;

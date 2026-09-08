@@ -6,8 +6,8 @@
  * CANONICAL_TRIP_TABLES fails the check; a listed file whose count grows fails
  * the check. Counts may only go DOWN, as writers move to lib/tripKernel.ts.
  *
- * TWO NUMBERS PER FILE
- * ====================
+ * THREE NUMBERS PER FILE
+ * ======================
  *   direct   every literal `.from("<canonical>").insert|update|upsert|delete`
  *            in the file — the Phase 0 inventory. This is the number that was
  *            47 on 2026-09-07 and it does NOT shrink when a writer is
@@ -20,10 +20,18 @@
  *            that never calls the kernel. This is the number the ratchet
  *            exists for. When it reaches zero, the flag can be flipped and the
  *            legacy writes deleted, at which point `direct` falls too.
+ *   nonAggregate  the subset of `direct` annotated NON_AGGREGATE_MARKER with a
+ *            declaration the check VERIFIED against the statement's own payload
+ *            columns — writes that must stay outside the aggregate because a
+ *            trips.version bump would be semantically wrong at that site. These
+ *            are not ungated and they are not gated; they are out of scope, and
+ *            the count is ratcheted so the exempt surface cannot grow silently.
  *
- * SURVEYED 2026-09-07 on claude/portava-continuation-uqta94 by
+ * SURVEYED 2026-09-08 on claude/portava-continuation-uqta94 by
  * `check:trip-kernel-writers --print-baseline`. 47 direct writes in 18 files;
- * 8 of them ungated (was 40 before the trip and participant families landed
+ * 40 kernel-gated, 5 declared non-aggregate, 2 ungated (was 8 ungated before
+ * the fifth pass declared the five reminder / derived-column writes
+ * non-aggregate per column and gated the appeal trip restore) (was 40 before the trip and participant families landed
  * in migration 2450, 32 before routes/trips-expansion.ts and routes/requests.ts
  * were gated in the third pass, 22 before the satellite plan-item writers in
  * routes/plan.ts, routes/tripReservations.ts, routes/telegraphChat.ts,
@@ -108,35 +116,74 @@
  * report): routes/events.ts (ADD_PLAN, crew, creator_id stamped by the kernel
  * where the insert leaves it NULL).
  *
- * CLASSIFIED OUT OF THE AGGREGATE, NOT MIGRATED
- * =============================================
- *   lib/tripReminderScheduler.ts (3) and routes/admin.ts's reminder reset (1
- *   of its 3) write trips.reminder_sent_at / reminder_retry_count /
- *   reminder_delivered_at — scheduler claim columns (compare-and-set,
- *   at-most-once delivery), not aggregate state. The reason is not "they are
- *   infrastructure": trips.version is a CLIENT CONCURRENCY TOKEN (§18.3/§18.4,
- *   If-Match), so a kernel command per reminder would bump it on every send
- *   and hand every client holding a version a spurious TRIP_VERSION_CONFLICT
- *   for a change it can neither see nor care about. Compare-and-set claim
- *   columns do not belong in an aggregate whose version means "the trip
- *   changed". They stay direct until those three columns move off `trips`
- *   into a sidecar table, which is the change that removes them from this
- *   inventory. Owner decision recorded 2026-09-07 (fourth pass); do not
- *   re-litigate without moving the columns.
+ * DECLARED NON-AGGREGATE (fifth pass) — five writes, each named column by column
+ * ============================================================================
+ * These are annotated NON_AGGREGATE_MARKER at the statement, with the exact
+ * `<table>.<column>` set they write. checkTripKernelWriters parses each
+ * statement's own payload literal and refuses the declaration unless the
+ * declared set EQUALS the written set, so none of these can grow a column
+ * without failing the check. The argument is per site and lives in the file:
  *
- *   services/contentTranslation.ts (1) writes trips.original_language from
- *   language detection — a DERIVED column (a function of title/notes), not a
- *   state change a client should see as a version bump. Same classification.
+ *   lib/tripReminderScheduler.ts (3)  trips.reminder_sent_at (claim),
+ *     trips.reminder_retry_count (recovery CAS), trips.reminder_delivered_at
+ *     (deliver). Two independent reasons, each sufficient. (a) trips.version is
+ *     the CLIENT concurrency token (§18.3/§18.4, If-Match); an hourly push
+ *     sweep bumping it would hand every crew member holding a version a
+ *     TRIP_VERSION_CONFLICT for a change they cannot see. (b) All three are
+ *     compare-and-set: `.is("reminder_sent_at", null)`,
+ *     `.eq("reminder_retry_count", rawCount)`, `.is("reminder_delivered_at",
+ *     null)`. trip_kernel_execute checks expected_trip_version and then applies
+ *     UNCONDITIONALLY — it cannot carry those predicates, so a command here
+ *     would not just be noisy, it would DELETE the at-most-once delivery
+ *     guarantee (migrations 0138/0139) these columns exist to provide.
  *
- *   services/appeals/resolveAppeal.ts (2) — NOT BUILT, owner decision
- *   APPEAL_RESTORE_SEMANTICS: 'trip_membership' UPDATEs trip_members SET
- *   role='member' for a row REMOVE_PARTICIPANT (and the legacy delete) has
- *   DELETED, so an approved appeal for a removed member restores nothing
- *   today; 'trip' UPDATEs trips SET status='planning', which does not undo
- *   ADMIN_HIDE_TRIP (visibility) and would exit a terminal cancelled /
- *   archived state the kernel refuses. The commands these need
- *   (ADMIN_RESTORE_PARTICIPANT re-inserting a row; ADMIN_RESTORE_TRIP restoring
- *   visibility) do not exist and what "restore" means is a product decision.
+ *   routes/admin.ts (1 of its 3)  the reset-reminder endpoint clears the same
+ *     three claim columns — the inverse of the scheduler's claim, so the same
+ *     argument. There is also no command that could carry it: UPDATE_TRIP's
+ *     allow-list (2450, c_trip_patch) does not contain them, and widening it
+ *     would put scheduler bookkeeping INTO the aggregate rather than take it
+ *     out. Its audit trail is the moderation_actions row, which is the right
+ *     place for an operator action on the notification pipeline.
+ *
+ *   services/contentTranslation.ts (1)  trips.original_language, a DERIVED
+ *     column — the detected language of text the user just wrote, reproducible
+ *     by re-running detection. Both trip callers (routes/trips.ts:356 create,
+ *     :978 patch) invoke detectAndStoreLanguage FIRE-AND-FORGET after their own
+ *     write has already returned the new version to the client in
+ *     X-Trip-Version. A command would land a second bump moments later and the
+ *     client's next If-Match write — with the version this API just told it to
+ *     hold — would be refused, non-deterministically, depending on how long the
+ *     language provider took. A user's own successful save must not invalidate
+ *     their own concurrency token.
+ *
+ * These stay direct. For the reminder columns the change that removes them from
+ * this inventory is moving them off `trips` into a sidecar table, not a
+ * command. Owner decision recorded 2026-09-07 (fourth pass), re-argued per
+ * column 2026-09-08 (fifth pass); do not re-litigate without moving the columns.
+ *
+ * STILL UNGATED (2)
+ * =================
+ *   routes/events.ts (1)  ADD_PLAN (crew, creator_id stamped by the kernel
+ *     where the insert leaves it NULL). The conversion is WRITTEN and was handed
+ *     over unstaged in the fourth-pass report; another lane owns the file, so
+ *     this pass could not stage it. It is a KERNEL_COMMAND, not an exemption.
+ *
+ *   services/appeals/resolveAppeal.ts (1 of its 2)  the 'trip_membership' case
+ *     UPDATEs trip_members SET role='member' for a row REMOVE_PARTICIPANT (and
+ *     the legacy delete) has DELETED, so it matches 0 rows and the appeal
+ *     resolves reporting "trip_membership_restored" while nothing was restored.
+ *     It is a KERNEL_COMMAND and no existing command can carry it: restoring a
+ *     removed member means RE-INSERTING the row, which is ADD_PARTICIPANT, whose
+ *     capability is `host` (2500) — and the actor here is the removed member,
+ *     not a host. The moderator cannot issue it either: 2450 pins actor_role to
+ *     the command's family, and the admin family contains only ADMIN_HIDE_TRIP.
+ *     The command it needs (ADMIN_RESTORE_PARTICIPANT) requires a new migration
+ *     replacing trip_kernel_execute, and what "restore" means when the row is
+ *     gone — original role? member? does the crew cap still apply? — is a
+ *     product decision (owner decision APPEAL_RESTORE_SEMANTICS). Its sibling
+ *     'trip' case WAS gated this pass: UPDATE_TRIP { status: 'planning' } with
+ *     the appellant as actor, whose `owner` capability is exactly the legacy
+ *     statement's `.eq("owner_id", appellant_id)`.
  */
 
 /** The Trip aggregate's own rows (Trips spec §2.2). */
@@ -193,9 +240,9 @@ export interface WriterBaseline {
 
 export const TRIP_KERNEL_DIRECT_WRITERS: Record<string, WriterBaseline> = {
   "compass/CompassAutopilotEngine.ts":     { direct: 1, ungated: 0 }, // KERNEL-GATED (fourth pass): applyProposal update -> MOVE_PLAN / UPDATE_PLAN / ... (crew, actor = proposal owner)
-  "lib/tripReminderScheduler.ts":          { direct: 3, ungated: 3 }, // reminder bookkeeping columns (not aggregate state; see header)
+  "lib/tripReminderScheduler.ts":          { direct: 3, ungated: 0, nonAggregate: 3 }, // DECLARED NON-AGGREGATE per column (fifth pass): reminder_sent_at / reminder_retry_count / reminder_delivered_at
   "lib/visuals/service.ts":                { direct: 1, ungated: 0 }, // KERNEL-GATED (fourth pass): finalizeVisual cover_url -> SET_TRIP_COVER (system)
-  "routes/admin.ts":                       { direct: 3, ungated: 1 }, // 2 x visibility hide KERNEL-GATED (fourth pass) -> ADMIN_HIDE_TRIP (admin); 1 x reminder reset (not aggregate state; see header)
+  "routes/admin.ts":                       { direct: 3, ungated: 0, nonAggregate: 1 }, // 2 x visibility hide KERNEL-GATED (fourth pass) -> ADMIN_HIDE_TRIP (admin); 1 x reminder reset DECLARED NON-AGGREGATE per column (fifth pass)
   "routes/airport.ts":                     { direct: 3, ungated: 0 }, // ALL KERNEL-GATED (fourth pass): mirror -> UPDATE_PLAN / ADD_PLAN; session plan -> ADD_PLAN (crew)
   "routes/compass.ts":                     { direct: 1, ungated: 0 }, // KERNEL-GATED (fourth pass): proposal confirm -> ADD_PLAN (crew)
   "routes/events.ts":                      { direct: 1, ungated: 1 }, // -> ADD_PLAN
@@ -207,7 +254,7 @@ export const TRIP_KERNEL_DIRECT_WRITERS: Record<string, WriterBaseline> = {
   "routes/tripReservations.ts":            { direct: 1, ungated: 0 }, // KERNEL-GATED (fourth pass): confirm + addToPlan -> ADD_PLAN (crew)
   "routes/trips-expansion.ts":             { direct: 7, ungated: 0 }, // ALL KERNEL-GATED: settings -> UPDATE_TRIP; cancel/complete/archive/delete -> CANCEL_TRIP/COMPLETE_TRIP/ARCHIVE_TRIP x2; join approve -> ADD_PARTICIPANT / SET_PARTICIPANT_ROLE (host, 2500); invite-link join -> JOIN_VIA_LINK (link_holder, 2500)
   "routes/trips.ts":                       { direct: 14, ungated: 0 }, // ALL KERNEL-GATED (contract v2)
-  "services/appeals/resolveAppeal.ts":     { direct: 2, ungated: 2 }, // NOT BUILT — owner decision APPEAL_RESTORE_SEMANTICS (see header)
-  "services/contentTranslation.ts":        { direct: 1, ungated: 1 }, // single-quoted .from('trips') — original_language (derived column, classified out; see header)
+  "services/appeals/resolveAppeal.ts":     { direct: 2, ungated: 1 }, // 'trip' KERNEL-GATED (fifth pass) -> UPDATE_TRIP { status: planning } (owner = the appellant, key appeal:<id>:trip); 'trip_membership' still ungated — no command exists (see header)
+  "services/contentTranslation.ts":        { direct: 1, ungated: 0, nonAggregate: 1 }, // single-quoted .from('trips') — DECLARED NON-AGGREGATE per column (fifth pass): original_language
   "services/hiddenGems/HiddenGemService.ts": { direct: 1, ungated: 0 }, // KERNEL-GATED (fourth pass): submitGem trip attach -> ADD_PLAN (crew); needs 2590
 };
