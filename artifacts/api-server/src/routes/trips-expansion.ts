@@ -11,6 +11,7 @@ import { isBlockedBetween } from "../lib/blockGuard.js";
 import { z } from "zod";
 import crypto from "node:crypto";
 import { getServiceClient } from "../lib/supabase.js";
+import { logger } from "../lib/logger.js";
 import {
   requireUser,
   optionalUser,
@@ -109,6 +110,20 @@ function readUnavailable(table: string, error: any): TripReadUnavailableError {
   return new TripReadUnavailableError(table, String(error?.message ?? error?.code ?? "db_error"));
 }
 
+/**
+ * Append to the trip's audit log. Deliberately non-fatal: a trip really WAS
+ * cancelled even if the audit row did not land, and failing the route would
+ * report the opposite. But the write is not silent any more.
+ *
+ * The old body was `.then(undefined, () => {})`, which is worse than it reads:
+ * a PostgREST builder RESOLVES on a database error, so the rejection handler
+ * never ran and the resolved `{ error }` was discarded unread. Every row this
+ * log failed to write vanished with no trace anywhere. It now binds the error
+ * and logs it, so a systematically-unwritable trip_activity_log — the table
+ * GET /trips/:tripId/activity and the invite-link joiner list both read — is
+ * visible in the server log instead of being inferred from a permanently empty
+ * activity feed.
+ */
 async function logActivity(
   client: any,
   tripId: string,
@@ -116,10 +131,11 @@ async function logActivity(
   eventType: string,
   metadata: Record<string, any> = {},
 ): Promise<void> {
-  await client
+  const { error } = await client
     .from("trip_activity_log")
     .insert({ trip_id: tripId, actor_id: actorId, event_type: eventType, metadata })
-    .then(undefined, () => {});
+    .then((r: any) => r, (err: any) => ({ error: err }));
+  if (error) logger.warn({ err: error, tripId, actorId, eventType }, "trip_activity_log insert failed — audit row lost");
 }
 
 // ---------------------------------------------------------------------------
@@ -526,9 +542,21 @@ router.patch("/trips/:tripId/settings", async (req, res) => {
 
   // Handle planEditors replacement
   if (b.planEditors !== undefined) {
-    await sc.from("plan_editors").delete().eq("trip_id", tripId);
+    // Delete-then-insert, and NEITHER write was bound. The failure that matters
+    // is the second one: the delete lands, the insert does not, and the trip is
+    // left with an EMPTY plan-editor list under `plan_edit_permission:
+    // 'specific_members'` — every delegated editor silently loses plan access
+    // while the route answers 200 with the updated trip. Both are bound now.
+    //
+    // The pair is still NOT atomic: there is no transaction across two PostgREST
+    // calls, so a failed insert leaves the list empty and the client must retry.
+    // Making it atomic needs a DB function; that is a migration and is recorded
+    // in the lane report rather than done here.
+    const { error: peDelErr } = await sc.from("plan_editors").delete().eq("trip_id", tripId);
+    if (peDelErr) { sendError(res, "db_error", peDelErr.message); return; }
     if (b.planEditors.length > 0) {
-      await sc.from("plan_editors").insert(b.planEditors.map((uid) => ({ trip_id: tripId, user_id: uid })));
+      const { error: peInsErr } = await sc.from("plan_editors").insert(b.planEditors.map((uid) => ({ trip_id: tripId, user_id: uid })));
+      if (peInsErr) { sendError(res, "db_error", peInsErr.message); return; }
     }
   }
 
@@ -582,8 +610,21 @@ router.post("/trips/:tripId/cancel", async (req, res) => {
     kernelCancelled = true;
   }
 
+  // A bodyless UPDATE returns `data: null`, so it cannot say how many rows it
+  // matched — `error === null` is NOT "it worked". This route answered the
+  // status word for a write that may have touched NOTHING (and, before this,
+  // for a write that outright FAILED: `.error` was never bound). `.select("id")`
+  // makes the affected-row count observable; zero rows now refuses.
   // trip-kernel:legacy-path — the flag-off twin of CANCEL_TRIP above.
-  if (!kernelCancelled) await sc.from("trips").update({ status: "cancelled", updated_at: new Date().toISOString() }).eq("id", tripId);
+  if (!kernelCancelled) {
+    const { data: cancelRows, error: cancelErr } = await sc
+      .from("trips")
+      .update({ status: "cancelled", updated_at: new Date().toISOString() })
+      .eq("id", tripId)
+      .select("id");
+    if (cancelErr) { sendError(res, "db_error", cancelErr.message); return; }
+    if ((cancelRows ?? []).length === 0) { sendError(res, "not_found", "Trip not found"); return; }
+  }
   await logActivity(sc, tripId, user.id, "trip_cancelled");
 
   // Fire-and-forget: notify all accepted trip members that the trip was cancelled.
@@ -660,8 +701,21 @@ router.post("/trips/:tripId/complete", async (req, res) => {
     kernelCompleted = true;
   }
 
+  // A bodyless UPDATE returns `data: null`, so it cannot say how many rows it
+  // matched — `error === null` is NOT "it worked". This route answered the
+  // status word for a write that may have touched NOTHING (and, before this,
+  // for a write that outright FAILED: `.error` was never bound). `.select("id")`
+  // makes the affected-row count observable; zero rows now refuses.
   // trip-kernel:legacy-path — the flag-off twin of COMPLETE_TRIP above.
-  if (!kernelCompleted) await sc.from("trips").update({ status: "completed", updated_at: new Date().toISOString() }).eq("id", tripId);
+  if (!kernelCompleted) {
+    const { data: completeRows, error: completeErr } = await sc
+      .from("trips")
+      .update({ status: "completed", updated_at: new Date().toISOString() })
+      .eq("id", tripId)
+      .select("id");
+    if (completeErr) { sendError(res, "db_error", completeErr.message); return; }
+    if ((completeRows ?? []).length === 0) { sendError(res, "not_found", "Trip not found"); return; }
+  }
   await logActivity(sc, tripId, user.id, "trip_completed");
   res.json({ status: "completed", tripId });
 });
@@ -704,8 +758,21 @@ router.post("/trips/:tripId/archive", async (req, res) => {
     kernelArchived = true;
   }
 
+  // A bodyless UPDATE returns `data: null`, so it cannot say how many rows it
+  // matched — `error === null` is NOT "it worked". This route answered the
+  // status word for a write that may have touched NOTHING (and, before this,
+  // for a write that outright FAILED: `.error` was never bound). `.select("id")`
+  // makes the affected-row count observable; zero rows now refuses.
   // trip-kernel:legacy-path — the flag-off twin of ARCHIVE_TRIP above.
-  if (!kernelArchived) await sc.from("trips").update({ status: "archived", updated_at: new Date().toISOString() }).eq("id", tripId);
+  if (!kernelArchived) {
+    const { data: archiveRows, error: archiveErr } = await sc
+      .from("trips")
+      .update({ status: "archived", updated_at: new Date().toISOString() })
+      .eq("id", tripId)
+      .select("id");
+    if (archiveErr) { sendError(res, "db_error", archiveErr.message); return; }
+    if ((archiveRows ?? []).length === 0) { sendError(res, "not_found", "Trip not found"); return; }
+  }
   await logActivity(sc, tripId, user.id, "trip_archived");
 
   // Fire-and-forget: notify all accepted trip members that the trip was archived.
@@ -784,8 +851,32 @@ router.delete("/trips/:tripId", async (req, res) => {
     }
   }
 
+  // TRANSITION AGREEMENT (lib/stateMachines/registry.ts, TRIPS_STATUS): the
+  // registry declares `-> archived` from draft/planning/upcoming/active/
+  // completed/cancelled — `archived` is NOT in that `from` list, yet this legacy
+  // path writes 'archived' unconditionally, so a second DELETE re-writes an
+  // already-archived row. The kernel path refuses that as a non-transition; the
+  // two paths therefore disagree by design, and tripKernelExpansion.test.ts pins
+  // the legacy side ("legacy writes archived again, unconditionally") as the
+  // flag-off byte-identity baseline. Left as it is deliberately: a self-write of
+  // the same value is idempotent, not a state change, and unpinning another
+  // lane's recorded baseline to make the two agree is not this lane's call. The
+  // divergence is reported rather than silently closed.
+  // A bodyless UPDATE returns `data: null`, so it cannot say how many rows it
+  // matched — `error === null` is NOT "it worked". This route answered the
+  // status word for a write that may have touched NOTHING (and, before this,
+  // for a write that outright FAILED: `.error` was never bound). `.select("id")`
+  // makes the affected-row count observable; zero rows now refuses.
   // trip-kernel:legacy-path — the flag-off twin of ARCHIVE_TRIP above.
-  if (deleteWrite === "legacy") await sc.from("trips").update({ status: "archived", updated_at: new Date().toISOString() }).eq("id", tripId);
+  if (deleteWrite === "legacy") {
+    const { data: deleteRows, error: deleteErr } = await sc
+      .from("trips")
+      .update({ status: "archived", updated_at: new Date().toISOString() })
+      .eq("id", tripId)
+      .select("id");
+    if (deleteErr) { sendError(res, "db_error", deleteErr.message); return; }
+    if ((deleteRows ?? []).length === 0) { sendError(res, "not_found", "Trip not found"); return; }
+  }
   await logActivity(sc, tripId, user.id, "trip_deleted");
   res.status(204).send();
 });
@@ -979,10 +1070,18 @@ router.post("/trips/:tripId/join-requests/:requestId/approve", async (req, res) 
              { onConflict: "trip_id,user_id" });
   if (memErr) { sendError(res, "db_error", memErr.message); return; }
 
-  await sc
+  // The member row above is committed by this point, so a request that stays
+  // 'pending' here is the WORST outcome this route has: the user IS on the trip
+  // and the owner's join-request queue still shows an unanswered request they
+  // can "approve" again. The write bound no `.error` and had no `.select()`, so
+  // both a failure and a zero-row match answered {status:"approved"}.
+  const { data: approvedRows, error: approvedErr } = await sc
     .from("trip_join_requests")
     .update({ status: "approved", reviewed_by: user.id, reviewed_at: new Date().toISOString() })
-    .eq("id", requestId);
+    .eq("id", requestId)
+    .select("id");
+  if (approvedErr) { sendError(res, "db_error", approvedErr.message); return; }
+  if ((approvedRows ?? []).length === 0) { sendError(res, "not_found", "Join request not found"); return; }
 
   await logActivity(sc, tripId, user.id, "join_request_approved", { userId: requestedUserId });
 
@@ -1060,10 +1159,17 @@ router.post("/trips/:tripId/join-requests/:requestId/decline", async (req, res) 
     return;
   }
 
-  await sc
+  // A decline that did not land leaves the request 'pending' while the requester
+  // is told (and pushed) that it was declined — and the route would say so on a
+  // hard DB failure too, since `.error` was never bound and a bodyless UPDATE
+  // reports no affected-row count.
+  const { data: declinedRows, error: declinedErr } = await sc
     .from("trip_join_requests")
     .update({ status: "declined", reviewed_by: user.id, reviewed_at: new Date().toISOString() })
-    .eq("id", requestId);
+    .eq("id", requestId)
+    .select("id");
+  if (declinedErr) { sendError(res, "db_error", declinedErr.message); return; }
+  if ((declinedRows ?? []).length === 0) { sendError(res, "not_found", "Join request not found"); return; }
 
   await logActivity(sc, tripId, user.id, "join_request_declined", { requestId });
 
@@ -1131,7 +1237,16 @@ router.post("/trips/:tripId/join-requests/:requestId/cancel", async (req, res) =
     return;
   }
 
-  await sc.from("trip_join_requests").update({ status: "cancelled" }).eq("id", requestId);
+  // Same shape: {status:"cancelled"} was answered for a write whose outcome the
+  // route never asked about. A request that is still 'pending' after this keeps
+  // notifying the owner about someone who withdrew.
+  const { data: cancelledRows, error: cancelledErr } = await sc
+    .from("trip_join_requests")
+    .update({ status: "cancelled" })
+    .eq("id", requestId)
+    .select("id");
+  if (cancelledErr) { sendError(res, "db_error", cancelledErr.message); return; }
+  if ((cancelledRows ?? []).length === 0) { sendError(res, "not_found", "Join request not found"); return; }
   res.json({ status: "cancelled", requestId });
 });
 
@@ -1208,7 +1323,17 @@ router.delete("/trips/:tripId/invite-link/:linkId", async (req, res) => {
 
   if (!link) { sendError(res, "not_found", "Invite link not found"); return; }
 
-  await sc.from("trip_invite_links").update({ revoked_at: new Date().toISOString() }).eq("id", linkId);
+  // The one on this list with a security consequence: 204 told the owner the
+  // link was revoked while the link went on admitting strangers to their trip.
+  // `.error` was unbound and the bodyless UPDATE reported no row count, so a
+  // failed revoke and a successful one were the same 204.
+  const { data: revokedRows, error: revokedErr } = await sc
+    .from("trip_invite_links")
+    .update({ revoked_at: new Date().toISOString() })
+    .eq("id", linkId)
+    .select("id");
+  if (revokedErr) { sendError(res, "db_error", revokedErr.message); return; }
+  if ((revokedRows ?? []).length === 0) { sendError(res, "not_found", "Invite link not found"); return; }
   res.status(204).send();
 });
 
@@ -1878,12 +2003,34 @@ async function handleDestinationsReorder(req: any, res: any): Promise<void> {
     sendError(res, "invalid_payload", "One or more destination IDs do not belong to this trip"); return;
   }
 
-  // Apply positions sequentially
-  await Promise.all(
+  // Apply positions sequentially.
+  //
+  // The `.then(undefined, () => {})` here was doing nothing useful and hiding
+  // something real: a PostgREST builder RESOLVES on a database error, so the
+  // rejection handler never fires, and the resolved `{ error }` was thrown away
+  // with the value. Every one of these updates could fail and the route still
+  // answered {status:"reordered", count:N} — a reorder the client then renders
+  // optimistically and the server never performed. `.select("id")` also makes
+  // the affected-row count observable, so an id that matched nothing (a
+  // destination deleted between the validation read above and here) is caught
+  // rather than counted as reordered.
+  const positionWrites = await Promise.all(
     order.map((id, idx) =>
-      sc.from("trip_destinations").update({ position: idx + 1 }).eq("id", id).then(undefined, () => {}),
+      sc.from("trip_destinations").update({ position: idx + 1 }).eq("id", id).eq("trip_id", tripId).select("id"),
     ),
   );
+  const failed = positionWrites.filter((w: any) => w.error);
+  if (failed.length > 0) {
+    req.log?.error({ tripId, failed: failed.length, of: order.length, err: (failed[0] as any).error },
+      "trip_destinations reorder partially failed — positions are now inconsistent");
+    sendError(res, "db_error", String((failed[0] as any).error?.message ?? "reorder failed"));
+    return;
+  }
+  const missed = positionWrites.filter((w: any) => ((w.data ?? []) as any[]).length === 0);
+  if (missed.length > 0) {
+    sendError(res, "invalid_payload", "One or more destination IDs do not belong to this trip");
+    return;
+  }
 
   res.json({ status: "reordered", tripId, count: order.length });
 }
@@ -2224,6 +2371,10 @@ router.patch("/trips/:tripId/documents/:docId", async (req, res) => {
     .maybeSingle();
 
   if (error) { sendError(res, "db_error", error.message); return; }
+  // `.maybeSingle()` on an UPDATE that matched nothing gives `data: null` with
+  // `error: null`, and the route sent that straight out as a 200 whose body is
+  // literally `null` — a success answer for a document that was not updated.
+  if (!updated) { sendError(res, "not_found", "Document not found"); return; }
   res.json(updated);
 });
 
@@ -2251,7 +2402,13 @@ router.delete("/trips/:tripId/documents/:docId", async (req, res) => {
   const isCreator = (doc as any).creator_id === user.id;
   if (!isOwner && !isCreator) { sendError(res, "forbidden", "Cannot delete this document"); return; }
 
-  await sc.from("trip_documents").delete().eq("id", docId);
+  // A DELETE that matched no row is genuinely idempotent here — the row was just
+  // read and authorized two statements above — so a zero-row delete keeps its
+  // 204. A DELETE that FAILED is not idempotent and is not a 204: `.error` was
+  // unbound, so a refused or errored delete answered "deleted" and the client
+  // dropped the item from its list.
+  const { error: docDelErr } = await sc.from("trip_documents").delete().eq("id", docId);
+  if (docDelErr) { sendError(res, "db_error", docDelErr.message); return; }
   res.status(204).send();
 });
 
@@ -2373,6 +2530,8 @@ router.patch("/trips/:tripId/notes/:noteId", async (req, res) => {
     .maybeSingle();
 
   if (error) { sendError(res, "db_error", error.message); return; }
+  // Same as the document PATCH above: a zero-row UPDATE answered 200 `null`.
+  if (!updated) { sendError(res, "not_found", "Note not found"); return; }
   res.json(updated);
 });
 
@@ -2399,7 +2558,13 @@ router.delete("/trips/:tripId/notes/:noteId", async (req, res) => {
   const isAuthor = (note as any).author_id === user.id;
   if (!isOwner && !isAuthor) { sendError(res, "forbidden", "Cannot delete this note"); return; }
 
-  await sc.from("trip_notes").delete().eq("id", noteId);
+  // A DELETE that matched no row is genuinely idempotent here — the row was just
+  // read and authorized two statements above — so a zero-row delete keeps its
+  // 204. A DELETE that FAILED is not idempotent and is not a 204: `.error` was
+  // unbound, so a refused or errored delete answered "deleted" and the client
+  // dropped the item from its list.
+  const { error: noteDelErr } = await sc.from("trip_notes").delete().eq("id", noteId);
+  if (noteDelErr) { sendError(res, "db_error", noteDelErr.message); return; }
   res.status(204).send();
 });
 
@@ -2518,7 +2683,13 @@ router.delete("/trips/:tripId/saved-places/:placeEntryId", async (req, res) => {
   const isCreator = (entry as any).user_id === user.id;
   if (!isOwner && !isCreator) { sendError(res, "forbidden", "Cannot remove this saved place"); return; }
 
-  await sc.from("trip_saved_places").delete().eq("id", placeEntryId);
+  // A DELETE that matched no row is genuinely idempotent here — the row was just
+  // read and authorized two statements above — so a zero-row delete keeps its
+  // 204. A DELETE that FAILED is not idempotent and is not a 204: `.error` was
+  // unbound, so a refused or errored delete answered "deleted" and the client
+  // dropped the item from its list.
+  const { error: placeDelErr } = await sc.from("trip_saved_places").delete().eq("id", placeEntryId);
+  if (placeDelErr) { sendError(res, "db_error", placeDelErr.message); return; }
   res.status(204).send();
 });
 
@@ -2659,8 +2830,14 @@ router.delete("/trips/:tripId/checklists/:checklistId", async (req, res) => {
   const isCreator = (list as any).created_by === user.id;
   if (!isOwner && !isCreator) { sendError(res, "forbidden", "Cannot delete this checklist"); return; }
 
-  await sc.from("trip_checklist_items").delete().eq("checklist_id", checklistId);
-  await sc.from("trip_checklists").delete().eq("id", checklistId);
+  // Two writes, neither bound. The dangerous ordering is items-then-list: if the
+  // items delete failed and the list delete succeeded, the items are ORPHANED
+  // (no checklist row to reach them by) and the caller was told 204. Refuse on
+  // the first failure so the list is still there to retry against.
+  const { error: itemsDelErr } = await sc.from("trip_checklist_items").delete().eq("checklist_id", checklistId);
+  if (itemsDelErr) { sendError(res, "db_error", itemsDelErr.message); return; }
+  const { error: listDelErr } = await sc.from("trip_checklists").delete().eq("id", checklistId);
+  if (listDelErr) { sendError(res, "db_error", listDelErr.message); return; }
   res.status(204).send();
 });
 
@@ -2738,7 +2915,13 @@ router.delete("/trips/:tripId/checklists/:checklistId/items/:itemId", async (req
     sendError(res, "forbidden", "Not a trip member"); return;
   }
 
-  await sc.from("trip_checklist_items").delete().eq("id", itemId).eq("trip_id", tripId);
+  // A DELETE that matched no row is genuinely idempotent here — the row was just
+  // read and authorized two statements above — so a zero-row delete keeps its
+  // 204. A DELETE that FAILED is not idempotent and is not a 204: `.error` was
+  // unbound, so a refused or errored delete answered "deleted" and the client
+  // dropped the item from its list.
+  const { error: itemDelErr } = await sc.from("trip_checklist_items").delete().eq("id", itemId).eq("trip_id", tripId);
+  if (itemDelErr) { sendError(res, "db_error", itemDelErr.message); return; }
   res.status(204).send();
 });
 
@@ -2866,7 +3049,13 @@ router.delete("/trips/:tripId/reminders/:reminderId", async (req, res) => {
   if (!rem) { sendError(res, "not_found", "Reminder not found"); return; }
   if ((rem as any).user_id !== user.id) { sendError(res, "forbidden", "Can only delete your own reminders"); return; }
 
-  await sc.from("trip_reminders").delete().eq("id", reminderId);
+  // A DELETE that matched no row is genuinely idempotent here — the row was just
+  // read and authorized two statements above — so a zero-row delete keeps its
+  // 204. A DELETE that FAILED is not idempotent and is not a 204: `.error` was
+  // unbound, so a refused or errored delete answered "deleted" and the client
+  // dropped the item from its list.
+  const { error: remDelErr } = await sc.from("trip_reminders").delete().eq("id", reminderId);
+  if (remDelErr) { sendError(res, "db_error", remDelErr.message); return; }
   res.status(204).send();
 });
 

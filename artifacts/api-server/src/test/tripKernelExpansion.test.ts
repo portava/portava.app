@@ -104,8 +104,14 @@ function makeFakeClient(state: State) {
     let verb: Write["verb"] | "select" = "select";
     let payload: any = null;
     let single = false;
+    // The real PostgrestBuilder returns the AFFECTED ROWS when a write carries
+    // `.select()`, and `data: null` when it does not — that difference is the
+    // only way a route can tell "updated 1 row" from "matched nothing", so the
+    // fake has to model it rather than answer null for both. (It answered null
+    // for both until routes/trips-expansion.ts started asking.)
+    let selected = false;
     const b: any = {
-      select() { return b; },
+      select() { selected = true; return b; },
       insert(p: any) { verb = "insert"; payload = p; return b; },
       update(p: any) { verb = "update"; payload = p; return b; },
       upsert(p: any, opts?: any) { verb = "upsert"; payload = { row: p, opts }; return b; },
@@ -133,8 +139,10 @@ function makeFakeClient(state: State) {
       }
       if (verb === "update") {
         let last: any = null;
-        for (const r of src(table)) if (preds.every((p) => p(r))) { Object.assign(r, payload); last = r; }
-        return { data: single ? last : null, error: null };
+        const touched: any[] = [];
+        for (const r of src(table)) if (preds.every((p) => p(r))) { Object.assign(r, payload); last = r; touched.push(r); }
+        if (single) return { data: last, error: null };
+        return { data: selected ? touched : null, error: null };
       }
       if (verb === "upsert") {
         const row = payload.row;
