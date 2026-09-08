@@ -10,7 +10,7 @@ production SQL, and without data that does not exist.
 
 | Surface | Blocker | Type | Owner | Buildable now? | Fix / action | Commit | Production impact |
 |---|---|---|---|---|---|---|---|
-| Layover | `layover_recs_owner` is `FOR ALL` with `with_check` NULL and `authenticated` holds all 8 privileges — a session owner can write their own `safety_rating`, `return_buffer_min`, `hard_return_time` | MANUAL_SQL | owner | **No** — fix is written | apply `2335`, then `2510` to verify | `2335` (earlier), `2510` (`c3471867`) | **Live now.** Certified safety fields are client-writable on the surface that tells a traveller whether it is safe to leave an airport |
+| Layover | `layover_recs_owner` was `FOR ALL` with `with_check` NULL, so a session owner could write their own `safety_rating`, `return_buffer_min` and `hard_return_time` | MANUAL_SQL | owner | No — **applied** | `2335`, then `2510` to verify | `2335` (earlier), `2510` (`c3471867`); applied `20260908104231` / `20260908104255` | **CLOSED 2026-09-08.** The defect was proven by EXECUTION on production before the fix, not read off the catalog: acting as `authenticated` with the session owner's `sub`, a self-assigning UPDATE of `safety_rating` was ADMITTED and rewrote 1 row — inside a block that then raised, so nothing persisted (30 rows, all `source='ai'`, before and after). `2510` — verify-only — was run against production BEFORE the fix and RAISED, naming the exact defect, which is how its assertions were shown not to be decorative. After: `layover_recs_owner` is FOR SELECT only, `authenticated` holds SELECT and nothing else, `anon` holds nothing, `service_role` keeps SELECT/INSERT/UPDATE/DELETE and loses TRUNCATE. The same write is now refused **42501** while the owner READ still returns the row — the write door shut without shutting the read door. `2510` re-run after: passes. Section 2 of `2335` (TRUNCATE on the four sibling tables) was already a NO-OP: `2490` revoked those on 2026-09-08 and the migration's header, written a day earlier, overstates the surviving grant set |
 | Telegraph | `messages_hide_blocked_sender` PERMISSIVE with a predicate true for `anon`; `msg_select` a tautology | MANUAL_SQL | owner | No — **applied** | `2401` → `2402` | applied | **Closed.** Verified empirically: anon sees 0 of 29 messages, no recursion |
 | Meetups | length-two policy cycle `meetups → meetup_invites → meetups`; `mi_own` bound only `user_id` | MANUAL_SQL | owner | No — **applied** | `2460` (inert defuse) → `2461` (repair) → `2462` (vote boundary) | `469c3232`, `296b8c24`; applied `20260907181058` / `183518` / `183707` | **CLOSED.** Re-read on production 2026-09-08: `mi_own` now states a `WITH CHECK`. The row above said "still unrepaired in either" database for a day after all three had landed |
 | Highlights | `highlights_select_active` trip_only branch admitted pending invitees and removed members | MANUAL_SQL | owner | No — **applied** | `2530` | `04871c46`; applied `20260907223359` | **CLOSED.** Re-read on production 2026-09-08: the `tm1 JOIN tm2` self-join shape is gone. The ordering hazard stands — PR #461's `2313` restores the self-join byte-for-byte, so merging it would reopen this |
@@ -268,6 +268,59 @@ per endpoint across roughly fifteen of them, whether a degraded read should 503
 or degrade visibly — and that is a product call about what a user should see
 when half the page is unavailable. Classified OWNER-priority rather than FIX NOW
 for that reason, not because the work is hard.
+
+### `MAP_CANCELLED_TRIP_VISIBILITY` — two surfaces already disagree
+
+Measured 2026-09-08. `lib/mapProjectionTripRead.ts:195` filters trips only on
+`.not("status","is",null)`, so a CANCELLED trip is projected onto the map (scoped
+to trips the viewer is an accepted member of). `TRIP_DISCOVERY_EXCLUDED_STATUSES`
+in `lib/tripDiscoveryProjection.ts:93` excludes `draft`, `cancelled` and
+`archived` from discovery.
+
+So the decision is not hypothetical and it is not "what should we do one day":
+the two surfaces take DIFFERENT answers today, from the same status column. Both
+lanes that touched this stopped at the boundary rather than making them agree,
+which is right — making them agree in either direction IS the decision.
+
+### `TRIP_REMINDER_DELIVERY` — a store with a field that promises delivery
+
+**NEW 2026-09-08.** `trip_reminders.remind_at` and `is_sent` have no deliverer
+anywhere in the tree. `is_sent` is only ever READ. `lib/tripReminderScheduler.ts`
+is a different mechanism — it drives "your trip starts tomorrow" from
+`trips.reminder_sent_at` and does not read this table at all.
+
+So the group is a write-only store whose column names promise something nothing
+performs. Closing it needs a new scheduler AND its registration in
+`src/index.ts`, and possibly a `sent_at` column; a scheduler nobody starts is
+the defect this pass keeps finding, so none was written.
+
+Worth reading together with the `2535` row in P1: the write boundary on that
+table was closed on 2026-09-08, and the reason the defect was bounded rather
+than an open door is exactly this — nothing consumes what is written there.
+
+### `PLAN_EDITORS_ATOMICITY` — a two-call replace with no transaction
+
+**NEW 2026-09-08.** `PATCH /trips/:tripId/settings` replaces the `plan_editors`
+set with a DELETE followed by an INSERT, as two separate PostgREST calls. A
+landed delete with a failed insert leaves an EMPTY editor list under
+`plan_edit_permission: 'specific_members'` — nobody can edit the plan, and no
+error was visible before this pass because neither write was bound.
+
+Both writes are now bound, so it fails loudly instead of answering 200. Making
+it ATOMIC needs a database function, which is a migration:
+
+```sql
+CREATE OR REPLACE FUNCTION public.replace_plan_editors(p_trip_id uuid, p_user_ids uuid[])
+RETURNS void LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+BEGIN
+  DELETE FROM plan_editors WHERE trip_id = p_trip_id;
+  INSERT INTO plan_editors (trip_id, user_id) SELECT p_trip_id, unnest(p_user_ids);
+END $$;
+```
+
+NOT WRITTEN AND NOT APPLIED. It is recorded here for the same reason the
+`adjust_counter` function is: a database function with no caller is a migration
+applied because it exists, and it goes in when the caller does.
 
 ## P6 — explicit holds
 

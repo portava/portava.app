@@ -14,7 +14,6 @@
   "routes/messaging.ts": 2,
   "routes/postcards.ts": 1,
   "routes/rentABuddyMarketplace.ts": 2,
-  "routes/tripReadiness.ts": 2,
   "routes/trust-admin.ts": 1,
   "services/passport/PassportStampService.ts": 1,
   "services/phoneVerification/PhoneVerificationService.ts": 1,

@@ -14,7 +14,9 @@ says "not re-run by me": the migrations landed in an earlier session and I have
 verified only that the ledger records them, not that their own postconditions
 passed. Row 11 is the exception; its whole gate is mine and is described there.
 
-Not applied to production as of 2026-09-08: `2335`, `2510`, `2411`, `2450`,
+`2335` and `2510` were applied on 2026-09-08 (`20260908104231` / `20260908104255`)
+under the same gate as row 11 — see the Layover row of the blocker ledger for the
+before/after measurement. Still not applied to production: `2411`, `2450`,
 `2500`, `2600`. Of those, `2411` was MEASURED and found OPTIONAL (30 rows, all
 unkeyed, nothing to preserve) and `2600` encodes the open `EVENT_START_TRANSITION`
 owner decision — neither is a backlog item.
