@@ -1175,6 +1175,43 @@ router.post("/trips/:tripId/accept-invite", async (req, res) => {
   if (!membership) { res.status(404).json({ error: "not_found", message: "No invitation found for this trip" }); return; }
   if ((membership as any).role !== "invited") { res.status(400).json({ error: "invalid_payload", message: `Already a ${(membership as any).role}` }); return; }
 
+  // ── Trust: private_plan_access, the restriction nothing enforced ───────────
+  //
+  // TrustRestrictionService declares four restriction types. `hosting` is gated
+  // twenty lines up in this file and `messaging` in routes/messaging.ts;
+  // `private_plan_access` — "excluded from private plans" — reached the user as
+  // a capability chip on their Passport and was enforced NOWHERE (census-trust
+  // A13). A user was TOLD they were excluded and then let in, which is worse
+  // than either honest outcome.
+  //
+  // Accepting an invitation to a trip whose visibility is `private` or `invite`
+  // IS joining a private plan; a public trip is not one, so the restriction does
+  // not touch it.
+  //
+  // The degraded branch is deliberately absent here, and that is not an
+  // oversight: getRestrictionState fails OPEN for this type on purpose
+  // (TrustRestrictionService:207-214, "Low-risk actions (private_plan_access,
+  // location_plan_join) stay open"), so canJoinPrivatePlans is `true` on an
+  // unreadable read and this gate cannot fire on a degraded one. The hosting
+  // gate above needs its degraded branch because hosting fails CLOSED.
+  const { data: tripVis, error: tripVisErr } = await client
+    .from("trips").select("visibility").eq("id", tripId).maybeSingle();
+  if (tripVisErr) {
+    sendError(res, "degraded_unavailable", "We could not verify this invitation right now. Please try again shortly.");
+    return;
+  }
+  const isPrivatePlan = ["private", "invite"].includes(String((tripVis as any)?.visibility ?? "private"));
+  if (isPrivatePlan) {
+    const inviteTrust = await getRestrictionState(client, user.id);
+    if (!inviteTrust.canJoinPrivatePlans) {
+      res.status(403).json({
+        error: "trust_restriction",
+        message: "Your account is currently restricted from joining private trips.",
+      });
+      return;
+    }
+  }
+
   // Trip Kernel path (ACCEPT_INVITE, contract v2). The invitee is NOT accepted
   // crew, so the v1 crew re-check could never admit this command; v2 requires
   // exactly an 'invited' row for the actor. Off => the direct update below.

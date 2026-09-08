@@ -25,6 +25,7 @@ import { z } from "zod";
 import { requireUser, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { isFlagEnabled } from "../lib/featureFlags.js";
+import { getRestrictionState } from "../services/trust/TrustRestrictionService.js";
 import {
   getCrewMap,
   getCrewPreferences,
@@ -418,6 +419,31 @@ router.post("/trips/:tripId/crew/live-share/start", async (req, res) => {
   const { tripId } = req.params;
   const role = await getMemberRole(sc, tripId, user.id);
   if (!role) { sendError(res, "not_member"); return; }
+
+  // ── Trust: location_plan_join, the other restriction nothing enforced ──────
+  //
+  // "cannot join location-based plans" (TrustRestrictionService:8). Like
+  // private_plan_access it reached the user as a Passport capability chip and
+  // was enforced NOWHERE (census-trust A13). Starting a live location share with
+  // a trip's crew is the location-based join this type names: it is the moment a
+  // restricted user begins broadcasting their position to a group, which is the
+  // harm the restriction exists to prevent.
+  //
+  // Gated on START only, never on STOP — a restricted user must always be able
+  // to stop sharing.
+  //
+  // No degraded branch, for the reason stated on the private-plan gate in
+  // routes/trips.ts: this type fails OPEN inside getRestrictionState by design,
+  // so canJoinLocationPlans is `true` on an unreadable read and the gate cannot
+  // fire on one.
+  const locTrust = await getRestrictionState(sc, user.id);
+  if (!locTrust.canJoinLocationPlans) {
+    res.status(403).json({
+      error: "trust_restriction",
+      message: "Your account is currently restricted from joining location-based plans.",
+    });
+    return;
+  }
 
   const { duration, visibilityLevel, allowedMemberIds, planEndAt } = parsed.data;
 
