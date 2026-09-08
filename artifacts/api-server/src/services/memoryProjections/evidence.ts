@@ -215,7 +215,7 @@ function isNonEmptyString(v: unknown): v is string {
 /** Deterministic, dependency-free digest. Same input, same text, every run. */
 function digest(parts: readonly string[]): string {
   let h1 = 0x811c9dc5, h2 = 0x01000193, h3 = 0x9e3779b9, h4 = 0x85ebca6b;
-  const s = parts.join(" ");
+  const s = parts.join("\u0000");
   for (let i = 0; i < s.length; i++) {
     const c = s.charCodeAt(i);
     h1 = Math.imul(h1 ^ c, 0x01000193) >>> 0;

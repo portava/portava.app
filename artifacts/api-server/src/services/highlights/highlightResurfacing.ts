@@ -225,7 +225,7 @@ export type ResurfacingSuppressions =
   | { readonly state: "unreadable"; readonly reason: string };
 
 function keyOf(control: ResurfacingControl, subjectId: string): string {
-  return `${control} ${subjectId}`;
+  return `${control}\u0000${subjectId}`;
 }
 
 /**
