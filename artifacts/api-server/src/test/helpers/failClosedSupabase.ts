@@ -197,6 +197,8 @@ export function makeFailClosedClient(spec: FakeClientSpec): any {
       let orderCol: string | null = null;
       let orderAsc = true;
       let writeKind: "insert" | "update" | "upsert" | "delete" | null = null;
+      /** Set when a write verb was handed `{ count: … }` — see settleWrite. */
+      let writeCountRequested = false;
       let writePayload: any = null;
       /** Whether a `.select()` was chained — PostgREST's RETURNING switch. */
       let selected = false;
@@ -255,6 +257,31 @@ export function makeFailClosedClient(spec: FakeClientSpec): any {
         // so the client hands back `data: null`. Returning the payload here
         // would let a test "count affected rows" on a response that carries
         // none — see NOT MODELLED / MODELLED EXACTLY in the header.
+        // ── NOT MODELLED: an affected-row count on a bodyless write. ────────
+        //
+        // Refused HERE rather than at the `.delete(...)` call, and only on the
+        // success path, because that is the only place the answer is consulted:
+        // a test proving that a FAILED write is not a 404 returns above without
+        // ever looking at `count`, and refusing it would be refusing a real
+        // case.
+        //
+        // Why refuse at all: postgrest-js takes `count` from the response's
+        // content-range header, and whether PostgREST sends that header on a 204
+        // with no `return=representation` has never been measured here. Eight
+        // call sites in this repo branch on `if (!count)` after exactly this
+        // shape. Answering `null` — which this double did, silently, because
+        // `.delete()` took no arguments at all — makes every one of them take
+        // the not-found path in every test, and three tests passed that way for
+        // a reason unrelated to what they asserted.
+        if (writeCountRequested && !selected) {
+          throw new Error(
+            "failClosedSupabase does not model an affected-row count on a bodyless write. postgrest-js " +
+              "reads `count` from the response's content-range header, and whether PostgREST sends it on " +
+              "a 204 with no `return=representation` has NOT been measured — so any count here would be " +
+              "this fake's opinion, and eight call sites in this repo branch on it. Chain `.select()` and " +
+              "count the returned rows, assert on the recorded write, or measure the real server.",
+          );
+        }
         if (!selected) return { data: null, error: null, count: null };
         // RETURNING shows the row AS UPDATED. The seed is not mutated (this
         // double records writes rather than applying them — see NOT MODELLED),
@@ -279,8 +306,20 @@ export function makeFailClosedClient(spec: FakeClientSpec): any {
         },
         insert(payload: any) { writeKind = "insert"; writePayload = payload; return builder; },
         upsert(payload: any) { writeKind = "upsert"; writePayload = payload; return builder; },
-        update(payload: any) { writeKind = "update"; writePayload = payload; return builder; },
-        delete()             { writeKind = "delete"; writePayload = null;   return builder; },
+        update(payload: any, opts?: { count?: string }) {
+          writeKind = "update"; writePayload = payload;
+          if (opts?.count) writeCountRequested = true;
+          return builder;
+        },
+        // `.delete()` used to take NO arguments, so `.delete({ count: "exact" })`
+        // was accepted and the option silently dropped. The option is captured
+        // now — not to answer it, but so settleWrite can refuse it (below) at
+        // the one point where the answer would actually be consulted.
+        delete(opts?: { count?: string }) {
+          writeKind = "delete"; writePayload = null;
+          if (opts?.count) writeCountRequested = true;
+          return builder;
+        },
         eq(col: string, val: unknown)  { filters.push({ col, op: "eq",  val }); return builder; },
         neq(col: string, val: unknown) { filters.push({ col, op: "neq", val }); return builder; },
         gt(col: string, val: unknown)  { filters.push({ col, op: "gt",  val }); return builder; },

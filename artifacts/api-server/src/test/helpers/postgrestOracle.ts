@@ -36,6 +36,14 @@
  * off documentation; `supabaseContract.test.ts` re-measures the load-bearing
  * ones every run, so a client upgrade that moves them fails loudly.
  *
+ * ── NOT MODELLED ────────────────────────────────────────────────────────────
+ * An affected-row COUNT on a bodyless write — `.delete({ count: "exact" })` or
+ * `.update(..., { count: "exact" })` with no chained `.select()`. That answer
+ * depends on whether PostgREST sends `Content-Range` on a 204, which is a fact
+ * about the SERVER and cannot be read off the client. The oracle THROWS on that
+ * shape rather than inventing an answer; see the comment at the write handler
+ * for the eight call sites that turn on it.
+ *
  * NOTHING here talks to a database. The injected `fetch` is the only transport;
  * the URL handed to `createClient` is never dialled.
  */
@@ -326,6 +334,50 @@ export function makeOracle(world: OracleWorld): OracleHandle {
       }
       if (!representation) return json(null, 201);
       return respondRows(written, 201);
+    }
+
+    // ── NOT MODELLED: an affected-row COUNT on a bodyless write. ────────────
+    //
+    // The client half is settled and readable: postgrest-js takes `count` from
+    // the response's `content-range` header whenever the request carried
+    // `Prefer: count=exact` (index.mjs:400-402). The SERVER half is not. Whether
+    // PostgREST emits `Content-Range` on a 204 with no representation is a fact
+    // about PostgREST, and no amount of reading the installed client can
+    // establish it — which is exactly the kind of thing this oracle was built to
+    // stop being assumed.
+    //
+    // It matters. Eight call sites in this repo branch on `if (!count)` after a
+    // `.delete({ count: "exact" })` with no chained `.select()`
+    // (routes/emergencyContacts.ts, services/location/LocationSafetyService.ts,
+    // compass/CompassGraphEngine.ts, lib/weatherCacheCleanup.ts,
+    // lib/suggestionSeenCleanup.ts, lib/dailyBriefCleanup.ts,
+    // lib/discoveryCacheCleanup.ts, lib/rankingFatigueSweeper.ts). If the header
+    // does come back, they work; if it does not, every one of them treats a
+    // successful delete as "nothing matched". Three tests were written against
+    // this oracle's guess, passed for a reason unrelated to what they claimed,
+    // and were deleted once that was noticed.
+    //
+    // So the oracle REFUSES rather than guesses. A refusal is a question a
+    // reader can answer with one measurement against a live PostgREST; a guess
+    // is a green that means nothing.
+    //
+    // HOW THE REFUSAL SURFACES, stated exactly: this throw happens inside the
+    // injected `fetch`, and the real client treats a transport that throws as a
+    // RESOLVED failure — so the caller gets `{ data: null, error: <this text> }`
+    // rather than a rejection. That is faithful (it is what the client does with
+    // any transport error) and it is loud enough: `error` is non-null and its
+    // message names the open question. It is NOT a rejection, so a test that
+    // asserts only `count === null` would still pass — assert on `error`.
+    const wantsCount = (prefer ?? "").includes("count=");
+    if (!representation && wantsCount && (method === "PATCH" || method === "DELETE")) {
+      throw new Error(
+        `postgrestOracle does not model an affected-row count on a bodyless ${method}. ` +
+          "postgrest-js reads `count` from the response's content-range header, and whether PostgREST " +
+          "sends that header on a 204 with no `return=representation` has NOT been measured against a " +
+          "real server — so any answer here would be this fake's opinion, and eight call sites in this " +
+          "repo branch on it. Chain `.select()` (then the count is not in question), or measure the real " +
+          "server and teach this oracle what it does.",
+      );
     }
 
     if (method === "PATCH") {
