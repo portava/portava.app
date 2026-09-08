@@ -155,12 +155,23 @@ async function resolveViewAccess(
   res: Response,
   log?: { error: (obj: unknown, msg: string) => void },
 ): Promise<{ h: HighlightRecord } | null> {
-  const { data: h } = await sc
+  // An unreadable `highlights` table is NOT a missing highlight. supabase-js
+  // RESOLVES on a DB error, so `const { data: h }` bound null and this helper —
+  // the gate in front of view, like, unlike, reply and report — answered a table
+  // outage with "Highlight not found". That is not a permission verdict and it
+  // discloses nothing to say so: we do not know whether the row exists, so
+  // db_error is both the honest answer and the safe one. §28.11.
+  const { data: h, error: hErr } = await sc
     .from("highlights")
     .select("id, owner_id, visibility, expires_at, deleted_at")
     .eq("id", highlightId)
     .maybeSingle();
 
+  if (hErr) {
+    log?.error({ err: hErr, highlightId }, "highlights: highlight read failed — cannot resolve access");
+    sendError(res, "db_error", hErr.message);
+    return null;
+  }
   if (!h) {
     sendError(res, "not_found", "Highlight not found");
     return null;
@@ -197,9 +208,19 @@ async function resolveViewAccess(
   let sharesTrip = viewerId === ownerId;
 
   if (viewerId !== ownerId && record.visibility === "circle_only") {
+    // `Boolean(circleMember.data)` read a resolved DB error as "not in the
+    // circle". The deny is right — withholding is the safe answer — but nothing
+    // could tell it apart from a real one, which is the entry this site carries
+    // on the unchecked-reads ledger. Same treatment as the trip_only branch
+    // below: withhold, and say why.
     const circleMember = await sc
       .from("circle_memberships").select("other_id").eq("user_id", ownerId).eq("other_id", viewerId).maybeSingle();
-    viewerFollowsOwner = Boolean(circleMember.data);
+    if (circleMember.error) {
+      log?.error({ err: circleMember.error, highlightId }, "highlights: circle membership lookup failed — withholding circle_only highlight");
+      viewerFollowsOwner = false;
+    } else {
+      viewerFollowsOwner = Boolean(circleMember.data);
+    }
   }
 
   if (viewerId !== ownerId && record.visibility === "trip_only") {
@@ -398,7 +419,12 @@ router.get("/users/:userId/highlights", async (req, res) => {
     if (sc) {
       const circleMember = await sc
         .from("circle_memberships").select("other_id").eq("user_id", targetId).eq("other_id", user.id).maybeSingle();
-      viewerFollowsOwner = Boolean(circleMember.data);
+      if (circleMember.error) {
+        req.log.error({ err: circleMember.error, targetId }, "highlights: circle membership lookup failed — withholding circle_only highlights");
+        viewerFollowsOwner = false;
+      } else {
+        viewerFollowsOwner = Boolean(circleMember.data);
+      }
 
       if (highlights.some((h) => h.visibility === "trip_only")) {
         const shares = await sharesAcceptedTrip(sc, user.id, [targetId]);
@@ -567,11 +593,16 @@ router.get("/highlights/active", async (req, res) => {
   )];
   const followingSet = new Set<string>();
   if (circleOwnerIds.length > 0) {
-    const { data: circleRows } = await sc
+    const { data: circleRows, error: circleErr } = await sc
       .from("circle_memberships")
       .select("user_id")
       .eq("other_id", user.id)
       .in("user_id", circleOwnerIds);
+    if (circleErr) {
+      // `circleRows ?? []` on an error left followingSet empty, which withholds
+      // — right answer, silent. Withhold and say so.
+      req.log.error({ err: circleErr }, "highlights: circle membership lookup failed — withholding circle_only highlights");
+    }
     for (const r of circleRows ?? []) followingSet.add((r as any).user_id as string);
   }
 
@@ -651,25 +682,44 @@ router.delete("/highlights/:id", async (req, res) => {
   const { id } = req.params;
   if (!UUID.test(id)) { sendError(res, "invalid_payload", "Invalid highlight id"); return; }
 
-  const { data: existing } = await client
+  const { data: existing, error: existingErr } = await client
     .from("highlights")
     .select("id, owner_id")
     .eq("id", id)
     .is("deleted_at", null)
     .maybeSingle();
 
+  if (existingErr) {
+    req.log.error({ err: existingErr, highlightId: id }, "highlights: delete pre-read failed");
+    sendError(res, "db_error", existingErr.message);
+    return;
+  }
   if (!existing) { sendError(res, "not_found", "Highlight not found"); return; }
   if ((existing as any).owner_id !== user.id) { sendError(res, "forbidden", "Only the owner can delete this highlight"); return; }
 
-  const { error } = await client
+  // `.select("id")` is what turns this into an answer.
+  //
+  // An UPDATE with no .select() returns `data: null` and says NOTHING about how
+  // many rows it touched, so `error === null` is not "it worked" — it is "the
+  // statement ran". This runs under the caller's own RLS context, so a policy
+  // that no longer admits the row matches zero rows, errors nothing, and this
+  // handler answered 204 for a highlight still live on the owner's profile.
+  // Taking your own content down is exactly the operation that must not lie.
+  const { data: deleted, error } = await client
     .from("highlights")
     .update({ deleted_at: new Date().toISOString() })
     .eq("id", id)
-    .eq("owner_id", user.id);
+    .eq("owner_id", user.id)
+    .select("id");
 
   if (error) {
     req.log.error({ err: error }, "Failed to delete highlight");
     sendError(res, "db_error", error.message);
+    return;
+  }
+  if (!deleted || (deleted as any[]).length === 0) {
+    req.log.error({ highlightId: id, ownerId: user.id }, "highlights: delete matched zero rows — highlight NOT deleted");
+    sendError(res, "db_error", "The highlight could not be deleted. Please try again.", { exposeDetail: true });
     return;
   }
   res.status(204).send();
@@ -729,16 +779,30 @@ router.post("/highlights/:id/like", async (req, res) => {
     return;
   }
 
-  await sc
+  // The upsert result was discarded. It IS issued (the await sends it), but a
+  // failed write resolved rather than threw, and this handler then answered
+  // 200 { likedByMe: true } with nothing stored — the client renders a filled
+  // heart for a like the database never took, and it survives until the next
+  // refresh contradicts it.
+  const { error: likeErr } = await sc
     .from("highlight_likes")
     .upsert({ highlight_id: id, user_id: user.id }, { onConflict: "highlight_id,user_id", ignoreDuplicates: true });
+  if (likeErr) {
+    req.log.error({ err: likeErr, highlightId: id }, "highlights: like write failed");
+    sendError(res, "db_error", "Could not record the like. Please try again.", { exposeDetail: true });
+    return;
+  }
 
-  const { count } = await sc
+  // `count ?? 0` on an errored count is a fabricated zero. The like DID land,
+  // so the request succeeded; the count is reported as null rather than as a
+  // number nobody measured.
+  const { count, error: countErr } = await sc
     .from("highlight_likes")
     .select("*", { count: "exact", head: true })
     .eq("highlight_id", id);
+  if (countErr) req.log.warn({ err: countErr, highlightId: id }, "highlights: like count unreadable after a successful like");
 
-  res.status(200).json({ likedByMe: true, likeCount: count ?? 0 });
+  res.status(200).json({ likedByMe: true, likeCount: countErr ? null : (count ?? 0) });
 });
 
 /* ============================================================================
@@ -759,14 +823,21 @@ router.delete("/highlights/:id/like", async (req, res) => {
   const access = await resolveViewAccess(sc, user.id, id, res, req.log);
   if (!access) return;
 
-  await sc.from("highlight_likes").delete().eq("highlight_id", id).eq("user_id", user.id);
+  const { error: unlikeErr } = await sc
+    .from("highlight_likes").delete().eq("highlight_id", id).eq("user_id", user.id);
+  if (unlikeErr) {
+    req.log.error({ err: unlikeErr, highlightId: id }, "highlights: unlike write failed");
+    sendError(res, "db_error", "Could not remove the like. Please try again.", { exposeDetail: true });
+    return;
+  }
 
-  const { count } = await sc
+  const { count, error: countErr } = await sc
     .from("highlight_likes")
     .select("*", { count: "exact", head: true })
     .eq("highlight_id", id);
+  if (countErr) req.log.warn({ err: countErr, highlightId: id }, "highlights: like count unreadable after a successful unlike");
 
-  res.status(200).json({ likedByMe: false, likeCount: count ?? 0 });
+  res.status(200).json({ likedByMe: false, likeCount: countErr ? null : (count ?? 0) });
 });
 
 /* ============================================================================
@@ -780,12 +851,17 @@ router.get("/highlights/:id/viewers", async (req, res) => {
   const { id } = req.params;
   if (!UUID.test(id)) { sendError(res, "invalid_payload", "Invalid highlight id"); return; }
 
-  const { data: h } = await client
+  const { data: h, error: hErr } = await client
     .from("highlights")
     .select("id, owner_id")
     .eq("id", id)
     .maybeSingle();
 
+  if (hErr) {
+    req.log.error({ err: hErr, highlightId: id }, "highlights: viewers pre-read failed");
+    sendError(res, "db_error", hErr.message);
+    return;
+  }
   if (!h) { sendError(res, "not_found", "Highlight not found"); return; }
   if ((h as any).owner_id !== user.id) { sendError(res, "forbidden", "Only the owner can see viewers"); return; }
 
@@ -879,19 +955,35 @@ router.post("/highlights/:id/reply", async (req, res) => {
   //   - look up all threads the replier is in
   //   - find one where BOTH users are members (2-person DM)
   //   - create a new one if none exists
-  const { data: myMemberships } = await sc
+  // These two reads decide whether a DM thread ALREADY EXISTS. `?? []` on an
+  // errored read is an empty membership list, which is indistinguishable from
+  // "these two have never spoken" — so a transient failure here did not lose a
+  // message, it CREATED A SECOND THREAD between the same two people, splitting
+  // their conversation permanently. A duplicate thread cannot be undone by
+  // retrying, so this refuses rather than guesses.
+  const { data: myMemberships, error: myMemErr } = await sc
     .from("message_thread_members")
     .select("thread_id")
     .eq("user_id", user.id);
+  if (myMemErr) {
+    req.log.error({ err: myMemErr, ownerId }, "highlight reply: thread lookup failed — refusing rather than creating a duplicate DM thread");
+    sendError(res, "degraded_unavailable", "We could not open the conversation right now. Please try again.");
+    return;
+  }
 
   const myThreadIds = (myMemberships ?? []).map((m: any) => m.thread_id as string);
   let threadId: string | null = null;
 
   if (myThreadIds.length > 0) {
-    const { data: allMembers } = await sc
+    const { data: allMembers, error: allMemErr } = await sc
       .from("message_thread_members")
       .select("thread_id, user_id")
       .in("thread_id", myThreadIds);
+    if (allMemErr) {
+      req.log.error({ err: allMemErr, ownerId }, "highlight reply: thread member lookup failed — refusing rather than creating a duplicate DM thread");
+      sendError(res, "degraded_unavailable", "We could not open the conversation right now. Please try again.");
+      return;
+    }
 
     const membersByThread: Record<string, Set<string>> = {};
     for (const m of (allMembers ?? []) as any[]) {
@@ -1000,9 +1092,19 @@ router.post("/highlights/:id/report", async (req, res) => {
     return;
   }
 
-  await sc
+  // The report write was discarded. A 204 told the reporter their report was
+  // filed; on a failure nothing was filed, and a report nobody receives is the
+  // one kind of silence a safety surface must never produce. The compass
+  // signals below are deliberately best-effort and stay that way — they follow
+  // the report, they are not the report.
+  const { error: reportErr } = await sc
     .from("highlight_reports")
     .upsert({ highlight_id: id, reporter_id: user.id, reason }, { onConflict: "highlight_id,reporter_id" });
+  if (reportErr) {
+    req.log.error({ err: reportErr, highlightId: id, reporterId: user.id }, "highlights: report write failed — the report was NOT filed");
+    sendError(res, "db_error", "Could not submit the report. Please try again.", { exposeDetail: true });
+    return;
+  }
 
   // Compass: record negative signal + immediately end fair exposure for the reported author.
   // Import lazily to keep highlights.ts independent of the compass subsystem.
@@ -1037,11 +1139,36 @@ router.get("/highlights/following-feed", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
-  // 1. Get followed user IDs
-  const { data: followRows } = await sc
+  // 1. Get followed user IDs.
+  //
+  // "NOBODY YOU FOLLOW HAS AN ACTIVE HIGHLIGHT" IS A CLAIM ABOUT OTHER PEOPLE,
+  // AND IT MUST BE TRUE. supabase-js RESOLVES on a database error, so
+  // `(followRows ?? [])` on an unreadable user_follows is an EMPTY LIST and the
+  // very next line answers `{ users: [] }` — the whole feed reported as empty
+  // from a lookup that never happened. It is the shape a sibling lane found in
+  // the Wall ("you're all caught up" with an unreadable follow graph) and in the
+  // passport ("zero stamps" for an unreadable table). §28.11.
+  //
+  // FAIL-CLOSED, shape 3 (lib/exclusionSet.ts): the follow graph scopes the
+  // ENTIRE response, so there is no narrower part left to serve honestly.
+  // `degraded_unavailable` (503, retryable) is the code for "the read could not
+  // be performed", and it is what the block read further down this same handler
+  // already does — that one refuses, this one did not.
+  //
+  // A genuinely empty follow list is still `{ users: [] }`, unchanged. The two
+  // cases are indistinguishable in the data and were indistinguishable in the
+  // response; only one of them is now.
+  const { data: followRows, error: followErr } = await sc
     .from("user_follows")
     .select("following_id")
     .eq("follower_id", user.id);
+
+  if (followErr) {
+    req.log.error({ err: followErr, viewerId: user.id },
+      "highlights: following-feed follow graph unreadable — refusing rather than reporting an empty feed");
+    sendError(res, "degraded_unavailable", "We could not load your highlights feed. Please try again.");
+    return;
+  }
 
   const followingIds = (followRows ?? []).map((r: any) => r.following_id as string);
   if (followingIds.length === 0) {
@@ -1148,6 +1275,11 @@ router.get("/highlights/following-feed", async (req, res) => {
       ? sharesAcceptedTrip(sc, user.id, tripOnlyOwnerIds)
       : Promise.resolve(null),
   ]);
+  if ((circleRows as any)?.error) {
+    // `?? []` left circleApprovedSet empty, which withholds — the right answer,
+    // silently. Withhold and say so.
+    req.log.error({ err: (circleRows as any).error }, "highlights: following-feed circle membership lookup failed — withholding circle_only highlights");
+  }
   for (const r of (circleRows as any)?.data ?? []) circleApprovedSet.add((r as any).user_id as string);
   if (shares) {
     if (shares.ok) {
