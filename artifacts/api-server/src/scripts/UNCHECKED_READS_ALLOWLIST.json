@@ -123,7 +123,6 @@
     "services/passport/PassportProjectionService.ts::resolveSharedTripRole::trip_members.filter": "FAIL-CLOSED: no row -> deny / not-found; a DB error is silently reported as that denial and never logged",
     "services/passport/PassportProjectionService.ts::resolveSharedTripRole::trip_members.filter#2": "FAIL-CLOSED: no row -> deny / not-found; a DB error is silently reported as that denial and never logged",
     "services/passport/PassportProjectionService.ts::resolveSharedTripRole::trips.filter": "FAIL-CLOSED: no row -> deny / not-found; a DB error is silently reported as that denial and never logged",
-      "services/passport/PassportProjectionService.ts::loadVisibilityPrefs::passport_visibility_preferences.maybeSingle": "UNCLASSIFIED: prefs null -> caller default; if the default is 'visible', an owner who hid stamps/memories has them shown — not traced",
     "services/passport/StampAwardEngine.ts::_awardStampCore::feature_flags.maybeSingle": "FAIL-CLOSED: stamp_system_v2_enabled unreadable -> 'feature_disabled' -> no award; the DB error is reported as a disabled feature",
     "services/passport/StampAwardEngine.ts::checkEligibility::stamp_definitions.maybeSingle": "FAIL-CLOSED: definition unreadable -> 'definition_not_found' -> no award; the DB error is reported as a missing definition",
     "services/ranking/DiscoveryRankingService.ts::loadRankingFlags::feature_flags.filter": "UNCLASSIFIED: bulk ranking flag load reads as all-false; mixed polarity — see check-flag-polarity",

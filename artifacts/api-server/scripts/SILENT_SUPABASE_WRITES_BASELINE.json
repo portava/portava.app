@@ -7,7 +7,6 @@
   "compass/CompassSenseEngine.ts": 1,
   "routes/adminCompass.ts": 1,
   "routes/airport.ts": 1,
-  "routes/appeals.ts": 2,
   "routes/circle.ts": 1,
   "routes/dailyBrief.ts": 1,
   "routes/events.ts": 1,
