@@ -42,6 +42,8 @@ import { LayoverPlanSection } from '../../src/components/layover/LayoverPlanSect
 import { LayoverRecsSection } from '../../src/components/layover/LayoverRecsSection';
 import { LayoverMapCard } from '../../src/components/layover/LayoverMapCard';
 import { LayoverPeopleSection } from '../../src/components/layover/LayoverPeopleSection';
+import { LayoverSafeReturnCard } from '../../src/components/layover/LayoverSafeReturnCard';
+import { LayoverCompassCard } from '../../src/components/layover/LayoverCompassCard';
 import { fmtClock } from '../../src/components/layover/layoverFormat';
 import { KeyboardSafeScrollView } from '../../src/components/ui/KeyboardSafeView';
 
@@ -266,6 +268,21 @@ export default function LayoverDashboardScreen() {
 
   const { session, airport, window: win, advice, stops, planFit, localTimes } = overview;
 
+  const returnCard = (
+    <LayoverSafeReturnCard
+      overview={overview}
+      nowMs={nowMs}
+      canAbort={!!canEdit}
+      // The abort cancels landside stops and may flip the session status, so the
+      // screen must re-read rather than keep rendering the plan it just cleared.
+      onAborted={() => load(true)}
+    />
+  );
+  // `?.` against a required field on purpose: the type says the server always
+  // sends `safeReturn`, and getLayoverOverview warns loudly when it does not —
+  // but a missing field must degrade the LAYOUT, not blank the whole dashboard.
+  const returnCardFirst = overview.safeReturn?.returnRoutePrimary === true;
+
   return (
     <View style={styles.container}>
       <Stack.Screen options={{ headerShown: false }} />
@@ -295,9 +312,20 @@ export default function LayoverDashboardScreen() {
           </View>
         )}
 
+        {/* §15 "the fastest return route is primary": when the certified posture
+            says so (RETURN_NOW / CONNECTION_AT_RISK), the abort card is hoisted
+            above the hero instead of sitting with the plan. Nothing is hidden —
+            position is the only thing that changes. */}
+        {returnCardFirst && returnCard}
+
         <LayoverHero airport={airport} session={session} window={win} localTimes={localTimes} nowMs={nowMs} />
         <CanILeaveCard advice={advice} window={win} airport={airport} />
         <AirportEssentialsCard countryCode={airport.countryCode} countryName={airport.country !== 'Unknown' ? airport.country : undefined} />
+
+        {/* §15.1 "every active landside plan must expose RETURN TO AIRPORT" —
+            directly above the plan it cancels. */}
+        {!returnCardFirst && returnCard}
+
         <LayoverPlanSection
           sessionId={session.id}
           stops={stops}
@@ -315,6 +343,7 @@ export default function LayoverDashboardScreen() {
           addingRecId={addingRecId}
           onAddToPlan={handleAddRec}
         />
+        <LayoverCompassCard sessionId={session.id} timezone={airport.timezone} />
         <LayoverMapCard airport={airport} stops={stops} />
         <LayoverPeopleSection
           city={city ?? null}
