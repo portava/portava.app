@@ -718,3 +718,44 @@ not in this batch.
 Still true, and worth repeating: the schema exists, the features do not run. The
 branch is unmerged, `intel_presence_verification_enabled` and
 `locate_friends_enabled` are seeded FALSE, and every new table is at 0 rows.
+
+
+---
+
+## 2026-09-08 — Trust: what applying `2370` + `2371` did and did not realize
+
+Measured on production after both were applied.
+
+| | value | reading |
+|---|---|---|
+| `trust_engine_enabled` | **TRUE** | on, and has been since 2026-07-17 |
+| `trust_profiles.evidence_weight` / `evidence_count` | **both columns exist** | 2371 landed — the schema half is realized |
+| profiles carrying either value | **0 of 2** | **the writer has not run since** |
+| `trust_events` | **5** | over 2026-07-25 → 2026-08-16, then nothing |
+| distinct event types ever emitted | **2** — `first_event_joined`, `pulse_post_created` | of a much larger declared vocabulary |
+| `trust_profiles` rows | **2**, for **58** profiles | |
+| client privileges on any `trust_*` table | **0** | 2370 held |
+
+### The honest reading
+
+Applying 2371 closed the schema half and **nothing else**. Before it,
+`TrustScoreService` PGRST204'd on every recalculation and logged
+*"is migration 2371 applied?"* — the score landed, the evidence never did. That
+specific failure is now impossible. But `evidence_count` is populated on **zero**
+profiles, which is the direct measurement of the thing that has not changed:
+**the branch carrying that code is unmerged, so the writer has not run at all.**
+
+`stamp_verified` has still never fired, and this is now provable rather than
+inferred: only two event types exist in the entire table and neither is it.
+
+### The consequence that is already live
+
+56 of 58 profiles have no `trust_profiles` row. `routes/events.ts` substitutes
+`TRUST_SCORE_WHEN_NO_PROFILE = 50` for them, and that substitution — not a
+measurement — decides real access to 22 events carrying `trust_score_min`.
+Applying 2370/2371 did not touch this, and it should not be read as having done
+so.
+
+**So: Trust's schema is realized in production; Trust itself is not.** The
+emitters are starved (5 events in 52 days), and no migration can fix that — it
+needs the code merged and the emitters wired.
