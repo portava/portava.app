@@ -28,7 +28,13 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "./database.types";
 import { normalizeLocationName } from "./canonicalLocations";
-import { nameVisibilitySet } from "./publicIdentity";
+// Spec §21/§35: the map does not rebuild identity — it REQUESTS the Passport's
+// map-presence projection. That projection is batch-only by construction (the
+// per-user consumer-variant path is ~34 reads per target and this is a polling
+// bulk surface); see buildMapPresenceProjections' header. It takes the profile
+// rows already loaded above, so adopting it costs no extra read: it takes over
+// the `nameVisibilitySet` call this file used to make itself.
+import { buildMapPresenceProjections } from "../services/passport/PassportConsumerProjections.js";
 
 /**
  * Compile-time schema guard: property access below type-checks against the
@@ -272,11 +278,19 @@ async function loadCandidates(
     }
   }
 
-  // Universal display-name rule: map pins show @handle unless opted in.
-  const allowedPinNames = await nameVisibilitySet(db, eligible.map((e) => e.loc.user_id));
+  // Identity (handle / displayName / avatarUrl / verified) and the two privacy
+  // rules that govern it — the universal display-name gate and the avatar
+  // opt-out — belong to the Passport, not here. This file keeps what is its own:
+  // eligibility, blocking, freshness and position coarsening.
+  const presence = await buildMapPresenceProjections(db, eligible.map((e) => e.prof as any));
 
-  const rows: MapTravelerPayload[] = eligible.map(({ loc, prof, vis, freshness }) => {
+  const rows: MapTravelerPayload[] = eligible.flatMap(({ loc, prof, vis, freshness }) => {
     const id = loc.user_id;
+    const ident = presence.get(id);
+    // A profile the Passport could not name does not exist; dropping the pin is
+    // correct and is why this is a flatMap. Substituting a default here would
+    // put an anonymous pin on the map for a row that is not a person.
+    if (!ident) return [];
     let pos: { lat: number; lng: number; precision: MapPrecision } | null = null;
     if (vis === "city_only" && loc.city) {
       const norm = normalizeLocationName(String(loc.city));
@@ -284,22 +298,14 @@ async function loadCandidates(
       if (cent) pos = { lat: cent.lat, lng: cent.lng, precision: "city" };
     }
     if (!pos) pos = coarsenPosition(id, loc.lat as number, loc.lng as number, vis);
-    return {
-      id,
-      handle: (prof.handle as string | null) ?? null,
-      displayName: allowedPinNames.has(id)
-        ? ((prof.display_name as string | null) ??
-          (prof.name as string | null) ??
-          (prof.handle as string | null) ??
-          "Traveler")
-        : (prof.handle ? `@${prof.handle as string}` : "Traveler"),
-      // Candidates are already private-excluded and viewer-independent (no
-      // follow/friend context), so this is a flag-only gate: a public profile's
-      // owner can still opt out via show_profile_picture_publicly (default true).
-      avatarUrl: (prof.show_profile_picture_publicly !== false)
-        ? ((prof.avatar_url as string | null) ?? null)
-        : null,
-      verified: prof.verified === true,
+    return [{
+      id: ident.id,
+      handle: ident.handle,
+      displayName: ident.displayName,
+      avatarUrl: ident.avatarUrl,
+      verified: ident.verified,
+      // NOT identity — `open_to_meet` is a map-eligibility signal this file owns
+      // and the Passport projection deliberately does not carry.
       openToMeet: prof.open_to_meet === true,
       city: (loc.city as string | null) ?? null,
       country: (loc.country as string | null) ?? null,
@@ -307,7 +313,7 @@ async function loadCandidates(
       precision: pos.precision,
       lat: pos.lat,
       lng: pos.lng,
-    };
+    }];
   });
 
   // Live users first, then stable name order — the cap keeps the most relevant.

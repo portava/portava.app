@@ -132,6 +132,10 @@ import {
   type AvailabilityWindow,
   type ViewerRelationship,
 } from "./OpenToPlansService.js";
+// The canonical universal display-name gate. Imported directly rather than
+// reached through the assembler because buildMapPresenceProjections (bottom of
+// this file) must not touch the assembler at all — see its header.
+import { nameVisibilitySet } from "../../lib/publicIdentity.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Variant kinds
@@ -896,4 +900,107 @@ export async function buildConsumerProjection<V extends PassportConsumerVariant>
   if (variant === "trips") return toTripsProjection(full) as ConsumerProjectionFor<V>;
   if (variant === "event") return toEventPassport(full) as ConsumerProjectionFor<V>;
   return toSafetyProjection(full) as ConsumerProjectionFor<V>;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Map presence (spec §21 "Map — aggregate or permission-appropriate presence
+// only"; §35 "other surfaces request the appropriate Passport projection
+// instead of rebuilding identity")
+//
+// WHY THIS IS NOT A SEVENTH `PassportConsumerVariant`
+// ---------------------------------------------------
+// It was the obvious move and it is the wrong one. Every variant above is
+// reached through `buildConsumerProjection`, which NARROWS a full per-user
+// assembly: `buildPassportProjection` performs ~21 table reads, and
+// `resolvePassportViewerContext` runs the interaction-permissions engine for
+// roughly 13 more PER TARGET. The live map is a bulk, polling surface — up to
+// `MAX_RESULTS` (100) travelers per response, polled every 45 s by every open
+// client. One per-user call per traveler is ~3,400 reads per poll per viewer.
+//
+// Putting `"map"` in that union would not just be slow; it would ADVERTISE the
+// per-user path to the next person who wires a map feature. So the map's access
+// to the Passport is batch-only BY CONSTRUCTION: this function, and no variant.
+// `passportMapPresence.test.ts` asserts the union still has no "map" member, so
+// the constraint is enforced rather than explained.
+//
+// WHAT THIS OWNS, AND WHAT IT DELIBERATELY DOES NOT
+// -------------------------------------------------
+// It owns IDENTITY: the four fields a map pin shows about a person, and the two
+// privacy rules that govern them. It does NOT own eligibility (who may appear on
+// the map at all), position coarsening, freshness, or blocking — those are
+// `lib/mapTravelers`' own contract and stay there. This function is given rows
+// that have ALREADY passed that gate and answers only "how is this person named
+// and pictured".
+//
+// COST: ONE table read for N owners, and it is not a new one — it is the
+// `nameVisibilitySet` call the caller was already making. Moving the rule here
+// costs nothing and changes no output; `passportMapPresence.test.ts` pins the
+// read count at 1 for 50 owners, so a future edit that reaches for a per-user
+// call fails instead of quietly making the map 3,400 reads deep.
+
+/** The profile columns map presence needs. A structural type, so callers pass
+ *  the rows they already loaded rather than this module re-reading them. */
+export interface MapPresenceProfileRow {
+  id: string;
+  handle?: string | null;
+  name?: string | null;
+  display_name?: string | null;
+  avatar_url?: string | null;
+  show_profile_picture_publicly?: boolean | null;
+  verified?: boolean | null;
+}
+
+/** The identity a map pin may carry. No location, no counts, no trust. */
+export interface MapPresenceProjection {
+  id: string;
+  handle: string | null;
+  displayName: string;
+  avatarUrl: string | null;
+  verified: boolean;
+}
+
+/** The name shown when the owner has NOT opted in to their real name. */
+const MAP_PRESENCE_FALLBACK_NAME = "Traveler";
+
+/**
+ * Identity for N map-eligible owners, keyed by owner id.
+ *
+ * Owners the caller passed that are missing from the result do not exist as
+ * profiles; a caller should drop them rather than substitute a default, which is
+ * why this returns a Map rather than a same-length array.
+ *
+ * `sc` is used for exactly one read (`nameVisibilitySet`). A read failure there
+ * yields an EMPTY allow-set, which means every pin falls back to `@handle` —
+ * fail-closed on the name, which is the safe direction: showing a handle to
+ * someone who opted in to their real name is a cosmetic regression, showing a
+ * real name to someone who did not is the privacy failure.
+ */
+export async function buildMapPresenceProjections(
+  sc: SupabaseClient,
+  rows: readonly MapPresenceProfileRow[],
+): Promise<Map<string, MapPresenceProjection>> {
+  const out = new Map<string, MapPresenceProjection>();
+  if (rows.length === 0) return out;
+
+  const allowedRealNames = await nameVisibilitySet(sc, rows.map((r) => r.id));
+
+  for (const prof of rows) {
+    const handle = prof.handle ?? null;
+    out.set(prof.id, {
+      id: prof.id,
+      handle,
+      // Universal display-name rule: a real name only where the owner opted in;
+      // otherwise the handle, and only then the fallback word.
+      displayName: allowedRealNames.has(prof.id)
+        ? (prof.display_name ?? prof.name ?? handle ?? MAP_PRESENCE_FALLBACK_NAME)
+        : (handle ? `@${handle}` : MAP_PRESENCE_FALLBACK_NAME),
+      // A flag-only gate, and that is correct HERE and would not be elsewhere:
+      // the caller's candidates are already private-excluded and
+      // viewer-independent (a map pin carries no follow/friend context), so the
+      // only remaining question is whether this owner opted OUT. Default true.
+      avatarUrl: prof.show_profile_picture_publicly !== false ? (prof.avatar_url ?? null) : null,
+      verified: prof.verified === true,
+    });
+  }
+  return out;
 }
