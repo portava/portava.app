@@ -46,9 +46,18 @@ export async function recordContribution(
     metadata = {},
   } = input;
 
-  // If we have a source_id, check for existing record to avoid duplicate credit
+  // If we have a source_id, check for existing record to avoid duplicate credit.
+  //
+  // A failed read resolves as `{ data: null }` and so reads as "no prior credit
+  // for this source", which sends us straight into the INSERT below and
+  // double-credits the §20 ledger for one real-world action.
+  // `passport_contribution_events_dedup_idx` bounds that damage, but a unique
+  // index is a backstop, not the check: it can be dropped, and it does not
+  // exist at all for the source_id-less callers this branch skips. Return the
+  // function's existing negative ("duplicate or error") and let the producer's
+  // next attempt do the crediting.
   if (sourceId) {
-    const { data: existing } = await db
+    const { data: existing, error: existingErr } = await db
       .from("passport_contribution_events")
       .select("id")
       .eq("user_id", userId)
@@ -56,6 +65,7 @@ export async function recordContribution(
       .eq("source_id", sourceId)
       .maybeSingle();
 
+    if (existingErr) return false;
     if (existing) return false;
   }
 

@@ -182,13 +182,32 @@ export async function translateContentFields(
   if (sourceLanguage === targetLanguage) return skipped;
 
   // 1. Cache hit?
-  const { data: cached } = await sc
+  //
+  // This read is not just a cost optimisation, it is the guard on the upsert at
+  // the bottom of the function. That upsert is keyed on
+  // (entity_type, entity_id, target_language), so treating an unreadable
+  // content_translations as a cache MISS re-runs the provider and then writes
+  // the result over the row it could not read — and when the fresh attempt
+  // fails validation (`status: 'failed'`, `translated_fields: {}`), a perfectly
+  // good stored translation is replaced by a failure sentinel that the next
+  // reader will serve as "translation unavailable". Return the existing
+  // `skipped` sentinel instead: no provider spend, no overwrite, and the caller
+  // falls back to the original text exactly as it does when translation is off.
+  const { data: cached, error: cacheErr } = await sc
     .from('content_translations')
     .select('translated_fields, status, source_language')
     .eq('entity_type', entityType)
     .eq('entity_id', entityId)
     .eq('target_language', targetLanguage)
     .maybeSingle();
+
+  if (cacheErr) {
+    logger?.warn(
+      { entityType, entityId, targetLanguage, err: cacheErr.message },
+      'content_translation_cache_read_failed',
+    );
+    return skipped;
+  }
 
   if (cached && (cached as any).status === 'translated') {
     const tf = (cached as any).translated_fields as TranslatedFields ?? {};

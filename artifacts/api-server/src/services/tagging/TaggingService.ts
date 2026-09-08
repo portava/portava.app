@@ -356,13 +356,25 @@ async function processMentions(
 
     // Dedup guard: if this (source, tagged_user) pair already exists,
     // skip — callers should not dispatch a second notification for re-processing.
-    const { data: existing } = await db
+    const { data: existing, error: dedupErr } = await db
       .from('tags')
       .select('id')
       .eq('source_type', sourceType)
       .eq('source_id', sourceId)
       .eq('tagged_user_id', profile.id)
       .maybeSingle();
+
+    // The upsert below is ignoreDuplicates, so a failed read cannot write a
+    // second tags row — but it CAN push the profile onto `taggedIds`, and
+    // taggedIds is what the caller dispatches mention notifications from. So an
+    // unreadable tags table re-notifies everyone mentioned in a post every time
+    // that post is re-processed (an edit, a retry), which is exactly the
+    // "at-most-once notification guaranteed" promise on the line below. Skip
+    // this profile — the same `continue` the upsert failure below takes.
+    if (dedupErr) {
+      logger?.warn({ err: dedupErr, handle: profile.handle }, 'tag dedup lookup failed — skipping mention');
+      continue;
+    }
 
     if (existing) continue; // Already tagged — at-most-once notification guaranteed
 

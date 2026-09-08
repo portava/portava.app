@@ -348,12 +348,23 @@ export async function saveGem(
   gemId: string,
   userId: string,
 ): Promise<{ alreadySaved: boolean }> {
-  const { data: existing } = await db
+  // The idempotency guard. An unreadable hidden_gem_saves resolves as
+  // `{ data: null }` and so reads as "not saved yet", which sends us into the
+  // INSERT and, more to the point, into the save_count increment below — a
+  // counter that is bumped once per *new* save and has no way back. A user who
+  // already saved the gem gets it counted twice. Throw, matching the insert
+  // failure two lines down.
+  const { data: existing, error: existingErr } = await db
     .from("hidden_gem_saves")
     .select("gem_id")
     .eq("gem_id", gemId)
     .eq("user_id", userId)
     .maybeSingle();
+
+  if (existingErr) {
+    logger.warn({ err: existingErr, gemId, userId }, "saveGem: existing-save lookup failed");
+    throw existingErr;
+  }
 
   if (existing) return { alreadySaved: true };
 

@@ -45,11 +45,19 @@ export async function applyForGuide(
   bio?: string,
   cityExpertise?: string[],
 ): Promise<any> {
-  const { data: existing } = await db
+  // This is what makes "Idempotent" true, and a failed read breaks it silently:
+  // `{ data: null }` from an unreadable table is indistinguishable from "no
+  // profile yet", so the INSERT below runs against a user who may already be an
+  // ACTIVE guide — writing guide_level 0 and status 'applicant' over a
+  // standing, verified profile. Fail closed by throwing, exactly as
+  // getGuideProfile does for a read error on this same table.
+  const { data: existing, error: existingErr } = await db
     .from("local_guide_profiles")
     .select("user_id, status")
     .eq("user_id", userId)
     .maybeSingle();
+
+  if (existingErr) throw existingErr;
 
   if (existing) return existing;
 
