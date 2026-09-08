@@ -15,8 +15,15 @@ const sc = createClient(url, key, { auth: { persistSession: false } });
 const BUCKETS = ["post-media", "profile-media"];
 
 async function main() {
-  const { data: flag } = await sc
+  // supabase-js RESOLVES on a database error, so an unchecked read here reads as
+  // "the flag is off" — and this script would then confidently report
+  // "pre-cutover, safe" about a database it never managed to talk to.
+  const { data: flag, error: flagErr } = await sc
     .from("feature_flags").select("enabled").eq("flag", "media_private_buckets_enabled").maybeSingle();
+  if (flagErr) {
+    console.error(`Could not read media_private_buckets_enabled: ${flagErr.message}. No verdict.`);
+    process.exit(2);
+  }
   const flagOn = (flag as any)?.enabled === true;
   console.log(`flag media_private_buckets_enabled = ${flagOn}`);
 
@@ -26,6 +33,21 @@ async function main() {
     if (error || !data) { console.log(`  ${id}: (not found) ${error?.message ?? ""}`); states[id] = null; continue; }
     states[id] = data.public;
     console.log(`  ${id}: public=${data.public}`);
+  }
+
+  // VACUITY IS FAILURE. Every bucket unreadable means this script examined
+  // NOTHING, and it used to fall through to the "MIXED STATE" branch and exit 0
+  // — a security audit reporting a verdict about buckets it never saw. Pointed
+  // at an unreachable target (a loopback discard port, say) that is exactly what
+  // it did. Exit 2 = could not establish the state, distinct from exit 1 = the
+  // credentials were never supplied.
+  if (BUCKETS.every((b) => states[b] === null)) {
+    console.error("");
+    console.error(
+      `NO VERDICT: none of ${BUCKETS.join(", ")} could be read, so nothing about bucket privacy was established. ` +
+        `An audit that examined nothing must not report a state.`,
+    );
+    process.exit(2);
   }
 
   const anyPublic = BUCKETS.some((b) => states[b] === true);

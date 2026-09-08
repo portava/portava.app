@@ -199,6 +199,35 @@ describe("guard reachability ratchet", () => {
     assert.match(out, /runs cleanly here and exits 0/);
   });
 
+  it("gives the SAME manual verdict with database credentials in the environment", () => {
+    // A gate whose verdict depends on the caller's environment is worse than no
+    // gate. check-media-bucket-privacy.ts exits 1 from a bare shell (no
+    // credentials) and — before it was fixed to refuse a vacuous verdict —
+    // exited 0 under this very suite, which exports SUPABASE_URL/KEY pointed at
+    // a loopback discard port. So the manual run strips the credential
+    // variables, and this pins that the answer does not move.
+    const runAll = join(tmp, "none3.sh");
+    writeFileSync(runAll, "#!/usr/bin/env bash\n");
+    const wf = join(tmp, "wfnone3");
+    mkdirSync(wf, { recursive: true });
+    const entry = [{
+      checker: "src/scripts/check-media-bucket-privacy.ts",
+      responsibility: "A live-Storage audit whose verdict changed with the caller's environment until the run was sanitised.",
+      reach: { kind: "manual", reason: "s".repeat(200) },
+    }];
+    const bare = withRegistry("envbare", entry, {
+      GUARD_RUN_ALL: runAll, GUARD_WORKFLOW_DIR: wf, GUARD_SKIP_MANUAL_RUN: "",
+      SUPABASE_URL: "", SUPABASE_SERVICE_ROLE_KEY: "",
+    });
+    const withCreds = withRegistry("envcreds", entry, {
+      GUARD_RUN_ALL: runAll, GUARD_WORKFLOW_DIR: wf, GUARD_SKIP_MANUAL_RUN: "",
+      SUPABASE_URL: "http://127.0.0.1:9", SUPABASE_SERVICE_ROLE_KEY: "dummy",
+    });
+    const verdict = (out: string) => /check-media-bucket-privacy\.ts: declared MANUAL/.test(out);
+    assert.equal(verdict(bare.out), verdict(withCreds.out), "the manual verdict must not move with the environment");
+    assert.equal(verdict(bare.out), false, "and it must be the correct one: this guard genuinely cannot run in CI");
+  });
+
   it("ACCEPTS a manual exemption for a guard that genuinely cannot run", () => {
     // The control. checkMediaUrlsExternalOnly exits 2 — its credential guard
     // refusing a non-sanctioned target — so the manual claim is true and must be

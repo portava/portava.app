@@ -497,9 +497,24 @@ function main(): void {
         const manualAbs = join(API_ROOT, g.checker);
         if (existsSync(manualAbs) && !process.env.GUARD_SKIP_MANUAL_RUN) {
           const argv = manualAbs.endsWith(".mjs") ? [manualAbs] : ["--import", "tsx/esm", manualAbs];
+          // SANITISED ENVIRONMENT, and this is load-bearing rather than tidy.
+          //
+          // The question the rule asks is "could CI invoke this?", and CI has no
+          // database credentials. Run with whatever the caller happens to have,
+          // the answer changes with the caller: check-media-bucket-privacy.ts
+          // exits 1 from a bare shell (no credentials) and — before it was fixed
+          // to refuse a vacuous verdict — exited 0 under the unit suite, which
+          // exports SUPABASE_URL/KEY pointed at a loopback discard port. A gate
+          // whose verdict depends on the ambient environment is worse than no
+          // gate, so the credential variables are stripped and the answer is the
+          // same everywhere.
+          const sanitised: NodeJS.ProcessEnv = { ...process.env };
+          for (const k of Object.keys(sanitised)) {
+            if (/^(EXPO_PUBLIC_)?SUPABASE_/.test(k)) delete sanitised[k];
+          }
           const run = spawnSync(process.execPath, argv, {
             cwd: API_ROOT, encoding: "utf8", timeout: MANUAL_RUN_TIMEOUT_MS,
-            maxBuffer: 32 * 1024 * 1024,
+            maxBuffer: 32 * 1024 * 1024, env: sanitised,
           });
           if (run.status === 0) {
             problems.push(
