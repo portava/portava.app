@@ -3,7 +3,25 @@ import type { Response } from "express";
 import { requireUser, sendError } from "../lib/http";
 import { getServiceClient } from "../lib/supabase";
 import { invalidate as invalidateCompassCache } from "../compass/CompassCacheEngine.js";
-import { canViewHighlight, type HighlightVisibility, type HighlightRecord } from "../lib/highlightPermissions";
+import {
+  canViewHighlight,
+  canEngageHighlight,
+  ownHighlightRefusal,
+  type HighlightEngagement,
+  type HighlightVisibility,
+  type HighlightRecord,
+} from "../lib/highlightPermissions";
+import {
+  readResurfacingSuppressionsForOwners,
+  isSuppressed,
+  type ResurfacingSuppressions,
+} from "../services/highlights/highlightResurfacing.js";
+import {
+  readProjectionPolicies,
+  resolveLocationDisclosure,
+  type ProjectionPolicyRead,
+} from "../services/highlights/highlightProjectionPolicy.js";
+import { executeRevocation } from "../services/highlights/highlightRevocation.js";
 import { canMessage } from "../lib/messagingPermissions";
 import { isFlagEnabled } from "../lib/featureFlags";
 import { nameVisibilitySet, presentedName } from "../lib/publicIdentity";
@@ -12,6 +30,158 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 const router = Router();
 const UUID = /^[0-9a-f-]{36}$/i;
+
+/* ============================================================================
+ * The projected column set, named once.
+ *
+ * `archived_at` is NEW here. It has existed on `public.highlights` since
+ * migration 0026 and, until 2026-09-08, was referenced by NO TypeScript in this
+ * repository — grepped, not assumed. Spec §21 gives it a job: Archive is
+ * "retain … remove from normal browsing unless explicitly requested", the one
+ * REVERSIBLE removal, and it is a different operation from the soft delete in
+ * `deleted_at`, which is terminal. Projecting it is what lets
+ * lib/highlightPermissions.isHighlightActive tell the two apart; a read that
+ * does not project it passes `undefined`, which that function treats as "not
+ * asked for", not as "not archived".
+ *
+ * NOTE for whoever reads the RLS policy next: `highlights_select_active`
+ * (migration 2530) does NOT reference archived_at. Archive is enforced
+ * app-side, here, and a direct PostgREST read would still see archived rows.
+ * ============================================================================ */
+const HIGHLIGHT_COLUMNS =
+  "id, owner_id, media_url, media_type, video_duration_seconds, caption, location_name, location_city, location_country, visibility, expires_at, created_at, deleted_at, archived_at";
+
+/* ============================================================================
+ * §10 / §11 — the projection policy pass.
+ *
+ * Highlights/Memories Development Architecture Spec v1:
+ *   §10 "Publishing location must never exceed the owner's selected precision";
+ *       "Temporary operational location must not leak into durable public
+ *        Highlights by default."
+ *   §11 the six resurfacing controls, of which DO_NOT_RESURFACE,
+ *       KEEP_PRIVATE_FOREVER and HIDE_PERSON_FROM_RESURFACING bear on a
+ *       proactively-assembled feed.
+ *
+ * WHY THIS RUNS ON THE FEEDS AND NOT ON THE PROFILE READ. §21 draws the line
+ * for us: "Do not resurface — retain and search privately; suppress PROACTIVE
+ * resurfacing." GET /users/:id/highlights is an explicit retrieval — a person
+ * asked for that person's Highlights — so a DO_NOT_RESURFACE control does not
+ * apply to it. GET /highlights/active and GET /highlights/following-feed are
+ * assembled by the system and are exactly what "proactive" means.
+ *
+ * THREE STATES, NOT TWO. See services/highlights/highlightSchemaAvailability.ts.
+ * `absent` (the tables are not deployed — migrations 2720/2721 are written and
+ * NOT applied) is reported and NOT enforced; `unreadable` fails CLOSED. The
+ * difference is decided by PostgREST's own missing-object codes, never by a
+ * heuristic.
+ * ============================================================================ */
+
+/** Controls that suppress a Highlight from a proactively-assembled feed. */
+const FEED_SUPPRESSING_CONTROLS = ["DO_NOT_RESURFACE", "KEEP_PRIVATE_FOREVER"] as const;
+
+/**
+ * Drop the Highlights whose owner has asked that they not be resurfaced.
+ *
+ * Returns the surviving rows. An `unreadable` control table suppresses
+ * EVERYTHING — `isSuppressed` returns true for an unreadable set by
+ * construction — which on a feed means an empty page rather than a page that
+ * silently ignores a user's "never show me this again". An `absent` table
+ * suppresses nothing and is logged.
+ */
+function applyResurfacingControls<T extends { id: string; owner_id: string }>(
+  rows: T[],
+  set: ResurfacingSuppressions,
+  log: { error: (obj: unknown, msg: string) => void } | undefined,
+  where: string,
+): T[] {
+  if (set.state === "absent") {
+    log?.error(
+      { reason: set.reason, where },
+      "highlights: §11 resurfacing controls are NOT DEPLOYED — feed served without them",
+    );
+    return rows;
+  }
+  if (set.state === "unreadable") {
+    log?.error(
+      { reason: set.reason, where },
+      "highlights: §11 resurfacing controls unreadable — suppressing every candidate rather than resurfacing something a user asked to forget",
+    );
+    return [];
+  }
+  return rows.filter((h) => {
+    for (const c of FEED_SUPPRESSING_CONTROLS) if (isSuppressed(set, c, h.id)) return false;
+    if (isSuppressed(set, "HIDE_PERSON_FROM_RESURFACING", h.owner_id)) return false;
+    return true;
+  });
+}
+
+/**
+ * §10 location precision. Rewrites `location_name` / `location_city` /
+ * `location_country` on each row to the owner's selected rung.
+ *
+ * When no precision is stored — which is EVERY Highlight today, because the
+ * column does not exist — the fields are returned unchanged and the reason is
+ * logged once for the page. LOCATION_PRECISION_DEFAULT is an OWNER decision and
+ * is deliberately not taken here; picking a default would strip location text
+ * from every Highlight now on the surface.
+ */
+function applyLocationPrecision<T extends { id: string; location_name?: string | null; location_city?: string | null; location_country?: string | null }>(
+  rows: T[],
+  policies: ProjectionPolicyRead,
+  log: { error: (obj: unknown, msg: string) => void } | undefined,
+  where: string,
+): T[] {
+  if (policies.state !== "ready") {
+    // `unreadable` clamps to HIDDEN inside resolveLocationDisclosure; `absent`
+    // leaves the row alone. Both are logged, neither is silent.
+    if (policies.state === "unreadable") {
+      log?.error(
+        { reason: policies.reason, where },
+        "highlights: §10 projection policy unreadable — clamping every location to HIDDEN",
+      );
+    } else {
+      log?.error(
+        { reason: policies.reason, where },
+        "highlights: §10 owner-selected location precision is NOT DEPLOYED — locations served unclamped",
+      );
+    }
+  }
+  return rows.map((h) => {
+    const stored = policies.state === "ready" ? policies.byHighlightId.get(h.id)?.location_precision : undefined;
+    const d = resolveLocationDisclosure(h, stored ?? null, policies);
+    return { ...h, location_name: d.location_name, location_city: d.location_city, location_country: d.location_country };
+  });
+}
+
+/**
+ * The engagement gate, once. Every engagement route calls this instead of
+ * re-deriving "is this my own highlight" inline — the fork that let
+ * lib/highlightPermissions.canEngageHighlight sit exported with zero callers
+ * while three handlers each restated its rule. See that file's header for which
+ * behaviour was kept and why.
+ *
+ * Returns true when the action may proceed; otherwise it has already sent the
+ * response.
+ */
+function gateEngagement(
+  userId: string,
+  h: HighlightRecord,
+  action: HighlightEngagement,
+  res: Response,
+): boolean {
+  // `true` for viewerCanView: every caller reaches here only after
+  // resolveViewAccess returned, which is the canViewHighlight verdict for this
+  // exact viewer and row. Recomputing it here would be a second, divergable
+  // answer — the thing this reconciliation exists to remove.
+  const verdict = canEngageHighlight(userId, h, action, true);
+  if (verdict.allowed) return true;
+  if (verdict.reason === "own_highlight") {
+    sendError(res, "invalid_payload", ownHighlightRefusal(action));
+  } else {
+    sendError(res, "not_found", "Highlight not found");
+  }
+  return false;
+}
 
 /* ============================================================================
  * Trip membership — the definition of record, not a local approximation.
@@ -163,7 +333,7 @@ async function resolveViewAccess(
   // db_error is both the honest answer and the safe one. §28.11.
   const { data: h, error: hErr } = await sc
     .from("highlights")
-    .select("id, owner_id, visibility, expires_at, deleted_at")
+    .select("id, owner_id, visibility, expires_at, deleted_at, archived_at")
     .eq("id", highlightId)
     .maybeSingle();
 
@@ -338,7 +508,7 @@ router.post("/highlights", async (req, res) => {
       // compatibility and deliberately not persisted. One unknown column fails
       // the WHOLE insert (PGRST204), so this distinction is load-bearing.
     })
-    .select("id, owner_id, media_url, media_type, video_duration_seconds, caption, location_name, location_city, location_country, visibility, expires_at, created_at, deleted_at")
+    .select(HIGHLIGHT_COLUMNS)
     .single();
 
   if (error) {
@@ -396,9 +566,13 @@ router.get("/users/:userId/highlights", async (req, res) => {
   // Load active (non-expired, non-deleted) highlights for target user
   const { data: rows, error } = await client
     .from("highlights")
-    .select("id, owner_id, media_url, media_type, video_duration_seconds, caption, location_name, location_city, location_country, visibility, expires_at, created_at, deleted_at")
+    .select(HIGHLIGHT_COLUMNS)
     .eq("owner_id", targetId)
     .is("deleted_at", null)
+    // §21 Archive: "remove from normal browsing unless explicitly requested".
+    // A profile view is browsing. The owner reaches archived Highlights through
+    // GET /highlights/archived, which is the explicit request.
+    .is("archived_at", null)
     .gt("expires_at", new Date().toISOString())
     .order("created_at", { ascending: true });
 
@@ -560,8 +734,9 @@ router.get("/highlights/active", async (req, res) => {
   // Build query — include trip_only so trip members can see them
   let q = sc
     .from("highlights")
-    .select("id, owner_id, media_url, media_type, video_duration_seconds, caption, location_name, location_city, location_country, visibility, expires_at, created_at, deleted_at")
+    .select(HIGHLIGHT_COLUMNS)
     .is("deleted_at", null)
+    .is("archived_at", null) // §21 Archive — see GET /users/:id/highlights
     .gt("expires_at", new Date().toISOString())
     .in("visibility", ["public", "travelers_nearby", "circle_only", "trip_only"])
     .order("created_at", { ascending: false })
@@ -620,22 +795,41 @@ router.get("/highlights/active", async (req, res) => {
     }
   }
 
-  // Permission filter
-  const visible = unblocked.filter((h: any) => {
-    if (h.owner_id === user.id) return true;
-    if (h.visibility === "public" || h.visibility === "travelers_nearby") return true;
-    if (h.visibility === "circle_only") return followingSet.has(h.owner_id as string);
-    if (h.visibility === "trip_only") return sharesTripSet.has(h.owner_id as string);
-    return false;
-  }).slice(0, limit);
+  // Permission filter — THE shared rule, not a fourth copy of it.
+  //
+  // This was an inline switch over `visibility` that restated
+  // lib/highlightPermissions.canViewHighlight. It reached the same verdict for
+  // every case the query can return, because the query already filters
+  // deleted_at / expires_at / private — which is exactly why the fork was
+  // survivable and exactly why it was dangerous: change the query and the two
+  // silently disagree. canViewHighlight re-checks expiry, deletion and (new)
+  // archive itself, so the guarantee no longer depends on the SELECT.
+  const visible = unblocked.filter((h: any) =>
+    canViewHighlight(user.id, h as HighlightRecord, {
+      viewerFollowsOwner: followingSet.has(h.owner_id as string),
+      sharesTrip: sharesTripSet.has(h.owner_id as string),
+    }),
+  ).slice(0, limit);
 
-  if (visible.length === 0) {
+  // §11 — this feed is PROACTIVE resurfacing, so the owner's resurfacing
+  // controls apply to it. Read for the owners on the page, one query.
+  const suppressed = await readResurfacingSuppressionsForOwners(
+    sc,
+    visible.map((h: any) => h.owner_id as string),
+  );
+  const surviving = applyResurfacingControls(visible as any[], suppressed, req.log, "GET /highlights/active");
+
+  if (surviving.length === 0) {
     res.status(200).json({ highlights: [] });
     return;
   }
 
-  const highlightIds = visible.map((h: any) => h.id as string);
-  const ownerIds = [...new Set(visible.map((h: any) => h.owner_id as string))];
+  const highlightIds = surviving.map((h: any) => h.id as string);
+  const ownerIds = [...new Set(surviving.map((h: any) => h.owner_id as string))];
+
+  // §10 — clamp each location to the owner's selected precision.
+  const policies = await readProjectionPolicies(sc, highlightIds);
+  const disclosed = applyLocationPrecision(surviving as any[], policies, req.log, "GET /highlights/active");
 
   // Batch metrics + author profiles
   const [viewRows, likeRows, viewedRows, likedRows, profileRows] = await Promise.all([
@@ -659,7 +853,7 @@ router.get("/highlights/active", async (req, res) => {
     profileMap[(p as any).id] = { id: (p as any).id, handle: (p as any).handle, name: presentedName(p as any, (p as any).id === user.id || allowedNames.has((p as any).id)), avatarUrl: (p as any).avatar_url ?? null };
   }
 
-  const result = visible.map((h: any) => ({
+  const result = disclosed.map((h: any) => ({
     ...h,
     author: profileMap[h.owner_id] ?? null,
     viewCount: viewCountMap[h.id] ?? 0,
@@ -722,7 +916,175 @@ router.delete("/highlights/:id", async (req, res) => {
     sendError(res, "db_error", "The highlight could not be deleted. Please try again.", { exposeDetail: true });
     return;
   }
+
+  /* §21 — revocation propagation.
+   *
+   * "Revocation propagation must cover public projection, search index,
+   *  semantic embedding, profile Highlight, Trip story derivative, Passport
+   *  reference, cached narrative, and any share link. Deletion should be
+   *  observable, retryable, and dead-lettered if a downstream cleanup
+   *  repeatedly fails."
+   *
+   * Before this, DELETE set `deleted_at` and stopped. POST /highlights/:id/report
+   * already invalidated the Compass cache for exactly the reason that applies
+   * here — "their feed should not continue to surface content they reported" —
+   * so a DELETED Highlight could outlive its own deletion in a cached Compass
+   * feed while a REPORTED one could not. The cache is the one §21 destination
+   * this repository can actually reach; the other seven are reported with their
+   * measured status (not_applicable where no such destination exists,
+   * not_implemented where one does and nothing reaches it). See
+   * services/highlights/highlightRevocation.ts — nothing in that report claims a
+   * destination was revoked that was not.
+   *
+   * The revocation does NOT gate the 204. The row is already soft-deleted and
+   * every read on this surface filters it; failing the request would tell the
+   * owner their deletion did not happen, which is false. The unreached
+   * destinations are logged with the highlight id so a repeated failure is
+   * dead-letterable. */
+  const sc = getServiceClient();
+  const report = await executeRevocation("DELETE_HIGHLIGHT", id, {
+    invalidateCache: sc
+      ? async () => {
+          await invalidateCompassCache(sc, user.id, "highlight_deleted");
+        }
+      : undefined,
+  });
+  if (!report.complete) {
+    req.log.error(
+      {
+        highlightId: id,
+        ownerId: user.id,
+        retryable: report.retryable,
+        unreached: report.outcomes.filter((o) => o.status !== "revoked" && o.status !== "not_applicable"),
+      },
+      "highlights: §21 revocation incomplete — destinations remain unrevoked after delete",
+    );
+  }
+
   res.status(204).send();
+});
+
+/* ============================================================================
+ * §21 ARCHIVE — the reversible removal, which is NOT the soft delete.
+ *
+ * Highlights/Memories Development Architecture Spec v1 §21:
+ *   "Delete, archive, do-not-resurface, and 'keep but do not personalize' are
+ *    different operations and must remain separate in both data model and UX."
+ *   Archive: "Retain canonical Memory; remove from normal browsing unless
+ *    explicitly requested."
+ *
+ * `highlights.archived_at` has existed since migration 0026 and was referenced
+ * by no TypeScript in this repository until now — so no migration is needed and
+ * no existing row is affected: every archived_at is NULL today, which is why
+ * adding `.is("archived_at", null)` to the three list reads changes nothing
+ * that is currently on anyone's screen.
+ *
+ * What makes this Archive and not a second delete:
+ *   - it is REVERSIBLE (DELETE /highlights/:id/archive clears it);
+ *   - the row is RETAINED and still explicitly retrievable by its owner
+ *     (GET /highlights/archived);
+ *   - it does NOT set deleted_at, and DELETE /highlights/:id still works on an
+ *     archived Highlight, so archiving does not consume the delete.
+ *
+ * Both writes carry `.select("id")`. An UPDATE with no .select() returns
+ * `data: null` and cannot tell one affected row from none, so `error === null`
+ * would mean only "the statement ran" — and under the caller's own RLS an
+ * update matching zero rows errors nothing at all. Same reasoning, same shape,
+ * as the soft delete above.
+ * ============================================================================ */
+router.post("/highlights/:id/archive", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { client, user } = auth;
+
+  const { id } = req.params;
+  if (!UUID.test(id)) { sendError(res, "invalid_payload", "Invalid highlight id"); return; }
+
+  const { data: updated, error } = await client
+    .from("highlights")
+    .update({ archived_at: new Date().toISOString() })
+    .eq("id", id)
+    .eq("owner_id", user.id)
+    .is("deleted_at", null)
+    .select("id, archived_at");
+
+  if (error) {
+    req.log.error({ err: error, highlightId: id }, "highlights: archive failed");
+    sendError(res, "db_error", error.message);
+    return;
+  }
+  if (!updated || (updated as any[]).length === 0) {
+    // Zero rows: not yours, not there, or already deleted. Not distinguishable
+    // without a second read, and each of the three is a 404 to this caller.
+    sendError(res, "not_found", "Highlight not found");
+    return;
+  }
+  res.status(200).json({ id, archivedAt: (updated as any[])[0].archived_at });
+});
+
+/** §21 Archive is reversible. This is the half that makes it so. */
+router.delete("/highlights/:id/archive", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { client, user } = auth;
+
+  const { id } = req.params;
+  if (!UUID.test(id)) { sendError(res, "invalid_payload", "Invalid highlight id"); return; }
+
+  const { data: updated, error } = await client
+    .from("highlights")
+    .update({ archived_at: null })
+    .eq("id", id)
+    .eq("owner_id", user.id)
+    .is("deleted_at", null)
+    .select("id");
+
+  if (error) {
+    req.log.error({ err: error, highlightId: id }, "highlights: unarchive failed");
+    sendError(res, "db_error", error.message);
+    return;
+  }
+  if (!updated || (updated as any[]).length === 0) {
+    sendError(res, "not_found", "Highlight not found");
+    return;
+  }
+  res.status(200).json({ id, archivedAt: null });
+});
+
+/* ============================================================================
+ * GET /highlights/archived — §21's "unless explicitly requested".
+ *
+ * Owner-only, and it is the ONLY read on this surface that returns archived
+ * rows. Expiry is deliberately NOT filtered here: an archived Highlight is
+ * being retained, and hiding the retained thing behind the very expiry the
+ * owner archived it to escape would make Archive indistinguishable from
+ * waiting. Deleted rows are still excluded — Delete is terminal.
+ * ============================================================================ */
+router.get("/highlights/archived", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { client, user } = auth;
+
+  const { data: rows, error } = await client
+    .from("highlights")
+    .select(HIGHLIGHT_COLUMNS)
+    .eq("owner_id", user.id)
+    .is("deleted_at", null)
+    .not("archived_at", "is", null)
+    .order("archived_at", { ascending: false })
+    .limit(200);
+
+  if (error) {
+    // An unreadable table is NOT "you have archived nothing". supabase-js
+    // RESOLVES on a database error, so an unbound `.error` here would answer
+    // `{ highlights: [] }` for an outage and the owner would conclude their
+    // archive was lost.
+    req.log.error({ err: error, ownerId: user.id }, "highlights: archived read failed — refusing rather than reporting an empty archive");
+    sendError(res, "degraded_unavailable", "We could not load your archived highlights. Please try again.");
+    return;
+  }
+
+  res.status(200).json({ highlights: (rows ?? []) as any[] });
 });
 
 /* ============================================================================
@@ -774,10 +1136,7 @@ router.post("/highlights/:id/like", async (req, res) => {
   const access = await resolveViewAccess(sc, user.id, id, res, req.log);
   if (!access) return;
 
-  if (access.h.owner_id === user.id) {
-    sendError(res, "invalid_payload", "Cannot like your own highlight");
-    return;
-  }
+  if (!gateEngagement(user.id, access.h, "like", res)) return;
 
   // The upsert result was discarded. It IS issued (the await sends it), but a
   // failed write resolved rather than threw, and this handler then answered
@@ -933,10 +1292,7 @@ router.post("/highlights/:id/reply", async (req, res) => {
   if (!access) return;
 
   const ownerId = access.h.owner_id;
-  if (ownerId === user.id) {
-    sendError(res, "invalid_payload", "Cannot reply to your own highlight");
-    return;
-  }
+  if (!gateEngagement(user.id, access.h, "reply", res)) return;
 
   // Enforce messaging permissions — honour the recipient's privacy settings and block rules.
   // This mirrors the canMessage gate used by POST /api/users/:userId/open-thread.
@@ -1087,10 +1443,7 @@ router.post("/highlights/:id/report", async (req, res) => {
   const access = await resolveViewAccess(sc, user.id, id, res, req.log);
   if (!access) return;
 
-  if (access.h.owner_id === user.id) {
-    sendError(res, "invalid_payload", "Cannot report your own highlight");
-    return;
-  }
+  if (!gateEngagement(user.id, access.h, "report", res)) return;
 
   // The report write was discarded. A 204 told the reporter their report was
   // filed; on a failure nothing was filed, and a report nobody receives is the
@@ -1225,9 +1578,10 @@ router.get("/highlights/following-feed", async (req, res) => {
 
   let feedQuery = sc
     .from("highlights")
-    .select("id, owner_id, media_url, media_type, video_duration_seconds, caption, location_name, location_city, location_country, visibility, expires_at, created_at, deleted_at")
+    .select(HIGHLIGHT_COLUMNS)
     .in("owner_id", eligibleIds)
     .is("deleted_at", null)
+    .is("archived_at", null) // §21 Archive — see GET /users/:id/highlights
     .gt("expires_at", new Date().toISOString())
     .neq("visibility", "private")
     .order("created_at", { ascending: true });
@@ -1290,13 +1644,33 @@ router.get("/highlights/following-feed", async (req, res) => {
   }
 
   // 5. Permission filter, then (when bounded) the finite page.
-  const permitted = allHighlights.filter((h) => {
-    if (h.visibility === "public" || h.visibility === "travelers_nearby") return true;
-    if (h.visibility === "circle_only") return circleApprovedSet.has(h.owner_id as string);
-    if (h.visibility === "trip_only") return sharesTripSet.has(h.owner_id as string);
-    return false;
-  });
-  const visible = feedLimit != null ? permitted.slice(0, feedLimit) : permitted;
+  // THE shared rule. This inline copy had ONE substantive divergence from
+  // canViewHighlight: no owner short-circuit. An owner who follows their own
+  // account therefore did not see their own circle_only / trip_only Highlight
+  // in their own feed, while GET /users/:id/highlights and the single-highlight
+  // gate both showed it. Reconciled onto canViewHighlight — the majority
+  // behaviour, and one that can leak nothing, since the subject is the viewer's
+  // own row. Private highlights stay out via the `.neq` on the query above.
+  const permitted = allHighlights.filter((h) =>
+    canViewHighlight(user.id, h as HighlightRecord, {
+      viewerFollowsOwner: circleApprovedSet.has(h.owner_id as string),
+      sharesTrip: sharesTripSet.has(h.owner_id as string),
+    }),
+  );
+  // 5b. §11 resurfacing controls, BEFORE the page is cut.
+  //
+  // Order matters: suppressing after slicing would leave the page short by
+  // however many rows the controls removed, and `nextCursor` would then be
+  // computed from a page whose length no longer means "full". Suppress, then
+  // cut, then derive the cursor — the same reason the visibility filter runs
+  // before the slice above.
+  const suppressed = await readResurfacingSuppressionsForOwners(
+    sc,
+    permitted.map((h: any) => h.owner_id as string),
+  );
+  const surviving = applyResurfacingControls(permitted as any[], suppressed, req.log, "GET /highlights/following-feed");
+
+  const visible = feedLimit != null ? surviving.slice(0, feedLimit) : surviving;
   const nextCursor = feedLimit != null && visible.length === feedLimit
     ? (visible[visible.length - 1]?.created_at ?? null)
     : null;
@@ -1309,6 +1683,10 @@ router.get("/highlights/following-feed", async (req, res) => {
   // 6. Batch metrics + author profiles
   const highlightIds = visible.map((h: any) => h.id as string);
   const ownerIds = [...new Set(visible.map((h: any) => h.owner_id as string))];
+
+  // §10 — clamp each location to the owner's selected precision.
+  const policies = await readProjectionPolicies(sc, highlightIds);
+  const disclosed = applyLocationPrecision(visible as any[], policies, req.log, "GET /highlights/following-feed");
 
   const [viewRows2, likeRows2, viewedRows2, likedRows2, profileRows] = await Promise.all([
     sc.from("highlight_views").select("highlight_id").in("highlight_id", highlightIds),
@@ -1338,7 +1716,7 @@ router.get("/highlights/following-feed", async (req, res) => {
 
   // 7. Group by owner, preserving the order highlights came back
   const grouped = new Map<string, { profile: any; highlights: any[] }>();
-  for (const h of visible) {
+  for (const h of disclosed) {
     const ownerId = h.owner_id as string;
     if (!grouped.has(ownerId)) {
       grouped.set(ownerId, { profile: profileMap[ownerId] ?? null, highlights: [] });
