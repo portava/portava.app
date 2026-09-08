@@ -88,7 +88,7 @@ import {
 import { isNonNumericCoord } from "../lib/coords.js";
 import { sendPushWithRetry } from "../lib/pushWithRetry.js";
 import { invalidate as invalidateCompassCache } from "../compass/CompassCacheEngine.js";
-import { invalidateSuggestedCityCache, checkRentBuddyAccess } from "./rentABuddyRollout.js";
+import { invalidateSuggestedCityCache, checkRentBuddyAccess, CANCELLED_BOOKING_STATUSES } from "./rentABuddyRollout.js";
 import { requireBookingKyc } from "../lib/rentBuddyKycGate.js";
 import { isKillSwitchEngaged } from "../lib/featureFlags.js";
 // requireRentBuddyEnabled is the lane's ONE master-switch guard, defined in
@@ -2223,7 +2223,16 @@ router.get("/rent-a-buddy/me/earnings/summary", async (req, res) => {
   const upcoming = bookings.filter((b) => b.booking_date > today && (UPCOMING_STATUSES as readonly string[]).includes(b.status));
   const completed = bookings.filter((b) => b.status === "completed");
   const disputed = bookings.filter((b) => b.status === "disputed");
-  const cancelled = bookings.filter((b) => b.status === "cancelled");
+  // THE SAME TWO-VALUE BLIND SPOT, on the other side of the lifecycle.
+  // `cancelled` is written ONLY by admin dispute resolution. Every user-initiated
+  // cancellation writes `cancelled_by_traveler` or `cancelled_by_buddy` (the
+  // cancel route in rentABuddy.ts), so `b.status === "cancelled"` counted almost
+  // every real cancellation as zero and the buddy's statusBreakdown reported a
+  // cancellation history they did not have. This is the identical undercount
+  // CANCELLED_BOOKING_STATUSES was created for in rentABuddyRollout.ts, where it
+  // had made the city graduation gate falsely lenient; the set is imported
+  // rather than re-listed so the two cannot drift apart again.
+  const cancelled = bookings.filter((b) => CANCELLED_BOOKING_STATUSES.has(b.status));
 
   const sum = (arr: any[], key: string) => arr.reduce((s, r) => s + Number(r[key] ?? 0), 0);
 

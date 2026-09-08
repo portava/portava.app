@@ -131,6 +131,7 @@ function httpReq(method: string, path: string, body?: unknown, who = TRAVELER_ID
 before(async () => {
   const { default: rentABuddyRouter } = await import("../routes/rentABuddy.js");
   const { default: rentABuddySpecRouter } = await import("../routes/rentABuddySpec.js");
+  const { default: marketplaceRouter } = await import("../routes/rentABuddyMarketplace.js");
   const app = express();
   app.use(express.json());
   // req.log shim. Without it the handlers' error paths crash and a
@@ -141,6 +142,7 @@ before(async () => {
   });
   app.use("/api", rentABuddyRouter);
   app.use("/api", rentABuddySpecRouter);
+  app.use("/api", marketplaceRouter);
   server = http.createServer(app);
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", () => r()));
   base = `http://127.0.0.1:${(server.address() as any).port}`;
@@ -426,5 +428,57 @@ describe("C: dispute-resolution counters follow the booking transition", () => {
     assert.equal(res.body?.error, "precondition_unavailable");
     assert.deepEqual(counterRpcCalls(), []);
     assert.deepEqual(bookingPatches(), [], "nothing may be written when the evidence cannot be read");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// D. GET /me/earnings/summary — the cancellation bucket
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * `statusBreakdown.cancelled` filtered on `b.status === "cancelled"`. That value
+ * is written ONLY by admin dispute resolution; every user-initiated cancellation
+ * writes `cancelled_by_traveler` or `cancelled_by_buddy`. So the bucket counted
+ * almost every real cancellation as zero — the identical undercount
+ * CANCELLED_BOOKING_STATUSES was created for in rentABuddyRollout.ts, where it
+ * had made the city graduation gate falsely lenient.
+ */
+describe("D: the earnings summary counts the cancellations that were actually written", () => {
+  it("counts cancelled_by_traveler and cancelled_by_buddy, not only bare 'cancelled'", async () => {
+    const BUDDY_ROWS = [
+      { id: "bk-1", status: "cancelled_by_traveler", booking_date: "2020-01-01", total_usd: 100, deposit_usd: 0, cash_balance_usd: 0, tip_usd: 0, pricing_type: "hourly", category: "city", city: "Cebu", duration_h: 2 },
+      { id: "bk-2", status: "cancelled_by_buddy",    booking_date: "2020-01-02", total_usd: 100, deposit_usd: 0, cash_balance_usd: 0, tip_usd: 0, pricing_type: "hourly", category: "city", city: "Cebu", duration_h: 2 },
+      { id: "bk-3", status: "cancelled",             booking_date: "2020-01-03", total_usd: 100, deposit_usd: 0, cash_balance_usd: 0, tip_usd: 0, pricing_type: "hourly", category: "city", city: "Cebu", duration_h: 2 },
+      { id: "bk-4", status: "completed",             booking_date: "2020-01-04", total_usd: 200, deposit_usd: 0, cash_balance_usd: 0, tip_usd: 0, pricing_type: "hourly", category: "city", city: "Cebu", duration_h: 2 },
+    ];
+
+    const client = realClient((c) => {
+      if (c.path === "/auth/v1/user") return authUser(c, BUDDY_USER);
+      if (c.path === "/rest/v1/feature_flags") return [{ flag: "rent_buddy_enabled", enabled: true }];
+      if (c.path === "/rest/v1/rent_buddy_profiles" && c.method === "GET") {
+        return [{ id: BUDDY_PROF, user_id: BUDDY_USER, buddy_level: "new", profile_views: 0,
+                  search_appearances: 0, repeat_client_count: 0, city_ranking: null,
+                  average_rating: null, review_count: 0 }];
+      }
+      if (c.path === "/rest/v1/rent_buddy_fee_rules") {
+        return [{ buddy_level: "new", platform_fee_percent: 20, traveler_service_fee_percent: 0 }];
+      }
+      if (c.path === "/rest/v1/rent_buddy_bookings" && c.method === "GET") return BUDDY_ROWS;
+      if (c.path === "/rest/v1/rent_buddy_tips" && c.method === "GET") return [];
+      if (c.path === "/rest/v1/trust_scores") return [];
+      return [];
+    });
+    _setTestClient(client as any, true);
+    _setTestServiceClient(client as any);
+
+    const res = await httpReq("GET", "/api/rent-a-buddy/me/earnings/summary", undefined, BUDDY_USER);
+    await settle();
+
+    assert.equal(res.status, 200, `expected 200, got ${res.status}: ${JSON.stringify(res.body)}`);
+    assert.equal(
+      res.body?.statusBreakdown?.cancelled, 3,
+      "all three cancellation statuses must be counted; filtering on bare 'cancelled' reports 1 of 3",
+    );
+    assert.equal(res.body?.statusBreakdown?.completed, 1);
   });
 });

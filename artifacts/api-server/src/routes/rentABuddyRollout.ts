@@ -53,7 +53,7 @@ const KNOWN_CITY_STATUSES = new Set<string>([
 // (see the cancel route in rentABuddy.ts); bare `cancelled` is produced only by
 // admin dispute-resolution. Counting only bare `cancelled` undercounted the real
 // cancel rate to ~zero, making the graduation gate falsely lenient.
-const CANCELLED_BOOKING_STATUSES = new Set<string>([
+export const CANCELLED_BOOKING_STATUSES = new Set<string>([
   "cancelled", "cancelled_by_traveler", "cancelled_by_buddy",
 ]);
 
