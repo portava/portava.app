@@ -18,6 +18,7 @@ import { requireUser, sendError } from "../lib/http.js";
 import { requireAdmin, isAdmin } from "../lib/requireAdmin.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { loadTravelerIdentity } from "../lib/travelerVerification.js";
+import { isFlagEnabled, isKillSwitchEngaged } from "../lib/featureFlags.js";
 
 const router = Router();
 
@@ -82,25 +83,81 @@ export function invalidateSuggestedCityCache(): void {
   _scCacheTs = 0;
 }
 
+/**
+ * The controls object for a singleton row that has never been CONFIGURED.
+ *
+ * A missing row is not an unreadable row. maybeSingle() answers `{data: null,
+ * error: null}` for "no such row", which means "no global control has been set"
+ * — the same distinction lib/featureFlags.ts draws for an absent kill-switch
+ * row, and for the same reason: making an ABSENT row mean "paused" would turn
+ * every freshly restored project into an outage.
+ */
+const GC_UNCONFIGURED = {
+  id: 1,
+  all_bookings_paused: false,
+  applications_paused: false,
+  cash_balance_paused: false,
+  nightlife_paused: false,
+  force_full_in_app: false,
+  force_public_meetup: false,
+} as const;
+
+/**
+ * The controls object for a singleton row that could not be READ.
+ *
+ * ── WHY EVERY SWITCH IS TRUE HERE ────────────────────────────────────────────
+ * These six columns are Rent-a-Buddy's platform-wide kill switches. Each one
+ * INVERTS the meaning of its value: `all_bookings_paused = true` means STOP. So
+ * the old `data ?? {…all false}` — which took the same branch for "row absent"
+ * and "read failed", because the read's `error` was never looked at — did not
+ * degrade to a safe default. It DISENGAGED every kill switch at precisely the
+ * moment the database was unhealthy, i.e. the moment an operator is most likely
+ * to be reaching for one. And it then wrote that fallback into `_gcCache`, so a
+ * SINGLE failed read held every switch off for the full 30-second TTL, long
+ * after the database recovered.
+ *
+ * A state that could not be established is therefore treated as "stopped", and
+ * the fail-closed object is NEVER cached: the next call re-reads, so the pause
+ * lifts the instant the row becomes readable again. `unavailable` rides along
+ * so the admin GET can say "could not be read" instead of asserting that an
+ * operator paused the platform.
+ */
+const GC_UNREADABLE = {
+  ...GC_UNCONFIGURED,
+  all_bookings_paused: true,
+  applications_paused: true,
+  cash_balance_paused: true,
+  nightlife_paused: true,
+  force_full_in_app: true,
+  force_public_meetup: true,
+  unavailable: true,
+} as const;
+
 async function getGlobalControls(sc: any): Promise<any> {
   const now = Date.now();
   if (_gcCache && now - _gcCacheTs < GC_TTL_MS) return _gcCache;
 
-  const { data } = await sc
-    .from("rent_buddy_global_controls")
-    .select("*")
-    .eq("id", 1)
-    .maybeSingle();
+  let data: any = null;
+  let unreadable = false;
+  try {
+    const res: any = await sc
+      .from("rent_buddy_global_controls")
+      .select("*")
+      .eq("id", 1)
+      .maybeSingle();
+    // supabase-js RESOLVES on a DB error, so the failure exists only in `error`.
+    if (res?.error) unreadable = true;
+    else data = res?.data ?? null;
+  } catch {
+    unreadable = true;
+  }
 
-  _gcCache = data ?? {
-    id: 1,
-    all_bookings_paused: false,
-    applications_paused: false,
-    cash_balance_paused: false,
-    nightlife_paused: false,
-    force_full_in_app: false,
-    force_public_meetup: false,
-  };
+  // Fail closed, and do NOT cache: caching this would extend one failed read
+  // into 30 seconds of platform-wide pause the operator never asked for, and
+  // (before this change) 30 seconds of every kill switch being off.
+  if (unreadable) return { ...GC_UNREADABLE };
+
+  _gcCache = data ?? { ...GC_UNCONFIGURED };
   _gcCacheTs = now;
   return _gcCache;
 }
@@ -111,13 +168,32 @@ export function invalidateGcCache(): void {
 
 // ── Feature flag helpers ───────────────────────────────────────────────────────
 
+/**
+ * Read a CAPABILITY flag — one whose `true` OPENS something.
+ *
+ * False on an unreadable flag is the safe default here (the capability stays
+ * shut), which is exactly `isFlagEnabled`. This used to be a local read that
+ * destructured only `data`, so the polarity happened to be right for these
+ * flags by accident; it is now the shared fail-closed reader, which also
+ * survives a THROWN read rather than propagating it out of the access check.
+ */
 async function getFlag(sc: any, flag: string): Promise<boolean> {
-  const { data } = await sc
-    .from("feature_flags")
-    .select("enabled")
-    .eq("flag", flag)
-    .maybeSingle();
-  return !!data?.enabled;
+  return isFlagEnabled(sc, flag);
+}
+
+/**
+ * Read a RESTRICTION flag — one whose `true` CLOSES something down
+ * (RENT_BUDDY_ADMIN_ONLY_MODE, RENT_BUDDY_MVP_MODE, RENT_BUDDY_BETA_ONLY_MODE).
+ *
+ * These invert the meaning of the value, so they invert the safe failure too:
+ * reading them through the capability reader returned false on a DB error and
+ * LIFTED the restriction — admin-only mode, MVP mode and beta-only mode all
+ * disengaging together on one failed read. `isKillSwitchEngaged` is the reader
+ * whose whole purpose is this polarity: error ⇒ engaged, absent row ⇒ not
+ * configured, so nothing changes for a healthy database.
+ */
+async function getRestrictionFlag(sc: any, flag: string): Promise<boolean> {
+  return isKillSwitchEngaged(sc, flag);
 }
 
 // ── Admin guard ────────────────────────────────────────────────────────────────
@@ -169,7 +245,7 @@ export async function checkRentBuddyAccess(opts: {
   }
 
   // 2. Admin-only mode
-  const adminOnlyMode = await getFlag(sc, "RENT_BUDDY_ADMIN_ONLY_MODE");
+  const adminOnlyMode = await getRestrictionFlag(sc, "RENT_BUDDY_ADMIN_ONLY_MODE");
   if (adminOnlyMode && !isTestUser) {
     if (!userId) {
       return { allowed: false, code: "unauthenticated", message: "Sign in to access Rent a Buddy.", httpStatus: 401 };
@@ -233,7 +309,7 @@ export async function checkRentBuddyAccess(opts: {
   }
 
   // 4. MVP mode — category whitelist
-  const mvpMode = await getFlag(sc, "RENT_BUDDY_MVP_MODE");
+  const mvpMode = await getRestrictionFlag(sc, "RENT_BUDDY_MVP_MODE");
   if (mvpMode && category && !MVP_ALLOWED_CATEGORIES.has(category)) {
     return {
       allowed: false,
@@ -409,7 +485,7 @@ export async function checkRentBuddyAccess(opts: {
   }
 
   // 7. Beta-only mode (global) — blocks all non-read actions for non-beta users
-  const betaOnlyMode = await getFlag(sc, "RENT_BUDDY_BETA_ONLY_MODE");
+  const betaOnlyMode = await getRestrictionFlag(sc, "RENT_BUDDY_BETA_ONLY_MODE");
   if (betaOnlyMode && action !== "read" && !isTestUser) {
     if (!userId) {
       return { allowed: false, code: "unauthenticated", message: "Sign in to access Rent a Buddy.", httpStatus: 401 };
@@ -1107,7 +1183,12 @@ router.get("/admin/rent-buddy/global-controls", asyncHandler(async (req, res) =>
   if (!admin) return;
 
   const controls = await getGlobalControls(admin.sc);
-  return res.json({ controls });
+  // `unavailable` is the honest answer when the singleton row could not be read:
+  // the switches in `controls` are then the fail-closed ones this process is
+  // ENFORCING, not values an operator set. Saying so keeps the admin UI from
+  // reporting "an operator paused the platform" when the truth is "the controls
+  // row is unreadable, so bookings are paused until it can be read".
+  return res.json({ controls, unavailable: controls?.unavailable === true });
 }));
 
 // PATCH /api/admin/rent-buddy/global-controls
