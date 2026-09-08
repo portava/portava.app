@@ -554,12 +554,29 @@ async function _awardStampCore(
         return;
       }
 
-      const { data: prog } = await sc
+      // supabase-js RESOLVES on a database error, so an unchecked `error` here
+      // reads as "no progress row" — and the upsert below would then write
+      // progress_count = 1 OVER a row that said 47. A read failure must not be
+      // allowed to look like a fresh start; skip the increment instead. The
+      // legitimate absence case (no row yet) still starts at 0.
+      const { data: prog, error: progErr } = await sc
         .from("stamp_progress")
         .select("progress_count")
         .eq("user_id", userId)
         .eq("stamp_definition_id", definition.id)
         .maybeSingle();
+
+      if (progErr) {
+        console.error(JSON.stringify({
+          event:         "stamp.progress.read_failed",
+          user_id:       userId,
+          definition_id: definition.id,
+          code:          (progErr as any).code ?? null,
+          error:         (progErr as any).message ?? String(progErr),
+          note:          "increment skipped — an unreadable current count must not be rewritten as 1",
+        }));
+        return;
+      }
 
       const newCount = ((prog as any)?.progress_count ?? 0) + 1;
 
@@ -586,11 +603,27 @@ async function _awardStampCore(
     try {
       const MILESTONE_LEVELS = [10000, 1000, 100] as const;
 
-      const { count: totalCount } = await sc
+      // A failed count resolves with count = null, which `?? 0` turns into
+      // "this user has zero stamps" — indistinguishable from the real thing.
+      // That direction is safe (no milestone fires) but silent, and a silent
+      // permanent miss is how a milestone gets skipped for ever: the next award
+      // sees the higher total and `break`s at the already-recorded level below.
+      const { count: totalCount, error: countErr } = await sc
         .from("user_stamps")
         .select("id", { count: "exact", head: true })
         .eq("user_id", userId)
         .eq("is_revoked", false);
+
+      if (countErr) {
+        console.error(JSON.stringify({
+          event:   "stamp.milestone.count_failed",
+          user_id: userId,
+          code:    (countErr as any).code ?? null,
+          error:   (countErr as any).message ?? String(countErr),
+          note:    "milestone check skipped — an unreadable count must not be read as zero stamps",
+        }));
+        return;
+      }
 
       const total = totalCount ?? 0;
 
@@ -598,13 +631,29 @@ async function _awardStampCore(
         activeLevel = level;
         if (total < level) continue;
 
-        // Check if this milestone was already recorded
-        const { data: existing } = await sc
+        // Check if this milestone was already recorded.
+        // An unchecked `error` reads identically to "not recorded yet", which
+        // sends the loop on to INSERT and push a milestone the user may already
+        // have been congratulated for. "The table could not be read" is not
+        // "this milestone is new" — stop rather than guess.
+        const { data: existing, error: existingErr } = await sc
           .from("stamp_milestones")
           .select("user_id")
           .eq("user_id", userId)
           .eq("milestone_level", level)
           .maybeSingle();
+
+        if (existingErr) {
+          console.error(JSON.stringify({
+            event:           "stamp.milestone.read_failed",
+            user_id:         userId,
+            milestone_level: level,
+            code:            (existingErr as any).code ?? null,
+            error:           (existingErr as any).message ?? String(existingErr),
+            note:            "milestone check aborted — an unreadable table must not be read as 'not yet awarded'",
+          }));
+          break;
+        }
 
         if (existing) break; // highest already-recorded milestone — nothing new
 

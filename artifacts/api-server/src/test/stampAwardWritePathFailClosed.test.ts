@@ -50,7 +50,8 @@ const SOURCE = "33333333-0000-4000-a000-000000000003";
 
 const DEFINITION = {
   id: DEF_ID,
-  code: "test_stamp",
+  slug: "test_stamp",
+  name: "Test Stamp",
   is_active: true,
   is_repeatable: false,
   max_awards_per_user: null,
@@ -79,7 +80,7 @@ function baseRows(extra: Record<string, any[]> = {}) {
 
 const input = () => ({
   userId: USER,
-  stampCode: "test_stamp",
+  definitionSlug: "test_stamp",
   sourceType: "trips" as const,
   sourceId: SOURCE,
   awardSource: "verified" as const,
