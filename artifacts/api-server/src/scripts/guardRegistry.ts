@@ -468,6 +468,22 @@ export const GUARDS: readonly GuardEntry[] = [
     reach: { kind: "check-all", script: "check:memory-table-ownership" },
   },
   {
+    checker: "src/scripts/checkCensusFreshness.ts",
+    inspects: {
+      countPattern: "(\\d+) checkable \\(declare head_commit",
+      unit: "censuses that can be checked for staleness",
+    },
+    responsibility:
+      "A census cannot be quoted as current truth after the architecture it measured has moved.",
+    // The repeated failure this is written against: two censuses sat at numbers
+    // measured hundreds of commits earlier and were read as present-tense fact.
+    // Re-measured, layover went 31.4%/3.4% -> 50.0%/8.4% and highlights
+    // 28.6%/6.4% -> 52.3%/6.0% -- one DOWN on correctness. The direction is not
+    // the point; nothing could tell a census checked yesterday from one not
+    // checked in months.
+    reach: { kind: "check-all", script: "check:census-freshness" },
+  },
+  {
     checker: "src/scripts/checkCensusIntegrity.ts",
     inspects: {
       countPattern: "(\\d+) verdict row\\(s\\) parsed",

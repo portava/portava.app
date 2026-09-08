@@ -157,6 +157,13 @@ run_check "check:security-definer-oracles" pnpm run check:security-definer-oracl
 # counted in prose where no tool can read them — so it is visible how much of
 # each headline rests on something checkable.
 run_check "check:census-integrity" pnpm run check:census-integrity
+# check:census-freshness — a census that has gone stale must not be quotable as
+# current truth. Two of them sat at numbers measured hundreds of commits earlier
+# and were read as present-tense fact; re-measured, one moved up and one moved
+# DOWN on correctness. Path-scoped: a README edit must not age a census, because
+# a guard that cries stale on every commit gets switched off and then the real
+# staleness comes back.
+run_check "check:census-freshness" pnpm run check:census-freshness
 # check:memory-table-ownership — public.memory_events (the Memory projection
 # family's log, live in production and read by the account-deletion cascade) and
 # public.memory_domain_events (the Highlights/Memories spec §17 command log, not
