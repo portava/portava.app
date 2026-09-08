@@ -384,7 +384,43 @@ describe("allowlist contract", () => {
   });
 });
 
-// ── 4. The CLI, by exit code ────────────────────────────────────────────────
+// ── 4a. The CLI against the REAL tree — the thing that makes this guard bite ──
+
+describe("CLI against the REAL tree and the REAL allowlist", () => {
+  it("exits 0, and would exit 1 if a new unchecked read appeared", () => {
+    // WITHOUT THIS CASE, THIS GUARD PROTECTED NOTHING.
+    //
+    // Every other spawn in this file points the checker at a scratch tree through
+    // UNCHECKED_READS_SRC_ROOT / UNCHECKED_READS_ALLOWLIST. Those cases prove the
+    // checker's LOGIC — and no CI path anywhere ran it against the real tree, so a
+    // new unchecked `.error` added tomorrow failed no check, and the 306 -> 0
+    // burn-down this guard records was held up by nothing at all.
+    //
+    // check:guard-reachability now enforces that every guard has a control like
+    // this one; this file was the finding that made that check exist, and it is
+    // the reason checkUncheckedSupabaseReads could only move out of the MANUAL
+    // (not enforced by CI) column once the write-precondition tier's 91 open
+    // findings were classified and fixed rather than ledgered.
+    const r = spawnSync(process.execPath, ["--import", "tsx/esm", SCRIPT], {
+      cwd: resolve(SRC, ".."),
+      encoding: "utf8",
+      timeout: 300_000,
+      maxBuffer: 64 * 1024 * 1024,
+    });
+    const out = `${r.stdout ?? ""}${r.stderr ?? ""}`;
+    assert.equal(r.status, 0, out);
+    // NON-VACUITY. Exit 0 on a tree it failed to scan is the trap this repo has
+    // hit repeatedly, so the run must also prove it looked at the real thing.
+    assert.match(out, /scanned [1-9]\d{2,} file\(s\)/, "the real tree is hundreds of files");
+    assert.match(out, /judged [1-9]\d{3,} read site\(s\)/, "the real tree is thousands of read sites");
+    // …and that the ENFORCED scope is non-empty: a guard whose in-scope set fell
+    // to zero would also exit 0, while checking nobody.
+    const inScope = out.match(/(\d+) in scope/);
+    assert.ok(inScope && Number(inScope[1]) > 0, `the enforced scope must not be empty: ${out}`);
+  });
+});
+
+// ── 4b. The CLI, by exit code, against crafted trees ─────────────────────────
 
 describe("CLI exit codes against scratch trees", () => {
   let root: string;

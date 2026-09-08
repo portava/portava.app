@@ -106,6 +106,22 @@ run_gate() {
 }
 
 run_check "check:guard-coverage" pnpm run check:guard-coverage
+# check:guard-reachability — the guard OVER the guards. A checker nobody runs is
+# decorative architecture: the same defect check:projection-consumers catches for
+# data pipes (a producer, a table, no consumer), one level up. It was not
+# hypothetical — check:unchecked-supabase-reads, the fail-open ledger and the
+# largest guard here, is reached by NOTHING: its mutation suite spawns it only
+# with UNCHECKED_READS_SRC_ROOT / UNCHECKED_READS_ALLOWLIST pointed at scratch
+# trees, so a new unchecked .error added to the real tree fails no check anywhere
+# and the 306 -> 0 burn-down it records is protected by nothing.
+#
+# Every check*.ts / check*.mjs on disk must DECLARE how it is reached
+# (src/scripts/guardRegistry.ts) and this verifies the declaration: check:all
+# invocation, a live workflow line, a delegating gate, the production build, a
+# registered mutation suite with a REAL-TREE control, or a written statement that
+# CI cannot invoke it. Ten currently declare the last of those. That number is
+# printed on every run so the unenforced set is measured rather than implied.
+run_check "check:guard-reachability" pnpm run check:guard-reachability
 # check:route-auth-gate — requireUser is the ONLY place the account ban/suspend
 # gate is applied, and banning does not revoke sessions, so a route that verifies
 # its own JWT accepts a banned user's still-valid token. Six mutating routes in

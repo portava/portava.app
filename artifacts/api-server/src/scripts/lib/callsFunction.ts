@@ -24,27 +24,8 @@
  * loudly rather than passing quietly, which is the right direction for a guard
  * whose whole job is to notice a missing call.
  */
+import { stripComments } from "./stripComments.js";
+
 export function callsFunction(text: string, name: string): boolean {
-  const re = new RegExp(`\\b${name}\\s*\\(`);
-  let inBlock = false;
-  for (const raw of text.split("\n")) {
-    let line = raw;
-    if (inBlock) {
-      const end = line.indexOf("*/");
-      if (end === -1) continue;
-      line = line.slice(end + 2);
-      inBlock = false;
-    }
-    for (;;) {
-      const begin = line.indexOf("/*");
-      if (begin === -1) break;
-      const end = line.indexOf("*/", begin + 2);
-      if (end === -1) { line = line.slice(0, begin); inBlock = true; break; }
-      line = line.slice(0, begin) + line.slice(end + 2);
-    }
-    const slashes = line.indexOf("//");
-    if (slashes !== -1) line = line.slice(0, slashes);
-    if (re.test(line)) return true;
-  }
-  return false;
+  return new RegExp(`\\b${name}\\s*\\(`).test(stripComments(text));
 }

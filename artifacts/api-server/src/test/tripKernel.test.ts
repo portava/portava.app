@@ -769,7 +769,7 @@ describe("check:trip-kernel-writers (§24 Phase 1 ratchet)", () => {
     assert.deepEqual(s.grew, []);
     assert.deepEqual(s.shrank.map((r) => [r.file, r.ungated]), [["routes/a.ts", 1]]);
   });
-  it("the committed baseline matches the tree: 47 direct, 40 kernel-gated, 5 declared non-aggregate, 2 ungated", () => {
+  it("the committed baseline matches the tree: 47 direct, 41 kernel-gated, 5 declared non-aggregate, 1 ungated", () => {
     const rows = surveyTree();
     const v = judge(rows, TRIP_KERNEL_DIRECT_WRITERS);
     assert.deepEqual(v.newWriters, [], "a new direct writer appeared");
@@ -778,9 +778,19 @@ describe("check:trip-kernel-writers (§24 Phase 1 ratchet)", () => {
     assert.deepEqual(v.refusedExemptions, [], "a trip-kernel:non-aggregate declaration does not match the columns its statement writes");
     assert.deepEqual(v.shrank, [], "the baseline is stale: a file now writes less than it records — lower the entry");
     assert.equal(rows.reduce((n, r) => n + r.count, 0), 47);
-    assert.equal(rows.reduce((n, r) => n + (r.importsKernel ? r.gated : 0), 0), 40, "kernel-gated writes");
+    assert.equal(rows.reduce((n, r) => n + (r.importsKernel ? r.gated : 0), 0), 41, "kernel-gated writes");
     assert.equal(rows.reduce((n, r) => n + r.nonAggregate, 0), 5, "writes declared out of the aggregate, per column");
-    assert.equal(rows.reduce((n, r) => n + ungatedOf(r), 0), 2, "neither gated nor declared: routes/events.ts and resolveAppeal's trip_membership case");
+    // 4672f7ac routed routes/events.ts add-event-to-trip through ADD_PLAN, which
+    // moved it from ungated to gated (2 -> 1, 40 -> 41). It updated
+    // tripKernelWriterBaseline.ts and the checker agrees with the tree, but these
+    // three exact numbers were left behind, so this case has been red ever since —
+    // and a permanently-red case is one deletion away from being no case at all.
+    //
+    // The one remaining ungated write is resolveAppeal.ts's trip_membership
+    // restore, which is BLOCKED ON THE OWNER DECISION APPEAL_RESTORE_SEMANTICS and
+    // must stay ungated until that is answered. It is pinned at 1 here, not 0, so
+    // that "we fixed it" cannot be claimed by deleting the write.
+    assert.equal(rows.reduce((n, r) => n + ungatedOf(r), 0), 1, "neither gated nor declared: resolveAppeal's trip_membership case, blocked on APPEAL_RESTORE_SEMANTICS");
     const trips = rows.find((r) => r.file === "routes/trips.ts")!;
     assert.equal(trips.count, 14);
     assert.equal(ungatedOf(trips), 0, "every direct write in routes/trips.ts has a kernel path");
@@ -801,10 +811,15 @@ describe("check:trip-kernel-writers (§24 Phase 1 ratchet)", () => {
     assert.equal(admin.gated, 2, "the two visibility hides go through ADMIN_HIDE_TRIP");
     assert.equal(admin.nonAggregate, 1, "the reminder reset declares its three claim columns and is verified against them");
     assert.equal(ungatedOf(admin), 0);
-    // The two that remain, named so this test fails if either is quietly
-    // exempted rather than converted. Both are KERNEL_COMMANDs.
+    // The ONE that remains, named so this test fails if it is quietly exempted
+    // rather than converted. routes/events.ts used to be the second: 4672f7ac
+    // routed add-event-to-trip through ADD_PLAN, so it is now GATED. It stays
+    // pinned here — gated, and explicitly NOT classified out of the aggregate —
+    // because the two ways to make this number go down dishonestly are to declare
+    // the write non-aggregate or to delete it, and both must fail.
     const events = rows.find((r) => r.file === "routes/events.ts")!;
-    assert.equal(ungatedOf(events), 1, "routes/events.ts still needs ADD_PLAN (another lane owns the file)");
+    assert.equal(ungatedOf(events), 0, "routes/events.ts goes through ADD_PLAN as of 4672f7ac");
+    assert.equal(events.gated, 1, "and it is GATED, not merely absent");
     assert.equal(events.nonAggregate, 0, "routes/events.ts must NOT be classified out of the aggregate");
     const appeals = rows.find((r) => r.file === "services/appeals/resolveAppeal.ts")!;
     assert.equal(appeals.gated, 1, "the trip restore goes through UPDATE_TRIP");

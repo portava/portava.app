@@ -172,11 +172,13 @@ export const MIN_RATIONALE_CHARS = 40;
 export const DIRECTION_LABELS = ["FAIL-OPEN:", "FAIL-CLOSED:", "UNCLASSIFIED:"] as const;
 
 const WRITE_METHODS = new Set(["insert", "upsert", "update", "delete"]);
+/** Writes that CREATE a durable row. update/delete cannot duplicate one. */
+const CREATE_METHODS = new Set(["insert", "upsert"]);
 const RESULT_MEMBERS = new Set(["data", "count", "error", "status", "statusText"]);
 
 export type Shape = "data-only" | "error-unread" | "member-only" | "discarded";
 export type Terminal = "maybeSingle" | "single" | "select" | "rpc" | "filter";
-export type Tier = "exclusion-table" | "gate-function" | "guard-file" | "flag-table";
+export type Tier = "exclusion-table" | "gate-function" | "guard-file" | "flag-table" | "write-precondition";
 
 export interface UncheckedRead {
   file: string;
@@ -192,11 +194,20 @@ export interface UncheckedRead {
   tier: Tier | null;
 }
 
-export function tierOf(read: Pick<UncheckedRead, "table" | "fn" | "file">): Tier | null {
+export function tierOf(
+  read: Pick<UncheckedRead, "table" | "fn" | "file" | "terminal">,
+  /** Tables WRITTEN inside the same enclosing function. See the write-precondition tier. */
+  writtenInFn?: ReadonlySet<string>,
+): Tier | null {
   if (EXCLUSION_TABLES.has(read.table)) return "exclusion-table";
   if (isGateFunctionName(read.fn)) return "gate-function";
   if (GUARD_FILE_NAME.test(read.file)) return "guard-file";
   if (FLAG_TABLES.has(read.table)) return "flag-table";
+  // Checked LAST so it is purely additive: nothing already in scope is
+  // reclassified, only reads that had no tier at all can gain this one.
+  if (writtenInFn?.has(read.table) && (read.terminal === "maybeSingle" || read.terminal === "single")) {
+    return "write-precondition";
+  }
   return null;
 }
 
@@ -516,9 +527,54 @@ export interface FileScan {
   unresolvedSamples: string[];
 }
 
+/**
+ * Tables WRITTEN inside each enclosing function: `fn -> {table, …}`.
+ *
+ * This is the evidence behind the `write-precondition` tier. `describeChain`
+ * deliberately returns null for a write chain, so writes are invisible to the
+ * read scan; this walks for them separately and does not judge them.
+ */
+function collectWritesByFunction(sf: ts.SourceFile): Map<string, Set<string>> {
+  const out = new Map<string, Set<string>>();
+  const visit = (n: ts.Node): void => {
+    if (ts.isCallExpression(n)) {
+      const callee = unwrap(n.expression);
+      if (ts.isPropertyAccessExpression(callee) && CREATE_METHODS.has(callee.name.text)) {
+        // Walk the receiver down to its `.from("table")`.
+        let cur: ts.Node = unwrap(callee.expression);
+        for (let hops = 0; hops < 64; hops += 1) {
+          if (ts.isCallExpression(cur)) {
+            const c2 = unwrap(cur.expression);
+            if (ts.isPropertyAccessExpression(c2)) {
+              if (c2.name.text === "from") {
+                const arg = cur.arguments[0];
+                if (arg && ts.isStringLiteralLike(arg)) {
+                  const fn = enclosingFunctionName(n);
+                  if (!out.has(fn)) out.set(fn, new Set());
+                  out.get(fn)!.add(arg.text);
+                }
+                break;
+              }
+              cur = unwrap(c2.expression);
+              continue;
+            }
+            break;
+          }
+          if (ts.isPropertyAccessExpression(cur)) { cur = unwrap(cur.expression); continue; }
+          break;
+        }
+      }
+    }
+    ts.forEachChild(n, visit);
+  };
+  visit(sf);
+  return out;
+}
+
 export function scanSource(src: string, file: string): FileScan {
   const sf = ts.createSourceFile(file, src, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
   const out: FileScan = { reads: [], sitesJudged: 0, delegated: 0, unresolved: 0, throwOnError: 0, unresolvedSamples: [] };
+  const writesByFn = collectWritesByFunction(sf);
   const noteUnresolved = (node: ts.Node): void => {
     out.unresolved++;
     out.unresolvedSamples.push(`${file}:${sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1} ${ts.SyntaxKind[node.parent.kind]}`);
@@ -565,7 +621,7 @@ export function scanSource(src: string, file: string): FileScan {
     const key = n === 1 ? base : `${base}#${n}`;
     const excerpt = chainNode.getText(sf).replace(/\s+/g, " ").slice(0, 100);
     const read: UncheckedRead = { file, line, key, shape, terminal, table: info.table, fn, excerpt, tier: null };
-    read.tier = tierOf(read);
+    read.tier = tierOf(read, writesByFn.get(fn));
     out.reads.push(read);
   };
 
