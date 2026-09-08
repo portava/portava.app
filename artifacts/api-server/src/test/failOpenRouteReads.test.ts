@@ -145,9 +145,22 @@ function gateOpts(sc: any, extra: Record<string, unknown> = {}) {
 
 describe("enforceBookingCreationGates — rent_buddy_launch_controls", () => {
   it("FAILURE: an unreadable control table does NOT waive the countryCode requirement", async () => {
+    // ISOLATION MATTERS HERE. Only the unfiltered `count` read — the one the
+    // countryCode gate makes — is failed; the resolver's keyed lookups still
+    // succeed and DO find a matching control. So if this gate stopped honouring
+    // its error the request would sail past into the launch-control policy
+    // itself (a 403 on age/DOB), never reaching the deny-by-default branch that
+    // would otherwise mask the regression behind an identical 503.
     const sc = makeFailClosedClient({
-      rows: { rent_buddy_launch_controls: [] },
-      failOn: (ctx) => (ctx.table === "rent_buddy_launch_controls" ? READ_FAIL : null),
+      rows: {
+        rent_buddy_launch_controls: [{
+          id: "lc-any", country_code: null, city: null, category: "day_tour",
+          enabled: true, min_age: 18, nightlife_min_age: 21,
+          require_id_verification: false, require_phone_verification: false,
+        }],
+      },
+      failOn: (ctx) =>
+        ctx.table === "rent_buddy_launch_controls" && ctx.filters.length === 0 ? READ_FAIL : null,
     });
     const { opts, out } = gateOpts(sc); // no countryCode
     const ok = await enforceBookingCreationGates(opts);
