@@ -285,13 +285,35 @@ function routeSpec(members: Row[]): Spec {
   };
 }
 
-async function approve(url: string) {
+/**
+ * What PATCH /api/appeals/:id actually returns, on the success path and on the
+ * refusal path alike. `Response.json()` is `unknown` under tsconfig.test.json,
+ * and the honest way through that is to NAME the shape production emits — not
+ * to widen it to `any`, which is the very thing the test-typecheck ratchet
+ * exists to stop: a fixture typed `any` asserts nothing the compiler can check.
+ * Every field is optional because a 422 `reversal_failed` carries `error` and
+ * `message` and none of the rest.
+ */
+interface PatchAppealBody {
+  id?: string;
+  state?: string;
+  resolutionNote?: string | null;
+  updatedAt?: string;
+  reversalAction?: string;
+  restored?: boolean;
+  restorationRequired?: string;
+  restorationQueue?: string;
+  error?: string;
+  message?: string;
+}
+
+async function approve(url: string): Promise<{ status: number; body: PatchAppealBody }> {
   const res = await fetch(`${url}/api/appeals/${APPEAL}`, {
     method: "PATCH",
     headers: { Authorization: "Bearer admin-token", "Content-Type": "application/json" },
     body: JSON.stringify({ state: "approved", resolutionNote: undefined }),
   });
-  return { status: res.status, body: await res.json() };
+  return { status: res.status, body: (await res.json()) as PatchAppealBody };
 }
 
 describe("PATCH /api/appeals/:id — approving a trip_membership appeal whose member row is gone", () => {
