@@ -35,8 +35,9 @@ owner decision — neither is a backlog item.
 | 10 | `2534` `can_see_trip` status gate + checklist write boundary | **2337** | — | 17 dependent policies enumerated | **prod ✓** `20260907223139` | not re-run by me; its repair of `trip_reminders_insert` was DECORATIVE until 2535 landed | **applied** |
 | 11 | `2535` trip_reminders write boundary | **2534**, `authz.is_trip_crew` | **ci ✓** | 2 policies, `trip_reminders_own` FOR ALL / with_check NULL, 0 rows, deps present | **prod ✓** `20260908103147` | 4 policies, 0 FOR ALL, 0 write policy without WITH CHECK, 0 gating on the read predicate — re-run independently after apply; live smoke returns **42501**, not 23503 | **applied 2026-09-08** |
 | 12 | `2420` trip kernel foundation | **2334 → 2337** | ✓ | production has no `trips.version` | **prod ✓** `20260908005403` | not re-run by me | **applied** |
-| 13 | `2450` trip/participant families | **2420** | — | — | queued | — | — |
-| 14 | `2500` `JOIN_VIA_LINK` + host | **2450** | — | — | queued | — | — |
+| 13 | `2551` revoke EXECUTE on `increment_hashtag_usage_count` | none (a grant, not a schema object) | **ci ✓** rehearsed end-to-end | 0 of 808 policies reference it; no function body, view, trigger or `src/` string literal names it; `hashtags` RLS write policy is `FOR ALL USING (false)`, so the definer function is the ONLY write path a user token has; `hashtags` holds 0 rows | **prod ✓** `20260908114134` | re-read independently after apply: acl `{postgres,service_role}`, `has_function_privilege` anon=false authenticated=false service_role=true, and an actual call as `authenticated` returns **permission denied for function**; `upsert_hashtag_usage_and_increment` EXECUTE still true; 0 rows seeded | **applied 2026-09-08** |
+| 14 | `2450` trip/participant families | **2420** | — | — | queued | — | — |
+| 15 | `2500` `JOIN_VIA_LINK` + host | **2450** | — | — | queued | — | — |
 | 15 | `2490` destructive privilege boundary | none | ✓ | 375 app-owned offenders → **0**; 3 extension-owned excluded | **APPLIED prod 20260908011416** | vacuity guard ≥300 relations; 3472 `has_table_privilege` probes, 0 held | ✓ |
 | — | `2224`, `2315` → `2333` | each other | — | both tables absent in production | queued | 2333 aborts without them | — |
 
