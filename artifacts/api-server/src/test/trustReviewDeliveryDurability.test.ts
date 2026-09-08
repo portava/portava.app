@@ -44,7 +44,7 @@ process.env["TRUST_MAINTENANCE_MAX_USERS"] = "50";
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 
-const { runTrustMaintenance } = await import("../lib/trustMaintenanceScheduler.js");
+const { runTrustMaintenance, MAX_REVIEW_REPAIRS_PER_PASS } = await import("../lib/trustMaintenanceScheduler.js");
 
 const DAY = 24 * 60 * 60 * 1000;
 const daysAgo = (n: number) => new Date(Date.now() - n * DAY).toISOString();
@@ -298,6 +298,42 @@ describe("a pending_review event whose queue row was lost", () => {
     assert.equal(r.reviewsStuck, null, "an unreadable queue means UNKNOWN, never zero");
     assert.equal(r.reviewsRepaired, 0);
     assert.equal(t["trust_reviews"].length, 0, "and nothing may be written on an unread queue");
+  });
+
+  it("says so when the scan hit its per-pass cap — a bounded look is not a clean queue", async () => {
+    // "We could not look" can hide inside a BOUND as easily as inside an error.
+    // The scan reads at most MAX_REVIEW_REPAIRS_PER_PASS pending events; a
+    // larger backlog is examined one page at a time, and reporting
+    // `reviewsStuck: 0` for that page reads as "nothing is stuck" while the
+    // rest sit unadjudicated and unmentioned. `truncated` on the result is
+    // about DIRTY USERS and says nothing about this scan.
+    const t = tables();
+    const backlog = MAX_REVIEW_REPAIRS_PER_PASS + 25;
+    for (let i = 0; i < backlog; i++) t["trust_events"]!.push(seriousEvent(`evt-bulk-${i}`));
+
+    const r = await runTrustMaintenance(makeClient(t));
+    assert.equal(
+      r.reviewsScanTruncated, true,
+      "a saturated scan must declare itself; its stuck count is a floor, not a total",
+    );
+    assert.equal(
+      t["trust_reviews"]!.length, MAX_REVIEW_REPAIRS_PER_PASS,
+      "exactly one page was repaired, so the remainder really was left unexamined",
+    );
+    assert.equal(r.reviewsRepaired, MAX_REVIEW_REPAIRS_PER_PASS);
+    assert.ok(backlog > MAX_REVIEW_REPAIRS_PER_PASS, "the fixture must exceed the cap or this proves nothing");
+  });
+
+  it("does NOT claim truncation for a backlog that fits inside one pass", async () => {
+    // The control: the flag must mean something. A queue the pass saw in full
+    // reports a stuck count that IS a total.
+    const t = tables();
+    for (let i = 0; i < 3; i++) t["trust_events"]!.push(seriousEvent(`evt-small-${i}`));
+
+    const r = await runTrustMaintenance(makeClient(t));
+    assert.equal(r.reviewsScanTruncated, false);
+    assert.equal(r.reviewsRepaired, 3);
+    assert.equal(r.reviewsStuck, 0);
   });
 
   it("leaves an applied (non-serious) event alone", async () => {

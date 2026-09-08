@@ -85,7 +85,12 @@ const EVENT_LOOKBACK_DAYS = 30;
 /** PostgREST `.in()` lists are URL-encoded — chunk so the query string stays sane. */
 const ID_CHUNK = 100;
 /** Per-pass ceiling on review re-queues, so one sick pass cannot become a storm. */
-const MAX_REVIEW_REPAIRS_PER_PASS = 200;
+/**
+ * Per-pass cap on the pending_review scan. Exported so a test can size a
+ * backlog AGAINST the cap rather than against a hardcoded 200 — a hardcode
+ * would quietly stop exercising the truncation path the moment the cap moved.
+ */
+export const MAX_REVIEW_REPAIRS_PER_PASS = 200;
 
 const DAY_MS = 24 * 60 * 60 * 1_000;
 
@@ -392,8 +397,23 @@ export interface TrustMaintenanceResult {
    * pending_review events STILL not on the queue after the repair ran — the
    * stuck set. Null when the scan could not be performed, which is not zero:
    * "we could not look" must never be reported as "there is nothing there".
+   *
+   * When `reviewsScanTruncated` is true this is a FLOOR over the events the
+   * pass examined, not a total.
    */
   reviewsStuck: number | null;
+  /**
+   * True when the pending_review scan hit its per-pass cap
+   * (MAX_REVIEW_REPAIRS_PER_PASS), so there were events it never looked at.
+   *
+   * Without this, "we could not look" hides inside a BOUND rather than inside
+   * an error: a backlog of 500 lost queue rows is examined 200 at a time and
+   * reports `reviewsStuck: 0` — which reads as "nothing is stuck" while 300
+   * serious findings sit unadjudicated and unmentioned. `truncated` above is
+   * about DIRTY USERS and says nothing about this scan, so a caller had no
+   * signal at all. Same failure class as reporting null as zero, one level down.
+   */
+  reviewsScanTruncated: boolean;
 }
 
 /**
@@ -429,7 +449,7 @@ export interface TrustMaintenanceResult {
  */
 async function repairMissingEventReviews(
   db: any,
-): Promise<{ repaired: number; stuck: number | null }> {
+): Promise<{ repaired: number; stuck: number | null; scanTruncated: boolean }> {
   let pending: any[] = [];
   try {
     const { data, error } = await db
@@ -440,14 +460,23 @@ async function repairMissingEventReviews(
       .limit(MAX_REVIEW_REPAIRS_PER_PASS);
     if (error) {
       logger.warn({ err: error }, "trust review repair: pending_review scan failed — stuck count unknown this pass");
-      return { repaired: 0, stuck: null };
+      return { repaired: 0, stuck: null, scanTruncated: false };
     }
     pending = (data as any[]) ?? [];
   } catch (err) {
     logger.warn({ err }, "trust review repair: pending_review scan threw — stuck count unknown this pass");
-    return { repaired: 0, stuck: null };
+    return { repaired: 0, stuck: null, scanTruncated: false };
   }
-  if (pending.length === 0) return { repaired: 0, stuck: 0 };
+  // The scan is bounded. A FULL page means there may be more pending events we
+  // never looked at, so the stuck count below is a floor and must say so.
+  const scanTruncated = pending.length >= MAX_REVIEW_REPAIRS_PER_PASS;
+  if (scanTruncated) {
+    logger.warn(
+      { examined: pending.length, cap: MAX_REVIEW_REPAIRS_PER_PASS },
+      "trust review repair: pending_review scan hit its per-pass cap — the stuck count is a FLOOR, not a total; remainder rolls to the next pass",
+    );
+  }
+  if (pending.length === 0) return { repaired: 0, stuck: 0, scanTruncated: false };
 
   // Which of them already have a review row. An unreadable trust_reviews must
   // NOT be read as "none of them are queued" — that would re-queue every
@@ -464,14 +493,14 @@ async function repairMissingEventReviews(
         .in("source_event_id", chunk);
       if (error) {
         logger.warn({ err: error }, "trust review repair: trust_reviews read failed — no repair attempted this pass");
-        return { repaired: 0, stuck: null };
+        return { repaired: 0, stuck: null, scanTruncated };
       }
       for (const r of ((data as any[]) ?? [])) {
         if (r?.source_event_id) queued.add(String(r.source_event_id));
       }
     } catch (err) {
       logger.warn({ err }, "trust review repair: trust_reviews read threw — no repair attempted this pass");
-      return { repaired: 0, stuck: null };
+      return { repaired: 0, stuck: null, scanTruncated };
     }
   }
 
@@ -510,7 +539,7 @@ async function repairMissingEventReviews(
       "trust review repair: pending_review event(s) were NOT on the admin queue and have been re-queued — the original queue insert was lost",
     );
   }
-  return { repaired, stuck };
+  return { repaired, stuck, scanTruncated };
 }
 
 /**
@@ -524,7 +553,7 @@ export async function runTrustMaintenance(client?: any): Promise<TrustMaintenanc
     ok: true, capsExpired: 0, restrictionsExpired: 0, probationCleared: 0,
     usersRecalculated: 0, recalcFailures: 0, gamingFlagged: 0,
     eventsSeen: null, gamingInputs: null, gamingVacuous: false, truncated: false,
-    reviewsRepaired: 0, reviewsStuck: null,
+    reviewsRepaired: 0, reviewsStuck: null, reviewsScanTruncated: false,
   };
 
   const db = client ?? getServiceClient();
@@ -610,10 +639,12 @@ export async function runTrustMaintenance(client?: any): Promise<TrustMaintenanc
   //     EFFECT by migration 2650's unique index on trust_reviews.source_event_id.
   let reviewsRepaired = 0;
   let reviewsStuck: number | null = null;
+  let reviewsScanTruncated = false;
   try {
     const r = await repairMissingEventReviews(db);
     reviewsRepaired = r.repaired;
     reviewsStuck = r.stuck;
+    reviewsScanTruncated = r.scanTruncated;
   } catch (err) {
     logger.warn({ err }, "repairMissingEventReviews threw (non-fatal) — stuck count unknown this pass");
   }
@@ -643,6 +674,7 @@ export async function runTrustMaintenance(client?: any): Promise<TrustMaintenanc
     eventsSeen,
     reviewsRepaired,
     reviewsStuck,
+    reviewsScanTruncated,
     gamingInputs,
     gamingVacuous,
     truncated,
