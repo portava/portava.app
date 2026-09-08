@@ -1580,3 +1580,92 @@ describe("GET /api/discovery/search — posts are gated on post_status", () => {
       "the column is NOT NULL DEFAULT 'published'; absent must not fail closed");
   });
 });
+
+// ---------------------------------------------------------------------------
+
+describe("people search resolves the real name through the CANONICAL helper", () => {
+  /**
+   * THE DEFECT, AND WHY EVERY EXISTING TEST ABOVE PASSED WITH IT IN PLACE.
+   *
+   * The universal display-name rule has one canonical resolution —
+   * `lib/publicIdentity.presentedName`, which reads `display_name ?? name ??
+   * full_name` and trims. The map pin (`lib/mapTravelers`) and the Compass
+   * traveler list both honoured it. People search did not: it read `p.name`
+   * alone, and its `profiles` select did not even FETCH `display_name`. A user
+   * who set a display name different from their profile name was shown the other
+   * one here and the right one everywhere else.
+   *
+   * Nothing above catches it because every fixture in this file gives a profile
+   * a `name` and no `display_name`, under which the two implementations agree.
+   * That is the shape of the bug: it is invisible until the two columns differ.
+   */
+  it("prefers display_name over name for an opted-in subject", async () => {
+    setup({
+      profiles: [
+        { id: ALICE, handle: "alice", name: "Legal Name", display_name: "Preferred Name",
+          avatar_url: null, is_private: false, home_city: null, home_country: null, account_status: "active" },
+      ],
+      blocks: [],
+      profile_privacy_settings: [{ user_id: ALICE, show_real_name: true }],
+      user_follows: [],
+    });
+
+    const r = await get("/discovery/search?q=alice&type=travelers");
+    assert.equal(r.status, 200);
+    const { results } = await r.json() as any;
+    const row = (results as any[]).find((u: any) => u.id === ALICE);
+    assert.ok(row, "opted-in traveler should be in the results");
+    assert.equal(row.title, "Preferred Name");
+  });
+
+  it("still falls back to name when there is no display_name", async () => {
+    // The control. Without this the test above would also pass against an
+    // implementation that read display_name ONLY and dropped `name` entirely.
+    setup({
+      profiles: [
+        { id: ALICE, handle: "alice", name: "Legal Name", display_name: null,
+          avatar_url: null, is_private: false, home_city: null, home_country: null, account_status: "active" },
+      ],
+      blocks: [],
+      profile_privacy_settings: [{ user_id: ALICE, show_real_name: true }],
+      user_follows: [],
+    });
+    const { results } = await (await get("/discovery/search?q=alice&type=travelers")).json() as any;
+    assert.equal((results as any[]).find((u: any) => u.id === ALICE)?.title, "Legal Name");
+  });
+
+  it("a subject who has NOT opted in still gets the handle, display_name or not", async () => {
+    // The privacy direction is what matters most here: a display_name is still a
+    // real name, and honouring the canonical resolution must not become a way to
+    // leak one the owner did not opt in to showing.
+    setup({
+      profiles: [
+        { id: ALICE, handle: "alice", name: "Legal Name", display_name: "Preferred Name",
+          avatar_url: null, is_private: false, home_city: null, home_country: null, account_status: "active" },
+      ],
+      blocks: [],
+      profile_privacy_settings: [],
+      user_follows: [],
+    });
+    const { results } = await (await get("/discovery/search?q=alice&type=travelers")).json() as any;
+    const row = (results as any[]).find((u: any) => u.id === ALICE);
+    assert.equal(row?.title, "alice");
+    assert.equal(row?.subtitle, "@alice");
+  });
+
+  it("a whitespace-only name falls through to the handle rather than an empty title", async () => {
+    // `presentedName` trims; the old inline `p.name ?? null` did not, so a name
+    // of "   " rendered as a blank title with no way to tell who the row was.
+    setup({
+      profiles: [
+        { id: ALICE, handle: "alice", name: "   ", display_name: null,
+          avatar_url: null, is_private: false, home_city: null, home_country: null, account_status: "active" },
+      ],
+      blocks: [],
+      profile_privacy_settings: [{ user_id: ALICE, show_real_name: true }],
+      user_follows: [],
+    });
+    const { results } = await (await get("/discovery/search?q=alice&type=travelers")).json() as any;
+    assert.equal((results as any[]).find((u: any) => u.id === ALICE)?.title, "alice");
+  });
+});

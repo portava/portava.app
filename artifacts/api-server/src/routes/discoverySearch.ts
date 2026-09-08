@@ -72,7 +72,7 @@ import {
   type CanonicalRow,
 } from "../lib/canonicalLocations";
 import type { SensitivityLevel } from "../services/hiddenGems/HiddenGemPrivacyGuard.js";
-import { nameVisibilitySet } from "../lib/publicIdentity";
+import { nameVisibilitySet, presentedName } from "../lib/publicIdentity";
 import { buildConsumerProjection } from "../services/passport/PassportConsumerProjections.js";
 import { allowDiscoveryPersonCard } from "../services/passport/PassportConsumerAccess.js";
 // The canonical author-side block rule for a `discovery_places` row. Shared with
@@ -546,7 +546,7 @@ async function searchTravelers(
     const pat = sqlPattern(q);
     let query = sc
       .from("profiles")
-      .select("id, handle, username, name, avatar_url, is_private, home_city, home_country, account_status, verified, is_official, show_profile_picture_publicly")
+      .select("id, handle, username, name, display_name, avatar_url, is_private, home_city, home_country, account_status, verified, is_official, show_profile_picture_publicly")
       .or(`name.ilike.${pat},handle.ilike.${pat},username.ilike.${pat}`)
       .neq("id", userId)
       .in("account_status", ["active"])
@@ -621,7 +621,16 @@ async function searchTravelers(
     const mapped: SearchResult[] = nameSafe.map((p: any): SearchResult => {
       // Name defaults to @handle unless the subject opted in (or is the viewer).
       const nameAllowed = p.id === userId || allowedNames.has(p.id as string);
-      const presented = nameAllowed ? ((p.name as string | null) ?? null) : null;
+      // Resolved through the CANONICAL helper, not inline. This used to read
+      // `p.name` alone, and the select above did not even fetch `display_name` —
+      // so a user who set a display name different from their profile name was
+      // shown the OTHER one in people search, while the map pin
+      // (lib/mapTravelers) and the Compass traveler list both honoured it. One
+      // rule, three implementations, and this was the one that disagreed.
+      // presentedName also TRIMS: a whitespace-only name falls through to the
+      // handle instead of rendering as a blank title with no way to tell who
+      // the row is.
+      const presented = presentedName(p, nameAllowed);
       const fallbackLabel = presented ?? (p.handle as string) ?? "?";
       const isFollowing = followingSet.has(p.id as string);
       const isFriend = friendSet.has(p.id as string);
