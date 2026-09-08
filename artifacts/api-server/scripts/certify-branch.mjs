@@ -131,10 +131,26 @@ for (const step of STEPS) {
   // each by hand to find out — which is a pipeline hiding a status by another
   // route: the verdict was visible and the reason was not. Tail rather than head
   // because these tools print their findings last.
-  const excerpt =
-    status === "FAIL"
-      ? output.split("\n").filter((l) => l.trim().length > 0).slice(-FAIL_EXCERPT_LINES).join("\n")
-      : "";
+  //
+  // The TAIL is the right excerpt for a checker, which prints its findings last.
+  // It is the WRONG one for the test runner, which prints each failure where it
+  // happens and ends with a summary — so a failing `test` step showed 25 lines of
+  // the last suite's log noise and not one word about what failed. Measured
+  // twice before it was fixed.
+  //
+  // So: failure-shaped lines first, when there are any, and the tail as the
+  // fallback for a step that reports differently.
+  const excerptOf = (out) => {
+    const lines = out.split("\n").filter((l) => l.trim().length > 0);
+    const failures = lines.filter((l) => /^\s*not ok |^\s*(✖|✘|❌|::error)/.test(l));
+    if (failures.length > 0) {
+      const head = failures.slice(0, FAIL_EXCERPT_LINES);
+      const more = failures.length - head.length;
+      return head.join("\n") + (more > 0 ? `\n…and ${more} more failure line(s)` : "");
+    }
+    return lines.slice(-FAIL_EXCERPT_LINES).join("\n");
+  };
+  const excerpt = status === "FAIL" ? excerptOf(output) : "";
   results.push({ id: step.id, kind: step.kind, exit: code, status, ms: Date.now() - started, excerpt });
 }
 
@@ -200,7 +216,7 @@ if (JSON_ONLY) {
     console.log(`  failing: ${fail.map((f) => f.id).join(", ")}`);
     for (const f of fail) {
       console.log("");
-      console.log(`── ${f.id} — exit ${f.exit}, last ${FAIL_EXCERPT_LINES} non-empty line(s) ${"".padEnd(10, "─")}`);
+      console.log(`── ${f.id} — exit ${f.exit}, up to ${FAIL_EXCERPT_LINES} failure line(s) ${"".padEnd(10, "─")}`);
       console.log(f.excerpt || "  (the step failed and printed nothing — that is itself the finding)");
     }
   }
