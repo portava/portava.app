@@ -348,3 +348,60 @@ lib/mediaAssets did for three weeks". It logs a warning naming the migration.
 So production was degraded-but-safe, not silently broken, and applying restores
 the evidence fields. `trust_engine_enabled` was one of the eleven flags ON in
 production over missing schema; this is one of them closed.
+
+
+---
+
+## 2026-09-08 — `2420` → `2520` → `2610`: the kernel and Map schema exist in production
+
+Applied in dependency order, CI-first for 2520 and 2610 (CI already carried
+2420). Each from the file's exact bytes.
+
+### `2420_trip_kernel_foundation`
+`trips.version`, `trip_events`, `trip_command_receipts`, `trip_outbox`,
+`trip_kernel_execute()` and `trip_events_refuse_update()`.
+
+The fact that made it safe on 43 live rows: **PostgreSQL 17.6**, so
+`ADD COLUMN NOT NULL DEFAULT 0` is metadata-only — no table rewrite.
+
+**Row visibility did not change**, which is the check that mattered. Probed as
+role `authenticated` with a random subject BEFORE and AFTER: trips 12 → 12,
+trip_members 12 → 12, trip_plan_items 0 → 0, posts 9 → 9. A convergence that
+quietly widened or narrowed reads would show here and did not.
+
+43 trips read back, all `version = 0`, none NULL.
+
+### `2520_trip_map_projection_worker` and `2610_map_trip_projection_anchor`
+The projection tables, the drain and rebuild functions, and the Map-owned
+anchor columns with their fill trigger. Both CI-first, both verified there
+before production.
+
+### Independently verified after all three (not taken from the applying lane)
+
+| check | result |
+|---|---|
+| migrations in `supabase_migrations` | `2420`, `2520`, `2610` all present |
+| trips | 43, all `version = 0`, 0 NULL |
+| `trip_kernel_enabled` / `trip_map_projection_worker_enabled` / `map_trip_projection_read_enabled` | present, **all FALSE** |
+| new tables | 5 of 5 present; `trip_outbox` 0 rows, `trip_map_projections` 0 rows |
+| **policy cycles across `public`, depth 6** | **NONE** |
+| client privileges on the five new tables | **exactly one**: `trip_events` SELECT to `authenticated` |
+| client EXECUTE on the four new functions | **NONE** |
+| blanket `auth.uid() IS NOT NULL` predicates | **NONE** |
+
+The single client-facing grant is correctly gated: `trip_events_crew_select`
+`USING authz.is_trip_crew(trip_id)` — the accepted-crew predicate 2334
+installed. The other four new tables carry RLS with no client grant and no
+policy, so they are deny-all to clients and reachable only by `service_role`.
+
+### What this does and does not mean
+
+**The schema exists; the features do not run.** All three flags are FALSE, the
+outbox is empty, the projection is empty, and none of the application code that
+would produce or consume them is deployed — the branch is unmerged. What changed
+is that the Map and Discovery capabilities can now become *ready* rather than
+being permanently latent, and that the Trip Kernel has somewhere to write.
+
+Three of the eleven ON-and-dead flags depended on `trip_kernel_execute()`
+existing — `airport_mode_enabled`, `layover_plans_enabled`, `hidden_gems_enabled`
+— and that half of their requirement is now met.
