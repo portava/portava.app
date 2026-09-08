@@ -759,3 +759,97 @@ so.
 **So: Trust's schema is realized in production; Trust itself is not.** The
 emitters are starved (5 events in 52 days), and no migration can fix that — it
 needs the code merged and the emitters wired.
+
+
+---
+
+## 2026-09-08 — `2430`: the last ON-and-dead blocker, and the strongest gate of the pass
+
+`2430` was materially different from every other migration applied this session:
+**absent from BOTH databases.** It inherited no CI evidence from anything, so it
+got the strongest rehearsal.
+
+### Precondition matrix
+
+| Requirement | CI | Production | Required |
+|---|---|---|---|
+| `intel_live_promoted_scopes` (2179) | ✅ 6 cols | ✅ same 6 cols | must exist |
+| 2430's 7 new columns | 0 / 7 | 0 / 7 | must be absent |
+| existing rows | 0 | 0 | any |
+| the 3 `system_*_intel_live_scope*` functions | 0 / 3 | 0 / 3 | must be absent |
+| `intel_live_scope_promotion_enabled` | absent | absent | must be absent |
+| RLS / policies | on, 1 | on, 1 | unchanged |
+| **`service_role` table grants** | **4** | **8** | **diverges** |
+
+That last row is a real difference the CI rehearsal cannot reproduce:
+production has not had `2333`, which is what narrowed `service_role` on this
+table. 2430 changes no grant, so the divergence is carried forward unchanged —
+recorded rather than discovered later.
+
+### Rehearsal — the constraint caught MY probe, which is the point
+
+The first CI rehearsal aborted: I tried to force `expires_at` into the past with
+a direct UPDATE and
+`intel_live_scope_expiry_after_promotion_check (expires_at > promoted_at)`
+refused it. **The migration was right and the probe was wrong.** The legitimate
+way to build a lapsed scope is the function's own `p_now` parameter, which is
+what the corrected rehearsal used. The aborted transaction left **zero
+residue** — verified column-by-column.
+
+### Behavioural proof — identical on CI and production, both rolled back
+
+| probe | result |
+|---|---|
+| promote a new scope | `promoted` |
+| promote again, same horizon | `already_active` (no write) |
+| promote with a later horizon | `renewed` |
+| withdraw | `withdrawn` |
+| withdraw again | `already_withdrawn` (no write) |
+| promote after withdrawal | `repromoted` |
+| withdraw a scope that does not exist | `not_found` |
+| promote with no `expires_at` | **refused** |
+| promote with a past `expires_at` | **refused** |
+| withdraw with an empty reason | **refused** |
+| expiry sweep over a lapsed scope | **1 row**, `withdrawn_reason = 'expired'` |
+| legacy row with a NULL horizon | **not swept** — a 2179 hand-insert is not collateral |
+| legacy row after the column adds | **still valid** |
+
+### External postconditions — the file sets these but never asserts them
+
+| | result |
+|---|---|
+| all 3 functions `SECURITY DEFINER` with `search_path` pinned | **3 / 3** |
+| `anon` / `authenticated` EXECUTE on any of the 3 | **0** |
+| `service_role` EXECUTE | **3 / 3** |
+| client privileges on the table | **0** |
+| the four RLS-blind privileges (2490's boundary) | **0** |
+| self-referencing policy (cycle) | **0** |
+
+One thing worth naming rather than glossing: the single policy is
+`intel_live_promoted_scopes_service USING (true)`. That reads alarming out of
+context and is not, because **no client role holds any privilege on the table** —
+`USING (true)` is unreachable for anon and authenticated, and `service_role`
+bypasses RLS regardless.
+
+A second: the file's own postcondition "2430 must not promote any scope" counts
+rows with `promoted_via = 'service'`, and with **0 rows on both databases it is
+vacuous**. It is a genuine assertion, just not an exercised one — which is why
+the behavioural proof above exists separately.
+
+### Result
+
+**ON-and-dead flags: 4 → 0.** The ratchet reported all four `KNOWN` entries
+STALE **before** any were removed — the guard decided, not me:
+
+```
+OK — 0 unguarded (all known), 1 guarded, 26 latent
+```
+
+The remaining `1 guarded` is `media_canonical_enabled`, which stays exactly
+where it is: TRUE over absent columns, with its route refusing before the dead
+write, pending the `MEDIA_CANONICAL_FLAG` owner decision.
+
+**Nothing was promoted.** `intel_live_promoted_scopes` is still 0 rows,
+`intel_live_scope_promotion_enabled` is FALSE, and the live read path answers
+byte-identically to before. 2430 built the write path a human decision goes
+through; it did not make the decision.

@@ -287,6 +287,21 @@ async function loadUserNotifPrefs(
  * (e.g. COMPASS_BUDDY_SAFETY_BLOCK or COMPASS_NIGHTLIFE_SAFETY_BLOCK).
  * This mirrors the CompassSafetyFilter type-level block check.
  * Never throws.
+ *
+ * ── POLARITY ────────────────────────────────────────────────────────────────
+ * `*_SAFETY_BLOCK` is a KILL SWITCH: the row existing with `enabled = true` is
+ * how an operator says "stop sending this category, right now, for everyone".
+ * That inverts the usual `*_enabled` polarity, and it inverts what an
+ * unreadable flag means. supabase-js RESOLVES on a DB error, so
+ * `Boolean((data as any)?.enabled)` answered `false` — NOT BLOCKED — for both
+ * "no such flag row" (correct: nothing is blocked by default) and "feature_flags
+ * could not be read" (the switch's position is unknown). A kill switch whose
+ * position cannot be read must be treated as THROWN; the alternative is that a
+ * blocked safety category resumes firing during exactly the incident the
+ * operator threw it for.
+ *
+ * The absent-row case keeps its meaning: `data === null` with no error is still
+ * "not blocked", so no category needs a flag row to work.
  */
 async function isCategoryBlocked(
   db:       SupabaseClient | null,
@@ -295,14 +310,15 @@ async function isCategoryBlocked(
   if (!db || !category) return false;
   try {
     const flagKey = `COMPASS_${category.toUpperCase().replace(/[\s-]/g, "_")}_SAFETY_BLOCK`;
-    const { data } = await db
+    const { data, error } = await db
       .from("feature_flags")
       .select("enabled")
       .eq("flag", flagKey)
       .maybeSingle();
+    if (error) return true; // kill switch in an unknown position — treat as thrown
     return Boolean((data as any)?.enabled);
   } catch {
-    return false;
+    return true;
   }
 }
 

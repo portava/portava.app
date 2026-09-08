@@ -29,7 +29,7 @@
  * ON and the schema absent. An entry without all three is not a capability;
  * it is a comment.
  */
-import type { CapabilityDefinition } from "./schemaRequirement.js";
+import { SCHEMA_PROBE_SENTINEL_ID, type CapabilityDefinition } from "./schemaRequirement.js";
 import { DISCOVERY_TRIP_PROJECTION } from "../discoveryTripProjectionConsumer.js";
 
 /** The `media_assets` columns migration 2250 adds. Nothing before it does. */
@@ -67,6 +67,75 @@ export const MEDIA_CANONICAL: CapabilityDefinition = {
     "refusing keeps the legacy post_media/media_urls path authoritative until the columns exist.",
 };
 
+/**
+ * The `locate_friends_members` columns the §5 crew-presence reader names.
+ * Migration 2219 creates the table; nothing before it does.
+ */
+export const LOCATE_FRIENDS_MEMBER_COLUMNS = ["session_id", "user_id", "left_at"] as const;
+
+/** The `locate_friends_sessions` columns that same reader names. */
+export const LOCATE_FRIENDS_SESSION_COLUMNS = ["id", "started_at", "expires_at", "ended_at"] as const;
+
+/**
+ * Locate My Friends (Map spec §12) storage, read from OUTSIDE Locate My
+ * Friends — by the Passport assembler's §5 `with_crew` traveler-state signal.
+ *
+ * WHY THIS ENTRY EXISTS
+ * =====================
+ * `services/passport/PassportProjectionService.ts` selected
+ * `locate_friends_members` and `locate_friends_sessions` with NO consultation
+ * of `locate_friends_enabled` and no schema probe. Because the Passport
+ * assembler is shared, that read was on the path of every consumer variant —
+ * including the Safe Return safety projection
+ * (`routes/safeReturn.ts` → `buildConsumerProjection(db, "safety", …)`), which
+ * projects handle/verified/blocked and DISCARDS the traveler state entirely.
+ * Safe Return therefore carried a cross-feature read of a disabled feature's
+ * storage whose result it could not use. Applying 2219 to production on
+ * 2026-09-08 made that read succeed; it did not make it authorised.
+ *
+ * 2219's own header states the read contract this violated: "There is no view,
+ * no RPC and no anon grant that lists sessions or finds members by proximity"
+ * and "the API resolves the caller's membership per request before returning
+ * anything." The Passport reader resolved no membership at all, and answered a
+ * viewer who is not in the session.
+ *
+ * WHAT REFUSING PROTECTS. `with_crew` says "this person is, right now, inside a
+ * temporary group location-sharing session, which started at X and expires at
+ * Y". That is Map spec §23 purpose-bound Presence derived from Locate My
+ * Friends storage. With the flag FALSE the feature is dark, so the only honest
+ * answer is that Passport knows of no crew session — not a state read out of
+ * storage the feature is not currently allowed to serve.
+ *
+ * NOT DECIDED HERE: whether Passport may surface crew membership to a viewer
+ * who is NOT a member of that session once the flag is on at all
+ * (OWNER DECISION REQUIRED: PASSPORT_CREW_PRESENCE_AUDIENCE — Passport spec §5
+ * lists "With Crew" as a projected state; 2219 says every read resolves the
+ * caller's membership first, and those do not agree). The consumer implements
+ * the tighter of the two readings in the meantime: the signal is loaded only
+ * for the owner's own view or a viewer who already clears the §23/TABLE 24
+ * location gate, so neither eventual answer can be reached by accident.
+ */
+export const LOCATE_FRIENDS_CREW_PRESENCE: CapabilityDefinition = {
+  flag: "locate_friends_enabled",
+  providedBy: ["2219_locate_friends_sessions.sql"],
+  requires: {
+    tables: {
+      // Keyed (session_id, user_id) — there is no `id`, so the default sentinel
+      // probe would answer 42703 and the capability could never be ready.
+      locate_friends_members: {
+        columns: [...LOCATE_FRIENDS_MEMBER_COLUMNS],
+        probe: { column: "session_id", value: SCHEMA_PROBE_SENTINEL_ID },
+      },
+      locate_friends_sessions: { columns: [...LOCATE_FRIENDS_SESSION_COLUMNS] },
+    },
+  },
+  consumers: ["services/passport/PassportProjectionService.ts"],
+  note:
+    "A Passport read of Locate My Friends storage while that feature is dark discloses §23 " +
+    "purpose-bound Presence the feature itself is not serving; refusing leaves the traveler " +
+    "state to fall through to its non-crew derivation, which reads no Locate storage at all.",
+};
+
 /** flag → definition. The ratchet and the tests enumerate this. */
 export const CAPABILITIES: Readonly<Record<string, CapabilityDefinition>> = Object.freeze({
   [MEDIA_CANONICAL.flag]: MEDIA_CANONICAL,
@@ -77,6 +146,12 @@ export const CAPABILITIES: Readonly<Record<string, CapabilityDefinition>> = Obje
   // MAP_TRIP_PROJECTION_CAPABILITY below, which reaches its flag only through
   // the definition and would trip "REGISTRY OVER A DEAD FLAG" at zero sites.
   [DISCOVERY_TRIP_PROJECTION.flag]: DISCOVERY_TRIP_PROJECTION,
+  // Registered because routes/locateFriends.ts reads the flag by name at three
+  // sites, so scanFlagReads resolves it and the entry cannot trip "REGISTRY
+  // OVER A DEAD FLAG". The consumer that the entry is FOR is the Passport
+  // assembler, which is the module that reads this feature's storage from
+  // outside the feature.
+  [LOCATE_FRIENDS_CREW_PRESENCE.flag]: LOCATE_FRIENDS_CREW_PRESENCE,
   // NOT registered here, deliberately: MAP_TRIP_PROJECTION_CAPABILITY
   // (lib/mapProjectionTripContract.ts). resolveCapability takes the definition
   // directly, so the Map reader is fully guarded either way.

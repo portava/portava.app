@@ -514,6 +514,16 @@ async function loadQuietWindow(
   }
 }
 
+/**
+ * Has this exact nudge already been delivered inside the dedupe window?
+ *
+ * Same rule, same reasoning as CompassLiveEngine.isDuplicate: supabase-js
+ * RESOLVES on a DB error, so a dropped `.error` made "compass_sense_nudges
+ * could not be read" indistinguishable from "no such nudge yet" — and the
+ * latter means SEND. An unknown dedupe ledger answers "duplicate": the delivery
+ * record is written to this same table, so a read failure would have been a
+ * write failure too, and the nudge simply reappears on the next tick.
+ */
 async function isDuplicateNudge(
   sc: SupabaseClient,
   userId: string,
@@ -522,16 +532,17 @@ async function isDuplicateNudge(
 ): Promise<boolean> {
   try {
     const sinceIso = new Date(nowMs - DEDUPE_WINDOW_MS).toISOString();
-    const { data } = await sc
+    const { data, error } = await sc
       .from("compass_sense_nudges")
       .select("id")
       .eq("user_id", userId)
       .eq("dedupe_key", dedupeKey)
       .gte("created_at", sinceIso)
       .limit(1);
+    if (error) return true; // dedupe state unknown — assume already sent
     return ((data ?? []) as any[]).length > 0;
   } catch {
-    return false;
+    return true;
   }
 }
 

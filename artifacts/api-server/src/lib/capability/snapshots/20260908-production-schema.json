@@ -1959,7 +1959,14 @@
    "claim_type",
    "promoted_at",
    "promoted_by",
-   "note"
+   "note",
+   "expires_at",
+   "withdrawn_at",
+   "withdrawn_by",
+   "withdrawn_reason",
+   "promoted_via",
+   "evidence",
+   "updated_at"
   ],
   "intel_mission_candidates": [
    "id",
@@ -5746,7 +5753,10 @@
   "set_journey_observation_consent_v1",
   "set_updated_at",
   "sync_buddy_verification_status",
+  "system_expire_intel_live_scopes",
   "system_promote_admissible_intel_claims",
+  "system_promote_intel_live_scope",
+  "system_withdraw_intel_live_scope",
   "toggle_feature_flag_with_audit",
   "transition_live_place_recap",
   "trip_events_refuse_update",
@@ -6015,6 +6025,7 @@
   "wall_live_for_you_enabled": false,
   "wall_rab_integration_enabled": false,
   "locate_friends_enabled": false,
-  "intel_presence_verification_enabled": false
+  "intel_presence_verification_enabled": false,
+  "intel_live_scope_promotion_enabled": false
  }
 }

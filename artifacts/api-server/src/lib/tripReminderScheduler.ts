@@ -118,7 +118,33 @@ async function sendReminderForTrip(
   return true;
 }
 
-/** Mark a trip's reminder as fully delivered. */
+/**
+ * Mark a trip's reminder as fully delivered.
+ *
+ * trip-kernel:non-aggregate(trips.reminder_delivered_at)
+ *
+ * Phase-2 of the two-phase outbox (0138/0139): the DELIVER half of a
+ * compare-and-set claim, guarded by `.is("reminder_delivered_at", null)` so a
+ * concurrent recovery run cannot double-confirm. It is not a Trip Command for
+ * two independent reasons, either of which is sufficient:
+ *
+ *   1. `trips.version` is the CLIENT concurrency token (Trips spec §18.3/§18.4,
+ *      If-Match). A command here would bump it once per reminder delivery, at
+ *      an hour nobody chose, and the next If-Match write by any crew member
+ *      holding the version they were last handed would come back
+ *      TRIP_VERSION_CONFLICT — for a push notification they cannot see in the
+ *      trip and have no way to reconcile against. The version must mean "the
+ *      trip changed", and a reminder having been delivered is not the trip
+ *      changing.
+ *   2. The kernel has no way to express this write. trip_kernel_execute checks
+ *      expected_trip_version and then applies unconditionally; it cannot carry
+ *      the `WHERE reminder_delivered_at IS NULL` predicate that makes delivery
+ *      at-most-once. Routing this through a command would not merely be noisy,
+ *      it would DELETE the guarantee this column exists to provide.
+ *
+ * The column moves off `trips` into a reminder sidecar table one day; that
+ * change, not a command, is what removes this write from the inventory.
+ */
 async function markDelivered(
   sc: ReturnType<typeof getServiceClient>,
   tripId: string,
@@ -193,6 +219,18 @@ async function recoverStaleClaims(sc: ReturnType<typeof getServiceClient>): Prom
     // increment and both would send the 24h reminder (double push). The CAS
     // (increment only if the count is still what we read) lets exactly one run
     // win; the loser matches 0 rows and skips. Handles a NULL prior count too.
+    //
+    // trip-kernel:non-aggregate(trips.reminder_retry_count)
+    //
+    // The CAS predicate below (`.eq("reminder_retry_count", rawCount)`, or
+    // `.is(..., null)`) IS the mutual exclusion. The Trip Kernel's concurrency
+    // control is expected_trip_version against trips.version — a DIFFERENT
+    // token, shared with every other writer of the trip. Expressing this claim
+    // as a command would either lose the predicate (both runs send: the exact
+    // double-push this counter prevents) or make the claim fail whenever any
+    // unrelated crew edit had bumped the version since the sweep's SELECT,
+    // silently abandoning recoverable reminders. Neither is acceptable, and the
+    // retry budget of a push is in no sense state a client holds a version of.
     let claimQuery = (sc as any)
       .from("trips")
       .update({ reminder_retry_count: newCount })
@@ -261,6 +299,17 @@ export async function runOnce() {
     // Atomically claim the trip before sending: only the process that flips
     // reminder_sent_at from NULL wins, so restarts (or concurrent instances)
     // can't double-send. Claiming before the push errs on the side of at-most-once.
+    //
+    // trip-kernel:non-aggregate(trips.reminder_sent_at)
+    //
+    // The CLAIM half of the two-phase outbox, and the load-bearing one: its
+    // `.is("reminder_sent_at", null)` is what makes the 24h reminder
+    // at-most-once across restarts and across instances. trip_kernel_execute
+    // cannot carry that predicate (see markDelivered above), so a command here
+    // would trade a delivery guarantee for a version bump that every crew
+    // member's next If-Match write would then trip over as
+    // TRIP_VERSION_CONFLICT. An hourly background sweep must not be able to
+    // invalidate the concurrency token of a user who is editing the trip.
     const { data: claimed, error: claimError } = await (sc as any)
       .from("trips")
       .update({ reminder_sent_at: new Date(getNow()).toISOString() })

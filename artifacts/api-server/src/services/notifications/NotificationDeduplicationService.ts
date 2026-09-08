@@ -80,6 +80,26 @@ export class NotificationDeduplicationService {
     return { isDuplicate: false };
   }
 
+  /**
+   * Has an equivalent notification already been written inside the window?
+   *
+   * ── AN UNREADABLE LEDGER IS A DUPLICATE ───────────────────────────────────
+   * supabase-js RESOLVES on a DB error rather than throwing, so the `catch`
+   * below — and its "DB check failed, allowing notification" log — could never
+   * fire for the case it was written for: a PostgREST/Postgres failure came
+   * back as `{ data: null, error }`, `Array.isArray(null)` was false, and the
+   * function answered "not a duplicate" SILENTLY. Every coalescing rule in
+   * `check()` (telegraph message bursts, nearby-traveler throttling, the
+   * general per-source dedupe) then let the notification through, once per
+   * event, for as long as the table stayed unreadable.
+   *
+   * An unknown ledger now answers `true` — treat as already sent. The direction
+   * is not arbitrary: the row this check exists to avoid duplicating is written
+   * to `notifications`, the very table that just failed to read, so a read
+   * failure is overwhelmingly a write failure too and suppressing costs a
+   * notification that was not going to be persisted anyway. Duplicated push
+   * spam, by contrast, is delivered, durable and impossible to recall.
+   */
   private async hasRecentNotification(
     userId: string,
     category: string,
@@ -102,13 +122,17 @@ export class NotificationDeduplicationService {
       if (eventType) {
         query = query.eq('event_type', eventType);
       }
-      const { data } = await query
+      const { data, error } = await query
         .gt('created_at', since)
         .limit(1);
+      if (error) {
+        logger.warn({ err: error, userId, category }, 'dedup: DB check failed, suppressing as duplicate');
+        return true;
+      }
       return Array.isArray(data) && data.length > 0;
     } catch (err) {
-      logger.warn({ err }, 'dedup: DB check failed, allowing notification');
-      return false;
+      logger.warn({ err }, 'dedup: DB check threw, suppressing as duplicate');
+      return true;
     }
   }
 

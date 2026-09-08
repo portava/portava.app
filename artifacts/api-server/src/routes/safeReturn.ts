@@ -849,7 +849,22 @@ router.get("/me/safe-return/contacts/:userId/passport", async (req, res) => {
   if (!gate.allowed) { sendError(res, "forbidden", "No safety relationship with this user"); return; }
 
   try {
-    const passport = await buildConsumerProjection(db, "safety", userId, user.id);
+    // OWNERSHIP, NOT A FLAG CHECK. Safe Return does not depend on Locate My
+    // Friends (Map spec §23 lists them as two SEPARATE purpose-bound location
+    // scopes: "Locate My Friends: temporary group-scoped approximate/precise"
+    // and "Safe Return: purpose-bound precise location"), and the `safety`
+    // variant projects handle / verified / blocked and no traveler state at
+    // all. Until this argument existed, the shared Passport assembler still
+    // SELECTed `locate_friends_members` and `locate_friends_sessions` on this
+    // request and threw the answer away — a cross-feature read of a disabled
+    // feature's storage, ungated, on a safety surface.
+    //
+    // `crewSignal: "excluded"` states the contract instead of inheriting
+    // whatever `locate_friends_enabled` happens to be set to, so turning that
+    // flag on can never quietly hand this read back to Safe Return.
+    const passport = await buildConsumerProjection(db, "safety", userId, user.id, {
+      crewSignal: "excluded",
+    });
     if (!passport) { sendError(res, "not_found", "User not found"); return; }
     res.status(200).json({ passport });
   } catch (err) {

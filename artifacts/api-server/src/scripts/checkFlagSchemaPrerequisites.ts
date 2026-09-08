@@ -117,8 +117,18 @@ type Known = {
  * Measured 2026-09-08 against snapshot 20260908-production-schema.json.
  * `objects` are `table`, `table.column` or `fn()`.
  *
- * FIVE ENTRIES WERE RETIRED ON 2026-09-08 by applying the migration rather than
- * by editing the list, which is the only honest way to shrink it:
+ * NINE ENTRIES WERE RETIRED ON 2026-09-08 by applying the migration rather than
+ * by editing the list, which is the only honest way to shrink it. In every case
+ * the ratchet reported the entry STALE first; none was removed on judgement:
+ *
+ *   intel_claim_projection_crowd  2120 + 2273 + 2274 + 2275 + 2430
+ *   intel_limited_live            2275 + 2430
+ *   intel_live_label_crowd        2275 + 2430
+ *   intel_capture_quick_signal    2274 + 2276 + 2430
+ *   safe_return_enabled           2219
+ *   intel_trail_followup          2274 + 2276
+ *
+ * and earlier the same day:
  *
  *   trust_engine_enabled          2371 — trust_profiles.evidence_weight/_count now exist
  *   layover_plans_enabled         2420 — trip_kernel_execute() now exists
@@ -150,38 +160,6 @@ const KNOWN: Record<string, Known> = {
   },
 
   // ── Unguarded: ON in production, the code runs and fails ────────────────────
-  intel_claim_projection_crowd: {
-    classification: "unguarded",
-    objects: ["intel_live_promoted_scopes.expires_at", "intel_live_promoted_scopes.withdrawn_at"],
-    note:
-      "The Live spine. 2120/2273/2274/2275 were applied to production 2026-09-08, so canonical_events, the version " +
-      "table, the claim version columns and conflict_state all exist now and the scheduler no longer 42703s on them. " +
-      "What is left is 2430 alone: lib/liveClaimRead.ts selects the promoted-scope columns. 2430 is ABSENT ON BOTH " +
-      "DATABASES — unlike its siblings it has never been rehearsed anywhere, so it does not inherit their CI evidence. " +
-      "HANDOVER: intel owner; consumers are lib/intelProjection.ts, lib/intelProjectionScheduler.ts, lib/liveClaimRead.ts.",
-  },
-  intel_limited_live: {
-    classification: "unguarded",
-    objects: ["intel_live_promoted_scopes.expires_at", "intel_live_promoted_scopes.withdrawn_at"],
-    note:
-      "lib/liveClaimRead.ts:260 selects 2430's scope columns, so no Live claim can be served. conflict_state (2275) was applied " +
-      "2026-09-08 and is no longer part of this. 2430 is absent on BOTH databases and has never been rehearsed. HANDOVER: intel owner.",
-  },
-  intel_live_label_crowd: {
-    classification: "unguarded",
-    objects: ["intel_live_promoted_scopes.expires_at", "intel_live_promoted_scopes.withdrawn_at"],
-    note:
-      "Same remaining site as intel_limited_live: both read the 2430 scope columns in liveLabelsServable (lib/liveClaimRead.ts:311-317). " +
-      "HANDOVER: intel owner.",
-  },
-  intel_capture_quick_signal: {
-    classification: "unguarded",
-    objects: ["intel_live_promoted_scopes.expires_at", "intel_live_promoted_scopes.withdrawn_at"],
-    note:
-      "services/intel/IntelCaptureService.ts. 2274 and 2276 were applied to production 2026-09-08, so intel_claims.observation_id and " +
-      "the intel_presence_verifications table now exist and the insert no longer PGRST205s. Only 2430's scope columns remain. " +
-      "HANDOVER: intel owner (services/intel/IntelCaptureService.ts).",
-  },
 };
 
 // ── Declared-by-a-migration ──────────────────────────────────────────────────

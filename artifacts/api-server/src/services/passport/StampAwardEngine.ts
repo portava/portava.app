@@ -174,20 +174,40 @@ async function _awardStampCore(
   }
 
   // 0b. Global kill-switch: passport_stamps_enabled
-  // Fail-open: if the feature_flags table is missing (dev / unmigrated) or the
-  // row doesn't exist, the award proceeds so stamps work out-of-box without any
-  // DB setup. Only an explicit `enabled = false` row suppresses all awards.
+  //
+  // ABSENT ROW vs UNREADABLE TABLE. This is the one flag read in the tree whose
+  // MISSING row means ON: stamps work out-of-box with no DB setup, and only an
+  // explicit `enabled = false` row suppresses every award. That polarity is
+  // deliberate and is kept.
+  //
+  // What was NOT deliberate is that supabase-js RESOLVES on a DB error, so
+  // `const { data: flagRow } = await …` gave `flagRow === null` for the absent
+  // row AND for a failed read — and `flagRow !== null && enabled === false`
+  // read the failed read as ENABLED. A kill switch whose position cannot be
+  // determined was reported as "not thrown", which is the single worst answer a
+  // kill switch can give: an operator who set `enabled = false` to stop awards
+  // during an incident had awards resume, durably, for the length of the blip.
+  //
+  // So: absent row → award proceeds (unchanged). Read ERROR → fail closed with
+  // the same `feature_disabled` reason step 0a already uses, which callers
+  // treat as a warn-level skip rather than an error. Nothing is awarded on an
+  // unknown switch; an award skipped is retried by the next trigger, an award
+  // wrongly granted is a durable row in someone's passport.
   try {
-    const { data: flagRow } = await sc
+    const { data: flagRow, error: flagErr } = await sc
       .from("feature_flags")
       .select("enabled")
       .eq("flag", "passport_stamps_enabled")
       .maybeSingle();
+    if (flagErr) {
+      return { awarded: false, reason: "feature_disabled" };
+    }
     if (flagRow !== null && (flagRow as any).enabled === false) {
       return { awarded: false, reason: "feature_disabled" };
     }
   } catch {
-    // Fail-open: table might not exist in dev / before migrations are applied
+    // Fail-closed: an unreadable kill switch is treated as thrown.
+    return { awarded: false, reason: "feature_disabled" };
   }
 
   const {
@@ -877,18 +897,34 @@ export async function checkEligibility(
 
   const idemKey = buildIdempotencyKey(userId, definition.id, sourceType, sourceId);
 
-  const { data: existingEvent } = await sc
+  // ── The three "have you already got this?" reads ───────────────────────────
+  // All three are ALLOW-table reads whose EMPTY answer is the permissive one:
+  // no award event → not yet awarded; no user_stamp → not yet earned; count 0 →
+  // nowhere near the cap. supabase-js RESOLVES on a DB error, so a dropped
+  // `.error` made every one of them answer "eligible" when the table simply
+  // could not be read — the engine reporting that a user may collect a stamp
+  // they already hold, or a repeatable stamp whose per-user cap it could not
+  // count.
+  //
+  // `eligibility_unavailable` is a distinct reason on purpose. It is NOT
+  // "already_awarded" (that asserts a fact about the user that is not in
+  // evidence) and NOT "eligible" (the check did not happen). Callers that
+  // render an "Earn this" affordance from `eligible` now stay silent rather
+  // than promising an award the write path may refuse a second later.
+  const { data: existingEvent, error: eventErr } = await sc
     .from("stamp_award_events")
     .select("id, status")
     .eq("idempotency_key", idemKey)
     .maybeSingle();
+
+  if (eventErr) return { eligible: false, reason: "eligibility_unavailable", definition };
 
   if (existingEvent && (existingEvent as any).status === "awarded") {
     return { eligible: false, reason: "already_awarded", definition };
   }
 
   if (!definition.is_repeatable) {
-    const { data: existingStamp } = await sc
+    const { data: existingStamp, error: stampErr } = await sc
       .from("user_stamps")
       .select("id")
       .eq("user_id", userId)
@@ -896,17 +932,19 @@ export async function checkEligibility(
       .eq("is_revoked", false)
       .maybeSingle();
 
+    if (stampErr) return { eligible: false, reason: "eligibility_unavailable", definition };
     if (existingStamp) return { eligible: false, reason: "already_earned", definition };
   }
 
   if (definition.is_repeatable && definition.max_awards_per_user != null) {
-    const { count } = await sc
+    const { count, error: countErr } = await sc
       .from("user_stamps")
       .select("id", { count: "exact", head: true })
       .eq("user_id", userId)
       .eq("stamp_definition_id", definition.id)
       .eq("is_revoked", false);
 
+    if (countErr) return { eligible: false, reason: "eligibility_unavailable", definition };
     if ((count ?? 0) >= definition.max_awards_per_user) {
       return { eligible: false, reason: "max_awards_reached", definition };
     }

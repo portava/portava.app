@@ -77,7 +77,13 @@ export async function recordGpsCheckin(
   // Anti-spoofing: (1) snapshot-based coordinate-jump / impossible-speed check at check-in time,
   // (2) historical trust-event review. Either flagging makes the check-in suspicious.
   const [snapshotCheck, userTrust] = await Promise.all([
-    checkAndRecordSnapshot(db, userId, userLat, userLng).catch(() => ({ trusted: true })),
+    // The catch is fail-CLOSED for the same reason checkAndRecordSnapshot's own
+    // read is: a plausibility check that could not run has not produced a clean
+    // verdict, and `{ trusted: true }` here would have re-opened the hole the
+    // service just closed one layer down.
+    checkAndRecordSnapshot(db, userId, userLat, userLng).catch(
+      () => ({ trusted: false, suspicionReason: "plausibility_check_unavailable" }),
+    ),
     getUserTrustLevel(db, userId),
   ]);
   const isSuspicious = !snapshotCheck.trusted || userTrust !== "trusted";

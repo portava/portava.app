@@ -61,6 +61,9 @@ import {
   type ViewerRelationship as WindowViewerRelationship,
 } from "./OpenToPlansService.js";
 import { isFlagEnabled } from "../../lib/featureFlags.js";
+import { LOCATE_FRIENDS_CREW_PRESENCE } from "../../lib/capability/registry.js";
+import { resolveCapability } from "../../lib/capability/schemaCapability.js";
+import { logger as rootLogger } from "../../lib/logger.js";
 
 // The TABLE 24 owner field opt-outs now live in PassportPrivacyGuard so the
 // projection and Shared Context share ONE reader. Re-exported for callers that
@@ -1332,25 +1335,117 @@ async function loadActiveRsvpEvent(
   return { city: e.city ?? null, startsAt: e.starts_at ?? null, endsAt: String(e.ends_at) };
 }
 
-/** An active, un-expired Locate/crew session the user has opted into and not left. */
+// ─────────────────────────────────────────────────────────────────────────────
+// The §5 `with_crew` signal — a read of ANOTHER FEATURE'S storage
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// `locate_friends_members` / `locate_friends_sessions` belong to Locate My
+// Friends (Map spec §12), created and flagged by migration
+// 2219_locate_friends_sessions.sql. This file is OUTSIDE that feature, so every
+// read of them here is a cross-feature read and is subject to the capability
+// contract in lib/capability:
+//
+//     capability = FLAG_ENABLED && SCHEMA_CAPABILITY_READY,   fail-closed
+//
+// Until this gate existed the read was unconditional. Because the Passport
+// assembler is shared, that meant Safe Return — whose route reaches this file
+// through buildConsumerProjection(db, "safety", …) — issued a SELECT against a
+// disabled feature's storage on every safety-contact passport request, and then
+// discarded the result (the safety variant projects handle/verified/blocked and
+// no traveler state at all). Applying 2219 to production on 2026-09-08 made
+// that SELECT succeed. It did not make it authorised.
+//
+// THREE GATES, IN THIS ORDER, ALL FAIL-CLOSED:
+//
+//   1. CONSUMER CONTRACT.  A caller that does not project a traveler state
+//      declares `crewSignal: "excluded"` and the read never happens on its
+//      path, flag or no flag. Safe Return does exactly this — it is the
+//      OWNERSHIP half of the fix: Safe Return does not depend on Locate My
+//      Friends, so its contract says so instead of relying on a flag that
+//      someone may one day turn on.
+//   2. AUDIENCE.  `with_crew` is Map spec §23 purpose-bound Presence: "this
+//      person is inside a temporary group location-sharing session right now,
+//      from X until Y". A viewer who may not see the owner's location context
+//      (§23 / TABLE 24 `show_current_city`) does not get a location-derived
+//      state either — the label is not a city, but it is still built out of
+//      location storage.
+//   3. CAPABILITY.  `locate_friends_enabled` ON **and** 2219's tables and
+//      columns present. `off` / `absent` / `unreadable` / `missing` /
+//      `unknown` all refuse; see lib/capability/schemaCapability.ts.
+//
+// A refusal is not an error state: the traveler state simply falls through to
+// its non-crew derivation, which touches no Locate storage.
+
+/**
+ * Where a projection may take the `with_crew` signal from.
+ *
+ *   "capability" — Locate My Friends storage MAY be read, behind gates 2 and 3.
+ *   "excluded"   — it may not be read at all, on any path, for this projection.
+ */
+export type CrewSignalSource = "capability" | "excluded";
+
+/**
+ * The flag the crew signal is gated on, named here as a literal on purpose:
+ * this module is the registered consumer of that capability, and a consumer
+ * that reaches its flag only through an imported object cannot be checked
+ * against the flag it claims to honour. The assertion below fails loudly if the
+ * registry entry is ever repointed at a different flag.
+ */
+const LOCATE_FRIENDS_CAPABILITY_FLAG = "locate_friends_enabled";
+if (LOCATE_FRIENDS_CREW_PRESENCE.flag !== LOCATE_FRIENDS_CAPABILITY_FLAG) {
+  throw new Error(
+    `PassportProjectionService gates the §5 crew signal on ${LOCATE_FRIENDS_CAPABILITY_FLAG}, but ` +
+      `lib/capability/registry.ts declares LOCATE_FRIENDS_CREW_PRESENCE.flag = ${LOCATE_FRIENDS_CREW_PRESENCE.flag}.`,
+  );
+}
+
+/**
+ * Gate 3. `true` only when `locate_friends_enabled` is ON in this database AND
+ * 2219's schema answers the probe. Never throws: `resolveCapability` classifies
+ * every failure as a refusal, and a thrown client is caught here as one too.
+ */
+async function locateFriendsCrewCapabilityEnabled(sc: SupabaseClient): Promise<boolean> {
+  try {
+    const verdict = await resolveCapability(sc as any, LOCATE_FRIENDS_CREW_PRESENCE);
+    return verdict.enabled === true;
+  } catch (err) {
+    rootLogger.error(
+      { err, capability: LOCATE_FRIENDS_CAPABILITY_FLAG },
+      "passport: crew-presence capability could not be resolved — the §5 with_crew signal is REFUSED (fail-closed)",
+    );
+    return false;
+  }
+}
+
+/**
+ * An active, un-expired Locate/crew session the user has opted into and not
+ * left. CALLERS MUST HAVE CLEARED ALL THREE GATES — `loadTravelerActivity` is
+ * the only caller and does exactly that.
+ *
+ * A driver error is NOT "no session": it is an unusable answer, so it refuses
+ * explicitly rather than falling out of an ignored `error` field as an empty
+ * list. Both are fail-closed for disclosure; only one says so.
+ */
 async function loadActiveCrewSession(
   sc: SupabaseClient,
   userId: string,
   nowIso: string,
 ): Promise<TravelerActivity["withCrew"]> {
-  const { data: members } = await sc
+  const { data: members, error: membersError } = await sc
     .from("locate_friends_members")
     .select("session_id, left_at")
     .eq("user_id", userId)
     .is("left_at", null);
+  if (membersError) return null;
   const ids = ((members as any[]) ?? []).map((m) => m.session_id).filter(Boolean);
   if (ids.length === 0) return null;
-  const { data: sessions } = await sc
+  const { data: sessions, error: sessionsError } = await sc
     .from("locate_friends_sessions")
     .select("id, started_at, expires_at, ended_at")
     .in("id", ids)
     .is("ended_at", null)
     .gt("expires_at", nowIso);
+  if (sessionsError) return null;
   const active = ((sessions as any[]) ?? []).filter((s) => typeof s.expires_at === "string");
   if (active.length === 0) return null;
   // Soonest-expiring active session bounds the state.
@@ -1394,12 +1489,45 @@ async function loadActiveTripStop(
   };
 }
 
-/** Load all three activity signals in parallel; any failure degrades to "no signal". */
-async function loadTravelerActivity(sc: SupabaseClient, userId: string): Promise<TravelerActivity> {
+/** What `loadTravelerActivity` needs to decide whether the crew signal is loadable. */
+export interface CrewSignalGate {
+  /** Gate 1 — the consumer's declared contract. */
+  readonly source: CrewSignalSource;
+  /** Gate 2 — may this viewer receive location-derived context about the owner? */
+  readonly viewerMaySeePresence: boolean;
+}
+
+/**
+ * Gates 1 and 2, as a pure function so the decision is testable without a
+ * database and cannot drift from the comment above. `true` means "the
+ * capability may now be resolved", never "the read may happen".
+ */
+export function crewSignalMayBeLoaded(gate: CrewSignalGate): boolean {
+  return gate.source === "capability" && gate.viewerMaySeePresence;
+}
+
+/**
+ * Load the activity signals in parallel; any failure degrades to "no signal".
+ *
+ * The crew signal is loaded ONLY when gates 1 and 2 pass and the Locate My
+ * Friends capability resolves enabled. Everything else here reads Passport's
+ * own storage (`event_rsvps`/`events`, `route_plans`/`route_stops`) and is
+ * unaffected.
+ */
+async function loadTravelerActivity(
+  sc: SupabaseClient,
+  userId: string,
+  gate: CrewSignalGate,
+): Promise<TravelerActivity> {
   const nowIso = new Date().toISOString();
+  const crew = crewSignalMayBeLoaded(gate)
+    ? locateFriendsCrewCapabilityEnabled(sc).then((ok) =>
+        ok ? loadActiveCrewSession(sc, userId, nowIso) : null,
+      )
+    : Promise.resolve(null);
   const [atEvent, withCrew, exploring] = await Promise.all([
     loadActiveRsvpEvent(sc, userId, nowIso).catch(() => null),
-    loadActiveCrewSession(sc, userId, nowIso).catch(() => null),
+    crew.catch(() => null),
     loadActiveTripStop(sc, userId, nowIso).catch(() => null),
   ]);
   return { atEvent, withCrew, exploring };
@@ -1450,6 +1578,16 @@ export interface BuildProjectionOptions {
   ) => Promise<ViewerResolution>;
   /** Pre-loaded profile row (avoids a round trip when the caller has it). */
   profileRow?: Record<string, any> | null;
+  /**
+   * Whether this projection may take its §5 `with_crew` signal from Locate My
+   * Friends storage at all. Defaults to `"capability"` (read it, behind the
+   * flag + schema capability and the viewer's location gate).
+   *
+   * A consumer that does not project a traveler state must pass `"excluded"`,
+   * so the cross-feature read never happens on its path even if
+   * `locate_friends_enabled` is later turned on. `routes/safeReturn.ts` does.
+   */
+  crewSignal?: CrewSignalSource;
 }
 
 /**
@@ -1538,9 +1676,17 @@ export async function buildPassportProjection(
   };
 
   // 5. Traveler state + availability + intent (availability/intent gated).
+  // Gate 2 for the crew signal: the SAME location test `buildTravelerState`
+  // applies to a city (§23 / TABLE 24), resolved here because the read has to
+  // be decided before it is issued, not filtered after.
+  const viewerMaySeePresence =
+    isSelf || (permissions.canSeeLocationContext && ownerVisibility.showCurrentCity);
   const [activeTripCity, activity] = await Promise.all([
     loadActiveTripCity(sc, userId),
-    loadTravelerActivity(sc, userId),
+    loadTravelerActivity(sc, userId, {
+      source: opts.crewSignal ?? "capability",
+      viewerMaySeePresence,
+    }),
   ]);
   const travelerState = buildTravelerState(profile, quick, activeTripCity, activity, permissions, ownerVisibility);
 

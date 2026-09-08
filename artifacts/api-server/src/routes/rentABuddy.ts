@@ -1446,6 +1446,24 @@ async function loadCityRestriction(
 // ── Shared booking-CREATION safety gate ────────────────────────────────────────
 
 /**
+ * Refuse ONE booking because the launch-control table could not be read.
+ *
+ * 503 + `retryable`, not 500 and not a silent pass: nothing is wrong with the
+ * request, an admin-policy table was momentarily unreadable, and the client
+ * should offer a retry. Shape 1 of lib/exclusionSet.ts — the gate covers this
+ * one booking, so the refusal covers this one booking and nothing else. The
+ * PostgREST message is never echoed to the caller (it names tables/columns).
+ */
+function sendLaunchControlsUnavailable(res: any): void {
+  res.status(503).json({
+    error: "restrictions_unavailable",
+    retryable: true,
+    message: "Booking availability for this location could not be verified right now. Please try again shortly.",
+  });
+}
+
+
+/**
  * The SINGLE implementation of the gate stack that POST /rent-a-buddy/bookings
  * runs once the buddy, city and category are known. Extracted (audit RAB-1 /
  * RAB-2) so every other creation path — rebook, package-book, offer-accept —
@@ -1526,11 +1544,26 @@ export async function enforceBookingCreationGates(opts: {
   // ── Launch control gating (age / DOB / ID / phone) ──────────────────────────
   // countryCode must be provided whenever launch controls are configured —
   // without it we cannot enforce country-level policy, so fail closed.
+  //
+  // The `error` on this count is load-bearing, not decoration. supabase-js
+  // RESOLVES on a DB error, so `const { count } = await …` yields `count:
+  // undefined` for BOTH "no launch controls are configured anywhere" and "the
+  // launch-control table could not be read" — and `(ctrlCount ?? 0) > 0` reads
+  // the second as the first. That is the permissive answer at an admin policy
+  // gate: an unreadable table would waive the countryCode requirement, and the
+  // deny-by-default branch below would likewise wave the booking through into a
+  // region/category an admin may have gated on age, ID or phone verification.
+  // An unknown gate refuses THIS booking, exactly as the city-restriction load
+  // sixty lines down already does.
   if (!countryCode) {
-    const { count: ctrlCount } = await serviceClient
+    const { count: ctrlCount, error: ctrlErr } = await serviceClient
       .from("rent_buddy_launch_controls")
       .select("id", { count: "exact" })
       .limit(1);
+    if (ctrlErr) {
+      sendLaunchControlsUnavailable(res);
+      return false;
+    }
     if ((ctrlCount ?? 0) > 0) {
       res.status(400).json({
         error: "invalid_payload",
@@ -1582,11 +1615,17 @@ export async function enforceBookingCreationGates(opts: {
       return false;
     }
   } else {
-    // Deny-by-default: launch controls configured but none match this booking
-    const { count: ctrlCount } = await serviceClient
+    // Deny-by-default: launch controls configured but none match this booking.
+    // Same read, same trap (see the comment on the countryCode check above): an
+    // unreadable table must not be reported as "no launch controls exist".
+    const { count: ctrlCount, error: ctrlErr } = await serviceClient
       .from("rent_buddy_launch_controls")
       .select("id", { count: "exact" })
       .limit(1);
+    if (ctrlErr) {
+      sendLaunchControlsUnavailable(res);
+      return false;
+    }
     if ((ctrlCount ?? 0) > 0) {
       res.status(403).json({
         error: "location_unavailable",

@@ -187,6 +187,30 @@ router.get("/admin/trust/users/:userId", async (req, res) => {
       .limit(20),
   ]);
 
+  // `trust_restrictions` is an EXCLUSION table: a row means this user is
+  // restricted, and emptiness means they are not. supabase-js RESOLVES on a DB
+  // error, so `restrictionsRes.data ?? []` rendered the identical empty array
+  // for "this user has no restrictions" and for "the restrictions table could
+  // not be read" — and this dossier is the screen a moderator decides on. A
+  // fabricated clean record is the one answer that must never be served here:
+  // it invites lifting a sanction that is still in force, or closing a review
+  // on a user who is under one.
+  //
+  // There is no narrower honest answer than refusing. Shape 2 of
+  // lib/exclusionSet.ts (empty just the block-scoped part) is exactly what the
+  // defect already did; shape 3 applies — the restrictions ARE the finding, so
+  // the response is refused with `degraded_unavailable` (503, retryable), the
+  // code this codebase already uses for "the check could not be PERFORMED".
+  // The PostgREST message is logged, never sent.
+  if (restrictionsRes.error) {
+    req.log?.error?.(
+      { reason: restrictionsRes.error.message, subjectUserId: userId },
+      "trust_restrictions unreadable — refusing rather than showing an admin a clean record",
+    );
+    sendError(res, "degraded_unavailable", "Trust restrictions could not be read. Please try again.");
+    return;
+  }
+
   void logAdminAccess(sc, admin.userId, "profile", userId, "expand", accessReason(req));
   res.json({
     userId,

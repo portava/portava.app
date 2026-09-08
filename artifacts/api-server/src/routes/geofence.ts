@@ -119,23 +119,68 @@ async function getMemberRole(
   }
 }
 
-/** Admin default radius — returns 150 if table missing. */
-async function getAdminDefaults(db: ReturnType<typeof getServiceClient>) {
-  try {
-    const { data } = await db!
-      .from("geofence_admin_settings")
-      .select("default_radius_m, min_radius_m, max_radius_m, no_show_affects_reliability")
-      .eq("id", 1)
-      .maybeSingle();
-    return {
-      defaultRadiusM:           (data as any)?.default_radius_m             ?? 150,
-      minRadiusM:               (data as any)?.min_radius_m                 ?? 50,
-      maxRadiusM:               (data as any)?.max_radius_m                 ?? 5000,
-      noShowAffectsReliability: (data as any)?.no_show_affects_reliability  ?? false,
-    };
-  } catch {
-    return { defaultRadiusM: 150, minRadiusM: 50, maxRadiusM: 5000, noShowAffectsReliability: false };
+export interface AdminGeofenceDefaults {
+  defaultRadiusM: number;
+  minRadiusM: number;
+  maxRadiusM: number;
+  noShowAffectsReliability: boolean;
+}
+
+/**
+ * Admin-configured geofence policy (the singleton `geofence_admin_settings`
+ * row, id = 1).
+ *
+ * ── EMPTY vs UNREADABLE ─────────────────────────────────────────────────────
+ * NO ROW is a real, legitimate state: nobody has configured the singleton, and
+ * the shipped defaults (150 / 50 / 5000 m) are the policy. That still returns
+ * `ok: true`.
+ *
+ * An ERROR is not that. supabase-js RESOLVES on a DB error, so the old
+ * `const { data } = await …; (data as any)?.min_radius_m ?? 50` collapsed both
+ * into the hardcoded numbers — and the numbers are a POLICY CLAMP, not a
+ * cosmetic default. An admin who tightened `max_radius_m` to, say, 200 m so a
+ * check-in cannot be claimed from half a city away had that clamp silently
+ * widened back to 5000 m for the duration of any read blip, and the geofence
+ * was written with the loose radius and kept it permanently. The failure is not
+ * transient the way the read is.
+ *
+ * So the result is a discriminated union — deliberately NOT a nullable settings
+ * object, which invites the same `?? DEFAULTS` coercion one call site later
+ * (the reasoning lib/exclusionSet.ts spells out for `ExclusionSet`). The one
+ * caller refuses the write with `degraded_unavailable` (503, retryable), which
+ * denies exactly one geofence save and nothing else.
+ */
+export type AdminGeofenceDefaultsResult =
+  | { ok: true; defaults: AdminGeofenceDefaults }
+  | { ok: false; reason: string };
+
+export const GEOFENCE_FALLBACK_DEFAULTS: AdminGeofenceDefaults = {
+  defaultRadiusM: 150,
+  minRadiusM: 50,
+  maxRadiusM: 5000,
+  noShowAffectsReliability: false,
+};
+
+async function getAdminDefaults(
+  db: ReturnType<typeof getServiceClient>,
+): Promise<AdminGeofenceDefaultsResult> {
+  const { data, error } = await db!
+    .from("geofence_admin_settings")
+    .select("default_radius_m, min_radius_m, max_radius_m, no_show_affects_reliability")
+    .eq("id", 1)
+    .maybeSingle();
+  if (error) {
+    return { ok: false, reason: String((error as any)?.message ?? (error as any)?.code ?? error) };
   }
+  return {
+    ok: true,
+    defaults: {
+      defaultRadiusM:           (data as any)?.default_radius_m             ?? GEOFENCE_FALLBACK_DEFAULTS.defaultRadiusM,
+      minRadiusM:               (data as any)?.min_radius_m                 ?? GEOFENCE_FALLBACK_DEFAULTS.minRadiusM,
+      maxRadiusM:               (data as any)?.max_radius_m                 ?? GEOFENCE_FALLBACK_DEFAULTS.maxRadiusM,
+      noShowAffectsReliability: (data as any)?.no_show_affects_reliability  ?? GEOFENCE_FALLBACK_DEFAULTS.noShowAffectsReliability,
+    },
+  };
 }
 
 /** Write an attendance event (never auto-punishes). */
@@ -387,8 +432,21 @@ router.post("/trips/:tripId/geofence", async (req, res) => {
     return;
   }
 
-  // Validate radius against admin settings
-  const adminDefaults = await getAdminDefaults(db);
+  // Validate radius against admin settings. An unreadable settings row refuses
+  // the save rather than clamping to the shipped defaults — see the doc on
+  // getAdminDefaults: the clamp an admin configured is a policy, and silently
+  // substituting the wide built-in bounds writes a geofence that outlives the
+  // blip.
+  const adminSettings = await getAdminDefaults(db);
+  if (!adminSettings.ok) {
+    (req as any).log?.error?.(
+      { reason: adminSettings.reason, where: "POST /trips/:tripId/geofence" },
+      "geofence admin settings unreadable — refusing rather than clamping to built-in defaults",
+    );
+    sendError(res, "degraded_unavailable", "Geofence settings could not be verified right now. Please try again.");
+    return;
+  }
+  const adminDefaults = adminSettings.defaults;
   const radiusM = Math.max(
     adminDefaults.minRadiusM,
     Math.min(adminDefaults.maxRadiusM, parsed.data.checkInRadiusM),

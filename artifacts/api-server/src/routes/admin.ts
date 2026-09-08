@@ -2694,6 +2694,27 @@ router.post("/admin/trips/:tripId/reset-reminder", async (req, res) => {
     .maybeSingle();
   if (!trip) { sendError(res, "not_found", "Trip not found"); return; }
 
+  // trip-kernel:non-aggregate(trips.reminder_retry_count, trips.reminder_sent_at, trips.reminder_delivered_at)
+  //
+  // The inverse of lib/tripReminderScheduler's two-phase claim: it RELEASES the
+  // at-most-once claim so the hourly sweep will consider this trip again. It
+  // touches exactly the three claim columns and nothing a client can see — the
+  // trip's title, dates, status, visibility, crew and plan are all untouched,
+  // and the response below returns no trip state at all.
+  //
+  // Not a Trip Command, for the same reason the scheduler's writes are not: a
+  // command bumps trips.version, and trips.version is the client's If-Match
+  // concurrency token (Trips spec §18.3/§18.4). An operator clearing a stuck
+  // reminder would then hand a TRIP_VERSION_CONFLICT to every crew member
+  // holding a version, for a change none of them can observe. There is also no
+  // command that could carry it: the kernel's UPDATE_TRIP allow-list
+  // (migration 2450, c_trip_patch) does not contain these three columns, and
+  // widening it would put scheduler bookkeeping inside the aggregate rather
+  // than take it out.
+  //
+  // The audit trail for this action is the moderation_actions row written
+  // below, not a trip_events row — which is the right place for it: it is an
+  // operator action on the notification pipeline, not a change to the trip.
   const { error } = await sc
     .from("trips")
     .update({

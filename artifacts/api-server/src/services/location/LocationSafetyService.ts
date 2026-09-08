@@ -67,6 +67,29 @@ async function writeTrustEvent(
  * Check a new GPS coordinate against the user's previous snapshot.
  * If suspicious, writes a trust event and returns false.
  * If clean, optionally stores a fresh snapshot and returns true.
+ *
+ * ── WHY THE READ'S `.error` IS LOAD-BEARING ─────────────────────────────────
+ * The previous snapshot IS the anti-spoof check: without it there is nothing to
+ * measure the new fix against and the teleport / impossible-speed tests never
+ * run. supabase-js RESOLVES on a DB error, so `const { data: prev } = await …`
+ * produced the SAME `null` for "this user has no live snapshot" (genuinely
+ * nothing to compare, and trusted is the honest answer) and for "location_
+ * snapshots could not be read" (the check did not happen at all). The second
+ * used to return `{ trusted: true }` — a CLEAN verdict for a check that was
+ * never performed, which is precisely the status a GPS spoofer wants.
+ *
+ * So an unreadable snapshot table now returns `trusted: false` with
+ * `suspicionReason: "plausibility_check_unavailable"` — distinguishable in logs
+ * and in caller metadata from a real `coordinate_jump` / `impossible_speed`, and
+ * deliberately WITHOUT a trust event: the user is not accused of anything, the
+ * verdict merely says the check could not be made. Callers already treat an
+ * untrusted result conservatively rather than punitively (geofence check-in
+ * answers "we couldn't verify your location" and offers manual review; a hidden
+ * gem visit is recorded as pending_review instead of gps_verified) — nothing
+ * here bans, blocks or deletes.
+ *
+ * The fresh snapshot is still written on that path, so the very next check has
+ * a baseline again once the read recovers.
  */
 export async function checkAndRecordSnapshot(
   db: SupabaseClient,
@@ -76,7 +99,7 @@ export async function checkAndRecordSnapshot(
 ): Promise<{ trusted: boolean; suspicionReason?: string }> {
   const nowMs = Date.now();
   // Fetch latest snapshot for this user
-  const { data: prev } = await db
+  const { data: prev, error: prevErr } = await db
     .from("location_snapshots")
     .select("lat, lng, captured_at")
     .eq("user_id", userId)
@@ -84,6 +107,15 @@ export async function checkAndRecordSnapshot(
     .order("captured_at", { ascending: false })
     .limit(1)
     .maybeSingle();
+
+  if (prevErr) {
+    logger.warn(
+      { err: prevErr, userId },
+      "location snapshot unreadable — plausibility check not performed; reporting untrusted rather than clean",
+    );
+    await recordSnapshot(db, userId, lat, lng, nowMs);
+    return { trusted: false, suspicionReason: "plausibility_check_unavailable" };
+  }
 
   if (prev && prev.lat != null && prev.lng != null) {
     const km = haversineKm(prev.lat, prev.lng, lat, lng);
@@ -117,18 +149,27 @@ export async function checkAndRecordSnapshot(
   }
 
   // Store fresh snapshot (short TTL enforced by DB default)
-  {
-    const { error: snapError } = await db.from("location_snapshots").insert({
-      user_id:     userId,
-      lat,
-      lng,
-      source:      "gps",
-      captured_at: new Date(nowMs).toISOString(),
-    });
-    if (snapError) logger.warn({ err: snapError }, "snapshot insert failed — non-fatal");
-  }
+  await recordSnapshot(db, userId, lat, lng, nowMs);
 
   return { trusted: true };
+}
+
+/** Store a fresh snapshot. Best-effort telemetry: a failure is logged, never fatal. */
+async function recordSnapshot(
+  db: SupabaseClient,
+  userId: string,
+  lat: number,
+  lng: number,
+  nowMs: number,
+): Promise<void> {
+  const { error: snapError } = await db.from("location_snapshots").insert({
+    user_id:     userId,
+    lat,
+    lng,
+    source:      "gps",
+    captured_at: new Date(nowMs).toISOString(),
+  });
+  if (snapError) logger.warn({ err: snapError }, "snapshot insert failed — non-fatal");
 }
 
 /**

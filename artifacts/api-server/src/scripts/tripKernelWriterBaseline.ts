@@ -149,11 +149,46 @@ export const CANONICAL_TRIP_TABLES = ["trips", "trip_members", "trip_plan_items"
  */
 export const LEGACY_PATH_MARKER = "trip-kernel:legacy-path";
 
+/**
+ * The comment token that declares a direct write to be OUTSIDE the Trip
+ * aggregate — a write that must NOT become a command, because a command would
+ * bump `trips.version` and `trips.version` is the client's concurrency token
+ * (§18.3/§18.4, If-Match). It is written with the exact columns it covers:
+ *
+ *   trip-kernel:non-aggregate(trips.reminder_sent_at)
+ *   trip-kernel:non-aggregate(trips.reminder_retry_count, trips.reminder_sent_at)
+ *
+ * This is DELIBERATELY not a file, path or table exemption. checkTripKernelWriters
+ * parses the annotated statement's own payload object literal and requires the
+ * declared `<table>.<column>` set to equal the set of keys the statement writes,
+ * with the declared table equal to the `.from()` table. Consequences:
+ *
+ *   * adding a column to the annotated write FAILS the check until the
+ *     declaration is widened by hand — an exemption cannot silently expand;
+ *   * removing one FAILS too, so a declaration cannot outlive the write it
+ *     describes and quietly cover something else;
+ *   * a payload that is not a literal object (a spread, a variable, a computed
+ *     key) is REFUSED outright — an unverifiable claim is not an exemption;
+ *   * only `update` qualifies. insert / upsert / delete create or destroy a
+ *     canonical row, which is aggregate state by definition, so a
+ *     non-aggregate declaration on one is refused.
+ *
+ * Unlike LEGACY_PATH_MARKER this does NOT require the file to import
+ * lib/tripKernel: the whole claim is that no command exists or should exist.
+ */
+export const NON_AGGREGATE_MARKER = "trip-kernel:non-aggregate";
+
 export interface WriterBaseline {
   /** All literal direct writes (Phase 0 inventory). */
   direct: number;
   /** Direct writes with no kernel path (the Phase 1 ratchet). */
   ungated: number;
+  /**
+   * Direct writes carrying a VERIFIED NON_AGGREGATE_MARKER declaration.
+   * Ratcheted like the others: it may fall, never grow. Absent means 0 —
+   * so a file cannot acquire its first exemption without editing this table.
+   */
+  nonAggregate?: number;
 }
 
 export const TRIP_KERNEL_DIRECT_WRITERS: Record<string, WriterBaseline> = {
