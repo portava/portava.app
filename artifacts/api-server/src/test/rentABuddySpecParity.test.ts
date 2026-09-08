@@ -292,9 +292,20 @@ function makeDispClient() {
 
         if (this._updateData !== null) {
           if (t === "rent_buddy_bookings") {
+            // PostgREST applies EVERY predicate on an UPDATE, and — when the
+            // statement is RETURNING (`.select()`) — answers with the rows it
+            // actually changed. The old branch honoured only `.eq("id")` and
+            // always answered `{data: null}`, so a compare-and-set update that
+            // should have matched NOTHING looked identical to one that applied,
+            // and `affectedRows()` could not tell them apart. Model both.
             const eqId = this._filters.find(([, col]) => col === "id");
-            if (eqId && dstate.bookings[eqId[2]]) Object.assign(dstate.bookings[eqId[2]], this._updateData);
-            return { data: null, error: null };
+            const casRow: any = eqId ? (dstate.bookings)[eqId[2]] ?? null : null;
+            const casMatches = !!casRow
+              && this._filters.every(([, col, val]) => col === "id" || casRow[col] === val)
+              && this._inFilters.every(([, col, vals]) => vals.includes(casRow[col]));
+            if (!casMatches) return { data: this._isSingle ? null : [], error: null };
+            Object.assign(casRow, this._updateData);
+            return { data: this._isSingle ? { id: casRow.id } : [{ id: casRow.id }], error: null };
           }
           if (t === "rent_buddy_profiles") {
             const eqId = this._filters.find(([, col]) => col === "id");

@@ -2168,7 +2168,30 @@ router.post("/rent-a-buddy/bookings/:bookingId/cancel", async (req, res) => {
     ? (hoursUntil < 2 ? "rent_buddy_late_cancel" : "rent_buddy_abandoned_booking")
     : "rent_buddy_buddy_cancel";
 
-  await serviceClient
+  // ── COMPARE-AND-SET, so cancel_count counts cancellations, not requests ────
+  //
+  // THE DEFECT. This was `.update({…}).eq("id", bookingId)` with no status
+  // predicate, no `.select()` and no error check, and everything below it — the
+  // booking event, the buddy's cancel_count, the Trust penalty, the 200 — was
+  // driven by the `cancellableStatuses.includes(b.status)` READ taken above
+  // rather than by what this write actually did. That is the same shape as the
+  // sweeper defect: a counter moved by a READ SET instead of by the write's
+  // affected rows.
+  //
+  // Sequentially the read guard hides it, because a second /cancel re-reads the
+  // now-cancelled row and 409s. Concurrently it does not: two in-flight cancels
+  // both read `scheduled`, both pass the guard, both write, and the buddy takes
+  // TWO cancel_count increments (adjustBuddyCounter is atomic, so neither is
+  // lost) for one cancellation. cancel_count feeds search ranking and the
+  // reliability surface, and nothing ever recomputes it from the bookings
+  // table, so that drift is permanent. The Trust event survives this only by
+  // accident — TrustEventService dedups on (user, type, source) within 24h.
+  //
+  // Re-asserting the cancellable statuses inside the same statement makes the
+  // check and the write inseparable; `.select("id")` makes it RETURNING so zero
+  // rows is visible. Zero rows means somebody else moved the booking first, so
+  // this request cancelled nothing and must not be counted as a cancellation.
+  const { data: cancelledRows, error: cancelErr } = await serviceClient
     .from("rent_buddy_bookings")
     .update({
       status: cancelStatus,
@@ -2176,7 +2199,20 @@ router.post("/rent-a-buddy/bookings/:bookingId/cancel", async (req, res) => {
       cancellation_reason: cancellation_reason ?? null,
       updated_at: now.toISOString(),
     })
-    .eq("id", bookingId);
+    .eq("id", bookingId)
+    .in("status", [...cancellableStatuses])
+    .select("id");
+
+  if (cancelErr) {
+    req.log?.error?.({ err: cancelErr, bookingId }, "cancel: booking update failed");
+    return res.status(500).json({ error: "update_failed", message: "The booking could not be cancelled." });
+  }
+  if (affectedRows(cancelledRows) === 0) {
+    return res.status(409).json({
+      error: "invalid_transition",
+      message: "The booking changed state before this cancellation was applied. Refresh and try again.",
+    });
+  }
 
   recordBookingEvent(serviceClient, req.log, {
     booking_id: bookingId, actor_user_id: auth.user.id, event: cancelStatus,
@@ -2184,7 +2220,8 @@ router.post("/rent-a-buddy/bookings/:bookingId/cancel", async (req, res) => {
     metadata: { hoursUntil: Math.round(hoursUntil * 10) / 10, cancellation_reason: cancellation_reason ?? null },
   });
 
-  // Buddy-initiated cancellations count against the buddy's reliability.
+  // Buddy-initiated cancellations count against the buddy's reliability. Reached
+  // only when the compare-and-set above actually moved this booking.
   if (isBuddyCancel) {
     await adjustBuddyCounter(serviceClient, b.buddy_id, "cancel_count", 1);
   }
@@ -2608,7 +2645,25 @@ router.post("/rent-a-buddy/bookings/:bookingId/complete", async (req, res) => {
   const finalStatus = isBuddyCompleting ? "completed_pending_traveler_confirmation" : "completed";
 
   const now = new Date(nowMs).toISOString();
-  await serviceClient
+  // ── COMPARE-AND-SET, so completed_count counts completions ─────────────────
+  //
+  // Same defect and same fix as /cancel above, on the counter that matters most:
+  // completed_count is the number on the public buddy profile, a term in the
+  // search ranker, and the threshold for the buddy_veteran stamp. The write had
+  // no status predicate, no `.select()` and no error check, so two concurrent
+  // /complete calls that both read `in_progress` both applied — +2 on
+  // completed_count, two `buddy_marked_complete` rows in the evidence log, and a
+  // stamp evaluation run twice — for one session. A failed write was invisible
+  // for the same reason: supabase-js resolves, so the handler awarded the
+  // counter, the Trust events and the stamps for a completion the database
+  // never recorded, and answered 200.
+  //
+  // `.eq("status", "in_progress")` rides in the same statement as the write, so
+  // exactly one of two racing requests can win it, and the loser gets a 409
+  // instead of a second increment. The duplicate `buddy_marked_complete` matters
+  // beyond the count: rentABuddySpec's dispute resolution reads that event to
+  // decide whether to compensate completed_count, and compensates by exactly -1.
+  const { data: completedRows, error: completeErr } = await serviceClient
     .from("rent_buddy_bookings")
     .update({
       status: finalStatus,
@@ -2616,7 +2671,20 @@ router.post("/rent-a-buddy/bookings/:bookingId/complete", async (req, res) => {
       ...(disputeWindowExpiresAt ? { dispute_window_expires_at: disputeWindowExpiresAt } : {}),
       updated_at: now,
     })
-    .eq("id", bookingId);
+    .eq("id", bookingId)
+    .eq("status", "in_progress")
+    .select("id");
+
+  if (completeErr) {
+    req.log?.error?.({ err: completeErr, bookingId }, "complete: booking update failed");
+    return res.status(500).json({ error: "update_failed", message: "The booking could not be completed." });
+  }
+  if (affectedRows(completedRows) === 0) {
+    return res.status(409).json({
+      error: "invalid_transition",
+      message: "The booking changed state before this completion was applied. Refresh and try again.",
+    });
+  }
 
   recordBookingEvent(serviceClient, req.log, {
     booking_id: bookingId, actor_user_id: auth.user.id,

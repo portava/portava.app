@@ -18,6 +18,7 @@ import { isPrivateLocation } from "../lib/rentaBuddyScanner.js";
 import { normalizeLaunchControlKey, upsertLaunchControlRow } from "../lib/rentBuddyLaunchControls.js";
 import { createEarningsLedgerEntry } from "../lib/rentBuddyEarningsLedger.js";
 import { isBlockedBetween } from "../lib/blockGuard.js";
+import { affectedRows } from "../lib/affectedRows.js";
 
 const router = Router();
 
@@ -1720,12 +1721,57 @@ router.post("/rent-a-buddy/admin/bookings/:bookingId/resolve-dispute", asyncHand
 
   // Capture open dispute before updating — needed for no_show_count logic below,
   // since the update response only returns the post-update row without reason/raised_by.
-  const { data: openDispute } = await serviceClient
+  //
+  // FAIL CLOSED on a read error. supabase-js RESOLVES on a DB error, so
+  // `{ data: null }` is byte-identical to "this booking has no open dispute" —
+  // and this row is the ONLY input to the no_show_count decision at the bottom
+  // of the handler. Swallowing the error silently turned a confirmed buddy
+  // no-show into "no penalty", with a 200 and a resolved dispute to say the
+  // adjudication had been carried out in full.
+  const { data: openDispute, error: openDisputeErr } = await serviceClient
     .from("rent_buddy_disputes")
-    .select("id, reason, raised_by")
+    .select("id, reason, raised_by, status")
     .eq("booking_id", bookingId)
     .in("status", ["open", "reviewing"])
     .maybeSingle();
+  if (openDisputeErr) {
+    req.log?.error?.({ err: openDisputeErr, bookingId }, "resolve-dispute: open-dispute read failed");
+    return res.status(503).json({
+      error: "precondition_unavailable",
+      retryable: true,
+      message: "The dispute record could not be read, so this resolution was not applied. Please try again shortly.",
+    });
+  }
+
+  // ── completed_count compensation EVIDENCE, read as a precondition ──────────
+  // Read before anything is written, and fail closed, for the same reason as
+  // the dispute read above: `{ data: null }` on an unreadable
+  // buddy_booking_events is indistinguishable from "this booking never passed
+  // through mark-complete", and taking that branch silently skips a
+  // compensation that is owed. Reading it here means a table we cannot consult
+  // stops the resolution BEFORE the dispute row and the booking are moved,
+  // instead of leaving a resolved dispute next to a counter that was never
+  // corrected.
+  // Only a resolution AGAINST the buddy can owe a compensation, so only that
+  // resolution needs the evidence — and only that one is blocked by an
+  // unreadable event log.
+  let passedThroughMarkComplete = false;
+  if (favorTraveler === true) {
+    const { data: completeEvents, error: completeEventsErr } = await serviceClient
+      .from("buddy_booking_events")
+      .select("id")
+      .eq("booking_id", bookingId)
+      .eq("event", "buddy_marked_complete");
+    if (completeEventsErr) {
+      req.log?.error?.({ err: completeEventsErr, bookingId }, "resolve-dispute: mark-complete evidence read failed");
+      return res.status(503).json({
+        error: "precondition_unavailable",
+        retryable: true,
+        message: "The booking's event log could not be read, so this resolution was not applied. Please try again shortly.",
+      });
+    }
+    passedThroughMarkComplete = Array.isArray(completeEvents) && completeEvents.length > 0;
+  }
 
   // Resolve the dispute row
   const { data: dispute, error: dErr } = await serviceClient
@@ -1742,12 +1788,66 @@ router.post("/rent-a-buddy/admin/bookings/:bookingId/resolve-dispute", asyncHand
 
   if (dErr || !dispute) return res.status(404).json({ error: "dispute_not_found", message: dErr?.message });
 
-  // Update booking status based on resolution
+  // ── Booking transition: COMPARE-AND-SET, not fire-and-hope ──────────────────
+  //
+  // THE DEFECT. This was `.update({status}).eq("id", bookingId)` with no status
+  // predicate, no `.select()` and no error check — and every consequence below
+  // it (the completed_count compensation, the no_show_count increment, the
+  // admin-action audit row, the 200) was driven by the `booking.status ===
+  // "disputed"` READ taken further up the handler rather than by what this
+  // write actually did. The same defect the request sweeper had: a counter
+  // moved by a read set instead of by the write's affected rows.
+  //
+  // Two ways that goes wrong, both silent:
+  //   • the UPDATE fails — supabase-js resolves, so nothing here noticed. The
+  //     dispute is marked resolved, the buddy's counters are adjusted, and the
+  //     booking stays `disputed` forever with no open dispute to resolve it.
+  //   • the booking left `disputed` between the read and the write. The write
+  //     stomped whatever state it had reached, and the counters were adjusted
+  //     for a transition that had already been made by someone else.
+  //
+  // Re-asserting `status = "disputed"` inside the same statement makes the
+  // check and the write inseparable, and `.select("id")` makes the statement
+  // RETURNING so zero rows is visible. Zero rows or an error ⇒ nothing was
+  // adjudicated, so the dispute resolution is ROLLED BACK to the status it had
+  // and the caller is told, rather than being handed a 200 for a booking
+  // transition that did not happen.
   const newBookingStatus = favorTraveler === true ? "cancelled" : "completed";
-  await serviceClient
+  const { data: movedBooking, error: bookingUpdErr } = await serviceClient
     .from("rent_buddy_bookings")
     .update({ status: newBookingStatus, updated_at: new Date().toISOString() })
-    .eq("id", bookingId);
+    .eq("id", bookingId)
+    .eq("status", "disputed")
+    .select("id");
+
+  if (bookingUpdErr || affectedRows(movedBooking) === 0) {
+    // Compensate: put the dispute back the way we found it, so the booking and
+    // its dispute cannot be left disagreeing about whether it was adjudicated.
+    // Best-effort and logged — a failed rollback is reported, never swallowed.
+    try {
+      const { error: rollbackErr } = await serviceClient
+        .from("rent_buddy_disputes")
+        .update({ status: (openDispute as any)?.status ?? "open", resolution_note: null, resolved_at: null })
+        .eq("id", (dispute as any).id)
+        .eq("status", "resolved");
+      if (rollbackErr) {
+        req.log?.error?.({ err: rollbackErr, bookingId, disputeId: (dispute as any).id },
+          "resolve-dispute: booking transition failed AND the dispute rollback failed — dispute is resolved over a still-disputed booking");
+      }
+    } catch (err) {
+      req.log?.error?.({ err, bookingId, disputeId: (dispute as any).id },
+        "resolve-dispute: dispute rollback threw after a failed booking transition");
+    }
+
+    if (bookingUpdErr) {
+      req.log?.error?.({ err: bookingUpdErr, bookingId }, "resolve-dispute: booking transition failed");
+      return res.status(500).json({ error: "update_failed", message: "The booking could not be moved out of dispute. No counters were adjusted." });
+    }
+    return res.status(409).json({
+      error: "invalid_transition",
+      message: "The booking left 'disputed' before this resolution was applied. Refresh and try again.",
+    });
+  }
 
   // ── B2: completed_count compensation ────────────────────────────────────────
   // completed_count is incremented once, at buddy-mark-complete time
@@ -1760,15 +1860,8 @@ router.post("/rent-a-buddy/admin/bookings/:bookingId/resolve-dispute", asyncHand
   // never incremented completed_count, so those must NOT be decremented.
   // (Query uses only select/eq so every route fake can resolve it; adjustBuddyCounter
   //  clamps at >= 0, so a double-resolve cannot drive the counter negative.)
-  if (newBookingStatus === "cancelled") {
-    const { data: completeEvents } = await serviceClient
-      .from("buddy_booking_events")
-      .select("id")
-      .eq("booking_id", bookingId)
-      .eq("event", "buddy_marked_complete");
-    if (Array.isArray(completeEvents) && completeEvents.length > 0) {
-      await adjustBuddyCounter(serviceClient, (booking as any).buddy_id, "completed_count", -1);
-    }
+  if (newBookingStatus === "cancelled" && passedThroughMarkComplete) {
+    await adjustBuddyCounter(serviceClient, (booking as any).buddy_id, "completed_count", -1);
   }
 
   await serviceClient.from("rent_buddy_admin_actions").insert({
