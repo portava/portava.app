@@ -232,8 +232,8 @@ export function makeKernelRpc(state: KernelState) {
       const eventType = COMMAND_EVENT[type];
       const eventId = `evt-${++idCounter}`;
 
-      if (state.failOn.has("event")) throw new Error("memory_events insert failed");
-      t("memory_events").push({
+      if (state.failOn.has("event")) throw new Error("memory_domain_events insert failed");
+      t("memory_domain_events").push({
         event_id: eventId,
         memory_id: memoryId,
         type: eventType,

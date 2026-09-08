@@ -96,7 +96,7 @@ export function isMemoryEventType(v: unknown): v is MemoryEventType {
 
 /** The outbox table (migration 2710) and the event store beside it. */
 export const MEMORY_OUTBOX_TABLE = "memory_event_outbox";
-export const MEMORY_EVENT_TABLE = "memory_events";
+export const MEMORY_EVENT_TABLE = "memory_domain_events";
 
 /**
  * The event payload a §18 consumer reads.

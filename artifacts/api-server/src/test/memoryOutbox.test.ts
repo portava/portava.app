@@ -61,7 +61,7 @@ function kernelState(failOn: KernelWriteTarget[] = []): KernelState {
     tables: {
       memories: [{ id: MEM, owner_id: OWNER, state: "published", title: "before", visibility: "public" }],
       memory_items: [], memory_tags: [],
-      memory_events: [], memory_event_outbox: [], memory_command_receipts: [], memory_command_audit: [],
+      memory_domain_events: [], memory_event_outbox: [], memory_command_receipts: [], memory_command_audit: [],
     },
     rpcCalls: [],
     failOn: new Set(failOn),
@@ -120,11 +120,11 @@ describe("§17 atomicity — canonical mutation and outbox insert are one transa
     const r = await executeMemoryCommand(client(s), patchCommand("k-ok"));
     assert.equal(r.ok, true, JSON.stringify(r));
     assert.equal(s.tables.memories[0].title, "after");
-    assert.equal(s.tables.memory_events.length, 1);
+    assert.equal(s.tables.memory_domain_events.length, 1);
     assert.equal(s.tables.memory_event_outbox.length, 1);
     assert.equal(s.tables.memory_command_receipts.length, 1);
     assert.equal(s.tables.memory_command_audit.length, 1);
-    assert.equal(s.tables.memory_event_outbox[0].event_id, s.tables.memory_events[0].event_id);
+    assert.equal(s.tables.memory_event_outbox[0].event_id, s.tables.memory_domain_events[0].event_id);
     assert.equal(s.tables.memory_event_outbox[0].published_at, null, "no consumer exists yet");
   });
 
@@ -134,7 +134,7 @@ describe("§17 atomicity — canonical mutation and outbox insert are one transa
     assert.equal(r.ok, false, "a command whose event could not be written is not a success");
     assert.equal((r as any).reason, "MEMORY_KERNEL_UNAVAILABLE");
     assert.equal(s.tables.memories[0].title, "before", "the canonical row rolled back with the event");
-    assert.equal(s.tables.memory_events.length, 0);
+    assert.equal(s.tables.memory_domain_events.length, 0);
     assert.equal(s.tables.memory_event_outbox.length, 0);
     assert.equal(s.tables.memory_command_receipts.length, 0,
       "no receipt either — a replay must be able to retry, not inherit a phantom success");
@@ -146,7 +146,7 @@ describe("§17 atomicity — canonical mutation and outbox insert are one transa
     assert.equal(r.ok, false);
     assert.equal((r as any).reason, "MEMORY_KERNEL_UNAVAILABLE");
     assert.equal(s.tables.memories[0].title, "before");
-    assert.equal(s.tables.memory_events.length, 0, "an event with no outbox row would never be delivered");
+    assert.equal(s.tables.memory_domain_events.length, 0, "an event with no outbox row would never be delivered");
     assert.equal(s.tables.memory_event_outbox.length, 0);
   });
 
@@ -155,7 +155,7 @@ describe("§17 atomicity — canonical mutation and outbox insert are one transa
     const r = await executeMemoryCommand(client(s), patchCommand("k-state"));
     assert.equal(r.ok, false);
     assert.equal(s.tables.memories[0].title, "before");
-    assert.equal(s.tables.memory_events.length, 0, "an event for a change that never landed");
+    assert.equal(s.tables.memory_domain_events.length, 0, "an event for a change that never landed");
     assert.equal(s.tables.memory_event_outbox.length, 0);
   });
 
@@ -163,7 +163,7 @@ describe("§17 atomicity — canonical mutation and outbox insert are one transa
     const s = kernelState(["receipt"]);
     const r = await executeMemoryCommand(client(s), patchCommand("k-rcpt"));
     assert.equal(r.ok, false);
-    assert.equal(s.tables.memory_events.length, 0);
+    assert.equal(s.tables.memory_domain_events.length, 0);
     assert.equal(s.tables.memory_event_outbox.length, 0);
     assert.equal(s.tables.memories[0].title, "before");
   });
@@ -178,7 +178,7 @@ describe("§17 atomicity — canonical mutation and outbox insert are one transa
     assert.equal(s.tables.memory_command_audit.length, 1, "§24 counts rejections too");
     assert.equal(s.tables.memory_command_audit[0].outcome, "rejected");
     assert.equal(s.tables.memory_command_audit[0].reason, "MEMORY_NOT_FOUND");
-    assert.equal(s.tables.memory_events.length, 0);
+    assert.equal(s.tables.memory_domain_events.length, 0);
   });
 
   it("supabase-js RESOLVES on a kernel failure — an unbound error would read as success", async () => {
@@ -229,17 +229,17 @@ describe("§23 event payloads carry ids and vocabulary, never the Memory's body"
       ...patchCommand("p-3"), type: "ADD_MEDIA",
       payload: { write: { memory_id: MEM, media_url: "https://secret.example/photo.jpg", media_type: "image/jpeg", caption: "at home", position: 0 } },
     });
-    assert.equal(s.tables.memory_events.length, 3);
-    for (const e of s.tables.memory_events) {
+    assert.equal(s.tables.memory_domain_events.length, 3);
+    for (const e of s.tables.memory_domain_events) {
       assert.ok(eventPayloadIsPrivacyFiltered(e.payload_json),
         `event ${e.type} leaked: ${JSON.stringify(e.payload_json)}`);
     }
     // The media URL was in the COMMAND and must not be in the EVENT.
-    const serialized = JSON.stringify(s.tables.memory_events);
+    const serialized = JSON.stringify(s.tables.memory_domain_events);
     assert.ok(!serialized.includes("secret.example"), "the media URL reached the event payload");
     assert.ok(!serialized.includes("at home"), "the caption reached the event payload");
     // The audience CLASS is allowed and is what a §18 projection needs.
-    const visEvent = s.tables.memory_events.find((e: any) => e.type === "memory.visibility_changed");
+    const visEvent = s.tables.memory_domain_events.find((e: any) => e.type === "memory.visibility_changed");
     assert.equal(visEvent.payload_json.visibility, "only_me");
   });
 });
@@ -314,7 +314,7 @@ describe("no emit outside the kernel transaction", () => {
       .split("\n").map((l) => l.replace(/(^|[^:])\/\/.*$/, "$1")).join("\n");
   }
 
-  it("no file this lane owns writes memory_events or memory_event_outbox directly", () => {
+  it("no file this lane owns writes memory_domain_events or memory_event_outbox directly", () => {
     for (const rel of OWNED) {
       const src = stripComments(readFileSync(path.join(here, rel), "utf8"));
       // A write is `.from("<table>")` followed, on the same chain, by

@@ -4,11 +4,34 @@
 -- that gates it, seeded FALSE. No function yet (that is 2711), so applying this
 -- migration alone changes nothing any user can observe.
 --
---   public.memory_events            immutable domain events (§17's fourteen names)
+--   public.memory_domain_events            immutable domain events (§17's fourteen names)
 --   public.memory_event_outbox      the transactional outbox (§17)
 --   public.memory_command_receipts  idempotency receipts (§17, §19)
 --   public.memory_command_audit     one row per COMMAND ATTEMPT (§17 audit, §24)
 --   feature_flags('memory_kernel_enabled', false)
+--
+-- WHY THE TABLE IS CALLED memory_domain_events AND NOT memory_events.
+-- It was written as `memory_events`, and a CI rehearsal before any apply found
+-- that `public.memory_events` ALREADY EXISTS -- in CI and in production -- as a
+-- completely different table:
+--
+--   existing:  id, user_id, event_type, occurred_at, subject_type, subject_id,
+--              source, visibility, source_ref, metadata, created_at, expires_at
+--   this one:  event_id, memory_id, sequence, type, actor_user_id, causation_id,
+--              correlation_id, payload_json, schema_version, occurred_at, recorded_at
+--
+-- Two different things sharing a name. The existing one is load-bearing: ten
+-- migrations (2183, 2186, 2187, 2190, 2192, 2193, 2194, 2197, 2200, 2333)
+-- build the Memory projection family on it, and both AccountDeletionService and
+-- lib/deletionDispositions cascade user erasure through it.
+--
+-- `CREATE TABLE IF NOT EXISTS` is what makes this worth spelling out. It would
+-- NOT have created the table and would NOT have complained; the failure would
+-- have surfaced two statements later, when `CREATE INDEX ... (memory_id,
+-- sequence)` hit a table with no memory_id column -- and had the index shapes
+-- happened to be compatible, it would not have surfaced at all, leaving the
+-- kernel writing domain events into the projection family's table. Renaming is
+-- the whole fix; nothing else about the design changes.
 --
 -- Spec: docs/specs/Portava_Highlights_Memories_Development_Architecture_Spec_v1.txt
 --   §17 "All canonical writes should cross an explicit command boundary for
@@ -58,7 +81,7 @@
 --
 -- TABLE ACCESS
 -- ============
---   memory_events            RLS on. ONE policy: SELECT by the Memory's OWNER
+--   memory_domain_events            RLS on. ONE policy: SELECT by the Memory's OWNER
 --                            (§23 "Owner-only access to canonical private
 --                            Memory facts by default"). NOT crew, NOT
 --                            participants — §23 line 599 says "participant
@@ -113,14 +136,14 @@
 --   DROP TABLE IF EXISTS public.memory_command_audit;
 --   DROP TABLE IF EXISTS public.memory_command_receipts;
 --   DROP TABLE IF EXISTS public.memory_event_outbox;
---   DROP TABLE IF EXISTS public.memory_events;
+--   DROP TABLE IF EXISTS public.memory_domain_events;
 --   DROP FUNCTION IF EXISTS public.memory_events_refuse_update();
 --   (Safe while the flag is false: nothing writes these tables.)
 
 BEGIN;
 
 -- ── 1. Event store (§17 domain events) ───────────────────────────────────────
-CREATE TABLE IF NOT EXISTS public.memory_events (
+CREATE TABLE IF NOT EXISTS public.memory_domain_events (
   event_id       uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
   memory_id      uuid        NOT NULL REFERENCES public.memories(id) ON DELETE CASCADE,
   sequence       bigint      NOT NULL,
@@ -143,10 +166,10 @@ CREATE TABLE IF NOT EXISTS public.memory_events (
     'highlight.created', 'highlight.published', 'highlight.expired',
     'highlight.pinned', 'highlight.hidden'))
 );
-COMMENT ON TABLE public.memory_events IS
+COMMENT ON TABLE public.memory_domain_events IS
   'Immutable Memory domain events (Highlights/Memories spec §17). Written only by public.memory_kernel_execute, in the same transaction as the canonical state change. UPDATE is refused by trigger; DELETE follows the Memory (cascade). Payloads are privacy-filtered (§23): ids and vocabulary, never the Memory body.';
-CREATE INDEX IF NOT EXISTS idx_memory_events_memory_seq ON public.memory_events (memory_id, sequence);
-CREATE INDEX IF NOT EXISTS idx_memory_events_type_time  ON public.memory_events (type, recorded_at DESC);
+CREATE INDEX IF NOT EXISTS idx_memory_events_memory_seq ON public.memory_domain_events (memory_id, sequence);
+CREATE INDEX IF NOT EXISTS idx_memory_events_type_time  ON public.memory_domain_events (type, recorded_at DESC);
 
 CREATE OR REPLACE FUNCTION public.memory_events_refuse_update()
 RETURNS trigger
@@ -154,20 +177,20 @@ LANGUAGE plpgsql
 SET search_path TO 'public', 'pg_catalog'
 AS $fn$
 BEGIN
-  RAISE EXCEPTION 'memory_events is append-only: UPDATE refused (event_id=%)', OLD.event_id
+  RAISE EXCEPTION 'memory_domain_events is append-only: UPDATE refused (event_id=%)', OLD.event_id
     USING ERRCODE = 'restrict_violation';
 END;
 $fn$;
 
-DROP TRIGGER IF EXISTS trg_memory_events_append_only ON public.memory_events;
+DROP TRIGGER IF EXISTS trg_memory_events_append_only ON public.memory_domain_events;
 CREATE TRIGGER trg_memory_events_append_only
-  BEFORE UPDATE ON public.memory_events
+  BEFORE UPDATE ON public.memory_domain_events
   FOR EACH ROW EXECUTE FUNCTION public.memory_events_refuse_update();
 
 -- ── 2. Outbox (§17) ──────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS public.memory_event_outbox (
   id           bigint      GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-  event_id     uuid        NOT NULL REFERENCES public.memory_events(event_id) ON DELETE CASCADE,
+  event_id     uuid        NOT NULL REFERENCES public.memory_domain_events(event_id) ON DELETE CASCADE,
   memory_id    uuid        NOT NULL,
   type         text        NOT NULL,
   created_at   timestamptz NOT NULL DEFAULT now(),
@@ -176,7 +199,7 @@ CREATE TABLE IF NOT EXISTS public.memory_event_outbox (
   last_error   text        NULL
 );
 COMMENT ON TABLE public.memory_event_outbox IS
-  'Outbox rows written in the same transaction as memory_events (Highlights/Memories spec §17). NO CONSUMER EXISTS YET — rows accumulate with published_at NULL until a §18 projection worker is built. src/lib/memoryOutbox.readUnpublishedOutbox is the reader that worker will use.';
+  'Outbox rows written in the same transaction as memory_domain_events (Highlights/Memories spec §17). NO CONSUMER EXISTS YET — rows accumulate with published_at NULL until a §18 projection worker is built. src/lib/memoryOutbox.readUnpublishedOutbox is the reader that worker will use.';
 CREATE INDEX IF NOT EXISTS idx_memory_outbox_unpublished
   ON public.memory_event_outbox (id) WHERE published_at IS NULL;
 
@@ -193,7 +216,7 @@ CREATE TABLE IF NOT EXISTS public.memory_command_receipts (
   command_id      uuid        NOT NULL,
   command_type    text        NOT NULL,
   memory_id       uuid        NULL REFERENCES public.memories(id) ON DELETE CASCADE,
-  event_id        uuid        NOT NULL REFERENCES public.memory_events(event_id) ON DELETE CASCADE,
+  event_id        uuid        NOT NULL REFERENCES public.memory_domain_events(event_id) ON DELETE CASCADE,
   event_type      text        NOT NULL,
   result_json     jsonb       NOT NULL,
   created_at      timestamptz NOT NULL DEFAULT now(),
@@ -229,7 +252,7 @@ CREATE INDEX IF NOT EXISTS idx_memory_command_audit_reason ON public.memory_comm
   WHERE reason IS NOT NULL;
 
 -- ── 5. RLS and grants ────────────────────────────────────────────────────────
-ALTER TABLE public.memory_events           ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.memory_domain_events           ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.memory_event_outbox     ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.memory_command_receipts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.memory_command_audit    ENABLE ROW LEVEL SECURITY;
@@ -237,19 +260,19 @@ ALTER TABLE public.memory_command_audit    ENABLE ROW LEVEL SECURITY;
 -- Supabase's ALTER DEFAULT PRIVILEGES hands anon/authenticated the full DML set
 -- (plus TRUNCATE, which RLS never polices) at CREATE TABLE. Take it all back,
 -- then grant exactly what is meant.
-REVOKE ALL ON public.memory_events           FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON public.memory_domain_events           FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON public.memory_event_outbox     FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON public.memory_command_receipts FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON public.memory_command_audit    FROM PUBLIC, anon, authenticated;
 
 -- §23: owner-only, and SELECT only. Participants get nothing: line 599,
 -- "Participant membership alone does not grant full Memory access."
-GRANT SELECT ON public.memory_events TO authenticated;
-DROP POLICY IF EXISTS memory_events_owner_select ON public.memory_events;
-CREATE POLICY memory_events_owner_select ON public.memory_events
+GRANT SELECT ON public.memory_domain_events TO authenticated;
+DROP POLICY IF EXISTS memory_events_owner_select ON public.memory_domain_events;
+CREATE POLICY memory_events_owner_select ON public.memory_domain_events
   FOR SELECT USING (
     EXISTS (SELECT 1 FROM public.memories m
-             WHERE m.id = public.memory_events.memory_id
+             WHERE m.id = public.memory_domain_events.memory_id
                AND m.owner_id = auth.uid())
   );
 
@@ -266,15 +289,15 @@ DECLARE n integer;
 BEGIN
   SELECT count(*) INTO n FROM pg_tables
    WHERE schemaname = 'public'
-     AND tablename IN ('memory_events', 'memory_event_outbox', 'memory_command_receipts', 'memory_command_audit')
+     AND tablename IN ('memory_domain_events', 'memory_event_outbox', 'memory_command_receipts', 'memory_command_audit')
      AND rowsecurity;
   IF n <> 4 THEN
     RAISE EXCEPTION 'POSTCONDITION FAILED: expected RLS on 4 kernel tables, found %', n;
   END IF;
 
-  -- Client roles: SELECT on memory_events only; nothing anywhere else.
-  IF has_table_privilege('anon', 'public.memory_events', 'SELECT')
-     OR has_table_privilege('authenticated', 'public.memory_events', 'INSERT, UPDATE, DELETE, TRUNCATE')
+  -- Client roles: SELECT on memory_domain_events only; nothing anywhere else.
+  IF has_table_privilege('anon', 'public.memory_domain_events', 'SELECT')
+     OR has_table_privilege('authenticated', 'public.memory_domain_events', 'INSERT, UPDATE, DELETE, TRUNCATE')
      OR has_table_privilege('anon', 'public.memory_event_outbox', 'SELECT, INSERT, UPDATE, DELETE, TRUNCATE')
      OR has_table_privilege('authenticated', 'public.memory_event_outbox', 'SELECT, INSERT, UPDATE, DELETE, TRUNCATE')
      OR has_table_privilege('anon', 'public.memory_command_receipts', 'SELECT, INSERT, UPDATE, DELETE, TRUNCATE')
@@ -283,14 +306,14 @@ BEGIN
      OR has_table_privilege('authenticated', 'public.memory_command_audit', 'SELECT, INSERT, UPDATE, DELETE, TRUNCATE') THEN
     RAISE EXCEPTION 'POSTCONDITION FAILED: a client role holds a grant on a kernel table it must not';
   END IF;
-  IF NOT has_table_privilege('authenticated', 'public.memory_events', 'SELECT') THEN
-    RAISE EXCEPTION 'POSTCONDITION FAILED: authenticated cannot SELECT memory_events';
+  IF NOT has_table_privilege('authenticated', 'public.memory_domain_events', 'SELECT') THEN
+    RAISE EXCEPTION 'POSTCONDITION FAILED: authenticated cannot SELECT memory_domain_events';
   END IF;
 
-  -- Exactly one policy on memory_events, and none on the other three.
-  SELECT count(*) INTO n FROM pg_policies WHERE schemaname = 'public' AND tablename = 'memory_events';
+  -- Exactly one policy on memory_domain_events, and none on the other three.
+  SELECT count(*) INTO n FROM pg_policies WHERE schemaname = 'public' AND tablename = 'memory_domain_events';
   IF n <> 1 THEN
-    RAISE EXCEPTION 'POSTCONDITION FAILED: memory_events should carry exactly 1 policy, found %', n;
+    RAISE EXCEPTION 'POSTCONDITION FAILED: memory_domain_events should carry exactly 1 policy, found %', n;
   END IF;
   SELECT count(*) INTO n FROM pg_policies
    WHERE schemaname = 'public'
@@ -306,7 +329,7 @@ BEGIN
 
   -- The append-only trigger is installed.
   IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'trg_memory_events_append_only' AND NOT tgisinternal) THEN
-    RAISE EXCEPTION 'POSTCONDITION FAILED: memory_events append-only trigger is absent';
+    RAISE EXCEPTION 'POSTCONDITION FAILED: memory_domain_events append-only trigger is absent';
   END IF;
 END $$;
 

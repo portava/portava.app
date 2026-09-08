@@ -78,7 +78,7 @@ function fixtureTables(kernelOn: boolean): Record<string, any[]> {
     memory_tags: [{ memory_id: M_PUB, tagged_user_id: TAGGED, status: "pending", created_at: "2026-01-01T00:00:00.000Z" }],
     memory_likes: [], memory_saves: [], blocks: [], user_follows: [],
     circle_memberships: [], notifications: [], hidden_gems: [], trips: [], trip_members: [],
-    memory_events: [], memory_event_outbox: [], memory_command_receipts: [], memory_command_audit: [],
+    memory_domain_events: [], memory_event_outbox: [], memory_command_receipts: [], memory_command_audit: [],
   };
 }
 
@@ -371,7 +371,7 @@ describe("§19 idempotent replay — same key twice, one effect, same body", () 
       assert.deepEqual(second.body, first.body, "the ORIGINAL result, not a fresh one");
       assert.equal(app.tables.memories.find((m) => m.id === M_PUB)?.title, "first",
         "the second call must not have applied its own payload");
-      assert.equal(app.tables.memory_events.length, 1, "exactly one domain event");
+      assert.equal(app.tables.memory_domain_events.length, 1, "exactly one domain event");
       assert.equal(app.tables.memory_event_outbox.length, 1, "exactly one outbox row");
       assert.equal(app.tables.memory_command_receipts.length, 1, "one receipt");
       // The audit records BOTH attempts — the second as a duplicate. §24.
@@ -489,7 +489,7 @@ describe("kernel flag OFF — the legacy direct write still runs and no event is
       assert.equal(r.status, 200, JSON.stringify(r.body));
       assert.equal(app.tables.memories.find((m) => m.id === M_PUB)?.title, "legacy");
       assert.equal(app.state.rpcCalls.length, 0, "the kernel function was never called");
-      assert.equal(app.tables.memory_events.length, 0);
+      assert.equal(app.tables.memory_domain_events.length, 0);
       assert.equal(app.tables.memory_event_outbox.length, 0);
       assert.equal(app.tables.memory_command_receipts.length, 0);
     } finally { await app.close(); }

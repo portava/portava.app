@@ -110,7 +110,7 @@
 -- POST-CUTOVER CANONICAL FORWARD MIGRATION (2100-2999 band). Lane 2711.
 --
 -- MUST BE TRUE BEFORE APPLYING:
---   * 2710 has been applied (memory_events, memory_event_outbox,
+--   * 2710 has been applied (memory_domain_events, memory_event_outbox,
 --     memory_command_receipts, memory_command_audit, and the flag).
 --   * public.memories, public.memory_items and public.memory_tags exist with
 --     the columns 0067_memories.sql defines.
@@ -445,9 +445,9 @@ BEGIN
 
   -- ── Event + outbox + receipt + audit. Same transaction as the change. ──────
   SELECT coalesce(max(sequence), 0) + 1 INTO v_seq
-    FROM public.memory_events WHERE memory_id = v_memory_id;
+    FROM public.memory_domain_events WHERE memory_id = v_memory_id;
 
-  INSERT INTO public.memory_events (
+  INSERT INTO public.memory_domain_events (
     memory_id, sequence, type, actor_user_id, causation_id, correlation_id,
     payload_json, schema_version, occurred_at)
   VALUES (
@@ -502,7 +502,7 @@ END;
 $fn$;
 
 COMMENT ON FUNCTION public.memory_kernel_execute(jsonb) IS
-  'Memory Command Bus write path (Highlights/Memories spec §5/§17/§19/§23/§24). Applies ONE MemoryCommand: honours the idempotency receipt, locks and re-checks the Memory''s owner, enforces the §5 lifecycle machine, applies the state change, then writes memory_events + memory_event_outbox + memory_command_receipts + memory_command_audit in the SAME transaction. Rejections are RETURNED with a §24 reason code and still write an audit row; failures RAISE and roll everything back. service_role only; application authorization runs before the call.';
+  'Memory Command Bus write path (Highlights/Memories spec §5/§17/§19/§23/§24). Applies ONE MemoryCommand: honours the idempotency receipt, locks and re-checks the Memory''s owner, enforces the §5 lifecycle machine, applies the state change, then writes memory_domain_events + memory_event_outbox + memory_command_receipts + memory_command_audit in the SAME transaction. Rejections are RETURNED with a §24 reason code and still write an audit row; failures RAISE and roll everything back. service_role only; application authorization runs before the call.';
 
 REVOKE ALL ON FUNCTION public.memory_kernel_execute(jsonb) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.memory_kernel_execute(jsonb) TO service_role;
@@ -530,7 +530,7 @@ BEGIN
   IF (v->>'reason') IS DISTINCT FROM 'MEMORY_COMMAND_MALFORMED' THEN
     RAISE EXCEPTION 'POSTCONDITION FAILED: memory_kernel_execute({}) returned %', v;
   END IF;
-  IF EXISTS (SELECT 1 FROM public.memory_events) THEN
+  IF EXISTS (SELECT 1 FROM public.memory_domain_events) THEN
     RAISE EXCEPTION 'POSTCONDITION FAILED: a malformed command wrote an event';
   END IF;
 
