@@ -51,6 +51,23 @@ import {
   resolveMemoryLocationCeiling,
   coarsenMemoryLocation,
 } from "../lib/memoryLocationPrecision.js";
+// §17 Command Bus and Domain Events. Every canonical Memory write below crosses
+// this boundary: a typed command, an actor, an idempotency key, an audit row
+// and — when the kernel is enabled — a domain event in the same transaction as
+// the state change. See lib/memoryCommandBus.ts for what runs with the flag off.
+import {
+  lifecycleStateOf,
+  readMemoryCommandEnvelope,
+  sendMemoryCommandRejection,
+} from "../lib/memoryCommandBus.js";
+import {
+  authorizeParticipantCommand,
+  commandTypeForPatch,
+  dispatchMemoryCommand,
+  guardLifecycle,
+  loadMemoryForCommand,
+  type CommandOutcome,
+} from "../services/memory/MemoryDomainService.js";
 
 const router = Router();
 const UUID_RE = /^[0-9a-f-]{36}$/i;
@@ -435,6 +452,46 @@ const patchTagSchema = z.object({
   action: z.enum(["approve", "remove"]),
 });
 
+// ── §17 command plumbing for the handlers below ───────────────────────────────
+
+/**
+ * Render a MemoryDomainService outcome that is NOT a success.
+ *
+ * Two refusal shapes, deliberately kept apart. A `rejection` is command-shaped
+ * — a §5 illegal transition, a §23 capability refusal, the kernel being absent
+ * — and carries a §24 reason code the client can switch on; lib/memoryCommandBus
+ * .sendMemoryCommandRejection owns that mapping so every route answers the same
+ * refusal the same way. An `http` error is everything else (an unreadable table,
+ * a write that matched zero rows) and keeps the exact code, status and message
+ * the handler used before this lane, so no existing client sees a new shape for
+ * an old failure.
+ */
+function sendCommandFailure(
+  req: any,
+  res: any,
+  outcome: Extract<CommandOutcome<unknown>, { ok: false }>,
+): void {
+  if ("rejection" in outcome) {
+    sendMemoryCommandRejection(res, outcome.rejection, req.log);
+    return;
+  }
+  const e = outcome.http;
+  sendError(res, e.code as any, e.message, e.exposeDetail ? { exposeDetail: true } : undefined);
+}
+
+/**
+ * Read the §19 Idempotency-Key header, or answer 400.
+ *
+ * Absent header => a fresh UUID, i.e. the request is not idempotent — exactly
+ * what every Memory write did before this lane, so an unaware client is not
+ * given a dedup window keyed on something it did not choose.
+ */
+function requireIdempotencyKey(req: any, res: any): string | null {
+  const env = readMemoryCommandEnvelope(req);
+  if (!env.ok) { sendError(res, "invalid_payload", env.message); return null; }
+  return env.idempotencyKey;
+}
+
 // ── Notification helper ────────────────────────────────────────────────────────
 
 async function notifyTagged(sc: any, memory: any, taggedUserId: string): Promise<void> {
@@ -532,6 +589,15 @@ router.post("/memories", async (req, res) => {
   }
   const d = parsed.data;
 
+  const idempotencyKey = requireIdempotencyKey(req, res);
+  if (idempotencyKey === null) return;
+
+  // §5. A create names its own starting state. The schema admits draft or
+  // published; neither is a transition, but naming them through the same
+  // vocabulary is what lets the event payload carry a §5 `to_state` rather than
+  // the legacy column value.
+  const createState = lifecycleStateOf(d.state);
+
   const precisionEnabled = await isFlagEnabled(sc, "memory_location_precision_enabled");
 
   // A client may not name a column this database does not have: PostgREST fails
@@ -553,39 +619,60 @@ router.post("/memories", async (req, res) => {
   // decision, not this route's).
   const precisionValue = precisionEnabled ? normalizeMemoryPrecisionForWrite(d.locationPrecision) : undefined;
 
-  const { data: memory, error } = await sc
-    .from("memories")
-    .insert({
-      location_precision: precisionValue,
-      owner_id: user.id,
-      title: d.title ?? null,
-      caption: d.caption ?? null,
+  const insertRow = {
+    location_precision: precisionValue,
+    owner_id: user.id,
+    title: d.title ?? null,
+    caption: d.caption ?? null,
+    visibility: d.visibility,
+    allowed_user_ids: d.allowedUserIds,
+    hidden_user_ids: d.hiddenUserIds,
+    trip_id: d.tripId ?? null,
+    event_id: d.eventId ?? null,
+    place_id: d.placeId ?? null,
+    location_city: d.locationCity ?? null,
+    location_country: d.locationCountry ?? null,
+    location_lat: d.locationLat ?? null,
+    location_lng: d.locationLng ?? null,
+    canonical_location_id: d.canonicalLocationId ?? null,
+    starts_at: d.startsAt ?? null,
+    ends_at: d.endsAt ?? null,
+    state: d.state,
+  };
+
+  const created = await dispatchMemoryCommand<any>({
+    sc,
+    commandType: "CREATE_MEMORY",
+    memoryId: null, // assigned by the kernel / the database
+    actorUserId: user.id,
+    idempotencyKey,
+    payload: {
+      to_state: createState,
       visibility: d.visibility,
-      allowed_user_ids: d.allowedUserIds,
-      hidden_user_ids: d.hiddenUserIds,
-      trip_id: d.tripId ?? null,
-      event_id: d.eventId ?? null,
-      place_id: d.placeId ?? null,
-      location_city: d.locationCity ?? null,
-      location_country: d.locationCountry ?? null,
-      location_lat: d.locationLat ?? null,
-      location_lng: d.locationLng ?? null,
-      canonical_location_id: d.canonicalLocationId ?? null,
-      starts_at: d.startsAt ?? null,
-      ends_at: d.endsAt ?? null,
-      state: d.state,
-    })
-    .select((precisionEnabled ? MEMORY_CREATE_SELECT_WITH_PRECISION : MEMORY_CREATE_SELECT) as any)
-    .single();
+      write: insertRow,
+      select: precisionEnabled ? MEMORY_CREATE_SELECT_WITH_PRECISION : MEMORY_CREATE_SELECT,
+    },
+    legacy: async () => {
+      const { data, error } = await sc
+        .from("memories")
+        .insert(insertRow)
+        .select((precisionEnabled ? MEMORY_CREATE_SELECT_WITH_PRECISION : MEMORY_CREATE_SELECT) as any)
+        .single();
+      if (error) {
+        req.log.error({ err: error }, "memories: create failed");
+        return { ok: false, http: { code: "db_error", message: error.message } };
+      }
+      return { ok: true, body: data };
+    },
+  });
 
-  if (error) {
-    req.log.error({ err: error }, "memories: create failed");
-    sendError(res, "db_error", error.message);
-    return;
-  }
+  if (!created.ok) { sendCommandFailure(req, res, created); return; }
+  const memory = created.body;
 
-  // Tag users if provided
-  if (d.taggedUserIds.length > 0) {
+  // Tag users if provided. §17 ADD_PERSON — the participant set is part of the
+  // Memory, and a replay of CREATE_MEMORY must not tag anyone twice, which is
+  // why this is skipped on a duplicate: the original command already did it.
+  if (d.taggedUserIds.length > 0 && !created.duplicate) {
     const tagRows = d.taggedUserIds
       .filter((uid) => uid !== user.id)
       .map((uid) => ({
@@ -595,9 +682,23 @@ router.post("/memories", async (req, res) => {
       }));
 
     if (tagRows.length > 0) {
-      await sc.from("memory_tags").insert(tagRows).then(undefined, () => {});
-      for (const uid of d.taggedUserIds.filter((u) => u !== user.id)) {
-        notifyTagged(sc, memory, uid);
+      // `.then(undefined, () => {})` — MEASURED THIS SESSION: that is a
+      // REJECTION handler, and supabase-js RESOLVES on a database error, so it
+      // never ran for the failure it was written to absorb. The tag insert
+      // failing meant nobody was tagged, no notification row was written, and
+      // the route answered 201 with a `taggedUserIds` the caller had every
+      // reason to believe had landed. Not fatal to the Memory — the Memory is
+      // created and correct — so the response stays 201, but the failure is now
+      // visible in the log and the per-user notification loop is skipped rather
+      // than told about tags that do not exist.
+      const { error: tagErr } = await sc.from("memory_tags").insert(tagRows);
+      if (tagErr) {
+        req.log.error({ err: tagErr, memoryId: (memory as any).id, count: tagRows.length },
+          "memories: create tagged nobody — memory_tags insert failed");
+      } else {
+        for (const uid of d.taggedUserIds.filter((u) => u !== user.id)) {
+          notifyTagged(sc, memory, uid);
+        }
       }
     }
   }
@@ -896,28 +997,29 @@ router.patch("/memories/:id", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
+  const idempotencyKey = requireIdempotencyKey(req, res);
+  if (idempotencyKey === null) return;
+
   const precisionEnabled = await isFlagEnabled(sc, "memory_location_precision_enabled");
 
-  // An unreadable `memories` table is not a missing memory: supabase-js RESOLVES
-  // on a DB error, so `const { data: existing }` bound null and this answered
-  // "Memory not found" for an outage. §28.11.
-  const { data: existing, error: existingErr } = await sc
-    .from("memories")
-    .select("id, owner_id")
-    .eq("id", id)
-    .neq("state", "deleted")
-    .maybeSingle();
+  const loaded = await loadMemoryForCommand(sc, id);
+  if (!loaded.ok) { sendCommandFailure(req, res, loaded); return; }
+  const existing = loaded.row;
+  if (existing.owner_id !== user.id) { sendError(res, "forbidden", "Not your memory"); return; }
 
-  if (existingErr) {
-    req.log.error({ err: existingErr, memoryId: id }, "memories: memory read failed");
-    sendError(res, "db_error", existingErr.message);
-    return;
-  }
-  if (!existing) { sendError(res, "not_found", "Memory not found"); return; }
-  if ((existing as any).owner_id !== user.id) { sendError(res, "forbidden", "Not your memory"); return; }
+  const d = parsed.data;
+
+  // §5. THE GUARD H50 SAYS WAS MISSING. Before this line the handler accepted
+  // any of draft/published/archived as `state` and wrote it unconditionally —
+  // published -> draft (un-publish, an arrow §5 does not draw), archived ->
+  // draft, and, for a row a moderator had set to 'removed', removed ->
+  // published, which puts moderator-removed content back into the discovery
+  // feed. The guard runs whether or not the kernel flag is on, because it needs
+  // no table that does not exist.
+  const lifecycle = guardLifecycle(existing.state, d.state);
+  if (!lifecycle.ok) { sendCommandFailure(req, res, lifecycle); return; }
 
   const patch: Record<string, unknown> = {};
-  const d = parsed.data;
   if (d.title !== undefined) patch.title = d.title;
   if (d.caption !== undefined) patch.caption = d.caption;
   if (d.visibility !== undefined) patch.visibility = d.visibility;
@@ -940,17 +1042,43 @@ router.patch("/memories/:id", async (req, res) => {
   if (d.state !== undefined) patch.state = d.state;
   patch.updated_at = new Date().toISOString();
 
-  const { data, error } = await sc
-    .from("memories")
-    .update(patch)
-    .eq("id", id)
-    .eq("owner_id", user.id)
-    .select((precisionEnabled ? MEMORY_SELECT_WITH_PRECISION : MEMORY_SELECT) as any)
-    .single();
+  // §17. Which command this PATCH is — a lifecycle transition, an audience
+  // change, a place correction, or a plain field edit. The name reaches the
+  // audit row and the domain event's payload, which is what makes §24's
+  // place_correction_rate countable at all.
+  const commandType = commandTypeForPatch(d);
 
-  if (error) { req.log.error({ err: error }, "memories: patch failed"); sendError(res, "db_error", error.message); return; }
+  const outcome = await dispatchMemoryCommand<any>({
+    sc,
+    commandType,
+    memoryId: id,
+    actorUserId: user.id,
+    idempotencyKey,
+    payload: {
+      patch,
+      from_state: lifecycle.fromState,
+      to_state: lifecycle.toState,
+      select: precisionEnabled ? MEMORY_SELECT_WITH_PRECISION : MEMORY_SELECT,
+    },
+    legacy: async () => {
+      const { data, error } = await sc
+        .from("memories")
+        .update(patch)
+        .eq("id", id)
+        .eq("owner_id", user.id)
+        .select((precisionEnabled ? MEMORY_SELECT_WITH_PRECISION : MEMORY_SELECT) as any)
+        .single();
+      if (error) {
+        req.log.error({ err: error }, "memories: patch failed");
+        return { ok: false, http: { code: "db_error", message: error.message } };
+      }
+      return { ok: true, body: data };
+    },
+  });
 
-  res.json({ memory: mapMemory(data, user.id) });
+  if (!outcome.ok) { sendCommandFailure(req, res, outcome); return; }
+
+  res.json({ memory: mapMemory(outcome.body, user.id) });
 });
 
 // ── DELETE /memories/:id ──────────────────────────────────────────────────────
@@ -966,23 +1094,20 @@ router.delete("/memories/:id", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
-  // An unreadable `memories` table is not a missing memory: supabase-js RESOLVES
-  // on a DB error, so `const { data: existing }` bound null and this answered
-  // "Memory not found" for an outage. §28.11.
-  const { data: existing, error: existingErr } = await sc
-    .from("memories")
-    .select("id, owner_id")
-    .eq("id", id)
-    .neq("state", "deleted")
-    .maybeSingle();
+  const idempotencyKey = requireIdempotencyKey(req, res);
+  if (idempotencyKey === null) return;
 
-  if (existingErr) {
-    req.log.error({ err: existingErr, memoryId: id }, "memories: memory read failed");
-    sendError(res, "db_error", existingErr.message);
-    return;
-  }
-  if (!existing) { sendError(res, "not_found", "Memory not found"); return; }
-  if ((existing as any).owner_id !== user.id) { sendError(res, "forbidden", "Not your memory"); return; }
+  const loaded = await loadMemoryForCommand(sc, id);
+  if (!loaded.ok) { sendCommandFailure(req, res, loaded); return; }
+  const existing = loaded.row;
+  if (existing.owner_id !== user.id) { sendError(res, "forbidden", "Not your memory"); return; }
+
+  // §5. `:642` wrote state:"deleted" directly with no transition check. A
+  // 'removed' (moderator) row reaching this handler now gets a refusal instead
+  // of a soft-delete that would hide the moderation verdict behind the owner's
+  // own delete.
+  const lifecycle = guardLifecycle(existing.state, "deleted");
+  if (!lifecycle.ok) { sendCommandFailure(req, res, lifecycle); return; }
 
   // Soft-delete by design: the memory becomes invisible everywhere (every read
   // path filters `state != 'deleted'`) but the row, its items and their media
@@ -991,31 +1116,48 @@ router.delete("/memories/:id", async (req, res) => {
   // memories by owner_id with no state filter and removes the items' storage
   // objects, so soft-deleted memories are hard-erased when the account goes
   // (audit MEM·H2).
-  // THE WRITE THAT MAKES THE DELETION REAL, AND ITS RESULT WAS THROWN AWAY.
   //
-  // No `error` binding and no `.select()`: supabase-js RESOLVES on a failure, so
-  // a rejected update produced 204 "deleted" for a memory still published, still
-  // on the owner's profile and still in the discovery feed. An UPDATE without
-  // .select() also returns `data: null`, so even a bound `error` would not have
-  // said whether any row was touched. `.select("id")` is what turns this into an
-  // answer. Deleting your own content is the operation that must not lie.
-  const { data: deleted, error: delErr } = await sc
-    .from("memories")
-    .update({ state: "deleted", updated_at: new Date().toISOString() })
-    .eq("id", id)
-    .eq("owner_id", user.id)
-    .select("id");
+  // §21's full deletion lifecycle (DELETION_REQUESTED -> PUBLIC_REVOKED ->
+  // DERIVATIVES_PURGED -> RAW_EVIDENCE_PURGED -> DELETED) is NOT built: there is
+  // no derivative registry to revoke against (§18, NOT-BUILT). This command
+  // emits memory.deleted so that registry, when it exists, has the one event it
+  // needs to start from — which is the whole reason the outbox goes in first.
+  const outcome = await dispatchMemoryCommand<{ id: string }>({
+    sc,
+    commandType: "DELETE_MEMORY",
+    memoryId: id,
+    actorUserId: user.id,
+    idempotencyKey,
+    payload: { from_state: lifecycle.fromState, to_state: lifecycle.toState },
+    legacy: async () => {
+      // THE WRITE THAT MAKES THE DELETION REAL, AND ITS RESULT WAS THROWN AWAY.
+      //
+      // No `error` binding and no `.select()`: supabase-js RESOLVES on a
+      // failure, so a rejected update produced 204 "deleted" for a memory still
+      // published, still on the owner's profile and still in the discovery
+      // feed. An UPDATE without .select() also returns `data: null`, so even a
+      // bound `error` would not have said whether any row was touched.
+      // `.select("id")` is what turns this into an answer. Deleting your own
+      // content is the operation that must not lie.
+      const { data: deleted, error: delErr } = await sc
+        .from("memories")
+        .update({ state: "deleted", updated_at: new Date().toISOString() })
+        .eq("id", id)
+        .eq("owner_id", user.id)
+        .select("id");
+      if (delErr) {
+        req.log.error({ err: delErr, memoryId: id }, "memories: delete failed");
+        return { ok: false, http: { code: "db_error", message: delErr.message } };
+      }
+      if (!deleted || (deleted as any[]).length === 0) {
+        req.log.error({ memoryId: id, ownerId: user.id }, "memories: delete matched zero rows — memory NOT deleted");
+        return { ok: false, http: { code: "db_error", message: "The memory could not be deleted. Please try again.", exposeDetail: true } };
+      }
+      return { ok: true, body: { id } };
+    },
+  });
 
-  if (delErr) {
-    req.log.error({ err: delErr, memoryId: id }, "memories: delete failed");
-    sendError(res, "db_error", delErr.message);
-    return;
-  }
-  if (!deleted || (deleted as any[]).length === 0) {
-    req.log.error({ memoryId: id, ownerId: user.id }, "memories: delete matched zero rows — memory NOT deleted");
-    sendError(res, "db_error", "The memory could not be deleted. Please try again.", { exposeDetail: true });
-    return;
-  }
+  if (!outcome.ok) { sendCommandFailure(req, res, outcome); return; }
 
   res.status(204).send();
 });
@@ -1039,39 +1181,61 @@ router.post("/memories/:id/items", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
-  // An unreadable `memories` table is not a missing memory: supabase-js RESOLVES
-  // on a DB error, so `const { data: existing }` bound null and this answered
-  // "Memory not found" for an outage. §28.11.
-  const { data: existing, error: existingErr } = await sc
-    .from("memories")
-    .select("id, owner_id")
-    .eq("id", id)
-    .neq("state", "deleted")
-    .maybeSingle();
+  const idempotencyKey = requireIdempotencyKey(req, res);
+  if (idempotencyKey === null) return;
 
-  if (existingErr) {
-    req.log.error({ err: existingErr, memoryId: id }, "memories: memory read failed");
-    sendError(res, "db_error", existingErr.message);
-    return;
-  }
-  if (!existing) { sendError(res, "not_found", "Memory not found"); return; }
-  if ((existing as any).owner_id !== user.id) { sendError(res, "forbidden", "Not your memory"); return; }
+  const loaded = await loadMemoryForCommand(sc, id);
+  if (!loaded.ok) { sendCommandFailure(req, res, loaded); return; }
+  if (loaded.row.owner_id !== user.id) { sendError(res, "forbidden", "Not your memory"); return; }
 
-  const { data, error } = await sc
-    .from("memory_items")
-    .insert({
-      memory_id: id,
-      media_url: parsed.data.mediaUrl,
+  // §17 ADD_MEDIA. §19 H176/H177 are already correct here and stay correct: the
+  // Memory exists before any media and a failed item write leaves its facts
+  // intact. What the command adds is the idempotency key — §19's "enqueue media
+  // uploads independently ... sync command with idempotency key" is exactly the
+  // retry that used to produce a duplicate item on every network stutter.
+  const outcome = await dispatchMemoryCommand<any>({
+    sc,
+    commandType: "ADD_MEDIA",
+    memoryId: id,
+    actorUserId: user.id,
+    idempotencyKey,
+    payload: {
       media_type: parsed.data.mediaType,
-      caption: parsed.data.caption ?? null,
       position: parsed.data.position,
-    })
-    .select("id, media_url, media_type, caption, position, created_at")
-    .single();
+      // media_url and caption are deliberately NOT in the command payload's
+      // top level: the kernel takes them from `write` and never copies them
+      // into the event (§23 privacy-filtered event payloads).
+      write: {
+        memory_id: id,
+        media_url: parsed.data.mediaUrl,
+        media_type: parsed.data.mediaType,
+        caption: parsed.data.caption ?? null,
+        position: parsed.data.position,
+      },
+    },
+    legacy: async () => {
+      const { data, error } = await sc
+        .from("memory_items")
+        .insert({
+          memory_id: id,
+          media_url: parsed.data.mediaUrl,
+          media_type: parsed.data.mediaType,
+          caption: parsed.data.caption ?? null,
+          position: parsed.data.position,
+        })
+        .select("id, media_url, media_type, caption, position, created_at")
+        .single();
+      if (error) {
+        req.log.error({ err: error }, "memories: add item failed");
+        return { ok: false, http: { code: "db_error", message: error.message } };
+      }
+      return { ok: true, body: data };
+    },
+  });
 
-  if (error) { req.log.error({ err: error }, "memories: add item failed"); sendError(res, "db_error", error.message); return; }
+  if (!outcome.ok) { sendCommandFailure(req, res, outcome); return; }
 
-  res.status(201).json({ item: mapItem(data) });
+  res.status(201).json({ item: mapItem(outcome.body) });
 });
 
 // ── DELETE /memories/:id/items/:itemId ───────────────────────────────────────
@@ -1087,53 +1251,69 @@ router.delete("/memories/:id/items/:itemId", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
-  // An unreadable `memories` table is not a missing memory: supabase-js RESOLVES
-  // on a DB error, so `const { data: existing }` bound null and this answered
-  // "Memory not found" for an outage. §28.11.
-  const { data: existing, error: existingErr } = await sc
-    .from("memories")
-    .select("id, owner_id")
-    .eq("id", id)
-    .neq("state", "deleted")
-    .maybeSingle();
+  const idempotencyKey = requireIdempotencyKey(req, res);
+  if (idempotencyKey === null) return;
 
-  if (existingErr) {
-    req.log.error({ err: existingErr, memoryId: id }, "memories: memory read failed");
-    sendError(res, "db_error", existingErr.message);
-    return;
-  }
-  if (!existing) { sendError(res, "not_found", "Memory not found"); return; }
-  if ((existing as any).owner_id !== user.id) { sendError(res, "forbidden", "Not your memory"); return; }
+  const loaded = await loadMemoryForCommand(sc, id);
+  if (!loaded.ok) { sendCommandFailure(req, res, loaded); return; }
+  if (loaded.row.owner_id !== user.id) { sendError(res, "forbidden", "Not your memory"); return; }
 
-  // Fetch the item to get its media_url before deleting
-  const { data: item } = await sc
+  // Fetch the item to get its media_url before deleting.
+  //
+  // `error` is bound: supabase-js RESOLVES on a database error, so an
+  // unreadable memory_items answered "Item not found" — a 404 for an outage,
+  // and worse, a 404 that tells the owner their media is already gone. §28.11.
+  const { data: item, error: itemErr } = await sc
     .from("memory_items")
     .select("id, media_url")
     .eq("id", itemId)
     .eq("memory_id", id)
     .maybeSingle();
 
+  if (itemErr) {
+    req.log.error({ err: itemErr, memoryId: id, itemId }, "memories: item read failed");
+    sendError(res, "db_error", itemErr.message);
+    return;
+  }
   if (!item) { sendError(res, "not_found", "Item not found"); return; }
 
-  // Delete the DB row first so the item is immediately inaccessible.
-  //
-  // The result of this delete was discarded, and the storage object is removed
-  // UNCONDITIONALLY below. So a failed row delete did not merely leave the item
-  // in place: it left the row pointing at bytes that had just been erased, i.e.
-  // a permanently broken item in the memory, and answered 204. Ordering makes
-  // the check load-bearing — nothing downstream can repair it.
-  const { data: removed, error: rmErr } = await sc
-    .from("memory_items").delete().eq("id", itemId).eq("memory_id", id).select("id");
-  if (rmErr) {
-    req.log.error({ err: rmErr, memoryId: id, itemId }, "memories: item delete failed — storage object left in place");
-    sendError(res, "db_error", rmErr.message);
-    return;
-  }
-  if (!removed || (removed as any[]).length === 0) {
-    req.log.error({ memoryId: id, itemId }, "memories: item delete matched zero rows — storage object left in place");
-    sendError(res, "db_error", "The item could not be removed. Please try again.", { exposeDetail: true });
-    return;
-  }
+  // §17 REMOVE_MEDIA. The storage delete below stays OUTSIDE the command: it is
+  // not a canonical write, it cannot participate in the transaction, and §21
+  // ("Delete media asset — remove asset and derivatives; Memory may survive if
+  // other evidence remains") makes it a consequence of the command rather than
+  // part of it. Ordering is what keeps that honest — the row goes first, and if
+  // the row does not go, the bytes stay.
+  const outcome = await dispatchMemoryCommand<{ id: string }>({
+    sc,
+    commandType: "REMOVE_MEDIA",
+    memoryId: id,
+    actorUserId: user.id,
+    idempotencyKey,
+    payload: { item_id: itemId },
+    legacy: async () => {
+      // Delete the DB row first so the item is immediately inaccessible.
+      //
+      // The result of this delete was discarded, and the storage object is
+      // removed UNCONDITIONALLY below. So a failed row delete did not merely
+      // leave the item in place: it left the row pointing at bytes that had just
+      // been erased, i.e. a permanently broken item in the memory, and answered
+      // 204. Ordering makes the check load-bearing — nothing downstream can
+      // repair it.
+      const { data: removed, error: rmErr } = await sc
+        .from("memory_items").delete().eq("id", itemId).eq("memory_id", id).select("id");
+      if (rmErr) {
+        req.log.error({ err: rmErr, memoryId: id, itemId }, "memories: item delete failed — storage object left in place");
+        return { ok: false, http: { code: "db_error", message: rmErr.message } };
+      }
+      if (!removed || (removed as any[]).length === 0) {
+        req.log.error({ memoryId: id, itemId }, "memories: item delete matched zero rows — storage object left in place");
+        return { ok: false, http: { code: "db_error", message: "The item could not be removed. Please try again.", exposeDetail: true } };
+      }
+      return { ok: true, body: { id: itemId } };
+    },
+  });
+
+  if (!outcome.ok) { sendCommandFailure(req, res, outcome); return; }
 
   // Delete the storage object — derive path from public URL.
   // URL format: https://<host>/storage/v1/object/public/post-media/<path>
@@ -1225,11 +1405,6 @@ router.patch("/memories/:id/tags/:userId", async (req, res) => {
   const { id, userId } = req.params;
   if (!isUuid(id) || !isUuid(userId)) { sendError(res, "invalid_payload", "Invalid id"); return; }
 
-  if (userId !== user.id) {
-    sendError(res, "forbidden", "You can only modify your own tag");
-    return;
-  }
-
   const parsed = patchTagSchema.safeParse(req.body);
   if (!parsed.success) {
     sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid payload");
@@ -1239,34 +1414,79 @@ router.patch("/memories/:id/tags/:userId", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
-  const { data: tag } = await sc
+  const idempotencyKey = requireIdempotencyKey(req, res);
+  if (idempotencyKey === null) return;
+
+  // §17 ADD_PERSON (consent) / REMOVE_PERSON.
+  //
+  // THIS HANDLER USED TO OPEN WITH `if (userId !== user.id) forbidden`, so the
+  // Memory's OWNER could not remove a person from their own Memory, and no other
+  // route could either. See authorizeParticipantCommand in
+  // services/memory/MemoryDomainService.ts for the spec lines: Appendix A step 7
+  // (line 776) walks the owner through removing a participant, §23 line 597/610
+  // makes the participant set an owner-editable canonical fact, and §10 line 338
+  // ("being tagged does not make another user a co-owner") is why the tagged
+  // person's presence is not a veto. Approval stays the tagged person's alone —
+  // §5 line 226, "only after participant consent".
+  //
+  // The Memory must be loaded before the tag, because the owner's identity is
+  // the thing being authorized against and it is not on the tag row.
+  const loaded = await loadMemoryForCommand(sc, id);
+  if (!loaded.ok) { sendCommandFailure(req, res, loaded); return; }
+
+  const command = parsed.data.action === "approve" ? "ADD_PERSON" : "REMOVE_PERSON";
+  const authorized = authorizeParticipantCommand(command, user.id, loaded.row.owner_id, userId);
+  if (!authorized.ok) { sendCommandFailure(req, res, authorized); return; }
+
+  // `error` is bound: an unreadable memory_tags answered "Tag not found", i.e.
+  // told a person their tag does not exist because the table was down. §28.11.
+  const { data: tag, error: tagErr } = await sc
     .from("memory_tags")
     .select("memory_id, tagged_user_id, status")
     .eq("memory_id", id)
-    .eq("tagged_user_id", user.id)
+    .eq("tagged_user_id", userId)
     .maybeSingle();
 
+  if (tagErr) {
+    req.log.error({ err: tagErr, memoryId: id }, "memories: tag read failed");
+    sendError(res, "db_error", tagErr.message);
+    return;
+  }
   if (!tag) { sendError(res, "not_found", "Tag not found"); return; }
 
   const newStatus = parsed.data.action === "approve" ? "approved" : "removed";
 
-  // `.select()`: an UPDATE without it returns data:null, so `error === null` did
-  // not mean a row changed. Approving or removing your own tag on somebody
-  // else's Memory is a consent decision; reporting it as applied when nothing
-  // was written leaves the tag standing while the person believes it is gone.
-  const { data: updatedTag, error } = await sc
-    .from("memory_tags")
-    .update({ status: newStatus })
-    .eq("memory_id", id)
-    .eq("tagged_user_id", user.id)
-    .select("memory_id");
+  const outcome = await dispatchMemoryCommand<{ status: string }>({
+    sc,
+    commandType: command,
+    memoryId: id,
+    actorUserId: user.id,
+    idempotencyKey,
+    payload: { tagged_user_id: userId, status: newStatus, actor_role: authorized.actorRole },
+    legacy: async () => {
+      // `.select()`: an UPDATE without it returns data:null, so `error === null`
+      // did not mean a row changed. Approving or removing a tag is a consent
+      // decision; reporting it as applied when nothing was written leaves the
+      // tag standing while the person believes it is gone.
+      const { data: updatedTag, error } = await sc
+        .from("memory_tags")
+        .update({ status: newStatus })
+        .eq("memory_id", id)
+        .eq("tagged_user_id", userId)
+        .select("memory_id");
+      if (error) {
+        req.log.error({ err: error, memoryId: id }, "memories: tag update failed");
+        return { ok: false, http: { code: "db_error", message: error.message } };
+      }
+      if (!updatedTag || (updatedTag as any[]).length === 0) {
+        req.log.error({ memoryId: id, userId, newStatus }, "memories: tag update matched zero rows — the tag is unchanged");
+        return { ok: false, http: { code: "db_error", message: "Your tag could not be updated. Please try again.", exposeDetail: true } };
+      }
+      return { ok: true, body: { status: newStatus } };
+    },
+  });
 
-  if (error) { req.log.error({ err: error, memoryId: id }, "memories: tag update failed"); sendError(res, "db_error", error.message); return; }
-  if (!updatedTag || (updatedTag as any[]).length === 0) {
-    req.log.error({ memoryId: id, userId: user.id, newStatus }, "memories: tag update matched zero rows — the tag is unchanged");
-    sendError(res, "db_error", "Your tag could not be updated. Please try again.", { exposeDetail: true });
-    return;
-  }
+  if (!outcome.ok) { sendCommandFailure(req, res, outcome); return; }
 
   res.json({ status: newStatus });
 });
@@ -1495,17 +1715,29 @@ router.post("/trips/:tripId/memory", async (req, res) => {
   if (error) { req.log.error({ err: error }, "create-from-trip failed"); sendError(res, "db_error", error.message); return; }
 
   const memoryId = (memory as any).id;
+  let taggedCount = 0;
 
   if (crewIds.length > 0) {
     const tagRows = crewIds.map((uid) => ({ memory_id: memoryId, tagged_user_id: uid, status: "pending" }));
-    await sc.from("memory_tags").insert(tagRows).then(undefined, () => {});
-
-    for (const uid of crewIds) {
-      notifyTagged(sc, memory, uid);
+    // Same defect as the create route: `.then(undefined, cb)` is a REJECTION
+    // handler and supabase-js RESOLVES on a database error, so a failed insert
+    // was invisible — and here the route went on to answer
+    // `taggedCount: crewIds.length`, a number describing rows that did not
+    // exist. The count is now what actually landed.
+    const { error: tagErr } = await sc.from("memory_tags").insert(tagRows);
+    if (tagErr) {
+      req.log.error({ err: tagErr, memoryId, count: tagRows.length },
+        "create-from-trip: memory_tags insert failed — no crew member was tagged");
+      taggedCount = 0;
+    } else {
+      taggedCount = tagRows.length;
+      for (const uid of crewIds) {
+        notifyTagged(sc, memory, uid);
+      }
     }
   }
 
-  res.status(201).json({ memory: mapMemory(memory, user.id), taggedCount: crewIds.length });
+  res.status(201).json({ memory: mapMemory(memory, user.id), taggedCount });
 });
 
 // ── GET /trips/:tripId/memory — fetch memory linked to a trip ─────────────────
