@@ -22,13 +22,32 @@ import { logger as rootLogger } from "../../lib/logger.js";
 
 const logger = rootLogger.child({ service: "TrustScoreService" });
 
-export type PublicTrustLevel =
-  | "new_traveler"
-  | "building_trust"
-  | "reliable_traveler"
-  | "trusted_traveler"
-  | "highly_trusted"
-  | "city_trusted";
+/**
+ * The public trust levels, as a RUNTIME vocabulary.
+ *
+ * The union used to exist only in the type system, so nothing could ask at
+ * runtime "is this string one of the six?" — and `publicTrustLabel` answers an
+ * unrecognised level with the "New Traveler" default rather than complaining.
+ * That combination means a writer persisting a level outside this list degrades
+ * every reader's label silently. Exported so a test can assert the writer's
+ * output against the declared set instead of against `typeof x === "string"`,
+ * which is the assertion that let the question go unasked.
+ */
+export const PUBLIC_TRUST_LEVELS = [
+  "new_traveler",
+  "building_trust",
+  "reliable_traveler",
+  "trusted_traveler",
+  "highly_trusted",
+  "city_trusted",
+] as const;
+
+export type PublicTrustLevel = (typeof PUBLIC_TRUST_LEVELS)[number];
+
+/** Narrow an arbitrary persisted value to a declared public trust level. */
+export function isPublicTrustLevel(value: unknown): value is PublicTrustLevel {
+  return typeof value === "string" && (PUBLIC_TRUST_LEVELS as readonly string[]).includes(value);
+}
 
 const ALL_CATEGORIES: TrustCategory[] = [
   "plan_attendance","host_quality","communication","respect_safety",

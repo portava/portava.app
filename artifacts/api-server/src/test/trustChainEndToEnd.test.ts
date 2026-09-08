@@ -69,7 +69,12 @@ import assert from "node:assert/strict";
 
 import { awardStamp, type AwardInput } from "../services/passport/StampAwardEngine.js";
 import { recordStampVerifiedTrustEvent } from "../services/trust/TrustEventService.js";
-import { getTrustProfile, getDisplayTrustScore } from "../services/trust/TrustScoreService.js";
+import {
+  getTrustProfile,
+  getDisplayTrustScore,
+  isPublicTrustLevel,
+  PUBLIC_TRUST_LEVELS,
+} from "../services/trust/TrustScoreService.js";
 import { computeTrustScore } from "../lib/trustScore.js";
 import { publicTrustLabel } from "../services/trust/TrustPrivacyGuard.js";
 import { runTrustMaintenance } from "../lib/trustMaintenanceScheduler.js";
@@ -320,11 +325,20 @@ describe("one qualifying award → one stamp → one trust event → one profile
     // from `public_level`, which only the writer produces. A writer that stops
     // persisting it leaves every reader showing "New Traveler" to a scored
     // traveller, and no assertion on the score would notice.
-    assert.ok(
-      typeof row.public_level === "string" && row.public_level.length > 0,
-      `the pass persisted a public_level, got ${JSON.stringify(row.public_level)}`,
-    );
-    assert.equal(after.card.label, publicTrustLabel(row.public_level), "the label is derived from the persisted level");
+    // Membership in the DECLARED vocabulary, not merely "a non-empty string".
+    // publicTrustLabel answers an unrecognised level with the "New Traveler"
+    // default rather than complaining, so a writer that persists a level
+    // outside PUBLIC_TRUST_LEVELS degrades every reader's label silently. The
+    // weaker assertion could not ask that question — and, being weaker than
+    // publicTrustLabel's own parameter, it did not typecheck either.
+    const persistedLevel: unknown = row.public_level;
+    if (!isPublicTrustLevel(persistedLevel)) {
+      assert.fail(
+        `the pass persisted a public_level from the declared vocabulary ` +
+        `(${PUBLIC_TRUST_LEVELS.join("|")}), got ${JSON.stringify(persistedLevel)}`,
+      );
+    }
+    assert.equal(after.card.label, publicTrustLabel(persistedLevel), "the label is derived from the persisted level");
     assert.notEqual(
       after.card.label, "New Traveler",
       "a traveller with a scored profile is not shown the no-profile default",
