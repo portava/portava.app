@@ -181,6 +181,43 @@ export function mirrorStates(ts: string, symbol: string): string[] | null {
   return [...m[1]!.matchAll(/["'`]([^"'`]+)["'`]/g)].map((x) => x[1]!);
 }
 
+/**
+ * Does `text` actually CALL `name`, outside comments?
+ *
+ * A plain `new RegExp(name + "\\s*\\(")` over the raw file says yes for
+ * `// startTrustMaintenanceScheduler();`. That was measured, not imagined:
+ * commenting the call out in index.ts left this check GREEN while the state it
+ * guards became unreachable — the exact regression the rule exists to catch,
+ * passing. Line comments and block comments are stripped first.
+ *
+ * It errs toward NOT finding the call (a `//` inside a string literal truncates
+ * the rest of that line), which fails loudly rather than passing quietly.
+ */
+export function callsFunction(text: string, name: string): boolean {
+  const re = new RegExp(`\\b${name}\\s*\\(`);
+  let inBlock = false;
+  for (const raw of text.split("\n")) {
+    let line = raw;
+    if (inBlock) {
+      const end = line.indexOf("*/");
+      if (end === -1) continue;
+      line = line.slice(end + 2);
+      inBlock = false;
+    }
+    for (;;) {
+      const begin = line.indexOf("/*");
+      if (begin === -1) break;
+      const end = line.indexOf("*/", begin + 2);
+      if (end === -1) { line = line.slice(0, begin); inBlock = true; break; }
+      line = line.slice(0, begin) + line.slice(end + 2);
+    }
+    const slashes = line.indexOf("//");
+    if (slashes !== -1) line = line.slice(0, slashes);
+    if (re.test(line)) return true;
+  }
+  return false;
+}
+
 // ── the check ────────────────────────────────────────────────────────────────
 
 function main(): void {
@@ -392,7 +429,7 @@ function main(): void {
         const eText = note(eAbs);
         if (eText === null) {
           problems.push(`${label}: scheduler entry point ${t.scheduler.from} does not exist.`);
-        } else if (!new RegExp(`${t.scheduler.starts}\\s*\\(`).test(eText)) {
+        } else if (!callsFunction(eText, t.scheduler.starts)) {
           problems.push(
             `${label}: ${t.scheduler.starts} is never CALLED from ${t.scheduler.from}. ` +
               `An unstarted scheduler is a writer that never runs, and "${t.to}" is then unreachable ` +

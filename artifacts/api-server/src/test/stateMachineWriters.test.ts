@@ -21,7 +21,7 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { STATE_MACHINES } from "../lib/stateMachines/registry.js";
-import { enumStates, checkStates, mirrorStates } from "../scripts/checkStateMachineWriters.js";
+import { callsFunction, enumStates, checkStates, mirrorStates } from "../scripts/checkStateMachineWriters.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const API_ROOT = resolve(HERE, "..", "..");
@@ -341,4 +341,21 @@ test("mirrorStates reads a TS `as const` vocabulary", () => {
     "candidate", "active", "conflicting", "superseded", "expired", "retracted", "rejected",
   ]);
   assert.equal(mirrorStates(ts, "NO_SUCH_CONSTANT"), null);
+});
+
+test("callsFunction ignores a call that has been commented out", () => {
+  // Measured, not imagined: with a raw regex over the file, commenting out
+  // `startTrustMaintenanceScheduler();` in index.ts left the whole check GREEN
+  // while `expired` became unreachable — the regression the rule exists to
+  // catch, passing.
+  const index = readFileSync(join(API_ROOT, "src/index.ts"), "utf8");
+  assert.equal(callsFunction(index, "startTrustMaintenanceScheduler"), true);
+  assert.equal(callsFunction(index, "startEventLifecycleScheduler"), true);
+
+  assert.equal(callsFunction("  // startX();", "startX"), false);
+  assert.equal(callsFunction("  /* startX(); */", "startX"), false);
+  assert.equal(callsFunction("/*\n  startX();\n*/", "startX"), false);
+  assert.equal(callsFunction("  startX(); // was: startY()", "startX"), true);
+  // The import alone is not a call.
+  assert.equal(callsFunction('import { startX } from "./x.js";', "startX"), false);
 });
