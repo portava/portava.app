@@ -55,6 +55,7 @@ import {
   buildFallbackProfile,
   upsertAirportProfile,
   type AirportProfile,
+  airportRowToProfile,
 } from "../services/airport/AirportProfileService.js";
 import {
   createSession,
@@ -95,6 +96,17 @@ import {
   USER_HIDDEN_RECOMMENDATION_STATUS,
 } from "../services/airport/LayoverRecommendationService.js";
 import { answerLayoverQuestion } from "../services/airport/LayoverCompassService.js";
+import {
+  evaluateSharingGate,
+  publishableUserIds,
+  disclosePresence,
+} from "../services/airport/LayoverPrivacyGuard.js";
+// buildReturnContract and abortToAirport are deliberately NOT imported yet:
+// the one-tap abort route they serve cannot ship before migration 2741 widens
+// layover_events.event_type to accept 'safe_return_aborted'. Wiring it now
+// would add a route whose ledger insert is rejected by a CHECK constraint.
+import { safeReturnPosture } from "../services/airport/LayoverSafeReturnService.js";
+import { buildOfflineBundle } from "../services/airport/LayoverDegradedService.js";
 import {
   shouldSuggestSafeReturn,
   suggestSafeReturn,
@@ -149,25 +161,11 @@ async function resolveAirportForSession(sc: any, session: any): Promise<AirportR
       return { ok: false, message: String(error.message ?? "airport_profiles unreadable") };
     }
     if (data) {
-      return { ok: true, airport: {
-          id: (data as any).id,
-          iataCode: (data as any).iata_code,
-          name: (data as any).name,
-          city: (data as any).city,
-          country: (data as any).country,
-          countryCode: (data as any).country_code,
-          timezone: (data as any).timezone ?? "UTC",
-          lat: Number((data as any).lat),
-          lng: Number((data as any).lng),
-          domesticBufferMin: (data as any).domestic_buffer_min ?? 60,
-          domesticBufferMax: (data as any).domestic_buffer_max ?? 90,
-          internationalBufferMin: (data as any).international_buffer_min ?? 120,
-          internationalBufferMax: (data as any).international_buffer_max ?? 180,
-          immigrationExtraMin: (data as any).immigration_extra_min ?? 30,
-          checkedBagsExtraMin: (data as any).checked_bags_extra_min ?? 15,
-          trafficExtraMin: (data as any).traffic_extra_min ?? 20,
-          verified: Boolean((data as any).verified),
-      } };
+      // One row-to-profile mapping, not two. This handler hand-built the object
+      // while AirportProfileService built its own from the same columns, so a
+      // column added to one was silently absent from the other -- terminal_info
+      // has existed since 0127 and never reached a session route because of it.
+      return { ok: true, airport: airportRowToProfile(data) };
     }
   }
   return { ok: true, airport: buildFallbackProfile({
@@ -832,6 +830,10 @@ router.get("/airport/sessions/:id/safety", async (req, res) => {
     // a stored answer be traced to the rules and inputs that produced it.
     certification: certificationHeader(record),
     estimates:     record.estimates,
+    // §15: the posture the client should take now — what this verdict MEANS for
+    // getting back, rather than leaving each caller to re-derive it from the
+    // envelope. Derived from the same certified record, so it cannot disagree.
+    safeReturn: safeReturnPosture(record),
   });
 });
 
@@ -1017,6 +1019,7 @@ router.post("/airport/sessions/:id/return-deadline", async (req, res) => {
     bufferMinutes: record.deadline.breakdown.totalBuffer,
     reminderMinutesBefore: parsed.data.minutesBefore,
     certification: certificationHeader(record),
+    safeReturn: safeReturnPosture(record),
   });
 });
 
@@ -1100,6 +1103,11 @@ function publicAirport(a: any) {
     lat:         a.lat ?? null,
     lng:         a.lng ?? null,
     verified:    Boolean(a.verified),
+    // §15 pinned terminal context. The column has existed since 0127 and no
+    // session route has ever published it; production holds 0 rows with a
+    // value, so this is null everywhere today and says so honestly rather than
+    // being absent from the contract.
+    terminalInfo: a.terminalInfo ?? null,
   };
 }
 
@@ -1259,7 +1267,15 @@ async function cityPresence(
     for (const b of (blockRows ?? []) as any[]) {
       excluded.add(b.blocker_id === userId ? b.blocked_id : b.blocker_id);
     }
-    const visible = userIds.filter((id) => !excluded.has(id));
+    const notBlocked = userIds.filter((id) => !excluded.has(id));
+    // A candidate's own sharing opt-out is checked HERE, not only at the
+    // session flag. `share_city_status` on the session is what the traveller
+    // chose when the session began; `location_preferences` and ghost mode are
+    // what they have chosen since. Publishing on the stale one is how someone
+    // who paused sharing stays on the list. An unreadable table publishes
+    // NOBODY -- for a presence surface the empty answer is the safe one.
+    const publishable = await publishableUserIds(sc, notBlocked);
+    const visible = publishable.allowed;
     if (visible.length === 0) return empty;
 
     let travelers: Array<{ id: string; handle: string | null; name: string | null; avatarUrl: string | null }> = [];
@@ -1386,9 +1402,21 @@ router.get("/airport/sessions/:id/overview", async (req, res) => {
   const planFit = computePlanFit(record, stops);
   const tz      = airport.timezone ?? "UTC";
 
-  const presence = session.shareCityStatus
+  // Same gate as GET /presence, for the same reason: `share_city_status` is the
+  // session-time choice and the gate is the current one. The overview published
+  // othersInCity off the stale flag alone.
+  const overviewGate = await evaluateSharingGate(sc, { userId: user.id, tripId: session.tripId });
+  const ladderEnabled = await isFlagEnabled(sc, "layover_presence_ladder_enabled");
+  const rawPresence = overviewGate.allowed && session.shareCityStatus
     ? await cityPresence(sc, user.id, airport.city !== "Unknown" ? airport.city : session.manualCity)
     : { count: 0, travelers: [] };
+  const presence = disclosePresence({
+    gate: overviewGate,
+    sessionOptedIn: session.shareCityStatus,
+    ladderEnabled,
+    count: rawPresence.count,
+    travelers: rawPresence.travelers,
+  });
 
   res.json({
     ok: true,
@@ -1412,6 +1440,18 @@ router.get("/airport/sessions/:id/overview", async (req, res) => {
       enabled: session.shareCityStatus,
       othersInCity: presence.count,
     },
+    // The server half of §15 and §16, which had no server half at all: the
+    // posture the client should take now, and a bundle that carries its own
+    // certifiedAt/staleAfter/inputHash so an offline client can say how old its
+    // answer is instead of presenting a stale deadline as current.
+    safeReturn: safeReturnPosture(record),
+    offlineBundle: buildOfflineBundle({
+      session,
+      airport,
+      record,
+      hardReturnLocal: formatLocalTime(tz, record.deadline.hardReturnTime),
+      stops,
+    }),
     returnReminderAt: session.returnReminderAt,
     localTimes: {
       timezone:       tz,
@@ -1703,9 +1743,22 @@ router.get("/airport/sessions/:id/presence", async (req, res) => {
   if (!ctx) return;
   const { sc, user, session } = ctx;
 
-  // Reciprocity: you only see others when you're sharing too.
-  if (!session.shareCityStatus) {
-    res.json({ ok: true, sharing: false, count: 0, travelers: [] });
+  // Reciprocity is only half the gate. `share_city_status` is what the
+  // traveller chose when the session began; the sharing GATE is what they have
+  // chosen since -- location mode, paused sharing, ghost mode. This route
+  // consulted only the first, so pausing sharing did not stop the route from
+  // publishing this traveller's own presence back to them as "sharing: true"
+  // while cityPresence went on publishing them to others. The gate is NOT
+  // behind the ladder flag: it applies the traveller's own stored opt-out, and
+  // an opt-out that waits for a rollout is not an opt-out.
+  const gate = await evaluateSharingGate(sc, { userId: user.id, tripId: session.tripId });
+  const ladderEnabled = await isFlagEnabled(sc, "layover_presence_ladder_enabled");
+
+  if (!gate.allowed || !session.shareCityStatus) {
+    const d = disclosePresence({ gate, sessionOptedIn: session.shareCityStatus, ladderEnabled, count: 0, travelers: [] });
+    // Byte-identical to the previous refusal for every field it used to carry;
+    // level/withheld/degraded are additive.
+    res.json({ ok: true, sharing: d.sharing, count: d.count, travelers: d.travelers, level: d.level, withheld: d.withheld, degraded: d.degraded });
     return;
   }
 
@@ -1713,8 +1766,9 @@ router.get("/airport/sessions/:id/presence", async (req, res) => {
   if (!airport) return;
   const city = airport.city !== "Unknown" ? airport.city : session.manualCity;
   const presence = await cityPresence(sc, user.id, city ?? null);
+  const d = disclosePresence({ gate, sessionOptedIn: true, ladderEnabled, count: presence.count, travelers: presence.travelers });
 
-  res.json({ ok: true, sharing: true, city: city ?? null, ...presence });
+  res.json({ ok: true, city: city ?? null, sharing: d.sharing, count: d.count, travelers: d.travelers, level: d.level, degraded: d.degraded });
 });
 
 // ── GET /api/airport/sessions/:id/buddies ─────────────────────────────────────
