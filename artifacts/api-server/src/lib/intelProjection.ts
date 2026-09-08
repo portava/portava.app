@@ -160,6 +160,35 @@ export interface ProjectionInput {
    * Absent ⇒ supported (hand-built inputs are unaffected).
    */
   cohortSupportsValue?: boolean;
+  /**
+   * FAIL-CLOSED ON AN UNREADABLE COHORT. False when any of the reads the
+   * aggregator derives this input from was REJECTED by the database — the
+   * observations, the consent rows, the independence evidence, or the
+   * confirmations.
+   *
+   * WHY WITHHOLDING, AND NOT "A CONSERVATIVE LOW INPUT". supabase-js resolves on
+   * a database error, so each of those reads used to come back as an empty
+   * result. "Fail-soft to a low input" sounds conservative and is not: a low
+   * input is still an ASSERTION. It gets scored, it fails the privacy gate, and
+   * the gate's refusal is still WRITTEN — privacy_eligible=false over a snapshot
+   * that was serving a moment ago. So a transient read error published "this
+   * place has no live intelligence", which is a wrong answer about a real venue,
+   * and (§21) emitted a permanent `intel.state.changed` transition recording it
+   * on a spine that blocks UPDATE and DELETE.
+   *
+   * Two of the four reads were not even conservative. An unreadable
+   * `intel_evidence` left the coordination-clustering maps empty, so reporters
+   * who share a media asset or a feed stopped collapsing into one cluster and
+   * the independent-GROUP count went UP — the gate got EASIER to pass. An
+   * unreadable `intel_confirmations` scored zero disagreements, which is the
+   * cohort-conflict signal switched off.
+   *
+   * So: unreadable ⇒ project NOTHING for this claim. The previous snapshot keeps
+   * serving under its own TTL (45 minutes for crowd.level), which is the only
+   * outcome that neither publishes a falsehood nor asserts an unearned truth.
+   * Absent ⇒ complete (hand-built inputs are unaffected).
+   */
+  evidenceComplete?: boolean;
 }
 
 /**
@@ -209,7 +238,7 @@ export interface ProjectionResult {
   snapshot: ProjectedSnapshot | null;
   /** Why it is not publishable, when it is not. */
   privacy: PrivacyDecision;
-  skippedReason?: "no_ttl_policy" | "invalid_input" | "value_not_supported";
+  skippedReason?: "no_ttl_policy" | "invalid_input" | "value_not_supported" | "evidence_unreadable";
   /** The full scored record, for callers that want it without re-reading the snapshot. */
   scored?: ConfidenceResult;
 }
@@ -247,6 +276,14 @@ export async function projectClaim(
 
   if (!subjectId || !input?.claimType || !input.observedAt) {
     return { snapshot: null, privacy: { publishable: false, reason: "invalid_input" }, skippedReason: "invalid_input" };
+  }
+
+  // FAIL CLOSED ON AN UNREADABLE COHORT — before anything is scored or written.
+  // See ProjectionInput.evidenceComplete: a rejected evidence read must not be
+  // scored as thin evidence, because the gate's refusal would still be persisted
+  // as "no live intelligence here".
+  if (input.evidenceComplete === false) {
+    return { snapshot: null, privacy: { publishable: false, reason: "invalid_input" }, skippedReason: "evidence_unreadable" };
   }
 
   // FAIL CLOSED ON AN UNSUPPORTED VALUE. The aggregator sets this false when no

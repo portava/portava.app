@@ -262,14 +262,67 @@ describe("captureSnapshotStates", () => {
   it("keys snapshots by (subject, zone, claim_type)", async () => {
     const s: any = { id: "s1", subject_id: "p1", zone_id: "z1", claim_type: "crowd.level", value: { level: "busy" }, confidence: 0.5, confidence_band: "live", privacy_eligible: true, observed_at: NOW.toISOString(), expires_at: NOW.toISOString() };
     const db = makeDb({ snapshots: [s] });
-    const m = await captureSnapshotStates(db as any, ["p1"]);
-    assert.equal(m.size, 1);
-    assert.ok(m.has(snapshotKey(s)));
+    const r = await captureSnapshotStates(db as any, ["p1"]);
+    assert.equal(r.ok, true);
+    assert.equal(r.states.size, 1);
+    assert.ok(r.states.has(snapshotKey(s)));
   });
-  it("empty subject list reads nothing", async () => {
+  it("empty subject list reads nothing — and that is ok:true, nothing failed", async () => {
     const db = makeDb({ snapshots: [{ id: "s1", subject_id: "p1", claim_type: "x" }] });
-    const m = await captureSnapshotStates(db as any, []);
-    assert.equal(m.size, 0);
+    const r = await captureSnapshotStates(db as any, []);
+    assert.equal(r.ok, true);
+    assert.equal(r.states.size, 0);
+  });
+  it("AN UNREADABLE SNAPSHOT TABLE IS ok:false, NOT AN EMPTY WORLD", async () => {
+    // The whole defect in one assertion. supabase-js resolves on a database
+    // error, so this read used to hand back an empty Map indistinguishable from
+    // "this subject has no snapshots" — and the projection pass reads that Map as
+    // the PRIOR state, where a missing key means "appeared".
+    const db = makeDb({ snapshots: [{ id: "s1", subject_id: "p1", claim_type: "crowd.level" }], errorTable: "intel_state_snapshots" });
+    const r = await captureSnapshotStates(db as any, ["p1"]);
+    assert.equal(r.ok, false, "a rejected read reported success");
+    assert.equal(r.states.size, 0);
+  });
+  it("no client is ok:false", async () => {
+    const r = await captureSnapshotStates(null as any, ["p1"]);
+    assert.equal(r.ok, false);
+    assert.equal(r.states.size, 0);
+  });
+});
+
+describe("emitStateChangedEvents — an UNKNOWN prior emits no diff", () => {
+  const snap = (over: Partial<SnapshotRow> = {}): SnapshotRow => ({
+    id: "s1", subject_id: "p1", zone_id: null, claim_type: "crowd.level",
+    value: { level: "busy" }, confidence: 0.7, confidence_band: "live",
+    privacy_eligible: true, observed_at: NOW.toISOString(), expires_at: NOW.toISOString(),
+    ...over,
+  } as SnapshotRow);
+
+  it("with priorComplete:false the post map produces ZERO events", async () => {
+    const db = makeDb({ events: [] });
+    const post = new Map<string, SnapshotRow>([[snapshotKey(snap()), snap()]]);
+    const r = await emitStateChangedEvents(db as any, new Map(), post, [], { now: NOW, priorComplete: false });
+    assert.equal(r.stateChanged, 0, "an unreadable prior state was published as an 'appeared' transition");
+    assert.equal((db as any)._events.length, 0);
+  });
+
+  it("with an EMPTY but KNOWN prior the same post map DOES emit 'appeared' — so the guard is the flag, not the emptiness", async () => {
+    const db = makeDb({ events: [] });
+    const post = new Map<string, SnapshotRow>([[snapshotKey(snap()), snap()]]);
+    const r = await emitStateChangedEvents(db as any, new Map(), post, [], { now: NOW });
+    assert.equal(r.stateChanged, 1);
+    assert.equal((db as any)._events[0].payload.intel.transition, "appeared");
+  });
+
+  it("wentDark 'expired' rows are STILL emitted under an unknown prior — they come from the paginated reconciliation, not the diff", async () => {
+    const db = makeDb({ events: [] });
+    const r = await emitStateChangedEvents(
+      db as any, new Map(), new Map(),
+      [{ id: "s9", subject_id: "p9", zone_id: null, claim_type: "crowd.level" }],
+      { now: NOW, priorComplete: false },
+    );
+    assert.equal(r.stateChanged, 1);
+    assert.equal((db as any)._events[0].payload.intel.transition, "expired");
   });
 });
 

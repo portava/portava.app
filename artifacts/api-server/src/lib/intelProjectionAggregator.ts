@@ -36,6 +36,7 @@ import { isFlagEnabled } from "./featureFlags.js";
 import { observationsHaveEligibleMediaEvidence } from "./media/mediaEvidenceLink.js";
 import { assessConflict, type ConflictAssessment, type ConflictVote } from "./intelConflict.js";
 import { clusterByIndependence, type IndependenceObservation } from "./intelIndependence.js";
+import { logger } from "./logger.js";
 
 const clamp01 = (x: number): number => (x < 0 ? 0 : x > 1 ? 1 : x);
 
@@ -149,12 +150,24 @@ export async function assembleClaimInput(sc: SupabaseClient, claim: ClaimRow, no
   // never contribute to a claim, snapshot, or live label (owner pilot ruling): the
   // whitelist .in() is fail-closed, and it re-runs every projection pass, so a row
   // invalidated after a snapshot was written drops out at the next pass.
-  const { data: obs } = await sc
+  // EVERY READ BELOW OBSERVES ITS ERROR. supabase-js RESOLVES on a database
+  // error, so an unchecked `.error` here reads as an empty result — and this
+  // module's four reads each turned that into a different lie. See
+  // ProjectionInput.evidenceComplete for why the answer is to project NOTHING
+  // rather than to "fail soft to a low input": the gate's refusal is itself
+  // written, so a low input publishes "no live intelligence" over a venue that
+  // has some.
+  let evidenceComplete = true;
+  const { data: obs, error: obsErr } = await sc
     .from("intel_observations")
     .select("id, actor_id, presence_level, source_class, expires_at, group_key, observed_at, value")
     .eq("subject_id", claim.subject_id)
     .eq("claim_type", claim.claim_type)
     .in("moderation_state", PILOT_CLAIMABLE_MODERATION_STATES as unknown as string[]);
+  if (obsErr) {
+    evidenceComplete = false;
+    logger.warn({ err: obsErr, claim: claim.id }, "intelProjectionAggregator: observation cohort read failed; claim will be withheld");
+  }
   const freshObsAll = ((obs as any[]) ?? []).filter((o) => !o.expires_at || o.expires_at > nowIso);
 
   // D4 consent parity with system promotion (2174, which JOINs
@@ -167,12 +180,20 @@ export async function assembleClaimInput(sc: SupabaseClient, claim: ClaimRow, no
   const actorIds = [...new Set(freshObsAll.map((o) => o.actor_id).filter(Boolean))];
   let consentedActors = new Set<string>();
   if (actorIds.length > 0) {
-    const { data: consentRows } = await sc
+    const { data: consentRows, error: consentErr } = await sc
       .from("intel_contribution_consent")
       .select("user_id")
       .in("user_id", actorIds)
       .eq("enabled", true)
       .is("withdrawn_at", null);
+    if (consentErr) {
+      // A CONSENT READ THAT FAILED IS NOT A CONSENT THAT WAS GIVEN, and it is
+      // not a consent that was refused either. Emptying the set (the old
+      // behaviour) at least never inflated a cohort, but it did publish the
+      // resulting suppression as a fact. Withhold instead.
+      evidenceComplete = false;
+      logger.warn({ err: consentErr, claim: claim.id }, "intelProjectionAggregator: contribution-consent read failed; claim will be withheld");
+    }
     consentedActors = new Set(((consentRows as any[]) ?? []).map((r) => r.user_id as string));
   }
   const freshObs = freshObsAll.filter((o) => o.actor_id && consentedActors.has(o.actor_id));
@@ -193,10 +214,22 @@ export async function assembleClaimInput(sc: SupabaseClient, claim: ClaimRow, no
   const mediaByObs = new Map<string, Set<string>>();
   const sourceByObs = new Map<string, Set<string>>();
   if (obsIds.length > 0) {
-    const { data: evidence } = await sc
+    const { data: evidence, error: evidenceErr } = await sc
       .from("intel_evidence")
       .select("observation_id, evidence_kind, media_asset_id, detail")
       .in("observation_id", obsIds);
+    if (evidenceErr) {
+      // THIS ONE FAILED OPEN, not closed. With the maps empty, reporters who
+      // share a media asset or a common feed stop collapsing into one cluster,
+      // so distinctGroups goes UP and maxGroupShare goes DOWN — the §11
+      // independent-group gate becomes EASIER to pass on an unreadable table.
+      // The old comment ("can never invent independence, only fail to detect
+      // it") described the mechanism correctly and drew the wrong conclusion:
+      // failing to detect coordination IS presenting coordinated reporters as
+      // independent.
+      evidenceComplete = false;
+      logger.warn({ err: evidenceErr, claim: claim.id }, "intelProjectionAggregator: independence-evidence read failed; claim will be withheld");
+    }
     for (const e of ((evidence as any[]) ?? [])) {
       const oid = e.observation_id;
       if (!oid) continue;
@@ -281,7 +314,14 @@ export async function assembleClaimInput(sc: SupabaseClient, claim: ClaimRow, no
     !cohortMayCountAsConsensus && mayCountAsConsensus(sourceClass) ? "sponsored" : sourceClass;
 
   // Confirmation stances for this claim.
-  const { data: confs } = await sc.from("intel_confirmations").select("stance").eq("claim_id", claim.id);
+  const { data: confs, error: confsErr } = await sc.from("intel_confirmations").select("stance").eq("claim_id", claim.id);
+  if (confsErr) {
+    // Zero rows scores agreement 0.5 (neutral) AND makes confirmationConflict
+    // false — i.e. an unreadable confirmations table reads as "nobody disagreed",
+    // which is the cohort-conflict signal switched off rather than fail-closed.
+    evidenceComplete = false;
+    logger.warn({ err: confsErr, claim: claim.id }, "intelProjectionAggregator: confirmation-stance read failed; claim will be withheld");
+  }
   let agrees = 0, disagrees = 0;
   for (const c of ((confs as any[]) ?? [])) {
     if (c.stance === "agree") agrees++;
@@ -533,6 +573,8 @@ export async function assembleClaimInput(sc: SupabaseClient, claim: ClaimRow, no
     value: derivedValue,
     // ... and on a tie, only when a live cohort member still asserts it.
     cohortSupportsValue,
+    // ... and never at all when one of this function's four reads was REJECTED.
+    evidenceComplete,
     // Snapshot observed_at + expires_at derive from the freshest observation so a
     // key stays live while fresh reports arrive (see effectiveObservedAt above).
     observedAt: effectiveObservedAt,
