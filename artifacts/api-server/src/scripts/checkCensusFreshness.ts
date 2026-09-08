@@ -92,6 +92,31 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/lib/memoryOutbox.ts",
     "artifacts/api-server/src/lib/highlightPermissions.ts",
   ],
+  // Trust has NO SPEC — its 52 requirements are 20 inbound obligations from
+  // other surfaces' specs plus 32 contracts its own code asserts. That makes the
+  // scope wider than one directory: the rows about whether OTHER surfaces
+  // consume Trust correctly (A13, A17) are aged by the files that consume it,
+  // not by services/trust. Listing only the service would have made this census
+  // look fresh while the reads it grades moved underneath it.
+  "census-trust.md": [
+    "artifacts/api-server/src/services/trust/",
+    "artifacts/api-server/src/lib/trustScore.ts",
+    "artifacts/api-server/src/lib/trustMaintenanceScheduler.ts",
+    "artifacts/api-server/src/routes/trust-admin.ts",
+    // The consumers A13 and A17 grade.
+    "artifacts/api-server/src/routes/events.ts",
+    "artifacts/api-server/src/routes/pulse.ts",
+    "artifacts/api-server/src/routes/rentABuddyMarketplace.ts",
+    "artifacts/api-server/src/routes/tripCrewLocation.ts",
+    "artifacts/api-server/src/compass/CompassProfileService.ts",
+    "artifacts/api-server/src/compass/CompassTools.ts",
+    "artifacts/api-server/src/compass/CompassActiveUserRewardEngine.ts",
+    "artifacts/api-server/src/services/ranking/CreatorActivityScoreService.ts",
+    // The emitters C32 and A6 grade.
+    "artifacts/api-server/src/services/hiddenGems/",
+    "artifacts/api-server/src/services/passport/StampAwardEngine.ts",
+    "artifacts/api-server/src/services/passport/PassportStampService.ts",
+  ],
 };
 
 interface Ack {

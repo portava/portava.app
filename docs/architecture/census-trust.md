@@ -373,3 +373,64 @@ on `src/test/tripCrewRlsMembershipConvergence.test.ts`, a sibling's Trips file, 
 ---
 
 *The full-suite verdict for this branch is recorded by the coordinator, not here.*
+
+
+---
+
+## 10. Re-census — 2026-09-08, HEAD `7bca4b0d`
+
+Paths relative to `artifacts/api-server/src/`. Same denominator (52), same rule,
+same buckets. **Every row below was re-derived by opening the file at this
+commit.** Rows not restated keep the verdict the body left them with.
+
+| Field | Value |
+| --- | --- |
+| `head_commit` | `7bca4b0d0e19d29ea0a96982f74b35d26402fa52` (`git rev-parse HEAD`) |
+| `generated_at` | 2026-09-08 |
+| **Denominator (testable requirements)** | **52** |
+| Scanned | `services/trust/` (8 services), `lib/trustScore.ts`, `lib/trustMaintenanceScheduler.ts`, `routes/trust-admin.ts`, plus every file the eight open rows named: `routes/events.ts`, `routes/pulse.ts`, `routes/rentABuddyMarketplace.ts`, `routes/admin.ts`, `routes/trips.ts`, `routes/tripCrewLocation.ts`, `compass/*`, `services/ranking/CreatorActivityScoreService.ts`, `services/passport/*`, `services/hiddenGems/*` |
+
+### Verdict changes
+
+| id | Was | Now | Evidence at this commit |
+| --- | --- | --- | --- |
+| A13 | W | **C** | Both unenforced restriction types are gated at the point that means JOINING. `private_plan_access` on `POST /trips/:tripId/accept-invite` (`routes/trips.ts`), and **only when the trip's visibility is `private` or `invite`** — a public trip is not a private plan. `location_plan_join` on `POST /trips/:tripId/crew/live-share/start` (`routes/tripCrewLocation.ts`), on START and deliberately not on STOP: a restricted user must always be able to stop broadcasting. Neither carries a `fail_closed` branch, which is correct rather than missing — `getRestrictionState` fails OPEN for both types by design, so both booleans are `true` on an unreadable read and neither gate can fire on one. Pinned by `test/trustRestrictionEnforcement.test.ts`, mutation-proven on both gates. |
+| A17 | W | **C** | Zero direct reads of `trust_profiles` / `trust_caps` / `trust_restrictions` outside `services/trust`, enforced by `check:trust-table-ownership` (724 files scanned, 21 reads inside the service, 3 files owned elsewhere with a written reason, 0 violations). Three of the eleven could not have complied with the API the service offered, so the seam was widened rather than the rule waived: `getDisplayTrustScores` (batch), `listRestrictionsForAudit` (rows, not booleans), `getActiveCapsResult` (fail-closed caps). All three replaced reads that FAILED OPEN, and two of those substituted the neutral 50 for every user in a feed. |
+| C11 | W | **C** | `getTrustProfileResult` (three-state) is the read at every consumer. The admin dossier REFUSES with `degraded_unavailable` rather than showing a moderator a user with no trust profile; `getSafeTrustSummary` and `getPublicTrustBadge` already carried `profileUnavailable`; `computeTrustScore` and `buildTrustSummary` set `degraded` from their own three-state read. `getDisplayTrustScore` keeps `number \| null` — both callers establish the state separately — and now LOGS the unreadable case, which previously passed through silently. Its docblock promised "never a fabricated number" while an unreadable table produced the "New Traveler" label; it now names which of the two states `null` means. |
+| C15 | W | **C** | `routes/admin.ts` names no Trust table in executable code. The read goes through `listRestrictionsForAudit`, which was added because the enforcement seam answers in booleans and an admin dossier needs the row — id, reason, created_at. It refuses rather than returning an empty list, because an unreadable EXCLUSION table rendered as a clean record invites lifting a sanction that is still in force. |
+| C18 | W | **C** | `getRecoveryStatus` returns `overallProgress: null` for a user with no profile, not the constant 50 — 50 is exactly a value a real measurement can hold, which made the fabrication indistinguishable from a reading. The `profileUnavailable` flag matches the shape `SafeTrustSummary` and `PublicTrustBadge` already use. The probation read beside it had an unbound error and asserted "not on probation" about a table nobody could read; it is bound. |
+| C32 | W | **C** | `TRUST_EVENT_TYPES` is a contract, held by `check:trust-event-vocabulary`: 50 declared types, 36 emitted, 27 emitter sites compared against their declaration, **0 divergent, 0 undeclared**. Nineteen types were emitted and undeclared and are now declared with the values their emitters actually pass. One was actively FALSE — `gem_verified_by_guide` awarded 5 against a declared 4, so a guide's trust moved by a number the vocabulary denied — and that emitter now reads the constant. Fourteen declared-but-unemitted types each carry a written reason. |
+
+### Rows that did NOT move, and why
+
+| id | Stays | Why |
+| --- | --- | --- |
+| A6 | W | **The code gap is closed; the row is not.** Both emitters the body named now exist and are tested — `StampAwardEngine` calls `recordStampVerifiedTrustEvent` on every fresh award (pinned by `test/trustStampVerified.test.ts`, `test/trustEmissionChain.test.ts`, `test/trustChainEndToEnd.test.ts`), and `routes/posts.ts` emits `pulse_post_created`. But A6's requirement is *"Live evidence actually reaches the ledger from the surfaces that generate it (the first hop of A5, **measured in production**)"*, and this branch is unmerged. The row is defined as a production measurement, so no amount of code closes it: it needs a deploy and then a stamp. It is the one row in this census that is genuinely deployment-gated **by its own wording**. |
+| C22 | W | **OWNER DECISION, not work.** `adminOverrideScore` creates a CEILING, then `recalculateTrustScore` recomputes from events — so an override ABOVE the event-derived score does not hold and only downward overrides stick. `trust_caps` has no floor. The question is whether "override" means **pin** (the admin's number wins until lifted) or **cap** (the admin sets a maximum and events move it below). Both are defensible and they are different products: a pin lets an admin grant standing, a cap only lets them withhold it. Building either without the decision would be taking it. Unwired to any route, so nothing live turns on it today. |
+
+### Recomputed headline — HEAD `7bca4b0d`
+
+Same 52 denominator, same counting rule. Six rows move `W → C`; nothing moves
+into or out of `N`.
+
+| Measure | Body (`507f8427`) | Now (`7bca4b0d`) |
+| --- | --- | --- |
+| BUILT-AND-CORRECT | 44 | **50** |
+| BUILT-BUT-WRONG | 8 | **2** |
+| NOT-BUILT | 0 | **0** |
+| CANNOT-VERIFY | 0 | **0** |
+| Sum | 52 | **52** |
+| CONSTRUCTED% | 100 % | **100 %** |
+| CORRECT% | 84.6 % | **96.2 %** (50/52) |
+
+**Two rows remain, and neither is buildable here.** A6 is defined as a production
+measurement and this branch is unmerged; C22 is an owner decision about what the
+word "override" means. Trust is at **96.2 %**, which is the ceiling available
+without a deploy and without an owner.
+
+Three new guards hold what closed: `check:trust-table-ownership`,
+`check:trust-event-vocabulary`, and `test/trustRestrictionEnforcement.test.ts`.
+All three were mutation-proven, and two of them caught a defect in themselves on
+the first run — the ownership guard rejected an allowlist entry I had just
+written for a file that did not need one, and the enforcement test passed a
+mutation because it was matching a COMMENT rather than the gate.
