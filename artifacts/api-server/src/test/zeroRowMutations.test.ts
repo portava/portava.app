@@ -1,6 +1,8 @@
 /**
- * Zero matched rows reported as success — the route sites found in the second
- * pass of the audit.
+ * Zero matched rows reported as success — the sites found in the second pass of
+ * the audit. Four are HTTP routes; the last (approveClaim) is a service
+ * function, driven directly rather than through its route so that no admin
+ * guard or capability flag can produce a refusal resembling the one under test.
  *
  *   POST /rent-a-buddy/admin/safety/flags/:flagId/confirm   (routes/rentABuddy.ts)
  *     Confirming a CRITICAL policy flag puts the flagged buddy on `risk_hold`
@@ -49,6 +51,7 @@ import http from "node:http";
 import express from "express";
 import { _setTestClient } from "../lib/http.js";
 import { _setTestServiceClient } from "../lib/supabase.js";
+import { approveClaim } from "../services/intel/IntelCaptureService.js";
 import rentBuddyRouter from "../routes/rentABuddy.js";
 import eventsRouter from "../routes/events.js";
 import sharedMomentsRouter from "../routes/sharedMoments.js";
@@ -399,5 +402,50 @@ describe("POST /shared-moments/:id/respond — an invitation that vanished", () 
     assert.equal(status, 200, `got ${status} ${JSON.stringify(body)}`);
     assert.equal(body.status, "accepted");
     assert.equal(db.tables.shared_moment_memberships[0]!.status, "accepted");
+  });
+});
+
+// ── Intel claim promotion (service-level) ───────────────────────────────────
+
+describe("approveClaim — promoting a claim that is no longer a candidate", () => {
+  const CLAIM_ID = "ffffffff-0000-0000-0000-000000000006";
+
+  it("refuses instead of reporting a promotion that did not happen", async () => {
+    const { db, client } = makeClient({
+      // captureSystemEnabled() needs one of these two, or approveClaim short-
+      // circuits with reason:"disabled" — a refusal unrelated to this fix, which
+      // is why the assertion below matches on the REASON and not just on !ok.
+      feature_flags: [{ flag: "intel_capture_quick_signal", enabled: true }],
+      // Already promoted by someone else — the compare-and-swap on
+      // status='candidate' matches nothing, which supabase-js resolves exactly
+      // as it resolves a successful promotion.
+      intel_claims: [{ id: CLAIM_ID, status: "active", promotion_source: "system" }],
+    });
+
+    const out = await approveClaim(client, CLAIM_ID);
+
+    assert.equal(out.ok, false, "approval is the trust gate of this lifecycle; it must not claim a promotion it did not make");
+    assert.match(String(out.reason), /no longer a candidate/);
+    assert.equal(
+      db.tables.intel_claims[0]!.promotion_source,
+      "system",
+      "and the first promotion's provenance stands",
+    );
+  });
+
+  it("promotes a real candidate", async () => {
+    const { db, client } = makeClient({
+      // captureSystemEnabled() needs one of these two, or approveClaim short-
+      // circuits with reason:"disabled" — a refusal unrelated to this fix, which
+      // is why the assertion below matches on the REASON and not just on !ok.
+      feature_flags: [{ flag: "intel_capture_quick_signal", enabled: true }],
+      intel_claims: [{ id: CLAIM_ID, status: "candidate", promotion_source: null }],
+    });
+
+    const out = await approveClaim(client, CLAIM_ID);
+
+    assert.equal(out.ok, true, `got ${JSON.stringify(out)}`);
+    assert.equal(db.tables.intel_claims[0]!.status, "active");
+    assert.equal(db.tables.intel_claims[0]!.promotion_source, "admin");
   });
 });

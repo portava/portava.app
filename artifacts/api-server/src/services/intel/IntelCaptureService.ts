@@ -19,6 +19,7 @@
  * blocker surfaces as validation, never a stack trace.
  */
 import { isFlagEnabled } from "../../lib/featureFlags.js";
+import { affectedRows } from "../../lib/affectedRows.js";
 import {
   CLAIM_TYPES,
   COMMERCIAL_DISCLOSURES,
@@ -566,12 +567,28 @@ export async function proposeClaim(sc: any, observation: any): Promise<ProposeRe
  */
 export async function approveClaim(sc: any, claimId: string): Promise<{ ok: boolean; reason?: string }> {
   if (!(await captureSystemEnabled(sc))) return { ok: false, reason: "disabled" };
-  const { error } = await sc
+  // `.eq("status","candidate")` is a compare-and-swap and nothing above it reads
+  // the claim, so this statement matches zero rows whenever the id names no
+  // claim, or names one that is no longer a candidate (already active, or
+  // rejected). Zero matched rows is NOT an error — PostgREST answers 204 and
+  // supabase-js resolves `{ data: null, error: null }`, the same shape the
+  // winning caller sees — so reading only `error` reported `{ok:true}` and the
+  // route answered `{ok:true}` for a promotion that never happened. Approval is
+  // the trust gate of this lifecycle (candidate → active → publishable): an
+  // admin being told a claim is live when it is still a candidate is the one
+  // thing this step must not do. `.select()` makes it RETURNING; the refusal
+  // uses the function's own {ok:false, reason} contract, which routes/intel.ts
+  // already maps to its db_error response.
+  const { data, error } = await sc
     .from("intel_claims")
     .update({ status: "active", promotion_source: "admin" })
     .eq("id", claimId)
-    .eq("status", "candidate");
+    .eq("status", "candidate")
+    .select("id");
   if (error) return { ok: false, reason: String((error as any).message ?? "db_error") };
+  if (affectedRows(data) === 0) {
+    return { ok: false, reason: "claim not found, or no longer a candidate — nothing was promoted" };
+  }
   return { ok: true };
 }
 
