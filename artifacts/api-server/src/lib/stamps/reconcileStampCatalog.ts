@@ -216,13 +216,27 @@ async function reconcile(sc: any, stats: ReconcileStats): Promise<void> {
       continue;
     }
 
-    // Upsert catalog entry
-    const { data: existingEntry } = await sc
+    // Upsert catalog entry.
+    //
+    // An unreadable universal_stamp_catalog resolves as `{ data: null }`, which
+    // this branch cannot tell from "this location has no catalog entry yet" —
+    // and the else-branch then INSERTs one, queuing a fresh artwork generation
+    // for a stamp whose artwork already exists and splitting the catalog for
+    // that location. Flag it for admin review and move on, exactly as the
+    // key-building failure above and the insert failure below do; the
+    // reconciler is re-runnable, so the combo is picked up on the next pass.
+    const { data: existingEntry, error: existingEntryErr } = await sc
       .from("universal_stamp_catalog")
       .select("id")
       .eq("canonical_location_key", canonKey)
       .eq("stamp_type", combo.stamp_type ?? "city")
       .maybeSingle();
+
+    if (existingEntryErr) {
+      console.warn("[reconcile] Catalog lookup failed:", existingEntryErr.message, combo);
+      stats.flagged++;
+      continue;
+    }
 
     let catalogId: string;
 
@@ -247,12 +261,22 @@ async function reconcile(sc: any, stats: ReconcileStats): Promise<void> {
       if (insertErr) {
         // Unique constraint race
         if ((insertErr as any).code === "23505") {
-          const { data: retry } = await sc
+          const { data: retry, error: retryErr } = await sc
             .from("universal_stamp_catalog")
             .select("id")
             .eq("canonical_location_key", canonKey)
             .eq("stamp_type", combo.stamp_type ?? "city")
             .maybeSingle();
+          // Direction is already right — an unresolvable race is flagged, not
+          // guessed at — but the two ways of getting here were indistinguishable
+          // in the output: a race whose winner we simply could not see was
+          // counted the same as a 23505 with no matching row, which is a real
+          // key-collision bug. Say which happened.
+          if (retryErr) {
+            console.warn("[reconcile] Catalog race re-read failed:", retryErr.message, combo);
+            stats.flagged++;
+            continue;
+          }
           if (!retry) { stats.flagged++; continue; }
           catalogId = (retry as any).id;
         } else {

@@ -28,12 +28,24 @@ export async function syncTripChatMembers(
   const now = new Date().toISOString();
 
   // 1. Resolve or create the trip thread (idempotent).
-  const { data: existing } = await sc
+  //
+  // The read must be checked: supabase-js resolves a failed read as
+  // `{ data: null }`, which is indistinguishable here from "no thread yet". Read
+  // that way, the else-branch INSERTs a second 'trip' thread for a trip that
+  // already has one — and this function then upserts every accepted member into
+  // the new row, so the crew's chat history stays on the orphaned thread. Fail
+  // closed with the null this function already uses for "could not sync".
+  const { data: existing, error: existingErr } = await sc
     .from('message_threads')
     .select('id, title')
     .eq('trip_id', tripId)
     .eq('thread_type', 'trip')
     .maybeSingle();
+
+  if (existingErr) {
+    console.error(`syncTripChatMembers: thread lookup failed for trip ${tripId}: ${existingErr.message}`);
+    return null;
+  }
 
   let threadId: string;
 
@@ -142,12 +154,19 @@ export async function syncCircleChatMembers(
   const now = new Date().toISOString();
 
   // 1. Resolve or create the circle thread.
-  const { data: existing } = await sc
+  // Same failure mode as the trip branch above — an unreadable message_threads
+  // must not be mistaken for "this circle has no thread yet".
+  const { data: existing, error: existingErr } = await sc
     .from('message_threads')
     .select('id')
     .eq('circle_owner_id', circleOwnerId)
     .eq('thread_type', 'circle')
     .maybeSingle();
+
+  if (existingErr) {
+    console.error(`syncCircleChatMembers: thread lookup failed for circle ${circleOwnerId}: ${existingErr.message}`);
+    return null;
+  }
 
   let threadId: string;
 

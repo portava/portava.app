@@ -50,12 +50,23 @@ export async function syncTripChatMembers(
   // Find or create the trip's group thread (unique index on trip_id WHERE thread_type='trip').
   let threadId: string;
 
-  const { data: existing } = await sc
+  // An unreadable message_threads is NOT "this trip has no thread yet". Reading
+  // it that way sends us into the INSERT below, which either trips the unique
+  // partial index (a 500 for a trip whose chat exists and is healthy) or — if
+  // that index is ever absent — creates a SECOND thread for the trip and then
+  // upserts every accepted member into it, splitting the crew off from their
+  // own message history. Fail closed: throw, exactly as every write failure in
+  // this function already does, so the caller retries against a live database.
+  const { data: existing, error: existingErr } = await sc
     .from('message_threads')
     .select('id')
     .eq('thread_type', 'trip')
     .eq('trip_id', tripId)
     .maybeSingle();
+
+  if (existingErr) {
+    throw new Error(`syncTripChatMembers: thread lookup failed for trip ${tripId}: ${existingErr.message}`);
+  }
 
   if (existing) {
     threadId = (existing as any).id as string;
@@ -75,12 +86,19 @@ export async function syncTripChatMembers(
 
     if (createErr) {
       // Lost a race — another request created it first; fetch the winner.
-      const { data: raceWinner } = await sc
+      const { data: raceWinner, error: raceErr } = await sc
         .from('message_threads')
         .select('id')
         .eq('thread_type', 'trip')
         .eq('trip_id', tripId)
         .maybeSingle();
+      // Both outcomes throw, but they are not the same fault: `!raceWinner`
+      // means the insert failed for a reason that was never a race, while
+      // `raceErr` means the table went away between the two statements. Naming
+      // the read error stops the second being reported as the first.
+      if (raceErr) {
+        throw new Error(`syncTripChatMembers: thread lookup after insert conflict failed for trip ${tripId}: ${raceErr.message} (insert: ${createErr.message})`);
+      }
       if (!raceWinner) throw new Error(`syncTripChatMembers: cannot find or create thread for trip ${tripId}: ${createErr.message}`);
       threadId = (raceWinner as any).id as string;
     } else {
@@ -165,12 +183,19 @@ export async function syncCircleChatMembers(
   // Find or create the circle's group thread (unique index on circle_owner_id WHERE thread_type='circle').
   let threadId: string;
 
-  const { data: existing } = await sc
+  // Same reasoning as the trip branch: an unreadable table must not be read as
+  // "this circle has no thread", which would create a duplicate circle thread
+  // and move the owner's whole circle into it.
+  const { data: existing, error: existingErr } = await sc
     .from('message_threads')
     .select('id')
     .eq('thread_type', 'circle')
     .eq('circle_owner_id', circleOwnerId)
     .maybeSingle();
+
+  if (existingErr) {
+    throw new Error(`syncCircleChatMembers: thread lookup failed for circle ${circleOwnerId}: ${existingErr.message}`);
+  }
 
   if (existing) {
     threadId = (existing as any).id as string;
@@ -189,12 +214,15 @@ export async function syncCircleChatMembers(
       .single();
 
     if (createErr) {
-      const { data: raceWinner } = await sc
+      const { data: raceWinner, error: raceErr } = await sc
         .from('message_threads')
         .select('id')
         .eq('thread_type', 'circle')
         .eq('circle_owner_id', circleOwnerId)
         .maybeSingle();
+      if (raceErr) {
+        throw new Error(`syncCircleChatMembers: thread lookup after insert conflict failed for circle ${circleOwnerId}: ${raceErr.message} (insert: ${createErr.message})`);
+      }
       if (!raceWinner) throw new Error(`syncCircleChatMembers: cannot find or create thread for circle ${circleOwnerId}: ${createErr.message}`);
       threadId = (raceWinner as any).id as string;
     } else {
