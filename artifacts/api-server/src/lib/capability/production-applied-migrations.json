@@ -1,114 +1,118 @@
 {
- "$comment": "The repository's record of what has been applied to PRODUCTION (travel-buddy, ajrurzioarfkagpuxfnb), taken from its supabase_migrations.schema_migrations. COMMIT AN ENTRY HERE IN THE SAME CHANGE THAT APPLIES THE MIGRATION. checkFlagSchemaPrerequisites compares the newest version here against the snapshot's productionMigrationWatermark and FAILS when this file is ahead -- that is how a stale snapshot is caught OFFLINE, with no live database access. Production has no schema_migration_ledger, and migrations applied by hand through the Supabase dashboard write no row into supabase_migrations, so this file is necessarily a record of what WE applied, not proof of everything that is applied. It is a staleness tripwire, not an inventory.",
- "projectRef": "ajrurzioarfkagpuxfnb",
- "migrations": [
-  {
-   "version": "20260907181058",
-   "name": "2460_meetup_invites_self_invite_latent_disclosure"
-  },
-  {
-   "version": "20260907183518",
-   "name": "2461_meetup_rls_recursion"
-  },
-  {
-   "version": "20260907183707",
-   "name": "2462_meetup_time_votes_write_boundary"
-  },
-  {
-   "version": "20260907184258",
-   "name": "2334_route_plan_crew_visibility"
-  },
-  {
-   "version": "20260907185750",
-   "name": "2337_trip_crew_rls_membership_convergence"
-  },
-  {
-   "version": "20260907190129",
-   "name": "2531_crew_session_owner_select_owner_only"
-  },
-  {
-   "version": "20260907222834",
-   "name": "2532_pg_policies_snapshot_v2"
-  },
-  {
-   "version": "20260907222934",
-   "name": "2533_drop_shares_trip_with_oracle"
-  },
-  {
-   "version": "20260907223139",
-   "name": "2534_can_see_trip_status_gate_and_checklist_write_boundary"
-  },
-  {
-   "version": "20260907223359",
-   "name": "2530_highlights_trip_only_accepted_crew"
-  },
-  {
-   "version": "20260908005403",
-   "name": "2420_trip_kernel_foundation"
-  },
-  {
-   "version": "20260908005407",
-   "name": "2370_trust_tables_privileges"
-  },
-  {
-   "version": "20260908005514",
-   "name": "2371_trust_profiles_evidence"
-  },
-  {
-   "version": "20260908010109",
-   "name": "2520_trip_map_projection_worker"
-  },
-  {
-   "version": "20260908010501",
-   "name": "2610_map_trip_projection_anchor"
-  },
-  {
-   "version": "20260908011416",
-   "name": "2490_destructive_privilege_boundary"
-  },
-  {
-   "version": "20260908011801",
-   "name": "2640_collections_single_default_per_owner"
-  },
-  {
-   "version": "20260908012223",
-   "name": "2410_layover_recommendation_identity"
-  },
-  {
-   "version": "20260908013309",
-   "name": "2252_hidden_gem_contributions"
-  },
-  {
-   "version": "20260908013420",
-   "name": "2219_locate_friends_sessions"
-  },
-  {
-   "version": "20260908013620",
-   "name": "2120_canonical_events"
-  },
-  {
-   "version": "20260908013648",
-   "name": "2275_intel_snapshot_conflict_state"
-  },
-  {
-   "version": "20260908013748",
-   "name": "2273_intel_replayable_projection"
-  },
-  {
-   "version": "20260908013842",
-   "name": "2274_intel_claim_observation_model"
-  },
-  {
-   "version": "20260908013936",
-   "name": "2276_intel_presence_verification"
-  },
-  {
-   "version": "20260908020748",
-   "name": "2430_intel_live_scope_promotion_writer"
-  },
-  {
-   "version": "20260908023317",
-   "name": "2550_discovery_trip_projection_consumer_flag"
-  }
- ]
+  "$comment": "The repository's record of what has been applied to PRODUCTION (travel-buddy, ajrurzioarfkagpuxfnb), taken from its supabase_migrations.schema_migrations. COMMIT AN ENTRY HERE IN THE SAME CHANGE THAT APPLIES THE MIGRATION. checkFlagSchemaPrerequisites compares the newest version here against the snapshot's productionMigrationWatermark and FAILS when this file is ahead -- that is how a stale snapshot is caught OFFLINE, with no live database access. Production has no schema_migration_ledger, and migrations applied by hand through the Supabase dashboard write no row into supabase_migrations, so this file is necessarily a record of what WE applied, not proof of everything that is applied. It is a staleness tripwire, not an inventory.",
+  "projectRef": "ajrurzioarfkagpuxfnb",
+  "migrations": [
+    {
+      "version": "20260907181058",
+      "name": "2460_meetup_invites_self_invite_latent_disclosure"
+    },
+    {
+      "version": "20260907183518",
+      "name": "2461_meetup_rls_recursion"
+    },
+    {
+      "version": "20260907183707",
+      "name": "2462_meetup_time_votes_write_boundary"
+    },
+    {
+      "version": "20260907184258",
+      "name": "2334_route_plan_crew_visibility"
+    },
+    {
+      "version": "20260907185750",
+      "name": "2337_trip_crew_rls_membership_convergence"
+    },
+    {
+      "version": "20260907190129",
+      "name": "2531_crew_session_owner_select_owner_only"
+    },
+    {
+      "version": "20260907222834",
+      "name": "2532_pg_policies_snapshot_v2"
+    },
+    {
+      "version": "20260907222934",
+      "name": "2533_drop_shares_trip_with_oracle"
+    },
+    {
+      "version": "20260907223139",
+      "name": "2534_can_see_trip_status_gate_and_checklist_write_boundary"
+    },
+    {
+      "version": "20260907223359",
+      "name": "2530_highlights_trip_only_accepted_crew"
+    },
+    {
+      "version": "20260908005403",
+      "name": "2420_trip_kernel_foundation"
+    },
+    {
+      "version": "20260908005407",
+      "name": "2370_trust_tables_privileges"
+    },
+    {
+      "version": "20260908005514",
+      "name": "2371_trust_profiles_evidence"
+    },
+    {
+      "version": "20260908010109",
+      "name": "2520_trip_map_projection_worker"
+    },
+    {
+      "version": "20260908010501",
+      "name": "2610_map_trip_projection_anchor"
+    },
+    {
+      "version": "20260908011416",
+      "name": "2490_destructive_privilege_boundary"
+    },
+    {
+      "version": "20260908011801",
+      "name": "2640_collections_single_default_per_owner"
+    },
+    {
+      "version": "20260908012223",
+      "name": "2410_layover_recommendation_identity"
+    },
+    {
+      "version": "20260908013309",
+      "name": "2252_hidden_gem_contributions"
+    },
+    {
+      "version": "20260908013420",
+      "name": "2219_locate_friends_sessions"
+    },
+    {
+      "version": "20260908013620",
+      "name": "2120_canonical_events"
+    },
+    {
+      "version": "20260908013648",
+      "name": "2275_intel_snapshot_conflict_state"
+    },
+    {
+      "version": "20260908013748",
+      "name": "2273_intel_replayable_projection"
+    },
+    {
+      "version": "20260908013842",
+      "name": "2274_intel_claim_observation_model"
+    },
+    {
+      "version": "20260908013936",
+      "name": "2276_intel_presence_verification"
+    },
+    {
+      "version": "20260908020748",
+      "name": "2430_intel_live_scope_promotion_writer"
+    },
+    {
+      "version": "20260908023317",
+      "name": "2550_discovery_trip_projection_consumer_flag"
+    },
+    {
+      "version": "20260908063417",
+      "name": "2650_trust_reviews_one_per_event"
+    }
+  ]
 }

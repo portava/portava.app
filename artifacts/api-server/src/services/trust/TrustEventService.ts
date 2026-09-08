@@ -391,9 +391,22 @@ async function queueEventForReview(
       },
     });
     if (error) {
+      // 23505 — migration 2650's partial unique index on
+      // trust_reviews (source_event_id). The event is already on the queue,
+      // put there by a concurrent emitter or by the maintenance repair sweep.
+      // That is DELIVERY, not failure, and reporting it as a failure would send
+      // an operator looking for a lost review that is sitting in front of them.
+      if ((error as any).code === "23505") {
+        logger.info(
+          { userId, eventId, eventType: facts.eventType },
+          "trust_reviews queue insert refused by the unique index — this event is already queued",
+        );
+        return;
+      }
       logger.warn(
         { err: error, userId, eventId, eventType: facts.eventType },
-        "pending_review event recorded but trust_reviews queue insert failed — adjudication delayed, not lost",
+        "pending_review event recorded but trust_reviews queue insert failed — adjudication delayed, not lost; " +
+          "the trust maintenance sweep re-queues it (repairMissingEventReviews)",
       );
     }
   } catch (err) {

@@ -84,6 +84,8 @@ const EVENT_LOOKBACK_DAYS = 30;
 
 /** PostgREST `.in()` lists are URL-encoded — chunk so the query string stays sane. */
 const ID_CHUNK = 100;
+/** Per-pass ceiling on review re-queues, so one sick pass cannot become a storm. */
+const MAX_REVIEW_REPAIRS_PER_PASS = 200;
 
 const DAY_MS = 24 * 60 * 60 * 1_000;
 
@@ -381,6 +383,134 @@ export interface TrustMaintenanceResult {
   /** True when the gaming scan ran and every detector examined zero rows. */
   gamingVacuous: boolean;
   truncated: boolean;
+  /**
+   * pending_review events that reached an admin queue only because this pass
+   * repaired them. Non-zero means the original queue insert was lost.
+   */
+  reviewsRepaired: number;
+  /**
+   * pending_review events STILL not on the queue after the repair ran — the
+   * stuck set. Null when the scan could not be performed, which is not zero:
+   * "we could not look" must never be reported as "there is nothing there".
+   */
+  reviewsStuck: number | null;
+}
+
+/**
+ * Re-queue serious/severe trust events whose admin review row was lost.
+ *
+ * ── THE DURABILITY GAP ───────────────────────────────────────────────────────
+ * `recordTrustEvent` writes the event, then inserts a `trust_reviews` row so an
+ * admin can adjudicate it. That second insert is deliberately NON-FATAL: the
+ * event is the record of the finding and is already committed, so a failed queue
+ * insert should delay adjudication rather than lose evidence.
+ *
+ * Non-fatal with no retry is AT-MOST-ONCE. The event then sits in
+ * `pending_review` — excluded from the score by design (`loadEvents` counts only
+ * applied/confirmed) and absent from the queue an admin can actually list. An
+ * unattended serious finding is then invisible in both directions at once, and
+ * the only trace is a log line from whenever it happened.
+ *
+ * This sweep makes the delivery AT-LEAST-ONCE. Migration 2650 is what stops
+ * at-least-once from becoming a MORE-THAN-ONCE EFFECT: a partial unique index on
+ * `trust_reviews (source_event_id) WHERE source_event_id IS NOT NULL` means a
+ * re-queue of an event that is already queued is refused with 23505, which is
+ * read here as "already delivered" rather than as a failure. Retry plus a
+ * uniqueness backstop is exactly-once effect; retry alone would be a second
+ * review of the same finding, adjudicated twice, and closed by
+ * TrustAdminService.confirmEvent / dismissEvent — which close
+ * `trust_reviews WHERE source_event_id = :id` and so already assume at most one.
+ *
+ * ── WHY IT REPORTS A STUCK COUNT, AND WHY THAT CAN BE NULL ──────────────────
+ * Anything it could not repair stays visible in the pass result. `null` is not
+ * zero: it means the scan itself could not be performed, and "we could not look"
+ * reported as "there is nothing there" is the defect class this whole file
+ * exists to refuse.
+ */
+async function repairMissingEventReviews(
+  db: any,
+): Promise<{ repaired: number; stuck: number | null }> {
+  let pending: any[] = [];
+  try {
+    const { data, error } = await db
+      .from("trust_events")
+      .select("id, user_id, event_type, category, severity, source_type")
+      .eq("status", "pending_review")
+      .order("created_at", { ascending: true })
+      .limit(MAX_REVIEW_REPAIRS_PER_PASS);
+    if (error) {
+      logger.warn({ err: error }, "trust review repair: pending_review scan failed — stuck count unknown this pass");
+      return { repaired: 0, stuck: null };
+    }
+    pending = (data as any[]) ?? [];
+  } catch (err) {
+    logger.warn({ err }, "trust review repair: pending_review scan threw — stuck count unknown this pass");
+    return { repaired: 0, stuck: null };
+  }
+  if (pending.length === 0) return { repaired: 0, stuck: 0 };
+
+  // Which of them already have a review row. An unreadable trust_reviews must
+  // NOT be read as "none of them are queued" — that would re-queue every
+  // pending event on every pass. Without the answer there is nothing safe to
+  // do, and the stuck count is unknown rather than large.
+  const ids = pending.map((e) => String(e.id));
+  const queued = new Set<string>();
+  for (let i = 0; i < ids.length; i += ID_CHUNK) {
+    const chunk = ids.slice(i, i + ID_CHUNK);
+    try {
+      const { data, error } = await db
+        .from("trust_reviews")
+        .select("source_event_id")
+        .in("source_event_id", chunk);
+      if (error) {
+        logger.warn({ err: error }, "trust review repair: trust_reviews read failed — no repair attempted this pass");
+        return { repaired: 0, stuck: null };
+      }
+      for (const r of ((data as any[]) ?? [])) {
+        if (r?.source_event_id) queued.add(String(r.source_event_id));
+      }
+    } catch (err) {
+      logger.warn({ err }, "trust review repair: trust_reviews read threw — no repair attempted this pass");
+      return { repaired: 0, stuck: null };
+    }
+  }
+
+  const missing = pending.filter((e) => !queued.has(String(e.id)));
+  let repaired = 0;
+  let stuck = 0;
+  for (const e of missing) {
+    try {
+      const { error } = await db.from("trust_reviews").insert({
+        user_id:         e.user_id,
+        review_type:     "event_review",
+        source_event_id: e.id,
+        status:          "open",
+        metadata: {
+          event_type:  e.event_type,
+          category:    e.category,
+          severity:    e.severity,
+          source_type: e.source_type,
+          requeued_by: "trust_maintenance_repair",
+        },
+      });
+      if (!error) { repaired += 1; continue; }
+      // 23505 — migration 2650's unique index. Another emitter queued it between
+      // our read and our write; that is delivery, not failure.
+      if ((error as any).code === "23505") continue;
+      stuck += 1;
+      logger.warn({ err: error, eventId: e.id, userId: e.user_id }, "trust review repair: re-queue failed — event stays unadjudicated");
+    } catch (err) {
+      stuck += 1;
+      logger.warn({ err, eventId: e.id }, "trust review repair: re-queue threw — event stays unadjudicated");
+    }
+  }
+  if (repaired > 0) {
+    logger.warn(
+      { repaired },
+      "trust review repair: pending_review event(s) were NOT on the admin queue and have been re-queued — the original queue insert was lost",
+    );
+  }
+  return { repaired, stuck };
 }
 
 /**
@@ -394,6 +524,7 @@ export async function runTrustMaintenance(client?: any): Promise<TrustMaintenanc
     ok: true, capsExpired: 0, restrictionsExpired: 0, probationCleared: 0,
     usersRecalculated: 0, recalcFailures: 0, gamingFlagged: 0,
     eventsSeen: null, gamingInputs: null, gamingVacuous: false, truncated: false,
+    reviewsRepaired: 0, reviewsStuck: null,
   };
 
   const db = client ?? getServiceClient();
@@ -474,6 +605,19 @@ export async function runTrustMaintenance(client?: any): Promise<TrustMaintenanc
     );
   }
 
+  // 3b. Re-queue any serious/severe event whose admin review row was lost. See
+  //     repairMissingEventReviews: at-least-once delivery, made exactly-once in
+  //     EFFECT by migration 2650's unique index on trust_reviews.source_event_id.
+  let reviewsRepaired = 0;
+  let reviewsStuck: number | null = null;
+  try {
+    const r = await repairMissingEventReviews(db);
+    reviewsRepaired = r.repaired;
+    reviewsStuck = r.stuck;
+  } catch (err) {
+    logger.warn({ err }, "repairMissingEventReviews threw (non-fatal) — stuck count unknown this pass");
+  }
+
   // 4. Gaming detection. Runs last: it reads the scores this pass just wrote,
   //    and it self-skips when `trust_gaming_detection_enabled` is off.
   let gamingFlagged = 0;
@@ -497,6 +641,8 @@ export async function runTrustMaintenance(client?: any): Promise<TrustMaintenanc
     recalcFailures,
     gamingFlagged,
     eventsSeen,
+    reviewsRepaired,
+    reviewsStuck,
     gamingInputs,
     gamingVacuous,
     truncated,
