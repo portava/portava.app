@@ -23,6 +23,12 @@ import { color, space, radius, type as t, shadow } from '../../theme/tokens.ts';
 import { StampAdmireBlock } from './StampAdmireBlock.tsx';
 
 import { RARITY_COLORS, normalizeRarity } from '../../lib/stampRarity.ts';
+// §12: the detail view must show the issue date AND the verification treatment.
+// Both the DECISION (deriveStampVerification, from sourceType + verificationLevel,
+// fail-closed) and the PRESENTATION are imported — this view derives neither, so
+// it cannot disagree with the stamp strip about what a stamp's provenance is.
+import { deriveStampVerification } from '../../services/passportStampMappers.ts';
+import { VERIFICATION_META } from '../../features/passport/stampVerificationPresentation.ts';
 
 const SOURCE_LABELS: Record<string, string> = {
   trip:        'Completed a trip',
@@ -189,6 +195,24 @@ export function StampDetailModal({ stamp, isOwner, visible, onClose, onStampUpda
                 })}
               </Text>
             </View>
+
+            {/* §12 verification treatment, beside the issue date the spec pairs
+                it with. Glyph AND word, never colour alone (§27) — the row reads
+                correctly in greyscale and to a screen reader. */}
+            {(() => {
+              const verification = deriveStampVerification(stamp.sourceType, stamp.verificationLevel);
+              const meta = VERIFICATION_META[verification];
+              const Icon = meta.Icon;
+              return (
+                <View style={styles.row} testID={`stamp-verification-${verification}`}>
+                  <Text style={styles.rowKey}>Verification</Text>
+                  <View style={styles.verificationVal}>
+                    <Icon size={14} color={meta.color} strokeWidth={2.5} />
+                    <Text style={[styles.rowVal, { color: meta.color }]}>{meta.label}</Text>
+                  </View>
+                </View>
+              );
+            })()}
 
             {/* §13: explore links — Journey (this stamp in its trip history) and,
                 for the owner, My World (personal geographic history). */}
@@ -359,6 +383,15 @@ const styles = StyleSheet.create({
   },
   rowKey: { ...t.small, color: color.mute, fontWeight: '600', flex: 1 },
   rowVal: { ...t.small, color: color.ink, fontWeight: '500', flex: 2, textAlign: 'right' },
+  // The glyph sits beside the word, right-aligned with the other values.
+  // `flex: 2` matches rowVal so the row's proportions are unchanged.
+  verificationVal: {
+    flex: 2,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    gap: 6,
+  },
   revokedBanner: {
     width: '100%',
     backgroundColor: '#FEE2E2',

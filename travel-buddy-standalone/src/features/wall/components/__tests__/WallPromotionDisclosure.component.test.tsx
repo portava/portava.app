@@ -26,9 +26,10 @@
 import React from 'react';
 import { render, screen } from '@testing-library/react-native';
 
-// Same exhaustive-by-design mock as WallAccessibility.component.test.tsx: the
-// Wall components pull wallAnalytics -> wallApi, whose real module loads the
-// supabase/apiToken chain at import and crashes the suite.
+// NOTE: exhaustive-by-design mock, same as WallAccessibility.component.test.tsx.
+// The Wall components pull wallAnalytics -> wallApi, whose real module loads the
+// supabase/apiToken chain at import and crashes the suite, so requireActual is
+// not an option here and the factory must list every export those paths touch.
 jest.mock('../../services/wallApi.ts', () => ({
   fetchWall: jest.fn(),
   fetchLiveForYou: jest.fn(),
