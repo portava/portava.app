@@ -199,7 +199,9 @@ import http from "node:http";
 import express from "express";
 import { _setTestClient } from "../lib/http.js";
 import airportRouter from "../routes/airport.js";
-import { airportRow, sessionRow } from "./helpers/fakeLayoverDb.js";
+// `sessionRow` is already imported at the top of this file from the same
+// module; re-importing it here declared the identifier twice.
+import { airportRow } from "./helpers/fakeLayoverDb.js";
 
 const HIDE_TOKEN = "hide-route-token";
 const HIDE_USER = "user-1";

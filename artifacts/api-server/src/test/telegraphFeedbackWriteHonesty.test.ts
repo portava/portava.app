@@ -165,7 +165,12 @@ before(async () => {
     next();
   });
   app.use("/api", feedbackRouter);
-  await new Promise<void>((resolve) => { server = app.listen(0, "127.0.0.1", resolve); });
+  // `() => resolve()` and not `resolve`: Express 5's listen callback is typed
+  // `(error?: Error) => void`, and a bare `resolve` from `Promise<void>` cannot
+  // accept that argument. Discarding it is also the right behaviour here — the
+  // listen error path is not what this suite is testing, and passing `resolve`
+  // through would have RESOLVED the promise with an Error as the value.
+  await new Promise<void>((resolve) => { server = app.listen(0, "127.0.0.1", () => resolve()); });
   base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
 });
 

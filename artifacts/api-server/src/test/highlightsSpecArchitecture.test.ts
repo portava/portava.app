@@ -47,6 +47,7 @@ import {
   executeRevocation,
   summariseRevocation,
   planRevocation,
+  type DestinationOutcome,
 } from "../services/highlights/highlightRevocation.js";
 import {
   startApp,
@@ -451,13 +452,19 @@ describe("§21: a revocation report never claims a destination it did not reach"
   });
 
   it("complete is true ONLY when every applicable destination is revoked", () => {
-    const all = REVOCATION_DESTINATIONS.map((d) => ({ destination: d, status: "revoked" as const, detail: "" }));
+    // Annotated rather than inferred: with `status: "revoked" as const` the array
+    // was inferred as `status: "revoked"` ONLY, so assigning a not_implemented
+    // outcome into it below did not typecheck. The fixture's real type is the
+    // one production emits, and naming it is the fix — widening the element by
+    // hand, or casting the assignment, would have been the fixture describing a
+    // shape of its own invention, which is what this gate exists to stop.
+    const all: DestinationOutcome[] = REVOCATION_DESTINATIONS.map((d) => ({ destination: d, status: "revoked" as const, detail: "" }));
     assert.equal(summariseRevocation("DELETE_HIGHLIGHT", "h", all).complete, true);
     const one = [...all];
     one[3] = { destination: one[3].destination, status: "not_implemented" as const, detail: "" };
     assert.equal(summariseRevocation("DELETE_HIGHLIGHT", "h", one).complete, false);
     // An all-not_applicable plan is NOT "complete" — nothing was revoked.
-    const none = REVOCATION_DESTINATIONS.map((d) => ({ destination: d, status: "not_applicable" as const, detail: "" }));
+    const none: DestinationOutcome[] = REVOCATION_DESTINATIONS.map((d) => ({ destination: d, status: "not_applicable" as const, detail: "" }));
     assert.equal(summariseRevocation("DELETE_HIGHLIGHT", "h", none).complete, false);
   });
 });
