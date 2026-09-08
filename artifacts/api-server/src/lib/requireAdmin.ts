@@ -111,11 +111,33 @@ export async function requireAdmin(
     .maybeSingle();
 
   // Fail closed on all three: query error, absent profile, unmatched role.
-  // `error` is checked explicitly even though `!data` already covers it in
-  // supabase-js — an explicit check cannot be invalidated by a client-library
-  // change, and this is the one place in the codebase where that matters.
+  //
+  // A READ FAILURE IS NOT A ROLE DENIAL, and until now it was reported as one.
+  // `!data` already denies on a failed read — supabase-js RESOLVES on a database
+  // error with data null — so the direction was always safe. What was wrong was
+  // the ANSWER: a real admin, locked out by a database outage, was told "Admin
+  // role required", and nothing anywhere logged it. Six entries in
+  // UNCHECKED_READS_ALLOWLIST.json described exactly this shape on the local
+  // guards this one replaced ("a DB error is silently reported as that denial and
+  // never logged"), and replacing them with a shared guard that does the same
+  // thing would have moved the defect rather than retired it.
+  //
+  // So the outage case is separated: still denied, never widened, but answered as
+  // what it is and logged at error level so an operator sees it.
+  if (error) {
+    (req.log?.error ?? console.error).call(
+      req.log ?? console,
+      { err: error, userId: user.id },
+      "requireAdmin: profiles role read failed — denying, and this is NOT a role denial",
+    );
+    res.status(503).json({ error: "db_error", message: "Could not verify admin role" });
+    return null;
+  }
+
+  // `error` having been handled above, `!data` now means the profile row is
+  // genuinely absent, and the role check is a real answer about a real row.
   const role = (data as any)?.role;
-  if (error || !data || !roles.includes(role)) {
+  if (!data || !roles.includes(role)) {
     res.status(403).json({ error: "forbidden", message: "Admin role required" });
     return null;
   }

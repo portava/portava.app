@@ -113,6 +113,14 @@
     {
       "version": "20260908063417",
       "name": "2650_trust_reviews_one_per_event"
+    },
+    {
+      "version": "20260908073548",
+      "name": "2540_trust_events_one_shot_uniqueness"
+    },
+    {
+      "version": "20260908073559",
+      "name": "2660_trust_events_one_shot_covers_stamp_verified"
     }
   ]
 }

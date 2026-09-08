@@ -160,7 +160,7 @@ const servers: http.Server[] = [];
 async function serve(router: any): Promise<string> {
   const app: Express = express();
   app.use(express.json());
-  app.use((req: any, _res, next) => { req.log = noopLog; next(); });
+  app.use((req: any, _res, next) => { req.log = capturingLog(); next(); });
   app.use("/api", router);
   const server = http.createServer(app);
   servers.push(server);
@@ -200,11 +200,79 @@ beforeEach(() => {
 });
 
 /** The shared guard's refusal, byte for byte. */
+/**
+ * A read failure is DENIED, but it is not a role denial and must not be answered
+ * as one.
+ *
+ * These nine cases originally asserted 403 "Admin role required" for an
+ * unreadable profiles row. The direction was right — supabase-js resolves on a
+ * database error with data null, so `!data` denied either way — but the ANSWER
+ * was a false statement: a real admin locked out by an outage was told they are
+ * not an admin, and nothing logged it. That is the same shape as the six
+ * UNCHECKED_READS_ALLOWLIST entries the shared guard retired, and answering it
+ * identically would have moved the defect into the shared guard rather than
+ * closing it.
+ */
+/**
+ * Lines the guard logged during the last request.
+ *
+ * Needed because the outage branch's OTHER half — logging at error level so an
+ * operator sees the outage — is invisible to a status assertion: dropping the log
+ * and keeping the 503 left all nine cases green. A fix nobody can watch fail is
+ * not a fix.
+ */
+const loggedLines: string[] = [];
+function capturingLog(): any {
+  const rec = (...a: unknown[]) => { loggedLines.push(a.map((x) => JSON.stringify(x)).join(" ")); };
+  const l: any = { info: rec, warn: rec, error: rec, debug: rec };
+  l.child = () => l;
+  return l;
+}
+
+function assertSharedUnavailable(reply: Reply, what: string): void {
+  assert.equal(reply.status, 503, `${what}: expected 503, got ${reply.status} ${JSON.stringify(reply.body)}`);
+  assert.equal(reply.body?.error, "db_error", `${what}: error code`);
+  assert.equal(reply.body?.message, "Could not verify admin role", `${what}: message`);
+  // and it must NOT claim the caller lacks the role
+  assert.notEqual(reply.body?.error, "forbidden", `${what}: an outage is not a role denial`);
+}
+
 function assertSharedForbidden(reply: Reply, what: string): void {
   assert.equal(reply.status, 403, `${what}: expected 403, got ${reply.status} ${JSON.stringify(reply.body)}`);
   assert.equal(reply.body?.error, "forbidden", `${what}: error code`);
   assert.equal(reply.body?.message, "Admin role required", `${what}: message`);
 }
+
+describe("the outage branch is LOUD, not just closed", () => {
+  it("logs the failed role read at error level, naming it as not a role denial", async () => {
+    // The status assertion alone cannot see this: dropping the log while keeping
+    // the 503 leaves every other case in this file green. Measured, then pinned.
+    loggedLines.length = 0;
+    install(clientFor({ role: "admin", failOn: failRoleRead() }));
+    const reply = await request(compassBase, "GET", "/api/compass/graph/status");
+    assertSharedUnavailable(reply, "LOG");
+    assert.ok(
+      loggedLines.some((l) => l.includes("profiles role read failed")),
+      `the outage must be logged, not only answered. Saw: ${JSON.stringify(loggedLines)}`,
+    );
+    assert.ok(
+      loggedLines.some((l) => l.includes("NOT a role denial")),
+      "the log must say what it is, so an operator is not sent looking for a permissions problem",
+    );
+  });
+
+  it("logs NOTHING for a genuine role refusal", async () => {
+    // The control. A guard that logged an outage for every denial would pass the
+    // case above while making the signal useless.
+    loggedLines.length = 0;
+    install(clientFor({ role: "user" }));
+    assertSharedForbidden(await request(compassBase, "GET", "/api/compass/graph/status"), "LOG-CTL");
+    assert.equal(
+      loggedLines.filter((l) => l.includes("profiles role read failed")).length, 0,
+      "a real non-admin is not an outage",
+    );
+  });
+});
 
 // ── A: compassGraph.ts — GET /api/compass/graph/status ────────────────────────
 
@@ -237,7 +305,7 @@ describe("A: compassGraph admin routes go through the shared guard", () => {
 
   it("A4 fails CLOSED when the role read resolves as an error", async () => {
     install(clientFor({ role: "admin", failOn: failRoleRead() }));
-    assertSharedForbidden(await request(compassBase, "GET", "/api/compass/graph/status"), "A4");
+    assertSharedUnavailable(await request(compassBase, "GET", "/api/compass/graph/status"), "A4");
   });
 });
 
@@ -267,7 +335,7 @@ describe("B: circle admin routes go through the shared guard", () => {
 
   it("B3 fails CLOSED when the role read resolves as an error", async () => {
     install(clientFor({ role: "admin", failOn: failRoleRead() }));
-    assertSharedForbidden(await request(circleBase, "GET", "/api/admin/circle/reports"), "B3");
+    assertSharedUnavailable(await request(circleBase, "GET", "/api/admin/circle/reports"), "B3");
   });
 });
 
@@ -293,7 +361,7 @@ describe("C: placesCanonical admin routes go through the shared guard", () => {
 
   it("C3 fails CLOSED when the role read resolves as an error", async () => {
     install(clientFor({ role: "admin", rows: { places: [mergedPlace] }, failOn: failRoleRead() }));
-    assertSharedForbidden(
+    assertSharedUnavailable(
       await request(placesBase, "POST", `/api/admin/places/${PLACE_ID}/unmerge`, {}),
       "C3",
     );
@@ -319,7 +387,7 @@ describe("D: rentABuddyMarketplace admin routes go through the shared guard", ()
 
   it("D3 fails CLOSED when the role read resolves as an error", async () => {
     install(clientFor({ role: "admin", failOn: failRoleRead() }));
-    assertSharedForbidden(await request(marketBase, "GET", path), "D3");
+    assertSharedUnavailable(await request(marketBase, "GET", path), "D3");
   });
 });
 
@@ -350,7 +418,7 @@ describe("E: rentABuddyRollout admin routes accept admin OR owner", () => {
 
   it("E4 fails CLOSED when the role read resolves as an error", async () => {
     install(clientFor({ role: "admin", rows: cities, failOn: failRoleRead() }));
-    assertSharedForbidden(await request(rolloutBase, "GET", path), "E4");
+    assertSharedUnavailable(await request(rolloutBase, "GET", path), "E4");
   });
 });
 
@@ -440,7 +508,7 @@ describe("G: adminVisuals keeps its extra feature-flag gate on top of the shared
 
   it("G4 fails CLOSED when the role read resolves as an error", async () => {
     install(clientFor({ role: "admin", rows: { ...flagOn, ...visual }, failOn: failRoleRead() }));
-    assertSharedForbidden(await request(adminVisualsBase, "DELETE", path), "G4");
+    assertSharedUnavailable(await request(adminVisualsBase, "DELETE", path), "G4");
   });
 });
 
@@ -470,7 +538,7 @@ describe("H: rentABuddySpec admin routes go through the shared guard", () => {
 
   it("H4 fails CLOSED when the role read resolves as an error", async () => {
     install(clientFor({ role: "admin", rows: services, failOn: failRoleRead() }));
-    assertSharedForbidden(await request(specBase, "POST", path, {}), "H4");
+    assertSharedUnavailable(await request(specBase, "POST", path, {}), "H4");
   });
 });
 

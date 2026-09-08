@@ -299,14 +299,14 @@ export const GUARDS: readonly GuardEntry[] = [
   },
   {
     checker: "src/scripts/checkAdminGuard.ts",
-    responsibility: "Reports admin route handlers whose privilege check does not match the admin contract.",
-    reach: {
-      kind: "manual",
-      reason:
-        "Superseded in CI by check:route-auth-gate, which enforces the stronger structural rule (a writing handler goes " +
-        "through requireUser) across every route rather than only the admin ones. Kept as a hand-run triage tool for the " +
-        "admin surface specifically. NOT WIRED MEANS NOT ENFORCED: nothing here is protected by this file.",
-    },
+    responsibility: "Every admin-gated handler decides 'is this caller an admin' through the shared guard, not through its own role check.",
+    // WAS MANUAL, on the reason "superseded in CI by check:route-auth-gate". That
+    // was false in the way that matters: route-auth-gate enforces the broader,
+    // weaker rule (a WRITING handler goes through requireUser) and says nothing
+    // about who counts as an admin. Nine route files declared their own admin
+    // check; all nine now go through lib/requireAdmin, the guard exits 0, and the
+    // manual-run rule in checkGuardReachability is what surfaced the stale claim.
+    reach: { kind: "check-all", script: "check:admin-guard" },
   },
   {
     checker: "src/scripts/check-media-bucket-privacy.ts",

@@ -128,6 +128,16 @@ run_check "check:guard-reachability" pnpm run check:guard-reachability
 # trips.ts did exactly that. Structural rule: if a handler writes, it goes
 # through requireUser.
 run_check "check:route-auth-gate" pnpm run check:route-auth-gate
+# check:admin-guard — every admin-gated handler goes through lib/requireAdmin
+# rather than declaring its own role check. It sat MANUAL and unenforced with the
+# note "superseded in CI by check:route-auth-gate", which was not true: that check
+# enforces the weaker, broader rule (a WRITING handler goes through requireUser)
+# and says nothing about who counts as an admin. Nine route files carried their own
+# guard; the burn-down routed all nine onto the shared one, preserving two
+# deliberate divergences rather than flattening them — rentABuddyRollout still
+# admits 'owner', and adminVisuals still requires ai_visual_admin_review_enabled on
+# top of the role.
+run_check "check:admin-guard" pnpm run check:admin-guard
 # check:flag-polarity — every feature flag is classified STOP/CAPABILITY/CONFIG
 # and read through the reader that classification demands. Wired 2026-08-10
 # after c89f09a7 converted eleven emergency stops that had been reading
