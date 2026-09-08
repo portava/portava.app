@@ -19,6 +19,16 @@
  *     recover and the operator sees a 404, not a database fault. A rejected read
  *     is a 500 db_error; only a SUCCESSFUL read that returned nothing is a 404.
  *
+ *   GET /v1/intel/consent
+ *     An unreadable intel_contribution_consent rendered as
+ *     { enabled:false, consentedAt:null, withdrawnAt:null } with a 200 — "you
+ *     have never consented", to a person who had. The screen it feeds carries a
+ *     toggle, and switching it on reaches PUT /v1/intel/consent, whose upsert
+ *     re-stamps consent_version and consented_at. A transient read failure
+ *     therefore rewrote the evidentiary record of which disclosure the person
+ *     agreed to and when. (The capture GATE, hasValidIntelConsent, is unchanged
+ *     and still fails closed to "no consent" — the two questions differ.)
+ *
  * Runtime: node:test + node:assert/strict (no vitest, no supertest).
  * Run: SUPABASE_URL=http://127.0.0.1:9 SUPABASE_SERVICE_ROLE_KEY=dummy \
  *      node --import tsx/esm --test src/test/intelUnreadableReadAnswers.test.ts
@@ -37,7 +47,7 @@ const OBS_ID = "33333333-3333-4333-8333-333333333333";
  * `observationsError` makes the read RESOLVE with an error (never throw) —
  * modelling a throw would test a shape the real client does not produce.
  */
-function makeClient(opts: { observationsError?: boolean; row?: any } = {}) {
+function makeClient(opts: { observationsError?: boolean; row?: any; consent?: "error" | "row" | "none" } = {}) {
   let reads = 0;
   const client: any = {
     _reads: () => reads,
@@ -51,6 +61,18 @@ function makeClient(opts: { observationsError?: boolean; row?: any } = {}) {
     from(table: string) {
       if (table === "profiles") {
         const q: any = { select: () => q, eq: () => q, maybeSingle: async () => ({ data: { account_status: "active" }, error: null }) };
+        return q;
+      }
+      if (table === "intel_contribution_consent") {
+        const q: any = {
+          select: () => q, eq: () => q,
+          maybeSingle: async () => {
+            reads++;
+            if (opts.consent === "error") return { data: null, error: { code: "42501", message: "permission denied" } };
+            if (opts.consent === "row") return { data: { enabled: true, consent_version: "intel_contributions_v1", consented_at: "2026-01-01T00:00:00.000Z", withdrawn_at: null }, error: null };
+            return { data: null, error: null };
+          },
+        };
         return q;
       }
       if (table === "intel_observations") {
@@ -127,5 +149,52 @@ describe("propose: an unreadable intel_observations must not read as 'you have n
     assert.equal(status, 404, `expected 404 not_found, got ${status} ${JSON.stringify(body)}`);
     assert.equal(body?.error, "not_found", JSON.stringify(body));
     assert.equal(client._reads(), 1);
+  });
+});
+
+async function get(app: Express, path: string): Promise<{ status: number; body: any }> {
+  const server = createServer(app);
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+  const port = (server.address() as any).port as number;
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}${path}`, { headers: { Authorization: "Bearer valid-token" } });
+    return { status: res.status, body: await res.json().catch(() => ({})) };
+  } finally {
+    await new Promise<void>((r) => server.close(() => r()));
+  }
+}
+
+describe("consent: an unreadable row must not read as 'you have never consented'", () => {
+  after(() => { _setTestClient(null, false); });
+
+  it("a REJECTED consent read answers 500 db_error, not a default-off state", async () => {
+    const client = makeClient({ consent: "error" });
+    _setTestClient(client, true);
+    const app = await makeApp();
+    const { status, body } = await get(app, "/api/v1/intel/consent");
+    assert.equal(status, 500, `expected 500, got ${status} ${JSON.stringify(body)}`);
+    assert.equal(body?.error, "db_error", JSON.stringify(body));
+    assert.equal(body?.enabled, undefined, "a consent state was returned for a read that failed");
+    assert.equal(client._reads(), 1, "vacuity guard: the consent read never happened");
+  });
+
+  it("a SUCCESSFUL read with NO ROW still answers 200 default-off — that is a real answer", async () => {
+    const client = makeClient({ consent: "none" });
+    _setTestClient(client, true);
+    const app = await makeApp();
+    const { status, body } = await get(app, "/api/v1/intel/consent");
+    assert.equal(status, 200, JSON.stringify(body));
+    assert.equal(body.enabled, false);
+    assert.equal(body.consentedAt, null);
+  });
+
+  it("a SUCCESSFUL read WITH a row returns the real history, untouched", async () => {
+    const client = makeClient({ consent: "row" });
+    _setTestClient(client, true);
+    const app = await makeApp();
+    const { status, body } = await get(app, "/api/v1/intel/consent");
+    assert.equal(status, 200, JSON.stringify(body));
+    assert.equal(body.enabled, true);
+    assert.equal(body.consentedAt, "2026-01-01T00:00:00.000Z");
   });
 });

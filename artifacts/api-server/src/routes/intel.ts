@@ -169,8 +169,12 @@ function sendCaptureResult(res: any, result: CaptureResult): void {
 router.get("/v1/intel/consent", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
-  const state = await getIntelConsentState(getServiceClient()!, auth.user.id);
-  res.json(state);
+  // An unreadable consent row must not render as "you have never consented" —
+  // see lib/intelConsent.getIntelConsentState. The client's toggle would then
+  // re-stamp a consent the person already gave.
+  const out = await getIntelConsentState(getServiceClient()!, auth.user.id);
+  if (!out.ok) return sendError(res, "db_error", "could not read your consent state");
+  res.json(out.state);
 }));
 
 router.put("/v1/intel/consent", asyncHandler(async (req, res) => {
