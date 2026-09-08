@@ -644,9 +644,26 @@ used everywhere and is not the problem. The RESOLUTION is copied.
 | site | opt-in gate | name resolution | state |
 | --- | --- | --- | --- |
 | `lib/mapTravelers.ts` | canonical | was inline, order correct | **fixed** — now requests `buildMapPresenceProjections` (P98) |
+| `services/passport/PassportConsumerProjections.ts` | canonical | **a FIFTH copy, added by the fix above** | **fixed** — see below |
 | `routes/discoverySearch.ts:624` | canonical | `p.name` ALONE, and `display_name` was not even in the SELECT | **fixed** — adopts `presentedName`; a user with a display name was shown the other one |
 | `routes/compass.ts:3672` | canonical | `display_name ?? name ?? username` inline | **NOT fixed — see below** |
 | `services/passport/PassportProjectionService.ts` | canonical | canonical | fine |
+
+### The fifth copy, written by the commit that removed the first
+
+Worth recording because it is the whole argument for a choke point, demonstrated
+against the person making it. `buildMapPresenceProjections` — added specifically
+so the map would stop rebuilding identity — resolved the name with
+`prof.display_name ?? prof.name` INLINE, inside `services/passport/`, two commits
+after the Discovery fix and one after this ledger entry was written.
+
+It was caught by `passportProjectionNameVisibility.test.ts`, which forbids
+exactly that read in exactly that directory, and it was caught at branch
+certification rather than by review. Fixed by routing through `presentedName`.
+
+The lesson is not "be more careful". It is that the rule survives because a guard
+enforces it in the one directory where it matters most, and the remaining
+divergences below are the ones NO guard covers.
 
 ### Why the Compass one was left, deliberately
 
