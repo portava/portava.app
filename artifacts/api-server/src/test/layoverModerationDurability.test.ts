@@ -53,6 +53,20 @@ import {
 import type { AirportProfile } from "../services/airport/AirportProfileService.js";
 import type { LayoverSession } from "../services/airport/LayoverSessionService.js";
 
+// ── result-shape adapter ─────────────────────────────────────────────────────
+/**
+ * `generateRecommendations` / `getRecommendations` now answer
+ * `{ ok: true, recommendations }` or `{ ok: false, message }`, because "the
+ * table could not be read" and "this layover has nothing to offer" were the
+ * same empty array before and are not the same answer. Every call in this file
+ * expects the success arm, and says so out loud rather than reading
+ * `undefined` off a refusal.
+ */
+function cards(r: { ok: true; recommendations: any[] } | { ok: false; message: string }): any[] {
+  if (!r.ok) assert.fail(`expected recommendations, got a refusal: ${r.message}`);
+  return r.recommendations;
+}
+
 const HERE = dirname(fileURLToPath(import.meta.url));
 const MIGRATIONS_DIR = join(HERE, "..", "migrations");
 
@@ -124,7 +138,7 @@ function moderate(t: Record<string, any[]>, key: string, status: string): string
 describe("rec_key: stable across generations, distinct across cards", () => {
   it("every card in one session gets a DIFFERENT key", async () => {
     const t = tables();
-    const recs = await generateRecommendations(makeLayoverDb(t), AIRPORT, session(), Date.now(), { stableIds: true });
+    const recs = cards(await generateRecommendations(makeLayoverDb(t), AIRPORT, session(), Date.now(), { stableIds: true }));
     assert.ok(recs.length >= 6, `positive control: expected inside + 3 discovery + escape cards, got ${recs.length}`);
     const keys = t.layover_recommendations.map((r) => r.rec_key);
     assert.equal(keys.length, recs.length, "every returned card must have a stored row");
@@ -134,7 +148,7 @@ describe("rec_key: stable across generations, distinct across cards", () => {
 
   it("two places with byte-identical display text get different keys — text is not identity", async () => {
     const t = tables();
-    await generateRecommendations(makeLayoverDb(t), AIRPORT, session(), Date.now(), { stableIds: true });
+    cards(await generateRecommendations(makeLayoverDb(t), AIRPORT, session(), Date.now(), { stableIds: true }));
     const a = rowFor(t, "place:place-twin-a");
     const b = rowFor(t, "place:place-twin-b");
     assert.ok(a && b, "positive control: both twin cards must be generated");
@@ -146,9 +160,9 @@ describe("rec_key: stable across generations, distinct across cards", () => {
   it("the same logical card keeps its key across regenerations, even as the window moves", async () => {
     const t = tables();
     const db = makeLayoverDb(t);
-    await generateRecommendations(db, AIRPORT, session(), Date.now(), { stableIds: true });
+    cards(await generateRecommendations(db, AIRPORT, session(), Date.now(), { stableIds: true }));
     const before = new Map(t.layover_recommendations.map((r) => [r.rec_key, r.id]));
-    await generateRecommendations(db, AIRPORT, session(), Date.now() + 47 * 60_000, { stableIds: true });
+    cards(await generateRecommendations(db, AIRPORT, session(), Date.now() + 47 * 60_000, { stableIds: true }));
     const after = new Map(t.layover_recommendations.map((r) => [r.rec_key, r.id]));
     assert.equal(after.size, before.size);
     for (const [k, id] of before) assert.equal(after.get(k), id, `key ${k} changed row identity`);
@@ -182,7 +196,7 @@ describe("the write itself leaves moderation state standing", () => {
       }
       return b;
     };
-    await generateRecommendations(db, AIRPORT, session(), Date.now(), { stableIds: true });
+    cards(await generateRecommendations(db, AIRPORT, session(), Date.now(), { stableIds: true }));
     assert.equal(seen.length, 1, "positive control: exactly one upsert of the card set");
     assert.ok(seen[0]!.length >= 6, "positive control: the payload carried the cards");
     for (const row of seen[0]!) {
@@ -195,10 +209,10 @@ describe("the write itself leaves moderation state standing", () => {
   it("an admin hide is still in the table after a regeneration", async () => {
     const t = tables();
     const db = makeLayoverDb(t);
-    await generateRecommendations(db, AIRPORT, session(), Date.now(), { stableIds: true });
+    cards(await generateRecommendations(db, AIRPORT, session(), Date.now(), { stableIds: true }));
     const hiddenId = moderate(t, "place:place-twin-a", USER_HIDDEN_RECOMMENDATION_STATUS);
 
-    await generateRecommendations(db, AIRPORT, session(), Date.now() + 60_000, { stableIds: true });
+    cards(await generateRecommendations(db, AIRPORT, session(), Date.now() + 60_000, { stableIds: true }));
 
     const row = rowFor(t, "place:place-twin-a");
     assert.ok(row, "the moderated row was deleted by regeneration");
@@ -215,11 +229,11 @@ describe("a hide survives regeneration (flag ON)", () => {
   it("PROPERTY 1: the hidden card is withheld from the regenerated set", async () => {
     const t = tables();
     const db = makeLayoverDb(t);
-    const first = await generateRecommendations(db, AIRPORT, session(), Date.now(), { stableIds: true });
+    const first = cards(await generateRecommendations(db, AIRPORT, session(), Date.now(), { stableIds: true }));
     assert.ok(first.some((r) => r.placeId === "place-twin-a"), "positive control: the card was served before the hide");
     moderate(t, "place:place-twin-a", USER_HIDDEN_RECOMMENDATION_STATUS);
 
-    const second = await generateRecommendations(db, AIRPORT, session(), Date.now() + 60_000, { stableIds: true });
+    const second = cards(await generateRecommendations(db, AIRPORT, session(), Date.now() + 60_000, { stableIds: true }));
     assert.ok(!second.some((r) => r.placeId === "place-twin-a"),
       "the admin-hidden card was served to the traveller again after regeneration");
   });
@@ -227,11 +241,11 @@ describe("a hide survives regeneration (flag ON)", () => {
   it("PROPERTY 2: an active card is still visible after regeneration, with its id", async () => {
     const t = tables();
     const db = makeLayoverDb(t);
-    await generateRecommendations(db, AIRPORT, session(), Date.now(), { stableIds: true });
+    cards(await generateRecommendations(db, AIRPORT, session(), Date.now(), { stableIds: true }));
     const keptId = rowFor(t, "place:place-1").id;
     moderate(t, "place:place-twin-a", USER_HIDDEN_RECOMMENDATION_STATUS);
 
-    const second = await generateRecommendations(db, AIRPORT, session(), Date.now() + 60_000, { stableIds: true });
+    const second = cards(await generateRecommendations(db, AIRPORT, session(), Date.now() + 60_000, { stableIds: true }));
     const kept = second.find((r) => r.placeId === "place-1");
     assert.ok(kept, "hiding one card suppressed an unrelated active one");
     assert.equal(kept.id, keptId, "the surviving card must keep the id the client already holds");
@@ -241,10 +255,10 @@ describe("a hide survives regeneration (flag ON)", () => {
   it("PROPERTY 3: the twin with identical text does NOT inherit the hide", async () => {
     const t = tables();
     const db = makeLayoverDb(t);
-    await generateRecommendations(db, AIRPORT, session(), Date.now(), { stableIds: true });
+    cards(await generateRecommendations(db, AIRPORT, session(), Date.now(), { stableIds: true }));
     moderate(t, "place:place-twin-a", USER_HIDDEN_RECOMMENDATION_STATUS);
 
-    const second = await generateRecommendations(db, AIRPORT, session(), Date.now() + 60_000, { stableIds: true });
+    const second = cards(await generateRecommendations(db, AIRPORT, session(), Date.now() + 60_000, { stableIds: true }));
     const twinB = second.find((r) => r.placeId === "place-twin-b");
     assert.ok(twinB, "the untouched twin was suppressed — identity was inferred from display text");
     assert.equal(rowFor(t, "place:place-twin-b").status, undefined,
@@ -255,11 +269,11 @@ describe("a hide survives regeneration (flag ON)", () => {
   it("PROPERTY 4: the SAME card inherits the hide across many regenerations", async () => {
     const t = tables();
     const db = makeLayoverDb(t);
-    await generateRecommendations(db, AIRPORT, session(), Date.now(), { stableIds: true });
+    cards(await generateRecommendations(db, AIRPORT, session(), Date.now(), { stableIds: true }));
     moderate(t, "inside:rest:rest-sleep-pod", USER_HIDDEN_RECOMMENDATION_STATUS);
 
     for (let i = 1; i <= 3; i++) {
-      const out = await generateRecommendations(db, AIRPORT, session(), Date.now() + i * 60_000, { stableIds: true });
+      const out = cards(await generateRecommendations(db, AIRPORT, session(), Date.now() + i * 60_000, { stableIds: true }));
       assert.ok(!out.some((r) => r.title === "Rest & Sleep Pod"),
         `the hide leaked back on regeneration #${i}`);
       assert.equal(rowFor(t, "inside:rest:rest-sleep-pod").status, USER_HIDDEN_RECOMMENDATION_STATUS);
@@ -269,10 +283,10 @@ describe("a hide survives regeneration (flag ON)", () => {
   it("'flagged' stays visible — keep_flagged is a different admin outcome from hide", async () => {
     const t = tables();
     const db = makeLayoverDb(t);
-    await generateRecommendations(db, AIRPORT, session(), Date.now(), { stableIds: true });
+    cards(await generateRecommendations(db, AIRPORT, session(), Date.now(), { stableIds: true }));
     moderate(t, "place:place-1", "flagged");
 
-    const second = await generateRecommendations(db, AIRPORT, session(), Date.now() + 60_000, { stableIds: true });
+    const second = cards(await generateRecommendations(db, AIRPORT, session(), Date.now() + 60_000, { stableIds: true }));
     assert.ok(second.some((r) => r.placeId === "place-1"),
       "collapsing flagged into hidden would make 'leave it up while we review' mean 'take it down'");
   });
@@ -280,11 +294,11 @@ describe("a hide survives regeneration (flag ON)", () => {
   it("the suppression is auditable: recommendation_generated records how many were withheld", async () => {
     const t = tables();
     const db = makeLayoverDb(t);
-    await generateRecommendations(db, AIRPORT, session(), Date.now(), { stableIds: true });
+    cards(await generateRecommendations(db, AIRPORT, session(), Date.now(), { stableIds: true }));
     moderate(t, "place:place-twin-a", USER_HIDDEN_RECOMMENDATION_STATUS);
     t.layover_events.length = 0;
 
-    const second = await generateRecommendations(db, AIRPORT, session(), Date.now() + 60_000, { stableIds: true });
+    const second = cards(await generateRecommendations(db, AIRPORT, session(), Date.now() + 60_000, { stableIds: true }));
     const evt = t.layover_events.find((e) => e.event_type === "recommendation_generated");
     assert.ok(evt, "no recommendation_generated event");
     assert.equal(evt.metadata.moderationHidden, 1, "the withheld card is invisible in the audit record");
@@ -329,7 +343,7 @@ describe("legacy rows with rec_key NULL are handled safely", () => {
     const t = tables();
     seedLegacy(t);
     const db = makeLayoverDb(t);
-    const out = await generateRecommendations(db, AIRPORT, session(), Date.now(), { stableIds: true });
+    const out = cards(await generateRecommendations(db, AIRPORT, session(), Date.now(), { stableIds: true }));
 
     // 'legacy-hidden' and 'legacy-active' have IDENTICAL rec_type/title/
     // inside_airport. If identity were inferred from display text, the hide
@@ -384,14 +398,14 @@ describe("flag OFF: the legacy path is unchanged", () => {
       return b;
     };
 
-    const first = await generateRecommendations(db, AIRPORT, session(), Date.now());
+    const first = cards(await generateRecommendations(db, AIRPORT, session(), Date.now()));
     for (const r of first) assert.equal(r.id, undefined, `legacy path leaked an id on "${r.title}"`);
     assert.ok(!t.layover_recommendations.some((r) => "rec_key" in r), "legacy path must not write rec_key");
     assert.deepEqual(ops, ["delete", "insert"],
       `the legacy path must be exactly delete-then-insert, got ${JSON.stringify(ops)}`);
 
     const idsA = new Set(t.layover_recommendations.map((r) => r.id));
-    await generateRecommendations(db, AIRPORT, session(), Date.now() + 60_000);
+    cards(await generateRecommendations(db, AIRPORT, session(), Date.now() + 60_000));
     for (const id of t.layover_recommendations.map((r) => r.id)) {
       assert.ok(!idsA.has(id), "legacy path is delete+insert: ids must not survive");
     }
@@ -400,12 +414,12 @@ describe("flag OFF: the legacy path is unchanged", () => {
   it("a hide does NOT survive with the flag off — the unfixed status quo the flag exists to change", async () => {
     const t = tables();
     const db = makeLayoverDb(t);
-    await generateRecommendations(db, AIRPORT, session(), Date.now());
+    cards(await generateRecommendations(db, AIRPORT, session(), Date.now()));
     const target = t.layover_recommendations.find((r) => r.place_id === "place-twin-a");
     assert.ok(target, "positive control: the card was generated");
     target.status = USER_HIDDEN_RECOMMENDATION_STATUS;
 
-    const second = await generateRecommendations(db, AIRPORT, session(), Date.now() + 60_000);
+    const second = cards(await generateRecommendations(db, AIRPORT, session(), Date.now() + 60_000));
     // Documented, NOT fixed: on the legacy path a card has no identity that
     // outlives the DELETE, so there is nothing to reapply the status to. This
     // assertion is what makes the flag's value measurable, and it fails if
@@ -418,7 +432,7 @@ describe("flag OFF: the legacy path is unchanged", () => {
 
   it("the audit record reports zero withheld when the flag is off", async () => {
     const t = tables();
-    await generateRecommendations(makeLayoverDb(t), AIRPORT, session(), Date.now());
+    cards(await generateRecommendations(makeLayoverDb(t), AIRPORT, session(), Date.now()));
     const evt = t.layover_events.find((e) => e.event_type === "recommendation_generated");
     assert.ok(evt);
     assert.equal(evt.metadata.stableIds, false);

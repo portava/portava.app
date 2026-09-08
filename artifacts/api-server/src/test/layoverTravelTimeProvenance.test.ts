@@ -45,6 +45,20 @@ import {
 import type { AirportProfile } from "../services/airport/AirportProfileService.js";
 import type { LayoverSession } from "../services/airport/LayoverSessionService.js";
 
+// ── result-shape adapter ─────────────────────────────────────────────────────
+/**
+ * `generateRecommendations` / `getRecommendations` now answer
+ * `{ ok: true, recommendations }` or `{ ok: false, message }`, because "the
+ * table could not be read" and "this layover has nothing to offer" were the
+ * same empty array before and are not the same answer. Every call in this file
+ * expects the success arm, and says so out loud rather than reading
+ * `undefined` off a refusal.
+ */
+function cards(r: { ok: true; recommendations: any[] } | { ok: false; message: string }): any[] {
+  if (!r.ok) assert.fail(`expected recommendations, got a refusal: ${r.message}`);
+  return r.recommendations;
+}
+
 const HERE = dirname(fileURLToPath(import.meta.url));
 
 const AIRPORT: AirportProfile = {
@@ -110,7 +124,7 @@ describe("generateRecommendations — every card states where its travel time ca
   for (const stableIds of [false, true]) {
     it(`stableIds=${stableIds}: landside cards are category_default, airside cards inside_airport, none measured`, async () => {
       const t = tables();
-      const recs = await generateRecommendations(makeLayoverDb(t), AIRPORT, session(), Date.now(), { stableIds });
+      const recs = cards(await generateRecommendations(makeLayoverDb(t), AIRPORT, session(), Date.now(), { stableIds }));
       const landside = recs.filter((r) => !r.insideAirport);
       const airside = recs.filter((r) => r.insideAirport);
       assert.ok(landside.length >= 3, `positive control: expected discovery + escape cards, got ${landside.length}`);
@@ -129,7 +143,7 @@ describe("generateRecommendations — every card states where its travel time ca
     // database that has not run a migration adding it; the source lives beside
     // the row (like rec_key's `keys`), not in it.
     const t = tables();
-    await generateRecommendations(makeLayoverDb(t), AIRPORT, session(), Date.now(), { stableIds: true });
+    cards(await generateRecommendations(makeLayoverDb(t), AIRPORT, session(), Date.now(), { stableIds: true }));
     assert.ok(t.layover_recommendations.length > 0, "positive control: rows were written");
     for (const row of t.layover_recommendations) {
       assert.ok(!("travel_time_source" in row) && !("travelTimeSource" in row),
@@ -145,7 +159,7 @@ describe("getRecommendations — the persisted read path recovers provenance con
       { id: "r1", session_id: "session-1", rec_type: "food", title: "Airport Dining", safety_rating: "safe", travel_time_min: 0, activity_time_min: 45, return_buffer_min: 140, hard_return_time: null, inside_airport: true, sort_order: 0 },
       { id: "r2", session_id: "session-1", rec_type: "activity", title: "Night Market", safety_rating: "safe", travel_time_min: 25, activity_time_min: 90, return_buffer_min: 140, hard_return_time: null, inside_airport: false, sort_order: 1 },
     );
-    const recs = await getRecommendations(makeLayoverDb(t), "session-1");
+    const recs = cards(await getRecommendations(makeLayoverDb(t), "session-1"));
     assert.equal(recs.length, 2);
     assert.equal(recs.find((r) => r.id === "r1")!.travelTimeSource, "inside_airport");
     assert.equal(recs.find((r) => r.id === "r2")!.travelTimeSource, "category_default");

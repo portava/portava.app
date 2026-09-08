@@ -288,13 +288,25 @@ export interface GenerateRecommendationsOptions {
   stableIds?: boolean;
 }
 
+/**
+ * Either the cards, or the fact that they could not be produced HONESTLY.
+ *
+ * `ok: false` is not "the write failed" — a failed write is non-fatal here and
+ * always has been. It is "the stored MODERATION STATE could not be read", on
+ * the stable-identity path where that state is what suppresses an admin-hidden
+ * card. See the stale-scan below.
+ */
+export type GenerateResult =
+  | { ok: true; recommendations: SafeRecommendation[] }
+  | { ok: false; message: string };
+
 export async function generateRecommendations(
   db: SupabaseClient,
   airport: AirportProfile,
   session: LayoverSession,
   nowMs = Date.now(),
   opts: GenerateRecommendationsOptions = {},
-): Promise<SafeRecommendation[]> {
+): Promise<GenerateResult> {
   const city = airport.city ?? session.manualCity ?? "Unknown";
 
   // 1. Inside-airport suggestions (always generated)
@@ -413,7 +425,18 @@ export async function generateRecommendations(
       .select("id, rec_key, status")
       .eq("session_id", session.id);
     if (exError) {
-      logger.warn({ err: exError, sessionId: session.id }, "recommendation stale-scan failed (non-fatal)");
+      // NOT non-fatal. This read is the ONLY source of `statusByKey`, and
+      // `statusByKey` is what drops an admin-hidden card from the returned set
+      // on this path. Letting it stay empty served every hidden card straight
+      // back to the traveller the moment the table hiccuped — the hide would
+      // have been one failed SELECT wide. Refuse: the caller answers 503 and
+      // the client retries, rather than showing moderated cards or claiming
+      // "no recommendations".
+      logger.warn(
+        { err: exError, sessionId: session.id },
+        "recommendation moderation state unreadable — refusing to serve cards whose hidden/flagged state is unknown",
+      );
+      return { ok: false, message: String(exError.message ?? "layover_recommendations unreadable") };
     } else {
       const live = new Set(keys);
       for (const r of (existing ?? []) as any[]) {
@@ -499,7 +522,7 @@ export async function generateRecommendations(
   //
   // On the legacy path `statusByKey` is empty, so nothing is dropped and the
   // returned set is byte-identical to what it was before this filter existed.
-  return rows.flatMap((row, idx) => {
+  return { ok: true, recommendations: rows.flatMap((row, idx) => {
     const status = statusByKey.get(keys[idx]);
     if (status === USER_HIDDEN_RECOMMENDATION_STATUS) return [];
     return [sanitizeRecommendation({
@@ -522,7 +545,7 @@ export async function generateRecommendations(
       placeId:         row.place_id ?? null,
       planItemId:      null,
     })];
-  });
+  }) };
 }
 
 /**
@@ -556,11 +579,15 @@ export const USER_HIDDEN_RECOMMENDATION_STATUS = "hidden" as const;
  * `layover_recommendations` directly for `status='flagged'`, and the resolve
  * route reads by id — so an admin can still see and act on everything.
  */
+export type RecommendationsRead =
+  | { ok: true; recommendations: SafeRecommendation[] }
+  | { ok: false; message: string };
+
 export async function getRecommendations(
   db: SupabaseClient,
   sessionId: string,
-): Promise<SafeRecommendation[]> {
-  try {
+): Promise<RecommendationsRead> {
+  {
     const { data, error } = await db
       .from("layover_recommendations")
       .select("*")
@@ -572,12 +599,16 @@ export async function getRecommendations(
     // as an empty result. Returning [] here is the fail-closed direction for a
     // read, but it must be logged rather than silently indistinguishable from
     // "this session has no recommendations".
+    // Returning [] here made "the table could not be read" and "this layover
+    // has nothing to do" the same answer on the dashboard. They are not the
+    // same answer, and on this surface the difference is a traveller sitting
+    // in a terminal being told there is nothing worth their four hours.
     if (error) {
-      logger.warn({ err: error, sessionId }, "recommendation read failed; serving none");
-      return [];
+      logger.warn({ err: error, sessionId }, "recommendation read failed — refusing rather than reporting an empty layover");
+      return { ok: false, message: String(error.message ?? "layover_recommendations unreadable") };
     }
 
-    return (data ?? []).map((row: any) => sanitizeRecommendation({
+    return { ok: true, recommendations: (data ?? []).map((row: any) => sanitizeRecommendation({
       id:             row.id,
       recType:        row.rec_type,
       title:          row.title,
@@ -598,8 +629,6 @@ export async function getRecommendations(
       sortOrder:      row.sort_order,
       placeId:        row.place_id,
       planItemId:     row.plan_item_id,
-    }));
-  } catch {
-    return [];
+    })) };
   }
 }

@@ -31,6 +31,20 @@ import {
   USER_HIDDEN_RECOMMENDATION_STATUS,
 } from "../services/airport/LayoverRecommendationService.js";
 
+// ── result-shape adapter ─────────────────────────────────────────────────────
+/**
+ * `generateRecommendations` / `getRecommendations` now answer
+ * `{ ok: true, recommendations }` or `{ ok: false, message }`, because "the
+ * table could not be read" and "this layover has nothing to offer" were the
+ * same empty array before and are not the same answer. Every call in this file
+ * expects the success arm, and says so out loud rather than reading
+ * `undefined` off a refusal.
+ */
+function cards(r: { ok: true; recommendations: any[] } | { ok: false; message: string }): any[] {
+  if (!r.ok) assert.fail(`expected recommendations, got a refusal: ${r.message}`);
+  return r.recommendations;
+}
+
 const SESSION_ID = "session-1";
 
 function recRow(over: Record<string, any> = {}): Record<string, any> {
@@ -74,7 +88,7 @@ describe("layover admin-hide visibility", () => {
   it("an active recommendation is returned", async () => {
     const tables = { layover_recommendations: [recRow({ id: "rec-active" })] };
     const db = makeLayoverDb(tables) as any;
-    const out = await getRecommendations(db, SESSION_ID);
+    const out = cards(await getRecommendations(db, SESSION_ID));
     assert.equal(out.length, 1, "an active card must still reach the traveller");
     assert.equal(out[0]!.id, "rec-active");
   });
@@ -87,7 +101,7 @@ describe("layover admin-hide visibility", () => {
       ],
     };
     const db = makeLayoverDb(tables) as any;
-    const out = await getRecommendations(db, SESSION_ID);
+    const out = cards(await getRecommendations(db, SESSION_ID));
     const ids = out.map((r) => r.id);
     assert.ok(!ids.includes("rec-hidden"), "an admin-hidden card must not be served to the traveller");
     assert.deepEqual(ids, ["rec-active"]);
@@ -98,7 +112,7 @@ describe("layover admin-hide visibility", () => {
       layover_recommendations: [recRow({ id: "rec-flagged", status: "flagged" })],
     };
     const db = makeLayoverDb(tables) as any;
-    const out = await getRecommendations(db, SESSION_ID);
+    const out = cards(await getRecommendations(db, SESSION_ID));
     assert.deepEqual(
       out.map((r) => r.id),
       ["rec-flagged"],
@@ -114,7 +128,7 @@ describe("layover admin-hide visibility", () => {
       ],
     };
     const db = makeLayoverDb(tables) as any;
-    assert.deepEqual(await getRecommendations(db, SESSION_ID), []);
+    assert.deepEqual(cards(await getRecommendations(db, SESSION_ID)), []);
   });
 
   it("admin/service inspection is unaffected: a direct query still sees hidden rows", async () => {
@@ -137,12 +151,19 @@ describe("layover admin-hide visibility", () => {
     assert.equal((byId as any)?.status, "hidden", "an admin must still be able to reach a hidden row to approve it");
   });
 
-  it("a read error serves nothing rather than everything (supabase-js resolves on failure)", async () => {
+  it("a read error REFUSES — it does not serve everything, and it does not claim an empty layover", async () => {
+    // supabase-js RESOLVES on a database error, so this read comes back
+    // `{ data: null, error }` rather than throwing. Serving `[]` was the
+    // fail-closed direction for the moderation filter and the WRONG answer for
+    // the traveller: "we could not look" rendered as "there is nothing to do
+    // on your layover". The refusal is now explicit and carries the reason.
     const tables = { layover_recommendations: [recRow({ id: "rec-active" })] };
     const db = makeLayoverDb(tables, {
       failures: { "layover_recommendations:select": { message: "boom" } },
     }) as any;
-    assert.deepEqual(await getRecommendations(db, SESSION_ID), []);
+    const r = await getRecommendations(db, SESSION_ID);
+    assert.equal(r.ok, false, "an unreadable table must not answer with a card list at all");
+    assert.match((r as any).message, /boom/);
   });
 
   it("the filter is in the source, not only in this test's expectations", () => {
@@ -163,5 +184,113 @@ describe("layover admin-hide visibility", () => {
       /\.neq\("status",\s*USER_HIDDEN_RECOMMENDATION_STATUS\)/,
       "the plan-add read must apply the same moderation boundary",
     );
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// The SECOND read path, exercised over HTTP rather than by regex.
+//
+// The moderation boundary on `POST /airport/sessions/:id/stops/from-recommendation`
+// was pinned above only by a source match. A regex proves the characters are
+// present; it does not prove the route refuses. This drives the real router.
+// ═══════════════════════════════════════════════════════════════════════════
+import { before as _before, after as _after } from "node:test";
+import http from "node:http";
+import express from "express";
+import { _setTestClient } from "../lib/http.js";
+import airportRouter from "../routes/airport.js";
+import { airportRow, sessionRow } from "./helpers/fakeLayoverDb.js";
+
+const HIDE_TOKEN = "hide-route-token";
+const HIDE_USER = "user-1";
+let hideServer: http.Server;
+let hideBase = "";
+
+function post(p: string, body: any): Promise<{ status: number; body: any }> {
+  return new Promise((resolve, reject) => {
+    const url = new URL(p, hideBase);
+    const payload = JSON.stringify(body);
+    const r = http.request(
+      {
+        hostname: url.hostname, port: Number(url.port), path: url.pathname, method: "POST",
+        headers: {
+          authorization: `Bearer ${HIDE_TOKEN}`,
+          "content-type": "application/json",
+          "content-length": Buffer.byteLength(payload),
+        },
+      },
+      (res) => {
+        let raw = "";
+        res.setEncoding("utf8");
+        res.on("data", (c) => { raw += c; });
+        res.on("end", () => {
+          let parsed: any; try { parsed = raw ? JSON.parse(raw) : null; } catch { parsed = raw; }
+          resolve({ status: res.statusCode ?? 0, body: parsed });
+        });
+      },
+    );
+    r.on("error", reject);
+    r.write(payload);
+    r.end();
+  });
+}
+
+function stageRoute(status: string) {
+  const tables: Record<string, any[]> = {
+    feature_flags: [
+      { flag: "airport_mode_enabled", enabled: true },
+      { flag: "layover_plans_enabled", enabled: true },
+    ],
+    airport_profiles: [airportRow()],
+    layover_sessions: [sessionRow({ user_id: HIDE_USER })],
+    layover_recommendations: [recRow({ id: "rec-1", status })],
+    layover_plan_stops: [],
+    layover_events: [],
+  };
+  _setTestClient(makeLayoverDb(tables, { users: { [HIDE_TOKEN]: HIDE_USER } }) as any, true);
+  return tables;
+}
+
+_before(() => {
+  const app = express();
+  app.use(express.json());
+  app.use((r: any, _res: any, next: any) => {
+    r.log = { error() {}, info() {}, warn() {}, debug() {} };
+    next();
+  });
+  app.use("/api", airportRouter);
+  return new Promise<void>((resolve) => {
+    hideServer = app.listen(0, "127.0.0.1", () => {
+      hideBase = `http://127.0.0.1:${(hideServer.address() as any).port}`;
+      resolve();
+    });
+  });
+});
+_after(() => new Promise<void>((resolve) => hideServer.close(() => resolve())));
+
+describe("POST /stops/from-recommendation — the hide is not one API call wide", () => {
+  it("positive control: an ACTIVE recommendation can be added to the plan", async () => {
+    const tables = stageRoute("active");
+    const r = await post("/api/airport/sessions/session-1/stops/from-recommendation", { recommendationId: "rec-1" });
+    assert.equal(r.status, 200);
+    assert.equal(tables.layover_plan_stops!.length, 1, "vacuity: the allowed path must actually write a stop");
+    assert.equal(tables.layover_plan_stops![0]!.recommendation_id, "rec-1");
+  });
+
+  it("a HIDDEN recommendation is refused 404 and NOTHING is written", async () => {
+    // A client holding an id from before the hide is exactly the case: it has
+    // a valid id for a row that still exists. The row must not be reachable.
+    const tables = stageRoute("hidden");
+    const r = await post("/api/airport/sessions/session-1/stops/from-recommendation", { recommendationId: "rec-1" });
+    assert.equal(r.status, 404);
+    assert.equal(r.body.error, "not_found");
+    assert.equal(tables.layover_plan_stops!.length, 0, "an admin-hidden card must not be addable to a plan");
+  });
+
+  it("a FLAGGED recommendation is still addable — keep_flagged is not hide", async () => {
+    const tables = stageRoute("flagged");
+    const r = await post("/api/airport/sessions/session-1/stops/from-recommendation", { recommendationId: "rec-1" });
+    assert.equal(r.status, 200);
+    assert.equal(tables.layover_plan_stops!.length, 1);
   });
 });

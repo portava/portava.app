@@ -29,6 +29,20 @@ import { LAYOVER_ENGINE_VERSION } from "../services/airport/LayoverSafetyEngine.
 import type { AirportProfile } from "../services/airport/AirportProfileService.js";
 import type { LayoverSession } from "../services/airport/LayoverSessionService.js";
 
+// ── result-shape adapter ─────────────────────────────────────────────────────
+/**
+ * `generateRecommendations` / `getRecommendations` now answer
+ * `{ ok: true, recommendations }` or `{ ok: false, message }`, because "the
+ * table could not be read" and "this layover has nothing to offer" were the
+ * same empty array before and are not the same answer. Every call in this file
+ * expects the success arm, and says so out loud rather than reading
+ * `undefined` off a refusal.
+ */
+function cards(r: { ok: true; recommendations: any[] } | { ok: false; message: string }): any[] {
+  if (!r.ok) assert.fail(`expected recommendations, got a refusal: ${r.message}`);
+  return r.recommendations;
+}
+
 const AIRPORT: AirportProfile = {
   id: "airport-tpe", iataCode: "TPE", name: "Taoyuan Intl", city: "Taoyuan",
   country: "Taiwan", countryCode: "TW", timezone: "Asia/Taipei", lat: 25.07, lng: 121.23,
@@ -79,11 +93,11 @@ describe("stable ids (flag ON)", () => {
   it("returns every card WITH an id, and a second generation keeps the same ids", async () => {
     const t = tables();
     const db = makeLayoverDb(t);
-    const first = await generateRecommendations(db, AIRPORT, session(), Date.now(), { stableIds: true });
+    const first = cards(await generateRecommendations(db, AIRPORT, session(), Date.now(), { stableIds: true }));
     assert.ok(first.length >= 4, `expected inside + discovery + escape cards, got ${first.length}`);
     for (const r of first) assert.ok(r.id, `card "${r.title}" has no id`);
 
-    const second = await generateRecommendations(db, AIRPORT, session(), Date.now() + 60_000, { stableIds: true });
+    const second = cards(await generateRecommendations(db, AIRPORT, session(), Date.now() + 60_000, { stableIds: true }));
     const byTitle = (rs: typeof first) => new Map(rs.map((r) => [r.title, r.id]));
     const a = byTitle(first), b = byTitle(second);
     assert.equal(a.size, b.size);
@@ -95,11 +109,11 @@ describe("stable ids (flag ON)", () => {
   it("a plan stop's recommendation_id still resolves after the cards are regenerated", async () => {
     const t = tables();
     const db = makeLayoverDb(t);
-    const first = await generateRecommendations(db, AIRPORT, session(), Date.now(), { stableIds: true });
+    const first = cards(await generateRecommendations(db, AIRPORT, session(), Date.now(), { stableIds: true }));
     const chosen = first.find((r) => !r.insideAirport && r.placeId === "place-1")!;
     t.layover_plan_stops.push({ id: "stop-1", session_id: "session-1", recommendation_id: chosen.id, title: chosen.title });
 
-    await generateRecommendations(db, AIRPORT, session(), Date.now() + 5 * 60_000, { stableIds: true });
+    cards(await generateRecommendations(db, AIRPORT, session(), Date.now() + 5 * 60_000, { stableIds: true }));
     const stillThere = t.layover_recommendations.find((r) => r.id === chosen.id);
     assert.ok(stillThere, "the row the stop points at was deleted by regeneration");
     assert.equal(stillThere.rec_key, "place:place-1");
@@ -108,12 +122,12 @@ describe("stable ids (flag ON)", () => {
   it("a card that no longer applies is removed; the others keep their ids", async () => {
     const t = tables();
     const db = makeLayoverDb(t);
-    const first = await generateRecommendations(db, AIRPORT, session(), Date.now(), { stableIds: true });
+    const first = cards(await generateRecommendations(db, AIRPORT, session(), Date.now(), { stableIds: true }));
     const insideIds = new Set(first.filter((r) => r.insideAirport).map((r) => r.id));
     assert.ok(first.some((r) => !r.insideAirport), "positive control: landside cards present when wantsToLeave");
 
     // The traveller decides to stay airside: every landside card must go.
-    const second = await generateRecommendations(db, AIRPORT, session({ wantsToLeave: false }), Date.now(), { stableIds: true });
+    const second = cards(await generateRecommendations(db, AIRPORT, session({ wantsToLeave: false }), Date.now(), { stableIds: true }));
     assert.ok(second.every((r) => r.insideAirport), "landside cards survived a stay-airside regeneration");
     for (const r of second) assert.ok(insideIds.has(r.id!), `inside card "${r.title}" did not keep its id`);
     assert.equal(t.layover_recommendations.length, second.length, "stale landside rows were not deleted");
@@ -123,14 +137,14 @@ describe("stable ids (flag ON)", () => {
     const t = tables();
     t.layover_recommendations.push({ id: "legacy-1", session_id: "session-1", rec_key: null, title: "Old card", rec_type: "food", safety_rating: "safe" });
     const db = makeLayoverDb(t);
-    await generateRecommendations(db, AIRPORT, session(), Date.now(), { stableIds: true });
+    cards(await generateRecommendations(db, AIRPORT, session(), Date.now(), { stableIds: true }));
     assert.ok(!t.layover_recommendations.some((r) => r.id === "legacy-1"), "legacy row survived");
   });
 
   it("a failed upsert is non-fatal: cards are still returned, just without ids", async () => {
     const t = tables();
     const db = makeLayoverDb(t, { failures: { "layover_recommendations:upsert": { message: "column rec_key does not exist" } } });
-    const recs = await generateRecommendations(db, AIRPORT, session(), Date.now(), { stableIds: true });
+    const recs = cards(await generateRecommendations(db, AIRPORT, session(), Date.now(), { stableIds: true }));
     assert.ok(recs.length >= 4);
     for (const r of recs) assert.equal(r.id, undefined);
   });
@@ -140,12 +154,12 @@ describe("legacy path (flag OFF) — unchanged", () => {
   it("returns cards WITHOUT ids, and regeneration replaces the rows (new ids)", async () => {
     const t = tables();
     const db = makeLayoverDb(t);
-    const first = await generateRecommendations(db, AIRPORT, session(), Date.now());
+    const first = cards(await generateRecommendations(db, AIRPORT, session(), Date.now()));
     for (const r of first) assert.equal(r.id, undefined, `legacy path leaked an id on "${r.title}"`);
     const idsA = new Set(t.layover_recommendations.map((r) => r.id));
     assert.ok(!t.layover_recommendations.some((r) => "rec_key" in r), "legacy path must not write rec_key");
 
-    await generateRecommendations(db, AIRPORT, session(), Date.now() + 60_000);
+    cards(await generateRecommendations(db, AIRPORT, session(), Date.now() + 60_000));
     const idsB = new Set(t.layover_recommendations.map((r) => r.id));
     for (const id of idsB) assert.ok(!idsA.has(id), "legacy path is delete+insert: ids must not survive");
   });
@@ -155,7 +169,7 @@ describe("audit record and honest degradation", () => {
   it("recommendation_generated carries the engine version, the deadline inputs and what was written", async () => {
     const t = tables();
     const db = makeLayoverDb(t);
-    const recs = await generateRecommendations(db, AIRPORT, session(), Date.now(), { stableIds: true });
+    const recs = cards(await generateRecommendations(db, AIRPORT, session(), Date.now(), { stableIds: true }));
     const evt = t.layover_events.find((e) => e.event_type === "recommendation_generated");
     assert.ok(evt, "no recommendation_generated event");
     const m = evt.metadata;
@@ -181,7 +195,7 @@ describe("audit record and honest degradation", () => {
   it("an unreadable discovery_places yields no landside discovery cards and does not throw", async () => {
     const t = tables();
     const db = makeLayoverDb(t, { failures: { "discovery_places:select": { message: "relation unavailable" } } });
-    const recs = await generateRecommendations(db, AIRPORT, session(), Date.now(), { stableIds: true });
+    const recs = cards(await generateRecommendations(db, AIRPORT, session(), Date.now(), { stableIds: true }));
     assert.ok(recs.length > 0, "inside-airport cards must still be produced");
     assert.ok(!recs.some((r) => r.placeId), "a discovery place was fabricated from a failed read");
   });
