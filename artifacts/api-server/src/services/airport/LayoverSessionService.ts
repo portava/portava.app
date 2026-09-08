@@ -30,6 +30,44 @@ export interface LayoverSessionInput {
   canonicalCityId?: string | null;
 }
 
+/**
+ * The statuses that mean "this layover is still happening".
+ *
+ * `'returning'` (migration 2741, spec §15.1) is a LIVE state, not a terminal
+ * one: the traveller pressed RETURN TO AIRPORT and is on their way back, which
+ * is the moment they need the countdown MOST. Every reader that treats
+ * `'active'` as live must treat this set as live, or an aborting traveller
+ * disappears from the surface that is telling them when to be at the gate.
+ *
+ * Migration 2741's header names twelve such readers. It is NINE, and the
+ * discrepancy is worth keeping written down because acting on the list
+ * unchecked would have been an error: three of the twelve filter `status` on a
+ * DIFFERENT TABLE — `discovery_places` (LayoverRecommendationService),
+ * `rent_buddy_profiles` and `posts` (both routes/airport.ts). Widening those
+ * would have admitted archived places, inactive buddy profiles and unpublished
+ * posts into a layover surface. A `status` column is not a session status just
+ * because a layover file reads it.
+ */
+export const LAYOVER_LIVE_SESSION_STATUSES = ["active", "returning"] as const;
+
+/**
+ * Whether the code half of the one-tap abort capability is in place — that is,
+ * whether the live-set readers above actually honour `'returning'`.
+ *
+ * This exists so the abort route can require FLAG_ENABLED **and**
+ * CAPABILITY_READY rather than the flag alone. A feature flag says what an
+ * operator wants; it cannot say whether the code can survive the state it
+ * enables. Turning `layover_safe_return_status_enabled` on while the readers
+ * still filtered `'active'` would mark a session returning and then hide it
+ * from `GET /sessions/active`, `setReturnReminder` and `endSession` — the
+ * failure 2741's header describes.
+ *
+ * It is a constant rather than a probe because what it asserts is a property of
+ * THIS BUILD, not of the database: the deployed code either honours the state
+ * or it does not, and a running server cannot discover that about itself.
+ */
+export const LAYOVER_RETURNING_READERS_WIDENED = true;
+
 export interface LayoverSession {
   id: string;
   userId: string;
@@ -53,7 +91,7 @@ export interface LayoverSession {
   canonicalCityId: string | null;
   shareCityStatus: boolean;
   returnReminderAt: string | null;
-  status: "active" | "completed" | "cancelled" | "expired";
+  status: "active" | "returning" | "completed" | "cancelled" | "expired";
   createdAt: string;
   updatedAt: string;
 }
@@ -205,7 +243,7 @@ export async function endSession(
       .update({ status: reason, updated_at: new Date().toISOString() })
       .eq("id", sessionId)
       .eq("user_id", userId)
-      .in("status", ["active"])
+      .in("status", [...LAYOVER_LIVE_SESSION_STATUSES])
       .select("*")
       .maybeSingle();
 
@@ -273,7 +311,7 @@ export async function getActiveSession(
     .from("layover_sessions")
     .select("*")
     .eq("user_id", userId)
-    .eq("status", "active")
+    .in("status", [...LAYOVER_LIVE_SESSION_STATUSES])
     .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle();
@@ -288,7 +326,7 @@ export async function getActiveSession(
 export async function listSessions(
   db: SupabaseClient,
   userId: string,
-  status?: "active" | "completed" | "cancelled" | "expired",
+  status?: "active" | "returning" | "completed" | "cancelled" | "expired",
   limit = 20,
 ): Promise<SessionListRead> {
   let query = db
@@ -344,7 +382,7 @@ export async function setReturnReminder(
       .update({ return_reminder_at: remindAtIso, updated_at: new Date().toISOString() })
       .eq("id", sessionId)
       .eq("user_id", userId)
-      .eq("status", "active");
+      .in("status", [...LAYOVER_LIVE_SESSION_STATUSES]);
     return !error;
   } catch {
     return false;
@@ -359,7 +397,7 @@ export async function expireOldSessions(
     const { data, error } = await db
       .from("layover_sessions")
       .update({ status: "expired", updated_at: new Date().toISOString() })
-      .eq("status", "active")
+      .in("status", [...LAYOVER_LIVE_SESSION_STATUSES])
       .lt("departure_time", new Date().toISOString())
       .select("id, user_id");
 

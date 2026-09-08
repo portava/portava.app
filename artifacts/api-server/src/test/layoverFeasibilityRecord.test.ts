@@ -391,10 +391,39 @@ describe("routes consult the certified record and nothing else", () => {
     assert.match(src, /certifySessionFeasibility\s*\(/);
   });
 
+  /**
+   * The handlers that legitimately certify, BY NAME rather than by count.
+   *
+   * This was `assert.equal(calls, 4)`. A bare count is the weaker pin: it goes
+   * red when a fifth handler is added — which it correctly did when
+   * POST /return-now landed — but it cannot tell a NEW handler that certifies
+   * once from an OLD handler that started certifying twice. Both read as 5.
+   * Naming them keeps the ratchet and makes the diff say which handler
+   * changed. Adding a row here is a deliberate act; bumping a number was not.
+   */
+  const FEASIBILITY_HANDLERS = [
+    "/airport/sessions/:id/safety",
+    "/airport/sessions/:id/return-deadline",
+    "/airport/sessions/:id/return-now",
+    "/airport/sessions/:id/overview",
+    "/airport/sessions/:id/stops",
+  ];
+
   it("every handler that needs feasibility certifies exactly once", () => {
     const src = readFileSync(join(HERE, "..", "routes", "airport.ts"), "utf8");
     const calls = (src.match(/certifySessionFeasibility\s*\(/g) ?? []).length;
-    assert.equal(calls, 4, `expected one certification per feasibility handler (safety, return-deadline, overview, stops), found ${calls}`);
+    assert.equal(
+      calls, FEASIBILITY_HANDLERS.length,
+      `expected one certification per feasibility handler (${FEASIBILITY_HANDLERS.join(", ")}), found ${calls}`,
+    );
+    // Non-vacuity: the named routes must actually exist, or this asserts a
+    // count against a list nobody maintains.
+    for (const route of FEASIBILITY_HANDLERS) {
+      assert.ok(
+        src.includes(`"${route}"`),
+        `${route} is named as a feasibility handler but no route declares it`,
+      );
+    }
   });
 });
 

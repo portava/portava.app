@@ -703,12 +703,13 @@ const INERT_SEEDED_FLAGS = [
   //
   // R7 now fails on this shape (FALSE INERT DECLARATION), so the six cannot
   // come back, and no seventh can be added.
-  {
-    flag: 'layover_safe_return_status_enabled', seededIn: '2741_layover_session_returning_status.sql:185', kind: 'CAPABILITY',
-    disposition: 'write-reader',
-    reason:
-      'Layover spec 15.1, the one-tap abort. The reader EXISTS -- abortToAirport in services/airport/LayoverSafeReturnService.ts takes it as statusEnabled and is fully unit-tested (32 cases) -- but nothing calls it, because the route that would (POST /airport/sessions/:id/return-now) CANNOT SHIP YET. Its decision-ledger insert uses event_type safe_return_aborted, and production layover_events_event_type_check accepts eighteen values that do not include it (re-read on production 2026-09-08), so the route would 500 on its own audit row. Migration 2741 widens that CHECK and is WRITTEN BUT NOT APPLIED. The remedy is therefore ordered and known, not open: apply 2741 under the migration gate, wire the route, then this entry is deleted. It is write-reader and not owner-decision because no product question is outstanding -- what the flag should gate is decided and built. Flipping it to TRUE is a separate and later step that additionally requires the twelve status=\'active\' readers named in 2741\'s header to be widened to (\'active\',\'returning\'), or an aborting traveller vanishes from GET /sessions/active. Seeded FALSE, so today it gates nothing and misleads nobody: with the flag off the abort would still cancel landside stops and write its ledger row, and would leave status untouched.',
-  },
+  // NOTE: layover_safe_return_status_enabled was declared inert here with
+  // disposition `write-reader`, blocked on migration 2741. 2741 was applied to
+  // production on 2026-09-08 (20260908133347) and POST /return-now was wired,
+  // so the flag now HAS a reader and the declaration became false. R7 —- an
+  // inert declaration must still be TRUE — turned red and forced this deletion,
+  // which is the rule doing exactly what it was written for. The flag remains
+  // seeded FALSE; having a reader is not the same as being on.
   {
     flag: 'MEDIA_GRID_RANKING_ENABLED', seededIn: '2038_media_admin_flags.sql:25', kind: 'CAPABILITY',
     disposition: 'owner-decision',

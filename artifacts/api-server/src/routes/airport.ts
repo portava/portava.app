@@ -69,6 +69,7 @@ import {
   expireOldSessions,
   emitLayoverEvent,
   type LayoverSession,
+  LAYOVER_RETURNING_READERS_WIDENED,
 } from "../services/airport/LayoverSessionService.js";
 import { safetyLabel } from "../services/airport/LayoverSafetyEngine.js";
 // Every feasibility number this file publishes comes from ONE call to
@@ -101,11 +102,9 @@ import {
   publishableUserIds,
   disclosePresence,
 } from "../services/airport/LayoverPrivacyGuard.js";
-// buildReturnContract and abortToAirport are deliberately NOT imported yet:
-// the one-tap abort route they serve cannot ship before migration 2741 widens
-// layover_events.event_type to accept 'safe_return_aborted'. Wiring it now
-// would add a route whose ledger insert is rejected by a CHECK constraint.
-import { safeReturnPosture } from "../services/airport/LayoverSafeReturnService.js";
+// abortToAirport ships now that 2741 is APPLIED TO PRODUCTION (20260908133347),
+// which is what makes its 'safe_return_aborted' ledger insert legal.
+import { safeReturnPosture, abortToAirport } from "../services/airport/LayoverSafeReturnService.js";
 import { buildOfflineBundle } from "../services/airport/LayoverDegradedService.js";
 import {
   shouldSuggestSafeReturn,
@@ -967,6 +966,107 @@ router.post("/airport/sessions/:id/plan", async (req, res) => {
   await emitLayoverEvent(sc, session.id, user.id, "plan_created", { planItemId: (item as any)?.id });
 
   res.status(201).json({ ok: true, planItemId: (item as any)?.id });
+});
+
+// ── POST /api/airport/sessions/:id/return-now ────────────────────────────────
+/**
+ * Spec §15.1, the one-tap abort. "Every active landside plan must expose RETURN
+ * TO AIRPORT. The action cancels optional itinerary state, marks the session
+ * returning, surfaces the fastest certified route, notifies relevant crew/buddy
+ * flows, preserves offline route/deadline, and records the transition in the
+ * decision ledger."
+ *
+ * ── FLAG AND CAPABILITY ARE SEPARATE QUESTIONS ───────────────────────────────
+ * `statusEnabled` is the conjunction of two things that are NOT the same:
+ *
+ *   layover_safe_return_status_enabled   what an operator WANTS
+ *   LAYOVER_RETURNING_READERS_WIDENED    what this BUILD can survive
+ *
+ * A flag flipped on a deployment whose readers still filter `status = 'active'`
+ * would mark the session returning and then hide it from GET /sessions/active,
+ * setReturnReminder and endSession — the traveller loses the countdown at the
+ * exact moment they are running for a plane. So the flag alone may not reach
+ * the status write. The migration is a third, independent prerequisite, and it
+ * is the reason this route did not exist until 2741 was applied: the ledger
+ * insert below uses event_type 'safe_return_aborted', which the CHECK on
+ * layover_events rejected in full on any database without that migration.
+ *
+ * ── WHAT SURVIVES WHEN A PIECE IS MISSING ────────────────────────────────────
+ * The abort is not all-or-nothing, and that is deliberate. With the flag off,
+ * the landside stops are still cancelled and the decision ledger is still
+ * written — the ledger is the only durable evidence the traveller pressed
+ * abort, and it must not depend on a rollout. Only the STATUS write is gated.
+ * Every effect that ran, successful or not, is reported in `effects`; nothing
+ * is swallowed.
+ */
+router.post("/airport/sessions/:id/return-now", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured"); return; }
+  if (!await isFlagEnabled(sc, "airport_mode_enabled")) {
+    sendError(res, "feature_disabled"); return;
+  }
+
+  // ownedSessionOr answers 404 for someone else's session and 503 for an
+  // unreadable one — an unauthorized caller and an outage must not look alike.
+  const session = await ownedSessionOr(res, sc, req.params.id, user.id);
+  if (!session) return;
+
+  // Aborting a session that has already ended is not an error to retry; it is a
+  // no-op the client should stop asking about. A DOUBLE TAP therefore lands
+  // here on the second press only if the status write is enabled and took
+  // effect; with the flag off the session stays `active` and the second press
+  // repeats the abort, which is safe — cancelLandsideStops matches nothing the
+  // second time and the ledger records both presses, which is the truth.
+  if (session.status === "completed" || session.status === "cancelled" || session.status === "expired") {
+    sendError(res, "invalid_payload", `This layover is already ${session.status}.`);
+    return;
+  }
+
+  const airport = await airportOr503(sc, res, session);
+  if (!airport) return;
+
+  const nowMs = Date.now();
+  const record = certifySessionFeasibility(airport, session, { nowMs });
+
+  const flagOn = await isFlagEnabled(sc, "layover_safe_return_status_enabled");
+  const statusEnabled = flagOn && LAYOVER_RETURNING_READERS_WIDENED;
+
+  const result = await abortToAirport(sc, {
+    session, airport, record, userId: user.id, nowMs, statusEnabled,
+  });
+
+  if (!result.ok) {
+    // Something the abort promised did not happen. Say so, and keep the parts
+    // that did in the body: the traveller still needs the return contract even
+    // when the ledger write failed, and "head to the airport now" is the one
+    // instruction that must survive any partial failure.
+    req.log.error(
+      { sessionId: session.id, effects: result.effects },
+      "return-now: abort completed with failed effects",
+    );
+    res.status(500).json({
+      ok: false,
+      error: "db_error",
+      message: "Your plan could not be fully cleared. Head to the airport now.",
+      returnContract: result.returnContract,
+      posture: result.posture,
+      effects: result.effects,
+    });
+    return;
+  }
+
+  // `result.ok` is already true on this path — spreading it is the single
+  // source of that field rather than restating it beside the spread.
+  res.json({
+    ...result,
+    statusCapability: statusEnabled
+      ? "enabled"
+      : flagOn ? "flag_on_readers_not_widened" : "flag_off",
+  });
 });
 
 // ── POST /api/airport/sessions/:id/return-deadline ───────────────────────────
