@@ -1,5 +1,5 @@
 {
-  "//": "Acknowledgements that a counted architecture file changed WITHOUT the census being re-measured. Read by src/scripts/checkCensusFreshness.ts. An entry names the census, the head_commit it was written against (`since`), the FILES it covers, and why those changes cannot have moved a verdict. It covers the paths it names and nothing else \u2014 a counted file that changed and is not listed in `files` makes the census stale again, and an entry with no `files` covers nothing. It is spent the moment that census is re-measured: the checker compares `since` against the census head_commit and FAILS on a mismatch, so an acknowledgement cannot outlive the measurement it was written for.",
+  "//": "Acknowledgements that a counted architecture file changed WITHOUT the census being re-measured. Read by src/scripts/checkCensusFreshness.ts. An entry names the census, the head_commit it was written against (`since`), the FILES it covers, and why those changes cannot have moved a verdict. It covers the paths it names and nothing else — a counted file that changed and is not listed in `files` makes the census stale again, and an entry with no `files` covers nothing. It is spent the moment that census is re-measured: the checker compares `since` against the census head_commit and FAILS on a mismatch, so an acknowledgement cannot outlive the measurement it was written for.",
   "acknowledged": [
     {
       "census": "census-highlights-memories.md",
@@ -12,6 +12,16 @@
         "artifacts/api-server/src/services/memoryProjections/derivativeRegistry.ts",
         "artifacts/api-server/src/services/memoryProjections/derivativeRegistryRead.ts",
         "artifacts/api-server/src/services/memoryRetrieval/searchMemories.ts"
+      ]
+    },
+    {
+      "census": "census-wall.md",
+      "since": "9f8122ff5ed233a367fda6431589c9cb97df7979",
+      "file": "travel-buddy-standalone/src/features/wall/components/__tests__/WallPromotionDisclosure.component.test.tsx",
+      "acknowledgedAt": "2026-09-08",
+      "reason": "COMMENT-ONLY, and measured rather than asserted. `git diff 9f8122ff..HEAD` on this file, filtered to lines that are neither a comment nor blank, returns EMPTY (0 lines) against a --stat of 4 insertions / 3 deletions. The edit rewords the jest.mock header so it begins with the literal word NOTE, which is what check-test-mocks.mjs requires before it will start the client runner; the mock factory, every assertion and every testID are byte-identical.\n\nWHY IT CANNOT HAVE MOVED A WALL VERDICT. The file is the test for W178 (§37 promoted-content disclosure). W178's verdict rests on the producers and the render sites — lib/wallProjection.ts, the two Wall services, LiveForYouStrip.tsx and ContextThreadView.tsx — none of which this diff touches. A comment cannot render a disclosure and cannot assert one.\n\nCHECKABLE: the suite is 7 pass / 0 fail before and after, and its assertion count is unchanged. A change that had moved a verdict would have moved an assertion.",
+      "files": [
+        "travel-buddy-standalone/src/features/wall/components/__tests__/WallPromotionDisclosure.component.test.tsx"
       ]
     }
   ]
