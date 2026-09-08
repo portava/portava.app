@@ -737,6 +737,21 @@ const EXEMPT = [
   },
 
   {
+    file: 'src/test/mediaAccessFailClosed.test.ts',
+    pinnedTestEnv: true,
+    reason:
+      'Registered unit test for the media access relay. It names SUPABASE_URL only to SET it, to the hardcoded ' +
+      'literal "http://sb.example.test", and to restore whatever was there afterwards — mediaAccess builds a ' +
+      'storage URL out of that variable, so the test has to give it one to assert on. It constructs NO client: ' +
+      'it calls createClient nowhere, and injects its fakes through _setTestServiceClient. That in-file ' +
+      'override is a STRONGER pin than the CI one, in the same way snapshotFreshnessGuard.test.ts is: it moves ' +
+      'with the file rather than with package.json, and it cannot inherit whatever an operator .env names ' +
+      'because it overwrites it. pinnedTestEnv is set because CI invokes it and the CI-surface rule requires ' +
+      'the flag of any exemption CI runs; the loopback pin is the weaker of the two. EXEMPTION MEANS ' +
+      'UNGUARDED, NOT SAFE — if this file is ever changed to construct a client, the exemption is void.',
+  },
+
+  {
     file: 'src/test/notificationIssuance.test.ts',
     pinnedTestEnv: true,
     reason:
