@@ -196,8 +196,12 @@ BEGIN
   END IF;
 
   -- 1. No relation in public still grants any of the four to anon or
-  --    authenticated. spatial_ref_sys is excluded BY NAME because it is owned by
-  --    supabase_admin and is unreachable from this migration (see header).
+  --    authenticated, EXCLUDING extension-owned relations -- see the predicate
+  --    below for why that is the right exclusion and not a convenience.
+  --    (This comment previously said "spatial_ref_sys is excluded BY NAME",
+  --    which described the first draft. The draft was wrong: PostGIS owns
+  --    three, not one, and naming them would have to be redone for the next
+  --    extension.)
   SELECT count(*), string_agg(rel, ', ' ORDER BY rel)
     INTO v_offending, v_names
     FROM (
