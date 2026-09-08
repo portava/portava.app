@@ -367,7 +367,13 @@ export const STATE_MACHINES: readonly StateMachineEntry[] = [
         from: ["draft"],
         to: "open",
         classification: "REACHABLE",
-        writer: { file: "routes/events.ts", evidence: ['.update({ state: "open", updated_at: new Date().toISOString() })'] },
+        writer: {
+          file: "routes/events.ts",
+          // POST /events/:id/publish. The writer moved into writeEventState, so the
+          // pin is the CALL SITE, quoted contiguously: it names the target state and
+          // the state it was read from, which is what the transition is.
+          evidence: ['const publishWrite = await writeEventState(sc, id, (ev as any).state, "open");'],
+        },
       },
       {
         from: ["open", "waitlist"],
@@ -375,7 +381,15 @@ export const STATE_MACHINES: readonly StateMachineEntry[] = [
         classification: "REACHABLE",
         writer: {
           file: "routes/events.ts",
-          evidence: ['newState = (ev as any).waitlist_enabled ? "waitlist" : "full";', 'await sc.from("events").update({ state: newState'],
+          // SHARED CALL SITE, STATED: syncEventState computes `newState` and performs
+          // -> full, -> waitlist AND -> open through the same writeEventState call, so
+          // all three transitions pin the same block. The evidence is ONE contiguous
+          // quotation that both computes and writes the state: two separate evidence
+          // fragments can each be satisfied by unrelated text elsewhere in the file
+          // and prove nothing together.
+          evidence: [
+            '  let newState: EventState = current as EventState;\n  if (going >= maxAttendees) {\n    newState = (ev as any).waitlist_enabled ? "waitlist" : "full";\n  } else if (["full", "waitlist"].includes(current) && !(await hasActiveWaitlistOffer(sc, eventId))) {\n    newState = "open";\n  }\n  if (newState !== current) await writeEventState(sc, eventId, current, newState);',
+          ],
         },
       },
       {
@@ -384,14 +398,21 @@ export const STATE_MACHINES: readonly StateMachineEntry[] = [
         classification: "REACHABLE",
         writer: {
           file: "routes/events.ts",
-          evidence: ['newState = (ev as any).waitlist_enabled ? "waitlist" : "full";', 'await sc.from("events").update({ state: newState'],
+          evidence: [
+            '  let newState: EventState = current as EventState;\n  if (going >= maxAttendees) {\n    newState = (ev as any).waitlist_enabled ? "waitlist" : "full";\n  } else if (["full", "waitlist"].includes(current) && !(await hasActiveWaitlistOffer(sc, eventId))) {\n    newState = "open";\n  }\n  if (newState !== current) await writeEventState(sc, eventId, current, newState);',
+          ],
         },
       },
       {
         from: ["full", "waitlist"],
         to: "open",
         classification: "REACHABLE",
-        writer: { file: "routes/events.ts", evidence: ['newState = "open";'] },
+        writer: {
+          file: "routes/events.ts",
+          evidence: [
+            '  let newState: EventState = current as EventState;\n  if (going >= maxAttendees) {\n    newState = (ev as any).waitlist_enabled ? "waitlist" : "full";\n  } else if (["full", "waitlist"].includes(current) && !(await hasActiveWaitlistOffer(sc, eventId))) {\n    newState = "open";\n  }\n  if (newState !== current) await writeEventState(sc, eventId, current, newState);',
+          ],
+        },
       },
       {
         from: ["open", "full", "waitlist"],
@@ -418,10 +439,11 @@ export const STATE_MACHINES: readonly StateMachineEntry[] = [
         classification: "OWNER_BLOCKED",
         writer: {
           file: "routes/events.ts",
-          evidence: [
-            'if ((ev as any).state !== "started") {',
-            '.update({ state: "completed", updated_at: new Date().toISOString() })',
-          ],
+          // POST /events/:id/complete. One contiguous quotation of the call site.
+          // The route ALSO still refuses a non-`started` event before reaching it,
+          // and decideEventTransition refuses open|draft|... -> completed, so the
+          // precondition is now asserted in two independent places.
+          evidence: ['const completeWrite = await writeEventState(sc, id, (ev as any).state, "completed");'],
         },
         reason:
           "The route exists, is host-gated and is correct; its precondition is a state that no reachable " +
@@ -432,19 +454,48 @@ export const STATE_MACHINES: readonly StateMachineEntry[] = [
         from: ["draft", "open", "full", "waitlist", "started", "completed"],
         to: "cancelled",
         classification: "REACHABLE",
-        writer: { file: "routes/events.ts", evidence: ['.update({ state: "cancelled", updated_at: new Date().toISOString() })'] },
+        writer: {
+          file: "routes/events.ts",
+          // POST /events/:id/cancel. DELETE /events/:id is a second, identically
+          // shaped call site (`const delWrite = await writeEventState(sc, id,
+          // priorState, "cancelled");`) — one pin is quoted, both go through the
+          // same authority.
+          evidence: ['const cancelWrite = await writeEventState(sc, id, priorState, "cancelled");'],
+        },
+        // STALE IN ONE ENTRY, deliberately: `completed` is listed here because the pre-authority
+        // cancel route accepted any state but `cancelled`. decideEventTransition
+        // (lib/eventLifecycle.ts) now REFUSES completed -> cancelled — an event that already
+        // happened cannot be un-happened, and cancelling one pushed \ to the people who attended
+        // it. Removing `completed` from this list is a registry `from` edit, which this lane was
+        // not granted; it is reported to the owner instead of made silently.
       },
       {
         from: ["open", "full", "waitlist"],
         to: "draft",
         classification: "REACHABLE",
-        writer: { file: "routes/events.ts", evidence: ['.update({ state: "draft", updated_at: new Date().toISOString() })'] },
+        writer: {
+          file: "routes/events.ts",
+          evidence: ['const postponeWrite = await writeEventState(sc, id, (ev as any).state, "draft");'],
+        },
+        // UNDERSTATED, pre-existing: POST /events/:id/postpone refuses only
+        // cancelled|archived|completed, so started -> draft was already reachable before the
+        // transition authority existed and the table preserves it. Whether postponing an
+        // IN-PROGRESS event should be possible at all is an open question — it is also the one
+        // way a host leaves a started event without the host-cancel trust charge
+        // (EVENT_HOST_CANCEL_TRIGGER_STATES includes `started`, postponing does not fire it).
+        // Reported rather than changed: it is a `from` edit and a product call.
       },
       {
         from: ["draft", "open", "full", "waitlist", "started", "completed", "cancelled"],
         to: "archived",
         classification: "REACHABLE",
-        writer: { file: "routes/events.ts", evidence: ['.update({ state: "archived", updated_at: new Date().toISOString() })'] },
+        writer: {
+          file: "routes/events.ts",
+          // POST /events/:id/archive. This route previously read NO state and
+          // discarded its UPDATE's `.error`, so a refused archive answered
+          // {ok:true}; it now reads first and goes through the authority.
+          evidence: ['const archiveWrite = await writeEventState(sc, id, (archEv as any).state, "archived");'],
+        },
       },
     ],
   },

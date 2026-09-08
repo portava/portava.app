@@ -548,29 +548,58 @@ async function syncEventState(sc: any, eventId: string): Promise<void> {
   if (!maxAttendees) return; // unlimited
 
   const going = await getGoingCount(sc, eventId);
+  const current = String((ev as any).state ?? "");
 
-  let newState: string = (ev as any).state;
+  // The capacity cycle. Reopening only happens when there is no active waitlist
+  // offer — that slot is RESERVED for the offer holder, and hasActiveWaitlistOffer
+  // answers `true` when it cannot read, so an outage keeps the reservation.
+  //
+  // The write goes through the transition authority like every other writer, and
+  // is conditional on `current`: a `full` event that was cancelled between the
+  // read above and this write must not be resurrected as `open`.
+  //
+  // REGISTRY NOTE: this ONE call site performs three EVENTS_STATE transitions —
+  // -> full, -> waitlist and -> open — because `newState` is computed. The
+  // state-machine registry pins all three to the contiguous block below and says
+  // so in each entry; there is no separate site to point at.
+  let newState: EventState = current as EventState;
   if (going >= maxAttendees) {
     newState = (ev as any).waitlist_enabled ? "waitlist" : "full";
-  } else if (["full", "waitlist"].includes((ev as any).state)) {
-    // Only reopen if there is no active waitlist offer — the slot is reserved for that user
-    const offerActive = await hasActiveWaitlistOffer(sc, eventId);
-    if (!offerActive) {
-      newState = "open";
-    }
+  } else if (["full", "waitlist"].includes(current) && !(await hasActiveWaitlistOffer(sc, eventId))) {
+    newState = "open";
   }
-
-  if (newState !== (ev as any).state) {
-    // Through the authority like every other writer: the capacity cycle is a
-    // transition, and a `full` event that was cancelled between the read above
-    // and this write must not be resurrected as `open`.
-    await writeEventState(sc, eventId, (ev as any).state, newState as EventState);
-  }
+  if (newState !== current) await writeEventState(sc, eventId, current, newState);
 }
 
-/** Promote next waitlisted user — give 24h to accept */
-async function promoteNextWaitlisted(sc: any, eventId: string): Promise<void> {
-  const { data: next } = await sc
+/**
+ * Outcome of trying to hand the freed seat to the next person in the queue.
+ *
+ * `stranded` (the queue is readable and empty) and `unreadable` (the queue
+ * could not be read) are DELIBERATELY different. They were the same value: the
+ * queue read discarded `error`, and supabase-js RESOLVES on a database error,
+ * so an unreadable event_waitlist answered "nobody is waiting" and the seat was
+ * written off in silence.
+ */
+type PromoteOutcome =
+  | { outcome: "promoted"; userId: string }
+  | { outcome: "stranded" }
+  | { outcome: "unreadable"; message: string }
+  | { outcome: "contended" }
+  | { outcome: "write_failed"; message: string };
+
+/**
+ * Promote next waitlisted user — give 24h to accept.
+ *
+ * The UPDATE re-asserts `offer_expires_at IS NULL` and `.select()`s, so:
+ *   • two concurrent cancellations that both read the SAME next-in-queue user
+ *     cannot both claim to have promoted them — the loser matches zero rows and
+ *     is reported `contended`, instead of one seat quietly disappearing;
+ *   • a write the database refuses is `write_failed`, not a silent success.
+ * The push is sent only when a row really moved: telling someone "you have 24
+ * hours to accept" when they hold no offer is worse than saying nothing.
+ */
+async function promoteNextWaitlisted(sc: any, eventId: string, req?: any): Promise<PromoteOutcome> {
+  const { data: next, error: readErr } = await sc
     .from("event_waitlist")
     .select("user_id")
     .eq("event_id", eventId)
@@ -578,28 +607,45 @@ async function promoteNextWaitlisted(sc: any, eventId: string): Promise<void> {
     .order("position", { ascending: true })
     .limit(1)
     .maybeSingle();
-  if (!next) return;
+  if (readErr) {
+    req?.log?.warn?.({ err: readErr, eventId }, "waitlist queue unreadable — seat not offered, not written off");
+    return { outcome: "unreadable", message: String(readErr.message ?? readErr) };
+  }
+  if (!next) return { outcome: "stranded" };
 
+  const userId = (next as any).user_id as string;
   const offerExpiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
-  await sc
+  const { data: claimed, error: updErr } = await sc
     .from("event_waitlist")
     .update({ offer_expires_at: offerExpiresAt })
     .eq("event_id", eventId)
-    .eq("user_id", (next as any).user_id);
+    .eq("user_id", userId)
+    .is("offer_expires_at", null)
+    .select("user_id");
+  if (updErr) {
+    req?.log?.warn?.({ err: updErr, eventId, userId }, "waitlist promotion write failed — seat not offered");
+    return { outcome: "write_failed", message: String(updErr.message ?? updErr) };
+  }
+  if (!Array.isArray(claimed) || claimed.length === 0) {
+    // Someone else offered this seat between the read and the write.
+    req?.log?.info?.({ eventId, userId }, "waitlist promotion lost a race — no second offer issued");
+    return { outcome: "contended" };
+  }
 
-  // Notify them
+  // Notify them — only now, because only now do they actually hold the offer.
   const { data: profile } = await sc
     .from("profiles")
     .select("expo_push_token")
-    .eq("id", (next as any).user_id)
+    .eq("id", userId)
     .maybeSingle();
   if ((profile as any)?.expo_push_token) {
     await sendPushWithRetry(
       sc,
-      { userId: (next as any).user_id, tokens: [(profile as any).expo_push_token] },
+      { userId, tokens: [(profile as any).expo_push_token] },
       { title: "A spot opened up!", body: "You're next on the waitlist. You have 24 hours to accept." },
     );
   }
+  return { outcome: "promoted", userId };
 }
 
 // ── Shared eligibility check ──────────────────────────────────────────────────
@@ -2907,7 +2953,7 @@ router.delete("/events/:id/rsvp", async (req, res) => {
   if ((existing as any).status === "going") {
     const waitlistEnabled = await isFlagEnabled(sc, "events_waitlist_enabled");
     if (waitlistEnabled) {
-      await promoteNextWaitlisted(sc, id);
+      await promoteNextWaitlisted(sc, id, req);
     }
   }
   await syncEventState(sc, id);
@@ -3036,7 +3082,7 @@ router.post("/events/:id/leave", async (req, res) => {
   // offer (see DELETE /rsvp) — otherwise syncEventState reopens to a walk-in.
   if ((existing as any).status === "going") {
     const waitlistEnabled = await isFlagEnabled(sc, "events_waitlist_enabled");
-    if (waitlistEnabled) await promoteNextWaitlisted(sc, id);
+    if (waitlistEnabled) await promoteNextWaitlisted(sc, id, req);
   }
   await syncEventState(sc, id);
 
@@ -3200,7 +3246,7 @@ router.post("/events/:id/waitlist/accept", async (req, res) => {
     // Nulling offer_expires_at would cause promoteNextWaitlisted to re-offer
     // this same user (it queries IS NULL), so we delete instead.
     await sc.from("event_waitlist").delete().eq("event_id", id).eq("user_id", user.id);
-    await promoteNextWaitlisted(sc, id);
+    await promoteNextWaitlisted(sc, id, req);
     sendError(res, "forbidden", "Your spot offer has expired"); return;
   }
 
@@ -3219,7 +3265,7 @@ router.post("/events/:id/waitlist/accept", async (req, res) => {
   if (!acceptVis.ok) {
     // Remove them from the queue so the seat can go to an eligible member.
     await sc.from("event_waitlist").delete().eq("event_id", id).eq("user_id", user.id);
-    await promoteNextWaitlisted(sc, id);
+    await promoteNextWaitlisted(sc, id, req);
     sendError(res, "forbidden", acceptVis.message); return;
   }
   const maxAtt = (evCapCheck as any)?.max_attendees ?? null;
@@ -3228,7 +3274,7 @@ router.post("/events/:id/waitlist/accept", async (req, res) => {
     if (currentGoing >= maxAtt) {
       // Slot was taken — expire this offer and promote the next person
       await sc.from("event_waitlist").update({ offer_expires_at: null }).eq("event_id", id).eq("user_id", user.id);
-      await promoteNextWaitlisted(sc, id);
+      await promoteNextWaitlisted(sc, id, req);
       sendError(res, "forbidden", "This spot was filled before you accepted. You have been returned to the waitlist queue."); return;
     }
   }
@@ -5044,7 +5090,7 @@ router.delete("/events/:id/attendees/:userId", async (req, res) => {
   // Promote BEFORE syncing state so the freed seat is reserved by an active
   // offer (see DELETE /rsvp) — otherwise syncEventState reopens to a walk-in.
   const waitlistEnabled = await isFlagEnabled(sc, "events_waitlist_enabled");
-  if (waitlistEnabled) await promoteNextWaitlisted(sc, id);
+  if (waitlistEnabled) await promoteNextWaitlisted(sc, id, req);
   await syncEventState(sc, id);
 
   const { data: ev } = await sc.from("events").select("chat_thread_id").eq("id", id).maybeSingle();

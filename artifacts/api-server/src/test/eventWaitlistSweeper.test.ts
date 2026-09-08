@@ -1,423 +1,405 @@
 /**
- * Unit tests for eventWaitlistSweeper.ts
+ * eventWaitlistSweeper — the freed seat, and the three reads that could not say
+ * they had failed.
  *
- * Covers:
- *   S1: skips when no service client is available
- *   S2: no-op when there are no expired offers
- *   S3: deletes expired offer holders and promotes the next user
- *   S4: does not crash when there is no next user to promote (end of queue)
- *   S5: processes multiple events in a single sweep pass
- *   S6: continues processing remaining events when one event delete fails
- *   S7: records lastRunAt and lastExpiredCount in status after a successful sweep
- *   S8: increments consecutiveFailures when the initial select errors
- *   S9: promotes next user with a 24h offer window (offer_expires_at in the future)
+ * ── WHY THIS FILE WAS REWRITTEN ──────────────────────────────────────────────
+ * The previous version drove a fake whose chain returned a fixed fixture and
+ * whose `deleteError` / `updateError` knobs were WIRED BUT NEVER ASSERTED ON,
+ * because the sweeper discarded those errors and the fake had no table to
+ * disagree with. So "the delete failed" and "the delete succeeded" produced
+ * byte-identical passes, which is precisely the defect the file was supposed to
+ * be watching.
  *
- * Runtime: node:test + node:assert/strict
- * Run: node --import tsx/esm --test src/test/eventWaitlistSweeper.test.ts
+ * The fake here is a real in-memory `event_waitlist`: `.eq/.in/.is/.lt/.not`
+ * filter rows, DELETE removes them, UPDATE mutates them, and both return the
+ * rows they ACTUALLY touched when `.select()` is chained — exactly as postgrest
+ * does. That is what makes the double-promotion case below expressible at all:
+ * the second pass reads whatever the first pass really left behind.
+ *
+ * ── WHAT IS PROVEN ───────────────────────────────────────────────────────────
+ *   • the writes are ISSUED (the request counter is asserted non-zero — a
+ *     PostgrestBuilder is a thenable, and an un-awaited chain issues nothing);
+ *   • a failed DELETE frees NO seat and promotes NO ONE, and the expired rows
+ *     are still there afterwards (was: credited as cleared, then re-promoted on
+ *     every later sweep — one seat, unbounded promotions);
+ *   • an unreadable QUEUE is `unreadable`, distinct from `stranded`: "nobody is
+ *     waiting" and "the waitlist cannot be read" are different answers;
+ *   • a failed promotion UPDATE is `failed` and nobody holds an offer;
+ *   • two passes over the same table promote ONE user for ONE freed seat, and
+ *     two CONCURRENT passes do too;
+ *   • every count is asserted. A pass that processed zero rows fails the cases
+ *     that claim it processed some.
+ *
+ * Run: SUPABASE_URL=http://127.0.0.1:9 SUPABASE_SERVICE_ROLE_KEY=dummy \
+ *      node --import tsx/esm --test src/test/eventWaitlistSweeper.test.ts
  */
 
 import { describe, it, beforeEach } from "node:test";
 import assert from "node:assert/strict";
-import { runSweep, getSweepStatus, _resetStatus } from "../lib/eventWaitlistSweeper.js";
+import {
+  runSweep,
+  getSweepStatus,
+  _resetStatus,
+  OFFER_WINDOW_MS,
+} from "../lib/eventWaitlistSweeper.js";
 
-// ── Fake-client builder ────────────────────────────────────────────────────────
+// ── The table-backed fake ─────────────────────────────────────────────────────
 
-interface ExpiredRow { event_id: string; user_id: string }
-
-interface FakeClientConfig {
-  expiredRows?: ExpiredRow[];
-  initialError?: { message: string } | null;
-  deleteError?: { message: string } | null;
-  nextByEvent?: Record<string, { user_id: string } | null>;
-  updateError?: { message: string } | null;
-  throwOnInitialSelect?: boolean;
+interface WlRow {
+  event_id: string;
+  user_id: string;
+  position: number;
+  offer_expires_at: string | null;
 }
 
-/**
- * Build a minimal fake Supabase client that simulates the four query shapes
- * used by runSweep():
- *
- *   1. select expired: from("event_waitlist").select(...).not(...).lt(...)
- *      → resolves array via thenable
- *
- *   2. delete expired: from("event_waitlist").delete().eq(...).in(...)
- *      → resolves via thenable
- *
- *   3. find next: from("event_waitlist").select(...).eq(...).is(...).order(...).limit(1).maybeSingle()
- *      → resolves via maybeSingle()
- *
- *   4. update next: from("event_waitlist").update({...}).eq(...).eq(...)
- *      → resolves via thenable
- */
-function makeClient(cfg: FakeClientConfig = {}): any {
-  const {
-    expiredRows   = [],
-    initialError  = null,
-    deleteError   = null,
-    nextByEvent   = {},
-    updateError   = null,
-    throwOnInitialSelect = false,
-  } = cfg;
+interface FakeCfg {
+  /** Ops that resolve with `{data:null,error}` — the RESOLVED failure supabase-js really produces. */
+  fail?: Partial<Record<"select" | "delete" | "update", boolean>>;
+  /** The initial expired-offer select THROWS rather than resolving. */
+  throwOnSelect?: boolean;
+  /** Fail only the queue (`IS NULL`) select, not the initial expired select. */
+  failQueueSelect?: boolean;
+}
 
-  // Track which updates were applied so tests can assert on them
-  const updates: Array<{ event_id: string; user_id: string; patch: Record<string, unknown> }> = [];
-  const deletes: Array<{ event_id: string; user_ids: string[] }> = [];
-
-  return {
-    _updates: updates,
-    _deletes: deletes,
-
+function makeClient(rows: WlRow[], cfg: FakeCfg = {}) {
+  const counts = { select: 0, delete: 0, update: 0 };
+  const client = {
+    _rows: rows,
+    _counts: counts,
     from(_table: string) {
-      // Mutable state accumulated as the chain is built
       let op: "select" | "delete" | "update" = "select";
-      let capturedEventId: string | null = null;
-      let capturedUserIds: string[] = [];
-      let capturedUserId: string | null = null;
-      let capturedPatch: Record<string, unknown> = {};
-      let usedIs = false; // find-next select filters on offer_expires_at IS NULL
+      let patch: Record<string, unknown> = {};
+      let usedIsNull = false;
+      let limitN: number | null = null;
+      let ordered = false;
+      const filters: Array<(r: WlRow) => boolean> = [];
 
-      // Next-eligible users for an event, normalised to an array (a fixture may
-      // supply a single {user_id} or an array to promote several in one sweep).
-      const nextRowsFor = (eventId: string | null): Array<{ user_id: string }> => {
-        const nx = eventId !== null ? nextByEvent[eventId] : null;
-        return Array.isArray(nx) ? nx : nx ? [nx] : [];
-      };
-
-      const builder: any = {
-        select() { op = "select"; return builder; },
-        delete() { op = "delete"; return builder; },
-        update(patch: Record<string, unknown>) {
-          op = "update";
-          capturedPatch = patch;
-          return builder;
+      const b: any = {
+        select() { if (op === "select") op = "select"; return b; },
+        delete() { op = "delete"; return b; },
+        update(p: Record<string, unknown>) { op = "update"; patch = p; return b; },
+        eq(c: string, v: any) { filters.push((r) => (r as any)[c] === v); return b; },
+        in(c: string, v: any[]) { filters.push((r) => v.includes((r as any)[c])); return b; },
+        is(c: string, v: any) {
+          if (c === "offer_expires_at" && v === null) usedIsNull = true;
+          filters.push((r) => ((r as any)[c] ?? null) === v);
+          return b;
         },
-        not() { return builder; },
-        lt()  { return builder; },
-        is()  { usedIs = true; return builder; },
-        order() { return builder; },
-        limit() { return builder; },
-        eq(col: string, val: string) {
-          if (col === "event_id") capturedEventId = val;
-          if (col === "user_id")  capturedUserId  = val;
-          return builder;
+        not(c: string, _op: string, v: any) { filters.push((r) => ((r as any)[c] ?? null) !== v); return b; },
+        lt(c: string, v: any) {
+          filters.push((r) => (r as any)[c] !== null && String((r as any)[c]) < String(v));
+          return b;
         },
-        in(col: string, vals: string[]) {
-          if (col === "user_id") capturedUserIds = vals;
-          return builder;
-        },
-
-        // Legacy single-promote shape (kept for back-compat; unused by the
-        // multi-promote sweeper, which awaits .limit(N) directly).
-        maybeSingle(): Promise<{ data: { user_id: string } | null; error: null }> {
-          return Promise.resolve({ data: nextRowsFor(capturedEventId)[0] ?? null, error: null });
-        },
-
-        // All other operations resolved as a thenable (awaited as a Promise)
-        then(onFulfilled: any, onRejected: any) {
-          if (op === "select") {
-            if (throwOnInitialSelect) {
-              return Promise.reject(new Error("DB error")).then(onFulfilled, onRejected);
-            }
-            // The find-next select uses IS NULL; the initial expired select does not.
-            if (usedIs) {
-              return Promise.resolve({ data: nextRowsFor(capturedEventId), error: null }).then(onFulfilled, onRejected);
-            }
-            return Promise.resolve({ data: expiredRows, error: initialError }).then(onFulfilled, onRejected);
+        order() { ordered = true; return b; },
+        limit(n: number) { limitN = n; return b; },
+        then(onF: any, onR: any) {
+          counts[op] += 1;
+          const failed =
+            (op === "select" && cfg.throwOnSelect) ? "throw" :
+            (op === "select" && cfg.failQueueSelect && usedIsNull) ? "error" :
+            (cfg.fail?.[op] && !(op === "select" && cfg.failQueueSelect)) ? "error" :
+            null;
+          if (failed === "throw") return Promise.reject(new Error("DB error")).then(onF, onR);
+          if (failed === "error") {
+            return Promise.resolve({ data: null, error: { message: `${op} failed` }, count: null }).then(onF, onR);
           }
+
+          let hit = rows.filter((r) => filters.every((f) => f(r)));
+          if (ordered) hit = [...hit].sort((a, z) => a.position - z.position);
+          if (limitN !== null) hit = hit.slice(0, limitN);
+
           if (op === "delete") {
-            if (capturedEventId !== null) {
-              deletes.push({ event_id: capturedEventId, user_ids: capturedUserIds });
+            for (const r of hit) {
+              const i = rows.indexOf(r);
+              if (i >= 0) rows.splice(i, 1);
             }
-            return Promise.resolve({ data: null, error: deleteError }).then(onFulfilled, onRejected);
+          } else if (op === "update") {
+            for (const r of hit) Object.assign(r, patch);
           }
-          // update — records one entry per promoted user (promotion now uses
-          // .in(user_id, [...]); a single .eq() still works via the fallback).
-          const uids = capturedUserIds.length ? capturedUserIds : capturedUserId ? [capturedUserId] : [];
-          if (capturedEventId !== null) {
-            for (const uid of uids) updates.push({ event_id: capturedEventId, user_id: uid, patch: capturedPatch });
-          }
-          return Promise.resolve({ data: null, error: updateError }).then(onFulfilled, onRejected);
+          // postgrest returns the touched rows only because `.select()` was
+          // chained; the sweeper depends on that to know what it really changed.
+          return Promise.resolve({ data: hit.map((r) => ({ ...r })), error: null, count: hit.length })
+            .then(onF, onR);
         },
       };
-      return builder;
+      return b;
     },
   };
+  return client;
 }
 
-// ── Status reset between tests ─────────────────────────────────────────────────
+const PAST   = new Date(Date.now() - 3_600_000).toISOString();
+const FUTURE = new Date(Date.now() + 3_600_000).toISOString();
 
-beforeEach(() => {
-  _resetStatus();
-});
+function seat(event_id: string, user_id: string, position: number, offer: string | null): WlRow {
+  return { event_id, user_id, position, offer_expires_at: offer };
+}
+
+beforeEach(() => { _resetStatus(); });
 
 // ══════════════════════════════════════════════════════════════════════════════
-// S1: no client → skips gracefully
+// Baseline behaviour
 // ══════════════════════════════════════════════════════════════════════════════
 
-describe("S1: skips when no client is provided", () => {
-  it("resolves without throwing when client is undefined", async () => {
-    // Pass no opts → falls back to getServiceClient() which returns null in test env
-    // We can also pass null explicitly via opts.client = null
-    await assert.doesNotReject(runSweep({ client: null }));
-
-    const s = getSweepStatus();
-    assert.equal(s.lastRunAt, null, "lastRunAt should remain null");
-    assert.equal(s.consecutiveFailures, 0);
+describe("no client", () => {
+  it("skips with reason no_client and touches nothing", async () => {
+    const r = await runSweep({ client: null });
+    assert.equal(r.skipped, true);
+    assert.equal(r.reason, "no_client");
+    assert.equal(r.scanned, 0);
+    assert.equal(getSweepStatus().lastRunAt, null);
+    assert.equal(getSweepStatus().consecutiveFailures, 0);
   });
 });
 
-// ══════════════════════════════════════════════════════════════════════════════
-// S2: no expired offers → quiet no-op
-// ══════════════════════════════════════════════════════════════════════════════
-
-describe("S2: no-op when there are no expired offers", () => {
-  it("resolves cleanly and records lastRunAt", async () => {
-    const client = makeClient({ expiredRows: [] });
-    const before = Date.now();
-    await runSweep({ client });
-    const after = Date.now();
-
-    const s = getSweepStatus();
-    assert.ok(s.lastRunAt !== null, "lastRunAt should be set");
-    const ts = new Date(s.lastRunAt!).getTime();
-    assert.ok(ts >= before && ts <= after, "lastRunAt should be within test window");
-    assert.equal(s.lastExpiredCount, 0);
-    assert.equal(s.consecutiveFailures, 0);
-    assert.equal(client._deletes.length, 0, "no deletes should occur");
-    assert.equal(client._updates.length, 0, "no updates should occur");
-  });
-});
-
-// ══════════════════════════════════════════════════════════════════════════════
-// S3: expired offer exists, next user in queue → delete + promote
-// ══════════════════════════════════════════════════════════════════════════════
-
-describe("S3: deletes expired offer holder and promotes next user", () => {
-  it("deletes the expired holder and sets offer_expires_at on the next user", async () => {
-    const EVENT = "evt-aaa";
-    const EXPIRED_USER = "user-expired";
-    const NEXT_USER = "user-next";
-
-    const client = makeClient({
-      expiredRows: [{ event_id: EVENT, user_id: EXPIRED_USER }],
-      nextByEvent: { [EVENT]: { user_id: NEXT_USER } },
-    });
-
-    const before = Date.now();
-    await runSweep({ client });
-
-    // expired holder was deleted
-    assert.equal(client._deletes.length, 1);
-    assert.equal(client._deletes[0]!.event_id, EVENT);
-    assert.deepEqual(client._deletes[0]!.user_ids, [EXPIRED_USER]);
-
-    // next user was promoted
-    assert.equal(client._updates.length, 1);
-    const upd = client._updates[0]!;
-    assert.equal(upd.event_id, EVENT);
-    assert.equal(upd.user_id, NEXT_USER);
-    assert.ok("offer_expires_at" in upd.patch, "patch must include offer_expires_at");
-
-    // offer must be ~24h in the future
-    const offerTs = new Date(upd.patch["offer_expires_at"] as string).getTime();
-    const expectedMin = before + 23 * 60 * 60 * 1_000;
-    const expectedMax = Date.now() + 25 * 60 * 60 * 1_000;
-    assert.ok(offerTs >= expectedMin, "offer_expires_at should be at least 23h from now");
-    assert.ok(offerTs <= expectedMax, "offer_expires_at should not be more than 25h from now");
-
-    const s = getSweepStatus();
-    assert.equal(s.lastExpiredCount, 1);
-    assert.equal(s.consecutiveFailures, 0);
-  });
-
-  it("promotes ALL freed slots when several offers expire for one event in a sweep", async () => {
-    const EVENT = "evt-multi";
-    const client = makeClient({
-      // two offers expired for the same event → two seats freed
-      expiredRows: [
-        { event_id: EVENT, user_id: "exp-1" },
-        { event_id: EVENT, user_id: "exp-2" },
-      ],
-      // two next-in-queue users must BOTH be promoted (regression: only one was)
-      nextByEvent: { [EVENT]: [{ user_id: "next-1" }, { user_id: "next-2" }] },
-    });
-
-    await runSweep({ client });
-
-    assert.equal(client._deletes.length, 1);
-    assert.deepEqual(client._deletes[0]!.user_ids, ["exp-1", "exp-2"]);
-    assert.equal(client._updates.length, 2, "both freed slots promoted, not just one");
-    assert.deepEqual(client._updates.map((u) => u.user_id).sort(), ["next-1", "next-2"]);
-    assert.equal(getSweepStatus().lastExpiredCount, 2);
-  });
-});
-
-// ══════════════════════════════════════════════════════════════════════════════
-// S4: expired offer, no next user → delete only, no update
-// ══════════════════════════════════════════════════════════════════════════════
-
-describe("S4: no next user in queue — delete only", () => {
-  it("deletes expired holder but does not call update", async () => {
-    const EVENT = "evt-bbb";
-
-    const client = makeClient({
-      expiredRows: [{ event_id: EVENT, user_id: "user-expired" }],
-      nextByEvent: { [EVENT]: null }, // queue is empty
-    });
-
-    await runSweep({ client });
-
-    assert.equal(client._deletes.length, 1, "should delete expired holder");
-    assert.equal(client._updates.length, 0, "no update when queue is exhausted");
-
-    const s = getSweepStatus();
-    assert.equal(s.lastExpiredCount, 1);
-  });
-});
-
-// ══════════════════════════════════════════════════════════════════════════════
-// S5: multiple events in one sweep
-// ══════════════════════════════════════════════════════════════════════════════
-
-describe("S5: processes multiple events in one sweep pass", () => {
-  it("handles two events independently", async () => {
-    const EA = "evt-aaa";
-    const EB = "evt-bbb";
-    const NEXT_A = "user-next-a";
-
-    const client = makeClient({
-      expiredRows: [
-        { event_id: EA, user_id: "user-expired-a" },
-        { event_id: EB, user_id: "user-expired-b" },
-      ],
-      nextByEvent: {
-        [EA]: { user_id: NEXT_A },
-        [EB]: null, // EB queue exhausted
-      },
-    });
-
-    await runSweep({ client });
-
-    assert.equal(client._deletes.length, 2, "two delete calls (one per event)");
-    assert.equal(client._updates.length, 1, "one update (only EA has next user)");
-    assert.equal(client._updates[0]!.user_id, NEXT_A);
-
-    const s = getSweepStatus();
-    assert.equal(s.lastExpiredCount, 2);
-  });
-});
-
-// ══════════════════════════════════════════════════════════════════════════════
-// S6: one event delete fails — other events still processed
-// ══════════════════════════════════════════════════════════════════════════════
-
-describe("S6: continues after a per-event delete error", () => {
-  it("records an error for the failing event but still processes others", async () => {
-    // Only one event in this test; the sweeper catches the per-event error
-    // and increments _status only for top-level errors, not per-event ones.
-    // So after the sweep, lastRunAt should still be set and the top-level
-    // consecutiveFailures counter should NOT increment.
-    const EVENT = "evt-fail";
-
-    const client = makeClient({
-      expiredRows: [{ event_id: EVENT, user_id: "user-expired" }],
-      deleteError: { message: "deadlock" },
-      nextByEvent: { [EVENT]: { user_id: "user-next" } },
-    });
-
-    await assert.doesNotReject(runSweep({ client }));
-
-    // top-level sweep should still complete (no throw)
-    const s = getSweepStatus();
-    assert.ok(s.lastRunAt !== null, "lastRunAt set even when per-event delete fails");
-    // consecutiveFailures is for top-level errors only, not per-event
-    assert.equal(s.consecutiveFailures, 0);
-  });
-});
-
-// ══════════════════════════════════════════════════════════════════════════════
-// S7: status fields set correctly after success
-// ══════════════════════════════════════════════════════════════════════════════
-
-describe("S7: status fields reflect sweep outcome", () => {
-  it("lastRunAt, lastExpiredCount, consecutiveFailures all updated", async () => {
-    const client = makeClient({
-      expiredRows: [
-        { event_id: "evt-1", user_id: "u1" },
-        { event_id: "evt-1", user_id: "u2" },
-      ],
-      nextByEvent: { "evt-1": null },
-    });
-
-    const before = Date.now();
-    await runSweep({ client });
-    const after = Date.now();
-
+describe("nothing has expired", () => {
+  it("is a clean pass, NOT an error: reason null, scanned 0, zero writes", async () => {
+    const rows = [seat("e1", "u1", 1, FUTURE), seat("e1", "u2", 2, null)];
+    const c = makeClient(rows);
+    const r = await runSweep({ client: c });
+    assert.equal(r.skipped, false);
+    assert.equal(r.reason, null);
+    assert.deepEqual(
+      { scanned: r.scanned, cleared: r.cleared, promoted: r.promoted, failed: r.failed, unreadable: r.unreadable },
+      { scanned: 0, cleared: 0, promoted: 0, failed: 0, unreadable: 0 },
+    );
+    assert.equal(c._counts.delete, 0, "no delete may be issued");
+    assert.equal(c._counts.update, 0, "no update may be issued");
+    assert.equal(rows.length, 2, "no row may be touched");
     const s = getSweepStatus();
     assert.ok(s.lastRunAt !== null);
-    const ts = new Date(s.lastRunAt!).getTime();
-    assert.ok(ts >= before && ts <= after);
-    assert.equal(s.lastExpiredCount, 2);
     assert.equal(s.consecutiveFailures, 0);
   });
 });
 
-// ══════════════════════════════════════════════════════════════════════════════
-// S8: top-level DB error → consecutiveFailures increments
-// ══════════════════════════════════════════════════════════════════════════════
+describe("the ordinary case", () => {
+  it("frees the seat, promotes exactly one, and the WRITE IS ISSUED", async () => {
+    const rows = [seat("e1", "expired", 1, PAST), seat("e1", "next", 2, null), seat("e1", "after", 3, null)];
+    const c = makeClient(rows);
+    const before = Date.now();
+    const r = await runSweep({ client: c });
 
-describe("S8: top-level DB error increments consecutiveFailures", () => {
-  it("increments consecutiveFailures and does not set lastRunAt", async () => {
-    const client = makeClient({ throwOnInitialSelect: true });
+    assert.deepEqual(
+      { scanned: r.scanned, events: r.events, cleared: r.cleared, promoted: r.promoted, stranded: r.stranded, unreadable: r.unreadable, failed: r.failed },
+      { scanned: 1, events: 1, cleared: 1, promoted: 1, stranded: 0, unreadable: 0, failed: 0 },
+    );
+    // The counter, not the log line: a PostgrestBuilder is a thenable and an
+    // un-awaited chain issues no request at all.
+    assert.ok(c._counts.delete >= 1, "the DELETE must actually be issued");
+    assert.ok(c._counts.update >= 1, "the promotion UPDATE must actually be issued");
 
-    await assert.doesNotReject(runSweep({ client }));
+    // The table really moved.
+    assert.equal(rows.find((x) => x.user_id === "expired"), undefined, "the expired holder is gone");
+    const next = rows.find((x) => x.user_id === "next")!;
+    assert.ok(next.offer_expires_at, "the next in queue holds an offer");
+    const diff = new Date(next.offer_expires_at!).getTime() - before;
+    assert.ok(diff >= OFFER_WINDOW_MS - 5_000 && diff <= OFFER_WINDOW_MS + 5_000,
+      `offer window is ${diff}ms, expected ~${OFFER_WINDOW_MS}ms`);
+    // Queue order is respected: position 3 is not jumped ahead of position 2.
+    assert.equal(rows.find((x) => x.user_id === "after")!.offer_expires_at, null);
 
     const s = getSweepStatus();
-    assert.equal(s.consecutiveFailures, 1);
-    // lastRunAt stays null because the sweep did not complete successfully
-    assert.equal(s.lastRunAt, null);
+    assert.equal(s.lastExpiredCount, 1);
+    assert.equal(s.consecutiveFailures, 0);
   });
 
-  it("increments consecutiveFailures on each successive failure", async () => {
-    const client = makeClient({ throwOnInitialSelect: true });
+  it("promotes ALL the seats it freed, not just the first", async () => {
+    const rows = [
+      seat("e1", "exp-1", 1, PAST), seat("e1", "exp-2", 2, PAST),
+      seat("e1", "next-1", 3, null), seat("e1", "next-2", 4, null), seat("e1", "next-3", 5, null),
+    ];
+    const c = makeClient(rows);
+    const r = await runSweep({ client: c });
+    assert.equal(r.cleared, 2);
+    assert.equal(r.promoted, 2, "both freed seats promoted, not just one");
+    assert.deepEqual(
+      rows.filter((x) => x.offer_expires_at !== null).map((x) => x.user_id).sort(),
+      ["next-1", "next-2"],
+    );
+    assert.equal(rows.find((x) => x.user_id === "next-3")!.offer_expires_at, null,
+      "a third user must not be promoted for two seats");
+  });
 
-    await runSweep({ client });
-    await runSweep({ client });
+  it("processes several events independently in one pass", async () => {
+    const rows = [
+      seat("eA", "expA", 1, PAST), seat("eA", "nextA", 2, null),
+      seat("eB", "expB", 1, PAST),                                  // eB queue exhausted
+    ];
+    const r = await runSweep({ client: makeClient(rows) });
+    assert.equal(r.events, 2);
+    assert.equal(r.cleared, 2);
+    assert.equal(r.promoted, 1);
+    assert.equal(r.stranded, 1, "eB's freed seat is stranded, and is REPORTED as stranded");
+  });
 
-    const s = getSweepStatus();
-    assert.equal(s.consecutiveFailures, 2);
+  it("an exhausted queue is `stranded`, and no update is issued", async () => {
+    const rows = [seat("e1", "expired", 1, PAST)];
+    const c = makeClient(rows);
+    const r = await runSweep({ client: c });
+    assert.equal(r.cleared, 1);
+    assert.equal(r.promoted, 0);
+    assert.equal(r.stranded, 1);
+    assert.equal(r.unreadable, 0, "an EMPTY queue is not an UNREADABLE one");
+    assert.equal(c._counts.update, 0);
+    assert.equal(getSweepStatus().consecutiveFailures, 0, "an empty queue is not a failure");
   });
 });
 
 // ══════════════════════════════════════════════════════════════════════════════
-// S9: offer window is ~24h
+// The three discarded errors
 // ══════════════════════════════════════════════════════════════════════════════
 
-describe("S9: offer_expires_at is set approximately 24h from now", () => {
-  it("offer_expires_at is between 23.9h and 24.1h from call time", async () => {
-    const EVENT = "evt-window";
-    const client = makeClient({
-      expiredRows: [{ event_id: EVENT, user_id: "user-old" }],
-      nextByEvent: { [EVENT]: { user_id: "user-new" } },
-    });
+describe("the DELETE resolves with .error", () => {
+  it("frees NOTHING, promotes NO ONE, leaves the rows in place, and is counted a failure", async () => {
+    // supabase-js RESOLVES on a database error. The old code dropped this
+    // result entirely, credited itself with clearing the rows, and then
+    // promoted a user for a seat that was never freed.
+    const rows = [seat("e1", "expired", 1, PAST), seat("e1", "next", 2, null)];
+    const c = makeClient(rows, { fail: { delete: true } });
+    const r = await runSweep({ client: c });
 
-    const callTime = Date.now();
-    await runSweep({ client });
+    assert.equal(r.failed, 1);
+    assert.equal(r.cleared, 0, "a refused DELETE frees no seat");
+    assert.equal(r.promoted, 0, "and therefore entitles the pass to no promotion");
+    assert.equal(c._counts.update, 0, "no promotion write may even be ISSUED");
+    assert.ok(rows.find((x) => x.user_id === "expired"), "the expired row is still there");
+    assert.equal(rows.find((x) => x.user_id === "next")!.offer_expires_at, null,
+      "nobody may hold an offer for a seat that was never freed");
+    assert.equal(getSweepStatus().lastExpiredCount, 0, "the status must not claim rows it did not clear");
+    assert.equal(getSweepStatus().consecutiveFailures, 1,
+      "a pass in which every event failed is a failed pass");
+  });
 
-    assert.equal(client._updates.length, 1);
-    const offerTs = new Date(client._updates[0]!.patch["offer_expires_at"] as string).getTime();
+  it("REGRESSION: a permanently refused DELETE cannot promote a new user every sweep", async () => {
+    // The measured consequence of the discarded error. The expired row survives
+    // with a past offer_expires_at, so each later sweep saw it again, "cleared"
+    // it again, and promoted whoever was next — because the previously promoted
+    // user now had a non-null offer and the IS NULL query skipped them.
+    const rows = [
+      seat("e1", "expired", 1, PAST),
+      seat("e1", "next-1", 2, null), seat("e1", "next-2", 3, null), seat("e1", "next-3", 4, null),
+    ];
+    const c = makeClient(rows, { fail: { delete: true } });
+    for (let i = 0; i < 3; i++) await runSweep({ client: c });
+    const holders = rows.filter((x) => x.user_id.startsWith("next") && x.offer_expires_at !== null);
+    assert.equal(holders.length, 0,
+      `three sweeps over one un-deletable seat promoted ${holders.length} users`);
+    assert.equal(getSweepStatus().consecutiveFailures, 3);
+  });
+});
 
-    const diff = offerTs - callTime;
-    const H24_MS = 24 * 60 * 60 * 1_000;
-    const TOLERANCE_MS = 5_000; // 5 second tolerance
+describe("the QUEUE read resolves with .error", () => {
+  it("is `unreadable`, NOT `stranded` — the seat is retried, not written off", async () => {
+    // `error` was not destructured at all here, so "nobody is waiting" and "the
+    // waitlist is unreadable" were the same value and the seat vanished quietly.
+    const rows = [seat("e1", "expired", 1, PAST), seat("e1", "next", 2, null)];
+    const c = makeClient(rows, { failQueueSelect: true });
+    const r = await runSweep({ client: c });
 
-    assert.ok(
-      diff >= H24_MS - TOLERANCE_MS,
-      `offer window too short: ${diff}ms (expected ~${H24_MS}ms)`,
-    );
-    assert.ok(
-      diff <= H24_MS + TOLERANCE_MS,
-      `offer window too long: ${diff}ms (expected ~${H24_MS}ms)`,
-    );
+    assert.equal(r.unreadable, 1);
+    assert.equal(r.stranded, 0, "an unreadable queue must not be reported as an empty one");
+    assert.equal(r.promoted, 0);
+    assert.equal(c._counts.update, 0, "no promotion may be issued on an unreadable queue");
+    assert.equal(r.cleared, 1, "the delete DID succeed — the seat is genuinely free");
+    assert.equal(getSweepStatus().consecutiveFailures, 1,
+      "an unreadable waitlist is a failure the health surface must see");
+  });
+
+  it("the healthy twin: a readable EMPTY queue is not a failure", async () => {
+    // Without this, "always report unreadable" would pass the case above and
+    // make every exhausted queue look like an outage.
+    const rows = [seat("e1", "expired", 1, PAST)];
+    const r = await runSweep({ client: makeClient(rows) });
+    assert.equal(r.unreadable, 0);
+    assert.equal(r.stranded, 1);
+    assert.equal(getSweepStatus().consecutiveFailures, 0);
+  });
+});
+
+describe("the promotion UPDATE resolves with .error", () => {
+  it("is counted failed and nobody ends up holding an offer", async () => {
+    const rows = [seat("e1", "expired", 1, PAST), seat("e1", "next", 2, null)];
+    const c = makeClient(rows, { fail: { update: true } });
+    const r = await runSweep({ client: c });
+    assert.equal(r.failed, 1);
+    assert.equal(r.promoted, 0, "a refused write is not a promotion");
+    assert.ok(c._counts.update >= 1, "the write was issued — it is the RESULT that failed");
+    assert.equal(rows.find((x) => x.user_id === "next")!.offer_expires_at, null);
+    assert.equal(getSweepStatus().consecutiveFailures, 1);
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Idempotence and double-promotion
+// ══════════════════════════════════════════════════════════════════════════════
+
+describe("idempotence", () => {
+  it("a second pass over the same table scans nothing and writes nothing", async () => {
+    const rows = [seat("e1", "expired", 1, PAST), seat("e1", "next", 2, null), seat("e1", "after", 3, null)];
+    const c = makeClient(rows);
+    const first = await runSweep({ client: c });
+    assert.equal(first.promoted, 1);
+    const deletesAfterFirst = c._counts.delete;
+    const updatesAfterFirst = c._counts.update;
+
+    const second = await runSweep({ client: c });
+    assert.equal(second.scanned, 0, "the promoted user's offer is in the FUTURE — nothing is due");
+    assert.equal(second.promoted, 0);
+    assert.equal(c._counts.delete, deletesAfterFirst, "no further delete issued");
+    assert.equal(c._counts.update, updatesAfterFirst, "no further promotion issued");
+    assert.equal(rows.find((x) => x.user_id === "after")!.offer_expires_at, null,
+      "one seat, one promotion, across two passes");
+  });
+
+  it("two CONCURRENT passes over one freed seat promote exactly one user", async () => {
+    // Both passes read the same expired row. The DELETE decides: the loser
+    // removes zero rows, so it is entitled to zero promotions.
+    const rows = [
+      seat("e1", "expired", 1, PAST),
+      seat("e1", "next-1", 2, null), seat("e1", "next-2", 3, null),
+    ];
+    const c = makeClient(rows);
+    const [a, b] = await Promise.all([runSweep({ client: c }), runSweep({ client: c })]);
+    assert.equal(a.cleared + b.cleared, 1, "only one pass may free the seat");
+    assert.equal(a.promoted + b.promoted, 1, "one seat must yield exactly one promotion");
+    assert.equal(rows.filter((x) => x.offer_expires_at !== null).length, 1);
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// The top-level read
+// ══════════════════════════════════════════════════════════════════════════════
+
+describe("the expired-offer read fails", () => {
+  it("throws → reason error, no writes, consecutiveFailures increments", async () => {
+    const rows = [seat("e1", "expired", 1, PAST)];
+    const c = makeClient(rows, { throwOnSelect: true });
+    const r = await runSweep({ client: c });
+    assert.equal(r.reason, "error");
+    assert.equal(r.scanned, 0);
+    assert.equal(c._counts.delete, 0);
+    assert.equal(c._counts.update, 0);
+    assert.equal(rows.length, 1, "nothing may be touched when the read failed");
+    const s = getSweepStatus();
+    assert.equal(s.consecutiveFailures, 1);
+    assert.equal(s.lastRunAt, null, "a failed pass must not stamp a successful run time");
+  });
+
+  it("RESOLVES with .error → also reason error, never read as 'no expired offers'", async () => {
+    const rows = [seat("e1", "expired", 1, PAST)];
+    const c = makeClient(rows, { fail: { select: true } });
+    const r = await runSweep({ client: c });
+    assert.equal(r.reason, "error");
+    assert.equal(c._counts.delete, 0);
+    assert.equal(getSweepStatus().consecutiveFailures, 1);
+  });
+
+  it("consecutive failures accumulate, and a healthy pass clears them", async () => {
+    const bad = makeClient([seat("e1", "x", 1, PAST)], { throwOnSelect: true });
+    await runSweep({ client: bad });
+    await runSweep({ client: bad });
+    assert.equal(getSweepStatus().consecutiveFailures, 2);
+    await runSweep({ client: makeClient([]) });
+    assert.equal(getSweepStatus().consecutiveFailures, 0, "a clean pass must clear the counter");
   });
 });
