@@ -9,7 +9,8 @@
     "BACKEND WITH NO MOBILE CONSUMER": 147,
     "WIRED": 849,
     "DEAD ENDPOINT": 196,
-    "LEGACY ROUTE": 0
+    "LEGACY ROUTE": 0,
+    "orphanClientFunctions": 192
   },
   "areaStats": {
     "Map": {
@@ -61,6 +62,1422 @@
       "adminOnly": 7
     }
   },
+  "orphanClientFunctions": [
+    {
+      "fn": "_clearCityConfidenceCache() @ src/services/compass.ts:391",
+      "callSite": "src/services/compass.ts:402",
+      "routes": [
+        "/api/compass/city-confidence"
+      ]
+    },
+    {
+      "fn": "_resolveCircleFlag() @ src/hooks/useCircleFlag.ts:21",
+      "callSite": "src/hooks/useCircleFlag.ts:27",
+      "routes": [
+        "/api/feature-flags"
+      ]
+    },
+    {
+      "fn": "_resolveFlag() @ src/hooks/useRentABuddyFlag.ts:40",
+      "callSite": "src/hooks/useRentABuddyFlag.ts:46",
+      "routes": [
+        "/api/feature-flags"
+      ]
+    },
+    {
+      "fn": "_setTestSessionToken() @ src/services/auth.ts:15",
+      "callSite": "src/services/auth.ts:59",
+      "routes": [
+        "/api/auth/signup-status"
+      ]
+    },
+    {
+      "fn": "acceptCircleInvite() @ src/services/friends.ts:214",
+      "callSite": "src/services/friends.ts:215",
+      "routes": [
+        "/api/circle-invites/:inviteId/accept"
+      ]
+    },
+    {
+      "fn": "acceptTripInvite() @ src/services/friends.ts:228",
+      "callSite": "src/services/friends.ts:229",
+      "routes": [
+        "/api/trips/:tripId/accept-invite"
+      ]
+    },
+    {
+      "fn": "addGemToPlan() @ src/services/hiddenGems.ts:379",
+      "callSite": "src/services/hiddenGems.ts:383",
+      "routes": [
+        "/api/hidden-gems/:id/plan"
+      ]
+    },
+    {
+      "fn": "addMeetupToTripPlan() @ src/services/meetups.ts:267",
+      "callSite": "src/services/meetups.ts:272",
+      "routes": [
+        "/api/meetups/:meetupId/add-to-trip-plan"
+      ]
+    },
+    {
+      "fn": "addMember() @ src/services/trips.ts:359",
+      "callSite": "src/services/trips.ts:365",
+      "routes": [
+        "/api/trips/:tripId/members"
+      ]
+    },
+    {
+      "fn": "addMemoryItemFromUrl() @ src/services/memories.ts:286",
+      "callSite": "src/services/memories.ts:295",
+      "routes": [
+        "/api/memories/:id/items"
+      ]
+    },
+    {
+      "fn": "addSharedMomentContribution() @ src/services/sharedMoments.ts:65",
+      "callSite": "src/services/sharedMoments.ts:66",
+      "routes": [
+        "/api/shared-moments/:id/contributions"
+      ]
+    },
+    {
+      "fn": "adminAdvanceCityStatus() @ src/services/rentABuddy.ts:1485",
+      "callSite": "src/services/rentABuddy.ts:1486",
+      "routes": [
+        "/api/admin/rent-buddy/rollout/cities/:id/advance-status"
+      ]
+    },
+    {
+      "fn": "adminCreateCity() @ src/services/rentABuddy.ts:1474",
+      "callSite": "src/services/rentABuddy.ts:1482",
+      "routes": [
+        "/api/admin/rent-buddy/rollout/cities"
+      ]
+    },
+    {
+      "fn": "AdminFeaturedScreen() @ app/admin/featured.tsx:130",
+      "callSite": "app/admin/featured.tsx:155",
+      "routes": [
+        "/api/admin/featured",
+        "/api/admin/featured/reseed",
+        "/api/admin/featured/:id"
+      ]
+    },
+    {
+      "fn": "adminGetAuditLog() @ src/services/rentABuddy.ts:1606",
+      "callSite": "src/services/rentABuddy.ts:1620",
+      "routes": [
+        "/api/admin/rent-buddy/audit-log"
+      ]
+    },
+    {
+      "fn": "adminGetBetaAccess() @ src/services/rentABuddy.ts:1516",
+      "callSite": "src/services/rentABuddy.ts:1521",
+      "routes": [
+        "/api/admin/rent-buddy/beta-access"
+      ]
+    },
+    {
+      "fn": "adminGetCities() @ src/services/rentABuddy.ts:1470",
+      "callSite": "src/services/rentABuddy.ts:1471",
+      "routes": [
+        "/api/admin/rent-buddy/rollout/cities"
+      ]
+    },
+    {
+      "fn": "adminGetCityMetrics() @ src/services/rentABuddy.ts:1500",
+      "callSite": "src/services/rentABuddy.ts:1501",
+      "routes": [
+        "/api/admin/rent-buddy/rollout/cities/:id/metrics"
+      ]
+    },
+    {
+      "fn": "adminGetGlobalControls() @ src/services/rentABuddy.ts:1579",
+      "callSite": "src/services/rentABuddy.ts:1580",
+      "routes": [
+        "/api/admin/rent-buddy/global-controls"
+      ]
+    },
+    {
+      "fn": "adminGetQAChecklists() @ src/services/rentABuddy.ts:1555",
+      "callSite": "src/services/rentABuddy.ts:1557",
+      "routes": [
+        "/api/admin/rent-buddy/qa/checklists"
+      ]
+    },
+    {
+      "fn": "adminGrantBetaAccess() @ src/services/rentABuddy.ts:1524",
+      "callSite": "src/services/rentABuddy.ts:1530",
+      "routes": [
+        "/api/admin/rent-buddy/beta-access"
+      ]
+    },
+    {
+      "fn": "AdminHashtagsScreen() @ app/admin/hashtags.tsx:33",
+      "callSite": "app/admin/hashtags.tsx:62",
+      "routes": [
+        "/api/admin/hashtags",
+        "/api/admin/hashtags/:slug/block",
+        "/api/admin/hashtags/:slug/unblock",
+        "/api/admin/hashtags/:slug/hide-trending",
+        "/api/admin/hashtags/:slug/hide-trending",
+        "/api/admin/hashtags/merge",
+        "/api/admin/hashtags/merge",
+        "/api/admin/hashtags/:slug",
+        "/api/admin/hashtags/:slug"
+      ]
+    },
+    {
+      "fn": "adminMarkChecklistFailed() @ src/services/rentABuddy.ts:1564",
+      "callSite": "src/services/rentABuddy.ts:1565",
+      "routes": [
+        "/api/admin/rent-buddy/qa/checklists/:id/mark-failed"
+      ]
+    },
+    {
+      "fn": "adminMarkChecklistPassed() @ src/services/rentABuddy.ts:1560",
+      "callSite": "src/services/rentABuddy.ts:1561",
+      "routes": [
+        "/api/admin/rent-buddy/qa/checklists/:id/mark-passed"
+      ]
+    },
+    {
+      "fn": "adminPauseCity() @ src/services/rentABuddy.ts:1492",
+      "callSite": "src/services/rentABuddy.ts:1493",
+      "routes": [
+        "/api/admin/rent-buddy/rollout/cities/:id/pause"
+      ]
+    },
+    {
+      "fn": "adminResumeCity() @ src/services/rentABuddy.ts:1496",
+      "callSite": "src/services/rentABuddy.ts:1497",
+      "routes": [
+        "/api/admin/rent-buddy/rollout/cities/:id/resume"
+      ]
+    },
+    {
+      "fn": "adminRevokeBetaAccess() @ src/services/rentABuddy.ts:1533",
+      "callSite": "src/services/rentABuddy.ts:1534",
+      "routes": [
+        "/api/admin/rent-buddy/beta-access/:id/revoke"
+      ]
+    },
+    {
+      "fn": "adminUpdateGlobalControls() @ src/services/rentABuddy.ts:1583",
+      "callSite": "src/services/rentABuddy.ts:1584",
+      "routes": [
+        "/api/admin/rent-buddy/global-controls"
+      ]
+    },
+    {
+      "fn": "applyForGuide() @ src/services/hiddenGems.ts:390",
+      "callSite": "src/services/hiddenGems.ts:394",
+      "routes": [
+        "/api/hidden-gems/guides/:userId",
+        "/api/hidden-gems/guides/apply"
+      ]
+    },
+    {
+      "fn": "ApplyToBeBuddy() @ app/(rent-a-buddy)/become/apply.tsx:97",
+      "callSite": "app/(rent-a-buddy)/become/apply.tsx:300",
+      "routes": [
+        "/api/rent-buddy/launch-status"
+      ]
+    },
+    {
+      "fn": "approveNightlife() @ src/services/rentABuddyAdmin.ts:314",
+      "callSite": "src/services/rentABuddyAdmin.ts:315",
+      "routes": [
+        "/api/rent-a-buddy/admin/buddies/:buddyId/nightlife-approve"
+      ]
+    },
+    {
+      "fn": "approveSharedMomentContribution() @ src/services/sharedMoments.ts:68",
+      "callSite": "src/services/sharedMoments.ts:69",
+      "routes": [
+        "/api/shared-moments/:id/contributions/:contributionId/approve"
+      ]
+    },
+    {
+      "fn": "approveTagConsent() @ src/services/rentABuddy.ts:1284",
+      "callSite": "src/services/rentABuddy.ts:1285",
+      "routes": [
+        "/api/rent-a-buddy/tag-consents/:consentId/approve"
+      ]
+    },
+    {
+      "fn": "attachAddonsToBooking() @ src/services/rentABuddy.ts:1142",
+      "callSite": "src/services/rentABuddy.ts:1145",
+      "routes": [
+        "/api/rent-a-buddy/bookings/:bookingId/addons"
+      ]
+    },
+    {
+      "fn": "batchFetchCatalogEntries() @ src/services/adminStamps.ts:429",
+      "callSite": "src/services/adminStamps.ts:442",
+      "routes": [
+        "/api/stamps/:entityType/:entityId",
+        "/api/stamps/catalog/batch",
+        "/api/stamps/catalog/:canonicalKeyOrId"
+      ]
+    },
+    {
+      "fn": "bookAgain() @ src/services/rentABuddy.ts:1166",
+      "callSite": "src/services/rentABuddy.ts:1167",
+      "routes": [
+        "/api/rent-a-buddy/buddies/:buddyId/book-again"
+      ]
+    },
+    {
+      "fn": "bookPackage() @ src/services/rentABuddy.ts:1120",
+      "callSite": "src/services/rentABuddy.ts:1123",
+      "routes": [
+        "/api/rent-a-buddy/packages/:packageId/book"
+      ]
+    },
+    {
+      "fn": "cancelEvent() @ src/services/events.ts:313",
+      "callSite": "src/services/events.ts:314",
+      "routes": [
+        "/api/events/me",
+        "/api/events/:id",
+        "/api/events/nearby",
+        "/api/events/search",
+        "/api/events/hosting",
+        "/api/events/joined",
+        "/api/events/circles",
+        "/api/events/saved",
+        "/api/events/invites",
+        "/api/events/requests",
+        "/api/events/drafts",
+        "/api/events/following"
+      ]
+    },
+    {
+      "fn": "cancelMessageRequest() @ src/services/messaging.ts:348",
+      "callSite": "src/services/messaging.ts:351",
+      "routes": [
+        "/api/message-requests/:requestId/cancel"
+      ]
+    },
+    {
+      "fn": "cancelRequest() @ src/services/requests.ts:145",
+      "callSite": "src/services/requests.ts:151",
+      "routes": [
+        "/api/me/requests/trip_invite/:tripId/cancel",
+        "/api/me/requests/trip_invite/:tripId/cancel",
+        "/api/me/requests/friend_request/:id/cancel",
+        "/api/me/requests/circle_invite/:id/cancel"
+      ]
+    },
+    {
+      "fn": "checkLocationAvailability() @ src/services/rentABuddy.ts:1241",
+      "callSite": "src/services/rentABuddy.ts:1247",
+      "routes": [
+        "/api/rent-a-buddy/availability/location"
+      ]
+    },
+    {
+      "fn": "completeBooking() @ src/services/rentABuddy.ts:633",
+      "callSite": "src/services/rentABuddy.ts:634",
+      "routes": [
+        "/api/rent-a-buddy/bookings/:bookingId/complete"
+      ]
+    },
+    {
+      "fn": "confirmAttendance() @ src/services/events.ts:411",
+      "callSite": "src/services/events.ts:415",
+      "routes": [
+        "/api/events/:id/attendance/:userId"
+      ]
+    },
+    {
+      "fn": "convertEventToMemory() @ src/services/events.ts:427",
+      "callSite": "src/services/events.ts:430",
+      "routes": [
+        "/api/events/:id/memory"
+      ]
+    },
+    {
+      "fn": "createLaunchControl() @ src/services/rentABuddyAdmin.ts:351",
+      "callSite": "src/services/rentABuddyAdmin.ts:354",
+      "routes": [
+        "/api/rent-a-buddy/admin/launch-controls"
+      ]
+    },
+    {
+      "fn": "createMarketplaceAddon() @ src/services/rentABuddy.ts:1132",
+      "callSite": "src/services/rentABuddy.ts:1135",
+      "routes": [
+        "/api/rent-a-buddy/me/addons"
+      ]
+    },
+    {
+      "fn": "createMemory() @ src/services/memories.ts:134",
+      "callSite": "src/services/memories.ts:139",
+      "routes": [
+        "/api/memories"
+      ]
+    },
+    {
+      "fn": "createPackageV2() @ src/services/rentABuddy.ts:1095",
+      "callSite": "src/services/rentABuddy.ts:1101",
+      "routes": [
+        "/api/rent-a-buddy/me/packages/v2"
+      ]
+    },
+    {
+      "fn": "declineCircleInvite() @ src/services/friends.ts:218",
+      "callSite": "src/services/friends.ts:219",
+      "routes": [
+        "/api/circle-invites/:inviteId/decline"
+      ]
+    },
+    {
+      "fn": "declineTagConsent() @ src/services/rentABuddy.ts:1288",
+      "callSite": "src/services/rentABuddy.ts:1289",
+      "routes": [
+        "/api/rent-a-buddy/tag-consents/:consentId/decline"
+      ]
+    },
+    {
+      "fn": "declineTripInvite() @ src/services/friends.ts:232",
+      "callSite": "src/services/friends.ts:233",
+      "routes": [
+        "/api/trips/:tripId/decline-invite"
+      ]
+    },
+    {
+      "fn": "DEFAULT_PASSPORT_TELEMETRY_PATH() @ src/features/passport/passportTelemetryTransport.ts:118",
+      "callSite": "src/features/passport/passportTelemetryTransport.ts:118",
+      "routes": [
+        "/api/passport/telemetry"
+      ]
+    },
+    {
+      "fn": "deleteEventReview() @ src/services/events.ts:503",
+      "callSite": "src/services/events.ts:506",
+      "routes": [
+        "/api/events/:id/reviews"
+      ]
+    },
+    {
+      "fn": "deleteMedia() @ src/services/postcards.ts:345",
+      "callSite": "src/services/postcards.ts:350",
+      "routes": [
+        "/api/postcards/:id/media/upload-url",
+        "/api/postcards/:id/media/:mediaId"
+      ]
+    },
+    {
+      "fn": "deletePlanItem() @ src/services/tripPlan.ts:153",
+      "callSite": "src/services/tripPlan.ts:154",
+      "routes": [
+        "/api/trips/:tripId/plan/items/:itemId"
+      ]
+    },
+    {
+      "fn": "deleteRoutePlan() @ src/services/routePlan.ts:237",
+      "callSite": "src/services/routePlan.ts:238",
+      "routes": [
+        "/api/route-plans/:id"
+      ]
+    },
+    {
+      "fn": "deleteStory() @ src/services/stories.ts:190",
+      "callSite": "src/services/stories.ts:193",
+      "routes": [
+        "/api/stories/feed",
+        "/api/stories/:id"
+      ]
+    },
+    {
+      "fn": "deleteTrip() @ src/services/trips.ts:272",
+      "callSite": "src/services/trips.ts:276",
+      "routes": [
+        "/api/trips/draft-from-text",
+        "/api/trips/:tripId",
+        "/api/trips/me",
+        "/api/trips/upcoming",
+        "/api/trips/active",
+        "/api/trips/past",
+        "/api/trips/invites",
+        "/api/trips/join-requests"
+      ]
+    },
+    {
+      "fn": "executeBriefAction() @ src/services/intelligence.ts:85",
+      "callSite": "src/services/intelligence.ts:88",
+      "routes": [
+        "/api/trips/:tripId/daily-brief/actions/:actionId"
+      ]
+    },
+    {
+      "fn": "FeatureFlagsScreen() @ app/admin/feature-flags.tsx:244",
+      "callSite": "app/admin/feature-flags.tsx:288",
+      "routes": [
+        "/api/admin/feature-flags/:flag",
+        "/api/admin/feature-flags"
+      ]
+    },
+    {
+      "fn": "fetchActiveHighlights() @ src/services/highlights.ts:193",
+      "callSite": "src/services/highlights.ts:209",
+      "routes": [
+        "/api/highlights/active",
+        "/api/highlights/:id"
+      ]
+    },
+    {
+      "fn": "fetchCompassFeed() @ src/services/compass.ts:103",
+      "callSite": "src/services/compass.ts:112",
+      "routes": [
+        "/api/compass/feed"
+      ]
+    },
+    {
+      "fn": "fetchEntitySuggestions() @ src/services/tagging.ts:127",
+      "callSite": "src/services/tagging.ts:134",
+      "routes": [
+        "/api/tags/suggestions",
+        "/api/tags/:id"
+      ]
+    },
+    {
+      "fn": "fetchExperience() @ src/features/media/services/mediaProjection.ts:1101",
+      "callSite": "src/features/media/services/mediaProjection.ts:1106",
+      "routes": [
+        "/api/media/experiences/:experienceId"
+      ]
+    },
+    {
+      "fn": "fetchGems() @ src/features/media/services/mediaProjection.ts:1149",
+      "callSite": "src/features/media/services/mediaProjection.ts:1155",
+      "routes": [
+        "/api/media/:id",
+        "/api/media/gems-feed"
+      ]
+    },
+    {
+      "fn": "fetchHashtagSuggestions() @ src/services/tagging.ts:159",
+      "callSite": "src/services/tagging.ts:162",
+      "routes": [
+        "/api/hashtags/suggestions",
+        "/api/hashtags/:slug"
+      ]
+    },
+    {
+      "fn": "fetchMedia() @ src/features/media/services/mediaProjection.ts:1206",
+      "callSite": "src/features/media/services/mediaProjection.ts:1211",
+      "routes": [
+        "/api/media/:id",
+        "/api/media/world",
+        "/api/media/gems-feed",
+        "/api/media/people",
+        "/api/media/me",
+        "/api/media/timeline",
+        "/api/media/feed",
+        "/api/media/sign",
+        "/api/media/map",
+        "/api/media/upload"
+      ]
+    },
+    {
+      "fn": "fetchMyLikedPostIds() @ src/services/postEngagement.ts:133",
+      "callSite": "src/services/postEngagement.ts:136",
+      "routes": [
+        "/api/posts/liked-by-me",
+        "/api/posts/:postId"
+      ]
+    },
+    {
+      "fn": "fileSupportReport() @ src/services/rentABuddy.ts:1318",
+      "callSite": "src/services/rentABuddy.ts:1323",
+      "routes": [
+        "/api/rent-a-buddy/bookings/:bookingId/support/report"
+      ]
+    },
+    {
+      "fn": "getActiveLiveShares() @ src/services/tripCrewLocation.ts:155",
+      "callSite": "src/services/tripCrewLocation.ts:157",
+      "routes": [
+        "/api/trips/:tripId/crew/live-shares"
+      ]
+    },
+    {
+      "fn": "getActivityRecommendations() @ src/services/telegraph.ts:39",
+      "callSite": "src/services/telegraph.ts:52",
+      "routes": [
+        "/api/telegraph/recommend"
+      ]
+    },
+    {
+      "fn": "getAdminResponseTemplates() @ src/services/rentABuddyAdmin.ts:282",
+      "callSite": "src/services/rentABuddyAdmin.ts:283",
+      "routes": [
+        "/api/rent-a-buddy/admin/support/templates"
+      ]
+    },
+    {
+      "fn": "getAdminRiskReview() @ src/services/rentABuddyAdmin.ts:299",
+      "callSite": "src/services/rentABuddyAdmin.ts:301",
+      "routes": [
+        "/api/rent-a-buddy/admin/risk-review"
+      ]
+    },
+    {
+      "fn": "getAdminSupportReports() @ src/services/rentABuddyAdmin.ts:266",
+      "callSite": "src/services/rentABuddyAdmin.ts:270",
+      "routes": [
+        "/api/rent-a-buddy/admin/support/reports"
+      ]
+    },
+    {
+      "fn": "getAllLaunchStatuses() @ src/services/rentABuddy.ts:1436",
+      "callSite": "src/services/rentABuddy.ts:1437",
+      "routes": [
+        "/api/rent-buddy/launch-status"
+      ]
+    },
+    {
+      "fn": "getAvailabilityNudges() @ src/services/availability.ts:172",
+      "callSite": "src/services/availability.ts:173",
+      "routes": [
+        "/api/me/availability-nudges"
+      ]
+    },
+    {
+      "fn": "getBookingEvents() @ src/services/rentABuddy.ts:1689",
+      "callSite": "src/services/rentABuddy.ts:1692",
+      "routes": [
+        "/api/rent-a-buddy/bookings/:bookingId/events"
+      ]
+    },
+    {
+      "fn": "getBuddyAddons() @ src/services/rentABuddy.ts:1128",
+      "callSite": "src/services/rentABuddy.ts:1129",
+      "routes": [
+        "/api/rent-a-buddy/buddies/:buddyId/addons"
+      ]
+    },
+    {
+      "fn": "getBuddyAvailability() @ src/services/rentABuddy.ts:306",
+      "callSite": "src/services/rentABuddy.ts:311",
+      "routes": [
+        "/api/rent-a-buddy/buddies/:buddyId/availability",
+        "/api/rent-a-buddy/buddies/:buddyId/availability-exceptions"
+      ]
+    },
+    {
+      "fn": "getBuddyPackages() @ src/services/rentABuddy.ts:1112",
+      "callSite": "src/services/rentABuddy.ts:1113",
+      "routes": [
+        "/api/rent-a-buddy/buddies/:buddyId/packages"
+      ]
+    },
+    {
+      "fn": "getCatalogEarners() @ src/services/adminStamps.ts:312",
+      "callSite": "src/services/adminStamps.ts:313",
+      "routes": [
+        "/api/admin/stamps/catalog/:id/earners"
+      ]
+    },
+    {
+      "fn": "getCircleAgeSettings() @ src/services/circleAgeSettings.ts:80",
+      "callSite": "src/services/circleAgeSettings.ts:85",
+      "routes": [
+        "/api/circle-age-settings/:ownerId"
+      ]
+    },
+    {
+      "fn": "getCrewPreferences() @ src/services/tripCrewLocation.ts:100",
+      "callSite": "src/services/tripCrewLocation.ts:101",
+      "routes": [
+        "/api/trips/:tripId/crew/location-preferences"
+      ]
+    },
+    {
+      "fn": "getDiscoverySections() @ src/services/rentABuddy.ts:992",
+      "callSite": "src/services/rentABuddy.ts:997",
+      "routes": [
+        "/api/rent-a-buddy/sections"
+      ]
+    },
+    {
+      "fn": "getEarningsBreakdownSummary() @ src/services/rentABuddy.ts:1381",
+      "callSite": "src/services/rentABuddy.ts:1382",
+      "routes": [
+        "/api/rent-a-buddy/dashboard/earnings/summary"
+      ]
+    },
+    {
+      "fn": "getEventReviews() @ src/services/events.ts:496",
+      "callSite": "src/services/events.ts:500",
+      "routes": [
+        "/api/events/:id/reviews"
+      ]
+    },
+    {
+      "fn": "getForYouRecommendations() @ src/services/telegraphRecommend.ts:55",
+      "callSite": "src/services/telegraphRecommend.ts:68",
+      "routes": [
+        "/api/telegraph/recommend"
+      ]
+    },
+    {
+      "fn": "getGeofence() @ src/services/geofence.ts:114",
+      "callSite": "src/services/geofence.ts:115",
+      "routes": [
+        "/api/trips/:tripId/geofence"
+      ]
+    },
+    {
+      "fn": "getLaunchControls() @ src/services/rentABuddyAdmin.ts:346",
+      "callSite": "src/services/rentABuddyAdmin.ts:347",
+      "routes": [
+        "/api/rent-a-buddy/admin/launch-controls"
+      ]
+    },
+    {
+      "fn": "getMyBetaStatus() @ src/services/rentABuddy.ts:1449",
+      "callSite": "src/services/rentABuddy.ts:1451",
+      "routes": [
+        "/api/rent-buddy/me/beta-status"
+      ]
+    },
+    {
+      "fn": "getMyEligibility() @ src/services/rentABuddy.ts:1224",
+      "callSite": "src/services/rentABuddy.ts:1226",
+      "routes": [
+        "/api/rent-a-buddy/me/eligibility"
+      ]
+    },
+    {
+      "fn": "getMyMeetupInvites() @ src/services/meetups.ts:214",
+      "callSite": "src/services/meetups.ts:215",
+      "routes": [
+        "/api/me/meetup-invites"
+      ]
+    },
+    {
+      "fn": "getMyMessageSettings() @ src/services/messaging.ts:287",
+      "callSite": "src/services/messaging.ts:288",
+      "routes": [
+        "/api/me/message-settings"
+      ]
+    },
+    {
+      "fn": "getMyOffers() @ src/services/rentABuddy.ts:1077",
+      "callSite": "src/services/rentABuddy.ts:1078",
+      "routes": [
+        "/api/rent-a-buddy/me/offers"
+      ]
+    },
+    {
+      "fn": "getMyQuickStatus() @ src/services/availability.ts:118",
+      "callSite": "src/services/availability.ts:119",
+      "routes": [
+        "/api/me/quick-availability"
+      ]
+    },
+    {
+      "fn": "getMyWaitlist() @ src/services/rentABuddy.ts:474",
+      "callSite": "src/services/rentABuddy.ts:475",
+      "routes": [
+        "/api/rent-a-buddy/waitlist"
+      ]
+    },
+    {
+      "fn": "getOpenDispute() @ src/services/rentABuddy.ts:1714",
+      "callSite": "src/services/rentABuddy.ts:1717",
+      "routes": [
+        "/api/rent-a-buddy/bookings/:bookingId/dispute"
+      ]
+    },
+    {
+      "fn": "getOutgoingFriendRequests() @ src/services/friends.ts:165",
+      "callSite": "src/services/friends.ts:166",
+      "routes": [
+        "/api/me/friend-requests/outgoing"
+      ]
+    },
+    {
+      "fn": "getPackage() @ src/services/rentABuddy.ts:1116",
+      "callSite": "src/services/rentABuddy.ts:1117",
+      "routes": [
+        "/api/rent-a-buddy/packages/:packageId"
+      ]
+    },
+    {
+      "fn": "getPassportProjection() @ src/features/passport/useTrustProjection.ts:255",
+      "callSite": "src/features/passport/useTrustProjection.ts:262",
+      "routes": [
+        "/api/passport/:userId/projection"
+      ]
+    },
+    {
+      "fn": "getPlanStops() @ src/services/layover.ts:409",
+      "callSite": "src/services/layover.ts:410",
+      "routes": [
+        "/api/airport/sessions/:id/stops"
+      ]
+    },
+    {
+      "fn": "getPostingDefaults() @ src/services/rentABuddy.ts:1355",
+      "callSite": "src/services/rentABuddy.ts:1356",
+      "routes": [
+        "/api/rent-a-buddy/me/posting-defaults"
+      ]
+    },
+    {
+      "fn": "getRentABuddyFeatureStatus() @ src/services/rentABuddy.ts:1255",
+      "callSite": "src/services/rentABuddy.ts:1256",
+      "routes": [
+        "/api/rent-a-buddy/launch-status"
+      ]
+    },
+    {
+      "fn": "getSavedBuddies() @ src/services/rentABuddy.ts:1162",
+      "callSite": "src/services/rentABuddy.ts:1163",
+      "routes": [
+        "/api/rent-a-buddy/me/saved-buddies"
+      ]
+    },
+    {
+      "fn": "getSavedHashtags() @ src/services/collections.ts:265",
+      "callSite": "src/services/collections.ts:270",
+      "routes": [
+        "/api/users/me/saved-hashtags"
+      ]
+    },
+    {
+      "fn": "getStory() @ src/services/stories.ts:139",
+      "callSite": "src/services/stories.ts:142",
+      "routes": [
+        "/api/stories/feed",
+        "/api/stories/:id"
+      ]
+    },
+    {
+      "fn": "getUserEvents() @ src/services/events.ts:756",
+      "callSite": "src/services/events.ts:759",
+      "routes": [
+        "/api/users/:username/events"
+      ]
+    },
+    {
+      "fn": "getUserMemories() @ src/services/memories.ts:262",
+      "callSite": "src/services/memories.ts:270",
+      "routes": [
+        "/api/users/:userId/memories"
+      ]
+    },
+    {
+      "fn": "getWaitlistV2() @ src/services/rentABuddy.ts:1177",
+      "callSite": "src/services/rentABuddy.ts:1178",
+      "routes": [
+        "/api/rent-a-buddy/me/waitlist/v2"
+      ]
+    },
+    {
+      "fn": "inviteToMeetup() @ src/services/meetups.ts:207",
+      "callSite": "src/services/meetups.ts:211",
+      "routes": [
+        "/api/meetups/:meetupId/invites"
+      ]
+    },
+    {
+      "fn": "inviteToSharedMoment() @ src/services/sharedMoments.ts:47",
+      "callSite": "src/services/sharedMoments.ts:48",
+      "routes": [
+        "/api/shared-moments/:id/invites"
+      ]
+    },
+    {
+      "fn": "joinWaitlistV2() @ src/services/rentABuddy.ts:1170",
+      "callSite": "src/services/rentABuddy.ts:1174",
+      "routes": [
+        "/api/rent-a-buddy/waitlist/:city",
+        "/api/rent-a-buddy/waitlist/v2",
+        "/api/rent-a-buddy/waitlist/:waitlistId"
+      ]
+    },
+    {
+      "fn": "leaveLocateFriendsSession() @ src/services/locateFriends.ts:881",
+      "callSite": "src/services/locateFriends.ts:887",
+      "routes": [
+        "/api/locate-friends/sessions/:id/membership"
+      ]
+    },
+    {
+      "fn": "leaveTip() @ src/services/rentABuddy.ts:1148",
+      "callSite": "src/services/rentABuddy.ts:1149",
+      "routes": [
+        "/api/rent-a-buddy/bookings/:bookingId/tip"
+      ]
+    },
+    {
+      "fn": "leaveWaitlist() @ src/services/rentABuddy.ts:497",
+      "callSite": "src/services/rentABuddy.ts:498",
+      "routes": [
+        "/api/rent-a-buddy/waitlist/:city",
+        "/api/rent-a-buddy/waitlist/v2",
+        "/api/rent-a-buddy/waitlist/:waitlistId"
+      ]
+    },
+    {
+      "fn": "leaveWaitlistById() @ src/services/rentABuddy.ts:1181",
+      "callSite": "src/services/rentABuddy.ts:1182",
+      "routes": [
+        "/api/rent-a-buddy/waitlist/:city",
+        "/api/rent-a-buddy/waitlist/v2",
+        "/api/rent-a-buddy/waitlist/:waitlistId"
+      ]
+    },
+    {
+      "fn": "likeMedia() @ src/services/mediaInteractions.ts:62",
+      "callSite": "src/services/mediaInteractions.ts:63",
+      "routes": [
+        "/api/media/:id/like"
+      ]
+    },
+    {
+      "fn": "likeMemory() @ src/services/memories.ts:421",
+      "callSite": "src/services/memories.ts:424",
+      "routes": [
+        "/api/memories/:id/like"
+      ]
+    },
+    {
+      "fn": "likePost() @ src/services/postEngagement.ts:165",
+      "callSite": "src/services/postEngagement.ts:166",
+      "routes": [
+        "/api/posts/:postId/like"
+      ]
+    },
+    {
+      "fn": "listLayoverSessions() @ src/services/layover.ts:376",
+      "callSite": "src/services/layover.ts:380",
+      "routes": [
+        "/api/airport/sessions"
+      ]
+    },
+    {
+      "fn": "loadLocationPrefs() @ src/services/locationPrefsLogic.ts:61",
+      "callSite": "src/services/locationPrefsLogic.ts:67",
+      "routes": [
+        "/api/me/location-preferences"
+      ]
+    },
+    {
+      "fn": "mapExperiencePlan() @ src/features/media/services/mediaActions.ts:183",
+      "callSite": "src/features/media/services/mediaActions.ts:190",
+      "routes": [
+        "/api/trips/:tripId/plan/items"
+      ]
+    },
+    {
+      "fn": "markNoShow() @ src/services/events.ts:418",
+      "callSite": "src/services/events.ts:422",
+      "routes": [
+        "/api/events/:id/noshow/:userId"
+      ]
+    },
+    {
+      "fn": "PackageQueue() @ app/(rent-a-buddy)/admin/package-queue.tsx:130",
+      "callSite": "app/(rent-a-buddy)/admin/package-queue.tsx:158",
+      "routes": [
+        "/api/rent-a-buddy/admin/packages/:id/approve",
+        "/api/rent-a-buddy/admin/packages/:id/disable"
+      ]
+    },
+    {
+      "fn": "patchTripAvailability() @ src/services/availability.ts:137",
+      "callSite": "src/services/availability.ts:141",
+      "routes": [
+        "/api/trips/:tripId/availability"
+      ]
+    },
+    {
+      "fn": "PlaceDetailScreen() @ app/place/[id].tsx:303",
+      "callSite": "app/place/[id].tsx:353",
+      "routes": [
+        "/api/rank-events"
+      ]
+    },
+    {
+      "fn": "PortavaPostEditScreen() @ app/admin/portava-post-edit.tsx:92",
+      "callSite": "app/admin/portava-post-edit.tsx:162",
+      "routes": [
+        "/api/admin/portava/posts/:id"
+      ]
+    },
+    {
+      "fn": "PortavaPostScreen() @ app/admin/portava-post.tsx:73",
+      "callSite": "app/admin/portava-post.tsx:112",
+      "routes": [
+        "/api/admin/portava/posts"
+      ]
+    },
+    {
+      "fn": "PortavaPostsScreen() @ app/admin/portava-posts.tsx:99",
+      "callSite": "app/admin/portava-posts.tsx:163",
+      "routes": [
+        "/api/admin/portava/posts/:id",
+        "/api/admin/portava/posts"
+      ]
+    },
+    {
+      "fn": "postSearchSignal() @ src/services/discovery.ts:728",
+      "callSite": "src/services/discovery.ts:737",
+      "routes": [
+        "/api/compass/signals/search"
+      ]
+    },
+    {
+      "fn": "PrivacyVisibilityScreen() @ app/profile/edit/privacy.tsx:39",
+      "callSite": "app/profile/edit/privacy.tsx:117",
+      "routes": [
+        "/api/me/passport/visibility-preferences",
+        "/api/me/passport/visibility-preferences"
+      ]
+    },
+    {
+      "fn": "publishLocateFriendsPosition() @ src/services/locateFriends.ts:618",
+      "callSite": "src/services/locateFriends.ts:639",
+      "routes": [
+        "/api/locate-friends/sessions/:id/position"
+      ]
+    },
+    {
+      "fn": "reactToMediaStampIt() @ src/services/mediaInteractions.ts:142",
+      "callSite": "src/services/mediaInteractions.ts:143",
+      "routes": [
+        "/api/media/:id/react"
+      ]
+    },
+    {
+      "fn": "reactToStory() @ src/services/stories.ts:215",
+      "callSite": "src/services/stories.ts:218",
+      "routes": [
+        "/api/stories/:id/react"
+      ]
+    },
+    {
+      "fn": "readLocateFriendsSession() @ src/services/locateFriends.ts:828",
+      "callSite": "src/services/locateFriends.ts:835",
+      "routes": [
+        "/api/locate-friends/sessions/:id"
+      ]
+    },
+    {
+      "fn": "recordOutcome() @ src/services/rankEvents.ts:35",
+      "callSite": "src/services/rankEvents.ts:52",
+      "routes": [
+        "/api/rank-events/outcome"
+      ]
+    },
+    {
+      "fn": "registerDevice() @ src/services/notifications.ts:173",
+      "callSite": "src/services/notifications.ts:174",
+      "routes": [
+        "/api/me/devices"
+      ]
+    },
+    {
+      "fn": "removeMember() @ src/services/trips.ts:373",
+      "callSite": "src/services/trips.ts:379",
+      "routes": [
+        "/api/trips/:tripId/members/:userId"
+      ]
+    },
+    {
+      "fn": "removeSharedMomentContribution() @ src/services/sharedMoments.ts:71",
+      "callSite": "src/services/sharedMoments.ts:72",
+      "routes": [
+        "/api/shared-moments/:id/contributions/:contributionId"
+      ]
+    },
+    {
+      "fn": "removeTagConsent() @ src/services/rentABuddy.ts:1295",
+      "callSite": "src/services/rentABuddy.ts:1296",
+      "routes": [
+        "/api/rent-a-buddy/tag-consents/:consentId"
+      ]
+    },
+    {
+      "fn": "replyToStory() @ src/services/stories.ts:227",
+      "callSite": "src/services/stories.ts:230",
+      "routes": [
+        "/api/stories/:id/reply"
+      ]
+    },
+    {
+      "fn": "reportCrash() @ src/lib/crashReporter.ts:37",
+      "callSite": "src/lib/crashReporter.ts:71",
+      "routes": [
+        "/api/crash-report"
+      ]
+    },
+    {
+      "fn": "reportMessage() @ src/services/messaging.ts:618",
+      "callSite": "src/services/messaging.ts:626",
+      "routes": [
+        "/api/messages/:messageId/report"
+      ]
+    },
+    {
+      "fn": "reportNoShow() @ src/services/rentABuddy.ts:1670",
+      "callSite": "src/services/rentABuddy.ts:1674",
+      "routes": [
+        "/api/rent-a-buddy/bookings/:bookingId/no-show"
+      ]
+    },
+    {
+      "fn": "reportReview() @ src/services/reviews.ts:121",
+      "callSite": "src/services/reviews.ts:122",
+      "routes": [
+        "/api/reviews/:id/report"
+      ]
+    },
+    {
+      "fn": "requestRouteChange() @ src/services/rentABuddy.ts:678",
+      "callSite": "src/services/rentABuddy.ts:682",
+      "routes": [
+        "/api/rent-a-buddy/bookings/:bookingId/route-change"
+      ]
+    },
+    {
+      "fn": "requestTagConsent() @ src/services/rentABuddy.ts:1273",
+      "callSite": "src/services/rentABuddy.ts:1278",
+      "routes": [
+        "/api/rent-a-buddy/bookings/:bookingId/tag-consent"
+      ]
+    },
+    {
+      "fn": "requestToJoinSharedMoment() @ src/services/sharedMoments.ts:53",
+      "callSite": "src/services/sharedMoments.ts:54",
+      "routes": [
+        "/api/shared-moments/:id/request"
+      ]
+    },
+    {
+      "fn": "resolveAirportByIata() @ src/services/layover.ts:287",
+      "callSite": "src/services/layover.ts:289",
+      "routes": [
+        "/api/airport/search"
+      ]
+    },
+    {
+      "fn": "resolveMapPickerResult() @ src/components/location/MapLocationPicker.machine.ts:50",
+      "callSite": "src/components/location/MapLocationPicker.machine.ts:71",
+      "routes": [
+        "/api/places/reverse"
+      ]
+    },
+    {
+      "fn": "respondToSharedMomentInvite() @ src/services/sharedMoments.ts:50",
+      "callSite": "src/services/sharedMoments.ts:51",
+      "routes": [
+        "/api/shared-moments/:id/respond"
+      ]
+    },
+    {
+      "fn": "respondToSharedMomentJoinRequest() @ src/services/sharedMoments.ts:56",
+      "callSite": "src/services/sharedMoments.ts:57",
+      "routes": [
+        "/api/shared-moments/:id/requests/:userId/respond"
+      ]
+    },
+    {
+      "fn": "runGpsCapture() @ src/components/location/GpsLocationCapture.machine.ts:91",
+      "callSite": "src/components/location/GpsLocationCapture.machine.ts:120",
+      "routes": [
+        "/api/places/reverse"
+      ]
+    },
+    {
+      "fn": "saveBuddyWithNotes() @ src/services/rentABuddy.ts:1154",
+      "callSite": "src/services/rentABuddy.ts:1155",
+      "routes": [
+        "/api/rent-a-buddy/buddies/:buddyId/save"
+      ]
+    },
+    {
+      "fn": "saveLocationPrefs() @ src/services/locationPrefsLogic.ts:84",
+      "callSite": "src/services/locationPrefsLogic.ts:91",
+      "routes": [
+        "/api/me/location-preferences"
+      ]
+    },
+    {
+      "fn": "savePost() @ src/services/posts.ts:588",
+      "callSite": "src/services/posts.ts:592",
+      "routes": [
+        "/api/posts/:postId/save"
+      ]
+    },
+    {
+      "fn": "saveToHighlight() @ src/services/stories.ts:239",
+      "callSite": "src/services/stories.ts:242",
+      "routes": [
+        "/api/stories/:id/save-to-highlight"
+      ]
+    },
+    {
+      "fn": "SchemaDriftScreen() @ app/admin/schema-drift.tsx:84",
+      "callSite": "app/admin/schema-drift.tsx:103",
+      "routes": [
+        "/api/admin/health/schema-drift",
+        "/api/admin/health/schema-drift"
+      ]
+    },
+    {
+      "fn": "selfCheckIn() @ src/services/events.ts:407",
+      "callSite": "src/services/events.ts:408",
+      "routes": [
+        "/api/events/:id/checkin"
+      ]
+    },
+    {
+      "fn": "sendCircleInvite() @ src/services/friends.ts:210",
+      "callSite": "src/services/friends.ts:211",
+      "routes": [
+        "/api/circle-invites"
+      ]
+    },
+    {
+      "fn": "setRoutePlan() @ src/services/rentABuddy.ts:668",
+      "callSite": "src/services/rentABuddy.ts:672",
+      "routes": [
+        "/api/rent-a-buddy/bookings/:bookingId/route"
+      ]
+    },
+    {
+      "fn": "Settings() @ app/settings/index.tsx:17",
+      "callSite": "app/settings/index.tsx:43",
+      "routes": [
+        "/api/admin/feature-flags"
+      ]
+    },
+    {
+      "fn": "startBooking() @ src/services/rentABuddy.ts:622",
+      "callSite": "src/services/rentABuddy.ts:627",
+      "routes": [
+        "/api/rent-a-buddy/bookings/:bookingId/start"
+      ]
+    },
+    {
+      "fn": "stopLiveShare() @ src/services/tripCrewLocation.ts:149",
+      "callSite": "src/services/tripCrewLocation.ts:150",
+      "routes": [
+        "/api/trips/:tripId/crew/live-share/stop"
+      ]
+    },
+    {
+      "fn": "submitCheckIn() @ src/services/rentABuddy.ts:1703",
+      "callSite": "src/services/rentABuddy.ts:1708",
+      "routes": [
+        "/api/rent-a-buddy/bookings/:bookingId/check-in"
+      ]
+    },
+    {
+      "fn": "submitEventReview() @ src/services/events.ts:486",
+      "callSite": "src/services/events.ts:490",
+      "routes": [
+        "/api/events/:id/reviews"
+      ]
+    },
+    {
+      "fn": "submitObservation() @ src/services/intelCapture.ts:101",
+      "callSite": "src/services/intelCapture.ts:105",
+      "routes": [
+        "/api/v1/intel/observations"
+      ]
+    },
+    {
+      "fn": "syncCircleChat() @ src/services/messaging.ts:414",
+      "callSite": "src/services/messaging.ts:417",
+      "routes": [
+        "/api/circles/:circleId/chat/sync"
+      ]
+    },
+    {
+      "fn": "syncTripChat() @ src/services/messaging.ts:408",
+      "callSite": "src/services/messaging.ts:411",
+      "routes": [
+        "/api/trips/:tripId/chat/sync"
+      ]
+    },
+    {
+      "fn": "travelerConfirmComplete() @ src/services/rentABuddy.ts:1680",
+      "callSite": "src/services/rentABuddy.ts:1683",
+      "routes": [
+        "/api/rent-a-buddy/bookings/:bookingId/traveler-confirm"
+      ]
+    },
+    {
+      "fn": "triggerEmergencyPhrase() @ src/services/rentABuddy.ts:755",
+      "callSite": "src/services/rentABuddy.ts:760",
+      "routes": [
+        "/api/rent-a-buddy/bookings/:bookingId/safety/emergency-phrase"
+      ]
+    },
+    {
+      "fn": "triggerMockWebhook() @ src/services/verification.ts:161",
+      "callSite": "src/services/verification.ts:166",
+      "routes": [
+        "/api/verification/webhook"
+      ]
+    },
+    {
+      "fn": "unlikeMedia() @ src/services/mediaInteractions.ts:66",
+      "callSite": "src/services/mediaInteractions.ts:67",
+      "routes": [
+        "/api/media/:id/like"
+      ]
+    },
+    {
+      "fn": "unlikeMemory() @ src/services/memories.ts:433",
+      "callSite": "src/services/memories.ts:436",
+      "routes": [
+        "/api/memories/:id/like"
+      ]
+    },
+    {
+      "fn": "unlikePost() @ src/services/postEngagement.ts:170",
+      "callSite": "src/services/postEngagement.ts:171",
+      "routes": [
+        "/api/posts/:postId/like"
+      ]
+    },
+    {
+      "fn": "unregisterDevice() @ src/services/notifications.ts:181",
+      "callSite": "src/services/notifications.ts:182",
+      "routes": [
+        "/api/me/devices/:id"
+      ]
+    },
+    {
+      "fn": "unsaveBuddyById() @ src/services/rentABuddy.ts:1158",
+      "callSite": "src/services/rentABuddy.ts:1159",
+      "routes": [
+        "/api/rent-a-buddy/buddies/:buddyId/save"
+      ]
+    },
+    {
+      "fn": "unsavePost() @ src/services/posts.ts:604",
+      "callSite": "src/services/posts.ts:608",
+      "routes": [
+        "/api/posts/:postId/save"
+      ]
+    },
+    {
+      "fn": "updateGem() @ src/services/hiddenGems.ts:415",
+      "callSite": "src/services/hiddenGems.ts:429",
+      "routes": [
+        "/api/hidden-gems/saved",
+        "/api/hidden-gems/layover-safe",
+        "/api/hidden-gems/nearby",
+        "/api/hidden-gems/:id"
+      ]
+    },
+    {
+      "fn": "updateLaunchControl() @ src/services/rentABuddyAdmin.ts:358",
+      "callSite": "src/services/rentABuddyAdmin.ts:362",
+      "routes": [
+        "/api/rent-a-buddy/admin/launch-controls/:controlId"
+      ]
+    },
+    {
+      "fn": "updateLayoverSession() @ src/services/layover.ts:312",
+      "callSite": "src/services/layover.ts:316",
+      "routes": [
+        "/api/airport/sessions/:id",
+        "/api/airport/sessions/active"
+      ]
+    },
+    {
+      "fn": "updateMarketplaceAddon() @ src/services/rentABuddy.ts:1138",
+      "callSite": "src/services/rentABuddy.ts:1139",
+      "routes": [
+        "/api/rent-a-buddy/me/addons/:addonId"
+      ]
+    },
+    {
+      "fn": "updateMyMessageSettings() @ src/services/messaging.ts:291",
+      "callSite": "src/services/messaging.ts:294",
+      "routes": [
+        "/api/me/message-settings"
+      ]
+    },
+    {
+      "fn": "updateOffer() @ src/services/rentABuddy.ts:539",
+      "callSite": "src/services/rentABuddy.ts:542",
+      "routes": [
+        "/api/rent-a-buddy/dashboard/offer"
+      ]
+    },
+    {
+      "fn": "updatePackageV2() @ src/services/rentABuddy.ts:1104",
+      "callSite": "src/services/rentABuddy.ts:1109",
+      "routes": [
+        "/api/rent-a-buddy/me/packages/v2/:packageId"
+      ]
+    },
+    {
+      "fn": "updatePlanStop() @ src/services/layover.ts:436",
+      "callSite": "src/services/layover.ts:441",
+      "routes": [
+        "/api/airport/sessions/:id/stops/from-recommendation",
+        "/api/airport/sessions/:id/stops/:stopId",
+        "/api/airport/sessions/:id/stops/reorder"
+      ]
+    },
+    {
+      "fn": "updateRiskStatus() @ src/services/rentABuddyAdmin.ts:305",
+      "callSite": "src/services/rentABuddyAdmin.ts:310",
+      "routes": [
+        "/api/rent-a-buddy/admin/users/:userId/risk-status"
+      ]
+    },
+    {
+      "fn": "updateSupportReport() @ src/services/rentABuddyAdmin.ts:274",
+      "callSite": "src/services/rentABuddyAdmin.ts:278",
+      "routes": [
+        "/api/rent-a-buddy/admin/support/reports/:reportId"
+      ]
+    },
+    {
+      "fn": "updateUserVerification() @ src/services/rentABuddyAdmin.ts:319",
+      "callSite": "src/services/rentABuddyAdmin.ts:323",
+      "routes": [
+        "/api/rent-a-buddy/admin/users/:userId/verification"
+      ]
+    },
+    {
+      "fn": "uploadMemoryMedia() @ src/services/memories.ts:86",
+      "callSite": "src/services/memories.ts:97",
+      "routes": [
+        "/api/media/:id",
+        "/api/media/upload"
+      ]
+    },
+    {
+      "fn": "uploadStampArtwork() @ src/services/adminStamps.ts:259",
+      "callSite": "src/services/adminStamps.ts:264",
+      "routes": [
+        "/api/admin/stamps/catalog/:id/upload"
+      ]
+    },
+    {
+      "fn": "withdrawOffer() @ src/services/rentABuddy.ts:1089",
+      "callSite": "src/services/rentABuddy.ts:1090",
+      "routes": [
+        "/api/rent-a-buddy/offers/:offerId/withdraw"
+      ]
+    }
+  ],
   "staleDocComments": [
     {
       "url": "/api/v1/media/contributors/:id",
@@ -18579,8 +19996,12 @@
           "via": [
             "literal"
           ],
-          "consumers": [],
-          "screens": []
+          "consumers": [
+            "app/(rent-a-buddy)/become/apply.tsx"
+          ],
+          "screens": [
+            "app/(rent-a-buddy)/become/apply.tsx"
+          ]
         },
         {
           "callSite": "src/services/rentABuddy.ts:420",
@@ -18588,8 +20009,12 @@
           "via": [
             "literal"
           ],
-          "consumers": [],
-          "screens": []
+          "consumers": [
+            "app/(rent-a-buddy)/become/apply.tsx"
+          ],
+          "screens": [
+            "app/(rent-a-buddy)/become/apply.tsx"
+          ]
         }
       ]
     },
@@ -18666,8 +20091,12 @@
           "via": [
             "literal"
           ],
-          "consumers": [],
-          "screens": []
+          "consumers": [
+            "app/(rent-a-buddy)/buddy-dashboard/earnings.tsx"
+          ],
+          "screens": [
+            "app/(rent-a-buddy)/buddy-dashboard/earnings.tsx"
+          ]
         }
       ]
     },
@@ -18715,8 +20144,12 @@
           "via": [
             "literal"
           ],
-          "consumers": [],
-          "screens": []
+          "consumers": [
+            "app/(rent-a-buddy)/buddy-dashboard/requests.tsx"
+          ],
+          "screens": [
+            "app/(rent-a-buddy)/buddy-dashboard/requests.tsx"
+          ]
         }
       ]
     },
@@ -18880,8 +20313,12 @@
           "via": [
             "literal"
           ],
-          "consumers": [],
-          "screens": []
+          "consumers": [
+            "app/(rent-a-buddy)/buddy-dashboard/requests.tsx"
+          ],
+          "screens": [
+            "app/(rent-a-buddy)/buddy-dashboard/requests.tsx"
+          ]
         }
       ]
     },
@@ -19032,11 +20469,13 @@
           "consumers": [
             "app/(rent-a-buddy)/active.tsx",
             "app/(rent-a-buddy)/booking/[id].tsx",
+            "app/(rent-a-buddy)/buddy-dashboard/earnings.tsx",
             "app/(rent-a-buddy)/buddy-dashboard/safety.tsx"
           ],
           "screens": [
             "app/(rent-a-buddy)/active.tsx",
             "app/(rent-a-buddy)/booking/[id].tsx",
+            "app/(rent-a-buddy)/buddy-dashboard/earnings.tsx",
             "app/(rent-a-buddy)/buddy-dashboard/safety.tsx"
           ]
         }
@@ -19331,8 +20770,12 @@
           "via": [
             "literal"
           ],
-          "consumers": [],
-          "screens": []
+          "consumers": [
+            "app/(rent-a-buddy)/buddy-dashboard/requests.tsx"
+          ],
+          "screens": [
+            "app/(rent-a-buddy)/buddy-dashboard/requests.tsx"
+          ]
         }
       ]
     },
@@ -19544,11 +20987,13 @@
           "consumers": [
             "app/(rent-a-buddy)/booking/[id].tsx",
             "app/(rent-a-buddy)/buddy/[id].tsx",
+            "app/(rent-a-buddy)/buddy-dashboard/requests.tsx",
             "app/(rent-a-buddy)/checkout.tsx"
           ],
           "screens": [
             "app/(rent-a-buddy)/booking/[id].tsx",
             "app/(rent-a-buddy)/buddy/[id].tsx",
+            "app/(rent-a-buddy)/buddy-dashboard/requests.tsx",
             "app/(rent-a-buddy)/checkout.tsx"
           ]
         }
@@ -19776,8 +21221,12 @@
           "via": [
             "literal"
           ],
-          "consumers": [],
-          "screens": []
+          "consumers": [
+            "app/(rent-a-buddy)/buddy-dashboard/index.tsx"
+          ],
+          "screens": [
+            "app/(rent-a-buddy)/buddy-dashboard/index.tsx"
+          ]
         }
       ]
     },
@@ -19797,8 +21246,12 @@
           "via": [
             "literal"
           ],
-          "consumers": [],
-          "screens": []
+          "consumers": [
+            "app/(rent-a-buddy)/buddy-dashboard/addons.tsx"
+          ],
+          "screens": [
+            "app/(rent-a-buddy)/buddy-dashboard/addons.tsx"
+          ]
         },
         {
           "callSite": "src/services/rentABuddy.ts:575",
@@ -19806,8 +21259,12 @@
           "via": [
             "literal"
           ],
-          "consumers": [],
-          "screens": []
+          "consumers": [
+            "app/(rent-a-buddy)/buddy-dashboard/addons.tsx"
+          ],
+          "screens": [
+            "app/(rent-a-buddy)/buddy-dashboard/addons.tsx"
+          ]
         }
       ]
     },
@@ -19827,8 +21284,12 @@
           "via": [
             "literal"
           ],
-          "consumers": [],
-          "screens": []
+          "consumers": [
+            "app/(rent-a-buddy)/buddy-dashboard/addons.tsx"
+          ],
+          "screens": [
+            "app/(rent-a-buddy)/buddy-dashboard/addons.tsx"
+          ]
         },
         {
           "callSite": "src/services/rentABuddy.ts:589",
@@ -19836,8 +21297,12 @@
           "via": [
             "literal"
           ],
-          "consumers": [],
-          "screens": []
+          "consumers": [
+            "app/(rent-a-buddy)/buddy-dashboard/addons.tsx"
+          ],
+          "screens": [
+            "app/(rent-a-buddy)/buddy-dashboard/addons.tsx"
+          ]
         }
       ]
     },
@@ -19857,8 +21322,14 @@
           "via": [
             "literal"
           ],
-          "consumers": [],
-          "screens": []
+          "consumers": [
+            "app/(rent-a-buddy)/buddy-dashboard/availability.tsx",
+            "app/(rent-a-buddy)/buddy-dashboard/index.tsx"
+          ],
+          "screens": [
+            "app/(rent-a-buddy)/buddy-dashboard/availability.tsx",
+            "app/(rent-a-buddy)/buddy-dashboard/index.tsx"
+          ]
         },
         {
           "callSite": "src/services/rentABuddy.ts:533",
@@ -19866,8 +21337,12 @@
           "via": [
             "literal"
           ],
-          "consumers": [],
-          "screens": []
+          "consumers": [
+            "app/(rent-a-buddy)/buddy-dashboard/availability.tsx"
+          ],
+          "screens": [
+            "app/(rent-a-buddy)/buddy-dashboard/availability.tsx"
+          ]
         }
       ]
     },
@@ -19886,8 +21361,14 @@
           "via": [
             "literal"
           ],
-          "consumers": [],
-          "screens": []
+          "consumers": [
+            "app/(rent-a-buddy)/buddy-dashboard/availability.tsx",
+            "app/(rent-a-buddy)/buddy-dashboard/index.tsx"
+          ],
+          "screens": [
+            "app/(rent-a-buddy)/buddy-dashboard/availability.tsx",
+            "app/(rent-a-buddy)/buddy-dashboard/index.tsx"
+          ]
         }
       ]
     },
@@ -19906,8 +21387,12 @@
           "via": [
             "literal"
           ],
-          "consumers": [],
-          "screens": []
+          "consumers": [
+            "app/(rent-a-buddy)/buddy-dashboard/earnings.tsx"
+          ],
+          "screens": [
+            "app/(rent-a-buddy)/buddy-dashboard/earnings.tsx"
+          ]
         }
       ]
     },
@@ -19967,8 +21452,12 @@
           "via": [
             "literal"
           ],
-          "consumers": [],
-          "screens": []
+          "consumers": [
+            "app/(rent-a-buddy)/buddy-dashboard/packages.tsx"
+          ],
+          "screens": [
+            "app/(rent-a-buddy)/buddy-dashboard/packages.tsx"
+          ]
         },
         {
           "callSite": "src/services/rentABuddy.ts:553",
@@ -19976,8 +21465,12 @@
           "via": [
             "literal"
           ],
-          "consumers": [],
-          "screens": []
+          "consumers": [
+            "app/(rent-a-buddy)/buddy-dashboard/packages.tsx"
+          ],
+          "screens": [
+            "app/(rent-a-buddy)/buddy-dashboard/packages.tsx"
+          ]
         }
       ]
     },
@@ -19997,8 +21490,12 @@
           "via": [
             "literal"
           ],
-          "consumers": [],
-          "screens": []
+          "consumers": [
+            "app/(rent-a-buddy)/buddy-dashboard/packages.tsx"
+          ],
+          "screens": [
+            "app/(rent-a-buddy)/buddy-dashboard/packages.tsx"
+          ]
         },
         {
           "callSite": "src/services/rentABuddy.ts:567",
@@ -20006,8 +21503,12 @@
           "via": [
             "literal"
           ],
-          "consumers": [],
-          "screens": []
+          "consumers": [
+            "app/(rent-a-buddy)/buddy-dashboard/packages.tsx"
+          ],
+          "screens": [
+            "app/(rent-a-buddy)/buddy-dashboard/packages.tsx"
+          ]
         }
       ]
     },
@@ -20026,8 +21527,14 @@
           "via": [
             "literal"
           ],
-          "consumers": [],
-          "screens": []
+          "consumers": [
+            "app/(rent-a-buddy)/buddy-dashboard/index.tsx",
+            "app/(rent-a-buddy)/buddy-dashboard/requests.tsx"
+          ],
+          "screens": [
+            "app/(rent-a-buddy)/buddy-dashboard/index.tsx",
+            "app/(rent-a-buddy)/buddy-dashboard/requests.tsx"
+          ]
         }
       ]
     },
@@ -20417,12 +21924,14 @@
             "literal"
           ],
           "consumers": [
+            "app/(rent-a-buddy)/become/apply.tsx",
             "app/(rent-a-buddy)/buddy-dashboard/availability-calendar.tsx",
             "app/(rent-a-buddy)/buddy-dashboard/meetup-pin.tsx",
             "app/(rent-a-buddy)/buddy-dashboard/offer-create.tsx",
             "app/(tabs)/passport.tsx"
           ],
           "screens": [
+            "app/(rent-a-buddy)/become/apply.tsx",
             "app/(rent-a-buddy)/buddy-dashboard/availability-calendar.tsx",
             "app/(rent-a-buddy)/buddy-dashboard/meetup-pin.tsx",
             "app/(rent-a-buddy)/buddy-dashboard/offer-create.tsx",
@@ -20460,8 +21969,14 @@
             "literal"
           ],
           "aliasedTo": "/api/rent-a-buddy/me/profile/checklist",
-          "consumers": [],
-          "screens": []
+          "consumers": [
+            "app/(rent-a-buddy)/become/apply.tsx",
+            "app/(rent-a-buddy)/buddy-dashboard/index.tsx"
+          ],
+          "screens": [
+            "app/(rent-a-buddy)/become/apply.tsx",
+            "app/(rent-a-buddy)/buddy-dashboard/index.tsx"
+          ]
         }
       ]
     },
@@ -20501,8 +22016,12 @@
             "literal"
           ],
           "aliasedTo": "/api/rent-a-buddy/me/profile/submit",
-          "consumers": [],
-          "screens": []
+          "consumers": [
+            "app/(rent-a-buddy)/become/apply.tsx"
+          ],
+          "screens": [
+            "app/(rent-a-buddy)/become/apply.tsx"
+          ]
         }
       ]
     },
@@ -20565,8 +22084,12 @@
           "via": [
             "literal"
           ],
-          "consumers": [],
-          "screens": []
+          "consumers": [
+            "app/(rent-a-buddy)/become/apply.tsx"
+          ],
+          "screens": [
+            "app/(rent-a-buddy)/become/apply.tsx"
+          ]
         }
       ]
     },
@@ -20585,8 +22108,12 @@
           "via": [
             "literal"
           ],
-          "consumers": [],
-          "screens": []
+          "consumers": [
+            "app/(rent-a-buddy)/become/apply.tsx"
+          ],
+          "screens": [
+            "app/(rent-a-buddy)/become/apply.tsx"
+          ]
         }
       ]
     },
@@ -20808,8 +22335,12 @@
           "via": [
             "literal"
           ],
-          "consumers": [],
-          "screens": []
+          "consumers": [
+            "app/(rent-a-buddy)/buddy-dashboard/offer.tsx"
+          ],
+          "screens": [
+            "app/(rent-a-buddy)/buddy-dashboard/offer.tsx"
+          ]
         },
         {
           "callSite": "src/services/rentABuddy.ts:1066",

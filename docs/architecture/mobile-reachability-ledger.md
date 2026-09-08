@@ -209,6 +209,43 @@ mounted at `app/map/index.tsx:3181` - and it already searches, via `searchUnifie
 The honest classification is BACKEND WITH NO MOBILE CONSUMER: a newer, narrower search
 backend that the client has not migrated to, not a gap to close by swapping the call.
 
+### Client wrappers that reach a live route but nothing calls
+
+192 exported client functions build a URL that a mounted server route serves, and
+are imported by no production file. The route works and the wrapper works; nothing calls it.
+The full list is in the JSON under `orphanClientFunctions`. The concentrations:
+
+| Service | Orphaned wrappers |
+| --- | ---: |
+| `src/services/rentABuddy.ts` | 61 |
+| `src/services/rentABuddyAdmin.ts` | 10 |
+| `src/services/events.ts` | 9 |
+| `src/services/sharedMoments.ts` | 7 |
+| `src/services/friends.ts` | 6 |
+| `src/services/memories.ts` | 6 |
+| `src/services/messaging.ts` | 6 |
+| `src/services/stories.ts` | 5 |
+| `src/services/layover.ts` | 5 |
+| `src/services/hiddenGems.ts` | 3 |
+| `src/services/meetups.ts` | 3 |
+| `src/services/trips.ts` | 3 |
+
+Counting these needs care in one specific way. `import * as rentABuddy from ...` followed
+by `rentABuddy.acceptBooking(id)` (`app/(rent-a-buddy)/buddy-dashboard/requests.tsx:400`)
+is a real consumer, and a named-import-only test reports all 86 of that module's wrappers
+as orphans. Resolving namespace imports drops the count from 217 to 192.
+
+Spot-checked at the call site, these are genuine but mostly are NOT gaps to wire:
+
+- `getMyQuickStatus()` (`src/services/availability.ts:118`) is redundant, not missing:
+  `getMyAvailability()` already returns `quickStatus`, which `AvailabilityStore.tsx:62`
+  consumes. Calling it would add a duplicate round-trip.
+- `getAvailabilityNudges()` (`availability.ts:172`) has no orphan reader because there is
+  no nudges surface - showing them means designing a screen, not wiring a call.
+- `leaveLocateFriendsSession()` / `publishLocateFriendsPosition()`
+  (`src/services/locateFriends.ts:881,618`) are referenced only by
+  `src/features/map/presence/__tests__/locateFriendsService.test.ts`: tested, never shipped.
+
 ### Guard reachability: `useMapEntities.gatewayAsymmetry.test.ts`
 
 Reported as failing to load in isolation with `ERR_REQUIRE_CYCLE_MODULE` while absent
