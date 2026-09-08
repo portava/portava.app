@@ -16,6 +16,7 @@
  * GET    /admin/trust/settings                     — read trust settings
  * PUT    /admin/trust/settings/:key                — update one trust setting + async recalc
  *                                                     (value bounded per key — see SETTING_BOUNDS)
+ * GET    /admin/trust/maintenance/health          — trust maintenance scheduler health
  */
 import { Router } from "express";
 import { logAdminAccess, accessReason } from "../lib/adminAudit.js";
@@ -35,6 +36,13 @@ import { getActiveCaps, liftCap } from "../services/trust/TrustCapService.js";
 import type { RestrictionType } from "../services/trust/TrustRestrictionService.js";
 
 import { requireAdmin } from "../lib/requireAdmin.js";
+import {
+  getTrustMaintenanceStatus,
+  MAINTENANCE_INTERVAL_MS,
+  STARTUP_DELAY_MS,
+  MAX_USERS_PER_PASS,
+  STALE_DAYS,
+} from "../lib/trustMaintenanceScheduler.js";
 
 const router = Router();
 
@@ -484,6 +492,121 @@ router.put("/admin/trust/settings/:key", async (req, res) => {
   });
 
   res.json({ settings: data ?? {}, updated: { key, value: parsed.data.value } });
+});
+
+// ── GET /admin/trust/maintenance/health ──────────────────────────────────────
+
+/**
+ * The trust maintenance scheduler's health, read out loud.
+ *
+ * ── WHY THIS EXISTS ─────────────────────────────────────────────────────────
+ * lib/trustMaintenanceScheduler maintains `consecutiveFailures`,
+ * `lastSkippedReason`, `lastEventsSeen`, `lastRecalcFailures` and
+ * `lastReviewsStuck`, and exports `getTrustMaintenanceStatus()` — which had NO
+ * CALLER anywhere in the repository. Every one of those counters was computed
+ * and then dropped on the floor. A maintenance pass could fail on every tick
+ * for weeks and the only trace was a log line, in a job whose whole purpose is
+ * that trust scores stay computed: `trust_profiles.overall_score` gates event
+ * RSVPs, ranks the buddy marketplace and ranks Pulse. Health nobody can read is
+ * health nobody has.
+ *
+ * ── THE VERDICT IS THE STATUS CODE ──────────────────────────────────────────
+ * A health endpoint that answers 200 while the job is failing has moved the
+ * defect rather than fixed it, so the verdict is load-bearing:
+ *
+ *   ok        200  a pass genuinely succeeded recently
+ *   pending   200  the process is still inside its startup delay and no pass is
+ *                  due yet — "has not run yet" is not "broken", but it is also
+ *                  not "healthy", so it is named rather than rounded to either
+ *   degraded  503  no pass has run well past the startup delay, or the last
+ *                  attempt is older than two intervals (the timer is gone)
+ *   failing   503  the last pass did not fully succeed
+ *
+ * The full status object is returned in BOTH directions: an operator reading a
+ * 503 needs the counters more than anyone.
+ *
+ * `skipped: "flag_off"` is NOT a failure. The trust engine being deliberately
+ * off is a configured state, and reporting it as breakage would train an
+ * operator to ignore this endpoint. It is surfaced as `lastSkippedReason` so
+ * the difference between "off" and "on and broken" is one field, not a guess.
+ */
+router.get("/admin/trust/maintenance/health", async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const { sc } = admin;
+
+  void logAdminAccess(sc, admin.userId, "profile", "list", "view", accessReason(req));
+
+  const status = getTrustMaintenanceStatus();
+  const nowMs = Date.now();
+
+  const lastRunMs = status.lastRunAt ? Date.parse(status.lastRunAt) : null;
+  const lastSuccessMs = status.lastSuccessAt ? Date.parse(status.lastSuccessAt) : null;
+
+  // Two intervals of slack: one pass may legitimately still be in flight when
+  // the next is due, and a single late tick is not an outage.
+  const staleAfterMs = MAINTENANCE_INTERVAL_MS * 2;
+  // Startup grace: the first pass is deliberately delayed, and a process that
+  // has been up for less than that has not failed to do anything yet.
+  const withinStartupGrace = process.uptime() * 1_000 < STARTUP_DELAY_MS + MAINTENANCE_INTERVAL_MS;
+
+  let verdict: "ok" | "pending" | "degraded" | "failing";
+  let detail: string;
+
+  if (status.consecutiveFailures > 0) {
+    verdict = "failing";
+    detail = `last pass did not fully succeed (${status.consecutiveFailures} consecutive)`;
+  } else if (lastRunMs === null) {
+    if (withinStartupGrace) {
+      verdict = "pending";
+      detail = "no pass yet — process is still inside the scheduler's startup delay";
+    } else {
+      verdict = "degraded";
+      detail = "no maintenance pass has EVER run in this process, well past the startup delay";
+    }
+  } else if (nowMs - lastRunMs > staleAfterMs) {
+    verdict = "degraded";
+    detail = `last attempt was ${Math.round((nowMs - lastRunMs) / 60_000)} minutes ago, more than two intervals`;
+  } else {
+    verdict = "ok";
+    detail = status.lastSkippedReason
+      ? `running; last pass skipped (${status.lastSkippedReason})`
+      : "running";
+  }
+
+  const httpStatus = verdict === "ok" || verdict === "pending" ? 200 : 503;
+
+  res.status(httpStatus).json({
+    verdict,
+    detail,
+    status: {
+      lastRunAt:               status.lastRunAt,
+      lastSuccessAt:           status.lastSuccessAt,
+      /** null means the trust_events read FAILED — it is not a count of zero. */
+      lastEventsSeen:          status.lastEventsSeen,
+      lastUsersRecalculated:   status.lastUsersRecalculated,
+      lastRecalcFailures:      status.lastRecalcFailures,
+      lastCapsExpired:         status.lastCapsExpired,
+      lastRestrictionsExpired: status.lastRestrictionsExpired,
+      lastProbationCleared:    status.lastProbationCleared,
+      lastGamingFlagged:       status.lastGamingFlagged,
+      lastGamingInputs:        status.lastGamingInputs,
+      /** null means the pending_review scan could not be performed. */
+      lastReviewsStuck:        status.lastReviewsStuck,
+      lastSkippedReason:       status.lastSkippedReason,
+      lastFailures:            status.lastFailures,
+      consecutiveFailures:     status.consecutiveFailures,
+    },
+    // The cadence the verdict was judged against, so a reader can check the
+    // arithmetic rather than trust it.
+    schedule: {
+      intervalMs:      MAINTENANCE_INTERVAL_MS,
+      startupDelayMs:  STARTUP_DELAY_MS,
+      staleAfterMs,
+      maxUsersPerPass: MAX_USERS_PER_PASS,
+      staleDays:       STALE_DAYS,
+    },
+  });
 });
 
 export default router;

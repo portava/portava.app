@@ -38,6 +38,7 @@ import { startCreatorActivityScoreScheduler } from "./lib/creatorActivityScoreSc
 import { startRankingFatigueSweeper } from "./lib/rankingFatigueSweeper";
 import { startTrustMaintenanceScheduler } from "./lib/trustMaintenanceScheduler";
 import { startBuddyRequestSweeper } from "./lib/rentBuddyRequestSweeper";
+import { startNotificationMaintenanceScheduler } from "./lib/notificationMaintenanceScheduler.js";
 import { startPostPlaceBackfillWorker } from "./lib/places/postPlaceBackfillWorker";
 import { startMediaDedupWorker } from "./lib/media/mediaDedupWorker.js";
 import { startPlaceCollectionsWorker } from "./lib/places/placeCollectionsWorker.js";
@@ -277,6 +278,20 @@ app.listen(port, (err) => {
   // dispute window closes (so a completed booking never auto-confirms), and no
   // reported no-show ever escalates to a dispute.
   startBuddyRequestSweeper();
+  // Drives the notification pipeline's two scheduled jobs. Neither had a
+  // driver: NotificationDigestService.runForAllUsers and
+  // NotificationService.expireOldNotifications were reachable ONLY from
+  // POST /internal/notifications/{digest,expire}, and nothing in this
+  // repository called those routes — no scheduler, no pg_cron (no migration
+  // here contains cron.schedule), no CI job. So no daily digest was ever
+  // built, and notifications.expires_at was a column every reader honoured
+  // and nothing ever acted on. Expiry runs hourly and is probed first so an
+  // unreadable table cannot be reported as an empty one; the digest runs on
+  // the first tick of each local day and is retried until a pass actually
+  // reads the recipient list. Safe on every instance: the delete is
+  // idempotent and the digest is claimed per (user, category, day)
+  // downstream. NOTIFICATION_MAINTENANCE_DISABLED=1 opts an instance out.
+  startNotificationMaintenanceScheduler();
 
   // Startup stamp-worker health summary — log pending queue depth and any
   // jobs stuck in `generating` past their lock (a crashed worker never

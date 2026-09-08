@@ -116,6 +116,21 @@ export interface TrustMaintenanceStatus {
   lastGamingInputs: GamingScanInputs | null;
   lastSkippedReason: string | null;
   consecutiveFailures: number;
+  /**
+   * When a pass last GENUINELY succeeded — not merely "did not throw".
+   *
+   * `lastRunAt` says a pass was ATTEMPTED. These two diverging is the signal
+   * that this job is running and failing, a state that used to be
+   * indistinguishable from a healthy idle one because `consecutiveFailures`
+   * was reset at the end of every pass that did not throw.
+   */
+  lastSuccessAt: string | null;
+  /** Users whose recalculation threw last pass. Non-zero is a partial failure. */
+  lastRecalcFailures: number;
+  /** Events left unadjudicated last pass; null = the scan itself could not run. */
+  lastReviewsStuck: number | null;
+  /** Every reason the last pass was not a success. Empty on a clean pass. */
+  lastFailures: string[];
 }
 
 const _status: TrustMaintenanceStatus = {
@@ -129,10 +144,14 @@ const _status: TrustMaintenanceStatus = {
   lastGamingInputs: null,
   lastSkippedReason: null,
   consecutiveFailures: 0,
+  lastSuccessAt: null,
+  lastRecalcFailures: 0,
+  lastReviewsStuck: null,
+  lastFailures: [],
 };
 
 export function getTrustMaintenanceStatus(): Readonly<TrustMaintenanceStatus> {
-  return { ..._status };
+  return { ..._status, lastFailures: [..._status.lastFailures] };
 }
 
 /** Reset status between test runs — not for production use. */
@@ -147,6 +166,10 @@ export function _resetStatus(): void {
   _status.lastGamingInputs = null;
   _status.lastSkippedReason = null;
   _status.consecutiveFailures = 0;
+  _status.lastSuccessAt = null;
+  _status.lastRecalcFailures = 0;
+  _status.lastReviewsStuck = null;
+  _status.lastFailures = [];
 }
 
 // ── Probation ─────────────────────────────────────────────────────────────────
@@ -685,7 +708,13 @@ export async function runTrustMaintenance(client?: any): Promise<TrustMaintenanc
 
 let _timer: ReturnType<typeof setTimeout> | null = null;
 
-async function tickOnce(): Promise<void> {
+/**
+ * One scheduled tick. Exported so a test can drive a pass and assert on the
+ * health counters directly — `startTrustMaintenanceScheduler` only installs the
+ * timer, and asserting on a timer handle proves nothing about what a pass does
+ * to `consecutiveFailures`.
+ */
+export async function tickOnce(): Promise<void> {
   try {
     const r = await runTrustMaintenance();
     _status.lastRunAt = new Date().toISOString();
@@ -723,9 +752,52 @@ async function tickOnce(): Promise<void> {
         );
       }
     }
-    _status.consecutiveFailures = 0;
+
+    // ── consecutiveFailures RESETS ONLY ON A PASS THAT GENUINELY SUCCEEDED ──
+    // It used to be set to 0 here unconditionally, i.e. at the end of every
+    // pass that did not THROW. `runTrustMaintenance` is fail-soft by
+    // construction: every step is individually try/caught and the function
+    // returns `ok: true` regardless, so the top-level catch below fired almost
+    // never. The counter therefore read 0 through a pass with no service
+    // client, a pass where `trust_events` was unreadable, a pass in which
+    // EVERY recalculation threw, and a pass whose review scan could not run —
+    // the exact states a health reader exists to see. Same defect the event
+    // waitlist sweeper carried and fixed.
+    //
+    // A SKIP is not a failure of the work when it is `flag_off`: the engine is
+    // deliberately off and there is nothing to do. `no_service_client` IS a
+    // failure — this process cannot do the job at all.
+    const failures: string[] = [];
+    if (r.skipped) {
+      if ((r.skipReason ?? "") === "no_service_client") failures.push("no_service_client");
+    } else {
+      // "Could not look" — an unreadable trust_events makes every subsequent
+      // count in this pass a floor of unknown depth, not a measurement.
+      if (r.eventsSeen === null) failures.push("events_unreadable");
+      // A partial failure is still a failure: users whose score this pass was
+      // supposed to refresh still carry a stale one.
+      if (r.recalcFailures > 0) failures.push(`recalc_failures:${r.recalcFailures}`);
+      // null = the pending_review scan itself could not be performed.
+      if (r.reviewsStuck === null) failures.push("review_scan_unreadable");
+      else if (r.reviewsStuck > 0) failures.push(`reviews_stuck:${r.reviewsStuck}`);
+      _status.lastRecalcFailures = r.recalcFailures;
+      _status.lastReviewsStuck = r.reviewsStuck;
+    }
+
+    _status.lastFailures = failures;
+    if (failures.length === 0) {
+      _status.consecutiveFailures = 0;
+      if (!r.skipped) _status.lastSuccessAt = _status.lastRunAt;
+    } else {
+      _status.consecutiveFailures += 1;
+      logger.error(
+        { failures, consecutiveFailures: _status.consecutiveFailures },
+        "trust maintenance pass did NOT fully succeed",
+      );
+    }
   } catch (err) {
     _status.consecutiveFailures += 1;
+    _status.lastFailures = ["threw"];
     logger.error(
       { err, consecutiveFailures: _status.consecutiveFailures },
       "trust maintenance pass failed",
