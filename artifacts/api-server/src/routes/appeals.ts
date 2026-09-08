@@ -16,7 +16,7 @@ import { z } from "zod";
 import { requireUser, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { isUuid } from "../lib/followDecisions.js";
-import { resolveAppeal } from "../services/appeals/resolveAppeal.js";
+import { resolveAppeal, isDeferred } from "../services/appeals/resolveAppeal.js";
 
 import { requireAdmin } from "../lib/requireAdmin.js";
 
@@ -243,6 +243,7 @@ router.patch("/appeals/:id", asyncHandler(async (req, res) => {
   // Gate the state write on a successful reversal: if it fails, hold the appeal
   // in its current state and surface an error instead.
   let reversal: Awaited<ReturnType<typeof resolveAppeal>> | null = null;
+  let restorationDeferred = false;
   if (state === "approved") {
     reversal = await resolveAppeal(sc, {
       id:              (appeal as any).id,
@@ -254,7 +255,29 @@ router.patch("/appeals/:id", asyncHandler(async (req, res) => {
 
     req.log.info({ appealId: id, reversal }, "appeal reversal");
 
-    if (!reversal.ok) {
+    // ── Restoration owed, appeal still resolves ───────────────────────────
+    // A DEFERRED reversal is not a failure of the appeal: the appeal is upheld
+    // and must be allowed to reach its terminal state (holding it under_review
+    // forever is not "truthful", it is a queue that can never be closed). What
+    // failed is the RESTORATION, and that must not be dressed up as a success:
+    // the action recorded is `restore_requires_policy`, the appellant is NOT
+    // told the action was reversed, and an operator gets the ids they need to
+    // do it by hand.
+    if (isDeferred(reversal)) {
+      req.log.error(
+        {
+          appealId:    id,
+          action:      reversal.action,
+          reason:      reversal.reason,
+          targetType:  (appeal as any).target_type,
+          targetId:    (appeal as any).target_id,
+          appellantId: (appeal as any).appellant_id,
+          evidence:    reversal.evidence,
+        },
+        "appeal approved but the restoration did NOT happen — manual restoration required",
+      );
+      restorationDeferred = true;
+    } else if (!reversal.ok) {
       // Do NOT commit 'approved' and do NOT notify the appellant that the
       // action was reversed. Leave the appeal in under_review so a moderator
       // can retry once the underlying cause is fixed.
@@ -295,15 +318,23 @@ router.patch("/appeals/:id", asyncHandler(async (req, res) => {
       event_type:        "appeal.approved",
       category:          "admin",
       title:             "Appeal approved",
-      body:              resolutionNote
-        ? `Your appeal was approved. ${resolutionNote}`
-        : "Your appeal was approved and the action has been reversed.",
+      body:              restorationDeferred
+        ? (resolutionNote
+            ? `Your appeal was approved. ${resolutionNote}`
+            : "Your appeal was approved. A moderator still needs to restore this by hand.")
+        : (resolutionNote
+            ? `Your appeal was approved. ${resolutionNote}`
+            : "Your appeal was approved and the action has been reversed."),
       action_url:        "/appeals",
       metadata: {
         appealId:       id,
         targetType:     (appeal as any).target_type,
         resolutionNote: resolutionNote ?? null,
         reversalAction: reversal!.action,
+        // Explicit, so an audit reader never has to infer restoration from the
+        // appeal reaching 'approved'.
+        restored:       !restorationDeferred,
+        ...(restorationDeferred ? { restorationPending: (reversal as any).reason } : {}),
       },
     }).then(() => {}).catch(() => {});
   }
@@ -333,6 +364,15 @@ router.patch("/appeals/:id", asyncHandler(async (req, res) => {
     state:          (updated as any).state,
     resolutionNote: (updated as any).resolution_note ?? null,
     updatedAt:      (updated as any).updated_at,
+    ...(reversal
+      ? {
+          reversalAction: reversal.action,
+          // The admin who approved must see, in the response to their own
+          // request, that the restoration is still owed.
+          restored:       !restorationDeferred,
+          ...(restorationDeferred ? { restorationRequired: (reversal as any).reason } : {}),
+        }
+      : {}),
   });
 }));
 

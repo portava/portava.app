@@ -18,9 +18,42 @@ export interface Appeal {
   resolution_note: string | null;
 }
 
-type ReversalResult =
-  | { ok: true; action: string }
-  | { ok: false; action: "noop"; reason: string };
+/** The reversal ran and did what `action` says it did. */
+export interface ReversalApplied {
+  ok: true;
+  action: string;
+  /** Absent means "the action name is the whole truth". */
+  restored?: true;
+}
+
+/**
+ * The appeal RESOLVES, but the restoration itself did NOT happen and cannot be
+ * performed by this code. `action` is deliberately NOT a `*_restored` name, and
+ * `restored` is explicitly false so no caller can mistake this for a success by
+ * reading `ok` alone.
+ */
+export interface ReversalDeferred {
+  ok: true;
+  action: "restore_requires_policy";
+  restored: false;
+  reason: string;
+  /** What an operator needs to act on this by hand. */
+  evidence: { appealId: string; targetType: string; targetId: string; userId: string };
+}
+
+/** The reversal could not be attempted or failed outright. */
+export interface ReversalNoop {
+  ok: false;
+  action: "noop";
+  reason: string;
+}
+
+export type ReversalResult = ReversalApplied | ReversalDeferred | ReversalNoop;
+
+/** True when the appeal resolves but nothing was restored. */
+export function isDeferred(r: ReversalResult): r is ReversalDeferred {
+  return r.ok === true && (r as ReversalDeferred).restored === false;
+}
 
 export async function resolveAppeal(
   sc: any,
@@ -126,14 +159,106 @@ export async function resolveAppeal(
     }
 
     case "trip_membership": {
-      // Restore removed trip member
-      const { error } = await sc
+      // ── WHY THIS CASE CANNOT RESTORE ANYTHING ───────────────────────────
+      // The moderated action a `trip_membership` appeal contests is REMOVAL,
+      // and removal DELETES the trip_members row — the kernel's
+      // REMOVE_PARTICIPANT does `DELETE FROM public.trip_members` (migrations
+      // 2450/2500/2590) and so does its flag-off twin in routes/trips.ts and
+      // routes/requests.ts. So the row this case wants to update is GONE in
+      // exactly the situation the case exists for.
+      //
+      // supabase-js reports "matched zero rows" as `{ error: null }` — the same
+      // shape a successful update returns. The previous code read only `error`
+      // and answered `trip_membership_restored`, so every appeal of this type
+      // closed, notified the appellant that the removal had been reversed, and
+      // restored NOTHING. That is the defect.
+      //
+      // Restoring a deleted member means RE-INSERTING the row, which is the
+      // command ADMIN_RESTORE_PARTICIPANT — it does not exist, and the role a
+      // removed member returns to (their role at removal? 'member'? does the
+      // crew cap still apply?) is the OPEN owner decision
+      // APPEAL_RESTORE_SEMANTICS. Nothing below decides it: this case reports
+      // that the restoration is owed, it does not perform one.
+      //
+      // The UPDATE below is the site the Trip Kernel ratchet reports as the one
+      // remaining UNGATED writer of a canonical trip table. It stays, and it
+      // stays ungated, because the ratchet entry IS the visible record of that
+      // unresolved decision.
+      const { data: memberRow, error: readErr } = await sc
+        .from("trip_members")
+        .select("role, status")
+        .eq("trip_id", target_id)
+        .eq("user_id", appellant_id)
+        .maybeSingle();
+      if (readErr) {
+        return { ok: false, action: "noop", reason: `trip member read failed: ${readErr.message}` };
+      }
+
+      const evidence = {
+        appealId:   appeal.id,
+        targetType: target_type,
+        targetId:   target_id,
+        userId:     appellant_id,
+      };
+
+      const currentRole = (memberRow as any)?.role ?? null;
+
+      // No row: the member really was removed. There is nothing to update and
+      // no command that can put them back. Say so; do not claim a restoration.
+      // Do not INSERT a row here — that would be choosing the role.
+      if (memberRow == null) {
+        const reason =
+          "trip_members row absent (member was removed by DELETE); restoring it requires " +
+          "ADMIN_RESTORE_PARTICIPANT and the owner decision APPEAL_RESTORE_SEMANTICS";
+        console.error(
+          `[resolveAppeal] restore_requires_policy appeal=${appeal.id} trip=${target_id} user=${appellant_id} — ${reason}`,
+        );
+        return { ok: true, action: "restore_requires_policy", restored: false, reason, evidence };
+      }
+
+      // A row exists, so the appellant was never removed (or has since rejoined).
+      // If it holds any role other than 'member', running the legacy UPDATE
+      // would overwrite that role with 'member' — demoting an owner, co_host,
+      // host or viewer under the banner of "restoring" them. Picking 'member'
+      // for them is precisely the role invention APPEAL_RESTORE_SEMANTICS has
+      // to settle, so refuse and report instead of writing.
+      if (currentRole !== "member") {
+        const reason =
+          `trip_members row present with role '${currentRole}' — nothing was removed, and rewriting ` +
+          "that role would be choosing a restoration role (owner decision APPEAL_RESTORE_SEMANTICS)";
+        console.error(
+          `[resolveAppeal] restore_requires_policy appeal=${appeal.id} trip=${target_id} user=${appellant_id} — ${reason}`,
+        );
+        return { ok: true, action: "restore_requires_policy", restored: false, reason, evidence };
+      }
+
+      // Role is already 'member': the legacy UPDATE cannot change it, so it is
+      // safe to run, and its RETURNING rows are the affected-row count this
+      // function used to assume. `.select()` is what makes the update RETURNING;
+      // without it `data` is null on success and zero-matched is indetectable.
+      const { data: touched, error } = await sc
         .from("trip_members")
         .update({ role: "member" })
         .eq("trip_id", target_id)
-        .eq("user_id", appellant_id);
+        .eq("user_id", appellant_id)
+        .select("trip_id, user_id, role");
       if (error) return { ok: false, action: "noop", reason: `trip member restore failed: ${error.message}` };
-      return { ok: true, action: "trip_membership_restored" };
+
+      const affected = Array.isArray(touched) ? touched.length : touched == null ? 0 : 1;
+      if (affected === 0) {
+        // The row was deleted between the read and the write. Still not a
+        // restoration, and still not ours to invent a role for.
+        const reason =
+          "trip_members row disappeared between read and write; the update matched zero rows";
+        console.error(
+          `[resolveAppeal] restore_requires_policy appeal=${appeal.id} trip=${target_id} user=${appellant_id} — ${reason}`,
+        );
+        return { ok: true, action: "restore_requires_policy", restored: false, reason, evidence };
+      }
+
+      // The membership is intact and was already 'member'. Nothing was removed
+      // and nothing was restored — and this must not be reported as a restore.
+      return { ok: true, action: "trip_membership_already_present" };
     }
 
     // ── Moderated event/trip restoration ────────────────────────────────────
