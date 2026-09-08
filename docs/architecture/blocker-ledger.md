@@ -623,3 +623,49 @@ situation before the answer.
 of one census. It is on this ledger because it is the LAST row, not because it is
 urgent — and because a census that says "1 BUILT-BUT-WRONG" with no explanation
 of who can fix it is the shape that quietly becomes permanent.
+
+---
+
+## `DISPLAY_NAME_RULE_LOCAL_COPIES` — one rule, four call sites, no single home
+
+Raised 2026-09-08 while correcting `census-passport` P169. ENGINEERING, not an
+owner decision — recorded here because it is the kind of finding that gets fixed
+once in one place and left in the other three.
+
+### The rule
+
+`lib/publicIdentity.ts:presentedName` is the canonical resolution of "what real
+name may this viewer be shown": `display_name ?? name ?? full_name`, trimmed,
+and only when `nameVisibilitySet` says the owner opted in. `nameVisibilitySet` is
+used everywhere and is not the problem. The RESOLUTION is copied.
+
+### The four sites, and how far each had drifted
+
+| site | opt-in gate | name resolution | state |
+| --- | --- | --- | --- |
+| `lib/mapTravelers.ts` | canonical | was inline, order correct | **fixed** — now requests `buildMapPresenceProjections` (P98) |
+| `routes/discoverySearch.ts:624` | canonical | `p.name` ALONE, and `display_name` was not even in the SELECT | **fixed** — adopts `presentedName`; a user with a display name was shown the other one |
+| `routes/compass.ts:3672` | canonical | `display_name ?? name ?? username` inline | **NOT fixed — see below** |
+| `services/passport/PassportProjectionService.ts` | canonical | canonical | fine |
+
+### Why the Compass one was left, deliberately
+
+Its order is already right, so the only divergence is the trim: a whitespace-only
+`display_name` renders a blank title with no way to tell who the row is. Same
+class as the Discovery bug, an order of magnitude smaller.
+
+The change itself is three lines and was written, typechecked and reverted,
+because **no test covers the traveler-recommendation title path**. The nearest
+suite (`compass-social.test.ts`, 33 tests) exercises `get_whos_around`, a
+different code path; `compassSurfaces.test.ts` (77 tests) does not reach it. The
+title sits inside a nested conditional carrying a real privacy asymmetry — an
+opted-in subject with no name shows their username even when private and
+non-followed, because opting in is the owner's own choice — and rewriting that
+without a test is how an asymmetry quietly becomes a leak.
+
+**What is buildable now:** the harness. Build a test for the Compass
+traveler-recommendation payload that pins the existing four-way title behaviour
+(opted-in with a name / opted-in with none / not opted-in public / not opted-in
+private-non-followed), THEN adopt `presentedName`. In that order. The value of
+the fix is smaller than the value of that harness existing, which is the honest
+reason to do it in that order rather than the reverse.

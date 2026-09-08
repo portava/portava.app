@@ -187,7 +187,7 @@ export const COVERED = [
 // Whoever adds anchors next should move this number up with them in the same
 // PR — that is the ratchet doing its job, not a chore.
 // ---------------------------------------------------------------------------
-export const MIN_ANCHORED_CITATIONS = 180;
+export const MIN_ANCHORED_CITATIONS = 198;
 
 const SKIP_DIRS = new Set(['.git', 'node_modules']);
 
