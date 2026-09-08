@@ -1219,17 +1219,39 @@ async function loadBuddyReputation(sc: SupabaseClient, userId: string): Promise<
 }
 
 /** Load passport visibility preferences (best-effort). */
-async function loadVisibilityPrefs(sc: SupabaseClient, userId: string): Promise<Record<string, any> | null> {
-  try {
-    const { data } = await sc
-      .from("passport_visibility_preferences")
-      .select("stamps_visible, memories_visible")
-      .eq("user_id", userId)
-      .maybeSingle();
-    return (data as any) ?? null;
-  } catch {
-    return null;
+/**
+ * The THREE-state read of the owner's collection visibility preferences.
+ *
+ * `prefs: null, readFailed: false` means the owner never set a preference —
+ * the documented default is "public", so `tierPermits` admits everyone. That
+ * default is only defensible when the row was actually LOOKED FOR and was not
+ * there. supabase-js RESOLVES on a database error, so before `readFailed`
+ * existed a failed read arrived as `{ data: null, error }`, `?? null` collapsed
+ * it onto the same `null`, and the shelf of an owner who set
+ * `stamps_visible = 'private'` was projected to a stranger — built entirely
+ * out of a database hiccup. The `try/catch` that used to wrap this read never
+ * fired, because nothing was ever thrown.
+ */
+interface VisibilityPrefsRead {
+  prefs: Record<string, any> | null;
+  /** True when the preference row could not be READ (not merely absent). */
+  readFailed: boolean;
+}
+
+async function loadVisibilityPrefs(sc: SupabaseClient, userId: string): Promise<VisibilityPrefsRead> {
+  const { data, error } = await sc
+    .from("passport_visibility_preferences")
+    .select("stamps_visible, memories_visible")
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (error) {
+    rootLogger.warn(
+      { err: error, userId },
+      "passport: passport_visibility_preferences unreadable — collections withheld from non-owners",
+    );
+    return { prefs: null, readFailed: true };
   }
+  return { prefs: (data as any) ?? null, readFailed: false };
 }
 
 /**
@@ -1242,13 +1264,46 @@ async function loadVisibilityPrefs(sc: SupabaseClient, userId: string): Promise<
  * only composes them, so a viewer can never be shown more by the aggregate than
  * by the yearbook or the reverse.
  *
- * Fail-closed inputs: an unreadable preference row resolves to `null`, which
- * `tierPermits` treats as the default "public" tier — exactly as the aggregate
- * already does, so the two surfaces stay identical even in the degraded case.
+ * Fail-closed inputs: an unreadable preference row withholds BOTH collections
+ * from every non-owner caller and says so via `readFailed` — exactly as the
+ * aggregate does, so the two surfaces stay identical even in the degraded case.
+ * (This paragraph used to claim "fail-closed" while describing the opposite:
+ * the null it produced took the default "public" tier and SHOWED the shelf.)
  */
 export interface PassportCollectionVisibility {
   stamps: boolean;
   memories: boolean;
+  /**
+   * True when the answer above is a REFUSAL forced by an unreadable preference
+   * row, not the owner's setting. A caller that flattens this into "the owner
+   * hid it" tells the viewer something about a PERSON that is actually a
+   * statement about the database.
+   */
+  readFailed?: boolean;
+}
+
+/**
+ * The one place the preference read is turned into a visibility answer, so the
+ * aggregate (step 7/9) and the §9 Yearbook cannot drift.
+ *
+ * FAIL-CLOSED on an unreadable preference row, and deliberately so: the value
+ * withheld is the owner's own privacy choice, and "public" is the only default
+ * that can LEAK. The owner still sees their own shelf — `tierPermits` never
+ * consults the tier for the owner — so the degraded case costs a stranger a
+ * view, never the owner their passport.
+ */
+function visibilityFromPrefs(
+  read: VisibilityPrefsRead,
+  caller: CallerContext,
+): PassportCollectionVisibility {
+  if (read.readFailed) {
+    const own = caller === "owner";
+    return { stamps: own, memories: own, readFailed: true };
+  }
+  return {
+    stamps: tierPermits(read.prefs?.stamps_visible, caller),
+    memories: tierPermits(read.prefs?.memories_visible, caller),
+  };
 }
 
 export async function loadCollectionVisibility(
@@ -1256,11 +1311,7 @@ export async function loadCollectionVisibility(
   userId: string,
   caller: CallerContext,
 ): Promise<PassportCollectionVisibility> {
-  const prefs = await loadVisibilityPrefs(sc, userId);
-  return {
-    stamps: tierPermits(prefs?.stamps_visible, caller),
-    memories: tierPermits(prefs?.memories_visible, caller),
-  };
+  return visibilityFromPrefs(await loadVisibilityPrefs(sc, userId), caller);
 }
 
 /** Does a collection-level "public|friends_only|private" tier permit this caller? */
@@ -1734,7 +1785,7 @@ export async function buildPassportProjection(
   }
 
   // 4. Shared canonical reads (in parallel).
-  const [statsRaw, tripCount, unified, quick, prefs, restrictionState, reputation, buddyRep] = await Promise.all([
+  const [statsRaw, tripCount, unified, quick, prefsRead, restrictionState, reputation, buddyRep] = await Promise.all([
     // The `.catch` arms below are the LAST resort, not the failure path: a
     // PostgREST failure resolves, so these fire only on a genuine throw. Both
     // now report `readFailed` so the two ways of not-seeing-the-data converge
@@ -1769,8 +1820,21 @@ export async function buildPassportProjection(
   // happen. Collected here, next to the reads, rather than inferred later from
   // a zero — a zero is exactly the thing that cannot be distinguished.
   const unreadable: PassportUnreadableSection[] = [];
-  if (statsRaw.readFailed === true) unreadable.push("stats");
-  if (unified.readFailed === true) unreadable.push("stamps");
+  const markUnreadable = (s: PassportUnreadableSection) => {
+    if (!unreadable.includes(s)) unreadable.push(s);
+  };
+  if (statsRaw.readFailed === true) markUnreadable("stats");
+  if (unified.readFailed === true) markUnreadable("stamps");
+
+  // The owner's COLLECTION-level visibility, resolved through the same helper
+  // the Yearbook uses. An unreadable preference row withholds both collections
+  // from a non-owner (see visibilityFromPrefs) — and that withholding is named
+  // here rather than left to look like "this traveller has no stamps".
+  const collectionVisibility = visibilityFromPrefs(prefsRead, callerCtx);
+  if (collectionVisibility.readFailed === true) {
+    if (!collectionVisibility.stamps) markUnreadable("stamps");
+    if (!collectionVisibility.memories) markUnreadable("memories");
+  }
 
   // 5. Traveler state + availability + intent (availability/intent gated).
   // Gate 2 for the crew signal: the SAME location test `buildTravelerState`
@@ -1808,7 +1872,7 @@ export async function buildPassportProjection(
   //    private / circle_only was projected to any viewer that cleared (a).
   //    filterUnifiedStamps fails closed on an absent/unknown tier.
   let stamps: StampProjection[] = [];
-  if (tierPermits(prefs?.stamps_visible, callerCtx)) {
+  if (collectionVisibility.stamps) {
     stamps = filterUnifiedStamps(unified.stamps as UnifiedStamp[], callerCtx)
       .slice(0, 24)
       .map(mapStamp);
@@ -1832,10 +1896,10 @@ export async function buildPassportProjection(
 
   // 9. Memories (privacy-guarded per item + collection tier).
   let memories: MemoryProjection[] = [];
-  if (tierPermits(prefs?.memories_visible, callerCtx)) {
+  if (collectionVisibility.memories) {
     try {
       const memRead = await loadMemoriesRead(sc, userId);
-      if (memRead.readFailed) unreadable.push("memories");
+      if (memRead.readFailed) markUnreadable("memories");
       const guarded = filterMemories(memRead.rows as any[], callerCtx);
       memories = guarded.slice(0, 24).map((m: any) => ({
         id: m.id,
