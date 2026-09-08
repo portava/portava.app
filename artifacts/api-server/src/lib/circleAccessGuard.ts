@@ -17,6 +17,16 @@
  * Telegraph-only membership does NOT satisfy the check — only rows in
  * trip_members / event_rsvps (going) qualify.
  * Follow relationship alone does NOT satisfy the check.
+ *
+ * THREE ANSWERS, NOT TWO. Every step above denies on a database error, and that
+ * has not changed. What changed is what the denial SAYS. A failed read used to
+ * be folded into the verdict an empty read produces — `viewer_not_member`,
+ * `target_not_member`, `target_sharing_off` — so an outage was reported to the
+ * caller as a fact about who the user is and what they chose. Those are now
+ * `reason: "unavailable"`, the state this file already used for a failed
+ * target-side read in canBeSeenByViewersBatch, and every one is logged. Callers
+ * that only read `.allowed` are unaffected; a caller that wants to say "try
+ * again" instead of "you are not on this trip" now has something to read.
  */
 
 import { isKillSwitchEngaged } from "./featureFlags.js";
@@ -40,12 +50,38 @@ export interface CircleAccessResult {
 /** Accepted roles for trip membership (excludes 'invited'). */
 const ACCEPTED_TRIP_ROLES = new Set(["owner", "co_host", "member", "viewer"]);
 
+/**
+ * Three states, because there are three answers.
+ *
+ * This used to be a bare `boolean`, and a failed read produced `false` — the
+ * SAME value a genuine non-member produces. The error was observed
+ * (`if (error || !data) return false`) and then folded into the absence answer,
+ * which is why no unchecked-read checker could see it: the shape is
+ * ERROR-INERT, not error-unchecked. The user-visible consequence was that "we
+ * could not look" was served as "you are not on this trip".
+ *
+ * routes/circle.ts hit the identical defect in its own copy of this rule and
+ * had to THROW, for a structural reason stated in its own docblock: its
+ * `isAcceptedMember` returns a bare boolean and `getAcceptedMemberIds` a bare
+ * array, with nowhere to put a third state. Here there IS somewhere. Every
+ * caller of this function is already returning a `CircleAccessResult`, and this
+ * file already spells that third state `reason: "unavailable"` — the
+ * target-side read failure in canBeSeenByViewersBatch. So the third state is
+ * RETURNED rather than thrown, and the answer stays a deny: fail-CLOSED is
+ * unchanged, only its truthfulness is.
+ */
+type MembershipVerdict = "member" | "not_member" | "unavailable";
+
+function describeReadError(error: any): string {
+  return String(error?.message ?? error?.code ?? "db_error");
+}
+
 async function isAcceptedContextMember(
   sc: any,
   userId: string,
   contextType: ContextType,
   contextId: string,
-): Promise<boolean> {
+): Promise<MembershipVerdict> {
   if (contextType === "trip") {
     const { data, error } = await sc
       .from("trip_members")
@@ -53,11 +89,18 @@ async function isAcceptedContextMember(
       .eq("trip_id", contextId)
       .eq("user_id", userId)
       .maybeSingle();
-    if (error || !data) return false;
+    if (error) {
+      log.error(
+        { table: "trip_members", contextType, contextId, err: describeReadError(error) },
+        "membership read failed; answering unavailable rather than not_member",
+      );
+      return "unavailable";
+    }
+    if (!data) return "not_member";
     const row = data as { role: string; status?: string | null };
-    if (!ACCEPTED_TRIP_ROLES.has(row.role)) return false;
-    if (row.status != null && row.status !== "accepted") return false;
-    return true;
+    if (!ACCEPTED_TRIP_ROLES.has(row.role)) return "not_member";
+    if (row.status != null && row.status !== "accepted") return "not_member";
+    return "member";
   }
 
   // Event: require both RSVP going AND a confirmed event_attendees row.
@@ -67,10 +110,31 @@ async function isAcceptedContextMember(
     sc.from("event_rsvps").select("status").eq("event_id", contextId).eq("user_id", userId).maybeSingle(),
     sc.from("event_attendees").select("user_id").eq("event_id", contextId).eq("user_id", userId).maybeSingle(),
   ]);
-  if (rsvpResult.error || !rsvpResult.data) return false;
-  if ((rsvpResult.data as { status: string }).status !== "going") return false;
-  if (attendeeResult.error || !attendeeResult.data) return false;
-  return true;
+
+  // Order matters, and it is not "check both errors first". A READABLE RSVP that
+  // is absent or not 'going' SETTLES the question — the attendee read could not
+  // have changed the answer, so its failure must not downgrade a verdict we
+  // actually hold. Only the read that would have decided is allowed to make the
+  // answer unavailable.
+  if (!rsvpResult.error) {
+    if (!rsvpResult.data) return "not_member";
+    if ((rsvpResult.data as { status: string }).status !== "going") return "not_member";
+  } else {
+    log.error(
+      { table: "event_rsvps", contextType, contextId, err: describeReadError(rsvpResult.error) },
+      "membership read failed; answering unavailable rather than not_member",
+    );
+    return "unavailable";
+  }
+
+  if (attendeeResult.error) {
+    log.error(
+      { table: "event_attendees", contextType, contextId, err: describeReadError(attendeeResult.error) },
+      "membership read failed; answering unavailable rather than not_member",
+    );
+    return "unavailable";
+  }
+  return attendeeResult.data ? "member" : "not_member";
 }
 
 async function isUserBannedOrSuspended(sc: any, userId: string): Promise<boolean> {
@@ -108,23 +172,40 @@ export async function canViewCirclePresence(
   }
 
   // 2. Viewer must be an accepted member
-  const viewerIsMember = await isAcceptedContextMember(sc, viewerId, contextType, contextId);
-  if (!viewerIsMember) {
+  const viewerMembership = await isAcceptedContextMember(sc, viewerId, contextType, contextId);
+  if (viewerMembership === "unavailable") {
+    return { allowed: false, reason: "unavailable" };
+  }
+  if (viewerMembership !== "member") {
     return { allowed: false, reason: "viewer_not_member" };
   }
 
   // 3. Target must be an accepted member
-  const targetIsMember = await isAcceptedContextMember(sc, targetUserId, contextType, contextId);
-  if (!targetIsMember) {
+  const targetMembership = await isAcceptedContextMember(sc, targetUserId, contextType, contextId);
+  if (targetMembership === "unavailable") {
+    return { allowed: false, reason: "unavailable" };
+  }
+  if (targetMembership !== "member") {
     return { allowed: false, reason: "target_not_member" };
   }
 
-  // 4. Target global settings + consent
-  const { data: globalSettings } = await sc
+  // 4. Target global settings + consent.
+  //     The error was previously unbound, so an unreadable settings row became
+  //     `null` and was reported as `target_sharing_off` — a statement about what
+  //     the target CHOSE, made when we could not read their choice. The deny is
+  //     the same; the reason is now the truthful one.
+  const { data: globalSettings, error: settingsErr } = await sc
     .from("circle_visibility_settings")
     .select("global_enabled, visibility_mode, trip_sharing_default, event_sharing_default, is_paused, consent_version, consented_at")
     .eq("user_id", targetUserId)
     .maybeSingle();
+  if (settingsErr) {
+    log.error(
+      { table: "circle_visibility_settings", contextType, contextId, err: describeReadError(settingsErr) },
+      "target settings read failed; answering unavailable rather than target_sharing_off",
+    );
+    return { allowed: false, reason: "unavailable" };
+  }
 
   const settings = globalSettings as {
     global_enabled: boolean;
@@ -220,8 +301,14 @@ export async function canViewCirclePresence(
     return { allowed: false, reason: "target_restricted" };
   }
 
-  // 8. Load presence row and check expiry / staleness
-  const { data: presenceRow } = await sc
+  // 8. Load presence row and check expiry / staleness.
+  //     This one did not merely mislabel: with the error unbound, an unreadable
+  //     `circle_presence` produced `presenceRow = null` and fell through to the
+  //     bottom `return { allowed: true, presenceRow: null }` — "a member with
+  //     sharing on who has not published yet". No location leaked, but the
+  //     caller was told a fact about the target that had not been established.
+  //     The allowlist line for this read called it FAIL-CLOSED; it was not.
+  const { data: presenceRow, error: presenceErr } = await sc
     .from("circle_presence")
     .select(
       "id, status, status_label, approximate_label, venue_label, checked_in, last_seen_at, expires_at, stale_after_secs, is_stale, needs_help, updated_at",
@@ -230,6 +317,14 @@ export async function canViewCirclePresence(
     .eq("context_type", contextType)
     .eq("context_id", contextId)
     .maybeSingle();
+
+  if (presenceErr) {
+    log.error(
+      { table: "circle_presence", contextType, contextId, err: describeReadError(presenceErr) },
+      "presence read failed; answering unavailable rather than allowing with a null presence row",
+    );
+    return { allowed: false, reason: "unavailable" };
+  }
 
   if (presenceRow) {
     const row = presenceRow as {
@@ -314,24 +409,49 @@ export async function canBeSeenByViewersBatch(
   if (killSwitchActive) return denyAll("kill_switch");
 
   // 2. Viewer membership — one query per table (per-viewer gate).
+  //
+  //    A membership table here is an INCLUSION table: a viewer is a member
+  //    because a row says so. Reading only `data` meant an unreadable table read
+  //    as "no rows", so EVERY viewer in the batch came out a non-member and was
+  //    told `viewer_not_member`. Same defect as the single-row path above, in
+  //    the shape the batch takes: the deny was right, the reason was invented.
   const memberViewers = new Set<string>();
   if (contextType === "trip") {
-    const { data } = await sc
+    const { data, error } = await sc
       .from("trip_members")
       .select("user_id, role, status")
       .eq("trip_id", contextId)
       .in("user_id", viewers);
+    if (error) {
+      log.error(
+        { table: "trip_members", contextType, contextId, err: describeReadError(error) },
+        "batched viewer membership read failed; denying every viewer as unavailable, not as non-members",
+      );
+      return denyAll("unavailable");
+    }
     for (const r of (data ?? []) as Array<{ user_id: string; role: string; status?: string | null }>) {
       if (!ACCEPTED_TRIP_ROLES.has(r.role)) continue;
       if (r.status != null && r.status !== "accepted") continue;
       memberViewers.add(r.user_id);
     }
   } else {
-    // Event: require both RSVP going AND a confirmed event_attendees row.
+    // Event: require both RSVP going AND a confirmed event_attendees row. Both
+    // are required, so either one failing loses the answer for every viewer.
     const [rsvpResult, attendeeResult] = await Promise.all([
       sc.from("event_rsvps").select("user_id, status").eq("event_id", contextId).in("user_id", viewers),
       sc.from("event_attendees").select("user_id").eq("event_id", contextId).in("user_id", viewers),
     ]);
+    const failed = [
+      ["event_rsvps", rsvpResult.error],
+      ["event_attendees", attendeeResult.error],
+    ].filter(([, e]) => Boolean(e));
+    if (failed.length > 0) {
+      log.error(
+        { failed: failed.map(([n]) => n), contextType, contextId },
+        "batched viewer membership read failed; denying every viewer as unavailable, not as non-members",
+      );
+      return denyAll("unavailable");
+    }
     const going = new Set(
       ((rsvpResult.data ?? []) as Array<{ user_id: string; status: string }>)
         .filter((r) => r.status === "going")
@@ -343,8 +463,9 @@ export async function canBeSeenByViewersBatch(
   }
 
   // 3. Target must be an accepted member (checked ONCE for the whole batch).
-  const targetIsMember = await isAcceptedContextMember(sc, targetUserId, contextType, contextId);
-  if (!targetIsMember) {
+  const targetMembership = await isAcceptedContextMember(sc, targetUserId, contextType, contextId);
+  if (targetMembership === "unavailable") return denyAll("unavailable");
+  if (targetMembership !== "member") {
     for (const id of viewers) {
       out.set(id, {
         allowed: false,
@@ -579,17 +700,28 @@ export async function canViewCirclePresenceBatch(
   if (killSwitchActive) return denyAll("kill_switch");
 
   // 2. Viewer must be an accepted member (checked ONCE for the whole batch).
-  const viewerIsMember = await isAcceptedContextMember(sc, viewerId, contextType, contextId);
-  if (!viewerIsMember) return denyAll("viewer_not_member");
+  const viewerMembership = await isAcceptedContextMember(sc, viewerId, contextType, contextId);
+  if (viewerMembership === "unavailable") return denyAll("unavailable");
+  if (viewerMembership !== "member") return denyAll("viewer_not_member");
 
-  // 3. Target membership — one query per table.
+  // 3. Target membership — one query per table. Inclusion tables again: an
+  //    unreadable one read as "no rows", so every target came back
+  //    `target_not_member`. Deny all as `unavailable` instead of asserting a
+  //    membership fact about people we could not look up.
   const acceptedTargets = new Set<string>();
   if (contextType === "trip") {
-    const { data } = await sc
+    const { data, error } = await sc
       .from("trip_members")
       .select("user_id, role, status")
       .eq("trip_id", contextId)
       .in("user_id", targets);
+    if (error) {
+      log.error(
+        { table: "trip_members", contextType, contextId, err: describeReadError(error) },
+        "batched target membership read failed; denying every target as unavailable, not as non-members",
+      );
+      return denyAll("unavailable");
+    }
     for (const r of (data ?? []) as Array<{ user_id: string; role: string; status?: string | null }>) {
       if (!ACCEPTED_TRIP_ROLES.has(r.role)) continue;
       if (r.status != null && r.status !== "accepted") continue;
@@ -601,6 +733,17 @@ export async function canViewCirclePresenceBatch(
       sc.from("event_rsvps").select("user_id, status").eq("event_id", contextId).in("user_id", targets),
       sc.from("event_attendees").select("user_id").eq("event_id", contextId).in("user_id", targets),
     ]);
+    const failed = [
+      ["event_rsvps", rsvpResult.error],
+      ["event_attendees", attendeeResult.error],
+    ].filter(([, e]) => Boolean(e));
+    if (failed.length > 0) {
+      log.error(
+        { failed: failed.map(([n]) => n), contextType, contextId },
+        "batched target membership read failed; denying every target as unavailable, not as non-members",
+      );
+      return denyAll("unavailable");
+    }
     const going = new Set(
       ((rsvpResult.data ?? []) as Array<{ user_id: string; status: string }>)
         .filter((r) => r.status === "going")
