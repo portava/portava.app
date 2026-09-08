@@ -87,6 +87,20 @@ export async function safeSelect(sc: any, run: (sc: any) => any): Promise<any[]>
   }
 }
 
+/**
+ * Report a readiness PERSISTENCE failure. This module deliberately takes no
+ * logger dependency (it is imported by routes and by the reminder scheduler),
+ * so the warning goes to console.warn with a stable prefix — the point is that
+ * a failed write leaves a trace somewhere, which `.then(undefined, () => {})`
+ * did not.
+ */
+function readinessPersistWarn(message: string, context: Record<string, unknown>): void {
+  try {
+    // eslint-disable-next-line no-console
+    console.warn(`[tripReadiness] ${message}`, context);
+  } catch { /* logging must never be the thing that fails a compute */ }
+}
+
 /** Like safeSelect but null-signals "source unavailable" (table absent, etc.). */
 async function safeSelectOrNull(sc: any, run: (sc: any) => any): Promise<any[] | null> {
   try {
@@ -576,11 +590,38 @@ export async function computeReadiness(sc: any, tripId: string): Promise<Readine
     });
   }
 
+  // Set false when the upsert is known to have failed; gates the sweep below.
+  let upsertLanded = true;
+
   // ── Persist: upsert produced items, sweep stale rows ───────────────────────
-  const { data: existingData } = await sc
+  //
+  // THE ORDER IS THE CONTRACT AND IT WAS NOT ENFORCED. Both writes below were
+  // `.then(undefined, () => {})`, a REJECTION handler on a client that RESOLVES
+  // — postgrest-js catches its own fetch errors and returns `{ error }`, so the
+  // handler never ran for a database error and the resolved error was discarded
+  // unread. The sweep DELETE then ran unconditionally: a failed upsert was
+  // followed by deleting the rows describing the PREVIOUS run, leaving
+  // trip_readiness_items claiming fewer blockers than either the old or the new
+  // truth. That table is member-readable directly over PostgREST (policy
+  // tri_member_read), and this file's own header says the critical-item list
+  // must never be hidden.
+  //
+  // The posture is unchanged — a persistence failure must NOT fail the compute,
+  // because the summary returned below is derived in memory and is correct
+  // either way — but the writes are no longer silent, and the DELETE now
+  // happens only when the UPSERT is known to have landed.
+  const { data: existingData, error: existingErr } = await sc
     .from("trip_readiness_items")
     .select("dedupe_key")
     .eq("trip_id", tripId);
+  // An unreadable stored set cannot be swept against: the sweep is skipped
+  // (deleting on an unknown set would be strictly worse than leaving stale rows
+  // in place), and it is recorded rather than inferred from a table that never
+  // shrinks. NOTE: this branch produces the same visible behaviour as an empty
+  // stored set — it is annotation and a log line, not a behaviour change.
+  if (existingErr) {
+    readinessPersistWarn("trip_readiness_items stale-key read failed — the stale-row sweep is skipped, so superseded readiness items stay in the table", { tripId, error: existingErr });
+  }
   const producedKeys = new Set(items.map((i) => i.dedupeKey));
   const staleKeys = ((((existingData as any) ?? []) as any[]))
     .map((r) => (r as any).dedupe_key as string)
@@ -601,18 +642,26 @@ export async function computeReadiness(sc: any, tripId: string): Promise<Readine
       computed_at: computedAt,
     }));
     // Persistence failure must not fail the compute — the summary is still fresh.
-    await sc
+    const { error: upsertErr } = await sc
       .from("trip_readiness_items")
-      .upsert(rows, { onConflict: "trip_id,dedupe_key" })
-      .then(undefined, () => {});
+      .upsert(rows, { onConflict: "trip_id,dedupe_key" });
+    if (upsertErr) {
+      upsertLanded = false;
+      readinessPersistWarn("trip_readiness_items upsert failed — this run's items are NOT stored; the stale-row sweep is skipped so the previous run's rows survive", { tripId, error: upsertErr, itemCount: rows.length });
+    }
   }
-  if (staleKeys.length > 0) {
-    await sc
+  // Only sweep when the replacement rows are actually in place. Deleting the
+  // superseded rows after a failed upsert removes the only record of those
+  // items from a member-readable table.
+  if (upsertLanded && staleKeys.length > 0) {
+    const { error: sweepErr } = await sc
       .from("trip_readiness_items")
       .delete()
       .eq("trip_id", tripId)
-      .in("dedupe_key", staleKeys)
-      .then(undefined, () => {});
+      .in("dedupe_key", staleKeys);
+    if (sweepErr) {
+      readinessPersistWarn("trip_readiness_items stale-row sweep failed — superseded readiness items stay in the table", { tripId, error: sweepErr, staleCount: staleKeys.length });
+    }
   }
 
   return summarizeReadiness(items, computedAt);
