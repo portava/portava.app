@@ -254,7 +254,7 @@ export async function runBuddyRequestSweep(client?: any): Promise<BuddyRequestSw
     for (const bk of staleNoShows) {
       // Derive the original reporter from the no_show_reported event —
       // do NOT assume traveler; either party can file a no-show report.
-      const { data: noShowEvent } = await serviceClient
+      const { data: noShowEvent, error: noShowEventErr } = await serviceClient
         .from("buddy_booking_events")
         .select("actor_user_id")
         .eq("booking_id", bk.id as string)
@@ -262,18 +262,41 @@ export async function runBuddyRequestSweep(client?: any): Promise<BuddyRequestSw
         .order("created_at", { ascending: false })
         .limit(1)
         .maybeSingle();
-      // Fall back to traveler_id only if the event row is missing (data inconsistency)
+      // The fallback below is for a MISSING event row. A failed read returns
+      // `{ data: null }` too, and taking the fallback then does the one thing
+      // the comment says not to do: it assumes the traveler. `reporterUserId`
+      // is written to rent_buddy_disputes.raised_by, so when it was the BUDDY
+      // who filed the no-show, an unreadable buddy_booking_events opens a
+      // dispute in the traveler's name against themselves — a false attribution
+      // in the record a human moderator adjudicates from, and one no later
+      // sweep corrects because the booking is already 'disputed'. Skip the
+      // booking; it stays no_show_pending and the next pass retries it.
+      if (noShowEventErr) {
+        console.error("[sweep] no_show_reported event lookup failed for booking", bk.id, noShowEventErr);
+        continue;
+      }
       const reporterUserId: string = (noShowEvent as any)?.actor_user_id ?? (bk.traveler_id as string);
 
       // Resolve or create the dispute row FIRST. If the insert fails we skip the
       // booking update entirely, so the booking stays no_show_pending and
       // noShowEscalatedCount is never incremented.
-      const { data: existingDispute } = await serviceClient
+      const { data: existingDispute, error: existingDisputeErr } = await serviceClient
         .from("rent_buddy_disputes")
         .select("id")
         .eq("booking_id", bk.id as string)
         .eq("reason", "no_show")
         .maybeSingle();
+
+      // "Resolve or create" only resolves if the read is trusted. An unreadable
+      // rent_buddy_disputes reads as "no dispute for this booking yet" and the
+      // insert below files a SECOND open no_show dispute for the same booking —
+      // two moderation cases over one incident, which can be adjudicated
+      // independently and in opposite directions. Skip, exactly as the insert
+      // failure a few lines down does.
+      if (existingDisputeErr) {
+        console.error("[sweep] existing-dispute lookup failed for booking", bk.id, existingDisputeErr);
+        continue;
+      }
 
       let disputeId: string | null = (existingDispute as any)?.id ?? null;
 

@@ -204,7 +204,7 @@ export async function requestGeneration(req: GenerationRequest): Promise<Generat
   // Entity-level block guard: if an admin has set moderation_status='entity_blocked'
   // on any visual for this entity, refuse all future generation attempts outright.
   // This persists across force-regenerate and daily-limit resets.
-  const { data: blocked } = await sc
+  const { data: blocked, error: blockedErr } = await sc
     .from("generated_visuals")
     .select("id")
     .eq("entity_type", req.entityType)
@@ -212,6 +212,25 @@ export async function requestGeneration(req: GenerationRequest): Promise<Generat
     .eq("moderation_status", "entity_blocked")
     .limit(1)
     .maybeSingle();
+  // This is a MODERATION guard, and an unchecked one inverts it. supabase-js
+  // resolves a failed read as `{ data: null }`, which is the same value as "no
+  // admin has blocked this entity" — so while generated_visuals is unreadable
+  // the block is simply not enforced, and the very entity an admin ruled must
+  // never be generated again goes to the paid provider on the next request. A
+  // guard that stops working the moment the database is unwell is not a guard.
+  // Refuse the request instead; the caller retries.
+  if (blockedErr) {
+    // `VisualEventName` lives in analytics.ts and is a closed union; this uses
+    // the existing failure event with a status that names the cause rather than
+    // widening that union from here.
+    emitVisualEvent("visual_generation_failed", {
+      entity_type: req.entityType,
+      entity_id:   req.entityId,
+      purpose:     req.purpose,
+      status:      "block_check_unavailable",
+    });
+    return { ok: false, status: "error", error: "block_check_unavailable" };
+  }
   if (blocked) return { ok: false, status: "blocked", error: "entity_blocked" };
 
   // Load canonical entity from DB — never trust client-provided entity fields.
@@ -243,7 +262,7 @@ export async function requestGeneration(req: GenerationRequest): Promise<Generat
 
   // Reuse: an existing active image with the same hash → no new provider charge.
   if (!req.force) {
-    const { data: existing } = await sc
+    const { data: existing, error: reuseErr } = await sc
       .from("generated_visuals")
       .select("id, status")
       .eq("entity_type", req.entityType)
@@ -253,6 +272,16 @@ export async function requestGeneration(req: GenerationRequest): Promise<Generat
       .in("status", ["queued", "generating", "ready"])
       .limit(1)
       .maybeSingle();
+    // The reuse check is the "no new provider charge" promise on the line
+    // above. A failed read looks exactly like "nothing generated for this
+    // prompt", so every retry while the table is unreadable queues another
+    // paid job for an image that already exists — and because these rows are
+    // inserted, not upserted, the partial-unique index over the active set
+    // turns the second one into an insert error rather than a reuse. Return
+    // the file's generic negative rather than spending money on a guess.
+    if (reuseErr) {
+      return { ok: false, status: "error", error: "reuse_check_unavailable" };
+    }
     if (existing) {
       emitVisualEvent("visual_generation_reused", {
         entity_type: req.entityType,

@@ -428,9 +428,19 @@ export async function writeObservation(sc: any, actorId: string, input: CaptureI
   if (error) {
     // Unique (actor_id, idempotency_key) -> idempotent replay: return the stored row.
     if (String((error as any).code) === "23505") {
-      const { data: existing } = await sc
+      const { data: existing, error: replayErr } = await sc
         .from("intel_observations").select("*")
         .eq("actor_id", actorId).eq("idempotency_key", input.idempotencyKey).maybeSingle();
+      // The direction here is already safe — a replay we cannot confirm falls
+      // through to the db_error below and the client retries, rather than being
+      // told a write happened that we cannot show. What was NOT safe is the
+      // silence: the reported detail was the 23505, which reads as "your
+      // idempotency key collided" when the truth is "the replay lookup failed",
+      // and no operator would ever see the second fact.
+      if (replayErr) {
+        logger.warn({ err: replayErr, actorId }, "intel observation replay lookup failed after 23505");
+        return { ok: false, reason: "db_error", detail: `replay lookup failed: ${String(replayErr.message ?? "")}` };
+      }
       if (existing) return { ok: true, observation: existing, deduped: true };
     }
     return { ok: false, reason: "db_error", detail: String((error as any).message ?? "") };
@@ -529,9 +539,18 @@ export async function proposeClaim(sc: any, observation: any): Promise<ProposeRe
     // stored candidate. Any other 23505 (e.g. 2174's one-live-per-key index)
     // finds no row here and is reported as the error it is.
     if (String((error as any).code) === "23505" && observationId) {
-      const { data: existing } = await sc
+      const { data: existing, error: replayErr } = await sc
         .from("intel_claims").select("*")
         .eq("observation_id", observationId).eq("claim_type", observation.claim_type).maybeSingle();
+      // Same shape as writeObservation's replay lookup: safe direction, but an
+      // unreadable intel_claims used to be reported as the constraint violation
+      // itself. The comment above distinguishes an idempotent replay from
+      // 2174's one-live-per-key index by whether a row is found — a read that
+      // FAILED finds no row either, so it silently masqueraded as the latter.
+      if (replayErr) {
+        logger.warn({ err: replayErr, observationId }, "intel claim replay lookup failed after 23505");
+        return { ok: false, reason: `replay lookup failed: ${String(replayErr.message ?? "db_error")}` };
+      }
       if (existing) return { ok: true, claim: existing, deduped: true };
     }
     return { ok: false, reason: String((error as any).message ?? "db_error") };

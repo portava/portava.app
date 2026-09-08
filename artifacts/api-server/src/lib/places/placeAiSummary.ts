@@ -107,11 +107,24 @@ export async function generateAiSummary(
 
   // Check cache
   if (client) {
-    const { data: cached } = await client
+    const { data: cached, error: cacheErr } = await client
       .from("place_ai_summaries")
       .select("text, generated_at")
       .eq("place_id", placeId)
       .maybeSingle();
+
+    // This cache read is the only thing standing between a place-detail request
+    // and a paid gpt-4o-mini call. Unchecked, an unreadable place_ai_summaries
+    // reads as a cache MISS on every request — so for as long as the table is
+    // unavailable the TTL stops existing, every viewer of every busy place
+    // triggers a fresh generation, and each one upserts over a summary that was
+    // still inside its cache window. Return the null this function already uses
+    // for "no summary" so the caller renders without one, instead of spending
+    // per-request money to rewrite a cache we could not read.
+    if (cacheErr) {
+      console.warn("placeAiSummary: cache read failed:", cacheErr.message);
+      return null;
+    }
 
     if (cached) {
       const ageMs = Date.now() - new Date((cached as any).generated_at).getTime();
