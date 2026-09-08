@@ -14,6 +14,14 @@
  * The bus never throws into callers — publish failures are logged and swallowed
  * so realtime delivery can never break a write path.  The mobile client always
  * keeps a polling fallback, so any missed event self-heals on the next poll.
+ *
+ * "Swallowed" is not the same as "invisible".  An emitter that cannot fail
+ * visibly cannot be operated: when realtime silently stops, the only symptom is
+ * users reporting that the app "feels slow", which is unattributable.  Every
+ * swallow point below therefore leaves BOTH a log line naming what was lost and
+ * a counter (see `telegraphEmitterStats`) so the loss is a number an operator
+ * can scrape, alert on and compare across deploys — not one line in a log they
+ * would have to already suspect in order to search for.
  */
 
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -62,6 +70,59 @@ type Subscriber = (event: TelegraphEvent) => void;
 
 /** userId -> set of subscriber callbacks (one per open SSE connection). */
 const subscribers = new Map<string, Set<Subscriber>>();
+
+// ── Emitter observability ─────────────────────────────────────────────────────
+
+/**
+ * Counters for everything this bus swallows, so a realtime outage is a number
+ * rather than a rumour. Monotonic for the life of the process; read via
+ * `telegraphEmitterStats()`.
+ */
+export interface TelegraphEmitterStats {
+  /** publishToUsers calls that resolved a non-empty audience. */
+  published: number;
+  /** Individual subscriber callbacks successfully invoked. */
+  delivered: number;
+  /** Subscriber callbacks that threw — that connection missed this event. */
+  subscriberErrors: number;
+  /** Cross-instance fan-out threw — every OTHER instance missed this event. */
+  broadcastErrors: number;
+  /** Cross-instance revoke fan-out threw — a revoked session may stay open elsewhere. */
+  terminateBroadcastErrors: number;
+  /** publishToThread could not read the thread's members. */
+  audienceResolutionFailures: number;
+  /**
+   * Events dropped because the audience could not be resolved. One failed read
+   * loses the event for EVERY member of that thread, which is why this is
+   * counted separately from the read failure itself.
+   */
+  eventsDroppedUnresolvedAudience: number;
+  /** publishToThread resolved an audience of zero (everyone left / self-excluded). */
+  emptyAudience: number;
+}
+
+const stats: TelegraphEmitterStats = {
+  published: 0,
+  delivered: 0,
+  subscriberErrors: 0,
+  broadcastErrors: 0,
+  terminateBroadcastErrors: 0,
+  audienceResolutionFailures: 0,
+  eventsDroppedUnresolvedAudience: 0,
+  emptyAudience: 0,
+};
+
+/** Snapshot of the emitter counters. */
+export function telegraphEmitterStats(): TelegraphEmitterStats {
+  return { ...stats };
+}
+
+/** Test hook: zero the counters. Not used by production code. */
+export function _resetTelegraphEmitterStats(): void {
+  for (const k of Object.keys(stats) as Array<keyof TelegraphEmitterStats>) {
+    stats[k] = 0;
+  }
+}
 
 // ── Cross-instance broadcast hook ─────────────────────────────────────────────
 
@@ -153,7 +214,14 @@ export function terminateUserConnections(userId: string): void {
     try {
       _terminateBroadcastHook(userId);
     } catch (err) {
-      logger.warn({ err, userId }, "telegraph terminate broadcast hook threw");
+      // A failed revoke fan-out is an ACCESS outcome, not a delivery one: the
+      // user's connections on other instances stay open and keep receiving
+      // events they are no longer entitled to. That is an error, not a warning.
+      stats.terminateBroadcastErrors++;
+      logger.error(
+        { err, userId },
+        "telegraph terminate broadcast hook threw — revoked sessions on other instances stay OPEN",
+      );
     }
   }
 }
@@ -208,10 +276,12 @@ export function publishToUsersLocal(
     for (const cb of set) {
       try {
         cb(event);
+        stats.delivered++;
       } catch (err) {
+        stats.subscriberErrors++;
         logger.warn(
           { err, type: event.type },
-          "telegraph remote subscriber callback threw",
+          "telegraph remote subscriber callback threw — that connection missed this event",
         );
       }
     }
@@ -238,18 +308,31 @@ export function publishToUsers(
     for (const cb of set) {
       try {
         cb(full);
+        stats.delivered++;
       } catch (err) {
-        logger.warn({ err, type: full.type }, "telegraph subscriber callback threw");
+        stats.subscriberErrors++;
+        logger.warn(
+          { err, type: full.type },
+          "telegraph subscriber callback threw — that connection missed this event",
+        );
       }
     }
   }
+  if (seen.size > 0) stats.published++;
 
   // Fan out to other instances — fire-and-forget, never block callers.
   if (_broadcastHook && seen.size > 0) {
     try {
       _broadcastHook(Array.from(seen), full);
     } catch (err) {
-      logger.warn({ err, type: full.type }, "telegraph broadcast hook threw");
+      // Local subscribers still got it; everyone connected to another instance
+      // did not, and nothing retries. Count it so a broken channel shows up as
+      // a rising number instead of as "realtime feels flaky on some phones".
+      stats.broadcastErrors++;
+      logger.error(
+        { err, type: full.type, audience: seen.size },
+        "telegraph broadcast hook threw — event NOT delivered to other instances",
+      );
     }
   }
 }
@@ -257,7 +340,7 @@ export function publishToUsers(
 /**
  * Resolve the active members of a thread (left_at IS NULL) and publish to them,
  * optionally excluding one user (typically the actor). Best-effort: a failure
- * to resolve members is logged and swallowed.
+ * to resolve members is logged, counted and swallowed.
  */
 export async function publishToThread(
   sc: SupabaseClient,
@@ -266,19 +349,43 @@ export async function publishToThread(
   options: { excludeUserId?: string } = {},
 ): Promise<void> {
   try {
-    const { data } = await sc
+    const { data, error } = await sc
       .from("message_thread_members")
       .select("user_id")
       .eq("thread_id", threadId)
       .is("left_at", null);
 
+    // supabase-js RESOLVES on a database error. Unchecked, `data` is null, the
+    // audience is empty, and the function returns through the "nobody to tell"
+    // path below — so an unreadable membership table looked EXACTLY like a
+    // thread whose members had all left, and every realtime event for every
+    // thread vanished without a single line of log. The two are not the same
+    // outcome and are no longer reported as if they were.
+    if (error) {
+      stats.audienceResolutionFailures++;
+      stats.eventsDroppedUnresolvedAudience++;
+      logger.error(
+        { err: error, threadId, type: event.type },
+        "publishToThread: thread audience read FAILED — realtime event DROPPED for every member of this thread",
+      );
+      return;
+    }
+
     const userIds = (data ?? [])
       .map((r: { user_id?: string }) => r.user_id)
       .filter((uid): uid is string => Boolean(uid) && uid !== options.excludeUserId);
 
-    if (userIds.length === 0) return;
+    if (userIds.length === 0) {
+      stats.emptyAudience++;
+      return;
+    }
     publishToUsers(userIds, { ...event, threadId });
   } catch (err) {
-    logger.warn({ err, threadId, type: event.type }, "publishToThread failed to resolve members");
+    stats.audienceResolutionFailures++;
+    stats.eventsDroppedUnresolvedAudience++;
+    logger.error(
+      { err, threadId, type: event.type },
+      "publishToThread threw resolving members — realtime event DROPPED for every member of this thread",
+    );
   }
 }
