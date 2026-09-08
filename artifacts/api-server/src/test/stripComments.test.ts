@@ -27,10 +27,11 @@
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync, readdirSync } from "node:fs";
+import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { stripComments } from "../scripts/lib/stripComments.js";
+import { stripSqlComments } from "../scripts/lib/canonicalSchema.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SRC = join(HERE, "..");
@@ -228,5 +229,107 @@ describe("corpus: shipped stripper vs. an independent reference", () => {
       if (stripComments(text).trim() === "") emptied.push(f.slice(SRC.length + 1));
     }
     assert.deepEqual(emptied, [], "these files were handed to every caller as blank");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// THE SQL STRIPPER, held to the same contract.
+//
+// `stripSqlComments` in scripts/lib/canonicalSchema.ts is what makes the
+// canonical SCHEMA and the canonical VOCABULARY: which tables and columns exist,
+// and which labels an enum may hold. check:schema-references, check:enum-literals
+// and check:not-null-writes all rest on it, so a comment counted as DDL becomes a
+// column the code may name, or an enum label the code may compare against.
+//
+// It had the same ordering bug as its TypeScript sibling — block comments removed
+// in one pass, line comments in another, so a `--` comment containing a block
+// opener swallowed everything to the next close marker. Measured across all 466
+// migration and baseline SQL files, that bug erases NOTHING today: no `--`
+// comment in the corpus happens to contain one. It is pinned here anyway,
+// because the sibling bug survived for exactly as long as nobody tested the
+// stripper, and the counts before and after the fix are identical (447 tables,
+// 325 columns with a declared vocabulary) which is the only reason to believe
+// the change was safe.
+// ─────────────────────────────────────────────────────────────────────────────
+describe("stripSqlComments", () => {
+  const BO = "/" + "*";
+  const BC = "*" + "/";
+
+  it("a block opener inside a `--` comment opens nothing", () => {
+    const sql = [
+      "CREATE TABLE a (id uuid);",
+      "-- see the " + BO + " note above, and the path /assets" + BO,
+      "CREATE TABLE b (id uuid);",
+      BO + " a real block " + BC,
+      "CREATE TABLE c (id uuid);",
+    ].join("\n");
+    const out = stripSqlComments(sql);
+    assert.match(out, /CREATE TABLE a/);
+    assert.match(out, /CREATE TABLE b/, "DDL after a line comment containing a block opener was erased");
+    assert.match(out, /CREATE TABLE c/);
+    assert.doesNotMatch(out, /see the/);
+    assert.doesNotMatch(out, /a real block/);
+  });
+
+  it("removes an ordinary line comment and keeps the DDL before it", () => {
+    assert.match(stripSqlComments("ALTER TABLE t ADD COLUMN c text; -- why"), /ALTER TABLE t ADD COLUMN c text;/);
+    assert.doesNotMatch(stripSqlComments("ALTER TABLE t ADD COLUMN c text; -- why"), /why/);
+  });
+
+  it("removes a multi-line block comment", () => {
+    const sql = ["CREATE TABLE a (id uuid);", BO, " * prose", " " + BC, "CREATE TABLE b (id uuid);"].join("\n");
+    const out = stripSqlComments(sql);
+    assert.match(out, /CREATE TABLE a/);
+    assert.match(out, /CREATE TABLE b/);
+    assert.doesNotMatch(out, /prose/);
+  });
+
+  it("still strips a line comment that FOLLOWS a closed block comment", () => {
+    const out = stripSqlComments("CREATE TABLE a " + BO + " x " + BC + " (id uuid); -- tail");
+    assert.match(out, /CREATE TABLE a/);
+    assert.doesNotMatch(out, /tail/);
+    assert.doesNotMatch(out, /x/);
+  });
+
+  it("an unterminated block comment runs to end of file", () => {
+    const out = stripSqlComments(["CREATE TABLE a (id uuid); " + BO + " open", "CREATE TABLE b (id uuid);"].join("\n"));
+    assert.match(out, /CREATE TABLE a/);
+    assert.doesNotMatch(out, /CREATE TABLE b/);
+  });
+
+  it("can only ever REMOVE text, never invent it", () => {
+    for (const sql of ["a -- b", BO + " a " + BC + " b", "-- " + BO + "\nCREATE TABLE keep (id uuid);"]) {
+      const out = stripSqlComments(sql).replace(/\s/g, "");
+      let i = 0;
+      for (const ch of out) {
+        i = sql.indexOf(ch, i);
+        assert.notEqual(i, -1, `stripSqlComments invented ${JSON.stringify(ch)} from ${JSON.stringify(sql)}`);
+        i += 1;
+      }
+    }
+  });
+
+  it("agrees with the two-pass version on the WHOLE real migration corpus", () => {
+    // The claim that made the fix safe to make: identical output on every SQL
+    // file in the tree. If a future migration introduces a `--` comment carrying
+    // a block opener, this case starts failing — and that is the moment the fix
+    // begins to matter, which is worth knowing about rather than discovering
+    // through a wrong schema.
+    const dirs = [join(SRC, "migrations"), join(SRC, "baseline")].filter((d) => existsSync(d));
+    assert.ok(dirs.length > 0, "no SQL corpus found — this case would verify nothing");
+    const twoPass = (sql: string) => sql.replace(new RegExp("\\" + "/\\*[\\s\\S]*?\\*\\/", "g"), " ").replace(/--[^\n]*/g, " ");
+    let files = 0, disagree: string[] = [];
+    for (const d of dirs) {
+      for (const f of readdirSync(d)) {
+        if (!f.endsWith(".sql")) continue;
+        files++;
+        const raw = readFileSync(join(d, f), "utf8");
+        const a = stripSqlComments(raw).replace(/\s+/g, " ").trim();
+        const b = twoPass(raw).replace(/\s+/g, " ").trim();
+        if (a !== b) disagree.push(f);
+      }
+    }
+    assert.ok(files >= 400, `only ${files} SQL file(s) scanned — the corpus check is vacuous`);
+    assert.deepEqual(disagree, [], "a `--` comment now carries a block opener; the order-aware stripper is load-bearing from here");
   });
 });
