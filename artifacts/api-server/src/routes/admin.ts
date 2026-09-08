@@ -1256,7 +1256,13 @@ router.patch("/admin/users/:userId/moderation-action", async (req, res) => {
   }
 
   if (action_type === "report_resolved" && target_ref_id) {
-    const { error } = await sc
+    // `target_ref_id` is any uuid the caller supplies — it is validated as a
+    // uuid and NOTHING else. An id that names no report matches zero rows, and
+    // PostgREST reports zero matched rows with no error at all, so the old
+    // `error ? "error" : "resolved"` told the admin their report was resolved
+    // whenever the id was simply wrong. `.select("id")` makes the statement
+    // RETURNING so the rows it actually touched can be counted.
+    const { data: resolvedRows, error } = await sc
       .from("reports")
       .update({
         status:           "resolved",
@@ -1265,8 +1271,19 @@ router.patch("/admin/users/:userId/moderation-action", async (req, res) => {
         moderation_notes: reason ?? null,
         updated_at:       now,
       })
-      .eq("id", target_ref_id);
-    sideEffects.reportStatus = error ? "error" : "resolved";
+      .eq("id", target_ref_id)
+      .select("id");
+    if (error) {
+      sideEffects.reportStatus = "error";
+    } else if (!Array.isArray(resolvedRows) || resolvedRows.length === 0) {
+      req.log.error(
+        { targetRefId: target_ref_id, targetUserId: userId, adminUserId },
+        "moderation-action report_resolved matched no report — nothing was resolved",
+      );
+      sideEffects.reportStatus = "not_found";
+    } else {
+      sideEffects.reportStatus = "resolved";
+    }
   }
 
   res.json({ action: auditRow, sideEffects });
@@ -2310,11 +2327,19 @@ router.post("/admin/reports/:id/hide-content", async (req, res) => {
   // Apply content mutation based on target type
   let contentHidden = false;
   if (target_type === "post") {
-    const { error } = await sc.from("posts")
+    // `.select("id")` is load-bearing: a report can name content that has since
+    // been hard-deleted, and an UPDATE matching zero rows resolves with no
+    // error. `contentHidden = true` therefore told the admin the post had been
+    // removed AND — via the `if (contentHidden)` gate below — charged the
+    // resolved owner a content_removed Trust penalty for a removal that never
+    // happened. The kernel's trip path already answers TRIP_NOT_FOUND here; the
+    // other target types now agree with it instead of contradicting it.
+    const { data: hiddenRows, error } = await sc.from("posts")
       .update({ post_status: "removed", updated_at: now })
-      .eq("id", target_id);
+      .eq("id", target_id)
+      .select("id");
     if (error) { sendError(res, "db_error", error.message); return; }
-    contentHidden = true;
+    contentHidden = Array.isArray(hiddenRows) && hiddenRows.length > 0;
   } else if (target_type === "trip") {
     // Trip Kernel path (ADMIN_HIDE_TRIP, admin family: actor_role 'admin' AND
     // profiles.role = 'admin' — exactly requireAdmin's DEFAULT_ROLES, so the
@@ -2343,17 +2368,36 @@ router.post("/admin/reports/:id/hide-content", async (req, res) => {
       kernelHidden = true;
     }
     // trip-kernel:legacy-path — the flag-off twin of ADMIN_HIDE_TRIP above.
-    const { error } = kernelHidden ? { error: null } : await sc.from("trips")
-      .update({ visibility: "private", updated_at: now })
-      .eq("id", target_id);
-    if (error) { sendError(res, "db_error", error.message); return; }
-    contentHidden = true;
+    // The type annotation uses a COMMA, not a semicolon: checkTripKernelWriters
+    // binds the marker above to the statement that starts after the previous
+    // `;`, so a `;` inside this annotation would cut the marker off from the
+    // write it documents and the write would resurface as UNGATED.
+    const hideRes: { data?: unknown, error: { message: string } | null } = kernelHidden
+      ? { data: [{ id: target_id }], error: null }
+      : await sc.from("trips")
+        .update({ visibility: "private", updated_at: now })
+        .eq("id", target_id)
+        .select("id");
+    if (hideRes.error) { sendError(res, "db_error", hideRes.error.message); return; }
+    // Flag ON the kernel has already refused a missing trip with TRIP_NOT_FOUND,
+    // so reaching here means it hid one. Flag OFF the same refusal has to come
+    // from the affected-row count, or the legacy twin keeps reporting a removal
+    // the gated path would have rejected.
+    contentHidden = Array.isArray(hideRes.data) && hideRes.data.length > 0;
   } else if (target_type === "event") {
-    const { error } = await sc.from("events")
+    const { data: hiddenEvents, error } = await sc.from("events")
       .update({ visibility: "invite_only", updated_at: now })
-      .eq("id", target_id);
+      .eq("id", target_id)
+      .select("id");
     if (error) { sendError(res, "db_error", error.message); return; }
-    contentHidden = true;
+    contentHidden = Array.isArray(hiddenEvents) && hiddenEvents.length > 0;
+  }
+
+  if (!contentHidden && ["post", "trip", "event"].includes(target_type)) {
+    req.log.error(
+      { reportId: req.params.id, targetType: target_type, targetId: target_id, adminUserId },
+      "content_removed matched no row — the content was NOT hidden and no Trust charge is recorded",
+    );
   }
 
   // Trust: content was actually removed from public view (post/trip/event —

@@ -5449,7 +5449,31 @@ router.patch("/rent-a-buddy/admin/users/:userId/limits", async (req, res) => {
   if (body.fullInAppPaymentRequired !== undefined)    patch.full_in_app_payment_required   = body.fullInAppPaymentRequired;
   if (body.reason !== undefined)                      patch.reason                         = body.reason;
 
-  await serviceClient.from("rent_buddy_user_limits").update(patch).eq("user_id", userId);
+  // These columns ARE the account restriction — rent_buddy_disabled,
+  // buddy_disabled, traveler_booking_disabled, nightlife_disabled. A user with
+  // no rent_buddy_user_limits row (the row is created by the sibling POST,
+  // which upserts) matches zero rows here, and PostgREST reports zero matched
+  // rows with no error, so this handler answered {ok:true} and wrote a
+  // "limits_updated" admin-action row while the user stayed unrestricted. The
+  // error was not read either. `.select()` makes the update RETURNING so the
+  // rows it actually touched can be counted.
+  const { data: limitRows, error: limitsErr } = await serviceClient
+    .from("rent_buddy_user_limits")
+    .update(patch)
+    .eq("user_id", userId)
+    .select("user_id");
+  if (limitsErr) return sendError(res, "db_error", limitsErr.message);
+  if (!Array.isArray(limitRows) || limitRows.length === 0) {
+    req.log?.error(
+      { userId, adminId, patch },
+      "rent-a-buddy admin limits PATCH matched no rent_buddy_user_limits row — no restriction was applied",
+    );
+    return sendError(
+      res,
+      "not_found",
+      "No Rent-A-Buddy limits row exists for this user. Create one with POST /rent-a-buddy/admin/users/:userId/limits first.",
+    );
+  }
 
   await serviceClient.from("rent_buddy_admin_actions").insert({
     admin_id: adminId,
