@@ -404,6 +404,18 @@ export const GUARDS: readonly GuardEntry[] = [
 
   // ── CI cannot invoke these ────────────────────────────────────────────────
   {
+    checker: "src/scripts/checkTrustEventVocabulary.ts",
+    responsibility:
+      "Reports trust events emitted with a category, delta or severity that DISAGREES with TRUST_EVENT_TYPES, " +
+      "types emitted but never declared, and declared types nothing emits — census-trust C32, where the " +
+      "constant called itself the vocabulary while every other emitter hand-wrote its own numbers.",
+    reach: { kind: "check-all", script: "check:trust-event-vocabulary" },
+    inspects: {
+      countPattern: "([0-9]+) emitter site\\(s\\) with literal fields compared",
+      unit: "emitter sites compared against the declared vocabulary",
+    },
+  },
+  {
     checker: "src/scripts/checkTrustTableOwnership.ts",
     responsibility:
       "Reports reads of public.trust_profiles / trust_caps / trust_restrictions from outside services/trust — " +

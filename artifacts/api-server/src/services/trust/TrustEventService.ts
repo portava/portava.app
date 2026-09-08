@@ -802,11 +802,55 @@ export const TRUST_EVENT_TYPES = {
   TRAVEL_CIRCLE_JOIN:       { category: "community_value" as TrustCategory, delta: 1,  severity: "minor" as TrustSeverity },
   MUTUAL_REPORT:            { category: "community_value" as TrustCategory, delta: -3, severity: "minor" as TrustSeverity },
   // Local Guide / Hidden Gems
-  GEM_VERIFIED_BY_GUIDE:    { category: "guide_accuracy" as TrustCategory,  delta: 4,  severity: "minor" as TrustSeverity },
+  // 5, not 4. check:trust-event-vocabulary found HiddenGemVerificationService
+  // awarding 5 against a declared 4 — the one place in this vocabulary where the
+  // declaration was actively FALSE rather than merely incomplete. The
+  // declaration is corrected to what the system does, and the emitter now reads
+  // this constant, so the two can no longer drift. Whether 4 or 5 is the RIGHT
+  // number is a product question this does not answer; what it fixes is that
+  // there is now ONE place to answer it in.
+  GEM_VERIFIED_BY_GUIDE:    { category: "guide_accuracy" as TrustCategory,  delta: 5,  severity: "minor" as TrustSeverity },
 
   /** Emitted when a user completes Portava Verified (id or id_selfie tier). */
   IDENTITY_VERIFIED:        { category: "respect_safety" as TrustCategory,  delta: 10, severity: "minor" as TrustSeverity },
   GEM_DISPUTED:             { category: "guide_accuracy" as TrustCategory,  delta: -5, severity: "moderate" as TrustSeverity },
+  // ── Emitted and previously UNDECLARED ──────────────────────────────────────
+  // Nineteen types the tree emits that this constant did not contain, so its own
+  // claim to be "all event types by source system" was false. Each carries the
+  // values its emitter ACTUALLY passes, read out of the call site rather than
+  // chosen here — the declaration is being made true, not being used to change
+  // behaviour. check:trust-event-vocabulary keeps them in step from now on.
+  //
+  // Events
+  EVENT_ATTENDANCE_CONFIRMED:  { category: "plan_attendance" as TrustCategory, delta: 4,  severity: "minor" as TrustSeverity },
+  EVENT_NO_SHOW:               { category: "plan_attendance" as TrustCategory, delta: -5, severity: "moderate" as TrustSeverity },
+  FIRST_EVENT_HOSTED:          { category: "host_quality" as TrustCategory,    delta: 10, severity: "minor" as TrustSeverity },
+  FIRST_EVENT_JOINED:          { category: "plan_attendance" as TrustCategory, delta: 10, severity: "minor" as TrustSeverity },
+  // Hidden Gems / Local Guides
+  GEM_CONTRIBUTION:            { category: "community_value" as TrustCategory, delta: 1,  severity: "minor" as TrustSeverity },
+  GEM_SAVED:                   { category: "community_value" as TrustCategory, delta: 1,  severity: "minor" as TrustSeverity },
+  GEM_VERIFIED_BY_GUIDE_AUTHOR:{ category: "guide_accuracy" as TrustCategory,  delta: 5,  severity: "minor" as TrustSeverity },
+  GUIDE_VERIFICATION:          { category: "guide_accuracy" as TrustCategory,  delta: 3,  severity: "minor" as TrustSeverity },
+  // Passport / content
+  PASSPORT_STAMP_EARNED:       { category: "passport_authenticity" as TrustCategory, delta: 2, severity: "minor" as TrustSeverity },
+  PULSE_POST_CREATED:          { category: "content_quality" as TrustCategory, delta: 1,  severity: "minor" as TrustSeverity },
+  // Telegraph
+  TELEGRAPH_CONNECTION_ACCEPTED: { category: "communication" as TrustCategory, delta: 1,  severity: "minor" as TrustSeverity },
+  // Appeals
+  APPEAL_APPROVED:             { category: "community_value" as TrustCategory, delta: 2,  severity: "minor" as TrustSeverity },
+  // Rent-a-Buddy. Three of these compute their delta from a rating or a
+  // severity band, so the value here is the BASE the emitter starts from and
+  // the checker cannot compare a computed argument against it — stated rather
+  // than implied, because a declaration nobody can check is the thing this
+  // vocabulary was.
+  RENT_BUDDY_APPLICATION_APPROVED:   { category: "community_value" as TrustCategory, delta: 10, severity: "minor" as TrustSeverity },
+  RENT_BUDDY_BOOKING_ACCEPTED:       { category: "community_value" as TrustCategory, delta: 3,  severity: "minor" as TrustSeverity },
+  RENT_BUDDY_CASH_BALANCE_CONFIRMED: { category: "community_value" as TrustCategory, delta: 2,  severity: "minor" as TrustSeverity },
+  RENT_BUDDY_COMPLETED:              { category: "community_value" as TrustCategory, delta: 5,  severity: "minor" as TrustSeverity },
+  RENT_BUDDY_POSITIVE_REVIEW:        { category: "community_value" as TrustCategory, delta: 4,  severity: "minor" as TrustSeverity },
+  RENT_BUDDY_POLICY_FLAG_CONFIRMED:  { category: "respect_safety" as TrustCategory,  delta: -5, severity: "minor" as TrustSeverity },
+  RENT_BUDDY_ROUTE_CHANGE_DECLINED:  { category: "respect_safety" as TrustCategory,  delta: -5, severity: "minor" as TrustSeverity },
+
   // Passport
   STAMP_VERIFIED:           { category: "passport_authenticity" as TrustCategory, delta: 3,  severity: "minor" as TrustSeverity },
   STAMP_DISPUTED:           { category: "passport_authenticity" as TrustCategory, delta: -6, severity: "moderate" as TrustSeverity },

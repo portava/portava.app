@@ -181,6 +181,13 @@ run_check "check:memory-table-ownership" pnpm run check:memory-table-ownership
 # needed rows, fail-soft where they needed fail-closed — so the seam was widened
 # and this checker keeps the next caller from reaching past it instead.
 run_check "check:trust-table-ownership" pnpm run check:trust-table-ownership
+# check:trust-event-vocabulary — TRUST_EVENT_TYPES declares every trust event's
+# category, delta and severity and calls itself "all event types by source
+# system". census-trust C32 measured what that was worth: nineteen types emitted
+# that it did not contain, and one emitter awarding 5 where it declared 4 — a
+# user's trust moving by a number the system did not say it moved by. It is a
+# contract now, and this is what makes it one.
+run_check "check:trust-event-vocabulary" pnpm run check:trust-event-vocabulary
 # check:production-drift — every table src/migrations declares, checked against a
 # committed snapshot of production's public schema. Offline and credential-free by
 # construction: CI holds no production secret and must not. It was registered as a

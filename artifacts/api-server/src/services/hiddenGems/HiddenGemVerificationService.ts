@@ -257,9 +257,14 @@ export async function recordGuideVerification(
     void recordTrustEvent(db, {
       userId: guideId,
       eventType: "gem_verified_by_guide",
-      category: "guide_accuracy",
-      delta: 5,
-      severity: "minor",
+      // Read from the vocabulary rather than restated. These three fields said
+      // delta 5 while TRUST_EVENT_TYPES declared 4 — the one place the
+      // declaration was actively FALSE, found by check:trust-event-vocabulary.
+      // The declaration was corrected to 5 (what the system does), and reading
+      // it here is what stops the two drifting apart again.
+      category: TRUST_EVENT_TYPES.GEM_VERIFIED_BY_GUIDE.category,
+      delta: TRUST_EVENT_TYPES.GEM_VERIFIED_BY_GUIDE.delta,
+      severity: TRUST_EVENT_TYPES.GEM_VERIFIED_BY_GUIDE.severity,
       sourceType: "hidden_gem",
       sourceId: gemId,
       dedupWindowHours: 24,
