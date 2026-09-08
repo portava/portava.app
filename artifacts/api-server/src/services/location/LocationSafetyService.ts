@@ -175,6 +175,23 @@ async function recordSnapshot(
 /**
  * Check recent trust events for a user.
  * Returns confidence level to inform stamp eligibility decisions.
+ *
+ * ── AN UNREADABLE EVENT LOG IS NOT A CLEAN ONE ──────────────────────────────
+ * This is the same defect `checkAndRecordSnapshot` documents above, one
+ * function down and still live. `location_trust_events` IS the record of
+ * suspected GPS spoofing; `trusted` is the verdict that turns a GPS stamp into
+ * `gps_verified` (routes/location.ts) and a hidden-gem visit into a verified
+ * one. supabase-js RESOLVES on a database error, so `if (error || !data)
+ * return "trusted"` issued a CLEAN verdict from a check that never ran —
+ * exactly the outcome a spoofer wants from an outage, and the one state in
+ * which the log of their previous attempts is guaranteed to be ignored.
+ *
+ * An unreadable log now returns `review`, not `suspicious` and not `trusted`.
+ * `review` is the honest middle: the caller downgrades to `pending_review`
+ * rather than awarding verification, and nobody is accused of anything —
+ * `review` is not a punishment anywhere in this codebase, it withholds a badge.
+ * An EMPTY result is still `trusted`: a successful read that found no
+ * unreviewed events is a real answer.
  */
 export async function getUserTrustLevel(
   db: SupabaseClient,
@@ -190,7 +207,17 @@ export async function getUserTrustLevel(
       .is("reviewed_at", null) // only unreviewed events
       .limit(10);
 
-    if (error || !data) return "trusted";
+    if (error) {
+      logger.error(
+        { err: error, userId },
+        "location_trust_events unreadable — GPS trust NOT verified; reporting 'review' rather than 'trusted'",
+      );
+      return "review";
+    }
+    if (!Array.isArray(data)) {
+      logger.error({ userId }, "location_trust_events read returned no rows array — reporting 'review'");
+      return "review";
+    }
 
     const highConfidence = (data as any[]).filter((r) => r.confidence === "high");
     const mediumConfidence = (data as any[]).filter((r) => r.confidence === "medium");
@@ -198,8 +225,11 @@ export async function getUserTrustLevel(
     if (highConfidence.length >= 1) return "suspicious";
     if (mediumConfidence.length >= 2) return "review";
     return "trusted";
-  } catch {
-    return "trusted";
+  } catch (err) {
+    // Transport-level rejection only. Same reasoning as the `error` branch:
+    // a check that did not happen is not a check that passed.
+    logger.error({ err, userId }, "getUserTrustLevel threw — reporting 'review' rather than 'trusted'");
+    return "review";
   }
 }
 

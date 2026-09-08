@@ -137,8 +137,29 @@ router.post("/moderation/report", asyncHandler(async (req, res) => {
     return;
   }
 
-  // Derive subject_user_id server-side
+  // Derive subject_user_id server-side.
+  //
+  // ── WHY A NULL HERE IS LOGGED AND NOT REFUSED ─────────────────────────────
+  // `resolveContentOwner` is documented as never throwing and returning null
+  // both for "this content has no accountable user" and for "the owner lookup
+  // failed" (lib/contentOwner.ts). For `place` the first is correct by design.
+  // For every other subject type a null means the report lands with
+  // `subject_user_id: null` and cannot be counted against the person who wrote
+  // the thing being reported — the report exists, but the escalation it should
+  // feed does not see it.
+  //
+  // This does NOT refuse: this is the abuse-reporting path, and the deliberate
+  // fail-OPEN posture documented on the dedupe read above governs here too. A
+  // report filed without attribution is recoverable by a moderator; a report
+  // refused because an owner lookup blinked is gone. So the fix is the operator
+  // signal that was missing, not a new way to lose a report.
   const subjectUserId = await resolveSubjectUserId(sc, subjectType, subjectId);
+  if (!subjectUserId && subjectType !== "place") {
+    req.log.error(
+      { subjectType, subjectId, reporterId: user.id },
+      "moderation report has no accountable subject user — the content row is missing or the owner lookup failed; this report will not be attributed to anyone",
+    );
+  }
 
   // Second self-report guard after resolution (for non-user subject types)
   if (subjectUserId && subjectUserId === user.id) {

@@ -31,12 +31,28 @@ export interface LiveShare {
   stoppedAt: string | null;
 }
 
+/**
+ * Whether `approximateArea` is a fact or a placeholder.
+ *
+ * ── WHY THE STRING WAS NOT ENOUGH ───────────────────────────────────────────
+ * `approximateArea` fell back to the literal "location unknown" for BOTH "this
+ * person has no stored location state" and "user_location_state could not be
+ * read". A contact watching a live share because someone did not come home
+ * reads "location unknown" as a fact about the person. It was, half the time, a
+ * fact about the database — and the same screen would have shown a real area
+ * one retry later. The string stays (a recipient must still see something
+ * honest); this field says which of the two it is, so the client can offer a
+ * retry instead of presenting an outage as a person who cannot be located.
+ */
+export type AreaStatus = "known" | "none_recorded" | "unavailable";
+
 /** Recipient-safe view: approximate area only, no raw GPS. */
 export interface RecipientLiveShareView {
   shareId: string;
   status: LiveShareStatus;
   sharingUserName: string;
   approximateArea: string;
+  areaStatus: AreaStatus;
   expiresAt: string | null;
   /** Seconds remaining until expiry, null if no expiry. */
   secondsRemaining: number | null;
@@ -199,15 +215,26 @@ export async function getRecipientView(
   db: SupabaseClient,
   shareId: string,
   callerUserId: string,
-): Promise<{ view: RecipientLiveShareView } | { error: "not_found" | "forbidden" | "expired" | "stopped" }> {
+): Promise<
+  | { view: RecipientLiveShareView }
+  | { error: "not_found" | "forbidden" | "expired" | "stopped" | "unavailable" }
+> {
   try {
     const nowMs = Date.now();
-    const { data: share } = await db
+    // `error` bound. `const { data: share } = …; if (!share) return not_found`
+    // told a contact that a live share they were sent DOES NOT EXIST whenever
+    // the table could not be read — the most reassuring possible reading of an
+    // outage on the one screen someone opens when they are worried.
+    const { data: share, error: shareErr } = await db
       .from("safe_return_live_shares")
       .select("*")
       .eq("id", shareId)
       .maybeSingle();
 
+    if (shareErr) {
+      logger.error({ err: shareErr, shareId }, "getRecipientView: share read failed");
+      return { error: "unavailable" };
+    }
     if (!share) return { error: "not_found" };
 
     const s = mapShare(share as any);
@@ -229,37 +256,61 @@ export async function getRecipientView(
 
     // If there's a contact row, verify can_receive_live_location
     if (s.recipientContactId) {
-      const { data: contact } = await db
+      const { data: contact, error: contactErr } = await db
         .from("safe_return_contacts")
         .select("can_receive_live_location")
         .eq("id", s.recipientContactId)
         .maybeSingle();
 
+      // FAIL CLOSED either way — an unreadable consent row is never a grant.
+      // But `unavailable` rather than `forbidden`: telling a legitimate
+      // recipient they are not authorised is a false accusation that makes them
+      // stop trying, where "temporarily unavailable" makes them retry. Neither
+      // discloses anything.
+      if (contactErr) {
+        logger.error({ err: contactErr, shareId }, "getRecipientView: contact permission read failed — refusing");
+        return { error: "unavailable" };
+      }
       if (!contact || !(contact as any).can_receive_live_location) {
         return { error: "forbidden" };
       }
     }
 
     // Fetch approximate area from user_location_state (city/country — no raw GPS)
-    const { data: locState } = await db
+    const { data: locState, error: locErr } = await db
       .from("user_location_state")
       .select("city, country")
       .eq("user_id", s.userId)
       .maybeSingle();
 
-    const parts: string[] = [];
-    if ((locState as any)?.city) parts.push((locState as any).city);
-    if ((locState as any)?.country) parts.push((locState as any).country);
-    const approximateArea = parts.length > 0 ? parts.join(", ") : "location unknown";
+    let approximateArea: string;
+    let areaStatus: AreaStatus;
+    if (locErr) {
+      logger.error({ err: locErr, shareId, userId: s.userId }, "getRecipientView: location state unreadable");
+      approximateArea = "location temporarily unavailable";
+      areaStatus = "unavailable";
+    } else {
+      const parts: string[] = [];
+      if ((locState as any)?.city) parts.push((locState as any).city);
+      if ((locState as any)?.country) parts.push((locState as any).country);
+      if (parts.length > 0) {
+        approximateArea = parts.join(", ");
+        areaStatus = "known";
+      } else {
+        approximateArea = "location unknown";
+        areaStatus = "none_recorded";
+      }
+    }
 
     // Sharer name
     let sharingUserName = "A traveler";
     try {
-      const { data: profile } = await db
+      const { data: profile, error: profErr } = await db
         .from("profiles")
         .select("display_name")
         .eq("id", s.userId)
         .maybeSingle();
+      if (profErr) logger.warn({ err: profErr, shareId }, "getRecipientView: sharer name read failed");
       sharingUserName = (profile as any)?.display_name ?? "A traveler";
     } catch { /* non-fatal */ }
 
@@ -273,12 +324,15 @@ export async function getRecipientView(
         status: s.status,
         sharingUserName,
         approximateArea,
+        areaStatus,
         expiresAt: s.expiresAt,
         secondsRemaining,
       },
     };
   } catch (err) {
-    logger.warn({ err }, "getRecipientView: threw");
-    return { error: "not_found" };
+    // Not `not_found`: a thrown transport error is not evidence the share does
+    // not exist.
+    logger.error({ err, shareId }, "getRecipientView: threw");
+    return { error: "unavailable" };
   }
 }

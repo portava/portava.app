@@ -9,6 +9,7 @@
  */
 import { Router } from "express";
 import { requireUser, sendError } from "../lib/http";
+import { affectedRows } from "../lib/affectedRows.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { readCircleLocations } from "../lib/circleLocationsRead.js";
 import { nameVisibilitySet } from "../lib/publicIdentity.js";
@@ -435,16 +436,37 @@ router.post("/location/exit-geofence", async (req, res) => {
   const eligibleAt = new Date(now.getTime() + GEOFENCE_CONFIRMATION_MINUTES * 60 * 1_000).toISOString();
   const exitedAt = now.toISOString();
 
-  const { error: updateErr } = await sc
+  // `.select("id")` so a zero-row UPDATE is distinguishable from a real one.
+  //
+  // PostgREST answers both with 204, so `if (updateErr)` alone could not tell
+  // "the post moved to pending_delay" from "nothing matched". The post is the
+  // author's own delayed-publish state — it holds back a post made AT a
+  // location until the author has left it — and a zero-row update leaves it
+  // stuck in `pending_location_exit` forever while this endpoint reports a
+  // `publishEligibleAt` the worker will never honour. The status was read and
+  // asserted a few lines above, so zero rows here means a concurrent change:
+  // real, rare, and not something to report as done.
+  const { data: updated, error: updateErr } = await sc
     .from("posts")
     .update({
       exited_geofence_at: exitedAt,
       publish_eligible_at: eligibleAt,
       post_status: "pending_delay", // worker picks it up on next tick
     })
-    .eq("id", postId);
+    .eq("id", postId)
+    .eq("post_status", "pending_location_exit")
+    .select("id");
 
-  if (updateErr) { sendError(res, "db_error", updateErr.message); return; }
+  if (updateErr) {
+    req.log.error({ err: updateErr, postId }, "exit-geofence: post update failed");
+    sendError(res, "db_error", updateErr.message);
+    return;
+  }
+  if (affectedRows(updated) === 0) {
+    req.log.warn({ postId }, "exit-geofence: no post row matched — status changed concurrently, nothing was scheduled");
+    sendError(res, "conflict", "This post is no longer awaiting a geofence exit");
+    return;
+  }
 
   // Append exit_detected event (non-fatal, but ISSUED).
   //

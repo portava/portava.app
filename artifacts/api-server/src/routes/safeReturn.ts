@@ -55,6 +55,8 @@ import {
   notifyTrustedCircle,
   notifyHost,
   notifyTripCrew,
+  alertFellShort,
+  type AlertOutcome,
 } from "../services/safeReturn/SafeReturnNotificationService";
 import {
   startShare,
@@ -71,18 +73,57 @@ const router = Router();
 
 // ── Feature flag helpers ──────────────────────────────────────────────────────
 
-async function isFlagEnabled(db: ReturnType<typeof getServiceClient>, flag: string): Promise<boolean> {
-  if (!db) return false;
+/**
+ * Is a Safe Return flag on?
+ *
+ * ── "OFF" AND "WE DO NOT KNOW" ARE DIFFERENT ANSWERS ────────────────────────
+ * supabase-js RESOLVES on a database error, so `const { data } = await …;
+ * Boolean(data?.enabled)` returned FALSE for a flag row that could not be read,
+ * and every caller renders false as "Safe Return is not yet enabled". Telling
+ * someone who is about to walk home alone that the feature does not exist —
+ * when it does, and a retry would have started their timer — is not a graceful
+ * degradation. `unknown` is a third value so the callers can refuse with a
+ * retryable 503 instead of a flat, false "off".
+ *
+ * A missing ROW is still a real `false`: an unseeded flag is off by design.
+ */
+type FlagState = "on" | "off" | "unknown";
+
+/**
+ * NAME KEPT DELIBERATELY. `scripts/check-flag-polarity.mjs` resolves which
+ * flags this router reads by finding the string literals passed to a helper
+ * called `isFlagEnabled` (this file has a declared SHADOW_READERS entry for it).
+ * Renaming it made `safe_return_live_share_enabled` and
+ * `safe_return_trusted_circle_alerts_enabled` report as SEEDED BUT NEVER READ —
+ * i.e. the guard could no longer see that these gates exist. What changed is
+ * the RETURN TYPE, not the name or the arguments.
+ */
+async function isFlagEnabled(db: ReturnType<typeof getServiceClient>, flag: string): Promise<FlagState> {
+  if (!db) return "unknown";
   try {
-    const { data } = await db
+    const { data, error } = await db
       .from("feature_flags")
       .select("enabled")
       .eq("flag", flag)
       .maybeSingle();
-    return Boolean((data as any)?.enabled);
+    if (error) return "unknown";
+    return (data as any)?.enabled ? "on" : "off";
   } catch {
-    return false;
+    return "unknown";
   }
+}
+
+/**
+ * Answer a request when a flag could not be read.
+ * 503 + retryable, never a 404 "feature_disabled" that reads as "this does not
+ * exist for you".
+ */
+function sendFlagUnknown(res: Parameters<typeof sendError>[1] extends never ? never : any, flag: string): void {
+  sendError(
+    res,
+    "degraded_unavailable",
+    `Safe Return availability could not be confirmed right now (${flag}). Please try again.`,
+  );
 }
 
 // ── Schemas ───────────────────────────────────────────────────────────────────
@@ -122,7 +163,9 @@ router.get("/me/safe-return/suggest/:planItemId", async (req, res) => {
   const { client, user } = auth;
 
   const db = getServiceClient() ?? client;
-  if (!await isFlagEnabled(db, "safe_return_enabled")) {
+  const flag = await isFlagEnabled(db, "safe_return_enabled");
+  if (flag === "unknown") { sendFlagUnknown(res, "safe_return_enabled"); return; }
+  if (flag === "off") {
     res.status(200).json({ suggest: false, featureEnabled: false });
     return;
   }
@@ -238,9 +281,10 @@ router.post("/me/safe-return/sessions", async (req, res) => {
   const { client, user } = auth;
 
   const db = getServiceClient() ?? client;
-  if (!await isFlagEnabled(db, "safe_return_enabled")) {
-    sendError(res, "feature_disabled", "Safe Return is not yet enabled");
-    return;
+  {
+    const flag = await isFlagEnabled(db, "safe_return_enabled");
+    if (flag === "unknown") { sendFlagUnknown(res, "safe_return_enabled"); return; }
+    if (flag === "off") { sendError(res, "feature_disabled", "Safe Return is not yet enabled"); return; }
   }
 
   const parsed = createSessionSchema.safeParse(req.body);
@@ -252,18 +296,25 @@ router.post("/me/safe-return/sessions", async (req, res) => {
   // Reject if the user already has an active session — prevents double-sessions
   // when the setup sheet is opened from two different screens concurrently.
   const existing = await getActiveSession(db, user.id);
-  if (existing) {
+  if (!existing.ok) {
+    // The duplicate-session pre-check could not run. Creating anyway risks a
+    // second session; refusing costs one retry. Refuse — and say why.
+    req.log.error({ reason: existing.reason, userId: user.id }, "safe-return create: active-session pre-check failed");
+    sendError(res, "degraded_unavailable", "We could not start Safe Return right now. Please try again.");
+    return;
+  }
+  if (existing.value) {
     sendError(res, "conflict", "You already have an active Safe Return session");
     return;
   }
 
-  const session = await createSession(db, { userId: user.id, ...parsed.data });
-  if (!session) {
+  const created = await createSession(db, { userId: user.id, ...parsed.data });
+  if (!created) {
     // Could be a true DB error, or the partial unique index fired for a concurrent
     // request that slipped past the pre-check above.  Re-check so we can return a
     // meaningful 409 instead of a generic 500.
     const stillActive = await getActiveSession(db, user.id);
-    if (stillActive) {
+    if (stillActive.ok && stillActive.value) {
       sendError(res, "conflict", "You already have an active Safe Return session");
     } else {
       sendError(res, "db_error", "Failed to create session", { exposeDetail: true });
@@ -271,10 +322,46 @@ router.post("/me/safe-return/sessions", async (req, res) => {
     return;
   }
 
+  const session = created.session;
+
   // Evict Compass profile cache — safeReturnActive signal changes immediately.
   invalidateCompassProfile(user.id);
 
-  res.status(201).json({ ok: true, session: toPublicSession(session) });
+  // THE CONTACTS ARE REPORTED, NOT ASSUMED.
+  //
+  // `contactsSaved` is what `safe_return_contacts` actually holds. When it is
+  // short of `contactsRequested`, the people the user nominated will NOT be
+  // alerted if this timer runs out, and the response says so in the same breath
+  // as the 201 rather than letting a green check mark stand for a write that
+  // did not happen. The session itself is still real and still worth having:
+  // the timer runs and the traveller's own missed-check-in alert works.
+  const contactsIncomplete = created.contactsSaved < created.contactsRequested;
+  if (contactsIncomplete) {
+    req.log.error(
+      {
+        sessionId: session.id,
+        userId: user.id,
+        contactsRequested: created.contactsRequested,
+        contactsSaved: created.contactsSaved,
+        reason: created.contactsError,
+      },
+      "safe-return create: trusted contacts were NOT stored — this session cannot alert them",
+    );
+  }
+
+  res.status(201).json({
+    ok: true,
+    session: toPublicSession(session),
+    contacts: { requested: created.contactsRequested, saved: created.contactsSaved },
+    ...(contactsIncomplete
+      ? {
+          degraded: true,
+          warnings: ["trusted_contacts_not_saved"],
+          message:
+            "Your Safe Return timer is running, but we could not save your trusted contacts. They will not be alerted — please add them again.",
+        }
+      : {}),
+  });
 
   // Fire-and-forget: award safe_return_ready stamp when user activates Safe Return.
   void (async () => {
@@ -313,12 +400,19 @@ router.post("/me/safe-return/sessions/:id/start", async (req, res) => {
   const { client, user } = auth;
 
   const db = getServiceClient() ?? client;
-  if (!await isFlagEnabled(db, "safe_return_enabled")) {
-    sendError(res, "feature_disabled"); return;
+  {
+    const flag = await isFlagEnabled(db, "safe_return_enabled");
+    if (flag === "unknown") { sendFlagUnknown(res, "safe_return_enabled"); return; }
+    if (flag === "off") { sendError(res, "feature_disabled"); return; }
   }
 
-  const session = await startSession(db, req.params.id, user.id);
-  if (!session) {
+  const started = await startSession(db, req.params.id, user.id);
+  if (started.outcome === "unavailable") {
+    req.log.error({ reason: started.reason, sessionId: req.params.id }, "safe-return start: update failed");
+    sendError(res, "degraded_unavailable", "We could not start your Safe Return timer. Please try again.");
+    return;
+  }
+  if (started.outcome === "no_match") {
     sendError(res, "not_found", "Session not found or cannot be started");
     return;
   }
@@ -326,7 +420,7 @@ router.post("/me/safe-return/sessions/:id/start", async (req, res) => {
   // Evict Compass profile cache — session is now active.
   invalidateCompassProfile(user.id);
 
-  res.status(200).json({ ok: true, session: toPublicSession(session) });
+  res.status(200).json({ ok: true, session: toPublicSession(started.session) });
 });
 
 // ── GET /api/me/safe-return/sessions/active ───────────────────────────────────
@@ -337,12 +431,26 @@ router.get("/me/safe-return/sessions/active", async (req, res) => {
   const { client, user } = auth;
 
   const db = getServiceClient() ?? client;
-  if (!await isFlagEnabled(db, "safe_return_enabled")) {
-    res.status(200).json({ session: null, featureEnabled: false }); return;
+  {
+    const flag = await isFlagEnabled(db, "safe_return_enabled");
+    // NOT `{ session: null }`. "You have no Safe Return running" is the whole
+    // answer this endpoint gives, and it must never be assembled from a flag
+    // read that failed.
+    if (flag === "unknown") { sendFlagUnknown(res, "safe_return_enabled"); return; }
+    if (flag === "off") { res.status(200).json({ session: null, featureEnabled: false }); return; }
   }
 
-  const session = await getActiveSession(db, user.id);
-  res.status(200).json({ session: session ? toPublicSession(session) : null });
+  const active = await getActiveSession(db, user.id);
+  if (!active.ok) {
+    req.log.error({ reason: active.reason, userId: user.id }, "safe-return: active-session read failed");
+    sendError(
+      res,
+      "degraded_unavailable",
+      "We could not check whether you have a Safe Return running. Please try again.",
+    );
+    return;
+  }
+  res.status(200).json({ session: active.value ? toPublicSession(active.value) : null });
 });
 
 // ── POST /api/me/safe-return/sessions/:id/extend ─────────────────────────────
@@ -353,8 +461,10 @@ router.post("/me/safe-return/sessions/:id/extend", async (req, res) => {
   const { client, user } = auth;
 
   const db = getServiceClient() ?? client;
-  if (!await isFlagEnabled(db, "safe_return_enabled")) {
-    sendError(res, "feature_disabled"); return;
+  {
+    const flag = await isFlagEnabled(db, "safe_return_enabled");
+    if (flag === "unknown") { sendFlagUnknown(res, "safe_return_enabled"); return; }
+    if (flag === "off") { sendError(res, "feature_disabled"); return; }
   }
 
   const parsed = extendSchema.safeParse(req.body);
@@ -363,13 +473,20 @@ router.post("/me/safe-return/sessions/:id/extend", async (req, res) => {
     return;
   }
 
-  const session = await extendTimer(db, req.params.id, user.id, parsed.data.minutes);
-  if (!session) {
+  const extended = await extendTimer(db, req.params.id, user.id, parsed.data.minutes);
+  if (extended.outcome === "unavailable") {
+    // A 404 here would tell someone whose timer is about to expire that their
+    // session does not exist. It does; the write failed and a retry may work.
+    req.log.error({ reason: extended.reason, sessionId: req.params.id }, "safe-return extend: failed");
+    sendError(res, "degraded_unavailable", "We could not extend your timer. Please try again.");
+    return;
+  }
+  if (extended.outcome === "no_match") {
     sendError(res, "not_found", "Session not found or cannot be extended");
     return;
   }
 
-  res.status(200).json({ ok: true, session: toPublicSession(session) });
+  res.status(200).json({ ok: true, session: toPublicSession(extended.session) });
 });
 
 // ── POST /api/me/safe-return/sessions/:id/confirm ────────────────────────────
@@ -380,15 +497,25 @@ router.post("/me/safe-return/sessions/:id/confirm", async (req, res) => {
   const { client, user } = auth;
 
   const db = getServiceClient() ?? client;
-  if (!await isFlagEnabled(db, "safe_return_enabled")) {
-    sendError(res, "feature_disabled"); return;
+  {
+    const flag = await isFlagEnabled(db, "safe_return_enabled");
+    if (flag === "unknown") { sendFlagUnknown(res, "safe_return_enabled"); return; }
+    if (flag === "off") { sendError(res, "feature_disabled"); return; }
   }
 
-  const session = await confirmSafe(db, req.params.id, user.id);
-  if (!session) {
+  const confirmed = await confirmSafe(db, req.params.id, user.id);
+  if (confirmed.outcome === "unavailable") {
+    // "Already closed" would tell someone who just got home that they are done.
+    // They are not: the session is still active and will alert their contacts.
+    req.log.error({ reason: confirmed.reason, sessionId: req.params.id }, "safe-return confirm: failed");
+    sendError(res, "degraded_unavailable", "We could not record that you are safe. Please try again.");
+    return;
+  }
+  if (confirmed.outcome === "no_match") {
     sendError(res, "not_found", "Session not found or already closed");
     return;
   }
+  const session = confirmed.session;
 
   // Fire-and-forget: award a Safe Return stamp + suggested memory behind feature flag
   void (async () => {
@@ -480,12 +607,21 @@ router.post("/me/safe-return/sessions/:id/cancel", async (req, res) => {
   const { client, user } = auth;
 
   const db = getServiceClient() ?? client;
-  if (!await isFlagEnabled(db, "safe_return_enabled")) {
-    sendError(res, "feature_disabled"); return;
+  {
+    const flag = await isFlagEnabled(db, "safe_return_enabled");
+    if (flag === "unknown") { sendFlagUnknown(res, "safe_return_enabled"); return; }
+    if (flag === "off") { sendError(res, "feature_disabled"); return; }
   }
 
-  const session = await cancelSession(db, req.params.id, user.id);
-  if (!session) {
+  const cancelled = await cancelSession(db, req.params.id, user.id);
+  if (cancelled.outcome === "unavailable") {
+    // A cancel that failed must not display as cancelled: the session is still
+    // running and will escalate to this person's contacts at the timer.
+    req.log.error({ reason: cancelled.reason, sessionId: req.params.id }, "safe-return cancel: failed");
+    sendError(res, "degraded_unavailable", "We could not cancel this Safe Return. It may still be running — please try again.");
+    return;
+  }
+  if (cancelled.outcome === "no_match") {
     sendError(res, "not_found", "Session not found or already closed");
     return;
   }
@@ -493,7 +629,7 @@ router.post("/me/safe-return/sessions/:id/cancel", async (req, res) => {
   // Evict Compass profile cache — session cancelled, safeReturnActive changes.
   invalidateCompassProfile(user.id);
 
-  res.status(200).json({ ok: true, session: toPublicSession(session) });
+  res.status(200).json({ ok: true, session: toPublicSession(cancelled.session) });
 });
 
 // ── POST /api/me/safe-return/sessions/:id/trigger-missed ─────────────────────
@@ -505,12 +641,20 @@ router.post("/me/safe-return/sessions/:id/trigger-missed", async (req, res) => {
   const { client, user } = auth;
 
   const db = getServiceClient() ?? client;
-  if (!await isFlagEnabled(db, "safe_return_enabled")) {
-    sendError(res, "feature_disabled"); return;
+  {
+    const flag = await isFlagEnabled(db, "safe_return_enabled");
+    if (flag === "unknown") { sendFlagUnknown(res, "safe_return_enabled"); return; }
+    if (flag === "off") { sendError(res, "feature_disabled"); return; }
   }
 
   // Fetch session first to get escalation level and options
-  const existing = await getSessionById(db, req.params.id, user.id);
+  const existingRead = await getSessionById(db, req.params.id, user.id);
+  if (!existingRead.ok) {
+    req.log.error({ reason: existingRead.reason, sessionId: req.params.id }, "safe-return trigger-missed: session read failed");
+    sendError(res, "degraded_unavailable", "We could not start the escalation. Please try again.");
+    return;
+  }
+  const existing = existingRead.value;
   if (!existing || existing.status !== "active") {
     sendError(res, "not_found", "Active session not found");
     return;
@@ -522,35 +666,86 @@ router.post("/me/safe-return/sessions/:id/trigger-missed", async (req, res) => {
     return;
   }
 
-  const session = await markMissed(db, req.params.id, user.id);
-  if (!session) {
-    sendError(res, "db_error", "Failed to mark session as missed", { exposeDetail: true });
+  const missed = await markMissed(db, req.params.id, user.id);
+  if (missed.outcome === "unavailable") {
+    req.log.error({ reason: missed.reason, sessionId: req.params.id }, "safe-return trigger-missed: markMissed failed");
+    sendError(res, "degraded_unavailable", "We could not start the escalation. Please try again.");
     return;
   }
+  if (missed.outcome === "no_match") {
+    sendError(res, "not_found", "Active session not found");
+    return;
+  }
+  const session = missed.session;
 
-  // Escalation: Level 0 = notify only the user
-  //             Level 1 = user + TC (if enabled)
-  //             Level 2 = user + TC + live share prompt
-  //             Level 3 = user + TC + host + crew
+  // ── ESCALATION ─────────────────────────────────────────────────────────────
+  //
+  // Level 0 = notify only the user
+  // Level 1 = user + TC (if enabled)
+  // Level 2 = user + TC + live share prompt
+  // Level 3 = user + TC + host + crew
+  //
+  // WHAT CHANGED, AND WHY IT IS THE POINT OF THIS ENDPOINT. Every call below
+  // used to return `void`, so the handler answered `{ ok: true, escalationLevel
+  // }` no matter what happened — including the case where `listContacts` hit an
+  // unreadable table, handed back `[]`, and "alert the trusted circle" quietly
+  // became "alert nobody". The response now carries what was actually achieved,
+  // and `alertsIncomplete` is true whenever anyone who should have been told
+  // was not. The escalation is NEVER abandoned because one channel failed —
+  // reaching two of three people beats reaching none — so this is a 200 with an
+  // honest body, not a refusal.
+  const outcomes: Record<string, AlertOutcome> = {};
+  let alertsIncomplete = false;
 
-  await sendMissedCheckIn(db, session);
+  outcomes.traveller = await sendMissedCheckIn(db, session);
 
   if (session.escalationLevel >= 1) {
-    const contacts = await listContacts(db, session.id, user.id);
-    const flagTcEnabled = await isFlagEnabled(db, "safe_return_trusted_circle_alerts_enabled");
-    if (flagTcEnabled) {
-      await notifyTrustedCircle(db, session, contacts);
-      // Mark contacts as notified
-      await Promise.all(contacts.map((c) => markContactNotified(db, c.id)));
+    const contactsRead = await listContacts(db, session.id, user.id);
+    const flagTc = await isFlagEnabled(db, "safe_return_trusted_circle_alerts_enabled");
+    if (flagTc === "unknown") {
+      // A flag we cannot read must not silently cancel an alert. Attempt the
+      // notification: `trusted_circle_enabled` on the session is the user's own
+      // consent and is checked inside notifyTrustedCircle, so this cannot
+      // notify anyone the user did not nominate.
+      req.log.error({ sessionId: session.id }, "safe-return escalation: trusted-circle flag unreadable — attempting the alert anyway");
+    }
+    if (flagTc !== "off") {
+      const contacts = contactsRead.ok ? contactsRead.value : [];
+      if (!contactsRead.ok) {
+        req.log.error(
+          { reason: contactsRead.reason, sessionId: session.id },
+          "safe-return escalation: contacts unreadable — we cannot say who should have been alerted",
+        );
+      }
+      outcomes.trustedCircle = await notifyTrustedCircle(db, session, contacts, !contactsRead.ok);
+      // Mark contacts as notified — only the ones an alert was attempted for.
+      const stamps = await Promise.all(contacts.map((c) => markContactNotified(db, c.id)));
+      if (stamps.some((r) => !r.ok)) {
+        req.log.error({ sessionId: session.id }, "safe-return escalation: notified_at not stamped for every contact");
+      }
     }
   }
 
   if (session.escalationLevel >= 3) {
-    await notifyHost(db, session);
-    await notifyTripCrew(db, session);
+    outcomes.host = await notifyHost(db, session);
+    outcomes.crew = await notifyTripCrew(db, session);
   }
 
-  res.status(200).json({ ok: true, session: toPublicSession(session), escalationLevel: session.escalationLevel });
+  for (const o of Object.values(outcomes)) if (alertFellShort(o)) alertsIncomplete = true;
+  if (alertsIncomplete) {
+    req.log.error({ sessionId: session.id, outcomes }, "safe-return escalation: NOT everyone who should have been alerted was");
+  }
+
+  res.status(200).json({
+    ok: true,
+    session: toPublicSession(session),
+    escalationLevel: session.escalationLevel,
+    alerts: outcomes,
+    alertsIncomplete,
+    ...(alertsIncomplete
+      ? { message: "We could not confirm that everyone was alerted. Please contact someone directly if you can." }
+      : {}),
+  });
 });
 
 // ── POST /api/me/safe-return/sessions/:id/live-share/start ───────────────────
@@ -561,14 +756,24 @@ router.post("/me/safe-return/sessions/:id/live-share/start", async (req, res) =>
   const { client, user } = auth;
 
   const db = getServiceClient() ?? client;
-  if (!await isFlagEnabled(db, "safe_return_enabled")) {
-    sendError(res, "feature_disabled"); return;
+  {
+    const flag = await isFlagEnabled(db, "safe_return_enabled");
+    if (flag === "unknown") { sendFlagUnknown(res, "safe_return_enabled"); return; }
+    if (flag === "off") { sendError(res, "feature_disabled"); return; }
   }
-  if (!await isFlagEnabled(db, "safe_return_live_share_enabled")) {
-    sendError(res, "feature_disabled", "Live location sharing is not yet enabled"); return;
+  {
+    const flag = await isFlagEnabled(db, "safe_return_live_share_enabled");
+    if (flag === "unknown") { sendFlagUnknown(res, "safe_return_live_share_enabled"); return; }
+    if (flag === "off") { sendError(res, "feature_disabled", "Live location sharing is not yet enabled"); return; }
   }
 
-  const session = await getSessionById(db, req.params.id, user.id);
+  const sessionRead = await getSessionById(db, req.params.id, user.id);
+  if (!sessionRead.ok) {
+    req.log.error({ reason: sessionRead.reason, sessionId: req.params.id }, "safe-return live-share start: session read failed");
+    sendError(res, "degraded_unavailable", "We could not start live sharing. Please try again.");
+    return;
+  }
+  const session = sessionRead.value;
   if (!session) {
     sendError(res, "not_found", "Session not found"); return;
   }
@@ -587,14 +792,27 @@ router.post("/me/safe-return/sessions/:id/live-share/start", async (req, res) =>
     return;
   }
 
-  // Verify the contact belongs to this session and has live-location permission
-  const { data: contact } = await db
+  // Verify the contact belongs to this session and has live-location permission.
+  //
+  // FAIL CLOSED, AND SAY WHICH FAILURE IT WAS. `can_receive_live_location` is
+  // the consent that decides whether a person's live position may be handed to
+  // someone, so an unreadable row can never be treated as a grant. It was also
+  // never distinguished from "no such contact": `const { data: contact }` made
+  // a read error look like a contact the user had not added, and the sharer got
+  // a flat 404 for a share that would have worked on retry. Both refuse; only
+  // one of them is retryable, and only one of them is true.
+  const { data: contact, error: contactErr } = await db
     .from("safe_return_contacts")
     .select("id, contact_user_id, can_receive_live_location")
     .eq("id", parsed.data.recipientContactId)
     .eq("session_id", session.id)
     .maybeSingle();
 
+  if (contactErr) {
+    req.log.error({ err: contactErr, sessionId: session.id }, "safe-return live-share start: contact permission read failed");
+    sendError(res, "degraded_unavailable", "We could not confirm this contact's permissions. Please try again.");
+    return;
+  }
   if (!contact) {
     sendError(res, "not_found", "Contact not found on this session"); return;
   }
@@ -635,8 +853,10 @@ router.post("/me/safe-return/sessions/:id/live-share/stop", async (req, res) => 
   const { client, user } = auth;
 
   const db = getServiceClient() ?? client;
-  if (!await isFlagEnabled(db, "safe_return_enabled")) {
-    sendError(res, "feature_disabled"); return;
+  {
+    const flag = await isFlagEnabled(db, "safe_return_enabled");
+    if (flag === "unknown") { sendFlagUnknown(res, "safe_return_enabled"); return; }
+    if (flag === "off") { sendError(res, "feature_disabled"); return; }
   }
 
   const { shareId } = req.body ?? {};
@@ -667,17 +887,29 @@ router.get(
       share: any;
     };
 
-    if (!await isFlagEnabled(db, "safe_return_enabled")) {
-      sendError(res, "feature_disabled", "Safe Return is not yet enabled"); return;
+    {
+      const flag = await isFlagEnabled(db, "safe_return_enabled");
+      if (flag === "unknown") { sendFlagUnknown(res, "safe_return_enabled"); return; }
+      if (flag === "off") { sendError(res, "feature_disabled", "Safe Return is not yet enabled"); return; }
     }
-    if (!await isFlagEnabled(db, "safe_return_live_share_enabled")) {
-      sendError(res, "feature_disabled", "Live location sharing is not yet enabled"); return;
+    {
+      const flag = await isFlagEnabled(db, "safe_return_live_share_enabled");
+      if (flag === "unknown") { sendFlagUnknown(res, "safe_return_live_share_enabled"); return; }
+      if (flag === "off") { sendError(res, "feature_disabled", "Live location sharing is not yet enabled"); return; }
     }
 
     const { shareId } = (req as any).safeReturnRecipient as { shareId: string };
     const result = await getRecipientView(db, shareId, callerUserId);
 
     if ("error" in result) {
+      // `unavailable` is 503-and-retryable, NOT one of the three 404s. "Expired",
+      // "stopped" and "not found" all tell a worried contact that there is
+      // nothing more to look at; only one of those may be said about a read
+      // that failed, and it is none of them.
+      if (result.error === "unavailable") {
+        sendError(res, "degraded_unavailable", "This live share could not be loaded. Please try again.");
+        return;
+      }
       if (result.error === "not_found") { sendError(res, "not_found", "Live share not found"); return; }
       if (result.error === "expired")   { sendError(res, "not_found", "Live share has expired"); return; }
       if (result.error === "stopped")   { sendError(res, "not_found", "Live share has been stopped"); return; }
@@ -701,22 +933,40 @@ router.get("/me/safe-return/history", async (req, res) => {
   const { client, user } = auth;
 
   const db = getServiceClient() ?? client;
-  if (!await isFlagEnabled(db, "safe_return_enabled")) {
-    res.status(200).json({ sessions: [], featureEnabled: false }); return;
+  {
+    const flag = await isFlagEnabled(db, "safe_return_enabled");
+    if (flag === "unknown") { sendFlagUnknown(res, "safe_return_enabled"); return; }
+    if (flag === "off") { res.status(200).json({ sessions: [], featureEnabled: false }); return; }
   }
 
   const limit = Math.min(50, parseInt(String(req.query.limit ?? "20"), 10) || 20);
-  const sessions = await listHistory(db, user.id, limit);
+  const historyRead = await listHistory(db, user.id, limit);
+  if (!historyRead.ok) {
+    // An empty history reads as "you have never used Safe Return". That is a
+    // claim about the record, and a failed read cannot make it.
+    req.log.error({ reason: historyRead.reason, userId: user.id }, "safe-return history: read failed");
+    sendError(res, "degraded_unavailable", "Your Safe Return history could not be loaded. Please try again.");
+    return;
+  }
+  const sessions = historyRead.value;
 
   // Fetch per-session event aggregates in one query
   const sessionIds = sessions.map((s) => s.id);
   let eventsBySession: Record<string, { alertsSent: number; missedCount: number; liveShareStarted: number; liveShareStopped: number }> = {};
+  // Set when the events read failed: the per-session counts below are then
+  // NOT zero-because-nothing-happened, they are unknown, and "0 alerts sent"
+  // is the single most misleading number this endpoint can print.
+  let eventsUnavailable = false;
   try {
     if (sessionIds.length > 0) {
-      const { data: events } = await db
+      const { data: events, error: eventsErr } = await db
         .from("safe_return_events")
         .select("session_id, event_type")
         .in("session_id", sessionIds);
+      if (eventsErr) {
+        eventsUnavailable = true;
+        req.log.error({ err: eventsErr, userId: user.id }, "safe-return history: event aggregates unreadable");
+      }
 
       for (const ev of (events as any[]) ?? []) {
         const sid = ev.session_id as string;
@@ -734,13 +984,20 @@ router.get("/me/safe-return/history", async (req, res) => {
         if (t === "live_share_stopped" || t === "live_share_expired") agg.liveShareStopped++;
       }
     }
-  } catch { /* non-fatal — omit aggregates */ }
+  } catch (err) {
+    eventsUnavailable = true;
+    req.log.error({ err, userId: user.id }, "safe-return history: event aggregates threw");
+  }
 
   res.status(200).json({
     sessions: sessions.map((s) => ({
       ...toPublicSession(s),
-      events: eventsBySession[s.id] ?? { alertsSent: 0, missedCount: 0, liveShareStarted: 0, liveShareStopped: 0 },
+      // `null`, not a row of zeros, when the aggregates could not be read.
+      events: eventsUnavailable
+        ? null
+        : (eventsBySession[s.id] ?? { alertsSent: 0, missedCount: 0, liveShareStarted: 0, liveShareStopped: 0 }),
     })),
+    ...(eventsUnavailable ? { eventsUnavailable: true } : {}),
   });
 });
 
@@ -753,16 +1010,29 @@ router.get("/me/safe-return/trusted-contacts", async (req, res) => {
   const { client } = auth;
 
   const db = getServiceClient() ?? client;
-  if (!await isFlagEnabled(db, "safe_return_enabled")) {
-    res.status(200).json({ contacts: [], featureEnabled: false }); return;
+  {
+    const flag = await isFlagEnabled(db, "safe_return_enabled");
+    if (flag === "unknown") { sendFlagUnknown(res, "safe_return_enabled"); return; }
+    if (flag === "off") { res.status(200).json({ contacts: [], featureEnabled: false }); return; }
   }
 
   // Trusted Circle = mutual follows (following each other) or circle members
+  //
+  // The `catch { res.json({ contacts: [] }) }` this replaces is the same defect
+  // in its most direct form: the ONE screen where a person picks who to alert
+  // if they do not come back would have rendered "you have nobody" out of a
+  // failed read, and they would have set up a Safe Return with an empty circle.
   try {
-    const { data: following } = await client
+    const { data: following, error: followErr } = await client
       .from("user_follows")
       .select("following_id, profiles!user_follows_following_id_fkey(id, display_name, handle, avatar_url)")
       .eq("follower_id", auth.user.id);
+
+    if (followErr) {
+      req.log.error({ err: followErr, userId: auth.user.id }, "safe-return trusted-contacts: read failed");
+      sendError(res, "degraded_unavailable", "Your contacts could not be loaded. Please try again.");
+      return;
+    }
 
     // Universal display-name rule: contacts show @handle unless opted in.
     const rows = ((following as any[]) ?? []);
@@ -775,8 +1045,9 @@ router.get("/me/safe-return/trusted-contacts", async (req, res) => {
     }));
 
     res.status(200).json({ contacts });
-  } catch {
-    res.status(200).json({ contacts: [] });
+  } catch (err) {
+    req.log.error({ err, userId: auth.user.id }, "safe-return trusted-contacts: threw");
+    sendError(res, "degraded_unavailable", "Your contacts could not be loaded. Please try again.");
   }
 });
 
@@ -789,20 +1060,38 @@ router.get("/me/safe-return/sessions/:id/contacts", async (req, res) => {
   const { client, user } = auth;
 
   const db = getServiceClient() ?? client;
-  if (!await isFlagEnabled(db, "safe_return_enabled")) {
-    res.status(200).json({ contacts: [], featureEnabled: false }); return;
+  {
+    const flag = await isFlagEnabled(db, "safe_return_enabled");
+    if (flag === "unknown") { sendFlagUnknown(res, "safe_return_enabled"); return; }
+    if (flag === "off") { res.status(200).json({ contacts: [], featureEnabled: false }); return; }
   }
 
-  const session = await getSessionById(db, req.params.id, user.id);
+  const sessionRead = await getSessionById(db, req.params.id, user.id);
+  if (!sessionRead.ok) {
+    req.log.error({ reason: sessionRead.reason, sessionId: req.params.id }, "safe-return session contacts: session read failed");
+    sendError(res, "degraded_unavailable", "We could not load this session. Please try again.");
+    return;
+  }
+  const session = sessionRead.value;
   if (!session) {
     sendError(res, "not_found", "Session not found"); return;
   }
 
+  // This is the "Share Location Now" picker. An empty list means "you nominated
+  // nobody"; the `catch`/`?? []` pair used to produce that same empty list from
+  // an unreadable table, so a user looking for someone to send their location to
+  // was shown a screen saying they had no one.
   try {
-    const { data: rows } = await db
+    const { data: rows, error } = await db
       .from("safe_return_contacts")
       .select("id, contact_user_id, contact_name, can_receive_live_location")
       .eq("session_id", session.id);
+
+    if (error) {
+      req.log.error({ err: error, sessionId: session.id }, "safe-return session contacts: read failed");
+      sendError(res, "degraded_unavailable", "Your contacts could not be loaded. Please try again.");
+      return;
+    }
 
     const contacts = ((rows as any[]) ?? []).map((r: any) => ({
       id:                    r.id,
@@ -812,8 +1101,9 @@ router.get("/me/safe-return/sessions/:id/contacts", async (req, res) => {
     }));
 
     res.status(200).json({ ok: true, contacts });
-  } catch {
-    res.status(200).json({ ok: true, contacts: [] });
+  } catch (err) {
+    req.log.error({ err, sessionId: session.id }, "safe-return session contacts: threw");
+    sendError(res, "degraded_unavailable", "Your contacts could not be loaded. Please try again.");
   }
 });
 
@@ -837,9 +1127,10 @@ router.get("/me/safe-return/contacts/:userId/passport", async (req, res) => {
   const { client, user } = auth;
 
   const db = getServiceClient() ?? client;
-  if (!await isFlagEnabled(db, "safe_return_enabled")) {
-    res.status(200).json({ passport: null, featureEnabled: false });
-    return;
+  {
+    const flag = await isFlagEnabled(db, "safe_return_enabled");
+    if (flag === "unknown") { sendFlagUnknown(res, "safe_return_enabled"); return; }
+    if (flag === "off") { res.status(200).json({ passport: null, featureEnabled: false }); return; }
   }
 
   const { userId } = req.params;

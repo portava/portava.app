@@ -52,34 +52,84 @@ router.post("/users/:userId/block", async (req, res) => {
     return;
   }
 
-  // Remove all social edges between the two users — fire-and-forget errors
+  // ── Residual-edge cleanup ──────────────────────────────────────────────────
+  //
+  // THE `.catch()` BELOW COULD NEVER FIRE. Every entry in that array is a
+  // PostgrestBuilder; awaiting one RESOLVES with `{ error }` on failure rather
+  // than rejecting, so `Promise.all([...]).catch(...)` caught nothing and every
+  // failure was dropped in silence. What those statements remove is the
+  // blocked person's remaining reach: their follow edge onto the blocker's
+  // posts, an open friend request, a pending message request. A failure there
+  // leaves that reach INTACT while the response says `{ blocked: true }`.
+  //
+  // The block row itself is written first and separately, and it is what
+  // `blockGuard` and every read path consult, so the primary protection holds
+  // regardless. That is why this is reported rather than made fatal — refusing
+  // the whole block because one follow-edge delete failed would undo the one
+  // part that worked. But it is REPORTED: an operator-visible error naming the
+  // exact statements that did not run, and a truthful `cleanup` object on the
+  // response instead of a bare `blocked: true`.
+  //
+  // Zero rows here is ZERO_OK and deliberately not treated as a failure: there
+  // is usually no follow edge, no pending request and no friendship to remove,
+  // and "delete what is there" is satisfied by there being nothing there.
   const nowMs = Date.now();
   const now = new Date(nowMs).toISOString();
-  await Promise.all([
+  const cleanupSteps: Array<[string, PromiseLike<{ error: unknown }>]> = [
     // Follow edges (both directions)
-    client.from("user_follows").delete().eq("follower_id", user.id).eq("following_id", target),
-    client.from("user_follows").delete().eq("follower_id", target).eq("following_id", user.id),
+    ["follow_out", client.from("user_follows").delete().eq("follower_id", user.id).eq("following_id", target)],
+    ["follow_in",  client.from("user_follows").delete().eq("follower_id", target).eq("following_id", user.id)],
     // Pending friend requests (both directions) — uses correct column names
-    client.from("friend_requests").delete()
-      .or(`and(requester_id.eq.${user.id},recipient_id.eq.${target}),and(requester_id.eq.${target},recipient_id.eq.${user.id})`),
+    ["friend_requests", client.from("friend_requests").delete()
+      .or(`and(requester_id.eq.${user.id},recipient_id.eq.${target}),and(requester_id.eq.${target},recipient_id.eq.${user.id})`)],
     // Active friendship row
-    client.from("user_friendships").delete()
-      .or(`and(user_a.eq.${user.id},user_b.eq.${target}),and(user_a.eq.${target},user_b.eq.${user.id})`),
+    ["friendship", client.from("user_friendships").delete()
+      .or(`and(user_a.eq.${user.id},user_b.eq.${target}),and(user_a.eq.${target},user_b.eq.${user.id})`)],
     // Cancel pending message requests (both directions) — prevents post-block inbox spam
-    client.from("message_requests").update({ status: "cancelled", updated_at: now })
-      .eq("sender_id", target).eq("recipient_id", user.id).eq("status", "pending"),
-    client.from("message_requests").update({ status: "cancelled", updated_at: now })
-      .eq("sender_id", user.id).eq("recipient_id", target).eq("status", "pending"),
-  ]).catch((e) => req.log.warn({ err: e }, "cleanup after block partially failed"));
+    ["message_requests_in", client.from("message_requests").update({ status: "cancelled", updated_at: now })
+      .eq("sender_id", target).eq("recipient_id", user.id).eq("status", "pending")],
+    ["message_requests_out", client.from("message_requests").update({ status: "cancelled", updated_at: now })
+      .eq("sender_id", user.id).eq("recipient_id", target).eq("status", "pending")],
+  ] as any;
+
+  const residual: string[] = [];
+  const settled = await Promise.allSettled(cleanupSteps.map(([, q]) => q));
+  settled.forEach((r, i) => {
+    const name = cleanupSteps[i]![0];
+    if (r.status === "rejected") { residual.push(name); return; }
+    if ((r.value as any)?.error) residual.push(name);
+  });
+  if (residual.length > 0) {
+    req.log.error(
+      { blockerId: user.id, blockedId: target, residual },
+      "block recorded, but social-edge cleanup FAILED — the blocked user may retain follow/request edges",
+    );
+  }
 
   // Anti-retaliation cooldowns: prevent blocked user from re-requesting for 90 days
   // (uses client which is already the service-role client, available before sc is declared below)
+  //
+  // `.then(undefined, () => {})` swallowed the rejection AND ignored the
+  // resolved `{ error }` entirely, so a failure to write the cooldown — the row
+  // that stops the blocked person from immediately re-requesting — left no
+  // trace at all.
   const expiresAt = new Date(nowMs + 90 * 24 * 60 * 60 * 1000).toISOString();
-  await client.from("user_interaction_cooldowns").upsert([
-    { user_id: target, target_user_id: user.id, cooldown_type: "message_request", expires_at: expiresAt },
-    { user_id: target, target_user_id: user.id, cooldown_type: "friend_request",  expires_at: expiresAt },
-    { user_id: target, target_user_id: user.id, cooldown_type: "follow",          expires_at: expiresAt },
-  ], { onConflict: "user_id,target_user_id,cooldown_type" }).then(undefined, () => {});
+  let cooldownsSet = true;
+  try {
+    const { error: cooldownErr } = await client.from("user_interaction_cooldowns").upsert([
+      { user_id: target, target_user_id: user.id, cooldown_type: "message_request", expires_at: expiresAt },
+      { user_id: target, target_user_id: user.id, cooldown_type: "friend_request",  expires_at: expiresAt },
+      { user_id: target, target_user_id: user.id, cooldown_type: "follow",          expires_at: expiresAt },
+    ], { onConflict: "user_id,target_user_id,cooldown_type" });
+    if (cooldownErr) {
+      cooldownsSet = false;
+      req.log.error({ err: cooldownErr, blockerId: user.id, blockedId: target }, "anti-retaliation cooldowns NOT set after block");
+    }
+  } catch (err) {
+    cooldownsSet = false;
+    req.log.error({ err, blockerId: user.id, blockedId: target }, "anti-retaliation cooldown upsert threw");
+  }
+  if (!cooldownsSet) residual.push("cooldowns");
 
   // Evict Compass profile + feed cache for both parties — must complete before response
   // so clients immediately see consistent state on next request.
@@ -97,7 +147,13 @@ router.post("/users/:userId/block", async (req, res) => {
   // neither side retains a stale "allowed" entry for the other's media.
   _clearMediaAccessCache();
 
-  res.status(200).json({ blocked: true, userId: target });
+  // `blocked: true` is TRUE and load-bearing — the block row is written and
+  // every guard reads it. `cleanup` is the part that used to be assumed.
+  res.status(200).json({
+    blocked: true,
+    userId: target,
+    cleanup: residual.length === 0 ? { complete: true } : { complete: false, residual },
+  });
 
   // Realtime: let the blocker's other sessions refresh (threads/follow state
   // may have changed). Not sent to the blocked user.
