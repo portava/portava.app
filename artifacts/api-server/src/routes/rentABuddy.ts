@@ -86,6 +86,10 @@ import {
 
 import { requireAdmin } from "../lib/requireAdmin.js";
 import { isBlockedBetween } from "../lib/blockGuard.js";
+// The module logger, for the two Telegraph emitters below. They are called
+// without a `req.log` (see RouteLog) and their failures must still be visible;
+// lib/telegraphEvents.ts reaches for the same one for the same reason.
+import { logger } from "../lib/logger.js";
 
 export { POLICY_TEXT, CATEGORY_RISK_LEVELS, getCategoryRiskLevel };
 
@@ -755,8 +759,32 @@ function mapApplication(row: any, profile?: any) {
 // ── Booking system message helper ─────────────────────────────────────────────
 // Fire-and-forget: inserts a system message into the booking's Telegraph thread.
 // Called after key booking state transitions. Silent no-op if no thread exists.
+//
+// FIRE-AND-FORGET IS NOT FIRE-AND-FORGET-ABOUT. Until 2026-09-08 both emitters
+// below dropped every failure on the floor: the `rent_buddy_bookings` read did
+// not bind `.error`, the `messages` insert did not bind `.error`, and the
+// enclosing `catch {}` named nothing. That was MEASURED rather than inferred —
+// a harness ran verbatim copies of both bodies against an instrumented client:
+//
+//   healthy (control)          requests=2   observable outputs=0
+//   bookings read → DB error   requests=1   observable outputs=0
+//   messages INSERT → DB error requests=2   observable outputs=0
+//   client throws              requests=1   observable outputs=0
+//
+// So the writes ARE issued — this is not the un-awaited-thenable defect; these
+// are real async functions and `void f()` runs their bodies. What was missing is
+// any way to know a milestone was lost. A booking that silently never gets its
+// "Buddy accepted" card leaves the two people looking at a thread that does not
+// say what happened, and nothing anywhere records that it should have.
+//
+// The failure is still non-fatal to the request — that part was right, and a
+// system message must not fail a booking transition. It is now LOUD instead of
+// silent, which is a different property from being fatal.
 
-async function emitBookingMilestone(
+// Exported for src/test/rentABuddyMilestoneSignal.test.ts, which drives both
+// emitters directly: their ONLY output is a log line, so the test has to hold
+// the function, not a route response.
+export async function emitBookingMilestone(
   client: any,
   bookingId: string,
   actorId: string,
@@ -764,38 +792,64 @@ async function emitBookingMilestone(
   body: string,
 ): Promise<void> {
   try {
-    const { data: bk } = await client
+    const { data: bk, error: readErr } = await client
       .from("rent_buddy_bookings")
       .select("telegraph_thread_id")
       .eq("id", bookingId)
       .maybeSingle();
+    if (readErr) {
+      logger.error(
+        { err: readErr, bookingId, subtype },
+        "emitBookingMilestone: could not read the booking's thread id — milestone LOST, not skipped",
+      );
+      return;
+    }
     const threadId: string | null = (bk as any)?.telegraph_thread_id ?? null;
+    // Genuinely absent: this booking has no thread, so there is nowhere to put
+    // the message. Distinct from the read failure above, which is why the two
+    // are separated rather than sharing one `if (!threadId)`.
     if (!threadId) return;
-    await client.from("messages").insert({
+    const { error: insertErr } = await client.from("messages").insert({
       thread_id: threadId,
       sender_id: actorId,
       body,
       msg_type: "system",
       subtype,
     });
-  } catch { /* non-critical — never fail the main request */ }
+    if (insertErr) {
+      logger.error(
+        { err: insertErr, bookingId, threadId, subtype },
+        "emitBookingMilestone: system message INSERT refused — milestone LOST",
+      );
+    }
+  } catch (err) {
+    logger.error({ err, bookingId, subtype }, "emitBookingMilestone threw — milestone LOST");
+  }
 }
 
 // Sends a structured booking card message into the thread.
 // Called on acceptance (initial card) and on each major status transition so
 // the UI always has a current card. The card body is a JSON string.
-async function emitBookingCard(
+export async function emitBookingCard(
   client: any,
   bookingId: string,
   actorId: string,
   newStatus: string,
 ): Promise<void> {
   try {
-    const { data: bk } = await client
+    const { data: bk, error: readErr } = await client
       .from("rent_buddy_bookings")
       .select("telegraph_thread_id, booking_date, start_time, duration_h, city, category, total_usd")
       .eq("id", bookingId)
       .maybeSingle();
+    if (readErr) {
+      logger.error(
+        { err: readErr, bookingId, newStatus },
+        "emitBookingCard: could not read the booking — card LOST, not skipped. The thread keeps showing " +
+          "the PREVIOUS status card, which is a wrong statement about the booking rather than an absent one.",
+      );
+      return;
+    }
     const threadId: string | null = (bk as any)?.telegraph_thread_id ?? null;
     if (!threadId) return;
     const cardBody = JSON.stringify({
@@ -810,14 +864,22 @@ async function emitBookingCard(
       cancellation_policy: "Free cancellation up to 24h before start. After that, a 50% fee may apply.",
       safety_reminder: "Always meet in public places. Share your itinerary with someone you trust.",
     });
-    await client.from("messages").insert({
+    const { error: insertErr } = await client.from("messages").insert({
       thread_id: threadId,
       sender_id: actorId,
       body: cardBody,
       msg_type: "booking_card",
       subtype: `booking_status_${newStatus}`,
     });
-  } catch { /* non-critical — never fail the main request */ }
+    if (insertErr) {
+      logger.error(
+        { err: insertErr, bookingId, threadId, newStatus },
+        "emitBookingCard: booking card INSERT refused — card LOST, thread still shows the previous status",
+      );
+    }
+  } catch (err) {
+    logger.error({ err, bookingId, newStatus }, "emitBookingCard threw — card LOST");
+  }
 }
 
 // ── Booking push notification helper ──────────────────────────────────────────

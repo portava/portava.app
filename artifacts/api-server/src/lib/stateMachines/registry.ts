@@ -1167,12 +1167,20 @@ export const STATE_MACHINES: readonly StateMachineEntry[] = [
           "ENGAGED_BOOKING_STATUSES (with in_progress/completed), PassportProjectionService's relationship " +
           "probe (with completed/in_progress) and interactionPermissions' pre-booking window (with " +
           "requested/pending/scheduled). It is retained deliberately for rows that may already carry it — " +
-          "removing the label is a schema decision about existing data, not an engineering task.",
+          "removing the label is a schema decision about existing data, not an engineering task. " +
+          "PassportProjectionService LEFT this consumer list on 2026-09-08: its relationship probe stopped " +
+          "carrying its own copy of the status set and now derives BUDDY_RELATIONSHIP_STATUSES from " +
+          "THREAD_ALLOWED_STATUSES in lib/rentBuddyBookingStatus.ts, which heads the list and still names " +
+          "the label. That is a consolidation, not a lost reader — but the guard reads CODE, and a file " +
+          "that names a state only in its explanatory comment is prose about the state, not a consumer of " +
+          "it. Its old copy also carried `active`, which is not a label of this enum at all: a dead literal " +
+          "that matched nothing, and no fake could see it because a fake only answers whether ITS fixture " +
+          "value is in the list. The same rewrite added the missing `scheduled` — the entire window between " +
+          "acceptance and session start, during which the probe had been returning null.",
         consumers: [
           "lib/rentBuddyBookingStatus.ts",
           "routes/rentABuddy.ts",
           "services/wall/WallCandidateLoaders.ts",
-          "services/passport/PassportProjectionService.ts",
           "services/interactionPermissions.ts",
         ],
       },
