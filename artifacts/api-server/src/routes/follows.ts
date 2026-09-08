@@ -322,6 +322,35 @@ router.get("/users/:userId/follow-status", async (req, res) => {
     client.from("profiles").select("is_private").eq("id", target).maybeSingle(),
   ]);
 
+  // EVERY FIELD OF THIS RESPONSE IS A CLAIM ABOUT TWO PEOPLE, so none of it may
+  // be derived from a read that failed. supabase-js RESOLVES on a database
+  // error, so each of the five reads above hands back `{ data: null, count:
+  // null, error }` — and read without its `.error` that is indistinguishable
+  // from the row genuinely not existing:
+  //   mine        -> isFollowing:false  — "you do not follow them" (you may)
+  //   theyFollow  -> followsYou:false   — "they do not follow you" (they may)
+  //   prof        -> is_private falsy   -> canSeeCounts TRUE. This is the
+  //                 FAIL-OPEN one: an unreadable `profiles` row downgrades a
+  //                 PRIVATE account to public and serves its exact follower and
+  //                 following counts to a stranger, the very leak the
+  //                 canSeeCounts rule exists to stop.
+  //   followers/following -> `count ?? 0` -> "0 followers", stated as fact.
+  //
+  // There is no sub-part of this payload left to answer honestly, and `null`
+  // counts are already spoken for ("withheld because the account is private"),
+  // so degrading into that shape would substitute one false statement for
+  // another. Refuse the whole response with a RETRYABLE 503 — the code this
+  // codebase uses for "the check could not be PERFORMED" (lib/exclusionSet.ts)
+  // — so the caller can tell an outage from a relationship that is absent.
+  const readErr =
+    (mine as any).error ?? (theyFollow as any).error ?? (prof as any).error ??
+    (followers as any).error ?? (following as any).error;
+  if (readErr) {
+    req.log.error({ err: readErr }, "follow-status reads failed — refusing to state a relationship");
+    sendError(res, "degraded_unavailable", "Follow status is temporarily unavailable");
+    return;
+  }
+
   // A private account's exact follower/following counts must not leak to a
   // caller who is neither the owner nor an (accepted) follower — same contract
   // as mediaFeedItem.ts, which nulls counts for private non-followers.
@@ -364,21 +393,41 @@ router.get("/me/following", async (req, res) => {
 
   // Determine which of these users also follow the caller back (mutual).
   const followingIds = rows.map((r: any) => r.following_id as string);
+  // MUTUALITY IS A CLAIM ABOUT EACH PERSON IN THE LIST. supabase-js resolves on
+  // a database error, so an unbound `error` here made an unreadable reverse edge
+  // table read as "nobody in this list follows you back" — stated as fact for
+  // every row at once. So did a missing service client, silently.
+  //
+  // The LIST itself is authoritative (its read above is error-checked), so
+  // refusing the whole response over a decoration would be the wrong trade.
+  // Instead the unknown is REPORTED: `followsYou` becomes null (not false) and
+  // the response carries `mutualStatusUnavailable`, so a caller can tell "they
+  // do not follow you back" from "we could not find out".
   const { getServiceClient } = await import("../lib/supabase");
   const sc = getServiceClient();
-  let mutualSet = new Set<string>();
-  if (sc) {
-    const { data: back } = await sc
+  let mutualSet: Set<string> | null = null;
+  if (!sc) {
+    req.log.error({}, "me/following: no service client — mutual follow status unknown");
+  } else {
+    const { data: back, error: backErr } = await sc
       .from("user_follows")
       .select("follower_id")
       .eq("following_id", user.id)
       .in("follower_id", followingIds);
-    mutualSet = new Set((back ?? []).map((r: any) => r.follower_id as string));
+    if (backErr) {
+      req.log.error({ err: backErr }, "me/following: reverse follow read failed — mutual status unknown");
+    } else {
+      mutualSet = new Set((back ?? []).map((r: any) => r.follower_id as string));
+    }
   }
 
   const allowedNamesFwd = await nameVisibilitySet(sc, rows.map((r: any) => r.profile?.id));
   res.status(200).json({
-    users: rows.map((r: any) => ({ ...rowToUser(r, allowedNamesFwd, user.id), followsYou: mutualSet.has(r.following_id as string) })),
+    users: rows.map((r: any) => ({
+      ...rowToUser(r, allowedNamesFwd, user.id),
+      followsYou: mutualSet ? mutualSet.has(r.following_id as string) : null,
+    })),
+    ...(mutualSet ? {} : { mutualStatusUnavailable: true }),
   });
 });
 
@@ -399,21 +448,36 @@ router.get("/me/followers", async (req, res) => {
 
   // Determine which of these followers the caller also follows back (mutual).
   const followerIds = rows.map((r: any) => r.follower_id as string);
+  // Same contract as /me/following above: an unreadable forward edge table (or a
+  // missing service client) used to assert "you follow none of these people".
+  // The follower list is authoritative; only the decoration is unknown, and the
+  // unknown is now reported as null + `mutualStatusUnavailable` rather than
+  // spoken as false.
   const { getServiceClient } = await import("../lib/supabase");
   const sc = getServiceClient();
-  let youFollowSet = new Set<string>();
-  if (sc) {
-    const { data: fwd } = await sc
+  let youFollowSet: Set<string> | null = null;
+  if (!sc) {
+    req.log.error({}, "me/followers: no service client — you-follow status unknown");
+  } else {
+    const { data: fwd, error: fwdErr } = await sc
       .from("user_follows")
       .select("following_id")
       .eq("follower_id", user.id)
       .in("following_id", followerIds);
-    youFollowSet = new Set((fwd ?? []).map((r: any) => r.following_id as string));
+    if (fwdErr) {
+      req.log.error({ err: fwdErr }, "me/followers: forward follow read failed — you-follow status unknown");
+    } else {
+      youFollowSet = new Set((fwd ?? []).map((r: any) => r.following_id as string));
+    }
   }
 
   const allowedNamesBack = await nameVisibilitySet(sc, rows.map((r: any) => r.profile?.id));
   res.status(200).json({
-    users: rows.map((r: any) => ({ ...rowToUser(r, allowedNamesBack, user.id), youFollow: youFollowSet.has(r.follower_id as string) })),
+    users: rows.map((r: any) => ({
+      ...rowToUser(r, allowedNamesBack, user.id),
+      youFollow: youFollowSet ? youFollowSet.has(r.follower_id as string) : null,
+    })),
+    ...(youFollowSet ? {} : { mutualStatusUnavailable: true }),
   });
 });
 
@@ -435,11 +499,21 @@ router.get("/users/:userId/followers", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
-  const { data: profile } = await sc
+  // An unreadable `profiles` row resolves as `{ data: null }` and used to fall
+  // straight into `not_found` — telling the caller this ACCOUNT DOES NOT EXIST
+  // when in fact the lookup failed. Worse, `profile` is then handed to
+  // resolveProfileVisibility as the subject's privacy state, so a 404 was the
+  // gentler of the two outcomes. Observe the error and say so instead.
+  const { data: profile, error: profileErr } = await sc
     .from("profiles")
     .select("id, is_private, account_status")
     .eq("id", target)
     .maybeSingle();
+  if (profileErr) {
+    req.log.error({ err: profileErr }, "follow-list: profile lookup failed — refusing to report the account missing");
+    sendError(res, "degraded_unavailable", "Profile lookup is temporarily unavailable");
+    return;
+  }
   if (!profile) { sendError(res, "not_found"); return; }
 
   let viewerId: string | null = null;
@@ -495,11 +569,21 @@ router.get("/users/:userId/following", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
-  const { data: profile } = await sc
+  // An unreadable `profiles` row resolves as `{ data: null }` and used to fall
+  // straight into `not_found` — telling the caller this ACCOUNT DOES NOT EXIST
+  // when in fact the lookup failed. Worse, `profile` is then handed to
+  // resolveProfileVisibility as the subject's privacy state, so a 404 was the
+  // gentler of the two outcomes. Observe the error and say so instead.
+  const { data: profile, error: profileErr } = await sc
     .from("profiles")
     .select("id, is_private, account_status")
     .eq("id", target)
     .maybeSingle();
+  if (profileErr) {
+    req.log.error({ err: profileErr }, "follow-list: profile lookup failed — refusing to report the account missing");
+    sendError(res, "degraded_unavailable", "Profile lookup is temporarily unavailable");
+    return;
+  }
   if (!profile) { sendError(res, "not_found"); return; }
 
   let viewerId: string | null = null;

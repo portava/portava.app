@@ -445,10 +445,26 @@ router.get("/me/friends", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
-  const [{ data: asA }, { data: asB }] = await Promise.all([
+  // A friendship pair is stored once under a sorted (user_a, user_b) key, so the
+  // caller's friends live in BOTH halves and both must be read. Neither read
+  // bound its `.error`, and supabase-js resolves on a database error — so one
+  // failed half silently deleted every friend on that side of the sort order,
+  // and two failed halves answered `{ friends: [] }`: "you have no friends", a
+  // complete and confident roster produced by two failures. A half-empty roster
+  // is the worse of the two, because nothing in the payload marks it partial.
+  // Both are refused with a RETRYABLE 503 rather than served as fact.
+  const [aRes, bRes] = await Promise.all([
     sc.from("user_friendships").select("user_b, created_at").eq("user_a", user.id),
     sc.from("user_friendships").select("user_a, created_at").eq("user_b", user.id),
   ]);
+  const friendsErr = (aRes as any).error ?? (bRes as any).error;
+  if (friendsErr) {
+    req.log.error({ err: friendsErr }, "me/friends: user_friendships read failed — refusing to serve a partial roster");
+    sendError(res, "degraded_unavailable", "Friend list is temporarily unavailable");
+    return;
+  }
+  const asA = (aRes as any).data as any[] | null;
+  const asB = (bRes as any).data as any[] | null;
 
   const entries = [
     ...(asA ?? []).map((r: any) => ({ friendId: r.user_b, since: r.created_at })),
@@ -637,10 +653,29 @@ router.get("/users/:userId/friend-status", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
-  // Active friendship?
+  // THREE CASCADING READS THAT ONLY EVER FALL ONE WAY. supabase-js RESOLVES on
+  // a database error, so each `const { data }` below reads an unreadable table
+  // as "no such row" and drops through to the next check — and when all three
+  // fail, the handler ends at `status: "none"`: a positive, confident statement
+  // that these two people have NO relationship, produced entirely by three
+  // failures. Two real people who are friends are told they are strangers, and
+  // an existing pending request is hidden along with the requestId the client
+  // needs to accept, decline or cancel it — so the caller is denied an action
+  // they are entitled to, with no way to tell why.
+  //
+  // `none` is the terminal, most-permissive verdict of this ladder, so an error
+  // must never reach it. Each read is observed and refuses with a RETRYABLE 503
+  // (the code this codebase uses for "the check could not be PERFORMED") rather
+  // than being laundered into a relationship claim.
   const [ua, ub] = normalizedFriendshipPair(user.id, targetId);
-  const { data: friendship } = await sc
+  const { data: friendship, error: friendshipErr } = await sc
     .from("user_friendships").select("user_a").eq("user_a", ua).eq("user_b", ub).maybeSingle();
+
+  if (friendshipErr) {
+    req.log.error({ err: friendshipErr }, "friend-status: user_friendships read failed — refusing to report 'none'");
+    sendError(res, "degraded_unavailable", "Friend status is temporarily unavailable");
+    return;
+  }
 
   if (friendship) {
     res.status(200).json({ userId: targetId, status: "friends" });
@@ -648,9 +683,15 @@ router.get("/users/:userId/friend-status", async (req, res) => {
   }
 
   // Outgoing pending?
-  const { data: outgoing } = await sc
+  const { data: outgoing, error: outgoingErr } = await sc
     .from("friend_requests").select("id")
     .eq("requester_id", user.id).eq("recipient_id", targetId).eq("status", "pending").maybeSingle();
+
+  if (outgoingErr) {
+    req.log.error({ err: outgoingErr }, "friend-status: outgoing friend_requests read failed — refusing to report 'none'");
+    sendError(res, "degraded_unavailable", "Friend status is temporarily unavailable");
+    return;
+  }
 
   if (outgoing) {
     res.status(200).json({ userId: targetId, status: "outgoing_pending", requestId: (outgoing as any).id });
@@ -658,9 +699,15 @@ router.get("/users/:userId/friend-status", async (req, res) => {
   }
 
   // Incoming pending?
-  const { data: incomingReq } = await sc
+  const { data: incomingReq, error: incomingErr } = await sc
     .from("friend_requests").select("id")
     .eq("requester_id", targetId).eq("recipient_id", user.id).eq("status", "pending").maybeSingle();
+
+  if (incomingErr) {
+    req.log.error({ err: incomingErr }, "friend-status: incoming friend_requests read failed — refusing to report 'none'");
+    sendError(res, "degraded_unavailable", "Friend status is temporarily unavailable");
+    return;
+  }
 
   if (incomingReq) {
     res.status(200).json({ userId: targetId, status: "incoming_pending", requestId: (incomingReq as any).id });
