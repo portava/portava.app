@@ -2295,12 +2295,37 @@ router.patch("/posts/:postId", async (req, res) => {
   if (parsed.data.content !== undefined && (existing as any).content !== parsed.data.content) {
     const sc = getServiceClient();
     if (sc) {
-      void sc.from("post_edits").insert({
-        post_id: postId,
-        user_id: user.id,
-        old_content: (existing as any).content ?? null,
-        new_content: parsed.data.content,
-      });
+      // ISSUED, not merely constructed. This was `void sc.from(…).insert({…})`,
+      // and PostgrestBuilder is a THENABLE, not a promise — it calls `_fetch`
+      // inside `then()`. So no post_edits row was ever written, which made
+      // GET /posts/:postId/edit-history permanently empty for every author and
+      // held CreatorActivityScoreService's `maintenance` component (its only
+      // source is post_edits) at zero for everyone.
+      //
+      // Still fire-and-forget: the post update is already committed and an
+      // audit row must not fail the edit. But a failure is logged — this is the
+      // only record that the caption changed.
+      void sc
+        .from("post_edits")
+        .insert({
+          post_id: postId,
+          user_id: user.id,
+          old_content: (existing as any).content ?? null,
+          new_content: parsed.data.content,
+        })
+        .then(
+          (r: { error?: unknown } | null | undefined) => {
+            if (r?.error) {
+              req.log?.warn?.(
+                { err: r.error, postId },
+                "post edit-history write failed (non-fatal)",
+              );
+            }
+          },
+          (err: unknown) => {
+            req.log?.warn?.({ err, postId }, "post edit-history write threw (non-fatal)");
+          },
+        );
     }
   }
 

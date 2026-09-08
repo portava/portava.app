@@ -64,6 +64,37 @@ const OFFER_EXPIRY_BATCH_LIMIT = 500;
 
 const logger = rootLogger.child({ service: "RentBuddyRequestSweeper" });
 
+/**
+ * Append one row to `buddy_booking_events`.
+ *
+ * Phases 1 and 2 used to write `void serviceClient.from(…).insert({…})`.
+ * `PostgrestBuilder` is a THENABLE, not a promise — it calls `_fetch` inside
+ * `then()` — so that statement built a request object and discarded it. No HTTP
+ * call, no row: `request_expired` and `auto_completed` were never in the log
+ * that GET /rent-a-buddy/bookings/:bookingId/events serves to both parties.
+ *
+ * Issued and awaited (the sweeper is a background job, so ordering costs
+ * nothing), with its own try/catch and a logged failure — the same shape phase
+ * 3's `no_show_escalated` write already used. Never throws, so an unwritable
+ * audit row cannot abort a sweep phase.
+ */
+async function writeBookingEvent(serviceClient: any, row: Record<string, unknown>): Promise<void> {
+  try {
+    const { error } = await serviceClient.from("buddy_booking_events").insert(row);
+    if (error) {
+      logger.error(
+        { err: error, bookingId: row.booking_id, event: row.event },
+        "buddy_booking_events insert failed — booking event unaudited",
+      );
+    }
+  } catch (err) {
+    logger.error(
+      { err, bookingId: row.booking_id, event: row.event },
+      "buddy_booking_events insert threw — booking event unaudited",
+    );
+  }
+}
+
 // ── Configuration ─────────────────────────────────────────────────────────────
 
 function parseEnvFloat(raw: string | undefined, def: number): number {
@@ -192,7 +223,7 @@ export async function runBuddyRequestSweep(client?: any): Promise<BuddyRequestSw
       }
       for (const bk of staleRequests) {
         if (!expiredIds.has(bk.id as string)) continue;
-        void serviceClient.from("buddy_booking_events").insert({
+        await writeBookingEvent(serviceClient, {
           booking_id: bk.id, actor_user_id: bk.traveler_id, event: "request_expired",
           from_status: bk.status as string, to_status: "expired", metadata: {},
         });
@@ -259,7 +290,7 @@ export async function runBuddyRequestSweep(client?: any): Promise<BuddyRequestSw
       }
       for (const bk of pendingConfirm) {
         if (!completedIds.has(bk.id as string)) continue;
-        void serviceClient.from("buddy_booking_events").insert({
+        await writeBookingEvent(serviceClient, {
           booking_id: bk.id, actor_user_id: bk.traveler_id, event: "auto_completed",
           from_status: "completed_pending_traveler_confirmation", to_status: "completed",
           metadata: { reason: "dispute_window_expired" },

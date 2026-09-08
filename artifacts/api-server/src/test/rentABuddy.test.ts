@@ -22,6 +22,7 @@ import { _setTestServiceClient } from "../lib/supabase.js";
 import rentABuddyRouter, { POLICY_TEXT, toPublicBuddyReview } from "../routes/rentABuddy.js";
 import { toLedgerEntryView } from "../routes/rentABuddyMarketplace.js";
 import { specAliasRewrite } from "../lib/specAliasRewrite.js";
+import { runBuddyRequestSweep } from "../lib/rentBuddyRequestSweeper.js";
 
 // ── Test server ───────────────────────────────────────────────────────────────
 
@@ -117,23 +118,26 @@ interface FakeState {
 
 let state: FakeState = {};
 
-// Tables whose inserts are fire-and-forget in rentABuddy.ts — i.e. the entire
-// chain is `void serviceClient.from(table).insert(data)` with no await, so
-// _resolve() is never called and the rows are invisible to test assertions
-// unless captured eagerly inside insert() itself.
+// ── THE FAKE RECORDS ONLY WRITES THAT WERE ACTUALLY ISSUED ───────────────────
 //
-// Audit (grep "void serviceClient" in rentABuddy.ts, 2026-07-16):
-//   • buddy_booking_events — 15 direct void sites; the only table that requires
-//     eager capture.
+// This fake used to carry a FIRE_AND_FORGET_TABLES set (buddy_booking_events)
+// whose rows were captured EAGERLY, inside `.insert()`, with a comment saying:
+// "the production code issues `void serviceClient.from(table).insert(...)` —
+// _resolve() is never reached, so rows must be captured right here".
 //
-// Other void-prefixed calls in rentABuddy.ts use async helper functions
-// (emitBookingMilestone → messages, emitBookingCard → messages,
-//  recordTrustEvent → trust_events, notifyBookingParty → notifications).
-// Those helpers internally await their DB writes so _resolve() IS reached for
-// those tables and no eager-capture is needed for them.
-const FIRE_AND_FORGET_TABLES = new Set([
-  "buddy_booking_events",
-]);
+// That comment was an accurate description of a BUG, written into the fake as
+// though it were a property of the code. `PostgrestBuilder` is a thenable, not
+// a promise: it calls `_fetch` inside `then()`. A `void …insert(…)` that nothing
+// continues therefore builds a request and discards it — the row is never sent
+// and never written. By capturing in `.insert()` the fake recorded the row
+// anyway, so the suite proved the request was CONSTRUCTED and never that it was
+// SENT, and it passed identically whether or not the write reached a database.
+//
+// Capture now happens only in `_resolve()`, which runs only from `then()` —
+// exactly the call the real client needs to issue anything. A fake still cannot
+// prove an HTTP request happened (see src/test/unissuedWrites.test.ts, which
+// puts a counting fetch on a REAL createClient for that); what it can now do is
+// tell "issued" apart from "constructed and dropped", which it could not before.
 
 /**
  * The fake's buddy-profile table. `FakeState.buddyProfiles` is optional because
@@ -161,7 +165,6 @@ function makeClient(userId: string, role = "user") {
       _order: null as any,
       _count: false,
       _maybeSingle: false,
-      _eagerCaptured: false,
       // Set by a `.select()` chained AFTER a mutation, which is what makes the
       // statement RETURNING. Until this existed the fake resolved EVERY update
       // as `{ data: null, error: null }` — the one shape a zero-row update and
@@ -177,22 +180,11 @@ function makeClient(userId: string, role = "user") {
         }
         return this;
       },
+      // Builds the request and records NOTHING. A row is recorded only when the
+      // chain is continued (`then`/`await`), which is the only thing that makes
+      // the real client issue it. See the block comment above.
       insert(data: any) {
         this._insertData = data;
-        // For every table in FIRE_AND_FORGET_TABLES, the production code issues
-        // `void serviceClient.from(table).insert(...)` — _resolve() is never
-        // reached, so rows must be captured right here in insert().
-        if (FIRE_AND_FORGET_TABLES.has(table)) {
-          const rows = Array.isArray(data) ? data : [data];
-          for (const row of rows) {
-            const r = { id: `gen-${Math.random().toString(36).slice(2)}`, ...row };
-            if (table === "buddy_booking_events") {
-              if (!(state as any).bookingEvents) (state as any).bookingEvents = [];
-              (state as any).bookingEvents.push(r);
-            }
-          }
-          this._eagerCaptured = true;
-        }
         return this;
       },
       update(data: any) { this._updateData = data; return this; },
@@ -216,10 +208,22 @@ function makeClient(userId: string, role = "user") {
       maybeSingle() { this._maybeSingle = true; return this; },
       single() { this._maybeSingle = true; return this; },
 
-      async then(resolve: (v: any) => void) {
-        const result = await this._resolve();
-        resolve(result);
-        return result;
+      // A real thenable: TWO arguments, either of which may be absent.
+      // The single-argument version here could not survive the correct
+      // fire-and-forget idiom — `void …insert(…).then(undefined, handler)`
+      // called `resolve(result)` on `undefined` and threw a TypeError — so the
+      // fake was only ever compatible with the broken shape it was written
+      // around. `_resolve()` is the point at which this fake counts a write as
+      // ISSUED, and it is reached from here and nowhere else.
+      async then(resolve?: (v: any) => any, reject?: (e: any) => any) {
+        let result: any;
+        try {
+          result = await this._resolve();
+        } catch (err) {
+          if (reject) return reject(err);
+          throw err;
+        }
+        return resolve ? resolve(result) : result;
       },
 
       async _resolve(): Promise<any> {
@@ -268,9 +272,13 @@ function makeClient(userId: string, role = "user") {
               if (!state.reviews) state.reviews = [];
               state.reviews.push(r);
             }
-            if (t === "buddy_booking_events" && !this._eagerCaptured) {
+            if (t === "buddy_booking_events") {
               if (!(state as any).bookingEvents) (state as any).bookingEvents = [];
               (state as any).bookingEvents.push(r);
+            }
+            if (t === "rent_buddy_review_notes") {
+              if (!(state as any).reviewNotes) (state as any).reviewNotes = [];
+              (state as any).reviewNotes.push(r);
             }
             if (t === "rent_buddy_route_change_requests") {
               if (!(state as any).routeChangeRequests) (state as any).routeChangeRequests = [];
@@ -2307,6 +2315,37 @@ describe("Rent a Buddy — reviews: moderation and duplicate guard", () => {
     assert.equal(insertedReview?.moderation_status, "pending_moderation");
   });
 
+  it("a privateNote is actually WRITTEN to rent_buddy_review_notes, not just constructed", async () => {
+    // This write was `void serviceClient.from("rent_buddy_review_notes").insert(…)`
+    // with no continuation, so the reviewer's private note was built into a
+    // request object and dropped on every single submission. Nothing in src/
+    // reads this table, so no other behaviour changed when it started
+    // landing — but the note is content a human typed and this row is the only
+    // place it exists.
+    setupReviewState([]);
+    (state as any).reviewNotes = [];
+    const r = await req("POST", `/api/rent-a-buddy/bookings/${COMPLETED_BOOKING_ID}/review`, {
+      rating: 5, body: "Amazing experience!", privateNote: "  buddy was 20 minutes late  ",
+    });
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+
+    const notes = (state as any).reviewNotes ?? [];
+    assert.equal(notes.length, 1, `exactly one review note must be written; got ${JSON.stringify(notes)}`);
+    assert.equal(notes[0].booking_id, COMPLETED_BOOKING_ID);
+    assert.equal(notes[0].author_id, USER_ID);
+    assert.equal(notes[0].note, "buddy was 20 minutes late", "the note is trimmed and stored verbatim");
+  });
+
+  it("no privateNote means no review-note row at all", async () => {
+    setupReviewState([]);
+    (state as any).reviewNotes = [];
+    const r = await req("POST", `/api/rent-a-buddy/bookings/${COMPLETED_BOOKING_ID}/review`, {
+      rating: 4, body: "Fine.",
+    });
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+    assert.equal(((state as any).reviewNotes ?? []).length, 0);
+  });
+
   it("second review submission returns 409 already_reviewed", async () => {
     // Pre-seed an existing review for this booking+reviewer
     setupReviewState([{
@@ -3837,6 +3876,58 @@ describe("Rent a Buddy — grace-period sweep: no_show_pending → disputed", ()
       "completed",
       "second booking must also be promoted to completed — the .in() call must cover all ids",
     );
+
+    // …and each promotion must leave an auto_completed row behind. Every other
+    // booking-event assertion in this describe is NEGATIVE (no row when the
+    // update errors), which is why nothing here noticed that phase 1's and
+    // phase 2's writes were `void …insert(…)` with no continuation and
+    // therefore never issued at all.
+    const autoEvents = ((state as any).bookingEvents ?? []).filter(
+      (e: any) => e.event === "auto_completed",
+    );
+    assert.equal(
+      autoEvents.length, 2,
+      `both auto-completions must be written to buddy_booking_events; got ${JSON.stringify(autoEvents)}`,
+    );
+    assert.deepEqual(
+      autoEvents.map((e: any) => e.booking_id).sort(),
+      ["bk-ac-multi-1", "bk-ac-multi-2"],
+    );
+    assert.equal(autoEvents[0].to_status, "completed");
+    assert.deepEqual(autoEvents[0].metadata, { reason: "dispute_window_expired" });
+  });
+
+  it("expiry writes a request_expired event for each booking it expired", async () => {
+    // The positive counterpart to "expired-request count stays at zero when the
+    // status update DB call fails" below: that one only ever asserted the
+    // ABSENCE of the row, so it passed just as happily when the write was never
+    // issued for any booking at all.
+    const PAST = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+    const client = makeClient(USER_ID);
+    _setTestClient(client as any, false);
+    _setTestServiceClient(client as any);
+
+    state = {
+      featureFlags: { rent_buddy_enabled: { flag: "rent_buddy_enabled", enabled: true } },
+      bookings: {
+        "bk-exp-ev-1": {
+          id: "bk-exp-ev-1", traveler_id: USER_ID, buddy_id: BUDDY_PROF,
+          status: "requested", expires_at: PAST,
+        },
+      },
+    };
+
+    const r = await reqSweep();
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(r.body.expired, 1, JSON.stringify(r.body));
+
+    const ev = ((state as any).bookingEvents ?? []).find(
+      (e: any) => e.booking_id === "bk-exp-ev-1" && e.event === "request_expired",
+    );
+    assert.ok(ev, "the request_expired event must be written, not merely constructed");
+    assert.equal(ev.actor_user_id, USER_ID);
+    assert.equal(ev.from_status, "requested");
+    assert.equal(ev.to_status, "expired");
   });
 
   it("returns 200 with noShowEscalated: 0 when the stale-no-shows DB query itself errors — no crash", async () => {
@@ -4825,5 +4916,170 @@ describe("toPublicBuddyReview", () => {
 
   it("a null photos column becomes an empty array, never null", () => {
     assert.deepEqual(toPublicBuddyReview({ ...ROW, photos: null }).photos, []);
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Booking events are ISSUED — and what turning them on changes downstream
+// ══════════════════════════════════════════════════════════════════════════════
+//
+// Every transition in routes/rentABuddy.ts used to write
+//
+//     void serviceClient.from("buddy_booking_events").insert({ … });
+//
+// and PostgrestBuilder is a THENABLE, not a promise — it calls `_fetch` inside
+// `then()`. So those statements built a request object and discarded it: no HTTP
+// call, no row, ever. The fake at the top of this file hid it by capturing rows
+// EAGERLY inside `.insert()`; it now records a row only from `_resolve()`, which
+// runs only when the chain is continued. (`src/test/unissuedWrites.test.ts`
+// proves on a REAL client with a counting fetch that this is the same line the
+// network draws.)
+//
+// The cases below are the two places where sending these rows changes a
+// DOWNSTREAM DECISION, not just a timeline:
+//
+//   1. `buddy_marked_complete` — rentABuddySpec's dispute resolution reads this
+//      event to decide whether to decrement the buddy's `completed_count` when a
+//      dispute is resolved in the traveller's favour (the +1 happened at
+//      mark-complete time and is wrong once the booking becomes 'cancelled').
+//      With the event never written, that compensation NEVER ran and every such
+//      buddy kept an inflated completed_count. rentABuddySpecParity.test.ts
+//      already proves the reader side from a HAND-SEEDED row; what was missing,
+//      and is asserted here, is that the row is ever produced.
+//
+//   2. `no_show_reported` — rentBuddyRequestSweeper reads this event to
+//      attribute a no-show dispute's `raised_by`. With the event never written
+//      the sweeper ALWAYS took its traveller fallback, so a no-show the BUDDY
+//      reported opened a dispute in the traveller's name — against themselves.
+//      The last test here drives the whole path with nothing hand-seeded.
+
+describe("Rent a Buddy — booking events are actually written", () => {
+  it("buddy mark-complete writes the buddy_marked_complete event the dispute compensation reads", async () => {
+    setupState({
+      bookings: {
+        [BOOKING_ID]: {
+          id: BOOKING_ID, buddy_id: BUDDY_PROF, traveler_id: USER_ID,
+          status: "in_progress",
+          updated_at: new Date().toISOString(), created_at: new Date().toISOString(),
+        },
+      },
+    });
+    (state as any).bookingEvents = [];
+
+    const r = await req("POST", `/api/rent-a-buddy/bookings/${BOOKING_ID}/complete`, {}, BUDDY_TOKEN);
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+
+    const ev = ((state as any).bookingEvents ?? []).find(
+      (e: any) => e.booking_id === BOOKING_ID && e.event === "buddy_marked_complete",
+    );
+    assert.ok(ev, "the buddy_marked_complete event must be written, not merely constructed");
+    assert.equal(ev.actor_user_id, BUDDY_USER);
+    assert.equal(ev.from_status, "in_progress");
+    assert.equal(ev.to_status, "completed_pending_traveler_confirmation");
+  });
+
+  it("a traveller completing writes `completed`, not buddy_marked_complete", async () => {
+    // The compensation above must not fire for a booking that never passed
+    // through mark-complete, so the two events must stay distinguishable.
+    setupState({
+      bookings: {
+        [BOOKING_ID]: {
+          id: BOOKING_ID, buddy_id: BUDDY_PROF, traveler_id: USER_ID,
+          status: "in_progress",
+          updated_at: new Date().toISOString(), created_at: new Date().toISOString(),
+        },
+      },
+    });
+    (state as any).bookingEvents = [];
+
+    const r = await req("POST", `/api/rent-a-buddy/bookings/${BOOKING_ID}/complete`, {});
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+
+    const events = ((state as any).bookingEvents ?? []).filter((e: any) => e.booking_id === BOOKING_ID);
+    assert.ok(
+      events.some((e: any) => e.event === "completed"),
+      `a 'completed' event must be written; got ${JSON.stringify(events.map((e: any) => e.event))}`,
+    );
+    assert.ok(
+      !events.some((e: any) => e.event === "buddy_marked_complete"),
+      "a traveller-completed booking must NOT record buddy_marked_complete",
+    );
+  });
+
+  it("a no-show reported by the buddy writes no_show_reported with the BUDDY as actor", async () => {
+    setupState({
+      bookings: {
+        [BOOKING_ID]: {
+          id: BOOKING_ID, buddy_id: BUDDY_PROF, traveler_id: USER_ID,
+          status: "in_progress",
+          updated_at: new Date().toISOString(), created_at: new Date().toISOString(),
+        },
+      },
+    });
+    (state as any).bookingEvents = [];
+
+    const r = await req("POST", `/api/rent-a-buddy/bookings/${BOOKING_ID}/no-show`, {}, BUDDY_TOKEN);
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+
+    const ev = ((state as any).bookingEvents ?? []).find(
+      (e: any) => e.booking_id === BOOKING_ID && e.event === "no_show_reported",
+    );
+    assert.ok(ev, "the no_show_reported event must be written, not merely constructed");
+    assert.equal(
+      ev.actor_user_id, BUDDY_USER,
+      "actor must be the reporting party (the buddy), which is what the sweeper attributes raised_by from",
+    );
+    assert.equal(ev.metadata?.reported_by, "buddy");
+  });
+
+  it("BEHAVIOUR CHANGE: a buddy-reported no-show now opens the dispute in the BUDDY's name", async () => {
+    // END TO END, nothing hand-seeded: the buddy reports the no-show through the
+    // route, the grace window lapses, and the sweeper escalates.
+    //
+    // BEFORE the fix the route's no_show_reported row was constructed and thrown
+    // away, so the sweeper's event lookup found nothing and took its documented
+    // traveller fallback — `raised_by` came out as USER_ID, i.e. the dispute was
+    // filed in the name of the person it is ABOUT. That is the attribution a
+    // human moderator adjudicates from, and it also feeds
+    // rentABuddySpec's no_show_count rule, which only penalises the buddy when
+    // `raised_by === traveler_id`. Both now key off the real reporter.
+    setupState({
+      bookings: {
+        [BOOKING_ID]: {
+          id: BOOKING_ID, buddy_id: BUDDY_PROF, traveler_id: USER_ID,
+          status: "in_progress",
+          updated_at: new Date().toISOString(), created_at: new Date().toISOString(),
+        },
+      },
+    });
+    (state as any).bookingEvents = [];
+
+    const reported = await req("POST", `/api/rent-a-buddy/bookings/${BOOKING_ID}/no-show`, {}, BUDDY_TOKEN);
+    assert.equal(reported.status, 200, JSON.stringify(reported.body));
+    assert.equal(state.bookings![BOOKING_ID].status, "no_show_pending");
+
+    // Lapse the grace window the route just set two hours out.
+    state.bookings![BOOKING_ID].no_show_grace_expires_at =
+      new Date(Date.now() - 60 * 60 * 1000).toISOString();
+
+    const sweep = await runBuddyRequestSweep(makeClient(USER_ID) as any);
+    assert.equal(sweep.noShowEscalated, 1, JSON.stringify(sweep));
+    assert.equal(state.bookings![BOOKING_ID].status, "disputed");
+
+    const dispute = (state.disputes ?? []).find(
+      (d: any) => d.booking_id === BOOKING_ID && d.reason === "no_show",
+    );
+    assert.ok(dispute, "the sweep must open a no_show dispute");
+    assert.equal(
+      dispute.raised_by, BUDDY_USER,
+      "raised_by must be the buddy who reported, NOT the traveller fallback (USER_ID) taken while the event row was never written",
+    );
+    assert.notEqual(dispute.raised_by, USER_ID);
+
+    const escalation = ((state as any).bookingEvents ?? []).find(
+      (e: any) => e.booking_id === BOOKING_ID && e.event === "no_show_escalated",
+    );
+    assert.ok(escalation, "the escalation event must be written");
+    assert.equal(escalation.actor_user_id, BUDDY_USER);
   });
 });

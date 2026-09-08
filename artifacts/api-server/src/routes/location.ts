@@ -446,7 +446,14 @@ router.post("/location/exit-geofence", async (req, res) => {
 
   if (updateErr) { sendError(res, "db_error", updateErr.message); return; }
 
-  // Append exit_detected event (non-fatal)
+  // Append exit_detected event (non-fatal, but ISSUED).
+  //
+  // This was a bare `void sc.from(…).insert({…})`. PostgrestBuilder is a
+  // THENABLE, not a promise — it calls `_fetch` inside `then()` — so that
+  // statement built a request object and discarded it, and no exit_detected row
+  // was ever written. The `.then(…)` below is what sends it. Failures are logged
+  // and never fail the response: the geofence exit is already recorded on the
+  // post itself, and this row is the trail, not the state.
   void sc
     .from("delayed_post_location_events")
     .insert({
@@ -456,7 +463,20 @@ router.post("/location/exit-geofence", async (req, res) => {
       lat,
       lng,
       metadata: { confirmation_window_minutes: GEOFENCE_CONFIRMATION_MINUTES },
-    });
+    })
+    .then(
+      (r: { error?: unknown } | null | undefined) => {
+        if (r?.error) {
+          req.log?.warn?.(
+            { err: r.error, postId },
+            "exit_detected event write failed (non-fatal)",
+          );
+        }
+      },
+      (err: unknown) => {
+        req.log?.warn?.({ err, postId }, "exit_detected event write threw (non-fatal)");
+      },
+    );
 
   res.status(200).json({ ok: true, publishEligibleAt: eligibleAt });
 });

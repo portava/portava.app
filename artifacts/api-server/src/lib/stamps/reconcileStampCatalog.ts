@@ -283,17 +283,35 @@ async function reconcile(sc: any, stats: ReconcileStats): Promise<void> {
           console.warn("[reconcile] Catalog insert failed:", insertErr.message, combo);
           stats.flagged++;
 
-          // Log for admin review
-          void sc.from("stamp_reconciliation_log").insert({
-            source_table:       "universal_stamp_catalog",
-            source_id:          "00000000-0000-0000-0000-000000000000",
-            raw_country:        combo.country,
-            raw_city:           combo.city,
-            stamp_type:         combo.stamp_type,
-            canonical_key:      canonKey,
-            needs_admin_review: true,
-            review_reason:      insertErr.message,
-          });
+          // Log for admin review.
+          //
+          // ISSUED, not just built. This was `void sc.from(…).insert({…})`, and
+          // PostgrestBuilder is a thenable that calls `_fetch` inside `then()` —
+          // so the statement constructed a request and discarded it. Every
+          // catalog-insert failure was counted in `stats.flagged` and then left
+          // NO admin-review row behind, unlike its two siblings below (the
+          // location-less user_stamps paths), which have always awaited.
+          //
+          // Awaited like those siblings, but inside its own try/catch and with
+          // the returned error logged: this is an error-path breadcrumb, and it
+          // must not be able to abort the reconciliation run it is describing.
+          try {
+            const { error: logErr } = await sc.from("stamp_reconciliation_log").insert({
+              source_table:       "universal_stamp_catalog",
+              source_id:          "00000000-0000-0000-0000-000000000000",
+              raw_country:        combo.country,
+              raw_city:           combo.city,
+              stamp_type:         combo.stamp_type,
+              canonical_key:      canonKey,
+              needs_admin_review: true,
+              review_reason:      insertErr.message,
+            });
+            if (logErr) {
+              console.warn("[reconcile] Admin-review log write failed:", logErr.message, combo);
+            }
+          } catch (logThrew: any) {
+            console.warn("[reconcile] Admin-review log write threw:", logThrew?.message, combo);
+          }
 
           continue;
         }

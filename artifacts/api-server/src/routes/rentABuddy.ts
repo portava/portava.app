@@ -91,6 +91,61 @@ export { POLICY_TEXT, CATEGORY_RISK_LEVELS, getCategoryRiskLevel };
 
 const router = Router();
 
+/** The subset of `req.log` this file uses. Optional everywhere — some callers
+ *  (and some test shims) do not carry a logger. */
+type RouteLog = { error?: (...args: any[]) => void } | undefined;
+
+/**
+ * Append a row to `buddy_booking_events` — the booking's evidence log.
+ *
+ * ── WHY THIS IS A FUNCTION AND NOT `void …insert(…)` ─────────────────────────
+ * `PostgrestBuilder` is a THENABLE, not a promise: it builds its headers and
+ * calls `_fetch` inside `then()`. So the shape this file used everywhere,
+ *
+ *     void serviceClient.from("buddy_booking_events").insert({ … });
+ *
+ * constructed a request object and threw it away — no HTTP call, no row, ever.
+ * Not a lost error and not an unawaited race: the write did not happen. Every
+ * booking transition in this file (request_created, accepted, declined,
+ * started, buddy_marked_complete, dispute_opened, no_show_reported, …) was
+ * silently absent from the log that
+ *   • GET /rent-a-buddy/bookings/:bookingId/events serves to both parties,
+ *   • rentABuddySpec's dispute resolution reads to decide whether to
+ *     compensate `completed_count` (it looks for `buddy_marked_complete`), and
+ *   • rentBuddyRequestSweeper reads to attribute a no-show dispute's
+ *     `raised_by` (it looks for `no_show_reported`).
+ *
+ * The write stays fire-and-forget — an audit failure must never fail the
+ * transition that is already committed — but it is now ISSUED, and a failure is
+ * LOGGED rather than swallowed: a booking event that silently does not land is
+ * exactly the defect this replaces.
+ */
+function recordBookingEvent(
+  serviceClient: any,
+  log: RouteLog,
+  row: Record<string, unknown>,
+): void {
+  void serviceClient
+    .from("buddy_booking_events")
+    .insert(row)
+    .then(
+      (res: { error?: unknown } | null | undefined) => {
+        if (res?.error) {
+          log?.error?.(
+            { err: res.error, bookingId: row.booking_id, event: row.event },
+            "buddy_booking_events insert failed — booking event unaudited",
+          );
+        }
+      },
+      (err: unknown) => {
+        log?.error?.(
+          { err, bookingId: row.booking_id, event: row.event },
+          "buddy_booking_events insert threw — booking event unaudited",
+        );
+      },
+    );
+}
+
 async function scanForPolicyViolations(opts: {
   sc: any;
   text: string;
@@ -1982,7 +2037,7 @@ router.post("/rent-a-buddy/bookings", async (req, res) => {
     // Best-effort: the booking is already committed.
     await createEarningsLedgerEntry(serviceClient, booking, buddyId).catch(() => {});
 
-    void serviceClient.from("buddy_booking_events").insert({
+    recordBookingEvent(serviceClient, req.log, {
       booking_id: (booking as any).id,
       actor_user_id: user.id,
       event: "request_created",
@@ -2123,7 +2178,7 @@ router.post("/rent-a-buddy/bookings/:bookingId/cancel", async (req, res) => {
     })
     .eq("id", bookingId);
 
-  void serviceClient.from("buddy_booking_events").insert({
+  recordBookingEvent(serviceClient, req.log, {
     booking_id: bookingId, actor_user_id: auth.user.id, event: cancelStatus,
     from_status: b.status, to_status: cancelStatus,
     metadata: { hoursUntil: Math.round(hoursUntil * 10) / 10, cancellation_reason: cancellation_reason ?? null },
@@ -2242,7 +2297,7 @@ router.post("/rent-a-buddy/bookings/:bookingId/accept", async (req, res) => {
     .update({ status: "scheduled", confirmed_at: now, updated_at: now })
     .eq("id", bookingId);
 
-  void serviceClient.from("buddy_booking_events").insert({
+  recordBookingEvent(serviceClient, req.log, {
     booking_id: bookingId, actor_user_id: auth.user.id, event: "accepted",
     from_status: (booking as any).status, to_status: "scheduled", metadata: {},
   });
@@ -2343,7 +2398,7 @@ router.post("/rent-a-buddy/bookings/:bookingId/decline", async (req, res) => {
     .update({ status: "declined", decline_reason: decline_reason ?? null, updated_at: now })
     .eq("id", req.params.bookingId);
 
-  void serviceClient.from("buddy_booking_events").insert({
+  recordBookingEvent(serviceClient, req.log, {
     booking_id: req.params.bookingId, actor_user_id: auth.user.id, event: "declined",
     from_status: (booking as any).status, to_status: "declined", metadata: { decline_reason: decline_reason ?? null },
   });
@@ -2431,7 +2486,7 @@ router.post("/rent-a-buddy/bookings/:bookingId/suggest", async (req, res) => {
     if (crErr) return sendError(res, "db_error", crErr.message);
   }
 
-  void serviceClient.from("buddy_booking_events").insert({
+  recordBookingEvent(serviceClient, req.log, {
     booking_id: bookingId, actor_user_id: auth.user.id, event: "changes_suggested",
     from_status: (booking as any).status, to_status: (booking as any).status,
     metadata: {
@@ -2488,7 +2543,7 @@ router.post("/rent-a-buddy/bookings/:bookingId/start", async (req, res) => {
     .update({ status: "in_progress", started_at: now, updated_at: now })
     .eq("id", bookingId);
 
-  void serviceClient.from("buddy_booking_events").insert({
+  recordBookingEvent(serviceClient, req.log, {
     booking_id: bookingId, actor_user_id: auth.user.id, event: "started",
     from_status: (booking as any).status, to_status: "in_progress", metadata: {},
   });
@@ -2563,7 +2618,7 @@ router.post("/rent-a-buddy/bookings/:bookingId/complete", async (req, res) => {
     })
     .eq("id", bookingId);
 
-  void serviceClient.from("buddy_booking_events").insert({
+  recordBookingEvent(serviceClient, req.log, {
     booking_id: bookingId, actor_user_id: auth.user.id,
     event: isBuddyCompleting ? "buddy_marked_complete" : "completed",
     from_status: "in_progress", to_status: finalStatus,
@@ -3305,12 +3360,36 @@ router.post("/rent-a-buddy/bookings/:bookingId/review", async (req, res) => {
 
   // Compass activity ingestion — reviewer earns review_posted credit
   if (typeof privateNote === "string" && privateNote.trim()) {
-    void serviceClient.from("rent_buddy_review_notes").insert({
-      review_id: (review as any)?.id ?? null,
-      booking_id: bookingId,
-      author_id: auth.user.id,
-      note: privateNote.trim().slice(0, 4000),
-    });
+    // Fire-and-forget, but ISSUED: a bare `void …insert(…)` on a PostgrestBuilder
+    // never calls `then()`, so the request was built and discarded and the
+    // reviewer's private note was silently thrown away on every submission.
+    // The review itself is already committed, so a failed note must not fail the
+    // request — but it is logged rather than lost without trace, because this
+    // row is content the reviewer typed and nothing else records it.
+    void serviceClient
+      .from("rent_buddy_review_notes")
+      .insert({
+        review_id: (review as any)?.id ?? null,
+        booking_id: bookingId,
+        author_id: auth.user.id,
+        note: privateNote.trim().slice(0, 4000),
+      })
+      .then(
+        (res: { error?: unknown } | null | undefined) => {
+          if (res?.error) {
+            req.log?.error?.(
+              { err: res.error, bookingId },
+              "rent_buddy_review_notes insert failed — reviewer's private note not stored",
+            );
+          }
+        },
+        (err: unknown) => {
+          req.log?.error?.(
+            { err, bookingId },
+            "rent_buddy_review_notes insert threw — reviewer's private note not stored",
+          );
+        },
+      );
   }
 
   recordActivityEvent(serviceClient, auth.user.id, "review_posted", { category: "buddy_session" });
@@ -3541,7 +3620,7 @@ router.post("/rent-a-buddy/bookings/:bookingId/dispute", async (req, res) => {
     .update({ status: "disputed", updated_at: now })
     .eq("id", bookingId);
 
-  void serviceClient.from("buddy_booking_events").insert({
+  recordBookingEvent(serviceClient, req.log, {
     booking_id: bookingId, actor_user_id: auth.user.id, event: "dispute_opened",
     from_status: (booking as any).status, to_status: "disputed",
     metadata: { reason, dispute_id: (dispute as any)?.id ?? null },
@@ -3658,7 +3737,7 @@ router.post("/rent-a-buddy/bookings/:bookingId/no-show", async (req, res) => {
     .update({ status: "no_show_pending", no_show_grace_expires_at: graceExpiry, updated_at: now })
     .eq("id", bookingId);
 
-  void serviceClient.from("buddy_booking_events").insert({
+  recordBookingEvent(serviceClient, req.log, {
     booking_id: bookingId, actor_user_id: auth.user.id, event: "no_show_reported",
     from_status: (booking as any).status, to_status: "no_show_pending",
     metadata: {
@@ -3900,7 +3979,7 @@ router.post("/rent-a-buddy/bookings/:bookingId/safety/end-early", async (req, re
   // Every other transition in this file writes a booking event; this one did not,
   // which is what made the abuse above silent. Fire-and-forget: an audit failure
   // must never block a safety exit.
-  void serviceClient.from("buddy_booking_events").insert({
+  recordBookingEvent(serviceClient, req.log, {
     booking_id: bookingId,
     actor_user_id: auth.user.id,
     event: "ended_early",
@@ -7053,7 +7132,7 @@ router.post("/rent-a-buddy/bookings/:bookingId/traveler-confirm", async (req, re
     .update({ status: "completed", updated_at: now })
     .eq("id", bookingId);
 
-  void serviceClient.from("buddy_booking_events").insert({
+  recordBookingEvent(serviceClient, req.log, {
     booking_id: bookingId, actor_user_id: auth.user.id, event: "traveler_confirmed",
     from_status: "completed_pending_traveler_confirmation", to_status: "completed", metadata: {},
   });
@@ -7234,7 +7313,7 @@ router.post("/rent-a-buddy/bookings/:bookingId/change-request", async (req, res)
     .maybeSingle();
   if (crErr) return sendError(res, "db_error", crErr.message);
 
-  void serviceClient.from("buddy_booking_events").insert({
+  recordBookingEvent(serviceClient, req.log, {
     booking_id: bookingId, actor_user_id: auth.user.id, event: "change_request_raised",
     from_status: (booking as any).status, to_status: (booking as any).status,
     metadata: { change_field: changeField, proposed_value: proposedValue, change_request_id: (changeReq as any)?.id },
@@ -7327,7 +7406,7 @@ router.post("/rent-a-buddy/bookings/:bookingId/respond-change-request", async (r
     await serviceClient.from("rent_buddy_bookings").update(bookingPatch).eq("id", bookingId);
   }
 
-  void serviceClient.from("buddy_booking_events").insert({
+  recordBookingEvent(serviceClient, req.log, {
     booking_id: bookingId, actor_user_id: auth.user.id, event: `change_request_${newStatus}`,
     from_status: (booking as any).status, to_status: (booking as any).status,
     metadata: {
@@ -7493,18 +7572,23 @@ router.post("/rent-a-buddy/bookings/:bookingId/rebook", async (req, res) => {
   if (error) return sendError(res, "db_error", error.message);
 
   // Same shared estimated-ledger write as the canonical route — see above.
+  // The booking event goes in the SAME guard: now that the insert is actually
+  // issued, a null `newBooking` would send `booking_id: undefined` and earn a
+  // not-null / foreign-key rejection on every rebook whose RETURNING row came
+  // back empty. An event about a booking that does not exist is not an audit
+  // row worth attempting.
   if (newBooking) {
     await createEarningsLedgerEntry(serviceClient, newBooking, buddyProfileId).catch(() => {});
-  }
 
-  void serviceClient.from("buddy_booking_events").insert({
-    booking_id: (newBooking as any)?.id,
-    actor_user_id: auth.user.id,
-    event: "rebook_created",
-    from_status: null,
-    to_status: "pending",
-    metadata: { original_booking_id: bookingId },
-  });
+    recordBookingEvent(serviceClient, req.log, {
+      booking_id: (newBooking as any).id,
+      actor_user_id: auth.user.id,
+      event: "rebook_created",
+      from_status: null,
+      to_status: "pending",
+      metadata: { original_booking_id: bookingId },
+    });
+  }
 
   return res.status(201).json({ bookingId: (newBooking as any)?.id, booking: newBooking });
 });
