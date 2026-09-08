@@ -753,6 +753,13 @@ describe("GET /api/pulse/live", () => {
         category: "Beach",
         status: "active",
         save_count: 100,
+        // hidden_gems.sensitivity_level is NOT NULL, so a row without it is a
+        // shape production never emits. The Live Pulse gem rails put every row
+        // through HiddenGemPrivacyGuard.mayDiscloseGemIdentity, which refuses an
+        // absent/unrecognised value — a fixture missing it would fail for the
+        // wrong reason.
+        sensitivity_level: "public",
+        submitted_by: null,
       }],
     }), true);
 
@@ -771,6 +778,8 @@ describe("GET /api/pulse/live", () => {
         category: "Beach",
         status: "active",
         save_count: 100,
+        sensitivity_level: "public",
+        submitted_by: null,
       }],
     }), true);
 
@@ -993,9 +1002,9 @@ describe("GET /api/pulse/live", () => {
     _setTestClient(makeClient({
       hidden_gems: [
         // within 50km of Manila
-        { id: "ee000000-0000-0000-0000-000000000001", name: "Near Gem", city: "Manila", category: "cafe", save_count: 5, status: "active", latitude: 14.5995, longitude: 120.9842 },
+        { id: "ee000000-0000-0000-0000-000000000001", name: "Near Gem", city: "Manila", category: "cafe", save_count: 5, status: "active", sensitivity_level: "public", submitted_by: null, latitude: 14.5995, longitude: 120.9842 },
         // >50km away (Baguio is ~250km)
-        { id: "ee000000-0000-0000-0000-000000000002", name: "Far Gem", city: "Baguio", category: "spot", save_count: 10, status: "active", latitude: 16.4023, longitude: 120.5960 },
+        { id: "ee000000-0000-0000-0000-000000000002", name: "Far Gem", city: "Baguio", category: "spot", save_count: 10, status: "active", sensitivity_level: "public", submitted_by: null, latitude: 16.4023, longitude: 120.5960 },
       ],
       feature_flags: [{ flag: "hidden_gems_enabled", enabled: true }],
     }), true);
