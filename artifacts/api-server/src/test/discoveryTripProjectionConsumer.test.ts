@@ -756,7 +756,13 @@ describe("lib/discoveryTripProjectionConsumer — the units", () => {
     assert.equal(DISCOVERY_TRIP_PROJECTION.flag, DISCOVERY_TRIP_PROJECTION_FLAG);
     assert.deepEqual(DISCOVERY_TRIP_PROJECTION.requires.tables.trips!.columns, DISCOVERY_TRIP_PROJECTION_COLUMNS);
     assert.ok(DISCOVERY_TRIP_PROJECTION.providedBy.some((m) => m.includes("2420")), "the refusal names the migration to apply");
-    assert.deepEqual(DISCOVERY_TRIP_PROJECTION.consumers, ["routes/discoverySearch.ts"]);
+    // The WRAPPER, not the route. checkFlagSchemaPrerequisites' consumer rule
+    // tests whether a declared consumer REACHES lib/capability, not whether it
+    // mentions the flag; routes/discoverySearch.ts does the latter only, through
+    // this file. Declaring the route made the ratchet fail
+    // "REGISTRY WITHOUT A CONSUMER: does not reach lib/capability", correctly.
+    // MEDIA_CANONICAL uses the same shape: consumers: ["lib/mediaAssets.ts"].
+    assert.deepEqual(DISCOVERY_TRIP_PROJECTION.consumers, ["lib/discoveryTripProjectionConsumer.ts"]);
   });
 
   it("§19.1: acceptTripDiscoveryProjections keeps schema version 1 and drops (and counts) anything else", () => {
