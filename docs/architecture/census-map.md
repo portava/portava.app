@@ -934,3 +934,72 @@ reader should take from that spread:
    commits that name it by section number. The question the brief asked me to
    test rather than assume has a different answer here, and the difference is
    not marginal.
+
+---
+
+## 9. Addendum (2026-09-08) — the trip projection now has a reader
+
+Section 7's table lists PRs that would move a verdict. This addendum records a
+change on the branch itself, in the same spirit: **what it moves, and what it
+does not.**
+
+### What was there
+
+Migration `2520_trip_map_projection_worker.sql` and `lib/mapTripProjectionWorker.ts`
+built the Trips-spec §19.4 projection worker — `trip_outbox` drained into
+`trip_map_projections` in `aggregate_version` order, idempotent by `event_id`,
+with a rebuild path and an atomic publish. It is correct, and it had **no
+reader**. `routes/mapProjection.ts` still derived the `trip_stop` layer from
+canonical `trips` at request time, so the projection closed **zero** census
+rows. 2520's own header said the reader decision was "NOT taken here".
+
+### What is there now
+
+    Trip Kernel event → trip_outbox → trip_map_projection_drain (2520)
+      → trip_map_projections (+ the 2610 Map anchor)
+      → lib/mapProjectionTripRead → routes/mapProjection.ts
+      → GET /api/map/projection → mobile Map
+
+`lib/mapProjectionTripContract.ts` defines the **Map-owned** half of the
+contract — ten fields, exactly what `lib/mapProjection.projectTrip` reads, and
+deliberately far narrower than `AuthorizedTripView`. `lib/mapProjectionTripRead.ts`
+is the reader. Both branches end in the same `projectTrip`, so the served
+object cannot drift between them.
+
+### The field 2520 could not supply
+
+2520's `body` is coordinate-free by design (§5.3, §14.4) and carries only
+`has_destination_coordinates`. `projectTrip` returns null without
+`destinationLat`/`destinationLng`, so the projection was unusable as a map
+source on its own. Migration `2610_map_trip_projection_anchor.sql` adds a
+**Map-owned anchor** — `destination_lat`, `destination_lng`,
+`map_contract_version` as real columns on the Map-owned projection table,
+filled by a trigger on the same write the drain already makes. `body` is
+untouched. Real columns rather than jsonb keys because **a capability probe
+cannot look inside a jsonb value**, and the probe is what makes the gate work.
+
+### Why it is a capability, not a flag (measured 2026-09-07)
+
+| database | 2334/2337/2420 | 2520 | `trip_map_projections` | canonical trips |
+| --- | --- | --- | --- | --- |
+| production `ajrurzioarfkagpuxfnb` | **not applied** | not applied | absent | **43 rows, live** |
+| portava-ci `hwokxgbmezheskbzskfr` | applied | **not applied** | absent | — |
+
+On both, the projection is not merely empty — the table does not exist. A bare
+flag would answer "on", the layer would read nothing, and on a map that is
+indistinguishable from "you have no trips": 43 real production trips would
+vanish the moment an operator flipped a switch. So the gate is the existing
+`lib/capability` contract, `FLAG_ENABLED && SCHEMA_CAPABILITY_READY`,
+fail-closed on `missing` **and** on `unknown`, with the canonical path as the
+not-ready branch. Which branch ran is on the wire: `trips.path` in the body and
+the `X-Map-Trip-Source` response header.
+
+### What this does NOT move
+
+No census verdict changes. The `trip_stop` layer already existed and was
+already CORRECT; this replaces the *source* behind it under a gate that is OFF
+everywhere, and the not-ready branch is byte-identical to what shipped. The
+verdict that would move is a future one about §19.4 projection lag, and it
+cannot be scored until `2520` and `2610` are applied and both flags
+(`trip_map_projection_worker_enabled`, then `map_trip_projection_read_enabled`)
+are on — **in that order**, or the reader serves a stale or empty layer.
