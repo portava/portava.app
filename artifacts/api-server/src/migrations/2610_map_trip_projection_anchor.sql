@@ -207,8 +207,12 @@ BEGIN
 
   -- The body must still be coordinate-free: this migration must not have moved
   -- the §14.4 line, only added a column beside it.
+  -- jsonb_exists(), not the `?` operator: this file is applied by tooling that
+  -- may treat `?` as a bind placeholder, and a migration that fails to parse in
+  -- the applier is a migration that does not exist.
   IF EXISTS (SELECT 1 FROM public.trip_map_projections
-              WHERE body ? 'destination_lat' OR body ? 'destination_lng') THEN
+              WHERE jsonb_exists(body, 'destination_lat')
+                 OR jsonb_exists(body, 'destination_lng')) THEN
     RAISE EXCEPTION 'POSTCONDITION FAILED: a coordinate reached the §14.1 body';
   END IF;
 
