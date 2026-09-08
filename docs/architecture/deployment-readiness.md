@@ -26,14 +26,15 @@ ENABLED. FLAG ENABLED is not PRODUCTION REALIZED.**
 
 | Fact | Value | How |
 |---|---|---|
-| Commits ahead of `origin/main` | **351** | `git rev-list --count origin/main..HEAD` |
+| Commits ahead of `origin/main` | **363** | `git rev-list --count origin/main..HEAD` |
 | Commits `origin/main` is ahead | **0** | `git rev-list --count HEAD..origin/main` |
 | Merge shape | **fast-forward, zero conflicts** | `git merge-tree --write-tree`; resulting tree byte-identical to HEAD's |
 | Merged | **NO** | — |
 | Server deployed | **NO** | no deploy performed in this session |
 | Mobile deployed | **NO** | — |
 | Migrations applied to production | **35** | `production-applied-migrations.json`, reconciled against `supabase_migrations.schema_migrations` |
-| Migrations written, NOT applied | **10** | 2700, 2710, 2711, 2720–2724, 2730, 2740 |
+| Migrations written, NOT applied to PRODUCTION | **10** | 2700, 2710, 2711, 2720–2724, 2730, 2740 |
+| Of those, applied to **portava-ci** | **2** | 2710 `20260908142429`, 2711 `20260908142652` — CI is not production and this row exists so the two are never read as one |
 
 ## Per-surface
 
@@ -44,13 +45,13 @@ ENABLED. FLAG ENABLED is not PRODUCTION REALIZED.**
 |---|---|---|---|---|---|---|---|---|---|
 | Layover — feasibility record | yes | yes | yes | n/a | **no** | no | no | n/a | **no** |
 | Layover — sharing gate / presence | yes | yes | yes | n/a | **no** | no | no | ladder flag FALSE (2740 unapplied ⇒ no row) | **no** |
-| Layover — safe return / abort | yes | yes | yes | **yes (2741)** | **no** | no | no | `layover_safe_return_status_enabled` FALSE | **no** |
+| Layover — safe return / abort | yes | yes | yes | **yes (2741)** | **no** | no | **client built, undeployed** | `layover_safe_return_status_enabled` FALSE | **no** |
 | Layover — crew constraints | yes | **no** (no route) | yes | n/a | **no** | no | no | n/a | **no** |
-| Layover — offline bundle | yes | yes (server) | yes | n/a | **no** | no | **no client reader** | n/a | **no** |
+| Layover — offline bundle | yes | yes (server) | yes | n/a | **no** | no | **displayed, not cached** | n/a | **no** |
 | Highlights — permission rule | yes | yes | yes | n/a | **no** | no | no | n/a | **no** |
 | Highlights — archive | yes | yes | yes | yes (0026, pre-existing) | **no** | no | no | n/a | **no** |
 | Highlights — consent / resurfacing | yes | partial | yes | **no (2720, 2721)** | **no** | no | no | n/a | **no** |
-| Memories — command bus / outbox | yes | yes | yes | **no (2710, 2711)** | **no** | no | no | `memory_kernel_enabled` has NO ROW | **no** |
+| Memories — command bus / outbox | yes | yes | yes | **ci only (2710, 2711)** | **no** | no | no | `memory_kernel_enabled` FALSE on CI, NO ROW in production | **no** |
 | Memories — projections / retrieval | yes | **no HTTP surface** | yes | **no (2730)** | **no** | no | no | n/a | **no** |
 | Trips / Trip Kernel | prior | prior | yes | yes (2420) | **no** | no | no | — | **no** |
 | Map | prior | prior | yes | yes (2520, 2610) | **no** | no | no | — | **no** |
@@ -63,6 +64,25 @@ ENABLED. FLAG ENABLED is not PRODUCTION REALIZED.**
 | Trust | prior | prior | yes | yes (2370, 2371, 2540, 2650, 2660) | **no** | no | no | — | **no** |
 | Intel / Sensing | prior | prior | yes | partial (2481 owner-blocked) | **no** | no | no | — | **no** |
 | Media | prior | prior | yes | **no (2470 owner-blocked)** | **no** | no | no | `media_canonical_enabled` TRUE with columns ABSENT | **no** |
+
+### Changes since this ledger was generated, and what they did NOT change
+
+Two lanes landed on the branch. Neither moved any row past `BRANCH_BUILT`, and
+the table above is written to make that visible rather than to hide it behind a
+new "yes".
+
+- **Layover mobile reachability** (`a718beb5`) gave three server capabilities a
+  gesture: one-tap abort, the certification footer, and the Compass question
+  panel. `Mobile deployed` is still `no` for every one of them — a component
+  that exists in a branch is not an app anybody has. The census recensus records
+  the same three as `W → C` and CONSTRUCTED% as UNCHANGED, which is the same
+  fact stated in the other document's vocabulary.
+- **Memory kernel certification** (`3721cb39`) applied 2710 and 2711 to
+  **portava-ci only**, verified the applied bytes by md5 against the files on
+  disk, and proved the transaction rolls back whole under an injected fault.
+  Production was never contacted. `Migr applied` for that surface therefore
+  reads `ci only`, which is a state this table did not previously have a word
+  for and needed one.
 
 **Every row ends `PRODUCTION_REALIZED = no`, because the branch is unmerged.**
 That single fact dominates the table: no amount of branch-side completeness
