@@ -130,7 +130,7 @@ async function getLikerIds(
   targetType: TargetType,
   targetId: string,
   opts: { reactionType?: string; cursor?: string; limit: number },
-): Promise<{ userIds: string[]; likedAts: Map<string, string>; nextCursor: string | null; hasMore: boolean }> {
+): Promise<{ userIds: string[]; likedAts: Map<string, string>; nextCursor: string | null; hasMore: boolean; readFailed: boolean }> {
   const { reactionType, cursor, limit } = opts;
 
   let q: any;
@@ -160,7 +160,14 @@ async function getLikerIds(
   q = q.order("created_at", { ascending: false }).limit(limit + 1);
 
   const { data: rows, error } = await q;
-  if (error) return { userIds: [], likedAts: new Map(), nextCursor: null, hasMore: false };
+  // An unreadable likes table is NOT "nobody liked this". This function used to
+  // answer both questions with the same empty page, and the caller turned that
+  // into a 200 `{ users: [] }` — the exact false statement the block-set
+  // refusal below exists to prevent, made two functions earlier and about the
+  // same roster. The caller refuses instead; see the route.
+  if (error) {
+    return { userIds: [], likedAts: new Map(), nextCursor: null, hasMore: false, readFailed: true };
+  }
 
   const all = (rows ?? []) as any[];
   const hasMore = all.length > limit;
@@ -171,7 +178,7 @@ async function getLikerIds(
 
   const nextCursor = hasMore ? (page[page.length - 1]?.created_at ?? null) : null;
 
-  return { userIds: page.map((r: any) => r.user_id), likedAts, nextCursor, hasMore };
+  return { userIds: page.map((r: any) => r.user_id), likedAts, nextCursor, hasMore, readFailed: false };
 }
 
 // ── Main route ─────────────────────────────────────────────────────────────────
@@ -221,12 +228,28 @@ router.get("/engagement/likes", asyncHandler(async (req, res) => {
     return;
   }
 
-  const { userIds, likedAts, nextCursor, hasMore } = await getLikerIds(
+  const { userIds, likedAts, nextCursor, hasMore, readFailed } = await getLikerIds(
     sc,
     targetType as TargetType,
     targetId,
     { reactionType, cursor, limit },
   );
+
+  // FAIL-CLOSED, same reasoning as the block set below and the same answer:
+  // this response IS the roster, so `users: []` is not a narrower truth, it is
+  // a false statement that nobody liked this — which the client renders and
+  // caches as fact, and which no field on the response distinguishes from a
+  // genuinely unliked post. `degraded_unavailable` (503, retryable) says the
+  // read could not be PERFORMED, rather than db_error (500): nothing is wrong
+  // with the request and a retry is the correct recovery.
+  if (readFailed) {
+    req.log.error(
+      { targetType, targetId },
+      "engagement/likes: liker read failed — refusing rather than reporting an empty roster",
+    );
+    sendError(res, "degraded_unavailable", "Reactions are temporarily unavailable");
+    return;
+  }
 
   if (userIds.length === 0) {
     res.json({ ok: true, users: [], nextCursor: null, hasMore: false });
