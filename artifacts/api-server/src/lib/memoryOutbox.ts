@@ -60,6 +60,54 @@
  * of the exercise — it returns a discriminated result rather than an empty
  * array, so "the outbox is unreadable" can never be served as "there is nothing
  * to publish" (§28.11).
+ *
+ * ══════════════════════════════════════════════════════════════════════════════
+ * FOUR THINGS THE WORKER AUTHOR MUST KNOW, MEASURED AGAINST THE APPLIED SCHEMA
+ * ══════════════════════════════════════════════════════════════════════════════
+ * 2710 and 2711 were applied to the CI project and the kernel was exercised
+ * against real Postgres (src/test/memoryKernelTransactionLive.test.ts). Four
+ * properties came out of that which are NOT obvious from the table definition
+ * and each of which is a plausible way to build a broken consumer:
+ *
+ * 1. NOTHING ACKS. `published_at`, `attempts` and `last_error` are columns that
+ *    no code writes — not this module, not the kernel function, not any other
+ *    migration. `public.memory_kernel_execute` is the ONLY database object that
+ *    touches this table and it only INSERTs. Compare `trip_outbox`, whose
+ *    worker (migration 2520) does increment `attempts` and does set
+ *    `published_at`; the Memory side has the columns and not the worker.
+ *
+ * 2. THERE IS NO POISON HANDLING, SO ORDER IS A CHOICE WITH A COST. The reader
+ *    below is `published_at IS NULL ORDER BY id ASC` with no attempts filter,
+ *    no max-attempts, no dead letter and no lease/visibility-timeout column to
+ *    add one to. Measured: an unacked row is returned first on every read,
+ *    indefinitely. A consumer that processes the batch strictly in order stalls
+ *    permanently on one bad event; a consumer that processes the batch in
+ *    parallel does not, because the rows behind the poison row are still
+ *    delivered in the same batch. Neither is right by default — the choice
+ *    belongs to the worker, and it has to be made deliberately.
+ *
+ * 3. TIMESTAMPS CANNOT ORDER EVENTS; ONLY `sequence` CAN. `occurred_at`,
+ *    `recorded_at` and `created_at` all default to `now()`, which in Postgres is
+ *    TRANSACTION start time, not statement time. Measured: two kernel calls two
+ *    seconds apart inside one transaction produced two events with byte-identical
+ *    `recorded_at`. Under concurrent commands the timestamps therefore reflect
+ *    when each writer BEGAN, not the order in which they committed. The only
+ *    total order per aggregate is `memory_domain_events.sequence`, which the
+ *    function allocates while holding a `SELECT ... FOR UPDATE` on the
+ *    `memories` row and which `UNIQUE (memory_id, sequence)` keeps honest.
+ *
+ * 4. THE OUTBOX ROW DOES NOT CARRY THAT ORDER. `MemoryOutboxRow` has no
+ *    `sequence` and no `aggregate_version` — a consumer that needs per-aggregate
+ *    order must join back to the event log. `id` is a workable proxy WITHIN one
+ *    aggregate (the row lock serializes those inserts) and is not one across
+ *    aggregates or across time: identity values are allocated at INSERT and are
+ *    not reclaimed on rollback, so `id` has gaps, and a lower `id` from a slower
+ *    transaction can become visible after a higher one. Do not treat `id`
+ *    continuity as evidence that nothing was missed.
+ *
+ * `last_error` is deliberately absent from `MemoryOutboxRow` and from the select
+ * list below: nothing writes it, and typing a column the reader does not fetch
+ * would describe a shape this code never produces.
  */
 
 /** §17's fourteen domain events, verbatim. */
