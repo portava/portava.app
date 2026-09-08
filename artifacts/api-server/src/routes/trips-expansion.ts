@@ -640,6 +640,11 @@ router.post("/trips/:tripId/cancel", async (req, res) => {
       if (members && members.length > 0) {
         const memberIds = (members as any[]).map((m: any) => m.user_id).filter((id: string) => id !== user.id);
         if (memberIds.length > 0) {
+          // Inside the fire-and-forget push block: an unreadable `profiles`
+          // means no push tokens and therefore no notification. That is the
+          // correct outcome for a best-effort courtesy send — the state change
+          // itself already succeeded and was answered — and it is why this read
+          // is not converted to a refusal like the ones on the request path.
           const { data: profiles } = await sc2.from("profiles").select("id, expo_push_token").in("id", memberIds);
           (profiles ?? []).forEach((p: any) => recipients.push({ userId: p.id as string, tokens: [p.expo_push_token] }));
         }
@@ -788,6 +793,11 @@ router.post("/trips/:tripId/archive", async (req, res) => {
       if (members && members.length > 0) {
         const memberIds = (members as any[]).map((m: any) => m.user_id).filter((id: string) => id !== user.id);
         if (memberIds.length > 0) {
+          // Inside the fire-and-forget push block: an unreadable `profiles`
+          // means no push tokens and therefore no notification. That is the
+          // correct outcome for a best-effort courtesy send — the state change
+          // itself already succeeded and was answered — and it is why this read
+          // is not converted to a refusal like the ones on the request path.
           const { data: profiles } = await sc2.from("profiles").select("id, expo_push_token").in("id", memberIds);
           (profiles ?? []).forEach((p: any) => recipients.push({ userId: p.id as string, tokens: [p.expo_push_token] }));
         }
@@ -1386,6 +1396,10 @@ router.get("/trips/:tripId/invite-links", async (req, res) => {
   const profileMap = new Map<string, { id: string; name: string | null; handle: string | null; avatarUrl: string | null }>();
 
   if (allJoinerIds.length > 0) {
+    // Enrichment only: an unreadable `profiles` leaves each joiner as
+    // `{ id, name: null, handle: null, avatarUrl: null }` (the fallback below).
+    // The joiner's id and their `removed` flag — the two facts the owner acts
+    // on — come from trip_activity_log and trip_members, not from here.
     const { data: profiles } = await sc
       .from("profiles")
       .select("id, display_name, name, full_name, username, avatar_url")
