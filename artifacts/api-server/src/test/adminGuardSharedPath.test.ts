@@ -57,7 +57,7 @@ import http from "node:http";
 import express from "express";
 import type { Express } from "express";
 
-import { _setTestClient } from "../lib/http.js";
+import { _setTestClient, _clearTestClient } from "../lib/http.js";
 import { _setTestServiceClient } from "../lib/supabase.js";
 import { makeFailClosedClient, noopLog, type FakeClientSpec } from "./helpers/failClosedSupabase.js";
 
@@ -194,7 +194,12 @@ after(async () => {
 });
 
 beforeEach(() => {
-  _setTestClient(null);
+  // `_setTestClient` takes (client, ready) — passing one argument stopped
+  // compiling when the readiness flag was added. The reset path is its own
+  // helper, and it is the one that belongs here: it clears the readiness
+  // sentinel back to null ("never set") rather than to false ("set, not
+  // ready"), which is what a per-test reset means.
+  _clearTestClient();
   _setTestServiceClient(null as any);
   invalidateGcCache();
 });

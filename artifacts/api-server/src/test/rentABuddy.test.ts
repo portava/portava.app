@@ -372,11 +372,16 @@ function makeClient(userId: string, role = "user") {
                   default:    return true;
                 }
               });
-            const matched = Object.values(state.bookings ?? {}).filter(matchesAll) as any[];
+            // `bookings` is optional on the fixture type, and the read above
+            // already coalesced it. Bind the same table once so the write below
+            // is indexing the thing that was matched, rather than re-reading a
+            // possibly-absent property three more times.
+            const bookings = (state.bookings ??= {});
+            const matched = Object.values(bookings).filter(matchesAll) as any[];
             const matchedIds = matched.map((r: any) => r.id);
             for (const id of matchedIds) {
-              if (this._updateData === "__delete__") delete state.bookings[id];
-              else state.bookings[id] = { ...state.bookings[id], ...this._updateData };
+              if (this._updateData === "__delete__") delete bookings[id];
+              else bookings[id] = { ...bookings[id], ...this._updateData };
             }
             // RETURNING: the rows the statement MATCHED, `[]` when it matched
             // none. Without `.select()` chained, `null` — as supabase-js does.
