@@ -112,6 +112,15 @@ const LanguageSettingsPatchSchema = z.object({
  */
 export const BUDDY_BOOKING_SCAN_CAP = 1000;
 
+/**
+ * Hard cap on the thread-membership scans that find an EXISTING direct thread
+ * between two people. Same PostgREST row cap as above (Supabase ships
+ * db-max-rows = 1000): an unbounded scan is truncated server-side, the existing
+ * DM falls off the end, and the caller then CREATES A SECOND one — permanently
+ * splitting a conversation. The cap is ours and hitting it is reported.
+ */
+const DM_THREAD_SCAN_CAP = 1000;
+
 /** Default number of cumulative offenses (including the current one) that suspends a buddy. */
 export const OFF_APP_SUSPENSION_THRESHOLD_DEFAULT = 3;
 
@@ -135,6 +144,86 @@ export function offAppSuspensionThreshold(log?: ThresholdLogger): number {
     return OFF_APP_SUSPENSION_THRESHOLD_DEFAULT;
   }
   return parsed;
+}
+
+interface DedupeLogger { error: (obj: unknown, msg: string) => void; warn: (obj: unknown, msg: string) => void }
+
+/**
+ * Find an existing 1:1 direct thread shared by two people.
+ *
+ * Returns `{ threadId }` on a decided answer (a thread, or a proven absence) and
+ * `{ undecided: true }` when a read failed. The distinction is the whole point:
+ * all three reads used to drop their `.error`, so a single unreadable table
+ * produced "no existing thread" — and both callers respond to that by CREATING
+ * one. A transient database blip therefore left two people with two DM threads
+ * and their history split across both, which no user action undoes. Absence of
+ * evidence was being spent as evidence of absence, irreversibly.
+ */
+export async function findDirectThreadBetween(
+  sc: any,
+  userA: string,
+  userB: string,
+  log: DedupeLogger,
+): Promise<{ threadId: string | null } | { undecided: true }> {
+  const { data: aMemberships, error: aErr } = await sc
+    .from('message_thread_members')
+    .select('thread_id')
+    .eq('user_id', userA)
+    .limit(DM_THREAD_SCAN_CAP);
+  if (aErr) {
+    log.error({ err: aErr, userA }, 'direct-thread lookup: membership read failed — cannot prove no thread exists');
+    return { undecided: true };
+  }
+
+  const aThreadIds = ((aMemberships ?? []) as any[]).map((m) => m.thread_id as string);
+  if (aThreadIds.length === 0) return { threadId: null };
+  if (aThreadIds.length >= DM_THREAD_SCAN_CAP) {
+    // Beyond the cap the scan can no longer prove absence, and the caller's
+    // response to "absent" is to create a duplicate. Refuse instead.
+    log.error({ userA, cap: DM_THREAD_SCAN_CAP },
+      'direct-thread lookup: membership scan hit the cap — cannot prove no thread exists, refusing rather than creating a duplicate');
+    return { undecided: true };
+  }
+
+  const { data: allMembers, error: mErr } = await sc
+    .from('message_thread_members')
+    .select('thread_id, user_id')
+    .in('thread_id', aThreadIds);
+  if (mErr) {
+    log.error({ err: mErr, userA, userB }, 'direct-thread lookup: roster read failed — cannot prove no thread exists');
+    return { undecided: true };
+  }
+
+  const membersByThread: Record<string, string[]> = {};
+  for (const m of (allMembers ?? []) as any[]) {
+    if (!membersByThread[m.thread_id]) membersByThread[m.thread_id] = [];
+    membersByThread[m.thread_id]!.push(m.user_id);
+  }
+
+  const candidateIds: string[] = [];
+  for (const [tid, members] of Object.entries(membersByThread)) {
+    if (members.length === 2 && members.includes(userA) && members.includes(userB)) {
+      candidateIds.push(tid);
+    }
+  }
+  if (candidateIds.length === 0) return { threadId: null };
+
+  // Only reuse true DM threads. Trip/circle group threads can also have exactly
+  // two members — matching those would hijack a group chat as the DM. The create
+  // paths rely on the DB default thread_type='direct', so accept 'direct' (or
+  // NULL for legacy rows).
+  const { data: candidateThreads, error: tErr } = await sc
+    .from('message_threads')
+    .select('id, thread_type')
+    .in('id', candidateIds);
+  if (tErr) {
+    log.error({ err: tErr, userA, userB }, 'direct-thread lookup: thread-type read failed — cannot prove no thread exists');
+    return { undecided: true };
+  }
+  const direct = ((candidateThreads ?? []) as any[]).find(
+    (t) => t.thread_type === 'direct' || t.thread_type == null,
+  );
+  return { threadId: direct ? (direct.id as string) : null };
 }
 
 /* ---------------------------------------------------------------------------
@@ -357,48 +446,12 @@ router.post('/users/:userId/open-thread', async (req, res) => {
     return;
   }
 
-  const { data: myMemberships } = await sc
-    .from('message_thread_members')
-    .select('thread_id')
-    .eq('user_id', user.id);
-
-  const myThreadIds = (myMemberships ?? []).map((m: any) => m.thread_id);
-
-  let existingThreadId: string | null = null;
-  if (myThreadIds.length > 0) {
-    const { data: allMembers } = await sc
-      .from('message_thread_members')
-      .select('thread_id, user_id')
-      .in('thread_id', myThreadIds);
-
-    const membersByThread: Record<string, string[]> = {};
-    for (const m of (allMembers ?? []) as any[]) {
-      if (!membersByThread[m.thread_id]) membersByThread[m.thread_id] = [];
-      membersByThread[m.thread_id].push(m.user_id);
-    }
-
-    const candidateIds: string[] = [];
-    for (const [threadId, members] of Object.entries(membersByThread)) {
-      if (members.length === 2 && members.includes(user.id) && members.includes(recipientId)) {
-        candidateIds.push(threadId);
-      }
-    }
-
-    // Only reuse true DM threads. Trip/circle group threads can also have exactly
-    // two members — matching those would hijack a group chat as the DM. The DM
-    // create path below relies on the DB default thread_type='direct', so accept
-    // 'direct' (or NULL for legacy rows).
-    if (candidateIds.length > 0) {
-      const { data: candidateThreads } = await sc
-        .from('message_threads')
-        .select('id, thread_type')
-        .in('id', candidateIds);
-      const direct = ((candidateThreads ?? []) as any[]).find(
-        (t) => t.thread_type === 'direct' || t.thread_type == null,
-      );
-      if (direct) existingThreadId = direct.id;
-    }
+  const lookup = await findDirectThreadBetween(sc, user.id, recipientId, req.log);
+  if ('undecided' in lookup) {
+    sendError(res, 'degraded_unavailable', 'We could not open this conversation right now. Please try again shortly.');
+    return;
   }
+  const existingThreadId: string | null = lookup.threadId;
 
   if (existingThreadId) {
     // Reusing a thread one (or both) parties previously left: reset left_at so
@@ -734,51 +787,12 @@ router.post('/message-requests/:requestId/accept', async (req, res) => {
     return;
   }
 
-  const { data: senderMemberships } = await sc
-    .from('message_thread_members')
-    .select('thread_id')
-    .eq('user_id', req_.sender_id);
-
-  const senderThreadIds = (senderMemberships ?? []).map((m: any) => m.thread_id);
-
-  let existingDirectThreadId: string | null = null;
-  if (senderThreadIds.length > 0) {
-    const { data: allMembers } = await sc
-      .from('message_thread_members')
-      .select('thread_id, user_id')
-      .in('thread_id', senderThreadIds);
-
-    const membersByThread: Record<string, string[]> = {};
-    for (const m of (allMembers ?? []) as any[]) {
-      if (!membersByThread[m.thread_id]) membersByThread[m.thread_id] = [];
-      membersByThread[m.thread_id].push(m.user_id);
-    }
-
-    const candidateIds: string[] = [];
-    for (const [tid, members] of Object.entries(membersByThread)) {
-      if (
-        members.length === 2 &&
-        members.includes(req_.sender_id) &&
-        members.includes(req_.recipient_id)
-      ) {
-        candidateIds.push(tid);
-      }
-    }
-
-    // Only reuse true DM threads — trip/circle group threads can also have
-    // exactly two members. DM threads carry thread_type='direct' (DB default)
-    // or NULL on legacy rows.
-    if (candidateIds.length > 0) {
-      const { data: candidateThreads } = await sc
-        .from('message_threads')
-        .select('id, thread_type')
-        .in('id', candidateIds);
-      const direct = ((candidateThreads ?? []) as any[]).find(
-        (t) => t.thread_type === 'direct' || t.thread_type == null,
-      );
-      if (direct) existingDirectThreadId = direct.id;
-    }
+  const acceptLookup = await findDirectThreadBetween(sc, req_.sender_id, req_.recipient_id, req.log);
+  if ('undecided' in acceptLookup) {
+    sendError(res, 'degraded_unavailable', 'We could not accept this request right now. Please try again shortly.');
+    return;
   }
+  const existingDirectThreadId: string | null = acceptLookup.threadId;
 
   let threadId: string;
 
