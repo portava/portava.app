@@ -298,6 +298,24 @@ export const GUARDS: readonly GuardEntry[] = [
     },
   },
   {
+    checker: "src/scripts/checkUnissuedSupabaseWrites.ts",
+    responsibility:
+      "A void supabase mutation with no .then/.catch/await is never SENT — PostgrestBuilder issues its request " +
+      "inside then() — so the row is not written at all.",
+    reach: {
+      kind: "manual",
+      reason:
+        "NOT WIRED YET, AND THAT IS A GAP WITH A DATE ON IT, NOT A JUSTIFICATION. It exits 1 on 20 real findings: " +
+        "essentially the whole Rent-A-Buddy booking audit trail, post edit history, the stamp reconciliation log and " +
+        "a delayed-location event. Wiring it into check:all today would make the suite permanently red, which this " +
+        "repository has twice written down as one `|| true` away from being no check at all. A burn-down lane owns " +
+        "the 20; this moves to check-all in the same change that clears them, and its mutation suite " +
+        "(src/test/unissuedSupabaseWrites.test.ts) is registered and green in the meantime so the rule itself is " +
+        "not unproven while it waits.",
+    },
+  },
+
+  {
     checker: "src/scripts/checkAdminGuard.ts",
     responsibility: "Every admin-gated handler decides 'is this caller an admin' through the shared guard, not through its own role check.",
     // WAS MANUAL, on the reason "superseded in CI by check:route-auth-gate". That
