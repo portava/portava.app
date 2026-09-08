@@ -173,6 +173,14 @@ run_check "check:census-freshness" pnpm run check:census-freshness
 # have written domain events into the projection family's table. Every reference
 # is classified here, and no object name may straddle the two.
 run_check "check:memory-table-ownership" pnpm run check:memory-table-ownership
+# check:trust-table-ownership — services/trust owns every read of trust_profiles,
+# trust_caps and trust_restrictions. Two docblocks in the tree already said so and
+# nothing enforced it: census-trust measured eleven direct reads outside the
+# service (A17) and one in an admin route (C15). Three of those could not have
+# complied — the seam was per-user where they needed a batch, boolean where they
+# needed rows, fail-soft where they needed fail-closed — so the seam was widened
+# and this checker keeps the next caller from reaching past it instead.
+run_check "check:trust-table-ownership" pnpm run check:trust-table-ownership
 # check:production-drift — every table src/migrations declares, checked against a
 # committed snapshot of production's public schema. Offline and credential-free by
 # construction: CI holds no production secret and must not. It was registered as a

@@ -101,6 +101,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { logger as rootLogger } from "../../lib/logger.js";
 
+import { getTrustProfileResult } from "../trust/TrustScoreService.js";
 const logger = rootLogger.child({ service: "CreatorActivityScoreService" });
 
 // ─── Trust input availability ─────────────────────────────────────────────────
@@ -1297,16 +1298,16 @@ export class CreatorSignalAggregator {
    */
   private async _readSafetyMultiplier(userId: string): Promise<SafetyMultiplierRead> {
     try {
-      const { data, error } = await (this.db as any)
-        .from("trust_profiles")
-        .select("overall_score")
-        .eq("user_id", userId)
-        .maybeSingle();
-
-      if (error) {
-        return { state: "unavailable", reason: String(error.message ?? error.code ?? "read failed") };
+      // Through the canonical seam (census-trust A17). The three states this
+      // method already modelled are exactly the three the seam returns, so the
+      // repoint is a rename rather than a behaviour change — which is the point:
+      // the rule was violated for ownership, not because the shape was wrong.
+      const read = await getTrustProfileResult(this.db as any, userId);
+      if (read.state === "unavailable") {
+        return { state: "unavailable", reason: read.reason };
       }
-      if (!data) return { state: "absent" };
+      if (read.state !== "ok") return { state: "absent" };
+      const data = { overall_score: read.profile.overall_score };
 
       const d = data as any;
       const overallScore = Number(d.overall_score) || 50;

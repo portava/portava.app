@@ -30,7 +30,8 @@ import {
   adminResolveReview,
   getPendingEvents,
 } from "../services/trust/TrustAdminService.js";
-import { getTrustProfile, recalculateTrustScore } from "../services/trust/TrustScoreService.js";
+import { getTrustProfileResult, recalculateTrustScore } from "../services/trust/TrustScoreService.js";
+import { listRestrictionsForAudit } from "../services/trust/TrustRestrictionService.js";
 import { invalidate as invalidateCompassCache } from "../compass/CompassCacheEngine.js";
 import { getActiveCaps, liftCap } from "../services/trust/TrustCapService.js";
 import type { RestrictionType } from "../services/trust/TrustRestrictionService.js";
@@ -172,15 +173,23 @@ router.get("/admin/trust/users/:userId", async (req, res) => {
   const { userId } = req.params;
   if (!UUID.test(userId)) { sendError(res, "invalid_payload", "Invalid userId"); return; }
 
-  const [profile, caps, restrictionsRes, eventsRes, reviewsRes] = await Promise.all([
-    getTrustProfile(sc, userId),
+  const [profileRead, caps, restrictionsRes, eventsRes, reviewsRes] = await Promise.all([
+    // getTrustProfileResult, not getTrustProfile. The lossy wrapper returns null
+    // for "this user has no profile" and for "trust_profiles could not be read"
+    // alike, and this dossier is the screen a moderator decides on — the same
+    // reason the restrictions read below refuses rather than showing an empty
+    // array. A missing profile is a fact about the user; an unreadable one is a
+    // fact about the database, and a moderator must not be shown the first when
+    // the truth is the second.
+    getTrustProfileResult(sc, userId),
     getActiveCaps(sc, userId),
-    sc
-      .from("trust_restrictions")
-      .select("id, restriction_type, reason, expires_at, created_at, lifted_at")
-      .eq("user_id", userId)
-      .order("created_at", { ascending: false })
-      .limit(50),
+    // Through the service's audit read (census-trust C15/A17): route code names
+    // no trust table. Mapped back into { data, error } so the refusal below is
+    // unchanged — an unreadable EXCLUSION table must never render as a clean
+    // record on a moderator's screen.
+    listRestrictionsForAudit(sc, userId).then((r) =>
+      r.state === "ok" ? { data: r.rows, error: null } : { data: null, error: { message: r.reason } },
+    ),
     sc
       .from("trust_events")
       .select("id, event_type, category, delta, severity, status, source_type, metadata, created_at")
@@ -219,10 +228,19 @@ router.get("/admin/trust/users/:userId", async (req, res) => {
     return;
   }
 
+  if (profileRead.state === "unavailable") {
+    req.log?.error?.(
+      { reason: profileRead.reason, subjectUserId: userId },
+      "trust_profiles unreadable — refusing rather than showing an admin a user with no trust profile",
+    );
+    sendError(res, "degraded_unavailable", "The trust profile could not be read. Please try again.");
+    return;
+  }
+
   void logAdminAccess(sc, admin.userId, "profile", userId, "expand", accessReason(req));
   res.json({
     userId,
-    profile:      profile ?? null,
+    profile:      profileRead.state === "ok" ? profileRead.profile : null,
     caps,
     restrictions: (restrictionsRes.data as any[]) ?? [],
     events:       (eventsRes.data as any[]) ?? [],
@@ -477,6 +495,11 @@ router.put("/admin/trust/settings/:key", async (req, res) => {
   // Fire-and-forget: recalculate all users' scores so the new weights/decay take effect.
   // Read all user_ids from trust_profiles in one query, then recalc each sequentially.
   setImmediate(() => {
+    // The one read of trust_profiles that is NOT a display or a gate: it is the
+    // recalculation sweep enumerating who to recompute. It stays a direct read
+    // and is declared Trust-owned in the guard, because a "give me every user id
+    // with a profile" seam would exist for exactly one caller and would hide
+    // that this loop is unbounded at 1000.
     sc.from("trust_profiles")
       .select("user_id")
       .limit(1000)

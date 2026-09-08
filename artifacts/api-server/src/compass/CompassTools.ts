@@ -59,6 +59,7 @@ import {
 import { getActiveWindows } from "../services/passport/OpenToPlansService.js";
 import { readGroupBlockExclusions, exclusionsUnavailable, type ExclusionSet } from "../lib/exclusionSet.js";
 
+import { getTrustProfileResult } from "../services/trust/TrustScoreService.js";
 // ── Tool definitions (OpenAI function schemas) ────────────────────────────────
 
 export const COMPASS_TOOL_DEFINITIONS = [
@@ -846,13 +847,11 @@ async function toolTravelCompatibility(
   // state of an ordinary account, not evidence about it; whether unscored
   // accounts should pass a floor is an owner decision and is unchanged here.
   try {
-    const { data: trust, error: trustErr } = await sc
-      .from("trust_profiles")
-      .select("overall_score")
-      .eq("user_id", targetId)
-      .maybeSingle();
-    if (trustErr) return notAvailable;
-    const score = (trust as any)?.overall_score;
+    // Through the canonical seam (census-trust A17); the fail-closed posture is
+    // unchanged, and the three states are exactly what this gate already needed.
+    const trustRead = await getTrustProfileResult(sc, targetId);
+    if (trustRead.state === "unavailable") return notAvailable;
+    const score = trustRead.state === "ok" ? trustRead.profile.overall_score : undefined;
     if (typeof score === "number" && score < SOCIAL_TRUST_FLOOR) return notAvailable;
   } catch { return notAvailable; /* an unreadable gate is a closed gate */ }
 

@@ -398,18 +398,116 @@ export async function recalculateTrustScore(
  * identity card, TrustScreen and the Rent-a-Buddy card can never disagree: it
  * returns exactly `trust_profiles.overall_score` — the weighted, decay-aware,
  * cap-clamped number recalculateTrustScore persists — rounded to an integer for
- * display. It performs NO recalculation and NO write (safe on a GET path); a
- * user with no row yet reads `null` (rendered as the non-stigmatizing "New
- * Traveler" label, never a fabricated number).
+ * display. It performs NO recalculation and NO write (safe on a GET path).
+ *
+ * `null` MEANS TWO THINGS AND THE DOCBLOCK USED TO NAME ONLY ONE. It said "a
+ * user with no row yet reads null (rendered as the non-stigmatizing 'New
+ * Traveler' label, never a fabricated number)". An UNREADABLE `trust_profiles`
+ * also reads `null`, and "New Traveler" is then a fabricated fact about a person
+ * — exactly the number the sentence promised never to invent, wearing a label
+ * instead of a digit.
+ *
+ * The return type stays `number | null` because both callers
+ * (`lib/trustScore.computeTrustScore` and
+ * `PassportProjectionService.buildTrustSummary`) ALREADY establish the third
+ * state for themselves — one through `getTrustProfileResult`, the other through
+ * `SafeTrustSummary.profileUnavailable` — and widen it into a `degraded` flag on
+ * their own responses. Widening this signature would churn both for a state they
+ * already hold. What was genuinely missing is that an outage passed through here
+ * SILENTLY: nothing logged, so a null from a broken database looked exactly like
+ * a null from a new account in the logs as well as in the type.
+ *
+ * A caller that does NOT separately establish the state must use
+ * `getTrustProfileResult` directly. There is a test pinning that both current
+ * callers do.
  */
 export async function getDisplayTrustScore(
   db: SupabaseClient,
   userId: string,
 ): Promise<number | null> {
-  const profile = await getTrustProfile(db, userId);
-  if (!profile || profile.overall_score === null || profile.overall_score === undefined) return null;
+  const read = await getTrustProfileResult(db, userId);
+  if (read.state === "unavailable") {
+    logger.warn(
+      { userId, reason: read.reason },
+      "getDisplayTrustScore: trust_profiles unreadable — returning null, which a caller that has not " +
+        "established the state for itself will render as 'New Traveler'",
+    );
+    return null;
+  }
+  if (read.state !== "ok") return null;
+  const profile = read.profile;
+  if (profile.overall_score === null || profile.overall_score === undefined) return null;
   const n = Number(profile.overall_score);
   return Number.isFinite(n) ? Math.round(n) : null;
+}
+
+/**
+ * The BATCH display read — many users, one query, three states.
+ *
+ * ── WHY THE SERVICE HAD TO GROW THIS ─────────────────────────────────────────
+ *
+ * `TrustScoreService:353-364` names `getDisplayTrustScore` "the single source
+ * every Passport surface must read", and census-trust A17 records eleven direct
+ * `trust_profiles` / `trust_caps` reads outside `services/trust` that ignore it.
+ * Three of those eleven are LIST paths — an events host list, the buddy
+ * marketplace, the pulse feed — and they read the table directly for a reason
+ * the rule did not answer: the canonical helper is per-user, so obeying it on a
+ * fifty-row feed meant fifty round trips. There was no honest way to comply.
+ *
+ * So the seam is widened rather than the rule waived, exactly as
+ * `listRestrictionsForAudit` did for the restriction table.
+ *
+ * ── AND IT REFUSES, BECAUSE ALL THREE CALLERS FAILED OPEN ────────────────────
+ *
+ * Every one of those three wrote `const { data: trustRows } = await …` with the
+ * error unbound. supabase-js RESOLVES on a database failure, so an unreadable
+ * `trust_profiles` produced an empty result — "nobody has any trust" — and two
+ * of the three then substituted the neutral 50 for every missing user, which is
+ * census-passport P45's defect ("every user is described as an Established
+ * member") reproduced three more times. A map that cannot be built is reported
+ * as unavailable; a map that is genuinely empty is reported as an empty map.
+ */
+export type DisplayTrustScoresRead =
+  | { state: "ok"; scores: Map<string, number> }
+  | { state: "unavailable"; reason: string };
+
+export async function getDisplayTrustScores(
+  db: SupabaseClient,
+  userIds: readonly string[],
+): Promise<DisplayTrustScoresRead> {
+  const ids = [...new Set(userIds)].filter(Boolean);
+  if (ids.length === 0) return { state: "ok", scores: new Map() };
+
+  const { data, error } = await db
+    .from("trust_profiles")
+    .select("user_id, overall_score")
+    .in("user_id", ids);
+
+  if (error) {
+    logger.warn(
+      { err: error, count: ids.length },
+      "getDisplayTrustScores: trust_profiles unreadable — reporting unavailable rather than an empty score map",
+    );
+    return { state: "unavailable", reason: String((error as any).message ?? (error as any).code ?? "db_error") };
+  }
+
+  const scores = new Map<string, number>();
+  for (const r of ((data as Array<{ user_id: string; overall_score: unknown }>) ?? [])) {
+    // A row whose score is null or unparseable is NOT a zero and NOT a 50: it is
+    // a user with no usable score, and it stays absent from the map so the caller
+    // makes that decision explicitly.
+    //
+    // The null check is separate and comes FIRST because `Number(null)` is 0 and
+    // `Number.isFinite(0)` is true — so the obvious one-liner turns a null score
+    // into a hard zero, which is a fabricated measurement of the worst kind: the
+    // lowest one available. Caught by src/test/trustSeamOwnership.test.ts on the
+    // seam's first run, in the seam written to stop exactly this.
+    const raw = r.overall_score;
+    if (raw === null || raw === undefined || raw === "") continue;
+    const n = Number(raw);
+    if (Number.isFinite(n)) scores.set(r.user_id, Math.round(n));
+  }
+  return { state: "ok", scores };
 }
 
 /**

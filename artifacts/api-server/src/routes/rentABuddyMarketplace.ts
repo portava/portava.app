@@ -120,6 +120,7 @@ import {
 import { fetchBlockedSet } from "../lib/blocks.js";
 import { requireAdmin } from "../lib/requireAdmin.js";
 
+import { getDisplayTrustScores, getTrustProfileResult } from "../services/trust/TrustScoreService.js";
 const router = Router();
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
@@ -435,19 +436,29 @@ router.post("/rent-a-buddy/match", async (req, res) => {
 
   const rows = withoutBlocked((buddyRows as any[]) ?? [], blockedSet, (r) => r.user_id);
 
-  // Load trust scores in batch
+  // Load trust scores in batch, through the canonical seam (census-trust A17).
+  //
+  // The inline read this replaces bound no error, so an unreadable
+  // trust_profiles produced an EMPTY map — and the two `?? 50` fallbacks below
+  // then gave every buddy in the city the neutral score. That is
+  // census-passport P45's defect in the marketplace: a constant standing in for
+  // a measurement, and indistinguishable from a real one because 50 is a value a
+  // real profile can hold. Ranking a marketplace on a fabricated constant is
+  // worse than ranking it without the term.
   const userIds = rows.map((r: any) => r.user_id);
-  const { data: trustRows } = await svc
-    .from("trust_profiles")
-    .select("user_id, overall_score")
-    .in("user_id", userIds.length > 0 ? userIds : ["00000000-0000-0000-0000-000000000000"]);
-
-  const trustMap = new Map<string, number>();
-  for (const t of (trustRows as any[]) ?? []) {
-    trustMap.set(t.user_id, Number(t.overall_score ?? 50));
+  const trustRead = await getDisplayTrustScores(svc, userIds);
+  if (trustRead.state === "unavailable") {
+    req.log?.error?.(
+      { reason: trustRead.reason, buddies: userIds.length },
+      "buddy marketplace: trust scores unavailable — refusing rather than ranking every buddy on the neutral 50",
+    );
+    sendError(res, "degraded_unavailable", "Buddy ranking is temporarily unavailable. Please try again.");
+    return;
   }
+  const trustMap = trustRead.scores;
 
-  // Score + rank
+  // Score + rank. `?? 50` is retained ONLY for a user the map genuinely lacks —
+  // a buddy with no trust profile — which is a real state and not an outage.
   const scoringDataList = rows.map((r: any) =>
     toBuddyScoringData(r, trustMap.get(r.user_id) ?? 50)
   );
@@ -2177,10 +2188,8 @@ router.get("/rent-a-buddy/me/earnings/summary", async (req, res) => {
     fetchAllBuddyBookingRows(svc, buddyProfile.id, EARNINGS_DASHBOARD_BOOKING_COLUMNS),
     fetchAllBuddyTipRows(svc, auth.user.id),
     resolveFeeSchedule(svc, buddyProfile.buddy_level),
-    svc.from("trust_profiles")
-      .select("overall_score, public_level")
-      .eq("user_id", auth.user.id)
-      .maybeSingle(),
+    // Through the canonical seam (census-trust A17).
+    getTrustProfileResult(svc, auth.user.id),
   ]);
 
   // A buddy is told a take rate or told nothing. Quoting a fee the operator did
@@ -2283,8 +2292,12 @@ router.get("/rent-a-buddy/me/earnings/summary", async (req, res) => {
       disputed: disputed.length,
       cancelled: cancelled.length,
     },
-    trustScore: (trustRes.data as any)?.overall_score ?? null,
-    trustLevel: (trustRes.data as any)?.public_level ?? null,
+    // null for "no profile", null for "unreadable" — the earnings summary has no
+    // third state to render and inventing one here would be scope. What changed
+    // is that the unreadable case is now LOGGED by the service instead of
+    // vanishing into an unbound `.error`.
+    trustScore: trustRes.state === "ok" ? (trustRes.profile.overall_score ?? null) : null,
+    trustLevel: trustRes.state === "ok" ? (trustRes.profile.public_level ?? null) : null,
     profileViews: buddyProfile.profile_views ?? 0,
     searchAppearances: buddyProfile.search_appearances ?? 0,
     repeatClientCount: buddyProfile.repeat_client_count ?? 0,

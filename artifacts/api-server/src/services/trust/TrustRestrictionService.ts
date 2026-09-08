@@ -251,6 +251,72 @@ export async function getRestrictionState(
 }
 
 /**
+ * The AUDIT read of `trust_restrictions` — rows and reasons, for a screen a
+ * moderator looks at rather than a gate the server evaluates.
+ *
+ * ── WHY THIS EXISTS RATHER THAN A ROUTE READING THE TABLE ────────────────────
+ *
+ * `getRestrictionState` is the ENFORCEMENT seam and its docblock is emphatic:
+ * "always call this, never query trust_restrictions directly in route code."
+ * `routes/admin.ts` did anyway, and the reason it did is real — the enforcement
+ * seam answers in booleans, and an admin dossier needs the row: the id, the
+ * reason, when it was created, whether it was lifted. There was no honest way to
+ * obey the rule with the API the service offered.
+ *
+ * So the rule is kept and the API is widened, rather than the rule being bent.
+ * Route code still never names the table; the service owns every read of it, and
+ * the error handling for an audit read now lives beside the error handling for
+ * an enforcement read instead of being reinvented per route.
+ *
+ * ── IT REFUSES RATHER THAN RETURNING AN EMPTY LIST ───────────────────────────
+ *
+ * `trust_restrictions` is an EXCLUSION table: a row means restricted, emptiness
+ * means clear. supabase-js RESOLVES on a database error, so `data ?? []` renders
+ * a CLEAN RECORD for a table nobody could read — and a fabricated clean record
+ * is the one answer an admin screen must never show, because it invites lifting
+ * a sanction that is still in force. `routes/trust-admin.ts` already reached
+ * that conclusion for its own dossier and refuses with `degraded_unavailable`;
+ * this returns the same three-state shape so the second screen cannot reach a
+ * different one.
+ */
+export type RestrictionAuditRow = {
+  id: string;
+  restriction_type: string;
+  reason: string | null;
+  expires_at: string | null;
+  lifted_at: string | null;
+  created_at: string;
+};
+
+export type RestrictionAuditRead =
+  | { state: "ok"; rows: RestrictionAuditRow[] }
+  | { state: "unavailable"; reason: string };
+
+export async function listRestrictionsForAudit(
+  db: SupabaseClient,
+  userId: string,
+  opts: { activeOnly?: boolean; limit?: number } = {},
+): Promise<RestrictionAuditRead> {
+  let q = db
+    .from("trust_restrictions")
+    .select("id, restriction_type, reason, expires_at, lifted_at, created_at")
+    .eq("user_id", userId);
+  if (opts.activeOnly) q = q.is("lifted_at", null);
+  const { data, error } = await q
+    .order("created_at", { ascending: false })
+    .limit(opts.limit ?? 50);
+
+  if (error) {
+    trustRestrictionLogger.error(
+      { err: error, userId },
+      "listRestrictionsForAudit: trust_restrictions unreadable — reporting unavailable rather than an empty (clean) record",
+    );
+    return { state: "unavailable", reason: String((error as any).message ?? (error as any).code ?? "db_error") };
+  }
+  return { state: "ok", rows: ((data as RestrictionAuditRow[]) ?? []) };
+}
+
+/**
  * Expire restrictions whose expires_at has passed.
  *
  * Called from lib/trustMaintenanceScheduler on every pass. This function

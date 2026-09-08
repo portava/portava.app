@@ -135,6 +135,53 @@ export async function liftCapsBySourceEvents(
 }
 
 /** Get all active caps for a user */
+/**
+ * The THREE-state caps read: caps were READ, or the table could not be read.
+ *
+ * `getActiveCaps` is deliberately fail-SOFT — it returns `[]` and logs, so a
+ * Passport projection is not taken down by a caps read. That is right for a
+ * display path and wrong for a GATE, and census-trust A17 found a gate that had
+ * therefore written its own read rather than use the service:
+ * `CompassActiveUserRewardEngine.hasActiveTrustCap` treats an unreadable table
+ * as CAPPED and withholds the boost, which `getActiveCaps` cannot express.
+ *
+ * So the service offers both postures instead of a caller choosing between
+ * obeying the rule and being correct.
+ */
+export type ActiveCapsRead =
+  | { state: "ok"; caps: TrustCap[] }
+  | { state: "unavailable"; reason: string };
+
+export async function getActiveCapsResult(
+  db: SupabaseClient,
+  userId: string,
+): Promise<ActiveCapsRead> {
+  try {
+    const now = new Date().toISOString();
+    const { data, error } = await db
+      .from("trust_caps")
+      .select("id, user_id, category, ceiling_score, reason_code, source_event_id, expires_at, created_at")
+      .eq("user_id", userId)
+      .is("lifted_at", null)
+      .or(`expires_at.is.null,expires_at.gt.${now}`);
+    if (error) {
+      logger.warn({ err: error, userId }, "getActiveCapsResult read failed — reporting unavailable so a GATE can fail closed");
+      return { state: "unavailable", reason: String((error as any).message ?? (error as any).code ?? "db_error") };
+    }
+    return {
+      state: "ok",
+      caps: ((data as any[]) ?? []).map((d) => ({
+        id: d.id, userId: d.user_id, category: d.category, ceilingScore: d.ceiling_score,
+        reasonCode: d.reason_code, sourceEventId: d.source_event_id,
+        expiresAt: d.expires_at, createdAt: d.created_at,
+      })) as TrustCap[],
+    };
+  } catch (err) {
+    logger.warn({ err, userId }, "getActiveCapsResult threw — reporting unavailable");
+    return { state: "unavailable", reason: "threw" };
+  }
+}
+
 export async function getActiveCaps(
   db: SupabaseClient,
   userId: string,

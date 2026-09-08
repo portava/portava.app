@@ -24,6 +24,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 
+import { getActiveCapsResult } from "../services/trust/TrustCapService.js";
 // ── Window weights ────────────────────────────────────────────────────────────
 
 const WINDOW_WEIGHTS = {
@@ -199,16 +200,13 @@ async function loadEvents(db: SupabaseClient, userId: string): Promise<any[]> {
  */
 async function hasActiveTrustCap(db: SupabaseClient, userId: string): Promise<boolean> {
   try {
-    const now = new Date().toISOString();
-    const { data, error } = await db
-      .from("trust_caps")
-      .select("id")
-      .eq("user_id", userId)
-      .is("lifted_at", null)
-      .or(`expires_at.is.null,expires_at.gt.${now}`)
-      .limit(1);
-    if (error) return true; // cap state unknown → treat as capped, withhold the boost
-    return ((data as any[]) ?? []).length > 0;
+    // Through the canonical seam (census-trust A17). The fail-CLOSED posture is
+    // unchanged — and it is the reason TrustCapService had to grow a three-state
+    // read: `getActiveCaps` returns [] on failure, which a GATE cannot tell from
+    // "no caps", so this file had written its own read rather than be wrong.
+    const read = await getActiveCapsResult(db, userId);
+    if (read.state === "unavailable") return true; // cap state unknown → treat as capped, withhold the boost
+    return read.caps.length > 0;
   } catch {
     return true;
   }

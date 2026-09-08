@@ -41,6 +41,7 @@ import { requireUser, sendError } from "../lib/http";
 import { nameVisibilitySet, presentedName } from "../lib/publicIdentity";
 import { getServiceClient } from "../lib/supabase";
 import { stampOverlayCol } from "../lib/postMediaOverlay";
+import { getDisplayTrustScores } from "../services/trust/TrustScoreService.js";
 import {
   mayDiscloseGemIdentity,
   resolveGemCoords,
@@ -535,19 +536,24 @@ router.get("/pulse", async (req, res) => {
       }
       const trustMap = new Map<string, number>();
       if (authorIdsForTrust.size > 0) {
-        try {
-          // Trust scores live in trust_profiles.overall_score (0043_trust_engine.sql);
-          // there is no user_trust_scores table. NUMERIC comes back as a string,
-          // so coerce to number.
-          const { data: trustRows } = await sc
-            .from("trust_profiles")
-            .select("user_id, overall_score")
-            .in("user_id", [...authorIdsForTrust]);
-          for (const r of (trustRows as any[]) ?? []) {
-            const score = Number(r.overall_score);
-            if (Number.isFinite(score)) trustMap.set(r.user_id as string, score);
-          }
-        } catch { /* non-fatal — trust scores contribute 0 when absent */ }
+        // Through the canonical seam (census-trust A17): TrustScoreService owns
+        // every read of trust_profiles, and it binds the error. The inline read
+        // this replaces did not — `const { data: trustRows } = await …` on a
+        // client that RESOLVES on failure, so an unreadable table produced an
+        // empty map and every author silently ranked as trustless.
+        const read = await getDisplayTrustScores(sc, [...authorIdsForTrust]);
+        if (read.state === "ok") {
+          for (const [id, score] of read.scores) trustMap.set(id, score);
+        } else {
+          // Ranking input, not an authorization gate, so the feed still serves —
+          // but it serves WITHOUT the trust term rather than with a fabricated
+          // one, and it says so in the log instead of looking like a feed where
+          // nobody has any trust.
+          req.log?.warn?.(
+            { reason: read.reason, authors: authorIdsForTrust.size },
+            "pulse ranking: trust scores unavailable — ranking without the trust term rather than treating every author as trustless",
+          );
+        }
       }
 
       // ── Official-publisher boost setup ───────────────────────────────────

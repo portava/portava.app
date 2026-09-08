@@ -39,6 +39,7 @@ import { resolveStoragePath } from "../lib/storagePath.js";
 import { logModerationAction, auditReportAction } from "../lib/moderationAudit.js";
 
 import { requireAdmin } from "../lib/requireAdmin.js";
+import { listRestrictionsForAudit } from "../services/trust/TrustRestrictionService.js";
 import {
   GEO_ZONE_DB_TYPES,
   GEO_ZONE_SAFETY_RATINGS,
@@ -1454,10 +1455,20 @@ router.get("/admin/users/:userId/summary", async (req, res) => {
       .eq("reporter_id", userId)
       .order("created_at", { ascending: false })
       .limit(20),
-    sc.from("trust_restrictions")
-      .select("id, restriction_type, reason, lifted_at, created_at")
-      .eq("user_id", userId)
-      .is("lifted_at", null),
+    // NOT `sc.from("trust_restrictions")`. TrustRestrictionService's docblock
+    // says "always call this, never query trust_restrictions directly in route
+    // code", and this route was the one place that did. It had a real reason —
+    // the enforcement seam answers in booleans and a dossier needs the ROW — so
+    // the service grew an audit read rather than the rule being bent.
+    //
+    // Mapped back into the { data, error } shape failedModerationReads expects,
+    // so the refusal behaviour below is byte-for-byte what it was: an unreadable
+    // exclusion table must not render as a clean record on a moderator's screen.
+    listRestrictionsForAudit(sc, userId, { activeOnly: true }).then((r) =>
+      r.state === "ok"
+        ? { data: r.rows, error: null }
+        : { data: null, error: { message: r.reason } },
+    ),
     sc.from("blocks")
       .select("id", { count: "exact", head: true })
       .or(`blocker_id.eq.${userId},blocked_id.eq.${userId}`),

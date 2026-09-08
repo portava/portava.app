@@ -212,6 +212,7 @@ import {
 import { rankCandidates } from "../lib/portavaRank.js";
 import type { RankCandidate, ViewerContext } from "../lib/portavaRank.js";
 import { logImpression } from "../lib/rankLog.js";
+import { getDisplayTrustScores, getTrustProfileResult } from "../services/trust/TrustScoreService.js";
 import {
   toPrivateEventPreview,
   toAuthorizedEventView,
@@ -714,11 +715,15 @@ export async function checkEventEligibility(
       // and an outage read as "no profile" -> substituted 50 -> admitted on
       // every threshold <= 50. An authorization gate must not silently open
       // because a table it depends on could not be read.
-      const { data: tp, error: tpErr } = await sc.from("trust_profiles").select("overall_score").eq("user_id", userId).maybeSingle();
-      if (tpErr) {
+      // Through the canonical seam (census-trust A17). The fail-closed posture
+      // is unchanged and is the reason the seam has to be three-state: an
+      // authorization gate must be able to tell "no profile" (score defaults,
+      // gate evaluates) from "could not read" (gate refuses).
+      const tpRead = await getTrustProfileResult(sc, userId);
+      if (tpRead.state === "unavailable") {
         return { ok: false, errorCode: "forbidden", message: "Trust check is temporarily unavailable for this event" };
       }
-      const score = (tp as any)?.overall_score ?? TRUST_SCORE_WHEN_NO_PROFILE;
+      const score = (tpRead.state === "ok" ? tpRead.profile.overall_score : null) ?? TRUST_SCORE_WHEN_NO_PROFILE;
       if (score < ev.trust_score_min) {
         return { ok: false, errorCode: "forbidden", message: `This event requires a trust score of at least ${ev.trust_score_min}` };
       }
@@ -1117,14 +1122,24 @@ router.get("/events", async (req, res) => {
     if (trustGatesEnabled) {
       const [profileRes, tpRes] = await Promise.all([
         sc.from("profiles").select("verified, date_of_birth").eq("id", user.id).maybeSingle(),
-        sc.from("trust_profiles").select("overall_score").eq("user_id", user.id).maybeSingle(),
+        getTrustProfileResult(sc, user.id),
       ]);
       const profile = (profileRes as any).data;
       viewerVerified = !!profile?.verified;
-      // Ranking/visibility input rather than an authorization gate, so this
-      // one is left substituting rather than failing closed — but it is named
-      // so the two cases are distinguishable when #467 lands.
-      viewerTrust = ((tpRes as any).data)?.overall_score ?? TRUST_SCORE_WHEN_NO_PROFILE;
+      // WAS: "Ranking/visibility input rather than an authorization gate, so
+      // this one is left substituting rather than failing closed." It is not a
+      // ranking input. Sixteen lines down, `viewerTrust < ev.trust_score_min`
+      // DECIDES WHETHER AN EVENT IS SHOWN — the same predicate the join gate at
+      // :726 and the waitlist gate at :3187 both fail CLOSED on, in this file.
+      // Substituting the neutral 50 for an unreadable table admits the viewer to
+      // every event with a threshold at or below 50, which is most of them.
+      //
+      // The three now agree: unreadable is refused, absent is 50.
+      if (tpRes.state === "unavailable") {
+        sendError(res, "degraded_unavailable", "Event visibility could not be checked. Please try again.");
+        return;
+      }
+      viewerTrust = (tpRes.state === "ok" ? tpRes.profile.overall_score : null) ?? TRUST_SCORE_WHEN_NO_PROFILE;
       viewerAge = profile?.date_of_birth
         ? Math.floor((Date.now() - new Date(profile.date_of_birth).getTime()) / (1000 * 60 * 60 * 24 * 365.25))
         : null;
@@ -1198,22 +1213,28 @@ router.get("/events", async (req, res) => {
   const hostTrustMap = new Map<string, number>();
 
   if (hostIds.length > 0) {
-    const [hpsResult, trustResult] = await Promise.all([
+    const [hpsResult, trustRead] = await Promise.all([
       sc.from("profiles").select("id, name, handle, avatar_url").in("id", hostIds),
-      (async () => {
-        try {
-          return await sc
-            .from("trust_profiles")
-            .select("user_id, overall_score")
-            .in("user_id", hostIds);
-        } catch {
-          return { data: null };
-        }
-      })(),
+      // Through the canonical seam (census-trust A17). The read this replaces
+      // was wrapped in a try/catch that returned `{ data: null }` — DEAD CODE on
+      // a client that RESOLVES rather than throws, so a database failure never
+      // reached the catch and arrived as an empty list instead. Every host then
+      // ranked with no trust signal, which for a RANKING input is a tolerable
+      // outcome and an intolerable way to arrive at it: nothing said so.
+      getDisplayTrustScores(sc, hostIds),
     ]);
     const allowedNames = await nameVisibilitySet(sc, hostIds);
     for (const p of ((hpsResult as any).data as any[]) ?? []) hostProfileMap[p.id as string] = sanitizeIdentity(p, allowedNames, user.id);
-    for (const t of ((trustResult as any).data as any[]) ?? []) hostTrustMap.set(t.user_id as string, t.overall_score as number);
+    if (trustRead.state === "ok") {
+      for (const [id, score] of trustRead.scores) hostTrustMap.set(id, score);
+    } else {
+      // Ranking signal only (portavaRank §42: "missing scores contribute 0 to
+      // rank"), so the list still serves — without the term, and audibly.
+      req.log?.warn?.(
+        { reason: trustRead.reason, hosts: hostIds.length },
+        "event ranking: host trust scores unavailable — ranking without the trust signal rather than treating every host as untrusted",
+      );
+    }
   }
 
   // ── Portava ranking (spec §42) ────────────────────────────────────────────
@@ -3184,11 +3205,11 @@ router.post("/events/:id/waitlist", async (req, res) => {
     if ((ev as any).trust_score_min != null) {
       // Fail closed on an unreadable trust_profiles — same reasoning as the
       // join gate above; this path had the identical discarded-error defect.
-      const { data: tpWl, error: tpWlErr } = await sc.from("trust_profiles").select("overall_score").eq("user_id", user.id).maybeSingle();
-      if (tpWlErr) {
+      const tpWlRead = await getTrustProfileResult(sc, user.id);
+      if (tpWlRead.state === "unavailable") {
         sendError(res, "forbidden", "Trust check is temporarily unavailable for this event"); return;
       }
-      const scoreWl = (tpWl as any)?.overall_score ?? TRUST_SCORE_WHEN_NO_PROFILE;
+      const scoreWl = (tpWlRead.state === "ok" ? tpWlRead.profile.overall_score : null) ?? TRUST_SCORE_WHEN_NO_PROFILE;
       if (scoreWl < (ev as any).trust_score_min) {
         sendError(res, "forbidden", `This event requires a trust score of at least ${(ev as any).trust_score_min}`); return;
       }

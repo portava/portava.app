@@ -404,6 +404,18 @@ export const GUARDS: readonly GuardEntry[] = [
 
   // ── CI cannot invoke these ────────────────────────────────────────────────
   {
+    checker: "src/scripts/checkTrustTableOwnership.ts",
+    responsibility:
+      "Reports reads of public.trust_profiles / trust_caps / trust_restrictions from outside services/trust — " +
+      "the rule two Trust docblocks already state and nothing enforced, which census-trust measured as eleven " +
+      "violations (A17) plus one admin route (C15).",
+    reach: { kind: "check-all", script: "check:trust-table-ownership" },
+    inspects: {
+      countPattern: "([0-9]+) source file\\(s\\) scanned",
+      unit: "source files scanned for a direct Trust-table read",
+    },
+  },
+  {
     checker: "src/scripts/checkProductionDrift.ts",
     responsibility: "Reports where the live production schema has drifted from the committed canonical schema.",
     // WAS MANUAL, on the stated ground that it "reads PRODUCTION over the
