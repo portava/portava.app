@@ -396,6 +396,85 @@ async function hasActiveWaitlistOffer(sc: any, eventId: string): Promise<boolean
   return ((data as any[]) ?? []).length > 0;
 }
 
+/**
+ * Result of trying to seat a user on an event's waitlist.
+ *
+ * `{ ok: false }` is DELIBERATELY distinct from `alreadyPresent`. Seating
+ * someone needs two reads — "is this user already queued?" and "what is the
+ * highest position taken?" — and supabase-js RESOLVES on a DB error, so a
+ * table that cannot be read comes back as `{ data: null }`: the exact shape
+ * "no such row" has. Six copies of this block read it as "no row" and then:
+ *
+ *   1. INSERT a SECOND event_waitlist row for a user who is already queued, and
+ *   2. compute `nextPos = (null?.position ?? 0) + 1 = 1`, seating them at the
+ *      FRONT of the queue ahead of everyone actually waiting, and
+ *   3. stamp `events.waitlist_count = 1` over a queue of any length.
+ *
+ * All three are writes the route cannot take back, so an unreadable table has
+ * to abort the seating instead of guessing. The insert's own error is checked
+ * for the same reason: reporting "you have been added to the waitlist" after a
+ * failed INSERT tells the user they hold a place they do not hold.
+ */
+type WaitlistAdd =
+  | { ok: true; position: number; alreadyPresent: boolean }
+  | { ok: false };
+
+async function addToEventWaitlist(sc: any, eventId: string, userId: string): Promise<WaitlistAdd> {
+  const { data: existing, error: existingErr } = await sc
+    .from("event_waitlist")
+    .select("position")
+    .eq("event_id", eventId)
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (existingErr) return { ok: false };
+  if (existing) return { ok: true, position: (existing as any).position, alreadyPresent: true };
+
+  const { data: maxPos, error: maxPosErr } = await sc
+    .from("event_waitlist")
+    .select("position")
+    .eq("event_id", eventId)
+    .order("position", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (maxPosErr) return { ok: false };
+
+  const nextPos = ((maxPos as any)?.position ?? 0) + 1;
+  const { error: insertErr } = await sc
+    .from("event_waitlist")
+    .insert({ event_id: eventId, user_id: userId, position: nextPos });
+  if (insertErr) return { ok: false };
+
+  return { ok: true, position: nextPos, alreadyPresent: false };
+}
+
+/** The refusal every caller of addToEventWaitlist sends when it returns !ok. */
+function sendWaitlistUnavailable(req: any, res: any, eventId: string, where: string): void {
+  req.log?.error({ eventId, where }, "event waitlist seating unavailable: table could not be read/written");
+  sendError(
+    res,
+    "degraded_unavailable",
+    "The waitlist could not be updated right now. Please try again shortly.",
+  );
+}
+
+/**
+ * Recount an event's waitlist and write `events.waitlist_count`.
+ *
+ * The count read is checked because `((rows as any[]) ?? []).length` turns an
+ * unreadable event_waitlist into 0 and then PERSISTS that zero over the real
+ * count — the row survives long after the outage, and every capacity decision
+ * downstream reads it. A failed recount leaves the previous (stale but true)
+ * count alone.
+ */
+async function recountEventWaitlist(sc: any, eventId: string, req: any, extra?: Record<string, unknown>): Promise<void> {
+  const { data: rows, error } = await sc.from("event_waitlist").select("user_id").eq("event_id", eventId);
+  if (error) {
+    req.log?.warn({ err: error, eventId }, "waitlist recount failed; leaving events.waitlist_count unchanged");
+    return;
+  }
+  await sc.from("events").update({ waitlist_count: (rows as any[]).length, ...(extra ?? {}) }).eq("id", eventId);
+}
+
 async function syncEventState(sc: any, eventId: string): Promise<void> {
   const { data: ev } = await sc
     .from("events")
@@ -2562,24 +2641,10 @@ router.post("/events/:id/rsvp", async (req, res) => {
       sendError(res, "forbidden", "This event is full and waitlist is not available"); return;
     }
     // Auto-add to waitlist
-    const { data: existing } = await sc
-      .from("event_waitlist")
-      .select("position")
-      .eq("event_id", id)
-      .eq("user_id", user.id)
-      .maybeSingle();
-
-    if (!existing) {
-      const { data: maxPos } = await sc
-        .from("event_waitlist")
-        .select("position")
-        .eq("event_id", id)
-        .order("position", { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      const nextPos = ((maxPos as any)?.position ?? 0) + 1;
-      await sc.from("event_waitlist").insert({ event_id: id, user_id: user.id, position: nextPos });
-      await sc.from("events").update({ waitlist_count: nextPos, updated_at: new Date().toISOString() }).eq("id", id);
+    const seated = await addToEventWaitlist(sc, id, user.id);
+    if (!seated.ok) { sendWaitlistUnavailable(req, res, id, "rsvp"); return; }
+    if (!seated.alreadyPresent) {
+      await sc.from("events").update({ waitlist_count: seated.position, updated_at: new Date().toISOString() }).eq("id", id);
     }
 
     res.status(202).json({ status: "waitlisted", message: "Event is full — you have been added to the waitlist" }); return;
@@ -2615,7 +2680,13 @@ router.post("/events/:id/rsvp", async (req, res) => {
   if (status === "going") {
     void (async () => {
       try {
-        const { data: prior } = await sc
+        // "Have they ever gone to another event?" decides whether the
+        // first_event_joined trust credit (+10, deduped for ~11 years) is
+        // written. An unreadable event_rsvps resolves as `{ data: null }`,
+        // which reads as "no prior event" and awards a FIRST-event bonus to a
+        // veteran — and the 99999h dedup window means that wrong award is the
+        // only one they will ever get. No read, no award.
+        const { data: prior, error: priorErr } = await sc
           .from("event_rsvps")
           .select("event_id")
           .eq("user_id", user.id)
@@ -2623,6 +2694,10 @@ router.post("/events/:id/rsvp", async (req, res) => {
           .neq("event_id", id)
           .limit(1)
           .maybeSingle();
+        if (priorErr) {
+          req.log.warn({ err: priorErr, userId: user.id, eventId: id }, "first_event_joined: prior-RSVP check unavailable; skipping award");
+          return;
+        }
         if (!prior) {
           await recordTrustEvent(sc, {
             userId: user.id,
@@ -2800,15 +2875,10 @@ router.post("/events/:id/join", async (req, res) => {
     if (!evData.waitlist_enabled) {
       sendError(res, "forbidden", "This event is full and the waitlist is not available"); return;
     }
-    const { data: existingWl } = await sc
-      .from("event_waitlist").select("position").eq("event_id", id).eq("user_id", user.id).maybeSingle();
-    if (!existingWl) {
-      const { data: maxPos } = await sc
-        .from("event_waitlist").select("position").eq("event_id", id)
-        .order("position", { ascending: false }).limit(1).maybeSingle();
-      const nextPos = ((maxPos as any)?.position ?? 0) + 1;
-      await sc.from("event_waitlist").insert({ event_id: id, user_id: user.id, position: nextPos });
-      await sc.from("events").update({ waitlist_count: nextPos, updated_at: new Date().toISOString() }).eq("id", id);
+    const seated = await addToEventWaitlist(sc, id, user.id);
+    if (!seated.ok) { sendWaitlistUnavailable(req, res, id, "join:state_full"); return; }
+    if (!seated.alreadyPresent) {
+      await sc.from("events").update({ waitlist_count: seated.position, updated_at: new Date().toISOString() }).eq("id", id);
     }
     res.status(202).json({ status: "waitlisted", message: "Event is full — you have been added to the waitlist" }); return;
   }
@@ -2820,16 +2890,10 @@ router.post("/events/:id/join", async (req, res) => {
       if (!evData.waitlist_enabled) {
         sendError(res, "forbidden", "This event is full and the waitlist is not available"); return;
       }
-      const { data: existingWl2 } = await sc
-        .from("event_waitlist").select("position").eq("event_id", id).eq("user_id", user.id).maybeSingle();
-      if (!existingWl2) {
-        const { data: maxPos2 } = await sc
-          .from("event_waitlist").select("position").eq("event_id", id)
-          .order("position", { ascending: false }).limit(1).maybeSingle();
-        const nextPos2 = ((maxPos2 as any)?.position ?? 0) + 1;
-        await sc.from("event_waitlist").insert({ event_id: id, user_id: user.id, position: nextPos2 });
-        const wlCount = await sc.from("event_waitlist").select("user_id").eq("event_id", id);
-        await sc.from("events").update({ waitlist_count: ((wlCount as any).data ?? []).length, updated_at: new Date().toISOString() }).eq("id", id);
+      const seated2 = await addToEventWaitlist(sc, id, user.id);
+      if (!seated2.ok) { sendWaitlistUnavailable(req, res, id, "join:capacity"); return; }
+      if (!seated2.alreadyPresent) {
+        await recountEventWaitlist(sc, id, req, { updated_at: new Date().toISOString() });
       }
       res.status(202).json({ status: "waitlisted", message: "Event is full — you have been added to the waitlist" }); return;
     }
@@ -3009,28 +3073,13 @@ router.post("/events/:id/waitlist", async (req, res) => {
     }
   }
 
-  const { data: existing } = await sc
-    .from("event_waitlist")
-    .select("position")
-    .eq("event_id", id)
-    .eq("user_id", user.id)
-    .maybeSingle();
+  const seated = await addToEventWaitlist(sc, id, user.id);
+  if (!seated.ok) { sendWaitlistUnavailable(req, res, id, "waitlist"); return; }
+  if (seated.alreadyPresent) { res.json({ position: seated.position, message: "Already on waitlist" }); return; }
 
-  if (existing) { res.json({ position: (existing as any).position, message: "Already on waitlist" }); return; }
+  await sc.from("events").update({ waitlist_count: seated.position, updated_at: new Date(nowMsWl).toISOString() }).eq("id", id);
 
-  const { data: maxPos } = await sc
-    .from("event_waitlist")
-    .select("position")
-    .eq("event_id", id)
-    .order("position", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  const nextPos = ((maxPos as any)?.position ?? 0) + 1;
-
-  await sc.from("event_waitlist").insert({ event_id: id, user_id: user.id, position: nextPos });
-  await sc.from("events").update({ waitlist_count: nextPos, updated_at: new Date(nowMsWl).toISOString() }).eq("id", id);
-
-  res.status(201).json({ position: nextPos });
+  res.status(201).json({ position: seated.position });
 });
 
 // ── POST /api/events/:id/waitlist/accept ──────────────────────────────────────
@@ -3349,17 +3398,9 @@ router.patch("/events/:id/requests/:userId", async (req, res) => {
     if (maxAtt != null && currentGoing >= maxAtt) {
       if ((evFull as any).waitlist_enabled) {
         // Add to waitlist if not already there
-        const { data: existingWl } = await sc
-          .from("event_waitlist").select("position").eq("event_id", id).eq("user_id", userId).maybeSingle();
-        if (!existingWl) {
-          const { data: maxPos } = await sc
-            .from("event_waitlist").select("position").eq("event_id", id)
-            .order("position", { ascending: false }).limit(1).maybeSingle();
-          const nextPos = ((maxPos as any)?.position ?? 0) + 1;
-          await sc.from("event_waitlist").insert({ event_id: id, user_id: userId, position: nextPos });
-          const { data: wlRows } = await sc.from("event_waitlist").select("user_id").eq("event_id", id);
-          await sc.from("events").update({ waitlist_count: ((wlRows as any[]) ?? []).length }).eq("id", id);
-        }
+        const seated = await addToEventWaitlist(sc, id, userId);
+        if (!seated.ok) { sendWaitlistUnavailable(req, res, id, "requests:approve"); return; }
+        if (!seated.alreadyPresent) await recountEventWaitlist(sc, id, req);
         res.json({ ok: true, action, status: "waitlisted" }); return;
       }
       // Waitlist disabled and event full — still approve the request but don't auto-RSVP
@@ -4986,13 +5027,8 @@ router.post("/events/:id/join-requests/:requestId/approve", async (req, res) => 
   // already nests it this way.
   if (maxAtt != null && currentGoing >= maxAtt) {
     if ((evFull as any).waitlist_enabled) {
-      const { data: existingWl } = await sc.from("event_waitlist").select("position").eq("event_id", id).eq("user_id", targetId).maybeSingle();
-      if (!existingWl) {
-        const { data: maxPos } = await sc.from("event_waitlist").select("position").eq("event_id", id)
-          .order("position", { ascending: false }).limit(1).maybeSingle();
-        const nextPos = ((maxPos as any)?.position ?? 0) + 1;
-        await sc.from("event_waitlist").insert({ event_id: id, user_id: targetId, position: nextPos });
-      }
+      const seated = await addToEventWaitlist(sc, id, targetId);
+      if (!seated.ok) { sendWaitlistUnavailable(req, res, id, "join-requests:approve"); return; }
       await logEventActivity(sc, id, user.id, "join_request_approved", { targetUserId: targetId, outcome: "waitlisted" });
       res.json({ ok: true, status: "waitlisted" }); return;
     }
@@ -5186,23 +5222,10 @@ router.post("/events/:id/invites/:inviteId/accept", async (req, res) => {
       if (!(ev as any).waitlist_enabled) {
         // Invite accepted but event is full with no waitlist — just record acceptance, no RSVP
       } else {
-        const { data: alreadyWaitlisted } = await sc
-          .from("event_waitlist")
-          .select("position")
-          .eq("event_id", id)
-          .eq("user_id", user.id)
-          .maybeSingle();
-        if (!alreadyWaitlisted) {
-          const { data: maxPos } = await sc
-            .from("event_waitlist")
-            .select("position")
-            .eq("event_id", id)
-            .order("position", { ascending: false })
-            .limit(1)
-            .maybeSingle();
-          const nextPos = ((maxPos as any)?.position ?? 0) + 1;
-          await sc.from("event_waitlist").insert({ event_id: id, user_id: user.id, position: nextPos });
-          await sc.from("events").update({ waitlist_count: nextPos }).eq("id", id);
+        const seated = await addToEventWaitlist(sc, id, user.id);
+        if (!seated.ok) { sendWaitlistUnavailable(req, res, id, "invites:accept"); return; }
+        if (!seated.alreadyPresent) {
+          await sc.from("events").update({ waitlist_count: seated.position }).eq("id", id);
         }
         res.json({ ok: true, status: "waitlisted" }); return;
       }
@@ -6135,10 +6158,21 @@ router.post("/events/:id/add-to-trip", async (req, res) => {
     sendError(res, "forbidden", "You must be an accepted trip member to add events"); return;
   }
 
-  // Guard against duplicate: same source already in this trip
-  const { data: existingItem } = await sc.from("trip_plan_items").select("id")
+  // Guard against duplicate: same source already in this trip.
+  // This is the ONLY thing standing between a retry and a second itinerary
+  // entry on the legacy (kernel-off) path, whose INSERT below is unconditional
+  // and carries no idempotency key. An unreadable trip_plan_items resolves as
+  // `{ data: null }` — identical to "not in the plan" — so treating the failure
+  // as "not present" adds the event to the trip twice. Refuse instead: the add
+  // is retryable and the duplicate is not undoable from this route.
+  const { data: existingItem, error: existingItemErr } = await sc.from("trip_plan_items").select("id")
     .eq("trip_id", tripId).eq("source_type", "event").eq("source_id", id)
     .is("removed_at", null).maybeSingle();
+  if (existingItemErr) {
+    req.log.error({ err: existingItemErr, tripId, eventId: id }, "add-to-trip: duplicate check unavailable");
+    sendError(res, "degraded_unavailable", "We could not check whether this event is already in the trip. Please try again shortly.");
+    return;
+  }
   if (existingItem) {
     res.json({ planItemId: (existingItem as any).id, tripId, alreadyAdded: true }); return;
   }
@@ -6346,8 +6380,17 @@ router.post("/events/:id/telegraph-thread", async (req, res) => {
   // Post a pinned context card if this thread was freshly created
   void (async () => {
     try {
-      const { data: existing } = await sc.from("messages").select("id")
+      // "Has the pinned card already been posted?" is what makes this route
+      // idempotent. An unreadable `messages` resolves as `{ data: null }`, the
+      // same shape as "no card yet", so every re-open of the thread while the
+      // table is unhealthy pins ANOTHER copy of the card into the event chat.
+      // Skip on an unreadable check; the next open re-posts it if it is genuinely missing.
+      const { data: existing, error: existingErr } = await sc.from("messages").select("id")
         .eq("thread_id", threadId).eq("msg_type", "system").eq("subtype", "event_context_card").limit(1).maybeSingle();
+      if (existingErr) {
+        req.log?.warn({ err: existingErr, eventId: id, threadId }, "event context card: existing-card check unavailable; not posting");
+        return;
+      }
       if (!existing) {
         const e = ev as any;
         const lines = [
