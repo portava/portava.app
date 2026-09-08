@@ -30,6 +30,7 @@ import {
   getCrewPreferences,
   upsertCrewPreferences,
   setGhostMode,
+  CrewMapUnavailableError,
 } from "../services/tripCrew/TripCrewLocationService.js";
 import {
   startLiveShare,
@@ -103,9 +104,38 @@ async function getMemberRole(
 }
 
 /**
+ * The statuses a trip_members row may carry, from migration 0078:
+ *   status TEXT NOT NULL DEFAULT 'accepted'
+ *          CHECK (status IN ('invited','accepted','declined','removed','left'))
+ * A row that is not one of the two "still on the trip" states below describes a
+ * person who is GONE — they declined, they were removed, or they left — and the
+ * role column does not change when that happens (REMOVE_PARTICIPANT records the
+ * role at removal; see migration 2450). So a rule that reads role and not status
+ * cannot tell a member from an ex-member. `null`/absent is treated as 'accepted'
+ * for pre-0078 rows, exactly as requireTripMember (lib/http.ts) does.
+ */
+const STILL_ON_TRIP_STATUSES = ["accepted", "invited"];
+
+/** True when a trip_members row's status means the person is still on the trip. */
+function statusStillOnTrip(row: any): boolean {
+  const status = (row as any)?.status;
+  return status == null || STILL_ON_TRIP_STATUSES.includes(String(status));
+}
+
+/**
  * Like getMemberRole but also accepts 'invited' role.
  * Used for read-only crew visibility endpoints where pending invitees should be
  * able to see who else is on their trip before deciding to accept.
+ *
+ * THE STATUS GATE, AND WHY IT IS WIDER HERE THAN IN getMemberRole.
+ * This function read ROLE ONLY, so {role:'member', status:'removed'} — the
+ * shape a removed member's row keeps — passed it, and the crew map served the
+ * trip's roster and area labels to someone taken off the trip. That contradicts
+ * this file's own header ("Pending invites and removed members receive 403").
+ * getMemberRole demands status === 'accepted'; this one also admits 'invited',
+ * because admitting PENDING invitees is this endpoint's documented purpose. The
+ * three statuses it now rejects — declined, removed, left — are the ones that
+ * mean the person is off the trip, and none of them was ever meant in.
  */
 async function getMemberRoleAny(
   db: ReturnType<typeof getServiceClient>,
@@ -123,20 +153,36 @@ async function getMemberRoleAny(
 
     const { data: member } = await db
       .from("trip_members")
-      .select("role")
+      .select("role, status")
       .eq("trip_id", tripId)
       .eq("user_id", userId)
       .in("role", ["owner", "co_host", "member", "invited"])
       .maybeSingle();
-    return member ? ((member as any).role as string) : null;
+    // A read error leaves `member` null and returns null below, so this path
+    // stays fail-closed (403) — the same disposition getMemberRole records.
+    if (!member) return null;
+    if (!statusStillOnTrip(member)) return null;
+    return (member as any).role as string;
   } catch {
     return null;
   }
 }
 
 /**
- * Returns all accepted member IDs for a trip (owner + role=member rows).
+ * Returns all accepted member IDs for a trip (owner + accepted member rows).
  * Used to validate allowedMemberIds in live-share start.
+ *
+ * THIS IS AN ALLOW-LIST FOR EXACT COORDINATES, and it filtered by role alone.
+ * A live-share recipient is precisely who getCrewMap will hand exact lat/lng to
+ * (TripCrewLocationService step 7 → buildCrewCard), so a removed member named
+ * here kept receiving the sharer's position for the life of the share — while
+ * the route rejected everyone ELSE with the words "not accepted trip members".
+ * `status` is compared in JS rather than filtered in PostgREST for the same
+ * reason getMemberRole does it: coalesce-on-a-nullable-column is awkward to
+ * express as a filter and easy to get subtly wrong.
+ *
+ * Note this set is deliberately NARROWER than getMemberRoleAny's: a pending
+ * invitee may LOOK at the crew map, but may not be given a live-share grant.
  */
 async function getAcceptedMemberIds(
   db: ReturnType<typeof getServiceClient>,
@@ -146,12 +192,13 @@ async function getAcceptedMemberIds(
   try {
     const [ownerRes, membersRes] = await Promise.all([
       db.from("trips").select("owner_id").eq("id", tripId).maybeSingle(),
-      db.from("trip_members").select("user_id").eq("trip_id", tripId).in("role", ["owner", "co_host", "member"]),
+      db.from("trip_members").select("user_id, status").eq("trip_id", tripId).in("role", ["owner", "co_host", "member"]),
     ]);
     const ids: string[] = [];
     const ownerId = (ownerRes.data as any)?.owner_id;
     if (ownerId) ids.push(ownerId);
     for (const row of ((membersRes.data as any[]) ?? [])) {
+      if (String((row as any).status ?? "accepted") !== "accepted") continue;
       if (row.user_id && !ids.includes(row.user_id)) ids.push(row.user_id);
     }
     return ids;
@@ -206,6 +253,16 @@ router.get("/trips/:tripId/crew/map", async (req, res) => {
     const result = await getCrewMap(sc, tripId, user.id);
     res.status(200).json({ featureEnabled: true, ...result });
   } catch (err) {
+    // getCrewMap refuses with CrewMapUnavailableError (503
+    // degraded_unavailable, retryable) when an input it cannot answer without
+    // could not be READ. Flattening that into db_error (500, not retryable)
+    // would tell the client its request failed when the truth is "ask again" —
+    // so the refusal is re-thrown for the global handler, which reads the
+    // `status`/`code` it carries. Everything else stays a 500.
+    if (err instanceof CrewMapUnavailableError) {
+      req.log.warn({ err, tripId }, "crew/map: input unavailable — refusing");
+      throw err;
+    }
     req.log.error({ err }, "crew/map: failed");
     sendError(res, "db_error", "Failed to load crew map", { exposeDetail: true });
   }

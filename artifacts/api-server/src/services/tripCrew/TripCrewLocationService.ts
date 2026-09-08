@@ -23,6 +23,36 @@ import { fetchBlockedSet } from "../../lib/blocks.js";
 
 const logger = rootLogger.child({ service: "TripCrewLocationService" });
 
+/**
+ * Refusal for a crew-map input that could not be READ.
+ *
+ * supabase-js RESOLVES on a database error — `{ data: null, error: {...} }` —
+ * so a table that could not be read is byte-for-byte indistinguishable from an
+ * empty one at the call site. Every "no rows" default in getCrewMap below is
+ * therefore also the DB-error default, and three of them defaulted toward
+ * DISCLOSURE: no prefs row means ghost mode off, no location_preferences row
+ * means hotel blur off, no trip_members rows means the crew is just its owner.
+ *
+ * `status` and `code` are read by the global error handler (lib/errorEnvelope),
+ * so throwing this becomes 503 `degraded_unavailable` with `retryable: true` —
+ * the code this codebase uses for "the check could not be PERFORMED", as
+ * opposed to db_error (500) which reads as "your request was wrong or we broke".
+ */
+export class CrewMapUnavailableError extends Error {
+  readonly status = 503;
+  readonly code = "degraded_unavailable" as const;
+  readonly table: string;
+  constructor(table: string, detail: string) {
+    super(`crew map input ${table} unavailable — refusing to answer: ${detail}`);
+    this.name = "CrewMapUnavailableError";
+    this.table = table;
+  }
+}
+
+function crewMapUnavailable(table: string, error: any): CrewMapUnavailableError {
+  return new CrewMapUnavailableError(table, String(error?.message ?? error?.code ?? "db_error"));
+}
+
 // ── Public API ────────────────────────────────────────────────────────────────
 
 export interface CrewMapResult {
@@ -45,13 +75,30 @@ export async function getCrewMap(
   const [ownerRes, membersRes] = await Promise.all([
     db.from("trips").select("owner_id").eq("id", tripId).maybeSingle(),
     db.from("trip_members")
-      .select("user_id")
+      .select("user_id, status")
       .eq("trip_id", tripId)
       .in("role", ["owner", "member", "invited"]),
   ]);
 
+  // REFUSE, do not shrink. An unreadable trip_members returned `[]`, which this
+  // function renders as "the crew is the owner and nobody else" — a confident
+  // claim about who is on the trip, assembled from a query that did not answer.
+  // Fail-closed-with-partial-data is not available here: the roster IS the
+  // response.
+  if (membersRes.error) throw crewMapUnavailable("trip_members", membersRes.error);
+  if (ownerRes.error) throw crewMapUnavailable("trips", ownerRes.error);
+
   const ownerId: string | null = (ownerRes.data as any)?.owner_id ?? null;
-  const memberRows: any[] = (membersRes.data as any[]) ?? [];
+  // trip_members.status ('invited','accepted','declined','removed','left' —
+  // migration 0078) is the other half of membership, and the role column does
+  // not change when someone is removed. Filtering on role alone published a
+  // REMOVED member's area label — and, under an active live share, their exact
+  // coordinates — to the crew of a trip they are no longer on. 'invited' stays
+  // in: this map deliberately shows pending invitees.
+  const memberRows: any[] = ((membersRes.data as any[]) ?? []).filter((r) => {
+    const status = (r as any).status;
+    return status == null || status === "accepted" || status === "invited";
+  });
 
   // Bidirectional block filter — enforced HERE on the server, not only in the
   // client. A blocked user hitting this endpoint directly must never receive a
@@ -90,6 +137,15 @@ export async function getCrewMap(
     .select("user_id, default_visibility, ghost_mode_enabled, share_arrival_status, share_safe_return_status")
     .eq("trip_id", tripId)
     .in("user_id", allUserIds);
+  // REFUSE. This row is each member's OWN answer to "what may the crew see of
+  // me on this trip", and buildCrewCard reads a missing row as ghost mode OFF.
+  // So an unreadable table silently inverted the one setting the module calls
+  // an absolute choice: a member with ghost mode on and an active live share
+  // came back as `ghostMode:false, statusLabel:"live_sharing_active"` with an
+  // area label. Unlike the hotel-blur read below, this one governs EVERY card's
+  // disclosure level, so there is no honest sub-part of the response left to
+  // serve — the request is refused instead.
+  if (prefsRes.error) throw crewMapUnavailable("trip_crew_location_preferences", prefsRes.error);
   const prefsMap = new Map<string, any>(
     ((prefsRes.data as any[]) ?? []).map((p) => [p.user_id, p]),
   );
@@ -109,6 +165,21 @@ export async function getCrewMap(
     .from("location_preferences")
     .select("user_id, hotel_blur_enabled")
     .in("user_id", allUserIds);
+  // FAIL CLOSED AT THE FIELD, don't refuse the request. hotel_blur_enabled
+  // gates one thing and one thing only: the exact-coordinate upgrade inside an
+  // already-granted live share. An empty set means "nobody blurs", and that was
+  // also what a DB error produced — so an unreadable location_preferences
+  // published exact lat/lng for a member whose setting says never to. Treating
+  // every member as blurred when the table cannot be read withholds the
+  // strongest claim in the payload and leaves the rest of the map (area labels,
+  // check-ins, freshness) intact and true, which a 503 would not.
+  const hotelBlurUnreadable = Boolean(locPrefsRes.error);
+  if (hotelBlurUnreadable) {
+    logger.warn(
+      { err: locPrefsRes.error, tripId },
+      "getCrewMap: location_preferences unreadable — withholding exact coordinates for every member",
+    );
+  }
   const hotelBlurSet = new Set<string>(
     ((locPrefsRes.data as any[]) ?? [])
       .filter((r) => r.hotel_blur_enabled === true)
@@ -183,7 +254,7 @@ export async function getCrewMap(
         lat: loc.lat ?? null,
         lng: loc.lng ?? null,
       } : null,
-      hotelBlurEnabled: hotelBlur,
+      hotelBlurEnabled: hotelBlurUnreadable || hotelBlur,
       checkInStatus: checkinMap.get(uid) ?? null,
       hasSafeReturnActive: activeSRSet.has(uid),
       liveShare: liveShare ? {

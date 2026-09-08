@@ -79,13 +79,34 @@ export async function startLiveShare(
   const visibilityLevel = input.visibilityLevel ?? "neighborhood";
   const expiresAt = expiresAtFromDuration(duration, planEndAt);
 
-  // Stop any existing active session
-  await db
+  // Stop any existing active session.
+  //
+  // THE ORDER IS THE CONTRACT: "only one active session per user per trip" is
+  // enforced solely by this UPDATE landing before the INSERT below. Its error
+  // was never bound, and supabase-js RESOLVES on a database error, so a stop
+  // that FAILED was indistinguishable from a stop that matched nothing — and
+  // the insert then ran unconditionally. The trip was left holding TWO active
+  // sessions for one user, and the stale one still names the OLD
+  // allowed_member_ids and the OLD expiry. getCrewMap and getActiveLiveShares
+  // both grant on "any active session that names you", so narrowing a share
+  // (dropping a recipient, shortening the window) silently did not narrow
+  // anything, while the route answered 201. Refusing here leaves the caller's
+  // existing share exactly as it was — a state they already consented to — and
+  // tells them to retry.
+  const { error: stopError } = await db
     .from("trip_crew_location_sessions")
     .update({ status: "stopped", stopped_at: new Date().toISOString() })
     .eq("trip_id", tripId)
     .eq("user_id", userId)
     .eq("status", "active");
+
+  if (stopError) {
+    logger.error(
+      { err: stopError, tripId, userId },
+      "startLiveShare: could not stop the existing session; refusing to add a second active one",
+    );
+    return { ok: false, error: stopError.message };
+  }
 
   const { data, error } = await db
     .from("trip_crew_location_sessions")
