@@ -737,6 +737,21 @@ const EXEMPT = [
   },
 
   {
+    file: 'src/test/notificationIssuance.test.ts',
+    pinnedTestEnv: true,
+    reason:
+      'Registered unit test that answers "is the notification actually SENT" over a REAL createClient, for the ' +
+      'reason the rabLifecycle suites below do: PostgrestBuilder calls _fetch inside then(), so a void write ' +
+      'with no continuation issues no request at all, and a hand-written double cannot tell a CONSTRUCTED ' +
+      'builder from a SENT one — it is the same seam unissuedWrites.test.ts uses. It also asserts ORDER (the ' +
+      'dedupe read precedes the insert), which only exists on the wire. The client is handed its own transport ' +
+      '(global: { fetch: makeRecordingFetch(...) }), so the installed fetch is never consulted and no request ' +
+      'leaves the process, and SUPA_URL is the hardcoded literal "http://supabase.test" declared in the file ' +
+      'rather than read from the environment. pinnedTestEnv because CI invokes it and the CI-surface rule ' +
+      'requires the flag of any exemption CI runs. EXEMPTION MEANS UNGUARDED, NOT SAFE.',
+  },
+
+  {
     file: 'src/test/rabLifecycleTransitions.test.ts',
     pinnedTestEnv: true,
     reason:

@@ -96,6 +96,15 @@ export interface GuardEntry {
   inspects?: InspectionProof;
   /** True when the guard needs live credentials, so its count cannot be read here. */
   credentialed?: boolean;
+  /**
+   * Set ONLY on a guard whose job is to RUN OTHER GUARDS and require a verdict
+   * line from each. Its inspection proof is those requirements, so
+   * checkGuardReachability does not run it a second time to read a count of its
+   * own. The value is the prose saying why — a bare `true` here would be the
+   * loophole this field exists to avoid being. Mutually exclusive with
+   * `inspects`.
+   */
+  aggregator?: string;
   responsibility: string;
   reach: Reach;
 }
@@ -222,16 +231,33 @@ export const GUARDS: readonly GuardEntry[] = [
     checker: "scripts/check-doc-citations.mjs",
     responsibility: "A documented claim cites a file:line that exists, so architecture docs cannot drift into fiction.",
     reach: { kind: "workflow", script: "check:doc-citations" },
+    // MEASURED: "  file:line citations ...... 145" — printed on both paths.
+    inspects: {
+      countPattern: "file:line citations \\.+ (\\d+)",
+      unit: "file:line citation(s) found in the committed docs it covers",
+    },
   },
   {
     checker: "scripts/check-test-registration.mjs",
     responsibility: "A test file on disk is either in the run or on an allowlist saying why — a test nobody runs proves nothing.",
     reach: { kind: "workflow", script: "check:test-registration" },
+    // MEASURED: "✅ check-test-registration: 872 test file(s) on disk under src/".
+    // The clean path is the only one that prints it, which is the path this proof
+    // is about: a green here must mean it enumerated the suite.
+    inspects: {
+      countPattern: "(\\d+) test file\\(s\\) on disk",
+      unit: "test file(s) on disk under src/",
+    },
   },
   {
     checker: "src/scripts/checkEnumLiterals.ts",
     responsibility: "Every enum literal code compares against is a label the database enum actually has.",
     reach: { kind: "workflow", script: "check:enum-literals" },
+    // MEASURED: "Extracted 1383 filter literal(s) and 871 write literal(s) across 793 file(s)".
+    inspects: {
+      countPattern: "Extracted (\\d+) filter literal\\(s\\)",
+      unit: "enum filter literal(s) extracted from source",
+    },
   },
   {
     checker: "src/scripts/checkMigrationLedger.ts",
@@ -246,11 +272,25 @@ export const GUARDS: readonly GuardEntry[] = [
     checker: "src/scripts/checkNoApiRoutePrefix.ts",
     responsibility: "A router path does not repeat the /api mount prefix, which would serve it at /api/api and reach nobody.",
     reach: { kind: "workflow", script: "check:api-prefix" },
+    // MEASURED: "1534 route declaration(s) inspected across 143 route file(s)".
+    // The count is the DECLARATION population, not the offender population: this
+    // guard's whole output when clean is an absence, and an absence proves nothing
+    // unless something was there to be absent from. Added when this guard was
+    // instrumented; before that it printed no number at all.
+    inspects: {
+      countPattern: "(\\d+) route declaration\\(s\\) inspected",
+      unit: "route declaration(s) inspected in src/routes/",
+    },
   },
   {
     checker: "src/scripts/checkSchemaReferences.ts",
     responsibility: "Every table and column a source file names exists in the canonical schema.",
     reach: { kind: "workflow", script: "check:schema-references" },
+    // MEASURED: "Extracted 5035 statically-resolvable schema references".
+    inspects: {
+      countPattern: "Extracted (\\d+) statically-resolvable schema references",
+      unit: "statically-resolvable schema reference(s)",
+    },
   },
   {
     checker: "src/scripts/checkSentryOtelDeps.ts",
@@ -265,6 +305,11 @@ export const GUARDS: readonly GuardEntry[] = [
     checker: "src/scripts/checkWriterlessReads.ts",
     responsibility: "No code reads a table nothing writes, which returns zero rows for ever and looks like an empty feature.",
     reach: { kind: "workflow", script: "check:writerless-reads" },
+    // MEASURED: "Scanned 692 server file(s) ...; 353 relation(s) read".
+    inspects: {
+      countPattern: "(\\d+) relation\\(s\\) read",
+      unit: "relation(s) observed being read",
+    },
   },
 
   // ── reached by a registered mutation suite with a real-tree control ───────
@@ -310,6 +355,12 @@ export const GUARDS: readonly GuardEntry[] = [
     // is the same defect as a guard that nothing runs, and the registry is where
     // that question is answered.
     checker: "scripts/run-security-checks.sh",
+    aggregator:
+      "It IS the inspection proof for the twelve checks it gates: every one is declared with --require verdict " +
+      "lines, and a check that exits 0 without printing them FAILS here rather than passing — that is how the " +
+      "deletion-coverage and data-rights verdict patterns were caught going stale. Running it inside " +
+      "checkGuardReachability to read a count of its own would re-run all twelve guards a second time, and the " +
+      "count it produced would be an aggregate of theirs.",
     responsibility:
       "The security- and privacy-relevant guards run as one attributable suite: only exit 0 passes, a check that " +
       "cannot run FAILS rather than skips, and the security guards that remain unenforced are counted by name on " +

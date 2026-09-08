@@ -371,6 +371,90 @@ function main(): void {
 
   // 4-7. verify each declaration
   const summary: string[] = [];
+
+  /**
+   * THE INSPECTION PROOF. An exit code says whether the guard found a problem;
+   * it says nothing about whether it LOOKED. check-admin-guard — a SECURITY
+   * guard — printed a success line that was byte-identical whether it had
+   * inspected 143 route files or zero, and would have printed it if its
+   * directory had been renamed.
+   *
+   * So a credential-free ENFORCED guard declares the line carrying its inspected
+   * count, and that count is READ by running it. "Enforced" means check:all or a
+   * workflow: a guard a workflow runs is no less capable of reporting a clean
+   * verdict for a tree it never opened, and until 2026-09-08 only the check:all
+   * half was held to this — six workflow guards were exempt from the proof for
+   * no reason anyone had stated.
+   *
+   * `aggregator` is the one way out, and it is narrow: a guard whose own job is
+   * to run OTHER guards and demand a verdict line from each already carries the
+   * proof, and running it here would run every one of them a second time. The
+   * field holds the prose saying so, and an aggregator that declares `inspects`
+   * as well is a contradiction rather than a belt-and-braces.
+   */
+  function proveInspection(g: (typeof GUARDS)[number], kindLabel: string): void {
+    if (g.credentialed || process.env.GUARD_SKIP_INSPECTION_RUN) return;
+
+    if (g.aggregator) {
+      if (g.inspects) {
+        problems.push(
+          `${g.checker}: declares BOTH \`aggregator\` and \`inspects\`. The first says its proof is the verdict ` +
+            `lines it demands of the guards it runs; the second says its proof is a count read by running it ` +
+            `here. Only one of them is the proof. Pick it.`,
+        );
+      }
+      summary.push(`${("  " + g.checker).padEnd(48)} inspected      (aggregator — proved by the checks it gates)`);
+      return;
+    }
+
+    if (!g.inspects) {
+      problems.push(
+        `${g.checker}: enforced (${kindLabel}) without an \`inspects\` proof. It must declare the line that ` +
+          `carries its inspected count, or be marked credentialed. "Nothing is wrong" and "I did not look" ` +
+          `are not the same sentence, and an exit code cannot tell them apart.`,
+      );
+      return;
+    }
+
+    const abs = join(API_ROOT, g.checker);
+    const argv = abs.endsWith(".mjs") ? [abs] : ["--import", "tsx/esm", abs];
+    const run = spawnSync(process.execPath, argv, {
+      cwd: API_ROOT, encoding: "utf8", timeout: MANUAL_RUN_TIMEOUT_MS, maxBuffer: 32 * 1024 * 1024,
+    });
+    const out = `${run.stdout ?? ""}${run.stderr ?? ""}`;
+    const m = out.match(new RegExp(g.inspects.countPattern));
+    if (run.status !== 0) {
+      // The proof answers ONE question: did a PASSING guard actually look? A
+      // guard that is currently failing is already loud, and check:all will say
+      // so — demanding an inspection line from it as well turns a real finding
+      // into a complaint about a stale pattern, which is what happened the first
+      // time this ran against a red check:flag-polarity.
+      summary.push(
+        `${("  " + g.checker).padEnd(48)} inspected      (not read — the guard is currently FAILING, exit ${run.status})`,
+      );
+      return;
+    }
+    if (!m) {
+      problems.push(
+        `${g.checker}: its declared inspection line (/${g.inspects.countPattern}/) did not appear in its ` +
+          `output. Either the guard stopped reporting what it inspected, or the pattern is stale — and a ` +
+          `count nobody can read is the same as no count.`,
+      );
+      return;
+    }
+    const n = Number(m[1]);
+    if (!Number.isFinite(n)) {
+      problems.push(`${g.checker}: inspection pattern matched but group 1 ("${m[1]}") is not a number.`);
+    } else if (n === 0 && !g.inspects.zeroIsProved) {
+      problems.push(
+        `${g.checker}: reports ZERO ${g.inspects.unit} and still passes. A guard that examined nothing ` +
+          `must not report that nothing is wrong. Fix the scan, or declare zeroIsProved with the proof ` +
+          `that zero is the expected state here.`,
+      );
+    } else {
+      summary.push(`${("  " + g.checker).padEnd(48)} inspected      ${n} ${g.inspects.unit}`);
+    }
+  }
   for (const g of GUARDS) {
     const r = g.reach;
     switch (r.kind) {
@@ -382,52 +466,7 @@ function main(): void {
         // would have printed it if its directory had been renamed. So a
         // credential-free check-all guard declares the line carrying its
         // inspected count, and that count is READ by running it.
-        if (!g.credentialed && !process.env.GUARD_SKIP_INSPECTION_RUN) {
-          if (!g.inspects) {
-            problems.push(
-              `${g.checker}: enforced in check:all without an \`inspects\` proof. It must declare the line that ` +
-                `carries its inspected count, or be marked credentialed. "Nothing is wrong" and "I did not look" ` +
-                `are not the same sentence, and an exit code cannot tell them apart.`,
-            );
-          } else {
-            const abs = join(API_ROOT, g.checker);
-            const argv = abs.endsWith(".mjs") ? [abs] : ["--import", "tsx/esm", abs];
-            const run = spawnSync(process.execPath, argv, {
-              cwd: API_ROOT, encoding: "utf8", timeout: MANUAL_RUN_TIMEOUT_MS, maxBuffer: 32 * 1024 * 1024,
-            });
-            const out = `${run.stdout ?? ""}${run.stderr ?? ""}`;
-            const m = out.match(new RegExp(g.inspects.countPattern));
-            if (run.status !== 0) {
-              // The proof answers ONE question: did a PASSING guard actually look?
-              // A guard that is currently failing is already loud, and check:all
-              // will say so — demanding an inspection line from it as well turns a
-              // real finding into a complaint about a stale pattern, which is what
-              // happened the first time this ran against a red check:flag-polarity.
-              summary.push(
-                `${("  " + g.checker).padEnd(48)} inspected      (not read — the guard is currently FAILING, exit ${run.status})`,
-              );
-            } else if (!m) {
-              problems.push(
-                `${g.checker}: its declared inspection line (/${g.inspects.countPattern}/) did not appear in its ` +
-                  `output. Either the guard stopped reporting what it inspected, or the pattern is stale — and a ` +
-                  `count nobody can read is the same as no count.`,
-              );
-            } else {
-              const n = Number(m[1]);
-              if (!Number.isFinite(n)) {
-                problems.push(`${g.checker}: inspection pattern matched but group 1 ("${m[1]}") is not a number.`);
-              } else if (n === 0 && !g.inspects.zeroIsProved) {
-                problems.push(
-                  `${g.checker}: reports ZERO ${g.inspects.unit} and still passes. A guard that examined nothing ` +
-                    `must not report that nothing is wrong. Fix the scan, or declare zeroIsProved with the proof ` +
-                    `that zero is the expected state here.`,
-                );
-              } else {
-                summary.push(`${("  " + g.checker).padEnd(48)} inspected      ${n} ${g.inspects.unit}`);
-              }
-            }
-          }
-        }
+        proveInspection(g, r.kind);
 
         if (!(r.script in scripts)) {
           problems.push(`${g.checker}: declares check-all via "${r.script}", but package.json has no such script.`);
@@ -441,6 +480,7 @@ function main(): void {
         break;
       }
       case "workflow": {
+        proveInspection(g, "workflow");
         if (!(r.script in scripts)) {
           problems.push(`${g.checker}: declares workflow via "${r.script}", but package.json has no such script.`);
         } else if (!workflowInvokes(r.script)) {

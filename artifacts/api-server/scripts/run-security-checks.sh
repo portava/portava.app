@@ -443,11 +443,11 @@ default_checks() {
   # It is an OWNER decision and this suite does not attempt to resolve it.
   security_check "check:deletion-coverage" \
     --guard "src/scripts/checkDeletionCoverage.ts" \
-    --codes "0 = every baseline user-keyed table has a stated deletion fate; 1 = one does not" \
-    --require '^check-deletion-coverage: [1-9][0-9]* user-keyed table\(s\) in the baseline' \
-    --require '^✓ every user-keyed table in the baseline has a stated deletion fate\.' \
+    --codes "0 = every user-linked table in the baseline has a stated deletion fate; 1 = one does not" \
+    --require '^[[:space:]]*DENOMINATOR[[:space:]]+[1-9][0-9]* table\(s\) that must have a stated deletion fate' \
+    --require '^✓ every user-linked table in the baseline has a stated deletion fate\.' \
     --report-ere '^[[:space:]]*[0-9]+ UNCLASSIFIED — survive deletion' \
-    --report-ere '^check-deletion-coverage: [0-9]+ user-keyed table\(s\) in the baseline' \
+    --report-ere '^[[:space:]]*DENOMINATOR[[:space:]]+([0-9]+) table\(s\) that must have a stated deletion fate' \
     -- pnpm run check:deletion-coverage
 
   # DATA RIGHTS: every intel column has a stated ownership class, so no personal
@@ -460,9 +460,31 @@ default_checks() {
     --guard "src/scripts/checkDataRights.ts" \
     --codes "0 = every intel column classified; 1 = an unclassified column" \
     --require '^check-data-rights: [1-9][0-9]* intel field\(s\) classified' \
-    --require '^✓ every intel column has a stated ownership class\.' \
+    --require '^check-data-rights — [1-9][0-9]* intel column\(s\) inspected; every one has a stated ownership class\.' \
     --report-ere '^[[:space:]]*[0-9]+ carry or could reconstruct personal data' \
     -- pnpm run check:data-rights
+
+  # ADMIN GUARD: no route file declares its own admin check. This was DISCLOSURE
+  # rather than a gate until 2026-09-08, on the recorded reason that it was "RED
+  # TODAY, so gating it would make this suite permanently red". That reason
+  # expired when the 30 local admin guards — under four different names, two of
+  # them diverged — were consolidated onto the shared requireAdmin path, and a
+  # stale reason is worse than none: a reader takes it for a considered decision.
+  # It is gated here now.
+  #
+  # Both required lines matter and neither is redundant. The tick alone is what
+  # this check printed for a tree it had not read: the success sentence was
+  # byte-identical whether it had inspected 143 route files or zero, and it
+  # would have printed it if src/routes had been renamed. So the inspected
+  # COUNT is required as well as the verdict, and the check itself refuses below
+  # its own floor.
+  security_check "check:admin-guard" \
+    --guard "src/scripts/checkAdminGuard.ts" \
+    --codes "0 = no route file declares a local admin guard; 1 = one does, or the scan was vacuous" \
+    --require '^check-admin-guard — [1-9][0-9]* route file\(s\) inspected' \
+    --require 'PASSED, no local admin guards in src/routes/$' \
+    --report-ere '^check-admin-guard — ([0-9]+) route file\(s\) inspected' \
+    -- pnpm run check:admin-guard
 
   # LOCATION PRIVACY: every coordinate-holding table is claimed by a documented
   # purpose. Green today, and gated here as a ratchet — a NEW coordinate-holding
@@ -487,12 +509,6 @@ default_checks() {
 # run. None of them moves the exit code: gating a permanently-red guard is one
 # `|| true` away from being no guard at all.
 default_unenforced() {
-  security_unenforced \
-    "src/scripts/checkAdminGuard.ts" \
-    "Admin route privilege checks re-implemented per file — authorisation drift. RED TODAY, so gating it would make this suite permanently red; wiring needs the findings fixed first (route files, other lanes' territory)." \
-    --count-ere 'FAILED — [0-9]+ locally declared admin guard' \
-    -- node --import tsx/esm src/scripts/checkAdminGuard.ts
-
   security_unenforced \
     "src/scripts/check-media-bucket-privacy.ts" \
     "Storage buckets whose public/private flag disagrees with the media privacy contract. Reads live project state; no CI run can observe the project it matters for. EXEMPT MEANS UNENFORCED, NOT SAFE." \
