@@ -493,3 +493,69 @@ Two things this migration cannot reach, both recorded in the file header:
 `trips` 43, `trust_events` 5, `trip_events` 0, 750 policies in `public`,
 relations 434 — all unchanged, and `supabase_migrations` accepted the row, so
 the migration path is still operational.
+
+
+---
+
+## 2026-09-08 — `2640`: one default collection per owner, enforced by the database
+
+Applied to portava-ci (`20260908011725`) then production (`20260908011801`).
+Additive: one partial unique index. Drops nothing, rewrites no row, changes no
+policy.
+
+### Why the application fix was not enough
+
+`ensureDefaultCollection` is a get-or-create. Its read ignored `.error`, and
+**supabase-js resolves on a database error** — so an unreadable `collections`
+table was indistinguishable from "this user has no default collection", and the
+next statement INSERTed a second one. A duplicate created *because* the database
+was briefly unavailable, persisting long after it recovered.
+
+Checking that error closes that path. It cannot close the other one: two
+concurrent requests for a user with no default can both read "none" and both
+insert. **No application-side check can arbitrate that — only the database can.**
+So the index is the authority, and the route's `23505` branch is written against
+it: losing the race is a *success* for the caller, who re-reads the winner's row.
+
+### Preconditions, measured before applying
+
+| | production | portava-ci |
+|---|---|---|
+| `collections` rows | 1 | 0 |
+| rows with `is_default IS TRUE` | 0 | 0 |
+| owners holding more than one default | 0 | 0 |
+| index already present | no | no |
+
+Nothing to reconcile. Had any owner held two defaults, `CREATE UNIQUE INDEX`
+would fail — and that is the correct behaviour: choosing which duplicate
+survives is a data decision this migration must not take on its own. The
+precondition detects it and names the affected owners.
+
+### The postcondition is weaker than the claim, so the claim was tested separately
+
+2640's postcondition proves the index **exists** and is UNIQUE and PARTIAL. That
+is not the same as proving it **enforces**, which is what the route's `23505`
+branch depends on. So enforcement was proved directly on both databases, inside
+a transaction deliberately aborted so nothing persisted:
+
+| probe | result | why it matters |
+|---|---|---|
+| 1st default for an owner | inserted | the index does not block the ordinary case |
+| 2nd default, same owner | **`23505`** | exactly the SQLSTATE `ensureDefaultCollection` catches |
+| 2nd **non**-default, same owner | **allowed** | proves the index is PARTIAL — a non-partial one would forbid a user having more than one ordinary collection and would break the feature |
+
+Identical on CI and production. Index confirmed `indisunique = true`,
+`indpred = (is_default IS TRUE)`. Afterwards: production `collections` back to
+1 row, 0 probe rows left behind.
+
+### Honest scope
+
+With zero default rows in production the index **constrains nothing there
+today**, and the migration says so with a NOTICE rather than reporting a silent
+success. That is not a defect: it is the arbiter for a race the application
+cannot resolve, and it has to exist *before* the rows do rather than after the
+first duplicate appears. The vacuity distinction is deliberate — the check that
+the index exists and has the right shape is strict and fails loudly; only the
+"is it currently exercised" observation is a NOTICE.
+
+Rollback: `db/rollback/2026-09-07-2640-collections-single-default-rollback.sql`.

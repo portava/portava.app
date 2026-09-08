@@ -37,22 +37,36 @@ re-derived under two rules:
 
 ---
 
-## Finding 1 — CI and production have diverged by eighteen migrations
+## Finding 1 — CI and production diverged by eighteen migrations; the gap is now nineteen-to-eleven
+
+**Originally measured:** production carried **1** of the 2330–2490 band
+(`2402`); CI carried **19**. CI was roughly eighteen migrations ahead.
+
+**Re-measured 2026-09-08, after the apply pass:**
 
 | | production | portava-ci |
 |---|---|---|
-| Migrations in the 2330–2490 band with their marker present | **1** (`2402`) | **19** |
+| Migrations in the 2330–2490 band with their marker present | **11** | **19** |
 
-Every one of `2333 2334 2335 2336 2337 2338 2339 2340 2350 2360 2361 2370 2371
-2400 2410 2420` and the media-canonical family is present on CI and absent in
-production.
+Production now carries `2334 2337 2370 2371 2401 2402 2420 2460 2461 2462 2490`.
+Still absent there: `2330 2331 2332 2333 2335 2336 2338 2339 2340 2350 2360 2361
+2400 2410 2430 2450 2470 2480 2481` — nineteen, of which `2470`/`2481`/`2250`
+are held by unresolved owner decisions rather than by sequencing.
 
-**Consequence, stated plainly: a green CI run is not evidence about production
-for anything in this band.** CI is roughly eighteen migrations ahead. Any check
-that reads the live schema — `checkMissingLiveColumns`, `checkAuthorizationContract`,
-`rlsPolicyShapeLive` — is describing CI's schema, not the one users are served
-from. Where a decision depends on production's shape, it has to be read from
-production.
+**The consequence has narrowed but has NOT gone away: a green CI run is still not
+evidence about production for anything in this band.** Any check reading the live
+schema — `checkMissingLiveColumns`, `checkAuthorizationContract`,
+`rlsPolicyShapeLive` — describes whichever database it was pointed at. Where a
+decision depends on production's shape, it still has to be read from production.
+
+**A caveat on how "present" is established here.** This column is derived from
+**marker objects**, not from `supabase_migrations.schema_migrations`, and that
+distinction is load-bearing: production has no `schema_migration_ledger`, and
+migrations applied by hand through the Supabase dashboard (`2401`, `2402` among
+them) write no row into `supabase_migrations` at all. So absence from that table
+is **not** evidence that a migration was never applied. Presence of its marker
+is. Rows that record a production version below do so because this session
+applied them through `apply_migration`, which does write the row.
 
 ## Finding 2 — the dependency that would have aborted
 
@@ -91,28 +105,28 @@ measured, migration self-declares and carries a postcondition, not re-audited.
 | 2331 | creator counter atomicity | absent | absent | `ready_for_manual_apply` | M |
 | 2332 | money grant boundary | absent | absent | `ready_for_manual_apply` | M |
 | 2333 | derived-memory + consent grant boundary | absent | **applied** | `ready_for_manual_apply` — **requires 2224 + 2315** | V |
-| 2334 | route-plan crew visibility (`authz.is_trip_crew`) | absent | **applied** | `ready_for_manual_apply` — prerequisite for 2337 | M |
+| 2334 | route-plan crew visibility (`authz.is_trip_crew`) | **applied** | **applied** | **`applied`** — production `20260907184258` | M |
 | 2335 | layover recommendation write boundary | absent | **applied** | `ready_for_manual_apply` — *Layover lane verifying no read path breaks* | V |
 | 2336 | media canonical control flags | absent | **applied** | `ready_for_manual_apply` (seeds flags FALSE) | M |
-| 2337 | trip-crew RLS membership convergence | absent | **applied** | `ready_for_manual_apply` — **requires 2334** | V |
+| 2337 | trip-crew RLS membership convergence | **applied** | **applied** | **`applied`** — production `20260907185750` | V |
 | 2338 | memory `location_precision` | absent | **applied** | `ready_for_manual_apply` — DEFAULT is a deliberate no-op; the *product* default is `LOCATION_PRECISION_DEFAULT` and is **not** taken by applying this | V |
 | 2339 | highlights feed bound | absent | **applied** | `ready_for_manual_apply` (seeds flag FALSE) | M |
 | 2340 | sensing anon replay + time bounds | absent | **applied** | `ready_for_manual_apply` — **requires 2315**, already enforced | M |
 | 2350 | map/sensing projection flags | absent | **applied** | `ready_for_manual_apply` (seeds flags FALSE) | M |
 | 2360 | discovery buddy launch gate flag | absent | **applied** | `ready_for_manual_apply` | M |
 | 2361 | discovery candidate projection flag | absent | **applied** | `ready_for_manual_apply` | M |
-| 2370 | trust table privileges | absent | **applied** | `ready_for_manual_apply` | M |
-| 2371 | trust profile evidence columns | absent | **applied** | `ready_for_manual_apply` | M |
+| 2370 | trust table privileges | **applied** | **applied** | **`applied`** — production `20260908005407` | M |
+| 2371 | trust profile evidence columns | **applied** | **applied** | **`applied`** — production `20260908005514` | M |
 | 2400 | telegraph history bound | absent | **applied** | `ready_for_manual_apply` (seeds flag FALSE) | M |
 | 2401 | telegraph messages latent disclosure | **applied** | applied | done | V |
 | 2402 | telegraph membership RLS recursion | **applied** | applied | done — refuses without 2401 | V |
 | 2410 | layover recommendation identity (`rec_key`) | absent | **applied** | `ready_for_manual_apply` (path behind a FALSE flag) | M |
-| 2420 | trip kernel foundation | absent | **applied** | `ready_for_manual_apply` — **requires 2334 + 2337** | M |
+| 2420 | trip kernel foundation | **applied** | **applied** | **`applied`** — production `20260908005403` | M |
 | 2430 | intel live scope promotion writer | absent | absent | `ready_for_manual_apply` | M |
 | 2450 | trip kernel trip + participant families | absent | absent | `ready_for_manual_apply` — **requires 2334→2337→2420**, enforced | M |
-| 2460 | meetup self-invite latent disclosure (inert defuse) | absent | absent | `ready_for_manual_apply` — **apply before 2461** | V |
-| 2461 | meetup RLS recursion repair | absent | absent | `ready_for_manual_apply` — **requires 2460** | V |
-| 2462 | meetup time-vote write boundary | absent | absent | `ready_for_manual_apply` — **requires 2460** | V |
+| 2460 | meetup self-invite latent disclosure (inert defuse) | **applied** | **applied** | **`applied`** — production `20260907181058` | V |
+| 2461 | meetup RLS recursion repair | **applied** | **applied** | **`applied`** — production `20260907183518` | V |
+| 2462 | meetup time-vote write boundary | **applied** | **applied** | **`applied`** — production `20260907183707` | V |
 | 2470 | media canonical columns, flag-agnostic | absent | **CANNOT-VERIFY** | `blocked_by_owner_decision` — **MEDIA_CANONICAL_FLAG** | V |
 | 2480 | sensing contribution sessions | absent | absent | `ready_for_manual_apply` | M |
 | 2481 | sensing sessions Option A issuer | absent | absent | `blocked_by_owner_decision` — **SENSING_AUTH_POSTURE**. Its CHECK *encodes* Option A; applying it takes the decision | V |
@@ -155,22 +169,34 @@ one row where it actually binds.
 
 ---
 
-## Extension — migrations 2500-2550, written during the parallel lane pass
+## Extension — migrations 2500-2650, written during the parallel lane pass
 
-All were authored 2026-09-07 by lanes running under "apply nothing". **Every
-marker below was verified ABSENT on portava-ci**, and production is behind CI on
-every migration in the band, so none is applied anywhere.
+All were authored 2026-09-07 by lanes running under "apply nothing", and that
+sentence is the reason this section existed: **every marker was verified ABSENT
+on portava-ci**, production was behind CI on every migration in the band, and
+none was applied anywhere.
+
+**That is no longer true, and the rows below have been corrected against the
+databases rather than against this paragraph.** Seven of the band —
+`2520`, `2530`, `2531`, `2532`, `2533`, `2534`, `2610` — plus `2640` were
+applied to production on 2026-09-07/08 under the migration safety gate. Each row
+now carries its production `supabase_migrations` version. The remaining rows
+(`2500`, `2510`, `2540`, `2550`) are still unapplied and still say so.
 
 | Mig | Prod marker | CI marker | Ledger | Dependency | Status | Reason |
 |---|---|---|---|---|---|---|
 | 2500 | `trip_kernel_execute` body contains `JOIN_VIA_LINK` — absent | absent | not ledgered | **2334 → 2337 → 2420 → 2450** | `blocked_by_dependency` | Adds `JOIN_VIA_LINK` and widens two commands from `owner` to `host`. A 2450 database refuses the new type as `TRIP_COMMAND_UNKNOWN_TYPE` — tested, not assumed. Production has none of the chain. |
 | 2510 | verify-only; would RAISE today | would pass | not ledgered | **strictly after 2335** | `ready_for_manual_apply` | The postcondition block 2335 lacks, as a separate file because 2335 is ledgered on CI by sha256 and `checkMigrationLedger` reports an edited applied migration as a finding. Proven to discriminate: on production `layover_recs_owner` is `polcmd='*'` with `authenticated` holding all eight privileges, so it raises; on CI `polcmd='r'` with SELECT only, so it passes. |
-| 2520 | `trip_map_projection_drain` — absent | absent | not ledgered | **2334 → 2337 → 2420** | `blocked_by_dependency` | Outbox projection worker. Its own precondition RAISEs until the kernel chain lands. Flag `trip_map_projection_worker_enabled` seeded FALSE. |
-| 2530 | `highlights_select_active` qual contains `shares_accepted_trip` — absent | absent | not ledgered | **2337** (creates `authz.shares_accepted_trip`) | `ready_for_manual_apply` | Rewrites one branch of one policy, shape-agnostic, refuses any shape it does not recognise. **Ordering hazard: PR #461's 2313 restores the `trip_members` self-join byte-for-byte.** If 2313 is applied after 2530 on production the defect returns — see runbook. |
-| 2531 | `crew_session_owner_select` qual free of `allowed_member_ids` — absent | absent | not ledgered | none | `ready_for_manual_apply` | Removes the branch admitting any stranger listed in `allowed_member_ids`. This is the policy 2337 deferred to reconciliation-staging/2118. |
-| 2532 | `pg_policies_snapshot_v2` — absent | absent | not ledgered | none | `ready_for_manual_apply` | Diagnostic snapshot keeping USING and WITH CHECK apart. 2199's fuses them, so no consumer of it can distinguish a `FOR ALL` that wrote `WITH CHECK` from one that did not — the distinction this whole pass turns on. |
+| 2520 | `trip_map_projection_drain` — **PRESENT** | **present** | **prod `20260908010109`** | **2334 → 2337 → 2420** | **`applied`** | Outbox projection worker. Its own precondition RAISEs until the kernel chain lands. Flag `trip_map_projection_worker_enabled` seeded FALSE. |
+| 2530 | `highlights_select_active` qual contains `shares_accepted_trip` — **PRESENT** | **present** | **prod `20260907223359`** | **2337** (creates `authz.shares_accepted_trip`) | **`applied`** | Rewrites one branch of one policy, shape-agnostic, refuses any shape it does not recognise. **Ordering hazard: PR #461's 2313 restores the `trip_members` self-join byte-for-byte.** If 2313 is applied after 2530 on production the defect returns — see runbook. |
+| 2531 | `crew_session_owner_select` qual free of `allowed_member_ids` — **PRESENT** | **present** | **prod `20260907190129`** | none | **`applied`** | Removes the branch admitting any stranger listed in `allowed_member_ids`. This is the policy 2337 deferred to reconciliation-staging/2118. |
+| 2532 | `pg_policies_snapshot_v2` — **PRESENT** | **present** | **prod `20260907222834`** | none | **`applied`** | Diagnostic snapshot keeping USING and WITH CHECK apart. 2199's fuses them, so no consumer of it can distinguish a `FOR ALL` that wrote `WITH CHECK` from one that did not — the distinction this whole pass turns on. |
+| 2533 | `authz.shares_trip_with` — **DROPPED** | **dropped** | **prod `20260907222934`** | **2530** (last consumer) | **`applied`** | Drops the membership oracle: a `(thing, user)` signature answers "is this person in that trip" for any pair the caller names. Removed only after 2530 retired its last consumer. |
+| 2534 | `can_see_trip` body reads `status` — **PRESENT** | **present** | **prod `20260907223139`** | **2337** | **`applied`** | `can_see_trip` read `role` but never `status`, so an *invited-not-accepted* member was admitted. Also removed two `FOR ALL` policies with no `WITH CHECK`, which let any viewer of a PUBLIC trip INSERT/UPDATE/DELETE checklist rows. Checklist readers 17 → 9. |
 | 2540 | index `trust_events_one_shot_uniq` — absent | absent | not ledgered | none | `ready_for_manual_apply` | Partial unique index scoped to the five event types whose emitters were wired. Every other type deliberately excluded for its owner to extend. Rehearsed on CI inside a rolled-back transaction. |
 | 2550 | *(Discovery consumer lane in flight)* | — | — | — | *pending* | Will seed the Discovery-consumer flag FALSE. Recorded here so the band is not silently incomplete. |
+| 2610 | `trip_map_projections` anchor columns — **PRESENT** | **present** | **prod `20260908010501`** | **2420 → 2520** | **`applied`** | Map-owned anchor columns and their fill trigger. Flag `map_trip_projection_read_enabled` seeded FALSE, so the schema exists and the read path stays dark. |
+| 2640 | index `collections_one_default_per_owner_idx` — **PRESENT** | **present** | **prod `20260908011801`** | none | **`applied`** | Partial unique index; the arbiter for a race `ensureDefaultCollection` cannot resolve in application code. Enforcement proved on both databases inside a rolled-back transaction: 2nd default → `23505`, 2nd non-default → allowed. |
 
 ### Why 2500 and 2520 are `blocked_by_dependency` rather than `ready`
 
