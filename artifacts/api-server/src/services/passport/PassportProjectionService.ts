@@ -64,6 +64,7 @@ import { isFlagEnabled } from "../../lib/featureFlags.js";
 import { LOCATE_FRIENDS_CREW_PRESENCE } from "../../lib/capability/registry.js";
 import { resolveCapability } from "../../lib/capability/schemaCapability.js";
 import { logger as rootLogger } from "../../lib/logger.js";
+import { THREAD_ALLOWED_STATUSES, isOneOf } from "../../lib/rentBuddyBookingStatus.js";
 
 // The TABLE 24 owner field opt-outs now live in PassportPrivacyGuard so the
 // projection and Shared Context share ONE reader. Re-exported for callers that
@@ -398,29 +399,77 @@ async function resolveSharedTripRole(
   }
 }
 
-/** Determine a buddy service relationship between owner and viewer, if any. */
-async function resolveBuddyRole(
+/**
+ * Booking statuses that mean a REAL buddy service relationship exists between
+ * two people — the question `resolveBuddyRole` is actually asking.
+ *
+ * ── WHY THIS IS NOT A LOCAL LITERAL ANY MORE ────────────────────────────────
+ * It used to be `["confirmed", "active", "completed", "in_progress"]`, and two
+ * of those four are fiction:
+ *
+ *   • `active` is not a label of the `rent_buddy_booking_status` enum at all.
+ *     The enum's fourteen labels are pending, confirmed, in_progress, completed,
+ *     cancelled, disputed, declined, expired, cancelled_by_traveler,
+ *     cancelled_by_buddy, completed_pending_traveler_confirmation, scheduled,
+ *     requested, no_show_pending. Because this membership test runs in JS and
+ *     not in the predicate, `active` did not raise 22P02 the way the same
+ *     literal did in CompassAbuseDefenseEngine and interactionPermissions — it
+ *     simply never matched anything. A dead literal, silent.
+ *
+ *   • `confirmed` is written by NO route in src/. `lib/rentBuddyBookingStatus.ts`
+ *     records this: accept writes `scheduled` (rentABuddy.ts:2396). It is
+ *     retained only because pre-existing rows may carry it.
+ *
+ * And the set OMITTED `scheduled` — the one and only status a canonically
+ * accepted booking has. So for a booking between the two parties that had been
+ * accepted but not yet started, this returned null and the viewer never reached
+ * `buddy_provider` / `buddy_customer` at all. The three live values it did admit
+ * (completed, in_progress) plus dead `confirmed` covered the session and after,
+ * never the window between acceptance and start.
+ *
+ * The canonical set is `THREAD_ALLOWED_STATUSES` — the same statuses under which
+ * the two parties are allowed a booking chat thread, which is precisely
+ * "these two are in a service relationship". Reusing it rather than spelling a
+ * fifth hand-rolled list is the point: this file has now been one of eight
+ * places that got this enum wrong.
+ */
+export const BUDDY_RELATIONSHIP_STATUSES = THREAD_ALLOWED_STATUSES;
+
+/**
+ * Determine a buddy service relationship between owner and viewer, if any.
+ *
+ * FAIL-CLOSED ON AN UNREADABLE TABLE. `buddyRole` only ever ADDS context
+ * (`classifyViewerContext` promotes to `buddy_provider` / `buddy_customer`), so
+ * `null` is the least-privileged answer and is the right one when the read
+ * fails. What was wrong before is that the failure was INVISIBLE: `.error` was
+ * never bound, so supabase-js's resolved-error result was indistinguishable
+ * from "no bookings", and the `try/catch` around it was dead code — a PostgREST
+ * failure resolves, it does not throw. The error is now bound and logged.
+ */
+export async function resolveBuddyRole(
   sc: SupabaseClient,
   ownerId: string,
   viewerId: string,
 ): Promise<"provider" | "customer" | null> {
-  const active = ["confirmed", "active", "completed", "in_progress"];
-  try {
-    const { data } = await sc
-      .from("rent_buddy_bookings")
-      .select("buddy_id, traveler_id, status")
-      .or(
-        `and(buddy_id.eq.${ownerId},traveler_id.eq.${viewerId}),and(buddy_id.eq.${viewerId},traveler_id.eq.${ownerId})`,
-      );
-    for (const r of ((data as any[]) ?? [])) {
-      if (!active.includes(String(r.status))) continue;
-      if (r.buddy_id === ownerId && r.traveler_id === viewerId) return "provider"; // owner provides
-      if (r.traveler_id === ownerId && r.buddy_id === viewerId) return "customer"; // owner is customer
-    }
-    return null;
-  } catch {
+  const { data, error } = await sc
+    .from("rent_buddy_bookings")
+    .select("buddy_id, traveler_id, status")
+    .or(
+      `and(buddy_id.eq.${ownerId},traveler_id.eq.${viewerId}),and(buddy_id.eq.${viewerId},traveler_id.eq.${ownerId})`,
+    );
+  if (error) {
+    rootLogger.warn(
+      { table: "rent_buddy_bookings", op: "select", code: (error as any).code ?? null, message: error.message },
+      "resolveBuddyRole read failed — viewer context degrades to non-buddy (fail-closed)",
+    );
     return null;
   }
+  for (const r of ((data as any[]) ?? [])) {
+    if (!isOneOf(BUDDY_RELATIONSHIP_STATUSES, r.status)) continue;
+    if (r.buddy_id === ownerId && r.traveler_id === viewerId) return "provider"; // owner provides
+    if (r.traveler_id === ownerId && r.buddy_id === viewerId) return "customer"; // owner is customer
+  }
+  return null;
 }
 
 /**
