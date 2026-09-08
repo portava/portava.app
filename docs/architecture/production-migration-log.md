@@ -559,3 +559,91 @@ the index exists and has the right shape is strict and fails loudly; only the
 "is it currently exercised" observation is a NOTICE.
 
 Rollback: `db/rollback/2026-09-07-2640-collections-single-default-rollback.sql`.
+
+
+---
+
+## 2026-09-08 — `2410`, `2252`, `2219`: retiring ON-and-dead flags by applying, not by editing
+
+Three class-A applies from the ON-and-dead matrix. Each had already been applied
+and verified on portava-ci and was absent only in production, so these close the
+CI-versus-production divergence rather than adding new work.
+
+### `2410_layover_recommendation_identity` (prod `20260908...`)
+
+Adds `layover_recommendations.rec_key`, a unique index on
+`(session_id, rec_key)`, and the flag
+`layover_stable_recommendation_ids_enabled` seeded **FALSE**.
+
+**CI's rehearsal was vacuous on the only risk that mattered.** CI held **0 rows**
+in `layover_recommendations`; production held **30**, with one session owning
+**13 of them** — all about to carry `rec_key` NULL under a *non-partial* unique
+index. So the rehearsal was redone on production's real rows inside an aborted
+transaction:
+
+| probe | result |
+|---|---|
+| index built over 30 real rows | yes |
+| `rec_key` NULL on all 30 | yes |
+| max rows sharing `(session_id, rec_key)` | **13**, accepted |
+| index is NULLS DISTINCT | confirmed (`indnullsnotdistinct = false`) |
+| duplicate **keyed** pair | **rejected, 23505** |
+
+The last row is the one that makes the index more than decoration: NULLs coexist,
+real keys collide. Both facts had to hold or the migration was wrong in one
+direction or the other.
+
+After: 30 rows, all `rec_key` NULL, index present, new flag FALSE,
+`airport_mode_enabled` and `layover_safety_engine_enabled` still TRUE and
+untouched. `layover_plan_stops` still 0 — the "Add to plan" control still has
+never rendered, because the fix that would give cards an id is behind the FALSE
+flag and an unmerged branch.
+
+**`ALTER TABLE ADD COLUMN` did not re-issue the four privileges** — 2490's
+default-ACL fix survived its first real schema change in production.
+
+### `2252_hidden_gem_contributions` (prod `20260908...`)
+
+The §16.3 gem-contribution observation store. Resolves `hidden_gems_enabled`.
+
+RLS on, two policies (own-row SELECT, own-row INSERT), `anon` **(none)**,
+`authenticated` exactly `INSERT,SELECT`, 0 rows, `hidden_gems` still 6. The
+four-privilege boundary held on the brand-new table — a second confirmation.
+
+### `2219_locate_friends_sessions` (prod `20260908...`)
+
+Four tables + `locate_friends_enabled` seeded FALSE. Resolves the schema half of
+`safe_return_enabled`.
+
+**2219 ships no postconditions.** It could not be given any: it is already
+ledgered on CI by sha256, and `checkMigrationLedger` reports an edited applied
+migration as a finding — the same reason `2510` exists as a separate file rather
+than as an edit to 2335. So the postconditions were supplied externally, and the
+privacy claims in its header were **tested rather than trusted**:
+
+| invariant the header claims | probe | result |
+|---|---|---|
+| "temporary and auto-expiring" | session with `expires_at` 13h out | **refused 23514** |
+| `expires_at` NOT NULL, no default | session with no expiry | **refused 23502** |
+| "opt-in only" | membership with no `consent_source` | **refused 23502** |
+| coordinate only at `precise` | lat/lng at rung `approximate` | **refused 23514** |
+| §23 60-minute decay horizon | position expiring 90 min out | **refused 23514** |
+
+A legitimate 2-hour session inserted cleanly first, so the constraints reject
+the bad case without rejecting the good one. All rolled back; all four tables
+are at 0 rows.
+
+Grant posture verified per table: **client privileges `(none)` on all four**,
+**PUBLIC pseudo-role grants 0 on all four** (worth checking separately — a
+grant to `PUBLIC` has grantee `0` and does not join to `pg_roles`, so an
+ACL-count query that only looks at named roles would miss it), `service_role`
+holding exactly its intended set, and RLS enabled with **no policies** — deny-all
+to clients, locked twice.
+
+### Effect on the matrix
+
+ON-and-dead unguarded: **11 → 7 → 6**. `hidden_gems_enabled` and the three
+layover/trust flags are retired; `safe_return_enabled`'s schema half is closed
+but its **class-B half is not**: the locate-friends read in
+`PassportProjectionService` is still not gated on `locate_friends_enabled`.
+Applying 2219 removed the crash, not the ungated cross-feature read.
