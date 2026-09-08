@@ -4,6 +4,80 @@
 (byte-compared against the `.docx`: the `.txt` is a faithful extraction — the only diff is a
 leading blank line and a trailing newline, so the two agree and either may be read.)
 
+
+> ## RE-CENSUS HEADER — 2026-09-08, measured at HEAD `cdfff599`
+>
+> The body below is unedited and describes `ebe72b34`. **Its headline is stale.**
+> Section **A** at the end of this file re-measures every requirement whose
+> verdict moved, against current HEAD, using the same denominator and the same
+> rule.
+>
+> | Field | Value |
+> | --- | --- |
+> | `generated_at` | 2026-09-08 |
+> | `head_commit` | `cdfff5995c92f7adfb3ae7880496bc94002717e9` (`git rev-parse HEAD`) |
+> | `methodology_version` | 2 — **"How I decided what counts" is unchanged and the denominator is still 266.** Buckets unchanged (`BAC` / `BBW` / `NB` / `CV`), including rule 7 for prohibitions. Only verdicts moved, each citing a `file:line` opened at this commit. |
+> | Scanned | `artifacts/api-server/src/lib/memoryCommandBus.ts` (760 lines), `src/lib/memoryOutbox.ts`, `src/lib/highlightPermissions.ts`, `src/services/memory/MemoryDomainService.ts`, `src/services/memoryProjections/` (6 files), `src/services/memoryRetrieval/searchMemories.ts`, `src/services/highlights/` (6 files), `src/routes/memories.ts`, `src/routes/highlights.ts`, migrations `2710`, `2711`, `2720`–`2724`, `2730`, and `src/lib/deletionDispositions.ts` |
+> | Production state | From the repository's own committed artifacts, not a live query: `src/lib/capability/snapshots/20260908-production-schema.json` (watermark `20260908133347`) and `src/lib/capability/production-applied-migrations.json`. |
+>
+> ### Headline, side by side
+>
+> | Figure | Body (`ebe72b34`) | **Now (`cdfff599`)** |
+> | --- | ---: | ---: |
+> | Denominator | 266 | **266** |
+> | BUILT-AND-CORRECT | 17 | **16** |
+> | BUILT-BUT-WRONG | 59 | **123** |
+> | NOT-BUILT | 188 | **125** |
+> | CANNOT-VERIFY | 2 | **2** |
+> | CONSTRUCTED% | 28.6 % | **52.3 %** (139 / 266 = 52.3 %) |
+> | CORRECT%, raw | 6.4 % | **6.0 %** (16 / 266 = 6.0 %) |
+> | CORRECT%, spec-attributable | 0.0 % | **0.0 %** |
+>
+> ### The three numbers, each said plainly
+>
+> **CONSTRUCTED nearly doubled. CORRECT went DOWN. Spec-attributable CORRECT is
+> still zero.** Those are not in tension; together they are the whole finding.
+>
+> 1. **63 requirements moved `NB → BBW`** because a large, careful,
+>    *explicitly spec-attributable* body of code landed: a command bus with
+>    idempotency keys and a §5 lifecycle machine, a transactional outbox
+>    contract, evidence normalization, episode detection, significance,
+>    a memory graph, retrieval with namespace isolation, a projection registry,
+>    a derivative registry, and five Highlights services. Unlike anything the
+>    body found, these files **cite this specification by path and section in
+>    their headers**.
+> 2. **Not one of them satisfies a requirement end-to-end, because every
+>    migration they need is written and NOT APPLIED.** `2710`, `2711`, `2720`,
+>    `2721`, `2722`, `2723`, `2724` and `2730` appear in none of the 35 entries
+>    of `production-applied-migrations.json`, and none of their tables appears in
+>    the production schema snapshot. `memory_kernel_enabled` therefore has **no
+>    row**, and `lib/featureFlags.isFlagEnabled` is fail-closed, so every write in
+>    `routes/memories.ts` is the direct write it has always been. That is scored
+>    strictly: **code built, storage unapplied ⇒ BBW, never BAC.**
+> 3. **CORRECT fell by one because this pass found a false green in the body**
+>    — H84, below.
+>
+> ### The false green: H84
+>
+> H84 ("Blocking and account deletion suppress future social resurfacing and
+> unlink identity") was **BAC**, citing `lib/deletionDispositions.ts:152, 192,
+> 352` as proof that deletion "reaches … every highlight table". Line 152 is
+> genuine — `memories`, `memory_likes` and `memory_saves` are in
+> **`ERASED_BY_CASCADE`** (`src/lib/deletionDispositions.ts:46`). Line 352 is not.
+> `highlights`, `highlight_likes`, `highlight_reports` and `highlight_views` are
+> in **`UNCLASSIFIED_BACKLOG`** (`:270`, entries `:366-369`) and `highlight_replies`
+> is in `DENOMINATOR_CORRECTION_BACKLOG` (`:544`, entry `:569`). That file's own
+> header says what those lists mean: *"UNCLASSIFIED_BACKLOG — NOT a decision …
+> the data survives deletion and no one has said whether it should"* (`:35-38`).
+> `AccountDeletionService.ts:100-104` says the same in its own words. **No
+> highlight row is erased by account deletion.** H84 → **BBW**: the blocking half
+> is still correct and fail-closed; the deletion half was never true. Emptying
+> that backlog is owner decision **D6** and this census does not close it.
+>
+> The layover census made the identical miscitation from the identical file at
+> L163 — see `census-layover.md` §9.
+>
+
 **Codebase censused:** branch `claude/portava-continuation-uqta94` at `ebe72b34`.
 PRs **#470** (migration 2320) and **#461** (migration 2313) are **not merged into this branch**
 and are therefore **not** counted as built. Both are read and reported separately below.
@@ -608,3 +682,155 @@ policies but cannot see the application query.
 4. **Memory media bypasses the media pipeline entirely.** `memory_items` takes a client-supplied
    URL with no `media_assets` row, no pHash, no moderation state (`routes/memories.ts:708-716`),
    while `post_media` has all three. §20 assumes one pipeline.
+
+---
+
+## A. Re-census — 2026-09-08, HEAD `cdfff599`
+
+Paths relative to `artifacts/api-server/src/`. Same denominator (266), same
+counting rule, same four buckets. Rows not restated here keep the verdict the
+body gave them.
+
+### A.1 What landed, verified rather than taken on trust
+
+| Claim | Verified? | Where |
+| --- | --- | --- |
+| A command boundary with idempotency keys, per-attempt audit, transactional outbox | **In code, yes. In production, no.** | `lib/memoryCommandBus.ts:281` (11 command types), `:434` `IDEMPOTENCY_KEY_HEADER`, `:440` envelope reader, `:470` `executeMemoryCommand`; `lib/memoryOutbox.ts:67-79` (§17's fourteen event names verbatim); `services/memory/MemoryDomainService.ts:121` `auditCommand`, `:338` `dispatchMemoryCommand`. The kernel tables and `public.memory_kernel_execute` are migrations **2710 / 2711, NOT applied**. |
+| The flag is seeded FALSE | **Stronger than that — the row does not exist.** | 2710 seeds `memory_kernel_enabled`; 2710 is unapplied, so the production flag set (`lib/capability/snapshots/20260908-production-schema.json`) contains no such key, and `isFlagEnabled` is fail-closed. Every memory write in production is the legacy direct write, audited only by a log line marked `durable:false` (`MemoryDomainService.ts:344-354`). |
+| Seven routes cross the boundary | **Yes** | `routes/memories.ts:643` (CREATE), `:1051` (PATCH → ARCHIVE / CONFIRM / CHANGE_VISIBILITY / CHANGE_PLACE / UPDATE via `commandTypeForPatch`, `MemoryDomainService.ts:152`), `:1125` (DELETE), `:1196` (ADD_MEDIA), `:1286` (REMOVE_MEDIA), `:1459` (ADD_PERSON / REMOVE_PERSON) |
+| MERGE / SPLIT / PIN / UNPIN / PUBLISH_HIGHLIGHT / HIDE_HIGHLIGHT / SET_RESURFACING_POLICY are **not** declared | **Yes, and the code says why** | `lib/memoryCommandBus.ts:306-313` — `MEMORY_COMMAND_TYPES_NOT_DECLARED`, each with its reason. They stay NOT-BUILT. |
+| `memoryProjections/**` — registry, evidence, episodes, significance, graph | **Yes, and reachable from nothing** | `evidence.ts:246, 435`; `episodeDetection.ts:244`; `significance.ts:162`; `memoryGraph.ts:246`; `projectionRegistry.ts:501`; `derivativeRegistry.ts:287`. **No route or lib outside `src/test/` imports any of them** — grepped across `src/routes/`, `src/lib/`, `src/services/` and `src/scripts/` at this commit. |
+| `memoryRetrieval/**` | **Yes, test-only** | `searchMemories.ts:169`, namespace table at `:49`. Same reachability finding. |
+| `highlights/**` — ranking, lifecycle, projection policy, resurfacing, revocation | **Three of five are wired** | Wired: `highlightResurfacing` (`routes/highlights.ts:18`), `highlightProjectionPolicy` (`:23`), `highlightRevocation` (`:24`, executed `:945`). **Not wired:** `highlightRanking.ts` and `highlightLifecycle.ts` — test-only. |
+| `highlightPermissions.ts` reconciled to one rule | **Yes, and it is live** | `lib/highlightPermissions.ts:1-55` records the fork it closed: `canEngageHighlight` had **zero callers** while five routes re-derived the rule inline and disagreed with it on self-like and self-reply. The routes' behaviour was kept — widening is a product decision — and every route now calls `canViewHighlight` / `canEngageHighlight` (`routes/highlights.ts:6-13`). No migration is involved, so this one **is** in production. |
+| `highlights.archived_at` wired as a reversible archive | **Yes, and it is live** | `routes/highlights.ts:52` (projected), `:995` archive, `:1026` unarchive, `:1063` `GET /highlights/archived`, and `.is("archived_at", null)` on the three list reads (`:575`, `:739`, and the following-feed). **`archived_at` exists on `public.highlights` in production** (schema snapshot), so this is the one Highlights change in this range that a deployed database can actually hold. |
+| 2710, 2711, 2720–2724, 2730 written and NOT applied | **Yes** | None appears among the 35 entries in `lib/capability/production-applied-migrations.json`; none of their tables (`memory_domain_events`, `memory_event_outbox`, `highlight_resurfacing_preferences`, `highlight_projection_policies`, `highlight_sources`, `highlight_revocation_log`, `memory_derivative_registry`) appears in the production schema snapshot. `routes/highlights.ts:73-75` and `highlightProjectionPolicy.ts:228` say so in their own words. |
+
+### A.2 The scoring rule applied here, stated once
+
+**A migration written but not applied means the storage does not exist.** Code
+that degrades honestly when its table is absent is BUILT; the requirement it
+serves is not satisfied. Every such row below is **BBW** with the reason "code
+built, storage unapplied (migration NNNN)", never BAC. Applied uniformly, that
+is what keeps CORRECT at 6.0 % while CONSTRUCTED moves 24 points.
+
+**A second rule, applied for the same reason:** a module that no route, lib or
+script imports outside `src/test/` is BUILT and is BBW. It is not BAC, because
+a guarantee that has never had an opportunity to hold has not held. This is why
+**H64** ("significance internal, never a public social score") and **H65**
+("media quality must not dominate significance") are **BBW** and not BAC even
+though `redactSignificanceForAudience` (`significance.ts:291`) and
+`MEDIA_QUALITY_MAX_CONTRIBUTION` (`:86`) are exactly the concrete artifacts rule
+7 asks for: the score they govern is not reachable from any route, so nothing
+has yet been protected.
+
+### A.3 Verdict changes — table rows
+
+| id | Was | Now | Evidence at `cdfff599` | Attr |
+|---|---|---|---|---|
+| H84 | BAC | **BBW** | **A false green, corrected.** Blocking half stands (`routes/memories.ts:449-465`, `routes/highlights.ts:872-880`). Deletion half is false: `highlights`, `highlight_likes`, `highlight_reports`, `highlight_views` are in `UNCLASSIFIED_BACKLOG` (`lib/deletionDispositions.ts:366-369`), `highlight_replies` in `DENOMINATOR_CORRECTION_BACKLOG` (`:569`); `AccountDeletionService.ts:100-104` confirms. `memories` / `memory_likes` / `memory_saves` remain genuinely cascaded (`:152`). | pre |
+| H7 | NB | **BBW** | MemoryEvidenceService: `services/memoryProjections/evidence.ts` — normalization (`:246`), dedup (`:332`), precedence merge (`:364`), eligibility (`:435`), versioned (`:34`, `:36`). No route imports it; `memory_evidence` does not exist. | spec |
+| H8 | NB | **BBW** | EpisodeDetectionService: `episodeDetection.ts:244` `detectEpisodes`, deterministic (sorted output, digest ids), `EPISODE_DETECTOR_VERSION` (`:32`). No inputs exist — `memory_evidence` and `memory_episodes` are still absent. | spec |
+| H9 | NB | **BBW** | MemoryEligibilityService: `evidence.ts:435` `evaluateEligibility` with a closed rejection-reason set (`:391`). Test-only. | spec |
+| H12 | NB | **BBW** | HighlightService: `services/highlights/` — ranking (`highlightRanking.ts:278`), lifecycle (`highlightLifecycle.ts:256`), projection policy, resurfacing, revocation. Three are wired into `routes/highlights.ts`; the two that would build and rank a Highlight are not. | spec |
+| H13 | NB | **BBW** | MemorySearchService: `services/memoryRetrieval/searchMemories.ts:169`. Test-only; the projections it reads have no registry rows because 2730 is unapplied. | spec |
+| H42 | NB | **BBW** | `ConfidenceBand` is declared with the spec's exact four members (`evidence.ts:59`) and computed (`confidenceBandOf`, `:562`). No column stores it; nothing consumes it. | spec |
+| H45 | NB | **BBW** | `MemoryRelationType` (`memoryGraph.ts:54, 58`) and a validated `MemoryEdge` (`:64, 73`). `memory_relations` still does not exist. | spec |
+| H46 | NB | **BBW** | `HIGHLIGHT_LIFETIME_CLASSES` and §12's defaults table verbatim (`highlightLifecycle.ts:61, 73`). `highlights.lifetime_class` does not exist (2723 unapplied). | spec |
+| H47 | NB | **BBW** | Truth precedence is encoded as an ordering, not prose: `precedenceRank` (`evidence.ts:81`) with `mergeByPrecedence` (`:364`). Governs no stored fact. | spec |
+| H63 | NB | **BBW** | `scoreSignificance` (`significance.ts:162`) returns the score **with every contribution that produced it** — input code, weight, delta, cap, overriding rule — under `SIGNIFICANCE_POLICY_VERSION` (`:34`). Reachable from nothing. | spec |
+| H64 | NB | **BBW** | `SIGNIFICANCE_FIELDS` + `redactSignificanceForAudience` (`significance.ts:285, 291`) strip the score for an audience. Scored BBW, not BAC, per A.2: nothing publishes the score, so the strip has never run in anger. | spec |
+| H65 | NB | **BBW** | `MEDIA_QUALITY_MAX_CONTRIBUTION` (`significance.ts:86`) caps media quality at its own weight. Same limit as H64. | spec |
+| H66 | NB | **BBW** | Explicit intent is a hard rule inside `scoreSignificance` rather than a weight (`significance.ts:162` and the contribution list it returns). Same limit. | spec |
+| H75 | NB | **BBW** | `MEMORY_CONSENT_DIMENSIONS` (`highlightProjectionPolicy.ts:63`) is the spec's five, with `consentFromRow` / `mayProject` (`:87, 101`) treating `unknown` as withheld. `highlight_projection_policies` is 2721, **unapplied**, so `readProjectionPolicies` returns `absent` and nothing is enforced (`:228`). | spec |
+| H81 | NB | **BBW** | `clampLocationToPrecision` (`highlightProjectionPolicy.ts:165`) and `resolveLocationDisclosure` (`:205`), wired into the feeds (`routes/highlights.ts:23`, applied at `:128`). Unenforced today for exactly the reason the file states: no policy table. | spec |
+| H82 | NB | **BBW** | Same clamp, and `strictestPrecision` (`:134`) means a policy can only tighten. Same unapplied storage. | spec |
+| H86 | NB | **BBW** | `SENSITIVE_CONTEXT_CATEGORIES` (`highlightResurfacing.ts:66`) plus `SENSITIVE_CATEGORY_REGISTRY_MAPPING` (`:93`) binding them to the existing `lib/protectedLocations.ts` registry — which is the connection the body found missing. The mapping is declared; no read on either surface consults it yet. | spec |
+| H89 | NB | **BBW** | `HIDE_PERSON_FROM_RESURFACING` is a declared control (`highlightResurfacing.ts:129`) and is applied on the proactive feeds by owner id (`routes/highlights.ts:112`). Storage is 2720, **unapplied**: `applyResurfacingControls` logs "§11 resurfacing controls are NOT DEPLOYED — feed served without them" (`:96-102`) and suppresses nothing. | spec |
+| H90 | NB | **BBW** | `HIDE_TRIP` declared (`highlightResurfacing.ts:129`) with its surface effects (`:157`). Same unapplied storage; no trip-keyed subject reaches the feed filter. | spec |
+| H91 | NB | **BBW** | `KEEP_PRIVATE_FOREVER` declared and in `FEED_SUPPRESSING_CONTROLS` (`routes/highlights.ts:79`). Same unapplied storage. | spec |
+| H99 | NB | **BBW** | `HIGHLIGHT_RANKING_FACTORS` (`highlightRanking.ts:61`) is §12's seven verbatim and `rankHighlights` (`:278`) computes them. No `ranking_score` column (2723) and no route calls it — `routes/highlights.ts` still orders by `created_at`. | spec |
+| H100 | NB | **BBW** | `manual_pin` is the first ranking factor and outranks the rest by construction. No pin column, no pin route, no pin in the client. | spec |
+| H101 | NB | **BBW** | `DIVERSITY_DIMENSIONS` (`highlightRanking.ts:74`) is trip/person/venue/activity, applied inside `rankHighlights`. Unreachable. | spec |
+| H175 | NB | **BBW** | `Idempotency-Key` is now read on the memory command routes (`lib/memoryCommandBus.ts:434, 440`; `routes/memories.ts:490`) and carried into every dispatch. The receipt table is 2710, **unapplied**, so with the kernel off a replayed key produces a second write and only a log line records the key (`MemoryDomainService.ts:344-354`). | spec |
+| H187 | NB | **BBW** | `DO_NOT_RESURFACE` is declared, its surface effects are enumerated against §21's table (`highlightResurfacing.ts:157`), and it is applied to both proactive feeds. Storage unapplied (2720). Still no such control on a **Memory** — this is the Highlights surface only. | spec |
+| H188 | NB | **BBW** | `RETAIN_BUT_DO_NOT_PERSONALIZE` is separated from `DO_NOT_RESURFACE` — the body's complaint that the two were inseparable no longer holds in the vocabulary (`highlightResurfacing.ts:144-157`). Storage unapplied. | spec |
+| H192 | NB | **BBW** | `REVOCATION_DESTINATIONS` (`highlightRevocation.ts:168`) is §21's eight verbatim and `executeRevocation` (`:305`) is wired into `DELETE /highlights/:id` (`routes/highlights.ts:945`). **One of the eight is actually reached** — `cached_narrative`, and the outcome text says frankly that even that is guaranteed only for the in-process L1 cache. The rest report `not_applicable` or `not_implemented`, which the type distinguishes from success (`:180-188`). | spec |
+| H200 | NB | **BBW** | The publication policy exists as an artifact (`highlightProjectionPolicy.ts:333` `PROJECTION_POLICY_COLUMNS`, `:364` `readProjectionPolicies`) and is consulted on the feeds. Its table is 2721, **unapplied**, so there is no policy to be behind. | spec |
+| H201 | NB | **BBW** | The precision ladder is now applied on a durable public surface — Highlight `location_name` / `city` / `country` are rewritten to the owner's rung before serving (`routes/highlights.ts:128` `applyLocationPrecision`, `highlightProjectionPolicy.ts:165`). It does not reach a Memory's `location_lat` / `location_lng`, and it is unenforced until 2721 lands. | spec |
+| H209 | NB | **BBW** | `PERSON_VISIBILITY_LADDER` is §10's five rungs (`highlightProjectionPolicy.ts:261`) and `discloseParticipant` (`:307`) answers per viewer. Not wired to `memory_tags`; no per-participant policy is stored. | spec |
+| H210 | NB | **BBW** | `canUseForPersonalization` exists in substance: `CONTROL_EFFECTS` names `personalization` as a suppressible surface distinct from resurfacing and recap (`highlightResurfacing.ts:144-157`), so the question is answerable. Storage unapplied; no personalization path consults it. | spec |
+
+### A.4 Verdict changes counted in prose
+
+These sections count requirements in prose rather than in a row the tool can
+read; the body does the same, and the counts below follow its own enumeration.
+
+| Section | Requirement(s) | Was | Now | Evidence |
+| --- | --- | --- | --- | --- |
+| §6 (4) | H54 normalization · H55 eligibility gate · H56 rejection-reason registry · H57 evidence-source strength | NB ×4 | **BBW ×4** | `evidence.ts:246` (normalize, with a closed rejection set at `:192`), `:435` (eligibility, reasons at `:391`), `:114` `EVIDENCE_SOURCE_STRENGTH` per source type. Test-only; no `memory_evidence` table. |
+| §7 (5) | H58 deterministic grouping · H59 boundary features · H60 midnight must not split · H61 versioned reason codes · H62 dedup relations | NB ×5 | **BBW ×5** | `episodeDetection.ts:244` (no clock, no I/O, sorted output, digest ids), `:46` `BOUNDARY_FEATURES`, the midnight rule implemented rather than commented, `:71` `EPISODE_REASON_CODES` under `:32` `EPISODE_DETECTOR_VERSION`, `:375` `relateEpisodes`. No detector inputs exist. |
+| §13 (3) | H104 compression hierarchy · H105 Life Chapters as projections · H106 edge types | NB ×3 | **BBW ×3** | `memoryGraph.ts:41` `COMPRESSION_LEVELS`, `:246` `buildCompressionHierarchy`, `:227` `buildLifeChapters` (ids, counts and a derived label only — no caption or media is copied upward, which is the §28.8 rule), `:58` `MEMORY_RELATION_TYPES`. Test-only. |
+| §15 (5) | H110 signature · H111 deterministic before semantic · H112 ranking dimensions · H113 namespace isolation · H114 revocation of derivatives | NB ×5 | **BBW ×5** | `searchMemories.ts:169`, `:49` `NAMESPACE_PROJECTIONS` (checked on the way IN), `:65` `RANKING_WEIGHTS`, `:141` a lexical scorer used only after the deterministic pass, `derivativeRegistry.ts:450` `revokeDerivativesForMemory`. Test-only, and the registry table is 2730, unapplied. |
+| §17 (33) | `CONFIRM_MEMORY` | NB | **BBW** | Declared (`memoryCommandBus.ts:282`), mapped to `memory.confirmed` (`:318`), and issued by the PATCH route for `state: "published"` (`MemoryDomainService.ts:166`). No durable receipt (2710). |
+| §17 | `memory.created` · `.confirmed` · `.corrected` · `.archived` · `.deleted` · `.visibility_changed` | NB ×6 | **BBW ×6** | Declared verbatim (`memoryOutbox.ts:67-74`) and mapped from every declared command (`memoryCommandBus.ts:317-335`). **None is emitted**: the emit is inside `memory_kernel_execute`, migration 2711, unapplied. `memory.merged` / `.split` and the five `highlight.*` events stay NB. |
+| §17 | transactional outbox | NB | **BBW** | `lib/memoryOutbox.ts` is the payload and ordering contract; the atomic write is 2710/2711's SQL function. Unapplied, so no outbox row has ever been written. "Idempotent consumers" stays NB — there are none. |
+| §18 (12) | PlaceMemoryProjection · PeopleMemoryProjection | NB ×2 | **BBW ×2** | Both are defined and marked `availability: "BUILDABLE"` (`projectionRegistry.ts:339, 364`) with §18's own audience vocabulary (`:56`). Nothing builds them. |
+| §18 | Derivative registration (source version, type, destination, generatedAt, revocation state) | NB | **BBW** | `derivativeRegistry.ts:252` `RegistrationRow`, `:287` `rebuildProjection`, `:395` `projectionStaleness`, `:450` revoke. Table is `memory_derivative_registry`, migration 2730, **unapplied**. |
+| §26 (8) | Phase 0 Contracts · Phase 2 Episode candidates · Phase 4 Retrieval · Phase 6 Resurfacing | NB ×4 | **BBW ×4** | Each phase's code artifacts now exist and are cited above; each phase's storage is an unapplied migration. Phases 5 and 7 stay NB. |
+
+### A.5 What did NOT move, and why
+
+| Requirement | Stays | Why |
+| --- | --- | --- |
+| H94–H98 (LIVE / DAY / TRIP / SEASONAL / PERMANENT) | **NB** | The classes are declared, and `representableLifetimeClasses` (`highlightLifecycle.ts:106`) answers, for a database without `highlights.lifetime_class`, that **all five are unrepresentable** — "migration 2723 not applied", in the function's own words. Declaring a vocabulary a database cannot hold is not building the class. |
+| H23, H24, H26–H30, H32–H37 (13 storage tables) | **NB** | A written migration is not a table. `memory_domain_events`, `memory_event_outbox`, `memory_derivative_registry`, `highlight_sources`, `highlight_revocation_log`, `highlight_resurfacing_preferences` and `highlight_projection_policies` are all in unapplied migrations and none appears in the production schema snapshot. `memory_relations`, `memory_corrections`, `memory_entity_links` are not written at all. |
+| H115–H128 (Compass memory tools and LLM boundary) | **NB ×14** | `compass/CompassTools.ts` is unchanged — re-read at this commit, no memory-facing tool, and no memory-facing LLM path exists to constrain. |
+| §24's twelve named metrics | **NB ×12** | Re-grepped: none of the twelve names occurs in `.ts`, `.sql` or `.md`. `readMemoryCommandRejectedTotal` (`memoryCommandBus.ts:412`) is a counter, but it is not one of them. |
+| §25's 12 fixtures, 9 invariants, 9 chaos scenarios | **unchanged** | Ten new memory/highlight suites landed, but they test the new modules, not the spec's named fixtures. I declined to re-map them onto §25's list: doing so would be scoring a resemblance. |
+| H79 (public search must query a derivative, never canonical + post-filter) | **BBW** | `routes/memories.ts:423-465` is untouched by this range: still the service client over canonical `memories`, still `.limit()` before block filtering. `PublicMemoryProjection` exists in the registry and nothing routes through it. This is the single largest gap between the code that landed and the code that serves traffic. |
+| H93 (Highlights are projections over Memories) | **BBW** | `highlight_sources` — the link that would give a Highlight a source Memory — is migration 2722, written, **unapplied**, and has no TypeScript writer. `POST /highlights` still inserts a client-supplied `mediaUrl`. |
+| H103 (Highlights remain finite) | **BBW** | A bound now exists (`routes/highlights.ts:419-420`, `FOLLOWING_FEED_DEFAULT_LIMIT`) but only behind `highlights_feed_bounded_enabled` (migration 2339), which is **not in the applied list**, so the flag has no row and `isFlagEnabled` fails closed. The following-feed is unbounded in production. |
+| H204 | **CV** | Still cannot-verify, and for a sharper reason than the body had. `2150_passport_memories_write_boundary.sql` is not among the 35 entries in `production-applied-migrations.json` — but that file's own header says it is *"a record of what WE applied, not proof of everything that is applied … a staleness tripwire, not an inventory"*. Absence there is not proof of absence in production. Resolving H204 needs a live query, which this pass did not make. |
+| H197 | **CV** | No backfill code exists in the branch. Unchanged. |
+| H2 (automatic Memories private-first) | **BBW** | `routes/stories.ts` "save to Highlight" is outside this range and still hard-codes `visibility: "public"`. |
+| H50 (Memory lifecycle machine) | **BBW** | Genuinely improved and **live**: `assertLifecycleTransition` (`memoryCommandBus.ts:253`) runs on every PATCH regardless of the kernel flag (`MemoryDomainService.ts:224`), so an illegal transition is now refused in production. It stays BBW because the stored vocabulary is still `0067`'s five and none of `CANDIDATE`, `CONFIRMED`, `MERGED`, `REJECTED` can be written. |
+| H51 (Highlight lifecycle machine) | **BBW** | Also improved and live: `archived_at` is a real reversible archive on a column production has, and `isHighlightActive` distinguishes it from the terminal `deleted_at` (`lib/highlightPermissions.ts:95`). `DRAFT`, `PINNED` and `HIDDEN` remain unstorable (2723). |
+| H198 (owner-only by default) | **BBW** | Every memory and highlight read still runs on `getServiceClient()`; the effective default is still the TypeScript helper. What changed is that there is now exactly **one** such helper instead of five inline copies (`lib/highlightPermissions.ts:1-55`) — a real reduction in the number of places the default can drift, and not a move to the database. |
+
+### A.6 Attribution — CONSTRUCTED is now spec-attributable; CORRECT still is not
+
+The body's central claim was *"not one file cites this spec"*. That is no longer
+true. `lib/memoryCommandBus.ts:4-16`, `lib/memoryOutbox.ts:4-14`,
+`services/memory/MemoryDomainService.ts:5`,
+`services/memoryProjections/{evidence,episodeDetection,significance,memoryGraph,projectionRegistry,derivativeRegistry}.ts`,
+`services/memoryRetrieval/searchMemories.ts:4-14`,
+`services/highlights/{highlightLifecycle,highlightRanking,highlightRevocation,highlightProjectionPolicy,highlightResurfacing}.ts`
+and `lib/highlightPermissions.ts:4-14` each open by naming
+`Portava_Highlights_Memories_Development_Architecture_Spec_v1` and the sections
+they implement, and several cite this census by requirement id.
+
+**63 of the 123 BBW verdicts are spec-attributable.** **0 of the 16 BAC
+verdicts are.** That is the honest summary of this range: the specification
+finally has code written for it, and none of that code has yet made a single
+requirement true end-to-end, because the eight migrations it rests on have not
+been applied.
+
+### A.7 Owner decisions this pass surfaces
+
+1. **Apply 2710 + 2711, or stop calling the command bus a boundary.** Until they
+   land, `memory_kernel_enabled` has no row, every write is the unaudited direct
+   write, and §17 cannot leave BBW no matter how good `memoryCommandBus.ts` is.
+2. **Apply 2720 + 2721.** The §10/§11 controls are wired into the live feeds and
+   suppress nothing; `routes/highlights.ts:96-102` logs that on every request.
+   A user's "never show me this again" is currently a no-op the server announces
+   to its own logs.
+3. **Apply 2730** before any derivative is built, since it is the cleanup graph
+   deletion would need.
+4. **D6 for highlights.** `highlights`, `highlight_likes`, `highlight_reports`,
+   `highlight_views` and `highlight_replies` all survive account deletion (H84).
+   That is the D6 backlog, it is an owner decision, and this census does not
+   close it — it only stops reporting it as closed.
+5. **H79 is not a migration problem.** The public discovery feed reads canonical
+   `memories` through the service client and post-filters blocks. Nothing in this
+   range touched it, and `PublicMemoryProjection` exists precisely to replace it.
