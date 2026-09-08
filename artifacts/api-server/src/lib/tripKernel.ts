@@ -390,7 +390,66 @@ export function planCommandTypeForPatch(patch: {
  * database error, so `error` is read explicitly and becomes a counted
  * TRIP_KERNEL_UNAVAILABLE rejection rather than an empty result read as success.
  */
+
+/**
+ * The plan interval this command would LEAVE BEHIND, when that interval is
+ * inverted; null otherwise.
+ *
+ * ADD_PLAN carries both endpoints in the payload, so its own pair is the
+ * answer. The UPDATE family carries a PATCH, and the effective value of each
+ * endpoint is the patch's when the patch names it and the stored row's
+ * otherwise — which this function cannot see. So it judges only what it can:
+ *
+ *   • the patch names BOTH endpoints  → the merged interval IS the patch's, and
+ *     an inversion here is certain. Refused.
+ *   • the patch names ONE             → the other endpoint is whatever the row
+ *     holds. Undecidable here, and NOT refused: guessing would reject a legal
+ *     command. Migration 2750's CHECK catches it at the write, which is why the
+ *     constraint is the guarantee and this is only the good error message.
+ *
+ * Stated rather than hidden, because "validated in TS" would otherwise read as
+ * a stronger claim than it is.
+ */
+function invertedPlanInterval(cmd: TripCommand): { starts: string; ends: string } | null {
+  const p = (cmd.payload ?? {}) as Record<string, unknown>;
+  const src = cmd.type === "ADD_PLAN" ? p : ((p.patch as Record<string, unknown> | undefined) ?? {});
+  const starts = src.starts_at;
+  const ends = src.ends_at;
+  if (typeof starts !== "string" || typeof ends !== "string") return null;
+  const a = Date.parse(starts);
+  const b = Date.parse(ends);
+  // An unparseable timestamp is the function's business, not this one's: it
+  // returns TRIP_COMMAND_MALFORMED with the real SQLSTATE behind it.
+  if (!Number.isFinite(a) || !Number.isFinite(b)) return null;
+  return b < a ? { starts, ends } : null;
+}
+
 export async function executeTripCommand(sc: any, cmd: TripCommand): Promise<TripKernelResult> {
+  // §4.4, the plan-item half. The kernel FUNCTION already refuses an inverted
+  // range on the TRIP (start_date > end_date, on create and on update, using the
+  // merged value). A plan item's interval was never checked anywhere, so
+  // ADD_PLAN and the UPDATE family would persist an item that ends before it
+  // starts. Migration 2750 adds the CHECK that makes that impossible for ANY
+  // writer; this is the typed refusal, so a caller gets a modelled
+  // TRIP_TEMPORAL_RANGE_INVERTED instead of a raw 23514 surfacing as a 500.
+  //
+  // THE SPLIT IS REAL AND IS NOT PRETENDED AWAY: a service_role caller invoking
+  // the RPC directly skips this and meets the constraint instead — a correct
+  // outcome with a worse error. The check belongs inside trip_kernel_execute,
+  // and every kernel change replaces that 700-line function in full, so it
+  // should ride along with the next migration that replaces it for its own
+  // reasons. Recorded in census-trips TR54.
+  const inverted = invertedPlanInterval(cmd);
+  if (inverted) {
+    countRejection("TRIP_TEMPORAL_RANGE_INVERTED");
+    return {
+      ok: false,
+      reason: "TRIP_TEMPORAL_RANGE_INVERTED",
+      detail: `ends_at ${inverted.ends} is before starts_at ${inverted.starts}`,
+      contractVersion: null,
+    };
+  }
+
   const p_command = {
     command_id: cmd.commandId,
     trip_id: cmd.tripId,
