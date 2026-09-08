@@ -474,12 +474,25 @@ router.post("/trips/:tripId/geofence", async (req, res) => {
     updated_at:                 new Date().toISOString(),
   };
 
-  // Upsert on trip_id (UNIQUE added in migration 0039)
-  const { data: existing } = await db
+  // Upsert on trip_id (UNIQUE added in migration 0039).
+  // supabase-js RESOLVES on a DB error, so an unbound `error` read an
+  // unreadable plan_geofences row as "no geofence set yet" and took the INSERT
+  // branch against a trip that already has one: the unique index rejects it and
+  // the host's edit to the meeting point — radius, check-in window, exact
+  // visibility — is reported as a raw db_error while the OLD geofence stays
+  // live. The same "refuse rather than guess" rule the admin-settings read
+  // above already follows.
+  const { data: existing, error: existingErr } = await db
     .from("plan_geofences")
     .select("id")
     .eq("trip_id", tripId)
     .maybeSingle();
+
+  if (existingErr) {
+    req.log.error({ err: existingErr, tripId }, "geofence: existing-row lookup failed — refusing to insert over a possible existing geofence");
+    sendError(res, "db_error", existingErr.message);
+    return;
+  }
 
   let writeError: any = null;
   if ((existing as any)?.id) {

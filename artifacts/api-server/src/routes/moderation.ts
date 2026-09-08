@@ -103,8 +103,17 @@ router.post("/moderation/report", asyncHandler(async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
-  // Duplicate open-report collapse
-  const { data: existing } = await sc
+  // Duplicate open-report collapse.
+  //
+  // Deliberately NOT fail-closed: this is the abuse-reporting path, and
+  // refusing to record a safety report because the dedupe lookup was
+  // unreadable would be a strictly worse failure than filing a second copy of
+  // one the reporter already sent (the moderation queue collapses those; a
+  // report never filed is gone). supabase-js RESOLVES on a DB error, though, so
+  // without binding `error` the collapse silently stopped happening and looked
+  // identical to a first-time report — hence the explicit log, so a run of
+  // duplicate open reports has a visible cause.
+  const { data: existing, error: existingErr } = await sc
     .from("moderation_reports")
     .select("id")
     .eq("reporter_id", user.id)
@@ -112,6 +121,13 @@ router.post("/moderation/report", asyncHandler(async (req, res) => {
     .eq("subject_id", subjectId)
     .eq("status", "open")
     .maybeSingle();
+
+  if (existingErr) {
+    req.log.error(
+      { err: existingErr, subjectType, subjectId },
+      "moderation_reports duplicate-collapse read failed — filing the report anyway; it may duplicate an existing open one",
+    );
+  }
 
   if (existing) {
     res.status(200).json({

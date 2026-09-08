@@ -385,12 +385,24 @@ router.post("/admin/featured/approve/:postId", asyncHandler(async (req, res) => 
   // Load any existing featured row for this (post_id, category) pair.
   // This prevents double-incrementing featured_count when the admin re-approves
   // a row that is already live (idempotency guard).
-  const { data: existingFeatured } = await sc
+  // supabase-js RESOLVES on a DB error, so an unbound `error` here made an
+  // unreadable portava_featured read look exactly like "no row yet":
+  // wasAlreadyLive would be false, the early return would be skipped, and the
+  // upsert below would run adjustProfileCounter(+1) a SECOND time on a row that
+  // was already live — permanently inflating the author's featured_count with
+  // no way to tell how many times it happened. Refuse instead.
+  const { data: existingFeatured, error: existingFeaturedErr } = await sc
     .from("portava_featured")
     .select("id, status")
     .eq("post_id", postId)
     .eq("category", category)
     .maybeSingle();
+
+  if (existingFeaturedErr) {
+    req.log?.error({ err: existingFeaturedErr, postId, category }, "portava_featured idempotency read failed — refusing to approve");
+    sendError(res, "db_error", existingFeaturedErr.message);
+    return;
+  }
 
   const wasAlreadyLive = (existingFeatured as any)?.status === "live";
 

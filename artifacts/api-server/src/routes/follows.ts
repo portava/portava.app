@@ -61,13 +61,25 @@ router.post("/users/:userId/follow", async (req, res) => {
         return;
       }
 
-      // Check for an existing request in this direction
-      const { data: existing } = await client
+      // Check for an existing request in this direction.
+      // supabase-js RESOLVES on a DB error, so an unbound `error` read an
+      // unreadable friend_requests table as "no request exists" and fell all
+      // the way through to the INSERT at the bottom of this branch — creating a
+      // second row for a pair that already has one, which either duplicates the
+      // outgoing request or dies on the pair unique index and surfaces as an
+      // unexplained db_error instead of the idempotent 200 this branch owes.
+      const { data: existing, error: existingErr } = await client
         .from("friend_requests")
         .select("id, status")
         .eq("requester_id", user.id)
         .eq("recipient_id", target)
         .maybeSingle();
+
+      if (existingErr) {
+        req.log.error({ err: existingErr }, "outgoing friend_requests lookup failed — refusing to create a possible duplicate");
+        sendError(res, "db_error", existingErr.message);
+        return;
+      }
 
       if (existing) {
         if (existing.status === "pending") {
@@ -93,14 +105,26 @@ router.post("/users/:userId/follow", async (req, res) => {
         return;
       }
 
-      // Check if target already sent us a request → auto-accept both sides
-      const { data: incoming } = await client
+      // Check if target already sent us a request → auto-accept both sides.
+      // supabase-js RESOLVES on a DB error, so an unbound `error` read an
+      // unreadable friend_requests table as "they never asked" and skipped the
+      // auto-accept — inserting a fresh outgoing request against a pending
+      // INCOMING one, so two people who each asked to be friends are both left
+      // waiting on each other instead of becoming friends, and no
+      // user_friendships row is ever written.
+      const { data: incoming, error: incomingErr } = await client
         .from("friend_requests")
         .select("id")
         .eq("requester_id", target)
         .eq("recipient_id", user.id)
         .eq("status", "pending")
         .maybeSingle();
+
+      if (incomingErr) {
+        req.log.error({ err: incomingErr }, "incoming friend_requests lookup failed — refusing to bypass auto-accept");
+        sendError(res, "db_error", incomingErr.message);
+        return;
+      }
 
       if (incoming) {
         const now = new Date().toISOString();

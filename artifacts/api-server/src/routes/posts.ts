@@ -3390,8 +3390,14 @@ router.post("/posts/:postId/comments/:commentId/replies", async (req, res) => {
   if (!post) { sendError(res, "not_found", "Post not found"); return; }
   if (!(await checkEngagePermission(res, post as any, user.id, client))) return;
 
-  // Verify parent comment belongs to the post and is a root comment (one-level depth guard)
-  const { data: parent } = await sc.from("posts_comments").select("id, post_id, parent_comment_id").eq("id", commentId).is("deleted_at", null).maybeSingle();
+  // Verify parent comment belongs to the post and is a root comment (one-level depth guard).
+  // supabase-js RESOLVES on a DB error, so an unbound `error` collapsed "this
+  // comment was deleted" and "posts_comments could not be read" into the same
+  // 404: the reply is correctly refused either way, but the author is told
+  // their parent comment is gone — so they stop retrying a reply that a retry
+  // would have delivered. Report the outage as an outage.
+  const { data: parent, error: parentErr } = await sc.from("posts_comments").select("id, post_id, parent_comment_id").eq("id", commentId).is("deleted_at", null).maybeSingle();
+  if (parentErr) { req.log.error({ err: parentErr, commentId }, "reply parent-comment lookup failed"); sendError(res, "db_error", parentErr.message); return; }
   if (!parent || (parent as any).post_id !== postId) { sendError(res, "not_found", "Comment not found"); return; }
   if ((parent as any).parent_comment_id !== null) { sendError(res, "invalid_payload", "Cannot reply to a reply — only one level of nesting is supported"); return; }
 

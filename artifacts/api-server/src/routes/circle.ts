@@ -411,12 +411,24 @@ router.patch("/circle/settings", async (req, res) => {
   }
   const { globalEnabled, visibilityMode, tripSharingDefault, eventSharingDefault, isPaused, consentVersion } = parsed.data;
 
-  // Fetch current state to detect enable transition
-  const { data: existing } = await sc
+  // Fetch current state to detect enable transition.
+  // supabase-js RESOLVES on a DB error, so an unbound `error` made an
+  // unreadable circle_visibility_settings row look like "sharing has never been
+  // enabled": isEnabling would be true for a user who ALREADY consented, and
+  // the upsert below would then overwrite their consent_version /consented_at
+  // with today's date — destroying the original location-sharing consent
+  // timestamp, which is the record that proves when consent was given.
+  const { data: existing, error: existingErr } = await sc
     .from("circle_visibility_settings")
     .select("global_enabled, consented_at")
     .eq("user_id", user.id)
     .maybeSingle();
+
+  if (existingErr) {
+    req.log?.error({ err: existingErr, userId: user.id }, "circle settings read failed — refusing to rewrite location-sharing consent");
+    sendError(res, "db_error", existingErr.message);
+    return;
+  }
 
   const wasDisabled = !((existing as any)?.global_enabled);
   const isEnabling  = globalEnabled === true && wasDisabled;

@@ -166,12 +166,23 @@ router.put("/trips/:tripId/area-preferences", asyncHandler(async (req, res) => {
   }
 
   // Merge with the existing row so a partial PUT doesn't clobber the other field.
-  const { data: existing } = await sc
+  // supabase-js RESOLVES on a DB error, so an unbound `error` read an
+  // unreadable trip_area_preferences row as "no preferences saved yet" and the
+  // upsert below then wrote the DEFAULTS (sleep_vs_play null, priorities {})
+  // over whichever field this PUT did not carry — the exact clobber the merge
+  // exists to prevent, and unrecoverable because the old values are gone.
+  const { data: existing, error: existingErr } = await sc
     .from("trip_area_preferences")
     .select("sleep_vs_play, priorities")
     .eq("trip_id", tripId)
     .eq("user_id", user.id)
     .maybeSingle();
+
+  if (existingErr) {
+    req.log?.error({ err: existingErr, tripId }, "area preferences merge read failed — refusing to overwrite saved preferences with defaults");
+    sendError(res, "db_error", existingErr.message);
+    return;
+  }
 
   const row = {
     trip_id:       tripId,

@@ -771,12 +771,24 @@ router.post("/trips/:tripId/join-request", async (req, res) => {
   if (existing) { res.status(200).json({ status: "already_member", idempotent: true }); return; }
 
   // Existing pending request?
-  const { data: existingReq } = await sc
+  // supabase-js RESOLVES on a DB error, so an unbound `error` read an
+  // unreadable trip_join_requests as "this user has never asked" and fell
+  // through to the INSERT — filing a fresh pending request (and a fresh push to
+  // the trip owner) for someone whose earlier request the owner already
+  // DENIED, which is the one state this lookup exists to keep from being
+  // reopened by the requester alone.
+  const { data: existingReq, error: existingReqErr } = await sc
     .from("trip_join_requests")
     .select("id, status")
     .eq("trip_id", tripId)
     .eq("user_id", user.id)
     .maybeSingle();
+
+  if (existingReqErr) {
+    req.log?.error({ err: existingReqErr, tripId }, "trip_join_requests lookup failed — refusing to file a possible duplicate request");
+    sendError(res, "db_error", existingReqErr.message);
+    return;
+  }
 
   if (existingReq) {
     if ((existingReq as any).status === "pending") {
@@ -2346,15 +2358,25 @@ router.post("/trips/:tripId/saved-places", async (req, res) => {
   if (!parsed.success) { sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid body"); return; }
   const b = parsed.data;
 
-  // Duplicate prevention
+  // Duplicate prevention.
+  // supabase-js RESOLVES on a DB error, so an unbound `error` read an
+  // unreadable trip_saved_places as "not saved yet" and inserted a second copy
+  // of the same place for the same member — the 409 this block owes the client
+  // becomes a 201, and the trip's saved-places list grows a duplicate that only
+  // manual deletion removes.
   if (b.placeId) {
-    const { data: dup } = await sc
+    const { data: dup, error: dupErr } = await sc
       .from("trip_saved_places")
       .select("id")
       .eq("trip_id", tripId)
       .eq("user_id", user.id)
       .eq("place_id", b.placeId)
       .maybeSingle();
+    if (dupErr) {
+      req.log?.error({ err: dupErr, tripId, placeId: b.placeId }, "trip_saved_places duplicate check failed — refusing to save");
+      sendError(res, "db_error", dupErr.message);
+      return;
+    }
     if (dup) {
       res.status(409).json({ error: "duplicate", message: "This place is already saved to the trip" });
       return;

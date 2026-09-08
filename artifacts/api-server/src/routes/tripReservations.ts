@@ -345,7 +345,13 @@ router.post("/trips/:tripId/reservations/:id/confirm", asyncHandler(async (req, 
   let planItem: any = null;
   if (addToPlan) {
     // Duplicate guard: one plan item per reservation (source_id = reservation id).
-    const { data: dup } = await sc
+    // supabase-js RESOLVES on a DB error, so an unbound `error` read an
+    // unreadable trip_plan_items as "not in the plan yet" and added a SECOND
+    // plan item for this reservation on every confirm — two identical hotel /
+    // flight rows in the trip timeline, each visible to the whole crew. The
+    // reservation itself is already confirmed above and that update is
+    // idempotent, so refusing here leaves a retry clean.
+    const { data: dup, error: dupErr } = await sc
       .from("trip_plan_items")
       .select("id")
       .eq("trip_id", (trip as any).id)
@@ -353,6 +359,12 @@ router.post("/trips/:tripId/reservations/:id/confirm", asyncHandler(async (req, 
       .eq("source_id", (reservation as any).id)
       .is("removed_at", null)
       .maybeSingle();
+
+    if (dupErr) {
+      req.log.error({ err: dupErr, reservationId: (reservation as any).id }, "reservation plan-item duplicate check failed — reservation confirmed, plan item not added");
+      sendError(res, "db_error", dupErr.message);
+      return;
+    }
 
     if (dup) {
       planItem = dup;

@@ -1250,7 +1250,12 @@ router.post("/hidden-gems/:id/plan", async (req, res) => {
     // becomes a db_error and is then SANITIZED to "A database error occurred" —
     // so the client cannot tell a duplicate from a real failure. Return the
     // established 409 shape instead.
-    const { data: existing } = await client
+    // supabase-js RESOLVES on a DB error, so an unbound `error` read an
+    // unreadable trip_plan_items as "not in the plan yet" and fell through to
+    // the ADD_PLAN below — which is exactly the 23505-sanitized-to-
+    // "A database error occurred" outcome the 409 above exists to prevent, and
+    // on the kernel path a genuine duplicate gem row in the trip plan.
+    const { data: existing, error: existingErr } = await client
       .from("trip_plan_items")
       .select("id")
       .eq("trip_id", tripId)
@@ -1258,6 +1263,11 @@ router.post("/hidden-gems/:id/plan", async (req, res) => {
       .eq("source_id", (gem as any).id)
       .is("removed_at", null)
       .maybeSingle();
+    if (existingErr) {
+      req.log.error({ err: existingErr, tripId }, "hidden gem plan duplicate check failed — refusing to add");
+      sendError(res, "db_error", existingErr.message);
+      return;
+    }
     if (existing) {
       res.status(409).json({ error: "duplicate", message: "This gem is already in your trip plan" });
       return;

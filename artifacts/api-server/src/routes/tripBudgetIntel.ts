@@ -267,7 +267,18 @@ router.post("/admin/price-baselines", asyncHandler(async (req, res) => {
     .eq("tier", b.tier);
   findQ = country === null ? findQ.is("country", null) : findQ.eq("country", country);
   findQ = city    === null ? findQ.is("city", null)    : findQ.eq("city", city);
-  const { data: existing } = await findQ.maybeSingle();
+  // supabase-js RESOLVES on a DB error, so an unbound `error` read an
+  // unreadable price_baselines as "no row for this (country, city, category,
+  // tier)" and took the INSERT branch instead of the UPDATE — which the
+  // COALESCE unique index then rejects, so the admin's curated daily_amount is
+  // reported as a raw db_error while the stale baseline stays in force for
+  // every trip budget that reads it.
+  const { data: existing, error: existingErr } = await findQ.maybeSingle();
+  if (existingErr) {
+    req.log?.error({ err: existingErr, category: b.category, tier: b.tier }, "price_baselines lookup failed — refusing to insert over a possible existing baseline");
+    sendError(res, "db_error", existingErr.message);
+    return;
+  }
 
   const values: Record<string, any> = {
     country,

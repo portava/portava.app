@@ -146,13 +146,24 @@ router.post('/tags', async (req, res) => {
   if (error) {
     // Unique constraint violation → already tagged (idempotent)
     if ((error as any).code === '23505') {
-      const { data: existing } = await sc
+      // supabase-js RESOLVES on a DB error, so an unbound `error` here fell
+      // back to the `?? 'approved'` default and told the tagger their tag on
+      // another user is LIVE (200, status approved) when the row it could not
+      // read may still be 'pending' — i.e. awaiting that user's consent under
+      // approval_required. Reporting someone else's pending consent as granted
+      // is the one answer this branch must never guess at.
+      const { data: existing, error: existingErr } = await sc
         .from('tags')
         .select('id, status')
         .eq('source_type', source_type)
         .eq('source_id', source_id)
         .eq('tagged_user_id', tagged_user_id)
         .maybeSingle();
+      if (existingErr) {
+        req.log.error({ err: existingErr, source_type, source_id }, 'existing tag lookup failed after 23505 — cannot confirm tag status');
+        sendError(res, 'db_error', 'Could not confirm the status of the existing tag');
+        return;
+      }
       const existingStatus = (existing as any)?.status ?? 'approved';
       res.status(existingStatus === 'pending' ? 202 : 200).json({
         tagId: (existing as any)?.id ?? null,

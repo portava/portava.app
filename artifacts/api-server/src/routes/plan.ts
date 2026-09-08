@@ -62,8 +62,12 @@ router.post("/meetups/:meetupId/add-to-trip-plan", asyncHandler(async (req, res)
     return;
   }
 
-  // Duplicate guard: same meetup already added to this trip (non-removed)
-  const { data: existing } = await client
+  // Duplicate guard: same meetup already added to this trip (non-removed).
+  // supabase-js RESOLVES on a DB error, so an unbound `error` read an
+  // unreadable trip_plan_items as "not added yet" and went on to ADD_PLAN —
+  // putting the same meetup into the trip timeline twice for every member,
+  // which no one can tell apart from a real second entry.
+  const { data: existing, error: existingErr } = await client
     .from("trip_plan_items")
     .select("id")
     .eq("trip_id", tripId)
@@ -71,6 +75,11 @@ router.post("/meetups/:meetupId/add-to-trip-plan", asyncHandler(async (req, res)
     .eq("source_id", meetupId)
     .is("removed_at", null)
     .maybeSingle();
+  if (existingErr) {
+    req.log.error({ err: existingErr, tripId, meetupId }, "meetup plan duplicate check failed — refusing to add");
+    sendError(res, "db_error", existingErr.message);
+    return;
+  }
   if (existing) { res.status(409).json({ error: "duplicate", message: "This meetup is already in your trip plan" }); return; }
 
   // Trip Kernel path (§4.1 ADD_PLAN, capability crew). The membership and
@@ -170,8 +179,10 @@ router.post("/places/:placeId/add-to-trip-plan", asyncHandler(async (req, res) =
     .maybeSingle();
   if (!place) { sendError(res, "not_found", "Place not found"); return; }
 
-  // Duplicate guard
-  const { data: existing } = await client
+  // Duplicate guard — see the meetup route above for why `error` must be bound:
+  // an unreadable trip_plan_items otherwise reads as "not added yet" and the
+  // ADD_PLAN below puts the same place into the trip timeline a second time.
+  const { data: existing, error: existingErr } = await client
     .from("trip_plan_items")
     .select("id")
     .eq("trip_id", tripId)
@@ -179,6 +190,11 @@ router.post("/places/:placeId/add-to-trip-plan", asyncHandler(async (req, res) =
     .eq("source_id", placeId)
     .is("removed_at", null)
     .maybeSingle();
+  if (existingErr) {
+    req.log.error({ err: existingErr, tripId, placeId }, "place plan duplicate check failed — refusing to add");
+    sendError(res, "db_error", existingErr.message);
+    return;
+  }
   if (existing) { res.status(409).json({ error: "duplicate", message: "This place is already in your trip plan" }); return; }
 
   // Trip Kernel path (§4.1 ADD_PLAN, capability crew) — see the meetup route.

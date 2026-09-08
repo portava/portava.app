@@ -174,14 +174,24 @@ router.post("/users/me/collections", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
-  // Compute next position
-  const { data: existing } = await sc
+  // Compute next position.
+  // supabase-js RESOLVES on a DB error, so an unbound `error` read an
+  // unreadable collections table as "this user has no collections" and stamped
+  // position 1 on the new row — colliding with the user's real first
+  // collection and scrambling the order of a list they curated by hand.
+  const { data: existing, error: existingErr } = await sc
     .from("collections")
     .select("position")
     .eq("owner_id", user.id)
     .order("position", { ascending: false })
     .limit(1)
     .maybeSingle();
+
+  if (existingErr) {
+    req.log.error({ err: existingErr }, "collections: next-position read failed");
+    sendError(res, "db_error", existingErr.message);
+    return;
+  }
 
   const nextPos = existing ? (existing as any).position + 1 : 1;
 

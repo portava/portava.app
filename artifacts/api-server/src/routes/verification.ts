@@ -199,8 +199,14 @@ router.post("/verification/session", asyncHandler(async (req, res) => {
   if (insertError) {
     // Postgres unique-index violation on uq_identity_verifications_active (code 23505)
     if ((insertError as any).code === "23505") {
-      // Return existing active session
-      const { data: active } = await sc
+      // Return existing active session.
+      // supabase-js RESOLVES on a DB error, so an unbound `error` made an
+      // unreadable identity_verifications look like "the unique index fired but
+      // there is no active session" — an impossible state that fell through to
+      // the generic handler below and reported the KYC session as a raw 23505
+      // db_error, so the client never learns it already has a live session and
+      // the user is stuck unable to start or resume verification.
+      const { data: active, error: activeErr } = await sc
         .from("identity_verifications")
         .select("id, provider_session_id, expires_at, status")
         .eq("user_id", user.id)
@@ -208,6 +214,12 @@ router.post("/verification/session", asyncHandler(async (req, res) => {
         .order("created_at", { ascending: false })
         .limit(1)
         .maybeSingle();
+
+      if (activeErr) {
+        req.log.error({ err: activeErr }, "verification: active-session lookup failed after 23505 — cannot return the existing session");
+        sendError(res, "db_error", "Could not read your existing verification session");
+        return;
+      }
 
       if (active) {
         res.status(200).json({

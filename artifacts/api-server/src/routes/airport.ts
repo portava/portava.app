@@ -178,7 +178,14 @@ async function mirrorSessionToTrip(
       location_name: airport?.name ?? session.manualAirportName ?? null,
       updated_at:    new Date().toISOString(),
     };
-    const { data: existing } = await sc
+    // This read chooses UPDATE_PLAN vs ADD_PLAN below. supabase-js RESOLVES on
+    // a DB error, so an unbound `error` turned an unreadable trip_plan_items
+    // into "no mirror row exists" and took the ADD branch — inserting a SECOND
+    // "Layover in <city>" row into the trip timeline every time the session was
+    // written while the table was unreadable (the mirror has no idempotency key
+    // of its own). Skipping the mirror is the recoverable side: the next
+    // session write re-runs it.
+    const { data: existing, error: existingErr } = await sc
       .from("trip_plan_items")
       .select("id")
       .eq("trip_id", session.tripId)
@@ -186,6 +193,14 @@ async function mirrorSessionToTrip(
       .eq("source_id", session.id)
       .is("removed_at", null)
       .maybeSingle();
+
+    if (existingErr) {
+      logger.warn(
+        { err: existingErr, sessionId: session.id, tripId: session.tripId },
+        "layover trip mirror: existing-row lookup failed — skipping the mirror rather than risking a duplicate timeline row",
+      );
+      return;
+    }
 
     // Trip Kernel path (§4.1 UPDATE_PLAN when the mirror row exists, ADD_PLAN
     // when it does not; capability crew — isAcceptedTripMember above). No
