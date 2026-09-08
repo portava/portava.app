@@ -34,7 +34,7 @@ ENABLED. FLAG ENABLED is not PRODUCTION REALIZED.**
 | Mobile deployed | **NO** | — |
 | Migrations applied to production | **35** | `production-applied-migrations.json`, reconciled against `supabase_migrations.schema_migrations` |
 | Migrations written, NOT applied to PRODUCTION | **10** | 2700, 2710, 2711, 2720–2724, 2730, 2740 |
-| Of those, applied to **portava-ci** | **3** | 2710 `20260908142429`, 2711 `20260908142652`, 2700 `20260908145925` — CI is not production and this row exists so the two are never read as one |
+| Of those, applied to **portava-ci** | **4** | 2710 `20260908142429`, 2711 `20260908142652`, 2700 `20260908145925`, 2740 `20260908150439` — CI is not production and this row exists so the two are never read as one |
 
 ## Per-surface
 
@@ -44,7 +44,7 @@ ENABLED. FLAG ENABLED is not PRODUCTION REALIZED.**
 | Surface | Branch built | Branch wired | Branch tested | Migr applied | Merged | Server deployed | Mobile deployed | Flag | Prod realized |
 |---|---|---|---|---|---|---|---|---|---|
 | Layover — feasibility record | yes | yes | yes | **ci only (2700)** — and NO WRITER exists, by design | **no** | no | no | n/a | **no** |
-| Layover — sharing gate / presence | yes | yes | yes | n/a | **no** | no | no | ladder flag FALSE (2740 unapplied ⇒ no row) | **no** |
+| Layover — sharing gate / presence | yes | yes | yes | **ci only (2740)** | **no** | no | no | ladder flag FALSE — a real row on CI, **still no row in production**, where `isFlagEnabled` fails closed to the same answer for a different reason | **no** |
 | Layover — safe return / abort | yes | yes | yes | **yes (2741)** | **no** | no | **client built, undeployed** | `layover_safe_return_status_enabled` FALSE | **no** |
 | Layover — crew constraints | yes | **no** (no route) | yes | n/a | **no** | no | no | n/a | **no** |
 | Layover — offline bundle | yes | yes (server) | yes | n/a | **no** | no | **displayed, not cached** | n/a | **no** |
