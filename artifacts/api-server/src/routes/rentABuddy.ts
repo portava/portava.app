@@ -84,6 +84,7 @@ import {
 } from "../lib/buddyMapRead.js";
 
 import { requireAdmin } from "../lib/requireAdmin.js";
+import { isBlockedBetween } from "../lib/blockGuard.js";
 
 export { POLICY_TEXT, CATEGORY_RISK_LEVELS, getCategoryRiskLevel };
 
@@ -1632,15 +1633,17 @@ export async function enforceBookingCreationGates(opts: {
 
   // ── Block-table enforcement ─────────────────────────────────────────────────
   // Traveler must not be blocked by, or have blocked, the buddy's user.
-  if (buddyUserId) {
-    const [blockedByBuddy, blockedByTraveler] = await Promise.all([
-      serviceClient.from("blocks").select("id").eq("blocker_id", buddyUserId).eq("blocked_id", userId).maybeSingle(),
-      serviceClient.from("blocks").select("id").eq("blocker_id", userId).eq("blocked_id", buddyUserId).maybeSingle(),
-    ]);
-    if (blockedByBuddy.data || blockedByTraveler.data) {
-      res.status(403).json({ error: "blocked", message: "You cannot book this Buddy." });
-      return false;
-    }
+  //
+  // FAIL-CLOSED, shape 1 (lib/exclusionSet.ts): this gates ONE booking between
+  // ONE pair, so an unreadable `blocks` table refuses that booking and nothing
+  // else. It matches how this same function already treats an unreadable city
+  // restriction thirty lines above ("A load error rejects THIS booking rather
+  // than allowing it") — the block table had simply never been given the same
+  // treatment. `if (blockedByBuddy.data || blockedByTraveler.data)` read a
+  // resolved DB error as "no block row" and let a blocked traveler book.
+  if (buddyUserId && (await isBlockedBetween(serviceClient, userId, buddyUserId))) {
+    res.status(403).json({ error: "blocked", message: "You cannot book this Buddy." });
+    return false;
   }
 
   // ── Nightlife / group category approvals ────────────────────────────────────

@@ -16,6 +16,7 @@ import { loadTravelerIdentity } from "../lib/travelerVerification.js";
 import { isPrivateLocation } from "../lib/rentaBuddyScanner.js";
 import { normalizeLaunchControlKey, upsertLaunchControlRow } from "../lib/rentBuddyLaunchControls.js";
 import { createEarningsLedgerEntry } from "../lib/rentBuddyEarningsLedger.js";
+import { isBlockedBetween } from "../lib/blockGuard.js";
 
 const router = Router();
 
@@ -501,24 +502,15 @@ router.post("/rent-a-buddy/buddies/:buddyId/request", asyncHandler(async (req, r
   }
 
   // Block-table enforcement — traveler must not be blocked by, or have blocked, the buddy's user.
-  if (buddyUserId) {
-    const [blockedByBuddy, blockedByTraveler] = await Promise.all([
-      serviceClient
-        .from("blocks")
-        .select("id")
-        .eq("blocker_id", buddyUserId)
-        .eq("blocked_id", auth.user.id)
-        .maybeSingle(),
-      serviceClient
-        .from("blocks")
-        .select("id")
-        .eq("blocker_id", auth.user.id)
-        .eq("blocked_id", buddyUserId)
-        .maybeSingle(),
-    ]);
-    if (blockedByBuddy.data || blockedByTraveler.data) {
-      return res.status(403).json({ error: "blocked", message: "You cannot book this Buddy." });
-    }
+  //
+  // FAIL-CLOSED, shape 1 (lib/exclusionSet.ts): one booking request, one pair,
+  // so an unreadable `blocks` table refuses this request only. The old pair of
+  // `.maybeSingle()` reads was fail-open twice: a resolved DB error left both
+  // `.data` null ("not blocked"), and maybeSingle additionally RAISES on >1 row,
+  // so a mutual block produced the same null. This alias must refuse exactly
+  // where the canonical POST /rent-a-buddy/bookings refuses.
+  if (buddyUserId && (await isBlockedBetween(serviceClient, auth.user.id, buddyUserId))) {
+    return res.status(403).json({ error: "blocked", message: "You cannot book this Buddy." });
   }
 
   // Category availability check

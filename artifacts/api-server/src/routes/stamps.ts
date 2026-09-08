@@ -36,6 +36,7 @@ import {
 } from "../services/passport/StampAwardEngine.js";
 import { NotificationService } from "../services/notifications/NotificationService.js";
 import { NotificationRouter as NotifRouter } from "../services/notifications/NotificationRouter.js";
+import { isBlockedBetween } from "../lib/blockGuard.js";
 
 const router = Router();
 
@@ -104,20 +105,24 @@ async function areFriends(
 
 // ── Block check helper ────────────────────────────────────────────────────────
 
+/**
+ * FAIL-CLOSED, shape 1 (lib/exclusionSet.ts): a two-party gate on ONE stamp
+ * interaction, so an unreadable `blocks` table denies that interaction only.
+ *
+ * The old body was fail-open twice over. `const { data } = …; return data != null`
+ * read a resolved DB error as "no block row"; and `.maybeSingle()` RAISES on
+ * more than one row, so a MUTUAL block — two rows, both permitted by
+ * UNIQUE(blocker_id, blocked_id) — errored into `data: null` and reported "not
+ * blocked" for the strongest block state there is. isBlockedBetween uses
+ * `.limit(1)` and returns true on error, which fixes both.
+ */
 async function isBlocked(
   sc: ReturnType<typeof getServiceClient>,
   callerId: string,
   targetId: string,
 ): Promise<boolean> {
   if (!sc) return false;
-  const { data } = await sc
-    .from("blocks")
-    .select("id")
-    .or(
-      `and(blocker_id.eq.${callerId},blocked_id.eq.${targetId}),and(blocker_id.eq.${targetId},blocked_id.eq.${callerId})`,
-    )
-    .maybeSingle();
-  return data != null;
+  return isBlockedBetween(sc, callerId, targetId);
 }
 
 /**
