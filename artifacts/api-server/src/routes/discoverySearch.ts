@@ -82,16 +82,20 @@ import { allowDiscoveryPersonCard } from "../services/passport/PassportConsumerA
 import { fetchBlockedSet, submitterIsVisible } from "../lib/blocks.js";
 import { isFlagEnabled } from "../lib/featureFlags.js";
 // Trips' projection contract (census-discovery A10 / D3, Trips spec §25) and
-// Discovery's consumer of it. Gated by discovery_trip_projection_enabled
-// (migration 2550, seeded FALSE): production has no trips.version, and the
-// readers fail closed on it. See lib/discoveryTripProjectionConsumer.ts.
+// Discovery's consumer of it. Gated by the CAPABILITY
+// discovery_trip_projection_enabled && trips-schema-ready, not by the flag
+// alone: production has no trips.version and the readers fail closed on it, so
+// a flag flipped onto missing schema would empty every trips and plans search.
+// The not-ready branch is the legacy read below. See
+// lib/discoveryTripProjectionConsumer.ts.
 import {
   searchTripDiscoveryProjections,
   readTripDiscoveryProjections,
   tripDiscoveryAdmits,
 } from "../lib/tripDiscoveryProjection.js";
 import {
-  discoveryTripProjectionEnabled,
+  discoveryTripProjectionGate,
+  recordDiscoveryTripSource,
   acceptTripDiscoveryProjections,
   tripCardSourceFromProjection,
   type DiscoveryTripCardSource,
@@ -772,18 +776,23 @@ async function searchEvents(
 /**
  * Trips — public only; blocked/suspended owners excluded.
  *
- * Two sources for the candidate rows, one flag between them
- * (discovery_trip_projection_enabled, migration 2550, seeded FALSE):
+ * Two sources for the candidate rows, one CAPABILITY between them —
+ * `discovery_trip_projection_enabled` (migration 2550, seeded FALSE) AND the
+ * `trips` schema the projection reader names (migration 2420):
  *
- *   OFF (the seed, and every failure to read the flag) — the legacy read
- *   below, byte-identical to before: same columns, same predicates, same
- *   order, same range. Pinned by src/test/discoveryTripProjectionConsumer.test.ts.
+ *   NOT READY (the seed; every failure to read the flag; and a flag that is ON
+ *   over a database whose `trips` lacks a required column, which is production
+ *   today) — the legacy read below, byte-identical to before: same columns,
+ *   same predicates, same order, same range. Pinned by
+ *   src/test/discoveryTripProjectionConsumer.test.ts.
  *
- *   ON — searchTripDiscoveryProjections, the Trip-owned contract
+ *   READY — searchTripDiscoveryProjections, the Trip-owned contract
  *   (lib/tripDiscoveryProjection.ts; Trips spec §25, census-discovery A10/D3).
  *   Discovery no longer states the visibility rule; it consumes
- *   `discoverable`. A failed read (TRIP_PROJECTION_UNAVAILABLE — e.g. a
- *   database without trips.version) is `[]`, never a crash and never a leak.
+ *   `discoverable`. A read that fails AFTER the probe passed
+ *   (TRIP_PROJECTION_UNAVAILABLE — a transient error, a revoked grant, a
+ *   schema-cache lag) is `[]`, never a crash and never a leak; the capability
+ *   decides the branch, so there is no silent fallback that would hide it.
  *   The owner's non-member privacy toggles then apply to a searcher; see
  *   lib/discoveryTripProjectionConsumer.ts for why that is accepted.
  *
@@ -801,7 +810,10 @@ async function searchTrips(
   try {
     let cards: DiscoveryTripCardSource[];
 
-    if (await discoveryTripProjectionEnabled(sc)) {
+    const gate = await discoveryTripProjectionGate(sc);
+    recordDiscoveryTripSource("trips", gate);
+
+    if (gate.source === "projection") {
       const r = await searchTripDiscoveryProjections(sc, {
         text: q,
         startsAfter: ctx?.startsAfter,
@@ -917,14 +929,17 @@ async function searchPlans(
 
     const tripIds = [...new Set(items.map((p: any) => p.trip_id as string))];
 
-    // The parent trips, from one of two sources behind
-    // discovery_trip_projection_enabled (see searchTrips above). Either way
-    // each candidate carries `admitted` — may THIS viewer see this trip's
-    // plans — decided by Trip semantics, and `ownerId` / `startDate` for the
-    // Discovery-owned filters that follow.
+    // The parent trips, from one of two sources behind the same capability as
+    // searchTrips above (flag AND schema). Either way each candidate carries
+    // `admitted` — may THIS viewer see this trip's plans — decided by Trip
+    // semantics, and `ownerId` / `startDate` for the Discovery-owned filters
+    // that follow.
     let parents: DiscoveryPlanParentTrip[];
 
-    if (await discoveryTripProjectionEnabled(sc)) {
+    const gate = await discoveryTripProjectionGate(sc);
+    recordDiscoveryTripSource("plans", gate);
+
+    if (gate.source === "projection") {
       // Not filtered by discoverability in SQL: the by-id reader returns the
       // owner's own private trip too, and tripDiscoveryAdmits — Trips' rule,
       // not restated here — decides per viewer. A failed read is `[]`.

@@ -42,11 +42,17 @@ import discoverySearchRouter, { dispatchSearch } from "../routes/discoverySearch
 import {
   DISCOVERY_TRIP_PROJECTION_FLAG,
   DISCOVERY_TRIP_PROJECTION_ACCEPTED_SCHEMA_VERSION,
+  DISCOVERY_TRIP_PROJECTION,
+  DISCOVERY_TRIP_PROJECTION_COLUMNS,
   acceptTripDiscoveryProjections,
   discoveryTripProjectionEnabled,
+  discoveryTripProjectionGate,
   invalidateDiscoveryTripProjectionFlagCache,
+  readDiscoveryTripSourceDecisions,
   tripCardSourceFromProjection,
 } from "../lib/discoveryTripProjectionConsumer.js";
+import { resetSchemaCapabilityMemo } from "../lib/capability/schemaCapability.js";
+import { SCHEMA_PROBE_SENTINEL_ID } from "../lib/capability/schemaRequirement.js";
 import {
   TRIP_DISCOVERY_SOURCE_COLUMNS,
   projectTripForDiscovery,
@@ -152,7 +158,7 @@ function baseState(flag: "absent" | true | false): Record<string, any[]> {
 interface Recorded { table: string; select: string | null; calls: Array<[string, any[]]> }
 type Answer = { data: any; error: any } | "throw";
 /** Per-table override, consulted with the select string: models a database that rejects a query shape. */
-type Override = (table: string, select: string | null) => Answer | undefined;
+type Override = (table: string, select: string | null, rec: Recorded) => Answer | undefined;
 
 const QUERIES: Recorded[] = [];
 
@@ -171,7 +177,7 @@ function makeFakeClient(state: Record<string, any[]>, override: Override = () =>
       let verb: "select" | "insert" = "select";
       const like = (pat: string) => new RegExp("^" + pat.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/%/g, ".*") + "$", "i");
       const answer = (): Promise<{ data: any; error: any }> => {
-        const o = override(table, rec.select);
+        const o = override(table, rec.select, rec);
         if (o === "throw") throw new Error(`fake client: ${table} threw`);
         if (o) return Promise.resolve(o);
         if (verb === "insert") return Promise.resolve({ data: null, error: null });
@@ -219,11 +225,36 @@ function makeFakeClient(state: Record<string, any[]>, override: Override = () =>
   };
 }
 
-/** Models production today: any `trips` read that names `version` is a 42703. */
+/**
+ * Models production today: any `trips` read that names `version` is a 42703 —
+ * the capability probe included, which is exactly how the gate learns that
+ * this database cannot serve the projection.
+ */
 const PRODUCTION_NO_VERSION: Override = (table, select) =>
   table === "trips" && select !== null && /\bversion\b/.test(select)
     ? { data: null, error: { code: "42703", message: 'column trips.version does not exist' } }
     : undefined;
+
+/**
+ * The same absence, worded the way PostgreSQL words it when it quotes the
+ * column rather than qualifying it. `missingObjectsNamedBy` matches `'c'`,
+ * `"c"` or ` c `, so THIS shape names `trips.version` where the dotted shape
+ * above can only name `trips` — the "floor" the capability contract documents,
+ * pinned here in both directions rather than assumed away.
+ */
+const PRODUCTION_NO_VERSION_QUOTED: Override = (table, select) =>
+  table === "trips" && select !== null && /\bversion\b/.test(select)
+    ? { data: null, error: { code: "42703", message: 'column "version" of relation "trips" does not exist' } }
+    : undefined;
+
+/**
+ * A database that HAS trips.version — so the capability probe passes — but
+ * whose actual projection SELECT fails anyway (a revoked grant, a transient
+ * error, a PostgREST schema-cache lag). The probe is the read filtered to the
+ * sentinel id; the search read is any other read of the same column list.
+ */
+const PROBE_OK_BUT_READ_FAILS = (answer: Answer): Override => (table, select, rec) =>
+  table === "trips" && select === TRIP_DISCOVERY_SOURCE_COLUMNS && !isProbeRead(rec) ? answer : undefined;
 
 // ── Server ────────────────────────────────────────────────────────────────────
 let base: string;
@@ -232,6 +263,7 @@ let server: Server;
 function setup(state: Record<string, any[]>, override?: Override) {
   QUERIES.length = 0;
   invalidateDiscoveryTripProjectionFlagCache();
+  resetSchemaCapabilityMemo();
   _resetRateLimit();
   _setTestClient(makeFakeClient(state, override) as any, true);
 }
@@ -253,8 +285,18 @@ async function search(type: "trips" | "plans", q = "lisbon"): Promise<{ status: 
   return { status: r.status, body: await r.json() };
 }
 const ids = (body: any): string[] => (body.results as any[]).map((r) => r.id as string);
-const tripsReads = () => QUERIES.filter((q) => q.table === "trips");
-const projectionReads = () => QUERIES.filter((q) => q.select === TRIP_DISCOVERY_SOURCE_COLUMNS);
+/** The capability probe: the required column list, pinned to a sentinel id no row can hold. */
+function isProbeRead(rec: Recorded): boolean {
+  return (
+    rec.table === "trips" &&
+    rec.select === TRIP_DISCOVERY_SOURCE_COLUMNS &&
+    rec.calls.some(([m, a]) => m === "eq" && a[0] === "id" && a[1] === SCHEMA_PROBE_SENTINEL_ID)
+  );
+}
+const probeReads = () => QUERIES.filter(isProbeRead);
+/** Reads of `trips` that serve a search — the probe is schema inspection, not a read of user data. */
+const tripsReads = () => QUERIES.filter((q) => q.table === "trips" && !isProbeRead(q));
+const projectionReads = () => QUERIES.filter((q) => q.select === TRIP_DISCOVERY_SOURCE_COLUMNS && !isProbeRead(q));
 const flagReads = () => QUERIES.filter((q) => q.table === "feature_flags" && q.calls.some(([m, a]) => m === "eq" && a[0] === "flag" && a[1] === DISCOVERY_TRIP_PROJECTION_FLAG));
 
 /** The whole legacy searchTrips read, call by call. `pat` is sqlPattern("lisbon"). */
@@ -406,7 +448,7 @@ describe("flag OFF (the seed) — searchPlans issues the legacy parent-trip read
 });
 
 // ═════════════════════════════════════════════════════════════════════════════
-describe("flag ON — the projection path returns the same results as legacy on a database WITH trips.version", () => {
+describe("capability READY (flag ON + trips.version present) — the projection path returns the same results as legacy", () => {
   it("trips: body deepEqual to the flag-OFF body; the one trips read selects TRIP_DISCOVERY_SOURCE_COLUMNS; blocked / age-restricted / suspended owners still excluded here", async () => {
     setup(baseState("absent"));
     const off = await search("trips");
@@ -417,6 +459,10 @@ describe("flag ON — the projection path returns the same results as legacy on 
     assert.equal(on.status, 200);
     assert.deepEqual(on.body, off.body, "flag ON serves exactly what flag OFF serves for these fixtures");
 
+    assert.equal(probeReads().length, 1, "the schema was probed before the projection was trusted");
+    assert.deepEqual(readDiscoveryTripSourceDecisions(), [
+      { surface: "trips", source: "projection", reason: "ready", missing: [] },
+    ]);
     const reads = tripsReads();
     assert.equal(reads.length, 1);
     assert.equal(reads[0]!.select, TRIP_DISCOVERY_SOURCE_COLUMNS);
@@ -448,17 +494,21 @@ describe("flag ON — the projection path returns the same results as legacy on 
     assert.deepEqual(reads[0]!.calls[1]![1], ["id", [T_PUB, T_PUB2, T_PRIV, T_DRAFT, T_BLOCKED, T_OPTOUT, T_SUSP, T_AGE]]);
   });
 
-  it("the flag read is cached: two searches, one feature_flags read for this flag", async () => {
+  it("the verdict is cached: two searches, one feature_flags read AND one schema probe", async () => {
     setup(baseState(true));
     await search("trips");
     await search("plans", "belem");
     assert.equal(flagReads().length, 1);
+    assert.equal(probeReads().length, 1, "the schema probe is not repeated per surface");
     assert.equal(projectionReads().length, 2, "both searches took the projection path");
+    assert.deepEqual(readDiscoveryTripSourceDecisions().map((d) => [d.surface, d.source]), [
+      ["trips", "projection"], ["plans", "projection"],
+    ]);
   });
 
   it("time intent ON: the projection search carries the same gte/lt on start_date", async () => {
     const sc = makeFakeClient(baseState(true));
-    QUERIES.length = 0; invalidateDiscoveryTripProjectionFlagCache();
+    QUERIES.length = 0; invalidateDiscoveryTripProjectionFlagCache(); resetSchemaCapabilityMemo();
     const out = await dispatchSearch(sc as any, "lisbon", ME, new Set([BOB]), new Set([CARL]), "trips", 0, 21,
       { startsAfter: "2026-09-01T00:00:00.000Z", startsBefore: "2026-11-01T00:00:00.000Z" });
     assert.deepEqual(out.map((r) => r.id), [T_PUB]);
@@ -469,21 +519,105 @@ describe("flag ON — the projection path returns the same results as legacy on 
   });
 });
 
-describe("flag ON — a failed projection read is [] : no crash, no leak", () => {
-  it("trips: production-shaped 42703 on version → 200 with results [] and no trip id in the body", async () => {
+// ════════════════════════════════════════════════════════════════════════════
+// THE CAPABILITY, not the flag: FLAG_ENABLED && SCHEMA_CAPABILITY_READY.
+//
+// This is the case a bare flag could not survive. Somebody sets
+// `discovery_trip_projection_enabled = true` on production, where 2420 has not
+// been applied and `trips` has no `version` column. Under the bare flag the
+// projection readers 42703 and EVERY trips and plans search answers `[]`,
+// silently. Under the capability the probe finds the column absent, the gate
+// refuses, and Discovery serves the legacy read it always served.
+// ════════════════════════════════════════════════════════════════════════════
+describe("capability NOT ready: the flag is ON over production's schema — legacy, byte-identical, never []", () => {
+  it("trips: the probe 42703s on `version`, the gate refuses, and the read issued is the LEGACY read call for call", async () => {
     setup(baseState(true), PRODUCTION_NO_VERSION);
+    const { status, body } = await search("trips");
+    assert.equal(status, 200);
+
+    // The results are the ones Discovery has always served — NOT [].
+    assertExpectedTrips(body);
+
+    assert.equal(probeReads().length, 1, "the schema was probed once");
+    assert.deepEqual(
+      probeReads()[0]!.calls.filter(([m]) => m === "eq").map(([, a]) => a),
+      [["id", SCHEMA_PROBE_SENTINEL_ID]],
+      "the probe is pinned to a sentinel id, so it can never return a user row",
+    );
+    const reads = tripsReads();
+    assert.equal(reads.length, 1, "one search read of trips, and only one");
+    assertLegacyTripsSearchRead(reads[0]!, { range: [0, 62] });
+    assert.equal(projectionReads().length, 0, "the projection readers were never called");
+
+    assert.deepEqual(readDiscoveryTripSourceDecisions(), [
+      // PostgREST relays PostgreSQL's dotted wording ("column trips.version does
+      // not exist"), which missingObjectsNamedBy can only resolve to the table.
+      // That is the documented FLOOR, not the whole requirement; the refusal log
+      // names providedBy, which is what an operator acts on.
+      { surface: "trips", source: "legacy", reason: "schema_missing", missing: ["trips"] },
+    ]);
+  });
+
+  it("plans: the same — legacy parent-trip read, every plan still served", async () => {
+    setup(baseState(true), PRODUCTION_NO_VERSION);
+    const { status, body } = await search("plans", "belem");
+    assert.equal(status, 200);
+    assertExpectedPlans(body);
+    assertLegacyPlanTripsRead(tripsReads()[0]!, [T_PUB, T_PUB2, T_PRIV, T_DRAFT, T_BLOCKED, T_OPTOUT, T_SUSP, T_AGE]);
+    assert.equal(projectionReads().length, 0);
+    assert.deepEqual(readDiscoveryTripSourceDecisions().map((d) => [d.surface, d.source, d.reason]), [
+      ["plans", "legacy", "schema_missing"],
+    ]);
+  });
+
+  it("`unknown` refuses exactly like `missing`: a probe that THROWS keeps Discovery on legacy", async () => {
+    setup(baseState(true), (table, select, rec) =>
+      table === "trips" && select === TRIP_DISCOVERY_SOURCE_COLUMNS && isProbeRead(rec) ? "throw" : undefined);
+    const { body } = await search("trips");
+    assertExpectedTrips(body);
+    assertLegacyTripsSearchRead(tripsReads()[0]!, { range: [0, 62] });
+    assert.equal(projectionReads().length, 0);
+    assert.deepEqual(readDiscoveryTripSourceDecisions().map((d) => d.reason), ["schema_unknown"]);
+  });
+
+  it("a NON-schema error on the probe (permission denied) is `unknown`, and still refuses — a guard that opens because it could not check is not a guard", async () => {
+    setup(baseState(true), (table, select, rec) =>
+      table === "trips" && select === TRIP_DISCOVERY_SOURCE_COLUMNS && isProbeRead(rec)
+        ? { data: null, error: { code: "42501", message: "permission denied for table trips" } }
+        : undefined);
+    const { body } = await search("trips");
+    assertExpectedTrips(body);
+    assert.equal(projectionReads().length, 0);
+    assert.deepEqual(readDiscoveryTripSourceDecisions().map((d) => d.reason), ["schema_unknown"]);
+  });
+
+  it("the dark flag makes NO schema contact: flag off ⇒ the probe never runs", async () => {
+    setup(baseState(false));
+    await search("trips");
+    assert.equal(probeReads().length, 0, "a flag that is not on is not worth a round trip");
+    assert.deepEqual(readDiscoveryTripSourceDecisions().map((d) => d.reason), ["flag_off"]);
+  });
+});
+
+describe("capability READY — a projection read that fails AFTER the probe passed is [] : no crash, no leak", () => {
+  const READ_ERROR: Answer = { data: null, error: { code: "42501", message: "permission denied for table trips" } };
+
+  it("trips: probe ready, search read errors → 200 with results [] and no trip id in the body", async () => {
+    setup(baseState(true), PROBE_OK_BUT_READ_FAILS(READ_ERROR));
     const { status, body } = await search("trips");
     assert.equal(status, 200);
     assert.deepEqual(body.results, []);
     assert.equal(body.hasMore, false);
     const json = JSON.stringify(body);
     for (const id of [...EXPECTED_TRIP_IDS, ...NEVER_TRIP_IDS]) assert.equal(json.includes(id), false, id);
-    assert.equal(projectionReads().length, 1, "the projection WAS consulted (flag on) and refused");
-    assert.equal(tripsReads().length, 1, "and no legacy fallback read was issued — the flag decides, not the outcome");
+    assert.equal(probeReads().length, 1);
+    assert.equal(projectionReads().length, 1, "the projection WAS consulted (capability ready) and refused");
+    assert.equal(tripsReads().length, 1, "no legacy fallback read — the capability decides the branch, not the outcome");
+    assert.deepEqual(readDiscoveryTripSourceDecisions().map((d) => [d.source, d.reason]), [["projection", "ready"]]);
   });
 
-  it("plans: 42703 on version → results [] — every plan withheld, none leaked from an unreadable parent", async () => {
-    setup(baseState(true), PRODUCTION_NO_VERSION);
+  it("plans: the same — every plan withheld, none leaked from an unreadable parent", async () => {
+    setup(baseState(true), PROBE_OK_BUT_READ_FAILS(READ_ERROR));
     const { status, body } = await search("plans", "belem");
     assert.equal(status, 200);
     assert.deepEqual(body.results, []);
@@ -491,11 +625,11 @@ describe("flag ON — a failed projection read is [] : no crash, no leak", () =>
     for (const id of [...EXPECTED_PLAN_IDS, ...NEVER_PLAN_IDS]) assert.equal(json.includes(id), false, id);
   });
 
-  it("a THROWN trips client on the projection path is the same []", async () => {
-    setup(baseState(true), (table, select) => (table === "trips" && select === TRIP_DISCOVERY_SOURCE_COLUMNS ? "throw" : undefined));
+  it("a THROWN client on the projection read (probe already passed) is the same []", async () => {
+    setup(baseState(true), PROBE_OK_BUT_READ_FAILS("throw"));
     const t = await search("trips");
     assert.deepEqual(t.body.results, []);
-    setup(baseState(true), (table, select) => (table === "trips" && select === TRIP_DISCOVERY_SOURCE_COLUMNS ? "throw" : undefined));
+    setup(baseState(true), PROBE_OK_BUT_READ_FAILS("throw"));
     const p = await search("plans", "belem");
     assert.deepEqual(p.body.results, []);
   });
@@ -539,7 +673,7 @@ describe("the policy consequence, pinned: the owner's non-member toggles reach a
     const bound = { startsAfter: "2026-09-01", startsBefore: "2026-10-10" }; // T_TOGGLES starts 2026-10-20: outside
     const off = await dispatchSearch(makeFakeClient(withToggles("absent")) as any, "belem", ME, new Set([BOB]), new Set([CARL]), "plans", 0, 21, bound);
     assert.equal(off.some((r) => r.id === P_TOGGLES), false, "OFF: excluded by the true start_date");
-    invalidateDiscoveryTripProjectionFlagCache();
+    invalidateDiscoveryTripProjectionFlagCache(); resetSchemaCapabilityMemo();
     const on = await dispatchSearch(makeFakeClient(withToggles(true)) as any, "belem", ME, new Set([BOB]), new Set([CARL]), "plans", 0, 21, bound);
     assert.equal(on.some((r) => r.id === P_TOGGLES), true, "ON: startDate is null under show_exact_dates=false, so the bound cannot apply");
     // Everything else about the bound still holds on the projection path.
@@ -553,19 +687,76 @@ describe("lib/discoveryTripProjectionConsumer — the units", () => {
     assert.equal(DISCOVERY_TRIP_PROJECTION_FLAG, "discovery_trip_projection_enabled");
   });
 
-  it("discoveryTripProjectionEnabled is fail-closed toward legacy: absent, false, error, throw → false; only an enabled row → true", async () => {
-    const mk = (flags: any[], override?: Override) => makeFakeClient({ feature_flags: flags }, override);
-    invalidateDiscoveryTripProjectionFlagCache();
-    assert.equal(await discoveryTripProjectionEnabled(mk([])), false);
-    invalidateDiscoveryTripProjectionFlagCache();
-    assert.equal(await discoveryTripProjectionEnabled(mk([{ flag: DISCOVERY_TRIP_PROJECTION_FLAG, enabled: false }])), false);
-    invalidateDiscoveryTripProjectionFlagCache();
-    assert.equal(await discoveryTripProjectionEnabled(mk([], () => ({ data: null, error: { message: "x" } }))), false);
-    invalidateDiscoveryTripProjectionFlagCache();
-    assert.equal(await discoveryTripProjectionEnabled(mk([], () => "throw")), false);
-    invalidateDiscoveryTripProjectionFlagCache();
-    assert.equal(await discoveryTripProjectionEnabled(mk([{ flag: DISCOVERY_TRIP_PROJECTION_FLAG, enabled: true }])), true);
-    invalidateDiscoveryTripProjectionFlagCache();
+  it("discoveryTripProjectionEnabled is fail-closed toward legacy: absent, false, error, throw, AND missing schema → false; only an enabled row over ready schema → true", async () => {
+    const mk = (flags: any[], override?: Override) => makeFakeClient({ feature_flags: flags, trips: [] }, override);
+    const reset = () => { invalidateDiscoveryTripProjectionFlagCache(); resetSchemaCapabilityMemo(); };
+    const ON = [{ flag: DISCOVERY_TRIP_PROJECTION_FLAG, enabled: true }];
+
+    reset(); assert.equal(await discoveryTripProjectionEnabled(mk([])), false, "absent flag row");
+    reset(); assert.equal(await discoveryTripProjectionEnabled(mk([{ flag: DISCOVERY_TRIP_PROJECTION_FLAG, enabled: false }])), false, "flag false");
+    reset(); assert.equal(await discoveryTripProjectionEnabled(mk([], (t) => (t === "feature_flags" ? { data: null, error: { message: "x" } } : undefined))), false, "flag row unreadable");
+    reset(); assert.equal(await discoveryTripProjectionEnabled(mk([], (t) => (t === "feature_flags" ? "throw" : undefined))), false, "flag read throws");
+    reset(); assert.equal(await discoveryTripProjectionEnabled(mk(ON, PRODUCTION_NO_VERSION)), false, "flag ON over production's schema");
+    reset(); assert.equal(await discoveryTripProjectionEnabled(mk(ON)), true, "flag ON over ready schema");
+    reset();
+  });
+
+  it("the gate names WHY it refused, and only `ready` opens it", async () => {
+    const mk = (flags: any[], override?: Override) => makeFakeClient({ feature_flags: flags, trips: [] }, override);
+    const reset = () => { invalidateDiscoveryTripProjectionFlagCache(); resetSchemaCapabilityMemo(); };
+    const ON = [{ flag: DISCOVERY_TRIP_PROJECTION_FLAG, enabled: true }];
+
+    reset();
+    const off = await discoveryTripProjectionGate(mk([]));
+    assert.deepEqual([off.source, off.reason, off.schema], ["legacy", "flag_off", null]);
+
+    reset();
+    const missing = await discoveryTripProjectionGate(mk(ON, PRODUCTION_NO_VERSION));
+    assert.equal(missing.source, "legacy");
+    assert.equal(missing.reason, "schema_missing");
+    assert.equal(missing.schema!.state, "missing");
+    assert.deepEqual(missing.schema!.missing, ["trips"], "the dotted driver wording resolves only to the table — the documented floor");
+    assert.equal(missing.schema!.errorCode, "42703");
+
+    reset();
+    const quoted = await discoveryTripProjectionGate(mk(ON, PRODUCTION_NO_VERSION_QUOTED));
+    assert.equal(quoted.reason, "schema_missing");
+    assert.deepEqual(quoted.schema!.missing, ["trips.version"], "when the driver quotes the column, the probe names the column 2420 provides");
+
+    reset();
+    const unknown = await discoveryTripProjectionGate(mk(ON, (_t, _sel, rec) => (isProbeRead(rec) ? "throw" : undefined)));
+    assert.equal(unknown.source, "legacy");
+    assert.equal(unknown.reason, "schema_unknown");
+
+    reset();
+    const ready = await discoveryTripProjectionGate(mk(ON));
+    assert.deepEqual([ready.source, ready.reason, ready.schema!.state], ["projection", "ready", "ready"]);
+    reset();
+  });
+
+  it("the verdict cache is keyed on the CLIENT OBJECT: one client's answer is never served to another", async () => {
+    const reset = () => { invalidateDiscoveryTripProjectionFlagCache(); resetSchemaCapabilityMemo(); };
+    const ON = [{ flag: DISCOVERY_TRIP_PROJECTION_FLAG, enabled: true }];
+    reset();
+    const ready = makeFakeClient({ feature_flags: ON, trips: [] });
+    const notReady = makeFakeClient({ feature_flags: ON, trips: [] }, PRODUCTION_NO_VERSION);
+    assert.equal(await discoveryTripProjectionEnabled(ready), true);
+    // No invalidate between the two — a module-global cache would answer `true` here.
+    assert.equal(await discoveryTripProjectionEnabled(notReady), false);
+    assert.equal(await discoveryTripProjectionEnabled(ready), true);
+    reset();
+  });
+
+  it("the capability declares exactly the columns the Trips-owned reader selects — derived, so it cannot drift", () => {
+    assert.deepEqual(
+      DISCOVERY_TRIP_PROJECTION_COLUMNS,
+      TRIP_DISCOVERY_SOURCE_COLUMNS.split(",").map((c) => c.trim()),
+    );
+    assert.ok(DISCOVERY_TRIP_PROJECTION_COLUMNS.includes("version"), "the 2420 column is declared");
+    assert.equal(DISCOVERY_TRIP_PROJECTION.flag, DISCOVERY_TRIP_PROJECTION_FLAG);
+    assert.deepEqual(DISCOVERY_TRIP_PROJECTION.requires.tables.trips!.columns, DISCOVERY_TRIP_PROJECTION_COLUMNS);
+    assert.ok(DISCOVERY_TRIP_PROJECTION.providedBy.some((m) => m.includes("2420")), "the refusal names the migration to apply");
+    assert.deepEqual(DISCOVERY_TRIP_PROJECTION.consumers, ["routes/discoverySearch.ts"]);
   });
 
   it("§19.1: acceptTripDiscoveryProjections keeps schema version 1 and drops (and counts) anything else", () => {
