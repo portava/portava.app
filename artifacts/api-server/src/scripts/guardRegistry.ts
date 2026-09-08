@@ -52,9 +52,50 @@ export type Reach =
   | { kind: "test-control"; test: string; seams: readonly string[] }
   | { kind: "manual"; reason: string };
 
+/**
+ * How a guard PROVES it inspected something.
+ *
+ * ── WHY THIS EXISTS ──────────────────────────────────────────────────────────
+ * A guard's exit code says whether it found a problem. It says nothing about
+ * whether it LOOKED. Three CI-enforced guards printed a success message that was
+ * byte-identical whether they had inspected everything or nothing:
+ *
+ *   check-admin-guard   "PASSED — no local admin guards in src/routes/"
+ *   check-data-rights   "every intel column has a stated ownership class."
+ *
+ * check-admin-guard is a SECURITY guard, wired into check:all, and would have
+ * printed that line if its route directory had been renamed or its walker had
+ * broken. "Nothing is wrong" and "I did not look" are not the same sentence, and
+ * an exit code cannot tell them apart.
+ *
+ * So a CI-enforced guard declares the line that carries its inspected count, and
+ * checkGuardReachability RUNS it and reads the number. Zero fails.
+ *
+ * `zeroIsProved` is the one escape, and it is deliberately narrow: a guard whose
+ * subject genuinely can be empty must say WHY zero is a proved expected state,
+ * not merely that it is possible. Reaching for it to silence a collapsed scan is
+ * the thing this rule exists to stop.
+ */
+export interface InspectionProof {
+  /** ERE matched against the guard's combined output; group 1 must be the count. */
+  countPattern: string;
+  /** What the number counts, for a reader of the failure message. */
+  unit: string;
+  /** Set ONLY when zero is a proved expected state, with the proof. */
+  zeroIsProved?: string;
+}
+
 export interface GuardEntry {
   /** Path relative to artifacts/api-server. */
   checker: string;
+  /**
+   * Required for a `check-all` guard that runs without credentials. A
+   * credentialed guard is exempt because running it here would either need
+   * credentials CI must not hold, or produce a NO_VERDICT that proves nothing.
+   */
+  inspects?: InspectionProof;
+  /** True when the guard needs live credentials, so its count cannot be read here. */
+  credentialed?: boolean;
   responsibility: string;
   reach: Reach;
 }
@@ -63,81 +104,115 @@ export const GUARDS: readonly GuardEntry[] = [
   // ── reached by scripts/run-all-checks.sh ──────────────────────────────────
   {
     checker: "scripts/check-compiler-authentic.mjs",
+    inspects: { countPattern: "(\\d+) probe program\\(s\\) compiled", unit: "probe programs compiled" },
     responsibility: "Proves the resolved TypeScript compiler REJECTS a program it must reject, so a green typecheck means something.",
     reach: { kind: "check-all", script: "check:compiler-authentic" },
   },
   {
     checker: "scripts/check-flag-polarity.mjs",
+    // Matches BOTH output paths: this guard prints "N flags seeded across" when
+    // clean and "N flags across" when it has findings. A pattern keyed on the
+    // clean-run wording alone went quiet exactly when the guard had something to say.
+    inspects: { countPattern: "(\\d+) flags (?:seeded )?across", unit: "feature flags seeded and accounted for" },
     responsibility: "Every feature flag is classified STOP/CAPABILITY/CONFIG and read through the reader that classification demands.",
     reach: { kind: "check-all", script: "check:flag-polarity" },
   },
   {
     checker: "scripts/check-guard-coverage.mjs",
+    inspects: { countPattern: "\\| source files scanned \\| (\\d+) \\|", unit: "source files scanned" },
     responsibility: "Every file that can reach Supabase directly imports a CI guard front door or carries a written exemption.",
     reach: { kind: "check-all", script: "check:guard-coverage" },
   },
   {
     checker: "scripts/check-route-auth-gate.mjs",
+    inspects: { countPattern: "(\\d+) route files scanned", unit: "route files scanned" },
     responsibility: "A route handler that writes goes through requireUser, the only place the account ban/suspend gate is applied.",
     reach: { kind: "check-all", script: "check:route-auth-gate" },
   },
   {
     checker: "src/scripts/checkAsyncHandlers.ts",
+    inspects: { countPattern: "(\\d+) route file\\(s\\) clean", unit: "route files checked for unhandled async rejection" },
     responsibility: "An async Express handler cannot reject unhandled, which would answer nothing and leave the request hanging.",
     reach: { kind: "check-all", script: "check:async-handlers" },
   },
   {
     checker: "src/scripts/checkAuthorizationContract.ts",
+    // Reads a live database through the Management API. Running it here to read an
+    // inspected count would need credentials CI must not hold, and its own exit 2
+    // (CANNOT-RUN) is already the honest verdict in a credential-free environment.
+    credentialed: true,
     responsibility: "No migration restores broad client mutation privileges, exposes a server-derived column, or adds an unapproved RLS policy.",
     reach: { kind: "check-all", script: "check:authorization-contract" },
   },
   {
     checker: "src/scripts/checkFrozenDir.ts",
+    inspects: { countPattern: "\\((\\d+) known file\\(s\\), unchanged\\)", unit: "frozen loose files verified" },
     responsibility: "Frozen directories stay frozen — a file added there is a change nobody agreed to.",
     reach: { kind: "check-all", script: "check:frozen-dir" },
   },
   {
     checker: "src/scripts/checkMediaObjects.ts",
+    // Reads a live database through the Management API. Running it here to read an
+    // inspected count would need credentials CI must not hold, and its own exit 2
+    // (CANNOT-RUN) is already the honest verdict in a credential-free environment.
+    credentialed: true,
     responsibility: "Every post_media row points at a Storage object that actually exists, which processing_status structurally cannot tell you.",
     reach: { kind: "check-all", script: "check:media-objects" },
   },
   {
     checker: "src/scripts/checkMigrationPrefixes.ts",
+    inspects: { countPattern: "PASSED \\((\\d+) file\\(s\\)", unit: "migration files checked for prefix collision" },
     responsibility: "Migration filenames carry unique, ordered prefixes so apply order is derivable and two lanes cannot collide.",
     reach: { kind: "check-all", script: "check:migration-prefixes" },
   },
   {
     checker: "src/scripts/checkMissingLiveColumns.ts",
+    // Reads a live database through the Management API. Running it here to read an
+    // inspected count would need credentials CI must not hold, and its own exit 2
+    // (CANNOT-RUN) is already the honest verdict in a credential-free environment.
+    credentialed: true,
     responsibility: "Code never reads or writes a column the live database does not have.",
     reach: { kind: "check-all", script: "check:missing-live-columns" },
   },
   {
     checker: "src/scripts/checkNotNullWrites.ts",
+    inspects: { countPattern: "(\\d+) source file\\(s\\), \\d+ write payload", unit: "source files scanned for null-into-NOT-NULL" },
     responsibility: "No write payload anywhere puts null into a NOT NULL column, which raises 23502 at run time on a path that may be mid-transaction.",
     reach: { kind: "check-all", script: "check:not-null-writes" },
   },
   {
     checker: "src/scripts/checkRankEventsSurfaces.ts",
+    // Reads a live database through the Management API. Running it here to read an
+    // inspected count would need credentials CI must not hold, and its own exit 2
+    // (CANNOT-RUN) is already the honest verdict in a credential-free environment.
+    credentialed: true,
     responsibility: "A behavioural probe that a real INSERT with each required rank_events surface is PERMITTED, rolled back.",
     reach: { kind: "check-all", script: "check:rank-events-surfaces" },
   },
   {
     checker: "src/scripts/checkSilentSupabaseWrites.ts",
+    inspects: { countPattern: "(\\d+) pre-existing site\\(s\\) baseline", unit: "baselined write sites" },
     responsibility: "A mutation never discards its error, the write-side twin of the unchecked-read defect.",
     reach: { kind: "check-all", script: "check:silent-supabase-writes" },
   },
   {
     checker: "src/scripts/checkTestRunnerFlags.ts",
+    inspects: { countPattern: "PASSED \\((\\d+) file\\(s\\) scanned", unit: "test-invocation files scanned" },
     responsibility: "The test invocation keeps the flags that make a failing test fail the process rather than print and exit 0.",
     reach: { kind: "check-all", script: "check:test-runner-flags" },
   },
   {
     checker: "src/scripts/checkTripKernelWriters.ts",
+    inspects: { countPattern: "(\\d+) direct write\\(s\\) to trips", unit: "direct trip-aggregate writes inventoried" },
     responsibility: "Every writer of trip aggregate state goes through the Trip Kernel instead of updating trips directly.",
     reach: { kind: "check-all", script: "check:trip-kernel-writers" },
   },
   {
     checker: "src/scripts/checkWritePathColumns.ts",
+    // Reads a live database through the Management API. Running it here to read an
+    // inspected count would need credentials CI must not hold, and its own exit 2
+    // (CANNOT-RUN) is already the honest verdict in a credential-free environment.
+    credentialed: true,
     responsibility: "Every column a write path names exists in the live schema with a compatible type.",
     reach: { kind: "check-all", script: "check:write-path-columns" },
   },
@@ -266,6 +341,7 @@ export const GUARDS: readonly GuardEntry[] = [
 
   {
     checker: "src/scripts/checkGuardReachability.ts",
+    inspects: { countPattern: "(\\d+) guard\\(s\\) on disk", unit: "guards discovered on disk" },
     responsibility: "Every guard in this tree is reached by something that would go red if it started failing.",
     reach: {
       kind: "test-control",
@@ -299,6 +375,7 @@ export const GUARDS: readonly GuardEntry[] = [
   },
   {
     checker: "src/scripts/checkUnissuedSupabaseWrites.ts",
+    inspects: { countPattern: "(\\d+) void statement\\(s\\) examined", unit: "void statements examined" },
     responsibility:
       "A void supabase mutation with no .then/.catch/await is never SENT — PostgrestBuilder issues its request " +
       "inside then() — so the row is not written at all.",
@@ -311,6 +388,7 @@ export const GUARDS: readonly GuardEntry[] = [
 
   {
     checker: "src/scripts/checkAdminGuard.ts",
+    inspects: { countPattern: "(\\d+) route file\\(s\\) inspected", unit: "route files inspected" },
     responsibility: "Every admin-gated handler decides 'is this caller an admin' through the shared guard, not through its own role check.",
     // WAS MANUAL, on the reason "superseded in CI by check:route-auth-gate". That
     // was false in the way that matters: route-auth-gate enforces the broader,
@@ -344,6 +422,7 @@ export const GUARDS: readonly GuardEntry[] = [
   },
   {
     checker: "src/scripts/checkDataRights.ts",
+    inspects: { countPattern: "(\\d+) intel column\\(s\\) inspected", unit: "intel columns inspected" },
     responsibility: "Every intel column carries a stated ownership class, so no personal contribution is stored with its owner undecided.",
     // WAS MANUAL, on a reason written from this guard's header rather than from
     // running it: "unwired because it carries standing findings". It exits 0.
@@ -351,6 +430,12 @@ export const GUARDS: readonly GuardEntry[] = [
   },
   {
     checker: "src/scripts/checkDeletionCoverage.ts",
+    // Repointed when the denominator was CORRECTED. The old line said "248
+    // user-keyed table(s) in the baseline", and that number was wrong: user-linked
+    // tables were identified by matching 18 column NAMES, so a table joined to
+    // profiles.id by a foreign key without one of those names fell out of scope
+    // entirely. The schema-driven graph puts the real denominator at 366.
+    inspects: { countPattern: "DENOMINATOR\\s+(\\d+) table\\(s\\)", unit: "tables that must have a stated deletion fate" },
     responsibility: "Every user-keyed table has a STATED deletion fate, so a new one cannot arrive with its fate undecided and unnoticed.",
     // WAS MANUAL, and the reason was false — it exits 0. Read the responsibility
     // literally: it enforces that a fate is stated, NOT that the fate is erasure.
@@ -362,6 +447,7 @@ export const GUARDS: readonly GuardEntry[] = [
   },
   {
     checker: "src/scripts/checkLocationPurposes.ts",
+    inspects: { countPattern: "(\\d+) table\\(s\\) hold coordinates", unit: "coordinate-holding tables" },
     responsibility: "Every coordinate-holding table is claimed by a documented purpose under the location-privacy contract.",
     // WAS MANUAL, on the theory that LOCATION_PRECISION_DEFAULT being an open
     // owner decision made the purpose taxonomy unsettled. Running it shows the
@@ -384,6 +470,7 @@ export const GUARDS: readonly GuardEntry[] = [
   },
   {
     checker: "src/scripts/checkUncheckedSupabaseReads.ts",
+    inspects: { countPattern: "judged (\\d+) read site\\(s\\)", unit: "supabase read sites judged" },
     responsibility: "No in-scope read discards its .error, which supabase-js turns into an empty result on a database failure.",
     // WAS MANUAL, AND WAS THE FINDING THAT MADE THIS REGISTRY EXIST. Every spawn
     // in its mutation suite pointed at a scratch tree through
