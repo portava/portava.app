@@ -58,10 +58,22 @@ BEGIN
     RAISE EXCEPTION 'ROLLBACK POSTCONDITION FAILED: public.profiles is gone';
   END IF;
 
+  -- WAS `highlights_cols <> 17`, and that was wrong to write: it pinned this
+  -- file to another migration's column count. 2723 legitimately takes
+  -- public.highlights from 17 columns to 22, and this assertion would then have
+  -- failed on a rollback that had done nothing wrong. Assert what 2721 actually
+  -- cares about instead -- the columns it references, and the absence of the one
+  -- it deliberately did not add.
   SELECT count(*) INTO highlights_cols FROM information_schema.columns
-   WHERE table_schema = 'public' AND table_name = 'highlights';
-  IF highlights_cols <> 17 THEN
-    RAISE EXCEPTION 'ROLLBACK POSTCONDITION FAILED: public.highlights has % columns, expected the 17 it had before and after 2721 -- the forward migration deliberately does NOT add audience_policy_id to it', highlights_cols;
+   WHERE table_schema = 'public' AND table_name = 'highlights'
+     AND column_name IN ('id', 'owner_id');
+  IF highlights_cols <> 2 THEN
+    RAISE EXCEPTION 'ROLLBACK POSTCONDITION FAILED: public.highlights is missing id and/or owner_id -- 2721 referenced both and created neither';
+  END IF;
+  IF EXISTS (SELECT 1 FROM information_schema.columns
+              WHERE table_schema = 'public' AND table_name = 'highlights'
+                AND column_name = 'audience_policy_id') THEN
+    RAISE EXCEPTION 'ROLLBACK POSTCONDITION FAILED: public.highlights carries audience_policy_id -- 2721 deliberately did not add it and its inverse must not have introduced it';
   END IF;
 END $$;
 
