@@ -62,7 +62,13 @@ before(async () => {
   app.use("/api", trustAdminRouter);
   app.use("/api", postsRouter);
   server = http.createServer(app);
-  await new Promise<void>((r) => server.listen(0, r));
+  // 127.0.0.1 explicitly: a host-less listen(0) binds the IPv6 wildcard, and the
+  // kernel may hand back a port a foreign process already holds on loopback —
+  // the request then reaches the stranger and a random case in this file fails on
+  // whatever it answered. The address makes the bind DEFERRED (node routes it
+  // through lookupAndListen), so the callback, not the next line, is when
+  // address() is readable. check:loopback-bind enforces this.
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
   base = `http://127.0.0.1:${(server.address() as any).port}`;
 });
 

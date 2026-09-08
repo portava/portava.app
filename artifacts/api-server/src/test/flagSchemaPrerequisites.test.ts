@@ -264,12 +264,27 @@ describe("the script", () => {
   });
 
   it("exits 1 when a KNOWN entry goes stale (the migration lands in production)", () => {
+    // This case used to push trust_profiles.evidence_weight/_count, because
+    // KNOWN.trust_engine_enabled listed them as absent. Migration 2371 then
+    // landed in production, the ratchet reported that entry STALE, the entry was
+    // struck — and this case started asserting a message that can no longer be
+    // produced, so it has been red ever since. The rule it exists to prove is
+    // fine; the fixture had outlived its subject.
+    //
+    // It is repointed at the one KNOWN entry that remains rather than deleted,
+    // because deleting it would retire the proof that the ratchet notices when a
+    // migration lands — which is the ONLY way this list is allowed to shrink.
     const edited = JSON.parse(readFileSync(SNAPSHOT, "utf8"));
-    edited.tables.trust_profiles.push("evidence_weight", "evidence_count");
+    assert.ok(
+      !edited.tables.media_assets.includes("captured_at"),
+      "premise: media_assets.captured_at is still absent in production (owner decision MEDIA_CANONICAL_FLAG)",
+    );
+    edited.tables.media_assets.push("captured_at");
     const p = join(fixture, "applied-snapshot.json");
     writeFileSync(p, JSON.stringify(edited));
     const r = run({ FLAG_SCHEMA_SNAPSHOT: p });
     assert.equal(r.status, 1, r.stdout);
-    assert.match(r.stdout, /STALE: KNOWN\.trust_engine_enabled/);
+    assert.match(r.stdout, /STALE: KNOWN\.media_canonical_enabled/);
+    assert.match(r.stdout, /captured_at/);
   });
 });

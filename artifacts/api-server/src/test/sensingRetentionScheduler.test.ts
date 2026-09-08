@@ -177,7 +177,21 @@ describe("sensing TTL sweep — registration and cadence", () => {
     const dir = join(SRC, "migrations");
     const sql = readdirSync(dir).filter((f) => f.endsWith(".sql"));
     assert.ok(sql.length > 100, "premise: the migration directory was found");
-    const scheduled = sql.filter((f) => /cron\.schedule|pg_cron/i.test(readFileSync(join(dir, f), "utf8")));
+    // COMMENTS STRIPPED, and the pattern is the CALL rather than the word.
+    // 2600_event_start_transition_flag.sql says "pg_cron not installed" in a
+    // header comment explaining why the Node scheduler exists — and this scan
+    // read that prose as a migration scheduling a sweep. Fifth instance of the
+    // same defect in this tree today (checkStateMachineWriters,
+    // checkProjectionConsumers, check-guard-coverage, checkGuardReachability);
+    // a comment is not a statement.
+    //
+    // Not weakened: a migration that actually schedules still matches
+    // `cron.schedule(`, and one that installs the extension still matches the
+    // CREATE EXTENSION form.
+    const stripSqlComments = (t: string) =>
+      t.replace(/\/\*[\s\S]*?\*\//g, " ").split("\n").map((l) => l.replace(/--.*$/, "")).join("\n");
+    const SCHEDULES = /\bcron\s*\.\s*schedule\s*\(|create\s+extension[^;]*\bpg_cron\b/i;
+    const scheduled = sql.filter((f) => SCHEDULES.test(stripSqlComments(readFileSync(join(dir, f), "utf8"))));
     assert.deepEqual(scheduled, [], "a migration schedules a sweep — the Node scheduler would double it");
   });
 });
