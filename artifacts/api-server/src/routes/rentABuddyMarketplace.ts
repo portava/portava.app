@@ -118,6 +118,7 @@ import {
 // The ONE bidirectional, fail-closed block resolver — the same one the map
 // reader and POST /rent-a-buddy/search consume.
 import { fetchBlockedSet } from "../lib/blocks.js";
+import { requireAdmin } from "../lib/requireAdmin.js";
 
 const router = Router();
 
@@ -125,18 +126,6 @@ const router = Router();
 
 function sc() {
   return getServiceClient();
-}
-
-async function requireAdmin(req: any, res: any): Promise<{ userId: string; svc: any } | null> {
-  const auth = await requireUser(req, res);
-  if (!auth) return null;
-  const { client, user } = auth;
-  const { data } = await client.from("profiles").select("role").eq("id", user.id).maybeSingle();
-  if (!data || (data as any).role !== "admin") {
-    res.status(403).json({ error: "forbidden", message: "Admin role required." });
-    return null;
-  }
-  return { userId: user.id, svc: sc() ?? client };
 }
 
 async function requireBuddyProfile(client: any, userId: string): Promise<any | null> {
@@ -2383,7 +2372,7 @@ router.get("/rent-a-buddy/me/earnings/ledger", async (req, res) => {
 router.get("/rent-a-buddy/admin/marketplace/analytics", async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
-  const { svc } = admin;
+  const { sc: svc } = admin;
 
   const nowMs = Date.now();
   const since = new Date(nowMs - 30 * 24 * 60 * 60 * 1000).toISOString();
@@ -2477,7 +2466,7 @@ router.get("/rent-a-buddy/admin/marketplace/analytics", async (req, res) => {
 router.get("/rent-a-buddy/admin/marketplace/cities", async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
-  const { svc } = admin;
+  const { sc: svc } = admin;
 
   const { data } = await svc
     .from("rent_buddy_profiles")
@@ -2498,7 +2487,7 @@ router.get("/rent-a-buddy/admin/marketplace/cities", async (req, res) => {
 router.post("/rent-a-buddy/admin/profiles/:id/feature", async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
-  const { svc } = admin;
+  const { sc: svc } = admin;
 
   const { error } = await svc
     .from("rent_buddy_profiles")
@@ -2522,7 +2511,7 @@ router.post("/rent-a-buddy/admin/profiles/:id/feature", async (req, res) => {
 router.delete("/rent-a-buddy/admin/profiles/:id/feature", async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
-  const { svc } = admin;
+  const { sc: svc } = admin;
 
   const { error: unfeatureErr } = await svc.from("rent_buddy_profiles")
     .update({ featured: false, featured_at: null, updated_at: new Date().toISOString() })
@@ -2540,7 +2529,7 @@ router.delete("/rent-a-buddy/admin/profiles/:id/feature", async (req, res) => {
 router.post("/rent-a-buddy/admin/profiles/:id/city-ambassador", async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
-  const { svc } = admin;
+  const { sc: svc } = admin;
 
   const enable = req.body?.enable !== false;
   const { error: ambassadorErr } = await svc.from("rent_buddy_profiles")
@@ -2565,7 +2554,7 @@ router.post("/rent-a-buddy/admin/profiles/:id/city-ambassador", async (req, res)
 router.post("/rent-a-buddy/admin/packages/:id/approve", async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
-  const { svc } = admin;
+  const { sc: svc } = admin;
 
   const { error: approveErr } = await svc.from("rent_buddy_packages")
     .update({
@@ -2598,7 +2587,7 @@ router.post("/rent-a-buddy/admin/packages/:id/approve", async (req, res) => {
 router.post("/rent-a-buddy/admin/packages/:id/disable", async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
-  const { svc } = admin;
+  const { sc: svc } = admin;
 
   const { error: disableErr } = await svc.from("rent_buddy_packages")
     .update({
@@ -2632,7 +2621,7 @@ router.post("/rent-a-buddy/admin/packages/:id/disable", async (req, res) => {
 router.get("/rent-a-buddy/admin/pricing/outliers", async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
-  const { svc } = admin;
+  const { sc: svc } = admin;
 
   // Buddies with rates more than 3x the city/category average
   const { data } = await svc
@@ -2649,7 +2638,7 @@ router.get("/rent-a-buddy/admin/pricing/outliers", async (req, res) => {
 router.patch("/rent-a-buddy/admin/fee-rules", async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
-  const { svc } = admin;
+  const { sc: svc } = admin;
 
   const { updates } = req.body ?? {};
   if (!Array.isArray(updates)) return sendError(res, 'invalid_payload', "updates array required.");
@@ -2678,7 +2667,7 @@ router.patch("/rent-a-buddy/admin/fee-rules", async (req, res) => {
 router.post("/rent-a-buddy/admin/users/:userId/force-public-meetup", async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
-  const { svc } = admin;
+  const { sc: svc } = admin;
 
   const { error: limitErr } = await svc.from("rent_buddy_user_limits").upsert({
     user_id: req.params.userId,
@@ -2700,7 +2689,7 @@ router.post("/rent-a-buddy/admin/users/:userId/force-public-meetup", async (req,
 router.post("/rent-a-buddy/admin/users/:userId/force-full-in-app", async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
-  const { svc } = admin;
+  const { sc: svc } = admin;
 
   const { error: limitErr } = await svc.from("rent_buddy_user_limits").upsert({
     user_id: req.params.userId,
@@ -2723,7 +2712,7 @@ router.post("/rent-a-buddy/admin/users/:userId/force-full-in-app", async (req, r
 router.post("/rent-a-buddy/admin/restrictions/city-category", async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
-  const { svc } = admin;
+  const { sc: svc } = admin;
 
   const { city, category, disableDepositCash, requirePublicMeetup, requireFullInApp, reason } = req.body ?? {};
   if (!city) return sendError(res, 'invalid_payload', "city is required.");

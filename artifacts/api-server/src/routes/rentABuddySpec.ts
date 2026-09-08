@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { asyncHandler } from "../lib/asyncHandler.js";
 import { requireUser, sendError } from "../lib/http.js";
+import { requireAdmin } from "../lib/requireAdmin.js";
 import { getServiceClient } from "../lib/supabase.js";
 // requireRentBuddyEnabled is the lane's ONE master-switch guard, defined in
 // rentABuddy.ts (which already gates its own 70 handlers with it). Imported
@@ -30,22 +31,6 @@ function sc(fallback?: any) {
 // "which control applies" can never drift from the canonical booking path. This
 // in-memory form also avoids the `.is("col", null)` builder call that several
 // route paths' fakes do not implement.
-
-async function requireAdminCtx(req: any, res: any) {
-  const auth = await requireUser(req, res);
-  if (!auth) return null;
-  const serviceClient = sc(auth.client);
-  const { data: profile } = await serviceClient
-    .from("profiles")
-    .select("role")
-    .eq("id", auth.user.id)
-    .maybeSingle();
-  if ((profile as any)?.role !== "admin") {
-    res.status(403).json({ error: "forbidden" });
-    return null;
-  }
-  return { auth, serviceClient };
-}
 
 // ── buddy_services ─────────────────────────────────────────────────────────────
 
@@ -229,9 +214,9 @@ router.delete("/me/buddy-services/:serviceId", asyncHandler(async (req, res) => 
 }));
 
 router.post("/admin/rent-a-buddy/services/:serviceId/approve", asyncHandler(async (req, res) => {
-  const adminCtx = await requireAdminCtx(req, res);
+  const adminCtx = await requireAdmin(req, res);
   if (!adminCtx) return;
-  const { serviceClient } = adminCtx;
+  const { sc: serviceClient } = adminCtx;
 
   const now = new Date().toISOString();
   const { data, error } = await serviceClient
@@ -246,9 +231,9 @@ router.post("/admin/rent-a-buddy/services/:serviceId/approve", asyncHandler(asyn
 }));
 
 router.post("/admin/rent-a-buddy/services/:serviceId/disable", asyncHandler(async (req, res) => {
-  const adminCtx = await requireAdminCtx(req, res);
+  const adminCtx = await requireAdmin(req, res);
   if (!adminCtx) return;
-  const { serviceClient } = adminCtx;
+  const { sc: serviceClient } = adminCtx;
 
   const now = new Date().toISOString();
   const { data, error } = await serviceClient

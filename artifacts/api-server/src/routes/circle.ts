@@ -18,6 +18,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { requireUser, sendError, safeSecretEquals, type ApiErrorCode } from "../lib/http.js";
+import { requireAdmin } from "../lib/requireAdmin.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { isFlagEnabled } from "../lib/featureFlags.js";
 import {
@@ -82,31 +83,6 @@ async function requireFeatureEnabled(res: any, sc: any): Promise<boolean> {
     return false;
   }
   return true;
-}
-
-/** Local admin guard — checks profiles.role = 'admin'. */
-async function requireAdmin(
-  req: any,
-  res: any,
-): Promise<{ user: any; sc: any } | null> {
-  const auth = await requireUser(req, res);
-  if (!auth) return null;
-  const { user } = auth;
-  const sc = getServiceClient();
-  if (!sc) {
-    sendError(res, "server_not_configured", "Service client not ready");
-    return null;
-  }
-  const { data, error } = await sc
-    .from("profiles")
-    .select("role")
-    .eq("id", user.id)
-    .maybeSingle();
-  if (error || !data || (data as any).role !== "admin") {
-    sendError(res, "forbidden", "Admin access required");
-    return null;
-  }
-  return { user, sc };
 }
 
 /** Check whether userId is the host of the given context. */
@@ -1937,7 +1913,7 @@ router.get("/admin/circle/reports", async (req, res) => {
 router.post("/admin/circle/disable-context", async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
-  const { sc, user: adminUser } = admin;
+  const { sc, userId: adminUserId } = admin;
 
   const { contextType, contextId, reason } = req.body as {
     contextType?: string;
@@ -1972,7 +1948,7 @@ router.post("/admin/circle/disable-context", async (req, res) => {
   }
 
   void writeAuditEvent(sc, {
-    actorUserId:  adminUser.id,
+    actorUserId:  adminUserId,
     contextType,
     contextId,
     eventType:    "admin_disabled_context",
@@ -1987,7 +1963,7 @@ router.post("/admin/circle/disable-context", async (req, res) => {
 router.post("/admin/circle/kill-switch", async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
-  const { sc, user: adminUser } = admin;
+  const { sc, userId: adminUserId } = admin;
 
   const { enabled } = req.body as { enabled?: boolean };
   if (typeof enabled !== "boolean") {
@@ -2011,7 +1987,7 @@ router.post("/admin/circle/kill-switch", async (req, res) => {
   if (error) { sendError(res, "db_error", error.message); return; }
 
   void writeAuditEvent(sc, {
-    actorUserId: adminUser.id,
+    actorUserId: adminUserId,
     eventType:   "admin_kill_switch_toggled",
     metadata:    { killSwitchEnabled: enabled },
   });

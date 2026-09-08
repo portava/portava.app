@@ -17,10 +17,10 @@
 import { Router } from "express";
 import { z } from "zod";
 import { asyncHandler } from "../lib/asyncHandler.js";
-import { requireUser, sendError } from "../lib/http.js";
-import { getServiceClient } from "../lib/supabase.js";
+import { sendError } from "../lib/http.js";
 import { isFlagEnabled } from "../lib/featureFlags.js";
 import { requestGeneration } from "../lib/visuals/service.js";
+import { requireAdmin } from "../lib/requireAdmin.js";
 
 const router = Router();
 
@@ -31,37 +31,32 @@ const AI_VISUAL_COST_PER_IMAGE = Number(process.env.AI_VISUAL_COST_PER_IMAGE ?? 
 
 // ── Admin + flag guard ────────────────────────────────────────────────────────
 
+/**
+ * Admin AND the `ai_visual_admin_review_enabled` flag.
+ *
+ * This is deliberately still a local function, but it no longer decides the
+ * ROLE question itself — that is delegated to the shared guard, with
+ * `withDisplayName` for the audit labelling these routes do. What remains local
+ * is the extra feature-flag gate, which makes this route group STRICTLY more
+ * restrictive than plain admin. That is the one direction a local wrapper is
+ * safe in: it can only ever refuse a caller the shared guard would have
+ * admitted, never admit one it would have refused.
+ */
 async function requireVisualAdmin(
   req: any,
   res: any,
 ): Promise<{ userId: string; displayName: string | null; client: any; sc: any } | null> {
-  const auth = await requireUser(req, res);
-  if (!auth) return null;
-  const { client, user } = auth;
-
-  const { data, error } = await client
-    .from("profiles")
-    .select("role, display_name, username, handle")
-    .eq("id", user.id)
-    .maybeSingle();
-
-  if (error || !data || (data as any).role !== "admin") {
-    res.status(403).json({ error: "forbidden", message: "Admin role required" });
-    return null;
-  }
-
-  const sc = getServiceClient() ?? client;
+  const ctx = await requireAdmin(req, res, { withDisplayName: true });
+  if (!ctx) return null; // 401/403 already sent
 
   // Gate: ai_visual_admin_review_enabled must be on
-  const flagEnabled = await isFlagEnabled(sc, "ai_visual_admin_review_enabled");
+  const flagEnabled = await isFlagEnabled(ctx.sc, "ai_visual_admin_review_enabled");
   if (!flagEnabled) {
     res.status(403).json({ error: "feature_disabled", message: "AI visual admin is not enabled" });
     return null;
   }
 
-  const displayName: string | null =
-    (data as any).display_name ?? (data as any).username ?? (data as any).handle ?? null;
-  return { userId: user.id, displayName, client, sc };
+  return { userId: ctx.userId, displayName: ctx.displayName, client: ctx.client, sc: ctx.sc };
 }
 
 // ── GET /admin/visuals/stats ──────────────────────────────────────────────────
