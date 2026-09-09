@@ -30,6 +30,7 @@ import { TripBudgetSection } from '../../src/components/trip/TripBudgetSection';
 import { DailyBriefCard } from '../../src/components/DailyBriefCard';
 import { TripReadinessCard } from '../../src/components/trip/TripReadinessCard';
 import { TripFeasibilityCard } from '../../src/components/trip/TripFeasibilityCard';
+import { TripCrewPresenceCard } from '../../src/components/trip/TripCrewPresenceCard';
 import { BeforeYouGoSection } from '../../src/components/trip/BeforeYouGoSection';
 import { TripFsqPlacesSection } from '../../src/components/trip/TripFsqPlacesSection';
 import { TripDestinationInfoCard } from '../../src/components/trip/TripDestinationInfoCard';
@@ -552,6 +553,13 @@ function TripDetailScreen() {
             what they are, and renders itself rather than vanishing when the
             check could not run. */}
         {live && trip.id ? <TripFeasibilityCard tripId={trip.id} /> : null}
+
+        {/* ── §10 crew presence ────────────────────────────────────────────
+            The first reader §10 has ever had: five migrations built presence
+            and nothing displayed it. Stale rows are shown rather than hidden —
+            §10.4 needs last-known data to remain available — but never drawn
+            like live ones. */}
+        {live && trip.id ? <TripCrewPresenceCard tripId={trip.id} /> : null}
 
         {/* ── FSQ places — renders nothing until city is ingested server-side ── */}
         {live ? (
