@@ -55,11 +55,30 @@ const isTransform = (sql: string) =>
 const isRestatement = (sql: string) =>
   sql.includes("CREATE OR REPLACE FUNCTION public.trip_kernel_execute");
 
+/**
+ * Transforms come in two kinds and the rules differ:
+ *
+ *   FAMILY — adds command branches and emits events (2764 onward). Everything
+ *   below applies.
+ *
+ *   CORRECTION — changes behaviour inside branches that already exist and adds
+ *   none (2769). It has no events to attribute and no branches to count on the
+ *   way in, so those two rules are skipped; every other rule still applies, and
+ *   it must still pin the branch count as UNCHANGED, which is the same
+ *   invariant with a different number.
+ *
+ * Discriminated by whether the migration emits an event, not by its filename.
+ */
 const CLASSIFIED = KERNEL_MIGRATIONS.map((f) => {
   const sql = readFileSync(MIG_DIR + f, "utf8");
-  return { file: f, sql, transform: isTransform(sql), restatement: isRestatement(sql) };
+  const transform = isTransform(sql);
+  return {
+    file: f, sql, transform,
+    restatement: isRestatement(sql),
+    family: transform && /v_event_type := '/.test(sql),
+  };
 });
-const FAMILY_MIGRATIONS = CLASSIFIED.filter((c) => c.transform).map((c) => c.file);
+const FAMILY_MIGRATIONS = CLASSIFIED.filter((c) => c.family).map((c) => c.file);
 
 const rollbacks = readdirSync(ROLLBACK_DIR);
 
@@ -77,11 +96,11 @@ describe("every §5 kernel family migration", () => {
       `found ${FAMILY_MIGRATIONS.length} transforms among ${KERNEL_MIGRATIONS.length} kernel migrations; the classifier has stopped matching`);
   });
 
-  for (const { file, sql } of CLASSIFIED.filter((c) => c.transform)) {
+  for (const { file, sql, family } of CLASSIFIED.filter((c) => c.transform)) {
     const prefix = file.slice(0, 4);
 
     describe(file, () => {
-      it("sets v_family on every branch that emits an event", () => {
+      it("sets v_family on every branch that emits an event", { skip: !family && "correction migration: emits no events" }, () => {
         const events = sql.match(/v_event_type := '(trip\.[a-z_]+)'/g) ?? [];
         assert.ok(events.length > 0, "emits no events at all");
         for (const m of events) {
@@ -92,7 +111,7 @@ describe("every §5 kernel family migration", () => {
         }
       });
 
-      it("counts its own family assignments in a postcondition", () => {
+      it("counts its own family assignments in a postcondition", { skip: !family && "correction migration: has no families of its own" }, () => {
         // Matched on SUBSTANCE, not on one migration's wording: the check must
         // count occurrences of the v_family assignment IN THE INSTALLED
         // DEFINITION, so a dropped assignment is refused at apply time and not
@@ -104,7 +123,7 @@ describe("every §5 kernel family migration", () => {
       });
 
       it("refuses a base that is not the kernel it transforms", () => {
-        assert.match(sql, /predates 2590/,
+        assert.match(sql, /predates 2590|installed kernel is missing/,
           "no base assertion: this would apply to a 2420 kernel and produce a wrong function");
         assert.match(sql, /RAISE EXCEPTION/);
       });
@@ -115,13 +134,19 @@ describe("every §5 kernel family migration", () => {
           `found ${anchorChecks.length} exactly-once anchor assertions, expected at least 3 (declaration, dispatch, branches)`);
       });
 
-      it("pins the number of branches it adds", () => {
-        assert.match(sql, /command branches, expected exactly \d+/,
-          "no branch-count invariant: an insert landing in the wrong place would pass every other check");
+      it("pins the command-branch count, counted from the installed definition", () => {
+        // Substance, not wording: the count must be derived from the function
+        // actually installed. A correction migration pins it as UNCHANGED,
+        // which is the same invariant with a different number — and it is the
+        // check that catches an anchor matching somewhere unintended.
+        assert.match(sql, /length\(replace\(d, E'\\n      WHEN/,
+          "the branch count is not computed from the installed definition");
+        assert.match(sql, /command branches/,
+          "no branch-count invariant is asserted at all");
       });
 
       it("declares itself non-idempotent rather than applying twice", () => {
-        assert.match(sql, /is already present; this migration is not idempotent by design/);
+        assert.match(sql, /(is already present|already applied); this migration is not idempotent by design/);
       });
 
       it("checks that what it did not name survived", () => {
@@ -136,8 +161,8 @@ describe("every §5 kernel family migration", () => {
         const rb = rollbacks.find((r) => r.includes(`-${prefix}-`));
         assert.ok(rb, `no rollback file mentions ${prefix}; a migration that cannot be withdrawn`);
         const body = readFileSync(ROLLBACK_DIR + rb!, "utf8");
-        assert.match(body, /command branches, expected exactly \d+/,
-          "the rollback does not pin how many branches it removes, so an overrun passes");
+        assert.match(body, /length\(replace\(d, E'\\n      WHEN/,
+          "the rollback does not count command branches from the installed definition, so an overrun passes");
         assert.match(body, /the excision overran/,
           "the rollback has no overrun postcondition");
         assert.ok(body.includes("pg_get_functiondef"),

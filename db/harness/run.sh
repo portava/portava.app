@@ -85,25 +85,54 @@ P=(psql -h "$SOCK" -p "$PORT" -U postgres -v ON_ERROR_STOP=1 -q)
 fn() { psql -h "$SOCK" -p "$PORT" -U postgres -tAc \
   "select pg_get_functiondef(p.oid) from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname='trip_kernel_execute'"; }
 
-# The 2590 kernel body, sliced out of the migration rather than copied, so this
-# harness can never drift from the file it is rehearsing.
-K="$MIGS/2590_trip_kernel_add_plan_attachment_columns.sql"
-S=$(grep -n '^CREATE OR REPLACE FUNCTION public.trip_kernel_execute' "$K" | cut -d: -f1)
-E=$(grep -n '^\$fn\$;' "$K" | cut -d: -f1)
-[ -n "$S" ] && [ -n "$E" ] || { echo "cannot locate the 2590 function body"; exit 2; }
-sed -n "${S},${E}p" "$K" > "$DATA/2590_fn.sql"
+# ── the base schema the 2400+ migrations assume ───────────────────────────────
+echo "== base schema =="
+"${P[@]}" -f "$HERE/base_tables.sql"
 
-# 2450's receipt/event column changes, likewise sliced, not transcribed.
-A=$(grep -n '^ALTER TABLE public.trip_events' "$MIGS/2450_trip_kernel_trip_and_participant_families.sql" | head -1 | cut -d: -f1)
-B=$(grep -n 'trip_command_receipts_actor_present CHECK' "$MIGS/2450_trip_kernel_trip_and_participant_families.sql" | head -1 | cut -d: -f1)
-sed -n "${A},${B}p" "$MIGS/2450_trip_kernel_trip_and_participant_families.sql" > "$DATA/2450_ddl.sql"
-grep -q 'actor_role' "$DATA/2450_ddl.sql" || { echo "2450 DDL slice looks wrong"; exit 2; }
+# ── the authz functions the kernel calls, sliced from the real migrations ─────
+echo "== authz (sliced from 2334 / 2337) =="
+: > "$DATA/authz.sql"
+while IFS='|' read -r f a b; do
+  f="$(trim "$f")"; a="$(trim "$a")"; b="$(trim "$b")"
+  [ -z "$f" ] && continue
+  case "$f" in \#*) continue;; esac
+  sed -n "${a},${b}p" "$REPO/$f" >> "$DATA/authz.sql"
+  printf '\n' >> "$DATA/authz.sql"
+done < "$HERE/authz.txt"
+grep -q 'authz.is_accepted_trip_member' "$DATA/authz.sql" || { echo "FAIL: the authz slice is wrong"; exit 2; }
+grep -q 'authz.is_trip_crew'            "$DATA/authz.sql" || { echo "FAIL: the authz slice is wrong"; exit 2; }
+"${P[@]}" -f "$DATA/authz.sql"
 
-echo "== scaffold =="
-"${P[@]}" -f "$HERE/scaffold.sql"
-"${P[@]}" -f "$HERE/tables.sql"
-"${P[@]}" -f "$HERE/upgrade.sql"
-"${P[@]}" -f "$DATA/2450_ddl.sql"
+# ── the CANONICAL KERNEL ANCESTRY: real migrations, in order ──────────────────
+# Each is run whole, so its own preconditions and postconditions decide whether
+# it may apply. Nothing is sliced and nothing is transcribed.
+echo "== kernel ancestry =="
+while read -r k; do
+  k="$(trim "$k")"; [ -z "$k" ] && continue
+  case "$k" in \#*) continue;; esac
+  echo "   $(basename "$k")"
+  "${P[@]}" -f "$REPO/$k"
+  # The prosrc md5 after each step. These are the values a real database must
+  # reproduce EXACTLY once the same file has been applied to it; anything else
+  # means the SQL that reached it was not the SQL in this tree.
+  echo "     prosrc md5 $(psql -h "$SOCK" -p "$PORT" -U postgres -tAc \
+    "select md5(prosrc) from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and p.proname='trip_kernel_execute'")"
+done < "${KERNEL_CHAIN_FILE:-$HERE/kernel_chain.txt}"
+
+# The ancestry must have produced the kernel the repo's 2590 describes, and the
+# harness says so by NAME rather than by trusting that four files ran clean.
+for want in CREATE_TRIP JOIN_VIA_LINK SET_TRIP_COVER added_by TRIP_VERSION_CONFLICT; do
+  fn | grep -q "$want" || { echo "FAIL: the ancestry did not produce $want"; exit 1; }
+done
+echo "   ancestry installed: $(fn | wc -c) bytes, all five markers present"
+
+# The ancestry's OWN families, probed before any transform, so a failure here
+# belongs to 2450/2500/2590 and not to a 276x file.
+if [ -f "$HERE/probe_kernel_ancestry.sql" ]; then
+  echo "== probes: the ancestry itself =="
+  psql -h "$SOCK" -p "$PORT" -U postgres -v ON_ERROR_STOP=1 -f "$HERE/probe_kernel_ancestry.sql"
+fi
+
 echo "== schema migrations (the real files, their own postconditions included) =="
 while read -r t; do
   t="$(trim "$t")"; [ -z "$t" ] && continue
@@ -111,9 +140,6 @@ while read -r t; do
   echo "   $(basename "$t")"
   "${P[@]}" -f "$REPO/$t"
 done < "$TABLES"
-echo "== 2590 kernel =="
-"${P[@]}" -f "$DATA/2590_fn.sql"
-fn > "$DATA/before.txt"
 
 # ── apply the chain ───────────────────────────────────────────────────────────
 STEP=0

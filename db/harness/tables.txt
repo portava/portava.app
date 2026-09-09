@@ -1,6 +1,7 @@
 # db/harness/tables.txt — the REAL schema migrations the chain needs, in order.
 # These are run verbatim, with all their own preconditions and postconditions,
 # because a stub of a table proves nothing about the constraints that table has.
+artifacts/api-server/src/migrations/2750_trip_plan_item_interval_ordered.sql
 artifacts/api-server/src/migrations/2760_trip_stages.sql
 artifacts/api-server/src/migrations/2761_trip_legs_and_commitments.sql
 artifacts/api-server/src/migrations/2762_trip_goals_decisions_risks.sql
