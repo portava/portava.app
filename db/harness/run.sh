@@ -52,9 +52,15 @@ DATA="${PGDATA_DIR:-/var/tmp/pgdata-harness}"
 SOCK="${PGSOCK_DIR:-/var/tmp/pgsock-harness}"
 PORT="${PGPORT_HARNESS:-55432}"
 
-MIGRATION="${1:-$MIGS/2764_trip_kernel_stage_family.sql}"
-ROLLBACK="${2:-$REPO/db/rollback/2026-09-09-2764-trip-kernel-stage-family-rollback.sql}"
-PROBE="${3:-$HERE/probe_stage_family.sql}"
+# Trim leading/trailing whitespace without a subprocess: xargs treats quotes as
+# special and the manifests' comment lines contain apostrophes.
+trim() { local v="$1"; v="${v#"${v%%[![:space:]]*}"}"; printf '%s' "${v%"${v##*[![:space:]]}"}"; }
+
+# The chain and the schema migrations it needs are declared in chain.txt and
+# tables.txt, not on the command line, so that what is rehearsed is a committed
+# fact rather than whatever the last invocation happened to pass.
+CHAIN="${CHAIN_FILE:-$HERE/chain.txt}"
+TABLES="${TABLES_FILE:-$HERE/tables.txt}"
 
 command -v "$PGBIN/initdb" >/dev/null || { echo "no PostgreSQL 16 at $PGBIN"; exit 2; }
 id postgres >/dev/null 2>&1 || useradd -m postgres
@@ -92,37 +98,67 @@ echo "== scaffold =="
 "${P[@]}" -f "$HERE/tables.sql"
 "${P[@]}" -f "$HERE/upgrade.sql"
 "${P[@]}" -f "$DATA/2450_ddl.sql"
-echo "== 2760 (the real migration, its own postconditions included) =="
-"${P[@]}" -f "$MIGS/2760_trip_stages.sql"
+echo "== schema migrations (the real files, their own postconditions included) =="
+while read -r t; do
+  t="$(trim "$t")"; [ -z "$t" ] && continue
+  case "$t" in \#*) continue;; esac
+  echo "   $(basename "$t")"
+  "${P[@]}" -f "$REPO/$t"
+done < "$TABLES"
 echo "== 2590 kernel =="
 "${P[@]}" -f "$DATA/2590_fn.sql"
 fn > "$DATA/before.txt"
 
-echo "== apply $(basename "$MIGRATION") =="
-"${P[@]}" -f "$MIGRATION"
-fn > "$DATA/after.txt"
-[ "$(wc -c < "$DATA/after.txt")" -gt "$(wc -c < "$DATA/before.txt")" ] || { echo "FAIL: the migration did not change the function"; exit 1; }
+# ── apply the chain ───────────────────────────────────────────────────────────
+STEP=0
+declare -a MIGS_A ROLLS_A PROBES_A
+while IFS='|' read -r m r pr; do
+  m="$(trim "$m")"; r="$(trim "$r")"; pr="$(trim "$pr")"
+  [ -z "$m" ] && continue
+  case "$m" in \#*) continue;; esac
+  MIGS_A+=("$m"); ROLLS_A+=("$r"); PROBES_A+=("$pr")
+done < "$CHAIN"
 
-echo "== re-apply must REFUSE =="
-if "${P[@]}" -f "$MIGRATION" >/dev/null 2>&1; then echo "FAIL: applied twice"; exit 1; fi
-echo "   refused, as designed"
+for i in "${!MIGS_A[@]}"; do
+  m="$REPO/${MIGS_A[$i]}"
+  echo "== apply $(basename "$m") =="
+  fn > "$DATA/before.$i.txt"
+  "${P[@]}" -f "$m"
+  fn > "$DATA/after.$i.txt"
+  if ! [ "$(wc -c < "$DATA/after.$i.txt")" -gt "$(wc -c < "$DATA/before.$i.txt")" ]; then
+    echo "FAIL: $(basename "$m") did not change the function"; exit 1
+  fi
+  if "${P[@]}" -f "$m" >/dev/null 2>&1; then echo "FAIL: $(basename "$m") applied twice"; exit 1; fi
+  echo "   re-apply refused, as designed"
+done
 
-echo "== probes =="
-"${P[@]}" -f "$HERE/seed.sql"
-psql -h "$SOCK" -p "$PORT" -U postgres -f "$PROBE"
+# ── probes, against the fully-applied chain ───────────────────────────────────
+# The seed is re-run before EACH probe file, so a probe never inherits rows or a
+# version number from the one before it. A probe whose expectations depend on
+# what ran earlier is a probe that will lie the first time the order changes.
+for i in "${!PROBES_A[@]}"; do
+  pr="${PROBES_A[$i]}"
+  [ -z "$pr" ] && continue
+  echo "== probes: $(basename "$pr") =="
+  "${P[@]}" -f "$HERE/seed.sql"
+  psql -h "$SOCK" -p "$PORT" -U postgres -v ON_ERROR_STOP=1 -f "$REPO/$pr"
+done
 
-echo "== rollback =="
-"${P[@]}" -f "$ROLLBACK"
-fn > "$DATA/restored.txt"
-if diff -q "$DATA/before.txt" "$DATA/restored.txt" >/dev/null; then
-  echo "   round trip: BYTE-IDENTICAL"
-else
-  echo "FAIL: the rollback did not restore the definition"; diff "$DATA/before.txt" "$DATA/restored.txt" | head -40; exit 1
-fi
-
-echo "== rollback again must REFUSE =="
-if "${P[@]}" -f "$ROLLBACK" >/dev/null 2>&1; then echo "FAIL: rolled back twice"; exit 1; fi
-echo "   refused, as designed"
+# ── roll back in reverse; each must restore its own step byte-for-byte ────────
+for (( i=${#ROLLS_A[@]}-1; i>=0; i-- )); do
+  r="${ROLLS_A[$i]}"
+  echo "== rollback $(basename "$r") =="
+  "${P[@]}" -f "$REPO/$r"
+  fn > "$DATA/restored.$i.txt"
+  if diff -q "$DATA/before.$i.txt" "$DATA/restored.$i.txt" >/dev/null; then
+    echo "   round trip: BYTE-IDENTICAL"
+  else
+    echo "FAIL: $(basename "$r") did not restore the definition"
+    diff "$DATA/before.$i.txt" "$DATA/restored.$i.txt" | head -40; exit 1
+  fi
+  if "${P[@]}" -f "$REPO/$r" >/dev/null 2>&1; then echo "FAIL: $(basename "$r") rolled back twice"; exit 1; fi
+  echo "   second rollback refused, as designed"
+done
 
 echo
 echo "HARNESS: PASS"

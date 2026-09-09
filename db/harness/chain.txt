@@ -1,0 +1,15 @@
+# db/harness/chain.txt — the kernel migration chain this harness rehearses.
+#
+# One step per line:  migration | rollback | probe (probe may be empty)
+# Paths are relative to the repository root.
+#
+# Steps are applied top to bottom, every probe runs against the fully-applied
+# chain, and rollbacks run bottom to top. After each rollback the harness diffs
+# pg_get_functiondef against the definition captured before that step's
+# migration and fails unless they are byte-identical, so a rollback that damages
+# a LATER migration's edits is caught at the step that damaged them.
+#
+# Schema-only migrations that the chain depends on (2760, 2761, ...) are listed
+# in tables.txt instead: they create tables rather than transform the kernel.
+artifacts/api-server/src/migrations/2764_trip_kernel_stage_family.sql | db/rollback/2026-09-09-2764-trip-kernel-stage-family-rollback.sql | db/harness/probe_stage_family.sql
+artifacts/api-server/src/migrations/2765_trip_kernel_leg_and_commitment_families.sql | db/rollback/2026-09-09-2765-trip-kernel-leg-and-commitment-families-rollback.sql | db/harness/probe_leg_commitment_families.sql

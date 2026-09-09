@@ -139,6 +139,16 @@ export type TripPlanCommandType =
   | "ADD_STAGE"
   | "UPDATE_STAGE"
   | "REMOVE_STAGE"
+  // §5.1 leg and commitment families (2765). Both hang off a stage: a leg joins
+  // two of them and a commitment is filed under at most one. The kernel checks
+  // stage OWNERSHIP explicitly rather than leaving it to the foreign key, which
+  // would accept another trip's stage.
+  | "ADD_LEG"
+  | "UPDATE_LEG"
+  | "REMOVE_LEG"
+  | "ADD_COMMITMENT"
+  | "UPDATE_COMMITMENT"
+  | "REMOVE_COMMITMENT"
   | "REORDER_PLAN"
   | "LINK_PLAN_ROUTE_STOP";
 
@@ -241,6 +251,12 @@ export type TripKernelReason =
   // §5.1 stage family (2764).
   | "TRIP_STAGE_NOT_FOUND"
   | "TRIP_STAGE_SEQUENCE_TAKEN"
+  // §5.1 leg and commitment families (2765). TRIP_STAGE_NOT_FOUND is reused
+  // deliberately: a leg or commitment naming a stage that is not this trip's is
+  // the same refusal as naming one that does not exist, and inventing a second
+  // reason would make the client distinguish a case it cannot act on.
+  | "TRIP_LEG_NOT_FOUND"
+  | "TRIP_COMMITMENT_NOT_FOUND"
   | "TRIP_TEMPORAL_RANGE_INVERTED"
   | "TRIP_IDENTITY_ALREADY_EXISTS"
   | "TRIP_PLAN_INVALID_TRANSITION"
@@ -297,6 +313,9 @@ export const TRIP_EVENT_TYPES = [
   // sequence is unique per trip and a clash is its own typed rejection rather
   // than a 23505 reaching the client as a 500.
   "trip.stage_added", "trip.stage_updated", "trip.stage_removed",
+  // leg and commitment families (2765).
+  "trip.leg_added", "trip.leg_updated", "trip.leg_removed",
+  "trip.commitment_added", "trip.commitment_updated", "trip.commitment_removed",
 ] as const;
 export type TripEventType = (typeof TRIP_EVENT_TYPES)[number];
 
