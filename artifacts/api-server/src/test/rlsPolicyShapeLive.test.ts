@@ -112,12 +112,11 @@ const KNOWN_OPEN = new Set<string>([
  * shrink.
  */
 const KNOWN_CYCLES = new Set<string>([
-  // meetups.meetups_invitee_select reads meetup_invites; four meetup_invites
-  // policies read meetups. FIXED by 2461 (with 2460 first, which hardens the
-  // self-insertable mi_own the repair would otherwise expose). REMOVE THIS
-  // ENTRY once 2460 + 2461 are applied to CI — the stale-allowlist case below
-  // fails by design until you do.
-  "meetup_invites <-> meetups",
+  // EMPTY as of 2026-09-09. It held "meetup_invites <-> meetups", repaired by
+  // 2460 + 2461 (authz.is_meetup_invitee breaks the mutual reference), and both
+  // are now applied to portava-ci: the live cycle sweep no longer finds it, so
+  // the stale-allowlist check below reported the entry and this is its removal.
+  // The entry's own comment predicted exactly that.
 ]);
 
 /** A missing credential is a failure of THIS suite, not a reason to report green. */
