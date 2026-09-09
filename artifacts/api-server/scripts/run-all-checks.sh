@@ -164,6 +164,17 @@ run_check "check:census-integrity" pnpm run check:census-integrity
 # a guard that cries stale on every commit gets switched off and then the real
 # staleness comes back.
 run_check "check:census-freshness" pnpm run check:census-freshness
+# check:census-policy-citations — a census that cites an RLS policy must cite the
+# migration that CURRENTLY defines it. census-trips made the mistake twice in one
+# sitting: it read route_plans' owner-only policy and stopped three lines short
+# of the member policy beside it, concluding a trip's crew cannot read the trip's
+# own route chain — a claim that shipped, as the reason string on a projection
+# layer served as `no_source`. Correcting it, it re-read the same 2016-era file
+# and never opened the 2334 migration that had already replaced all three
+# policies over authz.is_trip_crew. RLS policies are a UNION and a schema claim
+# is a claim about the END of the chain; this checks the citation, not the
+# sentence.
+run_check "check:census-policy-citations" pnpm run check:census-policy-citations
 # check:memory-table-ownership — public.memory_events (the Memory projection
 # family's log, live in production and read by the account-deletion cascade) and
 # public.memory_domain_events (the Highlights/Memories spec §17 command log, not

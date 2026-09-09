@@ -513,6 +513,25 @@ export const GUARDS: readonly GuardEntry[] = [
     reach: { kind: "check-all", script: "check:census-freshness" },
   },
   {
+    checker: "src/scripts/checkCensusPolicyCitations.ts",
+    inspects: {
+      countPattern: "(\\d+) census policy citation\\(s\\) checked",
+      unit: "census policy citations checked",
+    },
+    responsibility:
+      "A census that cites an RLS policy cites the migration that CURRENTLY defines it, not the one " +
+      "that first created it \u2014 so a reader following the citation does not land in a file " +
+      "describing a state that no longer exists.",
+    // Written after census-trips made this mistake TWICE in one sitting: first
+    // reading route_plans' owner-only policy and stopping three lines short of
+    // the member policy beside it (a claim that reached shipped code as a
+    // projection layer's `no_source` reason), then correcting that by re-reading
+    // the same 2016-era file and never opening the 2334 migration that had
+    // replaced all three policies. It cannot check whether a sentence about a
+    // policy is TRUE; it checks the precondition for a human being able to.
+    reach: { kind: "check-all", script: "check:census-policy-citations" },
+  },
+  {
     checker: "src/scripts/checkCensusIntegrity.ts",
     inspects: {
       countPattern: "(\\d+) verdict row\\(s\\) parsed",
