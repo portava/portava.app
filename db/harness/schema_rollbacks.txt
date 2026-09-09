@@ -9,6 +9,7 @@ db/rollback/2026-09-09-2774-trip-proposal-governance-rollback.sql
 db/rollback/2026-09-09-2773-trip-snapshot-fold-and-replay-rollback.sql
 db/rollback/2026-09-09-2771-trip-plan-participants-rollback.sql
 db/rollback/2026-09-09-2770-trip-plans-spec-columns-rollback.sql
+db/rollback/2026-09-09-2776-trip-presence-freshness-rollback.sql
 db/rollback/2026-09-09-2767-trip-presence-spec-vocabulary-rollback.sql
 db/rollback/2026-09-09-2763-trip-presence-proposals-snapshots-outcomes-rollback.sql
 db/rollback/2026-09-09-2762-trip-goals-decisions-risks-rollback.sql

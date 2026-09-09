@@ -18,3 +18,4 @@ artifacts/api-server/src/migrations/2768_trip_kernel_presence_proposal_outcome_f
 artifacts/api-server/src/migrations/2769_trip_kernel_participant_roles_and_terminal_lifecycle.sql | db/rollback/2026-09-09-2769-trip-kernel-participant-roles-and-terminal-lifecycle-rollback.sql | db/harness/probe_participant_roles_lifecycle.sql
 artifacts/api-server/src/migrations/2772_trip_kernel_plan_attendance_and_plan_version.sql | db/rollback/2026-09-09-2772-trip-kernel-plan-attendance-and-plan-version-rollback.sql | db/harness/probe_plan_attendance.sql
 artifacts/api-server/src/migrations/2775_trip_kernel_proposal_governance_and_apply.sql | db/rollback/2026-09-09-2775-trip-kernel-proposal-governance-and-apply-rollback.sql | db/harness/probe_proposal_governance.sql
+artifacts/api-server/src/migrations/2777_trip_kernel_presence_ordering.sql | db/rollback/2026-09-09-2777-trip-kernel-presence-ordering-rollback.sql | db/harness/probe_presence_freshness.sql

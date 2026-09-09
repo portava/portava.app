@@ -11,3 +11,4 @@ artifacts/api-server/src/migrations/2770_trip_plans_spec_columns.sql
 artifacts/api-server/src/migrations/2771_trip_plan_participants.sql
 artifacts/api-server/src/migrations/2773_trip_snapshot_fold_and_replay.sql
 artifacts/api-server/src/migrations/2774_trip_proposal_governance.sql
+artifacts/api-server/src/migrations/2776_trip_presence_freshness_and_ordering.sql

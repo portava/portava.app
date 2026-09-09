@@ -75,7 +75,11 @@ const CLASSIFIED = KERNEL_MIGRATIONS.map((f) => {
   return {
     file: f, sql, transform,
     restatement: isRestatement(sql),
-    family: transform && /v_event_type := '/.test(sql),
+    // A FAMILY migration AUTHORS branches, and authored branches live in a
+    // $branches$ block. Discriminating on `v_event_type :=` was wrong: a
+    // correction migration QUOTES an existing branch's event assignment as an
+    // anchor (2777 quotes SET_PRESENCE's), which made it look like a family.
+    family: transform && /\$branches\$/.test(sql),
   };
 });
 const FAMILY_MIGRATIONS = CLASSIFIED.filter((c) => c.family).map((c) => c.file);
@@ -131,7 +135,7 @@ describe("every §5 kernel family migration", () => {
       });
 
       it("refuses a base that is not the kernel it transforms", () => {
-        assert.match(sql, /predates 2590|installed kernel is missing/,
+        assert.match(sql, /predates \d+|installed kernel is missing|installed kernel has no/,
           "no base assertion: this would apply to a 2420 kernel and produce a wrong function");
         assert.match(sql, /RAISE EXCEPTION/);
       });
