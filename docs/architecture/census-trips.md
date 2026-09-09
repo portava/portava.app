@@ -2202,10 +2202,51 @@ kernel path is not worse at writing; it is worse at explaining.
 ### FINDING — `TRIPS_HAS_NO_LIVE_KERNEL_SUITE`
 
 Everything in this section was executed by hand through the Supabase management
-API and is reproducible only by re-reading this document. Memory's equivalent
-proof is a registered test (`test:memory-kernel-transaction`, scored by
-`.github/scripts/run-live-suite.sh` on pass-count and zero-skips so a run without
-credentials fails rather than passes vacuously). Trips has no such suite, so
-nothing here turns red on its own if the kernel changes. **The measurements above
+API and is reproducible only by re-reading this document. Memory has the equivalent FILE
+(`memoryKernelTransactionLive.test.ts`, script `test:memory-kernel-transaction`)
+and — measured, after the first draft of this section claimed otherwise — **CI
+invokes it nowhere**: `run-live-suite.sh` is called for 26 suites in
+`live-db.yml` and that is not one of them, and the file is on
+`UNREGISTERED_TESTS_ALLOWLIST.json` so the curated `npm test` skips it too. So
+the precedent is weaker than stated: Trips has neither the file nor the script,
+and the one existing example is itself inert
+(`MEMORY_LIVE_KERNEL_SUITE_NEVER_RUNS`). Nothing here turns red on its own if
+the kernel changes. **The measurements above
 are a snapshot; they are not a guard**, and the distinction is the same one this
 census draws between BUILT and CERTIFIED everywhere else.
+
+### §35.1 — the snapshot, made executable (same day)
+
+`src/test/tripKernelLive.test.ts` now encodes everything above that a test can
+reach: the twelve-command slice with its monotonic versions, the rows the §5.1
+read routes serve, §22.4 idempotency (a replayed key returns `duplicate: true`
+**at the original version** — the load-bearing half, since `duplicate: true` with
+a NEW version would mean the command ran twice and the receipt followed), the
+stale-version refusal, the four malformed-payload refusals, and
+`TRIP_KERNEL_CREATE_TRIP_UNGUARDED_INSERT` pinned as CURRENT behaviour so that
+closing the blocker turns this file red on purpose. It is registered as
+`test:trip-kernel-live` and invoked from `live-db.yml` through
+`run-live-suite.sh`, which scores it on pass > 0 AND skipped == 0.
+
+`test:memory-kernel-transaction` is wired in the same change. It had a package
+script and no caller anywhere under `.github/` — found while looking for the
+precedent to copy, and recorded as `MEMORY_LIVE_KERNEL_SUITE_NEVER_RUNS`. **The
+first draft of this section asserted the opposite** ("Memory's equivalent proof
+is a registered test, scored by `run-live-suite.sh`"); it was registered as a
+package script and scored by nobody, and the correction stands above.
+
+**What is NOT yet true, stated rather than implied.** This suite has never
+executed. This container holds no service-role credential, so everything above
+was proven through the management API as raw SQL and the TypeScript path —
+`executeTripCommand` → `sc.rpc("trip_kernel_execute", { p_command })` over
+PostgREST as `service_role` — is asserted, not measured. What IS measured is
+that `service_role` holds EXECUTE on the function, and that each assertion
+matches a value this database actually returned. The first live-DB job to run it
+is the first evidence that the suite itself is right, and if it is wrong there,
+the fix belongs in the suite, not in the reading above.
+
+Snapshot/replay determinism stays outside it, deliberately: `trip_snapshot_write`
+and `trip_snapshot_verify_replay` are granted to `service_role` and reachable,
+but no module in this repository owns those RPC names, and a test that is the
+only place a function name appears is a second source of truth for it. The
+measurement stands in §35; the guard waits for an owner.

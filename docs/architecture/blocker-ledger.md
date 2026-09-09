@@ -1449,10 +1449,18 @@ single object in this architecture. The 49 `trip*.test.ts` suites — **993 test
 0 skipped, all passing** — run against doubles and against the TypeScript
 around the RPC. They are worth having, and none of them executes the function.
 
-Memory has the proof Trips lacks: `src/test/memoryKernelTransactionLive.test.ts`,
-registered as `test:memory-kernel-transaction`, scored by
-`.github/scripts/run-live-suite.sh` on its OUTPUT (pass > 0 AND skipped == 0) so
-a run without credentials fails the job rather than passing vacuously.
+Memory has the FILE Trips lacks — `src/test/memoryKernelTransactionLive.test.ts`,
+with a `test:memory-kernel-transaction` script — and **it is invoked by nothing
+under `.github/`**. Measured 2026-09-09: `run-live-suite.sh` is called for 26
+suites in `live-db.yml` and that is not one of them, and the file sits on
+`scripts/UNREGISTERED_TESTS_ALLOWLIST.json`, so the curated `npm test` does not
+run it either. It is a script a human can run, not a guard.
+
+**This corrects the first version of this entry**, which said Memory's suite was
+"registered … scored by `run-live-suite.sh`". It is registered as a package
+script and scored by nobody. The correction makes the gap bigger, not smaller:
+Trips has neither the file nor the script, and the one precedent for what to
+build is itself not wired in. See `MEMORY_LIVE_KERNEL_SUITE_NEVER_RUNS` below.
 
 ### Why it matters
 
@@ -1464,8 +1472,60 @@ it, and the document would go on reporting a green that no longer holds. That is
 precisely the BUILT-versus-CERTIFIED distinction this census draws everywhere
 else, pointed at the certification itself.
 
-### What would close it
+### What closed it, and what has not
 
-`src/test/tripKernelLive.test.ts` importing `ciSupabaseGuard.mjs` first and
-driving `executeTripCommand` through the same slice, registered as
-`test:trip-kernel-live` and added to the live-DB job beside the Memory one.
+**Closed 2026-09-09** by `src/test/tripKernelLive.test.ts` — `ciSupabaseGuard.mjs`
+imported first, `executeTripCommand` driven through the §35 slice, registered as
+`test:trip-kernel-live` AND invoked from `live-db.yml` through
+`run-live-suite.sh`. The script alone would not have closed it: that is exactly
+what Memory had, and Memory's never ran.
+
+**The half that is not closed until CI runs it.** The suite has never executed —
+no service-role credential exists in the environment it was written in — so the
+PostgREST path (`sc.rpc("trip_kernel_execute", …)` as `service_role`) is
+asserted, not measured. Every value it asserts came back from this database
+through the management API, and `service_role` demonstrably holds EXECUTE on the
+function; what is unproven is the suite, not the kernel. The first live-DB job to
+run it decides that, and a failure there is a bug in the test.
+
+---
+
+## `MEMORY_LIVE_KERNEL_SUITE_NEVER_RUNS` — a live suite that exists and is invoked by nothing
+
+**Opened 2026-09-09**, found while looking for the precedent to copy for Trips.
+Type: `CI`. Owner: Memory. Buildable now? **Yes** — one line in `live-db.yml`.
+
+### The measurement
+
+`src/test/memoryKernelTransactionLive.test.ts` is 562 lines and asserts §17's
+central claim — canonical mutation and outbox insert in ONE transaction —
+against the real `public.memory_kernel_execute` rather than against
+`memoryCommandKernelFake.ts`. Its own header explains why the fake cannot prove
+it: "the fake rolls back because it was written to roll back".
+
+It is reachable by exactly one route: `npm run test:memory-kernel-transaction`,
+by hand. `.github/workflows/live-db.yml` calls `run-live-suite.sh` for 26 suites
+and this is not one of them; `scripts/UNREGISTERED_TESTS_ALLOWLIST.json` lists
+the file, so the curated `npm test` skips it too. Nothing in CI executes it.
+
+### Why it matters
+
+The reason `run-live-suite.sh` scores on OUTPUT (pass > 0 AND skipped == 0)
+rather than exit code is that a live suite which quietly does nothing is worse
+than none — it reports green while asserting zero. A live suite that is never
+INVOKED is the same failure one level up, and it is invisible to that guard
+because the guard only sees suites somebody remembered to list.
+
+### What closed it, and what is left
+
+**Closed 2026-09-09**: `live-db.yml` now calls
+`run-live-suite.sh memory-kernel-transaction …`, in the same change that wired
+the Trips one, because the two failures are the same failure.
+
+**Left open as a separate ask**, and not built here: nothing PREVENTS the next
+inert live suite. `assert-ci-scripts.mjs` verifies that every script CI invokes
+exists; the inverse — that every live-shaped script in `package.json` is either
+invoked by a workflow or carries a written reason — is the closed-set discipline
+`check:guard-coverage` already applies to Supabase-reaching files, and it does
+not exist for test scripts. Until it does, this entry closed one instance by
+hand.
