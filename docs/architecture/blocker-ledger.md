@@ -391,6 +391,67 @@ being fixed. Widening the scope is the honest next step and is deliberately NOT
 done here: it would surface a new population mid-pass and the burn-down would
 stop meaning what it currently means. Recorded as engineering work, not closed.
 
+### `VOTE_BALLOT_VISIBILITY` — can a crew see who voted which way?
+
+**An OWNER decision, defaulted to the narrower answer and shipped, because
+defaulting to the wider one is not reversible.**
+
+§9.3 gives a proposal a `decisionRule` of HOST | MAJORITY | UNANIMOUS | ANYONE,
+and migration 2774 built `trip_proposal_votes` — one row per crew member per
+proposal, carrying `yes | no | abstain`. The spec says who DECIDES. It never
+says who may SEE how each person decided.
+
+### What was shipped
+
+`GET /trips/:tripId/decisions` serves, per proposal:
+
+- the aggregate tally from `trip_proposal_tally` — counts, electorate size, and
+  whether each rule is met; and
+- **the caller's OWN ballot**, as `myVote`, or `null` for "has not voted".
+
+**No other crew member's ballot appears anywhere in the response**, and a test
+asserts that by scanning the whole serialised body for another user's id.
+
+### Why the caller's own vote is not part of the question
+
+Without it the feature is unusable: a crew member cannot tell whether they have
+already voted, and would be sent to vote twice — which the kernel then refuses,
+so the failure surfaces as a confusing error rather than as the missing
+information it is. It is also the one ballot whose disclosure needs nobody's
+consent.
+
+`null` is deliberately NOT rendered as `abstain`. Migration 2774's own column
+comment draws the line: *"ABSTAIN IS NOT ABSENCE: it is a recorded decision not
+to decide, and it counts toward a unanimous rule being SATISFIED but not toward
+it being MET… A crew member who has not voted at all has a different meaning
+and no row."* The unanimous rule turns on exactly that difference, so a client
+showing both as "no vote" erases the thing the rule is about.
+
+### The question that is actually open
+
+Whether a crew member may see **another** crew member's ballot. Three defensible
+answers, and this is product policy rather than engineering:
+
+1. **Visible to the crew.** A trip decision is a group decision made among
+   people who know each other; hiding it is the surprising choice, and with a
+   three-person crew the tally nearly determines the ballots anyway.
+2. **Visible to the proposer and the owner only.** They are the ones who have
+   to act on it.
+3. **Never visible.** Vote secrecy protects a member from being pressured by a
+   dominant traveller, which is a real dynamic in a small group.
+
+### Why it shipped narrow rather than waiting
+
+Widening later is a one-line change to one route. Narrowing after people have
+seen each other's ballots is not — the disclosure has already happened, and no
+migration undoes it. This is the same asymmetry that governs a privacy default
+anywhere: the reversible direction is the one to be wrong in.
+
+Note that answer 1 is arguably ALREADY partly true through the tally, which is
+served: on a three-person crew, `yes: 2, no: 1` plus your own ballot tells you
+the other two. That is an argument for answer 1 being the honest end state, and
+it is not an argument for shipping it without being asked.
+
 ### `API_TOKEN_SIGNED_OUT_VS_UNREADABLE` — one null for two different facts, app-wide
 
 **Engineering, not an owner decision. Recorded rather than half-fixed, because

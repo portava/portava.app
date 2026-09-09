@@ -84,7 +84,7 @@ describe('TripDecisionsCard', () => {
           }],
           proposals: [{
             id: 'p1', type: 'add_plan', status: 'pending', decisionRule: 'majority',
-            proposedBy: 'u1', expiresAt: null, payload: {},
+            proposedBy: 'u1', expiresAt: null, payload: {}, myVote: 'yes',
             tally: { found: true, majority_met: true, electorate: 3, yes: 2, no: 0, abstain: 0, cast: 2 },
           }],
         })))}
@@ -108,7 +108,7 @@ describe('TripDecisionsCard', () => {
           }],
           proposals: [{
             id: 'p1', type: 'add_plan', status: 'pending', decisionRule: 'majority',
-            proposedBy: 'u1', expiresAt: null, payload: {}, tally: null,
+            proposedBy: 'u1', expiresAt: null, payload: {}, myVote: null, tally: null,
           }],
           tallyFailures: 1,
         })))}
@@ -118,6 +118,28 @@ describe('TripDecisionsCard', () => {
     // And the absence is stated at card level too, so it is not something a
     // reader has to infer from one row.
     expect(await findByText(/vote count could not be read/)).toBeTruthy();
+  });
+
+  it("shows the viewer's own ballot, and 'not voted' is not 'abstained'", async () => {
+    const withVote = (myVote: 'yes' | 'no' | 'abstain' | null) => ok(board({
+      recommendations: [{
+        decisionTaskId: 't1', kind: 'RECOMMEND', proposalId: 'p1',
+        reasons: ['SERVES_GOAL'], options: [],
+      }],
+      proposals: [{
+        id: 'p1', type: 'add_plan', status: 'pending', decisionRule: 'host',
+        proposedBy: 'u1', expiresAt: null, payload: {}, tally: null, myVote,
+      }],
+    }));
+
+    const silent = await render(<TripDecisionsCard tripId={TRIP_ID} load={loader(withVote(null))} />);
+    expect(await silent.findByText(/You have not voted/)).toBeTruthy();
+
+    const abstained = await render(<TripDecisionsCard tripId={TRIP_ID} load={loader(withVote('abstain'))} />);
+    expect(await abstained.findByText(/You abstained/)).toBeTruthy();
+
+    const yes = await render(<TripDecisionsCard tripId={TRIP_ID} load={loader(withVote('yes'))} />);
+    expect(await yes.findByText(/You voted yes/)).toBeTruthy();
   });
 
   it('§8.4: open risks and the plan elements they reach are both shown', async () => {

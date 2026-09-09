@@ -77,6 +77,18 @@ export interface DecisionBoard {
     proposedBy: string | null; expiresAt: string | null; payload: unknown;
     /** NULL means the tally could not be COMPUTED. Never render it as no votes. */
     tally: ProposalTally | null;
+    /**
+     * The VIEWER's own ballot, or null for "has not voted".
+     *
+     * Null is not `abstain`. An abstention is a recorded decision not to
+     * decide and counts toward a unanimous rule being satisfied; a silence
+     * does not, because nobody knows what it means. Rendering both as "no
+     * vote" erases the distinction that rule turns on.
+     *
+     * Other people's ballots are NOT served — see VOTE_BALLOT_VISIBILITY in
+     * the blocker ledger for why the narrow default was chosen.
+     */
+    myVote: 'yes' | 'no' | 'abstain' | null;
   }>;
   /** How many tallies failed. A null tally is a visible absence because of this. */
   tallyFailures: number;
@@ -195,6 +207,19 @@ export function recommendationHeadline(r: Recommendation): string {
     case 'DO_NOT_RECOMMEND':   return 'None of these work';
     case 'INSUFFICIENT_BASIS':
     default:                   return 'Not enough to go on yet';
+  }
+}
+
+/**
+ * What to say about the viewer's own ballot. The three states stay three:
+ * voted, deliberately abstained, and not voted at all.
+ */
+export function myVoteLabel(v: 'yes' | 'no' | 'abstain' | null): string {
+  switch (v) {
+    case 'yes':     return 'You voted yes';
+    case 'no':      return 'You voted no';
+    case 'abstain': return 'You abstained';
+    default:        return 'You have not voted';
   }
 }
 

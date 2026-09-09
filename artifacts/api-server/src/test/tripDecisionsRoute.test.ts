@@ -216,6 +216,67 @@ describe("§8 — the chain is joined, and the recommendation comes out", () => 
   });
 });
 
+describe("§9.3 — the caller's own ballot, and nobody else's", () => {
+  it("serves the caller's own vote", async () => {
+    install({
+      trip_goals: [], trip_decision_tasks: [dtask()], trip_risks: [],
+      trip_proposals: [prop({ id: "p1" })],
+      trip_proposal_votes: [
+        { proposal_id: "p1", user_id: OWNER_ID, vote: "yes" },
+        { proposal_id: "p1", user_id: "someone-else", vote: "no" },
+      ],
+    });
+    const r = await get();
+    assert.equal(r.body.proposals[0].myVote, "yes");
+  });
+
+  it("does NOT serve anyone else's ballot, anywhere in the response", async () => {
+    // The narrow default for a privacy question. Widening it later is a
+    // one-line change; narrowing it after people have seen each other's
+    // ballots is not.
+    install({
+      trip_goals: [], trip_decision_tasks: [dtask()], trip_risks: [],
+      trip_proposals: [prop({ id: "p1" })],
+      trip_proposal_votes: [
+        { proposal_id: "p1", user_id: OWNER_ID, vote: "yes" },
+        { proposal_id: "p1", user_id: "someone-else", vote: "no" },
+      ],
+    });
+    const r = await get();
+    assert.ok(!JSON.stringify(r.body).includes("someone-else"),
+      "another crew member's ballot reached the response");
+  });
+
+  it("NOT VOTED is null, and is not the same as 'abstain'", async () => {
+    // 2774's own column comment: an abstention is a recorded decision not to
+    // decide; a silence means nobody knows what it means. The unanimous rule
+    // turns on exactly that difference.
+    install({
+      trip_goals: [], trip_decision_tasks: [dtask()], trip_risks: [],
+      trip_proposals: [prop({ id: "p1" }), prop({ id: "p2" })],
+      trip_proposal_votes: [{ proposal_id: "p2", user_id: OWNER_ID, vote: "abstain" }],
+    });
+    const r = await get();
+    const p1 = r.body.proposals.find((p: any) => p.id === "p1");
+    const p2 = r.body.proposals.find((p: any) => p.id === "p2");
+    assert.equal(p1.myVote, null);
+    assert.equal(p2.myVote, "abstain");
+    assert.notEqual(p1.myVote, p2.myVote);
+  });
+
+  it("an unreadable votes table refuses the whole response", async () => {
+    // A missing ballot reads as "you have not voted", which would send a crew
+    // member to vote twice — and the kernel would then have to refuse them.
+    install({
+      trip_goals: [], trip_decision_tasks: [dtask()], trip_risks: [],
+      trip_proposals: [prop({ id: "p1" })], trip_proposal_votes: [],
+    }, ["trip_proposal_votes"]);
+    const r = await get();
+    assert.equal(r.status, 503);
+    assert.equal(r.body.proposals, undefined);
+  });
+});
+
 describe("§9.3 — a proposal arrives with its governance state, or with none at all", () => {
   it("each proposal carries the tally, passed through untouched", async () => {
     install({

@@ -20,7 +20,7 @@ import { CheckCircle2, XCircle, HelpCircle, CloudOff, AlertTriangle } from 'luci
 
 import { color, space, radius, type as t, shadow } from '../../theme/tokens.ts';
 import {
-  fetchTripDecisions, recommendationHeadline, reasonText, acceptanceMet,
+  fetchTripDecisions, recommendationHeadline, reasonText, acceptanceMet, myVoteLabel,
   type DecisionRead, type Recommendation, type DecisionBoard,
 } from '../../services/tripDecisions.ts';
 
@@ -63,6 +63,13 @@ function RecommendationRow({ rec, board }: { rec: Recommendation; board: Decisio
               : chosen.tally === null ? "we couldn't check the vote"
               : 'decided by the host'}
           </Text>
+        )}
+        {chosen && (
+          // The viewer's own ballot. "Not voted" and "abstained" are shown as
+          // different sentences because they ARE different — an abstention
+          // counts toward a unanimous rule being satisfied and a silence does
+          // not.
+          <Text style={s.detail} testID={`myvote-${chosen.id}`}>{myVoteLabel(chosen.myVote)}</Text>
         )}
         {task?.consequence && (
           <Text style={s.detail}>If nothing is decided: {task.consequence}</Text>

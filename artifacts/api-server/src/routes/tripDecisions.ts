@@ -43,6 +43,24 @@
  * would be inventing a governance state. The count of failures is reported
  * alongside so the absence is visible rather than inferred from a null.
  *
+ * WHOSE BALLOTS A CALLER SEES, AND WHY IT IS ONLY THEIR OWN
+ * =========================================================
+ * `trip_proposal_votes` holds one row per crew member per proposal. This route
+ * serves the CALLER'S OWN vote and the aggregate tally, and nobody else's
+ * ballot.
+ *
+ * That is not a claim that vote secrecy is the right product answer — it is
+ * the NARROWER of the two answers, chosen because whether a crew can see who
+ * voted which way is genuinely a product-policy question and this is a privacy
+ * default. Widening it later is a one-line change; narrowing it after people
+ * have seen each other's ballots is not.
+ *
+ * The caller's own vote is served unconditionally, because without it the
+ * feature is unusable: a crew member cannot tell whether they have voted, and
+ * `abstain` and "has not voted" are explicitly different states (2774's column
+ * comment). Recorded as VOTE_BALLOT_VISIBILITY in
+ * docs/architecture/blocker-ledger.md.
+ *
  * FAIL-CLOSED, TABLE BY TABLE
  * ===========================
  * Six reads, six bound errors, and NO partial answer. A recommendation
@@ -108,6 +126,25 @@ router.get("/trips/:tripId/decisions", asyncHandler(async (req, res) => {
   const taskRows = await readAll("trip_decision_tasks", "id, type, deadline_at, consequence, assigned_user_id, status");
   const riskRows = await readAll("trip_risks", "id, likelihood, impact, status, trigger_json, mitigation_json");
   const propRows = await readAll("trip_proposals", "id, proposal_type, payload_json, status, expires_at, decision_rule, proposed_by");
+
+  // The caller's OWN ballots, and nobody else's. See the header on why this is
+  // the narrow default rather than a settled answer.
+  const myVotes = new Map<string, string>();
+  if (!failedInput && propRows.length > 0) {
+    const { data, error } = await sc
+      .from("trip_proposal_votes")
+      .select("proposal_id, vote")
+      .eq("user_id", user.id)
+      .in("proposal_id", propRows.map((p) => p.id as string));
+    if (error) {
+      log.warn({ err: error.message, tripId }, "decisions: own votes read failed");
+      failedInput = "trip_proposal_votes";
+    } else {
+      for (const v of ((data ?? []) as Array<{ proposal_id: string; vote: string }>)) {
+        myVotes.set(v.proposal_id, v.vote);
+      }
+    }
+  }
 
   if (failedInput) {
     sendError(res, "degraded_unavailable",
@@ -201,6 +238,16 @@ router.get("/trips/:tripId/decisions", asyncHandler(async (req, res) => {
        *  trip_proposal_tally. NULL means the tally could not be computed —
        *  never render it as zero votes. */
       tally: tallies[p.id] ?? null,
+      /**
+       * The CALLER'S own ballot: 'yes' | 'no' | 'abstain', or null.
+       *
+       * Null means NOT VOTED, and that is a different state from `abstain` —
+       * 2774's column comment is explicit that an abstention is a recorded
+       * decision not to decide, while a silence means nobody knows what it
+       * means. A client that renders both as "no vote" erases the distinction
+       * the unanimous rule turns on.
+       */
+      myVote: myVotes.get(p.id) ?? null,
     })),
     /** How many tallies could not be computed. Present so a null tally is a
      *  visible absence rather than something a reader has to infer. */
