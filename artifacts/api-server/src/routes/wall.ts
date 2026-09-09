@@ -7,6 +7,7 @@
  *   DELETE /wall/session-intent                                  — clear intent
  *   POST   /wall/impression       { objectId, objectType, ... }  — impression
  *   POST   /wall/action           { objectId, objectType, action }— action
+ *   POST   /wall/revalidate       { objectIds }                  — cache revalidation
  *
  * This route is THIN. It authenticates, gates on the Wall feature flags, gathers
  * canonical candidates, and delegates every decision to a Wall service:
@@ -115,6 +116,7 @@ export const WALL_RATE_LIMITS = {
   sessionIntent: { id: "wall_session_intent", limit: 30, windowMs: 60_000 },
   impression: { id: "wall_impression", limit: 600, windowMs: 60_000 },
   action: { id: "wall_action", limit: 300, windowMs: 60_000 },
+  revalidate: { id: "wall_revalidate", limit: 60, windowMs: 60_000 },
 } as const;
 
 const DEFAULT_LIMIT = 20;
@@ -179,6 +181,17 @@ function recordWallEvent(
 
 export interface WallViewerContext {
   followedCreatorIds: Set<string>;
+  /**
+   * Whether `followedCreatorIds` is an ANSWER or merely an absence.
+   *
+   * supabase-js resolves on a database error, so an unreadable `user_follows`
+   * yields exactly the same empty set as a viewer who follows nobody. The two
+   * are not interchangeable: Following treats an empty follow set as the true
+   * end of the feed and reports `caughtUp`, which is a positive claim about
+   * people the server could not look up. `false` here means "unknown", and the
+   * `caughtUp` claim is withheld.
+   */
+  followGraphKnown: boolean;
   viewerTripIds: Set<string>;
   currentCity: string | null;
   currentCountry: string | null;
@@ -201,6 +214,9 @@ export interface WallViewerContext {
 export async function loadViewerContext(sc: any, viewerId: string): Promise<WallViewerContext> {
   const ctx: WallViewerContext = {
     followedCreatorIds: new Set<string>(),
+    // Optimistic default, downgraded by the read below. Starting at `false`
+    // would make every caller that skips loadViewerContext look degraded.
+    followGraphKnown: true,
     viewerTripIds: new Set<string>(),
     currentCity: null,
     currentCountry: null,
@@ -209,28 +225,54 @@ export async function loadViewerContext(sc: any, viewerId: string): Promise<Wall
     preferredCities: new Set<string>(),
     interests: new Set<string>(),
   };
-  // Each read is independent and fail-soft — a missing signal degrades ranking
-  // quality, never the feed itself (spec §34).
+  // Each read below is independent, and every one of them BINDS `error`:
+  // supabase-js resolves on a database error, so a `try/catch` alone is dead
+  // code for the failure that matters and an unreadable table arrives as an
+  // empty result. Where an empty result is a merely poorer ranking that is
+  // fine and is said so per read; where it is a CLAIM (the follow graph, in
+  // Following) the failure is recorded instead of being absorbed (spec §34).
   try {
-    const { data } = await sc
+    const { data, error } = await sc
       .from("user_follows")
       .select("following_id")
       .eq("follower_id", viewerId);
-    for (const r of (data as any[]) ?? []) ctx.followedCreatorIds.add(String(r.following_id));
+    if (error) {
+      // NOT "degrades ranking quality, never the feed". In Following an empty
+      // followedCreatorIds is taken as the true end of the feed and becomes
+      // `caughtUp: true` — "nothing new from the people you follow", asserted
+      // about a relationship we just failed to read. Mark it unknown.
+      ctx.followGraphKnown = false;
+      logger.warn(
+        { err: error, viewerId, code: "wall_follow_graph_unknown" },
+        "wall: follow graph read failed — Following will not claim caughtUp",
+      );
+    } else {
+      for (const r of (data as any[]) ?? []) ctx.followedCreatorIds.add(String(r.following_id));
+    }
   } catch (err) {
-    logger.warn({ err }, "wall: follow graph read failed");
+    ctx.followGraphKnown = false;
+    logger.warn({ err, viewerId, code: "wall_follow_graph_unknown" }, "wall: follow graph read threw");
   }
   try {
-    const { data } = await sc
+    const { data, error } = await sc
       .from("trip_members")
       .select("trip_id, status, role")
       .eq("user_id", viewerId);
+    // Fail-closed and harmless: an empty viewerTripIds WITHHOLDS trip-only
+    // posts. The viewer sees less than they are entitled to, never more, and
+    // no claim is attached to the absence — but it is logged so a permanently
+    // trip-blind Wall is visible rather than looking like a quiet viewer.
+    if (error) {
+      logger.warn(
+        { err: error, viewerId }, "wall: trip membership read failed — trip-only posts withheld this request",
+      );
+    }
     for (const r of (data as any[]) ?? []) {
       const status = (r as any).status;
       if (status == null || status === "accepted") ctx.viewerTripIds.add(String((r as any).trip_id));
     }
   } catch (err) {
-    logger.warn({ err }, "wall: trip membership read failed");
+    logger.warn({ err, viewerId }, "wall: trip membership read threw — trip-only posts withheld this request");
   }
   try {
     // `current_country` DOES NOT EXIST on profiles — it is a column of
@@ -282,12 +324,16 @@ export async function loadViewerContext(sc: any, viewerId: string): Promise<Wall
   // Upcoming/active trip destination cities — a real-world discovery signal
   // (spec §13). Reads only the viewer's OWN trips, so nothing else leaks.
   try {
-    const { data } = await sc
+    const { data, error } = await sc
       .from("trips")
       .select("destination_city, status")
       .eq("owner_id", viewerId)
       .in("status", ["planning", "upcoming", "active"])
       .limit(50);
+    // Ranking signal only: an empty set means destination content is not
+    // boosted. Nothing is withheld and nothing is claimed, so the empty answer
+    // is genuinely harmless here — it is logged, not escalated.
+    if (error) logger.warn({ err: error, viewerId }, "wall: upcoming trips read failed — no destination boost");
     for (const r of (data as any[]) ?? []) {
       const c = (r as any).destination_city;
       if (c) ctx.upcomingTripCities.add(String(c).trim().toLowerCase());
@@ -300,11 +346,17 @@ export async function loadViewerContext(sc: any, viewerId: string): Promise<Wall
   try {
     const seeds = [...ctx.followedCreatorIds].slice(0, 200);
     if (seeds.length > 0) {
-      const { data } = await sc
+      const { data, error } = await sc
         .from("user_follows")
         .select("following_id")
         .in("follower_id", seeds)
         .limit(1000);
+      // Explanation signal only ("followed by people you follow"). An empty set
+      // costs a discovery EXPLANATION, never an item and never a claim — so
+      // unlike the primary read above this one does not touch followGraphKnown.
+      if (error) {
+        logger.warn({ err: error, viewerId }, "wall: second-degree follow read failed — no mutual-follow explanations");
+      }
       for (const r of (data as any[]) ?? []) {
         const id = String((r as any).following_id);
         // Not the viewer, and not someone they already follow (that is not
@@ -317,6 +369,117 @@ export async function loadViewerContext(sc: any, viewerId: string): Promise<Wall
     logger.warn({ err }, "wall: second-degree follow read failed");
   }
   return ctx;
+}
+
+// ── Viewer engagement read-back (spec §2 save · §7/§32 hide · §41 the loop) ──
+
+/**
+ * How far back a viewer's "not interested" signal keeps an object off their
+ * Wall. Long enough that the control means something, bounded so a single tap
+ * is not a permanent, unrevisitable verdict.
+ */
+export const SUPPRESSION_WINDOW_MS = 90 * 24 * 60 * 60 * 1000;
+/** Object types whose `canonicalObjectId` IS a `posts` row id (spec §2 save). */
+const SAVEABLE_OBJECT_TYPES: ReadonlySet<WallObjectType> = new Set<WallObjectType>([
+  "social_post",
+  "video",
+  "postcard",
+  "social_update",
+  "discovery",
+]);
+/** Cap on suppressed ids held in memory for one request. */
+const MAX_SUPPRESSIONS = 500;
+
+/**
+ * The objects this viewer told the Wall they were not interested in.
+ *
+ * THIS IS THE RETURN LEG OF THE WALL LOOP (spec §41). Every other hop —
+ * open → live → feed → object → engage → context → handoff → real-world action —
+ * already exists; what did not was anything reading an outcome BACK so that it
+ * changes what the Wall later shows. `POST /wall/action { action: "hide" }`
+ * already writes `rank_events` (surface='wall', event_type=ranking_item_hidden);
+ * nothing had ever read it, so a "not interested" survived only in React state
+ * and came back on the next launch.
+ *
+ * It reads the DEPLOYED store. The Wall's own telemetry table
+ * (`wall_telemetry_events`, migration 2308) is not applied in production, so a
+ * loop closed through it would be closed on paper only; `rank_events` is the
+ * table the Wall already writes and it exists.
+ *
+ * This is a VISIBILITY filter, not a ranking term (the ranker is untouched):
+ * the object is removed for this viewer, which is why it holds identically in
+ * Following, where relevance reordering is forbidden (TABLE 1). Fail-soft — an
+ * unreadable engagement store costs the viewer a preference, never the feed.
+ */
+export async function loadViewerSuppressions(
+  sc: any,
+  viewerId: string,
+  opts: { now?: Date } = {},
+): Promise<Set<string>> {
+  const out = new Set<string>();
+  if (!sc || !viewerId) return out;
+  const since = new Date((opts.now ?? new Date()).getTime() - SUPPRESSION_WINDOW_MS).toISOString();
+  try {
+    const { data, error } = await sc
+      .from("rank_events")
+      .select("item_id")
+      .eq("user_id", viewerId)
+      .eq("surface", "wall")
+      .eq("event_type", RankingEvent.ITEM_HIDDEN)
+      .gte("served_at", since)
+      .limit(MAX_SUPPRESSIONS);
+    if (error) {
+      logger.warn({ err: error }, "wall: suppression read failed — nothing suppressed this request");
+      return out;
+    }
+    for (const r of (data as any[]) ?? []) {
+      const id = (r as any)?.item_id;
+      if (id) out.add(String(id));
+    }
+  } catch (err) {
+    logger.warn({ err }, "wall: suppression read threw — nothing suppressed this request");
+  }
+  return out;
+}
+
+/**
+ * The subset of `objectIds` the viewer has SAVED in the canonical save store
+ * (`post_saves` — the table routes/mediaFeed's POST/DELETE /posts/:id/save
+ * writes). The Wall reports the state; it never owns it and never writes it.
+ *
+ * Without this the Wall's bookmark was a `React.useState` boolean that persisted
+ * nothing and reset on remount, so `save` — one of §2's eight named real-world
+ * actions — was an animation. Fail-soft: an unreadable save store yields an
+ * empty set, i.e. "Save" rather than a false "Saved" (the canonical endpoint is
+ * idempotent, so offering Save on an already-saved object is harmless; claiming
+ * Saved for something that is not would be a lie).
+ */
+export async function loadViewerSaves(
+  sc: any,
+  viewerId: string,
+  objectIds: string[],
+): Promise<Set<string>> {
+  const out = new Set<string>();
+  const ids = [...new Set(objectIds)].filter((id) => !!id).slice(0, 500);
+  if (!sc || !viewerId || ids.length === 0) return out;
+  try {
+    const { data, error } = await sc
+      .from("post_saves")
+      .select("post_id")
+      .eq("user_id", viewerId)
+      .in("post_id", ids);
+    if (error) {
+      logger.warn({ err: error }, "wall: post_saves read failed — save state unknown");
+      return out;
+    }
+    for (const r of (data as any[]) ?? []) {
+      const id = (r as any)?.post_id;
+      if (id) out.add(String(id));
+    }
+  } catch (err) {
+    logger.warn({ err }, "wall: post_saves read threw — save state unknown");
+  }
+  return out;
 }
 
 /**
@@ -374,9 +537,20 @@ async function loadCandidates(
   const empty: LoadedCandidates = { candidates: [], signals: new Map(), placeByObject: new Map() };
   const followed = [...viewer.followedCreatorIds];
 
-  // Following: only followed authors. With no follows there is nothing to show —
-  // and that IS the true end (caught up immediately).
-  if (mode === "following" && followed.length === 0) return { ...empty, followingReachedEnd: true };
+  // Following: only followed authors. With no follows there is nothing to show.
+  // That is the true end ONLY when the follow graph was actually READ: an
+  // unreadable `user_follows` produces the identical empty set, and treating it
+  // as the end turns a database failure into "you're all caught up" — a claim
+  // about people the server never managed to look up. Unknown => the page is
+  // still empty (honest degradation) but `followingReachedEnd` is explicitly
+  // false, so buildFollowing reports caughtUp: false.
+  if (mode === "following" && followed.length === 0) {
+    // EXPLICIT false when unknown, never omission: buildFollowing reads
+    // `opts.reachedEnd ?? true`, so leaving it undefined means "the caller
+    // fetched the whole set" and lands right back on caughtUp: true. Absence is
+    // the permissive value here.
+    return { ...empty, followingReachedEnd: viewer.followGraphKnown };
+  }
 
   let rows: any[] = [];
   let followingReachedEnd: boolean | undefined;
@@ -868,6 +1042,25 @@ router.get(
     const steered =
       mode === "for_you" ? applyIntentSteer(merged.candidates, sessionIntent) : merged.candidates;
 
+    // ── Viewer engagement read-back (spec §2 save · §7/§32 hide · §41).
+    //    Both are fail-soft and both are read from DEPLOYED stores. `saved` makes
+    //    the bookmark server truth; `suppressed` is the loop's return leg — an
+    //    object the viewer said they were not interested in is dropped for them
+    //    by the visibility gate below, not merely demoted.
+    const [savedObjectIds, suppressedObjectIds] = await Promise.all([
+      // Only post-like candidates have a `post_saves` row; a shared moment and a
+      // Buddy profile live in other id spaces, so sending their ids would be a
+      // guaranteed miss on every request.
+      loadViewerSaves(
+        sc,
+        user.id,
+        steered
+          .filter((c) => SAVEABLE_OBJECT_TYPES.has(c.objectType))
+          .map((c) => c.canonicalObjectId),
+      ),
+      loadViewerSuppressions(sc, user.id),
+    ]);
+
     // ── Gate + project (eligibility/block/visibility BEFORE ordering, §23/§24).
     const projectViewer: ProjectViewerContext = {
       viewerId: user.id,
@@ -875,6 +1068,8 @@ router.get(
       followedCreatorIds: viewer.followedCreatorIds,
       currentCity: viewer.currentCity,
       compassHandoffEnabled,
+      savedObjectIds,
+      suppressedObjectIds,
     };
     let projections: WallProjection[] = [];
     try {
@@ -1217,6 +1412,178 @@ router.get(
       items = [];
     }
     res.status(200).json({ items, generatedAt: new Date().toISOString() });
+  }),
+);
+
+// ── POST /wall/revalidate ────────────────────────────────────────────────────
+
+/**
+ * Columns the revalidation gate needs. Deliberately its own list rather than a
+ * reuse of POST_COLUMNS: this read wants the tombstone (`deleted_at`) and none
+ * of the ranking counters, and it must not drift when the feed spine's select
+ * list changes for ranking reasons.
+ */
+const REVALIDATE_COLUMNS =
+  "id, author_id, trip_id, visibility, status, post_status, deleted_at, created_at, published_at";
+
+/** Hard cap on ids one revalidation call may carry (the client caches 12). */
+export const MAX_REVALIDATE_IDS = 50;
+
+const revalidateSchema = z.object({
+  objectIds: z.array(z.string().min(1).max(200)).min(1).max(MAX_REVALIDATE_IDS),
+});
+
+/**
+ * Revalidate cached Wall projections against the CANONICAL gate (spec §37:
+ * "Moderation takedowns propagate to cached Wall projections"; §31: "revalidate
+ * eligibility").
+ *
+ * WHY THIS EXISTS. The client persists the first page for up to 24 h
+ * (features/wall/services/wallPrefetch) and paints it when a live fetch fails.
+ * Server-side propagation was already real — `passesEligibility` drops a
+ * taken-down object on every request — but the offline cache was the one path
+ * on which a taken-down object could still paint, because nothing ever
+ * re-checked it. This is that re-check.
+ *
+ * IT RETURNS WHAT IS STILL ELIGIBLE, NOT WHAT WAS REVOKED. An allowlist is
+ * fail-closed by construction: an id the server cannot positively re-admit — a
+ * deleted row, a taken-down row, an author who deactivated, a block that now
+ * exists, a visibility tier the viewer has fallen out of, an object type this
+ * gate cannot resolve, or simply an unreadable database — is absent from the
+ * answer, and the client drops it. A revoked-list would have had to enumerate
+ * every reason a thing can vanish, and would have failed OPEN on the one it
+ * forgot.
+ *
+ * IT RE-RUNS THE REAL GATE, not a copy of it. The ids are loaded back out of
+ * `posts`, rebuilt as candidates and pushed through `projectObjects` — the same
+ * eligibility → block → visibility path the feed uses (§37: "Server-side
+ * eligibility is authoritative; never rely on client hiding"). There is no
+ * second moderation predicate to drift.
+ *
+ * The client cannot reach this while genuinely offline, and nothing can
+ * propagate to a device with no network. What it guarantees is that the cache is
+ * corrected at the FIRST moment the device can reach the server, and that the
+ * correction is persisted — so a takedown that lands during an offline stretch
+ * is honoured before the cache is painted again.
+ */
+router.post(
+  "/wall/revalidate",
+  asyncHandler(async (req: any, res: any) => {
+    const auth = await requireUser(req, res);
+    if (!auth) return;
+    const { client: sc, user } = auth;
+
+    if (!(await isFlagEnabled(sc, "wall_enabled"))) {
+      sendError(res, "feature_disabled", "The Wall is not enabled");
+      return;
+    }
+
+    const parsed = revalidateSchema.safeParse(req.body);
+    if (!parsed.success) {
+      sendError(res, "invalid_payload", "objectIds must be a non-empty array of ids");
+      return;
+    }
+    const { id, limit: rlLimit, windowMs } = WALL_RATE_LIMITS.revalidate;
+    const rl = checkRateLimit(id, user.id, rlLimit, windowMs);
+    if (!rl.allowed) {
+      res.setHeader("Retry-After", Math.ceil(rl.retryAfterMs / 1000).toString());
+      sendError(res, "rate_limited", "Too many revalidation requests. Please slow down.");
+      return;
+    }
+
+    const requested = [...new Set(parsed.data.objectIds)];
+    const generatedAt = new Date().toISOString();
+
+    let rows: any[] = [];
+    try {
+      const { data, error } = await sc
+        .from("posts")
+        .select(REVALIDATE_COLUMNS)
+        .in("id", requested);
+      // Fail CLOSED. An unreadable posts table is not "everything is still
+      // fine" — it is "nothing can be confirmed", and the cache is dropped.
+      if (error) {
+        logger.warn({ err: error }, "wall: revalidate read failed — nothing re-admitted");
+        res.status(200).json({ eligibleObjectIds: [], generatedAt });
+        return;
+      }
+      rows = (data as any[]) ?? [];
+    } catch (err) {
+      logger.warn({ err }, "wall: revalidate read threw — nothing re-admitted");
+      res.status(200).json({ eligibleObjectIds: [], generatedAt });
+      return;
+    }
+
+    // The moderation/tombstone predicate the feed spine applies, restated over
+    // the SAME columns (status='active' + post_status='published' + no
+    // tombstone). Everything downstream of it — author account status, blocks,
+    // visibility tiers — is projectObjects' job, below.
+    const live = rows.filter(
+      (r) =>
+        r &&
+        String(r.status ?? "") === "active" &&
+        String(r.post_status ?? "") === "published" &&
+        r.deleted_at == null &&
+        isPostPublished(r),
+    );
+    if (live.length === 0) {
+      res.status(200).json({ eligibleObjectIds: [], generatedAt });
+      return;
+    }
+
+    // Author account status — the eligibility allowlist (§23). A read failure
+    // leaves the status absent, and `passesEligibility` reads absence as
+    // 'active'; that is the loaders' own documented fail-soft default and is why
+    // the tombstone/moderation predicate above is applied independently of it.
+    const authorIds = [...new Set(live.map((r) => String(r.author_id)))];
+    const accountStatus = new Map<string, string>();
+    try {
+      const { data } = await sc
+        .from("profiles")
+        .select("id, account_status")
+        .in("id", authorIds.slice(0, 500));
+      for (const p of (data as any[]) ?? []) {
+        if (p?.id) accountStatus.set(String(p.id), String(p.account_status ?? "active"));
+      }
+    } catch (err) {
+      logger.warn({ err }, "wall: revalidate profile read failed");
+    }
+
+    const candidates: WallCandidate[] = live.map((r) => ({
+      // The type only has to be POST-LIKE for the gate to route the row through
+      // decidePostReadable; which social presentation the client had cached is
+      // irrelevant to whether the viewer may still see the object.
+      objectType: "social_post",
+      canonicalObjectId: String(r.id),
+      authorId: String(r.author_id),
+      visibility: r.visibility ?? null,
+      tripId: r.trip_id ?? null,
+      publishedAt: String(r.published_at ?? r.created_at ?? generatedAt),
+      authorAccountStatus: accountStatus.get(String(r.author_id)) ?? null,
+      isDeleted: false,
+    }));
+
+    const viewer = await loadViewerContext(sc, user.id);
+    let survivors: WallProjection[] = [];
+    try {
+      survivors = await projectObjects(sc, candidates, {
+        viewerId: user.id,
+        viewerTripIds: viewer.viewerTripIds,
+        followedCreatorIds: viewer.followedCreatorIds,
+        // A hidden object stays hidden through a revalidation too — otherwise
+        // the cache would keep resurrecting something the viewer dismissed.
+        suppressedObjectIds: await loadViewerSuppressions(sc, user.id),
+      });
+    } catch (err) {
+      logger.warn({ err }, "wall: revalidate projection failed — nothing re-admitted");
+      survivors = [];
+    }
+
+    const eligible = new Set(survivors.map((p) => p.canonicalObjectId));
+    res.status(200).json({
+      eligibleObjectIds: requested.filter((objectId) => eligible.has(objectId)),
+      generatedAt,
+    });
   }),
 );
 

@@ -1,0 +1,17 @@
+# db/harness/schema_rollbacks.txt — schema rollbacks, rehearsed after the kernel
+# chain has been withdrawn and nothing writes these tables any more.
+#
+# REVERSE DEPENDENCY ORDER, top to bottom. This is not the migration list read
+# backwards and must not be generated from it: 2767 undoes a CORRECTION to 2763
+# and has to run before 2763's own rollback, and 2763 drops trip_outcomes, which
+# references trip_stages, so it has to run before 2760's.
+db/rollback/2026-09-09-2774-trip-proposal-governance-rollback.sql
+db/rollback/2026-09-09-2773-trip-snapshot-fold-and-replay-rollback.sql
+db/rollback/2026-09-09-2771-trip-plan-participants-rollback.sql
+db/rollback/2026-09-09-2770-trip-plans-spec-columns-rollback.sql
+db/rollback/2026-09-09-2776-trip-presence-freshness-rollback.sql
+db/rollback/2026-09-09-2767-trip-presence-spec-vocabulary-rollback.sql
+db/rollback/2026-09-09-2763-trip-presence-proposals-snapshots-outcomes-rollback.sql
+db/rollback/2026-09-09-2762-trip-goals-decisions-risks-rollback.sql
+db/rollback/2026-09-09-2761-trip-legs-and-commitments-rollback.sql
+db/rollback/2026-09-09-2760-trip-stages-rollback.sql

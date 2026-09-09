@@ -47,6 +47,30 @@ export const MEDIA_PROJECTION_POST_MEDIA_COLUMNS =
   "processing_status, moderation_status";
 
 /**
+ * `media_assets` columns safe for projection — the CANONICAL store (spec §6).
+ *
+ * Same whitelisting discipline as the two constants above, and it costs nothing
+ * to hold: `media_assets` has no coordinate column at all (checked against
+ * information_schema in both databases, 2026-09-07), so the "never read a
+ * precise location" guarantee is structural here rather than editorial.
+ *
+ * `captured_at` is the one field the canonical store has that neither legacy
+ * store does — the §6 / Wall §16 "two clocks" value. Everything projected from
+ * `post_media` or `media_urls` has to fall back to the post's `created_at`,
+ * which is the publish clock, not the capture clock.
+ *
+ * NOT SELECTABLE AS AN EMBED FROM `posts`. `media_attachments.entity_id` is a
+ * bare uuid with NO foreign key to `posts` (it is polymorphic over
+ * `entity_type`), so PostgREST cannot resolve `posts -> media_attachments`.
+ * Reading the canonical store needs a SECOND query keyed by entity_id — see
+ * lib/media/mediaCanonicalRead.ts. Anyone planning the cutover should know that
+ * up front: it is not a one-constant edit to the existing SELECT.
+ */
+export const MEDIA_PROJECTION_MEDIA_ASSET_COLUMNS =
+  "id, media_type, public_url, thumbnail_url, width, height, duration_ms, captured_at, " +
+  "processing_status, moderation_status";
+
+/**
  * Profile columns safe for a secondary contributor credit.
  *
  * `is_private` is read but never projected: it is a GATE input, consumed by
@@ -111,6 +135,13 @@ export interface MediaCandidateRow {
   post_status?: string | null;
   post_media?: any[] | null;
   media_urls?: string[] | null;
+  /**
+   * Canonical `media_assets` rows for this entity, attached by the gated loader
+   * `lib/media/mediaCanonicalRead.attachCanonicalMedia`. ABSENT on every row
+   * fetched today: no SELECT in this tree produces it and it is not a column on
+   * `posts`. When present it WINS over `post_media` (see firstReadyMedia).
+   */
+  canonical_media?: any[] | null;
   profiles?: any;
   /**
    * These MAY be present on the row (posts has them). They are typed here ONLY
@@ -121,7 +152,7 @@ export interface MediaCandidateRow {
   [key: string]: unknown;
 }
 
-function firstReadyMedia(row: MediaCandidateRow): {
+interface ResolvedMedia {
   id: string;
   mediaType: "image" | "video";
   url: string;
@@ -129,18 +160,100 @@ function firstReadyMedia(row: MediaCandidateRow): {
   width: number | null;
   height: number | null;
   durationSeconds: number | null;
-} | null {
+  /** §6 capture clock. Only the canonical store can supply this. */
+  capturedAt: string | null;
+  /** Which of the three stores this came from. Diagnostic; never projected. */
+  source: "media_assets" | "post_media" | "media_urls";
+}
+
+/**
+ * A media row is servable only if it is finished processing and has not been
+ * moderated away. Applied IDENTICALLY to `post_media` and to `media_assets`, so
+ * preferring the canonical store can never relax the gate.
+ *
+ * `media_assets.moderation_status` carries BOTH vocabularies at once — the
+ * legacy `pending|approved|flagged|rejected` and the §36
+ * `processing|active|limited|rejected|removed|owner_deleted` that migration 2250
+ * added as a superset. Neither set is a subset of the other, so this is a
+ * DENY-LIST of the states that must never reach a social surface, which is the
+ * same posture `lib/mediaEligibility` and the Wall's quick-media loader take. A
+ * value nobody has enumerated yet is therefore servable — matching the existing
+ * post_media branch exactly, rather than quietly making the canonical store
+ * stricter and losing media at cutover.
+ *
+ * SHARING THIS PREDICATE WITH THE post_media BRANCH IS PROVABLY INERT, not
+ * merely believed to be. That branch previously denied exactly `rejected` and
+ * `flagged`; this set adds `limited`, `removed` and `owner_deleted`. Those three
+ * cannot occur on a post_media row — `post_media_moderation_status_check` is
+ *
+ *     CHECK (moderation_status = ANY (ARRAY['pending','approved','flagged','rejected']))
+ *
+ * in BOTH databases (read from pg_constraint 2026-09-07: travel-buddy
+ * ajrurzioarfkagpuxfnb and portava-ci hwokxgbmezheskbzskfr, identical
+ * definitions). The database forbids the three added values, so the added denials
+ * are unreachable and the post_media verdict is unchanged for every row that can
+ * exist. If that CHECK is ever widened, re-derive this — do not assume it holds.
+ */
+const UNSERVABLE_MODERATION_STATES: ReadonlySet<string> = new Set([
+  "rejected",
+  "flagged",
+  "limited",
+  "removed",
+  "owner_deleted",
+]);
+
+function servableMediaRow(m: any): boolean {
+  return Boolean(
+    m &&
+      m.processing_status === "ready" &&
+      !UNSERVABLE_MODERATION_STATES.has(String(m.moderation_status ?? "")) &&
+      typeof m.public_url === "string" &&
+      m.public_url.trim().length > 0,
+  );
+}
+
+/**
+ * The canonical branch (spec §6): the first servable `media_assets` row this
+ * entity carries, ordered by its attachment position.
+ *
+ * Returns null when the row carries no canonical data — which is EVERY row
+ * today — so the caller falls through to `post_media` and then `media_urls`
+ * exactly as before. That fall-through is the point: the canonical store covers
+ * a fraction of live media (measured 2026-09-07 in production: 8 media_assets,
+ * 6 post_media, and only ONE storage path present in both), so a read path that
+ * preferred `media_assets` WITHOUT falling back would delete most media from
+ * every surface it serves. Preference, never replacement.
+ */
+function firstCanonicalMedia(row: MediaCandidateRow): ResolvedMedia | null {
+  const raw = Array.isArray(row.canonical_media) ? row.canonical_media : [];
+  const ready = raw
+    .filter(servableMediaRow)
+    .sort((a: any, b: any) => (a.position ?? 0) - (b.position ?? 0));
+  const m = ready[0];
+  if (!m) return null;
+  return {
+    id: String(m.id),
+    mediaType: m.media_type === "video" ? "video" : "image",
+    url: String(m.public_url).trim(),
+    thumbnailUrl: typeof m.thumbnail_url === "string" ? m.thumbnail_url : null,
+    width: typeof m.width === "number" ? m.width : null,
+    height: typeof m.height === "number" ? m.height : null,
+    // media_assets models duration as duration_ms (INTEGER, migration 0191);
+    // post_media models it as duration_seconds. The projection speaks seconds.
+    durationSeconds: typeof m.duration_ms === "number" ? m.duration_ms / 1000 : null,
+    capturedAt: typeof m.captured_at === "string" ? m.captured_at : null,
+    source: "media_assets",
+  };
+}
+
+function firstReadyMedia(row: MediaCandidateRow): ResolvedMedia | null {
+  // Canonical first (§6) — null on every row that carries no canonical data.
+  const canonical = firstCanonicalMedia(row);
+  if (canonical) return canonical;
+
   const rawMedia = Array.isArray(row.post_media) ? row.post_media : [];
   const ready = rawMedia
-    .filter(
-      (m: any) =>
-        m &&
-        m.processing_status === "ready" &&
-        m.moderation_status !== "rejected" &&
-        m.moderation_status !== "flagged" &&
-        typeof m.public_url === "string" &&
-        m.public_url.trim().length > 0,
-    )
+    .filter(servableMediaRow)
     .sort((a: any, b: any) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
 
   if (ready.length > 0) {
@@ -153,6 +266,8 @@ function firstReadyMedia(row: MediaCandidateRow): {
       width: typeof m.width === "number" ? m.width : null,
       height: typeof m.height === "number" ? m.height : null,
       durationSeconds: typeof m.duration_seconds === "number" ? m.duration_seconds : null,
+      capturedAt: null,
+      source: "post_media",
     };
   }
 
@@ -169,6 +284,8 @@ function firstReadyMedia(row: MediaCandidateRow): {
       width: null,
       height: null,
       durationSeconds: null,
+      capturedAt: null,
+      source: "media_urls",
     };
   }
   return null;
@@ -208,7 +325,13 @@ export function toMediaProjection(row: MediaCandidateRow, nowMs: number): MediaP
   const media = firstReadyMedia(row);
   if (!media) return null;
 
-  const capturedAt = typeof row.created_at === "string" ? row.created_at : new Date(nowMs).toISOString();
+  // §6 / Wall §16 "two clocks": the canonical store's `captured_at` is the
+  // CAPTURE time; `posts.created_at` is the PUBLISH time. Prefer the former
+  // when the canonical branch supplied one — that is the whole reason the
+  // canonical store is worth preferring, beyond having one row per file.
+  const capturedAt =
+    media.capturedAt ??
+    (typeof row.created_at === "string" ? row.created_at : new Date(nowMs).toISOString());
 
   return {
     id: row.id,

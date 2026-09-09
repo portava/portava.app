@@ -23,6 +23,11 @@
  */
 import { describe, it, before, after, beforeEach } from "node:test";
 import assert from "node:assert/strict";
+import {
+  buddiesWithheldByLaunchGate,
+  invalidateBuddyLaunchGateCache,
+  DISCOVERY_BUDDY_LAUNCH_GATE_FLAG,
+} from "../routes/discoverySearch.js";
 import { createServer } from "node:http";
 import type { Server } from "node:http";
 import express from "express";
@@ -61,7 +66,15 @@ interface FakeState {
   blocks?: { blocker_id: string; blocked_id: string }[];
   events?: any[];
   hashtags?: any[];
-  profile_privacy_settings?: { user_id: string; allow_profile_discovery: boolean }[];
+  // `show_real_name` is the column `nameVisibilitySet` actually selects, and it
+  // is what every fixture below sets — but the type only named
+  // `allow_profile_discovery`, so 14 fixtures were type-errors sitting in this
+  // file's baseline. That is the shape check-test-typecheck exists to catch: a
+  // fixture describing a row production never emits. Here the fixture was right
+  // and the TYPE was wrong, so the type is corrected rather than the baseline
+  // raised. Both columns are optional because different suites set one or the
+  // other.
+  profile_privacy_settings?: { user_id: string; allow_profile_discovery?: boolean; show_real_name?: boolean }[];
   user_follows?: any[];
   event_rsvps?: any[];
   trips?: any[];
@@ -417,6 +430,109 @@ describe("GET /api/discovery/search — block exclusion (travelers)", () => {
 });
 
 // ── Block fail-closed ─────────────────────────────────────────────────────────
+
+// ── Buddy launch-eligibility gate (GII §29 / census-input-intelligence G71) ───
+//
+// `type=buddies` used to apply exactly one predicate — buddy_verified_at IS NOT
+// NULL — and never asked whether the Rent-a-Buddy marketplace is launched
+// (`rent_buddy_enabled`, false in production). The launch leg now sits behind
+// `discovery_buddy_launch_gate_enabled` (migration 2360, seeded FALSE): with
+// the gate absent/false/unreadable NOTHING changes; with it on, buddies are
+// withheld unless the marketplace flag reads true.
+
+describe("GET /api/discovery/search — buddy launch-eligibility gate", () => {
+  const BUDDY = "ff000000-0000-4000-a000-0000000000b1";
+  const buddyRow = {
+    id: BUDDY, handle: "buddyben", name: "Buddy Ben", avatar_url: null, is_private: false,
+    home_city: null, home_country: null, account_status: "active",
+    buddy_verified_at: "2026-01-01T00:00:00Z",
+  };
+  const gateOn  = { flag: DISCOVERY_BUDDY_LAUNCH_GATE_FLAG, enabled: true };
+  const gateOff = { flag: DISCOVERY_BUDDY_LAUNCH_GATE_FLAG, enabled: false };
+  const launched   = { flag: "rent_buddy_enabled", enabled: true };
+  const unlaunched = { flag: "rent_buddy_enabled", enabled: false };
+
+  // The gate read is cached 30 s inside the route; every case starts cold, and
+  // the last case must not leave a cached `true` behind for later suites.
+  beforeEach(() => invalidateBuddyLaunchGateCache());
+  after(() => invalidateBuddyLaunchGateCache());
+
+  async function buddyIds(type: "buddies" | "travelers"): Promise<string[]> {
+    const r = await get(`/discovery/search?q=buddy&type=${type}`);
+    assert.equal(r.status, 200);
+    const { results } = await r.json() as any;
+    return (results as any[]).map((u: any) => u.id);
+  }
+
+  it("flag row ABSENT: legacy behaviour — a verified buddy is returned (the seed's world)", async () => {
+    setup({ profiles: [buddyRow], feature_flags: [] });
+    assert.deepEqual(await buddyIds("buddies"), [BUDDY]);
+  });
+
+  it("gate explicitly FALSE: legacy behaviour, even while the marketplace is unlaunched", async () => {
+    setup({ profiles: [buddyRow], feature_flags: [gateOff, unlaunched] });
+    assert.deepEqual(await buddyIds("buddies"), [BUDDY]);
+  });
+
+  it("gate ON + marketplace unlaunched: buddies withheld; the same person still appears as a traveler", async () => {
+    setup({ profiles: [buddyRow], feature_flags: [gateOn, unlaunched] });
+    assert.deepEqual(await buddyIds("buddies"), [], "an unlaunched marketplace has no buddy candidates");
+    assert.deepEqual(await buddyIds("travelers"), [BUDDY], "the gate is about the BUDDY role, not the person");
+  });
+
+  it("gate ON + marketplace flag ABSENT: withheld — absence of a launch is not a launch", async () => {
+    setup({ profiles: [buddyRow], feature_flags: [gateOn] });
+    assert.deepEqual(await buddyIds("buddies"), []);
+  });
+
+  it("gate ON + marketplace launched: buddies returned", async () => {
+    setup({ profiles: [buddyRow], feature_flags: [gateOn, launched] });
+    assert.deepEqual(await buddyIds("buddies"), [BUDDY]);
+  });
+
+  it("feature_flags UNREADABLE: the gate fails toward legacy (buddies unchanged)", async () => {
+    setup({ profiles: [buddyRow], feature_flags: [gateOn, unlaunched] }, ["feature_flags"]);
+    assert.deepEqual(await buddyIds("buddies"), [BUDDY],
+      "an unreadable GATE must not switch behaviour — that is the capability-flag polarity");
+  });
+
+  // The route-level fake cannot fail one flag read while answering another, so
+  // the second closure is pinned on the exported predicate directly.
+  it("gate ON + marketplace flag UNREADABLE: withheld — an eligibility gate that cannot be established is not passed", async () => {
+    const calls: string[] = [];
+    const sc: any = {
+      from: (_t: string) => ({
+        select: () => ({
+          eq: (_c: string, flag: string) => ({
+            maybeSingle: async () => {
+              calls.push(flag);
+              if (flag === DISCOVERY_BUDDY_LAUNCH_GATE_FLAG) return { data: { enabled: true }, error: null };
+              return { data: null, error: { message: "simulated DB error" } };
+            },
+          }),
+        }),
+      }),
+    };
+    assert.equal(await buddiesWithheldByLaunchGate(sc), true);
+    assert.deepEqual(calls, [DISCOVERY_BUDDY_LAUNCH_GATE_FLAG, "rent_buddy_enabled"],
+      "the marketplace flag is read only once the gate is known to be on");
+  });
+
+  it("gate OFF: the marketplace flag is never read at all", async () => {
+    const calls: string[] = [];
+    const sc: any = {
+      from: (_t: string) => ({
+        select: () => ({
+          eq: (_c: string, flag: string) => ({
+            maybeSingle: async () => { calls.push(flag); return { data: { enabled: false }, error: null }; },
+          }),
+        }),
+      }),
+    };
+    assert.equal(await buddiesWithheldByLaunchGate(sc), false);
+    assert.deepEqual(calls, [DISCOVERY_BUDDY_LAUNCH_GATE_FLAG]);
+  });
+});
 
 describe("GET /api/discovery/search — block lookup fail-closed", () => {
   it("returns empty results when the blocks table returns a DB error", async () => {
@@ -1470,5 +1586,94 @@ describe("GET /api/discovery/search — posts are gated on post_status", () => {
     const { results } = (await r.json()) as any;
     assert.deepEqual((results as any[]).map((x: any) => x.id), ["legacy-1"],
       "the column is NOT NULL DEFAULT 'published'; absent must not fail closed");
+  });
+});
+
+// ---------------------------------------------------------------------------
+
+describe("people search resolves the real name through the CANONICAL helper", () => {
+  /**
+   * THE DEFECT, AND WHY EVERY EXISTING TEST ABOVE PASSED WITH IT IN PLACE.
+   *
+   * The universal display-name rule has one canonical resolution —
+   * `lib/publicIdentity.presentedName`, which reads `display_name ?? name ??
+   * full_name` and trims. The map pin (`lib/mapTravelers`) and the Compass
+   * traveler list both honoured it. People search did not: it read `p.name`
+   * alone, and its `profiles` select did not even FETCH `display_name`. A user
+   * who set a display name different from their profile name was shown the other
+   * one here and the right one everywhere else.
+   *
+   * Nothing above catches it because every fixture in this file gives a profile
+   * a `name` and no `display_name`, under which the two implementations agree.
+   * That is the shape of the bug: it is invisible until the two columns differ.
+   */
+  it("prefers display_name over name for an opted-in subject", async () => {
+    setup({
+      profiles: [
+        { id: ALICE, handle: "alice", name: "Legal Name", display_name: "Preferred Name",
+          avatar_url: null, is_private: false, home_city: null, home_country: null, account_status: "active" },
+      ],
+      blocks: [],
+      profile_privacy_settings: [{ user_id: ALICE, show_real_name: true }],
+      user_follows: [],
+    });
+
+    const r = await get("/discovery/search?q=alice&type=travelers");
+    assert.equal(r.status, 200);
+    const { results } = await r.json() as any;
+    const row = (results as any[]).find((u: any) => u.id === ALICE);
+    assert.ok(row, "opted-in traveler should be in the results");
+    assert.equal(row.title, "Preferred Name");
+  });
+
+  it("still falls back to name when there is no display_name", async () => {
+    // The control. Without this the test above would also pass against an
+    // implementation that read display_name ONLY and dropped `name` entirely.
+    setup({
+      profiles: [
+        { id: ALICE, handle: "alice", name: "Legal Name", display_name: null,
+          avatar_url: null, is_private: false, home_city: null, home_country: null, account_status: "active" },
+      ],
+      blocks: [],
+      profile_privacy_settings: [{ user_id: ALICE, show_real_name: true }],
+      user_follows: [],
+    });
+    const { results } = await (await get("/discovery/search?q=alice&type=travelers")).json() as any;
+    assert.equal((results as any[]).find((u: any) => u.id === ALICE)?.title, "Legal Name");
+  });
+
+  it("a subject who has NOT opted in still gets the handle, display_name or not", async () => {
+    // The privacy direction is what matters most here: a display_name is still a
+    // real name, and honouring the canonical resolution must not become a way to
+    // leak one the owner did not opt in to showing.
+    setup({
+      profiles: [
+        { id: ALICE, handle: "alice", name: "Legal Name", display_name: "Preferred Name",
+          avatar_url: null, is_private: false, home_city: null, home_country: null, account_status: "active" },
+      ],
+      blocks: [],
+      profile_privacy_settings: [],
+      user_follows: [],
+    });
+    const { results } = await (await get("/discovery/search?q=alice&type=travelers")).json() as any;
+    const row = (results as any[]).find((u: any) => u.id === ALICE);
+    assert.equal(row?.title, "alice");
+    assert.equal(row?.subtitle, "@alice");
+  });
+
+  it("a whitespace-only name falls through to the handle rather than an empty title", async () => {
+    // `presentedName` trims; the old inline `p.name ?? null` did not, so a name
+    // of "   " rendered as a blank title with no way to tell who the row was.
+    setup({
+      profiles: [
+        { id: ALICE, handle: "alice", name: "   ", display_name: null,
+          avatar_url: null, is_private: false, home_city: null, home_country: null, account_status: "active" },
+      ],
+      blocks: [],
+      profile_privacy_settings: [{ user_id: ALICE, show_real_name: true }],
+      user_follows: [],
+    });
+    const { results } = await (await get("/discovery/search?q=alice&type=travelers")).json() as any;
+    assert.equal((results as any[]).find((u: any) => u.id === ALICE)?.title, "alice");
   });
 });

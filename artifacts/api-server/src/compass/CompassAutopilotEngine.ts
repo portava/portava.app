@@ -20,7 +20,9 @@
  */
 
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { randomUUID } from "node:crypto";
 import { getWeatherContext, type DailyWeather } from "../lib/weatherCache.js";
+import { tripKernelClient, executeTripCommand, planCommandTypeForPatch } from "../lib/tripKernel.js";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -631,6 +633,11 @@ export async function applyProposal(
   const items = await fetchPlanItems(sc, proposal.trip_id);
   const byId = new Map(items.map((i) => [i.id, i]));
 
+  // Trip Kernel gate, read once per proposal (Trips spec §4.1; lib/tripKernel.ts).
+  // routes/compassAutopilot.ts authorized the actor (own pending proposal,
+  // accepted member, canEditPlan) before calling; the kernel re-checks crew.
+  const kernel = await tripKernelClient(sc);
+
   let applied = 0;
   const blocked: string[] = [];
   for (const c of changes) {
@@ -643,6 +650,36 @@ export async function applyProposal(
       if (c.after && Object.prototype.hasOwnProperty.call(c.after, k)) patch[col] = (c.after as any)[k];
     }
     if (Object.keys(patch).length === 1) continue;
+
+    // Trip Kernel path: one command per changed item — MOVE_PLAN for a time /
+    // day change, CONFIRM_PLAN / CANCEL_PLAN / COMPLETE_ACTIVITY / UPDATE_PLAN
+    // for a status change (§3.3 names). The actor is the proposal's owner (the
+    // user who confirmed it). Key (proposal, item) is deterministic: a retry of
+    // the same confirm replays the receipt and moves nothing twice. The kernel
+    // refuses a done/cancelled item changing status where the direct update did
+    // not; that lands in `blocked` with the reason, never as a silent skip.
+    if (kernel) {
+      const { updated_at, ...columns } = patch;
+      const r = await executeTripCommand(kernel, {
+        commandId: randomUUID(),
+        tripId: proposal.trip_id,
+        actorUserId: proposal.user_id,
+        expectedTripVersion: null,
+        idempotencyKey: `autopilot:${proposal.id}:${c.itemId}`,
+        type: planCommandTypeForPatch({
+          status: columns.status as string | undefined,
+          dayDate: columns.day_date as string | null | undefined,
+          startsAt: columns.starts_at as string | null | undefined,
+          endsAt: columns.ends_at as string | null | undefined,
+        }),
+        payload: { item_id: c.itemId, patch: columns, updated_at },
+      });
+      if (r.ok) applied++;
+      else blocked.push(`${c.title}: ${r.reason}`);
+      continue;
+    }
+
+    // trip-kernel:legacy-path — flag-off twin of the plan-item command above.
     const { error } = await sc
       .from("trip_plan_items")
       .update(patch)

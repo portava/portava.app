@@ -1,7 +1,8 @@
 /**
  * CompassTools — Phase 4 native function calling for the Compass assistant.
  *
- * Eight tools the model may call on demand. Hard rules (master-roadmap.md):
+ * Eleven tools the model may call on demand (the OpenAI schemas in TOOL_DEFINITIONS
+ * below are the authoritative list). Hard rules (master-roadmap.md):
  *   - Candidate generation is strictly separated from AI explanation: tools
  *     produce candidates from real DB data; the model interprets, ranks,
  *     chooses, and explains — it must NEVER invent the candidate list.
@@ -56,7 +57,9 @@ import {
   type PassportViewerContext,
 } from "../services/passport/PassportProjectionService.js";
 import { getActiveWindows } from "../services/passport/OpenToPlansService.js";
+import { readGroupBlockExclusions, exclusionsUnavailable, type ExclusionSet } from "../lib/exclusionSet.js";
 
+import { getTrustProfileResult } from "../services/trust/TrustScoreService.js";
 // ── Tool definitions (OpenAI function schemas) ────────────────────────────────
 
 export const COMPASS_TOOL_DEFINITIONS = [
@@ -270,7 +273,12 @@ function hiddenUserIds(profile: CompassProfile | null): Set<string> {
  * time (and cached ~2 min). If the user blocks someone MID-CONVERSATION,
  * later tool calls in the same conversation must not surface that person —
  * so social tools refresh the hidden set per call instead of trusting the
- * stale snapshot. Fails safe: on query error the snapshot's ids are kept.
+ * stale snapshot. Fails safe: on query error the snapshot's ids are kept —
+ * and when there is NO snapshot to keep (profile null) a failed read THROWS
+ * rather than answering with an empty hidden set, because an empty set here
+ * would un-hide every blocked, blocker and muted user for that tool call.
+ * executeCompassTool's catch turns the throw into a "Tool execution failed"
+ * result, which is the closed answer.
  */
 async function refreshHiddenUsers(
   sc: SupabaseClient,
@@ -292,10 +300,14 @@ async function refreshHiddenUsers(
     const mutedUserIds = mutedRes.error
       ? (profile?.mutedUserIds ?? [])
       : ((mutedRes.data ?? []) as any[]).map((r) => String(r.muted_id));
+    if (!profile && (blockedRes.error || blockerRes.error || mutedRes.error)) {
+      throw new Error("hidden-user lists unavailable and no snapshot to fall back to");
+    }
     const base =
       profile ?? ({ userId, blockedUserIds: [], blockerUserIds: [], mutedUserIds: [] } as unknown as CompassProfile);
     return { ...base, blockedUserIds, blockerUserIds, mutedUserIds };
-  } catch {
+  } catch (err) {
+    if (!profile) throw err; // no snapshot to fall back to: closed, not empty
     return profile; // fail safe to the snapshot — never widen visibility
   }
 }
@@ -823,15 +835,25 @@ async function toolTravelCompatibility(
   if (!related) return notAvailable;
 
   // Trust gate: below-floor accounts are not surfaced in social answers.
+  //
+  // FAIL CLOSED on an UNREADABLE trust_profiles. supabase-js RESOLVES on a
+  // database error, so the previous `const { data: trust }` discarded `error`
+  // and an outage read as "no profile" -> gate passed -> a below-floor account
+  // could be surfaced for exactly as long as the table was unreadable. This is
+  // a surfacing gate, and "we could not check" must not render like "checked
+  // and fine" — the same defect the event trust gates carried (routes/events.ts,
+  // 2026-09-07). An ABSENT row is still admitted: as of 2026-09-07 production
+  // holds 2 trust_profiles rows for 58 profiles, so "no row" is the normal
+  // state of an ordinary account, not evidence about it; whether unscored
+  // accounts should pass a floor is an owner decision and is unchanged here.
   try {
-    const { data: trust } = await sc
-      .from("trust_profiles")
-      .select("overall_score")
-      .eq("user_id", targetId)
-      .maybeSingle();
-    const score = (trust as any)?.overall_score;
+    // Through the canonical seam (census-trust A17); the fail-closed posture is
+    // unchanged, and the three states are exactly what this gate already needed.
+    const trustRead = await getTrustProfileResult(sc, targetId);
+    if (trustRead.state === "unavailable") return notAvailable;
+    const score = trustRead.state === "ok" ? trustRead.profile.overall_score : undefined;
     if (typeof score === "number" && score < SOCIAL_TRUST_FLOOR) return notAvailable;
-  } catch { /* trust lookup failure never blocks (fail-open on infra error) */ }
+  } catch { return notAvailable; /* an unreadable gate is a closed gate */ }
 
   const { data: me } = await sc
     .from("profiles")
@@ -955,20 +977,20 @@ async function resolveGroupMemberIds(
   return { memberIds: [...ids], groupLabel: trip.title ? wrapUgc(String(trip.title)) : "the trip group", circleOwnerId: null };
 }
 
-/** Union of block relationships (both directions) involving any group member. */
-async function groupBlockUnion(sc: SupabaseClient, memberIds: string[]): Promise<string[]> {
+/**
+ * Union of block relationships (both directions) involving any group member.
+ *
+ * FAIL-CLOSED, shape 2/3 (lib/exclusionSet.ts): returns an `ExclusionSet`, so
+ * "unreadable" is a value the caller must handle rather than an empty array it
+ * cannot tell apart from "nobody in this group has blocked anybody". Both the
+ * old `(x ?? [])` reads AND the `catch` returned that indistinguishable `[]`;
+ * a group recommendation then ranked and surfaced people a member had blocked.
+ */
+async function groupBlockUnion(sc: SupabaseClient, memberIds: string[]): Promise<ExclusionSet> {
   try {
-    const [{ data: asBlocker }, { data: asBlocked }] = await Promise.all([
-      sc.from("blocks").select("blocker_id, blocked_id").in("blocker_id", memberIds),
-      sc.from("blocks").select("blocker_id, blocked_id").in("blocked_id", memberIds),
-    ]);
-    const out = new Set<string>();
-    for (const b of ((asBlocker ?? []) as any[])) out.add(String(b.blocked_id));
-    for (const b of ((asBlocked ?? []) as any[])) out.add(String(b.blocker_id));
-    for (const id of memberIds) out.delete(id); // members themselves stay
-    return [...out];
-  } catch {
-    return [];
+    return await readGroupBlockExclusions(sc, memberIds);
+  } catch (e) {
+    return exclusionsUnavailable(e);
   }
 }
 
@@ -994,14 +1016,23 @@ async function toolGroupRecommendation(
     sc.from("profiles").select(PREF_COLUMNS).in("id", memberIds),
     groupBlockUnion(sc, memberIds),
   ]);
+  // The whole point of a GROUP recommendation is that it is shared with the
+  // group, so a candidate one member blocked must not appear in it. With the
+  // block union unreadable there is no filtered answer to give — and this tool
+  // already has a vocabulary for "cannot answer" that the assistant renders as
+  // a sentence, so it says so instead of returning an unfiltered ranking.
+  if (!blockUnion.ok) {
+    return { candidates: [], info: "Group block state could not be read, so no group recommendation was made." };
+  }
+  const blockUnionIds = [...blockUnion.ids];
   const members = ((profRows ?? []) as any[]).map(prefsFromRow);
   if (members.length === 0) return { candidates: [], info: "Group member profiles are not available." };
 
   const agg = aggregateGroupPreferences(members);
   const viewerProfile: CompassProfile =
     profile ?? ({ userId, blockedUserIds: [], blockerUserIds: [], mutedUserIds: [] } as unknown as CompassProfile);
-  const groupProfile = buildGroupRankingProfile(viewerProfile, agg, blockUnion);
-  const excluded = new Set<string>([...hidden, ...blockUnion]);
+  const groupProfile = buildGroupRankingProfile(viewerProfile, agg, blockUnionIds);
+  const excluded = new Set<string>([...hidden, ...blockUnionIds]);
 
   // Phase 6 circle memories → group ranking. Membership-gated inside the
   // loader (fail-closed), boost stays bounded exactly like personal memories.

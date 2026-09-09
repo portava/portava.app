@@ -68,6 +68,7 @@ export type ApiErrorCode =
   | "invalid_state_transition"
   | "reversal_failed"
   | "collection_create_failed"
+  | "collection_lookup_failed"
   | "duplicate_event"
   | "conflict"
   | "gone"
@@ -97,6 +98,7 @@ const STATUS: Record<ApiErrorCode, number> = {
   invalid_state_transition: 409,
   reversal_failed: 422,
   collection_create_failed: 503,
+  collection_lookup_failed: 503,
   duplicate_event: 409,
   conflict: 409,
   gone: 410,
@@ -114,7 +116,25 @@ const STATUS: Record<ApiErrorCode, number> = {
  */
 const RETRYABLE_CODES: ReadonlySet<ApiErrorCode> = new Set<ApiErrorCode>([
   "degraded_unavailable",
+  // A default-collection LOOKUP that failed is transient by definition: the row
+  // may well exist and the read could not see it. Retrying is the correct
+  // recovery and is safe, because the caller now refuses to create on an
+  // unreadable lookup (routes/collections.ts) -- which is precisely what used
+  // to turn a transient read failure into a permanent duplicate default.
+  // collection_create_failed is deliberately NOT here: an insert that failed
+  // for a reason other than the race is not known to be retry-safe.
+  "collection_lookup_failed",
 ]);
+
+/**
+ * Does this code mean "retry", as opposed to "rejected"? Exported so the global
+ * error handler (lib/errorEnvelope.ts) can put the same `retryable: true` on a
+ * refusal that was THROWN as `sendError` puts on one that was SENT. One
+ * envelope, one flag, one list of which codes carry it.
+ */
+export function isRetryableErrorCode(code: string): boolean {
+  return RETRYABLE_CODES.has(code as ApiErrorCode);
+}
 
 /**
  * Error codes whose caller-supplied message must never reach the client.
@@ -171,6 +191,63 @@ export async function optionalUser(
   return { client, user: data.user as User };
 }
 
+// ---------------------------------------------------------------------------
+// The ban gate's input
+// ---------------------------------------------------------------------------
+
+/**
+ * The three-state read of `profiles.account_status`: the status was READ, no
+ * ban state is RECORDED, or the row could not be read AT ALL.
+ *
+ * SHAPE. This is deliberately the union PR #467 established for exactly this
+ * distinction — `TrustProfileRead` / `getTrustProfileResult` in
+ * `services/trust/TrustScoreService.ts`, `ok | absent | unavailable` with the
+ * failure carrying its own reason. Inventing a second vocabulary for the same
+ * three facts is how two call sites end up disagreeing about which is which.
+ */
+export type AccountStatusRead =
+  | { state: "ok"; status: string }
+  | { state: "absent" }
+  | { state: "unavailable"; reason: string };
+
+export async function readAccountStatus(
+  client: SupabaseClient,
+  userId: string,
+): Promise<AccountStatusRead> {
+  try {
+    const result: any = await client
+      .from("profiles")
+      .select("account_status")
+      .eq("id", userId)
+      .maybeSingle();
+
+    // supabase-js RESOLVES `{ data, error }` on a rejected PostgREST query — it
+    // does not throw — so this branch is the only thing standing between a
+    // failed read and a fabricated "active".
+    if (!result || typeof result !== "object") {
+      return { state: "unavailable", reason: "profiles read returned no result" };
+    }
+    if (result.error) {
+      return {
+        state: "unavailable",
+        reason: String(result.error.message ?? result.error.code ?? "db_error"),
+      };
+    }
+    const status = (result.data as any)?.account_status;
+    // No row, or a row whose column is NULL: a SUCCESSFUL read that found no
+    // ban state, which is a positive statement rather than a guess. An account
+    // is banned by WRITING `account_status`, so a ban always leaves a row
+    // behind and can never present as `absent`.
+    if (status == null) return { state: "absent" };
+    return { state: "ok", status: String(status) };
+  } catch (err) {
+    // Transport-level rejection only (socket, DNS). PostgREST failures arrive
+    // through `error` above, which is why the pre-existing code could never
+    // reach a catch written to handle them.
+    return { state: "unavailable", reason: String((err as any)?.message ?? err) };
+  }
+}
+
 /**
  * Resolve the authenticated user from the request, using the SERVICE-ROLE
  * client to verify the Bearer token via Supabase Auth (auth.getUser), which
@@ -210,16 +287,76 @@ export async function requireUser(
     return null;
   }
 
-  // Enforce account ban/suspend — reject banned or suspended users immediately.
-  // Fail-open: if the profile query errors we still allow the request through
-  // so a DB outage doesn't lock out all users.
-  const { data: profile } = await client
-    .from("profiles")
-    .select("account_status")
-    .eq("id", data.user.id)
-    .maybeSingle();
+  // ── THE BAN GATE ─────────────────────────────────────────────────────────
+  // Banning writes `profiles.account_status` AND NOTHING ELSE. There is no
+  // session revocation anywhere in this system — no token blocklist, no
+  // `auth.users` ban, no refresh-token purge — so this read is the ONLY place a
+  // ban is enforced, on every authenticated request, for as long as the ban
+  // lasts.
+  //
+  // WHAT THIS USED TO DO. The read discarded `error` and defaulted to "active",
+  // under the comment "Fail-open: if the profile query errors we still allow
+  // the request through so a DB outage doesn't lock out all users". supabase-js
+  // resolves rather than throws, so `{ data: null, error }` became "active" in
+  // silence. That is not graceful degradation. It is an unannounced, unlogged,
+  // open-ended revocation of every ban in the system — and the failure shapes
+  // most likely to be SUSTAINED rather than transient (a dropped or renamed
+  // `account_status` column, an RLS or grant change, a role misconfiguration)
+  // are precisely the ones that would have failed open indefinitely while
+  // reporting nothing at all.
+  //
+  // WHY THIS POSTURE, AND NOT SIMPLY "FAIL CLOSED". A hard refusal on every
+  // unreadable read is itself a serious failure mode, so the direction was
+  // chosen against the alternatives rather than by reflex:
+  //
+  //  1. IT REFUSES TO MAKE A CLAIM IT CANNOT SUPPORT, IN EITHER DIRECTION. A
+  //     403 would assert this user is banned; a 200 would assert they are not.
+  //     Neither fact is in evidence. `degraded_unavailable` is this codebase's
+  //     own code for "the permission check was NOT PERFORMED" (see
+  //     RETRYABLE_CODES above), and it is the only code marked retryable.
+  //  2. IT DOES NOT MANUFACTURE THE OUTAGE IT IS ACCUSED OF. `profiles` is this
+  //     API's core table: `requireAdmin` already fails CLOSED on this exact
+  //     read (lib/requireAdmin.ts), and `lib/privacyFilter.ts` and
+  //     `lib/profileVisibility.ts` both gate on it. A database in which
+  //     `profiles` cannot be read is ALREADY an outage for authenticated
+  //     traffic; what changes here is that the outage becomes loud, retryable
+  //     and correctly coded instead of silently serving unchecked requests.
+  //  3. IT IS DELIBERATELY NOT A 401. A 401 would make mobile clients discard
+  //     the session and log the entire population out — a transient blip turned
+  //     into a mass re-authentication event, which is the genuinely
+  //     unrecoverable version of this failure. A 503 keeps the session intact
+  //     and asks the client to try again.
+  //
+  // The blast radius is bounded to requests that ALREADY carry a valid bearer
+  // token. `optionalUser` — the public and anonymous path — is untouched, so
+  // unauthenticated reads keep serving throughout.
+  //
+  // NO EXCEPTION IS CARVED OUT FOR A MISSING TABLE OR COLUMN, unlike
+  // `profileVisibility.ts`, which skips a genuinely absent
+  // `user_account_states`. There, absence is a legitimate deploy state. Here it
+  // is not: a `profiles` or `account_status` that PostgREST cannot see means
+  // ban enforcement has been switched off system-wide, and `10` B-4 records
+  // that this schema drifts in BOTH directions. Waiving the one error that
+  // signals it is how it would go unnoticed.
+  const statusRead = await readAccountStatus(client, data.user.id);
+  if (statusRead.state === "unavailable") {
+    (req as any).log?.error?.(
+      { userId: data.user.id, reason: statusRead.reason },
+      "account_status unreadable — refusing to serve an unchecked request",
+    );
+    sendError(
+      res,
+      "degraded_unavailable",
+      "Could not verify account status. Please try again.",
+    );
+    return null;
+  }
 
-  const accountStatus: string = (profile as any)?.account_status ?? "active";
+  // `absent` is a successful read that found no ban state, so the account is
+  // active. Keeping it distinct from `ok` is what lets this stay safe: folding
+  // it into the refusal would lock out every brand-new account, whose auth user
+  // exists before its profile row does.
+  const accountStatus: string = statusRead.state === "ok" ? statusRead.status : "active";
   if (accountStatus === "banned") {
     sendError(res, "forbidden", "Your account has been banned");
     return null;
@@ -232,11 +369,66 @@ export async function requireUser(
   return { client, user: data.user as User };
 }
 
+// ---------------------------------------------------------------------------
+// Trip authorization inputs
+// ---------------------------------------------------------------------------
+
+/** Which trip authorization read failed. */
+export type TripAccessInput = "trip_members" | "trips" | "plan_editors" | "trip_plan_items";
+
+/**
+ * A trip AUTHORIZATION INPUT could not be read. Deliberately distinct from "the
+ * input is empty", because those two used to be the same observation and the
+ * difference decides whether an access answer may be given at all.
+ *
+ * ── WHY AN EXCEPTION AND NOT A WIDER RETURN TYPE ────────────────────────────
+ * This is the mechanism PR #458 established with `TrustInputUnavailableError`:
+ * when an input cannot be read, refuse instead of answering. It has to be an
+ * exception here for the same structural reason it had to be there — there is
+ * nowhere else to put the third state. `requireTripMember` returns
+ * `{ role } | null`, `isAcceptedTripMember` returns a bare `boolean`, and
+ * `tripExists` returns a bare `boolean`; none of them has room for "unknown",
+ * and widening their signatures would rewrite ~174 call sites spread across the
+ * very route files the eleven open PRs of `11` §"The in-flight campaign" are
+ * landing into. An exception changes these helpers and nothing else.
+ *
+ * `status` and `code` are read by the global error handler
+ * (`lib/errorEnvelope.ts`), so an uncaught one becomes exactly the response a
+ * route would have sent by hand: 503 `degraded_unavailable`, retryable. Express
+ * 5 forwards a rejected async handler to that handler automatically, so no
+ * route needs a `try`/`catch` for this to arrive correctly.
+ *
+ * The rule it enforces, from `11`: A FAILED READ MUST NEVER BE REPORTED AS
+ * EMPTY, CLEAN, OR DONE. "You are not a member of this trip" and "this trip
+ * does not exist" are confident claims about a person's access; neither may be
+ * assembled out of a query that did not answer.
+ */
+export class TripAccessUnavailableError extends Error {
+  /** Which input failed — 'trip_members' | 'trips' | 'plan_editors'. */
+  readonly input: TripAccessInput;
+  /** Read by the global error handler. */
+  readonly status: number = 503;
+  /** Read by the global error handler. */
+  readonly code: ApiErrorCode = "degraded_unavailable";
+  constructor(input: TripAccessInput, detail: string) {
+    super(`trip access input ${input} unavailable — refusing to answer: ${detail}`);
+    this.name = "TripAccessUnavailableError";
+    this.input = input;
+  }
+}
+
+/** Message text out of a PostgREST error object, for the exception detail. */
+function describeReadError(error: any): string {
+  return String(error?.message ?? error?.code ?? "db_error");
+}
+
 /**
  * Unified membership lookup for trip routes.
  *
  * Returns the membership row `{ role }` when the user is a trip member, or
- * `null` when they are not (or when a DB error occurs).
+ * `null` when they are NOT a member. A DB error is neither: it THROWS
+ * `TripAccessUnavailableError`, because `null` used to mean both and every
+ * caller reads `null` as a confident "not a member" and answers 403.
  *
  * Options:
  *   status: "accepted" (default) — only owner/member rows qualify.
@@ -260,7 +452,7 @@ export async function requireTripMember(
     .eq("user_id", userId)
     .maybeSingle();
 
-  if (error) return null;
+  if (error) throw new TripAccessUnavailableError("trip_members", describeReadError(error));
 
   if (!data) {
     // The trip owner is never given an explicit trip_members row on trip
@@ -269,11 +461,14 @@ export async function requireTripMember(
     // concluding no membership exists. Without this, every gate built on
     // requireTripMember (plan add/edit/reorder, etc.) incorrectly blocks
     // the trip owner.
-    const { data: trip } = await client
+    const { data: trip, error: tripErr } = await client
       .from("trips")
       .select("owner_id")
       .eq("id", tripId)
       .maybeSingle();
+    // Unbound before: an unreadable `trips` row denied the trip's own OWNER
+    // every plan gate built on this helper, and said "not a member" to do it.
+    if (tripErr) throw new TripAccessUnavailableError("trips", describeReadError(tripErr));
     if (trip && (trip as any).owner_id === userId) return { role: "owner" };
     return null;
   }
@@ -305,14 +500,20 @@ export async function isAcceptedTripMember(
   return (await requireTripMember(client, tripId, userId)) !== null;
 }
 
-/** Does the trip exist? (service-role read) */
+/**
+ * Does the trip exist? (service-role read)
+ *
+ * `false` means the row is genuinely absent. An unreadable `trips` THROWS
+ * rather than returning `false`, because every caller turns `false` into a 404
+ * — so a failed read used to tell a user their trip did not exist.
+ */
 export async function tripExists(client: SupabaseClient, tripId: string): Promise<boolean> {
   const { data, error } = await client
     .from("trips")
     .select("id")
     .eq("id", tripId)
     .maybeSingle();
-  if (error) return false;
+  if (error) throw new TripAccessUnavailableError("trips", describeReadError(error));
   return Boolean(data);
 }
 
@@ -332,19 +533,26 @@ export type PlanEditPermission = "owner_only" | "all_members" | "specific_member
  *   - 'specific_members': owner + users listed in plan_editors are permitted.
  *
  * Returns true/false. Does NOT write any HTTP response.
- * Returns null when the trip is not found (caller should treat as 403/404).
+ * Returns null when the trip is genuinely NOT FOUND (caller treats as 403/404).
+ *
+ * Neither read bound `error` before, so an unreadable `trips` row produced
+ * `null` — reported to the user as "trip not found" — and an unreadable
+ * `plan_editors` produced `false`, reported as "you may not edit this". Both
+ * now throw `TripAccessUnavailableError`; absent and unreadable are different
+ * facts and only one of them is an answer.
  */
 export async function canEditPlan(
   client: SupabaseClient,
   tripId: string,
   userId: string,
 ): Promise<boolean | null> {
-  const { data: trip } = await client
+  const { data: trip, error: tripErr } = await client
     .from("trips")
     .select("owner_id, plan_edit_permission")
     .eq("id", tripId)
     .maybeSingle();
 
+  if (tripErr) throw new TripAccessUnavailableError("trips", describeReadError(tripErr));
   if (!trip) return null;
 
   const ownerId  = (trip as any).owner_id as string;
@@ -359,13 +567,14 @@ export async function canEditPlan(
   if (perm === "owner_only")  return false;
 
   // specific_members: check plan_editors table
-  const { data: editorRow } = await client
+  const { data: editorRow, error: editorErr } = await client
     .from("plan_editors")
     .select("user_id")
     .eq("trip_id", tripId)
     .eq("user_id", userId)
     .maybeSingle();
 
+  if (editorErr) throw new TripAccessUnavailableError("plan_editors", describeReadError(editorErr));
   return Boolean(editorRow);
 }
 
@@ -399,13 +608,19 @@ export async function canEditPlanItem(
   userId: string,
   ownerOnly = false,
 ): Promise<CanEditPlanItemResult> {
-  const { data: item } = await client
+  // `error` bound for the reason this whole file records: this read decides
+  // BOTH whether the item exists AND, through creator_id, whether the caller
+  // may edit it. Unbound, a failed read answered "Plan item not found" — the
+  // 404 an author would see for someone else's item, said about their own.
+  // Refuse instead, the same way requireTripMember does: 503, retryable.
+  const { data: item, error: itemErr } = await client
     .from("trip_plan_items")
     .select("creator_id")
     .eq("id", itemId)
     .eq("trip_id", tripId)
     .is("removed_at", null)
     .maybeSingle();
+  if (itemErr) throw new TripAccessUnavailableError("trip_plan_items", describeReadError(itemErr));
   if (!item) {
     return { permitted: false, code: "not_found", message: "Plan item not found" };
   }

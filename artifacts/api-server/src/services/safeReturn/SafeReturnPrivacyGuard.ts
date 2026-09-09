@@ -111,11 +111,26 @@ export async function requireSafeReturnRecipient(
     return;
   }
 
-  const { data: share } = await db
+  // `error` bound and checked BEFORE `!share`.
+  //
+  // This middleware is the gate on the recipient view — the page a trusted
+  // contact opens when someone has not come home. `const { data: share } = …`
+  // made an unreadable `safe_return_live_shares` indistinguishable from a share
+  // that does not exist, and the contact was told "Live share not found": a
+  // confident, final, reassuring answer produced by a query that did not run.
+  // The refusal stays (nothing is served on an unreadable gate) but it now says
+  // "try again" instead of "there is nothing here".
+  const { data: share, error: shareErr } = await db
     .from("safe_return_live_shares")
     .select("id, user_id, recipient_user_id, recipient_contact_id, status, expires_at")
     .eq("id", shareId)
     .maybeSingle();
+
+  if (shareErr) {
+    (req as any).log?.error?.({ err: shareErr, shareId }, "safe-return live-share gate: share read failed");
+    sendError(res, "degraded_unavailable", "This live share could not be loaded. Please try again.");
+    return;
+  }
 
   if (!share) {
     sendError(res, "not_found", "Live share not found");

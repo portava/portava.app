@@ -93,15 +93,42 @@ export class NotificationRouter {
   async route(notification: NotificationRow): Promise<void> {
     const { userId } = notification;
 
-    // Load user preferences
-    const prefs    = await this.prefService.getPreferences(userId);
-    const catPrefs = (await this.prefService.getCategoryPreferences(userId))
-      .find((c) => c.category === notification.category);
+    // ── Load user preferences, and find out whether we actually LOADED them ──
+    //
+    // Both reads used to discard `{ error }`. supabase-js resolves on a
+    // database error, so an unreadable notification_preferences row produced
+    // the DEFAULTS — pushEnabled: true, inAppEnabled: true, no category mutes —
+    // and the router delivered on every channel. "We could not read your
+    // choices" was silently rendered as "you consented to all of them", which
+    // is the one direction a consent lookup must never fail in.
+    //
+    // ── THE DECISION, AND WHY IT IS NOT SYMMETRIC ────────────────────────────
+    // Failing closed on everything is also wrong: it would silently drop a
+    // safe_return alert because a preferences table blinked. So the rule is:
+    //
+    //   * The notification ROW is already persisted by NotificationService, so
+    //     the in-app Activity Center entry exists no matter what happens here.
+    //     Nothing durable is lost by declining the optional channels.
+    //   * urgent priority and the `admin` category deliver REGARDLESS of
+    //     preferences (see filterChannels' safety override). Preferences cannot
+    //     change that answer, so an unreadable preferences row cannot either:
+    //     these still go out. No safety-relevant notification is dropped.
+    //   * Everything else loses push / email / telegraph until consent can be
+    //     established again.
+    //   * And it is never SILENT. The declined channels are logged as
+    //     'failed' with 'preferences_unreadable', not 'suppressed' — the status
+    //     that means "the user asked us not to". Conflating an outage with an
+    //     opt-out is how this class of failure stays invisible.
+    const { prefs, readFailed: prefsUnreadable } = await this.prefService.getPreferencesResult(userId);
+    const { categoryPrefs, readFailed: catUnreadable } =
+      await this.prefService.getCategoryPreferencesResult(userId);
+    const preferencesUnreadable = prefsUnreadable || catUnreadable;
+    const catPrefs = categoryPrefs.find((c) => c.category === notification.category);
 
     // Derive channels from the template definition; fall back to ['in_app','push']
     const template = TEMPLATES.find((t) => t.eventType === notification.eventType);
     const wantedChannels: NotificationChannel[] = (template?.defaultChannels as NotificationChannel[]) ?? ['in_app', 'push'];
-    const activeChannels = this.prefService.filterChannels(
+    let activeChannels = this.prefService.filterChannels(
       wantedChannels,
       prefs,
       catPrefs,
@@ -109,18 +136,35 @@ export class NotificationRouter {
       notification.category,
     );
 
+    // Channels the safety override would have carried through on its own.
+    const safetyCritical =
+      notification.priority === 'urgent' || notification.category === 'admin';
+    let unreadableReason: string | undefined;
+    if (preferencesUnreadable && !safetyCritical) {
+      unreadableReason = 'preferences_unreadable';
+      activeChannels = activeChannels.filter((ch) => ch === 'in_app');
+      logger.warn(
+        { notificationId: notification.id, userId, priority: notification.priority, category: notification.category },
+        'NotificationRouter: preferences unreadable — declining push/email/telegraph rather than assuming consent',
+      );
+    }
+
+    // 'failed' (not 'suppressed') when we declined because we could not read
+    // consent: an outage must never be filed under "the user opted out".
+    const declinedStatus: 'failed' | 'suppressed' = unreadableReason ? 'failed' : 'suppressed';
+
     await Promise.allSettled([
       // in_app is already persisted — just log
       this.logAttempt(notification.id, userId, 'in_app', activeChannels.includes('in_app') ? 'sent' : 'suppressed'),
       // push
       activeChannels.includes('push')
         ? this.sendPush(notification, userId)
-        : this.logAttempt(notification.id, userId, 'push', 'suppressed'),
+        : this.logAttempt(notification.id, userId, 'push', declinedStatus, unreadableReason),
       // telegraph — only dispatched when the channel is active after preference filtering
       activeChannels.includes('telegraph')
         ? this.sendTelegraphSystemMsg(notification, userId)
         : (notification.category === 'telegraph'
-            ? this.logAttempt(notification.id, userId, 'telegraph', 'suppressed', 'telegraph channel suppressed by preferences')
+            ? this.logAttempt(notification.id, userId, 'telegraph', declinedStatus, unreadableReason ?? 'telegraph channel suppressed by preferences')
             : Promise.resolve()),
       // email stub
       this.logAttempt(notification.id, userId, 'email', 'suppressed', 'email provider not configured'),
@@ -180,13 +224,13 @@ export class NotificationRouter {
       // ── End Compass gate ───────────────────────────────────────────────────
 
       // Gather all push tokens registered for this user
-      const { data: devices } = await this.db
+      const { data: devices, error: devicesErr } = await this.db
         .from('notification_devices')
         .select('push_token')
         .eq('user_id', userId);
 
       // Also check legacy expo_push_token on profiles
-      const { data: profile } = await this.db
+      const { data: profile, error: profileErr } = await this.db
         .from('profiles')
         .select('expo_push_token')
         .eq('id', userId)
@@ -204,6 +248,54 @@ export class NotificationRouter {
           ].filter(Boolean),
         ),
       ];
+
+      // ── "THIS USER HAS NO DEVICE" vs "WE COULD NOT READ THEIR DEVICES" ──────
+      // Both reads above used to discard `{ error }`. supabase-js RESOLVES on a
+      // database error, so an unreadable notification_devices came back as
+      // `data: null` — an EMPTY token list — and the very next branch wrote
+      // `status: 'suppressed', error_message: 'no push tokens'` into
+      // notification_delivery_attempts. That is the SAME ledger row a user who
+      // has never installed the app produces. notification_delivery_attempts is
+      // the table an operator reads to answer "why did this alert not arrive?",
+      // and it answered "that person has no device registered" for an outage —
+      // a terminal, action-closing answer for a condition that was transient and
+      // retryable. Nothing else records the difference.
+      //
+      // route() above was already fixed to log 'failed' with
+      // 'preferences_unreadable' rather than 'suppressed' when consent could not
+      // be read, on the reasoning that conflating an outage with an opt-out is
+      // how this class of failure stays invisible. The token registry is the
+      // other half of the same claim and must agree: 'suppressed' is reserved
+      // for a decision about the user, 'failed' is what an outage gets.
+      //
+      // The two reads are not symmetric. A notification_devices failure is
+      // decisive: the token set is unknown, so pushing to whatever the legacy
+      // column happened to return would under-deliver AND record a 'sent' that
+      // overstates it. A profiles failure only matters when it leaves us with
+      // nothing to send to — when device tokens came back, the legacy column is
+      // a duplicate of one of them for almost every user.
+      if (devicesErr || (profileErr && tokens.length === 0)) {
+        const readErr = devicesErr ?? profileErr;
+        logger.error(
+          {
+            err: readErr,
+            notificationId: notification.id,
+            userId,
+            source: devicesErr ? 'notification_devices' : 'profiles',
+          },
+          'NotificationRouter: push token registry unreadable — recording a FAILED attempt, not "no push tokens"',
+        );
+        await this.logAttempt(
+          notification.id, userId, 'push', 'failed', 'push_tokens_unreadable',
+        );
+        return;
+      }
+      if (profileErr) {
+        logger.warn(
+          { err: profileErr, notificationId: notification.id, userId },
+          'NotificationRouter: legacy profiles.expo_push_token unreadable — sending to the device tokens that were readable',
+        );
+      }
 
       if (tokens.length === 0) {
         await this.logAttempt(notification.id, userId, 'push', 'suppressed', 'no push tokens');
@@ -422,14 +514,25 @@ export class NotificationRouter {
         return;
       }
 
-      // Insert a system message into the thread
-      await this.db.from('messages').insert({
+      // Insert a system message into the thread.
+      //
+      // The `{ error }` here used to be discarded. supabase-js RESOLVES on a
+      // database error, so the surrounding catch could not fire for it, and the
+      // very next line wrote a delivery attempt of 'sent' for a message that
+      // was never inserted. The delivery ledger — the thing an operator reads
+      // to answer "did it go out?" — asserted a send that did not happen.
+      const { error } = await this.db.from('messages').insert({
         thread_id:  threadId,
         sender_id:  userId, // system message attributed to recipient
         body:       notification.body,
         msg_type:   'system',
         subtype:    notification.eventType,
       });
+      if (error) {
+        logger.warn({ err: error, notificationId: notification.id, threadId }, 'NotificationRouter: telegraph system message insert failed');
+        await this.logAttempt(notification.id, userId, 'telegraph', 'failed', error.message);
+        return;
+      }
 
       await this.logAttempt(notification.id, userId, 'telegraph', 'sent');
     } catch (err) {

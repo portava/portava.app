@@ -557,19 +557,37 @@ export async function resolveExternalPlace(
   const now = new Date().toISOString();
 
   // 1. Already linked by (provider, provider_place_id)?
-  const { data: existingRef } = await db
+  // Step 1 is the identity check for the whole resolver, and its answer decides
+  // whether a canonical place is CREATED. A failed read resolves as
+  // `{ data: null }`, exactly like "this provider id has never been seen", so
+  // the resolver falls through to the proximity dedup and, when that finds no
+  // match (or is itself unreadable), inserts a brand-new `places` row for a
+  // venue that already exists. Step 4 then upserts the provider reference onto
+  // the unique (provider, provider_place_id) key — REPOINTING it at the
+  // duplicate, so every future resolution of that venue lands on the new row
+  // while all its existing posts, media and reviews stay on the old one. Both
+  // callers already treat null as "skipped"; take that.
+  const { data: existingRef, error: refErr } = await db
     .from("external_place_references")
     .select("place_id")
     .eq("provider", rec.provider)
     .eq("provider_place_id", rec.providerPlaceId)
     .maybeSingle();
+  if (refErr) return null;
   if ((existingRef as any)?.place_id) {
     await db.from("external_place_references")
       .update({ last_fetched_at: now, last_verified_at: now })
       .eq("provider", rec.provider).eq("provider_place_id", rec.providerPlaceId);
     // Follow a merge so a linked-but-since-merged place resolves to its survivor.
-    const { data: linked } = await db
+    const { data: linked, error: linkedErr } = await db
       .from("places").select("merged_into_place_id").eq("id", (existingRef as any).place_id).maybeSingle();
+    // "No merge row" and "could not read places" both arrive as `{ data: null }`,
+    // and the `??` below turns the second into the first — handing back a place
+    // id that may have been merged away. The caller writes content against that
+    // id, so the post/photo attaches to a tombstoned place and is invisible on
+    // the survivor that everyone actually browses. A merge is not reversible by
+    // re-running this; returning null is (both callers just count it skipped).
+    if (linkedErr) return null;
     const survivor = (linked as any)?.merged_into_place_id ?? (existingRef as any).place_id;
     return { placeId: survivor, created: false };
   }

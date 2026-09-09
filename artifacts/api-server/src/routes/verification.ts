@@ -86,17 +86,31 @@ export async function persistResult(
 ): Promise<void> {
   if (!client) return;
 
-  // Fetch the row by provider_session_id to get the user_id if not supplied
+  // Fetch the row by provider_session_id to get the user_id if not supplied.
+  //
+  // THE SECOND DOOR INTO THE H5 DROP. The webhook handler below already returns
+  // 5xx when the PERSIST fails, so the provider retries instead of losing the
+  // event. It could still lose the event here: supabase-js RESOLVES on a
+  // database error, so an unreadable `identity_verifications` produced
+  // `data: null` — indistinguishable from a genuinely unknown session — and the
+  // `return` two lines down is a SILENT SUCCESS. persistResult resolved,
+  // webhookHandler answered 200, the provider marked the event delivered and
+  // stopped retrying, and the user's KYC result was gone for good with nothing
+  // logged. Rethrow so the 5xx path handles it exactly as a persist failure.
   let targetUserId = userId;
   if (!targetUserId) {
-    const { data } = await client
+    const { data, error } = await client
       .from("identity_verifications")
       .select("user_id")
       .eq("provider_session_id", result.providerSessionId)
       .maybeSingle();
+    if (error) throw new Error(`lookup identity_verifications by session: ${error.message}`);
     targetUserId = (data as any)?.user_id;
   }
-  if (!targetUserId) return; // unknown session — ignore
+  // A READ that succeeded and found nothing. This one really is an unknown
+  // session — an event for a provider session this deployment never created —
+  // and dropping it is correct.
+  if (!targetUserId) return;
 
   const patch: Record<string, unknown> = {
     status:         result.status,
@@ -199,8 +213,14 @@ router.post("/verification/session", asyncHandler(async (req, res) => {
   if (insertError) {
     // Postgres unique-index violation on uq_identity_verifications_active (code 23505)
     if ((insertError as any).code === "23505") {
-      // Return existing active session
-      const { data: active } = await sc
+      // Return existing active session.
+      // supabase-js RESOLVES on a DB error, so an unbound `error` made an
+      // unreadable identity_verifications look like "the unique index fired but
+      // there is no active session" — an impossible state that fell through to
+      // the generic handler below and reported the KYC session as a raw 23505
+      // db_error, so the client never learns it already has a live session and
+      // the user is stuck unable to start or resume verification.
+      const { data: active, error: activeErr } = await sc
         .from("identity_verifications")
         .select("id, provider_session_id, expires_at, status")
         .eq("user_id", user.id)
@@ -208,6 +228,12 @@ router.post("/verification/session", asyncHandler(async (req, res) => {
         .order("created_at", { ascending: false })
         .limit(1)
         .maybeSingle();
+
+      if (activeErr) {
+        req.log.error({ err: activeErr }, "verification: active-session lookup failed after 23505 — cannot return the existing session");
+        sendError(res, "db_error", "Could not read your existing verification session");
+        return;
+      }
 
       if (active) {
         res.status(200).json({
@@ -315,12 +341,28 @@ router.get("/verification/status", asyncHandler(async (req, res) => {
     return;
   }
 
-  // Profile verification level
-  const { data: profile } = await sc
+  // Profile verification level.
+  //
+  // `error` is bound because supabase-js RESOLVES on a database error: an
+  // unreadable `profiles` and a user who has genuinely never verified both
+  // arrive as `data: null`, and `?? "none"` turned the first into the second.
+  // That is a false statement about a person ("you are not verified") that they
+  // cannot act on, and it is the reading direction that matters here — ID
+  // verification GATES real things elsewhere in this system (Rent-a-Buddy's
+  // MVP mode refuses a booking without it, routes/rentABuddyRollout.ts), so a
+  // client that caches "none" from a hiccup shows a verified user a
+  // verification wall. Say the read failed instead of answering for it.
+  const { data: profile, error: profileErr } = await sc
     .from("profiles")
     .select("verification_level, verified_at")
     .eq("id", user.id)
     .maybeSingle();
+
+  if (profileErr) {
+    req.log.error({ err: profileErr, userId: user.id }, "verification status: profile level fetch failed");
+    sendError(res, "db_error", "Could not read your verification level");
+    return;
+  }
 
   res.status(200).json({
     verificationRow:   row ?? null,

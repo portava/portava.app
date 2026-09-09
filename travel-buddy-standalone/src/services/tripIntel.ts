@@ -38,10 +38,18 @@ export interface ReadinessItem {
 
 export interface ReadinessSummary {
   computedAt: string;
-  score: number;
+  /**
+   * Percent of the MEASURED categories that are ready — null when none could
+   * be measured. Mirrors api-server/src/lib/tripReadiness.ts: a category with
+   * status `unknown` is excluded from the fraction rather than counted as
+   * ready, so an unreadable source can no longer raise a trip's score.
+   */
+  score: number | null;
   /** Score from the previous snapshot (e.g. yesterday). Null when no prior data exists. */
   previousScore: number | null;
   counts: Record<string, number>;
+  /** The categories `score` does not cover, because their status is unknown. */
+  unmeasuredCategories: string[];
   criticalItems: ReadinessItem[];
   categories: Record<string, string>;
   items: ReadinessItem[];
@@ -115,14 +123,51 @@ export interface TripReservation {
 
 // ── Readiness / NBA / arrival board ──────────────────────────────────────────
 
-export async function fetchTripReadiness(tripId: string, refresh = false): Promise<ReadinessSummary | null> {
-  if (!isSupabaseConfigured || !apiBase()) return null;
+/**
+ * The three states a readiness read can be in.
+ *
+ * WHY THIS IS NOT `ReadinessSummary | null`
+ * =========================================
+ * It was, and `null` meant both "the readiness feature is not available here"
+ * and "the request failed". TripReadinessCard's own comment said so out loud —
+ * "network/unexpected error → treat same as feature flag off" — and rendered
+ * nothing for both. So did app/trip/[id].tsx, which then fell back to
+ * `trips.progress`, a column nothing writes, and painted a 0% progress ring.
+ *
+ * A readiness summary is a RISK REPORT: it is where "you have no visa", "your
+ * stay is unbooked" comes from. A risk report that could not be read is not a
+ * report with no risks in it, and a progress ring is not entitled to a number
+ * derived from a read that did not answer. `unavailable` is that third state
+ * and every consumer has to handle it separately from `off`.
+ */
+export type ReadinessRead =
+  | { state: 'ok'; summary: ReadinessSummary }
+  /** The feature is not available here — not configured, or flagged off
+   *  server-side. Nothing was measured and nothing is claimed. */
+  | { state: 'off' }
+  /** The read FAILED. Distinct from `off`: readiness may well have findings
+   *  and we could not see them. */
+  | { state: 'unavailable'; detail: string };
+
+export async function fetchTripReadiness(tripId: string, refresh = false): Promise<ReadinessRead> {
+  if (!isSupabaseConfigured || !apiBase()) return { state: 'off' };
   try {
     const res = await authedFetch(`${apiBase()}/api/trips/${tripId}/readiness${refresh ? '?refresh=1' : ''}`);
-    if (!res.ok) return null; // 404 feature_disabled → honest null
-    return (await res.json()) as ReadinessSummary;
-  } catch {
-    return null;
+    if (!res.ok) {
+      // Only the server SAYING the feature is disabled counts as `off`. Every
+      // other non-ok status — 500, 503, a gateway page, an auth failure — is a
+      // read that did not answer, and used to be indistinguishable from it.
+      const body = await res.json().catch(() => null) as { error?: string } | null;
+      if (res.status === 404 && body?.error === 'feature_disabled') return { state: 'off' };
+      return { state: 'unavailable', detail: `HTTP ${res.status}` };
+    }
+    const summary = await res.json().catch(() => null) as ReadinessSummary | null;
+    if (!summary || !Array.isArray(summary.items)) {
+      return { state: 'unavailable', detail: 'unreadable response' };
+    }
+    return { state: 'ok', summary };
+  } catch (e: any) {
+    return { state: 'unavailable', detail: String(e?.message ?? 'network error') };
   }
 }
 

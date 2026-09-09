@@ -88,6 +88,10 @@ const ROW_BLOCKER   = { ...BASE_ROW, id: "dddd4444", name: "Blocker Pick",  subm
 
 const ALL_ROWS = [ROW_NO_AUTHOR, ROW_STRANGER, ROW_BLOCKED, ROW_BLOCKER];
 
+/** A place the VIEWER submitted. Deliberately NOT in ALL_ROWS: existing tests
+ *  deepEqual over that array and must not shift. */
+const ROW_SELF = { ...BASE_ROW, id: "eeee5555", name: "My Own Pick", submitted_by: VIEWER, profiles: profile(VIEWER, "myself") };
+
 // ── Fake service client ───────────────────────────────────────────────────────
 //
 // Chainable and thenable, like the real PostgREST builder. `.eq()` constraints
@@ -322,6 +326,94 @@ describe("discovery/community: blocked submitters", () => {
     const { body } = await community(server, false);
     assert.deepEqual(names(body), ["Blocked Pick", "Blocker Pick", "Legacy Row", "Stranger Pick"]);
     assert.equal((client as any).__calls.getUser, 0, "an anonymous request must not trigger an auth lookup");
+  });
+
+  // ── Display-name self-exemption ─────────────────────────────────────────────
+  // .agents/memory/display-name-privacy.md: "The viewer must always see their
+  // own name (self-exemption before the opt-in check)." The fake client returns
+  // [] for profile_privacy_settings, so nameVisibilitySet fail-closes and NOBODY
+  // is opted in — which is exactly the condition under which the viewer's own
+  // byline was being redacted to @username on a place they submitted themselves.
+  const bylineFor = (body: any, placeName: string): string | null => {
+    const item = ((body.items ?? []) as any[]).find((i) => i.name === placeName);
+    return item?.submittedBy?.name ?? null;
+  };
+
+  it("shows the viewer their OWN name on a place they submitted, though nobody opted in", async () => {
+    _setTestServiceClient(makeFakeClient({ rows: [...ALL_ROWS, ROW_SELF], blocks: [] }));
+    const { status, body } = await community(server, true);
+    assert.equal(status, 200);
+    assert.equal(
+      bylineFor(body, "My Own Pick"),
+      "myself display name",
+      "the viewer must see their own real name, not @myself",
+    );
+  });
+
+  it("still redacts everyone ELSE — the exemption is for the viewer only", async () => {
+    _setTestServiceClient(makeFakeClient({ rows: [...ALL_ROWS, ROW_SELF], blocks: [] }));
+    const { body } = await community(server, true);
+    // Same request, same response: the stranger is redacted while the viewer is not.
+    assert.equal(bylineFor(body, "Stranger Pick"), "@stranger",
+      "a non-opted-in stranger must still be redacted");
+    assert.equal(bylineFor(body, "My Own Pick"), "myself display name");
+  });
+
+  it("does not exempt the submitter from an ANONYMOUS caller's view", async () => {
+    // No viewer resolves, so nothing is self. Guards against implementing the
+    // exemption as "unredact when the ids are both null/undefined".
+    _setTestServiceClient(makeFakeClient({ rows: [...ALL_ROWS, ROW_SELF], blocks: [] }));
+    const { body } = await community(server, false);
+    assert.equal(bylineFor(body, "My Own Pick"), "@myself",
+      "an anonymous caller must see the submitter redacted");
+  });
+
+  // ── Canonical byline shape (displayName) ────────────────────────────────────
+  // .agents/memory/display-name-privacy.md prescribes ONE redaction shape: a
+  // null name plus a separate handle. This route's legacy `name` field bakes
+  // the literal `@username` into the name instead — a shape no other surface
+  // uses — and the mobile client renders that field raw, so it cannot change
+  // without changing what a user sees. `displayName` is the canonical shape,
+  // emitted additively: null when withheld, the real name when the viewer is
+  // the submitter or the submitter opted in, never a handle.
+  const submitterOf = (body: any, placeName: string): any =>
+    ((body.items ?? []) as any[]).find((i) => i.name === placeName)?.submittedBy ?? null;
+
+  it("displayName is null for a redacted stranger while the legacy name still carries @handle", async () => {
+    _setTestServiceClient(makeFakeClient({ rows: [...ALL_ROWS, ROW_SELF], blocks: [] }));
+    const { body } = await community(server, true);
+    const s = submitterOf(body, "Stranger Pick");
+    assert.ok(s, "the stranger's row is served");
+    assert.equal(s.displayName, null, "a withheld name is null — never a handle, never '@handle'");
+    assert.equal(s.handle, "stranger", "the handle travels in its own field");
+    assert.equal(s.name, "@stranger", "the legacy field is unchanged for the unmigrated client");
+  });
+
+  it("displayName is the real name for the viewer's own submission (self-exemption) and for nobody else", async () => {
+    _setTestServiceClient(makeFakeClient({ rows: [...ALL_ROWS, ROW_SELF], blocks: [] }));
+    const { body } = await community(server, true);
+    assert.equal(submitterOf(body, "My Own Pick").displayName, "myself display name");
+    assert.equal(submitterOf(body, "Blocker Pick").displayName, null);
+  });
+
+  it("displayName is null for every submitter when the caller is anonymous", async () => {
+    _setTestServiceClient(makeFakeClient({ rows: [...ALL_ROWS, ROW_SELF], blocks: [] }));
+    const { body } = await community(server, false);
+    for (const item of (body.items ?? []) as any[]) {
+      if (item.submittedBy) assert.equal(item.submittedBy.displayName, null, `${item.name} leaked a name to an anonymous caller`);
+    }
+  });
+
+  it("the two byline fields never disagree about WHETHER a name is withheld", async () => {
+    _setTestServiceClient(makeFakeClient({ rows: [...ALL_ROWS, ROW_SELF], blocks: [] }));
+    const { body } = await community(server, true);
+    for (const item of (body.items ?? []) as any[]) {
+      const s = item.submittedBy;
+      if (!s) continue;
+      const legacyWithheld = typeof s.name === "string" && s.name.startsWith("@");
+      assert.equal(s.displayName === null, legacyWithheld,
+        `${item.name}: name=${JSON.stringify(s.name)} displayName=${JSON.stringify(s.displayName)} — one rule, two shapes, same decision`);
+    }
   });
 
   it("reports total as what the viewer received, not what the query returned", async () => {

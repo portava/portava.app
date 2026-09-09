@@ -26,10 +26,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import {
-  DEFAULT_PLATFORM_FEE_PERCENT,
-  createEarningsLedgerEntry,
-} from "../lib/rentBuddyEarningsLedger.js";
+import { createEarningsLedgerEntry } from "../lib/rentBuddyEarningsLedger.js";
 
 const ROUTES = join(dirname(fileURLToPath(import.meta.url)), "../routes");
 
@@ -87,7 +84,9 @@ describe("every rent_buddy_bookings INSERT is accompanied by a ledger write", ()
 
 interface Rec { table: string; op: string; payload: any }
 
-function recordingClient(opts: { buddy?: any; feeRule?: any } = {}) {
+function recordingClient(
+  opts: { buddy?: any; feeRule?: any; feeRuleError?: any; rentBuddyEnabled?: boolean } = {},
+) {
   const writes: Rec[] = [];
   const table = (t: string) => ({
     _t: t,
@@ -99,7 +98,14 @@ function recordingClient(opts: { buddy?: any; feeRule?: any } = {}) {
     upsert(payload: any) { writes.push({ table: this._t, op: "upsert", payload }); return this; },
     async then(res: (v: any) => void) {
       if (this._t === "rent_buddy_profiles") return res({ data: opts.buddy ?? null, error: null });
-      if (this._t === "rent_buddy_fee_rules") return res({ data: opts.feeRule ?? null, error: null });
+      if (this._t === "rent_buddy_fee_rules") {
+        return res({ data: opts.feeRule ?? null, error: opts.feeRuleError ?? null });
+      }
+      // The marketplace master switch. Absent row → isFlagEnabled() reads
+      // false, which is production's actual state.
+      if (this._t === "feature_flags") {
+        return res({ data: opts.rentBuddyEnabled ? { enabled: true } : null, error: null });
+      }
       return res({ data: null, error: null });
     },
   });
@@ -120,6 +126,10 @@ describe("createEarningsLedgerEntry — the estimated breakdown", () => {
     const { client, writes } = recordingClient({
       buddy: { user_id: "buddy-user-1", buddy_level: "trusted" },
       feeRule: { platform_fee_percent: 15, traveler_service_fee_usd: 3 },
+      // Charging travellers is Stage 4 / ruling R1; the amount is only recorded
+      // once the marketplace is live. Turned on here so the 3.00 the schedule
+      // specifies is the 3.00 the row carries.
+      rentBuddyEnabled: true,
     });
     await createEarningsLedgerEntry(client, BOOKING, "buddy-prof-1");
 
@@ -139,24 +149,82 @@ describe("createEarningsLedgerEntry — the estimated breakdown", () => {
     assert.equal(row.is_estimated, true, "no money moves — the row is an estimate");
   });
 
-  it("falls back to the default platform fee when the level has no rule", async () => {
+  // ── The fallback that used to be here is the defect (M1 / M10) ─────────────
+  //
+  // This test used to assert that a level with no fee row was priced at
+  // DEFAULT_PLATFORM_FEE_PERCENT = 22. That is precisely the failure `08` §2.6
+  // names: the absence of a row is indistinguishable from a deliberate 22 %,
+  // and the buddy's money record is written from a number nobody configured.
+  // The literal is gone and the assertion is inverted.
+
+  it("writes NO row when the buddy's level has no fee rule", async () => {
     const { client, writes } = recordingClient({
-      buddy: { user_id: "buddy-user-1", buddy_level: "new" },
+      buddy: { user_id: "buddy-user-1", buddy_level: "standard" }, // settable by admin, no fee row
       feeRule: null,
     });
-    await createEarningsLedgerEntry(client, { ...BOOKING, tip_usd: 0 }, "buddy-prof-1");
+    const result = await createEarningsLedgerEntry(client, { ...BOOKING, tip_usd: 0 }, "buddy-prof-1");
+
+    assert.equal(writes.filter((w) => w.table === "rent_buddy_earnings_ledger").length, 0,
+      "a booking must not be priced at a guessed take rate");
+    assert.deepEqual(
+      { status: result.status, reason: (result as any).reason },
+      { status: "fee_unresolved", reason: "no_such_level" },
+      "the caller must be able to tell 'no fee row' from a successful write",
+    );
+  });
+
+  it("writes NO row when the fee table cannot be read, and says so distinguishably", async () => {
+    const { client, writes } = recordingClient({
+      buddy: { user_id: "buddy-user-1", buddy_level: "new" },
+      feeRuleError: { message: "permission denied for table rent_buddy_fee_rules" },
+    });
+    const result = await createEarningsLedgerEntry(client, BOOKING, "buddy-prof-1");
+
+    assert.equal(writes.filter((w) => w.table === "rent_buddy_earnings_ledger").length, 0);
+    assert.equal(result.status, "fee_unresolved");
+    assert.equal((result as any).reason, "read_failed",
+      "an unreadable schedule is not the same answer as an absent row");
+  });
+
+  it("keeps the traveller service fee at 0 while rent_buddy_enabled is off", async () => {
+    // The production schedule is traveler_service_fee_usd = 0.00 and
+    // traveler_service_fee_pct = 5.00 on all five rows. Reading _pct makes the
+    // 5 % reachable; the master switch keeps the recorded amount at 0, so this
+    // change charges nobody. Stage 4 / R1 decides whether it ever does.
+    const { client, writes } = recordingClient({
+      buddy: { user_id: "buddy-user-1", buddy_level: "new" },
+      feeRule: { platform_fee_percent: 25, traveler_service_fee_usd: 0, traveler_service_fee_pct: 5 },
+      rentBuddyEnabled: false,
+    });
+    await createEarningsLedgerEntry(client, BOOKING, "buddy-prof-1");
 
     const row = writes.find((w) => w.table === "rent_buddy_earnings_ledger")?.payload;
     assert.ok(row);
-    assert.equal(row.platform_fee_percent, DEFAULT_PLATFORM_FEE_PERCENT);
-    assert.equal(row.platform_fee_amount, 22);
-    assert.equal(row.buddy_net_estimated_amount, 78);
+    assert.equal(row.platform_fee_percent, 25);
+    assert.equal(row.traveler_service_fee_amount, 0);
+  });
+
+  it("reads traveler_service_fee_pct, not just _usd, once the lane is live", async () => {
+    const { client, writes } = recordingClient({
+      buddy: { user_id: "buddy-user-1", buddy_level: "new" },
+      feeRule: { platform_fee_percent: 25, traveler_service_fee_usd: 0, traveler_service_fee_pct: 5 },
+      rentBuddyEnabled: true,
+    });
+    await createEarningsLedgerEntry(client, BOOKING, "buddy-prof-1");
+
+    const row = writes.find((w) => w.table === "rent_buddy_earnings_ledger")?.payload;
+    assert.ok(row);
+    // 5 % of the 100.00 booking total. Under the old reader this was 0.00 no
+    // matter what an admin set, because only _usd was read and it is 0 on
+    // every production row.
+    assert.equal(row.traveler_service_fee_amount, 5);
   });
 
   it("writes nothing when the buddy profile cannot be loaded", async () => {
     const { client, writes } = recordingClient({ buddy: null });
-    await createEarningsLedgerEntry(client, BOOKING, "buddy-prof-1");
+    const result = await createEarningsLedgerEntry(client, BOOKING, "buddy-prof-1");
     assert.equal(writes.filter((w) => w.table === "rent_buddy_earnings_ledger").length, 0);
+    assert.equal(result.status, "skipped");
   });
 
   it("is a no-op on missing arguments rather than throwing", async () => {

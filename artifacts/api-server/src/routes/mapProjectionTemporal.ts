@@ -52,7 +52,7 @@ import { loadNearbyEvents } from "./mapSearch.js";
 import { applyProtection, type ProtectedZone } from "../lib/protectedLocations.js";
 import { aggregateForViewport, bboxContains, type BBox } from "../lib/mapAggregation.js";
 import { deriveGroupKey, type GroupIdentity } from "../lib/intelGroupKey.js";
-import { type MapObject, type MapObjectKind } from "../lib/mapObjects.js";
+import { isForecastKind, type MapObject, type MapObjectKind } from "../lib/mapObjects.js";
 import {
   bboxToCenterRadius,
   buildFlowZoneModel,
@@ -576,7 +576,11 @@ router.get(
     if (zones === null) {
       // An unreadable §24 policy is NOT an absent policy — serve nothing.
       res.json({
-        enabled: true,
+        enabled: false,
+        // Same rule as routes/mapProjection.ts: an unreadable §24 policy answers
+        // `enabled: false` with a named refusal so the client keeps its legacy
+        // path instead of drawing a blank Time Machine.
+        refusal: "protection_unreadable",
         objects: [],
         viewport: { bbox, zoom },
         target: { at: new Date(target.at).toISOString(), mode: target.mode },
@@ -617,6 +621,17 @@ router.get(
     if (predictionGate.withheld > 0) {
       protection.report.evaluated += predictionGate.withheld;
       protection.report.suppressed += predictionGate.withheld;
+    }
+
+    // ── Sensing §7 SX-07: "visually distinguish predicted from observed" ────
+    // Every forecast object is already a FORECAST_KIND with a `basis`; behind
+    // `map_experience_state_enabled` (migration 2350, seeded OFF) it also
+    // carries the §5.1 class a renderer switches on, `truthClass: 'predicted'`.
+    // Forecast objects ONLY — the historical arm's snapshots are observations
+    // and are left without a class rather than given a guessed one. A LITERAL,
+    // so check:flag-polarity resolves the read. Off ⇒ untouched.
+    if (await isFlagEnabled(sc, "map_experience_state_enabled")) {
+      objects = objects.map((o) => (isForecastKind(o.kind) ? { ...o, truthClass: "predicted" } : o));
     }
 
     const aggregation = aggregateForViewport(objects, { bbox, zoom });

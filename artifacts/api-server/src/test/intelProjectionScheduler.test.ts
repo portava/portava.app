@@ -37,6 +37,11 @@ function makeDb(cfg: {
   // window has advanced to (or past) `minOffset` — lets a test succeed on page 1
   // and fail on a later page, proving a PARTIAL read expires nothing.
   rangeError?: { table: string; minOffset?: number };
+  // Reject every UPDATE against this table. supabase-js RESOLVES on a database
+  // error, so the rejected update must come back as `{ error }` and mutate
+  // NOTHING — modelling a throw here would test a shape the real client never
+  // produces.
+  updateError?: { table: string };
 }) {
   const snaps: any[] = [...(cfg.snapshots ?? [])];
   // I1: every snapshot write is preceded by an append to the version table.
@@ -44,6 +49,8 @@ function makeDb(cfg: {
   // Every .update(...).in("id",[...]) is recorded here so a test can assert which
   // snapshot ids (if any) the reconciliation force-expired.
   const updates: { table: string; ids: any[]; patch: any }[] = [];
+  // Every canonical_events row the pass inserts (the §21 domain emitters).
+  const events: any[] = [];
   // D4: every observation actor is consented by default; withdrawnActors lets a
   // test mark some as withdrawn so the aggregator's consent filter can exclude them.
   const withdrawn = new Set(cfg.withdrawnActors ?? []);
@@ -76,10 +83,16 @@ function makeDb(cfg: {
       if (op === "upsert") { snaps.push(...(Array.isArray(payload) ? payload : [payload])); return { data: null, error: null }; }
       if (op === "insert") {
         if (table === "intel_state_snapshot_versions") versions.push(...(Array.isArray(payload) ? payload : [payload]));
+        if (table === "canonical_events") events.push(...(Array.isArray(payload) ? payload : [payload]));
         return { data: null, error: null };
       }
       if (op === "update") {
         const ids = inF && inF[0] === "id" ? [...inF[1]] : [];
+        if (cfg.updateError && cfg.updateError.table === table) {
+          // Rejected: record the ATTEMPT, change nothing, answer with an error.
+          updates.push({ table, ids, patch: payload, rejected: true } as any);
+          return { data: null, error: { message: "update boom", code: "42501" } };
+        }
         for (const r of src()) if (match(r)) Object.assign(r, payload); // mutate the store in place
         updates.push({ table, ids, patch: payload });
         return { data: null, error: null };
@@ -102,7 +115,7 @@ function makeDb(cfg: {
     };
     return b;
   }
-  return { from, _snaps: snaps, _versions: versions, _updates: updates };
+  return { from, _snaps: snaps, _versions: versions, _updates: updates, _events: events };
 }
 
 describe("intelProjection aggregator — deriveComponents (conservative)", () => {
@@ -179,6 +192,76 @@ describe("intelProjection aggregator — assembleClaimInput (real evidence)", ()
     // The gate then returns below_group_threshold rather than invalid_input.
     assert.equal(input.distinctGroups, 0, "no group_key → zero groups, never invented");
     assert.equal(input.maxGroupShare, 0, "finite share even with no grouped observations");
+  });
+
+  // ── The four reads, and what an unreadable table used to mean ──────────────
+  // supabase-js RESOLVES on a database error. Each of these four reads had no
+  // `.error` binding, so a rejected read came back as an empty result and the
+  // aggregator scored it as a fact about the world.
+  describe("a REJECTED read withholds the claim instead of publishing a low input", () => {
+    const evidenceCase = (table: string, note: string) => {
+      it(`${table}: ${note}`, async () => {
+        const db = makeDb({
+          flags: {},
+          observations: [
+            { id: "o1", actor_id: "a1", subject_id: "place-dn-1", claim_type: "crowd.level", presence_level: "P0", source_class: "firsthand_unverified", expires_at: null, observed_at: OBSERVED, group_key: "g1" },
+            { id: "o2", actor_id: "a2", subject_id: "place-dn-1", claim_type: "crowd.level", presence_level: "P0", source_class: "firsthand_unverified", expires_at: null, observed_at: OBSERVED, group_key: "g2" },
+          ],
+          confirmations: [{ claim_id: "c1", stance: "agree" }],
+          policies: [{ claim_type: "crowd.level", ttl_seconds: 2700, note: null }],
+          errorTable: table,
+        });
+        const input = await assembleClaimInput(db as any, claim, NOW);
+        assert.equal(input.evidenceComplete, false, `a rejected ${table} read was scored as evidence`);
+      });
+    };
+    evidenceCase("intel_observations", "an unreadable cohort is not an empty cohort");
+    evidenceCase("intel_contribution_consent", "a consent read that FAILED is not a consent that was refused");
+    evidenceCase("intel_evidence", "this one failed OPEN — no clustering means MORE independent groups");
+    evidenceCase("intel_confirmations", "zero stances reads as 'nobody disagreed', not as 'we could not look'");
+
+    it("with every table readable the same fixture is evidenceComplete — so the flag is the error, not the fixture", async () => {
+      const db = makeDb({
+        flags: {},
+        observations: [
+          { id: "o1", actor_id: "a1", subject_id: "place-dn-1", claim_type: "crowd.level", presence_level: "P0", source_class: "firsthand_unverified", expires_at: null, observed_at: OBSERVED, group_key: "g1" },
+          { id: "o2", actor_id: "a2", subject_id: "place-dn-1", claim_type: "crowd.level", presence_level: "P0", source_class: "firsthand_unverified", expires_at: null, observed_at: OBSERVED, group_key: "g2" },
+        ],
+        confirmations: [{ claim_id: "c1", stance: "agree" }],
+        policies: [{ claim_type: "crowd.level", ttl_seconds: 2700, note: null }],
+      });
+      const input = await assembleClaimInput(db as any, claim, NOW);
+      assert.notEqual(input.evidenceComplete, false);
+      assert.equal(input.distinctActors, 2, "vacuity guard: the happy path really did read a cohort");
+    });
+
+    it("THE CONSEQUENCE: the pass writes NO snapshot and leaves a serving one untouched", async () => {
+      // A snapshot that is live right now. The claim behind it is live-eligible,
+      // so the reconciliation will not expire it; the only thing that could
+      // change it is the projection writing over it.
+      const serving = {
+        id: "snap-live", subject_id: "place-dn-1", zone_id: null, claim_type: "crowd.level",
+        value: { level: "busy" }, confidence: 0.8, confidence_band: "live",
+        privacy_eligible: true, source_count: 20,
+        observed_at: OBSERVED, expires_at: new Date(NOW.getTime() + 30 * 60_000).toISOString(),
+      };
+      const db = makeDb({
+        flags: { intel_claim_projection_crowd: true },
+        claims: [{ id: "c1", subject_id: "place-dn-1", zone_id: null, claim_type: "crowd.level", value: { level: "busy" }, status: "active", observed_at: OBSERVED }],
+        observations: [], confirmations: [],
+        policies: [{ claim_type: "crowd.level", ttl_seconds: 2700, note: null }],
+        snapshots: [serving],
+        errorTable: "intel_confirmations",
+      });
+      const r = await runIntelProjectionPass({ client: db as any, now: NOW });
+      assert.equal(r.reason, null);
+      assert.equal(r.written, 0, "a claim with an unreadable confirmations table was still published");
+      assert.equal(r.suppressed, 0, "a rejected read was persisted as privacy_eligible=false — a wrong answer about a real venue");
+      assert.equal(r.skipped, 1, "the claim must be SKIPPED, and the count must say so");
+      const after = db._snaps.find((x: any) => x.id === "snap-live");
+      assert.equal(after.privacy_eligible, true, "the serving snapshot was overwritten on a transient read error");
+      assert.equal(db._snaps.length, 1, "a second snapshot row was written for a claim we could not evaluate");
+    });
   });
 
   it("freshness tracks the LATEST observation, not the frozen anchor claim's observed_at", async () => {
@@ -584,5 +667,61 @@ describe("intelProjection scheduler — runIntelProjectionPass (flag-gated, fail
     assert.equal(anyExpiry, false, "an errored live-key page must abort expiry entirely");
     const snap = db._snaps.find((s: any) => s.id === "snap-tail");
     assert.equal(snap.privacy_eligible, true, "servable snapshot untouched after a partial live-key read");
+  });
+
+  // ── The expiry WRITE, not the reads that decide it ──────────────────────────
+  // The reads above are fail-closed to the point of paranoia. The UPDATE that
+  // acts on them was awaited and its `.error` never looked at, and TWO things
+  // downstream assert it worked: the §24 completion log ("expired: N", by id) and
+  // the `intel.state.changed / expired` domain events pushed for the same
+  // orphans. supabase-js resolves on a database error, so a rejected update
+  // produced both records for an invalidation that did not happen — on an
+  // append-only spine that blocks UPDATE and DELETE (2130), i.e. permanently.
+  it("a REJECTED expiry update claims nothing: no completion log, no 'expired' domain event", async () => {
+    const orphan = { ...tailSnapshot(), id: "snap-orphan", claim_type: "crowd.level" };
+    const db = makeDb({
+      flags: { intel_claim_projection_crowd: true },
+      claims: [{ id: "c-old", subject_id: "subj-recon", zone_id: null, claim_type: "crowd.level", value: { level: "busy" }, status: "superseded", observed_at: OBSERVED }],
+      observations: [], confirmations: [], policies: [],
+      snapshots: [orphan],
+      updateError: { table: "intel_state_snapshots" },
+    });
+    const records: any[] = [];
+    const m = mock.method(logger, "info", (obj: unknown) => { records.push(obj); });
+    let r: any;
+    try {
+      r = await runIntelProjectionPass({ client: db as any, now: NOW });
+    } finally { m.mock.restore(); }
+
+    assert.equal(r.reason, null, "pass still completes — a failed expiry is not fatal to the projection");
+    // It TRIED (vacuity guard: a test that expires nothing because it found no
+    // orphan would pass every assertion below for the wrong reason).
+    const attempt = db._updates.find((u) => u.table === "intel_state_snapshots" && u.ids.includes("snap-orphan"));
+    assert.ok(attempt, "the pass never even attempted the expiry — this test proves nothing");
+    // The snapshot is still serving.
+    const snap = db._snaps.find((s: any) => s.id === "snap-orphan");
+    assert.equal(snap.privacy_eligible, true, "a rejected update must not have changed the row");
+    // ...and nothing anywhere says otherwise.
+    assert.equal(
+      records.some((x) => x?.event === "intel.correction.invalidation.completed"), false,
+      "a completion status was recorded for an invalidation the database refused",
+    );
+    const expiredEvents = db._events.filter((e: any) => e?.payload?.intel?.transition === "expired");
+    assert.deepEqual(expiredEvents, [], "an 'expired' transition was written to the append-only spine for a snapshot that is still live");
+  });
+
+  it("the SAME fixture with the update accepted DOES record both — so the guard above is the error check, not the fixture", async () => {
+    const orphan = { ...tailSnapshot(), id: "snap-orphan", claim_type: "crowd.level" };
+    const db = makeDb({
+      flags: { intel_claim_projection_crowd: true },
+      claims: [{ id: "c-old", subject_id: "subj-recon", zone_id: null, claim_type: "crowd.level", value: { level: "busy" }, status: "superseded", observed_at: OBSERVED }],
+      observations: [], confirmations: [], policies: [],
+      snapshots: [orphan],
+    });
+    const records: any[] = [];
+    const m = mock.method(logger, "info", (obj: unknown) => { records.push(obj); });
+    try { await runIntelProjectionPass({ client: db as any, now: NOW }); } finally { m.mock.restore(); }
+    assert.ok(records.some((x) => x?.event === "intel.correction.invalidation.completed"), "completion log missing on the happy path");
+    assert.equal(db._events.filter((e: any) => e?.payload?.intel?.transition === "expired").length, 1);
   });
 });

@@ -39,7 +39,17 @@ const PASS_ID   = "77777777-7777-7777-7777-777777777777";
 // ---------------------------------------------------------------------------
 type Row = Record<string, any>;
 interface FakeTable { rows: Row[]; nextInsertError?: string; }
-interface FakeOpts { throwOnTables?: string[]; }
+interface FakeOpts {
+  /** `from(table)` THROWS — a transport-level failure / a client that dies before it queries. */
+  throwOnTables?: string[];
+  /**
+   * Every chain on the table RESOLVES `{ data: null, error }` — which is what a
+   * real PostgREST failure looks like, and the case `throwOnTables` does NOT
+   * model. supabase-js resolves rather than throws, so a double that only
+   * throws cannot exercise a route's `.error` handling at all.
+   */
+  errorOnTables?: string[];
+}
 
 function makeFakeClient(tables: Record<string, FakeTable> = {}, opts: FakeOpts = {}) {
   const db: Record<string, FakeTable> = {
@@ -61,6 +71,7 @@ function makeFakeClient(tables: Record<string, FakeTable> = {}, opts: FakeOpts =
     ...tables,
   };
   const throwOn = opts.throwOnTables ?? [];
+  const errorOn = opts.errorOnTables ?? [];
 
   let idCtr = 0;
   function newId() {
@@ -203,8 +214,24 @@ function makeFakeClient(tables: Record<string, FakeTable> = {}, opts: FakeOpts =
     },
     from: (tableName: string) => {
       if (throwOn.includes(tableName)) {
-        // Simulates an environment where the table's schema doesn't exist yet.
+        // Simulates a client that dies before it queries (transport level).
         throw new Error(`relation "${tableName}" does not exist`);
+      }
+      if (errorOn.includes(tableName)) {
+        // Simulates the REAL failure shape: the builder RESOLVES with an error.
+        const failing: any = new Proxy({}, {
+          get(_t, prop) {
+            if (prop === "then") {
+              return (onF: any, onR: any) =>
+                Promise.resolve({ data: null, error: { message: `relation "${tableName}" is unavailable`, code: "PGRST999" } }).then(onF, onR);
+            }
+            if (prop === "maybeSingle" || prop === "single") {
+              return () => Promise.resolve({ data: null, error: { message: `relation "${tableName}" is unavailable`, code: "PGRST999" } });
+            }
+            return () => failing;
+          },
+        });
+        return failing;
       }
       return chain(tableName);
     },
@@ -563,6 +590,46 @@ describe("trip readiness routes", () => {
     assert.equal(snap.score, r.body.score, "snapshot score must match the returned score");
   });
 
+  it("a snapshot table that ERRORS does not break the readiness response (and the trend reads as none)", async () => {
+    // The snapshot is a decoration on an otherwise-correct readiness answer, so
+    // its failure must never become the user's 5xx. Nothing covered the failure
+    // shape the real client actually produces — a RESOLVED `{ data: null, error }`
+    // — only a synchronous throw, which supabase-js never does.
+    const { client } = makeFakeClient(
+      {
+        trips: { rows: [baseTrip()] },
+        trip_members: { rows: [ownerMemberRow()] },
+        feature_flags: flagOn(),
+      },
+      { errorOnTables: ["trip_readiness_snapshots"] },
+    );
+    _setTestClient(client, true);
+
+    const r = await req(port, "GET", `/trips/${TRIP_ID}/readiness`, { token: "owner-token" });
+    assert.equal(r.status, 200, `a failed snapshot must not fail readiness (got ${r.status} ${JSON.stringify(r.body)})`);
+    assert.equal(r.body.previousScore, null, "an unreadable snapshot reads as 'no prior snapshot', not as a score");
+    assert.equal(typeof r.body.score, "number", "the readiness score itself is still computed");
+  });
+
+  it("a snapshot table that THROWS does not break the readiness response either", async () => {
+    // The transport-level case. This is what the `try`/`catch` around the
+    // snapshot read and write is actually for; deleting it turns a socket error
+    // during a decoration into a 5xx on the whole readiness response.
+    const { client } = makeFakeClient(
+      {
+        trips: { rows: [baseTrip()] },
+        trip_members: { rows: [ownerMemberRow()] },
+        feature_flags: flagOn(),
+      },
+      { throwOnTables: ["trip_readiness_snapshots"] },
+    );
+    _setTestClient(client, true);
+
+    const r = await req(port, "GET", `/trips/${TRIP_ID}/readiness`, { token: "owner-token" });
+    assert.equal(r.status, 200, `a throwing snapshot table must not fail readiness (got ${r.status} ${JSON.stringify(r.body)})`);
+    assert.equal(r.body.previousScore, null);
+  });
+
   it("prunes snapshot rows older than 30 days on recompute, keeping recent ones", async () => {
     const todayStr = new Date().toISOString().slice(0, 10);
     // 31 days ago — must be deleted
@@ -810,7 +877,15 @@ describe("trip readiness routes", () => {
     assert.equal(r2.body.error, "feature_disabled");
   });
 
-  it("still computes readiness when trip_reservations does not exist (defensive)", async () => {
+  // THIS TEST USED TO ASSERT `categories.reservations === "ready"`.
+  //
+  // It read "Reservations treated as absent", and that is the defect: the
+  // table could not be READ, and the response said the reservations category
+  // was ready — a clean bill of health on a cancellation deadline nobody
+  // looked at. Worse, `unknown` categories counted toward the score exactly
+  // like `ready` did, so the less of a trip could be checked the readier it
+  // scored. Both are fixed; this test now pins the honest shape.
+  it("reports reservations as UNKNOWN — never ready — when trip_reservations cannot be read", async () => {
     const { client } = makeFakeClient(
       {
         trips: { rows: [baseTrip()] },
@@ -823,10 +898,55 @@ describe("trip readiness routes", () => {
 
     const r = await req(port, "GET", `/trips/${TRIP_ID}/readiness`, { token: "owner-token" });
     assert.equal(r.status, 200);
-    assert.ok(Array.isArray(r.body.items), "compute must succeed without the table");
-    // Reservations treated as absent → transport gap still derived from plan items
-    assert.ok(findItem(r.body.items, "transport:none"));
-    assert.equal(r.body.categories.reservations, "ready");
+    assert.ok(Array.isArray(r.body.items), "compute must still succeed without the table");
+
+    // 1. The category is unknown, and unknown is not ready.
+    assert.equal(r.body.categories.reservations, "unknown");
+    assert.notEqual(r.body.categories.reservations, "ready");
+
+    // 2. The failure is SAID, not merely absent, and it is critical-visible.
+    const unreadable = findItem(r.body.items, "reservations:unreadable");
+    assert.ok(unreadable, "the unreadable reservations item must be present");
+    assert.equal(unreadable.status, "unknown");
+    assert.ok(
+      r.body.criticalItems.some((i: any) => /could not be checked/i.test(i.title)),
+      "an unreadable reservations table must ride in criticalItems",
+    );
+
+    // 3. The stay/transport verdicts do not claim a reservation is absent when
+    //    the reservations table is what could not be read. The dedupe keys are
+    //    unchanged (the gap is still reported); the STATUS is not action_needed.
+    const transport = findItem(r.body.items, "transport:none");
+    assert.ok(transport, "the transport gap is still reported");
+    assert.equal(transport.status, "unknown");
+    assert.match(transport.detail, /could not be read/);
+    const stay = findItem(r.body.items, "stay:none");
+    assert.ok(stay);
+    assert.equal(stay.status, "unknown");
+
+    // 4. The score EXCLUDES what it could not measure, rather than counting it
+    //    as ready. Three categories are unknown here, so the denominator is 4.
+    assert.deepEqual(
+      [...r.body.unmeasuredCategories].sort(),
+      ["reservations", "stay", "transport"],
+      "every unmeasured category must be named",
+    );
+    assert.ok(r.body.score <= 100 && r.body.score >= 0);
+    // The precise property that used to fail: an unreadable table cannot raise
+    // the score. Compare against the same trip with the table readable.
+    const { client: healthy } = makeFakeClient({
+      trips: { rows: [baseTrip()] },
+      trip_members: { rows: [ownerMemberRow()] },
+      feature_flags: flagOn(),
+      trip_reservations: { rows: [] },
+    });
+    _setTestClient(healthy, true);
+    const healthyRes = await req(port, "GET", `/trips/${TRIP_ID}/readiness`, { token: "owner-token" });
+    assert.equal(healthyRes.body.categories.reservations, "ready");
+    assert.ok(
+      r.body.score <= healthyRes.body.score,
+      `an unreadable table must not score higher than a readable one (${r.body.score} vs ${healthyRes.body.score})`,
+    );
   });
 
   // ── Arrival board ──────────────────────────────────────────────────────────

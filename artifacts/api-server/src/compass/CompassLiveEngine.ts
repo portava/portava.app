@@ -415,6 +415,23 @@ function liveOnlyCandidates(
 
 // ── Live check loop ───────────────────────────────────────────────────────────
 
+/**
+ * Has this exact nudge already been delivered inside the dedupe window?
+ *
+ * ── AN UNREADABLE DEDUPE LEDGER IS A DUPLICATE ──────────────────────────────
+ * supabase-js RESOLVES on a DB error, so `const { data } = await …` yielded the
+ * same empty array for "this nudge has not been sent" and for
+ * "compass_sense_nudges could not be read" — and the empty array means SEND,
+ * which is how a user gets the same nudge over and over for as long as the
+ * table is unreadable. Repeat pushes to a phone are the visible half; the
+ * durable half is a duplicate row per tick.
+ *
+ * An unknown ledger therefore answers "duplicate" and the nudge is skipped. The
+ * cost of that direction is bounded and self-correcting: the delivery path
+ * writes its record into this very same table, so if the read failed the write
+ * was almost certainly going to fail too and nothing durable is lost — a
+ * skipped nudge simply reappears on the next tick once the table recovers.
+ */
 async function isDuplicate(
   sc: SupabaseClient,
   userId: string,
@@ -423,16 +440,17 @@ async function isDuplicate(
 ): Promise<boolean> {
   try {
     const sinceIso = new Date(nowMs - LIVE_DEDUPE_WINDOW_MS).toISOString();
-    const { data } = await sc
+    const { data, error } = await sc
       .from("compass_sense_nudges")
       .select("id")
       .eq("user_id", userId)
       .eq("dedupe_key", dedupeKey)
       .gte("created_at", sinceIso)
       .limit(1);
+    if (error) return true; // dedupe state unknown — assume already sent
     return ((data ?? []) as any[]).length > 0;
   } catch {
-    return false;
+    return true;
   }
 }
 

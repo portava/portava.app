@@ -101,7 +101,71 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { logger as rootLogger } from "../../lib/logger.js";
 
+import { getTrustProfileResult } from "../trust/TrustScoreService.js";
 const logger = rootLogger.child({ service: "CreatorActivityScoreService" });
+
+// ─── Trust input availability ─────────────────────────────────────────────────
+
+/**
+ * The three-state read of this service's one trust input, `trust_profiles`.
+ *
+ * Shape borrowed from `TrustProfileRead` / `getTrustProfileResult` (PR #467) so
+ * this lane does not invent a fourth convention for the same distinction. See
+ * `CreatorSignalAggregator._readSafetyMultiplier` for why all three states are
+ * needed and what each one means.
+ */
+export type SafetyMultiplierRead =
+  | { state: "ok"; multiplier: number }
+  | { state: "absent" }
+  | { state: "unavailable"; reason: string };
+
+/**
+ * The safety input could not be READ. Deliberately distinct from "the creator
+ * has no trust profile", because those two used to be the same observation and
+ * the difference decides whether a score may be written at all.
+ *
+ * ── WHY AN EXCEPTION AND NOT A DEGRADED FLAG ────────────────────────────────
+ * This is the shape PR #458 established for `TrustInputUnavailableError`, for
+ * the same reason: an exception is the only signal the call sites already act
+ * on. `calculateAndPersistScore` catches, does NOT persist, and returns null;
+ * `creatorActivityScoreScheduler` counts a null as an error and moves to the
+ * next user. A `degraded: true` on the return value would be invisible — the
+ * scheduler is the only production caller and it looks at nothing else.
+ *
+ * ── WHY SKIPPING IS THE HONEST POSTURE (07 §5) ──────────────────────────────
+ * The safety multiplier is a VETO: `trust_profiles.overall_score` scales the
+ * whole creator score, `< 20` collapsing it to zero. Defaulting an unreadable
+ * veto to 1.0 does not produce "no opinion", it produces the maximally
+ * permissive opinion — and `persistActivityScore` then UPSERTs that number into
+ * `creator_activity_scores` with a fresh `calculated_at` asserting it had just
+ * been measured. One trust_profiles read failure across a scheduler batch would
+ * have re-scored every creator in it as if every one of them had passed the
+ * safety check.
+ *
+ * A stale row is a known-old measurement. A row computed from an input that
+ * failed to load is a fabricated one. So: WHEN THE INPUT CANNOT BE READ, WRITE
+ * NOTHING — the creator keeps whatever row they already had and is picked up on
+ * the next pass, six hours later, by the same staleness rule that scheduled
+ * them this time.
+ *
+ * ── WHAT THIS IS NOT ────────────────────────────────────────────────────────
+ * It is NOT a de-ranking, and it must never become one. A creator with no
+ * `trust_profiles` row at all is the `absent` state, not this one: #449 makes
+ * row-absence the canonical representation of "no earned trust", and an
+ * unmeasured person keeps the full multiplier.
+ */
+export class CreatorTrustInputUnavailableError extends Error {
+  /** The creator whose pass was skipped. */
+  readonly userId: string;
+  /** The underlying PostgREST message or thrown reason, for the log. */
+  readonly reason: string;
+  constructor(userId: string, reason: string) {
+    super(`trust_profiles unavailable for ${userId} — refusing to score this pass: ${reason}`);
+    this.name   = "CreatorTrustInputUnavailableError";
+    this.userId = userId;
+    this.reason = reason;
+  }
+}
 
 // ─── Version ──────────────────────────────────────────────────────────────────
 
@@ -204,7 +268,13 @@ export interface CreatorSignals {
   /** Same event created/deleted repeatedly. */
   eventCreateDeleteCycles: number;
 
-  /** 0.0–1.0 from trust_profiles; undefined = no profile (treat as 1.0). */
+  /**
+   * 0.0–1.0 from `trust_profiles`. No row at all is 1.0 — under #449 that is
+   * the canonical representation of "no earned trust", and an unmeasured person
+   * is not de-ranked. An UNREADABLE `trust_profiles` never reaches this field:
+   * the aggregator throws `CreatorTrustInputUnavailableError` instead, so no
+   * score is computed or persisted from an input that failed to load.
+   */
   safetyMultiplier: number;
 }
 
@@ -436,6 +506,17 @@ export function computeActivityScore(
 export class CreatorSignalAggregator {
   constructor(private readonly db: SupabaseClient) {}
 
+  /**
+   * Aggregate every signal for one creator.
+   *
+   * THROWS `CreatorTrustInputUnavailableError` when `trust_profiles` cannot be
+   * read. That is the one input whose failure must stop the pass rather than be
+   * defaulted: it is a veto on the whole score, so an unreadable veto defaulted
+   * to "passed" is not a missing opinion but the most permissive one, and
+   * `persistActivityScore` would then stamp it with a fresh `calculated_at`.
+   * Every other source degrades to zero on failure, which understates a
+   * creator's activity rather than overstating their safety.
+   */
   async aggregate(userId: string): Promise<CreatorSignals> {
     const now    = Date.now();
     const ago24h = new Date(now - 1  * 24 * 60 * 60 * 1_000).toISOString();
@@ -448,6 +529,25 @@ export class CreatorSignalAggregator {
     // round-trip is acceptable; everything else runs in parallel after.
     const blockedIds = await this._fetchBlockedIds(userId);
 
+    // FAIL-CLOSED, shape 2 (lib/exclusionSet.ts). An unreadable block list does
+    // NOT stop the pass — that is `trust_profiles`' privilege, because it is a
+    // veto. It zeroes exactly the two components the block set filters, which
+    // is this class's stated rule for every non-veto input: "degrades to zero
+    // on failure, which understates a creator's activity rather than
+    // overstating their safety." Contributions, active days, maintenance, spam
+    // signals and the safety multiplier are not block-scoped and are still
+    // computed, so the score is a real (lower) score, not a refusal.
+    const blockScoped = blockedIds !== null;
+    if (!blockScoped) {
+      // This score is PERSISTED with a fresh calculated_at, so nothing
+      // downstream can tell a genuinely low participation score from one zeroed
+      // by an unreadable block list. Record it here or it leaves no trace.
+      logger.warn(
+        { userId },
+        "aggregate: blocks unreadable — participation and positive-response components scored as 0",
+      );
+    }
+
     const [
       contributions,
       activeDays,
@@ -459,8 +559,12 @@ export class CreatorSignalAggregator {
     ] = await Promise.all([
       this._fetchContributions(userId, ago24h, ago7d, ago30d, ago90d),
       this._fetchActiveDays(userId, ago90d),
-      this._fetchParticipation(userId, ago90d, blockedIds),
-      this._fetchPositiveResponses(userId, ago90d, blockedIds),
+      blockScoped
+        ? this._fetchParticipation(userId, ago90d, blockedIds!)
+        : Promise.resolve({ participationEvents: 0, participationDistinctUsers: 0 }),
+      blockScoped
+        ? this._fetchPositiveResponses(userId, ago90d, blockedIds!)
+        : Promise.resolve({ receivedPositiveActions: 0, receivedInteractionVolume: 0 }),
       this._fetchMaintenance(userId, ago90d),
       this._fetchSpamSignals(userId, ago90d),
       this._fetchSafetyMultiplier(userId),
@@ -479,14 +583,25 @@ export class CreatorSignalAggregator {
 
   // ── Blocked account IDs ───────────────────────────────────────────────────
 
-  /** Build the set of user IDs the creator has blocked or been blocked by. */
-  private async _fetchBlockedIds(userId: string): Promise<Set<string>> {
+  /**
+   * Build the set of user IDs the creator has blocked or been blocked by.
+   *
+   * Returns null when `blocks` could not be READ. That is not the same as an
+   * empty set, and the difference is the whole defect: an empty set means
+   * "exclude nobody", so a resolved DB error used to let likes, saves, follows
+   * and comments from blocked and blocking accounts count towards this
+   * creator's participation and positive-response signals — the two components
+   * an abuser most wants inflated, inflated exactly by the accounts that
+   * blocked them.
+   */
+  private async _fetchBlockedIds(userId: string): Promise<Set<string> | null> {
     try {
       // blocks table: blocker_id, blocked_id
-      const { data } = await (this.db as any)
+      const { data, error } = await (this.db as any)
         .from("blocks")
         .select("blocker_id, blocked_id")
         .or(`blocker_id.eq.${userId},blocked_id.eq.${userId}`);
+      if (error) return null;
 
       const ids = new Set<string>();
       for (const r of (data as any[]) ?? []) {
@@ -495,7 +610,7 @@ export class CreatorSignalAggregator {
       }
       return ids;
     } catch {
-      return new Set();
+      return null;
     }
   }
 
@@ -1119,26 +1234,93 @@ export class CreatorSignalAggregator {
    * it, and a column fetched for a rule that does not exist reads like a rule
    * that does. creatorActivitySafetyMultiplier.test.ts pins both halves — the
    * six-label vocabulary, and that no label collapses the multiplier.
+   *
+   * THE THIRD STATE (added 2026-09-07; docs/architecture/12 §3.3 C3)
+   * ---------------------------------------------------------------
+   * This reader used to end `catch { return 1.0; // fail-open: don't penalise
+   * on DB error }`, and `07` §5 names it as the last place in the
+   * trust-consuming code that turned an unreadable input into a confident
+   * value. See `_readSafetyMultiplier` for why absent and unreadable are now
+   * two answers rather than one.
    */
   private async _fetchSafetyMultiplier(userId: string): Promise<number> {
-    try {
-      const { data } = await (this.db as any)
-        .from("trust_profiles")
-        .select("overall_score")
-        .eq("user_id", userId)
-        .maybeSingle();
+    const read = await this._readSafetyMultiplier(userId);
+    if (read.state === "unavailable") {
+      // The ONLY signal the call sites already act on. See the class comment on
+      // CreatorTrustInputUnavailableError.
+      throw new CreatorTrustInputUnavailableError(userId, read.reason);
+    }
+    // #449: no row is the canonical representation of "no earned trust", not of
+    // low trust. An unmeasured person keeps the full multiplier.
+    if (read.state === "absent") return 1.0;
+    return read.multiplier;
+  }
 
-      if (!data) return 1.0; // no profile → default full multiplier
+  /**
+   * The three-state read of the safety input: measured, genuinely absent, or
+   * unreadable.
+   *
+   * WHY THREE STATES AND NOT TWO
+   * ----------------------------
+   * `trust_profiles` answers three different questions and the old reader
+   * collapsed all of them onto the single number 1.0:
+   *
+   *   ok          — a row exists. Its `overall_score` decides the multiplier
+   *                 through the four numeric rungs. This is a measurement.
+   *   absent      — no row. Under #449 this is the CANONICAL representation of
+   *                 "no earned trust": a user with zero qualifying events is
+   *                 computed but deliberately NOT persisted, because writing a
+   *                 fabricated 50/reliable_traveler row is what destroyed that
+   *                 representation. #449 also states the consequence for this
+   *                 reader by name — absence becomes the COMMON case, not a
+   *                 rare one — so absence must keep the full multiplier. An
+   *                 unmeasured person must not be de-ranked. Do not "fix" this
+   *                 into a fail-closed: it would silently zero every unscored
+   *                 creator, which is exactly the regression `07` §5 records
+   *                 this warning to prevent.
+   *   unavailable — the read FAILED. supabase-js RESOLVES `{ data, error }`
+   *                 rather than rejecting, so this branch is the only thing
+   *                 standing between a failed read and a fabricated score.
+   *
+   * ABSENT AND UNAVAILABLE ARE NOT THE SAME FACT and must not produce the same
+   * behaviour. Absence is an answer; a failed read is the absence of an answer.
+   *
+   * THE SHAPE IS DELIBERATELY BORROWED, NOT INVENTED
+   * ------------------------------------------------
+   * `{ state: "ok" | "absent" | "unavailable" }` is `getTrustProfileResult`'s
+   * `TrustProfileRead` (PR #467, services/trust/TrustScoreService.ts) applied to
+   * this reader's narrower need. It is re-stated locally rather than imported
+   * because #467 is open and unmerged: importing a symbol that does not exist on
+   * this branch would not compile, and adding one to TrustScoreService.ts would
+   * collide with the PR that is already editing it. When #467 lands, this type
+   * should be replaced by an import — the two are the same contract, and the
+   * point of matching the shape is that the reconciliation is mechanical.
+   */
+  private async _readSafetyMultiplier(userId: string): Promise<SafetyMultiplierRead> {
+    try {
+      // Through the canonical seam (census-trust A17). The three states this
+      // method already modelled are exactly the three the seam returns, so the
+      // repoint is a rename rather than a behaviour change — which is the point:
+      // the rule was violated for ownership, not because the shape was wrong.
+      const read = await getTrustProfileResult(this.db as any, userId);
+      if (read.state === "unavailable") {
+        return { state: "unavailable", reason: read.reason };
+      }
+      if (read.state !== "ok") return { state: "absent" };
+      const data = { overall_score: read.profile.overall_score };
 
       const d = data as any;
       const overallScore = Number(d.overall_score) || 50;
-      if (overallScore < 20) return 0.0;
-      if (overallScore < 30) return 0.3;
-      if (overallScore < 40) return 0.6;
-      if (overallScore < 50) return 0.8;
-      return 1.0;
-    } catch {
-      return 1.0; // fail-open: don't penalise on DB error
+      if (overallScore < 20) return { state: "ok", multiplier: 0.0 };
+      if (overallScore < 30) return { state: "ok", multiplier: 0.3 };
+      if (overallScore < 40) return { state: "ok", multiplier: 0.6 };
+      if (overallScore < 50) return { state: "ok", multiplier: 0.8 };
+      return { state: "ok", multiplier: 1.0 };
+    } catch (err) {
+      // A thrown client (a partial double, a transport failure) is not evidence
+      // that this creator is safe to boost at full strength. It is the same
+      // "could not read" as an `error`, and it gets the same answer.
+      return { state: "unavailable", reason: String((err as any)?.message ?? err) };
     }
   }
 }
@@ -1186,7 +1368,10 @@ export async function persistActivityScore(
  * Calculate and persist the CreatorActivityScore for a single user.
  * Safe to call from a background job; never throws.
  *
- * @returns The computed result, or null on unexpected error.
+ * @returns The computed result, or null when nothing was written — either
+ *          because the trust input could not be read (the creator is SKIPPED
+ *          this pass and keeps whatever row they already had), or on an
+ *          unexpected error.
  */
 export async function calculateAndPersistScore(
   db:           SupabaseClient,
@@ -1200,6 +1385,17 @@ export async function calculateAndPersistScore(
     await persistActivityScore(db, result);
     return result;
   } catch (err) {
+    // Separated from the generic catch so the log distinguishes "we chose not
+    // to write" from "something broke". Both return null and both leave the
+    // stored row untouched; only one of them is a deliberate refusal, and an
+    // operator reading these lines needs to be able to tell which.
+    if (err instanceof CreatorTrustInputUnavailableError) {
+      logger.warn(
+        { userId, reason: err.reason },
+        "calculateAndPersistScore: trust input unavailable — creator SKIPPED this pass, no score written",
+      );
+      return null;
+    }
     logger.warn({ err, userId }, "calculateAndPersistScore: unexpected error");
     return null;
   }

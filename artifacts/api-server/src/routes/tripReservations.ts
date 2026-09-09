@@ -14,8 +14,16 @@
  *   DELETE /trips/:tripId/reservations/:id          — creator or trip owner
  */
 import { Router } from "express";
+import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { asyncHandler } from "../lib/asyncHandler.js";
+import {
+  tripKernelClient,
+  readCommandEnvelope,
+  executeTripCommand,
+  sendKernelRejection,
+  setTripVersionHeader,
+} from "../lib/tripKernel.js";
 import { requireUser, requireTripMember, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { isFlagEnabled } from "../lib/featureFlags.js";
@@ -64,11 +72,18 @@ async function requireReservationMember(
     return null;
   }
 
-  const { data: trip } = await sc
+  // `error` is bound because `!trip` is this gate's whole answer. Unbound, a
+  // failed read became "Trip not found" — a confident, non-retryable claim
+  // about a trip nobody actually looked at. Unreadable is not absent.
+  const { data: trip, error: tripErr } = await sc
     .from("trips")
     .select("id, owner_id")
     .eq("id", tripId)
     .maybeSingle();
+  if (tripErr) {
+    sendError(res, "degraded_unavailable", "We could not read this trip right now. Please try again shortly.");
+    return null;
+  }
   if (!trip) { sendError(res, "not_found", "Trip not found"); return null; }
 
   const isOwner = (trip as any).owner_id === user.id;
@@ -337,7 +352,13 @@ router.post("/trips/:tripId/reservations/:id/confirm", asyncHandler(async (req, 
   let planItem: any = null;
   if (addToPlan) {
     // Duplicate guard: one plan item per reservation (source_id = reservation id).
-    const { data: dup } = await sc
+    // supabase-js RESOLVES on a DB error, so an unbound `error` read an
+    // unreadable trip_plan_items as "not in the plan yet" and added a SECOND
+    // plan item for this reservation on every confirm — two identical hotel /
+    // flight rows in the trip timeline, each visible to the whole crew. The
+    // reservation itself is already confirmed above and that update is
+    // idempotent, so refusing here leaves a retry clean.
+    const { data: dup, error: dupErr } = await sc
       .from("trip_plan_items")
       .select("id")
       .eq("trip_id", (trip as any).id)
@@ -346,10 +367,58 @@ router.post("/trips/:tripId/reservations/:id/confirm", asyncHandler(async (req, 
       .is("removed_at", null)
       .maybeSingle();
 
+    if (dupErr) {
+      req.log.error({ err: dupErr, reservationId: (reservation as any).id }, "reservation plan-item duplicate check failed — reservation confirmed, plan item not added");
+      sendError(res, "db_error", dupErr.message);
+      return;
+    }
+
     if (dup) {
       planItem = dup;
     } else {
       const startsAt: string | null = (reservation as any).starts_at ?? null;
+      // Trip Kernel path (§4.1 ADD_PLAN, capability crew). requireReservationMember
+      // + canManageReservation above are the authorization; the kernel re-checks
+      // crew. The payload is the direct insert's column set, key for key. Off =>
+      // the insert below.
+      const kernel = await tripKernelClient(sc);
+      if (kernel) {
+        const env = readCommandEnvelope(req);
+        if (!env.ok) { sendError(res, "invalid_payload", env.message); return; }
+        const r = await executeTripCommand(kernel, {
+          commandId: randomUUID(),
+          tripId: (trip as any).id,
+          actorUserId: userId,   // always from token
+          expectedTripVersion: env.expectedTripVersion,
+          idempotencyKey: env.idempotencyKey,
+          type: "ADD_PLAN",
+          payload: {
+            title:               (reservation as any).title,
+            category:            PLAN_CATEGORY_MAP[(reservation as any).type] ?? "other",
+            status:              "confirmed",
+            source_type:         "manual",
+            source_id:           (reservation as any).id,
+            day_date:            startsAt ? String(startsAt).slice(0, 10) : null,
+            starts_at:           startsAt,
+            ends_at:             (reservation as any).ends_at ?? null,
+            location_name:       (reservation as any).location_name ?? null,
+            lat:                 null,
+            lng:                 null,
+            location_is_private: false,
+            notes:               (reservation as any).confirmation_ref
+              ? `Confirmation: ${(reservation as any).confirmation_ref}`
+              : null,
+            sort_order:          0,
+            lock_type:           startsAt ? "fixed" : "flexible",
+            visibility:          "members",
+          },
+        });
+        if (!r.ok) { sendKernelRejection(res, r, req.log); return; }
+        setTripVersionHeader(res, r.version);
+        res.json({ reservation: updated, planItem: r.result });
+        return;
+      }
+      // trip-kernel:legacy-path — flag-off twin of ADD_PLAN above.
       // Column shape mirrors POST /trips/:tripId/plan/items (src/routes/trips.ts).
       const { data: item, error: planError } = await sc
         .from("trip_plan_items")

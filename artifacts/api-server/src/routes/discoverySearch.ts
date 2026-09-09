@@ -6,7 +6,12 @@
  * from @workspace/api-zod, supplemented by a server-side sanitization pass.
  *
  * Privacy rules (server-side, fail-closed):
- *   - Private accounts (is_private=true) excluded entirely.
+ *   - Private accounts (is_private=true) the viewer does not follow are
+ *     returned as a LOCKED PREVIEW (no avatar/location/matchedReason,
+ *     canAccess=false) — never silently excluded, so a private account is
+ *     discoverable everywhere or nowhere, matching /api/users/search. See
+ *     searchTravelers below; this line used to say "excluded entirely", which
+ *     the code has not done since the locked-preview contract landed.
  *   - Suspended/banned/deleted accounts excluded (account_status filter).
  *   - Profile-discovery opt-outs excluded (fail-closed on query error).
  *   - Blocked users excluded in both directions; block lookup failure is
@@ -67,12 +72,35 @@ import {
   type CanonicalRow,
 } from "../lib/canonicalLocations";
 import type { SensitivityLevel } from "../services/hiddenGems/HiddenGemPrivacyGuard.js";
-import { nameVisibilitySet } from "../lib/publicIdentity";
+import { nameVisibilitySet, presentedName } from "../lib/publicIdentity";
+import { buildConsumerProjection } from "../services/passport/PassportConsumerProjections.js";
+import { allowDiscoveryPersonCard } from "../services/passport/PassportConsumerAccess.js";
 // The canonical author-side block rule for a `discovery_places` row. Shared with
 // routes/discovery.ts (which re-exports it) rather than re-implemented here —
 // two copies of a privacy rule is how these two serve points drifted apart in
 // the first place.
-import { submitterIsVisible } from "../lib/blocks.js";
+import { fetchBlockedSet, submitterIsVisible } from "../lib/blocks.js";
+import { isFlagEnabled } from "../lib/featureFlags.js";
+// Trips' projection contract (census-discovery A10 / D3, Trips spec §25) and
+// Discovery's consumer of it. Gated by the CAPABILITY
+// discovery_trip_projection_enabled && trips-schema-ready, not by the flag
+// alone: production has no trips.version and the readers fail closed on it, so
+// a flag flipped onto missing schema would empty every trips and plans search.
+// The not-ready branch is the legacy read below. See
+// lib/discoveryTripProjectionConsumer.ts.
+import {
+  searchTripDiscoveryProjections,
+  readTripDiscoveryProjections,
+  tripDiscoveryAdmits,
+} from "../lib/tripDiscoveryProjection.js";
+import {
+  discoveryTripProjectionGate,
+  recordDiscoveryTripSource,
+  acceptTripDiscoveryProjections,
+  tripCardSourceFromProjection,
+  type DiscoveryTripCardSource,
+  type DiscoveryPlanParentTrip,
+} from "../lib/discoveryTripProjectionConsumer.js";
 import {
   logDiscoveryServe,
   DiscoveryServePoint,
@@ -364,26 +392,18 @@ function encodeCursor(offset: number): string {
 
 // ── Blocked-user set (fail-closed) ────────────────────────────────────────────
 //
-// Returns null on any error. Callers that receive null MUST return [] —
-// never expose content when the block state is unknown.
-
-async function fetchBlockedSet(sc: any, userId: string): Promise<Set<string> | null> {
-  try {
-    const { data, error } = await sc
-      .from("blocks")
-      .select("blocker_id, blocked_id")
-      .or(`blocker_id.eq.${userId},blocked_id.eq.${userId}`);
-    if (error) return null;
-    const set = new Set<string>();
-    for (const b of (data ?? [])) {
-      if ((b as any).blocker_id === userId) set.add((b as any).blocked_id);
-      else set.add((b as any).blocker_id);
-    }
-    return set;
-  } catch {
-    return null;
-  }
-}
+// `fetchBlockedSet` is lib/blocks' — the one bidirectional, fail-closed block
+// reader every people-exposing surface shares (map travelers, circle
+// locations, the input-assistance gateway, GET /discovery). This file carried
+// a byte-for-byte private copy of it until 2026-09-07. Passport §263: "Do not
+// implement blocking independently per surface"; Telegraph §285: "No subsystem
+// may independently 'rediscover' a blocked relationship." Two copies of a
+// privacy rule agree until the day one of them is edited — which is how
+// submitterIsVisible drifted between this route and the feed (see the import
+// above). Re-exported so a test can assert identity rather than resemblance.
+// Contract unchanged: null on any error, and callers that receive null MUST
+// return [] — never expose content when the block state is unknown.
+export { fetchBlockedSet };
 
 // ── Age-restricted profile set (fail-closed) ──────────────────────────────────
 //
@@ -405,6 +425,69 @@ export async function fetchAgeRestrictedSet(sc: any): Promise<Set<string> | null
   } catch {
     return null;
   }
+}
+
+// ── Buddy launch-eligibility gate (inert until seeded ON) ─────────────────────
+//
+// Global Input Intelligence §29 (row G71 of census-input-intelligence): a Buddy
+// suggestion must pass "service category, availability, launch/safety/payment
+// eligibility". `type=buddies` applied exactly one predicate —
+// `buddy_verified_at IS NOT NULL` — and never asked whether the Rent-a-Buddy
+// marketplace is LAUNCHED. `rent_buddy_enabled` is false in production, so a
+// verified buddy was searchable on a surface whose marketplace does not exist.
+//
+// The launch leg is closed here. It sits behind its OWN capability flag,
+// `discovery_buddy_launch_gate_enabled` (migration 2360, seeded FALSE), because
+// Discovery is live and this repository's rule is that nothing changes what a
+// user sees until someone deliberately flips a flag. Both reads are
+// isFlagEnabled — fail-closed — and the two closures point in the SAFE
+// direction each time:
+//   gate absent / false / unreadable   → legacy behaviour, buddies unchanged
+//   gate ON, rent_buddy_enabled false  → buddies withheld
+//   gate ON, rent_buddy_enabled UNREADABLE → buddies withheld (an eligibility
+//                                        gate that cannot be established is
+//                                        not passed)
+// The category and availability legs of G71 remain open — see
+// docs/architecture/census-discovery.md B03.
+//
+// Applied inside searchTravelers(isBuddy) so the input-assistance gateway
+// (lib/inputAssistance/gateway.ts → dispatchSearch) inherits the same rule.
+
+/** Literal name so check-flag-polarity resolves the read. */
+export const DISCOVERY_BUDDY_LAUNCH_GATE_FLAG = "discovery_buddy_launch_gate_enabled";
+/** The marketplace's master switch, read by routes/rentABuddy.ts. */
+const RENT_BUDDY_LAUNCH_FLAG = "rent_buddy_enabled";
+
+// The GATE read is cached 30 s (mirrors discoveryServeLog / compass/flags.ts):
+// type=all fans out through buddies on every search, and an uncached read
+// would add a round-trip per search for a flag that changes once. The
+// marketplace flag is read only when the gate is on, and is NOT cached, so a
+// launch or un-launch is visible on the next request.
+const BUDDY_GATE_TTL_MS = 30_000;
+let _buddyGateCache: { value: boolean; at: number } | null = null;
+
+/** Invalidate the gate cache. Exported for tests. */
+export function invalidateBuddyLaunchGateCache(): void {
+  _buddyGateCache = null;
+}
+
+async function buddyLaunchGateActive(sc: any): Promise<boolean> {
+  if (_buddyGateCache && Date.now() - _buddyGateCache.at < BUDDY_GATE_TTL_MS) {
+    return _buddyGateCache.value;
+  }
+  const value = await isFlagEnabled(sc, DISCOVERY_BUDDY_LAUNCH_GATE_FLAG);
+  _buddyGateCache = { value, at: Date.now() };
+  return value;
+}
+
+/**
+ * True when buddy results must be WITHHELD: the gate is on and the marketplace
+ * is not (or cannot be shown to be) launched. Exported for its unit test — the
+ * route-level fake cannot fail one flag read while answering another.
+ */
+export async function buddiesWithheldByLaunchGate(sc: any): Promise<boolean> {
+  if (!(await buddyLaunchGateActive(sc))) return false;
+  return !(await isFlagEnabled(sc, RENT_BUDDY_LAUNCH_FLAG));
 }
 
 // ── Owner account-status guard ─────────────────────────────────────────────────
@@ -456,11 +539,14 @@ async function searchTravelers(
   ctx?: SearchQueryContext,
 ): Promise<SearchResult[]> {
   if (blockedSet === null || ageRestrictedSet === null) return [];
+  // Launch eligibility (G71) before any row is read: a buddy the marketplace
+  // has not launched is not a candidate. Inert until the gate flag is on.
+  if (isBuddy && await buddiesWithheldByLaunchGate(sc)) return [];
   try {
     const pat = sqlPattern(q);
     let query = sc
       .from("profiles")
-      .select("id, handle, username, name, avatar_url, is_private, home_city, home_country, account_status, verified, is_official, show_profile_picture_publicly")
+      .select("id, handle, username, name, display_name, avatar_url, is_private, home_city, home_country, account_status, verified, is_official, show_profile_picture_publicly")
       .or(`name.ilike.${pat},handle.ilike.${pat},username.ilike.${pat}`)
       .neq("id", userId)
       .in("account_status", ["active"])
@@ -535,7 +621,16 @@ async function searchTravelers(
     const mapped: SearchResult[] = nameSafe.map((p: any): SearchResult => {
       // Name defaults to @handle unless the subject opted in (or is the viewer).
       const nameAllowed = p.id === userId || allowedNames.has(p.id as string);
-      const presented = nameAllowed ? ((p.name as string | null) ?? null) : null;
+      // Resolved through the CANONICAL helper, not inline. This used to read
+      // `p.name` alone, and the select above did not even fetch `display_name` —
+      // so a user who set a display name different from their profile name was
+      // shown the OTHER one in people search, while the map pin
+      // (lib/mapTravelers) and the Compass traveler list both honoured it. One
+      // rule, three implementations, and this was the one that disagreed.
+      // presentedName also TRIMS: a whitespace-only name falls through to the
+      // handle instead of rendering as a blank title with no way to tell who
+      // the row is.
+      const presented = presentedName(p, nameAllowed);
       const fallbackLabel = presented ?? (p.handle as string) ?? "?";
       const isFollowing = followingSet.has(p.id as string);
       const isFriend = friendSet.has(p.id as string);
@@ -689,6 +784,30 @@ async function searchEvents(
 
 /**
  * Trips — public only; blocked/suspended owners excluded.
+ *
+ * Two sources for the candidate rows, one CAPABILITY between them —
+ * `discovery_trip_projection_enabled` (migration 2550, seeded FALSE) AND the
+ * `trips` schema the projection reader names (migration 2420):
+ *
+ *   NOT READY (the seed; every failure to read the flag; and a flag that is ON
+ *   over a database whose `trips` lacks a required column, which is production
+ *   today) — the legacy read below, byte-identical to before: same columns,
+ *   same predicates, same order, same range. Pinned by
+ *   src/test/discoveryTripProjectionConsumer.test.ts.
+ *
+ *   READY — searchTripDiscoveryProjections, the Trip-owned contract
+ *   (lib/tripDiscoveryProjection.ts; Trips spec §25, census-discovery A10/D3).
+ *   Discovery no longer states the visibility rule; it consumes
+ *   `discoverable`. A read that fails AFTER the probe passed
+ *   (TRIP_PROJECTION_UNAVAILABLE — a transient error, a revoked grant, a
+ *   schema-cache lag) is `[]`, never a crash and never a leak; the capability
+ *   decides the branch, so there is no silent fallback that would hide it.
+ *   The owner's non-member privacy toggles then apply to a searcher; see
+ *   lib/discoveryTripProjectionConsumer.ts for why that is accepted.
+ *
+ * Both sources feed ONE card mapping, so the two paths cannot drift in what a
+ * card shows. The blocked / age-restricted / active-owner filters run on
+ * both, here, on ownerId — they are Trust and Discovery rules, not Trip ones.
  */
 async function searchTrips(
   sc: any, q: string, userId: string,
@@ -698,57 +817,91 @@ async function searchTrips(
 ): Promise<SearchResult[]> {
   if (blockedSet === null || ageRestrictedSet === null) return [];
   try {
-    const pat = sqlPattern(q);
-    let trQ: any = sc
-      .from("trips")
-      .select("id, title, destination_city, destination_country, owner_id, cover_url, start_date, status, visibility, created_at")
-      .or(`title.ilike.${pat},destination_city.ilike.${pat},destination_country.ilike.${pat}`)
-      .eq("visibility", "public")
-      .eq("show_in_discovery", true)
-      // `trip_status` is an ENUM: draft | planning | upcoming | active |
-      // completed | cancelled | archived. "deleted" and "banned" are NOT
-      // labels, and Postgres rejects an unknown enum literal outright (22P02)
-      // rather than matching nothing — so `type=trips` search errored out and
-      // fell into the `if (error || !data) return []` below on every request.
-      //
-      // Same shape as the events fix above: a denylist of real labels that also
-      // drops unpublished `draft` trips the broken filter would have surfaced.
-      .not("status", "in", '("draft","cancelled","archived")')
-      .order("start_date", { ascending: true });
-    // Apply time-intent date bounds to trip start_date when present
-    if (ctx?.startsAfter)  trQ = trQ.gte("start_date", ctx.startsAfter.slice(0, 10));
-    if (ctx?.startsBefore) trQ = trQ.lt("start_date",  ctx.startsBefore.slice(0, 10));
-    const { data, error } = await trQ.range(offset, offset + fetchLimit - 1);
+    let cards: DiscoveryTripCardSource[];
 
-    if (error || !data) return [];
+    const gate = await discoveryTripProjectionGate(sc);
+    recordDiscoveryTripSource("trips", gate);
 
-    const rows = (data as any[]).filter(
-      (t: any) => !blockedSet.has(t.owner_id as string) && !ageRestrictedSet.has(t.owner_id as string),
+    if (gate.source === "projection") {
+      const r = await searchTripDiscoveryProjections(sc, {
+        text: q,
+        startsAfter: ctx?.startsAfter,
+        startsBefore: ctx?.startsBefore,
+        offset,
+        limit: fetchLimit,
+      });
+      if (!r.ok) {
+        logger.warn({ reason: r.reason, detail: r.detail }, "trip discovery projection unavailable; trips search returns nothing");
+        return [];
+      }
+      const { accepted, rejected } = acceptTripDiscoveryProjections(r.projections);
+      if (rejected > 0) logger.warn({ rejected }, "trip discovery projections of an unreadable schema version dropped");
+      cards = accepted.map(tripCardSourceFromProjection);
+    } else {
+      const pat = sqlPattern(q);
+      let trQ: any = sc
+        .from("trips")
+        .select("id, title, destination_city, destination_country, owner_id, cover_url, start_date, status, visibility, created_at")
+        .or(`title.ilike.${pat},destination_city.ilike.${pat},destination_country.ilike.${pat}`)
+        .eq("visibility", "public")
+        .eq("show_in_discovery", true)
+        // `trip_status` is an ENUM: draft | planning | upcoming | active |
+        // completed | cancelled | archived. "deleted" and "banned" are NOT
+        // labels, and Postgres rejects an unknown enum literal outright (22P02)
+        // rather than matching nothing — so `type=trips` search errored out and
+        // fell into the `if (error || !data) return []` below on every request.
+        //
+        // Same shape as the events fix above: a denylist of real labels that also
+        // drops unpublished `draft` trips the broken filter would have surfaced.
+        .not("status", "in", '("draft","cancelled","archived")')
+        .order("start_date", { ascending: true });
+      // Apply time-intent date bounds to trip start_date when present
+      if (ctx?.startsAfter)  trQ = trQ.gte("start_date", ctx.startsAfter.slice(0, 10));
+      if (ctx?.startsBefore) trQ = trQ.lt("start_date",  ctx.startsBefore.slice(0, 10));
+      const { data, error } = await trQ.range(offset, offset + fetchLimit - 1);
+
+      if (error || !data) return [];
+
+      cards = (data as any[]).map((t: any): DiscoveryTripCardSource => ({
+        id: t.id as string,
+        ownerId: t.owner_id as string,
+        title: (t.title as string | null) ?? null,
+        destinationCity: (t.destination_city as string | null) ?? null,
+        destinationCountry: (t.destination_country as string | null) ?? null,
+        coverUrl: (t.cover_url as string | null) ?? null,
+        startDate: (t.start_date as string | null) ?? null,
+        status: t.status as string,
+        createdAt: (t.created_at as string | null) ?? null,
+      }));
+    }
+
+    const rows = cards.filter(
+      (t) => !blockedSet.has(t.ownerId) && !ageRestrictedSet.has(t.ownerId),
     );
     if (rows.length === 0) return [];
 
-    const ownerIds = [...new Set(rows.map((t: any) => t.owner_id as string))];
+    const ownerIds = [...new Set(rows.map((t) => t.ownerId))];
     const activeOwnerSet = await fetchActiveOwnerSet(sc, ownerIds);
 
     return rows
-      .filter((t: any) => activeOwnerSet.has(t.owner_id as string))
-      .map((t: any): SearchResult => ({
+      .filter((t) => activeOwnerSet.has(t.ownerId))
+      .map((t): SearchResult => ({
         id: t.id,
         type: "trips",
-        title: (t.title as string) ?? (t.destination_city as string) ?? "",
-        subtitle: [(t.destination_city as string | null), (t.destination_country as string | null)].filter(Boolean).join(", ") || null,
+        title: t.title ?? t.destinationCity ?? "",
+        subtitle: [t.destinationCity, t.destinationCountry].filter(Boolean).join(", ") || null,
         avatarUrl: null,
-        imageUrl: (t.cover_url as string | null) ?? null,
-        fallbackInitials: initials((t.title as string) ?? ""),
-        locationPreview: [(t.destination_city as string | null), (t.destination_country as string | null)].filter(Boolean).join(", ") || null,
+        imageUrl: t.coverUrl ?? null,
+        fallbackInitials: initials(t.title ?? ""),
+        locationPreview: [t.destinationCity, t.destinationCountry].filter(Boolean).join(", ") || null,
         matchedReason: null,
         actionState: null,
         privacyState: { isPublic: true },
         accessState: { canAccess: true },
-        destinationRoute: `/trip/${t.id as string}`,
-        metadata: { ownerId: t.owner_id, status: t.status },
-        createdAt: (t.created_at as string | null) ?? null,
-        startsAt: (t.start_date as string | null) ?? null,
+        destinationRoute: `/trip/${t.id}`,
+        metadata: { ownerId: t.ownerId, status: t.status },
+        createdAt: t.createdAt ?? null,
+        startsAt: t.startDate ?? null,
       }));
   } catch {
     return [];
@@ -784,37 +937,80 @@ async function searchPlans(
     if (items.length === 0) return [];
 
     const tripIds = [...new Set(items.map((p: any) => p.trip_id as string))];
-    const { data: trips } = await sc
-      .from("trips")
-      .select("id, visibility, show_in_discovery, owner_id, status, start_date")
-      .in("id", tripIds)
-      // Same dead literals as searchTrips above ("deleted" / "banned" are not
-      // `trip_status` labels), and worse here: the result is destructured as
-      // `const { data: trips }` with the error never inspected, so `trips` was
-      // undefined, `allowedTrips` empty, and EVERY plan was dropped as
-      // "no allowed parent trip". `type=plans` returned [] on every request.
-      .not("status", "in", '("draft","cancelled","archived")');
 
-    const allowedTrips = (trips ?? []).filter(
-      (t: any) =>
+    // The parent trips, from one of two sources behind the same capability as
+    // searchTrips above (flag AND schema). Either way each candidate carries
+    // `admitted` — may THIS viewer see this trip's plans — decided by Trip
+    // semantics, and `ownerId` / `startDate` for the Discovery-owned filters
+    // that follow.
+    let parents: DiscoveryPlanParentTrip[];
+
+    const gate = await discoveryTripProjectionGate(sc);
+    recordDiscoveryTripSource("plans", gate);
+
+    if (gate.source === "projection") {
+      // Not filtered by discoverability in SQL: the by-id reader returns the
+      // owner's own private trip too, and tripDiscoveryAdmits — Trips' rule,
+      // not restated here — decides per viewer. A failed read is `[]`.
+      const r = await readTripDiscoveryProjections(sc, tripIds);
+      if (!r.ok) {
+        logger.warn({ reason: r.reason, detail: r.detail }, "trip discovery projection unavailable; plans search returns nothing");
+        return [];
+      }
+      const { accepted, rejected } = acceptTripDiscoveryProjections(r.projections);
+      if (rejected > 0) logger.warn({ rejected }, "trip discovery projections of an unreadable schema version dropped");
+      // startDate is the projection's — null when the owner hides exact dates,
+      // in which case the time-intent bound below passes the trip exactly as
+      // it passes a trip with no start_date today. The contract carries no
+      // separate bounding date for the by-id reader (reported, not worked
+      // around by reading `trips` here).
+      parents = accepted.map((p): DiscoveryPlanParentTrip => ({
+        id: p.tripId,
+        ownerId: p.ownerId,
+        startDate: p.startDate,
+        admitted: tripDiscoveryAdmits(p, userId),
+      }));
+    } else {
+      const { data: trips } = await sc
+        .from("trips")
+        .select("id, visibility, show_in_discovery, owner_id, status, start_date")
+        .in("id", tripIds)
+        // Same dead literals as searchTrips above ("deleted" / "banned" are not
+        // `trip_status` labels), and worse here: the result is destructured as
+        // `const { data: trips }` with the error never inspected, so `trips` was
+        // undefined, `allowedTrips` empty, and EVERY plan was dropped as
+        // "no allowed parent trip". `type=plans` returned [] on every request.
+        .not("status", "in", '("draft","cancelled","archived")');
+
+      parents = ((trips ?? []) as any[]).map((t: any): DiscoveryPlanParentTrip => ({
+        id: t.id as string,
+        ownerId: t.owner_id as string,
+        startDate: (t.start_date as string | null) ?? null,
         // Public trips: also require show_in_discovery so owners who opted out are excluded.
         // Caller-owned trips are always visible regardless of the flag.
-        (((t.visibility as string) === "public" && t.show_in_discovery === true) ||
-          (t.owner_id as string) === userId) &&
-        !blockedSet.has(t.owner_id as string) &&
-        !ageRestrictedSet.has(t.owner_id as string) &&
+        admitted:
+          ((t.visibility as string) === "public" && t.show_in_discovery === true) ||
+          (t.owner_id as string) === userId,
+      }));
+    }
+
+    const allowedTrips = parents.filter(
+      (t) =>
+        t.admitted &&
+        !blockedSet.has(t.ownerId) &&
+        !ageRestrictedSet.has(t.ownerId) &&
         // Time-intent: filter by parent trip's start_date when bounds are present
-        (!ctx?.startsAfter  || !(t.start_date as string | null) || (t.start_date as string) >= ctx.startsAfter.slice(0, 10)) &&
-        (!ctx?.startsBefore || !(t.start_date as string | null) || (t.start_date as string) <  ctx.startsBefore.slice(0, 10)),
+        (!ctx?.startsAfter  || !t.startDate || t.startDate >= ctx.startsAfter.slice(0, 10)) &&
+        (!ctx?.startsBefore || !t.startDate || t.startDate <  ctx.startsBefore.slice(0, 10)),
     );
 
-    const allowedOwnerIds: string[] = [...new Set<string>(allowedTrips.map((t: any) => t.owner_id as string))];
+    const allowedOwnerIds: string[] = [...new Set<string>(allowedTrips.map((t) => t.ownerId))];
     const activeTripOwnerSet = await fetchActiveOwnerSet(sc, allowedOwnerIds);
 
     const visibleTripIds = new Set<string>(
       allowedTrips
-        .filter((t: any) => activeTripOwnerSet.has(t.owner_id as string))
-        .map((t: any) => t.id as string),
+        .filter((t) => activeTripOwnerSet.has(t.ownerId))
+        .map((t) => t.id),
     );
 
     return items
@@ -2040,6 +2236,54 @@ router.get("/discovery/suggest", async (req, res) => {
   } catch (err) {
     logger.warn({ err, q }, "discovery/suggest failed");
     res.status(200).json({ query: q, groups: [] });
+  }
+});
+
+// ── GET /api/discovery/people/:userId/passport ────────────────────────────────
+//
+// §21 TABLE 22, Discovery row: "identity, verification, availability, Open to
+// Plans, shared context, permitted trust summary". That is the discovery_card
+// variant verbatim, so this route builds NOTHING — it authorises the request and
+// returns what the one Passport assembler produced for this viewer (§35).
+//
+// The search list above ranks people; this is the card one of those rows opens.
+// The two agree by construction: the same subject the list withholds
+// (`allow_profile_discovery = false`, or age-restricted) is refused here by the
+// shared gate, and blocking / account status are settled inside the assembler,
+// which answers a blocked relationship with the variant's restricted shape
+// rather than a 404 — the client must not be able to tell "blocked" from
+// "does not exist" by the status code.
+router.get("/discovery/people/:userId/passport", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const { userId } = req.params;
+  if (!/^[0-9a-f-]{36}$/i.test(userId)) {
+    sendError(res, "invalid_payload", "Invalid user id");
+    return;
+  }
+
+  const rl = checkRateLimit("discovery_person_card", user.id, 60, 60_000);
+  if (!rl.allowed) {
+    res.setHeader("Retry-After", Math.ceil(rl.retryAfterMs / 1000).toString());
+    sendError(res, "rate_limited", "Too many requests. Please wait.");
+    return;
+  }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const gate = await allowDiscoveryPersonCard(sc, userId);
+  if (!gate.allowed) { sendError(res, "not_found", "User not found"); return; }
+
+  try {
+    const passport = await buildConsumerProjection(sc, "discovery_card", userId, user.id);
+    if (!passport) { sendError(res, "not_found", "User not found"); return; }
+    res.status(200).json({ passport });
+  } catch (err) {
+    logger.warn({ err, userId }, "discovery person card projection failed");
+    sendError(res, "db_error", "Could not load person card");
   }
 });
 

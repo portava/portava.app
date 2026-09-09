@@ -5,9 +5,17 @@
  *   POST /api/places/:placeId/add-to-trip-plan    { tripId, dayDate?, startsAt? }
  */
 import { Router } from "express";
+import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { requireUser, isAcceptedTripMember, canEditPlan, sendError } from "../lib/http.js";
 import { asyncHandler } from "../lib/asyncHandler.js";
+import {
+  tripKernelClient,
+  readCommandEnvelope,
+  executeTripCommand,
+  sendKernelRejection,
+  setTripVersionHeader,
+} from "../lib/tripKernel.js";
 
 const router = Router();
 
@@ -54,8 +62,12 @@ router.post("/meetups/:meetupId/add-to-trip-plan", asyncHandler(async (req, res)
     return;
   }
 
-  // Duplicate guard: same meetup already added to this trip (non-removed)
-  const { data: existing } = await client
+  // Duplicate guard: same meetup already added to this trip (non-removed).
+  // supabase-js RESOLVES on a DB error, so an unbound `error` read an
+  // unreadable trip_plan_items as "not added yet" and went on to ADD_PLAN —
+  // putting the same meetup into the trip timeline twice for every member,
+  // which no one can tell apart from a real second entry.
+  const { data: existing, error: existingErr } = await client
     .from("trip_plan_items")
     .select("id")
     .eq("trip_id", tripId)
@@ -63,8 +75,50 @@ router.post("/meetups/:meetupId/add-to-trip-plan", asyncHandler(async (req, res)
     .eq("source_id", meetupId)
     .is("removed_at", null)
     .maybeSingle();
+  if (existingErr) {
+    req.log.error({ err: existingErr, tripId, meetupId }, "meetup plan duplicate check failed — refusing to add");
+    sendError(res, "db_error", existingErr.message);
+    return;
+  }
   if (existing) { res.status(409).json({ error: "duplicate", message: "This meetup is already in your trip plan" }); return; }
 
+  // Trip Kernel path (§4.1 ADD_PLAN, capability crew). The membership and
+  // plan-edit checks above are the authorization; the kernel re-checks crew.
+  // The payload names every column the direct insert names, plus
+  // location_is_private = true — the column the insert leaves at its table
+  // default — so the kernel row is the legacy row. Off => the insert below.
+  const kernel = await tripKernelClient();
+  if (kernel) {
+    const env = readCommandEnvelope(req);
+    if (!env.ok) { sendError(res, "invalid_payload", env.message); return; }
+    const r = await executeTripCommand(kernel, {
+      commandId: randomUUID(),
+      tripId,
+      actorUserId: user.id,   // always from token
+      expectedTripVersion: env.expectedTripVersion,
+      idempotencyKey: env.idempotencyKey,
+      type: "ADD_PLAN",
+      payload: {
+        title: (meetup as any).title,
+        category: "meeting_point",
+        status: "tentative",
+        source_type: "meetup",
+        source_id: meetupId,
+        starts_at: (meetup as any).starts_at ?? null,
+        location_name: (meetup as any).location_name ?? null,
+        location_is_private: true,
+        sort_order: 0,
+        visibility: "members",
+        lock_type: lockType,
+      },
+    });
+    if (!r.ok) { sendKernelRejection(res, r, req.log); return; }
+    setTripVersionHeader(res, r.version);
+    res.status(201).json(toCamel(r.result));
+    return;
+  }
+
+  // trip-kernel:legacy-path — flag-off twin of ADD_PLAN above.
   const { data: item, error } = await client
     .from("trip_plan_items")
     .insert({
@@ -125,8 +179,10 @@ router.post("/places/:placeId/add-to-trip-plan", asyncHandler(async (req, res) =
     .maybeSingle();
   if (!place) { sendError(res, "not_found", "Place not found"); return; }
 
-  // Duplicate guard
-  const { data: existing } = await client
+  // Duplicate guard — see the meetup route above for why `error` must be bound:
+  // an unreadable trip_plan_items otherwise reads as "not added yet" and the
+  // ADD_PLAN below puts the same place into the trip timeline a second time.
+  const { data: existing, error: existingErr } = await client
     .from("trip_plan_items")
     .select("id")
     .eq("trip_id", tripId)
@@ -134,8 +190,47 @@ router.post("/places/:placeId/add-to-trip-plan", asyncHandler(async (req, res) =
     .eq("source_id", placeId)
     .is("removed_at", null)
     .maybeSingle();
+  if (existingErr) {
+    req.log.error({ err: existingErr, tripId, placeId }, "place plan duplicate check failed — refusing to add");
+    sendError(res, "db_error", existingErr.message);
+    return;
+  }
   if (existing) { res.status(409).json({ error: "duplicate", message: "This place is already in your trip plan" }); return; }
 
+  // Trip Kernel path (§4.1 ADD_PLAN, capability crew) — see the meetup route.
+  const kernel = await tripKernelClient();
+  if (kernel) {
+    const env = readCommandEnvelope(req);
+    if (!env.ok) { sendError(res, "invalid_payload", env.message); return; }
+    const r = await executeTripCommand(kernel, {
+      commandId: randomUUID(),
+      tripId,
+      actorUserId: user.id,   // always from token
+      expectedTripVersion: env.expectedTripVersion,
+      idempotencyKey: env.idempotencyKey,
+      type: "ADD_PLAN",
+      payload: {
+        title: (place as any).name,
+        category: (place as any).category ?? "activity",
+        status: "tentative",
+        source_type: "place",
+        source_id: placeId,
+        day_date: dayDate ?? null,
+        starts_at: startsAt ?? null,
+        location_name: (place as any).city ?? null,
+        location_is_private: true,
+        sort_order: 0,
+        visibility: "members",
+        lock_type: lockType,
+      },
+    });
+    if (!r.ok) { sendKernelRejection(res, r, req.log); return; }
+    setTripVersionHeader(res, r.version);
+    res.status(201).json(toCamel(r.result));
+    return;
+  }
+
+  // trip-kernel:legacy-path — flag-off twin of ADD_PLAN above.
   const { data: item, error } = await client
     .from("trip_plan_items")
     .insert({

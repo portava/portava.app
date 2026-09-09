@@ -140,6 +140,43 @@ describe("canonical schema — the model the static check judges against", () =>
     assert.match(stmts[1]!, /BEGIN a; b; END/, "the $$ body was split apart");
   });
 
+  it("keeps NAMED $tag$ bodies intact too — the case that shredded every DO block", () => {
+    // Postgres accepts any `$tag$`, and this repo's migrations use named tags
+    // throughout ($mig$, $base$, $post$, $body$). The splitter understood only
+    // `$$`, so every one of those blocks was cut at each `;` INSIDE it and each
+    // fragment was handed to callers as a top-level statement. That is how
+    // checkSecurityDefinerOracles came to report `trip_proposal_tally` —
+    // called twice by the kernel branches migration 2775 installs — as
+    // referenced by nothing at all, and demand it be dropped.
+    const stmts = splitStatements(`SELECT 1; DO $mig$ BEGIN a; b; END $mig$; SELECT 2;`);
+    assert.equal(stmts.length, 3, `expected 3 statements, got ${stmts.length}`);
+    assert.match(stmts[1]!, /BEGIN a; b; END/, "the $mig$ body was split apart");
+  });
+
+  it("a named tag does not terminate on a DIFFERENT tag", () => {
+    // $inner$ must not close $outer$, or a nested block would end the outer one
+    // early and leak its tail into the next statement.
+    const stmts = splitStatements(`DO $outer$ x; $inner$ y; $inner$ z; $outer$; SELECT 9;`);
+    assert.equal(stmts.length, 2, `expected 2 statements, got ${stmts.length}`);
+    assert.match(stmts[0]!, /x; \$inner\$ y; \$inner\$ z;/);
+    assert.match(stmts[1]!, /SELECT 9/);
+  });
+
+  it("an UNTERMINATED dollar body consumes to EOF rather than splitting", () => {
+    // The alternative — falling back to `;` splitting — would emit fragments of
+    // a body as if they were statements, which is exactly the failure above.
+    const stmts = splitStatements(`SELECT 1; DO $x$ a; b;`);
+    assert.equal(stmts.length, 2);
+    assert.match(stmts[1]!, /\$x\$ a; b;/);
+  });
+
+  it("a bare `$` that is not a dollar quote still splits normally", () => {
+    // `$1` in a parameterised statement, or `$` in a string, must not be
+    // mistaken for an opening tag and swallow the rest of the file.
+    const stmts = splitStatements(`SELECT $1; SELECT 2;`);
+    assert.equal(stmts.length, 2, `expected 2 statements, got ${stmts.length}`);
+  });
+
   it("reads columns out of a CREATE TABLE body without mistaking constraints for columns", () => {
     const cols = parseCreateTableColumns(
       `id uuid NOT NULL, name text, CONSTRAINT pk PRIMARY KEY (id), PRIMARY KEY (id)`,

@@ -79,13 +79,47 @@ router.post("/me/emergency-contacts", asyncHandler(async (req, res) => {
     return;
   }
 
-  // Enforce max 10 contacts per user
-  const { count } = await db
+  // Enforce max 10 contacts per user.
+  //
+  // `error` MUST be destructured and checked. supabase-js RESOLVES on a
+  // database error — it does not throw and it does not reject — so an
+  // unreadable table hands back `{ data: null, error: {...}, count: null }`.
+  // The previous form here read only `count`, and `(count ?? 0) >= 10` then
+  // coerced that null to `0`: the cap was not mis-measured, it was BYPASSED
+  // ENTIRELY, and every write past it succeeded without limit for as long as
+  // the read stayed broken. A `try`/`catch` would not have caught it, because
+  // the failure never leaves the resolved path.
+  const { count, error: countError } = await db
     .from("profile_emergency_contacts")
     .select("*", { count: "exact", head: true })
     .eq("user_id", user.id);
 
-  if ((count ?? 0) >= 10) {
+  // The cap was NOT PERFORMED. That is neither "permitted" nor "at the cap",
+  // and `degraded_unavailable` (503, retryable) is this codebase's own code for
+  // a check that could not be run — see RETRYABLE_CODES in lib/http.ts. A 403
+  // would claim the user is at their limit; a 201 would claim they are not.
+  // Neither fact is in evidence.
+  if (countError) {
+    (req as any).log?.error?.(
+      { userId: user.id, reason: countError.message ?? countError.code ?? "db_error" },
+      "emergency-contact cap unreadable — refusing to create an uncapped contact",
+    );
+    sendError(res, "degraded_unavailable", "Could not verify your contact limit. Please try again.");
+    return;
+  }
+
+  // A read that succeeded but produced no count has still not measured the cap.
+  // Coercing this to zero is the exact defect above wearing a different hat.
+  if (count == null) {
+    (req as any).log?.error?.(
+      { userId: user.id },
+      "emergency-contact cap read returned no count — refusing to create an uncapped contact",
+    );
+    sendError(res, "degraded_unavailable", "Could not verify your contact limit. Please try again.");
+    return;
+  }
+
+  if (count >= 10) {
     sendError(res, "forbidden", "You can have at most 10 emergency contacts");
     return;
   }

@@ -6,6 +6,7 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { logger as rootLogger } from "../../lib/logger.js";
+import { affectedRows } from "../../lib/affectedRows.js";
 
 const logger = rootLogger.child({ service: "TrustAdminService" });
 import { recalculateTrustScore } from "./TrustScoreService.js";
@@ -60,10 +61,33 @@ export async function confirmEvent(
   if (e.status !== "pending_review") throw new Error("Event is not pending review");
 
   const nowMs = Date.now();
-  // Mark confirmed
-  await db.from("trust_events")
+  // Mark confirmed — and make sure it happened. supabase-js resolves on a
+  // database error; unread, a failed update left the event pending_review while
+  // the code below still applied the cap, set probation, and logged the admin
+  // action. The next confirm of the same (still pending) event would then apply
+  // the cap AGAIN. The status transition is the idempotency guard for
+  // everything that follows, so a failure here stops here.
+  //
+  // Reading `error` alone was not enough to make that guarantee. The statement
+  // carries `.eq("status","pending_review")` — a compare-and-swap — and losing
+  // that CAS is NOT an error: PostgREST answers a zero-row UPDATE with 204 and
+  // supabase-js resolves `{ data: null, error: null }`, exactly as it does for
+  // the winning caller. Two admins adjudicating the same queue item (or one
+  // double-clicked request) therefore both ran the cap application, the
+  // probation set and the audit write, which is the double-charge the comment
+  // above says the transition prevents. `.select()` makes the update RETURNING
+  // so the transition can be OBSERVED, and zero rows raises the same
+  // "not pending review" the pre-check raises — the route already maps it.
+  const { data: confirmed, error: confirmErr } = await db.from("trust_events")
     .update({ status: "confirmed", reviewed_by: adminId, reviewed_at: new Date(nowMs).toISOString() })
-    .eq("id", eventId);
+    .eq("id", eventId)
+    .eq("status", "pending_review")
+    .select("id");
+  if (confirmErr) throw new Error(`confirmEvent: status update failed — ${confirmErr.message ?? confirmErr.code ?? "db_error"}`);
+  if (affectedRows(confirmed) === 0) {
+    logger.warn({ eventId, adminId }, "confirmEvent: pending_review→confirmed matched no row — already adjudicated; no cap, probation or audit applied");
+    throw new Error("Event is not pending review");
+  }
 
   // Apply standard caps for this event type
   const { applyEventCaps } = await import("./TrustCapService.js");
@@ -78,11 +102,15 @@ export async function confirmEvent(
   // Recalculate score
   await recalculateTrustScore(db, e.user_id).catch(() => {});
 
-  // Close any review for this event
-  await db.from("trust_reviews")
-    .update({ status: "resolved", resolved_by: adminId, resolved_at: new Date(nowMs).toISOString() })
-    .eq("source_event_id", eventId)
-    .eq("status", "open");
+  // Close any review for this event (non-fatal: the event is confirmed and
+  // scored; an open review row left behind is visible in the queue, not lost).
+  {
+    const { error: reviewErr } = await db.from("trust_reviews")
+      .update({ status: "resolved", resolved_by: adminId, resolved_at: new Date(nowMs).toISOString() })
+      .eq("source_event_id", eventId)
+      .eq("status", "open");
+    if (reviewErr) logger.warn({ err: reviewErr, eventId }, "confirmEvent: trust_reviews close failed (non-fatal)");
+  }
 
   await logAdminAction(db, adminId, e.user_id, "confirm_event", reason, { eventType: e.event_type }, eventId);
   return { ok: true };
@@ -130,10 +158,29 @@ export async function revokeModerationTrustConsequences(
     const { liftCapsBySourceEvents } = await import("./TrustCapService.js");
     const capsLifted = await liftCapsBySourceEvents(db, ids, adminId);
 
-    await db
+    // The count this function RETURNS is what routes/admin.ts's restore path
+    // reports as "the sanction's trust consequences were reversed". It used to
+    // be `ids.length` — the size of the READ set — while the write's outcome
+    // was discarded entirely: neither its error nor its affected-row count was
+    // read, so a dismissal that moved nothing still answered "N events
+    // dismissed" and the user kept the trust penalty for a lifted ban.
+    const { data: dismissedEvents, error: dismissErr } = await db
       .from("trust_events")
       .update({ status: "dismissed", reviewed_by: adminId, reviewed_at: new Date().toISOString() })
-      .in("id", ids);
+      .in("id", ids)
+      .in("status", ["applied", "confirmed", "pending_review"])
+      .select("id");
+    // Never throws, and the two user-favourable steps below (clearing probation
+    // and recalculating) still run on a failed dismissal — they are independent
+    // of it and the sanction really was lifted. What must NOT survive is the
+    // CLAIM: a dismissal that errored or matched nothing reports 0.
+    if (dismissErr) {
+      logger.error({ err: dismissErr, userId, adminId }, "revokeModerationTrustConsequences: event dismissal failed — trust penalty NOT reversed");
+    }
+    const eventsDismissed = dismissErr ? 0 : affectedRows(dismissedEvents);
+    if (eventsDismissed < ids.length) {
+      logger.warn({ userId, selected: ids.length, dismissed: eventsDismissed }, "revokeModerationTrustConsequences: fewer events dismissed than selected");
+    }
 
     // A reversed finding must not leave the user on probation for it.
     await setProbation(db, userId, false, null).catch(() => {});
@@ -145,10 +192,10 @@ export async function revokeModerationTrustConsequences(
     // metadata carries what actually happened.
     await logAdminAction(
       db, adminId, userId, "lift_cap", reason,
-      { op: "revoke_moderation_trust", eventsDismissed: ids.length, capsLifted },
+      { op: "revoke_moderation_trust", eventsDismissed, capsLifted },
     ).catch(() => {});
 
-    return { eventsDismissed: ids.length, capsLifted };
+    return { eventsDismissed, capsLifted };
   } catch {
     return { eventsDismissed: 0, capsLifted: 0 };
   }
@@ -161,24 +208,41 @@ export async function dismissEvent(
   eventId: string,
   reason: string,
 ): Promise<{ ok: boolean }> {
-  const { data: evt } = await db
+  const { data: evt, error: fetchErr } = await db
     .from("trust_events")
     .select("id, user_id, status")
     .eq("id", eventId)
     .maybeSingle();
 
+  if (fetchErr) throw new Error(`dismissEvent: event read failed — ${fetchErr.message ?? fetchErr.code ?? "db_error"}`);
   if (!evt) throw new Error("Event not found");
   const e = evt as any;
   if (e.status !== "pending_review") throw new Error("Event is not pending review");
 
-  await db.from("trust_events")
+  // Same rule as confirmEvent: the status transition must be known to have
+  // happened before the dismissal is recalculated and audited as done.
+  const { data: dismissed, error: dismissErr } = await db.from("trust_events")
     .update({ status: "dismissed", reviewed_by: adminId, reviewed_at: new Date().toISOString() })
-    .eq("id", eventId);
+    .eq("id", eventId)
+    .eq("status", "pending_review")
+    .select("id");
+  if (dismissErr) throw new Error(`dismissEvent: status update failed — ${dismissErr.message ?? dismissErr.code ?? "db_error"}`);
+  // Losing the compare-and-swap is not an error (see confirmEvent): zero rows
+  // means someone else adjudicated this event first, and reviewed_by on the row
+  // is theirs, not this admin's. Recalculating and writing a dismiss_event audit
+  // row for an adjudication this call did not make is the false success.
+  if (affectedRows(dismissed) === 0) {
+    logger.warn({ eventId, adminId }, "dismissEvent: pending_review→dismissed matched no row — already adjudicated; no recalc or audit written");
+    throw new Error("Event is not pending review");
+  }
 
-  await db.from("trust_reviews")
-    .update({ status: "dismissed", resolved_by: adminId, resolved_at: new Date().toISOString() })
-    .eq("source_event_id", eventId)
-    .eq("status", "open");
+  {
+    const { error: reviewErr } = await db.from("trust_reviews")
+      .update({ status: "dismissed", resolved_by: adminId, resolved_at: new Date().toISOString() })
+      .eq("source_event_id", eventId)
+      .eq("status", "open");
+    if (reviewErr) logger.warn({ err: reviewErr, eventId }, "dismissEvent: trust_reviews close failed (non-fatal)");
+  }
 
   await recalculateTrustScore(db, e.user_id).catch(() => {});
   await logAdminAction(db, adminId, e.user_id, "dismiss_event", reason, {}, eventId);
@@ -261,14 +325,16 @@ export async function adminRemoveOverride(
   category: TrustCategory,
   reason: string,
 ): Promise<{ ok: boolean }> {
-  // Find the active admin_override cap for this user+category
-  const { data: caps } = await db
+  // Find the active admin_override cap for this user+category. A failed read
+  // must not be audited as "override removed" — nothing was lifted.
+  const { data: caps, error: capsErr } = await db
     .from("trust_caps")
     .select("id")
     .eq("user_id", targetUserId)
     .eq("category", category)
     .eq("reason_code", "admin_override")
     .is("lifted_at", null);
+  if (capsErr) throw new Error(`adminRemoveOverride: trust_caps read failed — ${capsErr.message ?? capsErr.code ?? "db_error"}`);
 
   if (caps && Array.isArray(caps)) {
     await Promise.all((caps as any[]).map(cap =>
@@ -292,59 +358,84 @@ export async function adminResolveReview(
   resolution: "resolved" | "dismissed",
   notes?: string,
 ): Promise<{ ok: boolean }> {
-  const { data: review } = await db
+  // supabase-js RESOLVES on a database error, so an unbound `error` here made an
+  // unreadable `trust_reviews` indistinguishable from a review that does not
+  // exist — the admin was told "Review not found" about a row that is right
+  // there. The two sibling adjudication paths (confirmEvent, dismissEvent)
+  // already separate them; this one did not.
+  const { data: review, error: fetchErr } = await db
     .from("trust_reviews")
     .select("id, user_id")
     .eq("id", reviewId)
     .maybeSingle();
 
+  if (fetchErr) throw new Error(`adminResolveReview: review read failed — ${fetchErr.message ?? fetchErr.code ?? "db_error"}`);
   if (!review) throw new Error("Review not found");
   const r = review as any;
 
-  await db.from("trust_reviews").update({
+  // The resolution must be KNOWN to have happened before it is reported as
+  // done and written into the admin audit log. This update carried no
+  // `.select()` and no `.error` check at all: its result was discarded
+  // entirely, so a failed write returned `{ ok: true }` to the admin, left the
+  // review sitting in the queue, and recorded a `resolve_review` audit row for
+  // an action that never took place — a false entry in the one log whose whole
+  // purpose is to be trustworthy. Same rule confirmEvent and dismissEvent
+  // already apply to their status transitions.
+  const { data: resolved, error: updateErr } = await db.from("trust_reviews").update({
     status:      resolution,
     resolved_by: adminId,
     resolved_at: new Date().toISOString(),
     notes:       notes ?? null,
-  }).eq("id", reviewId);
+  }).eq("id", reviewId).select("id");
+  if (updateErr) throw new Error(`adminResolveReview: status update failed — ${updateErr.message ?? updateErr.code ?? "db_error"}`);
+  // A bodyless UPDATE cannot report affected rows (PostgREST answers 204 with
+  // no content-range), so `.select()` is what makes the transition observable
+  // at all. Zero rows means the review vanished between the read and the write;
+  // auditing a resolution of a row that is not there is the false success.
+  if (affectedRows(resolved) === 0) {
+    logger.warn({ reviewId, adminId, resolution }, "adminResolveReview: update matched no row — no audit written");
+    throw new Error("Review not found");
+  }
 
   await logAdminAction(db, adminId, r.user_id, "resolve_review",
     notes ?? resolution, { resolution }, reviewId);
   return { ok: true };
 }
 
-/** Get pending events queue for admin */
+/**
+ * Get pending events queue for admin.
+ *
+ * THROWS on a read failure. These two queue reads used to swallow both the
+ * resolved `error` and any throw and return `[]` — so an unreachable ledger
+ * rendered as an EMPTY queue, "nothing to review", to the one person whose job
+ * is to notice. An empty queue and a broken queue are different answers; the
+ * route turns the throw into a db_error.
+ */
 export async function getPendingEvents(
   db: SupabaseClient,
   limit = 50,
 ): Promise<any[]> {
-  try {
-    const { data } = await db
-      .from("trust_events")
-      .select("id, user_id, event_type, category, delta, severity, source_type, metadata, created_at")
-      .eq("status", "pending_review")
-      .order("created_at", { ascending: true })
-      .limit(limit);
-    return (data as any[]) ?? [];
-  } catch {
-    return [];
-  }
+  const { data, error } = await db
+    .from("trust_events")
+    .select("id, user_id, event_type, category, delta, severity, source_type, metadata, created_at")
+    .eq("status", "pending_review")
+    .order("created_at", { ascending: true })
+    .limit(limit);
+  if (error) throw new Error(`getPendingEvents: trust_events read failed — ${error.message ?? error.code ?? "db_error"}`);
+  return (data as any[]) ?? [];
 }
 
-/** Get open reviews queue */
+/** Get open reviews queue. Throws on a read failure — see getPendingEvents. */
 export async function getOpenReviews(
   db: SupabaseClient,
   limit = 50,
 ): Promise<any[]> {
-  try {
-    const { data } = await db
-      .from("trust_reviews")
-      .select("id, user_id, review_type, source_event_id, metadata, created_at")
-      .in("status", ["open", "in_progress"])
-      .order("created_at", { ascending: true })
-      .limit(limit);
-    return (data as any[]) ?? [];
-  } catch {
-    return [];
-  }
+  const { data, error } = await db
+    .from("trust_reviews")
+    .select("id, user_id, review_type, source_event_id, metadata, created_at")
+    .in("status", ["open", "in_progress"])
+    .order("created_at", { ascending: true })
+    .limit(limit);
+  if (error) throw new Error(`getOpenReviews: trust_reviews read failed — ${error.message ?? error.code ?? "db_error"}`);
+  return (data as any[]) ?? [];
 }

@@ -8,6 +8,23 @@ import { logger } from "../lib/logger.js";
 import { asyncHandler } from "../lib/asyncHandler.js";
 import { safeSecretEquals } from "../lib/http.js";
 
+// ── Scheduler health sources ─────────────────────────────────────────────────
+// Every one of these getters existed and had NO CALLER. Each job maintained
+// `consecutiveFailures` on every tick and dropped it on the floor: the jobs
+// could fail on every tick, for days, and the only trace was a log line. Two
+// of them (`getSweepStatus`) share a name across three modules, which is part
+// of why nothing ever aggregated them.
+import { getReconcileStatus } from "../lib/inviteSlotReconciler.js";
+import { getSweepStatus as getZombieTokenSweepStatus } from "../lib/zombieTokenSweeper.js";
+import { getSweepStatus as getEventWaitlistSweepStatus } from "../lib/eventWaitlistSweeper.js";
+import { getSweepStatus as getBuddyRequestSweepStatus } from "../lib/rentBuddyRequestSweeper.js";
+import { getSweeperStatus as getInviteSlotSweeperStatus } from "../lib/inviteSlotSweeper.js";
+import { callSweepFailureState } from "../lib/callSweepScheduler.js";
+import { getLiveShareSweepStatus } from "../lib/tripCrewLiveShareScheduler.js";
+import { getNotificationMaintenanceStatus } from "../lib/notificationMaintenanceScheduler.js";
+import { getServiceClient } from "../lib/supabase.js";
+import { sweepExpiredStories } from "./stories.js";
+
 const router: IRouter = Router();
 
 router.get("/healthz", (_req, res) => {
@@ -94,5 +111,274 @@ router.post("/admin/cleanup/weather-cache", asyncHandler(async (req, res) => {
   }
   res.json({ deleted: deleted ?? 0 });
 }));
+
+/**
+ * POST /admin/cleanup/expired-stories
+ *
+ * Runs sweepExpiredStories: flips `active` stories past their expires_at to
+ * `expired` and deletes the storage objects behind them.
+ *
+ * WHY THIS ENDPOINT EXISTS. sweepExpiredStories has lived in routes/stories.ts
+ * with a docblock reading "Called from the health/cleanup endpoint" and NO
+ * CALLER ANYWHERE except a test. So the 24-hour story was ephemeral in the
+ * product copy and permanent in the database: no row ever left `active`, and
+ * no object was ever removed.
+ *
+ * Two things about the blast radius, stated rather than left to be assumed.
+ * The severity is NOT "story media is publicly fetchable forever" -- that was
+ * the sweep's own comment and it is out of date, because lib/mediaAccess.ts
+ * branch 3d checks expires_at and denies expired story media on the serving
+ * path. What actually accumulates is rows that never leave `active` and storage
+ * objects nothing will ever delete. And AccountDeletionService reasons FROM
+ * this sweep in a comment ("sweepExpiredStories already deletes story bytes on
+ * EXPIRY, but only for..."), which is a premise built on a job that never ran.
+ *
+ * WHY AN OPERATOR ENDPOINT AND NOT A SCHEDULER. A scheduler needs a cadence,
+ * and a cadence for content expiry is a product decision, not a wiring detail.
+ * This mirrors POST /admin/cleanup/weather-cache exactly -- same secret, same
+ * constant-time compare, same shape -- so the capability becomes REACHABLE
+ * without anyone deciding how often it should run. Wiring it to a schedule is
+ * the next step and belongs to whoever owns that cadence.
+ */
+router.post("/admin/cleanup/expired-stories", asyncHandler(async (req, res) => {
+  const secret = process.env.CLEANUP_ADMIN_SECRET;
+  if (!secret) {
+    logger.error("admin/cleanup/expired-stories: CLEANUP_ADMIN_SECRET is not configured — refusing to run");
+    res.status(500).json({ error: "cleanup_secret_not_configured" });
+    return;
+  }
+  const provided = req.headers["x-cleanup-secret"];
+  // Constant-time compare — a plain !== leaks how many leading characters
+  // matched through response timing. See safeSecretEquals in lib/http.ts.
+  if (!safeSecretEquals(provided, secret)) {
+    res.status(401).json({ error: "unauthorized" });
+    return;
+  }
+  const sc = getServiceClient();
+  if (!sc) {
+    logger.error("admin/cleanup/expired-stories: no service client — refusing to run");
+    res.status(503).json({ error: "degraded_unavailable" });
+    return;
+  }
+  try {
+    const expired = await sweepExpiredStories(sc);
+    res.json({ expired });
+  } catch (err) {
+    // sweepExpiredStories THROWS on a read/update error rather than resolving
+    // with a count, so this catch is live code, unlike a catch around a bare
+    // supabase read. A failed sweep must not answer 200 with a fabricated 0.
+    logger.error({ err }, "admin/cleanup/expired-stories: sweep failed");
+    res.status(500).json({ error: "sweep_failed" });
+  }
+}));
+
+// ── GET /healthz/schedulers ──────────────────────────────────────────────────
+/**
+ * One readable verdict for every background job whose health was computed and
+ * then thrown away.
+ *
+ * WHY THIS EXISTS. Ten schedulers keep a status object. Two of them were
+ * reachable (`/healthz/cleanup`). The other eight were not reachable at all —
+ * `getReconcileStatus`, three separate `getSweepStatus`, `getSweeperStatus`,
+ * `callSweepFailureState`, `getLiveShareSweepStatus` and
+ * `getNotificationMaintenanceStatus` had zero callers in the tree. A job that
+ * fails repeatedly and reports nothing an operator can read is indistinguishable
+ * from a job that is working, and that is the whole defect.
+ *
+ * THREE STATES, KEPT APART, because collapsing any two of them is how this
+ * surface would lie:
+ *
+ *   "healthy"    the job has run AND its last pass did not fail.
+ *   "failing"    consecutiveFailures > 0, or the last outcome was an error.
+ *                Not "it failed once long ago": every job resets the counter
+ *                to 0 on a pass that genuinely succeeded, so a non-zero
+ *                counter means it is failing NOW, repeatedly.
+ *   "never_ran"  the job tracks a run timestamp and has none. A fresh process
+ *                is legitimately here; a process that has been up for hours is
+ *                not, and the operator can tell the difference from uptime.
+ *   "unknown"    the job exposes NO run timestamp, so "it ran and was fine"
+ *                cannot be told from "it never started". Only callSweepScheduler
+ *                is in this state today; it is reported honestly rather than
+ *                being counted as healthy, and giving it a lastRunAt is a
+ *                one-line change in a file this pass does not own.
+ *
+ * THE STATUS CODE IS THE VERDICT. 503 when anything is failing — an operator's
+ * probe must not have to parse the body to learn that eight sweepers are down.
+ * `never_ran` stays 200 on purpose: it is the correct state for the first
+ * minute of a process's life, and a check that flaps on every deploy is a check
+ * that gets muted.
+ *
+ * Unauthenticated, like the other /healthz routes. The body carries counters
+ * and timestamps only — no user data, no identifiers.
+ */
+type JobHealth = "healthy" | "failing" | "never_ran" | "unknown";
+
+interface JobReport {
+  job: string;
+  status: JobHealth;
+  lastRunAt: string | null;
+  /** When the job distinguishes "attempted" from "succeeded"; null when it does not. */
+  lastSuccessAt: string | null;
+  consecutiveFailures: number;
+  detail?: string;
+}
+
+function classify(o: {
+  lastRunAt?: string | null;
+  consecutiveFailures?: number;
+  lastOutcome?: string | null;
+  /** false when the job keeps no run timestamp at all. */
+  tracksLastRun?: boolean;
+}): JobHealth {
+  if ((o.consecutiveFailures ?? 0) > 0) return "failing";
+  if (o.lastOutcome === "error") return "failing";
+  if (o.tracksLastRun === false) return "unknown";
+  if (!o.lastRunAt) return "never_ran";
+  return "healthy";
+}
+
+function schedulerReports(): JobReport[] {
+  const reports: JobReport[] = [];
+
+  const reconcile = getReconcileStatus();
+  reports.push({
+    job: "inviteSlotReconciler",
+    status: classify(reconcile),
+    lastRunAt: reconcile.lastRunAt,
+    lastSuccessAt: null,
+    consecutiveFailures: reconcile.consecutiveFailures,
+  });
+
+  const zombie = getZombieTokenSweepStatus();
+  reports.push({
+    job: "zombieTokenSweeper",
+    status: classify(zombie),
+    lastRunAt: zombie.lastRunAt,
+    lastSuccessAt: null,
+    consecutiveFailures: zombie.consecutiveFailures,
+  });
+
+  const waitlist = getEventWaitlistSweepStatus();
+  reports.push({
+    job: "eventWaitlistSweeper",
+    status: classify(waitlist),
+    lastRunAt: waitlist.lastRunAt,
+    lastSuccessAt: null,
+    consecutiveFailures: waitlist.consecutiveFailures,
+  });
+
+  const buddy = getBuddyRequestSweepStatus();
+  reports.push({
+    job: "rentBuddyRequestSweeper",
+    status: classify(buddy),
+    lastRunAt: buddy.lastRunAt,
+    lastSuccessAt: null,
+    consecutiveFailures: buddy.consecutiveFailures,
+  });
+
+  const slots = getInviteSlotSweeperStatus();
+  reports.push({
+    job: "inviteSlotSweeper",
+    status: classify(slots),
+    lastRunAt: slots.lastRunAt,
+    lastSuccessAt: null,
+    consecutiveFailures: slots.consecutiveFailures,
+  });
+
+  const calls = callSweepFailureState();
+  reports.push({
+    job: "callSweepScheduler",
+    // No lastRunAt is exported by this scheduler, so a clean counter proves
+    // only "not failing", never "it ran". Reported as `unknown` rather than
+    // borrowed optimism.
+    status: classify({ consecutiveFailures: calls.consecutiveFailures, tracksLastRun: false }),
+    lastRunAt: null,
+    lastSuccessAt: null,
+    consecutiveFailures: calls.consecutiveFailures,
+    detail: calls.lastError
+      ? `last error: ${calls.lastError}`
+      : "this scheduler exports no run timestamp — a clean counter cannot prove it ticked",
+  });
+
+  const liveShare = getLiveShareSweepStatus();
+  reports.push({
+    job: "tripCrewLiveShareScheduler",
+    status: classify(liveShare),
+    lastRunAt: liveShare.lastRunAt,
+    lastSuccessAt: liveShare.lastSuccessAt,
+    consecutiveFailures: liveShare.consecutiveFailures,
+    detail: liveShare.lastFailures.length > 0 ? `last failures: ${liveShare.lastFailures.join(", ")}` : undefined,
+  });
+
+  const notif = getNotificationMaintenanceStatus();
+  reports.push({
+    job: "notificationMaintenanceScheduler",
+    status: classify(notif),
+    lastRunAt: notif.lastRunAt,
+    lastSuccessAt: notif.lastSuccessAt,
+    consecutiveFailures: notif.consecutiveFailures,
+    detail: notif.lastFailures.length > 0
+      ? `last failures: ${notif.lastFailures.join(", ")}`
+      : (notif.lastSkippedReason ? `last tick skipped: ${notif.lastSkippedReason}` : undefined),
+  });
+
+  // Already readable at /healthz/cleanup, repeated here so ONE probe covers the
+  // whole class and an operator does not have to know which jobs got lucky.
+  const cleanup = getCleanupStatus();
+  reports.push({
+    job: "dailyBriefCleanup",
+    status: classify(cleanup),
+    lastRunAt: cleanup.lastRunAt,
+    lastSuccessAt: null,
+    consecutiveFailures: cleanup.consecutiveFailures,
+  });
+
+  const seen = getSuggestionSeenStatus();
+  reports.push({
+    job: "suggestionSeenCleanup",
+    // Keeps no failure counter; `lastOutcome` is its only failure signal.
+    status: classify({ lastRunAt: seen.lastRunAt, lastOutcome: seen.lastOutcome }),
+    lastRunAt: seen.lastRunAt,
+    lastSuccessAt: null,
+    consecutiveFailures: 0,
+    detail: seen.lastOutcome ? `last outcome: ${seen.lastOutcome}` : undefined,
+  });
+
+  return reports;
+}
+
+router.get("/healthz/schedulers", (_req, res) => {
+  const jobs = schedulerReports();
+
+  const failing = jobs.filter((j) => j.status === "failing");
+  const neverRan = jobs.filter((j) => j.status === "never_ran");
+  const unknown = jobs.filter((j) => j.status === "unknown");
+
+  // Vacuity guard: an aggregate that reports on nothing is a green light that
+  // means nothing. If the report list is ever empty, that is itself a failure.
+  if (jobs.length === 0) {
+    res.status(503).json({ overall: "failing", jobs: [], error: "no scheduler reported" });
+    return;
+  }
+
+  const overall: JobHealth =
+    failing.length > 0 ? "failing" : neverRan.length > 0 ? "never_ran" : "healthy";
+
+  if (failing.length > 0) {
+    logger.error(
+      { failing: failing.map((j) => ({ job: j.job, consecutiveFailures: j.consecutiveFailures })) },
+      "schedulerHealthCheck: background jobs are failing repeatedly",
+    );
+  }
+
+  res.status(failing.length > 0 ? 503 : 200).json({
+    overall,
+    jobCount: jobs.length,
+    failingCount: failing.length,
+    neverRanCount: neverRan.length,
+    unknownCount: unknown.length,
+    jobs,
+  });
+});
 
 export default router;

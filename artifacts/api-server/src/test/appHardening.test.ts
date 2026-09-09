@@ -2,7 +2,12 @@
  * App-level security hardening tests
  *
  * 1. CORS — requests from non-allowlisted origins are rejected.
- * 2. Global error handler — unhandled throws return { error: { code, message } }.
+ * 2. Global error handler — unhandled throws return the FLAT { error, message }
+ *    envelope every route emits (A2; see lib/errorEnvelope.ts). This suite used
+ *    to assert the NESTED { error: { code, message } } shape against a
+ *    hand-copied replica of the handler, so it pinned the inconsistency and
+ *    could not have noticed the original changing. It now imports the real
+ *    exported handler.
  * 3. Auth rate limits — POST /auth/signup returns 429 after the per-IP cap is exceeded.
  *
  * Runtime: node:test + node:assert/strict (no vitest / no supertest).
@@ -16,6 +21,7 @@ import http from "node:http";
 import express, { type Request, type Response, type NextFunction } from "express";
 import cors from "cors";
 import { _setTestServiceClient } from "../lib/supabase.js";
+import { globalErrorHandler } from "../lib/errorEnvelope.js";
 import { _resetAuthRateLimits } from "../routes/auth.js";
 
 // ── Shared HTTP helper ────────────────────────────────────────────────────────
@@ -159,32 +165,25 @@ describe("global error handler", () => {
       next(err);
     });
 
-    // Global error handler — verbatim copy of the app.ts handler
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    app.use((err: any, _req: Request, res: Response, _next: NextFunction): void => {
-      const status: number =
-        typeof err?.status     === "number" ? err.status :
-        typeof err?.statusCode === "number" ? err.statusCode :
-        500;
-      res.status(status).json({
-        error: {
-          code:    err?.code    ?? "INTERNAL_ERROR",
-          message: err?.message ?? "An unexpected error occurred.",
-        },
-      });
-    });
+    // THE handler app.ts registers, not a copy of it. A replica cannot fail
+    // when the original drifts, which is exactly what happened to the envelope.
+    app.use(globalErrorHandler);
 
     server = await startServer(app);
   });
 
   after(() => stopServer(server));
 
-  it("returns 500 with { error: { code, message } } for an unhandled error", async () => {
+  it("returns 500 with the flat { error, message } envelope for an unhandled error", async () => {
     const r = await rawRequest({ server, method: "GET", path: "/throw" });
     assert.equal(r.status, 500, `expected 500, got ${r.status}`);
     assert.ok(r.body?.error, "response must have an 'error' key");
-    assert.equal(r.body.error.code, "INTERNAL_ERROR");
-    assert.ok(typeof r.body.error.message === "string" && r.body.error.message.length > 0,
+    // MOVED, not deleted: the old assertion pinned `body.error.code`, i.e. the
+    // nested shape that made `body.error` an object on any unhandled throw
+    // while all 4159 sendError sites made it a string.
+    assert.equal(typeof r.body.error, "string", "body.error must be the code itself");
+    assert.equal(r.body.error, "INTERNAL_ERROR");
+    assert.ok(typeof r.body.message === "string" && r.body.message.length > 0,
       "message must be a non-empty string");
   });
 
@@ -197,8 +196,8 @@ describe("global error handler", () => {
   it("preserves a custom status code carried on the error object", async () => {
     const r = await rawRequest({ server, method: "GET", path: "/custom-status" });
     assert.equal(r.status, 404, `expected 404, got ${r.status}`);
-    assert.equal(r.body.error.code, "NOT_FOUND");
-    assert.ok(r.body.error.message.includes("not found"));
+    assert.equal(r.body.error, "NOT_FOUND");
+    assert.ok(String(r.body.message).includes("not found"));
   });
 });
 
@@ -265,13 +264,14 @@ describe("auth rate limits — POST /auth/signup", () => {
     assert.equal(over.status, 429, `expected 429 on request 6, got ${over.status}: ${JSON.stringify(over.body)}`);
   });
 
-  it("429 body uses the standard { error: { code, message } } envelope", async () => {
+  it("429 body uses the standard flat { error, message } envelope", async () => {
     for (let i = 0; i < 5; i++) await postSignup(i);
     const over = await postSignup(5);
     assert.equal(over.status, 429);
     assert.ok(over.body?.error, "response must have an 'error' key");
-    assert.equal(over.body.error.code, "RATE_LIMITED");
-    assert.ok(typeof over.body.error.message === "string" && over.body.error.message.length > 0,
+    assert.equal(typeof over.body.error, "string", "body.error must be the code itself");
+    assert.equal(over.body.error, "RATE_LIMITED");
+    assert.ok(typeof over.body.message === "string" && over.body.message.length > 0,
       "message must be a non-empty string");
   });
 
@@ -351,13 +351,17 @@ describe("auth rate limits — POST /auth/lookup-username", () => {
     assert.equal(over.status, 429, `expected 429 on request 11, got ${over.status}: ${JSON.stringify(over.body)}`);
   });
 
-  it("429 body uses the standard { error: { code, message } } envelope", async () => {
+  it("429 body uses the standard flat { error, message } envelope", async () => {
     for (let i = 0; i < 10; i++) await postLookup(i);
     const over = await postLookup(10);
     assert.equal(over.status, 429);
     assert.ok(over.body?.error, "response must have an 'error' key");
-    assert.equal(over.body.error.code, "RATE_LIMITED");
-    assert.ok(typeof over.body.error.message === "string" && over.body.error.message.length > 0,
+    // MOVED with the signup suite's identical assertion above: the
+    // express-rate-limit `message` bodies in routes/auth.ts were the other two
+    // nested-envelope emitters in the tree (A2).
+    assert.equal(typeof over.body.error, "string", "body.error must be the code itself");
+    assert.equal(over.body.error, "RATE_LIMITED");
+    assert.ok(typeof over.body.message === "string" && over.body.message.length > 0,
       "message must be a non-empty string");
   });
 

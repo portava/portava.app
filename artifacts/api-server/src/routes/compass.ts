@@ -23,7 +23,16 @@ import { Router } from "express";
 import { z } from "zod";
 import { requireUser, sendError, canEditPlan, isAcceptedTripMember } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
+import {
+  tripKernelClient,
+  readCommandEnvelope,
+  executeTripCommand,
+  sendKernelRejection,
+  setTripVersionHeader,
+} from "../lib/tripKernel.js";
 import { nameVisibilitySet } from "../lib/publicIdentity.js";
+import { buildConsumerProjection } from "../services/passport/PassportConsumerProjections.js";
+import { allowDiscoveryPersonCard } from "../services/passport/PassportConsumerAccess.js";
 import { isCompassEnabled, isEnabled } from "../compass/flags.js";
 import { checkRateLimit } from "../lib/rateLimit.js";
 import { getCompassProfile } from "../compass/CompassProfileService.js";
@@ -912,12 +921,25 @@ router.get("/compass/why/:recommendationId", async (req, res) => {
     // Step 2: Authoritative DB lookup — recommendation must have been served via the feed.
     // The feed route pre-registers all served recommendations in compass_served_recommendations.
     // If the row doesn't exist, the recommendation was never served to this user.
-    const { data: row } = await sc
+    // This read IS the authorization: only a recommendation this server
+    // actually served to THIS user has a row here. supabase-js resolves on a
+    // DB error, so an unreadable compass_served_recommendations returns the
+    // same `null` an unserved recommendation does — the denial below is the
+    // right outcome either way (never serve an explanation we cannot attribute),
+    // but without observing `error` the outage is invisible and looks like a
+    // flood of users asking about recommendations they were never served.
+    const { data: row, error: rowErr } = await sc
       .from("compass_served_recommendations")
       .select("explanation_key, ranking_factors")
       .eq("recommendation_id", recommendationId)
       .eq("user_id", user.id)
       .maybeSingle();
+
+    if (rowErr) {
+      req.log?.warn({ err: rowErr, userId: user.id }, "compass/why: served-recommendation lookup unavailable; denying");
+      res.json({ explanation: "Recommendation not found or not available for your account." });
+      return;
+    }
 
     if (!row) {
       res.json({ explanation: "Recommendation not found or not available for your account." });
@@ -1805,7 +1827,13 @@ router.post("/compass/proposals/:proposalId/confirm", async (req, res) => {
 
   // Duplicate guard for catalog places (same rule as the plan route).
   if (proposal.placeId) {
-    const { data: existing } = await sc
+    // The duplicate guard is the only thing between a confirmed proposal and a
+    // second copy of the same place in the itinerary: the legacy (kernel-off)
+    // INSERT below runs unconditionally. supabase-js resolves on a DB error, so
+    // an unreadable trip_plan_items gives `data: null` — indistinguishable from
+    // "not in the plan" — and the place gets added again. Refuse instead; the
+    // proposal is still pending and the confirm is safe to retry.
+    const { data: existing, error: existingErr } = await sc
       .from("trip_plan_items")
       .select("id")
       .eq("trip_id", proposal.tripId)
@@ -1813,10 +1841,50 @@ router.post("/compass/proposals/:proposalId/confirm", async (req, res) => {
       .eq("source_id", proposal.placeId)
       .is("removed_at", null)
       .maybeSingle();
+    if (existingErr) {
+      req.log?.warn({ err: existingErr, tripId: proposal.tripId, placeId: proposal.placeId }, "compass proposal confirm: duplicate check unavailable");
+      sendError(res, "degraded_unavailable", "We could not check your trip plan right now. Please try again shortly.");
+      return;
+    }
     if (existing) { sendError(res, "conflict", "This place is already in your trip plan"); return; }
   }
 
-  const { data: item, error } = await sc
+  // Trip Kernel path (§4.1 ADD_PLAN, capability crew). The re-authorization
+  // above (accepted member + canEditPlan, at execution time) is the
+  // authorization; the kernel re-checks crew. The payload is the direct
+  // insert's column set plus location_is_private = true, the table default the
+  // insert relies on. Off => the insert below.
+  const kernel = await tripKernelClient(sc);
+  let kernelItem: any = null;
+  if (kernel) {
+    const env = readCommandEnvelope(req);
+    if (!env.ok) { sendError(res, "invalid_payload", env.message); return; }
+    const r = await executeTripCommand(kernel, {
+      commandId: randomUUID(),
+      tripId: proposal.tripId,
+      actorUserId: user.id,   // always from token
+      expectedTripVersion: env.expectedTripVersion,
+      idempotencyKey: env.idempotencyKey,
+      type: "ADD_PLAN",
+      payload: {
+        title:               proposal.title,
+        category:            proposal.category || "activity",
+        status:              "tentative",
+        source_type:         proposal.placeId ? "place" : "compass",
+        source_id:           proposal.placeId ?? proposal.proposalId,
+        day_date:            proposal.dayDate ?? null,
+        location_is_private: true,
+        sort_order:          0,
+        visibility:          "members",
+      },
+    });
+    if (!r.ok) { sendKernelRejection(res, r, req.log); return; }
+    setTripVersionHeader(res, r.version);
+    kernelItem = r.result;
+  }
+
+  // trip-kernel:legacy-path — flag-off twin of ADD_PLAN above.
+  const { data: item, error } = kernelItem ? { data: kernelItem, error: null } : await sc
     .from("trip_plan_items")
     .insert({
       trip_id:       proposal.tripId,
@@ -2039,11 +2107,18 @@ router.patch("/compass/me/preferences", async (req, res) => {
     return;
   }
 
-  const { data: updated } = await sc
+  // Read-back echo. The upsert above already succeeded, so this failing must
+  // NOT fail the request — but the `?? { user_id, ...parsed.data }` fallback
+  // hands the client a row built purely from what it just sent, hiding every
+  // stored field it did not touch. Log so the substituted echo is visible.
+  const { data: updated, error: readBackErr } = await sc
     .from("compass_user_preferences")
     .select("*")
     .eq("user_id", user.id)
     .maybeSingle();
+  if (readBackErr) {
+    req.log.warn({ err: readBackErr, userId: user.id }, "compass/me/preferences: saved, but read-back failed; echoing request body");
+  }
 
   res.json({ preferences: updated ?? { user_id: user.id, ...parsed.data } });
 });
@@ -2851,11 +2926,20 @@ router.patch("/compass/settings", async (req, res) => {
     return;
   }
 
-  const { data: updated } = await sc
+  // Read-back echo. The upsert already landed, so a failed read must not fail
+  // the request — but the fallback below renders every setting the caller did
+  // NOT send as the built-in DEFAULT, which for this table means showing
+  // default privacy/sharing toggles over whatever the user actually has stored.
+  // A client that then PATCHes the screen back would write those defaults in.
+  // Log it so the substitution is never silent.
+  const { data: updated, error: readBackErr } = await sc
     .from("compass_settings")
     .select(SETTINGS_SELECT_COLS)
     .eq("user_id", user.id)
     .maybeSingle();
+  if (readBackErr) {
+    req.log.warn({ err: readBackErr, userId: user.id }, "compass/settings PATCH: saved, but read-back failed; echoing defaults + request body");
+  }
 
   res.json({ settings: updated ?? { user_id: user.id, ...DEFAULT_COMPASS_SETTINGS, ...parsed.data } });
 });
@@ -2974,11 +3058,22 @@ router.post("/compass/signals/search", async (req, res) => {
 
   (async () => {
     try {
-      const { data } = await sc
+      // This is a read-modify-WRITE of the whole category_weights map. An
+      // unreadable compass_user_preferences resolves as `{ data: null }`, the
+      // same shape a user with no preferences row gives, so `?? {}` would make
+      // the upsert below overwrite EVERY learned category weight this user has
+      // accumulated with a single `{ [category]: 1 }` — destroying their
+      // personalisation permanently on a transient read failure. A skipped
+      // nudge costs one +1; a clobbered map cannot be recovered.
+      const { data, error: readErr } = await sc
         .from("compass_user_preferences")
         .select("category_weights")
         .eq("user_id", user.id)
         .maybeSingle();
+      if (readErr) {
+        req.log?.warn({ err: readErr, userId: user.id, category }, "compass/signals/search: weights unreadable; skipping nudge rather than clobbering the map");
+        return;
+      }
       const weights: Record<string, number> =
         ((data as any)?.category_weights as Record<string, number>) ?? {};
       // Nudge +1 toward the searched category, clamped to [-10, +10].
@@ -4176,6 +4271,56 @@ router.get("/compass/telegraph", async (req, res) => {
     req.log?.error({ err }, "compass/telegraph: build failed");
     // Always fail open — return empty cards rather than an error
     res.json({ cards: [], city: null });
+  }
+});
+
+// ── GET /api/compass/people/:userId/passport ──────────────────────────────────
+//
+// §21 TABLE 22, Compass row: "permitted identity, availability, intent, trust
+// capabilities, Trip/shared context". §8 pairs Compass person cards with
+// Discovery ones and the discovery_card variant serves both — it carries the
+// trust CAPABILITIES (`capabilities.owner`) Compass eligibility reads, and its
+// `intent` is the EXPLICIT current intent from the §8 availability-window
+// domain, which is precisely the signal §8 tells Compass to weight above
+// generic interests (`explicitIntentBoost` / `genericInterestWeight`, exported
+// from the same module so the weighting and the card read one truth).
+//
+// §35's loop — "Compass combines the two permitted Passport projections with
+// live Map intelligence" — is two calls to this, one per traveler, not a
+// Compass-local reconstruction of who those travelers are.
+router.get("/compass/people/:userId/passport", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const { userId } = req.params;
+  if (!/^[0-9a-f-]{36}$/i.test(userId)) {
+    sendError(res, "invalid_payload", "Invalid user id");
+    return;
+  }
+
+  const rl = checkRateLimit("compass_person_card", user.id, 60, 60_000);
+  if (!rl.allowed) {
+    res.setHeader("Retry-After", Math.ceil(rl.retryAfterMs / 1000).toString());
+    sendError(res, "rate_limited", "Too many requests. Please wait.");
+    return;
+  }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not available"); return; }
+
+  // Same gate as the Discovery card, from the same module: a traveler the
+  // people-recommendation list must not surface is not reachable by id either.
+  const gate = await allowDiscoveryPersonCard(sc, userId);
+  if (!gate.allowed) { sendError(res, "not_found", "User not found"); return; }
+
+  try {
+    const passport = await buildConsumerProjection(sc, "discovery_card", userId, user.id);
+    if (!passport) { sendError(res, "not_found", "User not found"); return; }
+    res.status(200).json({ passport });
+  } catch (err) {
+    req.log.warn({ err, userId }, "compass person card projection failed");
+    sendError(res, "db_error", "Could not load person card");
   }
 });
 

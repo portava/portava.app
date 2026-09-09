@@ -8,7 +8,10 @@
  *   - Per-category in-app/push/email/digest toggles
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { logger as rootLogger } from "../../lib/logger.js";
 import type { NotificationCategory, NotificationChannel, NotificationPriority } from "./NotificationTemplateService.js";
+
+const logger = rootLogger.child({ service: "NotificationPreferenceService" });
 
 export interface NotificationPreferences {
   userId: string;
@@ -118,13 +121,47 @@ export function localMinutesOfDay(now: Date, tz: string | null): number {
 export class NotificationPreferenceService {
   constructor(private readonly db: SupabaseClient) {}
 
-  async getPreferences(userId: string): Promise<NotificationPreferences> {
-    const { data } = await this.db
+  /**
+   * Read a user's global preferences, reporting whether the read SUCCEEDED.
+   *
+   * ── "NO ROW" AND "COULD NOT LOOK" ARE NOT THE SAME ANSWER ─────────────────
+   * supabase-js RESOLVES on a database error, so `data` is null both when the
+   * user has never saved preferences and when notification_preferences could
+   * not be read at all. `getPreferences` collapsed the two into DEFAULTS — and
+   * the defaults say pushEnabled: true. So an unreadable preferences table was
+   * read as EVERY USER CONSENTED TO PUSH, silently, for as long as the table
+   * stayed unreadable. That is the one direction a consent lookup must never
+   * fail in.
+   *
+   * This variant hands the caller the fact instead of hiding it.
+   * `readFailed: true` means "these are placeholder defaults, not this user's
+   * choices" — see NotificationRouter.route for what is done with that.
+   */
+  async getPreferencesResult(
+    userId: string,
+  ): Promise<{ prefs: NotificationPreferences; readFailed: boolean }> {
+    const { data, error } = await this.db
       .from('notification_preferences')
       .select('*')
       .eq('user_id', userId)
       .maybeSingle();
-    return rowToPrefs(userId, data as Record<string, any> | null);
+    if (error) {
+      logger.error({ err: error, userId }, 'NotificationPreferenceService: preferences read failed — consent is UNKNOWN, not granted');
+      return { prefs: rowToPrefs(userId, null), readFailed: true };
+    }
+    return { prefs: rowToPrefs(userId, data as Record<string, any> | null), readFailed: false };
+  }
+
+  /**
+   * Convenience wrapper that returns defaults for an unreadable row.
+   *
+   * Safe ONLY where the answer is displayed back to its owner (the settings
+   * screen). Anything that decides whether to DELIVER must use
+   * `getPreferencesResult` and handle `readFailed` — defaults grant push.
+   */
+  async getPreferences(userId: string): Promise<NotificationPreferences> {
+    const { prefs } = await this.getPreferencesResult(userId);
+    return prefs;
   }
 
   async upsertPreferences(
@@ -149,10 +186,18 @@ export class NotificationPreferenceService {
     const map = new Map<string, NotificationPreferences>();
     for (const id of userIds) map.set(id, rowToPrefs(id, null));
     if (userIds.length === 0) return map;
-    const { data } = await this.db
+    const { data, error } = await this.db
       .from('notification_preferences')
       .select('*')
       .in('user_id', userIds);
+    if (error) {
+      // Same assume-consent hazard as the single-user read, multiplied by the
+      // size of the fan-out: every candidate falls back to DEFAULTS, which
+      // grant push. The one caller (routes/rentABuddyMarketplace.ts) is owned
+      // elsewhere, so this logs rather than changes the answer — no silent
+      // consent assumption, but the outage is at least visible.
+      logger.error({ err: error, userCount: userIds.length }, 'NotificationPreferenceService: batch preferences read failed — every user fell back to DEFAULTS (push ON)');
+    }
     for (const row of (data ?? []) as Record<string, any>[]) {
       map.set(row.user_id, rowToPrefs(row.user_id, row));
     }
@@ -170,11 +215,14 @@ export class NotificationPreferenceService {
   ): Promise<Map<string, CategoryPreferences>> {
     const map = new Map<string, CategoryPreferences>();
     if (userIds.length === 0) return map;
-    const { data } = await this.db
+    const { data, error } = await this.db
       .from('notification_category_preferences')
       .select('*')
       .in('user_id', userIds)
       .eq('category', category);
+    if (error) {
+      logger.error({ err: error, userCount: userIds.length, category }, 'NotificationPreferenceService: batch category preferences read failed — every mute in this batch read as absent');
+    }
     for (const r of (data ?? []) as Record<string, any>[]) {
       map.set(r.user_id, {
         category:       r.category as NotificationCategory,
@@ -187,18 +235,41 @@ export class NotificationPreferenceService {
     return map;
   }
 
-  async getCategoryPreferences(userId: string): Promise<CategoryPreferences[]> {
-    const { data } = await this.db
+  /**
+   * Per-category overrides, reporting whether the read SUCCEEDED.
+   *
+   * An empty array means "this user has set no category overrides", i.e. every
+   * category is on. An unreadable table produced exactly that same empty array,
+   * so a muted category read as an UNMUTED one — the same assume-consent
+   * failure as the global row, one level down.
+   */
+  async getCategoryPreferencesResult(
+    userId: string,
+  ): Promise<{ categoryPrefs: CategoryPreferences[]; readFailed: boolean }> {
+    const { data, error } = await this.db
       .from('notification_category_preferences')
       .select('*')
       .eq('user_id', userId);
-    return (data ?? []).map((r: any) => ({
-      category:       r.category as NotificationCategory,
-      inAppEnabled:   Boolean(r.in_app_enabled),
-      pushEnabled:    Boolean(r.push_enabled),
-      emailEnabled:   Boolean(r.email_enabled),
-      digestEnabled:  Boolean(r.digest_enabled),
-    }));
+    if (error) {
+      logger.error({ err: error, userId }, 'NotificationPreferenceService: category preferences read failed — mutes are UNKNOWN, not absent');
+      return { categoryPrefs: [], readFailed: true };
+    }
+    return {
+      categoryPrefs: (data ?? []).map((r: any) => ({
+        category:       r.category as NotificationCategory,
+        inAppEnabled:   Boolean(r.in_app_enabled),
+        pushEnabled:    Boolean(r.push_enabled),
+        emailEnabled:   Boolean(r.email_enabled),
+        digestEnabled:  Boolean(r.digest_enabled),
+      })),
+      readFailed: false,
+    };
+  }
+
+  /** Display-only wrapper — see the warning on `getPreferences`. */
+  async getCategoryPreferences(userId: string): Promise<CategoryPreferences[]> {
+    const { categoryPrefs } = await this.getCategoryPreferencesResult(userId);
+    return categoryPrefs;
   }
 
   async upsertCategoryPreferences(
@@ -211,9 +282,19 @@ export class NotificationPreferenceService {
     if (patch.pushEnabled   !== undefined) row.push_enabled   = patch.pushEnabled;
     if (patch.emailEnabled  !== undefined) row.email_enabled  = patch.emailEnabled;
     if (patch.digestEnabled !== undefined) row.digest_enabled = patch.digestEnabled;
-    await this.db
+    // The write was issued (it is awaited, so the thenable runs) but its error
+    // was discarded and the method returned void — so PUT
+    // /me/notification-preferences answered `ok: true` to a user muting a
+    // category while the row was never written, and the notifications they
+    // just opted out of kept arriving. Failing loudly is the only way the
+    // caller can tell the difference.
+    const { error } = await this.db
       .from('notification_category_preferences')
       .upsert(row, { onConflict: 'user_id,category' });
+    if (error) {
+      logger.error({ err: error, userId, category }, 'NotificationPreferenceService: category preference upsert failed');
+      throw new Error(`category preference upsert failed for '${category}': ${error.message}`);
+    }
   }
 
   /**

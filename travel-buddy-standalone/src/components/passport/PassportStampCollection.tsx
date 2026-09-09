@@ -7,11 +7,17 @@ import React, { useState } from 'react';
 import {
   View, Text, ScrollView, Pressable, StyleSheet, Image,
 } from 'react-native';
-import { Compass, ShieldCheck, PenLine, Sparkles } from 'lucide-react-native';
+import { Compass } from 'lucide-react-native';
 import type { PassportStamp, StampVerification } from '../../types/models.ts';
 import { PP, PP_LABEL, PP_VALUE, fmtMonthYear } from '../../theme/passportTokens.ts';
 import { avatar, dot } from '../../theme/tokens.ts';
 import { trackStampViewed } from '../../features/passport/passportTelemetry.ts';
+// §12 provenance treatment — the label, colour and glyph live in ONE place so
+// this strip and the stamp DETAIL view cannot drift apart (census-passport P68).
+import {
+  VERIFICATION_META,
+  stampVerification,
+} from '../../features/passport/stampVerificationPresentation.ts';
 
 type StampFilter = 'all' | 'cities' | 'special';
 
@@ -46,24 +52,6 @@ function kindAccent(kind: PassportStamp['kind']): string {
     case 'perk':   return '#4A1A2A';
     default:       return '#1A3A2A';
   }
-}
-
-/**
- * §12 verification treatment. `verification` is optional on legacy stamps; an
- * absent value is treated as 'decorative' so a stamp of unknown provenance can
- * never read as verified.
- */
-const VERIFICATION_META: Record<
-  StampVerification,
-  { label: string; color: string; Icon: typeof ShieldCheck }
-> = {
-  verified:   { label: 'Verified',      color: '#2E7D5B', Icon: ShieldCheck },
-  reported:   { label: 'Self-reported', color: '#B4791F', Icon: PenLine },
-  decorative: { label: 'Decorative',    color: PP.inkMuted, Icon: Sparkles },
-};
-
-function stampVerification(stamp: PassportStamp): StampVerification {
-  return stamp.verification ?? 'decorative';
 }
 
 /**

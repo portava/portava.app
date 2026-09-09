@@ -31,10 +31,13 @@ import { useHighlightRingState } from '../hooks/useHighlightRingState.ts';
 import { deriveTripDisplayStatus, tripStatusLabel } from '../lib/tripStatus.ts';
 
 /* ── Progress ring (semicircle arc) ── */
-function ProgressRing({ pct }: { pct: number }) {
+function ProgressRing({ pct }: { pct: number | null }) {
   const r = 46, cx = 60, cy = 60;
   const start = Math.PI;
-  const end = Math.PI - (pct / 100) * Math.PI;
+  // A null pct means the readiness read did not answer. The arc stays at the
+  // track (no filled sweep) and the label says so, rather than drawing an
+  // empty ring over "0%" — which reads as a measured, very bad score.
+  const end = Math.PI - ((pct ?? 0) / 100) * Math.PI;
   const x1 = cx + r * Math.cos(start), y1 = cy - r * Math.sin(start);
   const x2 = cx + r * Math.cos(end), y2 = cy - r * Math.sin(end);
   const bgX = cx + r * Math.cos(0), bgY = cy - r * Math.sin(0);
@@ -44,7 +47,7 @@ function ProgressRing({ pct }: { pct: number }) {
         <Path d={`M ${x1} ${y1} A ${r} ${r} 0 0 1 ${bgX} ${bgY}`} stroke={color.haze} strokeWidth="9" fill="none" strokeLinecap="round" />
         <Path d={`M ${x1} ${y1} A ${r} ${r} 0 0 1 ${x2} ${y2}`} stroke={color.signal} strokeWidth="9" fill="none" strokeLinecap="round" />
       </Svg>
-      <Text style={ring.pct}>{pct}%</Text>
+      <Text style={ring.pct}>{pct === null ? '—' : `${pct}%`}</Text>
     </View>
   );
 }
@@ -107,7 +110,11 @@ export function TripHero({ trip }: { trip: TripDetail }) {
       <View style={hero.progressCard}>
         <Text style={hero.progressTitle}>Trip Progress</Text>
         <ProgressRing pct={trip.progress} />
-        <Text style={hero.progressSub}>Your trip is coming together!</Text>
+        <Text style={hero.progressSub}>
+          {trip.progress === null
+            ? "We couldn't check this trip's readiness just now."
+            : 'Your trip is coming together!'}
+        </Text>
         <View style={{ gap: space.sm, marginTop: space.md, alignSelf: 'stretch' }}>
           {trip.progressSteps.map((s) => (
             <View key={s.label} style={hero.stepRow}>
@@ -313,7 +320,7 @@ export function SavedIdeas({ ideas }: { ideas: SavedIdea[]; tripId: string }) {
  * The full toggle is still available for add/remove via the TripWishlistPicker.
  * ─────────────────────────────────────────────────────────────────────────── */
 export function TripSavedPlacesSection({ tripId }: { tripId: string }) {
-  const { places, loading, remove, clearAll } = useTripSavedPlaces(tripId);
+  const { places, loading, error: placesError, remove, clearAll } = useTripSavedPlaces(tripId);
 
   const handleClearAll = () => {
     Alert.alert(
@@ -344,6 +351,13 @@ export function TripSavedPlacesSection({ tripId }: { tripId: string }) {
       {loading ? (
         <View style={tsp.center}>
           <ActivityIndicator size="small" color={color.signal} />
+        </View>
+      ) : placesError ? (
+        // Distinct from the empty state below on purpose: "you have saved
+        // nothing" and "we could not read what you saved" are different facts
+        // and the second one used to be shown as the first.
+        <View style={tsp.empty}>
+          <Text style={tsp.emptyText}>{placesError}</Text>
         </View>
       ) : places.length === 0 ? (
         <View style={tsp.empty}>

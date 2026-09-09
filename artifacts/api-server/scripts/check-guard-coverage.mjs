@@ -136,6 +136,61 @@ const CREDENTIAL_NAME_RE = new RegExp(
 );
 const CREATE_CLIENT_RE = /(?:^|[^A-Za-z0-9_$.])createClient[ \t]*\(/;
 
+/**
+ * The file with its comments removed, for the reachability scan.
+ *
+ * A credential name inside a comment is not a use of that credential, and a
+ * `createClient(` inside a comment constructs nothing. Scanning the raw text
+ * classified 32 unit tests as able to reach Supabase because their header says
+ * how to RUN them. That is a guard failing on correct code, which is how guards
+ * get deleted.
+ *
+ * Deliberately conservative in the direction that keeps the guarded set LARGER:
+ * string literals are NOT parsed, so a `//` inside a string (a URL, say)
+ * truncates the rest of that line — which can only ever make this script see
+ * LESS credential usage on that line than is there... except that the whole
+ * point is the opposite direction, so read that again: dropping the tail of a
+ * line can only cause a file to be classified UNREACHABLE that should have been
+ * REACHABLE. That is the one way this can be wrong, and it is bounded to lines
+ * where a string literal contains `//` AND a credential name appears after it
+ * on the same line. No file in the tree does that today; the CI-surface rule
+ * below and the exemption list are the backstop if one ever does.
+ */
+function stripComments(text) {
+  let out = '';
+  let inBlock = false;
+  for (const raw of text.split('\n')) {
+    let line = raw;
+    if (inBlock) {
+      const end = line.indexOf('*/');
+      if (end === -1) { out += '\n'; continue; }
+      line = line.slice(end + 2);
+      inBlock = false;
+    }
+    // Whichever opens FIRST wins. This file carries its own copy of the
+    // stripper because it is .mjs and cannot import the .ts one; it therefore
+    // also carried the .ts one's bug — scanning for '/*' before '//' let an
+    // ordinary line comment containing a glob or URL open a block comment that
+    // ran to the next '*/' anywhere in the file, blanking real code. See
+    // src/scripts/lib/stripComments.ts and src/test/stripComments.test.ts,
+    // which is the test for the shared one; this copy must stay in step.
+    for (;;) {
+      const block = line.indexOf('/*');
+      const lineComment = line.indexOf('//');
+      if (block === -1 && lineComment === -1) break;
+      if (lineComment !== -1 && (block === -1 || lineComment < block)) {
+        line = line.slice(0, lineComment);
+        break;
+      }
+      const end = line.indexOf('*/', block + 2);
+      if (end === -1) { line = line.slice(0, block); inBlock = true; break; }
+      line = line.slice(0, block) + line.slice(end + 2);
+    }
+    out += line + '\n';
+  }
+  return out;
+}
+
 /** An `import "…/ciSupabaseGuard.mjs";` statement — not a mention of the name. */
 const GUARD_IMPORT_RE = /^[ \t]*import[ \t]+["'][^"']*ciSupabaseGuard\.mjs["'][ \t]*;?[ \t]*$/m;
 /** The same, for the read-only audit front door. */
@@ -298,6 +353,19 @@ const READ_ONLY_AUDIT_ENTRY_POINTS = [
       'and no .insert/.update/.upsert/.delete/.rpc call anywhere in the file. Auditing PRODUCTION is ' +
       'the point: the cache-dominance figure it reports is meaningless against an empty CI project.',
   },
+  {
+    file: 'src/scripts/check-media-bucket-privacy.ts',
+    reason:
+      'Reports the public/private state of the media buckets against the media_private_buckets_enabled flag ' +
+      '(audit SEC-02). Everything it sends, in full: ONE PostgREST SELECT of feature_flags.enabled for that one ' +
+      'flag, and storage.getBucket for each of post-media and profile-media. No INSERT/UPDATE/DELETE, no ' +
+      '.insert/.update/.upsert/.delete/.rpc, and nothing that mutates a bucket — it reads the flags and prints a ' +
+      'cutover verdict for a human. Moved here from the hand-run EXEMPT list once check:security named it from a ' +
+      'script a workflow runs: an exemption reading "CI never invokes it" stops being true the moment anything in ' +
+      'CI mentions the path, and a front door that refuses an unsanctioned target survives that change where a ' +
+      'list entry does not. It exits 2 rather than reporting a state it could not establish.',
+  },
+
   {
     file: 'src/scripts/checkMediaUrlsExternalOnly.ts',
     reason:
@@ -523,10 +591,27 @@ const EXEMPT = [
   //
   // NOTE for whoever next re-derives the patterns: matching the bare text
   // SUPABASE_ also matches error messages and comments, so the "can reach
-  // Supabase directly" population is an over-count, and some other exemptions
-  // here may rest on the same kind of false positive. Narrowing the pattern
-  // would shrink the guarded set, so it is deliberately NOT done in this change
-  // — it needs its own review.
+  // Supabase directly" population was an over-count, and some exemptions here
+  // may still rest on that kind of false positive.
+  //
+  // THE COMMENT HALF OF THAT HAS SINCE BEEN FIXED (see stripComments below):
+  // the reachability scan now runs over the file with comments removed. That
+  // was the review this note asked for, and it was forced by measurement, not
+  // by tidiness — 32 pure unit tests were being flagged whose ONLY mention of a
+  // credential name is the run instruction in their own doc comment:
+  //
+  //   * Run: SUPABASE_URL=http://127.0.0.1:9 SUPABASE_SERVICE_ROLE_KEY=dummy \
+  //
+  // Those files construct no client and issue no request. With them flagged,
+  // check:guard-coverage — the FIRST check in check:all — was red on nothing,
+  // and this script's own siblings say what happens next: "a permanently-red
+  // check is one `|| true` away from being no check at all".
+  //
+  // THE STRING-LITERAL HALF IS DELIBERATELY NOT FIXED. The trips.ts precedent
+  // above was a string literal in an error message, and a string holding a
+  // credential name is code that ran; only a comment is guaranteed not to be.
+  // So a file naming SUPABASE_SERVICE_ROLE_KEY inside a string is still
+  // REACHABLE here, and still has to be judged by a human.
 
   // ── Manual seed / backfill / ops tooling. CI invokes none of it. ──────────
   //
@@ -542,7 +627,6 @@ const EXEMPT = [
     ['src/scripts/backfill-media-assets.ts', 'one-shot backfill of media asset rows'],
     ['src/scripts/backfillLandmarkCategories.ts', 'one-shot backfill of landmark categories'],
     ['src/scripts/backfillStampCountries.ts', 'one-shot backfill of stamp country codes'],
-    ['src/scripts/check-media-bucket-privacy.ts', 'manual audit of storage bucket privacy flags'],
     ['src/scripts/fix-demo-events-city.ts', 'manual repair of demo event city fields'],
     ['src/scripts/fix-demo-memories.ts', 'manual repair of demo memory rows'],
     ['src/scripts/fix-demo-stamps.ts', 'manual repair of demo stamp rows'],
@@ -610,9 +694,224 @@ const EXEMPT = [
   //
   // The exemption is NOT taken on trust — assertPinnedTestEnv() below re-reads
   // package.json on every run and fails if the pin is gone.
+  //
+  // Three entries left this list when the reachability scan became
+  // comment-aware: dailyBriefCleanup, eventAgendaItems and stamps mentioned a
+  // credential name ONLY in a comment, so they were never reachable and never
+  // needed an exemption. The check's own staleness rule is what surfaced them —
+  // it refuses an EXEMPT entry for a file it no longer classifies as reaching
+  // Supabase, precisely so a narrowed pattern cannot quietly retire exemptions
+  // that are still load-bearing.
   ...[
-    'src/test/dailyBriefCleanup.test.ts',
-    'src/test/eventAgendaItems.test.ts',
+    'src/test/unissuedSupabaseWrites.test.ts',
+    'src/test/unissuedWrites.test.ts',
+  ].map((file) => ({
+    file,
+    pinnedTestEnv: true,
+    reason:
+      'Proves that a `void` supabase write with no .then/.catch/await issues NO HTTP request — PostgrestBuilder ' +
+      'calls _fetch inside then(). That fact can only be established against a REAL client, which is precisely why ' +
+      'the defect survived: a hand-written fake cannot tell "constructed" from "sent", and one in this suite was ' +
+      'written around it. So these call createClient deliberately. They are not reachers in any meaningful sense: ' +
+      'each installs its OWN counting `fetch` through `global.fetch`, so no request can leave the process whatever ' +
+      'the URL, and the URL is the loopback discard port besides. EXEMPTION MEANS UNGUARDED, NOT SAFE — if either ' +
+      'file is ever changed to let the real fetch through, the exemption is void and it must import the guard.',
+  })),
+
+  {
+    file: 'src/test/helpers/postgrestOracle.ts',
+    reason:
+      'THE CONFORMANCE ORACLE. It builds the REAL @supabase/supabase-js client on purpose: it is the ' +
+      'reference half of the harness that contract-checks every in-memory Supabase double in ' +
+      'src/test/helpers/ against the client they stand in for. That comparison is the only thing that can ' +
+      'catch a fake written AROUND a client behaviour — which is how a fake came to record an insert ' +
+      'EAGERLY and twenty writes that issued no HTTP request at all stayed green for months. It is a helper, ' +
+      'not an entry point: no package script names it, so CI never invokes it directly; it runs only when a ' +
+      'test imports it. That is not why it is safe, though, and the exemption does not rest on it. It is ' +
+      'safe because it CANNOT DIAL ANYTHING: createClient is given an injected fetch that emulates a ' +
+      'PostgREST server over in-memory tables and is the only transport the client has, and the URL it is ' +
+      'handed is the literal "http://oracle.invalid" — a name reserved never to resolve — written in the ' +
+      'file rather than read from the environment. It names no Supabase credential variable at all. ' +
+      'EXEMPTION MEANS UNGUARDED, NOT SAFE — if the injected fetch is ever removed, or the URL ever comes ' +
+      'from the environment, the exemption is void and this file must import the guard.',
+  },
+
+  {
+    file: 'src/test/mediaAccessFailClosed.test.ts',
+    pinnedTestEnv: true,
+    reason:
+      'Registered unit test for the media access relay. It names SUPABASE_URL only to SET it, to the hardcoded ' +
+      'literal "http://sb.example.test", and to restore whatever was there afterwards — mediaAccess builds a ' +
+      'storage URL out of that variable, so the test has to give it one to assert on. It constructs NO client: ' +
+      'it calls createClient nowhere, and injects its fakes through _setTestServiceClient. That in-file ' +
+      'override is a STRONGER pin than the CI one, in the same way snapshotFreshnessGuard.test.ts is: it moves ' +
+      'with the file rather than with package.json, and it cannot inherit whatever an operator .env names ' +
+      'because it overwrites it. pinnedTestEnv is set because CI invokes it and the CI-surface rule requires ' +
+      'the flag of any exemption CI runs; the loopback pin is the weaker of the two. EXEMPTION MEANS ' +
+      'UNGUARDED, NOT SAFE — if this file is ever changed to construct a client, the exemption is void.',
+  },
+
+  {
+    file: 'src/test/notificationPushTokenRegistryUnreadable.test.ts',
+    pinnedTestEnv: true,
+    reason:
+      'Registered unit test for the push-token registry read, over a REAL createClient for the same reason '
+      + 'notificationIssuance.test.ts is: the question is whether supabase-js RESOLVES a PostgREST 500 into an '
+      + '{error} the caller then ignores, and a hand-written double cannot answer it -- a double that returns '
+      + 'whatever the test asked for proves the test, not the client. It also keys its induced failure on the '
+      + 'exact projected column (select=push_token) rather than on the table, because notification_devices is read '
+      + 'elsewhere in the same handler and a table-wide failure would trip a different branch. That precision only '
+      + 'exists on the wire. It names NO Supabase credential variable: the URL and key are the in-file literals '
+      + '"http://supabase.test" and "test-service-role-key", and the client is handed an injected counting fetch as '
+      + 'its ONLY transport, so no request can leave the process whatever the environment holds -- a stronger pin '
+      + 'than the CI one, in the same way mediaAccessFailClosed.test.ts is. pinnedTestEnv is set because CI invokes '
+      + 'it and the CI-surface rule requires the flag on any exemption CI runs. EXEMPTION MEANS UNGUARDED, NOT SAFE '
+      + '-- if the injected fetch is ever removed, or either literal ever comes from the environment, the exemption '
+      + 'is void and this file must import the guard.',
+  },
+
+  {
+    file: 'src/test/authSignupStatusNoClient.test.ts',
+    pinnedTestEnv: true,
+    reason:
+      'Registered unit test for GET /auth/signup-status on the NO-SERVICE-CLIENT path. It names SUPABASE_URL and '
+      + 'SUPABASE_SERVICE_ROLE_KEY only to `delete` them from process.env, before a dynamic import() of '
+      + 'src/lib/supabase.js — which is the ONLY way to reach that branch, because isServiceClientReady is a '
+      + 'load-time const evaluated when the module is first imported, so the runner\'s own credentials would '
+      + 'otherwise pin it true forever. The detector here is NAME-BASED and cannot tell a read of a credential '
+      + 'from a DELETION of one, so it classified the file as a reacher on the strength of the two lines that '
+      + 'take the credentials AWAY. The file constructs no client, calls createClient nowhere, and after those '
+      + 'two deletes there is no URL left in the environment for anything to dial. Its whole subject is that the '
+      + 'route must answer 503 {signupsEnabled:false} rather than open signups when nothing is readable — a '
+      + 'fail-CLOSED assertion, which is why removing the credentials is the fixture and not a bypass. '
+      + 'EXEMPTION MEANS UNGUARDED, NOT SAFE — if this file ever stops deleting those variables, or ever '
+      + 'constructs a client, the exemption is void and it must import the guard.',
+  },
+
+  {
+    file: 'src/test/notificationIssuance.test.ts',
+    pinnedTestEnv: true,
+    reason:
+      'Registered unit test that answers "is the notification actually SENT" over a REAL createClient, for the ' +
+      'reason the rabLifecycle suites below do: PostgrestBuilder calls _fetch inside then(), so a void write ' +
+      'with no continuation issues no request at all, and a hand-written double cannot tell a CONSTRUCTED ' +
+      'builder from a SENT one — it is the same seam unissuedWrites.test.ts uses. It also asserts ORDER (the ' +
+      'dedupe read precedes the insert), which only exists on the wire. The client is handed its own transport ' +
+      '(global: { fetch: makeRecordingFetch(...) }), so the installed fetch is never consulted and no request ' +
+      'leaves the process, and SUPA_URL is the hardcoded literal "http://supabase.test" declared in the file ' +
+      'rather than read from the environment. pinnedTestEnv because CI invokes it and the CI-surface rule ' +
+      'requires the flag of any exemption CI runs. EXEMPTION MEANS UNGUARDED, NOT SAFE.',
+  },
+
+  {
+    file: 'src/test/rabLifecycleTransitions.test.ts',
+    pinnedTestEnv: true,
+    reason:
+      'Registered unit test in the rabLifecycle family, built the same way and exempt for the same reasons as ' +
+      'the three below. It proves that six booking transitions are COMPARE-AND-SWAP — that the write itself ' +
+      'carries the expected-status predicate rather than a read having checked it first — and that question ' +
+      'is only answerable against a real client, because what distinguishes the two is the request that goes ' +
+      'on the wire. The client is handed its own transport (global: { fetch: makeRecordingFetch(...) }), so ' +
+      'the installed fetch is never consulted and no request leaves the process, and SUPA_URL is the ' +
+      'hardcoded literal "http://supabase.test" declared in the file rather than read from the environment. ' +
+      'pinnedTestEnv because CI invokes it. EXEMPTION MEANS UNGUARDED, NOT SAFE.',
+  },
+
+  {
+    file: 'src/test/rabLifecycleRestrictions.test.ts',
+    pinnedTestEnv: true,
+    reason:
+      'Registered unit test in the same family as the two rabLifecycle suites below, built the same way and ' +
+      'for the same reason: it drives the real routes over a REAL createClient because the question is ' +
+      'whether the restriction path READS what it claims to and the route ISSUES what it claims to, and a ' +
+      'hand-written double answers that by construction rather than by measurement. The client is handed its ' +
+      'own transport (global: { fetch: makeRecordingFetch(...) }), so the installed fetch is never consulted ' +
+      'and no request leaves the process, and SUPA_URL is the hardcoded literal "http://supabase.test" ' +
+      'declared in the file rather than read from the environment. pinnedTestEnv because CI invokes it and ' +
+      'the CI-surface rule requires the flag of any exemption CI runs. EXEMPTION MEANS UNGUARDED, NOT SAFE.',
+  },
+
+  {
+    file: 'src/test/rabLifecycleNoShowAttribution.test.ts',
+    pinnedTestEnv: true,
+    reason:
+      'Registered unit test that proves the no-show attribution path over a REAL createClient, for the same ' +
+      'reason as rabLifecycleCounters below: the question is whether the route ISSUES the write the sweeper ' +
+      'later reads, and a hand-written double answers that question by construction rather than by ' +
+      'measurement. Same two in-file pins: the client is given its own transport ' +
+      '(global: { fetch: makeRecordingFetch(...) }), so the installed fetch is never reached and no request ' +
+      'leaves the process, and the URL is the hardcoded literal "http://supabase.test" declared in the file ' +
+      'rather than read from the environment. pinnedTestEnv because the test script names it and the ' +
+      'CI-surface rule requires the flag of any exemption CI invokes. EXEMPTION MEANS UNGUARDED, NOT SAFE — ' +
+      'void the moment the real fetch is let through or the URL comes from the environment.',
+  },
+
+  {
+    file: 'src/test/rabLifecycleCounters.test.ts',
+    pinnedTestEnv: true,
+    reason:
+      'Registered unit test that drives the real Rent-a-Buddy routes over a REAL createClient, deliberately. ' +
+      'What it proves is that three lifecycle counters move with the WRITE the route issues rather than with a ' +
+      'read set, and a hand-written double cannot tell a CONSTRUCTED PostgrestBuilder from a SENT request — ' +
+      'that distinction is precisely how twenty unissued writes stayed green for months, so the fake that ' +
+      'cannot see it is the wrong instrument here. Two facts in the file itself, both stronger than the CI ' +
+      'pin, keep it off the network: the client is handed its OWN transport, ' +
+      'createClient(SUPA_URL, SUPA_KEY, { global: { fetch: makeRecordingFetch(...) } }), so the installed ' +
+      'fetch is never consulted and no request can leave the process; and SUPA_URL is the hardcoded literal ' +
+      '"http://supabase.test" declared in the file, never read from the environment, so an operator .env ' +
+      'cannot redirect it. It carries pinnedTestEnv because CI does invoke it — the test script names it — ' +
+      'and the CI-surface rule requires that flag of any exemption CI runs; the loopback pin is a third, ' +
+      'weaker pin on top of the two above. EXEMPTION MEANS UNGUARDED, NOT SAFE — if this file is ever changed ' +
+      'to let the real fetch through, or to take its URL from the environment, the exemption is void and it ' +
+      'must import the guard.',
+  },
+
+  {
+    file: 'src/test/guardReachability.test.ts',
+    pinnedTestEnv: true,
+    reason:
+      'The mutation suite for check:guard-reachability. It sets SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY as CHILD ' +
+      'PROCESS environment for a spawned checker — to hardcoded literals, the loopback discard port and "dummy" — ' +
+      'in the one case that proves the manual-claim verdict does NOT move with the ambient environment. That case ' +
+      'exists because the verdict once DID move, so the credential names have to appear in it. The test constructs ' +
+      'no client and issues no request; it reads the spawned process\'s exit code and printed counts. EXEMPTION ' +
+      'MEANS UNGUARDED, NOT SAFE.',
+  },
+
+  {
+    file: 'src/test/guardCoverageReachability.test.ts',
+    // pinnedTestEnv for the same reason as the entries below: `pnpm test` names
+    // it and pins SUPABASE_URL on the command line.
+    pinnedTestEnv: true,
+    reason:
+      'The mutation suite for THIS script. It is classified reachable because it writes probe files whose ' +
+      'CONTENT quotes credential names as fixture text — including one case that exists specifically to prove ' +
+      'a credential name in a string literal is still treated as reachable, which is the narrowing this ' +
+      'script must NOT do. Building those fixtures by concatenation to dodge the pattern would be evading ' +
+      'the guard this file exists to defend, so the fixture text stays literal and the exemption is taken ' +
+      'openly. The test constructs no client and issues no request; it spawns this script as a child ' +
+      'process and reads its exit code and printed counts. EXEMPTION MEANS UNGUARDED, NOT SAFE.',
+  },
+
+  {
+    file: 'src/test/snapshotFreshnessGuard.test.ts',
+    // pinnedTestEnv because the CI-surface rule requires it of any exemption CI
+    // invokes, and because the premise is true here as well: `pnpm test` names
+    // this file and pins SUPABASE_URL on the command line. Its own hardcoded
+    // override is an ADDITIONAL, stronger pin on top of that, not a substitute
+    // for it — so the conditional re-check of package.json still applies.
+    pinnedTestEnv: true,
+    reason:
+      'Registered unit test that spawns src/scripts/checkFlagSchemaPrerequisites.ts as a CHILD PROCESS and ' +
+      'sets SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY for it to hardcoded literals — the loopback discard ' +
+      'port and the string "dummy" — AFTER spreading process.env, so the override wins and the child cannot ' +
+      'inherit whatever an operator .env names. That is a stronger pin than the pinnedTestEnv entries below, ' +
+      'which rely on package.json: this one is in the file itself and moves with it. The test constructs no ' +
+      'client and issues no request of its own. EXEMPTION MEANS UNGUARDED, NOT SAFE — if this file is ever ' +
+      'changed to pass the ambient credentials through, the exemption is void and it must import the guard.',
+  },
+
+  ...[
     'src/test/events-extension.test.ts',
     'src/test/mediaAccess.test.ts',
     'src/test/mediaFileWidthTransform.test.ts',
@@ -622,7 +921,6 @@ const EXEMPT = [
     'src/test/mediaUploadHardening.test.ts',
     'src/test/messaging.test.ts',
     'src/test/ogImageVisibility.test.ts',
-    'src/test/stamps.test.ts',
     'src/test/storyMediaOwnership.test.ts',
   ].map((file) => ({
     file,
@@ -831,10 +1129,15 @@ for (const abs of sourceFiles) {
 
   if (GUARD_MACHINERY.has(rel)) continue; // the guard is not its own client
 
-  const importsStrictGuard = GUARD_IMPORT_RE.test(text);
-  const importsReadOnlyGuard = READONLY_GUARD_IMPORT_RE.test(text);
+  // Comments stripped for BOTH questions. A commented-out credential name is
+  // not a use of it, and — the direction that matters more — a commented-out
+  // guard import is not a guard: `// import "…/ciSupabaseGuard.mjs";` must not
+  // count as opting in.
+  const code = stripComments(text);
+  const importsStrictGuard = GUARD_IMPORT_RE.test(code);
+  const importsReadOnlyGuard = READONLY_GUARD_IMPORT_RE.test(code);
   const importsGuard = importsStrictGuard || importsReadOnlyGuard;
-  const canReach = CREDENTIAL_NAME_RE.test(text) || CREATE_CLIENT_RE.test(text);
+  const canReach = CREDENTIAL_NAME_RE.test(code) || CREATE_CLIENT_RE.test(code);
 
   if (importsReadOnlyGuard) readOnlyImporters.add(rel);
 

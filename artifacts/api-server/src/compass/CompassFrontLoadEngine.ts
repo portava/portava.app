@@ -39,6 +39,7 @@ import { buildFeed } from "./CompassFeedBuilder.js";
 import { buildCompassContext, defaultSignals } from "./CompassContextEngine.js";
 import { hydrateCompassItems } from "./CompassItemHydrator.js";
 import { getCachedFeed, setCachedFeed } from "./CompassCacheEngine.js";
+import { fetchCompassFlags } from "./flags.js";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -280,19 +281,28 @@ async function loadTier0(
   });
 
   // 3. Feature flags (load live from DB)
-  let flags: Record<string, boolean> = {};
-  if (db) {
-    try {
-      const { data } = await db
-        .from("feature_flags")
-        .select("flag, enabled")
-        .like("flag", "COMPASS_%");
-      for (const row of (data as any[]) ?? []) {
-        flags[row.flag] = Boolean(row.enabled);
-      }
-    } catch { /* non-fatal */ }
+  //
+  // Tier 0 is the "always live, never cached" tier, and this item is the flag
+  // state the CLIENT then branches on. It was its own third copy of the
+  // COMPASS_% query, whose `catch` never fired (supabase-js resolves on a
+  // database error) and whose `flags` therefore stayed `{}` — shipping "every
+  // Compass flag is off", including "no content type is safety-blocked", to the
+  // client as if it were live state.
+  //
+  // It now goes through compass/flags.ts `fetchCompassFlags`, the one loader
+  // shared with CompassPipeline and getFlags, so a client preload and a
+  // server-side pipeline run cannot disagree about what unreadable means. On
+  // failure the item still carries a flag map (the payload shape is the client
+  // contract), but it is the fail-safe one: capabilities absent, every
+  // COMPASS_<TYPE>_SAFETY_BLOCK engaged.
+  const flagLoad = await fetchCompassFlags(db);
+  if (!flagLoad.ok) {
+    logger.warn(
+      { err: flagLoad.error, userId },
+      "front-load tier0: COMPASS_% flags unreadable — preloading FAILSAFE_COMPASS_FLAGS",
+    );
   }
-  items.push({ type: 'feature_flags', tier: 0, cachedAt: now, data: flags });
+  items.push({ type: 'feature_flags', tier: 0, cachedAt: now, data: flagLoad.flags });
 
   // 4. Blocked users (IDs only — no profile data)
   items.push({

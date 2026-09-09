@@ -142,6 +142,9 @@ export function AddGemForm({ onSuccess, onClose }: AddGemFormProps) {
   const [selectedTripId, setSelectedTripId] = useState<string | null>(null);
   const [activeTrips, setActiveTrips] = useState<TripRow[]>([]);
   const [tripsLoading, setTripsLoading] = useState(false);
+  // "No active or upcoming trips found." is a claim about the user's trips.
+  // This state is what stops it being made after a read that failed.
+  const [tripsError, setTripsError] = useState<string | null>(null);
 
   // ── Errors ──────────────────────────────────────────────────────────────────
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -155,6 +158,7 @@ export function AddGemForm({ onSuccess, onClose }: AddGemFormProps) {
     if (step !== 'details') return;
     let cancelled = false;
     setTripsLoading(true);
+    setTripsError(null);
     listMyTrips()
       .then((trips) => {
         if (cancelled) return;
@@ -164,7 +168,9 @@ export function AddGemForm({ onSuccess, onClose }: AddGemFormProps) {
         setActiveTrips(active);
       })
       .catch(() => {
-        // Non-fatal — trip picker just stays empty
+        // Still non-fatal to the gem — attaching to a trip is optional — but
+        // the picker may not present the failure as "you have no trips".
+        if (!cancelled) { setActiveTrips([]); setTripsError("Couldn't load your trips."); }
       })
       .finally(() => {
         if (!cancelled) setTripsLoading(false);
@@ -750,6 +756,8 @@ export function AddGemForm({ onSuccess, onClose }: AddGemFormProps) {
           <Text style={styles.label}>Add to a trip</Text>
           {tripsLoading ? (
             <ActivityIndicator size="small" color={color.signal} style={{ alignSelf: 'flex-start', marginTop: 4 }} />
+          ) : tripsError ? (
+            <Text style={styles.hint}>{tripsError} You can still post this gem without one.</Text>
           ) : activeTrips.length === 0 ? (
             <Text style={styles.hint}>No active or upcoming trips found.</Text>
           ) : (

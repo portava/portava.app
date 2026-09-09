@@ -241,7 +241,11 @@ async function bothPaths(state: FakeState) {
 }
 
 /** The equivalence assertion, in one place so every scenario checks the same thing. */
-async function assertEquivalent(name: string, state: FakeState) {
+async function assertEquivalent(
+  name: string,
+  state: FakeState,
+  opts: { banGateRefusesFirst?: boolean } = {},
+) {
   const { route, direct } = await bothPaths(state);
   if (direct.ok) {
     assert.equal(route.status, 200, `${name}: route should succeed when the reader does`);
@@ -257,13 +261,27 @@ async function assertEquivalent(name: string, state: FakeState) {
     // sanitized one (sendError redacts db_error detail so PostgREST text cannot
     // leak table/column names), which is why the reader returns the underlying
     // message separately: callers log it, they do not serve it.
-    assert.equal(route.status, 500, `${name}: a read failure must not answer 200`);
-    assert.equal(route.body.error, "db_error", `${name}: error code`);
-    assert.equal(
-      route.body.message,
-      "A database error occurred. Please try again.",
-      `${name}: db_error detail must stay sanitized on the wire`,
-    );
+    if (opts.banGateRefusesFirst) {
+      // `profiles` is not only this reader's input — it is `requireUser`'s ban
+      // gate (lib/http.ts). Since A1, an unreadable `account_status` is refused
+      // BEFORE the route body runs, with the code this codebase reserves for
+      // "the permission check was not performed": 503 `degraded_unavailable`,
+      // retryable. The property this suite exists for is unchanged and is still
+      // asserted — a read failure must not answer 200 — but the refusal now
+      // happens one layer earlier and says something more precise than
+      // `db_error`, so the route never reaches its own envelope.
+      assert.equal(route.status, 503, `${name}: a read failure must not answer 200`);
+      assert.equal(route.body.error, "degraded_unavailable", `${name}: error code`);
+      assert.equal(route.body.retryable, true, `${name}: the ban-gate refusal is retryable`);
+    } else {
+      assert.equal(route.status, 500, `${name}: a read failure must not answer 200`);
+      assert.equal(route.body.error, "db_error", `${name}: error code`);
+      assert.equal(
+        route.body.message,
+        "A database error occurred. Please try again.",
+        `${name}: db_error detail must stay sanitized on the wire`,
+      );
+    }
     assert.ok(direct.message.length > 0, `${name}: reader must carry the loggable detail`);
   }
   return direct;
@@ -434,13 +452,16 @@ describe("circle-locations extraction is behaviour-preserving", () => {
     ["privacy_settings", "user_privacy_settings"],
     ["location_state", "user_location_state"],
     // profiles carries account_status now, so its failure is fail-closed
-    // (db_error) rather than the old silent degradation to nameless rows.
+    // rather than the old silent degradation to nameless rows — and since A1 it
+    // is `requireUser`'s ban gate that refuses first, with 503
+    // `degraded_unavailable` instead of the route's 500 `db_error`.
     ["profiles", "profiles"],
   ] as const) {
-    it(`agrees on a ${table} read failure (db_error, not an empty list)`, async () => {
+    it(`agrees on a ${table} read failure (refused, not an empty list)`, async () => {
       const d = await assertEquivalent(
         `${table} failure`,
         circleState({ [table]: { error: { message: `${table} down` } } }),
+        { banGateRefusesFirst: table === "profiles" },
       );
       assert.equal(d.ok, false);
       assert.equal(d.ok === false && d.stage, stage);

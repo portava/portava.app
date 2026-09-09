@@ -45,6 +45,12 @@ import {
   syncTripChatMembers,
   syncCircleChatMembers,
 } from '../services/groupChatSync';
+import {
+  historyBoundEnabled,
+  membershipSelect,
+  visibleFromOf,
+  withinWindow,
+} from '../services/groupChatHistoryBound';
 import { publishToThread, publishToUsers } from '../lib/telegraphEvents';
 import { invalidate as invalidateCompassCache } from '../compass/CompassCacheEngine.js';
 import { recordTrustEvent } from '../services/trust/TrustEventService.js';
@@ -54,6 +60,7 @@ import { enrichSpans } from '../lib/enrichSpans';
 import { circleThreadTitle } from '../lib/displayName';
 import { NotificationService } from '../services/notifications/NotificationService.js';
 import { NotificationRouter } from '../services/notifications/NotificationRouter.js';
+import { readBlockExclusions, isExcluded } from '../lib/exclusionSet.js';
 
 const router = Router();
 
@@ -86,6 +93,138 @@ const LanguageSettingsPatchSchema = z.object({
   auto_translate_messages: z.boolean().optional(),
   show_original_messages: z.boolean().optional(),
 });
+
+/* ---------------------------------------------------------------------------
+ * Off-app solicitation control — tunables
+ * ---------------------------------------------------------------------------
+ */
+
+/**
+ * Hard cap on how many of a buddy's bookings are pulled when computing the
+ * booking-scoped offense count.
+ *
+ * PostgREST caps every unbounded collection response at `db-max-rows` (Supabase
+ * ships 1000). A `.select('id')` with no `.limit()` therefore returns a
+ * TRUNCATED list, and the `.in(...)` count built from it silently under-counts —
+ * the more bookings a buddy has, the more offenses go missing. Naming our own
+ * bound makes the truncation point ours, deterministic and testable, rather than
+ * a server-side default nobody in this process can observe.
+ */
+export const BUDDY_BOOKING_SCAN_CAP = 1000;
+
+/**
+ * Hard cap on the thread-membership scans that find an EXISTING direct thread
+ * between two people. Same PostgREST row cap as above (Supabase ships
+ * db-max-rows = 1000): an unbounded scan is truncated server-side, the existing
+ * DM falls off the end, and the caller then CREATES A SECOND one — permanently
+ * splitting a conversation. The cap is ours and hitting it is reported.
+ */
+const DM_THREAD_SCAN_CAP = 1000;
+
+/** Default number of cumulative offenses (including the current one) that suspends a buddy. */
+export const OFF_APP_SUSPENSION_THRESHOLD_DEFAULT = 3;
+
+interface ThresholdLogger { error: (obj: unknown, msg: string) => void }
+
+/**
+ * Resolve OFF_APP_SUSPENSION_THRESHOLD. A malformed value used to become NaN,
+ * and `n >= NaN` is false for every n — a typo in an env var switched the
+ * suspension off for good with no error anywhere. A value that cannot be read as
+ * a positive integer is reported and the default is used instead.
+ */
+export function offAppSuspensionThreshold(log?: ThresholdLogger): number {
+  const raw = process.env['OFF_APP_SUSPENSION_THRESHOLD'];
+  if (raw === undefined || raw === '') return OFF_APP_SUSPENSION_THRESHOLD_DEFAULT;
+  const parsed = Number(raw);
+  if (!Number.isInteger(parsed) || parsed < 1) {
+    log?.error(
+      { raw, fallback: OFF_APP_SUSPENSION_THRESHOLD_DEFAULT },
+      'OFF_APP_SUSPENSION_THRESHOLD is not a positive integer — falling back to the default instead of disabling suspension',
+    );
+    return OFF_APP_SUSPENSION_THRESHOLD_DEFAULT;
+  }
+  return parsed;
+}
+
+interface DedupeLogger { error: (obj: unknown, msg: string) => void; warn: (obj: unknown, msg: string) => void }
+
+/**
+ * Find an existing 1:1 direct thread shared by two people.
+ *
+ * Returns `{ threadId }` on a decided answer (a thread, or a proven absence) and
+ * `{ undecided: true }` when a read failed. The distinction is the whole point:
+ * all three reads used to drop their `.error`, so a single unreadable table
+ * produced "no existing thread" — and both callers respond to that by CREATING
+ * one. A transient database blip therefore left two people with two DM threads
+ * and their history split across both, which no user action undoes. Absence of
+ * evidence was being spent as evidence of absence, irreversibly.
+ */
+export async function findDirectThreadBetween(
+  sc: any,
+  userA: string,
+  userB: string,
+  log: DedupeLogger,
+): Promise<{ threadId: string | null } | { undecided: true }> {
+  const { data: aMemberships, error: aErr } = await sc
+    .from('message_thread_members')
+    .select('thread_id')
+    .eq('user_id', userA)
+    .limit(DM_THREAD_SCAN_CAP);
+  if (aErr) {
+    log.error({ err: aErr, userA }, 'direct-thread lookup: membership read failed — cannot prove no thread exists');
+    return { undecided: true };
+  }
+
+  const aThreadIds = ((aMemberships ?? []) as any[]).map((m) => m.thread_id as string);
+  if (aThreadIds.length === 0) return { threadId: null };
+  if (aThreadIds.length >= DM_THREAD_SCAN_CAP) {
+    // Beyond the cap the scan can no longer prove absence, and the caller's
+    // response to "absent" is to create a duplicate. Refuse instead.
+    log.error({ userA, cap: DM_THREAD_SCAN_CAP },
+      'direct-thread lookup: membership scan hit the cap — cannot prove no thread exists, refusing rather than creating a duplicate');
+    return { undecided: true };
+  }
+
+  const { data: allMembers, error: mErr } = await sc
+    .from('message_thread_members')
+    .select('thread_id, user_id')
+    .in('thread_id', aThreadIds);
+  if (mErr) {
+    log.error({ err: mErr, userA, userB }, 'direct-thread lookup: roster read failed — cannot prove no thread exists');
+    return { undecided: true };
+  }
+
+  const membersByThread: Record<string, string[]> = {};
+  for (const m of (allMembers ?? []) as any[]) {
+    if (!membersByThread[m.thread_id]) membersByThread[m.thread_id] = [];
+    membersByThread[m.thread_id]!.push(m.user_id);
+  }
+
+  const candidateIds: string[] = [];
+  for (const [tid, members] of Object.entries(membersByThread)) {
+    if (members.length === 2 && members.includes(userA) && members.includes(userB)) {
+      candidateIds.push(tid);
+    }
+  }
+  if (candidateIds.length === 0) return { threadId: null };
+
+  // Only reuse true DM threads. Trip/circle group threads can also have exactly
+  // two members — matching those would hijack a group chat as the DM. The create
+  // paths rely on the DB default thread_type='direct', so accept 'direct' (or
+  // NULL for legacy rows).
+  const { data: candidateThreads, error: tErr } = await sc
+    .from('message_threads')
+    .select('id, thread_type')
+    .in('id', candidateIds);
+  if (tErr) {
+    log.error({ err: tErr, userA, userB }, 'direct-thread lookup: thread-type read failed — cannot prove no thread exists');
+    return { undecided: true };
+  }
+  const direct = ((candidateThreads ?? []) as any[]).find(
+    (t) => t.thread_type === 'direct' || t.thread_type == null,
+  );
+  return { threadId: direct ? (direct.id as string) : null };
+}
 
 /* ---------------------------------------------------------------------------
  * GET /api/me/message-settings
@@ -266,6 +405,11 @@ router.get('/users/:userId/message-permission', async (req, res) => {
     allowed: verdict.allowed,
     reason: verdict.reason ?? null,
     relationship_context: verdict.relationship_context,
+    // `relationship_context` is a floor, not the truth, when a relationship read
+    // failed. The client renders this context as statements about a person ("you
+    // are not connected"), so it needs to be able to tell "false" from "we could
+    // not find out" and stay silent rather than assert something untrue.
+    degraded: verdict.degraded === true,
   });
 });
 
@@ -302,57 +446,40 @@ router.post('/users/:userId/open-thread', async (req, res) => {
     return;
   }
 
-  const { data: myMemberships } = await sc
-    .from('message_thread_members')
-    .select('thread_id')
-    .eq('user_id', user.id);
-
-  const myThreadIds = (myMemberships ?? []).map((m: any) => m.thread_id);
-
-  let existingThreadId: string | null = null;
-  if (myThreadIds.length > 0) {
-    const { data: allMembers } = await sc
-      .from('message_thread_members')
-      .select('thread_id, user_id')
-      .in('thread_id', myThreadIds);
-
-    const membersByThread: Record<string, string[]> = {};
-    for (const m of (allMembers ?? []) as any[]) {
-      if (!membersByThread[m.thread_id]) membersByThread[m.thread_id] = [];
-      membersByThread[m.thread_id].push(m.user_id);
-    }
-
-    const candidateIds: string[] = [];
-    for (const [threadId, members] of Object.entries(membersByThread)) {
-      if (members.length === 2 && members.includes(user.id) && members.includes(recipientId)) {
-        candidateIds.push(threadId);
-      }
-    }
-
-    // Only reuse true DM threads. Trip/circle group threads can also have exactly
-    // two members — matching those would hijack a group chat as the DM. The DM
-    // create path below relies on the DB default thread_type='direct', so accept
-    // 'direct' (or NULL for legacy rows).
-    if (candidateIds.length > 0) {
-      const { data: candidateThreads } = await sc
-        .from('message_threads')
-        .select('id, thread_type')
-        .in('id', candidateIds);
-      const direct = ((candidateThreads ?? []) as any[]).find(
-        (t) => t.thread_type === 'direct' || t.thread_type == null,
-      );
-      if (direct) existingThreadId = direct.id;
-    }
+  const lookup = await findDirectThreadBetween(sc, user.id, recipientId, req.log);
+  if ('undecided' in lookup) {
+    sendError(res, 'degraded_unavailable', 'We could not open this conversation right now. Please try again shortly.');
+    return;
   }
+  const existingThreadId: string | null = lookup.threadId;
 
   if (existingThreadId) {
     // Reusing a thread one (or both) parties previously left: reset left_at so
     // the conversation is usable again for both sides.
-    await sc
+    //
+    // ── THIS WRITE IS THE DIFFERENCE BETWEEN A THREAD AND A 403 ───────────────
+    // It was issued blind: no `{ error }`. supabase-js RESOLVES on a database
+    // error, so a rejoin that never landed answered exactly like one that did,
+    // and the handler replied 200 `{ threadId, created: false }`. The client
+    // then opens a thread in which every send and every media upload is refused
+    // — `left_at !== null` is checked explicitly in those handlers and answers
+    // 403 "You no longer have access to this thread". The endpoint's whole
+    // contract is "here is a conversation you can use", so a failure here has to
+    // be reported rather than papered over with the thread id.
+    const { error: rejoinErr } = await sc
       .from('message_thread_members')
       .update({ left_at: null })
       .eq('thread_id', existingThreadId)
       .in('user_id', [user.id, recipientId]);
+
+    if (rejoinErr) {
+      req.log.error(
+        { err: rejoinErr, threadId: existingThreadId },
+        'open-thread: left_at reset failed — the thread would 403 on every send; refusing instead of returning it',
+      );
+      sendError(res, 'db_error', rejoinErr.message ?? 'Failed to reopen this conversation');
+      return;
+    }
 
     res.status(200).json({ threadId: existingThreadId, created: false });
     return;
@@ -500,12 +627,29 @@ router.post('/users/:userId/message-request', async (req, res) => {
     return;
   }
 
-  const { data: existing } = await sc
+  // One request per (sender, recipient) is the anti-harassment property of this
+  // endpoint: a pending or accepted row short-circuits to a 200 instead of
+  // delivering another request to the recipient. supabase-js resolves on a DB
+  // error, so an unreadable message_requests returns the same `null` a
+  // first-ever request does, and the INSERT below then delivers a SECOND
+  // unsolicited request from the same sender. That reaches another person and
+  // cannot be recalled, so an unreadable table refuses the send.
+  const { data: existing, error: existingErr } = await sc
     .from('message_requests')
     .select('id, status')
     .eq('sender_id', user.id)
     .eq('recipient_id', recipientId)
     .maybeSingle();
+
+  if (existingErr) {
+    req.log.error({ err: existingErr, recipientId }, 'message-request: existing-request check unavailable');
+    sendError(
+      res,
+      'degraded_unavailable',
+      'We could not check your existing requests right now. Please try again shortly.',
+    );
+    return;
+  }
 
   if (existing) {
     const ex = existing as any;
@@ -662,51 +806,12 @@ router.post('/message-requests/:requestId/accept', async (req, res) => {
     return;
   }
 
-  const { data: senderMemberships } = await sc
-    .from('message_thread_members')
-    .select('thread_id')
-    .eq('user_id', req_.sender_id);
-
-  const senderThreadIds = (senderMemberships ?? []).map((m: any) => m.thread_id);
-
-  let existingDirectThreadId: string | null = null;
-  if (senderThreadIds.length > 0) {
-    const { data: allMembers } = await sc
-      .from('message_thread_members')
-      .select('thread_id, user_id')
-      .in('thread_id', senderThreadIds);
-
-    const membersByThread: Record<string, string[]> = {};
-    for (const m of (allMembers ?? []) as any[]) {
-      if (!membersByThread[m.thread_id]) membersByThread[m.thread_id] = [];
-      membersByThread[m.thread_id].push(m.user_id);
-    }
-
-    const candidateIds: string[] = [];
-    for (const [tid, members] of Object.entries(membersByThread)) {
-      if (
-        members.length === 2 &&
-        members.includes(req_.sender_id) &&
-        members.includes(req_.recipient_id)
-      ) {
-        candidateIds.push(tid);
-      }
-    }
-
-    // Only reuse true DM threads — trip/circle group threads can also have
-    // exactly two members. DM threads carry thread_type='direct' (DB default)
-    // or NULL on legacy rows.
-    if (candidateIds.length > 0) {
-      const { data: candidateThreads } = await sc
-        .from('message_threads')
-        .select('id, thread_type')
-        .in('id', candidateIds);
-      const direct = ((candidateThreads ?? []) as any[]).find(
-        (t) => t.thread_type === 'direct' || t.thread_type == null,
-      );
-      if (direct) existingDirectThreadId = direct.id;
-    }
+  const acceptLookup = await findDirectThreadBetween(sc, req_.sender_id, req_.recipient_id, req.log);
+  if ('undecided' in acceptLookup) {
+    sendError(res, 'degraded_unavailable', 'We could not accept this request right now. Please try again shortly.');
+    return;
   }
+  const existingDirectThreadId: string | null = acceptLookup.threadId;
 
   let threadId: string;
 
@@ -714,11 +819,44 @@ router.post('/message-requests/:requestId/accept', async (req, res) => {
     threadId = existingDirectThreadId;
     // Reusing a thread one (or both) parties previously left: reset left_at so
     // the conversation is usable again for both sides.
-    await sc
+    //
+    // Same blind write as POST /users/:id/open-thread carried: an unobserved
+    // failure here hands both parties a thread whose send handlers answer 403
+    // "You no longer have access to this thread" on `left_at !== null`, while
+    // the response says the request was accepted and names the thread.
+    const { error: rejoinErr } = await sc
       .from('message_thread_members')
       .update({ left_at: null })
       .eq('thread_id', threadId)
       .in('user_id', [req_.sender_id, req_.recipient_id]);
+
+    if (rejoinErr) {
+      req.log.error(
+        { err: rejoinErr, threadId, requestId },
+        'message-request accept: left_at reset failed — the reused thread would 403 on every send',
+      );
+      // The compare-and-swap above has ALREADY moved this request to 'accepted',
+      // and the status check at the top of the handler refuses anything that is
+      // not 'pending' — so returning here without undoing it would leave the
+      // recipient with an accepted request, no usable thread, and no way to try
+      // again. Put the request back the way we found it so the accept is
+      // genuinely retryable, exactly as the orphan-thread branch below rolls
+      // back the thread it created. If the rollback itself fails there is
+      // nothing further to try; it is logged rather than swallowed.
+      const { error: rollbackErr } = await sc
+        .from('message_requests')
+        .update({ status: 'pending', responded_at: null })
+        .eq('id', requestId)
+        .eq('status', 'accepted');
+      if (rollbackErr) {
+        req.log.error(
+          { err: rollbackErr, requestId },
+          'message-request accept: could not roll the request back to pending after a failed rejoin — it is stuck accepted with no usable thread',
+        );
+      }
+      sendError(res, 'db_error', rejoinErr.message ?? 'Failed to reopen this conversation');
+      return;
+    }
   } else {
     const { data: thread, error: tErr } = await sc
       .from('message_threads')
@@ -793,11 +931,28 @@ router.post('/message-requests/:requestId/accept', async (req, res) => {
   // request can be accepted into a reused existing direct thread that is e2ee;
   // inserting the plaintext preview_text there would break the E2EE invariant
   // (audit MSG-3). Skip the preview insert for e2ee threads.
-  const { data: acceptThreadMeta } = await sc
+  //
+  // The E2EE invariant makes this read a WRITE PRECONDITION, and the unsafe
+  // direction is the permissive one: supabase-js resolves on a DB error, so an
+  // unreadable message_threads yields `{ data: null }`, `?.is_e2ee === true`
+  // evaluates to FALSE, and the plaintext preview is inserted into what may
+  // well be an e2ee thread — server-readable plaintext persisted into an
+  // end-to-end-encrypted conversation, exactly the breach MSG-3 forbids, and
+  // not undoable once written. Treat "cannot prove this thread is not e2ee" as
+  // e2ee and skip the preview; the accept itself has already succeeded and been
+  // responded to, so nothing else is lost.
+  const { data: acceptThreadMeta, error: acceptThreadMetaErr } = await sc
     .from('message_threads')
     .select('is_e2ee')
     .eq('id', threadId)
     .maybeSingle();
+  if (acceptThreadMetaErr) {
+    req.log.error(
+      { err: acceptThreadMetaErr, threadId },
+      'message-request accept: could not read thread e2ee flag; skipping preview insert',
+    );
+    return;
+  }
   const threadIsE2ee = (acceptThreadMeta as any)?.is_e2ee === true;
   if (previewBody && !threadIsE2ee) {
     const { data: senderProfile } = await sc
@@ -857,11 +1012,59 @@ router.post('/message-requests/:requestId/decline', async (req, res) => {
   if (req_.status !== 'pending') { sendError(res, 'invalid_payload', `Request is already ${req_.status}`); return; }
 
   const now = new Date().toISOString();
-  await sc.from('message_requests').update({ status: 'declined', responded_at: now }).eq('id', requestId);
+
+  // ── THE DECLINE IS THE WHOLE ENDPOINT, AND IT WAS ISSUED BLIND ──────────────
+  // This used to be a bare `await sc.from(...).update(...).eq('id', requestId)`
+  // — no `.select()`, no `{ error }`. supabase-js RESOLVES on a database error,
+  // so an UPDATE that never landed returned exactly what a successful one
+  // returns, and the handler went on to answer HTTP 200 `{ status: 'declined' }`
+  // AND publish a `request.declined` realtime event to the sender — for a
+  // request still sitting at `pending` in the table. Three parties then disagree
+  // about one fact: the recipient's client drops the card, the sender is told
+  // they were turned down, and the next GET /message-requests hands the
+  // recipient the very same request back. Nothing retries, because nothing
+  // observed a failure.
+  //
+  // The `status !== 'pending'` check above is a READ, and the write below used to
+  // trust it. Between the two, a second decline — or an accept — can land, and
+  // both requests then answer 200 for a transition only one of them made. The
+  // transition is now a COMPARE-AND-SWAP: `.eq('status','pending')` moves the
+  // test into the write itself, and `.select('id')` is what makes the outcome
+  // observable, because without it PostgREST returns data: null and a caller
+  // cannot tell one affected row from none.
+  //
+  // This is the fix Lane Y measured and then had to withdraw, because the fake
+  // in telegraphStreamEndpoints.test.ts answered {data: null} for EVERY update
+  // and read the swap as "matched nothing". The fake was taught the client's
+  // actual behaviour in the same change; a double that cannot express a client
+  // behaviour will otherwise veto the repair of a real defect.
+  const { data: declined, error: declineErr } = await sc
+    .from('message_requests')
+    .update({ status: 'declined', responded_at: now })
+    .eq('id', requestId)
+    .eq('status', 'pending')
+    .select('id');
+
+  if (declineErr) {
+    req.log.error({ err: declineErr, requestId }, 'message_requests decline update failed');
+    sendError(res, 'db_error', declineErr.message);
+    return;
+  }
+
+  if (!Array.isArray(declined) || declined.length === 0) {
+    // Zero rows means the request stopped being `pending` between the read and
+    // the write. Nothing was changed, so nothing may be reported as changed —
+    // and in particular the realtime `request.declined` below must not fire.
+    req.log.warn({ requestId }, 'message_requests decline lost a race — no longer pending');
+    sendError(res, 'invalid_payload', 'Request is no longer pending');
+    return;
+  }
 
   res.status(200).json({ status: 'declined', requestId });
 
   // Realtime: notify the original sender their request was declined.
+  // Reached only on a decline this handler WATCHED land, so the event can no
+  // longer announce a state change the table does not carry.
   if (req_.sender_id) {
     void publishToUsers([req_.sender_id], {
       type: 'request.declined',
@@ -895,7 +1098,33 @@ router.post('/message-requests/:requestId/cancel', async (req, res) => {
   if (req_.sender_id !== user.id) { sendError(res, 'forbidden', 'Only the sender can cancel this request'); return; }
   if (req_.status !== 'pending') { sendError(res, 'invalid_payload', `Request is already ${req_.status}`); return; }
 
-  await sc.from('message_requests').update({ status: 'cancelled' }).eq('id', requestId);
+  // Same blind write as decline had: no `{ error }`. A failed UPDATE was
+  // reported to the sender as HTTP 200 `{ status: 'cancelled' }` while the
+  // request stayed `pending` and kept sitting in the recipient's inbox — a
+  // withdrawal the recipient never saw withdrawn.
+  // Compare-and-swap, for the same reason as decline: the `status !== 'pending'`
+  // test above is a READ, and an accept or decline can land between it and this
+  // write. `.eq('status','pending')` moves the test into the write;
+  // `.select('id')` is what makes the outcome observable at all, since PostgREST
+  // returns data: null without it.
+  const { data: cancelled, error: cancelErr } = await sc
+    .from('message_requests')
+    .update({ status: 'cancelled' })
+    .eq('id', requestId)
+    .eq('status', 'pending')
+    .select('id');
+
+  if (cancelErr) {
+    req.log.error({ err: cancelErr, requestId }, 'message_requests cancel update failed');
+    sendError(res, 'db_error', cancelErr.message);
+    return;
+  }
+
+  if (!Array.isArray(cancelled) || cancelled.length === 0) {
+    req.log.warn({ requestId }, 'message_requests cancel lost a race — no longer pending');
+    sendError(res, 'invalid_payload', 'Request is no longer pending');
+    return;
+  }
 
   res.status(200).json({ status: 'cancelled', requestId });
 });
@@ -920,11 +1149,15 @@ router.get('/me/unread-counts', async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, 'server_not_configured', 'Service client not ready'); return; }
 
+  // Telegraph §14.3: the unread badge counts only messages inside the caller's
+  // per-thread window (visible_from_at, migration 2400), flag-gated.
+  const boundOn = await historyBoundEnabled(sc);
+
   // ── Run messages query and notifications queries in parallel ──────────────
   const [membershipsResult, profileResult] = await Promise.all([
     sc
       .from('message_thread_members')
-      .select('thread_id, last_read_at')
+      .select(membershipSelect('thread_id, last_read_at', boundOn))
       .eq('user_id', user.id)
       .is('left_at', null),
     sc
@@ -934,7 +1167,11 @@ router.get('/me/unread-counts', async (req, res) => {
       .maybeSingle(),
   ]);
 
-  let { data: memberships, error: mErr } = membershipsResult;
+  // The membership select is built by membershipSelect() (a runtime string),
+  // so supabase-js cannot infer the row type; the rows are the same shape
+  // they always were.
+  let memberships: any[] | null = (membershipsResult.data as any[] | null);
+  let mErr: any = membershipsResult.error;
 
   // Migration 0016 adds last_read_at to message_thread_members. If it hasn't
   // been applied yet (pg error 42703 = undefined column), fall back to a query
@@ -969,9 +1206,11 @@ router.get('/me/unread-counts', async (req, res) => {
 
   if (threadIds.length > 0) {
     const readAtByThread: Record<string, string | null> = {};
+    const visibleFromByThread: Record<string, string | null> = {};
     for (const m of memberships ?? []) {
       // last_read_at may be absent if migration 0016 is pending; default null
       readAtByThread[(m as any).thread_id] = (m as any).last_read_at ?? null;
+      visibleFromByThread[(m as any).thread_id] = visibleFromOf(m as any, boundOn);
     }
 
     const { data: threads, error: tErr } = await sc
@@ -1010,6 +1249,9 @@ router.get('/me/unread-counts', async (req, res) => {
 
       const lastMsgByThread: Record<string, any> = {};
       for (const m of lastMsgs ?? []) {
+        // §14.3: a message outside the caller's window for its thread is not
+        // theirs to count as unread. No-op while the flag is OFF.
+        if (!withinWindow((m as any).created_at, visibleFromByThread[(m as any).thread_id] ?? null)) continue;
         if (!lastMsgByThread[(m as any).thread_id]) {
           lastMsgByThread[(m as any).thread_id] = m;
         }
@@ -1091,14 +1333,23 @@ router.get('/me/unread-counts', async (req, res) => {
     const now = new Date().toISOString();
 
     // 1. Get IDs of users blocked in either direction.
-    const [blockedByMe, blockingMe] = await Promise.all([
-      sc.from('blocks').select('blocked_id').eq('blocker_id', user.id),
-      sc.from('blocks').select('blocker_id').eq('blocked_id', user.id),
-    ]);
-    const blockedSet = new Set<string>([
-      ...((blockedByMe.data ?? []).map((r: any) => r.blocked_id as string)),
-      ...((blockingMe.data ?? []).map((r: any) => r.blocker_id as string)),
-    ]);
+    //
+    // FAIL-CLOSED, shape 2 (lib/exclusionSet.ts): the block set scopes ONE of
+    // the four numbers this endpoint returns. `messages`, `notifications` and
+    // `meetups` are not block-scoped and are already computed above, so the
+    // narrow honest answer is to leave `newHighlights` at its 0 default rather
+    // than 503 the whole badge endpoint. `isExcluded` returns true for every id
+    // when the set is unreadable, so `circleIds` empties, the highlights count
+    // is skipped, and the badge under-reports instead of surfacing a highlight
+    // from someone the caller blocked. Previously `(x.data ?? [])` turned a
+    // resolved DB error into an empty block set and the count included them.
+    const blockSet = await readBlockExclusions(sc, user.id);
+    if (!blockSet.ok) {
+      req.log.warn(
+        { reason: blockSet.reason },
+        'unread-counts: block list unreadable — newHighlights reported as 0',
+      );
+    }
 
     // 2. Get IDs of users in the caller's circle.
     const { data: circleRows } = await sc
@@ -1107,7 +1358,7 @@ router.get('/me/unread-counts', async (req, res) => {
       .eq('user_id', user.id);
     const circleIds = (circleRows ?? [])
       .map((r: any) => r.other_id as string)
-      .filter((id: string) => !blockedSet.has(id));
+      .filter((id: string) => !isExcluded(blockSet, id));
 
     if (circleIds.length > 0) {
       // 3. Count active highlights from circle members posted after last view.
@@ -1334,9 +1585,14 @@ router.get('/me/threads', async (req, res) => {
   if (!auth) return;
   const { client, user } = auth;
 
+  // Telegraph §14.3: the inbox preview and unread count are reads of message
+  // history too, so they honour the same per-membership bound as the thread
+  // read (visible_from_at, migration 2400), under the same flag.
+  const boundOn = await historyBoundEnabled(client);
+
   const { data: memberships, error: mErr } = await client
     .from('message_thread_members')
-    .select('thread_id, muted_at, archived_at, left_at, last_read_at')
+    .select(membershipSelect('thread_id, muted_at, archived_at, left_at, last_read_at', boundOn))
     .eq('user_id', user.id)
     .is('left_at', null);
 
@@ -1398,9 +1654,21 @@ router.get('/me/threads', async (req, res) => {
     }
   }
 
+  // §14.3 window per thread: a message created before the caller's
+  // visible_from_at for that thread is not the caller's to preview or count.
+  // Applied once here so the preview (lastMsgByThread) and the unread count
+  // (msgsByThread, below) agree. No-op while the flag is OFF (visibleFrom null).
+  const visibleFromByThread: Record<string, string | null> = {};
+  for (const m of memberships ?? []) {
+    visibleFromByThread[(m as any).thread_id] = visibleFromOf(m as any, boundOn);
+  }
+  const windowedMsgs = ((lastMsgRes.data ?? []) as any[]).filter((m) =>
+    withinWindow(m.created_at, visibleFromByThread[m.thread_id] ?? null),
+  );
+
   // Last message per thread.
   const lastMsgByThread: Record<string, any> = {};
-  for (const m of (lastMsgRes.data ?? []) as any[]) {
+  for (const m of windowedMsgs) {
     if (!lastMsgByThread[m.thread_id]) lastMsgByThread[m.thread_id] = m;
   }
 
@@ -1439,9 +1707,9 @@ router.get('/me/threads', async (req, res) => {
   const membershipMap: Record<string, any> = {};
   for (const m of memberships ?? []) membershipMap[(m as any).thread_id] = m;
 
-  // Group all messages by thread for unread counts.
+  // Group all messages by thread for unread counts (inside the §14.3 window).
   const msgsByThread: Record<string, any[]> = {};
-  for (const m of (lastMsgRes.data ?? []) as any[]) {
+  for (const m of windowedMsgs) {
     if (!msgsByThread[m.thread_id]) msgsByThread[m.thread_id] = [];
     msgsByThread[m.thread_id].push(m);
   }
@@ -1555,9 +1823,16 @@ router.get('/threads/:threadId/messages', async (req, res) => {
   const { threadId } = req.params;
   if (!isUuid(threadId)) { sendError(res, 'invalid_payload', 'Invalid thread id'); return; }
 
+  // Telegraph §14.3 / §26: "New member reads pre-membership history without
+  // policy → DENY". The bound lives on the caller's OWN membership row
+  // (visible_from_at, migration 2400) and is honoured only while
+  // telegraph_history_bound_enabled is TRUE; while OFF this read is exactly
+  // the query it was before 2400, column list included.
+  const boundOn = await historyBoundEnabled(client);
+
   const { data: membership } = await client
     .from('message_thread_members')
-    .select('user_id, left_at')
+    .select(membershipSelect('user_id, left_at', boundOn))
     .eq('thread_id', threadId)
     .eq('user_id', user.id)
     .is('left_at', null)
@@ -1565,6 +1840,8 @@ router.get('/threads/:threadId/messages', async (req, res) => {
 
   if (!membership) { sendError(res, 'forbidden', 'Not a member of this thread'); return; }
   if ((membership as any).left_at !== null) { sendError(res, 'forbidden', 'You no longer have access to this thread'); return; }
+
+  const visibleFrom = visibleFromOf(membership as any, boundOn);
 
   const before = req.query.before as string | undefined;
   const limit = Math.min(Number(req.query.limit ?? 50), 100);
@@ -1580,6 +1857,8 @@ router.get('/threads/:threadId/messages', async (req, res) => {
     .limit(limit);
 
   if (before) query = query.lt('created_at', before);
+  // The §14.3 window, applied in the query so pagination cannot walk past it.
+  if (visibleFrom) query = query.gte('created_at', visibleFrom);
 
   const { data, error } = await query;
   if (error) {
@@ -1641,10 +1920,14 @@ router.get('/threads/:threadId/messages', async (req, res) => {
         }
         const replyIds = Object.values(replyToIdMap).filter(Boolean) as string[];
         if (replyIds.length > 0) {
-          const { data: quotedRows } = await sc
+          // A reply to a message outside the caller's §14.3 window must not
+          // quote it back in — the quoted body is retrieval by another name.
+          let quotedQuery = sc
             .from('messages')
             .select(`id, body, sender_id, profile:profiles!messages_sender_id_fkey(name, handle, username, full_name)`)
             .in('id', replyIds);
+          if (visibleFrom) quotedQuery = quotedQuery.gte('created_at', visibleFrom);
+          const { data: quotedRows } = await quotedQuery;
           // Universal display-name rule: quoted sender shows @handle unless opted in.
           const qAllowed = await nameVisibilitySet(sc, ((quotedRows as any[]) ?? []).map((q: any) => q.sender_id));
           for (const qr of quotedRows as any[] ?? []) {
@@ -1779,12 +2062,26 @@ router.post('/threads/:threadId/messages', async (req, res) => {
   // isBlockedBetween (a blocks-table error is treated as blocked).
   {
     const blockSc = getServiceClient() ?? client;
-    const { data: otherMembers } = await client
+    const { data: otherMembers, error: otherMembersErr } = await client
       .from('message_thread_members')
       .select('user_id')
       .eq('thread_id', threadId)
       .is('left_at', null)
       .neq('user_id', user.id);
+    // isBlockedBetween IS fail-closed — but it is only REACHED when the roster
+    // read produced exactly one other member. supabase-js resolves on a database
+    // error, so an unreadable message_thread_members gave `data: null`, an empty
+    // roster, and the guard was skipped entirely: the fail-closed block check
+    // was never called, and the message went to someone who may have blocked the
+    // sender. A guard's posture is worth nothing if its INPUT can silently make
+    // it unreachable. Whether this is a 1:1 thread is now something we must
+    // KNOW, not something we assume from an empty result.
+    if (otherMembersErr) {
+      req.log.error({ err: otherMembersErr, threadId },
+        'thread roster read failed — cannot determine whether this is a blocked 1:1 thread; refusing the send');
+      sendError(res, 'degraded_unavailable', 'We could not verify this conversation right now. Please try again shortly.');
+      return;
+    }
     const others = ((otherMembers as any[]) ?? []).map((m) => m.user_id as string);
     if (others.length === 1 && others[0] && await isBlockedBetween(blockSc, user.id, others[0])) {
       sendError(res, 'forbidden', 'You cannot message this user'); return;
@@ -1792,11 +2089,22 @@ router.post('/threads/:threadId/messages', async (req, res) => {
   }
 
   // E-2: check thread E2EE flag.
-  const { data: threadMeta } = await client
+  // This flag decides whether the server is allowed to STORE PLAINTEXT. An
+  // unchecked `.error` made an unreadable message_threads read as
+  // `is_e2ee: false`, and the handler below then demanded a plaintext body and
+  // wrote it into a thread whose whole promise is that the server never sees
+  // one. "We could not read the flag" is not "the flag is false".
+  const { data: threadMeta, error: threadMetaErr } = await client
     .from('message_threads')
     .select('is_e2ee')
     .eq('id', threadId)
     .maybeSingle();
+  if (threadMetaErr) {
+    req.log.error({ err: threadMetaErr, threadId },
+      'thread E2EE flag read failed — refusing rather than risking plaintext storage in an E2EE thread');
+    sendError(res, 'degraded_unavailable', 'We could not verify this conversation right now. Please try again shortly.');
+    return;
+  }
   const isE2ee = (threadMeta as any)?.is_e2ee === true;
 
   if (isE2ee) {
@@ -1825,12 +2133,28 @@ router.post('/threads/:threadId/messages', async (req, res) => {
 
   // Validate reply reference belongs to the same thread (prevents cross-thread metadata exposure).
   if (replyToId) {
-    const { data: refMsg } = await sc
+    // An unreadable `messages` resolves as `{ data: null }`, which is also what
+    // a genuinely cross-thread replyToId returns. The refusal is right either
+    // way — the reply reference must never be persisted unverified — but the
+    // two must not wear the same clothes: telling the sender their message
+    // reference is invalid, when in truth the check could not run, makes them
+    // edit a message that was fine. 503 + retryable says "try again"; 400 says
+    // "this is wrong".
+    const { data: refMsg, error: refMsgErr } = await sc
       .from('messages')
       .select('id')
       .eq('id', replyToId)
       .eq('thread_id', threadId)
       .maybeSingle();
+    if (refMsgErr) {
+      req.log.error({ err: refMsgErr, threadId, replyToId }, 'reply-reference check unavailable');
+      sendError(
+        res,
+        'degraded_unavailable',
+        'We could not verify the message you are replying to. Please try again shortly.',
+      );
+      return;
+    }
     if (!refMsg) {
       sendError(res, 'invalid_payload', 'Referenced message does not belong to this thread');
       return;
@@ -1862,8 +2186,17 @@ router.post('/threads/:threadId/messages', async (req, res) => {
   // E-2: skip for E2EE threads — server cannot read ciphertext.
   // Scans the message body for off-app payment solicitation phrases. On match:
   //   1. Logs a buddy_booking_events row (event=off_app_solicitation_warning, admin_only).
-  //   2. After OFF_APP_SUSPENSION_THRESHOLD cumulative offenses for the buddy, suspends
-  //      the buddy profile and logs an auto-suspension event for admin review.
+  //   2. Counts the buddy's CUMULATIVE offenses INCLUDING the one being handled, and at
+  //      OFF_APP_SUSPENSION_THRESHOLD (default 3) suspends the buddy profile and logs an
+  //      auto-suspension event for admin review. "Three strikes": the third flagged
+  //      message is the one that suspends. The old local was named `priorCount` while
+  //      being read AFTER the warning insert, so it never held prior offenses at all —
+  //      the name lied about a number that decides whether an account is disabled. The
+  //      three-strikes BEHAVIOUR is what the surrounding prose, the operator-facing
+  //      threshold name and the existing acceptance test all describe, so the behaviour
+  //      is kept and the name is corrected to `offenseCount`; renaming rather than
+  //      re-basing the comparison also avoids silently converting this control into
+  //      four-strikes, which would weaken an abuse guard to satisfy a variable name.
   // Normal travel phrases do not trigger (patterns require explicit off-platform wording).
   const OFF_APP_PATTERNS = [
     /\boff[-\s]?app\b/i, /\bpay\s+outside\b/i, /\bcash\s+only\b.*\boutside\b/i,
@@ -1877,62 +2210,138 @@ router.post('/threads/:threadId/messages', async (req, res) => {
       try {
         const svcClient = getServiceClient();
         if (!svcClient) return;
-        const { data: booking } = await svcClient
+        // Every read below is an input to a decision that can DISABLE an account.
+        // supabase-js RESOLVES on a database error, so an unchecked `.error` reads
+        // as "no booking / no profile / no offenses" and silently switches the whole
+        // control off. Each one is checked and each failure is logged with what was
+        // lost, because a control that turns itself off during a bad database minute
+        // is worse than one that is absent: nobody knows it stopped.
+        const { data: booking, error: bookingErr } = await svcClient
           .from('rent_buddy_bookings')
           .select('id, buddy_id')
           .eq('telegraph_thread_id', threadId)
           .maybeSingle();
+        if (bookingErr) {
+          req.log.error({ err: bookingErr, threadId, messageId: (msg as any).id },
+            'off-app solicitation: booking lookup FAILED — flagged message not attributed to any buddy');
+          return;
+        }
         if (!booking) return;
         const bookingId = (booking as any).id as string;
         const buddyProfileId = (booking as any).buddy_id as string;
         // Only attribute the offense when the sender IS the buddy account.
         // A traveler can write off-app phrases without triggering buddy suspension.
-        const { data: buddySenderProfile } = await svcClient
+        const { data: buddySenderProfile, error: buddyProfErr } = await svcClient
           .from('rent_buddy_profiles')
           .select('id, user_id')
           .eq('id', buddyProfileId)
           .maybeSingle();
+        if (buddyProfErr) {
+          req.log.error({ err: buddyProfErr, buddyProfileId, bookingId },
+            'off-app solicitation: buddy profile lookup FAILED — offense not attributed');
+          return;
+        }
         if (!buddySenderProfile || (buddySenderProfile as any).user_id !== user.id) return;
-        await svcClient.from('buddy_booking_events').insert({
+        const { error: warnErr } = await svcClient.from('buddy_booking_events').insert({
           booking_id: bookingId,
           actor_user_id: user.id,
           event: 'off_app_solicitation_warning',
           metadata: { message_id: (msg as any).id, thread_id: threadId, excerpt: body.slice(0, 120), visibility: 'admin_only' },
         });
-        const { data: buddyBookings } = await svcClient
+        if (warnErr) {
+          req.log.error({ err: warnErr, bookingId, buddyProfileId, messageId: (msg as any).id },
+            'off-app solicitation warning insert FAILED — offense unaudited');
+        }
+
+        const threshold = offAppSuspensionThreshold(req.log);
+
+        // OFFENSE COUNT — two independent counts, neither of which may silently
+        // under-report.
+        //
+        // (A) actor-scoped: every off_app_solicitation_warning this user has ever
+        //     accrued. One equality filter, no id list, so PostgREST's row cap
+        //     cannot touch it. This is the authoritative count.
+        // (B) booking-scoped: the historical shape (warnings on any booking held by
+        //     this buddy PROFILE). It needs a booking-id list, and that list was
+        //     UNBOUNDED — PostgREST applies a default row cap (Supabase ships
+        //     db-max-rows = 1000), so a busy buddy's older bookings fell off the end
+        //     and the count was computed over a truncated set: the more bookings the
+        //     buddy had, the fewer offenses were counted. The cap is now OURS and
+        //     explicit, and hitting it is reported instead of being invisible; when
+        //     it is hit, (B) is a floor and (A) carries the answer.
+        //
+        // The decision uses max(A, B): (A) also aggregates across multiple buddy
+        // profiles owned by one user, and (B) still counts any legacy warning row
+        // whose actor was cleared (actor_user_id is ON DELETE SET NULL). Taking the
+        // max can only ever count more offenses, never fewer, so neither leg can
+        // make suspension easier to escape.
+        const { count: actorOffenses, error: actorCountErr } = await svcClient
+          .from('buddy_booking_events')
+          .select('id', { count: 'exact', head: true })
+          .eq('event', 'off_app_solicitation_warning')
+          .eq('actor_user_id', user.id);
+        if (actorCountErr || actorOffenses == null) {
+          req.log.error({ err: actorCountErr, buddyProfileId, threshold },
+            'off-app solicitation: offense count read FAILED — suspension decision SKIPPED, repeat offender stays active');
+          return;
+        }
+
+        const { data: buddyBookings, error: bookingsErr } = await svcClient
           .from('rent_buddy_bookings')
           .select('id')
-          .eq('buddy_id', buddyProfileId);
+          .eq('buddy_id', buddyProfileId)
+          .limit(BUDDY_BOOKING_SCAN_CAP);
+        if (bookingsErr) {
+          req.log.error({ err: bookingsErr, buddyProfileId },
+            'off-app solicitation: buddy booking list read FAILED — booking-scoped offense count unavailable, using actor-scoped count only');
+        }
         const buddyBookingIds = (buddyBookings ?? []).map((r: any) => r.id as string);
+        if (buddyBookingIds.length >= BUDDY_BOOKING_SCAN_CAP) {
+          req.log.warn({ buddyProfileId, cap: BUDDY_BOOKING_SCAN_CAP },
+            'off-app solicitation: buddy booking list hit the scan cap — booking-scoped offense count is a LOWER BOUND');
+        }
+        let bookingOffenses = 0;
         if (buddyBookingIds.length > 0) {
-          const { count: priorCount } = await svcClient
+          const { count: scoped, error: scopedErr } = await svcClient
             .from('buddy_booking_events')
-            .select('id', { count: 'exact' })
+            .select('id', { count: 'exact', head: true })
             .eq('event', 'off_app_solicitation_warning')
             .in('booking_id', buddyBookingIds);
-          const threshold = Number(process.env['OFF_APP_SUSPENSION_THRESHOLD'] ?? '3');
-          if ((priorCount ?? 0) >= threshold) {
-            // SAFETY enforcement: supabase-js resolves rather than throws on a DB
-            // error, so these results must be checked — a silently failed update
-            // here leaves a repeat off-app solicitor ACTIVE with no trace.
-            const { error: suspErr } = await svcClient
-              .from('rent_buddy_profiles')
-              .update({ status: 'suspended', admin_status: 'under_review', updated_at: new Date().toISOString() })
-              .eq('id', buddyProfileId);
-            if (suspErr) {
-              req.log.error({ err: suspErr, buddyProfileId, priorCount },
-                'off-app auto-suspension UPDATE failed — repeat offender remains active');
-            }
-            const { error: evErr } = await svcClient.from('buddy_booking_events').insert({
-              booking_id: bookingId,
-              actor_user_id: user.id,
-              event: 'buddy_auto_suspended',
-              metadata: { reason: 'repeated_off_app_solicitation', offense_count: priorCount, visibility: 'admin_only' },
-            });
-            if (evErr) {
-              req.log.error({ err: evErr, buddyProfileId },
-                'buddy_auto_suspended event insert failed — suspension unaudited');
-            }
+          if (scopedErr) {
+            req.log.error({ err: scopedErr, buddyProfileId },
+              'off-app solicitation: booking-scoped offense count FAILED — using actor-scoped count only');
+          } else {
+            bookingOffenses = scoped ?? 0;
+          }
+        }
+
+        // Cumulative offenses INCLUDING this message. The warning row was inserted
+        // above, so a successful insert is already in the count; when the insert
+        // failed the offense still happened and is added back explicitly, so a
+        // broken audit write cannot buy a repeat offender an extra strike.
+        const offenseCount = Math.max(actorOffenses, bookingOffenses) + (warnErr ? 1 : 0);
+
+        if (offenseCount >= threshold) {
+          // SAFETY enforcement: supabase-js resolves rather than throws on a DB
+          // error, so these results must be checked — a silently failed update
+          // here leaves a repeat off-app solicitor ACTIVE with no trace.
+          const { error: suspErr } = await svcClient
+            .from('rent_buddy_profiles')
+            .update({ status: 'suspended', admin_status: 'under_review', updated_at: new Date().toISOString() })
+            .eq('id', buddyProfileId);
+          if (suspErr) {
+            req.log.error({ err: suspErr, buddyProfileId, offenseCount },
+              'off-app auto-suspension UPDATE failed — repeat offender remains active');
+          }
+          const { error: evErr } = await svcClient.from('buddy_booking_events').insert({
+            booking_id: bookingId,
+            actor_user_id: user.id,
+            event: 'buddy_auto_suspended',
+            metadata: { reason: 'repeated_off_app_solicitation', offense_count: offenseCount, visibility: 'admin_only' },
+          });
+          if (evErr) {
+            req.log.error({ err: evErr, buddyProfileId },
+              'buddy_auto_suspended event insert failed — suspension unaudited');
           }
         }
       } catch (err) {
@@ -2134,12 +2543,26 @@ router.post('/threads/:threadId/media', async (req, res) => {
   // Fail-closed via isBlockedBetween.
   {
     const blockSc = getServiceClient() ?? client;
-    const { data: otherMembers } = await client
+    const { data: otherMembers, error: otherMembersErr } = await client
       .from('message_thread_members')
       .select('user_id')
       .eq('thread_id', threadId)
       .is('left_at', null)
       .neq('user_id', user.id);
+    // isBlockedBetween IS fail-closed — but it is only REACHED when the roster
+    // read produced exactly one other member. supabase-js resolves on a database
+    // error, so an unreadable message_thread_members gave `data: null`, an empty
+    // roster, and the guard was skipped entirely: the fail-closed block check
+    // was never called, and the message went to someone who may have blocked the
+    // sender. A guard's posture is worth nothing if its INPUT can silently make
+    // it unreachable. Whether this is a 1:1 thread is now something we must
+    // KNOW, not something we assume from an empty result.
+    if (otherMembersErr) {
+      req.log.error({ err: otherMembersErr, threadId },
+        'thread roster read failed — cannot determine whether this is a blocked 1:1 thread; refusing the send');
+      sendError(res, 'degraded_unavailable', 'We could not verify this conversation right now. Please try again shortly.');
+      return;
+    }
     const others = ((otherMembers as any[]) ?? []).map((m) => m.user_id as string);
     if (others.length === 1 && others[0] && await isBlockedBetween(blockSc, user.id, others[0])) {
       sendError(res, 'forbidden', 'You cannot message this user'); return;
@@ -2149,11 +2572,19 @@ router.post('/threads/:threadId/media', async (req, res) => {
   // Finding #14 fix: E2EE threads must never accept plaintext media messages.
   // This endpoint has no attachment-encryption path yet, so fail closed —
   // same posture as the text handler's ciphertext-required guard above.
-  const { data: threadMetaForMedia } = await client
+  const { data: threadMetaForMedia, error: threadMetaForMediaErr } = await client
     .from('message_threads')
     .select('is_e2ee')
     .eq('id', threadId)
     .maybeSingle();
+  if (threadMetaForMediaErr) {
+    // An unreadable flag read as `is_e2ee: false` and let a plaintext media
+    // message through the one gate that exists to stop it.
+    req.log.error({ err: threadMetaForMediaErr, threadId },
+      'thread E2EE flag read failed on the media path — refusing rather than admitting plaintext media to an E2EE thread');
+    sendError(res, 'degraded_unavailable', 'We could not verify this conversation right now. Please try again shortly.');
+    return;
+  }
   if ((threadMetaForMedia as any)?.is_e2ee === true) {
     sendError(res, 'e2ee_thread', 'Media messages are not supported on end-to-end encrypted threads');
     return;
@@ -2268,11 +2699,23 @@ router.post('/messages/:messageId/translate/retry', async (req, res) => {
   if (m.deleted_at) { sendError(res, 'invalid_payload', 'Cannot retry translation on a deleted message'); return; }
 
   // E-2: refuse translation for E2EE threads — server cannot read ciphertext.
-  const { data: threadMetaForTranslate } = await sc
+  // Third instance of the same shape as the two send paths: an unchecked
+  // `.error` made an unreadable message_threads read as `is_e2ee: false` and
+  // the gate was skipped, running the translation pipeline over a message from
+  // a thread whose contract is that the server never processes its contents.
+  // That the ciphertext column would probably yield nothing useful is not the
+  // guarantee; the gate is.
+  const { data: threadMetaForTranslate, error: threadMetaForTranslateErr } = await sc
     .from('message_threads')
     .select('is_e2ee')
     .eq('id', m.thread_id)
     .maybeSingle();
+  if (threadMetaForTranslateErr) {
+    req.log.error({ err: threadMetaForTranslateErr, threadId: m.thread_id, messageId },
+      'thread E2EE flag read failed on the translate path — refusing rather than translating a possibly E2EE message');
+    sendError(res, 'degraded_unavailable', 'We could not verify this conversation right now. Please try again shortly.');
+    return;
+  }
   if ((threadMetaForTranslate as any)?.is_e2ee === true) {
     sendError(res, 'e2ee_thread', 'Translation is unavailable for end-to-end encrypted messages');
     return;
@@ -2643,6 +3086,122 @@ router.post('/threads/:threadId/report', async (req, res) => {
   await invalidateCompassCache(sc, user.id, "thread_report");
 
   res.status(201).json({ ok: true });
+});
+
+// ── Saved messages ─────────────────────────────────────────────────────────────
+
+/**
+ * GET /api/me/saved-messages?limit=50
+ *
+ * The READ half of saved_messages. Until this route existed the table was
+ * write-only: both client surfaces offer "Save", the handler below persists it,
+ * and nothing anywhere read it back (Telegraph census T119, "persists into a
+ * hole"). This is not yet §10.2's "private Memory draft" — it is the projection
+ * that makes the save observable at all; promoting a save into a Memory is an
+ * owner decision this route does not make.
+ *
+ * §14.2 "Read authorization is dynamic": a save is not a permanent grant. Every
+ * item is RE-AUTHORIZED at read time, against the same rules the thread read
+ * applies —
+ *   - the caller is still an ACTIVE member of the message's thread
+ *     (a departed member's saves stay in the table and stop being returned);
+ *   - the message is not deleted / unsent (§7.4 "remove from normal
+ *     retrieval/search/projections");
+ *   - the message is inside the caller's §14.3 window when the history bound
+ *     is enabled.
+ * Every read is error-checked and fails CLOSED: supabase-js resolves rather
+ * than throws, and a failed read must never be reported as an empty collection
+ * (§29 "No silent schema failures that become plausible empty state").
+ *
+ * INERT: no client calls this route; nothing existing changes shape.
+ */
+router.get('/me/saved-messages', async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, 'server_not_configured', 'Service client not ready'); return; }
+
+  const limitRaw = Number(req.query.limit ?? 50);
+  const limit = Number.isFinite(limitRaw) && limitRaw > 0 ? Math.min(Math.floor(limitRaw), 200) : 50;
+
+  const { data: savedRows, error: savedErr } = await sc
+    .from('saved_messages')
+    .select('message_id, saved_at')
+    .eq('user_id', user.id)
+    .order('saved_at', { ascending: false })
+    .limit(limit);
+
+  if (savedErr) {
+    req.log.error({ err: savedErr }, 'saved_messages read failed');
+    sendError(res, 'db_error', savedErr.message);
+    return;
+  }
+
+  const saved = ((savedRows ?? []) as any[]);
+  if (saved.length === 0) { res.status(200).json({ saved: [] }); return; }
+
+  const savedAtById: Record<string, string> = {};
+  for (const s of saved) savedAtById[s.message_id as string] = s.saved_at as string;
+
+  const { data: msgRows, error: msgErr } = await sc
+    .from('messages')
+    .select('id, thread_id, sender_id, body, deleted_at, created_at, msg_type, subtype, media_url, media_type, media_thumbnail_url')
+    .in('id', Object.keys(savedAtById))
+    .is('deleted_at', null);
+
+  if (msgErr) {
+    req.log.error({ err: msgErr }, 'saved_messages: messages read failed');
+    sendError(res, 'db_error', msgErr.message);
+    return;
+  }
+
+  const msgs = ((msgRows ?? []) as any[]);
+  if (msgs.length === 0) { res.status(200).json({ saved: [] }); return; }
+
+  const threadIds = Array.from(new Set(msgs.map((m) => m.thread_id as string)));
+
+  const boundOn = await historyBoundEnabled(sc);
+  const { data: memRows, error: memErr } = await sc
+    .from('message_thread_members')
+    .select(membershipSelect('thread_id', boundOn))
+    .eq('user_id', user.id)
+    .in('thread_id', threadIds)
+    .is('left_at', null);
+
+  if (memErr) {
+    req.log.error({ err: memErr }, 'saved_messages: membership read failed');
+    sendError(res, 'db_error', memErr.message);
+    return;
+  }
+
+  const visibleFromByThread: Record<string, string | null> = {};
+  const activeThreads = new Set<string>();
+  for (const m of ((memRows ?? []) as any[])) {
+    activeThreads.add(m.thread_id as string);
+    visibleFromByThread[m.thread_id as string] = visibleFromOf(m, boundOn);
+  }
+
+  const items = msgs
+    .filter((m) => activeThreads.has(m.thread_id as string))
+    .filter((m) => withinWindow(m.created_at, visibleFromByThread[m.thread_id as string] ?? null))
+    .map((m) => ({
+      messageId: m.id as string,
+      threadId: m.thread_id as string,
+      senderId: (m.sender_id as string | null) ?? null,
+      body: (m.body as string | null) ?? null,
+      createdAt: m.created_at as string,
+      savedAt: savedAtById[m.id as string],
+      msgType: (m.msg_type as string) ?? 'text',
+      subtype: (m.subtype as string | null) ?? null,
+      mediaUrl: (m.media_url as string | null) ?? null,
+      mediaType: (m.media_type as string | null) ?? null,
+      mediaThumbnailUrl: (m.media_thumbnail_url as string | null) ?? null,
+    }))
+    .sort((a, b) => (a.savedAt < b.savedAt ? 1 : a.savedAt > b.savedAt ? -1 : 0));
+
+  res.status(200).json({ saved: items });
 });
 
 // ── Report message ────────────────────────────────────────────────────────────

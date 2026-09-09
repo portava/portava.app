@@ -17,7 +17,9 @@
  * ONLY accepted plans for exactly this reason.
  */
 import { Router } from "express";
+import { randomUUID } from "node:crypto";
 import { asyncHandler } from "../lib/asyncHandler.js";
+import { isTripKernelEnabled, executeTripCommand } from "../lib/tripKernel.js";
 import { z } from "zod";
 import { requireUser, sendError, canEditPlan, isAcceptedTripMember } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
@@ -225,8 +227,32 @@ router.post("/route-plans", asyncHandler(async (req, res) => {
     }))
     .filter((x) => x.sourceType === "plan_item" && x.sourceId && x.stopId);
 
-  if (planItemLinks.length > 0) {
+  // Trip Kernel path (Trips spec §25: a route plan integrates with the Trip by
+  // ISSUING A TRIP COMMAND, not by writing the Trip's table itself). Only when
+  // the plan is attached to a trip — a detached plan (tripId null) has no
+  // aggregate to command and keeps the legacy write below. Best-effort in both
+  // paths, exactly as before: a failed link is logged, never fatal.
+  const kernelSc = getServiceClient();
+  const kernel = planItemLinks.length > 0 && tripId && kernelSc && (await isTripKernelEnabled(kernelSc)) ? kernelSc : null;
+  if (kernel && tripId) {
     for (const link of planItemLinks) {
+      const r = await executeTripCommand(kernel, {
+        commandId: randomUUID(),
+        tripId,
+        actorUserId: user.id,
+        // Deterministic key: re-accepting the same plan re-links the same stop
+        // without a second event (§22.4).
+        idempotencyKey: `route-plan:${planId}:link:${link.sourceId}`,
+        type: "LINK_PLAN_ROUTE_STOP",
+        payload: { item_id: link.sourceId, route_stop_id: link.stopId },
+      });
+      if (!r.ok) {
+        req.log.warn({ reason: r.reason, detail: r.detail, sourceId: link.sourceId }, "link trip_plan_item route_stop_id (kernel)");
+      }
+    }
+  } else if (planItemLinks.length > 0) {
+    for (const link of planItemLinks) {
+      // trip-kernel:legacy-path — flag-off / detached-plan twin of LINK_PLAN_ROUTE_STOP above.
       const { error: linkErr } = await (client as any)
         .from("trip_plan_items")
         .update({ route_stop_id: link.stopId })

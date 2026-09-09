@@ -93,8 +93,8 @@ describe('TripReadinessCard', () => {
     router.push = mockPush;
   });
 
-  it('renders nothing when fetchTripReadiness returns null', async () => {
-    fetchTripReadiness.mockResolvedValue(null);
+  it("renders nothing when readiness is 'off' (not configured / flag off)", async () => {
+    fetchTripReadiness.mockResolvedValue({ state: 'off' });
 
     const { queryByTestId, queryByText, toJSON } = await mountCard();
 
@@ -118,25 +118,40 @@ describe('TripReadinessCard', () => {
     expect(toJSON()).toBeNull();
   });
 
-  it('renders nothing when fetchTripReadiness throws (network error)', async () => {
-    fetchTripReadiness.mockRejectedValue(new Error('Network request failed'));
+  // THIS TEST USED TO ASSERT THE DEFECT.
+  //
+  // It read "renders nothing when fetchTripReadiness throws (network error) —
+  // throw is treated same as null", and it passed, because the card collapsed
+  // a failed read into the feature-off state and disappeared. A readiness card
+  // is a risk report; a trip with unmet critical items looked exactly like a
+  // trip with none. The card must now SAY the check did not happen.
+  it("says so, rather than vanishing, when the read is 'unavailable'", async () => {
+    fetchTripReadiness.mockResolvedValue({ state: 'unavailable', detail: 'HTTP 503' });
 
-    const { queryByTestId, queryByText, toJSON } = await mountCard();
+    const { queryByTestId, findByText, queryByText } = await mountCard();
 
-    await waitFor(() => {
-      expect(queryByTestId('trip-readiness-card')).toBeNull();
-    });
+    expect(await findByText(/Readiness couldn't be checked/)).toBeTruthy();
+    expect(queryByTestId('trip-readiness-unavailable')).not.toBeNull();
 
-    // Card subtree must be fully absent — throw is treated same as null
-    expect(queryByText(/Trip Readiness/)).toBeNull();
+    // And it must not fabricate the report it could not read: no score, no
+    // category verdicts.
+    expect(queryByTestId('trip-readiness-card')).toBeNull();
     expect(queryByText(/\d+%/)).toBeNull();
     expect(queryByText('Plan')).toBeNull();
     expect(queryByText('Entry')).toBeNull();
-    expect(toJSON()).toBeNull();
+  });
+
+  it('does not vanish when the fetch itself throws unexpectedly', async () => {
+    // fetchTripReadiness swallows its own errors, but the card must not turn an
+    // unexpected throw back into "flag off" either.
+    fetchTripReadiness.mockRejectedValue(new Error('Network request failed'));
+
+    const { findByText } = await mountCard();
+    expect(await findByText(/Readiness couldn't be checked/)).toBeTruthy();
   });
 
   it('shows critical items above the score', async () => {
-    fetchTripReadiness.mockResolvedValue(FULL_SUMMARY);
+    fetchTripReadiness.mockResolvedValue({ state: 'ok', summary: FULL_SUMMARY });
 
     const { findByTestId, findByText, getByText } = await mountCard();
 
@@ -161,7 +176,7 @@ describe('TripReadinessCard', () => {
   });
 
   it('renders all seven category rows', async () => {
-    fetchTripReadiness.mockResolvedValue(FULL_SUMMARY);
+    fetchTripReadiness.mockResolvedValue({ state: 'ok', summary: FULL_SUMMARY });
 
     const { findByText } = await mountCard();
 
@@ -175,7 +190,7 @@ describe('TripReadinessCard', () => {
   });
 
   it('navigates via router.push when a critical item with actionRef is tapped', async () => {
-    fetchTripReadiness.mockResolvedValue(FULL_SUMMARY);
+    fetchTripReadiness.mockResolvedValue({ state: 'ok', summary: FULL_SUMMARY });
 
     const { findByText } = await mountCard();
 
@@ -187,7 +202,7 @@ describe('TripReadinessCard', () => {
   });
 
   it('passes refresh=true to fetchTripReadiness when refresh prop is true', async () => {
-    fetchTripReadiness.mockResolvedValue(FULL_SUMMARY);
+    fetchTripReadiness.mockResolvedValue({ state: 'ok', summary: FULL_SUMMARY });
 
     await mountCard({ refresh: true });
 
@@ -200,7 +215,7 @@ describe('TripReadinessCard', () => {
 
   it('shows "+8% since yesterday" when score increased by 8 points', async () => {
     // scores are integers (0–100) on the wire; delta = current − previous
-    fetchTripReadiness.mockResolvedValue({ ...FULL_SUMMARY, score: 72, previousScore: 64 });
+    fetchTripReadiness.mockResolvedValue({ state: 'ok', summary: { ...FULL_SUMMARY, score: 72, previousScore: 64 } });
 
     const { findByText } = await mountCard();
 
@@ -209,7 +224,7 @@ describe('TripReadinessCard', () => {
   });
 
   it('shows "-8% since yesterday" when score decreased by 8 points', async () => {
-    fetchTripReadiness.mockResolvedValue({ ...FULL_SUMMARY, score: 64, previousScore: 72 });
+    fetchTripReadiness.mockResolvedValue({ state: 'ok', summary: { ...FULL_SUMMARY, score: 64, previousScore: 72 } });
 
     const { findByText } = await mountCard();
 
@@ -218,7 +233,7 @@ describe('TripReadinessCard', () => {
   });
 
   it('shows "no change since yesterday" when score is identical to previousScore', async () => {
-    fetchTripReadiness.mockResolvedValue({ ...FULL_SUMMARY, score: 72, previousScore: 72 });
+    fetchTripReadiness.mockResolvedValue({ state: 'ok', summary: { ...FULL_SUMMARY, score: 72, previousScore: 72 } });
 
     const { findByText } = await mountCard();
 
@@ -227,7 +242,7 @@ describe('TripReadinessCard', () => {
   });
 
   it('shows no delta when previousScore is null', async () => {
-    fetchTripReadiness.mockResolvedValue({ ...FULL_SUMMARY, previousScore: null });
+    fetchTripReadiness.mockResolvedValue({ state: 'ok', summary: { ...FULL_SUMMARY, previousScore: null } });
 
     const { queryByText } = await mountCard();
 

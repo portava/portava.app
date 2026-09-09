@@ -77,17 +77,25 @@ import { requireUser, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { logger } from "../lib/logger.js";
 import { createEarningsLedgerEntry } from "../lib/rentBuddyEarningsLedger.js";
+// The ONE reader of rent_buddy_fee_rules. The dashboard used to carry its own
+// `defaultFeePercent = 22`; see lib/rentBuddyFeeSchedule.ts for why a numeric
+// fallback was the defect rather than the safety net (M1 / M10).
+import {
+  describeFeeScheduleFailure,
+  platformFeeUsdFor,
+  resolveFeeSchedule,
+} from "../lib/rentBuddyFeeSchedule.js";
 import { isNonNumericCoord } from "../lib/coords.js";
 import { sendPushWithRetry } from "../lib/pushWithRetry.js";
 import { invalidate as invalidateCompassCache } from "../compass/CompassCacheEngine.js";
-import { invalidateSuggestedCityCache, checkRentBuddyAccess } from "./rentABuddyRollout.js";
+import { invalidateSuggestedCityCache, checkRentBuddyAccess, CANCELLED_BOOKING_STATUSES } from "./rentABuddyRollout.js";
 import { requireBookingKyc } from "../lib/rentBuddyKycGate.js";
 import { isKillSwitchEngaged } from "../lib/featureFlags.js";
 // requireRentBuddyEnabled is the lane's ONE master-switch guard, defined in
 // rentABuddy.ts (which already gates its own 70 handlers with it). Imported
 // rather than re-implemented so this router cannot drift from the meaning of
 // `rent_buddy_enabled`. See its doc comment for why admin routes are exempt.
-import { getUserLimits, enforceBookingCreationGates, deriveServiceCountry, requireRentBuddyEnabled } from "./rentABuddy.js";
+import { accumulateBookingTip, getUserLimits, enforceBookingCreationGates, deriveServiceCountry, fetchAllBuddyBookingRows, fetchAllBuddyTipRows, requireRentBuddyEnabled } from "./rentABuddy.js";
 import {
   calculateCompatibilityScore,
   rankBuddies,
@@ -110,25 +118,15 @@ import {
 // The ONE bidirectional, fail-closed block resolver — the same one the map
 // reader and POST /rent-a-buddy/search consume.
 import { fetchBlockedSet } from "../lib/blocks.js";
+import { requireAdmin } from "../lib/requireAdmin.js";
 
+import { getDisplayTrustScores, getTrustProfileResult } from "../services/trust/TrustScoreService.js";
 const router = Router();
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
 function sc() {
   return getServiceClient();
-}
-
-async function requireAdmin(req: any, res: any): Promise<{ userId: string; svc: any } | null> {
-  const auth = await requireUser(req, res);
-  if (!auth) return null;
-  const { client, user } = auth;
-  const { data } = await client.from("profiles").select("role").eq("id", user.id).maybeSingle();
-  if (!data || (data as any).role !== "admin") {
-    res.status(403).json({ error: "forbidden", message: "Admin role required." });
-    return null;
-  }
-  return { userId: user.id, svc: sc() ?? client };
 }
 
 async function requireBuddyProfile(client: any, userId: string): Promise<any | null> {
@@ -438,19 +436,29 @@ router.post("/rent-a-buddy/match", async (req, res) => {
 
   const rows = withoutBlocked((buddyRows as any[]) ?? [], blockedSet, (r) => r.user_id);
 
-  // Load trust scores in batch
+  // Load trust scores in batch, through the canonical seam (census-trust A17).
+  //
+  // The inline read this replaces bound no error, so an unreadable
+  // trust_profiles produced an EMPTY map — and the two `?? 50` fallbacks below
+  // then gave every buddy in the city the neutral score. That is
+  // census-passport P45's defect in the marketplace: a constant standing in for
+  // a measurement, and indistinguishable from a real one because 50 is a value a
+  // real profile can hold. Ranking a marketplace on a fabricated constant is
+  // worse than ranking it without the term.
   const userIds = rows.map((r: any) => r.user_id);
-  const { data: trustRows } = await svc
-    .from("trust_profiles")
-    .select("user_id, overall_score")
-    .in("user_id", userIds.length > 0 ? userIds : ["00000000-0000-0000-0000-000000000000"]);
-
-  const trustMap = new Map<string, number>();
-  for (const t of (trustRows as any[]) ?? []) {
-    trustMap.set(t.user_id, Number(t.overall_score ?? 50));
+  const trustRead = await getDisplayTrustScores(svc, userIds);
+  if (trustRead.state === "unavailable") {
+    req.log?.error?.(
+      { reason: trustRead.reason, buddies: userIds.length },
+      "buddy marketplace: trust scores unavailable — refusing rather than ranking every buddy on the neutral 50",
+    );
+    sendError(res, "degraded_unavailable", "Buddy ranking is temporarily unavailable. Please try again.");
+    return;
   }
+  const trustMap = trustRead.scores;
 
-  // Score + rank
+  // Score + rank. `?? 50` is retained ONLY for a user the map genuinely lacks —
+  // a buddy with no trust profile — which is a real state and not an outage.
   const scoringDataList = rows.map((r: any) =>
     toBuddyScoringData(r, trustMap.get(r.user_id) ?? 50)
   );
@@ -1888,32 +1896,38 @@ router.post("/rent-a-buddy/bookings/:bookingId/tip", async (req, res) => {
     return sendError(res, 'invalid_payload', "Maximum tip amount is $200.");
   }
 
-  const { error } = await svc
-    .from("rent_buddy_tips")
-    .upsert({
-      booking_id: bookingId,
-      traveler_id: user.id,
-      buddy_user_id: bk.buddy.user_id,
-      amount_usd: amountUsd,
-      note: note ?? null,
-    }, { onConflict: "booking_id" });
-
-  if (error) return sendError(res, 'db_error', error.message);
-
-  // Update ledger with tip (best-effort: the tip row itself is committed — log only)
-  const { error: ledgerTipErr } = await svc
-    .from("rent_buddy_earnings_ledger")
-    .update({ tip_usd: amountUsd, updated_at: new Date().toISOString() })
-    .eq("booking_id", bookingId);
-  if (ledgerTipErr) logger.error({ err: ledgerTipErr, bookingId }, "ledger tip update failed (best-effort)");
-
-  // Update booking tip field (best-effort denormalised copy)
-  const { error: bookingTipErr } = await svc.from("rent_buddy_bookings").update({ tip_usd: amountUsd, updated_at: new Date().toISOString() }).eq("id", bookingId);
-  if (bookingTipErr) logger.error({ err: bookingTipErr, bookingId }, "booking tip update failed (best-effort)");
+  // M8 — ONE call, and it ACCUMULATES.
+  //
+  // THE DEFECT THIS REPLACES. Three unrelated writes used to happen here with
+  // no transaction: an upsert into rent_buddy_tips on conflict target
+  // `booking_id` carrying the single `amountUsd`, then two explicitly
+  // best-effort UPDATEs of the ledger's and the booking's `tip_usd`. The table
+  // is UNIQUE on booking_id, so a traveller's second tip REPLACED the first —
+  // there is no other copy of the destroyed amount and no reconciliation that
+  // could recover it, which is why 12 §4 orders M8 ahead of the rest of Stage
+  // 1B. The two trailing updates then wrote the single amount rather than the
+  // running total, so the three copies could disagree even without a second tip.
+  //
+  // WHY A FAILURE IS NOW A 500 AND NOT A LOG LINE. The two UPDATEs were
+  // best-effort by construction: they logged and the request still answered
+  // `{ ok: true }`. A silently dropped money write reported as a success is
+  // exactly the defect, so this is a DELIBERATE semantic change — the tip
+  // either lands in all three places or the traveller is told it did not.
+  //
+  // `buddy_user_id` is no longer passed from here: the payee is derived
+  // DB-side from the booking, so a caller cannot name someone else as the
+  // recipient of a tip.
+  const tip = await accumulateBookingTip(svc, bookingId, user.id, Number(amountUsd), note ?? null);
+  if (!tip) {
+    logger.error({ bookingId, userId: user.id }, "tip could not be applied");
+    return sendError(res, 'db_error', "The tip could not be recorded. Please try again.");
+  }
 
   emitAnalyticsEvent(svc, "tip_sent", { userId: user.id, buddyId: bk.buddy_id, city: bk.buddy?.city, category: bk.category, amountUsd: Number(amountUsd) });
 
-  res.json({ ok: true });
+  // totalTipUsd is the RUNNING TOTAL on this booking, not the amount just
+  // added — a second tip adds to the first rather than replacing it.
+  res.json({ ok: true, totalTipUsd: tip.totalTipUsd, atomic: tip.atomic });
 });
 
 // ── Saved Buddies (enhanced) ──────────────────────────────────────────────────
@@ -2136,6 +2150,14 @@ router.get("/rent-a-buddy/pricing/suggestion", async (req, res) => {
 
 // ── Earnings ──────────────────────────────────────────────────────────────────
 
+/**
+ * The booking columns this dashboard reads. Wider than the earnings fold's set
+ * in rentABuddy.ts, because this handler also renders today's and upcoming
+ * bookings to the client.
+ */
+const EARNINGS_DASHBOARD_BOOKING_COLUMNS =
+  "id, status, total_usd, deposit_usd, cash_balance_usd, cash_balance_confirmed_by_buddy, booking_date, category, city, duration_h, tip_usd, pricing_type";
+
 router.get("/rent-a-buddy/me/earnings/summary", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
@@ -2146,25 +2168,62 @@ router.get("/rent-a-buddy/me/earnings/summary", async (req, res) => {
 
   const today = new Date().toISOString().slice(0, 10);
 
-  const [bookingsRes, tipsRes, ledgerRes, trustRes] = await Promise.all([
-    svc.from("rent_buddy_bookings")
-      .select("id, status, total_usd, deposit_usd, cash_balance_usd, cash_balance_confirmed_by_buddy, booking_date, category, city, duration_h, tip_usd, pricing_type")
-      .eq("buddy_id", buddyProfile.id),
-    svc.from("rent_buddy_tips")
-      .select("amount_usd")
-      .eq("buddy_user_id", auth.user.id),
-    svc.from("rent_buddy_earnings_ledger")
-      .select("*")
-      .eq("buddy_user_id", auth.user.id),
-    svc.from("trust_profiles")
-      .select("overall_score, public_level")
-      .eq("user_id", auth.user.id)
-      .maybeSingle(),
+  // The take rate comes from rent_buddy_fee_rules keyed on THIS buddy's level —
+  // the same resolver the ledger writer uses (M1). It used to come from
+  // `ledger[0].platform_fee_percent`: an arbitrary row's rate applied to every
+  // completed booking, defaulting to a hard-coded 22 %. That select is gone
+  // with it; nothing else in this handler read the ledger.
+  //
+  // M7 — both money reads are EXHAUSTIVE, and both can say "I could not read".
+  //
+  // THE DEFECT (09 §1.3.4). Both of these were a single unpaginated select
+  // whose rows were then summed in JavaScript. PostgREST caps a select at its
+  // configured max-rows and says nothing when it truncates — no error, no
+  // header, just a shorter array — so a buddy past that cap was shown an
+  // earnings total and a tip total that were silently too low, and the more
+  // they had earned the more was missing. Worse, `(res.data ?? [])` turned a
+  // FAILED read into an empty array, so an outage published a confident $0.
+  // Both now page to exhaustion and return null on failure, and null is a 500.
+  const [bookingRows, tipRows, feeSchedule, trustRes] = await Promise.all([
+    fetchAllBuddyBookingRows(svc, buddyProfile.id, EARNINGS_DASHBOARD_BOOKING_COLUMNS),
+    fetchAllBuddyTipRows(svc, auth.user.id),
+    resolveFeeSchedule(svc, buddyProfile.buddy_level),
+    // Through the canonical seam (census-trust A17).
+    getTrustProfileResult(svc, auth.user.id),
   ]);
 
-  const bookings = (bookingsRes.data ?? []) as any[];
-  const tips = (tipsRes.data ?? []) as any[];
-  const ledger = (ledgerRes.data ?? []) as any[];
+  // A buddy is told a take rate or told nothing. Quoting a fee the operator did
+  // not configure is the defect (`08` §2.3); an error the client can surface is
+  // the honest alternative to a fabricated 22 %.
+  if (feeSchedule.status === "no_such_level") {
+    logger.error(
+      { userId: auth.user.id, buddyProfileId: buddyProfile.id, buddyLevel: feeSchedule.buddyLevel },
+      "earnings summary refused: buddy_level has no rent_buddy_fee_rules row",
+    );
+    // Operator-neutral text: the log above carries the table and the level.
+    return sendError(res, 'conflict',
+      "Your buddy level has no fee schedule entry, so earnings cannot be estimated.");
+  }
+  if (feeSchedule.status === "read_failed") {
+    logger.error(
+      { userId: auth.user.id, buddyProfileId: buddyProfile.id, detail: feeSchedule.message },
+      "earnings summary refused: rent_buddy_fee_rules unreadable",
+    );
+    return sendError(res, 'db_error', describeFeeScheduleFailure(feeSchedule));
+  }
+
+  // A partial total is worse than no total on a buddy's own money screen: the
+  // buddy cannot tell one from the other, and neither can an operator.
+  if (bookingRows === null || tipRows === null) {
+    logger.error(
+      { userId: auth.user.id, buddyProfileId: buddyProfile.id, bookingsFailed: bookingRows === null, tipsFailed: tipRows === null },
+      "earnings summary refused: booking/tip rows could not be read in full",
+    );
+    return sendError(res, 'db_error', "Earnings could not be totalled. Please try again.");
+  }
+
+  const bookings = bookingRows as any[];
+  const tips = tipRows as any[];
 
   const todayBkgs = bookings.filter((b) => b.booking_date === today);
   // Same two-value blind spot as GET /me/requests, in JS rather than SQL: the
@@ -2173,7 +2232,16 @@ router.get("/rent-a-buddy/me/earnings/summary", async (req, res) => {
   const upcoming = bookings.filter((b) => b.booking_date > today && (UPCOMING_STATUSES as readonly string[]).includes(b.status));
   const completed = bookings.filter((b) => b.status === "completed");
   const disputed = bookings.filter((b) => b.status === "disputed");
-  const cancelled = bookings.filter((b) => b.status === "cancelled");
+  // THE SAME TWO-VALUE BLIND SPOT, on the other side of the lifecycle.
+  // `cancelled` is written ONLY by admin dispute resolution. Every user-initiated
+  // cancellation writes `cancelled_by_traveler` or `cancelled_by_buddy` (the
+  // cancel route in rentABuddy.ts), so `b.status === "cancelled"` counted almost
+  // every real cancellation as zero and the buddy's statusBreakdown reported a
+  // cancellation history they did not have. This is the identical undercount
+  // CANCELLED_BOOKING_STATUSES was created for in rentABuddyRollout.ts, where it
+  // had made the city graduation gate falsely lenient; the set is imported
+  // rather than re-listed so the two cannot drift apart again.
+  const cancelled = bookings.filter((b) => CANCELLED_BOOKING_STATUSES.has(b.status));
 
   const sum = (arr: any[], key: string) => arr.reduce((s, r) => s + Number(r[key] ?? 0), 0);
 
@@ -2187,11 +2255,9 @@ router.get("/rent-a-buddy/me/earnings/summary", async (req, res) => {
     .filter((b) => b.cash_balance_confirmed_by_buddy === true)
     .reduce((s, b) => s + Number(b.cash_balance_usd ?? 0), 0);
 
-  // Platform fee estimate
-  const ledgerEntry = ledger[0];
-  const defaultFeePercent = 22;
-  const feePercent = ledgerEntry?.platform_fee_percent ?? defaultFeePercent;
-  const estimatedPlatformFee = Math.round(completedTotal * feePercent / 100 * 100) / 100;
+  // Platform fee estimate — one take rate, from the schedule of record.
+  const feePercent = feeSchedule.rule.platformFeePercent;
+  const estimatedPlatformFee = platformFeeUsdFor(completedTotal, feeSchedule.rule);
   const estimatedBuddyEarnings = Math.round((completedTotal - estimatedPlatformFee) * 100) / 100;
 
   res.json({
@@ -2214,6 +2280,11 @@ router.get("/rent-a-buddy/me/earnings/summary", async (req, res) => {
       inAppAmountCollected: depositCollected,
     },
     tips: { total: totalTips, count: tips.length },
+    // The rate and the level it came from, published together so a buddy can
+    // see WHICH schedule row priced them. Previously the percentage was never
+    // returned at all, which is how three different rates coexisted unnoticed.
+    buddyLevel: feeSchedule.buddyLevel,
+    platformFeePercent: feePercent,
     estimatedPlatformFeeUsd: estimatedPlatformFee,
     estimatedBuddyEarningsUsd: estimatedBuddyEarnings,
     statusBreakdown: {
@@ -2221,8 +2292,12 @@ router.get("/rent-a-buddy/me/earnings/summary", async (req, res) => {
       disputed: disputed.length,
       cancelled: cancelled.length,
     },
-    trustScore: (trustRes.data as any)?.overall_score ?? null,
-    trustLevel: (trustRes.data as any)?.public_level ?? null,
+    // null for "no profile", null for "unreadable" — the earnings summary has no
+    // third state to render and inventing one here would be scope. What changed
+    // is that the unreadable case is now LOGGED by the service instead of
+    // vanishing into an unbound `.error`.
+    trustScore: trustRes.state === "ok" ? (trustRes.profile.overall_score ?? null) : null,
+    trustLevel: trustRes.state === "ok" ? (trustRes.profile.public_level ?? null) : null,
     profileViews: buddyProfile.profile_views ?? 0,
     searchAppearances: buddyProfile.search_appearances ?? 0,
     repeatClientCount: buddyProfile.repeat_client_count ?? 0,
@@ -2243,7 +2318,28 @@ router.get("/rent-a-buddy/me/earnings/summary", async (req, res) => {
  * `entry.buddyNetEstimatedAmount.toFixed(2)` on undefined and the screen threw
  * on its FIRST row. The type asserted the mapping had happened; nothing checked
  * that it had. GET /me/earnings/summary, directly above, always mapped properly.
+ *
+ * ── THE WARNING IS UNCONDITIONAL, AND THAT IS THE HONEST NAME (M6) ──────────
+ * This used to read `row.is_estimated ? "Estimated — payout not processed"
+ * : undefined`, and the `undefined` arm was UNREACHABLE.
+ * `createEarningsLedgerEntry` is the only writer of `rent_buddy_earnings_ledger`
+ * in this tree; it writes `is_estimated: true` and `cash_balance_confirmed:
+ * false` at creation and nothing anywhere clears either one. There is no
+ * settlement writer, no payout insert (`rent_buddy_payouts` has no INSERT
+ * anywhere — `09` §1.4) and no payment path (`pay-deposit` / `pay-full` return
+ * 503). A branch on a flag that can never be false is not a branch; it is a
+ * claim that settlement exists, made by code that cannot settle anything.
+ *
+ * So the branch is gone and the warning always renders. `isEstimated` and
+ * `cashBalanceConfirmed` are still reported, because they are what the row
+ * actually says — but nothing DECIDES on them here any more.
+ *
+ * When a settlement writer is built (Stage 3, `09` §§4–10), this is the line
+ * that becomes conditional again, and the test that makes the false arm
+ * reachable must land in the same change as the writer that reaches it.
  */
+export const LEDGER_NOT_SETTLED_WARNING = "Estimated — payout not processed";
+
 export function toLedgerEntryView(row: any) {
   return {
     id: row.id,
@@ -2263,7 +2359,7 @@ export function toLedgerEntryView(row: any) {
     cashBalanceConfirmed: row.cash_balance_confirmed,
     isEstimated: row.is_estimated,
     createdAt: row.created_at,
-    warning: row.is_estimated ? "Estimated — payout not processed" : undefined,
+    warning: LEDGER_NOT_SETTLED_WARNING,
   };
 }
 
@@ -2298,7 +2394,7 @@ router.get("/rent-a-buddy/me/earnings/ledger", async (req, res) => {
 router.get("/rent-a-buddy/admin/marketplace/analytics", async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
-  const { svc } = admin;
+  const { sc: svc } = admin;
 
   const nowMs = Date.now();
   const since = new Date(nowMs - 30 * 24 * 60 * 60 * 1000).toISOString();
@@ -2392,7 +2488,7 @@ router.get("/rent-a-buddy/admin/marketplace/analytics", async (req, res) => {
 router.get("/rent-a-buddy/admin/marketplace/cities", async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
-  const { svc } = admin;
+  const { sc: svc } = admin;
 
   const { data } = await svc
     .from("rent_buddy_profiles")
@@ -2413,7 +2509,7 @@ router.get("/rent-a-buddy/admin/marketplace/cities", async (req, res) => {
 router.post("/rent-a-buddy/admin/profiles/:id/feature", async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
-  const { svc } = admin;
+  const { sc: svc } = admin;
 
   const { error } = await svc
     .from("rent_buddy_profiles")
@@ -2437,7 +2533,7 @@ router.post("/rent-a-buddy/admin/profiles/:id/feature", async (req, res) => {
 router.delete("/rent-a-buddy/admin/profiles/:id/feature", async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
-  const { svc } = admin;
+  const { sc: svc } = admin;
 
   const { error: unfeatureErr } = await svc.from("rent_buddy_profiles")
     .update({ featured: false, featured_at: null, updated_at: new Date().toISOString() })
@@ -2455,7 +2551,7 @@ router.delete("/rent-a-buddy/admin/profiles/:id/feature", async (req, res) => {
 router.post("/rent-a-buddy/admin/profiles/:id/city-ambassador", async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
-  const { svc } = admin;
+  const { sc: svc } = admin;
 
   const enable = req.body?.enable !== false;
   const { error: ambassadorErr } = await svc.from("rent_buddy_profiles")
@@ -2480,7 +2576,7 @@ router.post("/rent-a-buddy/admin/profiles/:id/city-ambassador", async (req, res)
 router.post("/rent-a-buddy/admin/packages/:id/approve", async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
-  const { svc } = admin;
+  const { sc: svc } = admin;
 
   const { error: approveErr } = await svc.from("rent_buddy_packages")
     .update({
@@ -2513,7 +2609,7 @@ router.post("/rent-a-buddy/admin/packages/:id/approve", async (req, res) => {
 router.post("/rent-a-buddy/admin/packages/:id/disable", async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
-  const { svc } = admin;
+  const { sc: svc } = admin;
 
   const { error: disableErr } = await svc.from("rent_buddy_packages")
     .update({
@@ -2547,7 +2643,7 @@ router.post("/rent-a-buddy/admin/packages/:id/disable", async (req, res) => {
 router.get("/rent-a-buddy/admin/pricing/outliers", async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
-  const { svc } = admin;
+  const { sc: svc } = admin;
 
   // Buddies with rates more than 3x the city/category average
   const { data } = await svc
@@ -2564,7 +2660,7 @@ router.get("/rent-a-buddy/admin/pricing/outliers", async (req, res) => {
 router.patch("/rent-a-buddy/admin/fee-rules", async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
-  const { svc } = admin;
+  const { sc: svc } = admin;
 
   const { updates } = req.body ?? {};
   if (!Array.isArray(updates)) return sendError(res, 'invalid_payload', "updates array required.");
@@ -2593,7 +2689,7 @@ router.patch("/rent-a-buddy/admin/fee-rules", async (req, res) => {
 router.post("/rent-a-buddy/admin/users/:userId/force-public-meetup", async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
-  const { svc } = admin;
+  const { sc: svc } = admin;
 
   const { error: limitErr } = await svc.from("rent_buddy_user_limits").upsert({
     user_id: req.params.userId,
@@ -2615,7 +2711,7 @@ router.post("/rent-a-buddy/admin/users/:userId/force-public-meetup", async (req,
 router.post("/rent-a-buddy/admin/users/:userId/force-full-in-app", async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
-  const { svc } = admin;
+  const { sc: svc } = admin;
 
   const { error: limitErr } = await svc.from("rent_buddy_user_limits").upsert({
     user_id: req.params.userId,
@@ -2638,7 +2734,7 @@ router.post("/rent-a-buddy/admin/users/:userId/force-full-in-app", async (req, r
 router.post("/rent-a-buddy/admin/restrictions/city-category", async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
-  const { svc } = admin;
+  const { sc: svc } = admin;
 
   const { city, category, disableDepositCash, requirePublicMeetup, requireFullInApp, reason } = req.body ?? {};
   if (!city) return sendError(res, 'invalid_payload', "city is required.");

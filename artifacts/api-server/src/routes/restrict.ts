@@ -96,6 +96,15 @@ router.delete("/users/:userId/restrict", async (req, res) => {
     return;
   }
 
+  // ZERO-ROW DECISION. This delete carries no `.select()`, so `error === null`
+  // proves the statement ran, not that it touched anything (PostgREST answers a
+  // zero-row DELETE with 204, exactly as it answers a successful one). That is
+  // acceptable here for a reason specific to this statement: the two filters
+  // together ARE the table's primary key, so a zero-row delete can only mean the
+  // restriction was already absent — and the response below asserts the END
+  // STATE ("you are not restricting this user"), which is true either way. The
+  // filters are what make that argument hold, so src/test/restrictReachability
+  // asserts both of them are present and that restrictor_id is the caller.
   const { error } = await sc
     .from("user_restrictions")
     .delete()

@@ -180,7 +180,19 @@ export function TripInviteLinksSheet({ tripId, visible, onDismiss }: Props) {
   const load = useCallback(async () => {
     setLoading(true);
     setLoadError(null);
-    const data = await getInviteLinks(tripId);
+    // getInviteLinks THROWS when the read fails. It used to return [], which
+    // made the `!Array.isArray` branch below unreachable and showed a trip
+    // owner an empty, clean list of live invite links for a read that never
+    // answered. The empty state here means "no live links"; only an answered
+    // read is allowed to produce it.
+    let data: InviteLinkUsage[];
+    try {
+      data = await getInviteLinks(tripId);
+    } catch {
+      setLoading(false);
+      setLoadError('Could not load invite links. Tap to retry.');
+      return;
+    }
     setLoading(false);
     if (!Array.isArray(data)) {
       setLoadError('Could not load invite links. Tap to retry.');

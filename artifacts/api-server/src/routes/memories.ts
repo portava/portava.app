@@ -39,10 +39,35 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   loadRestrictiveGems,
   gemCeilingForItem,
-  coarsenMediaLocation,
   UNDETERMINED_GEM_CEILING,
   type RestrictiveGem,
+  type LocationVisibilityTier,
 } from "../lib/mediaLocationVisibility.js";
+import {
+  MEMORY_LOCATION_PRECISIONS,
+  normalizeMemoryPrecision,
+  normalizeMemoryPrecisionForWrite,
+  publicationPrecision,
+  resolveMemoryLocationCeiling,
+  coarsenMemoryLocation,
+} from "../lib/memoryLocationPrecision.js";
+// §17 Command Bus and Domain Events. Every canonical Memory write below crosses
+// this boundary: a typed command, an actor, an idempotency key, an audit row
+// and — when the kernel is enabled — a domain event in the same transaction as
+// the state change. See lib/memoryCommandBus.ts for what runs with the flag off.
+import {
+  lifecycleStateOf,
+  readMemoryCommandEnvelope,
+  sendMemoryCommandRejection,
+} from "../lib/memoryCommandBus.js";
+import {
+  authorizeParticipantCommand,
+  commandTypeForPatch,
+  dispatchMemoryCommand,
+  guardLifecycle,
+  loadMemoryForCommand,
+  type CommandOutcome,
+} from "../services/memory/MemoryDomainService.js";
 
 const router = Router();
 const UUID_RE = /^[0-9a-f-]{36}$/i;
@@ -79,23 +104,46 @@ async function loadMemoryGemContext(
 }
 
 /**
- * Coarsen a raw memory row's location (snake_case) when a protected/approximate
- * gem sits on its coordinates. Owner bypass. No gem constraint (determined) ⇒
- * unchanged. Operates before mapMemory / enrichMemories so the coarsened values
- * flow through every projection.
+ * Coarsen a raw memory row's location (snake_case) to the STRICTER of two
+ * independent ceilings, for a non-owner viewer:
+ *
+ *   1. the Hidden-Gem ceiling — a property of the PLACE. "Is this coordinate
+ *      sitting on a gem whose own guard hides it?" Fail-closed when the gem
+ *      status could not be determined.
+ *   2. the owner's §10 `location_precision` rung — a property of the OWNER'S
+ *      CHOICE. "How precisely may this Memory of mine be published to anyone
+ *      who is not me?" Read only when `memory_location_precision_enabled` is
+ *      on, because production does not have the column (see migration 2338).
+ *
+ * These answer different questions and neither subsumes the other: a Memory at
+ * an unremarkable address has no gem to protect it, and a Memory on a protected
+ * gem is coarsened however permissive its owner's rung is.
+ *
+ * Owner bypass. Both ceilings absent ⇒ row returned unchanged, which with the
+ * flag off is byte-for-byte the pre-2338 behaviour. Operates before mapMemory /
+ * enrichMemories so the coarsened values flow through every projection.
  */
-function gemProtectMemoryRow(row: any, ctx: MemoryGemContext, viewerId: string): any {
+function protectMemoryRow(
+  row: any,
+  ctx: MemoryGemContext,
+  viewerId: string,
+  precisionEnabled: boolean,
+): any {
   if (row?.owner_id === viewerId) return row; // owner sees their own exact
   const lat = row?.location_lat != null ? Number(row.location_lat) : null;
   const lng = row?.location_lng != null ? Number(row.location_lng) : null;
-  const ceiling = ctx.determined
+  const gemCeiling: LocationVisibilityTier | null = ctx.determined
     ? gemCeilingForItem(ctx.gems, { placeId: null, lat, lng })
     : UNDETERMINED_GEM_CEILING; // fail-closed
-  if (ceiling == null) return row; // no gem constraint → unchanged
-  const d = coarsenMediaLocation(
-    { name: null, city: row?.location_city ?? null, country: row?.location_country ?? null, lat, lng },
-    { locationVisibility: ceiling, isOwner: false, coarsenSeed: String(row?.id ?? ""), emitCoarseCoords: true },
-  );
+  // Flag off ⇒ 'exact' ⇒ contributes no constraint, so `ceiling` collapses to
+  // exactly the gem ceiling and this function is a no-op wherever it was before.
+  // Flag on ⇒ the row's rung; a row that does not carry the key, or carries
+  // null / a value off the ladder, is clamped to 'hidden' — the read-side
+  // normalization that keeps an unreadable policy from being served as 'exact'.
+  const ownerPrecision = publicationPrecision(row, precisionEnabled);
+  const ceiling = resolveMemoryLocationCeiling(ownerPrecision, gemCeiling);
+  if (ceiling == null) return row; // no constraint from either source → unchanged
+  const d = coarsenMemoryLocation(row, ceiling);
   return {
     ...row,
     location_city: d.city,
@@ -117,13 +165,41 @@ const VISIBILITY_VALUES = ["public", "friends_only", "trip_crew", "circle_only",
 type MemoryVisibility = (typeof VISIBILITY_VALUES)[number];
 
 /**
- * Determines whether `viewerId` can read a memory row given raw DB data.
- * Always returns true for the owner.
+ * The surface a read is being served on. Spec v1 §23 names the policy function
+ * `canReadMemory(userId, memoryId, surface)` — the surface is part of the
+ * signature because one verdict must not serve every surface.
+ *
+ *   "single"      GET /memories/:id — a direct, addressed read. The full
+ *                 audience ladder applies: an allow-listed viewer of a `custom`
+ *                 Memory, a mutual follower of a `friends_only` one and a crew
+ *                 member of a `trip_crew` one may all read it here.
+ *   "profile"     GET /users/:userId/memories — same ladder; the viewer asked
+ *                 for one named owner.
+ *   "trip"        GET /trips/:tripId/memory — same ladder, scoped to a trip.
+ *   "public_feed" GET /memories — the discovery surface, and the reason this
+ *                 parameter exists. It is a PUBLIC surface: nothing but
+ *                 `visibility = 'public'` is admissible on it, no matter what
+ *                 relationship the viewer has to the owner. A `custom` Memory
+ *                 whose allow-list happens to contain the viewer must not
+ *                 appear in a global feed — being permitted to see something
+ *                 when you ask for it is not the same as having it pushed at
+ *                 you among strangers' content. §10 states the general form:
+ *                 canonical storage and public projections are separate, and
+ *                 the public surface gets the narrower rule.
  */
-async function canViewMemory(
+export type MemoryReadSurface = "single" | "profile" | "trip" | "public_feed";
+
+/**
+ * Spec v1 §23 `canReadMemory(userId, memoryId, surface)`.
+ *
+ * Determines whether `viewerId` can read a memory row given raw DB data, ON THE
+ * NAMED SURFACE. Always returns true for the owner.
+ */
+async function canReadMemory(
   sc: any,
   memory: any,
   viewerId: string | null,
+  surface: MemoryReadSurface,
 ): Promise<boolean> {
   if (viewerId === memory.owner_id) return true;
   if (memory.state !== "published") return false;
@@ -131,6 +207,15 @@ async function canViewMemory(
   const vis: MemoryVisibility = memory.visibility ?? "only_me";
 
   if (vis === "only_me") return false;
+
+  // The public surface admits exactly one visibility class, before any
+  // relationship is consulted. Everything below this line is the addressed-read
+  // ladder and must not run for the feed.
+  if (surface === "public_feed") {
+    if (vis !== "public") return false;
+    const hiddenOnFeed: string[] = memory.hidden_user_ids ?? [];
+    return !(viewerId != null && hiddenOnFeed.includes(viewerId));
+  }
 
   if (!viewerId) return vis === "public";
 
@@ -149,45 +234,120 @@ async function canViewMemory(
     return false;
   }
 
+  // EVERY GATE READ BELOW BINDS AND INSPECTS `.error`.
+  //
+  // supabase-js RESOLVES on a database error, so the old `Boolean(data)` /
+  // `if (!data) return false` forms turned an unreadable follow graph, crew or
+  // circle into a confident "not permitted". The DENIAL is right — withholding
+  // is the safe answer — but it was indistinguishable from a real one at every
+  // level: no different value, no log, nothing an operator could see. These are
+  // the four entries routes/memories.ts carries on the unchecked-reads ledger.
+  //
+  // The verdict is deliberately unchanged (still `false`), because this helper
+  // is called per-row across the discovery feed and the profile listing, where
+  // a per-row "undecidable" has no honest rendering. What changes is that the
+  // failure is now VISIBLE.
+  const denyUnreadable = (table: string, err: unknown): false => {
+    logger.error(
+      { err, table, memoryId: memory?.id, viewerId, visibility: vis, surface },
+      "memories: visibility gate read failed — withholding the memory (indistinguishable from a real deny in the response)",
+    );
+    return false;
+  };
+
   if (vis === "friends_only") {
-    const { data } = await sc
+    const { data, error } = await sc
       .from("user_follows")
       .select("following_id")
       .eq("follower_id", memory.owner_id)
       .eq("following_id", viewerId)
       .maybeSingle();
+    if (error) return denyUnreadable("user_follows", error);
     if (!data) return false;
-    const { data: back } = await sc
+    const { data: back, error: backErr } = await sc
       .from("user_follows")
       .select("following_id")
       .eq("follower_id", viewerId)
       .eq("following_id", memory.owner_id)
       .maybeSingle();
+    if (backErr) return denyUnreadable("user_follows", backErr);
     return Boolean(back);
   }
 
   if (vis === "trip_crew") {
     if (!memory.trip_id) return false;
-    const { data } = await sc
-      .from("trip_members")
-      .select("user_id")
-      .eq("trip_id", memory.trip_id)
-      .eq("user_id", viewerId)
-      .maybeSingle();
-    return Boolean(data);
+    // THE OLD PREDICATE WAS `trip_members WHERE trip_id = … AND user_id = viewer`
+    // AND NOTHING ELSE — no role filter, no status filter, and no check on the
+    // MEMORY OWNER at all. Any row admitted: role='invited' (never accepted the
+    // invitation), status='removed' (thrown off the trip), any role whatsoever.
+    // requireTripMember (lib/http.ts, the definition of record) accepts
+    //     role IN (owner, co_host, member, viewer)
+    //     AND (status IS NULL OR status = 'accepted')
+    // and falls back to trips.owner_id when no row exists. Migration 2530
+    // repaired the identical shape in the RLS policy behind highlights;
+    // routes/highlights.ts and routes/stories.ts carry the app-side rule. This
+    // is the third copy, and it was the loosest of the three.
+    const crew = await acceptedCrewOfTrip(sc, memory.trip_id);
+    if (!crew.ok) return denyUnreadable("trip_members", crew.error);
+    return crew.ids.has(viewerId) && crew.ids.has(memory.owner_id as string);
   }
 
   if (vis === "circle_only") {
-    const { data } = await sc
+    const { data, error } = await sc
       .from("circle_memberships")
       .select("other_id")
       .eq("user_id", memory.owner_id)
       .eq("other_id", viewerId)
       .maybeSingle();
+    if (error) return denyUnreadable("circle_memberships", error);
     return Boolean(data);
   }
 
   return false;
+}
+
+/* ============================================================================
+ * Trip crew — requireTripMember's rule, the third app-side copy.
+ *
+ * See the note in canReadMemory's trip_crew branch. The rule is duplicated
+ * rather than imported because that is already this repo's shape for it
+ * (lib/circleAccessGuard.ts, lib/mediaEligibility.ts, routes/geofence.ts,
+ * routes/highlights.ts, routes/stories.ts); one home for all of them is worth
+ * doing and is not this change.
+ *
+ * FAIL CLOSED: both reads check `.error` and the caller withholds.
+ * ============================================================================ */
+const ACCEPTED_TRIP_ROLES = new Set(["owner", "co_host", "member", "viewer"]);
+
+function isAcceptedMembershipRow(r: { role?: string | null; status?: string | null }): boolean {
+  if (!r.role || !ACCEPTED_TRIP_ROLES.has(r.role)) return false;
+  return r.status == null || r.status === "accepted";
+}
+
+/**
+ * The accepted crew of `tripId` — accepted trip_members rows, plus the
+ * trips.owner_id fallback when the owner holds no row (the row wins when one
+ * exists, so an owner whose own row says status='removed' is NOT crew).
+ */
+async function acceptedCrewOfTrip(
+  sc: any,
+  tripId: string,
+): Promise<{ ok: true; ids: Set<string> } | { ok: false; error: unknown }> {
+  const [rows, trip] = await Promise.all([
+    sc.from("trip_members").select("user_id, role, status").eq("trip_id", tripId),
+    sc.from("trips").select("owner_id").eq("id", tripId).maybeSingle(),
+  ]);
+  if (rows.error) return { ok: false, error: rows.error };
+  if (trip.error) return { ok: false, error: trip.error };
+  const ids = new Set<string>();
+  const rowUsers = new Set<string>();
+  for (const r of (rows.data ?? []) as any[]) {
+    rowUsers.add(r.user_id as string);
+    if (isAcceptedMembershipRow(r)) ids.add(r.user_id as string);
+  }
+  const ownerId = (trip.data as any)?.owner_id as string | null | undefined;
+  if (ownerId && !rowUsers.has(ownerId)) ids.add(ownerId);
+  return { ok: true, ids };
 }
 
 /** Check blocks in both directions. Returns true if blocked. */
@@ -203,6 +363,38 @@ async function isBlocked(sc: any, a: string, b: string): Promise<boolean> {
   // blocked" and leak the owner's memory content to a blocked viewer.
   if (r1.error || r2.error) return true;
   return Boolean(r1.data) || Boolean(r2.data);
+}
+
+/**
+ * The viewer's block set, in both directions, as an explicit result.
+ *
+ * Fail CLOSED, and the reason it returns a discriminated result rather than a
+ * Set is that a Set has no way to say "I could not establish this". supabase-js
+ * RESOLVES on a DB error, so `data ?? []` on an errored blocks query yields an
+ * EMPTY set — nothing filtered — which reads at the call site exactly like "this
+ * viewer has blocked nobody". That is how a transient blocks-table failure
+ * turns into a feed that serves blocked owners' content (audit MEM·M6, and
+ * §28.11: "never swallow projection/schema failures into plausible-looking
+ * empty history without structured error state").
+ */
+async function loadBlockedIds(
+  sc: any,
+  viewerId: string,
+): Promise<{ ok: true; ids: Set<string> } | { ok: false; error: unknown }> {
+  const [blockedByMe, blockingMe] = await Promise.all([
+    sc.from("blocks").select("blocked_id").eq("blocker_id", viewerId),
+    sc.from("blocks").select("blocker_id").eq("blocked_id", viewerId),
+  ]);
+  if (blockedByMe.error || blockingMe.error) {
+    return { ok: false, error: blockedByMe.error ?? blockingMe.error };
+  }
+  return {
+    ok: true,
+    ids: new Set<string>([
+      ...((blockedByMe.data ?? []).map((r: any) => r.blocked_id as string)),
+      ...((blockingMe.data ?? []).map((r: any) => r.blocker_id as string)),
+    ]),
+  };
 }
 
 // ── Schemas ────────────────────────────────────────────────────────────────────
@@ -221,6 +413,10 @@ const createMemorySchema = z.object({
   locationLat: z.number().min(-90).max(90).nullable().optional(),
   locationLng: z.number().min(-180).max(180).nullable().optional(),
   canonicalLocationId: z.string().uuid().nullable().optional(),
+  // §10 — the owner's ceiling on how precisely this Memory may be published.
+  // OPTIONAL, and left undefined the column keeps its DEFAULT 'exact', so a
+  // client that has never heard of it creates exactly what it created before.
+  locationPrecision: z.enum(MEMORY_LOCATION_PRECISIONS).optional(),
   startsAt: z.string().datetime({ offset: true }).nullable().optional(),
   endsAt: z.string().datetime({ offset: true }).nullable().optional(),
   state: z.enum(["draft", "published"]).default("published"),
@@ -239,6 +435,7 @@ const patchMemorySchema = z.object({
   locationLat: z.number().min(-90).max(90).nullable().optional(),
   locationLng: z.number().min(-180).max(180).nullable().optional(),
   canonicalLocationId: z.string().uuid().nullable().optional(),
+  locationPrecision: z.enum(MEMORY_LOCATION_PRECISIONS).optional(),
   startsAt: z.string().datetime({ offset: true }).nullable().optional(),
   endsAt: z.string().datetime({ offset: true }).nullable().optional(),
   state: z.enum(["draft", "published", "archived"]).optional(),
@@ -254,6 +451,46 @@ const addItemSchema = z.object({
 const patchTagSchema = z.object({
   action: z.enum(["approve", "remove"]),
 });
+
+// ── §17 command plumbing for the handlers below ───────────────────────────────
+
+/**
+ * Render a MemoryDomainService outcome that is NOT a success.
+ *
+ * Two refusal shapes, deliberately kept apart. A `rejection` is command-shaped
+ * — a §5 illegal transition, a §23 capability refusal, the kernel being absent
+ * — and carries a §24 reason code the client can switch on; lib/memoryCommandBus
+ * .sendMemoryCommandRejection owns that mapping so every route answers the same
+ * refusal the same way. An `http` error is everything else (an unreadable table,
+ * a write that matched zero rows) and keeps the exact code, status and message
+ * the handler used before this lane, so no existing client sees a new shape for
+ * an old failure.
+ */
+function sendCommandFailure(
+  req: any,
+  res: any,
+  outcome: Extract<CommandOutcome<unknown>, { ok: false }>,
+): void {
+  if ("rejection" in outcome) {
+    sendMemoryCommandRejection(res, outcome.rejection, req.log);
+    return;
+  }
+  const e = outcome.http;
+  sendError(res, e.code as any, e.message, e.exposeDetail ? { exposeDetail: true } : undefined);
+}
+
+/**
+ * Read the §19 Idempotency-Key header, or answer 400.
+ *
+ * Absent header => a fresh UUID, i.e. the request is not idempotent — exactly
+ * what every Memory write did before this lane, so an unaware client is not
+ * given a dedup window keyed on something it did not choose.
+ */
+function requireIdempotencyKey(req: any, res: any): string | null {
+  const env = readMemoryCommandEnvelope(req);
+  if (!env.ok) { sendError(res, "invalid_payload", env.message); return null; }
+  return env.idempotencyKey;
+}
 
 // ── Notification helper ────────────────────────────────────────────────────────
 
@@ -352,38 +589,90 @@ router.post("/memories", async (req, res) => {
   }
   const d = parsed.data;
 
-  const { data: memory, error } = await sc
-    .from("memories")
-    .insert({
-      owner_id: user.id,
-      title: d.title ?? null,
-      caption: d.caption ?? null,
+  const idempotencyKey = requireIdempotencyKey(req, res);
+  if (idempotencyKey === null) return;
+
+  // §5. A create names its own starting state. The schema admits draft or
+  // published; neither is a transition, but naming them through the same
+  // vocabulary is what lets the event payload carry a §5 `to_state` rather than
+  // the legacy column value.
+  const createState = lifecycleStateOf(d.state);
+
+  const precisionEnabled = await isFlagEnabled(sc, "memory_location_precision_enabled");
+
+  // A client may not name a column this database does not have: PostgREST fails
+  // the WHOLE insert on an unknown key (PGRST204), so an accepted-but-unwritable
+  // field would take Memory creation to 100% failure. With the flag off, a
+  // locationPrecision the client sent is dropped — the same posture
+  // routes/highlights.ts documents for media_thumbnail_url.
+  //
+  // `undefined` rather than a conditional spread, deliberately. Measured against
+  // the installed @supabase/supabase-js: an undefined property is dropped from
+  // the request entirely — it appears neither in the JSON body nor in a
+  // `columns=` parameter — so with the flag off this insert is byte-identical on
+  // the wire to the pre-2338 one. A spread would have produced the same request
+  // but a payload that `src/scripts/checkWritePathColumns.ts` cannot resolve
+  // statically, which trades a real guarantee for a cosmetic one: that check is
+  // the thing standing between this route and the PGRST204 outage above.
+  // Write-side normalization: only an exact ladder value is ever named; anything
+  // else leaves the column to its DEFAULT (whose value is the owner's pending
+  // decision, not this route's).
+  const precisionValue = precisionEnabled ? normalizeMemoryPrecisionForWrite(d.locationPrecision) : undefined;
+
+  const insertRow = {
+    location_precision: precisionValue,
+    owner_id: user.id,
+    title: d.title ?? null,
+    caption: d.caption ?? null,
+    visibility: d.visibility,
+    allowed_user_ids: d.allowedUserIds,
+    hidden_user_ids: d.hiddenUserIds,
+    trip_id: d.tripId ?? null,
+    event_id: d.eventId ?? null,
+    place_id: d.placeId ?? null,
+    location_city: d.locationCity ?? null,
+    location_country: d.locationCountry ?? null,
+    location_lat: d.locationLat ?? null,
+    location_lng: d.locationLng ?? null,
+    canonical_location_id: d.canonicalLocationId ?? null,
+    starts_at: d.startsAt ?? null,
+    ends_at: d.endsAt ?? null,
+    state: d.state,
+  };
+
+  const created = await dispatchMemoryCommand<any>({
+    sc,
+    commandType: "CREATE_MEMORY",
+    memoryId: null, // assigned by the kernel / the database
+    actorUserId: user.id,
+    idempotencyKey,
+    payload: {
+      to_state: createState,
       visibility: d.visibility,
-      allowed_user_ids: d.allowedUserIds,
-      hidden_user_ids: d.hiddenUserIds,
-      trip_id: d.tripId ?? null,
-      event_id: d.eventId ?? null,
-      place_id: d.placeId ?? null,
-      location_city: d.locationCity ?? null,
-      location_country: d.locationCountry ?? null,
-      location_lat: d.locationLat ?? null,
-      location_lng: d.locationLng ?? null,
-      canonical_location_id: d.canonicalLocationId ?? null,
-      starts_at: d.startsAt ?? null,
-      ends_at: d.endsAt ?? null,
-      state: d.state,
-    })
-    .select("id, owner_id, title, caption, visibility, trip_id, event_id, place_id, location_city, location_country, location_lat, location_lng, canonical_location_id, starts_at, ends_at, state, created_at")
-    .single();
+      write: insertRow,
+      select: precisionEnabled ? MEMORY_CREATE_SELECT_WITH_PRECISION : MEMORY_CREATE_SELECT,
+    },
+    legacy: async () => {
+      const { data, error } = await sc
+        .from("memories")
+        .insert(insertRow)
+        .select((precisionEnabled ? MEMORY_CREATE_SELECT_WITH_PRECISION : MEMORY_CREATE_SELECT) as any)
+        .single();
+      if (error) {
+        req.log.error({ err: error }, "memories: create failed");
+        return { ok: false, http: { code: "db_error", message: error.message } };
+      }
+      return { ok: true, body: data };
+    },
+  });
 
-  if (error) {
-    req.log.error({ err: error }, "memories: create failed");
-    sendError(res, "db_error", error.message);
-    return;
-  }
+  if (!created.ok) { sendCommandFailure(req, res, created); return; }
+  const memory = created.body;
 
-  // Tag users if provided
-  if (d.taggedUserIds.length > 0) {
+  // Tag users if provided. §17 ADD_PERSON — the participant set is part of the
+  // Memory, and a replay of CREATE_MEMORY must not tag anyone twice, which is
+  // why this is skipped on a duplicate: the original command already did it.
+  if (d.taggedUserIds.length > 0 && !created.duplicate) {
     const tagRows = d.taggedUserIds
       .filter((uid) => uid !== user.id)
       .map((uid) => ({
@@ -393,9 +682,23 @@ router.post("/memories", async (req, res) => {
       }));
 
     if (tagRows.length > 0) {
-      await sc.from("memory_tags").insert(tagRows).then(undefined, () => {});
-      for (const uid of d.taggedUserIds.filter((u) => u !== user.id)) {
-        notifyTagged(sc, memory, uid);
+      // `.then(undefined, () => {})` — MEASURED THIS SESSION: that is a
+      // REJECTION handler, and supabase-js RESOLVES on a database error, so it
+      // never ran for the failure it was written to absorb. The tag insert
+      // failing meant nobody was tagged, no notification row was written, and
+      // the route answered 201 with a `taggedUserIds` the caller had every
+      // reason to believe had landed. Not fatal to the Memory — the Memory is
+      // created and correct — so the response stays 201, but the failure is now
+      // visible in the log and the per-user notification loop is skipped rather
+      // than told about tags that do not exist.
+      const { error: tagErr } = await sc.from("memory_tags").insert(tagRows);
+      if (tagErr) {
+        req.log.error({ err: tagErr, memoryId: (memory as any).id, count: tagRows.length },
+          "memories: create tagged nobody — memory_tags insert failed");
+      } else {
+        for (const uid of d.taggedUserIds.filter((u) => u !== user.id)) {
+          notifyTagged(sc, memory, uid);
+        }
       }
     }
   }
@@ -421,54 +724,123 @@ router.get("/memories", async (req, res) => {
   const limit = Math.min(Number(req.query.limit ?? 30), 100);
   const cursor = typeof req.query.cursor === "string" ? req.query.cursor : null;
 
-  let q = sc
-    .from("memories")
-    .select(MEMORY_SELECT)
-    .eq("state", "published")
-    .eq("visibility", "public")
-    .order("created_at", { ascending: false })
-    .limit(limit);
+  const precisionEnabled = await isFlagEnabled(sc, "memory_location_precision_enabled");
 
-  if (cursor) {
-    (q as any) = (q as any).lt("created_at", cursor);
-  }
-
-  const { data, error } = await q;
-  if (error) {
-    req.log.error({ err: error }, "memories: discovery failed");
-    sendError(res, "db_error", error.message);
-    return;
-  }
-
-  const rows = (data ?? []) as any[];
-
-  // Filter blocks. Fail CLOSED: if either block lookup errors we cannot build a
-  // trustworthy block set, so we must not serve a feed that could include
-  // blocked owners' memories. (data ?? [] on an errored query yields an empty
-  // set → nothing filtered → blocked content leaks; guard the error explicitly.)
-  const [blockedByMe, blockingMe] = await Promise.all([
-    sc.from("blocks").select("blocked_id").eq("blocker_id", user.id),
-    sc.from("blocks").select("blocker_id").eq("blocked_id", user.id),
-  ]);
-  if (blockedByMe.error || blockingMe.error) {
-    req.log.error(
-      { err: blockedByMe.error ?? blockingMe.error },
-      "memories: block lookup failed — failing closed",
-    );
+  // ── Two defects lived in the shape this route used to have ─────────────────
+  //
+  // 1. `.limit(n)` ran in the DATABASE and the block filter ran afterwards in
+  //    TypeScript, so a page silently shrank by however many blocked owners it
+  //    happened to contain — request 30, receive 27. And because `nextCursor` is
+  //    emitted only when `visible.length === limit`, that shrunken page also
+  //    ENDED the feed: one blocked owner anywhere in the first page and the
+  //    viewer's discovery feed simply stopped, with more rows behind it.
+  //
+  // 2. Far worse: the feed never consulted `hidden_user_ids` at all. Every
+  //    OTHER read path routes through canReadMemory, whose comment states that
+  //    "a hidden viewer is denied for EVERY visibility mode" (audit MEM·M1) —
+  //    but the feed did not call it. A user the owner had explicitly hidden
+  //    read that owner's public Memories in the global discovery feed. The fix
+  //    for MEM·M1 landed inside the helper; the one path that bypassed the
+  //    helper never got it.
+  //
+  // Both are the same architectural mistake, and the spec names it: §10 "public
+  // search only queries public derivatives, never private canonical storage
+  // followed by post-query filtering", restated as a prohibition in §28.6.
+  // Post-query filtering is not merely inelegant — it is how a filter goes
+  // missing, because nothing about the query says which predicates are owed.
+  //
+  // So every privacy predicate now runs INSIDE the query, and LIMIT applies to
+  // the already-filtered set. Two ways to do that, and both are here:
+  //
+  //   • `memory_public_feed_projection_enabled` ON → the §18
+  //     PublicMemoryProjection (migration 2338): one RPC, all predicates in
+  //     SQL, and a return shape that does not even contain the owner's
+  //     allow/hide lists.
+  //   • OFF → the PostgREST path below, carrying the same predicates as query
+  //     filters. It exists because production has neither the function nor the
+  //     column, and the leak had to close there too.
+  //
+  // Both paths are exercised in src/test/memoriesPublicFeedPrivacy.test.ts, and
+  // the derivative's SQL was additionally rehearsed against portava-ci with the
+  // five-row fixture (public / only_me / draft / hidden-from-viewer / blocked
+  // owner) that it must reduce to one.
+  const blockList = await loadBlockedIds(sc, user.id);
+  if (!blockList.ok) {
+    req.log.error({ err: blockList.error }, "memories: block lookup failed — failing closed");
     sendError(res, "db_error", "Could not resolve block state");
     return;
   }
-  const blockedSet = new Set<string>([
-    ...((blockedByMe.data ?? []).map((r: any) => r.blocked_id as string)),
-    ...((blockingMe.data ?? []).map((r: any) => r.blocker_id as string)),
-  ]);
+  const blockedSet = blockList.ids;
 
-  const visibleRaw = rows.filter((m) => !blockedSet.has(m.owner_id as string));
+  const useProjection = await isFlagEnabled(sc, "memory_public_feed_projection_enabled");
 
-  // Hidden-Gem location protection (fail-closed): coarsen coords of any public
-  // memory that sits on a protected gem before enrichment/serialization.
+  let rows: any[];
+  if (useProjection) {
+    const { data, error } = await (sc as any).rpc("memory_public_feed", {
+      p_viewer: user.id,
+      p_limit: limit,
+      p_cursor: cursor,
+    });
+    if (error) {
+      req.log.error({ err: error }, "memories: public feed projection failed");
+      sendError(res, "db_error", error.message);
+      return;
+    }
+    rows = (data ?? []) as any[];
+  } else {
+    let q = sc
+      .from("memories")
+      .select((precisionEnabled ? MEMORY_SELECT_WITH_PRECISION : MEMORY_SELECT) as any)
+      .eq("state", "published")
+      .eq("visibility", "public")
+      // MEM·M1 on the surface that was missing it: a viewer the owner hid never
+      // reaches the feed's result set in the first place.
+      .not("hidden_user_ids", "cs", `{${user.id}}`)
+      .order("created_at", { ascending: false })
+      .limit(limit);
+
+    if (blockedSet.size > 0) {
+      // Quoted list, matching the established form in this repo
+      // (routes/discoverySearch.ts, routes/compassHome.ts): PostgREST accepts a
+      // bare uuid, but quoting is what every other `not.in` site here does and
+      // it is the form that stays correct if the values ever stop being uuids.
+      (q as any) = (q as any).not("owner_id", "in", `(${[...blockedSet].map((b) => `"${b}"`).join(",")})`);
+    }
+    if (cursor) {
+      (q as any) = (q as any).lt("created_at", cursor);
+    }
+
+    const { data, error } = await q;
+    if (error) {
+      req.log.error({ err: error }, "memories: discovery failed");
+      sendError(res, "db_error", error.message);
+      return;
+    }
+    rows = (data ?? []) as any[];
+  }
+
+  // Defence in depth, not the filter. Every predicate above already ran in the
+  // database; this re-asserts the verdict on the public surface so that a
+  // future edit to either query cannot reintroduce the leak silently. It can
+  // only ever remove rows, never add them, and on a correct query it removes
+  // none — which is what the mutation test in memoriesPublicFeedPrivacy asserts.
+  const feedChecks = await Promise.all(
+    rows.map((m) => canReadMemory(sc, m, user.id, "public_feed")),
+  );
+  const visibleRaw = rows.filter((m, i) => feedChecks[i] && !blockedSet.has(m.owner_id as string));
+
+  // Location protection (fail-closed): the stricter of the Hidden-Gem ceiling
+  // and the owner's §10 precision rung, applied before enrichment/serialization.
+  //
+  // `|| useProjection` closes a flag-COMBINATION hazard. The derivative always
+  // returns `location_precision` (it cannot exist without migration 2338), so a
+  // database where someone turned the projection flag on and left the precision
+  // flag off would serve rows that carry an owner's narrowed rung while ignoring
+  // it — a privacy regression produced by a configuration nobody intended.
+  // Neither flag may widen disclosure; only narrow it.
+  const clampPrecision = precisionEnabled || useProjection;
   const memoryGemCtx = await loadMemoryGemContext(sc, visibleRaw);
-  const visible = visibleRaw.map((m) => gemProtectMemoryRow(m, memoryGemCtx, user.id));
+  const visible = visibleRaw.map((m) => protectMemoryRow(m, memoryGemCtx, user.id, clampPrecision));
 
   const enriched = await enrichMemories(sc, visible, user.id);
 
@@ -502,6 +874,30 @@ router.get("/memories", async (req, res) => {
 
 const MEMORY_SELECT = "id, owner_id, title, caption, visibility, allowed_user_ids, hidden_user_ids, trip_id, event_id, place_id, location_city, location_country, location_lat, location_lng, canonical_location_id, starts_at, ends_at, state, created_at, updated_at";
 
+/**
+ * The same list plus the §10 precision rung.
+ *
+ * TWO SELECT CONSTANTS, NOT ONE WITH A CONDITIONAL SUFFIX BUILT AT THE CALL
+ * SITE, so that both strings are greppable literals: `check:write-path-columns`
+ * resolves string-literal select lists through the AST and would lose sight of
+ * a list assembled from fragments, and losing sight of it is precisely how a
+ * column reference outlives the migration that created it.
+ *
+ * Which one a route uses is decided by `memory_location_precision_enabled`, and
+ * that flag is a SCHEMA-PRESENCE gate, not a product switch: production has not
+ * run migration 2338, and in PostgREST one unknown column fails the WHOLE
+ * statement with PGRST100 — a select naming `location_precision` there returns
+ * zero rows, not an error anybody sees. Same failure class as migration 0164.
+ */
+/**
+ * POST /memories returns a narrower row than the read paths (no allow/hide
+ * lists, no updated_at). Same two-literal rule as MEMORY_SELECT.
+ */
+const MEMORY_CREATE_SELECT = "id, owner_id, title, caption, visibility, trip_id, event_id, place_id, location_city, location_country, location_lat, location_lng, canonical_location_id, starts_at, ends_at, state, created_at";
+const MEMORY_CREATE_SELECT_WITH_PRECISION = "id, owner_id, title, caption, visibility, trip_id, event_id, place_id, location_city, location_country, location_lat, location_lng, canonical_location_id, location_precision, starts_at, ends_at, state, created_at";
+
+const MEMORY_SELECT_WITH_PRECISION = "id, owner_id, title, caption, visibility, allowed_user_ids, hidden_user_ids, trip_id, event_id, place_id, location_city, location_country, location_lat, location_lng, canonical_location_id, location_precision, starts_at, ends_at, state, created_at, updated_at";
+
 router.get("/memories/:id", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
@@ -513,21 +909,26 @@ router.get("/memories/:id", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
-  const { data: memory, error } = await sc
+  const precisionEnabled = await isFlagEnabled(sc, "memory_location_precision_enabled");
+
+  const { data: memoryRow, error } = await sc
     .from("memories")
-    .select(MEMORY_SELECT)
+    .select((precisionEnabled ? MEMORY_SELECT_WITH_PRECISION : MEMORY_SELECT) as any)
     .eq("id", id)
     .neq("state", "deleted")
     .maybeSingle();
 
   if (error) { sendError(res, "db_error", error.message); return; }
-  if (!memory) { sendError(res, "not_found", "Memory not found"); return; }
+  if (!memoryRow) { sendError(res, "not_found", "Memory not found"); return; }
+  // The select list is chosen at runtime (see MEMORY_SELECT_WITH_PRECISION), so
+  // the generated row type cannot be resolved statically here.
+  const memory = memoryRow as any;
 
   if (memory.owner_id !== user.id) {
     const blocked = await isBlocked(sc, user.id, memory.owner_id);
     if (blocked) { sendError(res, "not_found", "Memory not found"); return; }
 
-    const ok = await canViewMemory(sc, memory, user.id);
+    const ok = await canReadMemory(sc, memory, user.id, "single");
     if (!ok) { sendError(res, "not_found", "Memory not found"); return; }
   }
 
@@ -548,10 +949,10 @@ router.get("/memories/:id", async (req, res) => {
 
   const ownerNameAllowed = memory.owner_id === user.id || await nameVisibleFor(sc, memory.owner_id);
 
-  // Hidden-Gem location protection (fail-closed) — coarsen coords for non-owner
-  // reads of a memory that sits on a protected gem.
+  // Location protection (fail-closed) — the stricter of the Hidden-Gem ceiling
+  // and the owner's §10 precision rung, for non-owner reads.
   const singleMemoryGemCtx = await loadMemoryGemContext(sc, [memory]);
-  const safeMemory = gemProtectMemoryRow(memory, singleMemoryGemCtx, user.id);
+  const safeMemory = protectMemoryRow(memory, singleMemoryGemCtx, user.id, precisionEnabled);
 
   res.json({
     memory: {
@@ -596,18 +997,29 @@ router.patch("/memories/:id", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
-  const { data: existing } = await sc
-    .from("memories")
-    .select("id, owner_id")
-    .eq("id", id)
-    .neq("state", "deleted")
-    .maybeSingle();
+  const idempotencyKey = requireIdempotencyKey(req, res);
+  if (idempotencyKey === null) return;
 
-  if (!existing) { sendError(res, "not_found", "Memory not found"); return; }
-  if ((existing as any).owner_id !== user.id) { sendError(res, "forbidden", "Not your memory"); return; }
+  const precisionEnabled = await isFlagEnabled(sc, "memory_location_precision_enabled");
+
+  const loaded = await loadMemoryForCommand(sc, id);
+  if (!loaded.ok) { sendCommandFailure(req, res, loaded); return; }
+  const existing = loaded.row;
+  if (existing.owner_id !== user.id) { sendError(res, "forbidden", "Not your memory"); return; }
+
+  const d = parsed.data;
+
+  // §5. THE GUARD H50 SAYS WAS MISSING. Before this line the handler accepted
+  // any of draft/published/archived as `state` and wrote it unconditionally —
+  // published -> draft (un-publish, an arrow §5 does not draw), archived ->
+  // draft, and, for a row a moderator had set to 'removed', removed ->
+  // published, which puts moderator-removed content back into the discovery
+  // feed. The guard runs whether or not the kernel flag is on, because it needs
+  // no table that does not exist.
+  const lifecycle = guardLifecycle(existing.state, d.state);
+  if (!lifecycle.ok) { sendCommandFailure(req, res, lifecycle); return; }
 
   const patch: Record<string, unknown> = {};
-  const d = parsed.data;
   if (d.title !== undefined) patch.title = d.title;
   if (d.caption !== undefined) patch.caption = d.caption;
   if (d.visibility !== undefined) patch.visibility = d.visibility;
@@ -619,22 +1031,54 @@ router.patch("/memories/:id", async (req, res) => {
   if (d.locationLat !== undefined) patch.location_lat = d.locationLat;
   if (d.locationLng !== undefined) patch.location_lng = d.locationLng;
   if (d.canonicalLocationId !== undefined) patch.canonical_location_id = d.canonicalLocationId;
+  // Same schema-presence rule as create: never name the column unless the
+  // database has it. See MEMORY_SELECT_WITH_PRECISION.
+  if (precisionEnabled && d.locationPrecision !== undefined) {
+    const rung = normalizeMemoryPrecisionForWrite(d.locationPrecision);
+    if (rung !== undefined) patch.location_precision = rung;
+  }
   if (d.startsAt !== undefined) patch.starts_at = d.startsAt;
   if (d.endsAt !== undefined) patch.ends_at = d.endsAt;
   if (d.state !== undefined) patch.state = d.state;
   patch.updated_at = new Date().toISOString();
 
-  const { data, error } = await sc
-    .from("memories")
-    .update(patch)
-    .eq("id", id)
-    .eq("owner_id", user.id)
-    .select(MEMORY_SELECT)
-    .single();
+  // §17. Which command this PATCH is — a lifecycle transition, an audience
+  // change, a place correction, or a plain field edit. The name reaches the
+  // audit row and the domain event's payload, which is what makes §24's
+  // place_correction_rate countable at all.
+  const commandType = commandTypeForPatch(d);
 
-  if (error) { req.log.error({ err: error }, "memories: patch failed"); sendError(res, "db_error", error.message); return; }
+  const outcome = await dispatchMemoryCommand<any>({
+    sc,
+    commandType,
+    memoryId: id,
+    actorUserId: user.id,
+    idempotencyKey,
+    payload: {
+      patch,
+      from_state: lifecycle.fromState,
+      to_state: lifecycle.toState,
+      select: precisionEnabled ? MEMORY_SELECT_WITH_PRECISION : MEMORY_SELECT,
+    },
+    legacy: async () => {
+      const { data, error } = await sc
+        .from("memories")
+        .update(patch)
+        .eq("id", id)
+        .eq("owner_id", user.id)
+        .select((precisionEnabled ? MEMORY_SELECT_WITH_PRECISION : MEMORY_SELECT) as any)
+        .single();
+      if (error) {
+        req.log.error({ err: error }, "memories: patch failed");
+        return { ok: false, http: { code: "db_error", message: error.message } };
+      }
+      return { ok: true, body: data };
+    },
+  });
 
-  res.json({ memory: mapMemory(data, user.id) });
+  if (!outcome.ok) { sendCommandFailure(req, res, outcome); return; }
+
+  res.json({ memory: mapMemory(outcome.body, user.id) });
 });
 
 // ── DELETE /memories/:id ──────────────────────────────────────────────────────
@@ -650,15 +1094,20 @@ router.delete("/memories/:id", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
-  const { data: existing } = await sc
-    .from("memories")
-    .select("id, owner_id")
-    .eq("id", id)
-    .neq("state", "deleted")
-    .maybeSingle();
+  const idempotencyKey = requireIdempotencyKey(req, res);
+  if (idempotencyKey === null) return;
 
-  if (!existing) { sendError(res, "not_found", "Memory not found"); return; }
-  if ((existing as any).owner_id !== user.id) { sendError(res, "forbidden", "Not your memory"); return; }
+  const loaded = await loadMemoryForCommand(sc, id);
+  if (!loaded.ok) { sendCommandFailure(req, res, loaded); return; }
+  const existing = loaded.row;
+  if (existing.owner_id !== user.id) { sendError(res, "forbidden", "Not your memory"); return; }
+
+  // §5. `:642` wrote state:"deleted" directly with no transition check. A
+  // 'removed' (moderator) row reaching this handler now gets a refusal instead
+  // of a soft-delete that would hide the moderation verdict behind the owner's
+  // own delete.
+  const lifecycle = guardLifecycle(existing.state, "deleted");
+  if (!lifecycle.ok) { sendCommandFailure(req, res, lifecycle); return; }
 
   // Soft-delete by design: the memory becomes invisible everywhere (every read
   // path filters `state != 'deleted'`) but the row, its items and their media
@@ -667,11 +1116,48 @@ router.delete("/memories/:id", async (req, res) => {
   // memories by owner_id with no state filter and removes the items' storage
   // objects, so soft-deleted memories are hard-erased when the account goes
   // (audit MEM·H2).
-  await sc
-    .from("memories")
-    .update({ state: "deleted", updated_at: new Date().toISOString() })
-    .eq("id", id)
-    .eq("owner_id", user.id);
+  //
+  // §21's full deletion lifecycle (DELETION_REQUESTED -> PUBLIC_REVOKED ->
+  // DERIVATIVES_PURGED -> RAW_EVIDENCE_PURGED -> DELETED) is NOT built: there is
+  // no derivative registry to revoke against (§18, NOT-BUILT). This command
+  // emits memory.deleted so that registry, when it exists, has the one event it
+  // needs to start from — which is the whole reason the outbox goes in first.
+  const outcome = await dispatchMemoryCommand<{ id: string }>({
+    sc,
+    commandType: "DELETE_MEMORY",
+    memoryId: id,
+    actorUserId: user.id,
+    idempotencyKey,
+    payload: { from_state: lifecycle.fromState, to_state: lifecycle.toState },
+    legacy: async () => {
+      // THE WRITE THAT MAKES THE DELETION REAL, AND ITS RESULT WAS THROWN AWAY.
+      //
+      // No `error` binding and no `.select()`: supabase-js RESOLVES on a
+      // failure, so a rejected update produced 204 "deleted" for a memory still
+      // published, still on the owner's profile and still in the discovery
+      // feed. An UPDATE without .select() also returns `data: null`, so even a
+      // bound `error` would not have said whether any row was touched.
+      // `.select("id")` is what turns this into an answer. Deleting your own
+      // content is the operation that must not lie.
+      const { data: deleted, error: delErr } = await sc
+        .from("memories")
+        .update({ state: "deleted", updated_at: new Date().toISOString() })
+        .eq("id", id)
+        .eq("owner_id", user.id)
+        .select("id");
+      if (delErr) {
+        req.log.error({ err: delErr, memoryId: id }, "memories: delete failed");
+        return { ok: false, http: { code: "db_error", message: delErr.message } };
+      }
+      if (!deleted || (deleted as any[]).length === 0) {
+        req.log.error({ memoryId: id, ownerId: user.id }, "memories: delete matched zero rows — memory NOT deleted");
+        return { ok: false, http: { code: "db_error", message: "The memory could not be deleted. Please try again.", exposeDetail: true } };
+      }
+      return { ok: true, body: { id } };
+    },
+  });
+
+  if (!outcome.ok) { sendCommandFailure(req, res, outcome); return; }
 
   res.status(204).send();
 });
@@ -695,31 +1181,61 @@ router.post("/memories/:id/items", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
-  const { data: existing } = await sc
-    .from("memories")
-    .select("id, owner_id")
-    .eq("id", id)
-    .neq("state", "deleted")
-    .maybeSingle();
+  const idempotencyKey = requireIdempotencyKey(req, res);
+  if (idempotencyKey === null) return;
 
-  if (!existing) { sendError(res, "not_found", "Memory not found"); return; }
-  if ((existing as any).owner_id !== user.id) { sendError(res, "forbidden", "Not your memory"); return; }
+  const loaded = await loadMemoryForCommand(sc, id);
+  if (!loaded.ok) { sendCommandFailure(req, res, loaded); return; }
+  if (loaded.row.owner_id !== user.id) { sendError(res, "forbidden", "Not your memory"); return; }
 
-  const { data, error } = await sc
-    .from("memory_items")
-    .insert({
-      memory_id: id,
-      media_url: parsed.data.mediaUrl,
+  // §17 ADD_MEDIA. §19 H176/H177 are already correct here and stay correct: the
+  // Memory exists before any media and a failed item write leaves its facts
+  // intact. What the command adds is the idempotency key — §19's "enqueue media
+  // uploads independently ... sync command with idempotency key" is exactly the
+  // retry that used to produce a duplicate item on every network stutter.
+  const outcome = await dispatchMemoryCommand<any>({
+    sc,
+    commandType: "ADD_MEDIA",
+    memoryId: id,
+    actorUserId: user.id,
+    idempotencyKey,
+    payload: {
       media_type: parsed.data.mediaType,
-      caption: parsed.data.caption ?? null,
       position: parsed.data.position,
-    })
-    .select("id, media_url, media_type, caption, position, created_at")
-    .single();
+      // media_url and caption are deliberately NOT in the command payload's
+      // top level: the kernel takes them from `write` and never copies them
+      // into the event (§23 privacy-filtered event payloads).
+      write: {
+        memory_id: id,
+        media_url: parsed.data.mediaUrl,
+        media_type: parsed.data.mediaType,
+        caption: parsed.data.caption ?? null,
+        position: parsed.data.position,
+      },
+    },
+    legacy: async () => {
+      const { data, error } = await sc
+        .from("memory_items")
+        .insert({
+          memory_id: id,
+          media_url: parsed.data.mediaUrl,
+          media_type: parsed.data.mediaType,
+          caption: parsed.data.caption ?? null,
+          position: parsed.data.position,
+        })
+        .select("id, media_url, media_type, caption, position, created_at")
+        .single();
+      if (error) {
+        req.log.error({ err: error }, "memories: add item failed");
+        return { ok: false, http: { code: "db_error", message: error.message } };
+      }
+      return { ok: true, body: data };
+    },
+  });
 
-  if (error) { req.log.error({ err: error }, "memories: add item failed"); sendError(res, "db_error", error.message); return; }
+  if (!outcome.ok) { sendCommandFailure(req, res, outcome); return; }
 
-  res.status(201).json({ item: mapItem(data) });
+  res.status(201).json({ item: mapItem(outcome.body) });
 });
 
 // ── DELETE /memories/:id/items/:itemId ───────────────────────────────────────
@@ -735,28 +1251,69 @@ router.delete("/memories/:id/items/:itemId", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
-  const { data: existing } = await sc
-    .from("memories")
-    .select("id, owner_id")
-    .eq("id", id)
-    .neq("state", "deleted")
-    .maybeSingle();
+  const idempotencyKey = requireIdempotencyKey(req, res);
+  if (idempotencyKey === null) return;
 
-  if (!existing) { sendError(res, "not_found", "Memory not found"); return; }
-  if ((existing as any).owner_id !== user.id) { sendError(res, "forbidden", "Not your memory"); return; }
+  const loaded = await loadMemoryForCommand(sc, id);
+  if (!loaded.ok) { sendCommandFailure(req, res, loaded); return; }
+  if (loaded.row.owner_id !== user.id) { sendError(res, "forbidden", "Not your memory"); return; }
 
-  // Fetch the item to get its media_url before deleting
-  const { data: item } = await sc
+  // Fetch the item to get its media_url before deleting.
+  //
+  // `error` is bound: supabase-js RESOLVES on a database error, so an
+  // unreadable memory_items answered "Item not found" — a 404 for an outage,
+  // and worse, a 404 that tells the owner their media is already gone. §28.11.
+  const { data: item, error: itemErr } = await sc
     .from("memory_items")
     .select("id, media_url")
     .eq("id", itemId)
     .eq("memory_id", id)
     .maybeSingle();
 
+  if (itemErr) {
+    req.log.error({ err: itemErr, memoryId: id, itemId }, "memories: item read failed");
+    sendError(res, "db_error", itemErr.message);
+    return;
+  }
   if (!item) { sendError(res, "not_found", "Item not found"); return; }
 
-  // Delete the DB row first so the item is immediately inaccessible
-  await sc.from("memory_items").delete().eq("id", itemId).eq("memory_id", id);
+  // §17 REMOVE_MEDIA. The storage delete below stays OUTSIDE the command: it is
+  // not a canonical write, it cannot participate in the transaction, and §21
+  // ("Delete media asset — remove asset and derivatives; Memory may survive if
+  // other evidence remains") makes it a consequence of the command rather than
+  // part of it. Ordering is what keeps that honest — the row goes first, and if
+  // the row does not go, the bytes stay.
+  const outcome = await dispatchMemoryCommand<{ id: string }>({
+    sc,
+    commandType: "REMOVE_MEDIA",
+    memoryId: id,
+    actorUserId: user.id,
+    idempotencyKey,
+    payload: { item_id: itemId },
+    legacy: async () => {
+      // Delete the DB row first so the item is immediately inaccessible.
+      //
+      // The result of this delete was discarded, and the storage object is
+      // removed UNCONDITIONALLY below. So a failed row delete did not merely
+      // leave the item in place: it left the row pointing at bytes that had just
+      // been erased, i.e. a permanently broken item in the memory, and answered
+      // 204. Ordering makes the check load-bearing — nothing downstream can
+      // repair it.
+      const { data: removed, error: rmErr } = await sc
+        .from("memory_items").delete().eq("id", itemId).eq("memory_id", id).select("id");
+      if (rmErr) {
+        req.log.error({ err: rmErr, memoryId: id, itemId }, "memories: item delete failed — storage object left in place");
+        return { ok: false, http: { code: "db_error", message: rmErr.message } };
+      }
+      if (!removed || (removed as any[]).length === 0) {
+        req.log.error({ memoryId: id, itemId }, "memories: item delete matched zero rows — storage object left in place");
+        return { ok: false, http: { code: "db_error", message: "The item could not be removed. Please try again.", exposeDetail: true } };
+      }
+      return { ok: true, body: { id: itemId } };
+    },
+  });
+
+  if (!outcome.ok) { sendCommandFailure(req, res, outcome); return; }
 
   // Delete the storage object — derive path from public URL.
   // URL format: https://<host>/storage/v1/object/public/post-media/<path>
@@ -800,13 +1357,18 @@ router.get("/memories/:id/tags", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
-  const { data: memory } = await sc
+  const { data: memory, error: memoryErr } = await sc
     .from("memories")
     .select("id, owner_id, visibility, state")
     .eq("id", id)
     .neq("state", "deleted")
     .maybeSingle();
 
+  if (memoryErr) {
+    req.log.error({ err: memoryErr, memoryId: id }, "memories: memory read failed");
+    sendError(res, "db_error", memoryErr.message);
+    return;
+  }
   if (!memory) { sendError(res, "not_found", "Memory not found"); return; }
 
   const isOwner = memory.owner_id === user.id;
@@ -819,7 +1381,7 @@ router.get("/memories/:id/tags", async (req, res) => {
   ).data != null;
 
   if (!isOwner && !isTagged) {
-    const ok = await canViewMemory(sc, memory, user.id);
+    const ok = await canReadMemory(sc, memory, user.id, "single");
     if (!ok) { sendError(res, "not_found", "Memory not found"); return; }
   }
 
@@ -843,11 +1405,6 @@ router.patch("/memories/:id/tags/:userId", async (req, res) => {
   const { id, userId } = req.params;
   if (!isUuid(id) || !isUuid(userId)) { sendError(res, "invalid_payload", "Invalid id"); return; }
 
-  if (userId !== user.id) {
-    sendError(res, "forbidden", "You can only modify your own tag");
-    return;
-  }
-
   const parsed = patchTagSchema.safeParse(req.body);
   if (!parsed.success) {
     sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid payload");
@@ -857,24 +1414,79 @@ router.patch("/memories/:id/tags/:userId", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
-  const { data: tag } = await sc
+  const idempotencyKey = requireIdempotencyKey(req, res);
+  if (idempotencyKey === null) return;
+
+  // §17 ADD_PERSON (consent) / REMOVE_PERSON.
+  //
+  // THIS HANDLER USED TO OPEN WITH `if (userId !== user.id) forbidden`, so the
+  // Memory's OWNER could not remove a person from their own Memory, and no other
+  // route could either. See authorizeParticipantCommand in
+  // services/memory/MemoryDomainService.ts for the spec lines: Appendix A step 7
+  // (line 776) walks the owner through removing a participant, §23 line 597/610
+  // makes the participant set an owner-editable canonical fact, and §10 line 338
+  // ("being tagged does not make another user a co-owner") is why the tagged
+  // person's presence is not a veto. Approval stays the tagged person's alone —
+  // §5 line 226, "only after participant consent".
+  //
+  // The Memory must be loaded before the tag, because the owner's identity is
+  // the thing being authorized against and it is not on the tag row.
+  const loaded = await loadMemoryForCommand(sc, id);
+  if (!loaded.ok) { sendCommandFailure(req, res, loaded); return; }
+
+  const command = parsed.data.action === "approve" ? "ADD_PERSON" : "REMOVE_PERSON";
+  const authorized = authorizeParticipantCommand(command, user.id, loaded.row.owner_id, userId);
+  if (!authorized.ok) { sendCommandFailure(req, res, authorized); return; }
+
+  // `error` is bound: an unreadable memory_tags answered "Tag not found", i.e.
+  // told a person their tag does not exist because the table was down. §28.11.
+  const { data: tag, error: tagErr } = await sc
     .from("memory_tags")
     .select("memory_id, tagged_user_id, status")
     .eq("memory_id", id)
-    .eq("tagged_user_id", user.id)
+    .eq("tagged_user_id", userId)
     .maybeSingle();
 
+  if (tagErr) {
+    req.log.error({ err: tagErr, memoryId: id }, "memories: tag read failed");
+    sendError(res, "db_error", tagErr.message);
+    return;
+  }
   if (!tag) { sendError(res, "not_found", "Tag not found"); return; }
 
   const newStatus = parsed.data.action === "approve" ? "approved" : "removed";
 
-  const { error } = await sc
-    .from("memory_tags")
-    .update({ status: newStatus })
-    .eq("memory_id", id)
-    .eq("tagged_user_id", user.id);
+  const outcome = await dispatchMemoryCommand<{ status: string }>({
+    sc,
+    commandType: command,
+    memoryId: id,
+    actorUserId: user.id,
+    idempotencyKey,
+    payload: { tagged_user_id: userId, status: newStatus, actor_role: authorized.actorRole },
+    legacy: async () => {
+      // `.select()`: an UPDATE without it returns data:null, so `error === null`
+      // did not mean a row changed. Approving or removing a tag is a consent
+      // decision; reporting it as applied when nothing was written leaves the
+      // tag standing while the person believes it is gone.
+      const { data: updatedTag, error } = await sc
+        .from("memory_tags")
+        .update({ status: newStatus })
+        .eq("memory_id", id)
+        .eq("tagged_user_id", userId)
+        .select("memory_id");
+      if (error) {
+        req.log.error({ err: error, memoryId: id }, "memories: tag update failed");
+        return { ok: false, http: { code: "db_error", message: error.message } };
+      }
+      if (!updatedTag || (updatedTag as any[]).length === 0) {
+        req.log.error({ memoryId: id, userId, newStatus }, "memories: tag update matched zero rows — the tag is unchanged");
+        return { ok: false, http: { code: "db_error", message: "Your tag could not be updated. Please try again.", exposeDetail: true } };
+      }
+      return { ok: true, body: { status: newStatus } };
+    },
+  });
 
-  if (error) { sendError(res, "db_error", error.message); return; }
+  if (!outcome.ok) { sendCommandFailure(req, res, outcome); return; }
 
   res.json({ status: newStatus });
 });
@@ -892,19 +1504,24 @@ router.post("/memories/:id/like", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
-  const { data: memory } = await sc
+  const { data: memory, error: memoryErr } = await sc
     .from("memories")
     .select("id, owner_id, visibility, allowed_user_ids, hidden_user_ids, trip_id, state")
     .eq("id", id)
     .neq("state", "deleted")
     .maybeSingle();
 
+  if (memoryErr) {
+    req.log.error({ err: memoryErr, memoryId: id }, "memories: memory read failed");
+    sendError(res, "db_error", memoryErr.message);
+    return;
+  }
   if (!memory) { sendError(res, "not_found", "Memory not found"); return; }
 
   if (memory.owner_id !== user.id) {
     const blocked = await isBlocked(sc, user.id, memory.owner_id);
     if (blocked) { sendError(res, "not_found", "Memory not found"); return; }
-    const ok = await canViewMemory(sc, memory, user.id);
+    const ok = await canReadMemory(sc, memory, user.id, "single");
     if (!ok) { sendError(res, "not_found", "Memory not found"); return; }
   }
 
@@ -917,14 +1534,15 @@ router.post("/memories/:id/like", async (req, res) => {
     return;
   }
 
-  const { count } = await sc.from("memory_likes").select("memory_id", { count: "exact", head: true }).eq("memory_id", id);
+  const { count, error: countErr } = await sc.from("memory_likes").select("memory_id", { count: "exact", head: true }).eq("memory_id", id);
+  if (countErr) req.log.warn({ err: countErr, memoryId: id }, "memories: like count unreadable after a successful like");
 
   notifyLike(sc, id, memory.owner_id, user.id);
 
   // Phase 14 — link like back to the originating Compass recommendation.
   void linkOutcomeSignal(sc, user.id, id, "liked", "route:memory_like");
 
-  res.json({ likedByMe: true, likeCount: count ?? 0 });
+  res.json({ likedByMe: true, likeCount: countErr ? null : (count ?? 0) });
 });
 
 // ── DELETE /memories/:id/like ─────────────────────────────────────────────────
@@ -940,11 +1558,22 @@ router.delete("/memories/:id/like", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
-  await sc.from("memory_likes").delete().eq("memory_id", id).eq("user_id", user.id);
+  // Discarded, so a failed delete answered 200 { likedByMe: false } with the
+  // like still stored — the client renders an empty heart until the next
+  // refresh contradicts it.
+  const { error: unlikeErr } = await sc
+    .from("memory_likes").delete().eq("memory_id", id).eq("user_id", user.id);
+  if (unlikeErr) {
+    req.log.error({ err: unlikeErr, memoryId: id }, "memories: unlike write failed");
+    sendError(res, "db_error", "Could not remove the like. Please try again.", { exposeDetail: true });
+    return;
+  }
 
-  const { count } = await sc.from("memory_likes").select("memory_id", { count: "exact", head: true }).eq("memory_id", id);
+  // `count ?? 0` on an errored count is a fabricated zero; report null instead.
+  const { count, error: countErr } = await sc.from("memory_likes").select("memory_id", { count: "exact", head: true }).eq("memory_id", id);
+  if (countErr) req.log.warn({ err: countErr, memoryId: id }, "memories: like count unreadable after a successful unlike");
 
-  res.json({ likedByMe: false, likeCount: count ?? 0 });
+  res.json({ likedByMe: false, likeCount: countErr ? null : (count ?? 0) });
 });
 
 // ── POST /memories/:id/save ───────────────────────────────────────────────────
@@ -960,19 +1589,24 @@ router.post("/memories/:id/save", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
-  const { data: memory } = await sc
+  const { data: memory, error: memoryErr } = await sc
     .from("memories")
     .select("id, owner_id, visibility, allowed_user_ids, hidden_user_ids, trip_id, state")
     .eq("id", id)
     .neq("state", "deleted")
     .maybeSingle();
 
+  if (memoryErr) {
+    req.log.error({ err: memoryErr, memoryId: id }, "memories: memory read failed");
+    sendError(res, "db_error", memoryErr.message);
+    return;
+  }
   if (!memory) { sendError(res, "not_found", "Memory not found"); return; }
 
   if (memory.owner_id !== user.id) {
     const blocked = await isBlocked(sc, user.id, memory.owner_id);
     if (blocked) { sendError(res, "not_found", "Memory not found"); return; }
-    const ok = await canViewMemory(sc, memory, user.id);
+    const ok = await canReadMemory(sc, memory, user.id, "single");
     if (!ok) { sendError(res, "not_found", "Memory not found"); return; }
   }
 
@@ -1001,7 +1635,13 @@ router.delete("/memories/:id/save", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
-  await sc.from("memory_saves").delete().eq("memory_id", id).eq("user_id", user.id);
+  const { error: unsaveErr } = await sc
+    .from("memory_saves").delete().eq("memory_id", id).eq("user_id", user.id);
+  if (unsaveErr) {
+    req.log.error({ err: unsaveErr, memoryId: id }, "memories: unsave write failed");
+    sendError(res, "db_error", "Could not remove the save. Please try again.", { exposeDetail: true });
+    return;
+  }
 
   res.json({ savedByMe: false });
 });
@@ -1075,17 +1715,29 @@ router.post("/trips/:tripId/memory", async (req, res) => {
   if (error) { req.log.error({ err: error }, "create-from-trip failed"); sendError(res, "db_error", error.message); return; }
 
   const memoryId = (memory as any).id;
+  let taggedCount = 0;
 
   if (crewIds.length > 0) {
     const tagRows = crewIds.map((uid) => ({ memory_id: memoryId, tagged_user_id: uid, status: "pending" }));
-    await sc.from("memory_tags").insert(tagRows).then(undefined, () => {});
-
-    for (const uid of crewIds) {
-      notifyTagged(sc, memory, uid);
+    // Same defect as the create route: `.then(undefined, cb)` is a REJECTION
+    // handler and supabase-js RESOLVES on a database error, so a failed insert
+    // was invisible — and here the route went on to answer
+    // `taggedCount: crewIds.length`, a number describing rows that did not
+    // exist. The count is now what actually landed.
+    const { error: tagErr } = await sc.from("memory_tags").insert(tagRows);
+    if (tagErr) {
+      req.log.error({ err: tagErr, memoryId, count: tagRows.length },
+        "create-from-trip: memory_tags insert failed — no crew member was tagged");
+      taggedCount = 0;
+    } else {
+      taggedCount = tagRows.length;
+      for (const uid of crewIds) {
+        notifyTagged(sc, memory, uid);
+      }
     }
   }
 
-  res.status(201).json({ memory: mapMemory(memory, user.id), taggedCount: crewIds.length });
+  res.status(201).json({ memory: mapMemory(memory, user.id), taggedCount });
 });
 
 // ── GET /trips/:tripId/memory — fetch memory linked to a trip ─────────────────
@@ -1114,9 +1766,11 @@ router.get("/trips/:tripId/memory", async (req, res) => {
 
   const tripOwnerId = (trip as any).owner_id as string;
 
+  const precisionEnabled = await isFlagEnabled(sc, "memory_location_precision_enabled");
+
   const { data: memory, error } = await sc
     .from("memories")
-    .select(MEMORY_SELECT)
+    .select((precisionEnabled ? MEMORY_SELECT_WITH_PRECISION : MEMORY_SELECT) as any)
     .eq("trip_id", tripId)
     .eq("owner_id", tripOwnerId)
     .neq("state", "deleted")
@@ -1130,7 +1784,7 @@ router.get("/trips/:tripId/memory", async (req, res) => {
   if ((memory as any).owner_id !== user.id) {
     const blocked = await isBlocked(sc, user.id, (memory as any).owner_id);
     if (blocked) { sendError(res, "not_found", "No memory for this trip"); return; }
-    const ok = await canViewMemory(sc, memory, user.id);
+    const ok = await canReadMemory(sc, memory, user.id, "trip");
     if (!ok) { sendError(res, "not_found", "No memory for this trip"); return; }
   }
 
@@ -1146,9 +1800,10 @@ router.get("/trips/:tripId/memory", async (req, res) => {
 
   const ownerNameAllowed = ownerId === user.id || await nameVisibleFor(sc, ownerId);
 
-  // Hidden-Gem location protection (fail-closed) for non-owner reads.
+  // Location protection (fail-closed) — the stricter of the Hidden-Gem ceiling
+  // and the owner's §10 precision rung, for non-owner reads.
   const tripMemoryGemCtx = await loadMemoryGemContext(sc, [memory]);
-  const safeTripMemory = gemProtectMemoryRow(memory, tripMemoryGemCtx, user.id);
+  const safeTripMemory = protectMemoryRow(memory, tripMemoryGemCtx, user.id, precisionEnabled);
 
   res.json({
     memory: {
@@ -1189,9 +1844,11 @@ router.get("/users/:userId/memories", async (req, res) => {
   const limit = Math.min(Number(req.query.limit ?? 30), 100);
   const cursor = typeof req.query.cursor === "string" ? req.query.cursor : null;
 
+  const precisionEnabled = await isFlagEnabled(sc, "memory_location_precision_enabled");
+
   let q = sc
     .from("memories")
-    .select(MEMORY_SELECT)
+    .select((precisionEnabled ? MEMORY_SELECT_WITH_PRECISION : MEMORY_SELECT) as any)
     .eq("owner_id", userId)
     .neq("state", "deleted")
     .order("created_at", { ascending: false })
@@ -1212,7 +1869,7 @@ router.get("/users/:userId/memories", async (req, res) => {
 
   let visible = rows;
   if (!isOwnProfile) {
-    const permChecks = await Promise.all(rows.map((m) => canViewMemory(sc, m, user.id)));
+    const permChecks = await Promise.all(rows.map((m) => canReadMemory(sc, m, user.id, "profile")));
     visible = rows.filter((_, i) => permChecks[i]);
   }
 
@@ -1240,6 +1897,15 @@ function mapMemory(r: any, viewerId?: string) {
     visibility: r.visibility,
     ...(isOwner
       ? { allowedUserIds: r.allowed_user_ids ?? [], hiddenUserIds: r.hidden_user_ids ?? [] }
+      : {}),
+    // §10 location_precision is the OWNER'S publication policy, and like the
+    // allow/hide lists it is a private choice about an audience rather than a
+    // fact about the Memory: telling a viewer "you are being shown this at city
+    // level" discloses that the owner narrowed it for them. Owner only, and
+    // omitted entirely when the column was not selected (flag off) so that an
+    // absent column never serializes as a fabricated 'exact'.
+    ...(isOwner && r.location_precision !== undefined
+      ? { locationPrecision: normalizeMemoryPrecision(r.location_precision) }
       : {}),
     tripId: r.trip_id ?? null,
     eventId: r.event_id ?? null,

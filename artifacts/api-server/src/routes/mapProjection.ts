@@ -23,8 +23,13 @@
  *   circle    → readCircleLocations     (kill switch + membership + blocks +
  *                                        affirmative consent + master switch +
  *                                        SERVER-SIDE coarsening)
- *   trips     → loadViewerTrips         (accepted-membership scope, then the
- *                                        shared toAuthorizedTripView DTO)
+ *   trips     → readTripStopLayer       (accepted-membership scope, then EITHER
+ *                                        the §19.4 trip_map_projections read
+ *                                        model or the canonical `trips` +
+ *                                        toAuthorizedTripView path, chosen by
+ *                                        the capability contract — see
+ *                                        lib/mapProjectionTripRead and the
+ *                                        `trips` report / X-Map-Trip-Source)
  *
  * The block set is resolved ONCE, fail-closed: if it cannot be read, nobody is
  * returned. That single set is handed to every people-bearing source —
@@ -110,7 +115,10 @@ import { fetchBlockedSet } from "../lib/blocks.js";
 import { listMapTravelers } from "../lib/mapTravelers.js";
 import { readCircleLocations } from "../lib/circleLocationsRead.js";
 import { readBuddyMapPins } from "../lib/buddyMapRead.js";
-import { toAuthorizedTripView } from "../lib/privacy/tripSerializers.js";
+import {
+  readTripStopLayer,
+  type TripLayerReport,
+} from "../lib/mapProjectionTripRead.js";
 import { findNearbyGems } from "../services/hiddenGems/HiddenGemDiscoveryService.js";
 import { applyGemPrivacyBatch } from "../services/hiddenGems/HiddenGemPrivacyGuard.js";
 import { readLiveClaims, toLiveClaimEnvelope } from "../lib/liveClaimRead.js";
@@ -131,6 +139,13 @@ import {
   type WorldIntelligenceRefusal,
 } from "../lib/mapProducers/worldIntelligence.js";
 import { deriveWorldPulse, type WorldPulseReport } from "../lib/mapProducers/worldPulseProducer.js";
+import { attachWorldMoments, type WorldMomentReport } from "../lib/mapProducers/worldMomentProducer.js";
+import {
+  parseDisplayIntent,
+  parseDisplayMode,
+  resolveDisplay,
+  type DisplayReport,
+} from "../lib/mapDisplayResolver.js";
 import { readTravelerFlowEdges, type TravelerFlowReport } from "../lib/mapProducers/travelerFlowProducer.js";
 import { readCityModels, type CityModelReport } from "../lib/mapProducers/cityModelProducer.js";
 import { readPersonalCityPins, type PersonalCityReport } from "../lib/mapProducers/personalCityProducer.js";
@@ -170,7 +185,6 @@ import {
   withholdCoarsenableAggregates,
   type CityGeographyParseResult,
   type FlowZone,
-  type TripViewLike,
 } from "../lib/mapProjection.js";
 
 const router = Router();
@@ -182,8 +196,25 @@ const router = Router();
  * with an empty zone list is an IDENTITY PASS — it means "no protection policy
  * exists", not "the policy could not be read". Returning [] on a read failure
  * would therefore silently disable the gate exactly when the database is
- * unhealthy. So a failed read returns null, and the caller answers with the
- * empty envelope instead of serving unprotected objects.
+ * unhealthy. So a failed read returns null, and the caller answers
+ * `enabled: false` with a named refusal instead of serving unprotected objects.
+ *
+ * WHY `enabled: false` AND NOT `enabled: true, objects: []` — THE BLANK MAP.
+ * The client (travel-buddy-standalone/src/hooks/useMapEntities.ts) treats an
+ * `enabled: true` answer as OWNING every layer and never re-fetches, while
+ * `enabled: false` means "the gateway is not serving — keep the legacy
+ * per-layer path". This branch used to answer `enabled: true, objects: []`,
+ * which is a fail-closed answer to the wrong question: it told the client
+ * "there is nothing here" when the truth was "I cannot tell whether it is safe
+ * to show you anything". Measured 2026-09-07, `protected_zones` does not exist
+ * in production (migration 2217 unapplied), so the first flip of
+ * `map_projection_enabled` there would have blanked the map for every user —
+ * the legacy path they were on a second earlier would be declined as a
+ * re-fetch. Answering `enabled: false` keeps them on exactly the path that
+ * serves them today, which exposes nothing this gateway would not, and the
+ * `refusal` names the cause so an operator can see the flip did not take.
+ * 2217 still has to precede a flip for the gateway to SERVE; it no longer has
+ * to precede it for the map to survive.
  *
  * Cached briefly: the table is tiny and effectively static, and a per-request
  * read on a polled endpoint would be pure waste. 30s mirrors the flag cache.
@@ -431,45 +462,12 @@ interface WorldIntelligenceReport {
   personalCities: PersonalCityReport | null;
   /** Phase 7 objects §24 withheld rather than coarsened, and then suppressed. */
   withheldForProtection: number;
-}
-
-/**
- * The viewer's own trips, scoped exactly as GET /api/trips/me scopes them.
- *
- * WHY THIS READ IS HERE AND NOT EXTRACTED
- * =======================================
- * The trips layer has no leftover privacy logic to extract: its FIELD-level
- * discipline — which trip columns an authorized viewer may see — already lives
- * in the shared `toAuthorizedTripView` DTO, and that is what this calls. The
- * only thing restated is the SCOPE predicate: "rows in trip_members for this
- * user whose role is not 'invited'". An invited-but-not-accepted member must
- * NOT get the authorized view, so that `.neq("role", "invited")` is the whole
- * privacy decision, and src/test/mapProjectionLayers.test.ts pins it against
- * GET /api/trips/me's own output over the same data rather than trusting that
- * two copies of one predicate will stay in step.
- *
- * Failure returns null (not []) so the caller can leave the layer OUT of
- * `sources` rather than claim an empty trips layer it never successfully read.
- */
-async function loadViewerTrips(sc: any, viewerId: string): Promise<TripViewLike[] | null> {
-  const { data: memberRows, error: memErr } = await sc
-    .from("trip_members")
-    .select("trip_id, role")
-    .eq("user_id", viewerId)
-    .neq("role", "invited");
-  if (memErr) return null;
-
-  const tripIds = ((memberRows ?? []) as any[]).map((r) => r.trip_id as string);
-  if (tripIds.length === 0) return [];
-
-  const { data: trips, error: tripsErr } = await sc
-    .from("trips")
-    .select("*")
-    .in("id", tripIds)
-    .not("status", "is", null);
-  if (tripsErr) return null;
-
-  return ((trips ?? []) as any[]).map(toAuthorizedTripView) as unknown as TripViewLike[];
+  /**
+   * Sensing §7 world moments over the surviving pulses. Null when
+   * `map_world_moments_enabled` is off; otherwise counts, even when no pulse
+   * was offered, so "off" and "nothing changed" are different facts.
+   */
+  worldMoments: WorldMomentReport | null;
 }
 
 router.get(
@@ -509,7 +507,9 @@ router.get(
         crowdFlow: null,
         producers: null,
         places: null,
+        trips: null,
         worldIntelligence: null,
+        display: null,
         generatedAt,
       });
       return;
@@ -542,13 +542,50 @@ router.get(
     const limitRaw = Number(req.query.limit);
     const limit = Number.isFinite(limitRaw) ? Math.min(200, Math.max(1, limitRaw)) : 100;
     const cursor = req.query.cursor ? String(req.query.cursor) : null;
+    // §30 mode and §13 intent, for the display resolver. Lenient: an unknown
+    // value is null, and null means LIVE / no intent. Ignored unless the
+    // resolver flag is on.
+    const displayMode = parseDisplayMode(req.query.mode);
+    const displayIntent = parseDisplayIntent(req.query.intent);
+
+    // ── Sensing §7 capability flags (migration 2350), ALL SEEDED OFF ──────────
+    // Three switches for three behaviours, each read fail-closed through
+    // isFlagEnabled so an unreadable flag leaves the behaviour off. LITERALS,
+    // so check:flag-polarity can resolve every read. With all three off this
+    // handler serves exactly what it served before they existed:
+    //   map_experience_state_enabled  applyLiveClaims folds a §5.3 ExperienceState
+    //                                 and stamps truthClass/coverage (SX-02, SX-07)
+    //   map_world_moments_enabled     world_pulse cells gain a world-change
+    //                                 moment (SX-03)
+    //   map_display_resolver_enabled  the clutter budget + safety precedence
+    //                                 pass runs before paging (SX-08, SX-09)
+    const [experienceStateOn, worldMomentsOn, displayResolverOn] = await Promise.all([
+      isFlagEnabled(sc, "map_experience_state_enabled"),
+      isFlagEnabled(sc, "map_world_moments_enabled"),
+      isFlagEnabled(sc, "map_display_resolver_enabled"),
+    ]);
 
     // ONE shared, fail-closed block set for every source. If it cannot be read,
     // nobody is returned — matching /api/map/search.
+    //
+    // `enabled: false` WITH A REFUSAL, not `enabled: true, objects: []`. This
+    // is the same reasoning spelled out above loadProtectedZones, applied to
+    // the other input that can fail: the client (useMapEntities.ts) treats an
+    // `enabled: true` answer as OWNING every layer and never re-fetches, so an
+    // empty `true` does not fail closed — it BLANKS THE MAP, declining the
+    // legacy per-layer path the user was on a second earlier. An unreadable
+    // `blocks` is a far more ordinary event than an unapplied migration (a
+    // connection blip, an RLS change, a grant change), so this branch is the
+    // more likely of the two to be taken in production.
+    //
+    // `fetchBlockedSet` returns null for a READ FAILURE specifically so this
+    // caller can tell it apart from "this user blocks nobody"; answering with
+    // an empty served payload threw that distinction away at the last step.
     const blockedSet = await fetchBlockedSet(sc, user.id);
     if (blockedSet === null) {
       res.json({
-        enabled: true,
+        enabled: false,
+        refusal: "block_set_unreadable",
         objects: [],
         viewport: { bbox, zoom },
         total: 0,
@@ -560,7 +597,9 @@ router.get(
         crowdFlow: null,
         producers: null,
         places: null,
+        trips: null,
         worldIntelligence: null,
+        display: null,
         generatedAt,
       });
       return;
@@ -750,12 +789,27 @@ router.get(
       );
     }
 
+    // ── trip_stop: the FIRST reader of the §19.4 trip projection ────────────
+    //
+    // lib/mapProjectionTripRead picks the branch through the capability
+    // contract (FLAG_ENABLED && SCHEMA_CAPABILITY_READY, fail-closed) and
+    // returns the SAME `TripViewLike` shape from either, so `projectTrip`
+    // below is the one and only place a trip becomes a MapObject and the two
+    // branches cannot drift. `tripLayer.report.path` says which one ran.
+    //
+    // `trips === null` means the layer was not READ — a scope failure, a
+    // canonical failure, or a projection that answered an error. It is left
+    // out of `sources`, exactly as before, so an unread layer is never served
+    // as an empty one.
+    const tripLayer: { report: TripLayerReport | null } = { report: null };
     if (wantKind("trip_stop")) {
       tasks.push(
         (async () => {
-          const trips = await loadViewerTrips(sc, user.id).catch(() => null);
-          if (trips === null) return;
-          for (const t of trips) collected.push(projectTrip(t));
+          const layer = await readTripStopLayer(sc, user.id).catch(() => null);
+          if (!layer) return;
+          tripLayer.report = layer.report;
+          if (layer.trips === null) return;
+          for (const t of layer.trips) collected.push(projectTrip(t));
           sources.push("trips");
         })(),
       );
@@ -952,6 +1006,8 @@ router.get(
           const count = countAdjacentActiveEvents(obj, activeEvents, nowMs);
           return count > 0 ? { eventNearby: { count } } : null;
         },
+        // Sensing §7 (SX-02 / SX-07). Off ⇒ applyLiveClaims is unchanged.
+        experienceState: experienceStateOn,
       },
     );
     objects = enrichment.objects;
@@ -963,9 +1019,11 @@ router.get(
     // downstream only coarsens or reorders, so nothing can re-sharpen this.
     const zones = await loadProtectedZones(sc);
     if (zones === null) {
-      // See loadProtectedZones: an unreadable policy is NOT an absent policy.
+      // See loadProtectedZones: an unreadable policy is NOT an absent policy,
+      // and `enabled: false` (not an empty `true`) is what keeps the map drawn.
       res.json({
-        enabled: true,
+        enabled: false,
+        refusal: "protection_unreadable",
         objects: [],
         viewport: { bbox, zoom },
         total: 0,
@@ -977,7 +1035,9 @@ router.get(
         crowdFlow: null,
         producers: null,
         places: null,
+        trips: null,
         worldIntelligence: null,
+        display: null,
         generatedAt,
       });
       return;
@@ -1044,6 +1104,7 @@ router.get(
         cityModels: null,
         personalCities: null,
         withheldForProtection: 0,
+        worldMoments: null,
       };
       worldIntelligence.report = report;
 
@@ -1219,19 +1280,73 @@ router.get(
             if (removed > 0) layer.published = Math.max(0, layer.published - removed);
           }
 
-          finalObjects = [...finalObjects, ...wiSurvived];
+          // ── Sensing §7 world moments (SX-03) ────────────────────────────
+          // AFTER §24, over the SURVIVING pulses, with a context of objects
+          // that have themselves survived §24 (the aggregation output and the
+          // Phase 7 edges). A moment therefore only ever re-describes what is
+          // already on the wire; it cannot resurrect a withheld cell or read
+          // an object the gate removed. Off ⇒ pulses are untouched and the
+          // report stays null.
+          let wiFinal: MapObject[] = wiSurvived;
+          if (worldMomentsOn) {
+            const pulses = wiSurvived.filter((o) => o.kind === "world_pulse");
+            const context = [
+              ...finalObjects,
+              ...wiSurvived.filter((o) => o.kind === "traveler_flow"),
+            ];
+            const moments = attachWorldMoments(pulses, context, { zoom });
+            report.worldMoments = moments.report;
+            const promoted = new Map(moments.pulses.map((p) => [p.id, p as MapObject]));
+            wiFinal = wiSurvived.map((o) =>
+              o.kind === "world_pulse" ? (promoted.get(o.id) ?? o) : o,
+            );
+          }
+
+          finalObjects = [...finalObjects, ...wiFinal];
         }
       }
     }
 
     const ranked = rankObjects(finalObjects, { lat, lng });
-    const { page, nextCursor } = paginate(ranked, cursor, limit);
+
+    // ── Sensing §7 display resolver (SX-08 / SX-09) ─────────────────────────
+    // Between ranking and paging, so it sees `distanceKm` and the §31 order,
+    // and so what it drops is never paged back in. Off ⇒ the ranked list is
+    // paged exactly as before and `display` is null.
+    let servable: MapObject[] = ranked;
+    let display: DisplayReport | null = null;
+    if (displayResolverOn) {
+      const resolved = resolveDisplay(ranked, {
+        band: aggregation.band,
+        mode: displayMode,
+        intent: displayIntent,
+        limit,
+      });
+      servable = resolved.objects;
+      display = resolved.report;
+    }
+
+    const { page, nextCursor } = paginate(servable, cursor, limit);
+
+    // WHICH BRANCH RAN, as a header as well as a body field: an operator
+    // watching the edge must be able to see the trip layer flip from the
+    // canonical `trips` read to the §19.4 projection without parsing a body.
+    // "absent" = the layer was not requested; "unread" = it was requested and
+    // could not be read (and is therefore absent from `sources` too).
+    res.setHeader(
+      "X-Map-Trip-Source",
+      tripLayer.report === null
+        ? "absent"
+        : tripLayer.report.refusal !== null
+          ? `${tripLayer.report.path}:unread`
+          : tripLayer.report.path,
+    );
 
     res.json({
       enabled: true,
       objects: page,
       viewport: { bbox, zoom, center: { lat, lng }, radiusKm },
-      total: ranked.length,
+      total: servable.length,
       nextCursor,
       sources,
       aggregation: {
@@ -1262,10 +1377,21 @@ router.get(
       // also absent from `sources`). Otherwise the row count and whether the
       // bounded read was a SAMPLE of the viewport — see lib/mapProjectPlace.
       places: placesReport.report,
+      // Null when the trip_stop layer was not requested. Otherwise WHICH
+      // BRANCH RAN (`path`), the capability verdict that chose it, the named
+      // refusal when the layer could not be read, and the fold counters — so
+      // an empty trip layer is never ambiguous between "no trips", "the
+      // projection is not ready", "the projection is broken" and "nothing
+      // asked". See TripLayerReport.
+      trips: tripLayer.report,
       // Null when no Phase 7 kind was requested. Otherwise counts + refusals,
       // so "no world intelligence" is never ambiguous between "the gates said
       // no", "the flag is off" and "nothing asked". See WorldIntelligenceReport.
       worldIntelligence: worldIntelligence.report,
+      // Null when `map_display_resolver_enabled` is off. Otherwise the budget
+      // that was applied and what it dropped, by kind — a thinned viewport is
+      // never indistinguishable from an empty one. See DisplayReport.
+      display,
       generatedAt,
     });
   }),

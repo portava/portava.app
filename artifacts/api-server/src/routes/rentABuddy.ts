@@ -45,6 +45,13 @@ import {
 } from "../lib/rentBuddyBookingStatus.js";
 import { runBuddyRequestSweep } from "../lib/rentBuddyRequestSweeper.js";
 import { createEarningsLedgerEntry } from "../lib/rentBuddyEarningsLedger.js";
+// The ONE reader of rent_buddy_fee_rules. The earnings-summary route used to
+// carry its own level-blind 0.15; see lib/rentBuddyFeeSchedule.ts for why a
+// numeric fallback was the defect rather than the safety net (M1 / M10).
+import {
+  describeFeeScheduleFailure,
+  resolveFeeSchedule,
+} from "../lib/rentBuddyFeeSchedule.js";
 import {
   findLaunchControlRow,
   normalizeLaunchControlKey,
@@ -53,6 +60,7 @@ import {
 // The ONE bidirectional, fail-closed block resolver. Marketplace search filters
 // against the same set the map layer does.
 import { fetchBlockedSet } from "../lib/blocks.js";
+import { affectedRows } from "../lib/affectedRows.js";
 import { haversineKm } from "../lib/canonicalLocations.js";
 import { isNonNumericCoord } from "../lib/coords.js";
 import { SEED_CITIES } from "../lib/popularCities.js";
@@ -77,10 +85,88 @@ import {
 } from "../lib/buddyMapRead.js";
 
 import { requireAdmin } from "../lib/requireAdmin.js";
+import { isBlockedBetween } from "../lib/blockGuard.js";
+// The module logger, for the two Telegraph emitters below. They are called
+// without a `req.log` (see RouteLog) and their failures must still be visible;
+// lib/telegraphEvents.ts reaches for the same one for the same reason.
+import { logger } from "../lib/logger.js";
 
 export { POLICY_TEXT, CATEGORY_RISK_LEVELS, getCategoryRiskLevel };
 
 const router = Router();
+
+/** The subset of `req.log` this file uses. Optional everywhere — some callers
+ *  (and some test shims) do not carry a logger. */
+type RouteLog = { error?: (...args: any[]) => void } | undefined;
+
+/**
+ * Append a row to `buddy_booking_events` — the booking's evidence log.
+ *
+ * ── WHY THIS IS A FUNCTION AND NOT `void …insert(…)` ─────────────────────────
+ * `PostgrestBuilder` is a THENABLE, not a promise: it builds its headers and
+ * calls `_fetch` inside `then()`. So the shape this file used everywhere,
+ *
+ *     void serviceClient.from("buddy_booking_events").insert({ … });
+ *
+ * constructed a request object and threw it away — no HTTP call, no row, ever.
+ * Not a lost error and not an unawaited race: the write did not happen. Every
+ * booking transition in this file (request_created, accepted, declined,
+ * started, buddy_marked_complete, dispute_opened, no_show_reported, …) was
+ * silently absent from the log that
+ *   • GET /rent-a-buddy/bookings/:bookingId/events serves to both parties,
+ *   • rentABuddySpec's dispute resolution reads to decide whether to
+ *     compensate `completed_count` (it looks for `buddy_marked_complete`), and
+ *   • rentBuddyRequestSweeper reads to attribute a no-show dispute's
+ *     `raised_by` (it looks for `no_show_reported`).
+ *
+ * The write stays fire-and-forget — an audit failure must never fail the
+ * transition that is already committed — but it is now ISSUED, and a failure is
+ * LOGGED rather than swallowed: a booking event that silently does not land is
+ * exactly the defect this replaces.
+ */
+/**
+ * The only booking states a no-show can be reported from.
+ *
+ * A session that never started cannot have a no-show (that is what /cancel is
+ * for, and writing one would fabricate an incident), and every later state is
+ * terminal or already under adjudication. Exported because
+ * rentABuddySpec's POST /bookings/:id/report-no-show is the SAME action reached
+ * through the mobile alias, and it carried a hand-written DENYLIST instead —
+ * `no_show_pending | disputed | completed | cancelled` — which admitted
+ * `requested`, `pending`, `expired`, `declined`, `cancelled_by_traveler`,
+ * `cancelled_by_buddy` and `completed_pending_traveler_confirmation`. A
+ * denylist that names bare `cancelled` while the cancel route writes
+ * `cancelled_by_traveler` is a denylist with a hole in it.
+ */
+export const NO_SHOW_REPORTABLE_STATUSES = ["confirmed", "scheduled", "in_progress"] as const;
+
+export { recordBookingEvent };
+
+function recordBookingEvent(
+  serviceClient: any,
+  log: RouteLog,
+  row: Record<string, unknown>,
+): void {
+  void serviceClient
+    .from("buddy_booking_events")
+    .insert(row)
+    .then(
+      (res: { error?: unknown } | null | undefined) => {
+        if (res?.error) {
+          log?.error?.(
+            { err: res.error, bookingId: row.booking_id, event: row.event },
+            "buddy_booking_events insert failed — booking event unaudited",
+          );
+        }
+      },
+      (err: unknown) => {
+        log?.error?.(
+          { err, bookingId: row.booking_id, event: row.event },
+          "buddy_booking_events insert threw — booking event unaudited",
+        );
+      },
+    );
+}
 
 async function scanForPolicyViolations(opts: {
   sc: any;
@@ -222,6 +308,298 @@ export async function requireRentBuddyEnabled(sc: any, res: any): Promise<boolea
 
 function sc(fallback?: any) {
   return getServiceClient() ?? fallback;
+}
+
+// ── Atomic money primitives (migration 2330) ──────────────────────────────────
+//
+// The rent-a-buddy money record has three places where a write can be lost or
+// inflated under concurrency. Each is repaired by moving the read-decide-write
+// sequence into ONE database statement, created by
+// src/migrations/2330_rent_buddy_money_atomicity.sql:
+//
+//   rb_accumulate_booking_tip   M8  — a second tip ADDS instead of replacing
+//   rb_confirm_booking_cash     M13 — cash confirmation is one locked write,
+//                                     and refuses an inflated amount
+//   rb_buddy_earnings_summary   M7  — the earnings total is aggregated DB-side
+//                                     so no row cap can truncate it
+//
+// Every call site keeps a fallback for the case where the function is not
+// there: an un-applied migration (12 §5.2 — migrations are applied out of band
+// BEFORE the PR that adds one can go green, so this file must be correct on
+// both sides of that apply) or a partial test client with no `.rpc`. The
+// fallbacks are documented individually; none of them silently reintroduces
+// the defect the RPC exists to fix.
+
+/**
+ * Call a SQL function, distinguishing "the function answered" from "there is no
+ * function here". supabase-js RESOLVES on a rejected query, so a failure is in
+ * `res.error` and never thrown — see .agents/memory/api-server-testing.md.
+ *
+ * Returns `{ ok: false }` when the RPC could not be used at all, so the caller
+ * can take its documented fallback instead of reporting a false success.
+ */
+async function rbRpc(client: any, fn: string, args: Record<string, unknown>): Promise<{ ok: boolean; data?: any }> {
+  if (typeof client?.rpc !== "function") return { ok: false };
+  try {
+    const res: any = await client.rpc(fn, args);
+    if (res?.error) return { ok: false };
+    return { ok: true, data: res?.data };
+  } catch {
+    // Partial/fake clients may throw on a method they do not implement.
+    return { ok: false };
+  }
+}
+
+/**
+ * M8 — add `amountUsd` to the tip on a booking, atomically.
+ *
+ * THE DEFECT THIS REPLACES. The tip path in routes/rentABuddyMarketplace.ts
+ * (POST /rent-a-buddy/bookings/:bookingId/tip) upserts rent_buddy_tips on
+ * conflict target `booking_id` with a bare `amount_usd: amountUsd`. The table
+ * carries UNIQUE (booking_id), so the second tip a traveller leaves REPLACES
+ * the first rather than adding to it. There is no other copy of the first tip
+ * and no reconciliation that could recover it — which is why 12 §4 orders M8
+ * ahead of the rest of Stage 1B: "a destroyed money record is not recoverable
+ * later." It then issues two more UPDATEs (the ledger's tip_usd and the
+ * booking's tip_usd) with no transaction and explicitly best-effort, each
+ * carrying the SINGLE amount rather than the running total, so the three copies
+ * can and do disagree.
+ *
+ * This helper is the correct primitive: one RPC, one transaction, GREATEST(0,
+ * col + delta) accumulation in rent_buddy_tips, and both denormalised copies
+ * written from the accumulated total.
+ *
+ * Returns the new running total, or null when it could not be applied. A null
+ * is a REAL FAILURE the caller must surface — the fallback below is not
+ * atomic, and pretending a lost tip succeeded is the defect this repairs.
+ *
+ * Exported because the only call site today is in rentABuddyMarketplace.ts,
+ * which already imports from this module.
+ */
+export async function accumulateBookingTip(
+  client: any,
+  bookingId: string,
+  travelerId: string,
+  amountUsd: number,
+  note?: string | null,
+): Promise<{ totalTipUsd: number; atomic: boolean } | null> {
+  if (!client || !bookingId || !travelerId) return null;
+  if (!Number.isFinite(amountUsd) || amountUsd <= 0) return null;
+
+  const rpc = await rbRpc(client, "rb_accumulate_booking_tip", {
+    p_booking_id: bookingId,
+    p_traveler_id: travelerId,
+    p_amount_usd: amountUsd,
+    p_note: note ?? null,
+  });
+  if (rpc.ok) {
+    // RETURNS TABLE surfaces as an array of one row through PostgREST.
+    const row = Array.isArray(rpc.data) ? rpc.data[0] : rpc.data;
+    const total = Number(row?.total_tip_usd ?? row?.totalTipUsd ?? NaN);
+    if (Number.isFinite(total)) return { totalTipUsd: total, atomic: true };
+  }
+
+  // FALLBACK — read-modify-write, used only where the RPC is unavailable.
+  // It is NOT atomic and says so in its return value, but it still ACCUMULATES:
+  // even here a second tip must never destroy the first. Two concurrent tips on
+  // this path can lose one increment; before 2330 a second tip lost the whole
+  // first tip on every path, concurrent or not.
+  try {
+    const readRes: any = await client
+      .from("rent_buddy_tips")
+      .select("id, amount_usd")
+      .eq("booking_id", bookingId)
+      .maybeSingle();
+    if (readRes?.error) return null; // never write a total derived from a failed read
+
+    const existing = readRes?.data ? Number((readRes.data as any).amount_usd ?? 0) : 0;
+    const total = Math.max(0, Math.round(((Number.isFinite(existing) ? existing : 0) + amountUsd) * 100) / 100);
+
+    // buddy_user_id is derived, never taken from the caller: the tips row names
+    // who is owed the money.
+    const bookingRes: any = await client
+      .from("rent_buddy_bookings")
+      .select("id, traveler_id, buddy_id")
+      .eq("id", bookingId)
+      .maybeSingle();
+    if (bookingRes?.error || !bookingRes?.data) return null;
+    if ((bookingRes.data as any).traveler_id !== travelerId) return null;
+
+    const bpRes: any = await client
+      .from("rent_buddy_profiles")
+      .select("id, user_id")
+      .eq("id", (bookingRes.data as any).buddy_id)
+      .maybeSingle();
+    if (bpRes?.error || !bpRes?.data) return null;
+
+    const upsertRes: any = await client
+      .from("rent_buddy_tips")
+      .upsert({
+        booking_id: bookingId,
+        traveler_id: travelerId,
+        buddy_user_id: (bpRes.data as any).user_id,
+        amount_usd: total,
+        note: note ?? null,
+      }, { onConflict: "booking_id" });
+    if (upsertRes?.error) return null;
+
+    await client
+      .from("rent_buddy_earnings_ledger")
+      .update({ tip_usd: total, updated_at: new Date().toISOString() })
+      .eq("booking_id", bookingId);
+    await client
+      .from("rent_buddy_bookings")
+      .update({ tip_usd: total, updated_at: new Date().toISOString() })
+      .eq("id", bookingId);
+
+    return { totalTipUsd: total, atomic: false };
+  } catch {
+    return null;
+  }
+}
+
+/** The verdict rb_confirm_booking_cash returns, plus the post-write state. */
+export interface CashConfirmationResult {
+  /**
+   * 'confirmed'          the write happened
+   * 'not_found'          no such booking
+   * 'not_party'          caller is neither the traveller nor the buddy
+   * 'amount_exceeds_due' a positive confirmation claimed more cash than the
+   *                      booking says is owed; NOTHING was written
+   * 'unavailable'        the confirmation could not be attempted at all
+   */
+  outcome: "confirmed" | "not_found" | "not_party" | "amount_exceeds_due" | "unavailable";
+  actedAsTraveler: boolean;
+  actedAsBuddy: boolean;
+  /** Post-write confirmation flags. Null means "not yet answered". */
+  travelerConfirmed: boolean | null;
+  buddyConfirmed: boolean | null;
+  travelerUserId: string | null;
+  bookingStatus: string | null;
+  cashDueUsd: number | null;
+  disputeExpiresAt: string | null;
+  /** False when the non-atomic fallback ran (no RPC available). */
+  atomic: boolean;
+}
+
+function normaliseConfirmRow(row: any): CashConfirmationResult {
+  const bool = (v: any): boolean | null => (v === true || v === false ? v : null);
+  return {
+    outcome: row?.outcome ?? "unavailable",
+    actedAsTraveler: row?.acted_as_traveler === true,
+    actedAsBuddy: row?.acted_as_buddy === true,
+    travelerConfirmed: bool(row?.traveler_confirmed),
+    buddyConfirmed: bool(row?.buddy_confirmed),
+    travelerUserId: row?.traveler_user_id ?? null,
+    bookingStatus: row?.booking_status ?? null,
+    cashDueUsd: row?.cash_due_usd === null || row?.cash_due_usd === undefined ? null : Number(row.cash_due_usd),
+    disputeExpiresAt: row?.dispute_expires_at ?? null,
+    atomic: true,
+  };
+}
+
+/**
+ * M13 — record one party's cash-balance confirmation atomically, refusing an
+ * inflated amount.
+ *
+ * THE DEFECT THIS REPLACES. The confirm-cash route read the booking, decided
+ * which column to set, and wrote it in a SEPARATE statement. Two simultaneous
+ * confirmations — the traveller's and the buddy's, which is the NORMAL case for
+ * a hand-to-hand cash settlement — each read the other's column as it was
+ * before the other write, and the later write reinstated the stale value. One
+ * party's confirmation silently disappeared, and the pair is the only evidence
+ * that the cash changed hands. 09 §9.2 names both halves; the second is
+ * docs/rent-buddy-audit.md:397, "A buddy could confirm an inflated cash
+ * amount."
+ *
+ * `amountUsd` is the sum the caller claims changed hands. It is OPTIONAL — the
+ * route has never required it and callers that omit it behave exactly as
+ * before — but when it IS supplied it is bounded, database-side, by the
+ * booking's own `cash_balance_usd`. A claim above what the booking says is owed
+ * is refused, not written and not clamped: clamping would record a settlement
+ * that neither party agreed to.
+ */
+export async function confirmBookingCash(
+  client: any,
+  bookingId: string,
+  actorUserId: string,
+  confirmed: boolean,
+  amountUsd?: number | null,
+): Promise<CashConfirmationResult> {
+  const unavailable: CashConfirmationResult = {
+    outcome: "unavailable",
+    actedAsTraveler: false, actedAsBuddy: false,
+    travelerConfirmed: null, buddyConfirmed: null, travelerUserId: null,
+    bookingStatus: null, cashDueUsd: null, disputeExpiresAt: null, atomic: false,
+  };
+  if (!client || !bookingId || !actorUserId) return unavailable;
+
+  const rpc = await rbRpc(client, "rb_confirm_booking_cash", {
+    p_booking_id: bookingId,
+    p_actor_id: actorUserId,
+    p_confirmed: confirmed,
+    p_amount_usd: amountUsd ?? null,
+  });
+  if (rpc.ok) {
+    const row = Array.isArray(rpc.data) ? rpc.data[0] : rpc.data;
+    if (row?.outcome) return normaliseConfirmRow(row);
+  }
+
+  // FALLBACK — read-then-write, for a client with no `.rpc` or a database where
+  // 2330 is not applied yet. It is NOT race-free and reports `atomic: false`,
+  // but it DOES enforce the amount bound, because that half of M13 is a
+  // validation rule rather than a concurrency property and must hold on every
+  // path.
+  try {
+    const bookingRes: any = await client
+      .from("rent_buddy_bookings")
+      .select("*")
+      .eq("id", bookingId)
+      .maybeSingle();
+    if (bookingRes?.error) return unavailable;
+    const b: any = bookingRes?.data;
+    if (!b) return { ...unavailable, outcome: "not_found" };
+
+    const bpRes: any = await client
+      .from("rent_buddy_profiles")
+      .select("id, user_id")
+      .eq("id", b.buddy_id)
+      .maybeSingle();
+    if (bpRes?.error) return unavailable;
+    const buddyUserId: string | null = bpRes?.data ? (bpRes.data as any).user_id : null;
+
+    const isTraveler = b.traveler_id === actorUserId;
+    const isBuddy = !!buddyUserId && buddyUserId === actorUserId;
+    if (!isTraveler && !isBuddy) return { ...unavailable, outcome: "not_party" };
+
+    const due = Number(b.cash_balance_usd ?? 0);
+    if (confirmed === true && amountUsd !== null && amountUsd !== undefined
+        && Number(amountUsd) > (Number.isFinite(due) ? due : 0) + 0.005) {
+      return { ...unavailable, outcome: "amount_exceeds_due", actedAsTraveler: isTraveler, actedAsBuddy: isBuddy, cashDueUsd: due };
+    }
+
+    const patch: Record<string, any> = { updated_at: new Date().toISOString() };
+    if (isTraveler) patch.cash_balance_confirmed_by_traveler = confirmed;
+    if (isBuddy) patch.cash_balance_confirmed_by_buddy = confirmed;
+    const updRes: any = await client.from("rent_buddy_bookings").update(patch).eq("id", bookingId);
+    if (updRes?.error) return unavailable;
+
+    const bool = (v: any): boolean | null => (v === true || v === false ? v : null);
+    return {
+      outcome: "confirmed",
+      actedAsTraveler: isTraveler,
+      actedAsBuddy: isBuddy,
+      travelerConfirmed: isTraveler ? confirmed : bool(b.cash_balance_confirmed_by_traveler),
+      buddyConfirmed: isBuddy ? confirmed : bool(b.cash_balance_confirmed_by_buddy),
+      travelerUserId: b.traveler_id ?? null,
+      bookingStatus: b.status ?? null,
+      cashDueUsd: Number.isFinite(due) ? due : null,
+      disputeExpiresAt: b.dispute_window_expires_at ?? null,
+      atomic: false,
+    };
+  } catch {
+    return unavailable;
+  }
 }
 
 // ── User limits helper ─────────────────────────────────────────────────────────
@@ -381,8 +759,32 @@ function mapApplication(row: any, profile?: any) {
 // ── Booking system message helper ─────────────────────────────────────────────
 // Fire-and-forget: inserts a system message into the booking's Telegraph thread.
 // Called after key booking state transitions. Silent no-op if no thread exists.
+//
+// FIRE-AND-FORGET IS NOT FIRE-AND-FORGET-ABOUT. Until 2026-09-08 both emitters
+// below dropped every failure on the floor: the `rent_buddy_bookings` read did
+// not bind `.error`, the `messages` insert did not bind `.error`, and the
+// enclosing `catch {}` named nothing. That was MEASURED rather than inferred —
+// a harness ran verbatim copies of both bodies against an instrumented client:
+//
+//   healthy (control)          requests=2   observable outputs=0
+//   bookings read → DB error   requests=1   observable outputs=0
+//   messages INSERT → DB error requests=2   observable outputs=0
+//   client throws              requests=1   observable outputs=0
+//
+// So the writes ARE issued — this is not the un-awaited-thenable defect; these
+// are real async functions and `void f()` runs their bodies. What was missing is
+// any way to know a milestone was lost. A booking that silently never gets its
+// "Buddy accepted" card leaves the two people looking at a thread that does not
+// say what happened, and nothing anywhere records that it should have.
+//
+// The failure is still non-fatal to the request — that part was right, and a
+// system message must not fail a booking transition. It is now LOUD instead of
+// silent, which is a different property from being fatal.
 
-async function emitBookingMilestone(
+// Exported for src/test/rentABuddyMilestoneSignal.test.ts, which drives both
+// emitters directly: their ONLY output is a log line, so the test has to hold
+// the function, not a route response.
+export async function emitBookingMilestone(
   client: any,
   bookingId: string,
   actorId: string,
@@ -390,38 +792,64 @@ async function emitBookingMilestone(
   body: string,
 ): Promise<void> {
   try {
-    const { data: bk } = await client
+    const { data: bk, error: readErr } = await client
       .from("rent_buddy_bookings")
       .select("telegraph_thread_id")
       .eq("id", bookingId)
       .maybeSingle();
+    if (readErr) {
+      logger.error(
+        { err: readErr, bookingId, subtype },
+        "emitBookingMilestone: could not read the booking's thread id — milestone LOST, not skipped",
+      );
+      return;
+    }
     const threadId: string | null = (bk as any)?.telegraph_thread_id ?? null;
+    // Genuinely absent: this booking has no thread, so there is nowhere to put
+    // the message. Distinct from the read failure above, which is why the two
+    // are separated rather than sharing one `if (!threadId)`.
     if (!threadId) return;
-    await client.from("messages").insert({
+    const { error: insertErr } = await client.from("messages").insert({
       thread_id: threadId,
       sender_id: actorId,
       body,
       msg_type: "system",
       subtype,
     });
-  } catch { /* non-critical — never fail the main request */ }
+    if (insertErr) {
+      logger.error(
+        { err: insertErr, bookingId, threadId, subtype },
+        "emitBookingMilestone: system message INSERT refused — milestone LOST",
+      );
+    }
+  } catch (err) {
+    logger.error({ err, bookingId, subtype }, "emitBookingMilestone threw — milestone LOST");
+  }
 }
 
 // Sends a structured booking card message into the thread.
 // Called on acceptance (initial card) and on each major status transition so
 // the UI always has a current card. The card body is a JSON string.
-async function emitBookingCard(
+export async function emitBookingCard(
   client: any,
   bookingId: string,
   actorId: string,
   newStatus: string,
 ): Promise<void> {
   try {
-    const { data: bk } = await client
+    const { data: bk, error: readErr } = await client
       .from("rent_buddy_bookings")
       .select("telegraph_thread_id, booking_date, start_time, duration_h, city, category, total_usd")
       .eq("id", bookingId)
       .maybeSingle();
+    if (readErr) {
+      logger.error(
+        { err: readErr, bookingId, newStatus },
+        "emitBookingCard: could not read the booking — card LOST, not skipped. The thread keeps showing " +
+          "the PREVIOUS status card, which is a wrong statement about the booking rather than an absent one.",
+      );
+      return;
+    }
     const threadId: string | null = (bk as any)?.telegraph_thread_id ?? null;
     if (!threadId) return;
     const cardBody = JSON.stringify({
@@ -436,14 +864,22 @@ async function emitBookingCard(
       cancellation_policy: "Free cancellation up to 24h before start. After that, a 50% fee may apply.",
       safety_reminder: "Always meet in public places. Share your itinerary with someone you trust.",
     });
-    await client.from("messages").insert({
+    const { error: insertErr } = await client.from("messages").insert({
       thread_id: threadId,
       sender_id: actorId,
       body: cardBody,
       msg_type: "booking_card",
       subtype: `booking_status_${newStatus}`,
     });
-  } catch { /* non-critical — never fail the main request */ }
+    if (insertErr) {
+      logger.error(
+        { err: insertErr, bookingId, threadId, newStatus },
+        "emitBookingCard: booking card INSERT refused — card LOST, thread still shows the previous status",
+      );
+    }
+  } catch (err) {
+    logger.error({ err, bookingId, newStatus }, "emitBookingCard threw — card LOST");
+  }
 }
 
 // ── Booking push notification helper ──────────────────────────────────────────
@@ -1146,6 +1582,97 @@ async function loadCityRestriction(
 // ── Shared booking-CREATION safety gate ────────────────────────────────────────
 
 /**
+ * Refuse ONE booking because the launch-control table could not be read.
+ *
+ * 503 + `retryable`, not 500 and not a silent pass: nothing is wrong with the
+ * request, an admin-policy table was momentarily unreadable, and the client
+ * should offer a retry. Shape 1 of lib/exclusionSet.ts — the gate covers this
+ * one booking, so the refusal covers this one booking and nothing else. The
+ * PostgREST message is never echoed to the caller (it names tables/columns).
+ */
+function sendLaunchControlsUnavailable(res: any): void {
+  res.status(503).json({
+    error: "restrictions_unavailable",
+    retryable: true,
+    message: "Booking availability for this location could not be verified right now. Please try again shortly.",
+  });
+}
+
+/**
+ * Refuse ONE mutation because the row it is meant to be idempotent against
+ * could not be read.
+ *
+ * Same shape and reasoning as sendLaunchControlsUnavailable: 503 + `retryable`,
+ * never 500 and never a silent pass. supabase-js RESOLVES on a DB error, so
+ * every "does a row already exist?" guard in this file gets `{ data: null }` —
+ * byte-identical to "no such row" — when its table is unreadable, and each of
+ * those guards is the last thing standing between a retry and a second
+ * irreversible row (a duplicate review, a re-asked tag consent, a second open
+ * change request). The PostgREST message is never echoed: it names tables.
+ */
+function sendPreconditionUnavailable(res: any, message: string): void {
+  res.status(503).json({ error: "precondition_unavailable", retryable: true, message });
+}
+
+
+/**
+ * Enforce the `rent_buddy_city_restrictions` row for one booking's city and
+ * category. Sends the matching refusal and returns false when a restriction
+ * blocks; returns true when nothing applies.
+ *
+ * Extracted from enforceBookingCreationGates so the ONE booking-creation path
+ * that does not run that gate stack — rentABuddySpec's
+ * POST /rent-a-buddy/buddies/:buddyId/request, the shorthand the mobile client
+ * reaches as /api/buddies/:buddyId/request — enforces the SAME restrictions
+ * from the SAME code. It did not read this table at all, so
+ * `require_public_meetup`, `disable_deposit_cash` and `require_full_in_app`
+ * were admin policy that one booking route honoured and another ignored: a
+ * traveller refused a private meetup by POST /rent-a-buddy/bookings could seat
+ * exactly that booking through the alias.
+ *
+ * FAIL CLOSED on a load error, unchanged: a restriction we cannot read might be
+ * one that should block this booking, so the refusal covers this one booking
+ * and nothing else (shape 1 of lib/exclusionSet.ts).
+ */
+export async function enforceCityRestrictions(opts: {
+  sc: any;
+  res: any;
+  city: string | null | undefined;
+  category: string | null | undefined;
+  meetupLocation?: any;
+  meetupType?: string | null;
+  paymentMode?: string | null;
+}): Promise<boolean> {
+  const { sc: serviceClient, res, city, category, meetupLocation, meetupType, paymentMode } = opts;
+
+  const restriction = await loadCityRestriction(serviceClient, city, category);
+  if (restriction.error) {
+    res.status(503).json({ error: "restrictions_unavailable", message: "Booking restrictions for this location could not be verified right now. Please try again shortly." });
+    return false;
+  }
+  if (!restriction.row) return true;
+
+  const r = restriction.row as any;
+  const meetupIsPrivate =
+    (meetupLocation != null && isPrivateLocation(meetupLocation)) ||
+    (meetupType === "private");
+  if (r.require_public_meetup && meetupIsPrivate) {
+    res.status(400).json({ error: "public_meetup_required", message: "Bookings in this location must start at a public meeting place (venue entrance, hotel lobby, landmark, etc.). Private rooms and homes are not allowed." });
+    return false;
+  }
+  const effectivePaymentMode = paymentMode ?? "full_in_app";
+  if (r.disable_deposit_cash && effectivePaymentMode === "deposit_plus_cash") {
+    res.status(403).json({ error: "cash_payment_unavailable", message: "Cash / off-platform payment is not available for bookings in this location. Full in-app payment is required." });
+    return false;
+  }
+  if (r.require_full_in_app && effectivePaymentMode !== "full_in_app") {
+    res.status(403).json({ error: "full_payment_required", message: "Full in-app payment is required for bookings in this location." });
+    return false;
+  }
+  return true;
+}
+
+/**
  * The SINGLE implementation of the gate stack that POST /rent-a-buddy/bookings
  * runs once the buddy, city and category are known. Extracted (audit RAB-1 /
  * RAB-2) so every other creation path — rebook, package-book, offer-accept —
@@ -1226,11 +1753,26 @@ export async function enforceBookingCreationGates(opts: {
   // ── Launch control gating (age / DOB / ID / phone) ──────────────────────────
   // countryCode must be provided whenever launch controls are configured —
   // without it we cannot enforce country-level policy, so fail closed.
+  //
+  // The `error` on this count is load-bearing, not decoration. supabase-js
+  // RESOLVES on a DB error, so `const { count } = await …` yields `count:
+  // undefined` for BOTH "no launch controls are configured anywhere" and "the
+  // launch-control table could not be read" — and `(ctrlCount ?? 0) > 0` reads
+  // the second as the first. That is the permissive answer at an admin policy
+  // gate: an unreadable table would waive the countryCode requirement, and the
+  // deny-by-default branch below would likewise wave the booking through into a
+  // region/category an admin may have gated on age, ID or phone verification.
+  // An unknown gate refuses THIS booking, exactly as the city-restriction load
+  // sixty lines down already does.
   if (!countryCode) {
-    const { count: ctrlCount } = await serviceClient
+    const { count: ctrlCount, error: ctrlErr } = await serviceClient
       .from("rent_buddy_launch_controls")
       .select("id", { count: "exact" })
       .limit(1);
+    if (ctrlErr) {
+      sendLaunchControlsUnavailable(res);
+      return false;
+    }
     if ((ctrlCount ?? 0) > 0) {
       res.status(400).json({
         error: "invalid_payload",
@@ -1282,11 +1824,17 @@ export async function enforceBookingCreationGates(opts: {
       return false;
     }
   } else {
-    // Deny-by-default: launch controls configured but none match this booking
-    const { count: ctrlCount } = await serviceClient
+    // Deny-by-default: launch controls configured but none match this booking.
+    // Same read, same trap (see the comment on the countryCode check above): an
+    // unreadable table must not be reported as "no launch controls exist".
+    const { count: ctrlCount, error: ctrlErr } = await serviceClient
       .from("rent_buddy_launch_controls")
       .select("id", { count: "exact" })
       .limit(1);
+    if (ctrlErr) {
+      sendLaunchControlsUnavailable(res);
+      return false;
+    }
     if ((ctrlCount ?? 0) > 0) {
       res.status(403).json({
         error: "location_unavailable",
@@ -1297,32 +1845,9 @@ export async function enforceBookingCreationGates(opts: {
   }
 
   // ── City/category restrictions (admin policy — fail CLOSED) ─────────────────
-  // Enforced here so every creation path honours it uniformly and no ordinary
-  // user can bypass. A load error rejects THIS booking rather than allowing it.
-  const restriction = await loadCityRestriction(serviceClient, city, category);
-  if (restriction.error) {
-    res.status(503).json({ error: "restrictions_unavailable", message: "Booking restrictions for this location could not be verified right now. Please try again shortly." });
-    return false;
-  }
-  if (restriction.row) {
-    const r = restriction.row as any;
-    const meetupIsPrivate =
-      (meetupLocation != null && isPrivateLocation(meetupLocation)) ||
-      (meetupType === "private");
-    if (r.require_public_meetup && meetupIsPrivate) {
-      res.status(400).json({ error: "public_meetup_required", message: "Bookings in this location must start at a public meeting place (venue entrance, hotel lobby, landmark, etc.). Private rooms and homes are not allowed." });
-      return false;
-    }
-    const effectivePaymentMode = paymentMode ?? "full_in_app";
-    if (r.disable_deposit_cash && effectivePaymentMode === "deposit_plus_cash") {
-      res.status(403).json({ error: "cash_payment_unavailable", message: "Cash / off-platform payment is not available for bookings in this location. Full in-app payment is required." });
-      return false;
-    }
-    if (r.require_full_in_app && effectivePaymentMode !== "full_in_app") {
-      res.status(403).json({ error: "full_payment_required", message: "Full in-app payment is required for bookings in this location." });
-      return false;
-    }
-  }
+  if (!await enforceCityRestrictions({
+    sc: serviceClient, res, city, category, meetupLocation, meetupType, paymentMode,
+  })) return false;
 
   // ── Self-booking block — a buddy cannot book themselves ─────────────────────
   const buddyUserId = (buddyProfile as any)?.user_id;
@@ -1333,15 +1858,17 @@ export async function enforceBookingCreationGates(opts: {
 
   // ── Block-table enforcement ─────────────────────────────────────────────────
   // Traveler must not be blocked by, or have blocked, the buddy's user.
-  if (buddyUserId) {
-    const [blockedByBuddy, blockedByTraveler] = await Promise.all([
-      serviceClient.from("blocks").select("id").eq("blocker_id", buddyUserId).eq("blocked_id", userId).maybeSingle(),
-      serviceClient.from("blocks").select("id").eq("blocker_id", userId).eq("blocked_id", buddyUserId).maybeSingle(),
-    ]);
-    if (blockedByBuddy.data || blockedByTraveler.data) {
-      res.status(403).json({ error: "blocked", message: "You cannot book this Buddy." });
-      return false;
-    }
+  //
+  // FAIL-CLOSED, shape 1 (lib/exclusionSet.ts): this gates ONE booking between
+  // ONE pair, so an unreadable `blocks` table refuses that booking and nothing
+  // else. It matches how this same function already treats an unreadable city
+  // restriction thirty lines above ("A load error rejects THIS booking rather
+  // than allowing it") — the block table had simply never been given the same
+  // treatment. `if (blockedByBuddy.data || blockedByTraveler.data)` read a
+  // resolved DB error as "no block row" and let a blocked traveler book.
+  if (buddyUserId && (await isBlockedBetween(serviceClient, userId, buddyUserId))) {
+    res.status(403).json({ error: "blocked", message: "You cannot book this Buddy." });
+    return false;
   }
 
   // ── Nightlife / group category approvals ────────────────────────────────────
@@ -1624,7 +2151,7 @@ router.post("/rent-a-buddy/bookings", async (req, res) => {
     // Best-effort: the booking is already committed.
     await createEarningsLedgerEntry(serviceClient, booking, buddyId).catch(() => {});
 
-    void serviceClient.from("buddy_booking_events").insert({
+    recordBookingEvent(serviceClient, req.log, {
       booking_id: (booking as any).id,
       actor_user_id: user.id,
       event: "request_created",
@@ -1632,7 +2159,7 @@ router.post("/rent-a-buddy/bookings", async (req, res) => {
       to_status: "requested",
       metadata: { city, category, durationH },
     });
-    notifyBookingParty(getServiceClient(), buddyUserId, "rent_buddy.booking_requested", (booking as any).id);
+    await notifyBookingParty(getServiceClient(), buddyUserId, "rent_buddy.booking_requested", (booking as any).id);
   }
 
   return res.status(201).json({ booking: mapBooking(booking), policyText: POLICY_TEXT });
@@ -1755,7 +2282,30 @@ router.post("/rent-a-buddy/bookings/:bookingId/cancel", async (req, res) => {
     ? (hoursUntil < 2 ? "rent_buddy_late_cancel" : "rent_buddy_abandoned_booking")
     : "rent_buddy_buddy_cancel";
 
-  await serviceClient
+  // ── COMPARE-AND-SET, so cancel_count counts cancellations, not requests ────
+  //
+  // THE DEFECT. This was `.update({…}).eq("id", bookingId)` with no status
+  // predicate, no `.select()` and no error check, and everything below it — the
+  // booking event, the buddy's cancel_count, the Trust penalty, the 200 — was
+  // driven by the `cancellableStatuses.includes(b.status)` READ taken above
+  // rather than by what this write actually did. That is the same shape as the
+  // sweeper defect: a counter moved by a READ SET instead of by the write's
+  // affected rows.
+  //
+  // Sequentially the read guard hides it, because a second /cancel re-reads the
+  // now-cancelled row and 409s. Concurrently it does not: two in-flight cancels
+  // both read `scheduled`, both pass the guard, both write, and the buddy takes
+  // TWO cancel_count increments (adjustBuddyCounter is atomic, so neither is
+  // lost) for one cancellation. cancel_count feeds search ranking and the
+  // reliability surface, and nothing ever recomputes it from the bookings
+  // table, so that drift is permanent. The Trust event survives this only by
+  // accident — TrustEventService dedups on (user, type, source) within 24h.
+  //
+  // Re-asserting the cancellable statuses inside the same statement makes the
+  // check and the write inseparable; `.select("id")` makes it RETURNING so zero
+  // rows is visible. Zero rows means somebody else moved the booking first, so
+  // this request cancelled nothing and must not be counted as a cancellation.
+  const { data: cancelledRows, error: cancelErr } = await serviceClient
     .from("rent_buddy_bookings")
     .update({
       status: cancelStatus,
@@ -1763,15 +2313,29 @@ router.post("/rent-a-buddy/bookings/:bookingId/cancel", async (req, res) => {
       cancellation_reason: cancellation_reason ?? null,
       updated_at: now.toISOString(),
     })
-    .eq("id", bookingId);
+    .eq("id", bookingId)
+    .in("status", [...cancellableStatuses])
+    .select("id");
 
-  void serviceClient.from("buddy_booking_events").insert({
+  if (cancelErr) {
+    req.log?.error?.({ err: cancelErr, bookingId }, "cancel: booking update failed");
+    return res.status(500).json({ error: "update_failed", message: "The booking could not be cancelled." });
+  }
+  if (affectedRows(cancelledRows) === 0) {
+    return res.status(409).json({
+      error: "invalid_transition",
+      message: "The booking changed state before this cancellation was applied. Refresh and try again.",
+    });
+  }
+
+  recordBookingEvent(serviceClient, req.log, {
     booking_id: bookingId, actor_user_id: auth.user.id, event: cancelStatus,
     from_status: b.status, to_status: cancelStatus,
     metadata: { hoursUntil: Math.round(hoursUntil * 10) / 10, cancellation_reason: cancellation_reason ?? null },
   });
 
-  // Buddy-initiated cancellations count against the buddy's reliability.
+  // Buddy-initiated cancellations count against the buddy's reliability. Reached
+  // only when the compare-and-set above actually moved this booking.
   if (isBuddyCancel) {
     await adjustBuddyCounter(serviceClient, b.buddy_id, "cancel_count", 1);
   }
@@ -1794,7 +2358,7 @@ router.post("/rent-a-buddy/bookings/:bookingId/cancel", async (req, res) => {
   const notifyEvent  = isTravelerCancel ? "rent_buddy.booking_cancelled_by_traveler" : "rent_buddy.booking_cancelled_by_buddy";
   const sc2 = getServiceClient();
   if (notifyUserId) {
-    notifyBookingParty(sc2, notifyUserId, notifyEvent, bookingId);
+    await notifyBookingParty(sc2, notifyUserId, notifyEvent, bookingId);
   }
 
   // Calls policy: an active call on this booking's thread deliberately rides
@@ -1879,12 +2443,35 @@ router.post("/rent-a-buddy/bookings/:bookingId/accept", async (req, res) => {
   }
 
   const now = new Date().toISOString();
-  await serviceClient
+  // Compare-and-set. Same rule as /cancel and /complete: the required source
+  // status rides in the SAME statement as the write, and `.select("id")` makes
+  // it RETURNING so a zero-row match is visible. Checking the status in JS and
+  // then writing unconditionally lets a concurrent transition be stomped —
+  // and, because supabase-js RESOLVES on a DB error, let a failed write answer
+  // 200.
+  // Here it would also RESURRECT a booking: the sweeper expires an unanswered
+  // request with its own compare-and-set, and an unguarded accept landing after
+  // it wrote `scheduled` straight over `expired`, committing the buddy to a
+  // session the traveller had already been told was dead.
+  const { data: acceptedRows, error: acceptErr } = await serviceClient
     .from("rent_buddy_bookings")
     .update({ status: "scheduled", confirmed_at: now, updated_at: now })
-    .eq("id", bookingId);
+    .eq("id", bookingId)
+    .in("status", ["pending", "requested"])
+    .select("id");
 
-  void serviceClient.from("buddy_booking_events").insert({
+  if (acceptErr) {
+    req.log?.error?.({ err: acceptErr, bookingId }, "accept: booking update failed");
+    return res.status(500).json({ error: "update_failed", message: "The booking could not be accepted." });
+  }
+  if (affectedRows(acceptedRows) === 0) {
+    return res.status(409).json({
+      error: "invalid_transition",
+      message: "The booking changed state before this acceptance was applied. Refresh and try again.",
+    });
+  }
+
+  recordBookingEvent(serviceClient, req.log, {
     booking_id: bookingId, actor_user_id: auth.user.id, event: "accepted",
     from_status: (booking as any).status, to_status: "scheduled", metadata: {},
   });
@@ -1941,7 +2528,7 @@ router.post("/rent-a-buddy/bookings/:bookingId/accept", async (req, res) => {
   ]);
 
   // Push notification to traveler
-  notifyBookingParty(sc_, (booking as any).traveler_id as string, "rent_buddy.booking_accepted", bookingId);
+  await notifyBookingParty(sc_, (booking as any).traveler_id as string, "rent_buddy.booking_accepted", bookingId);
 
   return res.json({ ok: true });
 });
@@ -1980,12 +2567,31 @@ router.post("/rent-a-buddy/bookings/:bookingId/decline", async (req, res) => {
   }
 
   const { decline_reason } = req.body ?? {};
-  await serviceClient
+  // Compare-and-set. Same rule as /cancel and /complete: the required source
+  // status rides in the SAME statement as the write, and `.select("id")` makes
+  // it RETURNING so a zero-row match is visible. Checking the status in JS and
+  // then writing unconditionally lets a concurrent transition be stomped —
+  // and, because supabase-js RESOLVES on a DB error, let a failed write answer
+  // 200.
+  const { data: declinedRows, error: declineErr } = await serviceClient
     .from("rent_buddy_bookings")
     .update({ status: "declined", decline_reason: decline_reason ?? null, updated_at: now })
-    .eq("id", req.params.bookingId);
+    .eq("id", req.params.bookingId)
+    .in("status", ["pending", "requested"])
+    .select("id");
 
-  void serviceClient.from("buddy_booking_events").insert({
+  if (declineErr) {
+    req.log?.error?.({ err: declineErr, bookingId: req.params.bookingId }, "decline: booking update failed");
+    return res.status(500).json({ error: "update_failed", message: "The booking could not be declined." });
+  }
+  if (affectedRows(declinedRows) === 0) {
+    return res.status(409).json({
+      error: "invalid_transition",
+      message: "The booking changed state before this decline was applied. Refresh and try again.",
+    });
+  }
+
+  recordBookingEvent(serviceClient, req.log, {
     booking_id: req.params.bookingId, actor_user_id: auth.user.id, event: "declined",
     from_status: (booking as any).status, to_status: "declined", metadata: { decline_reason: decline_reason ?? null },
   });
@@ -1999,7 +2605,7 @@ router.post("/rent-a-buddy/bookings/:bookingId/decline", async (req, res) => {
   // Push notification to traveler
   const travelerId: string = (booking as any).traveler_id ?? "";
   if (travelerId) {
-    notifyBookingParty(getServiceClient(), travelerId, "rent_buddy.booking_declined", req.params.bookingId);
+    await notifyBookingParty(getServiceClient(), travelerId, "rent_buddy.booking_declined", req.params.bookingId);
   }
 
   return res.json({ ok: true });
@@ -2073,7 +2679,7 @@ router.post("/rent-a-buddy/bookings/:bookingId/suggest", async (req, res) => {
     if (crErr) return sendError(res, "db_error", crErr.message);
   }
 
-  void serviceClient.from("buddy_booking_events").insert({
+  recordBookingEvent(serviceClient, req.log, {
     booking_id: bookingId, actor_user_id: auth.user.id, event: "changes_suggested",
     from_status: (booking as any).status, to_status: (booking as any).status,
     metadata: {
@@ -2087,7 +2693,7 @@ router.post("/rent-a-buddy/bookings/:bookingId/suggest", async (req, res) => {
 
   const notifyTargetId = party.isTraveler ? party.buddyUserId : (booking as any).traveler_id as string;
   if (notifyTargetId) {
-    notifyBookingParty(getServiceClient(), notifyTargetId, "rent_buddy.change_request_raised", bookingId);
+    await notifyBookingParty(getServiceClient(), notifyTargetId, "rent_buddy.change_request_raised", bookingId);
   }
 
   return res.status(201).json({ ok: true });
@@ -2125,12 +2731,35 @@ router.post("/rent-a-buddy/bookings/:bookingId/start", async (req, res) => {
   }
 
   const now = new Date().toISOString();
-  await serviceClient
+  // Compare-and-set. Same rule as /cancel and /complete: the required source
+  // status rides in the SAME statement as the write, and `.select("id")` makes
+  // it RETURNING so a zero-row match is visible. Checking the status in JS and
+  // then writing unconditionally lets a concurrent transition be stomped —
+  // and, because supabase-js RESOLVES on a DB error, let a failed write answer
+  // 200.
+  // A booking the traveller cancelled between the read and this write would
+  // otherwise be resurrected into `in_progress`, and every safety and
+  // completion path downstream treats in_progress as a session that is
+  // happening.
+  const { data: startedRows, error: startErr } = await serviceClient
     .from("rent_buddy_bookings")
     .update({ status: "in_progress", started_at: now, updated_at: now })
-    .eq("id", bookingId);
+    .eq("id", bookingId)
+    .in("status", ["confirmed", "scheduled"])
+    .select("id");
 
-  void serviceClient.from("buddy_booking_events").insert({
+  if (startErr) {
+    req.log?.error?.({ err: startErr, bookingId }, "start: booking update failed");
+    return res.status(500).json({ error: "update_failed", message: "The booking could not be started." });
+  }
+  if (affectedRows(startedRows) === 0) {
+    return res.status(409).json({
+      error: "invalid_transition",
+      message: "The booking changed state before this start was applied. Refresh and try again.",
+    });
+  }
+
+  recordBookingEvent(serviceClient, req.log, {
     booking_id: bookingId, actor_user_id: auth.user.id, event: "started",
     from_status: (booking as any).status, to_status: "in_progress", metadata: {},
   });
@@ -2195,7 +2824,25 @@ router.post("/rent-a-buddy/bookings/:bookingId/complete", async (req, res) => {
   const finalStatus = isBuddyCompleting ? "completed_pending_traveler_confirmation" : "completed";
 
   const now = new Date(nowMs).toISOString();
-  await serviceClient
+  // ── COMPARE-AND-SET, so completed_count counts completions ─────────────────
+  //
+  // Same defect and same fix as /cancel above, on the counter that matters most:
+  // completed_count is the number on the public buddy profile, a term in the
+  // search ranker, and the threshold for the buddy_veteran stamp. The write had
+  // no status predicate, no `.select()` and no error check, so two concurrent
+  // /complete calls that both read `in_progress` both applied — +2 on
+  // completed_count, two `buddy_marked_complete` rows in the evidence log, and a
+  // stamp evaluation run twice — for one session. A failed write was invisible
+  // for the same reason: supabase-js resolves, so the handler awarded the
+  // counter, the Trust events and the stamps for a completion the database
+  // never recorded, and answered 200.
+  //
+  // `.eq("status", "in_progress")` rides in the same statement as the write, so
+  // exactly one of two racing requests can win it, and the loser gets a 409
+  // instead of a second increment. The duplicate `buddy_marked_complete` matters
+  // beyond the count: rentABuddySpec's dispute resolution reads that event to
+  // decide whether to compensate completed_count, and compensates by exactly -1.
+  const { data: completedRows, error: completeErr } = await serviceClient
     .from("rent_buddy_bookings")
     .update({
       status: finalStatus,
@@ -2203,9 +2850,22 @@ router.post("/rent-a-buddy/bookings/:bookingId/complete", async (req, res) => {
       ...(disputeWindowExpiresAt ? { dispute_window_expires_at: disputeWindowExpiresAt } : {}),
       updated_at: now,
     })
-    .eq("id", bookingId);
+    .eq("id", bookingId)
+    .eq("status", "in_progress")
+    .select("id");
 
-  void serviceClient.from("buddy_booking_events").insert({
+  if (completeErr) {
+    req.log?.error?.({ err: completeErr, bookingId }, "complete: booking update failed");
+    return res.status(500).json({ error: "update_failed", message: "The booking could not be completed." });
+  }
+  if (affectedRows(completedRows) === 0) {
+    return res.status(409).json({
+      error: "invalid_transition",
+      message: "The booking changed state before this completion was applied. Refresh and try again.",
+    });
+  }
+
+  recordBookingEvent(serviceClient, req.log, {
     booking_id: bookingId, actor_user_id: auth.user.id,
     event: isBuddyCompleting ? "buddy_marked_complete" : "completed",
     from_status: "in_progress", to_status: finalStatus,
@@ -2347,11 +3007,11 @@ router.post("/rent-a-buddy/bookings/:bookingId/complete", async (req, res) => {
 
   // Push notification to the other party
   if (isBuddyCompleting) {
-    notifyBookingParty(scComplete, (booking as any).traveler_id as string,
+    await notifyBookingParty(scComplete, (booking as any).traveler_id as string,
       "rent_buddy.booking_pending_confirmation", bookingId);
   } else {
     if (buddyUserId) {
-      notifyBookingParty(scComplete, buddyUserId, "rent_buddy.booking_completed", bookingId);
+      await notifyBookingParty(scComplete, buddyUserId, "rent_buddy.booking_completed", bookingId);
     }
   }
 
@@ -2580,29 +3240,57 @@ router.post("/rent-a-buddy/bookings/:bookingId/confirm-cash", async (req, res) =
   if (!await requireRentBuddyEnabled(serviceClient, res)) return;
 
   const { bookingId } = req.params;
-  const { confirmed } = req.body ?? {};
+  const { confirmed, amountUsd } = req.body ?? {};
 
-  const { data: booking } = await serviceClient
-    .from("rent_buddy_bookings")
-    .select("*")
-    .eq("id", bookingId)
-    .maybeSingle();
+  // `confirmed` used to be written through unvalidated: anything that was not a
+  // boolean landed in the update patch as-is (or, being `undefined`, was
+  // dropped by JSON serialisation and wrote nothing) and the dispute branch
+  // below then compared it against `false`. A cash settlement is a yes/no, so
+  // an unparseable answer is refused rather than half-recorded.
+  if (typeof confirmed !== "boolean") {
+    return res.status(400).json({ error: "invalid_payload", message: "confirmed must be true or false." });
+  }
 
-  if (!booking) return res.status(404).json({ error: "not_found" });
+  // OPTIONAL. When present it is the sum the caller says changed hands, and it
+  // is bounded below by what the booking says is owed — the second half of M13
+  // (docs/rent-buddy-audit.md:397). Omitting it preserves the previous request
+  // contract exactly.
+  let claimedAmountUsd: number | null = null;
+  if (amountUsd !== undefined && amountUsd !== null) {
+    const n = Number(amountUsd);
+    if (!Number.isFinite(n) || n < 0) {
+      return res.status(400).json({ error: "invalid_payload", message: "amountUsd must be a non-negative number." });
+    }
+    claimedAmountUsd = n;
+  }
 
-  const party = await requireBookingParty(serviceClient, booking, auth.user.id, res);
-  if (!party) return;
+  const result = await confirmBookingCash(serviceClient, bookingId, auth.user.id, confirmed, claimedAmountUsd);
 
-  const { isTraveler, isBuddy } = party;
-  const updatePatch: Record<string, any> = { updated_at: new Date().toISOString() };
-  if (isTraveler) updatePatch.cash_balance_confirmed_by_traveler = confirmed;
-  if (isBuddy)    updatePatch.cash_balance_confirmed_by_buddy = confirmed;
+  if (result.outcome === "not_found") return res.status(404).json({ error: "not_found" });
+  if (result.outcome === "not_party") return res.status(403).json({ error: "forbidden" });
+  if (result.outcome === "amount_exceeds_due") {
+    // Refused, not clamped: recording a smaller settlement than the caller
+    // asserted would invent an agreement neither party made.
+    return res.status(409).json({
+      error: "amount_exceeds_due",
+      message: "The confirmed cash amount is higher than the balance this booking says is owed.",
+      cashBalanceDueUsd: result.cashDueUsd,
+    });
+  }
+  if (result.outcome !== "confirmed") {
+    return res.status(503).json({ error: "db_error", message: "Cash confirmation could not be recorded. Please try again." });
+  }
 
-  await serviceClient.from("rent_buddy_bookings").update(updatePatch).eq("id", bookingId);
-
-  const b = booking as any;
-  const tConf = isTraveler ? confirmed : b.cash_balance_confirmed_by_traveler;
-  const bConf = isBuddy    ? confirmed : b.cash_balance_confirmed_by_buddy;
+  // Post-write state, read out of the same statement that wrote it. The old
+  // code recomputed these from the row it had read BEFORE its own write, which
+  // is exactly how a concurrent confirmation by the other party disappeared.
+  const tConf = result.travelerConfirmed;
+  const bConf = result.buddyConfirmed;
+  const b = {
+    traveler_id: result.travelerUserId,
+    status: result.bookingStatus,
+    dispute_window_expires_at: result.disputeExpiresAt,
+  } as any;
 
   if (tConf === false || bConf === false) {
     // Only open a cash dispute when the booking is actually DISPUTABLE — the same
@@ -2620,16 +3308,52 @@ router.post("/rent-a-buddy/bookings/:bookingId/confirm-cash", async (req, res) =
       return res.json({ ok: true, disputed: false, notDisputable: true, currentStatus: b.status });
     }
 
-    await serviceClient.from("rent_buddy_bookings")
+    // COMPARE-AND-SET, and the dispute row is only written for a transition
+    // that really happened. The old order wrote `disputed` unguarded and then
+    // inserted unconditionally, so a booking that had left the disputable set
+    // between the read and the write was stomped, and a booking that already
+    // had an open dispute gained a SECOND one — which makes resolve-dispute's
+    // `.maybeSingle()` raise and the booking unresolvable through the API.
+    const { data: cashDisputedRows, error: cashDisputeErr } = await serviceClient
+      .from("rent_buddy_bookings")
       .update({ status: "disputed", updated_at: new Date().toISOString() })
-      .eq("id", bookingId);
+      .eq("id", bookingId)
+      .in("status", disputableStatuses)
+      .select("id");
 
-    await serviceClient.from("rent_buddy_disputes").insert({
+    if (cashDisputeErr) {
+      req.log?.error?.({ err: cashDisputeErr, bookingId }, "confirm-cash: dispute transition failed");
+      return res.status(500).json({ error: "update_failed", message: "The cash dispute could not be opened." });
+    }
+    if (affectedRows(cashDisputedRows) === 0) {
+      // Lost the race. The cash confirmation itself is already recorded.
+      return res.json({ ok: true, disputed: false, notDisputable: true, currentStatus: b.status });
+    }
+
+    const { error: cashDisputeInsertErr } = await serviceClient.from("rent_buddy_disputes").insert({
       booking_id: bookingId,
       raised_by: auth.user.id,
       reason: "cash_balance_disagreement",
       status: "open",
     });
+    if (cashDisputeInsertErr) {
+      // The booking IS disputed now; an admin must still be able to find the
+      // case. Reported loudly rather than swallowed, which is what a resolved
+      // supabase-js error would otherwise be.
+      req.log?.error?.({ err: cashDisputeInsertErr, bookingId },
+        "confirm-cash: booking moved to disputed but the rent_buddy_disputes row was not written");
+    }
+
+    // Every other transition in this file writes a booking event; this one did
+    // not, so a cash-balance dispute appeared nowhere in the evidence log
+    // GET /rent-a-buddy/bookings/:bookingId/events serves to both parties —
+    // the one record either side could point at to show a dispute was opened.
+    recordBookingEvent(serviceClient, req.log, {
+      booking_id: bookingId, actor_user_id: auth.user.id, event: "dispute_opened",
+      from_status: b.status, to_status: "disputed",
+      metadata: { reason: "cash_balance_disagreement", source: "confirm_cash" },
+    });
+
     return res.json({ ok: true, disputed: true });
   }
 
@@ -2868,13 +3592,23 @@ router.post("/rent-a-buddy/bookings/:bookingId/review", async (req, res) => {
   // reviewee must be a profiles.id (user ID), NOT a rent_buddy_profiles.id
   const revieweeId: string = isTraveler ? buddyUserId : b.traveler_id;
 
-  // One-review-per-booking enforcement at API level (DB also has a unique constraint)
-  const { data: existingReview } = await serviceClient
+  // One-review-per-booking enforcement at API level (DB also has a unique constraint).
+  // An unreadable rent_buddy_reviews resolves as `{ data: null }` — the same
+  // shape as "not yet reviewed" — so ignoring `error` lets a second review be
+  // attempted for the same booking. It is also the row COUNT on this booking
+  // that lifts the double-blind (`count >= 2` below), so a duplicate would
+  // unblind a booking where only one side has actually reviewed, exposing the
+  // reviewer's rating to the counterparty before their own is committed.
+  const { data: existingReview, error: existingReviewErr } = await serviceClient
     .from("rent_buddy_reviews")
     .select("id")
     .eq("booking_id", bookingId)
     .eq("reviewer_id", auth.user.id)
     .maybeSingle();
+  if (existingReviewErr) {
+    req.log?.error({ err: existingReviewErr, bookingId }, "review: duplicate-review check unavailable");
+    return sendPreconditionUnavailable(res, "We could not check whether you have already reviewed this booking. Please try again shortly.");
+  }
   if (existingReview) {
     return res.status(409).json({ error: "already_reviewed", message: "You have already submitted a review for this booking." });
   }
@@ -2909,12 +3643,36 @@ router.post("/rent-a-buddy/bookings/:bookingId/review", async (req, res) => {
 
   // Compass activity ingestion — reviewer earns review_posted credit
   if (typeof privateNote === "string" && privateNote.trim()) {
-    void serviceClient.from("rent_buddy_review_notes").insert({
-      review_id: (review as any)?.id ?? null,
-      booking_id: bookingId,
-      author_id: auth.user.id,
-      note: privateNote.trim().slice(0, 4000),
-    });
+    // Fire-and-forget, but ISSUED: a bare `void …insert(…)` on a PostgrestBuilder
+    // never calls `then()`, so the request was built and discarded and the
+    // reviewer's private note was silently thrown away on every submission.
+    // The review itself is already committed, so a failed note must not fail the
+    // request — but it is logged rather than lost without trace, because this
+    // row is content the reviewer typed and nothing else records it.
+    void serviceClient
+      .from("rent_buddy_review_notes")
+      .insert({
+        review_id: (review as any)?.id ?? null,
+        booking_id: bookingId,
+        author_id: auth.user.id,
+        note: privateNote.trim().slice(0, 4000),
+      })
+      .then(
+        (res: { error?: unknown } | null | undefined) => {
+          if (res?.error) {
+            req.log?.error?.(
+              { err: res.error, bookingId },
+              "rent_buddy_review_notes insert failed — reviewer's private note not stored",
+            );
+          }
+        },
+        (err: unknown) => {
+          req.log?.error?.(
+            { err, bookingId },
+            "rent_buddy_review_notes insert threw — reviewer's private note not stored",
+          );
+        },
+      );
   }
 
   recordActivityEvent(serviceClient, auth.user.id, "review_posted", { category: "buddy_session" });
@@ -3140,12 +3898,53 @@ router.post("/rent-a-buddy/bookings/:bookingId/dispute", async (req, res) => {
   if (disputeErr) return sendError(res, "db_error", disputeErr.message);
 
   const now = new Date().toISOString();
-  await serviceClient
+  // ── COMPARE-AND-SET, with the orphan dispute cleaned up ────────────────────
+  //
+  // The dispute row is inserted first (above) so a booking can never reach
+  // `disputed` with nothing to resolve it. That leaves the reverse hole, which
+  // this closes: the transition was `.update({status}).eq("id", …)` with no
+  // predicate, no `.select()` and no error check, so two concurrent /dispute
+  // calls both passed the JS status check and both INSERTED, leaving TWO open
+  // disputes on one booking. rentABuddySpec's resolve-dispute reads the open
+  // dispute with `.in("status", ["open","reviewing"]).maybeSingle()`, and
+  // maybeSingle RAISES on more than one row — so the second dispute made the
+  // booking permanently unresolvable through the API, and a failed transition
+  // left an open dispute attached to a booking that was never disputed.
+  //
+  // Zero rows or an error means this request disputed nothing, so the row it
+  // just created is deleted (it has been visible to nobody) and the caller is
+  // told.
+  const { data: disputedRows, error: disputeUpdErr } = await serviceClient
     .from("rent_buddy_bookings")
     .update({ status: "disputed", updated_at: now })
-    .eq("id", bookingId);
+    .eq("id", bookingId)
+    .in("status", disputableStatuses)
+    .select("id");
 
-  void serviceClient.from("buddy_booking_events").insert({
+  if (disputeUpdErr || affectedRows(disputedRows) === 0) {
+    const orphanId = (dispute as any)?.id ?? null;
+    if (orphanId) {
+      const { error: cleanupErr } = await serviceClient
+        .from("rent_buddy_disputes")
+        .delete()
+        .eq("id", orphanId)
+        .eq("status", "open");
+      if (cleanupErr) {
+        req.log?.error?.({ err: cleanupErr, bookingId, disputeId: orphanId },
+          "dispute: transition failed and the orphan dispute row could not be removed — a second open dispute on this booking will break resolve-dispute");
+      }
+    }
+    if (disputeUpdErr) {
+      req.log?.error?.({ err: disputeUpdErr, bookingId }, "dispute: booking update failed");
+      return res.status(500).json({ error: "update_failed", message: "The dispute could not be opened." });
+    }
+    return res.status(409).json({
+      error: "invalid_transition",
+      message: "The booking changed state before this dispute was opened. Refresh and try again.",
+    });
+  }
+
+  recordBookingEvent(serviceClient, req.log, {
     booking_id: bookingId, actor_user_id: auth.user.id, event: "dispute_opened",
     from_status: (booking as any).status, to_status: "disputed",
     metadata: { reason, dispute_id: (dispute as any)?.id ?? null },
@@ -3159,7 +3958,7 @@ router.post("/rent-a-buddy/bookings/:bookingId/dispute", async (req, res) => {
     ? party.buddyUserId
     : (booking as any).traveler_id as string;
   if (notifyTargetId) {
-    notifyBookingParty(getServiceClient(), notifyTargetId, "rent_buddy.dispute_opened", bookingId);
+    await notifyBookingParty(getServiceClient(), notifyTargetId, "rent_buddy.dispute_opened", bookingId);
   }
 
   return res.json({ ok: true, disputeId: (dispute as any)?.id ?? null });
@@ -3231,8 +4030,8 @@ router.post("/rent-a-buddy/bookings/:bookingId/no-show", async (req, res) => {
     return res.status(409).json({ error: "already_reported", status: (booking as any).status });
   }
 
-  const noShowAllowedStatuses = ["confirmed", "scheduled", "in_progress"];
-  if (!noShowAllowedStatuses.includes((booking as any).status)) {
+  const noShowAllowedStatuses = NO_SHOW_REPORTABLE_STATUSES;
+  if (!noShowAllowedStatuses.includes((booking as any).status as any)) {
     return res.status(409).json({
       error: "invalid_transition",
       message: "No-show can only be reported for confirmed or in-progress bookings.",
@@ -3257,12 +4056,35 @@ router.post("/rent-a-buddy/bookings/:bookingId/no-show", async (req, res) => {
   const now = new Date(nowMs).toISOString();
   const graceExpiry = new Date(nowMs + 2 * 3600 * 1000).toISOString();
 
-  await serviceClient
+  // Compare-and-set. Same rule as /cancel and /complete: the required source
+  // status rides in the SAME statement as the write, and `.select("id")` makes
+  // it RETURNING so a zero-row match is visible. Checking the status in JS and
+  // then writing unconditionally lets a concurrent transition be stomped —
+  // and, because supabase-js RESOLVES on a DB error, let a failed write answer
+  // 200.
+  const { data: pendingRows, error: noShowUpdErr } = await serviceClient
     .from("rent_buddy_bookings")
     .update({ status: "no_show_pending", no_show_grace_expires_at: graceExpiry, updated_at: now })
-    .eq("id", bookingId);
+    .eq("id", bookingId)
+    .in("status", [...noShowAllowedStatuses])
+    .select("id");
 
-  void serviceClient.from("buddy_booking_events").insert({
+  if (noShowUpdErr) {
+    req.log?.error?.({ err: noShowUpdErr, bookingId }, "no-show: booking update failed");
+    return res.status(500).json({ error: "update_failed", message: "The no-show report could not be applied." });
+  }
+  if (affectedRows(pendingRows) === 0) {
+    // The safety check-in above stands — it is a report, and it happened — but
+    // no transition did, so no grace period is claimed and the sweeper is not
+    // handed a booking it should escalate.
+    return res.status(409).json({
+      error: "invalid_transition",
+      message: "The booking changed state before this no-show report was applied. Refresh and try again.",
+      currentStatus: (booking as any).status,
+    });
+  }
+
+  recordBookingEvent(serviceClient, req.log, {
     booking_id: bookingId, actor_user_id: auth.user.id, event: "no_show_reported",
     from_status: (booking as any).status, to_status: "no_show_pending",
     metadata: {
@@ -3278,7 +4100,7 @@ router.post("/rent-a-buddy/bookings/:bookingId/no-show", async (req, res) => {
     ? party.buddyUserId
     : (booking as any).traveler_id as string;
   if (notifyTargetId) {
-    notifyBookingParty(getServiceClient(), notifyTargetId, "rent_buddy.no_show_reported", bookingId);
+    await notifyBookingParty(getServiceClient(), notifyTargetId, "rent_buddy.no_show_reported", bookingId);
   }
 
   return res.json({ ok: true, disputeId: null, gracePeriodExpiresAt: graceExpiry });
@@ -3504,7 +4326,7 @@ router.post("/rent-a-buddy/bookings/:bookingId/safety/end-early", async (req, re
   // Every other transition in this file writes a booking event; this one did not,
   // which is what made the abuse above silent. Fire-and-forget: an audit failure
   // must never block a safety exit.
-  void serviceClient.from("buddy_booking_events").insert({
+  recordBookingEvent(serviceClient, req.log, {
     booking_id: bookingId,
     actor_user_id: auth.user.id,
     event: "ended_early",
@@ -4916,6 +5738,12 @@ router.post("/rent-a-buddy/admin/safety/flags/:flagId/confirm", async (req, res)
 
   const f = flag as any;
 
+  // "applied"           the buddy profile really is on risk hold
+  // "no_buddy_profile"  the flagged user has no buddy profile to hold
+  // "failed"            the hold errored — the control is NOT on
+  // "not_applicable"    the flag is not critical, so no hold is called for
+  let riskHold: "applied" | "no_buddy_profile" | "failed" | "not_applicable" = "not_applicable";
+
   await serviceClient.from("rent_buddy_policy_flags").update({
     status: "resolved",
     admin_notes: req.body?.notes ?? null,
@@ -4938,11 +5766,52 @@ router.post("/rent-a-buddy/admin/safety/flags/:flagId/confirm", async (req, res)
       sourceId: flagId,
     });
 
-    // Risk hold for critical flags
+    // Risk hold for critical flags.
+    //
+    // The statement's ONLY predicate is user_id, so zero matched rows has
+    // exactly one meaning: the flagged user has no rent_buddy_profiles row —
+    // a flagged TRAVELER, who never applied to be a buddy. That is legitimate
+    // and must not be reported as a failure. But it is also indistinguishable,
+    // to code that reads neither `error` nor the affected-row count, from a
+    // hold that FAILED to land on a buddy who does have a profile: supabase-js
+    // resolves a zero-row UPDATE as `{ data: null, error: null }`, the same
+    // shape a successful one returns, and this call discarded even that. The
+    // route then answered {ok:true} for a critical safety flag whose hold was
+    // never applied.
+    //
+    // All three outcomes are now distinguished and reported in the response,
+    // and the two that are not "the hold is on" are logged with the flag and
+    // user ids so an operator can act on them.
     if (f.severity === "critical") {
-      await serviceClient.from("rent_buddy_profiles")
+      const { data: held, error: holdErr } = await serviceClient.from("rent_buddy_profiles")
         .update({ risk_hold: true, admin_status: "disabled" })
-        .eq("user_id", f.flagged_user_id);
+        .eq("user_id", f.flagged_user_id)
+        .select("user_id");
+      if (holdErr) {
+        // A critical hold that errored is a safety control that is NOT on.
+        riskHold = "failed";
+        req.log?.error?.(
+          { err: holdErr, flagId, flaggedUserId: f.flagged_user_id },
+          "rent-a-buddy: critical-flag risk hold FAILED — the buddy is not disabled",
+        );
+      } else if (affectedRows(held) === 0) {
+        // OPEN POLICY QUESTION (RAB_CRITICAL_HOLD_WITHOUT_PROFILE): a critical
+        // flag against a user with no buddy profile currently holds NOTHING,
+        // and nothing carries the hold forward if that user later applies to
+        // become a buddy. Whether the hold should be pre-created (a
+        // rent_buddy_user_limits row, an application block, or a profile row
+        // in `disabled` state) is an owner decision about the buddy-onboarding
+        // funnel, not one this handler may make on a moderator's behalf. Until
+        // it is decided, the truthful state is reported rather than assumed.
+        riskHold = "no_buddy_profile";
+        req.log?.warn?.(
+          { flagId, flaggedUserId: f.flagged_user_id },
+          "rent-a-buddy: critical-flag risk hold matched no rent_buddy_profiles row " +
+          "(flagged user is not a buddy) — no hold exists to carry into a future application",
+        );
+      } else {
+        riskHold = "applied";
+      }
     }
   }
 
@@ -4952,9 +5821,18 @@ router.post("/rent-a-buddy/admin/safety/flags/:flagId/confirm", async (req, res)
     target_id: flagId,
     action: "confirmed",
     notes: req.body?.notes ?? null,
+    // No column carries riskHold here: 0047 defines rent_buddy_admin_actions
+    // with (id, admin_id, target_type, target_id, action, notes, created_at)
+    // and 0107 adds only `details`, so which shape is live depends on which
+    // migration created the table. Writing an unknown column would make this
+    // (unchecked) audit insert fail silently and lose the row entirely, so the
+    // hold outcome travels in the response and the log instead.
   });
 
-  return res.json({ ok: true });
+  // riskHold is reported to the admin who confirmed the flag. `ok` still
+  // describes the confirmation (which did happen); it never again stands in
+  // for a critical hold that did not.
+  return res.json({ ok: true, riskHold });
 });
 
 router.post("/rent-a-buddy/admin/safety/flags/:flagId/escalate", async (req, res) => {
@@ -5080,7 +5958,31 @@ router.patch("/rent-a-buddy/admin/users/:userId/limits", async (req, res) => {
   if (body.fullInAppPaymentRequired !== undefined)    patch.full_in_app_payment_required   = body.fullInAppPaymentRequired;
   if (body.reason !== undefined)                      patch.reason                         = body.reason;
 
-  await serviceClient.from("rent_buddy_user_limits").update(patch).eq("user_id", userId);
+  // These columns ARE the account restriction — rent_buddy_disabled,
+  // buddy_disabled, traveler_booking_disabled, nightlife_disabled. A user with
+  // no rent_buddy_user_limits row (the row is created by the sibling POST,
+  // which upserts) matches zero rows here, and PostgREST reports zero matched
+  // rows with no error, so this handler answered {ok:true} and wrote a
+  // "limits_updated" admin-action row while the user stayed unrestricted. The
+  // error was not read either. `.select()` makes the update RETURNING so the
+  // rows it actually touched can be counted.
+  const { data: limitRows, error: limitsErr } = await serviceClient
+    .from("rent_buddy_user_limits")
+    .update(patch)
+    .eq("user_id", userId)
+    .select("user_id");
+  if (limitsErr) return sendError(res, "db_error", limitsErr.message);
+  if (!Array.isArray(limitRows) || limitRows.length === 0) {
+    req.log?.error(
+      { userId, adminId, patch },
+      "rent-a-buddy admin limits PATCH matched no rent_buddy_user_limits row — no restriction was applied",
+    );
+    return sendError(
+      res,
+      "not_found",
+      "No Rent-A-Buddy limits row exists for this user. Create one with POST /rent-a-buddy/admin/users/:userId/limits first.",
+    );
+  }
 
   await serviceClient.from("rent_buddy_admin_actions").insert({
     admin_id: adminId,
@@ -5531,13 +6433,24 @@ router.post("/rent-a-buddy/bookings/:bookingId/tag-consent", async (req, res) =>
     return res.status(403).json({ error: "consent_blocked", message: "Tagging consent is paused due to an active safety flag." });
   }
 
-  const { data: existing } = await serviceClient
+  // This row IS the consent record, including a `declined` one. An unreadable
+  // rent_buddy_tag_consents resolves as `{ data: null }`, indistinguishable
+  // from "never asked", so ignoring `error` inserts a NEW pending consent —
+  // re-asking to tag someone who has already declined to be tagged, and
+  // presenting the requester with a fresh pending state over a settled refusal.
+  // A consent decision must never be overwritten by a failed read.
+  const { data: existing, error: existingErr } = await serviceClient
     .from("rent_buddy_tag_consents")
     .select("id, consent_status")
     .eq("booking_id", bookingId)
     .eq("requester_id", user.id)
     .eq("target_id", targetUserId)
     .maybeSingle();
+
+  if (existingErr) {
+    req.log?.error({ err: existingErr, bookingId, targetUserId }, "tag-consent: existing-consent check unavailable");
+    return sendPreconditionUnavailable(res, "We could not check the existing tagging consent for this booking. Please try again shortly.");
+  }
 
   if (existing) {
     return res.json({ consentId: (existing as any).id, status: (existing as any).consent_status, alreadyExists: true });
@@ -6210,38 +7123,68 @@ export function nightlifePublicMeetupViolation(meetupLocation: string, category:
 // ── Buddy earnings summary ─────────────────────────────────────────────────────
 // The /api/rent-a-buddy/dashboard/earnings route already exists in the
 // main router section. We add a richer breakdown endpoint here.
+//
+// M7 — THE TOTAL MUST NOT BE SILENTLY TRUNCATED.
+//
+// THE DEFECT (09 §1.3.4, 12 §3.1 M7). This route used to `.select(...)` every
+// completed/disputed booking for a buddy with NO pagination and sum them in the
+// API process. PostgREST caps a select at its configured max-rows and says
+// nothing when it truncates — no error, no header the client reads, just a
+// shorter array. A buddy past that cap was shown an earnings total that was
+// silently too low, and the more they had earned the more was missing. That is
+// a wrong number on a buddy's own money screen today, which is why the register
+// grades it S1 and not S2.
+//
+// THE FIX, in the order 12 §4 asks for it ("aggregate DB-side or paginate",
+// preferring DB-side): rb_buddy_earnings_summary (migration 2330) does the
+// whole aggregation in SQL and returns ONE jsonb row, so there is no row count
+// left to truncate. Where that function is not available the route paginates
+// EXHAUSTIVELY and folds the pages with the identical arithmetic — slower, but
+// never short.
+//
+// THE TAKE RATE (M1), NOW CLOSED. This route used to carry its own fraction —
+// applied to every buddy at every level, so a `new` buddy (25 %) and an `elite`
+// buddy (12 %) were both shown a 15 % deduction, and only a `pro` buddy saw a
+// correct number, by coincidence. Verification V2 is discharged:
+// `rent_buddy_fee_rules` holds its five seed rows in production
+// (new 25 / rising 22 / pro 15 / elite 12 / city_ambassador 12), so the literal
+// is gone and the rate is resolved per buddy through the ONE reader,
+// `lib/rentBuddyFeeSchedule.ts`. There is deliberately no numeric fallback:
+// when the schedule cannot answer, this route refuses rather than publishing a
+// take rate nobody configured. See that module's header for why 22 was the
+// defect and not the safety net.
+//
+// WHAT THIS DELIBERATELY DOES NOT CHANGE. `totalCashConfirmedUsd` keeps summing
+// cash_balance_usd for every non-disputed booking, confirmed or not; see the
+// note at the fold.
 
-router.get("/rent-a-buddy/dashboard/earnings/summary", async (req, res) => {
-  const auth = await requireUser(req, res);
-  if (!auth) return;
-  const { user, client } = auth;
-  const serviceClient = sc(client);
-  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
+/** Page size for the exhaustive fallback. */
+const EARNINGS_PAGE_SIZE = 500;
 
-  const { data: bp } = await serviceClient
-    .from("rent_buddy_profiles")
-    .select("id")
-    .eq("user_id", user.id)
-    .maybeSingle();
+/** Bookings that count toward earnings. */
+const EARNINGS_STATUSES = ["completed", "disputed"] as const;
 
-  if (!bp) return res.status(404).json({ error: "not_found", message: "No Buddy profile found." });
+interface EarningsMonth { month: string; totalUsd: number; bookingCount: number; inApp: number; cash: number; fees: number }
 
-  const { data: bookings } = await serviceClient
-    .from("rent_buddy_bookings")
-    .select("id, total_usd, deposit_usd, cash_balance_usd, payment_mode, status, completed_at, booking_date, category")
-    .eq("buddy_id", (bp as any).id)
-    .in("status", ["completed", "disputed"]);
-
-  const rows = (bookings ?? []) as any[];
-
-  const platformFeePct = 0.15;
+/**
+ * Fold booking rows into the summary, with byte-identical arithmetic to the
+ * in-line loop this replaced:
+ *   - month key   = first 7 chars of completed_at, else booking_date, else ""
+ *   - fee         = round(total_usd * pct, 2)
+ *   - disputed    → gross to totalDisputed, month's bookingCount +1, nothing else
+ *   - otherwise   → deposit to inApp, cash_balance to cash, fee to fees,
+ *                   (gross - fee) to the month's totalUsd
+ *   - yearlyNet   = sum of the current year's monthly totalUsd
+ * Exported so the concurrency/exactness tests can drive it directly.
+ */
+export function foldEarningsRows(rows: any[], platformFeePct: number, now: Date = new Date()) {
   let totalInApp = 0;
   let totalCashConfirmed = 0;
   let totalFees = 0;
   let totalDisputed = 0;
-  let totalPending = 0;
+  const totalPending = 0;
 
-  const monthlyMap: Record<string, { totalUsd: number; bookingCount: number; inApp: number; cash: number; fees: number }> = {};
+  const monthlyMap: Record<string, Omit<EarningsMonth, "month">> = {};
 
   for (const b of rows) {
     const month = (b.completed_at ?? b.booking_date ?? "").slice(0, 7);
@@ -6268,26 +7211,191 @@ router.get("/rent-a-buddy/dashboard/earnings/summary", async (req, res) => {
     monthlyMap[month].bookingCount += 1;
   }
 
-  const monthlyBreakdown = Object.entries(monthlyMap)
+  const monthlyBreakdown: EarningsMonth[] = Object.entries(monthlyMap)
     .map(([month, v]) => ({ month, ...v }))
     .sort((a, b) => b.month.localeCompare(a.month));
 
-  const currentYear = new Date().getFullYear().toString();
-  const yearlyTotalUsd = monthlyBreakdown
+  const currentYear = now.getFullYear().toString();
+  const yearlyNetUsd = monthlyBreakdown
     .filter((m) => m.month.startsWith(currentYear))
     .reduce((sum, m) => sum + m.totalUsd, 0);
 
-  return res.json({
+  return {
     totalInAppUsd: totalInApp,
     totalCashConfirmedUsd: totalCashConfirmed,
     totalPlatformFeesUsd: totalFees,
     totalDisputedUsd: totalDisputed,
     totalPendingUsd: totalPending,
     totalNetUsd: totalInApp + totalCashConfirmed - totalFees,
-    yearlyNetUsd: yearlyTotalUsd,
+    yearlyNetUsd,
     monthlyBreakdown,
-    taxNote: "Tax documents are not available yet. Please keep your own records of earnings for tax purposes. A tax summary feature is planned for a future release.",
-    platformFeePct: platformFeePct * 100,
+  };
+}
+
+/** The columns the earnings fold reads. */
+const EARNINGS_BOOKING_COLUMNS =
+  "id, total_usd, deposit_usd, cash_balance_usd, payment_mode, status, completed_at, booking_date, category";
+
+/**
+ * Read EVERY earnings-bearing booking for a buddy, in pages.
+ *
+ * Signature and behaviour unchanged; the paging itself now lives in
+ * `fetchAllPagedRows` below, which the marketplace dashboard's two reads share.
+ * Returns null on a failed read rather than an empty array — see the pager.
+ */
+export async function fetchAllBuddyEarningsRows(client: any, buddyProfileId: string): Promise<any[] | null> {
+  return fetchAllPagedRows(client, "rent_buddy_bookings", EARNINGS_BOOKING_COLUMNS, {
+    column: "buddy_id",
+    value: buddyProfileId,
+    statuses: EARNINGS_STATUSES as unknown as string[],
+  });
+}
+
+/**
+ * The exhaustive pager the three earnings readers share.
+ *
+ * One equality predicate, an optional status set, ordered by `id` so the pages
+ * partition the set deterministically, de-duplicated by `id` so a client that
+ * ignores `range` (a partial test fake) cannot double-count. `null` on a failed
+ * read — never `[]`, because an empty array is indistinguishable from "this
+ * buddy has earned nothing" and answering a money question with a confident
+ * zero derived from a failed query is the defect class `11` §"The defect class"
+ * is a census of.
+ *
+ * The page ceiling is a guard against a non-paginating client looping forever,
+ * not an expected limit.
+ */
+async function fetchAllPagedRows(
+  client: any,
+  table: string,
+  columns: string,
+  match: { column: string; value: any; statuses?: string[] },
+): Promise<any[] | null> {
+  const seen = new Set<string>();
+  const out: any[] = [];
+  const MAX_PAGES = 400; // 200k rows; far past any real buddy
+
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const from = page * EARNINGS_PAGE_SIZE;
+    let q: any = client.from(table).select(columns).eq(match.column, match.value);
+    if (match.statuses) q = q.in("status", match.statuses);
+    const res: any = await q.order("id", { ascending: true }).range(from, from + EARNINGS_PAGE_SIZE - 1);
+
+    if (res?.error) return null;
+    const rows: any[] = Array.isArray(res?.data) ? res.data : [];
+    for (const r of rows) {
+      const key = String(r?.id ?? "");
+      if (key && seen.has(key)) continue;
+      if (key) seen.add(key);
+      out.push(r);
+    }
+    if (rows.length < EARNINGS_PAGE_SIZE) return out;
+  }
+  return out;
+}
+
+/**
+ * EVERY booking a buddy has, in pages — M7's other site.
+ *
+ * `GET /rent-a-buddy/me/earnings/summary` in rentABuddyMarketplace.ts needs the
+ * buddy's WHOLE booking set, not only the earnings-bearing statuses: it derives
+ * today's bookings, upcoming bookings and the cancelled count from the same
+ * array. So it cannot reuse `fetchAllBuddyEarningsRows`, whose
+ * `.in("status", ['completed','disputed'])` would empty all three. It reuses
+ * the pager instead, with its own column list and no status filter.
+ *
+ * Null on a failed read, for the same reason as above.
+ */
+export async function fetchAllBuddyBookingRows(
+  client: any,
+  buddyProfileId: string,
+  columns: string,
+): Promise<any[] | null> {
+  return fetchAllPagedRows(client, "rent_buddy_bookings", columns, {
+    column: "buddy_id",
+    value: buddyProfileId,
+  });
+}
+
+/**
+ * EVERY tip row paid to a buddy, in pages.
+ *
+ * The same unpaginated-select defect as the bookings read, in the same
+ * `Promise.all`: `select("amount_usd").eq("buddy_user_id", …)` with no range.
+ * `id` is selected so the pages have a deterministic order to partition on.
+ */
+export async function fetchAllBuddyTipRows(client: any, buddyUserId: string): Promise<any[] | null> {
+  return fetchAllPagedRows(client, "rent_buddy_tips", "id, amount_usd", {
+    column: "buddy_user_id",
+    value: buddyUserId,
+  });
+}
+
+router.get("/rent-a-buddy/dashboard/earnings/summary", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user, client } = auth;
+  const serviceClient = sc(client);
+  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
+
+  const { data: bp } = await serviceClient
+    .from("rent_buddy_profiles")
+    .select("id, buddy_level")
+    .eq("user_id", user.id)
+    .maybeSingle();
+
+  if (!bp) return res.status(404).json({ error: "not_found", message: "No Buddy profile found." });
+
+  // M1 — the take rate for THIS buddy's level, from the schedule of record.
+  // Both failure states refuse: a buddy is told a rate the operator configured
+  // or told nothing at all. Falling through to a number here is what made a
+  // missing row indistinguishable from a deliberate 15 %.
+  const feeSchedule = await resolveFeeSchedule(serviceClient, (bp as any).buddy_level);
+  if (feeSchedule.status === "no_such_level") {
+    req.log?.error(
+      { userId: user.id, buddyProfileId: (bp as any).id, buddyLevel: feeSchedule.buddyLevel },
+      "earnings summary refused: buddy_level has no rent_buddy_fee_rules row",
+    );
+    // Operator-neutral text: the log above carries the table and the level.
+    return sendError(res, 'conflict',
+      "Your buddy level has no fee schedule entry, so earnings cannot be estimated.");
+  }
+  if (feeSchedule.status === "read_failed") {
+    req.log?.error(
+      { userId: user.id, buddyProfileId: (bp as any).id, detail: feeSchedule.message },
+      "earnings summary refused: rent_buddy_fee_rules unreadable",
+    );
+    return sendError(res, 'db_error', describeFeeScheduleFailure(feeSchedule));
+  }
+  const rule = feeSchedule.rule;
+
+  const taxNote = "Tax documents are not available yet. Please keep your own records of earnings for tax purposes. A tax summary feature is planned for a future release.";
+
+  // Preferred path: the whole aggregation happens in SQL and comes back as one
+  // row, so there is nothing for a row cap to truncate. The SQL function takes
+  // the rate as a FRACTION (0.15 == 15 %); the schedule stores a percentage.
+  const rpc = await rbRpc(serviceClient, "rb_buddy_earnings_summary", {
+    p_buddy_id: (bp as any).id,
+    p_platform_fee_pct: rule.platformFeePercent / 100,
+  });
+  const agg = rpc.ok ? (Array.isArray(rpc.data) ? rpc.data[0] : rpc.data) : null;
+  if (agg && typeof agg === "object" && agg.totalNetUsd !== undefined) {
+    return res.json({ ...agg, taxNote, buddyLevel: feeSchedule.buddyLevel, platformFeePct: rule.platformFeePercent });
+  }
+
+  // Fallback: exhaustive pagination, same arithmetic. Not truncating either.
+  const rows = await fetchAllBuddyEarningsRows(serviceClient, (bp as any).id);
+  if (rows === null) {
+    // A partial total is worse than no total on an earnings screen: the buddy
+    // cannot tell one from the other.
+    return res.status(503).json({ error: "db_error", message: "Earnings could not be totalled. Please try again." });
+  }
+
+  return res.json({
+    ...foldEarningsRows(rows, rule.platformFeePercent / 100),
+    taxNote,
+    buddyLevel: feeSchedule.buddyLevel,
+    platformFeePct: rule.platformFeePercent,
   });
 });
 
@@ -6366,12 +7474,36 @@ router.post("/rent-a-buddy/bookings/:bookingId/traveler-confirm", async (req, re
   }
 
   const now = new Date().toISOString();
-  await serviceClient
+  // Compare-and-set. Same rule as /cancel and /complete: the required source
+  // status rides in the SAME statement as the write, and `.select("id")` makes
+  // it RETURNING so a zero-row match is visible. Checking the status in JS and
+  // then writing unconditionally lets a concurrent transition be stomped —
+  // and, because supabase-js RESOLVES on a DB error, let a failed write answer
+  // 200.
+  // This one matters most of the six: without the predicate a traveller who had
+  // opened a dispute (or whose no-show report had escalated) in the moment
+  // between the read and the write would write `completed` straight over
+  // `disputed`, taking the outcome away from the admin resolution route. That
+  // is exactly the abuse /safety/end-early's status guard was added to close.
+  const { data: confirmedRows, error: confirmErr } = await serviceClient
     .from("rent_buddy_bookings")
     .update({ status: "completed", updated_at: now })
-    .eq("id", bookingId);
+    .eq("id", bookingId)
+    .eq("status", "completed_pending_traveler_confirmation")
+    .select("id");
 
-  void serviceClient.from("buddy_booking_events").insert({
+  if (confirmErr) {
+    req.log?.error?.({ err: confirmErr, bookingId }, "traveler-confirm: booking update failed");
+    return res.status(500).json({ error: "update_failed", message: "The booking could not be confirmed." });
+  }
+  if (affectedRows(confirmedRows) === 0) {
+    return res.status(409).json({
+      error: "invalid_transition",
+      message: "The booking changed state before this confirmation was applied. Refresh and try again.",
+    });
+  }
+
+  recordBookingEvent(serviceClient, req.log, {
     booking_id: bookingId, actor_user_id: auth.user.id, event: "traveler_confirmed",
     from_status: "completed_pending_traveler_confirmation", to_status: "completed", metadata: {},
   });
@@ -6387,7 +7519,7 @@ router.post("/rent-a-buddy/bookings/:bookingId/traveler-confirm", async (req, re
     .maybeSingle();
   const buddyUserIdConfirm: string = (bProf as any)?.user_id ?? "";
   if (buddyUserIdConfirm) {
-    notifyBookingParty(getServiceClient(), buddyUserIdConfirm, "rent_buddy.booking_completed", bookingId);
+    await notifyBookingParty(getServiceClient(), buddyUserIdConfirm, "rent_buddy.booking_completed", bookingId);
   }
 
   // Archive thread
@@ -6505,14 +7637,22 @@ router.post("/rent-a-buddy/bookings/:bookingId/change-request", async (req, res)
     if (blocking) return sendBuddyUnavailable(res, blocking.exception_type);
   }
 
-  // Check for an already-open pending change request on the same field
-  const { data: existingOpen } = await serviceClient
+  // "Respond to the open one before raising another" is enforced only here.
+  // An unreadable buddy_booking_change_requests resolves as `{ data: null }`,
+  // the same shape as "none open", so ignoring `error` raises a SECOND pending
+  // change request on the same field — two live, conflicting proposals for the
+  // same booking date or price, either of which the counterparty can accept.
+  const { data: existingOpen, error: existingOpenErr } = await serviceClient
     .from("buddy_booking_change_requests")
     .select("id")
     .eq("booking_id", bookingId)
     .eq("change_field", changeField)
     .eq("status", "pending")
     .maybeSingle();
+  if (existingOpenErr) {
+    req.log?.error({ err: existingOpenErr, bookingId, changeField }, "change-request: open-request check unavailable");
+    return sendPreconditionUnavailable(res, "We could not check for an existing change request on this booking. Please try again shortly.");
+  }
   if (existingOpen) {
     return res.status(409).json({
       error: "conflict",
@@ -6544,7 +7684,7 @@ router.post("/rent-a-buddy/bookings/:bookingId/change-request", async (req, res)
     .maybeSingle();
   if (crErr) return sendError(res, "db_error", crErr.message);
 
-  void serviceClient.from("buddy_booking_events").insert({
+  recordBookingEvent(serviceClient, req.log, {
     booking_id: bookingId, actor_user_id: auth.user.id, event: "change_request_raised",
     from_status: (booking as any).status, to_status: (booking as any).status,
     metadata: { change_field: changeField, proposed_value: proposedValue, change_request_id: (changeReq as any)?.id },
@@ -6552,7 +7692,7 @@ router.post("/rent-a-buddy/bookings/:bookingId/change-request", async (req, res)
 
   const notifyTargetId = party.isTraveler ? party.buddyUserId : (booking as any).traveler_id as string;
   if (notifyTargetId) {
-    notifyBookingParty(getServiceClient(), notifyTargetId, "rent_buddy.change_request_raised", bookingId);
+    await notifyBookingParty(getServiceClient(), notifyTargetId, "rent_buddy.change_request_raised", bookingId);
   }
 
   return res.status(201).json({ changeRequest: changeReq });
@@ -6637,7 +7777,7 @@ router.post("/rent-a-buddy/bookings/:bookingId/respond-change-request", async (r
     await serviceClient.from("rent_buddy_bookings").update(bookingPatch).eq("id", bookingId);
   }
 
-  void serviceClient.from("buddy_booking_events").insert({
+  recordBookingEvent(serviceClient, req.log, {
     booking_id: bookingId, actor_user_id: auth.user.id, event: `change_request_${newStatus}`,
     from_status: (booking as any).status, to_status: (booking as any).status,
     metadata: {
@@ -6650,7 +7790,7 @@ router.post("/rent-a-buddy/bookings/:bookingId/respond-change-request", async (r
 
   const notifyTargetId = (changeReq as any).requested_by as string;
   if (notifyTargetId) {
-    notifyBookingParty(getServiceClient(), notifyTargetId,
+    await notifyBookingParty(getServiceClient(), notifyTargetId,
       decision === "accept" ? "rent_buddy.change_request_accepted" : "rent_buddy.change_request_declined",
       bookingId);
   }
@@ -6687,11 +7827,22 @@ router.post("/rent-a-buddy/bookings/:bookingId/rebook", async (req, res) => {
   // booking's start_time (see insert below). Clients may omit it to carry the
   // same time slot forward without having to re-send it.
 
-  const { data: original } = await serviceClient
+  // `original` is not merely looked up — every gate below reads FROM it: the
+  // traveler-ownership check, the completed-status check, the buddy profile,
+  // the city/country/category carried into enforceBookingCreationGates, and the
+  // fields copied into the NEW booking row. An unreadable rent_buddy_bookings
+  // resolves as `{ data: null }`, identical to "no such booking", and the 404
+  // below then tells a traveller their completed booking does not exist. The
+  // refusal direction is right; the code is not. 503 + retryable says so.
+  const { data: original, error: originalErr } = await serviceClient
     .from("rent_buddy_bookings")
     .select("*")
     .eq("id", bookingId)
     .maybeSingle();
+  if (originalErr) {
+    req.log?.error({ err: originalErr, bookingId }, "rebook: original booking read unavailable");
+    return sendPreconditionUnavailable(res, "We could not load the original booking right now. Please try again shortly.");
+  }
   if (!original) return res.status(404).json({ error: "not_found", message: "Booking not found." });
   if ((original as any).traveler_id !== auth.user.id) {
     return res.status(403).json({ error: "forbidden", message: "Not your booking." });
@@ -6792,18 +7943,23 @@ router.post("/rent-a-buddy/bookings/:bookingId/rebook", async (req, res) => {
   if (error) return sendError(res, "db_error", error.message);
 
   // Same shared estimated-ledger write as the canonical route — see above.
+  // The booking event goes in the SAME guard: now that the insert is actually
+  // issued, a null `newBooking` would send `booking_id: undefined` and earn a
+  // not-null / foreign-key rejection on every rebook whose RETURNING row came
+  // back empty. An event about a booking that does not exist is not an audit
+  // row worth attempting.
   if (newBooking) {
     await createEarningsLedgerEntry(serviceClient, newBooking, buddyProfileId).catch(() => {});
-  }
 
-  void serviceClient.from("buddy_booking_events").insert({
-    booking_id: (newBooking as any)?.id,
-    actor_user_id: auth.user.id,
-    event: "rebook_created",
-    from_status: null,
-    to_status: "pending",
-    metadata: { original_booking_id: bookingId },
-  });
+    recordBookingEvent(serviceClient, req.log, {
+      booking_id: (newBooking as any).id,
+      actor_user_id: auth.user.id,
+      event: "rebook_created",
+      from_status: null,
+      to_status: "pending",
+      metadata: { original_booking_id: bookingId },
+    });
+  }
 
   return res.status(201).json({ bookingId: (newBooking as any)?.id, booking: newBooking });
 });

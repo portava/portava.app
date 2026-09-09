@@ -741,6 +741,11 @@ export function coarsenForZone(
   delete out.sourceRefs;
   delete out.observedAt;
   delete out.expiresAt;
+  // Sensing §5.1 metadata goes for the same two reasons `sourceClass` does:
+  // `truthClass: observed` on its own says a person observed this place, and
+  // `coverage` restates the cohort that `count` was deleted for.
+  delete out.truthClass;
+  delete out.coverage;
 
   // renderingPriority is RESET, not deleted — it is required on a MapObject.
   //
@@ -804,6 +809,12 @@ export const COARSENED_PAYLOAD_KEYS: readonly string[] = [
   // mirrors `provenance` / `sourceRefs` — back-references that re-sharpen
   "provenance",
   "sourceRefs",
+  // mirrors `activity` / `trend` / `truthClass` / `coverage` / `sourceRefs`
+  // all at once: Sensing §5.3's ExperienceState (lib/mapExperienceState) and
+  // the world-moment block (lib/mapProducers/worldMomentProducer) each restate
+  // the live axes, the cohort bucket and the claim refs one level down.
+  "experienceState",
+  "moment",
 ];
 
 // ── The pass ─────────────────────────────────────────────────────────────────

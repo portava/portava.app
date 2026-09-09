@@ -43,9 +43,12 @@
  * --------------------------------------
  * Three legitimate shapes, and the ratchet below records which is which:
  *   - externally seeded reference data (`fsq_places`, `canonical_locations`)
- *   - a deliberately empty, human-curated allowlist — `intel_live_promoted_scopes`
- *     is documented as exactly this in migration 2179, and its emptiness is the
- *     fail-closed default, not a bug
+ *   - a deliberately empty, human-curated allowlist — `protected_zones` is
+ *     documented as exactly this in migration 2217, and its emptiness is the
+ *     fail-closed default, not a bug. (`intel_live_promoted_scopes` was the
+ *     other example until 2430 gave it a service-owned writer for the human
+ *     decision to travel through; an allowlist whose writer exists but whose
+ *     trigger is a person is no longer this check's business.)
  *   - a legacy decoy superseded by another table, pending removal
  * Each entry must say which, and why. An entry with no reason is a dead lane
  * wearing a note.
@@ -169,15 +172,13 @@ export const KNOWN_WRITERLESS_READS: Record<
       "itself a map of exactly what it protects.' service_role only. Emptiness is the correct " +
       "fail-closed default.",
   },
-  intel_live_promoted_scopes: {
-    readers: 1,
-    classification: "human-allowlist",
-    note:
-      "Migration 2179's per-scope Live allowlist. It starts EMPTY so that turning the global " +
-      "intel_limited_live flag on exposes nothing until a scope is explicitly promoted after a " +
-      "density gate and human review — the fix for a single-global-flag over-exposure bug. " +
-      "This is why wall_live_for_you_enabled should stay off: it would serve an empty strip.",
-  },
+  // intel_live_promoted_scopes — STRUCK OFF 2026-09-07. Migration 2430 gave it a
+  // writer (system_promote/withdraw/expire_intel_live_scope, called only by
+  // lib/intelLiveScopePromotion.ts behind intel_live_scope_promotion_enabled,
+  // seeded FALSE). It is STILL a human-curated allowlist — the writer records a
+  // human decision with provenance, horizon and withdrawal; nothing promotes a
+  // scope on its own. The table is still empty in production; that is now a
+  // pending owner decision (which scope, on what evidence), not a missing lane.
   route_flow_contribution_consent: {
     readers: 1,
     classification: "human-allowlist",

@@ -56,8 +56,20 @@ export interface ReadinessItem {
 
 export interface ReadinessSummary {
   computedAt: string;
-  /** Mechanical: round(100 × share of categories with zero action_needed/incomplete items). */
-  score: number;
+  /**
+   * Mechanical: round(100 × share of MEASURED categories that are "ready").
+   *
+   * NULL when no category could be measured at all. Null is not 0 and it is
+   * not 100 — it is "we have no readiness figure for this trip", and the two
+   * numbers are both confident claims this function is not entitled to make.
+   *
+   * The denominator is the measured categories, NOT all seven. A category
+   * whose status is `unknown` — the entry corridor with no verified data, a
+   * reservations table that could not be read — used to be counted as
+   * READY-ISH and pushed the score UP, so a trip got more "ready" the less of
+   * it could be checked. `unmeasuredCategories` names what was left out.
+   */
+  score: number | null;
   /**
    * Score from the most recent prior snapshot (e.g. yesterday's computation).
    * Null when no prior snapshot exists or the score is being served from cache.
@@ -65,6 +77,13 @@ export interface ReadinessSummary {
   previousScore: number | null;
   /** Category-level counts by worst status (sums to 7). */
   counts: { ready: number; actionNeeded: number; incomplete: number; unknown: number };
+  /**
+   * The categories the score does NOT cover, because their status is unknown.
+   * Empty on a fully-measured trip. A consumer rendering the score has to say
+   * so when this is non-empty; a percentage over 5 of 7 categories is not the
+   * same statement as a percentage over 7.
+   */
+  unmeasuredCategories: ReadinessCategory[];
   /** FULL list of critical items — never truncated (critical-visibility rule). */
   criticalItems: ReadinessItem[];
   /** category → worst status among its items ("ready" when a category has none). */
@@ -85,6 +104,20 @@ export async function safeSelect(sc: any, run: (sc: any) => any): Promise<any[]>
   } catch {
     return [];
   }
+}
+
+/**
+ * Report a readiness PERSISTENCE failure. This module deliberately takes no
+ * logger dependency (it is imported by routes and by the reminder scheduler),
+ * so the warning goes to console.warn with a stable prefix — the point is that
+ * a failed write leaves a trace somewhere, which `.then(undefined, () => {})`
+ * did not.
+ */
+function readinessPersistWarn(message: string, context: Record<string, unknown>): void {
+  try {
+    // eslint-disable-next-line no-console
+    console.warn(`[tripReadiness] ${message}`, context);
+  } catch { /* logging must never be the thing that fails a compute */ }
 }
 
 /** Like safeSelect but null-signals "source unavailable" (table absent, etc.). */
@@ -143,18 +176,29 @@ async function resolveDestinationIso2(raw: string | null | undefined): Promise<s
 // Shared loaders
 // ---------------------------------------------------------------------------
 
-/** Accepted member ids for a trip (owner always included). */
+/**
+ * Accepted member ids for a trip (owner always included).
+ *
+ * NULL means the membership could not be read. Distinct from an owner-only
+ * trip, which is a real and common answer — the caller must not treat "we could
+ * not look" as "there is nobody else to check".
+ */
 export async function loadAcceptedMemberIds(
   sc: any,
   tripId: string,
   ownerId: string | null,
-): Promise<string[]> {
+): Promise<string[] | null> {
+  // NULL on failure, not owner-only. An unreadable trip_members returned just
+  // the owner, so every OTHER member's entry/passport check was silently not
+  // performed and the `entry` category read "ready" — for a crew whose
+  // documents nobody looked at.
   const ids = new Set<string>();
   if (ownerId) ids.add(ownerId);
-  const { data } = await sc
+  const { data, error } = await sc
     .from("trip_members")
     .select("user_id, role, status")
     .eq("trip_id", tripId);
+  if (error) return null;
   for (const row of (((data as any) ?? []) as any[])) {
     const role = (row as any).role as string;
     const status = (row as any).status as string | null | undefined;
@@ -218,23 +262,29 @@ export function summarizeReadiness(
   }
 
   const counts = { ready: 0, actionNeeded: 0, incomplete: 0, unknown: 0 };
-  let readyish = 0;
+  const unmeasuredCategories: ReadinessCategory[] = [];
+  let ready = 0;
   for (const c of READINESS_CATEGORIES) {
     const s = categories[c];
     if (s === "ready") counts.ready += 1;
     else if (s === "action_needed") counts.actionNeeded += 1;
     else if (s === "incomplete") counts.incomplete += 1;
     else counts.unknown += 1;
-    // "Ready-ish" for the score: no action_needed and no incomplete items.
-    if (s === "ready" || s === "unknown") readyish += 1;
+    // An `unknown` category is NOT ready and it is NOT not-ready: it is out of
+    // the fraction entirely. It used to be counted in the numerator alongside
+    // `ready`, which is how an unreadable reservations table and an entry
+    // corridor with no data both RAISED a trip's readiness score.
+    if (s === "unknown") { unmeasuredCategories.push(c); continue; }
+    if (s === "ready") ready += 1;
   }
-  const score = Math.round((100 * readyish) / READINESS_CATEGORIES.length);
+  const measured = READINESS_CATEGORIES.length - unmeasuredCategories.length;
+  const score = measured === 0 ? null : Math.round((100 * ready) / measured);
 
   // CRITICAL-VISIBILITY RULE: the full critical list rides alongside the
   // score, always and untruncated — a high score must never bury a critical.
   const criticalItems = items.filter((i) => i.severity === "critical");
 
-  return { computedAt, score, previousScore, counts, criticalItems, categories, items };
+  return { computedAt, score, previousScore, counts, unmeasuredCategories, criticalItems, categories, items };
 }
 
 // ---------------------------------------------------------------------------
@@ -275,7 +325,17 @@ export async function computeReadiness(sc: any, tripId: string): Promise<Readine
     throw err;
   }
 
-  const memberIds = await loadAcceptedMemberIds(sc, tripId, (trip as any).owner_id ?? null);
+  const memberIdsRead = await loadAcceptedMemberIds(sc, tripId, (trip as any).owner_id ?? null);
+  // An unreadable membership means the per-member entry and passport checks
+  // below would silently run over the owner alone, and the `entry` category
+  // would come back "ready" for a crew nobody looked at. The compute refuses
+  // instead: readiness is a claim about a whole party.
+  if (memberIdsRead === null) {
+    const err = new Error("trip membership unreadable; readiness cannot be computed for the party") as any;
+    err.code = "degraded_unavailable";
+    throw err;
+  }
+  const memberIds = memberIdsRead;
 
   const { data: planData } = await sc
     .from("trip_plan_items")
@@ -298,9 +358,16 @@ export async function computeReadiness(sc: any, tripId: string): Promise<Readine
   const documentCount = (((docsData as any) ?? []) as any[]).length;
 
   // ── Defensive sources (tables may not exist yet in this environment) ───────
-  const reservations = await safeSelect(sc, (c) =>
+  // safeSelectOrNull, NOT safeSelect. An unreadable trip_reservations used to
+  // come back as [], the 72-hour cancellation-deadline scan below found
+  // nothing, and the `reservations` category stayed "ready" — asserting "your
+  // free-cancellation window is not closing" from a read that failed. That is
+  // a deadline claim, and being wrong about it costs money.
+  const reservationsRead = await safeSelectOrNull(sc, (c) =>
     c.from("trip_reservations").select("*").eq("trip_id", tripId),
   );
+  const reservationsUnavailable = reservationsRead === null;
+  const reservations = reservationsRead ?? [];
   const passports = await safeSelect(sc, (c) =>
     c.from("trip_traveler_passports").select("*").eq("trip_id", tripId),
   );
@@ -377,7 +444,21 @@ export async function computeReadiness(sc: any, tripId: string): Promise<Readine
       const startMs = new Date(`${startDate}T00:00:00Z`).getTime();
       if (Number.isFinite(startMs) && startMs - nowMs <= 14 * DAY_MS) severity = "critical";
     }
-    push({
+    // "No accommodation plan item OR stay reservation found" is a claim about
+    // BOTH sources. With reservations unreadable, `hasStayReservation` is false
+    // because nothing was read, not because nothing is there — the sentence
+    // would be asserting half of itself out of a query that never answered.
+    push(reservationsUnavailable ? {
+      userId: null,
+      category: "stay",
+      status: "unknown",
+      severity,
+      title: "Accommodation could not be confirmed",
+      detail: "This trip has no accommodation plan item, and its reservations could not be read — so we cannot tell whether a stay is booked.",
+      dueAt: null,
+      actionRef: null,
+      dedupeKey: "stay:none",
+    } : {
       userId: null,
       category: "stay",
       status: "action_needed",
@@ -396,7 +477,18 @@ export async function computeReadiness(sc: any, tripId: string): Promise<Readine
     ["flight", "transport"].includes(String((r as any).type ?? "")),
   );
   if (!hasTransportPlan && !hasTransportReservation) {
-    push({
+    // Same asymmetry as `stay` above.
+    push(reservationsUnavailable ? {
+      userId: null,
+      category: "transport",
+      status: "unknown",
+      severity: "normal",
+      title: "Transport could not be confirmed",
+      detail: "This trip has no transport plan item, and its reservations could not be read — so we cannot tell whether travel is booked.",
+      dueAt: null,
+      actionRef: null,
+      dedupeKey: "transport:none",
+    } : {
       userId: null,
       category: "transport",
       status: "action_needed",
@@ -555,6 +647,24 @@ export async function computeReadiness(sc: any, tripId: string): Promise<Readine
   }
 
   // reservations (cancellation deadlines within 72h) ------------------------
+  if (reservationsUnavailable) {
+    // `unknown`, not `action_needed`. Both are non-"ready", but action_needed
+    // says THERE IS SOMETHING TO DO and this does not know that; unknown says
+    // the category was not measured, which is exactly true and is what keeps
+    // it out of the score's denominator (summarizeReadiness). `critical`
+    // severity keeps it in criticalItems, so it is surfaced rather than buried.
+    push({
+      userId: null,
+      category: "reservations",
+      status: "unknown",
+      severity: "critical",
+      title: "Reservation deadlines could not be checked",
+      detail: "We could not read this trip's reservations, so we cannot say whether a free-cancellation window is closing.",
+      dueAt: null,
+      actionRef: null,
+      dedupeKey: "reservations:unreadable",
+    });
+  }
   for (const r of reservations) {
     if (String((r as any).status ?? "") === "dismissed") continue;
     const deadlineRaw = (r as any).cancellation_deadline_at as string | null;
@@ -576,11 +686,38 @@ export async function computeReadiness(sc: any, tripId: string): Promise<Readine
     });
   }
 
+  // Set false when the upsert is known to have failed; gates the sweep below.
+  let upsertLanded = true;
+
   // ── Persist: upsert produced items, sweep stale rows ───────────────────────
-  const { data: existingData } = await sc
+  //
+  // THE ORDER IS THE CONTRACT AND IT WAS NOT ENFORCED. Both writes below were
+  // `.then(undefined, () => {})`, a REJECTION handler on a client that RESOLVES
+  // — postgrest-js catches its own fetch errors and returns `{ error }`, so the
+  // handler never ran for a database error and the resolved error was discarded
+  // unread. The sweep DELETE then ran unconditionally: a failed upsert was
+  // followed by deleting the rows describing the PREVIOUS run, leaving
+  // trip_readiness_items claiming fewer blockers than either the old or the new
+  // truth. That table is member-readable directly over PostgREST (policy
+  // tri_member_read), and this file's own header says the critical-item list
+  // must never be hidden.
+  //
+  // The posture is unchanged — a persistence failure must NOT fail the compute,
+  // because the summary returned below is derived in memory and is correct
+  // either way — but the writes are no longer silent, and the DELETE now
+  // happens only when the UPSERT is known to have landed.
+  const { data: existingData, error: existingErr } = await sc
     .from("trip_readiness_items")
     .select("dedupe_key")
     .eq("trip_id", tripId);
+  // An unreadable stored set cannot be swept against: the sweep is skipped
+  // (deleting on an unknown set would be strictly worse than leaving stale rows
+  // in place), and it is recorded rather than inferred from a table that never
+  // shrinks. NOTE: this branch produces the same visible behaviour as an empty
+  // stored set — it is annotation and a log line, not a behaviour change.
+  if (existingErr) {
+    readinessPersistWarn("trip_readiness_items stale-key read failed — the stale-row sweep is skipped, so superseded readiness items stay in the table", { tripId, error: existingErr });
+  }
   const producedKeys = new Set(items.map((i) => i.dedupeKey));
   const staleKeys = ((((existingData as any) ?? []) as any[]))
     .map((r) => (r as any).dedupe_key as string)
@@ -601,18 +738,26 @@ export async function computeReadiness(sc: any, tripId: string): Promise<Readine
       computed_at: computedAt,
     }));
     // Persistence failure must not fail the compute — the summary is still fresh.
-    await sc
+    const { error: upsertErr } = await sc
       .from("trip_readiness_items")
-      .upsert(rows, { onConflict: "trip_id,dedupe_key" })
-      .then(undefined, () => {});
+      .upsert(rows, { onConflict: "trip_id,dedupe_key" });
+    if (upsertErr) {
+      upsertLanded = false;
+      readinessPersistWarn("trip_readiness_items upsert failed — this run's items are NOT stored; the stale-row sweep is skipped so the previous run's rows survive", { tripId, error: upsertErr, itemCount: rows.length });
+    }
   }
-  if (staleKeys.length > 0) {
-    await sc
+  // Only sweep when the replacement rows are actually in place. Deleting the
+  // superseded rows after a failed upsert removes the only record of those
+  // items from a member-readable table.
+  if (upsertLanded && staleKeys.length > 0) {
+    const { error: sweepErr } = await sc
       .from("trip_readiness_items")
       .delete()
       .eq("trip_id", tripId)
-      .in("dedupe_key", staleKeys)
-      .then(undefined, () => {});
+      .in("dedupe_key", staleKeys);
+    if (sweepErr) {
+      readinessPersistWarn("trip_readiness_items stale-row sweep failed — superseded readiness items stay in the table", { tripId, error: sweepErr, staleCount: staleKeys.length });
+    }
   }
 
   return summarizeReadiness(items, computedAt);

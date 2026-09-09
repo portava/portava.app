@@ -8,6 +8,41 @@
  * vacuous pass. `rpc` handlers are injected per test so a suite can assert
  * WHICH arguments reached the database (the owner-only memory read must be
  * called with the viewer's own id, never a client-supplied one).
+*
+ * ── CHECKED AGAINST THE REAL CLIENT ─────────────────────────────────────────
+ * `src/test/supabaseContract.test.ts` runs this double and the REAL installed
+ * supabase-js client through the same scenarios every CI run and fails if they
+ * disagree anywhere not listed below. Do not "improve" this file by making a
+ * scenario pass more loosely; change the scenario, or declare a gap here.
+ *
+ * MODELLED EXACTLY (measured, not assumed): thenable execution — a builder with
+ * no `.then`/`await` performs NOTHING, one with either performs it once;
+ * `.single()`/`.maybeSingle()` cardinality including the RESOLVED PGRST116 for
+ * more than one row; failures arriving RESOLVED as `{ data: null, error }`,
+ * never thrown; a write with no chained `.select()` returning `data: null`, so
+ * affected rows are UNKNOWABLE without one; `count` null unless requested.
+ *
+ * NOT MODELLED — every entry below is enforced: the contract suite fails if the
+ * behaviour silently starts agreeing, and fails if a listed operation stops
+ * refusing:
+ *
+ *   thenable/no-continuation, thenable/then-continuation, thenable/awaited,
+ *   insert/no-select-returns-null, insert/with-select-returns-rows,
+ *   insert/with-select-single, insert/unique-violation-23505,
+ *   update/zero-rows-no-select, update/many-rows-no-select,
+ *   update/zero-rows-with-select, update/many-rows-with-select,
+ *   delete/many-rows-no-select, delete/many-rows-with-select,
+ *   failure/write-error-resolves, rls/denied-write-yields-42501,
+ *   write/read-after-write-visible — this is a
+ *     READ double. Every write verb THROWS. There is no RETURNING, no
+ *     affected-row count and no unique index here, so a write assertion made
+ *     against it would be about this file rather than about PostgREST.
+ *   rls/denied-read-yields-zero-rows — `auth.getUser` tells this fake's token
+ *     from a stranger's, but `from()` has no role and no policies, so a denied
+ *     read is indistinguishable from an empty one. Passing `role` THROWS.
+ *   error/unknown-column-42703 — no schema knowledge. An unknown column reads as
+ *     `undefined` instead of failing the whole statement. Use
+ *     schemaStrictSupabase for that question.
  */
 import http from "node:http";
 import express from "express";
@@ -29,6 +64,12 @@ export interface FakeMapDbOptions {
   token: string;
   userId: string;
   rpc?: Record<string, RpcHandler>;
+  /**
+   * Present only so that asking for RLS is LOUD. `auth.getUser` tells the
+   * fake's token from a stranger's, but `from()` has no role and no policies;
+   * see NOT MODELLED above.
+   */
+  role?: "service" | "user";
 }
 
 export interface RpcCall {
@@ -69,6 +110,19 @@ function splitOutsideParens(s: string): string[] {
   return out;
 }
 
+/** PostgREST's answer when `application/vnd.pgrst.object+json` sees != 1 row. */
+function pgrst116(n: number) {
+  return {
+    data: null,
+    error: {
+      code: "PGRST116",
+      details: `Results contain ${n} rows, application/vnd.pgrst.object+json requires 1 row`,
+      hint: null,
+      message: "JSON object requested, multiple (or no) rows returned",
+    },
+  };
+}
+
 function buildQuery(spec: TableSpec) {
   let rows = [...(spec.rows ?? [])];
   const err = spec.error ?? null;
@@ -77,12 +131,33 @@ function buildQuery(spec: TableSpec) {
   // on the full row and projects last, and filtering on an unselected column is
   // legal PostgREST. See selectProjection.ts.
   let projection: Array<[string, string]> | null = null;
+  let countMode: string | null = null;
+  let headOnly = false;
   const narrow = (rs: any[]) => (projection ? rs.map((r) => projectRow(r, projection!)) : rs);
   const narrowOne = (r: any) => (r && projection ? projectRow(r, projection) : r);
-  const result = () => (err ? { data: null, error: err } : { data: narrow(rows), error: null });
+  // `count` mirrors PostgREST's Content-Range: null unless the caller asked.
+  const result = () =>
+    err ? { data: null, error: err, count: null } : { data: headOnly ? null : narrow(rows), error: null, count: countMode ? rows.length : null };
+
+  const refuseWrite = (verb: string) => () => {
+    throw new Error(
+      `fakeMapDb does not model writes (called .${verb}()). It is a READ double for the Map producers: ` +
+        "there is no RETURNING, no affected-row count and no unique index here, so a write assertion made " +
+        "against it would be about this file rather than about PostgREST. Use failClosedSupabase or fakeLayoverDb.",
+    );
+  };
 
   const q: any = {
-    select(fields?: string) { projection = projectionKeys(fields); return q; },
+    select(fields?: string, o?: { count?: string; head?: boolean }) {
+      projection = projectionKeys(fields);
+      if (o?.count) countMode = String(o.count);
+      if (o?.head) headOnly = true;
+      return q;
+    },
+    insert: refuseWrite("insert"),
+    upsert: refuseWrite("upsert"),
+    update: refuseWrite("update"),
+    delete: refuseWrite("delete"),
     order() { return q; },
     range() { return q; },
     limit(n: number) { rows = rows.slice(0, n); return q; },
@@ -142,10 +217,14 @@ function buildQuery(spec: TableSpec) {
       return q;
     },
     maybeSingle() {
-      return Promise.resolve(err ? { data: null, error: err } : { data: narrowOne(rows[0] ?? null), error: null });
+      if (err) return Promise.resolve({ data: null, error: err });
+      if (rows.length > 1) return Promise.resolve(pgrst116(rows.length));
+      return Promise.resolve({ data: narrowOne(rows[0] ?? null), error: null });
     },
     single() {
-      return Promise.resolve(err ? { data: null, error: err } : { data: narrowOne(rows[0] ?? null), error: null });
+      if (err) return Promise.resolve({ data: null, error: err });
+      if (rows.length !== 1) return Promise.resolve(pgrst116(rows.length));
+      return Promise.resolve({ data: narrowOne(rows[0]), error: null });
     },
     then(resolve: (v: any) => void, reject?: (e: any) => void) {
       return Promise.resolve(result()).then(resolve, reject);
@@ -155,6 +234,12 @@ function buildQuery(spec: TableSpec) {
 }
 
 export function makeFakeMapDb(state: FakeState, opts: FakeMapDbOptions) {
+  if (opts.role !== undefined) {
+    throw new Error(
+      "fakeMapDb does not model RLS: `from()` has one table set and no policies, so a denied read is " +
+        "indistinguishable from an empty one here. Use failClosedSupabase (role/rlsHiddenTables).",
+    );
+  }
   const rpcCalls: RpcCall[] = [];
   const client: any = {
     auth: {
@@ -167,7 +252,12 @@ export function makeFakeMapDb(state: FakeState, opts: FakeMapDbOptions) {
     rpc: (fn: string, args: Record<string, unknown>) => {
       rpcCalls.push({ fn, args });
       const h = opts.rpc?.[fn];
-      const out = h ? h(args) : { data: null, error: { message: `fakeMapDb: no rpc handler for ${fn}` } };
+      const out = h
+        ? h(args)
+        : {
+            data: null,
+            error: { code: "PGRST202", details: null, hint: null, message: `Could not find the function public.${fn}` },
+          };
       return Promise.resolve(out);
     },
     __rpcCalls: rpcCalls,

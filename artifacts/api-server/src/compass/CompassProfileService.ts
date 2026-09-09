@@ -21,6 +21,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { CompassProfile } from "./types.js";
 import { getDecayedWeights } from "./CompassSearchDecayService.js";
 
+import { getTrustProfileResult } from "../services/trust/TrustScoreService.js";
 const CACHE_TTL_MS = 2 * 60 * 1_000; // 2 minutes
 const FUTURE_WINDOW_48H_MS = 48 * 60 * 60 * 1_000;
 
@@ -83,10 +84,8 @@ async function buildProfile(
       .select("spoken_languages, default_language, budget_style, travel_styles, travel_group_style, travel_pace")
       .eq("id", userId)
       .maybeSingle(),
-    db.from("trust_profiles")
-      .select("overall_score, public_level")
-      .eq("user_id", userId)
-      .maybeSingle(),
+    // Through the canonical seam (census-trust A17).
+    getTrustProfileResult(db, userId),
     db.from("user_preference_profiles")
       .select("explicit_preferences_json, inferred_preferences_json")
       .eq("user_id", userId)
@@ -171,7 +170,13 @@ async function buildProfile(
 
   // ── Other data ─────────────────────────────────────────────────────────────
   const profile    = profileRes.status    === "fulfilled" ? (profileRes.value.data as any) : null;
-  const trust      = trustRes.status      === "fulfilled" ? (trustRes.value.data as any) : null;
+  // `null` for BOTH "no profile" and "unreadable" was the pre-existing shape and
+  // stays, because this projection has no third state to put it in — but the
+  // distinction is no longer LOST silently: getTrustProfileResult logs the
+  // unreadable case at the service, which the inline read never did.
+  const trust      = trustRes.status === "fulfilled" && trustRes.value.state === "ok"
+    ? (trustRes.value.profile as any)
+    : null;
   const prefProf   = prefProfileRes.status === "fulfilled" ? (prefProfileRes.value.data as any) : null;
   const locState   = locStateRes.status   === "fulfilled" ? (locStateRes.value.data as any) : null;
   const locPref    = locPrefRes.status    === "fulfilled" ? (locPrefRes.value.data as any) : null;

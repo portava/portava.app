@@ -1,12 +1,13 @@
 import { Router } from "express";
 import { asyncHandler } from "../lib/asyncHandler.js";
 import { requireUser, sendError } from "../lib/http.js";
+import { requireAdmin } from "../lib/requireAdmin.js";
 import { getServiceClient } from "../lib/supabase.js";
 // requireRentBuddyEnabled is the lane's ONE master-switch guard, defined in
 // rentABuddy.ts (which already gates its own 70 handlers with it). Imported
 // rather than re-implemented so this router cannot drift from the meaning of
 // `rent_buddy_enabled`. See its doc comment for why admin routes are exempt.
-import { findBlockingAvailabilityException, sendBuddyUnavailable, getUserLimits, deriveServiceCountry, resolveLaunchControlFromRows, requireRentBuddyEnabled } from "./rentABuddy.js";
+import { findBlockingAvailabilityException, sendBuddyUnavailable, getUserLimits, deriveServiceCountry, resolveLaunchControlFromRows, requireRentBuddyEnabled, recordBookingEvent, NO_SHOW_REPORTABLE_STATUSES, enforceCityRestrictions } from "./rentABuddy.js";
 import { adjustBuddyCounter } from "../services/rentBuddy/ReliabilityCounters.js";
 import { requireBookingKyc } from "../lib/rentBuddyKycGate.js";
 import { TRAINING_CHECKLIST_ITEMS } from "./rentABuddy.js";
@@ -16,6 +17,8 @@ import { loadTravelerIdentity } from "../lib/travelerVerification.js";
 import { isPrivateLocation } from "../lib/rentaBuddyScanner.js";
 import { normalizeLaunchControlKey, upsertLaunchControlRow } from "../lib/rentBuddyLaunchControls.js";
 import { createEarningsLedgerEntry } from "../lib/rentBuddyEarningsLedger.js";
+import { isBlockedBetween } from "../lib/blockGuard.js";
+import { affectedRows } from "../lib/affectedRows.js";
 
 const router = Router();
 
@@ -29,22 +32,6 @@ function sc(fallback?: any) {
 // "which control applies" can never drift from the canonical booking path. This
 // in-memory form also avoids the `.is("col", null)` builder call that several
 // route paths' fakes do not implement.
-
-async function requireAdminCtx(req: any, res: any) {
-  const auth = await requireUser(req, res);
-  if (!auth) return null;
-  const serviceClient = sc(auth.client);
-  const { data: profile } = await serviceClient
-    .from("profiles")
-    .select("role")
-    .eq("id", auth.user.id)
-    .maybeSingle();
-  if ((profile as any)?.role !== "admin") {
-    res.status(403).json({ error: "forbidden" });
-    return null;
-  }
-  return { auth, serviceClient };
-}
 
 // ── buddy_services ─────────────────────────────────────────────────────────────
 
@@ -228,9 +215,9 @@ router.delete("/me/buddy-services/:serviceId", asyncHandler(async (req, res) => 
 }));
 
 router.post("/admin/rent-a-buddy/services/:serviceId/approve", asyncHandler(async (req, res) => {
-  const adminCtx = await requireAdminCtx(req, res);
+  const adminCtx = await requireAdmin(req, res);
   if (!adminCtx) return;
-  const { serviceClient } = adminCtx;
+  const { sc: serviceClient } = adminCtx;
 
   const now = new Date().toISOString();
   const { data, error } = await serviceClient
@@ -245,9 +232,9 @@ router.post("/admin/rent-a-buddy/services/:serviceId/approve", asyncHandler(asyn
 }));
 
 router.post("/admin/rent-a-buddy/services/:serviceId/disable", asyncHandler(async (req, res) => {
-  const adminCtx = await requireAdminCtx(req, res);
+  const adminCtx = await requireAdmin(req, res);
   if (!adminCtx) return;
-  const { serviceClient } = adminCtx;
+  const { sc: serviceClient } = adminCtx;
 
   const now = new Date().toISOString();
   const { data, error } = await serviceClient
@@ -501,24 +488,15 @@ router.post("/rent-a-buddy/buddies/:buddyId/request", asyncHandler(async (req, r
   }
 
   // Block-table enforcement — traveler must not be blocked by, or have blocked, the buddy's user.
-  if (buddyUserId) {
-    const [blockedByBuddy, blockedByTraveler] = await Promise.all([
-      serviceClient
-        .from("blocks")
-        .select("id")
-        .eq("blocker_id", buddyUserId)
-        .eq("blocked_id", auth.user.id)
-        .maybeSingle(),
-      serviceClient
-        .from("blocks")
-        .select("id")
-        .eq("blocker_id", auth.user.id)
-        .eq("blocked_id", buddyUserId)
-        .maybeSingle(),
-    ]);
-    if (blockedByBuddy.data || blockedByTraveler.data) {
-      return res.status(403).json({ error: "blocked", message: "You cannot book this Buddy." });
-    }
+  //
+  // FAIL-CLOSED, shape 1 (lib/exclusionSet.ts): one booking request, one pair,
+  // so an unreadable `blocks` table refuses this request only. The old pair of
+  // `.maybeSingle()` reads was fail-open twice: a resolved DB error left both
+  // `.data` null ("not blocked"), and maybeSingle additionally RAISES on >1 row,
+  // so a mutual block produced the same null. This alias must refuse exactly
+  // where the canonical POST /rent-a-buddy/bookings refuses.
+  if (buddyUserId && (await isBlockedBetween(serviceClient, auth.user.id, buddyUserId))) {
+    return res.status(403).json({ error: "blocked", message: "You cannot book this Buddy." });
   }
 
   // Category availability check
@@ -537,9 +515,24 @@ router.post("/rent-a-buddy/buddies/:buddyId/request", asyncHandler(async (req, r
   // nothing changes for a compliant traveler.
   const serviceCountry = deriveServiceCountry(bp);
   {
-    const { data: launchRows } = await serviceClient
+    // FAIL CLOSED on an unreadable table. supabase-js RESOLVES on a DB error, so
+    // `{ data: null }` becomes `[]` below — byte-identical to "no launch control
+    // is configured anywhere". That is the permissive answer at an admin policy
+    // gate: it waives the server-derived-country requirement immediately below
+    // AND every age / ID / phone / full-payment rule an admin has set for this
+    // region. The canonical POST /rent-a-buddy/bookings refuses this booking
+    // (sendLaunchControlsUnavailable, 503 + retryable); this alias must refuse
+    // exactly where the canonical route refuses.
+    const { data: launchRows, error: launchRowsErr } = await serviceClient
       .from("rent_buddy_launch_controls")
       .select("*");
+    if (launchRowsErr) {
+      return res.status(503).json({
+        error: "restrictions_unavailable",
+        retryable: true,
+        message: "Booking availability for this location could not be verified right now. Please try again shortly.",
+      });
+    }
 
     // Fail closed on unresolved country — same invariant as the canonical gate
     // (rentABuddy.ts:1098-1111). Now that the country is server-derived and
@@ -585,7 +578,32 @@ router.post("/rent-a-buddy/buddies/:buddyId/request", asyncHandler(async (req, r
       if (launchCtrl.fullPaymentRequired && paymentMode !== "full_in_app") {
         return res.status(403).json({ error: "payment_mode_required", message: "Full in-app payment is required for this location." });
       }
+
+    } else if ((launchRows ?? []).length > 0) {
+      // DENY BY DEFAULT, matching enforceBookingCreationGates. Launch controls
+      // are configured but none matches this city/country/category, which means
+      // an admin has not opened this combination. The canonical route refuses
+      // here; this alias used to seat the booking, so a region an admin had
+      // simply not listed was bookable through the shorthand and not through
+      // the main route.
+      return res.status(403).json({
+        error: "location_unavailable",
+        message: "Rent a Buddy is not yet available in this location or category.",
+      });
     }
+
+    // ── City/category restrictions (admin policy — fail CLOSED) ───────────────
+    // THE GAP. rent_buddy_city_restrictions was read by
+    // enforceBookingCreationGates and by nothing else, and this route does not
+    // run that gate stack — so `require_public_meetup`, `disable_deposit_cash`
+    // and `require_full_in_app` were enforced on POST /rent-a-buddy/bookings,
+    // on rebook, on offer-accept and on package-book, and ignored here. A
+    // traveller refused a private meetup or a cash split by the canonical route
+    // could seat exactly that booking through /api/buddies/:buddyId/request.
+    // Same helper, same refusals, same fail-closed load error.
+    if (!await enforceCityRestrictions({
+      sc: serviceClient, res, city, category, meetupLocation, meetupType, paymentMode,
+    })) return;
 
     // ── C1: per-user forced public meetup ─────────────────────────────────────
     // rent_buddy_user_limits.public_meetup_required is written by the auto-
@@ -810,15 +828,31 @@ router.post("/rent-a-buddy/bookings/:bookingId/report-no-show", asyncHandler(asy
   const isParty = b.traveler_id === auth.user.id || (callerBp && b.buddy_id === (callerBp as any).id);
   if (!isParty) return res.status(403).json({ error: "forbidden" });
 
-  // Reject if the booking is already in a terminal or no-show/disputed state.
-  // completed and cancelled are final — a no-show report would corrupt the booking's end state.
-  if (
-    b.status === "no_show_pending" ||
-    b.status === "disputed" ||
-    b.status === "completed" ||
-    b.status === "cancelled"
-  ) {
+  // Already-in-process states get their own code so a client can tell an
+  // idempotency conflict from a genuinely invalid transition (same shape as the
+  // canonical /no-show route).
+  if (b.status === "no_show_pending" || b.status === "disputed") {
     return res.status(409).json({ error: "already_reported", status: b.status });
+  }
+
+  // ALLOWLIST, shared with the canonical route.
+  //
+  // This was a hand-written denylist — no_show_pending | disputed | completed |
+  // cancelled — which is the same action reached through a different URL with a
+  // different and much wider notion of "reportable". It admitted `requested`,
+  // `pending`, `expired` and `declined` (a session that never started cannot
+  // have a no-show; writing one fabricates an incident and pushes the booking
+  // into no_show_pending, from which the sweeper opens a real dispute), and it
+  // admitted `cancelled_by_traveler` / `cancelled_by_buddy` because it named
+  // only bare `cancelled`, which is the value ONLY admin dispute-resolution
+  // writes. It also admitted `completed_pending_traveler_confirmation`, letting
+  // a no-show be filed against a session both parties had just finished.
+  if (!NO_SHOW_REPORTABLE_STATUSES.includes(b.status as any)) {
+    return res.status(409).json({
+      error: "invalid_transition",
+      message: "No-show can only be reported for confirmed or in-progress bookings.",
+      currentStatus: b.status,
+    });
   }
 
   // Resolve the no-show target's user_id:
@@ -857,12 +891,60 @@ router.post("/rent-a-buddy/bookings/:bookingId/report-no-show", asyncHandler(asy
   const now = new Date(nowMs).toISOString();
   const graceExpiry = new Date(nowMs + 2 * 3600 * 1000).toISOString();
 
-  const { error: updateError } = await serviceClient
+  const { data: movedRows, error: updateError } = await serviceClient
     .from("rent_buddy_bookings")
     .update({ status: "no_show_pending", no_show_grace_expires_at: graceExpiry, updated_at: now })
-    .eq("id", bookingId);
+    .eq("id", bookingId)
+    .in("status", [...NO_SHOW_REPORTABLE_STATUSES])
+    .select("id");
 
   if (updateError) return sendError(res, "db_error", updateError.message);
+  if (affectedRows(movedRows) === 0) {
+    // The booking left a reportable state between the read and this write. The
+    // safety event above stands (it is a report, and it happened), but no
+    // transition did, so no grace period is claimed and the sweeper is not
+    // handed a booking it should escalate.
+    return res.status(409).json({
+      error: "invalid_transition",
+      message: "The booking changed state before this no-show report was applied. Refresh and try again.",
+      currentStatus: b.status,
+    });
+  }
+
+  // ── The `no_show_reported` event — the sweeper's ONLY attribution input ─────
+  //
+  // THE DEFECT. This path never wrote one. rentBuddyRequestSweeper phase 3
+  // derives the no-show dispute's `raised_by` from the LATEST
+  // buddy_booking_events row with event = 'no_show_reported', "do NOT assume
+  // traveler; either party can file a no-show report" — and with no such row it
+  // takes its `?? bk.traveler_id` fallback. rentABuddySpec's own dispute
+  // resolution then gates the buddy's no_show_count on
+  // `raised_by === traveler_id`. So a BUDDY reporting a traveller's no-show
+  // through THIS route opened a dispute in the traveller's name and, when an
+  // admin resolved it in the traveller's favour, incremented the BUDDY's
+  // no_show_count for the traveller's absence.
+  //
+  // That is the same dead-producer/broken-consumer pair that was repaired for
+  // POST /bookings/:id/no-show; this alias was the other producer, and it was
+  // not dead, it was never written. Its absence also meant a no-show filed here
+  // appeared nowhere in the evidence log
+  // GET /rent-a-buddy/bookings/:bookingId/events serves to both parties.
+  //
+  // Shares rentABuddy.ts's writer so the two producers cannot drift: issued
+  // (a `.then()` continuation, not a bare `void` on a thenable) and logged on
+  // failure, but never able to fail a safety report that is already committed.
+  recordBookingEvent(serviceClient, req.log, {
+    booking_id: bookingId,
+    actor_user_id: auth.user.id,
+    event: "no_show_reported",
+    from_status: b.status,
+    to_status: "no_show_pending",
+    metadata: {
+      reported_by: auth.user.id === b.traveler_id ? "traveler" : "buddy",
+      grace_expires_at: graceExpiry,
+      safety_event_id: (data as any)?.id ?? null,
+    },
+  });
 
   return res.status(201).json({ safetyEvent: data, gracePeriodExpiresAt: graceExpiry });
 }));
@@ -1743,12 +1825,57 @@ router.post("/rent-a-buddy/admin/bookings/:bookingId/resolve-dispute", asyncHand
 
   // Capture open dispute before updating — needed for no_show_count logic below,
   // since the update response only returns the post-update row without reason/raised_by.
-  const { data: openDispute } = await serviceClient
+  //
+  // FAIL CLOSED on a read error. supabase-js RESOLVES on a DB error, so
+  // `{ data: null }` is byte-identical to "this booking has no open dispute" —
+  // and this row is the ONLY input to the no_show_count decision at the bottom
+  // of the handler. Swallowing the error silently turned a confirmed buddy
+  // no-show into "no penalty", with a 200 and a resolved dispute to say the
+  // adjudication had been carried out in full.
+  const { data: openDispute, error: openDisputeErr } = await serviceClient
     .from("rent_buddy_disputes")
-    .select("id, reason, raised_by")
+    .select("id, reason, raised_by, status")
     .eq("booking_id", bookingId)
     .in("status", ["open", "reviewing"])
     .maybeSingle();
+  if (openDisputeErr) {
+    req.log?.error?.({ err: openDisputeErr, bookingId }, "resolve-dispute: open-dispute read failed");
+    return res.status(503).json({
+      error: "precondition_unavailable",
+      retryable: true,
+      message: "The dispute record could not be read, so this resolution was not applied. Please try again shortly.",
+    });
+  }
+
+  // ── completed_count compensation EVIDENCE, read as a precondition ──────────
+  // Read before anything is written, and fail closed, for the same reason as
+  // the dispute read above: `{ data: null }` on an unreadable
+  // buddy_booking_events is indistinguishable from "this booking never passed
+  // through mark-complete", and taking that branch silently skips a
+  // compensation that is owed. Reading it here means a table we cannot consult
+  // stops the resolution BEFORE the dispute row and the booking are moved,
+  // instead of leaving a resolved dispute next to a counter that was never
+  // corrected.
+  // Only a resolution AGAINST the buddy can owe a compensation, so only that
+  // resolution needs the evidence — and only that one is blocked by an
+  // unreadable event log.
+  let passedThroughMarkComplete = false;
+  if (favorTraveler === true) {
+    const { data: completeEvents, error: completeEventsErr } = await serviceClient
+      .from("buddy_booking_events")
+      .select("id")
+      .eq("booking_id", bookingId)
+      .eq("event", "buddy_marked_complete");
+    if (completeEventsErr) {
+      req.log?.error?.({ err: completeEventsErr, bookingId }, "resolve-dispute: mark-complete evidence read failed");
+      return res.status(503).json({
+        error: "precondition_unavailable",
+        retryable: true,
+        message: "The booking's event log could not be read, so this resolution was not applied. Please try again shortly.",
+      });
+    }
+    passedThroughMarkComplete = Array.isArray(completeEvents) && completeEvents.length > 0;
+  }
 
   // Resolve the dispute row
   const { data: dispute, error: dErr } = await serviceClient
@@ -1765,12 +1892,66 @@ router.post("/rent-a-buddy/admin/bookings/:bookingId/resolve-dispute", asyncHand
 
   if (dErr || !dispute) return res.status(404).json({ error: "dispute_not_found", message: dErr?.message });
 
-  // Update booking status based on resolution
+  // ── Booking transition: COMPARE-AND-SET, not fire-and-hope ──────────────────
+  //
+  // THE DEFECT. This was `.update({status}).eq("id", bookingId)` with no status
+  // predicate, no `.select()` and no error check — and every consequence below
+  // it (the completed_count compensation, the no_show_count increment, the
+  // admin-action audit row, the 200) was driven by the `booking.status ===
+  // "disputed"` READ taken further up the handler rather than by what this
+  // write actually did. The same defect the request sweeper had: a counter
+  // moved by a read set instead of by the write's affected rows.
+  //
+  // Two ways that goes wrong, both silent:
+  //   • the UPDATE fails — supabase-js resolves, so nothing here noticed. The
+  //     dispute is marked resolved, the buddy's counters are adjusted, and the
+  //     booking stays `disputed` forever with no open dispute to resolve it.
+  //   • the booking left `disputed` between the read and the write. The write
+  //     stomped whatever state it had reached, and the counters were adjusted
+  //     for a transition that had already been made by someone else.
+  //
+  // Re-asserting `status = "disputed"` inside the same statement makes the
+  // check and the write inseparable, and `.select("id")` makes the statement
+  // RETURNING so zero rows is visible. Zero rows or an error ⇒ nothing was
+  // adjudicated, so the dispute resolution is ROLLED BACK to the status it had
+  // and the caller is told, rather than being handed a 200 for a booking
+  // transition that did not happen.
   const newBookingStatus = favorTraveler === true ? "cancelled" : "completed";
-  await serviceClient
+  const { data: movedBooking, error: bookingUpdErr } = await serviceClient
     .from("rent_buddy_bookings")
     .update({ status: newBookingStatus, updated_at: new Date().toISOString() })
-    .eq("id", bookingId);
+    .eq("id", bookingId)
+    .eq("status", "disputed")
+    .select("id");
+
+  if (bookingUpdErr || affectedRows(movedBooking) === 0) {
+    // Compensate: put the dispute back the way we found it, so the booking and
+    // its dispute cannot be left disagreeing about whether it was adjudicated.
+    // Best-effort and logged — a failed rollback is reported, never swallowed.
+    try {
+      const { error: rollbackErr } = await serviceClient
+        .from("rent_buddy_disputes")
+        .update({ status: (openDispute as any)?.status ?? "open", resolution_note: null, resolved_at: null })
+        .eq("id", (dispute as any).id)
+        .eq("status", "resolved");
+      if (rollbackErr) {
+        req.log?.error?.({ err: rollbackErr, bookingId, disputeId: (dispute as any).id },
+          "resolve-dispute: booking transition failed AND the dispute rollback failed — dispute is resolved over a still-disputed booking");
+      }
+    } catch (err) {
+      req.log?.error?.({ err, bookingId, disputeId: (dispute as any).id },
+        "resolve-dispute: dispute rollback threw after a failed booking transition");
+    }
+
+    if (bookingUpdErr) {
+      req.log?.error?.({ err: bookingUpdErr, bookingId }, "resolve-dispute: booking transition failed");
+      return res.status(500).json({ error: "update_failed", message: "The booking could not be moved out of dispute. No counters were adjusted." });
+    }
+    return res.status(409).json({
+      error: "invalid_transition",
+      message: "The booking left 'disputed' before this resolution was applied. Refresh and try again.",
+    });
+  }
 
   // ── B2: completed_count compensation ────────────────────────────────────────
   // completed_count is incremented once, at buddy-mark-complete time
@@ -1783,15 +1964,8 @@ router.post("/rent-a-buddy/admin/bookings/:bookingId/resolve-dispute", asyncHand
   // never incremented completed_count, so those must NOT be decremented.
   // (Query uses only select/eq so every route fake can resolve it; adjustBuddyCounter
   //  clamps at >= 0, so a double-resolve cannot drive the counter negative.)
-  if (newBookingStatus === "cancelled") {
-    const { data: completeEvents } = await serviceClient
-      .from("buddy_booking_events")
-      .select("id")
-      .eq("booking_id", bookingId)
-      .eq("event", "buddy_marked_complete");
-    if (Array.isArray(completeEvents) && completeEvents.length > 0) {
-      await adjustBuddyCounter(serviceClient, (booking as any).buddy_id, "completed_count", -1);
-    }
+  if (newBookingStatus === "cancelled" && passedThroughMarkComplete) {
+    await adjustBuddyCounter(serviceClient, (booking as any).buddy_id, "completed_count", -1);
   }
 
   await serviceClient.from("rent_buddy_admin_actions").insert({
@@ -2153,6 +2327,79 @@ router.post("/rent-a-buddy/admin/category-status/:category", asyncHandler(async 
 }));
 
 // ── admin payout hold / release ────────────────────────────────────────────────
+//
+// M13/M3 — BOTH TRANSITIONS ARE COMPARE-AND-SWAP.
+//
+// THE DEFECT (09 §1.4, 12 §3.1 M3). Both routes used to be a bare
+// `.update({ status }).eq("id", payoutId)` with NO predicate on the payout's
+// current status. Releasing an already-released payout, or holding one that is
+// already on hold or already released, matched a row, wrote the same status
+// again, stamped a fresh released_by/released_at over the original operator and
+// timestamp, appended a second rent_buddy_admin_actions row — and returned 200.
+// Two admins acting at once both "succeeded", and the audit trail recorded the
+// LOSER's identity. On a money row that is not a cosmetic problem: released_by
+// and released_at are the only record of who authorised the movement.
+//
+// THE FIX (09 §9.1: "Every transition is a compare-and-swap ... a zero-row
+// result is a 409, not a success"). The expected current status travels in the
+// same UPDATE as the new one, so the check and the write cannot be separated by
+// another transaction. PostgREST returns the rows it actually updated, so an
+// empty array IS the "somebody else got there first" signal.
+//
+// The predicates are stated as a DENYLIST, not an allowlist, and that is
+// deliberate. `rent_buddy_payouts.status` is free text whose value set exists
+// only in a SQL comment (09 §9.1), and NOTHING in the repository inserts a
+// payout row (M2 — a capability awaiting a ruling, explicitly not this work).
+// An allowlist would therefore have to invent the vocabulary M2 is going to
+// define, and would reject rows carrying any status this file guessed wrong.
+// The denylist refuses exactly the transitions that are known-wrong today and
+// stays correct whatever M2 decides the rest of the ladder is called.
+//
+// Zero rows is ambiguous on its own — the payout may not exist at all — so the
+// row is read back once to tell 404 from 409. That read is NOT the guard; it
+// only picks the status code after the guard has already refused the write.
+
+/** Statuses a hold may not be applied over. See the block comment above. */
+const PAYOUT_NOT_HOLDABLE_FROM = ["on_hold", "released"] as const;
+/** The single status a release may be applied over. */
+const PAYOUT_RELEASABLE_FROM = "on_hold";
+
+/**
+ * Turn a zero-row compare-and-swap into the right status code.
+ *
+ * 404 — no such payout.
+ * 409 — the payout exists but was not in the state this transition requires;
+ *       the caller is told what state it IS in, so a UI can re-render rather
+ *       than retry a transition that will never apply.
+ */
+async function sendPayoutCasFailure(
+  serviceClient: any,
+  res: any,
+  payoutId: string,
+  expected: string,
+): Promise<void> {
+  const { data: current, error } = await serviceClient
+    .from("rent_buddy_payouts")
+    .select("id, status")
+    .eq("id", payoutId)
+    .maybeSingle();
+
+  // A failed read here must not be reported as "not found" — that is the
+  // fail-open shape 11 §"Authorization guards fail closed" exists to stop.
+  if (error) {
+    res.status(500).json({ error: "db_error", message: error.message });
+    return;
+  }
+  if (!current) {
+    res.status(404).json({ error: "not_found" });
+    return;
+  }
+  res.status(409).json({
+    error: "conflict",
+    message: `Payout is ${(current as any).status}; this transition requires ${expected}.`,
+    currentStatus: (current as any).status,
+  });
+}
 
 // POST /api/rent-a-buddy/admin/payouts/:payoutId/hold
 // Also accessible at /api/admin/buddy-payouts/:payoutId/hold via app.ts URL alias
@@ -2166,7 +2413,11 @@ router.post("/rent-a-buddy/admin/payouts/:payoutId/hold", asyncHandler(async (re
   const { payoutId } = req.params;
   const { reason } = req.body ?? {};
 
-  const { data, error } = await serviceClient
+  // Compare-and-swap: the status predicates ride in the SAME statement as the
+  // write, so no second admin can slip a transition in between the check and
+  // the update. `.select()` (not `.single()`) because zero updated rows is an
+  // expected outcome here, not an error.
+  let casQuery: any = serviceClient
     .from("rent_buddy_payouts")
     .update({
       status: "on_hold",
@@ -2175,12 +2426,19 @@ router.post("/rent-a-buddy/admin/payouts/:payoutId/hold", asyncHandler(async (re
       held_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     })
-    .eq("id", payoutId)
-    .select()
-    .single();
+    .eq("id", payoutId);
+  for (const forbidden of PAYOUT_NOT_HOLDABLE_FROM) casQuery = casQuery.neq("status", forbidden);
+  const { data, error } = await casQuery.select();
 
-  if (error || !data) return res.status(404).json({ error: "not_found", message: error?.message });
+  if (error) return res.status(500).json({ error: "db_error", message: error.message });
 
+  const held = Array.isArray(data) ? data[0] : (data ?? null);
+  if (!held) {
+    await sendPayoutCasFailure(serviceClient, res, payoutId, `a status other than ${PAYOUT_NOT_HOLDABLE_FROM.join(" or ")}`);
+    return;
+  }
+
+  // Only a transition that actually happened is written to the audit trail.
   await serviceClient.from("rent_buddy_admin_actions").insert({
     admin_id: auth.user.id,
     target_type: "payout",
@@ -2189,7 +2447,7 @@ router.post("/rent-a-buddy/admin/payouts/:payoutId/hold", asyncHandler(async (re
     notes: reason ?? null,
   });
 
-  return res.json({ payout: data });
+  return res.json({ payout: held });
 }));
 
 // POST /api/rent-a-buddy/admin/payouts/:payoutId/release
@@ -2204,6 +2462,10 @@ router.post("/rent-a-buddy/admin/payouts/:payoutId/release", asyncHandler(async 
   const { payoutId } = req.params;
   const { notes } = req.body ?? {};
 
+  // Compare-and-swap. A release may only be applied to a payout that is
+  // currently on hold — releasing an already-released one is the exact silent
+  // success 09 §1.4 names, and it overwrote released_by/released_at with the
+  // second operator's identity.
   const { data, error } = await serviceClient
     .from("rent_buddy_payouts")
     .update({
@@ -2213,10 +2475,16 @@ router.post("/rent-a-buddy/admin/payouts/:payoutId/release", asyncHandler(async 
       updated_at: new Date().toISOString(),
     })
     .eq("id", payoutId)
-    .select()
-    .single();
+    .eq("status", PAYOUT_RELEASABLE_FROM)
+    .select();
 
-  if (error || !data) return res.status(404).json({ error: "not_found", message: error?.message });
+  if (error) return res.status(500).json({ error: "db_error", message: error.message });
+
+  const released = Array.isArray(data) ? data[0] : (data ?? null);
+  if (!released) {
+    await sendPayoutCasFailure(serviceClient, res, payoutId, PAYOUT_RELEASABLE_FROM);
+    return;
+  }
 
   await serviceClient.from("rent_buddy_admin_actions").insert({
     admin_id: auth.user.id,
@@ -2226,7 +2494,7 @@ router.post("/rent-a-buddy/admin/payouts/:payoutId/release", asyncHandler(async 
     notes: notes ?? null,
   });
 
-  return res.json({ payout: data });
+  return res.json({ payout: released });
 }));
 
 export default router;

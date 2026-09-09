@@ -11,19 +11,24 @@
 
 import { act, renderHook, waitFor } from '@testing-library/react-native';
 import { useWallFeed } from '../useWallFeed.ts';
-import { fetchWall } from '../../services/wallApi.ts';
+import { fetchWall, revalidateCachedObjects } from '../../services/wallApi.ts';
 import type { FetchWallResult } from '../../services/wallApi.ts';
 import { clearFirstPageCache, writeFirstPageCache } from '../../services/wallPrefetch.ts';
 import type { WallProjection } from '../../types/wallProjection.ts';
 
-// NOTE: intentional stub — wallApi imports the native supabase client + the API
-// token seam at module load. fetchWall is the only member useWallFeed touches;
-// this exhaustive factory is complete for that seam.
+// The revalidation default is the OFFLINE answer — `{ ok: false }`, "the server
+// was not reached" — which is what these offline-cache scenarios mean, and which
+// must leave the cached page untouched. A test wanting a verdict overrides it.
+// NOTE: intentional stub — wallApi loads the native supabase/apiToken chain at
+// import. Two members are reachable here: `fetchWall`, and
+// `revalidateCachedObjects` via wallPrefetch's §31/§37 cache revalidation.
 jest.mock('../../services/wallApi', () => ({
   fetchWall: jest.fn(),
+  revalidateCachedObjects: jest.fn(async () => ({ ok: false, error: 'Network error' })),
 }));
 
 const fetchWallMock = fetchWall as jest.Mock;
+const revalidateMock = revalidateCachedObjects as jest.Mock;
 
 function proj(id: string): WallProjection {
   return {
@@ -46,6 +51,8 @@ function ok(items: WallProjection[]): FetchWallResult {
 
 beforeEach(async () => {
   fetchWallMock.mockReset();
+  revalidateMock.mockReset();
+  revalidateMock.mockResolvedValue({ ok: false, error: 'Network error' });
   await clearFirstPageCache('for_you');
   await clearFirstPageCache('following');
 });

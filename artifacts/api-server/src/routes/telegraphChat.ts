@@ -22,8 +22,16 @@
  */
 
 import { Router } from "express";
+import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { logger as rootLogger } from "../lib/logger.js";
+import {
+  tripKernelClient,
+  readCommandEnvelope,
+  executeTripCommand,
+  sendKernelRejection,
+  setTripVersionHeader,
+} from "../lib/tripKernel.js";
 
 const chatLogger = rootLogger.child({ route: "telegraphChat" });
 import { requireUser, sendError } from "../lib/http.js";
@@ -259,7 +267,44 @@ router.post(
 
     const itemTitle = title ?? (suggestion as any).title ?? "Telegraph suggestion";
 
-    const { data: planItem, error: planErr } = await client
+    // Trip Kernel path (§4.1 ADD_PLAN, capability crew). The thread-member and
+    // trip-member checks above are the authorization; the kernel re-checks
+    // crew. The direct insert names eight columns and leaves category, status,
+    // sort_order, visibility, lock_type and location_is_private at their table
+    // defaults; the kernel's defaults are the same values, and
+    // location_is_private is sent explicitly so the row matches under a 2500
+    // function too. Off => the insert below.
+    const kernel = await tripKernelClient();
+    let kernelPlanItem: { id: string; title: string } | null = null;
+    if (kernel) {
+      const env = readCommandEnvelope(req);
+      if (!env.ok) { sendError(res, "invalid_payload", env.message); return; }
+      const r = await executeTripCommand(kernel, {
+        commandId: randomUUID(),
+        tripId,
+        actorUserId: user.id,   // always from token
+        expectedTripVersion: env.expectedTripVersion,
+        idempotencyKey: env.idempotencyKey,
+        type: "ADD_PLAN",
+        payload: {
+          title: itemTitle,
+          source_type: "telegraph",
+          source_id: suggestionId,
+          day_date: dayDate ?? null,
+          starts_at: startsAt ?? null,
+          notes: (suggestion as any).location_context ?? null,
+          location_is_private: true,
+        },
+      });
+      if (!r.ok) { sendKernelRejection(res, r, req.log); return; }
+      setTripVersionHeader(res, r.version);
+      kernelPlanItem = { id: r.result.id, title: r.result.title };
+    }
+
+    // trip-kernel:legacy-path — flag-off twin of ADD_PLAN above.
+    const { data: planItem, error: planErr } = kernelPlanItem
+      ? { data: kernelPlanItem, error: null }
+      : await client
       .from("trip_plan_items")
       .insert({
         trip_id: tripId,

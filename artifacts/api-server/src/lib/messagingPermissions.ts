@@ -26,6 +26,10 @@
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { logger as rootLogger } from './logger.js';
+import { isUuid } from './followDecisions.js';
+
+const log = rootLogger.child({ lib: 'messagingPermissions' });
 
 export type MessageVerdict = 'allowed' | 'requires_request' | 'denied';
 
@@ -34,7 +38,18 @@ export type MessageDeniedReason =
   | 'blocked'
   | 'no_one'
   | 'privacy_setting'
-  | 'no_requests_allowed';
+  | 'no_requests_allowed'
+  /**
+   * A read this decision depends on FAILED, so permission is unknown.
+   *
+   * Deliberately distinct from 'blocked': saying "blocked" when the blocks
+   * table was merely unreadable would be a fabrication, and a caller that
+   * surfaces the reason to a user would show something untrue. 'unavailable'
+   * says what actually happened -- we could not decide -- and the answer is
+   * still a denial, because the alternative is delivering a message to someone
+   * who may have blocked the sender.
+   */
+  | 'unavailable';
 
 export interface RelationshipContext {
   isFriend: boolean;
@@ -49,6 +64,19 @@ export interface MessagePermissionVerdict {
   verdict: MessageVerdict;
   reason?: MessageDeniedReason;
   relationship_context: RelationshipContext;
+  /**
+   * At least one RELATIONSHIP read failed, so `relationship_context` is a floor
+   * rather than the truth.
+   *
+   * The relationship reads are inclusion signals: a failed one yields `data:
+   * null`, reads as "no such relationship", and can only ever make the verdict
+   * MORE restrictive -- so permission stays safe. What is not safe is the
+   * context itself, which callers render to people ("you are not connected to
+   * this user"). Stating a fact about someone's relationships on the strength of
+   * a read that failed is a fabrication, so the degraded case is labelled and a
+   * caller may choose to say nothing instead of saying something false.
+   */
+  degraded?: boolean;
 }
 
 interface MessageSettings {
@@ -57,6 +85,17 @@ interface MessageSettings {
   allow_trip_member_messages: boolean;
   allow_circle_member_messages: boolean;
 }
+
+/**
+ * Hard cap on the sender's trip list used for the shared-trip check.
+ *
+ * The list feeds `.in('trip_id', ids)`. PostgREST caps an unbounded collection
+ * at db-max-rows (Supabase ships 1000), so without an explicit limit a
+ * well-travelled sender's older trips fell off the end and a genuinely shared
+ * trip could be missed -- silently, and more often the more they had travelled.
+ * Naming the bound makes the truncation point ours and reportable.
+ */
+const TRIP_SCAN_CAP = 1000;
 
 const DEFAULT_SETTINGS: MessageSettings = {
   message_privacy: 'everyone',
@@ -95,14 +134,37 @@ export async function canMessage(
 
   if (senderId === recipientId) return deny('self', emptyCtx);
 
+  // Both ids are interpolated RAW into three PostgREST `.or()` filter strings
+  // below. A value carrying `,` `)` or `.` does not fail — it re-parses into a
+  // DIFFERENT filter, and the one that matters is the block check, where a
+  // filter that silently stops matching waves a sender through to someone who
+  // blocked them. Every route caller validates the id first, but this resolver
+  // is also reachable from the call gateway and from library code, and a guard
+  // that lives only in callers is a guard that a future caller forgets. A
+  // non-UUID can never name a real account, so refusing here costs nothing.
+  for (const [label, id] of [['senderId', senderId], ['recipientId', recipientId]] as const) {
+    if (typeof id !== 'string' || !isUuid(id)) {
+      log.error({ label, senderId, recipientId }, 'canMessage: non-UUID participant id; refusing rather than building a filter from it');
+      return deny('unavailable', emptyCtx);
+    }
+  }
+
   // Block check — sc is the service-role client so it bypasses RLS and can
   // read blocks rows regardless of which user is blocker_id.
-  const { data: blockRow } = await sc
+  const { data: blockRow, error: blockError } = await sc
     .from('blocks')
     .select('blocker_id')
     .or(`and(blocker_id.eq.${senderId},blocked_id.eq.${recipientId}),and(blocker_id.eq.${recipientId},blocked_id.eq.${senderId})`)
     .limit(1)
     .maybeSingle();
+  // `blocks` is an EXCLUSION table: a row means DENY. supabase-js resolves on a
+  // database error, so an unreadable table returns `data: null` -- identical to
+  // "no block exists" -- and this check would wave the sender straight through
+  // to someone who blocked them. Unknown is not permission.
+  if (blockError) {
+    log.error({ err: blockError, senderId, recipientId }, 'canMessage: blocks read failed; denying rather than assuming no block');
+    return deny('unavailable', emptyCtx);
+  }
   if (blockRow) return deny('blocked', emptyCtx);
 
   // Fetch all relationship data in parallel.
@@ -146,15 +208,17 @@ export async function canMessage(
       .maybeSingle(),
 
     // Shared accepted trip membership — direct two-step query, no RPC needed.
-    (async (): Promise<boolean> => {
-      const { data: senderTrips } = await sc
+    (async (): Promise<{ shared: boolean; degraded: boolean }> => {
+      const { data: senderTrips, error: senderTripsErr } = await sc
         .from('trip_members')
         .select('trip_id')
         .eq('user_id', senderId)
-        .in('role', ['owner', 'member']);
+        .in('role', ['owner', 'member'])
+        .limit(TRIP_SCAN_CAP);
+      if (senderTripsErr) return { shared: false, degraded: true };
       const ids = (senderTrips ?? []).map((m: any) => m.trip_id);
-      if (ids.length === 0) return false;
-      const { data: shared } = await sc
+      if (ids.length === 0) return { shared: false, degraded: false };
+      const { data: shared, error: sharedErr } = await sc
         .from('trip_members')
         .select('trip_id')
         .eq('user_id', recipientId)
@@ -162,7 +226,12 @@ export async function canMessage(
         .in('trip_id', ids)
         .limit(1)
         .maybeSingle();
-      return Boolean(shared);
+      if (sharedErr) return { shared: false, degraded: true };
+      // A truncated trip list can only DROP a shared trip, i.e. withhold
+      // permission the pair may be entitled to; it can never grant permission
+      // they are not. Flagged as degraded rather than silently accepted,
+      // because "not trip mates" would be asserted on partial evidence.
+      return { shared: Boolean(shared), degraded: ids.length >= TRIP_SCAN_CAP };
     })(),
 
     // Shared circle: sender is in recipient's circle OR recipient is in sender's circle.
@@ -174,6 +243,20 @@ export async function canMessage(
       .maybeSingle(),
   ]);
 
+  // The recipient's own privacy setting decides this. An unreadable
+  // user_message_settings row previously fell back to DEFAULT_SETTINGS, whose
+  // message_privacy is 'everyone' -- so a recipient who had deliberately
+  // restricted their DMs became messageable by anyone, precisely while the
+  // database was unhealthy. That default is only safe for a recipient who has
+  // never set a preference; it is not safe as an error fallback.
+  if ((settingsRes as any).error) {
+    log.error(
+      { err: (settingsRes as any).error, recipientId },
+      'canMessage: user_message_settings read failed; denying rather than defaulting to message_privacy=everyone',
+    );
+    return deny('unavailable', emptyCtx);
+  }
+
   const settings: MessageSettings =
     settingsRes.data
       ? {
@@ -184,16 +267,45 @@ export async function canMessage(
         }
       : DEFAULT_SETTINGS;
 
+  // The relationship reads are INCLUSION signals, so a dropped `.error` reads as
+  // "no such relationship" and can only ever make the verdict more restrictive.
+  // Permission therefore stays safe -- but the failure produced no signal at
+  // all, so a friends-only recipient becoming unreachable to their friends
+  // during a bad database minute looked exactly like the privacy setting
+  // working. Each failure is now named, and the verdict is marked degraded.
+  const relationshipReads: Array<[string, { error?: unknown } | null | undefined]> = [
+    ['user_friendships', friendshipRes as any],
+    ['user_follows(sender→recipient)', sfRes as any],
+    ['user_follows(recipient→sender)', rfRes as any],
+    ['circle_memberships', circleRes as any],
+  ];
+  let degraded = sharedTrip.degraded;
+  for (const [name, res] of relationshipReads) {
+    if (res && (res as any).error) {
+      degraded = true;
+      log.error(
+        { err: (res as any).error, read: name, senderId, recipientId },
+        'canMessage: relationship read failed; treated as "no relationship", which withholds permission the pair may be entitled to',
+      );
+    }
+  }
+  if (sharedTrip.degraded) {
+    log.error({ senderId, recipientId }, 'canMessage: shared-trip check degraded; treated as "no shared trip"');
+  }
+
   const ctx: RelationshipContext = {
     isFriend: Boolean(friendshipRes.data),
     senderFollowsRecipient: Boolean(sfRes.data),
     recipientFollowsSender: Boolean(rfRes.data),
-    sharedTrip,
+    sharedTrip: sharedTrip.shared,
     sharedCircle: Boolean(circleRes.data),
   };
 
+  const mark = (v: MessagePermissionVerdict): MessagePermissionVerdict =>
+    degraded ? { ...v, degraded: true } : v;
+
   // Hard deny: no_one.
-  if (settings.message_privacy === 'no_one') return deny('no_one', ctx);
+  if (settings.message_privacy === 'no_one') return mark(deny('no_one', ctx));
 
   // Evaluate primary privacy setting.
   let directlyAllowed = false;
@@ -230,10 +342,10 @@ export async function canMessage(
     directlyAllowed = true;
   }
 
-  if (directlyAllowed) return allow(ctx);
+  if (directlyAllowed) return mark(allow(ctx));
 
   // Not directly allowed — can a request be sent?
-  if (settings.allow_message_requests) return requiresRequest(ctx);
+  if (settings.allow_message_requests) return mark(requiresRequest(ctx));
 
-  return deny('privacy_setting', ctx);
+  return mark(deny('privacy_setting', ctx));
 }

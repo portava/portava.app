@@ -24,6 +24,7 @@ import {
 import { safeOrIlikeValue, escapeLikePattern } from '../lib/postgrestFilter.js';
 
 import { requireAdmin } from "../lib/requireAdmin.js";
+import { readBlockExclusions, isExcluded } from '../lib/exclusionSet.js';
 
 const router = Router();
 
@@ -145,13 +146,24 @@ router.post('/tags', async (req, res) => {
   if (error) {
     // Unique constraint violation → already tagged (idempotent)
     if ((error as any).code === '23505') {
-      const { data: existing } = await sc
+      // supabase-js RESOLVES on a DB error, so an unbound `error` here fell
+      // back to the `?? 'approved'` default and told the tagger their tag on
+      // another user is LIVE (200, status approved) when the row it could not
+      // read may still be 'pending' — i.e. awaiting that user's consent under
+      // approval_required. Reporting someone else's pending consent as granted
+      // is the one answer this branch must never guess at.
+      const { data: existing, error: existingErr } = await sc
         .from('tags')
         .select('id, status')
         .eq('source_type', source_type)
         .eq('source_id', source_id)
         .eq('tagged_user_id', tagged_user_id)
         .maybeSingle();
+      if (existingErr) {
+        req.log.error({ err: existingErr, source_type, source_id }, 'existing tag lookup failed after 23505 — cannot confirm tag status');
+        sendError(res, 'db_error', 'Could not confirm the status of the existing tag');
+        return;
+      }
       const existingStatus = (existing as any)?.status ?? 'approved';
       res.status(existingStatus === 'pending' ? 202 : 200).json({
         tagId: (existing as any)?.id ?? null,
@@ -209,15 +221,22 @@ router.get('/tags/suggestions', async (req, res) => {
   if (!sc) { sendError(res, 'server_not_configured', 'Service client not ready'); return; }
 
   // ── Block-list (both directions) ────────────────────────────────────────────
-  const { data: blockRows } = await sc
-    .from('blocks')
-    .select('blocker_id, blocked_id')
-    .or(`blocker_id.eq.${user.id},blocked_id.eq.${user.id}`);
-
-  const blockedSet = new Set<string>();
-  for (const b of (blockRows ?? []) as any[]) {
-    if (b.blocker_id === user.id) blockedSet.add(b.blocked_id);
-    else blockedSet.add(b.blocker_id);
+  //
+  // FAIL-CLOSED, shape 2 (lib/exclusionSet.ts): this set gates only the USER
+  // half of the suggestion list. Trips, circles, places and events are not
+  // block-scoped, so an unreadable `blocks` table costs the caller the @mention
+  // suggestions and nothing else — a narrower and more honest answer than
+  // refusing the whole picker, and a far better one than the old
+  // `(blockRows ?? [])`, which read a resolved DB error as "nobody is blocked"
+  // and offered a blocked user as a mention target. `isExcluded` reports every
+  // candidate as excluded when the set is unreadable, so `profiles` below
+  // filters to empty and `userSuggestions` is [] with no further branching.
+  const blockedSet = await readBlockExclusions(sc, user.id);
+  if (!blockedSet.ok) {
+    req.log.error(
+      { reason: blockedSet.reason },
+      'tags/suggestions: block list unreadable — omitting user suggestions',
+    );
   }
 
   // ── User candidates: match on handle prefix OR name substring ────────────────
@@ -246,7 +265,7 @@ router.get('/tags/suggestions', async (req, res) => {
     return;
   }
 
-  const profiles = ((rows ?? []) as any[]).filter((p) => !blockedSet.has(p.id));
+  const profiles = ((rows ?? []) as any[]).filter((p) => !isExcluded(blockedSet, p.id));
   const visibleIds = profiles.map((p: any) => p.id);
 
   // ── Relationship sets (ranking: crew > circle > mutual > any-follow > other) ──

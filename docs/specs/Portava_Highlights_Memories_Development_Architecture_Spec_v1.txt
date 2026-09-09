@@ -1,0 +1,794 @@
+
+PORTAVA
+Highlights / MemoriesDevelopment Architecture Specification
+v1 • September 2026
+Engineering design for the Memory Kernel, episode detection, Highlights, provenance, privacy, retrieval, projections, offline sync, lifecycle, and action loops.
+Architectural thesis
+Highlights are Portava’s curated window into a person’s real-world life. Memories are the private, provenance-backed graph of what actually happened. The system must remember truthfully, keep context private correctly, resurface intelligently, share without leaking private state, and turn past experience into new real-world action.
+Document map
+1. Architectural mandate and non-goals
+2. Domain model and canonical data contracts
+3. Memory lifecycle and state machines
+4. Evidence, episode detection, identity resolution, and significance
+5. Privacy, consent, visibility, and deletion semantics
+6. Highlights architecture and profile projections
+7. Memory retrieval, Compass tools, and executable-memory loops
+8. Events, projections, indexing, offline sync, and idempotency
+9. Observability, replay, certification, and rollout
+
+1. Architectural Mandate
+The Memory domain is not a media gallery. It is Portava’s historical truth layer for user-controlled real-world experiences. Media, Trips, Events, Places, Crews, Posts, Stamps, Buddy interactions, and user-authored notes may provide evidence, but none of those objects should be silently promoted into durable history without eligibility, provenance, and privacy checks.
+Hard architectural boundary
+REAL WORLD
+  -> signals / media / trip outcomes / user assertions
+  -> evidence normalization
+  -> eligibility + episode detection
+  -> Memory Kernel
+  -> privacy-filtered projections
+  -> Highlights / Passport / Profile / Compass / Discovery
+  -> real-world action
+  -> new outcomes and evidence
+Canonical Memory facts must remain independent from any specific viewer layout or AI-generated narrative.
+Automatic Memories are private-first. Publishing is always a separate projection decision.
+AI may summarize supported evidence, but may not manufacture historical facts, emotional states, participants, places, or outcomes.
+Planned, saved, or nearby activity must never be represented as “experienced” without occurrence evidence or user confirmation.
+Historical truth and current-world truth are separate. A place remembered as visited in 2026 does not establish that it is open now.
+Non-goals
+Building an Instagram Stories clone or a generic photo backup product.
+Using memory capture to maximize watch time, streaks, or endless-feed consumption.
+Publicly scoring users by travel volume, social value, or memory importance.
+Allowing commercial ranking or sponsorship to influence whether a personal Memory is significant.
+Using private Memories directly as public world-intelligence observations without a separate consent and evidence pipeline.
+2. Domain Boundaries
+The Memory system should be split into explicit bounded services. A single all-purpose MemoryService would become a high-risk coupling point between media, AI, privacy, profile rendering, and indexing.
+Service
+Responsibility
+MemoryDomainService
+Canonical Memory commands, lifecycle, ownership, versioning, merge/split, audit.
+MemoryEvidenceService
+Normalize evidence, source lineage, assertion confidence, corrections.
+EpisodeDetectionService
+Candidate grouping and event-boundary inference.
+MemoryEligibilityService
+Decide whether a signal set may become a Memory candidate.
+MemoryPrivacyService
+Audience, precision, participant, resurfacing, personalization, and publication policy.
+MemoryProjectionService
+Build disposable read models for profile, Passport, Trip, map, people, places, and public surfaces.
+HighlightService
+Create and rank ephemeral or curated Highlight projections.
+MemorySearchService
+Temporal/spatial/social/semantic retrieval within authorized scopes.
+MemoryNarrativeService
+Generate optional editable summaries from structured facts.
+MemoryResurfacingService
+Contextual recall, anniversaries, return-to-place prompts, fatigue and suppression rules.
+MemoryActionService
+Compile “Do Again”, “Add to Trip”, “Take Me Back”, and related actions into current plans.
+3. Canonical Data Model
+Media and Memory are distinct. A media asset is a file or capture. A Memory is a durable historical assertion assembled from evidence and user control.
+3.1 Core Memory
+Memory {
+  id: uuid
+  owner_id: uuid
+  occurred_at: timestamptz
+  ended_at: timestamptz?
+  occurred_timezone: text
+  title: text?
+  summary: text?
+  memory_type: MemoryType
+  lifecycle_state: MemoryLifecycleState
+  source_mode: MemorySourceMode
+  significance_score: numeric?
+  confidence_band: ConfidenceBand
+  visibility_class: VisibilityClass
+  location_precision: LocationPrecision
+  current_version: bigint
+  created_at: timestamptz
+  updated_at: timestamptz
+}
+3.2 Episode
+MemoryEpisode {
+  id: uuid
+  owner_id: uuid
+  started_at: timestamptz
+  ended_at: timestamptz
+  primary_place_id: uuid?
+  trip_id: uuid?
+  event_id: uuid?
+  detector_version: text
+  significance_score: numeric?
+  confidence_band: ConfidenceBand
+}
+3.3 Evidence
+MemoryEvidence {
+  id: uuid
+  memory_id: uuid?
+  episode_id: uuid?
+  source_type: EvidenceSourceType
+  source_id: text
+  assertion_type: MemoryAssertionType
+  assertion_json: jsonb
+  truth_level: TruthLevel
+  confidence: numeric
+  observed_at: timestamptz
+  expires_at: timestamptz?
+  provenance_json: jsonb
+}
+3.4 Relationships
+MemoryRelation {
+  source_memory_id: uuid
+  target_type: PERSON | PLACE | TRIP | EVENT | MEMORY | STAMP | PLAN
+  target_id: text
+  relation_type: text
+  confidence: numeric?
+  visibility_override: text?
+}
+3.5 Highlight
+Highlight {
+  id: uuid
+  owner_id: uuid
+  source_memory_ids: uuid[]
+  highlight_type: text
+  lifetime_class: LIVE | DAY | TRIP | SEASONAL | PERMANENT
+  lifecycle_state: DRAFT | ACTIVE | EXPIRED | PINNED | HIDDEN
+  starts_at: timestamptz
+  expires_at: timestamptz?
+  ranking_score: numeric?
+  reason_codes: text[]
+  audience_policy_id: uuid
+  presentation_json: jsonb
+  renderer_version: text
+}
+3.6 Recommended storage tables
+Table
+Purpose
+memories
+Canonical durable user Memories.
+memory_episodes
+Detected or confirmed episodes.
+memory_evidence
+Assertion-level provenance and confidence.
+memory_media_links
+Many-to-many links to media assets.
+memory_entity_links
+People/place/trip/event relations.
+memory_relations
+Memory-to-Memory graph edges.
+memory_corrections
+Authoritative user corrections and negative constraints.
+memory_commands
+Optional command receipt/idempotency ledger.
+memory_event_outbox
+Transactional domain-event outbox.
+highlights
+Canonical Highlight projection definitions.
+highlight_sources
+Links Highlights to Memories/Episodes.
+memory_visibility_policies
+Audience and location precision policy.
+memory_derivative_registry
+Search embeddings, Passport projections, public derivatives, thumbnails, narratives.
+memory_snapshots
+Versioned fact/evidence snapshots for replay.
+memory_resurfacing_preferences
+Do-not-resurface and related controls.
+memory_import_batches
+Explicit historical import/backfill jobs.
+4. Enums and Truth Semantics
+Enum
+Values
+MemoryLifecycleState
+CANDIDATE, CONFIRMED, ACTIVE, ARCHIVED, REJECTED, MERGED, DELETED
+MemorySourceMode
+AUTO_PRIVATE, SUGGESTED, USER_CREATED, SHARED_CONFIRMED, IMPORTED, LEGACY_IMPORTED
+MemoryType
+PLACE, PERSON, MOMENT, EPISODE, TRIP, EVENT, MILESTONE, CREW, DISCOVERY, ROUTE, EXPERIENCE, FIRST, REUNION
+TruthLevel
+USER_ASSERTED, SYSTEM_OBSERVED, MUTUALLY_CONFIRMED, INFERRED, UNKNOWN
+ConfidenceBand
+HIGH, MEDIUM, LOW, INSUFFICIENT
+VisibilityClass
+PRIVATE, SELECTED_PEOPLE, TRIP_CREW, FOLLOWERS, PUBLIC
+LocationPrecision
+EXACT, VENUE, NEIGHBORHOOD, CITY, COUNTRY, HIDDEN
+MemoryRelationType
+SAME_EPISODE, RELATED, CONTAINS, LED_TO, DISCOVERED_THROUGH, INTRODUCED_BY, RESULTED_IN, DERIVED_FROM, INSPIRED
+HighlightLifetime
+LIVE, DAY, TRIP, SEASONAL, PERMANENT
+Truth precedence
+Explicit user correction
+  > explicit user assertion
+  > mutually confirmed evidence
+  > strong system observation
+  > inference
+  > unknown
+A lower-confidence inference may never overwrite a higher-precedence user correction. Negative constraints from corrections must be durable so the system does not repeatedly “correct” the user back to a prior inference.
+5. State Machines and Lifecycle
+Memory lifecycle
+CANDIDATE -> CONFIRMED -> ACTIVE -> ARCHIVED
+     |             |         |
+     v             v         v
+  REJECTED       MERGED    DELETED
+Highlight lifecycle
+DRAFT -> ACTIVE -> EXPIRED
+          |          ^
+          v          |
+        PINNED ---- HIDDEN
+Deletion lifecycle
+ACTIVE
+ -> DELETION_REQUESTED
+ -> PUBLIC_REVOKED
+ -> DERIVATIVES_PURGED
+ -> RAW_EVIDENCE_PURGED (where policy allows)
+ -> DELETED
+Shared experiences
+A shared experience is not one globally editable personal Memory. Prefer a shared-experience anchor plus separate personal Memories. Mutual “Remember this together” creates an explicitly shared object only after participant consent.
+6. Evidence Normalization and Eligibility
+Candidate generation begins only after evidence is normalized and passes eligibility. The eligibility gate should prevent trivial, duplicated, privacy-sensitive, or unsupported candidates from entering the user-facing pipeline.
+RAW SIGNAL
+ -> normalize source and time
+ -> resolve entity candidates
+ -> privacy/sensitivity pre-check
+ -> deduplicate evidence
+ -> eligibility gate
+ -> episode candidate
+ -> significance scoring
+ -> candidate Memory
+Eligibility rejection reasons
+Insufficient evidence for occurrence.
+Only a planned/saved activity exists.
+Signal represents a pass-by rather than a visit.
+Duplicate of an existing Memory/Episode.
+Sensitive context is not eligible for automatic resurfacing or sharing.
+Media appears downloaded/screenshot rather than captured experience.
+Candidate is below triviality/significance threshold.
+User or policy has suppressed inference for this class.
+Evidence-source examples
+Source
+Strength / caveat
+Explicit “Remember this”
+Strong user intent; still validate entity links independently.
+Trip outcome / completed plan
+Strong occurrence evidence if completion itself is reliable.
+GPS proximity
+Weak alone; typically candidate-level only.
+Camera capture timestamp/location
+Useful but metadata may be wrong, edited, or imported.
+Crew overlap
+Supports social context but does not prove co-attendance at every episode.
+Event ticket + check-in
+Strong event attendance evidence.
+Telegraph message
+Context evidence; should not automatically become historical fact without corroboration.
+Stamp issuance
+Strong if stamp rules are deterministic and certified.
+7. Episode Detection and Boundary Engine
+Episode grouping must be deterministic enough to replay. AI may assist candidate description, but core grouping should operate on structured features and versioned reason codes.
+Boundary features
+Time proximity and pauses
+Large geographic transition
+Trip/stage transitions
+Participant-set change
+Activity-type change
+Transport transition
+Hotel/home return
+Event commitment boundary
+User-authored split/merge corrections
+Midnight must not force an episode split by itself. A late-night experience may legitimately span calendar dates.
+Candidate reason codes
+SAME_TRIP
+SAME_CREW
+SAME_PLACE_CLUSTER
+TIME_PROXIMITY
+TRANSPORT_CONTINUITY
+EVENT_CONTEXT
+EXPLICIT_REMEMBER
+FIRST_VISIT
+REPEATED_PLACE
+USER_MERGED
+Deduplication relationships
+SAME_EPISODE
+POSSIBLE_DUPLICATE
+RELATED
+CONTAINS
+8. Significance and Candidate Ranking
+Significance is internal orchestration, not a public social score. It controls which candidate Memories are suggested, which private Memories are more likely to resurface, and how automatic Highlights are diversified.
+Inputs may include explicit remember intent, first-time or rare experiences, trip goals, meaningful social context, repeat visits, user-created captions, user favorites, unique destinations, and later user promotion. Media quality may influence presentation but must not dominate significance.
+Hard rule
+Explicit user intent outranks inferred significance. The system may never demote, hide, or discard a user-created Memory simply because an automated score is low.
+Auto-creation vs suggestion thresholds
+AUTO_PRIVATE: very high confidence + policy eligible
+SUGGESTED: lower threshold; requires confirmation
+NO_CANDIDATE: insufficient truth, privacy, or significance
+9. Entity Resolution and Historical Identity
+Memory entity resolution must preserve both canonical identity and occurrence-time display context. Historical records cannot silently rewrite themselves when places rename, merge, close, or move.
+MemoryPlaceRef {
+  canonical_place_id: uuid?
+  unresolved_place_ref: jsonb?
+  display_name_at_occurrence: text?
+  location_at_occurrence: geometry?
+  resolution_confidence: numeric
+}
+Rules
+Unknown is valid; do not fabricate a place ID.
+Place closure does not invalidate a historical visit.
+Entity merges may repoint canonical identity while preserving occurrence-time display text.
+Entity splits trigger re-resolution from retained evidence.
+User correction beats automatic entity resolution.
+Do not infer two unrelated IDs represent the same place merely because names are similar.
+10. Privacy, Consent, and Projection Policy
+Canonical Memory storage and public/social projections are intentionally separate. The private record may retain richer context than any audience is allowed to see.
+Memory consent dimensions
+STORE
+RESURFACE
+PERSONALIZE
+SHARE
+CONTRIBUTE_TO_AGGREGATE_INTEL
+Location precision ladder
+EXACT -> VENUE -> NEIGHBORHOOD -> CITY -> COUNTRY -> HIDDEN
+Person visibility ladder
+NAMED -> PROFILE_LINKED -> CREW_ONLY -> ANONYMOUS_COUNT -> HIDDEN
+Policy invariants
+Automatic Memories default PRIVATE.
+Public search only queries public derivatives, never private canonical storage followed by post-query filtering.
+Media visibility is independent from Memory visibility.
+Publishing location must never exceed the owner’s selected precision.
+Temporary operational location must not leak into durable public Highlights by default.
+Being tagged or referenced does not make another user a co-owner.
+Blocking and account deletion must suppress future social resurfacing and unlink profile identity as policy requires.
+Public sharing must assume content can be copied outside Portava; screenshot prevention is not a privacy boundary.
+11. Sensitive Context and Resurfacing Controls
+Some places or contexts require stricter defaults. Sensitivity policy should be deterministic and reviewable rather than generated ad hoc by an LLM.
+Hotels and precise lodging locations
+Private residences
+Medical or emergency locations
+Embassies and legal assistance
+Sensitive nightlife contexts
+Religious or intimate settings where exposure could create harm
+Any user-marked “keep private forever” Memory
+User controls
+DO_NOT_RESURFACE
+DO_NOT_INCLUDE_IN_RECAPS
+HIDE_PERSON_FROM_RESURFACING
+HIDE_TRIP
+KEEP_PRIVATE_FOREVER
+RETAIN_BUT_DO_NOT_PERSONALIZE
+12. Highlights Architecture
+Highlights are disposable, audience-specific projections over one or more Memories or Episodes. They are not the source of historical truth.
+Highlight classes
+Class
+Example
+Default behavior
+LIVE
+Tonight with the crew
+Short-lived; high freshness; no stale location.
+DAY
+Day 4 in Da Nang
+Expires after recent context unless pinned.
+TRIP
+Japan 2026
+Lives through Trip and may remain as curated recap.
+SEASONAL
+Summer in Asia
+Dynamic collection over multiple Trips/Memories.
+PERMANENT
+First Portava Trip
+Explicit or milestone-driven durable Highlight.
+Ranking
+manual_pin
++ recency
++ significance
++ current_relevance
++ audience_relevance
++ presentation_quality
++ diversity_constraints
+Pinned/manual order always outranks automatic ordering. Diversity should prevent repetitive auto-selection across the same trip, person, venue, or activity type unless the user explicitly curates that way.
+Actions
+DO THIS
+SAVE
+ADD TO TRIP
+VIEW PLACE
+ASK
+MEET (when socially appropriate)
+Highlights should remain finite and contextual. Do not turn the surface into an endless feed.
+13. Memory Graph and Compression Hierarchy
+Memory density requires structured compression rather than one card per asset.
+SIGNAL
+ -> MOMENT
+ -> EPISODE
+ -> DAY
+ -> TRIP
+ -> SEASON
+ -> LIFE CHAPTER
+Life Chapters and cross-trip themes should be projections over the graph rather than duplicated Memories. Examples include “Summer in Asia,” “People I Met,” “Best Nights,” or “Hidden Gems.”
+Relationship edges
+Memory -> Person
+Memory -> Place
+Memory -> Trip
+Memory -> Event
+Memory -> Stamp
+Memory -> Memory
+Memory -> WorldContextSnapshot
+14. Executable Memories
+Portava’s differentiator is that the past can become a current real-world action. Memory retrieval must never simply replay old operational assumptions; the Memory provides historical context, while current engines re-evaluate feasibility.
+Historical Memory
+  + current world intelligence
+  + current user context
+  + Temporal Freedom Engine
+  -> executable current plan
+Actions
+Do this again
+Take me back
+Add to Trip
+Save experience
+Book again if provider is currently eligible
+Create a new Trip with this prior crew
+Bring forward saved experiences from a previous destination
+Use as inspiration while preserving novelty preferences
+Historical/current fusion invariant
+“You visited X in 2026” is a historical claim. “X is open tonight” requires fresh world data. Never derive the latter from the former.
+15. Memory Retrieval and Search
+Retrieval should combine graph queries and deterministic indexes before semantic search. Embeddings are useful for fuzzy descriptions, not as the only access path.
+searchMemories({
+  ownerId,
+  people?,
+  place?,
+  trip?,
+  event?,
+  dateRange?,
+  memoryType?,
+  semanticQuery?,
+  authorizedProjection
+})
+Ranking dimensions
+semantic relevance
++ temporal relevance
++ spatial relevance
++ person relevance
++ explicit significance
++ confidence
++ privacy eligibility
+Examples
+Where was that sushi place in Tokyo?
+Who did I meet in Bangkok?
+What did Marcus and I do in Phuket?
+What happened my first night in Da Nang?
+Show places I loved around Shibuya.
+Authorized namespaces
+Private personal, shared-crew, and public retrieval must have hard isolation boundaries. Public search should query only a public index or equivalent prefiltered derivative. Privacy changes must revoke searchable derivatives and embeddings.
+16. Compass Contract
+Compass is a consumer of Memory facts, not the owner of historical truth. It may explain and compare Memories, suggest drafts, and turn them into current actions, but it must not mutate canonical facts through prose generation.
+getMemory(memoryId)
+searchMemories(query)
+getSharedMemories(personId)
+getPlaceHistory(placeId)
+getTripMemories(tripId)
+getMemoryEvidence(memoryId)
+createMemoryDraft(input)
+suggestMemoryCorrection(memoryId, patch)
+LLM boundary
+May summarize supported evidence.
+May write optional narrative style.
+May propose a merge/split/correction.
+May ask the minimum clarifying question when a material fact is uncertain.
+May not invent emotional states, participants, place identity, attendance, preference, or historical outcomes.
+May not bypass privacy/visibility policy.
+May not use stale historical facts as current operational truth.
+17. Command Bus and Domain Events
+All canonical writes should cross an explicit command boundary for authorization, invariants, idempotency, audit, and downstream event generation.
+CREATE_MEMORY
+CONFIRM_MEMORY
+ARCHIVE_MEMORY
+DELETE_MEMORY
+MERGE_MEMORY
+SPLIT_MEMORY
+ADD_MEDIA
+REMOVE_MEDIA
+ADD_PERSON
+REMOVE_PERSON
+CHANGE_PLACE
+CHANGE_VISIBILITY
+PIN_HIGHLIGHT
+UNPIN_HIGHLIGHT
+PUBLISH_HIGHLIGHT
+HIDE_HIGHLIGHT
+SET_RESURFACING_POLICY
+Domain events
+memory.created
+memory.confirmed
+memory.corrected
+memory.merged
+memory.split
+memory.archived
+memory.deleted
+memory.visibility_changed
+highlight.created
+highlight.published
+highlight.expired
+highlight.pinned
+highlight.hidden
+Use an outbox pattern: canonical mutation and event-outbox insert occur in one database transaction. Consumers must be idempotent and may rebuild disposable projections asynchronously.
+18. Projections and Derived Artifact Registry
+Keep canonical truth small and durable. Everything else should be rebuildable.
+Projection / derivative
+Audience
+MemoryTimelineProjection
+Owner private timeline
+PassportMemoryProjection
+Owner/public according to Passport policy
+ProfileHighlightProjection
+Audience-specific profile
+TripMemoryProjection
+Trip recap / Trip story
+PlaceMemoryProjection
+Owner’s history at a place
+PeopleMemoryProjection
+Shared-history view
+CompassMemoryProjection
+Minimal authorized retrieval facts
+PublicMemoryProjection
+Public social/search surfaces
+SearchEmbedding
+Namespace-scoped retrieval
+NarrativeDerivative
+Optional AI summary
+MapTrailDerivative
+Spatial presentation
+Every derivative is registered with source Memory version, type, destination, generatedAt, and revocation state. This gives deletion and privacy changes an explicit cleanup graph.
+19. Offline and Multi-Device Architecture
+Memory capture must work without connectivity. Use client-generated operation IDs and server-side idempotency rather than blocking on media upload or network availability.
+local CREATE_MEMORY_DRAFT
+ -> temp client id
+ -> enqueue media uploads independently
+ -> sync command with idempotency key
+ -> server creates canonical Memory
+ -> reconcile temp id -> canonical id
+ -> late context/evidence may enrich later
+Memory can exist before all media uploads complete.
+A failed video upload does not invalidate already-saved Memory facts.
+Concurrent edits should resolve at command/field level, not blind row last-write-wins.
+Late evidence may increase confidence but must not overwrite explicit edits.
+Cross-device uploads and notes should converge on one Memory/Episode where evidence supports it.
+20. Media Pipeline
+Media processing should be staged to control privacy, latency, and cost.
+ingest metadata
+ -> fingerprint / duplicate detection
+ -> cheap context association
+ -> thumbnail generation
+ -> expensive media analysis only if necessary
+ -> episode candidate enrichment
+Original, viewer, card, and tiny renditions should be distinct signed derivatives.
+Perceptual fingerprints may detect duplicate imports without filename dependence.
+Video scenes can be logical segments without duplicating original files.
+Media quality may choose representative assets for Highlights but cannot determine Memory significance by itself.
+Do not make face recognition a dependency for People Memories; explicit social graph and participant evidence are safer primitives.
+21. Deletion, Forgetting, and Revocation
+Delete, archive, do-not-resurface, and “keep but do not personalize” are different operations and must remain separate in both data model and UX.
+Action
+Effect
+Archive
+Retain canonical Memory; remove from normal browsing unless explicitly requested.
+Do not resurface
+Retain and search privately; suppress proactive resurfacing.
+Do not personalize
+Retain Memory but exclude from preference/recommendation inference.
+Make private
+Revoke public derivatives and public indexing while retaining private Memory.
+Delete Memory
+Revoke derivatives, remove indexes/embeddings, then purge canonical/eligible evidence per policy.
+Delete media asset
+Remove asset and derivatives; Memory may survive if other evidence remains.
+Revocation propagation must cover public projection, search index, semantic embedding, profile Highlight, Trip story derivative, Passport reference, cached narrative, and any share link. Deletion should be observable, retryable, and dead-lettered if a downstream cleanup repeatedly fails.
+22. Migration from Existing Highlights / Memories
+Avoid a big-bang migration. Existing IDs and URLs should remain stable where practical. Legacy media-centric records should be imported as lower-provenance Memories rather than upgraded into invented rich context.
+Recommended rollout
+1. Inventory current Highlights, Memories, media, Passport, profile, Trip recap, and search usage.
+2. Create new canonical schema and command/event infrastructure behind existing UI.
+3. Backfill legacy rows with source_mode=LEGACY_IMPORTED and conservative confidence.
+4. Dual-read old and new projections in shadow mode; compare visible behavior.
+5. Migrate writes to the Memory Command Bus.
+6. Enable new private Memory timeline and correction tools.
+7. Enable Highlight projection from new Memory Kernel.
+8. Rebuild search and Passport projections.
+9. Decommission legacy write paths only after parity and cleanup certification.
+Never fabricate trip IDs, place IDs, participant links, or “visited” outcomes during backfill. Unknowns remain null/unresolved until evidence supports reconciliation.
+23. Authorization and RLS
+The Memory domain contains high-sensitivity personal history. Client roles should receive the minimum projection needed for each surface, not broad table access.
+Owner-only access to canonical private Memory facts by default.
+Participant membership alone does not grant full Memory access.
+Public derivatives live behind explicit publication policy.
+Exact location and private notes require tighter policies than public-safe summary data.
+Service roles performing projections must be scoped and audited.
+Search/index workers consume privacy-filtered event payloads where possible rather than raw entire rows.
+Writes to evidence truth levels and inference provenance are server-controlled; clients may submit assertions/corrections but not forge “verified” truth state.
+Policy functions
+canReadMemory(userId, memoryId, surface)
+canEditMemory(userId, memoryId)
+canPublishMemory(userId, memoryId, audience)
+canSeeExactLocation(userId, memoryId)
+canSeeParticipant(userId, memoryId, participantId)
+canUseForPersonalization(userId, memoryId)
+24. Observability and Quality Metrics
+The system should optimize truth quality and useful action, not engagement depth.
+Metric
+Purpose
+candidate_confirm_rate
+Precision of candidate generation.
+candidate_reject_rate
+Noise / significance calibration.
+candidate_split_rate
+Episode over-grouping signal.
+candidate_merge_rate
+Episode under-grouping signal.
+place_correction_rate
+Entity-resolution quality.
+participant_correction_rate
+Social inference quality.
+false_memory_rate
+Corrected inferred assertions / surfaced inferred assertions.
+explicit_memory_without_candidate_rate
+Likely false-negative detection.
+privacy_revocation_latency
+Time until all public derivatives are removed.
+projection_lag
+Freshness of derived views.
+resurfacing_suppression_violations
+Must be zero.
+do_again_conversion
+Real-world action from Memory, not watch time.
+Operational logs must include memoryId, commandId, eventId, source version, engine version, reason codes, projection name, and failure class. Do not log sensitive raw content unless strictly necessary.
+25. Replay, Testing, and Certification
+Memory behavior must be replayable from structured evidence, commands, and engine versions. This is essential to diagnose false memories and migration changes.
+Canonical certification fixtures
+Solo Trip with photos and explicit Remember action.
+Crew Trip with shared and private assets.
+Late media upload after Trip ends.
+Incorrect GPS and explicit place correction.
+Merge two Memories then split differently.
+Blocked participant after shared experience.
+Public-to-private revocation.
+Memory deletion with embeddings and Highlight derivatives.
+Imported historical trip with weak metadata.
+No-photo Memory from voice note + completed plan.
+Walk-past venue that must not become a visit.
+Downloaded screenshot that must not become experienced content.
+Hard invariant tests
+PRIVATE memory cannot appear in public search.
+Deleted memory cannot remain in Compass retrieval.
+Rejected candidate cannot become a Highlight.
+Planned activity without occurrence evidence cannot earn a visit Memory/Stamp.
+Blocked person cannot be newly resurfaced through shared-memory recommendations.
+Public location precision cannot exceed owner policy.
+User correction cannot be overwritten by weaker inference.
+Historical memory cannot assert current venue availability.
+Projection consumers must tolerate duplicate/out-of-order events.
+Property / chaos testing
+Duplicate upload
+Out-of-order evidence
+Projection worker outage
+Search-index delay
+Concurrent merge and edit
+Offline correction
+Partial media deletion
+Entity merge after Memory creation
+Timezone and date-line edges
+26. Delivery Phases
+Phase
+Scope
+Exit criteria
+0 - Contracts
+Enums, schema, command bus, outbox, RLS, reason-code registry.
+Schema/live-DB checks green; privacy invariants encoded.
+1 - Canonical Memory MVP
+User-created private Memories, media links, place/trip links, correction, delete.
+End-to-end private lifecycle certified.
+2 - Episode Candidates
+Eligibility, deterministic grouping, candidate inbox, merge/split.
+False-positive fixtures pass; shadow metrics acceptable.
+3 - Highlights
+Finite curated profile Highlight projection, pin/reorder/privacy.
+No private leakage; revocation certified.
+4 - Retrieval
+Temporal/spatial/social search and Compass read tools.
+Namespace isolation and delete propagation certified.
+5 - Executable Memories
+Do Again, Add to Trip, Take Me Back through current feasibility engines.
+Historical/current truth boundary certified.
+6 - Resurfacing
+Contextual return-to-place, anniversaries, user suppression/fatigue.
+Suppression and sensitivity rules certified.
+7 - Imports / Life Chapters
+Explicit historical backfill, cross-trip projections.
+No fabricated provenance; portability/export ready.
+27. Internal Service Interfaces
+MemoryDomainService
+  create(input, commandMeta)
+  confirm(memoryId, patch)
+  correct(memoryId, patch)
+  merge(memoryIds, commandMeta)
+  split(memoryId, definition)
+  archive(memoryId)
+  delete(memoryId)
+
+EpisodeDetectionService
+  buildCandidates(ownerId, window)
+  explain(candidateId)
+  replay(candidateId, detectorVersion)
+
+HighlightService
+  buildForProfile(ownerId, audience)
+  pin(highlightId)
+  hide(highlightId)
+  publish(highlightId, audience)
+
+MemorySearchService
+  search(query, authorizationContext)
+  getPlaceHistory(ownerId, placeId)
+  getPersonHistory(ownerId, personId)
+
+MemoryActionService
+  compileDoAgain(memoryId, currentContext)
+  addToTrip(memoryId, tripId)
+  buildNavigationTarget(memoryId)
+28. Developer Rules and Non-Negotiable Invariants
+1. Never treat a media asset as the Memory itself.
+2. Never infer “visited” from saved/planned/nearby alone.
+3. Never query a semantic substitute for an unknown canonical place/person and pretend it is the requested entity.
+4. Never let AI prose write canonical historical facts directly.
+5. Never let weaker inference overwrite explicit user correction.
+6. Never expose private canonical Memory records to public search and rely on post-filtering.
+7. Never allow public location precision above the owner’s publication policy.
+8. Never keep deleted Memories in embeddings, public caches, Highlights, Passport, or Compass projections.
+9. Never treat historical operational state as current intelligence.
+10. Never route public-world intelligence directly from private Memory without consent/eligibility/anonymization.
+11. Never swallow projection/schema failures into plausible-looking empty history without structured error state.
+12. Always make derived projections rebuildable.
+13. Always store provenance and engine/reason-code versions for inferred facts.
+14. Always support unknown/unresolved entities truthfully.
+15. Always make merge/split and publication changes auditable and idempotent.
+16. Always preserve original user voice and original-language text when generating summaries/translations.
+17. Always provide a deterministic fallback renderer if AI presentation fails.
+18. Always measure false-memory quality before increasing automation.
+29. Definition of Done
+The upgraded Highlights/Memories architecture is not complete merely when the UI renders new cards. A production-ready implementation should satisfy all of the following:
+Canonical Memory, Episode, Evidence, Highlight, visibility, and derivative schemas exist with migrations and live-DB checks.
+RLS/policy prevents unauthorized private history access.
+Create, confirm, correct, merge, split, archive, visibility-change, and delete commands are idempotent and audited.
+Projection outbox and consumers survive retry/duplicate events.
+Candidate detector has adversarial false-positive and false-negative fixtures.
+User correction is authoritative over inference.
+Public Highlight projection contains only audience-allowed fields and precision.
+Public-to-private and delete revocation remove search/embedding/profile derivatives.
+Compass retrieves only minimal authorized Memory context and cannot invent canonical facts.
+Do Again compiles through current-world/Temporal Freedom logic instead of replaying stale plans.
+Offline capture works before media sync completes.
+Legacy data migration does not fabricate rich provenance.
+Observability reports false-memory rate, projection lag, and revocation latency.
+Private-first automatic Memory behavior is enabled only after shadow precision is acceptable.
+Appendix A. Example End-to-End Session
+1. User takes 9 photos during dinner + river walk + club.
+2. Trip and crew context arrive from the active Trip.
+3. Evidence normalization resolves two place candidates, timestamps, and participants.
+4. Episode detector proposes one nightlife Episode using SAME_TRIP + TIME_PROXIMITY + SAME_CREW.
+5. Eligibility passes; significance high because explicit Trip plan completed + first visit + user caption.
+6. System creates AUTO_PRIVATE candidate Memory, not a public post.
+7. User opens candidate, removes one participant, corrects one place, and confirms.
+8. Correction creates authoritative provenance and negative constraint against the old place inference.
+9. MemoryTimelineProjection and TripMemoryProjection rebuild.
+10. HighlightService creates a DAY Highlight visible only to Trip Crew.
+11. User later publishes a CITY-level public Highlight; exact venue remains private.
+12. Months later, user returns to Da Nang. Resurfacing suggests the Memory.
+13. “Do this again” calls current place/transport/availability systems before creating a new plan.
+14. If the user makes the Memory private, public Highlight/search derivative is revoked within the privacy SLO.
+Appendix B. Suggested Initial Migration Names
+xxxx_memory_kernel.sql
+xxxx_memory_evidence.sql
+xxxx_memory_visibility_policies.sql
+xxxx_memory_command_outbox.sql
+xxxx_memory_episodes.sql
+xxxx_highlights_projection.sql
+xxxx_memory_derivative_registry.sql
+xxxx_memory_search_namespace.sql
+xxxx_memory_resurfacing_policy.sql
+Use the repo’s actual next migration numbers and existing naming conventions. Each migration should include postconditions or live-schema checks where the repository already uses that pattern.

@@ -18,6 +18,7 @@ import { resolveCountryWithGeocoding } from "../../lib/stamps/countryGeocoder.js
 import { criteriaGate } from "../../lib/stamps/criteria/index.js";
 import { isFlagEnabled } from "../../lib/featureFlags.js";
 import { recordPassportEvent } from "../../lib/passportTelemetry.js";
+import { recordStampVerifiedTrustEvent } from "../trust/TrustEventService.js";
 
 /**
  * §12/TABLE 16 provenance tier for a StampAwardEngine award. Everything the
@@ -173,20 +174,40 @@ async function _awardStampCore(
   }
 
   // 0b. Global kill-switch: passport_stamps_enabled
-  // Fail-open: if the feature_flags table is missing (dev / unmigrated) or the
-  // row doesn't exist, the award proceeds so stamps work out-of-box without any
-  // DB setup. Only an explicit `enabled = false` row suppresses all awards.
+  //
+  // ABSENT ROW vs UNREADABLE TABLE. This is the one flag read in the tree whose
+  // MISSING row means ON: stamps work out-of-box with no DB setup, and only an
+  // explicit `enabled = false` row suppresses every award. That polarity is
+  // deliberate and is kept.
+  //
+  // What was NOT deliberate is that supabase-js RESOLVES on a DB error, so
+  // `const { data: flagRow } = await …` gave `flagRow === null` for the absent
+  // row AND for a failed read — and `flagRow !== null && enabled === false`
+  // read the failed read as ENABLED. A kill switch whose position cannot be
+  // determined was reported as "not thrown", which is the single worst answer a
+  // kill switch can give: an operator who set `enabled = false` to stop awards
+  // during an incident had awards resume, durably, for the length of the blip.
+  //
+  // So: absent row → award proceeds (unchanged). Read ERROR → fail closed with
+  // the same `feature_disabled` reason step 0a already uses, which callers
+  // treat as a warn-level skip rather than an error. Nothing is awarded on an
+  // unknown switch; an award skipped is retried by the next trigger, an award
+  // wrongly granted is a durable row in someone's passport.
   try {
-    const { data: flagRow } = await sc
+    const { data: flagRow, error: flagErr } = await sc
       .from("feature_flags")
       .select("enabled")
       .eq("flag", "passport_stamps_enabled")
       .maybeSingle();
+    if (flagErr) {
+      return { awarded: false, reason: "feature_disabled" };
+    }
     if (flagRow !== null && (flagRow as any).enabled === false) {
       return { awarded: false, reason: "feature_disabled" };
     }
   } catch {
-    // Fail-open: table might not exist in dev / before migrations are applied
+    // Fail-closed: an unreadable kill switch is treated as thrown.
+    return { awarded: false, reason: "feature_disabled" };
   }
 
   const {
@@ -244,11 +265,30 @@ async function _awardStampCore(
   const idemKey = buildIdempotencyKey(userId, definition.id, sourceType, sourceId);
 
   // 3. Check idempotency — has this exact event already been awarded?
-  const { data: existingEvent } = await sc
+  //
+  // FAIL CLOSED. supabase-js RESOLVES on a database error, so discarding
+  // `error` here made an unreadable stamp_award_events indistinguishable from
+  // "this award has not happened yet" — and the code walked on toward awarding
+  // it a second time.
+  //
+  // The unique index `stamp_award_events_idempotency_key_key` does stop a
+  // duplicate landing, and that is a genuine backstop, not a reason to ignore
+  // the error: a constraint bounds the damage, it does not make the CLASSIFICATION
+  // correct. "The database could not answer" is not "there is no record", and
+  // reporting it as `already_awarded` or as a fresh award are both false
+  // statements about the user's passport.
+  //
+  // `eligibility_unavailable` is the same word checkEligibility already uses for
+  // this exact fact, so the dry-run path and the write path cannot drift apart
+  // in how they describe it.
+  const { data: existingEvent, error: existingEventErr } = await sc
     .from("stamp_award_events")
     .select("id, status")
     .eq("idempotency_key", idemKey)
     .maybeSingle();
+  if (existingEventErr) {
+    return { awarded: false, reason: "eligibility_unavailable" };
+  }
 
   // Recovery path: if the award event was committed but the user_stamp row is
   // missing (e.g. the DB went down between step 6 and step 7), skip directly to
@@ -277,7 +317,16 @@ async function _awardStampCore(
       ? (stampQuery as any).is("source_id", null)
       : (stampQuery as any).eq("source_id", resolvedSourceId);
 
-    const { data: existingStampForEvent } = await (stampQuery as any).maybeSingle();
+    // FAIL CLOSED. An unreadable user_stamps answered "no stamp row" and the
+    // heal proceeded to INSERT one — so a read failure here manufactured a
+    // second stamp for an award that already had one. This is the more
+    // dangerous of the two: the heal path exists precisely because the award
+    // event is already committed, so the code is primed to write.
+    const { data: existingStampForEvent, error: existingStampForEventErr } =
+      await (stampQuery as any).maybeSingle();
+    if (existingStampForEventErr) {
+      return { awarded: false, reason: "eligibility_unavailable" };
+    }
 
     if (existingStampForEvent) {
       return { awarded: false, reason: "already_awarded" };
@@ -289,13 +338,18 @@ async function _awardStampCore(
   if (!skipToStampInsert) {
     // 4. For non-repeatable stamps: check if user already has one
     if (!definition.is_repeatable) {
-      const { data: existingStamp } = await sc
+      // FAIL CLOSED: an unreadable user_stamps read as "not earned yet" and a
+      // NON-REPEATABLE stamp was awarded again.
+      const { data: existingStamp, error: existingStampErr } = await sc
         .from("user_stamps")
         .select("id")
         .eq("user_id", userId)
         .eq("stamp_definition_id", definition.id)
         .eq("is_revoked", false)
         .maybeSingle();
+      if (existingStampErr) {
+        return { awarded: false, reason: "eligibility_unavailable" };
+      }
 
       if (existingStamp) {
         return { awarded: false, reason: "already_earned" };
@@ -500,12 +554,29 @@ async function _awardStampCore(
         return;
       }
 
-      const { data: prog } = await sc
+      // supabase-js RESOLVES on a database error, so an unchecked `error` here
+      // reads as "no progress row" — and the upsert below would then write
+      // progress_count = 1 OVER a row that said 47. A read failure must not be
+      // allowed to look like a fresh start; skip the increment instead. The
+      // legitimate absence case (no row yet) still starts at 0.
+      const { data: prog, error: progErr } = await sc
         .from("stamp_progress")
         .select("progress_count")
         .eq("user_id", userId)
         .eq("stamp_definition_id", definition.id)
         .maybeSingle();
+
+      if (progErr) {
+        console.error(JSON.stringify({
+          event:         "stamp.progress.read_failed",
+          user_id:       userId,
+          definition_id: definition.id,
+          code:          (progErr as any).code ?? null,
+          error:         (progErr as any).message ?? String(progErr),
+          note:          "increment skipped — an unreadable current count must not be rewritten as 1",
+        }));
+        return;
+      }
 
       const newCount = ((prog as any)?.progress_count ?? 0) + 1;
 
@@ -532,11 +603,27 @@ async function _awardStampCore(
     try {
       const MILESTONE_LEVELS = [10000, 1000, 100] as const;
 
-      const { count: totalCount } = await sc
+      // A failed count resolves with count = null, which `?? 0` turns into
+      // "this user has zero stamps" — indistinguishable from the real thing.
+      // That direction is safe (no milestone fires) but silent, and a silent
+      // permanent miss is how a milestone gets skipped for ever: the next award
+      // sees the higher total and `break`s at the already-recorded level below.
+      const { count: totalCount, error: countErr } = await sc
         .from("user_stamps")
         .select("id", { count: "exact", head: true })
         .eq("user_id", userId)
         .eq("is_revoked", false);
+
+      if (countErr) {
+        console.error(JSON.stringify({
+          event:   "stamp.milestone.count_failed",
+          user_id: userId,
+          code:    (countErr as any).code ?? null,
+          error:   (countErr as any).message ?? String(countErr),
+          note:    "milestone check skipped — an unreadable count must not be read as zero stamps",
+        }));
+        return;
+      }
 
       const total = totalCount ?? 0;
 
@@ -544,13 +631,29 @@ async function _awardStampCore(
         activeLevel = level;
         if (total < level) continue;
 
-        // Check if this milestone was already recorded
-        const { data: existing } = await sc
+        // Check if this milestone was already recorded.
+        // An unchecked `error` reads identically to "not recorded yet", which
+        // sends the loop on to INSERT and push a milestone the user may already
+        // have been congratulated for. "The table could not be read" is not
+        // "this milestone is new" — stop rather than guess.
+        const { data: existing, error: existingErr } = await sc
           .from("stamp_milestones")
           .select("user_id")
           .eq("user_id", userId)
           .eq("milestone_level", level)
           .maybeSingle();
+
+        if (existingErr) {
+          console.error(JSON.stringify({
+            event:           "stamp.milestone.read_failed",
+            user_id:         userId,
+            milestone_level: level,
+            code:            (existingErr as any).code ?? null,
+            error:           (existingErr as any).message ?? String(existingErr),
+            note:            "milestone check aborted — an unreadable table must not be read as 'not yet awarded'",
+          }));
+          break;
+        }
 
         if (existing) break; // highest already-recorded milestone — nothing new
 
@@ -609,8 +712,8 @@ async function _awardStampCore(
   // OFF, payload allow-listed, and it can never block or fail the award. Emitted
   // only on a genuine fresh award (this return), never on the already-earned /
   // recovery no-op paths above. `void` so the award result is not awaited on it.
+  const tier = stampVerificationTier(sourceType);
   {
-    const tier = stampVerificationTier(sourceType);
     const evtPayload = {
       source: sourceType,
       verification: tier,
@@ -633,6 +736,58 @@ async function _awardStampCore(
       });
     }
   }
+
+  // Trust: the Passport half of STAMP_VERIFIED (+3 passport_authenticity).
+  // Declared in TRUST_EVENT_TYPES since the vocabulary was written and, until
+  // this call, emitted by nothing — 47 live production stamps, zero
+  // stamp_verified events, with trust_engine_enabled TRUE. The delta, category,
+  // dedup key and the verified/reported rule are fixed inside Trust's helper;
+  // this side only states the provenance:
+  //   subject  — userId, the stamp OWNER (the person whose travel fact was
+  //              verified). An admin-awarded stamp still credits the owner;
+  //              the admin rides in metadata as awardedByAdminId, never as
+  //              the subject.
+  //   source   — the user_stamps row just inserted. One stamp pays once.
+  //   tier     — the same §32 provenance tier as the telemetry above; a
+  //              'reported' (self-declared) award is refused by the helper.
+  // Same placement rule as the §32 events: this line is reached only when a
+  // user_stamps row was written by THIS call. Every no-op (already_awarded,
+  // already_earned, max_awards_reached, a lost 23505 race) returned above, and
+  // revokeStamp / restoreStamp / recalculateForUser never enter this function.
+  // The heal path (skipToStampInsert) also lands here — correctly: it writes
+  // the FIRST user_stamps row for an award event whose earlier attempt died
+  // before reaching this line, so no event exists for it yet.
+  //
+  // Fire-and-forget: trust bookkeeping can never fail or delay the award. But
+  // non-fatal is not silent — the helper resolves `{ ok: false }` (never
+  // throws) when the ledger write failed, so the result is read and a failure
+  // is surfaced in the engine's structured log vocabulary. A skip
+  // (flag_off / dedup / not_verified / daily_cap) is the engine's decision,
+  // not a failure, and is not logged here.
+  void recordStampVerifiedTrustEvent(sc, {
+    userId,
+    userStampId:       newStampId,
+    tier,
+    stampSourceType:   sourceType,
+    stampDefinitionId: definition.id,
+    awardedByAdminId:  adminId ?? null,
+  }).then((r) => {
+    if (r.ok || r.skipped) return;
+    console.error(JSON.stringify({
+      event:           "stamp.award.trust_event_failed",
+      user_id:         userId,
+      stamp_id:        newStampId,
+      definition_slug: definitionSlug,
+      source_type:     sourceType,
+    }));
+  }).catch((e: any) => {
+    console.error(JSON.stringify({
+      event:    "stamp.award.trust_event_failed",
+      user_id:  userId,
+      stamp_id: newStampId,
+      error:    e?.message ?? String(e),
+    }));
+  });
 
   return {
     awarded: true,
@@ -824,18 +979,34 @@ export async function checkEligibility(
 
   const idemKey = buildIdempotencyKey(userId, definition.id, sourceType, sourceId);
 
-  const { data: existingEvent } = await sc
+  // ── The three "have you already got this?" reads ───────────────────────────
+  // All three are ALLOW-table reads whose EMPTY answer is the permissive one:
+  // no award event → not yet awarded; no user_stamp → not yet earned; count 0 →
+  // nowhere near the cap. supabase-js RESOLVES on a DB error, so a dropped
+  // `.error` made every one of them answer "eligible" when the table simply
+  // could not be read — the engine reporting that a user may collect a stamp
+  // they already hold, or a repeatable stamp whose per-user cap it could not
+  // count.
+  //
+  // `eligibility_unavailable` is a distinct reason on purpose. It is NOT
+  // "already_awarded" (that asserts a fact about the user that is not in
+  // evidence) and NOT "eligible" (the check did not happen). Callers that
+  // render an "Earn this" affordance from `eligible` now stay silent rather
+  // than promising an award the write path may refuse a second later.
+  const { data: existingEvent, error: eventErr } = await sc
     .from("stamp_award_events")
     .select("id, status")
     .eq("idempotency_key", idemKey)
     .maybeSingle();
+
+  if (eventErr) return { eligible: false, reason: "eligibility_unavailable", definition };
 
   if (existingEvent && (existingEvent as any).status === "awarded") {
     return { eligible: false, reason: "already_awarded", definition };
   }
 
   if (!definition.is_repeatable) {
-    const { data: existingStamp } = await sc
+    const { data: existingStamp, error: stampErr } = await sc
       .from("user_stamps")
       .select("id")
       .eq("user_id", userId)
@@ -843,17 +1014,19 @@ export async function checkEligibility(
       .eq("is_revoked", false)
       .maybeSingle();
 
+    if (stampErr) return { eligible: false, reason: "eligibility_unavailable", definition };
     if (existingStamp) return { eligible: false, reason: "already_earned", definition };
   }
 
   if (definition.is_repeatable && definition.max_awards_per_user != null) {
-    const { count } = await sc
+    const { count, error: countErr } = await sc
       .from("user_stamps")
       .select("id", { count: "exact", head: true })
       .eq("user_id", userId)
       .eq("stamp_definition_id", definition.id)
       .eq("is_revoked", false);
 
+    if (countErr) return { eligible: false, reason: "eligibility_unavailable", definition };
     if ((count ?? 0) >= definition.max_awards_per_user) {
       return { eligible: false, reason: "max_awards_reached", definition };
     }

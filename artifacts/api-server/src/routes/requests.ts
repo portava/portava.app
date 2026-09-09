@@ -19,8 +19,27 @@ import { getServiceClient } from "../lib/supabase";
 import { getAgeEligibilityReason } from "../lib/ageEligibility";
 import { resolveInteractionPermissions } from "../services/interactionPermissions.js";
 import { nameVisibilitySet, sanitizeIdentity } from "../lib/publicIdentity";
+import {
+  isTripKernelEnabled,
+  readCommandEnvelope,
+  executeTripCommand,
+  sendKernelRejection,
+  setTripVersionHeader,
+} from "../lib/tripKernel.js";
+import { randomUUID } from "node:crypto";
 
 const router = Router();
+
+/**
+ * Trip Kernel gate (Trips spec §4; lib/tripKernel.ts; migrations 2420/2450).
+ * `sc` is auth.client — the service-role client — which is what the kernel
+ * function requires. Returns it when `trip_kernel_enabled` is TRUE, else null;
+ * null means the pre-kernel direct write runs exactly as before. The flag read
+ * is fail-closed. Same shape as routes/trips.ts.
+ */
+async function tripKernel(sc: any): Promise<any | null> {
+  return (await isTripKernelEnabled(sc)) ? sc : null;
+}
 
 const PROFILE_PUBLIC = "id, handle, name, avatar_url";
 
@@ -376,9 +395,42 @@ router.post("/me/requests/circle_invite/:id/accept", async (req, res) => {
   if (inv.status !== "pending") { sendError(res, "invalid_payload", `Invite is already ${inv.status}`); return; }
   if (inv.recipient_id !== user.id) { sendError(res, "forbidden", "Only the recipient may accept this invite"); return; }
 
-  // Age eligibility check — look up the circle owner's age settings
+  // ── Age eligibility check — the circle owner's age settings ──────────────
+  //
+  // "This circle has no age limit" is the PERMISSIVE answer, and this route
+  // used to reach it by two paths that had not read anything:
+  //
+  //   `if (serviceClient)` with no else — a boot-order or configuration problem
+  //     meant no client, the whole gate was SKIPPED, and the invite was accepted
+  //     as though the owner had set no limit. Silently.
+  //   an unbound `.error` — supabase-js RESOLVES on a database error, so an
+  //     unreadable `circle_age_settings` bound `data: null`, fell through
+  //     `ageSettings?.age_limit_enabled` and accepted the invite the same way.
+  //
+  // A row that is genuinely ABSENT and a row that could not be READ are
+  // opposite facts here: the first means the owner set no limit, the second
+  // means we do not know whether they did. This is the same defect, and the
+  // same fix, as GET /circle-age-settings/:ownerId in routes/circleAgeSettings.ts
+  // (commit 04dcbde5) — which is the read this path is the write side of. Both
+  // now refuse with a retryable 503 rather than joining someone to another
+  // user's trusted circle on a guess.
+  //
+  // NOTE ON COVERAGE, so it is not implied where it does not exist: the
+  // `!serviceClient` branch is verified BY INSPECTION ONLY. `getServiceClient()`
+  // answers from the environment, so `_setTestServiceClient(null)` does not
+  // produce a null client — a test built that way gets a real client pointed at
+  // an unreachable host and passes off the read-error branch instead. See the
+  // same note in commit 04dcbde5.
   const serviceClient = getServiceClient();
-  if (serviceClient) {
+  if (!serviceClient) {
+    req.log.error(
+      { inviteId: id, ownerId: inv.owner_id },
+      "circle invite accept: no service client — refusing rather than skipping the age gate",
+    );
+    sendError(res, "degraded_unavailable", "Age settings are temporarily unavailable");
+    return;
+  }
+  {
     const [ageSettingsRes, profileRes] = await Promise.all([
       serviceClient
         .from("circle_age_settings")
@@ -392,6 +444,29 @@ router.post("/me/requests/circle_invite/:id/accept", async (req, res) => {
         .maybeSingle(),
     ]);
 
+    if (ageSettingsRes.error) {
+      req.log.error(
+        { err: ageSettingsRes.error, inviteId: id, ownerId: inv.owner_id },
+        "circle invite accept: circle_age_settings read failed — refusing rather than accepting as 'no age limit'",
+      );
+      sendError(res, "degraded_unavailable", "Age settings are temporarily unavailable");
+      return;
+    }
+    if (profileRes.error) {
+      // Direction was ALREADY fail-closed here (a null DOB makes
+      // getAgeEligibilityReason return eligible:false), but the 403 it produced
+      // told the acceptor "your profile needs a date of birth" — a statement
+      // about their profile, made from a read of it that failed. A retryable
+      // 503 refuses just as firmly and does not say something untrue.
+      req.log.error(
+        { err: profileRes.error, inviteId: id, userId: user.id },
+        "circle invite accept: profile read failed — refusing without claiming the acceptor has no date of birth",
+      );
+      sendError(res, "degraded_unavailable", "Age settings are temporarily unavailable");
+      return;
+    }
+
+    // A SUCCESSFUL read that found no row: the owner has set no age limit.
     const ageSettings = ageSettingsRes.data as any;
     if (ageSettings?.age_limit_enabled) {
       const dob = (profileRes.data as any)?.date_of_birth ?? null;
@@ -526,7 +601,30 @@ router.post("/me/requests/trip_invite/:tripId/accept", async (req, res) => {
   if (!tm) { sendError(res, "not_found", "Trip invite not found"); return; }
   if (tm.role !== "invited") { sendError(res, "invalid_payload", `Trip membership is already '${tm.role}'`); return; }
 
-  const { error: tmAcceptErr } = await sc.from("trip_members").update({ role: "member" }).eq("trip_id", tripId).eq("user_id", user.id);
+  // Trip Kernel path (ACCEPT_INVITE, contract v2). The invitee is the actor;
+  // the kernel requires exactly an 'invited' row for them. Off => the direct
+  // update below, exactly as before.
+  const kernelAccept = await tripKernel(sc);
+  let kernelAccepted = false;
+  if (kernelAccept) {
+    const env = readCommandEnvelope(req);
+    if (!env.ok) { sendError(res, "invalid_payload", env.message); return; }
+    const r = await executeTripCommand(kernelAccept, {
+      commandId: randomUUID(),
+      tripId,
+      actorUserId: user.id,
+      expectedTripVersion: env.expectedTripVersion,
+      idempotencyKey: env.idempotencyKey,
+      type: "ACCEPT_INVITE",
+      payload: {},
+    });
+    if (!r.ok) { sendKernelRejection(res, r, req.log); return; }
+    setTripVersionHeader(res, r.version);
+    kernelAccepted = true;
+  }
+
+  // trip-kernel:legacy-path — the flag-off twin of ACCEPT_INVITE above.
+  const { error: tmAcceptErr } = kernelAccepted ? { error: null } : await sc.from("trip_members").update({ role: "member" }).eq("trip_id", tripId).eq("user_id", user.id);
   if (tmAcceptErr) {
     req.log.error({ err: tmAcceptErr }, "trip invite accept update failed");
     sendError(res, "db_error", tmAcceptErr.message);
@@ -552,7 +650,29 @@ router.post("/me/requests/trip_invite/:tripId/decline", async (req, res) => {
   if (!tm) { sendError(res, "not_found", "Trip invite not found"); return; }
   if (tm.role !== "invited") { sendError(res, "invalid_payload", `Trip membership is already '${tm.role}'`); return; }
 
-  const { error: tiDeclineErr } = await sc.from("trip_members")
+  // Trip Kernel path (DECLINE_INVITE, contract v2). Deletes the row exactly as
+  // legacy does; the event is the durable record. Off => the direct delete below.
+  const kernelDecline = await tripKernel(sc);
+  let kernelDeclined = false;
+  if (kernelDecline) {
+    const env = readCommandEnvelope(req);
+    if (!env.ok) { sendError(res, "invalid_payload", env.message); return; }
+    const r = await executeTripCommand(kernelDecline, {
+      commandId: randomUUID(),
+      tripId,
+      actorUserId: user.id,
+      expectedTripVersion: env.expectedTripVersion,
+      idempotencyKey: env.idempotencyKey,
+      type: "DECLINE_INVITE",
+      payload: {},
+    });
+    if (!r.ok) { sendKernelRejection(res, r, req.log); return; }
+    setTripVersionHeader(res, r.version);
+    kernelDeclined = true;
+  }
+
+  // trip-kernel:legacy-path — the flag-off twin of DECLINE_INVITE above.
+  const { error: tiDeclineErr } = kernelDeclined ? { error: null } : await sc.from("trip_members")
     .delete().eq("trip_id", tripId).eq("user_id", user.id);
   if (tiDeclineErr) { sendError(res, "db_error", "Failed to decline trip invite", { exposeDetail: true }); return; }
 
@@ -603,7 +723,32 @@ router.post("/me/requests/trip_invite/:tripId/cancel", async (req, res) => {
   if (!inviteRow) { sendError(res, "not_found", "Invite not found"); return; }
   if (inviteRow.role !== "invited") { sendError(res, "invalid_payload", `Membership is already '${inviteRow.role}'`); return; }
 
-  await sc.from("trip_members").delete().eq("trip_id", tripId).eq("user_id", inviteeId);
+  // Trip Kernel path (REMOVE_PARTICIPANT, contract v2). The owner check above
+  // is the authorization; the kernel re-checks owner and refuses the owner's
+  // own row. The event records role_at_removal = 'invited', which is how a
+  // consumer tells "invite cancelled" from "member removed". Off => the direct
+  // delete below, exactly as before (its error was never read; the kernel's is).
+  const kernelCancel = await tripKernel(sc);
+  let kernelCancelled = false;
+  if (kernelCancel) {
+    const env = readCommandEnvelope(req);
+    if (!env.ok) { sendError(res, "invalid_payload", env.message); return; }
+    const r = await executeTripCommand(kernelCancel, {
+      commandId: randomUUID(),
+      tripId,
+      actorUserId: user.id,
+      expectedTripVersion: env.expectedTripVersion,
+      idempotencyKey: env.idempotencyKey,
+      type: "REMOVE_PARTICIPANT",
+      payload: { user_id: inviteeId },
+    });
+    if (!r.ok) { sendKernelRejection(res, r, req.log); return; }
+    setTripVersionHeader(res, r.version);
+    kernelCancelled = true;
+  }
+
+  // trip-kernel:legacy-path — the flag-off twin of REMOVE_PARTICIPANT above.
+  if (!kernelCancelled) await sc.from("trip_members").delete().eq("trip_id", tripId).eq("user_id", inviteeId);
   res.status(200).json({ status: "cancelled", tripId, inviteeId });
 });
 

@@ -227,7 +227,8 @@ const UNRESOLVED_ALLOWLIST = new Map<string, number>([
   ["src/routes/mediaFeed.ts|insert|payload not statically resolvable", 1],
   ["src/routes/meetups.ts|insert|payload not statically resolvable", 2],
   ["src/routes/memories.ts|insert|payload not statically resolvable", 2],
-  ["src/routes/rentABuddy.ts|insert|payload not statically resolvable", 1],
+  // Bumped 1 -> 2 on 2026-09-09: a second runtime-built insert payload.
+  ["src/routes/rentABuddy.ts|insert|payload not statically resolvable", 2],
   ["src/routes/rentABuddyMarketplace.ts|insert|payload not statically resolvable", 1],
   ["src/routes/rentABuddyMarketplace.ts|upsert|payload not statically resolvable", 1],
   ["src/routes/rentABuddySpec.ts|upsert|payload not statically resolvable", 2],
@@ -328,6 +329,52 @@ const UNRESOLVED_ALLOWLIST = new Map<string, number>([
   ["src/services/hiddenGems/HiddenGemService.ts|select|select list not statically resolvable", 5],
   // ReliabilityCounters: one select list built at runtime from a scoring formula.
   ["src/services/rentBuddy/ReliabilityCounters.ts|select|select list not statically resolvable", 1],
+
+  // ── Sites this branch's other lanes added, ledgered 2026-09-09 ────────────
+  //
+  // These twenty sites appeared in one CI run because `main` had not moved for
+  // three days while trust, memories, messaging, rent-a-buddy, highlights,
+  // layover and account-deletion work accumulated. They are new BLIND SPOTS,
+  // not new defects: each is a site the extractor cannot resolve, so the
+  // column check simply does not cover it. Ledgered rather than rewritten,
+  // with the reason per group, because rewriting live code in six lanes this
+  // change does not otherwise touch buys a guard improvement at the cost of
+  // behaviour risk in code nobody here is testing.
+  //
+  // Three MORE sites were in this batch and are deliberately NOT here:
+  // routes/tripStructure.ts, routes/tripDecisions.ts and
+  // routes/tripMapProjection.ts each passed a table NAME to a shared read
+  // helper, which made every column on the three §5 read routes invisible to
+  // this check — on the newest tables in the schema, where a missing column is
+  // hardest to notice. Those three were rewritten to build the query at the
+  // call site instead, so they resolve and are checked.
+  //
+  // Registry- and dispatch-driven table names. Genuinely dynamic: the table is
+  // the loop variable of a registry of projections/derivatives, so there is no
+  // literal to write.
+  ["src/services/memoryProjections/derivativeRegistry.ts|select|dynamic table name", 4],
+  ["src/services/memoryProjections/derivativeRegistry.ts|update|dynamic table name", 1],
+  ["src/services/memoryProjections/derivativeRegistry.ts|upsert|dynamic table name", 1],
+  ["src/services/memoryProjections/derivativeRegistryRead.ts|select|dynamic table name", 1],
+  ["src/services/highlights/highlightProjectionPolicy.ts|select|dynamic table name", 1],
+  ["src/services/highlights/highlightResurfacing.ts|select|dynamic table name", 1],
+  ["src/services/highlights/highlightSchemaAvailability.ts|select|dynamic table name", 1],
+  // DeletionDryRun walks the deletion graph, whose whole point is that the
+  // table list is data, not code.
+  ["src/services/accountDeletion/DeletionDryRun.ts|select|dynamic table name", 1],
+  // rentABuddy: one more dispatch site beside the four already ledgered above.
+  ["src/routes/rentABuddy.ts|select|dynamic table name", 1],
+  //
+  // Select lists composed at runtime.
+  ["src/routes/memories.ts|select|select list not statically resolvable", 6],
+  ["src/routes/messaging.ts|select|select list not statically resolvable", 4],
+  ["src/routes/adminFeatured.ts|select|select list not statically resolvable", 1],
+  //
+  // Payloads built at runtime.
+  ["src/routes/admin.ts|insert|payload not statically resolvable", 1],
+  ["src/services/airport/LayoverRecommendationService.ts|upsert|payload not statically resolvable", 1],
+  ["src/routes/adminFeatured.ts|update|payload partially resolvable", 1],
+  ["src/routes/events.ts|update|payload partially resolvable", 2],
 ]);
 
 // ── Read-path baseline ────────────────────────────────────────────────────────

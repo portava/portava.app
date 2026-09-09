@@ -106,7 +106,7 @@ jest.mock('../../../src/hooks/useBackend', () => ({
 // NOTE: intentional stub — not under test here.
 jest.mock('../../../src/services/tripIntel', () => ({
   ...jest.requireActual('../../../src/services/tripIntel'),
-  fetchTripReadiness: jest.fn().mockResolvedValue(null),
+  fetchTripReadiness: jest.fn().mockResolvedValue({ state: 'off' }),
 }));
 // NOTE: intentional stub — not under test here.
 jest.mock('../../../src/services/safeReturn', () => ({

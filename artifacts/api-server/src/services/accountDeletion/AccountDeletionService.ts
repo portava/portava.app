@@ -841,22 +841,56 @@ export async function executeAccountDeletion(
   const tombstonedCounts: Record<string, number> = {};
   const deletedCounts: Record<string, number> = {};
 
+  //
+  // THIS FUNCTION DECIDES BETWEEN TOMBSTONE AND HARD DELETE, so its two reads
+  // are preconditions for an IRREVERSIBLE action and their `.error` is
+  // load-bearing. supabase-js RESOLVES on a DB error: `const { data } = await …`
+  // returned the same empty array for "nobody else commented / nobody reported
+  // this post" and for "posts_comments (or moderation_reports) could not be
+  // read", and the empty array routes the post to the else-branch — a hard
+  // DELETE that cascades away other people's comments, and takes a REPORTED
+  // post together with the evidence a moderator was going to look at. There is
+  // no undo and no second chance: the false "no third-party interest" is only
+  // ever discovered by the person whose comment vanished.
+  //
+  // It THROWS rather than answering. The caller already wraps each post in
+  // try/catch, collects the message into `postFailures`, keeps going with the
+  // other posts, and finally throws once so the step — and therefore the
+  // deletion request — is recorded as failed instead of reported complete. That
+  // is the honest outcome: the post is left exactly as it was, nothing is
+  // destroyed on an unread precondition, and the operator sees why.
+  //
+  // Note the asymmetry that makes throwing the only safe direction: guessing
+  // "true" here (tombstone everything) would over-retain but is recoverable;
+  // guessing "false" is not; and a deletion the user asked for that quietly
+  // failed is visible in the receipt, whereas a comment thread destroyed by a
+  // read blip is not visible anywhere.
   async function hasThirdPartyInterest(postId: string): Promise<boolean> {
-    const { data: otherComments } = await sc
+    const { data: otherComments, error: commentsErr } = await sc
       .from("posts_comments")
       .select("id")
       .eq("post_id", postId)
       .not("user_id", "is", null)
       .neq("user_id", userId)
       .limit(1);
+    if (commentsErr) {
+      throw new Error(
+        `third-party interest for post ${postId} is unknown: posts_comments unreadable (${commentsErr.message}) — refusing to hard-delete`,
+      );
+    }
     if (((otherComments as any[]) ?? []).length > 0) return true;
 
-    const { data: reports } = await sc
+    const { data: reports, error: reportsErr } = await sc
       .from("moderation_reports")
       .select("id")
       .eq("subject_type", "post")
       .eq("subject_id", postId)
       .limit(1);
+    if (reportsErr) {
+      throw new Error(
+        `third-party interest for post ${postId} is unknown: moderation_reports unreadable (${reportsErr.message}) — refusing to hard-delete`,
+      );
+    }
     return ((reports as any[]) ?? []).length > 0;
   }
 

@@ -30,6 +30,44 @@ export interface LayoverSessionInput {
   canonicalCityId?: string | null;
 }
 
+/**
+ * The statuses that mean "this layover is still happening".
+ *
+ * `'returning'` (migration 2741, spec §15.1) is a LIVE state, not a terminal
+ * one: the traveller pressed RETURN TO AIRPORT and is on their way back, which
+ * is the moment they need the countdown MOST. Every reader that treats
+ * `'active'` as live must treat this set as live, or an aborting traveller
+ * disappears from the surface that is telling them when to be at the gate.
+ *
+ * Migration 2741's header names twelve such readers. It is NINE, and the
+ * discrepancy is worth keeping written down because acting on the list
+ * unchecked would have been an error: three of the twelve filter `status` on a
+ * DIFFERENT TABLE — `discovery_places` (LayoverRecommendationService),
+ * `rent_buddy_profiles` and `posts` (both routes/airport.ts). Widening those
+ * would have admitted archived places, inactive buddy profiles and unpublished
+ * posts into a layover surface. A `status` column is not a session status just
+ * because a layover file reads it.
+ */
+export const LAYOVER_LIVE_SESSION_STATUSES = ["active", "returning"] as const;
+
+/**
+ * Whether the code half of the one-tap abort capability is in place — that is,
+ * whether the live-set readers above actually honour `'returning'`.
+ *
+ * This exists so the abort route can require FLAG_ENABLED **and**
+ * CAPABILITY_READY rather than the flag alone. A feature flag says what an
+ * operator wants; it cannot say whether the code can survive the state it
+ * enables. Turning `layover_safe_return_status_enabled` on while the readers
+ * still filtered `'active'` would mark a session returning and then hide it
+ * from `GET /sessions/active`, `setReturnReminder` and `endSession` — the
+ * failure 2741's header describes.
+ *
+ * It is a constant rather than a probe because what it asserts is a property of
+ * THIS BUILD, not of the database: the deployed code either honours the state
+ * or it does not, and a running server cannot discover that about itself.
+ */
+export const LAYOVER_RETURNING_READERS_WIDENED = true;
+
 export interface LayoverSession {
   id: string;
   userId: string;
@@ -53,7 +91,7 @@ export interface LayoverSession {
   canonicalCityId: string | null;
   shareCityStatus: boolean;
   returnReminderAt: string | null;
-  status: "active" | "completed" | "cancelled" | "expired";
+  status: "active" | "returning" | "completed" | "cancelled" | "expired";
   createdAt: string;
   updatedAt: string;
 }
@@ -205,7 +243,7 @@ export async function endSession(
       .update({ status: reason, updated_at: new Date().toISOString() })
       .eq("id", sessionId)
       .eq("user_id", userId)
-      .in("status", ["active"])
+      .in("status", [...LAYOVER_LIVE_SESSION_STATUSES])
       .select("*")
       .maybeSingle();
 
@@ -219,63 +257,91 @@ export async function endSession(
   }
 }
 
+/**
+ * "There is no such session" and "the session table could not be read" are
+ * DIFFERENT ANSWERS and this type is what keeps them apart.
+ *
+ * supabase-js RESOLVES on a database error, so the old `const { data } = await`
+ * with an unbound `error` made a failed read indistinguishable from an empty
+ * one. Every session route in routes/airport.ts turns a null session into 404
+ * "Session not found" — so an unreadable `layover_sessions` told the traveller
+ * their layover did not exist, on `/safety` and `/return-deadline` too: the two
+ * surfaces whose entire job is saying when to head back for a flight. A 404 is
+ * a claim about the world; the server was not in a position to make it.
+ *
+ * `ok: false` is the caller's cue to answer 503 `degraded_unavailable`
+ * (retryable) instead — the same code circle.ts and SafeReturn use for "the
+ * check could not be performed", not "it was performed and you failed it".
+ */
+export type SessionRead =
+  | { ok: true; session: LayoverSession | null }
+  | { ok: false; message: string };
+
+export type SessionListRead =
+  | { ok: true; sessions: LayoverSession[] }
+  | { ok: false; message: string };
+
 export async function getSession(
   db: SupabaseClient,
   sessionId: string,
   userId: string,
-): Promise<LayoverSession | null> {
-  try {
-    const { data } = await db
-      .from("layover_sessions")
-      .select("*")
-      .eq("id", sessionId)
-      .eq("user_id", userId)
-      .maybeSingle();
-    return data ? rowToSession(data) : null;
-  } catch {
-    return null;
+): Promise<SessionRead> {
+  // No try/catch: supabase-js resolves on a database error AND on a network
+  // error (postgrest-js catches fetch failures itself), so a catch here would
+  // be dead code that only ever fired on a wiring bug. Measured against
+  // supabase-js 2.108.2.
+  const { data, error } = await db
+    .from("layover_sessions")
+    .select("*")
+    .eq("id", sessionId)
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (error) {
+    logger.warn({ err: error, sessionId }, "layover session read failed — refusing rather than reporting 'not found'");
+    return { ok: false, message: String(error.message ?? "layover_sessions unreadable") };
   }
+  return { ok: true, session: data ? rowToSession(data) : null };
 }
 
 export async function getActiveSession(
   db: SupabaseClient,
   userId: string,
-): Promise<LayoverSession | null> {
-  try {
-    const { data } = await db
-      .from("layover_sessions")
-      .select("*")
-      .eq("user_id", userId)
-      .eq("status", "active")
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    return data ? rowToSession(data) : null;
-  } catch {
-    return null;
+): Promise<SessionRead> {
+  const { data, error } = await db
+    .from("layover_sessions")
+    .select("*")
+    .eq("user_id", userId)
+    .in("status", [...LAYOVER_LIVE_SESSION_STATUSES])
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) {
+    logger.warn({ err: error, userId }, "active layover session read failed — refusing rather than reporting 'no active layover'");
+    return { ok: false, message: String(error.message ?? "layover_sessions unreadable") };
   }
+  return { ok: true, session: data ? rowToSession(data) : null };
 }
 
 /** List a user's sessions, newest first. Optional status filter. */
 export async function listSessions(
   db: SupabaseClient,
   userId: string,
-  status?: "active" | "completed" | "cancelled" | "expired",
+  status?: "active" | "returning" | "completed" | "cancelled" | "expired",
   limit = 20,
-): Promise<LayoverSession[]> {
-  try {
-    let query = db
-      .from("layover_sessions")
-      .select("*")
-      .eq("user_id", userId)
-      .order("created_at", { ascending: false })
-      .limit(limit);
-    if (status) query = query.eq("status", status);
-    const { data } = await query;
-    return (data ?? []).map(rowToSession);
-  } catch {
-    return [];
+): Promise<SessionListRead> {
+  let query = db
+    .from("layover_sessions")
+    .select("*")
+    .eq("user_id", userId)
+    .order("created_at", { ascending: false })
+    .limit(limit);
+  if (status) query = query.eq("status", status);
+  const { data, error } = await query;
+  if (error) {
+    logger.warn({ err: error, userId, status }, "layover session list read failed — refusing rather than reporting 'no layovers'");
+    return { ok: false, message: String(error.message ?? "layover_sessions unreadable") };
   }
+  return { ok: true, sessions: (data ?? []).map(rowToSession) };
 }
 
 /** Toggle opt-in city-level layover visibility for a session. */
@@ -316,7 +382,7 @@ export async function setReturnReminder(
       .update({ return_reminder_at: remindAtIso, updated_at: new Date().toISOString() })
       .eq("id", sessionId)
       .eq("user_id", userId)
-      .eq("status", "active");
+      .in("status", [...LAYOVER_LIVE_SESSION_STATUSES]);
     return !error;
   } catch {
     return false;
@@ -328,13 +394,20 @@ export async function expireOldSessions(
   db: SupabaseClient,
 ): Promise<number> {
   try {
-    const { data } = await db
+    const { data, error } = await db
       .from("layover_sessions")
       .update({ status: "expired", updated_at: new Date().toISOString() })
-      .eq("status", "active")
+      .in("status", [...LAYOVER_LIVE_SESSION_STATUSES])
       .lt("departure_time", new Date().toISOString())
       .select("id, user_id");
 
+    // Bound so a failed expiry sweep is not reported as "nothing was expired".
+    // The callers treat this as best-effort housekeeping and continue either
+    // way; what they must not do is log a clean 0.
+    if (error) {
+      logger.warn({ err: error }, "layover session expiry sweep failed — 0 expired is not a measurement here");
+      return 0;
+    }
     const rows = (data ?? []) as any[];
     for (const row of rows) {
       await emitEvent(db, row.id, row.user_id, "session_expired");

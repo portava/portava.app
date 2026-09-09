@@ -559,8 +559,18 @@ async function processPlace(sc: any, placeId: string, claimedQueuedAt: string): 
         }));
       }
     }
-  } catch {
-    // assembleLivingPage not yet available or failed — skip gracefully.
+  } catch (err) {
+    // assembleLivingPage not yet available, or the dynamic import failed. Note
+    // this catch does NOT cover a refused cache write — supabase-js resolves on
+    // a database error, so that arrives as `cacheErr` above and is handled
+    // there. Skipping stays graceful (the worker must survive one bad place),
+    // but a place whose living page can never be assembled is now visible
+    // instead of being indistinguishable from a place that simply has no page.
+    console.warn(JSON.stringify({
+      event:    "place_collections.living_page_assemble_error",
+      place_id: placeId,
+      error:    err instanceof Error ? err.message : String(err),
+    }));
   }
 
   // D. Mark queue row 'done' — conditional on two guards:

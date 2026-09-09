@@ -118,12 +118,29 @@ describe("GET /api/map/search", () => {
     assert.equal(r.body.total, 0);
   });
 
-  it("block-list read error → fail closed (empty results, still enabled)", async () => {
+  /**
+   * UPDATED — this case used to assert `enabled: true` with empty results, and
+   * called that "fail closed". It is not: `enabled: true` is an AUTHORITATIVE
+   * answer. The client (useMapEntities.ts) reads it as "the server owns every
+   * layer" and stops asking, so an empty `true` does not withhold the map, it
+   * BLANKS it — the outage shape that routes/mapProjection.ts documents at
+   * length above `loadProtectedZones` and closed there for the §24 policy.
+   * `blocks` failing is the more ordinary of the two events.
+   *
+   * The assertion is STRICTER than the one it replaces, not weaker: the old
+   * one would have passed against a route that served an empty payload for any
+   * reason at all, while this one pins the exact refusal by name.
+   * src/test/mapBlockSetUnreadable.test.ts holds the paired proof that a
+   * READABLE block set still serves, so this cannot become an off switch.
+   */
+  it("block-list read error → enabled:false with a named refusal, never a blank enabled:true", async () => {
     setClients(makeClient({ flags: { map_search_enabled: true }, blocksError: true }));
     const r = await req("GET", "/api/map/search?lat=10.3&lng=123.9");
     assert.equal(r.status, 200);
-    assert.equal(r.body.enabled, true);
+    assert.equal(r.body.enabled, false);
+    assert.equal(r.body.refusal, "block_set_unreadable");
     assert.deepEqual(r.body.results, []);
+    assert.equal(r.body.total, 0);
   });
 
   it("401 without a token", async () => {

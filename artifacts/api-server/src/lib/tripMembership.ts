@@ -4,10 +4,22 @@
  *
  * A Portava "Trip Crew" is a trip plus its accepted members: the trip's owner
  * (trips.owner_id) and the trip_members rows whose role is 'owner' or 'member'
- * ('invited' is a pending invite, not a member). This mirrors the access rule
- * getMemberRole already enforces in routes/tripCrewLocation.ts; it is a role
- * check, deliberately independent of the trips.status lifecycle (which is not a
+ * ('invited' is a pending invite, not a member) AND whose status says they are
+ * still on the trip. This mirrors the access rule getMemberRole already
+ * enforces in routes/tripCrewLocation.ts; it is a role+status check,
+ * deliberately independent of the trips.status lifecycle (which is not a
  * reliable "is this trip active right now" signal today).
+ *
+ * STATUS IS HALF OF MEMBERSHIP, AND THIS FILE USED TO READ ONLY THE OTHER HALF.
+ * trip_members.status is `text NOT NULL DEFAULT 'accepted' CHECK (status IN
+ * ('invited','accepted','declined','removed','left'))` (migration 0078), and
+ * the ROLE column does not change when someone leaves or is removed — the
+ * kernel's REMOVE_PARTICIPANT records the role AT removal (migration 2450). So
+ * `role IN ('owner','member')` alone cannot tell a member from an ex-member: a
+ * row of {role:'member', status:'removed'} answered TRUE to every question
+ * below, and a person removed from a trip went on minting that trip's crew
+ * token — the merge this signal exists to control. The rule of record is
+ * lib/http.ts requireTripMember's: coalesce(status,'accepted') = 'accepted'.
  *
  * WHY MEMBERSHIP IS NOT ENOUGH — the shared-crew check is load-bearing. A client
  * asserts "I am capturing as part of trip T" (its partyId). If T were a SOLO trip
@@ -19,6 +31,16 @@
  * group. Fail-closed: any error or missing client returns false / 0.
  */
 
+/**
+ * True when a trip_members row's status means the person is still ON the trip.
+ * `null`/absent counts as accepted, for rows written before migration 0078 added
+ * the column — the same back-compat requireTripMember applies.
+ */
+function isAcceptedStatus(row: any): boolean {
+  const status = (row as any)?.status;
+  return status == null || String(status) === "accepted";
+}
+
 /** True iff `userId` is the owner or an accepted member of `tripId`. */
 export async function isAcceptedTripMember(sc: any, tripId: string, userId: string): Promise<boolean> {
   if (!sc || !tripId || !userId) return false;
@@ -28,12 +50,16 @@ export async function isAcceptedTripMember(sc: any, tripId: string, userId: stri
 
     const { data: member } = await sc
       .from("trip_members")
-      .select("role")
+      .select("role, status")
       .eq("trip_id", tripId)
       .eq("user_id", userId)
       .in("role", ["owner", "member"])
       .maybeSingle();
-    return Boolean(member);
+    // Status compared in JS, not filtered in PostgREST: coalesce-on-a-nullable
+    // column is awkward to express as a filter and easy to get subtly wrong,
+    // and this read returns at most one row. A DB error leaves `member` null
+    // and returns false, which is this file's documented fail-closed answer.
+    return Boolean(member) && isAcceptedStatus(member);
   } catch {
     return false;
   }
@@ -45,10 +71,13 @@ export async function acceptedCrewSize(sc: any, tripId: string): Promise<number>
   try {
     const { data: trip } = await sc.from("trips").select("owner_id").eq("id", tripId).maybeSingle();
     const { data: members } = await sc
-      .from("trip_members").select("user_id").eq("trip_id", tripId).in("role", ["owner", "member"]);
+      .from("trip_members").select("user_id, status").eq("trip_id", tripId).in("role", ["owner", "member"]);
     const set = new Set<string>();
     if ((trip as any)?.owner_id) set.add((trip as any).owner_id);
-    for (const m of ((members as any[]) ?? [])) if (m.user_id) set.add(m.user_id);
+    // Without the status gate a trip whose second member had been REMOVED still
+    // counted 2 and read as a SHARED crew, so the token kept being honored for
+    // a crew that no longer exists.
+    for (const m of ((members as any[]) ?? [])) if (m.user_id && isAcceptedStatus(m)) set.add(m.user_id);
     return set.size;
   } catch {
     return 0;

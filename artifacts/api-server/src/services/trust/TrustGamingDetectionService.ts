@@ -121,8 +121,9 @@ export const CHECKIN_CLUSTER_EVENT_TYPES = ["checked_in_successfully", "late_che
 async function detectCheckinClusters(
   db: SupabaseClient,
   settings: GamingSettings,
-): Promise<number> {
+): Promise<DetectorResult> {
   let flagged = 0;
+  let inputRows = 0;
   try {
     const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
     const { data, error } = await db
@@ -133,10 +134,11 @@ async function detectCheckinClusters(
 
     if (error) {
       logger.warn({ err: error }, "detectCheckinClusters query failed");
-      return 0;
+      return { flagged: 0, inputRows: null };
     }
-    if (!data) return 0;
+    if (!data) return { flagged: 0, inputRows: 0 };
     const rows = data as any[];
+    inputRows = rows.length;
 
     // Group by user+geofence
     const counts = new Map<string, number>();
@@ -159,7 +161,7 @@ async function detectCheckinClusters(
   } catch {
     // non-fatal
   }
-  return flagged;
+  return { flagged, inputRows };
 }
 
 /**
@@ -189,8 +191,9 @@ async function detectCheckinClusters(
 async function detectMutualRings(
   db: SupabaseClient,
   settings: GamingSettings,
-): Promise<number> {
+): Promise<DetectorResult> {
   let flagged = 0;
+  let inputRows = 0;
   try {
     const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
     const { data, error } = await db
@@ -201,10 +204,11 @@ async function detectMutualRings(
 
     if (error) {
       logger.warn({ err: error }, "detectMutualRings query failed");
-      return 0;
+      return { flagged: 0, inputRows: null };
     }
-    if (!data) return 0;
+    if (!data) return { flagged: 0, inputRows: 0 };
     const rows = data as any[];
+    inputRows = rows.length;
 
     // Count total positive events per user
     const totalPerUser = new Map<string, number>();
@@ -246,7 +250,7 @@ async function detectMutualRings(
   } catch {
     // non-fatal
   }
-  return flagged;
+  return { flagged, inputRows };
 }
 
 /**
@@ -257,8 +261,9 @@ async function detectMutualRings(
 async function detectRapidJumps(
   db: SupabaseClient,
   settings: GamingSettings,
-): Promise<number> {
+): Promise<DetectorResult> {
   let flagged = 0;
+  let inputRows = 0;
   try {
     const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
     const { data, error } = await db
@@ -269,10 +274,11 @@ async function detectRapidJumps(
 
     if (error) {
       logger.warn({ err: error }, "detectRapidJumps query failed");
-      return 0;
+      return { flagged: 0, inputRows: null };
     }
-    if (!data) return 0;
+    if (!data) return { flagged: 0, inputRows: 0 };
     const rows = data as any[];
+    inputRows = rows.length;
 
     const deltaPerUser = new Map<string, number>();
     for (const row of rows) {
@@ -292,7 +298,31 @@ async function detectRapidJumps(
   } catch {
     // non-fatal
   }
-  return flagged;
+  return { flagged, inputRows };
+}
+
+/**
+ * What one detector examined. `inputRows` is the number of rows its query
+ * returned — `null` when the query FAILED (examined nothing because it could
+ * not, as opposed to examined nothing because there was nothing).
+ */
+interface DetectorResult {
+  flagged: number;
+  inputRows: number | null;
+}
+
+/**
+ * Row counts each detector examined this scan. Measured in production on
+ * 2026-09-07: the flag has been ON since 2026-07-17 and every pass ran all
+ * three detectors over ZERO check-ins, ZERO counterparty-bearing positive
+ * events and five events total — "0 flagged" was the only answer they could
+ * give. Without these numbers a starved scan and a clean population are the
+ * same log line. `null` = the query failed.
+ */
+export interface GamingScanInputs {
+  checkins: number | null;
+  positiveEvents: number | null;
+  scoredEvents: number | null;
 }
 
 /** Run all gaming detection scans */
@@ -300,6 +330,9 @@ export async function runGamingDetectionScan(db: SupabaseClient): Promise<{
   ok: boolean;
   flaggedUsers: number;
   skipped?: boolean;
+  inputs?: GamingScanInputs;
+  /** True when every detector that ran examined zero rows: the scan was vacuous. */
+  vacuous?: boolean;
 }> {
   if (!await isGamingDetectionEnabled(db)) {
     return { ok: true, flaggedUsers: 0, skipped: true };
@@ -312,5 +345,17 @@ export async function runGamingDetectionScan(db: SupabaseClient): Promise<{
     detectRapidJumps(db, settings),
   ]);
 
-  return { ok: true, flaggedUsers: clusters + rings + jumps };
+  const inputs: GamingScanInputs = {
+    checkins:       clusters.inputRows,
+    positiveEvents: rings.inputRows,
+    scoredEvents:   jumps.inputRows,
+  };
+  const vacuous = [clusters, rings, jumps].every((d) => d.inputRows === 0 || d.inputRows === null);
+
+  return {
+    ok: true,
+    flaggedUsers: clusters.flagged + rings.flagged + jumps.flagged,
+    inputs,
+    vacuous,
+  };
 }

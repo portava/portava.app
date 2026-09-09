@@ -19,6 +19,7 @@
  * blocker surfaces as validation, never a stack trace.
  */
 import { isFlagEnabled } from "../../lib/featureFlags.js";
+import { affectedRows } from "../../lib/affectedRows.js";
 import {
   CLAIM_TYPES,
   COMMERCIAL_DISCLOSURES,
@@ -36,6 +37,7 @@ import {
   type PartySizeBucket,
 } from "../../lib/intelContracts.js";
 import { PHASE1_CAPTURE_CLAIM_TYPES, validateClaimValue } from "../../lib/quickSignal.js";
+import { projectClaimValue } from "../../lib/intelValueProjection.js";
 import { PHASE1_TRAIL_CAPTURE_CLAIM_TYPES, validateTrailClaimValue, mustAggregate } from "../../lib/trailFollowup.js";
 import { deriveGroupKey, type GroupIdentity } from "../../lib/intelGroupKey.js";
 import { isSharedCrewMember } from "../../lib/tripMembership.js";
@@ -339,6 +341,21 @@ export async function writeObservation(sc: any, actorId: string, input: CaptureI
     return { ok: false, reason: "invalid_claim_type", detail: `${input.claimType} is not a contracted claim on the ${surface} capture surface` };
   if (!validateForSurface(surface, input.claimType, input.value)) return { ok: false, reason: "invalid_value", detail: input.claimType };
 
+  // ── KEY PROJECTION (lib/intelValueProjection) ──────────────────────────────
+  // The validators above check the keys they NAME; none of them rejects an extra
+  // one. `value` is a client-supplied `z.record(z.string(), z.unknown())`, and it
+  // does not stay here — 2174's promote copies `o.value` verbatim into
+  // intel_claims.value, the aggregator carries it to intel_state_snapshots.value,
+  // and lib/intelApiProjection emits that as a REDISTRIBUTABLE field. So an
+  // unnamed key (free text, a coordinate) rode a validated claim all the way to a
+  // column lib/dataRights classifies personal:false. Project to the named keys —
+  // then re-validate, so a projection that dropped something required refuses the
+  // write rather than storing a shape nothing downstream can read.
+  const projectedValue = projectClaimValue(input.claimType, input.value);
+  if (!projectedValue || !validateForSurface(surface, input.claimType, projectedValue)) {
+    return { ok: false, reason: "invalid_value", detail: input.claimType };
+  }
+
   const visibility: Visibility = input.visibility && VISIBILITIES.includes(input.visibility) ? input.visibility : "private";
   // Fail-closed subject resolution — never let the places FK throw a 500.
   const { data: subj, error: subjErr } = await sc.from("places").select("id").eq("id", input.subjectId).maybeSingle();
@@ -408,7 +425,8 @@ export async function writeObservation(sc: any, actorId: string, input: CaptureI
     subject_id: input.subjectId,
     zone_id: input.zoneId ?? null,
     claim_type: input.claimType,
-    value: input.value,
+    // The PROJECTED value — never the raw client object. See the projection above.
+    value: projectedValue,
     source_class: disclosureSourceClass(commercialDisclosure),
     capture_surface: surface,
     visibility,
@@ -428,9 +446,19 @@ export async function writeObservation(sc: any, actorId: string, input: CaptureI
   if (error) {
     // Unique (actor_id, idempotency_key) -> idempotent replay: return the stored row.
     if (String((error as any).code) === "23505") {
-      const { data: existing } = await sc
+      const { data: existing, error: replayErr } = await sc
         .from("intel_observations").select("*")
         .eq("actor_id", actorId).eq("idempotency_key", input.idempotencyKey).maybeSingle();
+      // The direction here is already safe — a replay we cannot confirm falls
+      // through to the db_error below and the client retries, rather than being
+      // told a write happened that we cannot show. What was NOT safe is the
+      // silence: the reported detail was the 23505, which reads as "your
+      // idempotency key collided" when the truth is "the replay lookup failed",
+      // and no operator would ever see the second fact.
+      if (replayErr) {
+        logger.warn({ err: replayErr, actorId }, "intel observation replay lookup failed after 23505");
+        return { ok: false, reason: "db_error", detail: `replay lookup failed: ${String(replayErr.message ?? "")}` };
+      }
       if (existing) return { ok: true, observation: existing, deduped: true };
     }
     return { ok: false, reason: "db_error", detail: String((error as any).message ?? "") };
@@ -529,9 +557,18 @@ export async function proposeClaim(sc: any, observation: any): Promise<ProposeRe
     // stored candidate. Any other 23505 (e.g. 2174's one-live-per-key index)
     // finds no row here and is reported as the error it is.
     if (String((error as any).code) === "23505" && observationId) {
-      const { data: existing } = await sc
+      const { data: existing, error: replayErr } = await sc
         .from("intel_claims").select("*")
         .eq("observation_id", observationId).eq("claim_type", observation.claim_type).maybeSingle();
+      // Same shape as writeObservation's replay lookup: safe direction, but an
+      // unreadable intel_claims used to be reported as the constraint violation
+      // itself. The comment above distinguishes an idempotent replay from
+      // 2174's one-live-per-key index by whether a row is found — a read that
+      // FAILED finds no row either, so it silently masqueraded as the latter.
+      if (replayErr) {
+        logger.warn({ err: replayErr, observationId }, "intel claim replay lookup failed after 23505");
+        return { ok: false, reason: `replay lookup failed: ${String(replayErr.message ?? "db_error")}` };
+      }
       if (existing) return { ok: true, claim: existing, deduped: true };
     }
     return { ok: false, reason: String((error as any).message ?? "db_error") };
@@ -547,12 +584,28 @@ export async function proposeClaim(sc: any, observation: any): Promise<ProposeRe
  */
 export async function approveClaim(sc: any, claimId: string): Promise<{ ok: boolean; reason?: string }> {
   if (!(await captureSystemEnabled(sc))) return { ok: false, reason: "disabled" };
-  const { error } = await sc
+  // `.eq("status","candidate")` is a compare-and-swap and nothing above it reads
+  // the claim, so this statement matches zero rows whenever the id names no
+  // claim, or names one that is no longer a candidate (already active, or
+  // rejected). Zero matched rows is NOT an error — PostgREST answers 204 and
+  // supabase-js resolves `{ data: null, error: null }`, the same shape the
+  // winning caller sees — so reading only `error` reported `{ok:true}` and the
+  // route answered `{ok:true}` for a promotion that never happened. Approval is
+  // the trust gate of this lifecycle (candidate → active → publishable): an
+  // admin being told a claim is live when it is still a candidate is the one
+  // thing this step must not do. `.select()` makes it RETURNING; the refusal
+  // uses the function's own {ok:false, reason} contract, which routes/intel.ts
+  // already maps to its db_error response.
+  const { data, error } = await sc
     .from("intel_claims")
     .update({ status: "active", promotion_source: "admin" })
     .eq("id", claimId)
-    .eq("status", "candidate");
+    .eq("status", "candidate")
+    .select("id");
   if (error) return { ok: false, reason: String((error as any).message ?? "db_error") };
+  if (affectedRows(data) === 0) {
+    return { ok: false, reason: "claim not found, or no longer a candidate — nothing was promoted" };
+  }
   return { ok: true };
 }
 

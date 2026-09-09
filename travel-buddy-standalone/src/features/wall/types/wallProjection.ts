@@ -71,6 +71,61 @@ export interface DisplayMedia {
 /** Freshness state of a live/contextual fact. Ordered strongest→weakest. */
 export type FreshnessState = 'live' | 'recent' | 'aging' | 'stale' | 'unknown';
 
+// ── Truth metadata (Sensing §108 / §5.1) ─────────────────────────────────────
+
+/**
+ * The epistemic class of a SERVER-BUILT state the Wall renders. Mirrors
+ * artifacts/api-server/src/lib/wallProjection.ts `WallTruthClass`.
+ *
+ * The client NEVER derives this — it is carried on the wire precisely so the
+ * device does not have to reason about world truth (Sensing §6: "feature clients
+ * and React components must not independently calculate crowd, vibe, safety,
+ * opportunity, experience value or world-change state"). The client's only job
+ * is to render a prediction differently from an observation (§108).
+ */
+export type WallTruthClass =
+  | 'observed'
+  | 'corroborated'
+  | 'inferred'
+  | 'predicted'
+  | 'conflicting'
+  | 'stale'
+  | 'unknown';
+
+/** Coarse independent-evidence bucket. `unknown` is NOT "none" (§108). */
+export type WallCoverage = 'few' | 'several' | 'many' | 'unknown';
+
+/**
+ * Truth classes that may be rendered as a current observation. A `predicted`,
+ * `inferred`, `stale` or `unknown` state must be visibly distinguishable from an
+ * observed one — that is the whole point of §108, and it is a pure function of
+ * the carried value, not a re-derivation of the truth behind it.
+ */
+export function truthClassMayRenderAsObservation(cls: WallTruthClass | undefined): boolean {
+  return cls === 'observed' || cls === 'corroborated' || cls === 'conflicting';
+}
+
+/**
+ * The short, non-colour-dependent qualifier the UI puts next to a state that is
+ * NOT an observation (spec §36: live state must not rely on colour alone; §108:
+ * prediction must never render indistinguishably from observation). Returns null
+ * for an observed/corroborated state, which needs no qualifier.
+ */
+export function truthQualifierLabel(cls: WallTruthClass | undefined): string | null {
+  switch (cls) {
+    case 'predicted':
+      return 'Scheduled';
+    case 'inferred':
+      return 'Inferred';
+    case 'stale':
+      return 'Out of date';
+    case 'unknown':
+      return 'Unconfirmed';
+    default:
+      return null;
+  }
+}
+
 // ── WallAction ───────────────────────────────────────────────────────────────
 
 export type WallActionType =
@@ -134,6 +189,12 @@ export interface WallProjectionBase {
   place?: PublicPlaceRef;
   /** Rendered only when the §9 gate passed (populated server-side). */
   contextThread?: ContextThread;
+  /**
+   * Server-resolved save state for this viewer (spec §2 "save"). The Wall shows
+   * this value; it never keeps the bookmark in component state, so a save
+   * survives a remount and a scroll out of the render window.
+   */
+  viewerSaved?: boolean;
   actions: WallAction[];
   ranking?: WallRankingMetadata;
 }

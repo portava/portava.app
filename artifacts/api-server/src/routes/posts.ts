@@ -908,19 +908,27 @@ router.post("/posts", async (req, res) => {
   if (verdict.locationVerified && venueName) {
     const sc = getServiceClient();
     if (sc) {
-      const rateLimited = await isGeotagCreditRateLimited(sc, user.id, venueName).catch(() => false);
+      const capVerdict = await isGeotagCreditRateLimited(sc, user.id, venueName)
+        .catch((): GeotagCreditVerdict => "unknown");
       const postId = (data as any).id as string;
-      if (rateLimited) {
+      if (capVerdict === "over_cap") {
         // Flag for safety review instead of awarding credit
         await sc.from("posts").update({ post_status: "pending_safety_review" }).eq("id", postId);
         await logDelayedEvent(sc, postId, user.id, "credit_rate_limited", {
           metadata: { venue_name: venueName, reason: "rate_limit_exceeded" },
         });
-      } else {
+      } else if (capVerdict === "under_cap") {
         await sc.from("posts").update({ geotag_credit_awarded: true }).eq("id", postId);
         await logDelayedEvent(sc, postId, user.id, "geotag_credit_awarded", {
           metadata: { venue_name: venueName, sensitivity: sens },
         });
+      } else {
+        // "unknown": the cap could not be counted. Award nothing, accuse nobody,
+        // leave the post exactly as it is. See isGeotagCreditRateLimited.
+        req.log.warn(
+          { postId, venueName },
+          "geotag credit cap unreadable — credit withheld, post left unflagged",
+        );
       }
     }
   }
@@ -1073,27 +1081,50 @@ async function logDelayedEvent(
 }
 
 /**
- * Anti-abuse: check if the user has already received 3 geotag credits at the
- * same venue in the last 24 hours. Returns true when the cap is hit.
+ * Anti-abuse: has the user already received 3 geotag credits at this venue in
+ * the last 24 hours?
+ *
+ * ── WHY THREE ANSWERS AND NOT TWO ───────────────────────────────────────────
+ * This used to return a boolean, and supabase-js RESOLVES on a DB error, so
+ * `const { count } = await …` gave `count: undefined` → `?? 0` → ZERO for both
+ * "no credits at this venue yet" and "delayed_post_location_events could not be
+ * read". Zero never reaches the cap, so an unreadable table awarded the geotag
+ * credit every single time — the cap simply stopped existing for the length of
+ * the outage, which is the window an abuser is farming in.
+ *
+ * But `true` is not the honest fix either: the caller's rate-limited branch
+ * moves the post to `pending_safety_review` and writes a `credit_rate_limited`
+ * event. That is a MODERATION ASSERTION about the user, and a read failure is
+ * no evidence that they did anything. Flipping the boolean would trade "fabricate
+ * a reward" for "fabricate an accusation".
+ *
+ * So the answer is a third state. `"unknown"` awards nothing and accuses nobody:
+ * the post keeps its normal status, no credit is granted, and the operator sees
+ * a warn line. The credit is the thing the cap protects, and a credit that was
+ * never awarded can be awarded later; a post wrongly parked in safety review,
+ * and a credit wrongly granted past the cap, both persist.
  */
+type GeotagCreditVerdict = "under_cap" | "over_cap" | "unknown";
+
 async function isGeotagCreditRateLimited(
   db: any,
   userId: string,
   venueName: string | null,
-): Promise<boolean> {
-  if (!venueName) return false;
+): Promise<GeotagCreditVerdict> {
+  if (!venueName) return "under_cap";
   const since = new Date(Date.now() - 24 * 60 * 60 * 1_000).toISOString();
   try {
-    const { count } = await db
+    const { count, error } = await db
       .from("delayed_post_location_events")
       .select("id", { count: "exact", head: true })
       .eq("user_id", userId)
       .eq("event_type", "geotag_credit_awarded")
       .gte("created_at", since)
       .filter("metadata->>venue_name", "eq", venueName);
-    return (count ?? 0) >= 3;
+    if (error) return "unknown";
+    return (count ?? 0) >= 3 ? "over_cap" : "under_cap";
   } catch {
-    return false;
+    return "unknown";
   }
 }
 
@@ -2264,12 +2295,37 @@ router.patch("/posts/:postId", async (req, res) => {
   if (parsed.data.content !== undefined && (existing as any).content !== parsed.data.content) {
     const sc = getServiceClient();
     if (sc) {
-      void sc.from("post_edits").insert({
-        post_id: postId,
-        user_id: user.id,
-        old_content: (existing as any).content ?? null,
-        new_content: parsed.data.content,
-      });
+      // ISSUED, not merely constructed. This was `void sc.from(…).insert({…})`,
+      // and PostgrestBuilder is a THENABLE, not a promise — it calls `_fetch`
+      // inside `then()`. So no post_edits row was ever written, which made
+      // GET /posts/:postId/edit-history permanently empty for every author and
+      // held CreatorActivityScoreService's `maintenance` component (its only
+      // source is post_edits) at zero for everyone.
+      //
+      // Still fire-and-forget: the post update is already committed and an
+      // audit row must not fail the edit. But a failure is logged — this is the
+      // only record that the caption changed.
+      void sc
+        .from("post_edits")
+        .insert({
+          post_id: postId,
+          user_id: user.id,
+          old_content: (existing as any).content ?? null,
+          new_content: parsed.data.content,
+        })
+        .then(
+          (r: { error?: unknown } | null | undefined) => {
+            if (r?.error) {
+              req.log?.warn?.(
+                { err: r.error, postId },
+                "post edit-history write failed (non-fatal)",
+              );
+            }
+          },
+          (err: unknown) => {
+            req.log?.warn?.({ err, postId }, "post edit-history write threw (non-fatal)");
+          },
+        );
     }
   }
 
@@ -3359,8 +3415,14 @@ router.post("/posts/:postId/comments/:commentId/replies", async (req, res) => {
   if (!post) { sendError(res, "not_found", "Post not found"); return; }
   if (!(await checkEngagePermission(res, post as any, user.id, client))) return;
 
-  // Verify parent comment belongs to the post and is a root comment (one-level depth guard)
-  const { data: parent } = await sc.from("posts_comments").select("id, post_id, parent_comment_id").eq("id", commentId).is("deleted_at", null).maybeSingle();
+  // Verify parent comment belongs to the post and is a root comment (one-level depth guard).
+  // supabase-js RESOLVES on a DB error, so an unbound `error` collapsed "this
+  // comment was deleted" and "posts_comments could not be read" into the same
+  // 404: the reply is correctly refused either way, but the author is told
+  // their parent comment is gone — so they stop retrying a reply that a retry
+  // would have delivered. Report the outage as an outage.
+  const { data: parent, error: parentErr } = await sc.from("posts_comments").select("id, post_id, parent_comment_id").eq("id", commentId).is("deleted_at", null).maybeSingle();
+  if (parentErr) { req.log.error({ err: parentErr, commentId }, "reply parent-comment lookup failed"); sendError(res, "db_error", parentErr.message); return; }
   if (!parent || (parent as any).post_id !== postId) { sendError(res, "not_found", "Comment not found"); return; }
   if ((parent as any).parent_comment_id !== null) { sendError(res, "invalid_payload", "Cannot reply to a reply — only one level of nesting is supported"); return; }
 

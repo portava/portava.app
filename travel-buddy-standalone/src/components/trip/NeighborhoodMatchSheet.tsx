@@ -202,7 +202,7 @@ export function LocationCheckSheet({
   const [mapFullScreen, setMapFullScreen] = useState(_sessionMapFullScreen);
 
   const insets = useSafeAreaInsets();
-  const { places, loading: placesLoading } = useTripSavedPlaces(tripId);
+  const { places, loading: placesLoading, error: placesError } = useTripSavedPlaces(tripId);
   // Only show places that have coordinates
   const geoPlaces = places.filter((p) => p.lat != null && p.lng != null);
 
@@ -445,6 +445,11 @@ export function LocationCheckSheet({
           {/* ── Saved places picker ── */}
           {placesLoading ? (
             <ActivityIndicator size="small" color={color.signal} style={{ marginBottom: space.md }} />
+          ) : placesError ? (
+            // Not the same as having no saved places: the picker is absent
+            // because the list could not be read, and it says so rather than
+            // implying there is nothing to pick.
+            <Text style={styles.savedPlacesSectionLabel}>{placesError}</Text>
           ) : geoPlaces.length > 0 ? (
             <View style={styles.savedPlacesSection}>
               <Text style={styles.savedPlacesSectionLabel}>Pick a saved place</Text>

@@ -837,7 +837,10 @@ export interface TripDetail {
   availabilityLabel?: string;
   coverUrl: string;
   coverMediaType?: 'image' | 'video' | null;
-  progress: number;
+  /** Percent complete, or NULL when readiness could not be read. Null is not
+   *  0: `trips.progress` is a column nothing writes, so falling back to it on a
+   *  failed readiness read painted a confident "0% ready". */
+  progress: number | null;
   progressSteps: TripProgressStep[];
   nextUpPlanId?: ID | null;
   timeline: TimelineDay[];

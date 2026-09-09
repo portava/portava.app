@@ -211,9 +211,12 @@ export interface EditableTripRow {
 export async function fetchPlanEditableTrips(): Promise<EditableTripRow[]> {
   if (!isSupabaseConfigured) return [];
   const res = await authedFetch(`${apiBase()}/api/me/plan-editable-trips`);
-  if (!res.ok) return [];
-  const json = await res.json();
-  return (json.trips ?? []) as EditableTripRow[];
+  // "You have no trips you can add this to" is a permission claim. A request
+  // that failed has not established it.
+  if (!res.ok) throw new Error(`Could not read your editable trips (HTTP ${res.status})`);
+  const json = await res.json().catch(() => null);
+  if (!json || !Array.isArray(json.trips)) throw new Error('Could not read your editable trips');
+  return json.trips as EditableTripRow[];
 }
 
 export async function addMeetupToPlan(

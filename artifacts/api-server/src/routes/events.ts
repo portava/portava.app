@@ -184,18 +184,35 @@
 import { randomUUID } from "node:crypto";
 import { Router } from "express";
 import { z } from "zod";
-import { requireUser, sendError } from "../lib/http.js";
+import { requireUser, sendError, type ApiErrorCode } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
+import { logger } from "../lib/logger.js";
 import { detectAndStoreLanguage, invalidateContentTranslations } from "../services/contentTranslation.js";
 import { nameVisibilitySet, sanitizeIdentity } from "../lib/publicIdentity.js";
 import { isFlagEnabled, isKillSwitchEngaged } from "../lib/featureFlags.js";
+import { isBlockedBetween } from "../lib/blockGuard.js";
+import {
+  decideEventTransition,
+  eventTransitionRefusalMessage,
+  isEventStartTransition,
+  EVENT_START_TRANSITION_FLAG,
+  type EventState,
+} from "../lib/eventLifecycle.js";
+import { affectedRows } from "../lib/affectedRows.js";
+import { tripKernelClient, executeTripCommand, TRIP_VERSION_RESPONSE_HEADER } from "../lib/tripKernel.js";
+import { readBlockExclusions, sendExclusionsUnavailable } from "../lib/exclusionSet.js";
 import { appStorageUrlInfo } from "../lib/mediaUrl.js";
 import { sendPushWithRetry } from "../lib/pushWithRetry.js";
 import { linkOutcomeSignal } from "../compass/CompassOutcomeEngine.js";
-import { recordTrustEvent } from "../services/trust/TrustEventService.js";
+import {
+  recordTrustEvent,
+  recordEventHostCancelledTrustEvent,
+  recordEventReviewTrustEvent,
+} from "../services/trust/TrustEventService.js";
 import { rankCandidates } from "../lib/portavaRank.js";
 import type { RankCandidate, ViewerContext } from "../lib/portavaRank.js";
 import { logImpression } from "../lib/rankLog.js";
+import { getDisplayTrustScores, getTrustProfileResult } from "../services/trust/TrustScoreService.js";
 import {
   toPrivateEventPreview,
   toAuthorizedEventView,
@@ -236,6 +253,59 @@ async function getEventRole(
   return (r as any)?.role ?? null;
 }
 
+/**
+ * Live count of users OTHER than the host who have committed ('going') to an
+ * event. Read from event_rsvps, not the cached events.going_count (BUG AY:
+ * that counter drifts). Feeds recordEventHostCancelledTrustEvent's trigger
+ * rule; a read failure is reported as null so the emitter can decline rather
+ * than charge on an unknown.
+ */
+async function countCommittedAttendees(sc: any, eventId: string, hostId: string): Promise<number | null> {
+  const { data, error } = await sc
+    .from("event_rsvps")
+    .select("user_id")
+    .eq("event_id", eventId)
+    .eq("status", "going");
+  if (error) return null;
+  return ((data as any[]) ?? []).filter((r: any) => r.user_id !== hostId).length;
+}
+
+/**
+ * Host cancellation → EVENT_HOST_CANCELLED. Called by both host-cancel routes
+ * (DELETE /events/:id and POST /events/:id/cancel — one action, two verbs)
+ * AFTER the transition to 'cancelled' is written. The trigger rule (published
+ * state, ≥1 committed attendee) and the provenance live in
+ * TrustEventService.recordEventHostCancelledTrustEvent; this only gathers the
+ * facts. Fire-and-forget: a cancel must not fail because trust bookkeeping did.
+ * Never called from the admin moderation path — an admin cancel is not the
+ * host's act.
+ */
+function emitHostCancelledTrustEvent(
+  sc: any,
+  req: any,
+  ev: { id: string; hostId: string; priorState: string; startsAt: string | null; reason: string | null },
+): void {
+  void (async () => {
+    try {
+      const committed = await countCommittedAttendees(sc, ev.id, ev.hostId);
+      if (committed === null) {
+        req.log?.warn({ eventId: ev.id }, "host-cancel trust event: committed-attendee read failed — not recorded");
+        return;
+      }
+      await recordEventHostCancelledTrustEvent(sc, {
+        hostId: ev.hostId,
+        eventId: ev.id,
+        priorState: ev.priorState,
+        committedAttendees: committed,
+        startsAt: ev.startsAt,
+        reason: ev.reason,
+      });
+    } catch (err) {
+      req.log?.warn({ err, eventId: ev.id }, "host-cancel trust event failed (non-fatal)");
+    }
+  })();
+}
+
 async function isHostOrCoHost(sc: any, eventId: string, userId: string): Promise<boolean> {
   const role = await getEventRole(sc, eventId, userId);
   return role === "host" || role === "co_host";
@@ -246,14 +316,18 @@ async function canManageAttendance(sc: any, eventId: string, userId: string): Pr
   return role === "host" || role === "co_host" || role === "moderator";
 }
 
-/** Check if blocked relationship exists in either direction */
+/**
+ * Is there a block in either direction?
+ *
+ * Delegates to lib/blockGuard.isBlockedBetween rather than repeating the query.
+ * This function used to run its own copy and DISCARD `error`, so an unreadable
+ * `blocks` table read as "not blocked" and admitted the pair — on a path whose
+ * only caller is checkEventEligibility, an authorization gate. The shared
+ * helper answers `true` when it cannot read, so an outage denies the
+ * interaction instead of allowing it.
+ */
 async function isBlocked(sc: any, userA: string, userB: string): Promise<boolean> {
-  const { data } = await sc
-    .from("blocks")
-    .select("id")
-    .or(`and(blocker_id.eq.${userA},blocked_id.eq.${userB}),and(blocker_id.eq.${userB},blocked_id.eq.${userA})`)
-    .limit(1);
-  return ((data as any[]) ?? []).length > 0;
+  return isBlockedBetween(sc, userA, userB);
 }
 
 /** Get going_count for event */
@@ -287,14 +361,181 @@ async function syncAttendee(sc: any, eventId: string, userId: string, status: st
 }
 
 /** Auto-transition event state based on capacity */
+/**
+ * The score attributed to a user who has NO trust_profiles row.
+ *
+ * This is a SUBSTITUTION, not a measurement, and it decides real access. As of
+ * 2026-09-07 production holds 2 trust_profiles rows for 58 profiles and 22
+ * events carrying trust_score_min: 20 of those thresholds are <= 50, so this
+ * substitution silently admits everyone and the gate does nothing; 2 are above
+ * it (max 65), so it silently DENIES 56 of 58 users from those events for want
+ * of a profile they were never given. The engine is not off -- measured, it has
+ * been on since 2026-07-17 -- its emitters are starved (5 trust_events in 52
+ * days).
+ *
+ * Whether an unscored user should be admitted or denied is an OWNER decision,
+ * so the value is unchanged here and today's behaviour is preserved exactly.
+ * What changes is that the substitution is now named, greppable and documented
+ * instead of a bare `?? 50` in three places. PR #467 replaces this whole idea
+ * with `applicable: false` on the Passport side; this constant is the seam
+ * where the same treatment reaches the event gates.
+ */
+export const TRUST_SCORE_WHEN_NO_PROFILE = 50;
+
+/**
+ * Is a waitlist offer still live on this event?
+ *
+ * The only caller is syncEventState, which reopens a full/waitlisted event to
+ * "open" when the answer is false. The slot is RESERVED for whoever holds the
+ * offer, so a false answer gives their place away.
+ *
+ * The read discarded `error`, so an unreadable event_waitlist answered "no
+ * offer" and released the reservation. It now answers TRUE when it cannot read:
+ * the event stays full/waitlist, which is the recoverable direction — the next
+ * sync reopens it once the table is readable, whereas a wrongly-released slot
+ * has already been taken by someone else.
+ */
 async function hasActiveWaitlistOffer(sc: any, eventId: string): Promise<boolean> {
-  const { data } = await sc
+  const { data, error } = await sc
     .from("event_waitlist")
     .select("user_id")
     .eq("event_id", eventId)
     .gt("offer_expires_at", new Date().toISOString())
     .limit(1);
+  if (error) return true;
   return ((data as any[]) ?? []).length > 0;
+}
+
+/**
+ * Result of trying to seat a user on an event's waitlist.
+ *
+ * `{ ok: false }` is DELIBERATELY distinct from `alreadyPresent`. Seating
+ * someone needs two reads — "is this user already queued?" and "what is the
+ * highest position taken?" — and supabase-js RESOLVES on a DB error, so a
+ * table that cannot be read comes back as `{ data: null }`: the exact shape
+ * "no such row" has. Six copies of this block read it as "no row" and then:
+ *
+ *   1. INSERT a SECOND event_waitlist row for a user who is already queued, and
+ *   2. compute `nextPos = (null?.position ?? 0) + 1 = 1`, seating them at the
+ *      FRONT of the queue ahead of everyone actually waiting, and
+ *   3. stamp `events.waitlist_count = 1` over a queue of any length.
+ *
+ * All three are writes the route cannot take back, so an unreadable table has
+ * to abort the seating instead of guessing. The insert's own error is checked
+ * for the same reason: reporting "you have been added to the waitlist" after a
+ * failed INSERT tells the user they hold a place they do not hold.
+ */
+type WaitlistAdd =
+  | { ok: true; position: number; alreadyPresent: boolean }
+  | { ok: false };
+
+async function addToEventWaitlist(sc: any, eventId: string, userId: string): Promise<WaitlistAdd> {
+  const { data: existing, error: existingErr } = await sc
+    .from("event_waitlist")
+    .select("position")
+    .eq("event_id", eventId)
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (existingErr) return { ok: false };
+  if (existing) return { ok: true, position: (existing as any).position, alreadyPresent: true };
+
+  const { data: maxPos, error: maxPosErr } = await sc
+    .from("event_waitlist")
+    .select("position")
+    .eq("event_id", eventId)
+    .order("position", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (maxPosErr) return { ok: false };
+
+  const nextPos = ((maxPos as any)?.position ?? 0) + 1;
+  const { error: insertErr } = await sc
+    .from("event_waitlist")
+    .insert({ event_id: eventId, user_id: userId, position: nextPos });
+  if (insertErr) return { ok: false };
+
+  return { ok: true, position: nextPos, alreadyPresent: false };
+}
+
+/** The refusal every caller of addToEventWaitlist sends when it returns !ok. */
+function sendWaitlistUnavailable(req: any, res: any, eventId: string, where: string): void {
+  req.log?.error({ eventId, where }, "event waitlist seating unavailable: table could not be read/written");
+  sendError(
+    res,
+    "degraded_unavailable",
+    "The waitlist could not be updated right now. Please try again shortly.",
+  );
+}
+
+/**
+ * Recount an event's waitlist and write `events.waitlist_count`.
+ *
+ * The count read is checked because `((rows as any[]) ?? []).length` turns an
+ * unreadable event_waitlist into 0 and then PERSISTS that zero over the real
+ * count — the row survives long after the outage, and every capacity decision
+ * downstream reads it. A failed recount leaves the previous (stale but true)
+ * count alone.
+ */
+async function recountEventWaitlist(sc: any, eventId: string, req: any, extra?: Record<string, unknown>): Promise<void> {
+  const { data: rows, error } = await sc.from("event_waitlist").select("user_id").eq("event_id", eventId);
+  if (error) {
+    req.log?.warn({ err: error, eventId }, "waitlist recount failed; leaving events.waitlist_count unchanged");
+    return;
+  }
+  await sc.from("events").update({ waitlist_count: (rows as any[]).length, ...(extra ?? {}) }).eq("id", eventId);
+}
+
+/**
+ * The ONE way any route writes `events.state`.
+ *
+ * Every caller passes the state it read and the state it wants; the pair is put
+ * to `decideEventTransition` (lib/eventLifecycle.ts) before anything is written,
+ * and the UPDATE is made CONDITIONAL on the row still being in the state that
+ * was decided on — so a cancel that lands between the read and the write wins
+ * instead of being clobbered, and the same request replayed twice writes once.
+ *
+ * `.select("id")` is not decoration: without it supabase returns no rows and a
+ * write that matched NOTHING is indistinguishable from one that matched. The
+ * zero-row case is reported as `contended`, never as success.
+ *
+ * `.error` is checked because supabase-js RESOLVES on a database error — the
+ * archive route discarded it and answered `{ok:true}` for a write the database
+ * refused.
+ */
+type EventStateWriteOutcome =
+  | { ok: true; from: string; to: EventState }
+  | { ok: false; code: ApiErrorCode; message: string };
+
+async function writeEventState(
+  sc: any,
+  eventId: string,
+  from: unknown,
+  to: EventState,
+  extraPatch: Record<string, unknown> = {},
+): Promise<EventStateWriteOutcome> {
+  const decision = decideEventTransition(from, to);
+  if (!decision.allowed) {
+    return {
+      ok: false,
+      code: "invalid_state_transition",
+      message: eventTransitionRefusalMessage(decision),
+    };
+  }
+  const { data, error } = await sc
+    .from("events")
+    .update({ state: to, updated_at: new Date().toISOString(), ...extraPatch })
+    .eq("id", eventId)
+    .eq("state", decision.from)
+    .select("id");
+  if (error) return { ok: false, code: "db_error", message: String(error.message ?? error) };
+  if (!Array.isArray(data) || data.length === 0) {
+    return {
+      ok: false,
+      code: "conflict",
+      message: "The event changed while this request was in flight — reload and try again",
+    };
+  }
+  return { ok: true, from: decision.from, to };
 }
 
 async function syncEventState(sc: any, eventId: string): Promise<void> {
@@ -309,26 +550,61 @@ async function syncEventState(sc: any, eventId: string): Promise<void> {
   if (!maxAttendees) return; // unlimited
 
   const going = await getGoingCount(sc, eventId);
+  const current = String((ev as any).state ?? "");
 
-  let newState: string = (ev as any).state;
+  // The capacity cycle. Reopening only happens when there is no active waitlist
+  // offer — that slot is RESERVED for the offer holder, and hasActiveWaitlistOffer
+  // answers `true` when it cannot read, so an outage keeps the reservation.
+  //
+  // The write goes through the transition authority like every other writer, and
+  // is conditional on `current`: a `full` event that was cancelled between the
+  // read above and this write must not be resurrected as `open`.
+  //
+  // REGISTRY NOTE: this ONE call site performs three EVENTS_STATE transitions —
+  // -> full, -> waitlist and -> open — because `newState` is computed. The
+  // state-machine registry pins all three to the contiguous block below and says
+  // so in each entry; there is no separate site to point at.
+  let newState: EventState = current as EventState;
   if (going >= maxAttendees) {
     newState = (ev as any).waitlist_enabled ? "waitlist" : "full";
-  } else if (["full", "waitlist"].includes((ev as any).state)) {
-    // Only reopen if there is no active waitlist offer — the slot is reserved for that user
-    const offerActive = await hasActiveWaitlistOffer(sc, eventId);
-    if (!offerActive) {
-      newState = "open";
-    }
+  } else if (["full", "waitlist"].includes(current) && !(await hasActiveWaitlistOffer(sc, eventId))) {
+    newState = "open";
   }
-
-  if (newState !== (ev as any).state) {
-    await sc.from("events").update({ state: newState, updated_at: new Date().toISOString() }).eq("id", eventId);
+  if (newState !== current) {
+    const w = await writeEventState(sc, eventId, current, newState);
+    if (!w.ok) logger.warn({ eventId, from: current, to: newState, code: w.code }, "event capacity sync did not write");
   }
 }
 
-/** Promote next waitlisted user — give 24h to accept */
-async function promoteNextWaitlisted(sc: any, eventId: string): Promise<void> {
-  const { data: next } = await sc
+/**
+ * Outcome of trying to hand the freed seat to the next person in the queue.
+ *
+ * `stranded` (the queue is readable and empty) and `unreadable` (the queue
+ * could not be read) are DELIBERATELY different. They were the same value: the
+ * queue read discarded `error`, and supabase-js RESOLVES on a database error,
+ * so an unreadable event_waitlist answered "nobody is waiting" and the seat was
+ * written off in silence.
+ */
+type PromoteOutcome =
+  | { outcome: "promoted"; userId: string }
+  | { outcome: "stranded" }
+  | { outcome: "unreadable"; message: string }
+  | { outcome: "contended" }
+  | { outcome: "write_failed"; message: string };
+
+/**
+ * Promote next waitlisted user — give 24h to accept.
+ *
+ * The UPDATE re-asserts `offer_expires_at IS NULL` and `.select()`s, so:
+ *   • two concurrent cancellations that both read the SAME next-in-queue user
+ *     cannot both claim to have promoted them — the loser matches zero rows and
+ *     is reported `contended`, instead of one seat quietly disappearing;
+ *   • a write the database refuses is `write_failed`, not a silent success.
+ * The push is sent only when a row really moved: telling someone "you have 24
+ * hours to accept" when they hold no offer is worse than saying nothing.
+ */
+async function promoteNextWaitlisted(sc: any, eventId: string, req?: any): Promise<PromoteOutcome> {
+  const { data: next, error: readErr } = await sc
     .from("event_waitlist")
     .select("user_id")
     .eq("event_id", eventId)
@@ -336,28 +612,45 @@ async function promoteNextWaitlisted(sc: any, eventId: string): Promise<void> {
     .order("position", { ascending: true })
     .limit(1)
     .maybeSingle();
-  if (!next) return;
+  if (readErr) {
+    req?.log?.warn?.({ err: readErr, eventId }, "waitlist queue unreadable — seat not offered, not written off");
+    return { outcome: "unreadable", message: String(readErr.message ?? readErr) };
+  }
+  if (!next) return { outcome: "stranded" };
 
+  const userId = (next as any).user_id as string;
   const offerExpiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
-  await sc
+  const { data: claimed, error: updErr } = await sc
     .from("event_waitlist")
     .update({ offer_expires_at: offerExpiresAt })
     .eq("event_id", eventId)
-    .eq("user_id", (next as any).user_id);
+    .eq("user_id", userId)
+    .is("offer_expires_at", null)
+    .select("user_id");
+  if (updErr) {
+    req?.log?.warn?.({ err: updErr, eventId, userId }, "waitlist promotion write failed — seat not offered");
+    return { outcome: "write_failed", message: String(updErr.message ?? updErr) };
+  }
+  if (!Array.isArray(claimed) || claimed.length === 0) {
+    // Someone else offered this seat between the read and the write.
+    req?.log?.info?.({ eventId, userId }, "waitlist promotion lost a race — no second offer issued");
+    return { outcome: "contended" };
+  }
 
-  // Notify them
+  // Notify them — only now, because only now do they actually hold the offer.
   const { data: profile } = await sc
     .from("profiles")
     .select("expo_push_token")
-    .eq("id", (next as any).user_id)
+    .eq("id", userId)
     .maybeSingle();
   if ((profile as any)?.expo_push_token) {
     await sendPushWithRetry(
       sc,
-      { userId: (next as any).user_id, tokens: [(profile as any).expo_push_token] },
+      { userId, tokens: [(profile as any).expo_push_token] },
       { title: "A spot opened up!", body: "You're next on the waitlist. You have 24 hours to accept." },
     );
   }
+  return { outcome: "promoted", userId };
 }
 
 // ── Shared eligibility check ──────────────────────────────────────────────────
@@ -389,14 +682,22 @@ export async function checkEventEligibility(
   if (await isBlocked(sc, userId, ev.host_id)) {
     return { ok: false, errorCode: "forbidden", message: "Cannot join this event" };
   }
-  // Ban check
-  const { data: bannedRole } = await sc
+  // Ban check. FAIL CLOSED, for the same reason as the trust_profiles read
+  // below: supabase-js RESOLVES on a database error, so discarding `error` here
+  // made an unreadable event_roles indistinguishable from "this user is not
+  // banned" — and a banned caller was admitted to the event during any blip.
+  // A ban is the single most deliberate exclusion an organiser can express;
+  // it must not evaporate because a table could not be read.
+  const { data: bannedRole, error: bannedErr } = await sc
     .from("event_roles")
     .select("role")
     .eq("event_id", ev.id)
     .eq("user_id", userId)
     .eq("role", "banned")
     .maybeSingle();
+  if (bannedErr) {
+    return { ok: false, errorCode: "forbidden", message: "Event access check is temporarily unavailable" };
+  }
   if (bannedRole) return { ok: false, errorCode: "forbidden", message: "You are banned from this event" };
 
   // Trust / age / verified gates
@@ -409,8 +710,20 @@ export async function checkEventEligibility(
       }
     }
     if (ev.trust_score_min != null) {
-      const { data: tp } = await sc.from("trust_profiles").select("overall_score").eq("user_id", userId).maybeSingle();
-      const score = (tp as any)?.overall_score ?? 50;
+      // FAIL CLOSED on an unreadable trust_profiles. supabase-js RESOLVES on a
+      // database error, so the previous `const { data: tp }` discarded `error`
+      // and an outage read as "no profile" -> substituted 50 -> admitted on
+      // every threshold <= 50. An authorization gate must not silently open
+      // because a table it depends on could not be read.
+      // Through the canonical seam (census-trust A17). The fail-closed posture
+      // is unchanged and is the reason the seam has to be three-state: an
+      // authorization gate must be able to tell "no profile" (score defaults,
+      // gate evaluates) from "could not read" (gate refuses).
+      const tpRead = await getTrustProfileResult(sc, userId);
+      if (tpRead.state === "unavailable") {
+        return { ok: false, errorCode: "forbidden", message: "Trust check is temporarily unavailable for this event" };
+      }
+      const score = (tpRead.state === "ok" ? tpRead.profile.overall_score : null) ?? TRUST_SCORE_WHEN_NO_PROFILE;
       if (score < ev.trust_score_min) {
         return { ok: false, errorCode: "forbidden", message: `This event requires a trust score of at least ${ev.trust_score_min}` };
       }
@@ -571,8 +884,12 @@ router.post("/events", async (req, res) => {
     const ticketErr = checkTicketUrl((b as any).ticketUrl ?? (b as any).priceUrl);
     if (ticketErr) { sendError(res, "invalid_payload", ticketErr); return; }
 
-    const isDuplicate = await checkDuplicateEvent(sc, user.id, b.locationName, b.startsAt ?? null);
-    if (isDuplicate) { sendError(res, "duplicate_event", "An event with the same host, location, and time already exists"); return; }
+    const dup = await checkDuplicateEvent(sc, user.id, b.locationName, b.startsAt ?? null);
+    if (dup === "unavailable") {
+      sendError(res, "degraded_unavailable", "Could not check for a duplicate event. Please try again.");
+      return;
+    }
+    if (dup === "duplicate") { sendError(res, "duplicate_event", "An event with the same host, location, and time already exists"); return; }
   }
 
   const initialState = b.publishNow ? "open" : "draft";
@@ -719,16 +1036,22 @@ router.get("/events", async (req, res) => {
   const rows = (events as any[]) ?? [];
   const otherHostIds = [...new Set(rows.map((e: any) => e.host_id as string))].filter((h) => h !== user.id);
 
-  // Blocks in either direction — two batched queries
-  const blockedHosts = new Set<string>();
-  if (otherHostIds.length > 0) {
-    const [b1, b2] = await Promise.all([
-      sc.from("blocks").select("blocked_id").eq("blocker_id", user.id).in("blocked_id", otherHostIds),
-      sc.from("blocks").select("blocker_id").eq("blocked_id", user.id).in("blocker_id", otherHostIds),
-    ]);
-    for (const b of (((b1 as any).data as any[]) ?? [])) blockedHosts.add(b.blocked_id as string);
-    for (const b of (((b2 as any).data as any[]) ?? [])) blockedHosts.add(b.blocker_id as string);
+  // Blocks in either direction. Both queries discarded `error`, so an
+  // unreadable `blocks` table produced an EMPTY blockedHosts set — identical to
+  // "nobody is blocked" — and the feed served events hosted by people the
+  // caller has blocked, or who have blocked them.
+  //
+  // Every row in this response is attributable to a host and every host is
+  // block-scoped, so there is no narrower honest answer available here: showing
+  // the page unfiltered leaks, and showing an empty page is a false statement
+  // ("there are no events") that the client renders and caches as fact. This is
+  // shape 3 in lib/exclusionSet — refuse, retryably.
+  const blockExclusions = await readBlockExclusions(sc, user.id, { among: otherHostIds });
+  if (!blockExclusions.ok) {
+    sendExclusionsUnavailable(req, res, blockExclusions, "GET /events feed host filter");
+    return;
   }
+  const blockedHosts = blockExclusions.ids;
 
   // Friendships, only for hosts of friends_only events
   const friendsOnlyHosts = [...new Set(
@@ -799,11 +1122,24 @@ router.get("/events", async (req, res) => {
     if (trustGatesEnabled) {
       const [profileRes, tpRes] = await Promise.all([
         sc.from("profiles").select("verified, date_of_birth").eq("id", user.id).maybeSingle(),
-        sc.from("trust_profiles").select("overall_score").eq("user_id", user.id).maybeSingle(),
+        getTrustProfileResult(sc, user.id),
       ]);
       const profile = (profileRes as any).data;
       viewerVerified = !!profile?.verified;
-      viewerTrust = ((tpRes as any).data)?.overall_score ?? 50;
+      // WAS: "Ranking/visibility input rather than an authorization gate, so
+      // this one is left substituting rather than failing closed." It is not a
+      // ranking input. Sixteen lines down, `viewerTrust < ev.trust_score_min`
+      // DECIDES WHETHER AN EVENT IS SHOWN — the same predicate the join gate at
+      // :726 and the waitlist gate at :3187 both fail CLOSED on, in this file.
+      // Substituting the neutral 50 for an unreadable table admits the viewer to
+      // every event with a threshold at or below 50, which is most of them.
+      //
+      // The three now agree: unreadable is refused, absent is 50.
+      if (tpRes.state === "unavailable") {
+        sendError(res, "degraded_unavailable", "Event visibility could not be checked. Please try again.");
+        return;
+      }
+      viewerTrust = (tpRes.state === "ok" ? tpRes.profile.overall_score : null) ?? TRUST_SCORE_WHEN_NO_PROFILE;
       viewerAge = profile?.date_of_birth
         ? Math.floor((Date.now() - new Date(profile.date_of_birth).getTime()) / (1000 * 60 * 60 * 24 * 365.25))
         : null;
@@ -877,22 +1213,28 @@ router.get("/events", async (req, res) => {
   const hostTrustMap = new Map<string, number>();
 
   if (hostIds.length > 0) {
-    const [hpsResult, trustResult] = await Promise.all([
+    const [hpsResult, trustRead] = await Promise.all([
       sc.from("profiles").select("id, name, handle, avatar_url").in("id", hostIds),
-      (async () => {
-        try {
-          return await sc
-            .from("trust_profiles")
-            .select("user_id, overall_score")
-            .in("user_id", hostIds);
-        } catch {
-          return { data: null };
-        }
-      })(),
+      // Through the canonical seam (census-trust A17). The read this replaces
+      // was wrapped in a try/catch that returned `{ data: null }` — DEAD CODE on
+      // a client that RESOLVES rather than throws, so a database failure never
+      // reached the catch and arrived as an empty list instead. Every host then
+      // ranked with no trust signal, which for a RANKING input is a tolerable
+      // outcome and an intolerable way to arrive at it: nothing said so.
+      getDisplayTrustScores(sc, hostIds),
     ]);
     const allowedNames = await nameVisibilitySet(sc, hostIds);
     for (const p of ((hpsResult as any).data as any[]) ?? []) hostProfileMap[p.id as string] = sanitizeIdentity(p, allowedNames, user.id);
-    for (const t of ((trustResult as any).data as any[]) ?? []) hostTrustMap.set(t.user_id as string, t.overall_score as number);
+    if (trustRead.state === "ok") {
+      for (const [id, score] of trustRead.scores) hostTrustMap.set(id, score);
+    } else {
+      // Ranking signal only (portavaRank §42: "missing scores contribute 0 to
+      // rank"), so the list still serves — without the term, and audibly.
+      req.log?.warn?.(
+        { reason: trustRead.reason, hosts: hostIds.length },
+        "event ranking: host trust scores unavailable — ranking without the trust signal rather than treating every host as untrusted",
+      );
+    }
   }
 
   // ── Portava ranking (spec §42) ────────────────────────────────────────────
@@ -1745,8 +2087,15 @@ router.post("/events/drafts/:draftId/publish", async (req, res) => {
     if (ticketErr) { publishRejectedReason = { type: "ticket_url", detail: ticketErr }; }
   }
   if (!publishRejectedReason) {
-    const isDuplicate = await checkDuplicateEvent(sc, user.id, b.locationName, b.startsAt ?? null);
-    if (isDuplicate) { publishRejectedReason = { type: "duplicate", detail: "duplicate" }; }
+    const dup = await checkDuplicateEvent(sc, user.id, b.locationName, b.startsAt ?? null);
+    if (dup === "unavailable") {
+      // Not recorded as a publish rejection: nothing was rejected, the check
+      // could not run. Reporting it as "duplicate" would write a false reason
+      // into event_activity_log and tell the host their event already exists.
+      sendError(res, "degraded_unavailable", "Could not check for a duplicate event. Please try again.");
+      return;
+    }
+    if (dup === "duplicate") { publishRejectedReason = { type: "duplicate", detail: "duplicate" }; }
   }
 
   // We must have a valid events.id FK to write to event_activity_log.
@@ -2174,6 +2523,24 @@ router.patch("/events/:id", async (req, res) => {
   const { data: current } = await sc.from("events").select("*").eq("id", id).maybeSingle();
   if (!current) { sendError(res, "not_found", "Event not found"); return; }
 
+  // ── the state transition, through the one authority ───────────────────────
+  // `started` is refused here by NAME rather than by the table: the table says
+  // open|full|waitlist -> started is a structurally legal pair, but WHO may
+  // perform it is the open EVENT_START_TRANSITION owner decision, and a raw
+  // PATCH is not a sanctioned starter. Letting it through made the
+  // event_start_transition_enabled flag (seeded FALSE) decorative — any host
+  // could write `started` and unlock the complete / attendance / no-show
+  // routes and the trust awards behind them.
+  if (b.state !== undefined && b.state !== (current as any).state) {
+    if (isEventStartTransition((current as any).state, b.state)) {
+      sendError(res, "invalid_state_transition",
+        `An event is not started by editing it. Starting is gated by ${EVENT_START_TRANSITION_FLAG}.`);
+      return;
+    }
+    const stateWrite = await writeEventState(sc, id, (current as any).state, b.state as EventState);
+    if (!stateWrite.ok) { sendError(res, stateWrite.code, stateWrite.message); return; }
+  }
+
   const KEY_FIELDS = ["starts_at", "ends_at", "location_name", "age_min", "trust_score_min", "verified_only"] as const;
   const patch: Record<string, any> = { updated_at: new Date().toISOString() };
 
@@ -2196,7 +2563,10 @@ router.patch("/events/:id", async (req, res) => {
   if (b.visibility      !== undefined) patch.visibility       = b.visibility;
   if (b.circleId        !== undefined) patch.circle_id        = b.circleId;
   if (b.tripId          !== undefined) patch.trip_id          = b.tripId;
-  if (b.state           !== undefined) patch.state            = b.state;
+  // `state` is DELIBERATELY absent from this raw assembly. It used to be
+  // `patch.state = b.state` — an unguarded free transition (see
+  // lib/eventLifecycle.ts). It is now decided by the transition authority
+  // below and written by the same conditional UPDATE as every other writer.
   if (b.chatEnabled     !== undefined) patch.chat_enabled     = b.chatEnabled;
   if (b.waitlistEnabled !== undefined) patch.waitlist_enabled = b.waitlistEnabled;
   if (b.attendeeCommentsEnabled !== undefined) patch.attendee_comments_enabled = b.attendeeCommentsEnabled;
@@ -2325,13 +2695,24 @@ router.delete("/events/:id", async (req, res) => {
   const role = await getEventRole(sc, id, user.id);
   if (role !== "host") { sendError(res, "forbidden", "Only the host can cancel an event"); return; }
 
-  const { data: ev } = await sc.from("events").select("title, state").eq("id", id).maybeSingle();
+  const { data: ev } = await sc.from("events").select("title, state, starts_at").eq("id", id).maybeSingle();
   if (!ev) { sendError(res, "not_found", "Event not found"); return; }
+  // Captured BEFORE the transition: the trust rule is about the state the host
+  // walked away from, not the one the update leaves behind.
+  const priorState = String((ev as any).state ?? "");
 
   // supabase-js resolves rather than throws — unchecked, a failed cancel
   // returned {ok:true} while the event stayed open.
-  const { error: cancelErr } = await sc.from("events").update({ state: "cancelled", updated_at: new Date().toISOString() }).eq("id", id);
-  if (cancelErr) { sendError(res, "db_error", cancelErr.message); return; }
+  if (priorState === "cancelled") { res.json({ ok: true }); return; }
+  const delWrite = await writeEventState(sc, id, priorState, "cancelled");
+  if (!delWrite.ok) { sendError(res, delWrite.code, delWrite.message); return; }
+
+  // Trust: the host broke a published commitment (rule + provenance in
+  // TrustEventService; keyed on the event id, so this and POST /cancel cannot
+  // charge twice for one event).
+  emitHostCancelledTrustEvent(sc, req, {
+    id, hostId: user.id, priorState, startsAt: (ev as any).starts_at ?? null, reason: null,
+  });
 
   // Notify all Going/Maybe attendees (fire-and-forget)
   void (async () => {
@@ -2417,24 +2798,10 @@ router.post("/events/:id/rsvp", async (req, res) => {
       sendError(res, "forbidden", "This event is full and waitlist is not available"); return;
     }
     // Auto-add to waitlist
-    const { data: existing } = await sc
-      .from("event_waitlist")
-      .select("position")
-      .eq("event_id", id)
-      .eq("user_id", user.id)
-      .maybeSingle();
-
-    if (!existing) {
-      const { data: maxPos } = await sc
-        .from("event_waitlist")
-        .select("position")
-        .eq("event_id", id)
-        .order("position", { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      const nextPos = ((maxPos as any)?.position ?? 0) + 1;
-      await sc.from("event_waitlist").insert({ event_id: id, user_id: user.id, position: nextPos });
-      await sc.from("events").update({ waitlist_count: nextPos, updated_at: new Date().toISOString() }).eq("id", id);
+    const seated = await addToEventWaitlist(sc, id, user.id);
+    if (!seated.ok) { sendWaitlistUnavailable(req, res, id, "rsvp"); return; }
+    if (!seated.alreadyPresent) {
+      await sc.from("events").update({ waitlist_count: seated.position, updated_at: new Date().toISOString() }).eq("id", id);
     }
 
     res.status(202).json({ status: "waitlisted", message: "Event is full — you have been added to the waitlist" }); return;
@@ -2470,7 +2837,13 @@ router.post("/events/:id/rsvp", async (req, res) => {
   if (status === "going") {
     void (async () => {
       try {
-        const { data: prior } = await sc
+        // "Have they ever gone to another event?" decides whether the
+        // first_event_joined trust credit (+10, deduped for ~11 years) is
+        // written. An unreadable event_rsvps resolves as `{ data: null }`,
+        // which reads as "no prior event" and awards a FIRST-event bonus to a
+        // veteran — and the 99999h dedup window means that wrong award is the
+        // only one they will ever get. No read, no award.
+        const { data: prior, error: priorErr } = await sc
           .from("event_rsvps")
           .select("event_id")
           .eq("user_id", user.id)
@@ -2478,6 +2851,10 @@ router.post("/events/:id/rsvp", async (req, res) => {
           .neq("event_id", id)
           .limit(1)
           .maybeSingle();
+        if (priorErr) {
+          req.log.warn({ err: priorErr, userId: user.id, eventId: id }, "first_event_joined: prior-RSVP check unavailable; skipping award");
+          return;
+        }
         if (!prior) {
           await recordTrustEvent(sc, {
             userId: user.id,
@@ -2601,7 +2978,7 @@ router.delete("/events/:id/rsvp", async (req, res) => {
   if ((existing as any).status === "going") {
     const waitlistEnabled = await isFlagEnabled(sc, "events_waitlist_enabled");
     if (waitlistEnabled) {
-      await promoteNextWaitlisted(sc, id);
+      await promoteNextWaitlisted(sc, id, req);
     }
   }
   await syncEventState(sc, id);
@@ -2655,15 +3032,10 @@ router.post("/events/:id/join", async (req, res) => {
     if (!evData.waitlist_enabled) {
       sendError(res, "forbidden", "This event is full and the waitlist is not available"); return;
     }
-    const { data: existingWl } = await sc
-      .from("event_waitlist").select("position").eq("event_id", id).eq("user_id", user.id).maybeSingle();
-    if (!existingWl) {
-      const { data: maxPos } = await sc
-        .from("event_waitlist").select("position").eq("event_id", id)
-        .order("position", { ascending: false }).limit(1).maybeSingle();
-      const nextPos = ((maxPos as any)?.position ?? 0) + 1;
-      await sc.from("event_waitlist").insert({ event_id: id, user_id: user.id, position: nextPos });
-      await sc.from("events").update({ waitlist_count: nextPos, updated_at: new Date().toISOString() }).eq("id", id);
+    const seated = await addToEventWaitlist(sc, id, user.id);
+    if (!seated.ok) { sendWaitlistUnavailable(req, res, id, "join:state_full"); return; }
+    if (!seated.alreadyPresent) {
+      await sc.from("events").update({ waitlist_count: seated.position, updated_at: new Date().toISOString() }).eq("id", id);
     }
     res.status(202).json({ status: "waitlisted", message: "Event is full — you have been added to the waitlist" }); return;
   }
@@ -2675,16 +3047,10 @@ router.post("/events/:id/join", async (req, res) => {
       if (!evData.waitlist_enabled) {
         sendError(res, "forbidden", "This event is full and the waitlist is not available"); return;
       }
-      const { data: existingWl2 } = await sc
-        .from("event_waitlist").select("position").eq("event_id", id).eq("user_id", user.id).maybeSingle();
-      if (!existingWl2) {
-        const { data: maxPos2 } = await sc
-          .from("event_waitlist").select("position").eq("event_id", id)
-          .order("position", { ascending: false }).limit(1).maybeSingle();
-        const nextPos2 = ((maxPos2 as any)?.position ?? 0) + 1;
-        await sc.from("event_waitlist").insert({ event_id: id, user_id: user.id, position: nextPos2 });
-        const wlCount = await sc.from("event_waitlist").select("user_id").eq("event_id", id);
-        await sc.from("events").update({ waitlist_count: ((wlCount as any).data ?? []).length, updated_at: new Date().toISOString() }).eq("id", id);
+      const seated2 = await addToEventWaitlist(sc, id, user.id);
+      if (!seated2.ok) { sendWaitlistUnavailable(req, res, id, "join:capacity"); return; }
+      if (!seated2.alreadyPresent) {
+        await recountEventWaitlist(sc, id, req, { updated_at: new Date().toISOString() });
       }
       res.status(202).json({ status: "waitlisted", message: "Event is full — you have been added to the waitlist" }); return;
     }
@@ -2741,7 +3107,7 @@ router.post("/events/:id/leave", async (req, res) => {
   // offer (see DELETE /rsvp) — otherwise syncEventState reopens to a walk-in.
   if ((existing as any).status === "going") {
     const waitlistEnabled = await isFlagEnabled(sc, "events_waitlist_enabled");
-    if (waitlistEnabled) await promoteNextWaitlisted(sc, id);
+    if (waitlistEnabled) await promoteNextWaitlisted(sc, id, req);
   }
   await syncEventState(sc, id);
 
@@ -2837,8 +3203,13 @@ router.post("/events/:id/waitlist", async (req, res) => {
       }
     }
     if ((ev as any).trust_score_min != null) {
-      const { data: tpWl } = await sc.from("trust_profiles").select("overall_score").eq("user_id", user.id).maybeSingle();
-      const scoreWl = (tpWl as any)?.overall_score ?? 50;
+      // Fail closed on an unreadable trust_profiles — same reasoning as the
+      // join gate above; this path had the identical discarded-error defect.
+      const tpWlRead = await getTrustProfileResult(sc, user.id);
+      if (tpWlRead.state === "unavailable") {
+        sendError(res, "forbidden", "Trust check is temporarily unavailable for this event"); return;
+      }
+      const scoreWl = (tpWlRead.state === "ok" ? tpWlRead.profile.overall_score : null) ?? TRUST_SCORE_WHEN_NO_PROFILE;
       if (scoreWl < (ev as any).trust_score_min) {
         sendError(res, "forbidden", `This event requires a trust score of at least ${(ev as any).trust_score_min}`); return;
       }
@@ -2859,28 +3230,13 @@ router.post("/events/:id/waitlist", async (req, res) => {
     }
   }
 
-  const { data: existing } = await sc
-    .from("event_waitlist")
-    .select("position")
-    .eq("event_id", id)
-    .eq("user_id", user.id)
-    .maybeSingle();
+  const seated = await addToEventWaitlist(sc, id, user.id);
+  if (!seated.ok) { sendWaitlistUnavailable(req, res, id, "waitlist"); return; }
+  if (seated.alreadyPresent) { res.json({ position: seated.position, message: "Already on waitlist" }); return; }
 
-  if (existing) { res.json({ position: (existing as any).position, message: "Already on waitlist" }); return; }
+  await sc.from("events").update({ waitlist_count: seated.position, updated_at: new Date(nowMsWl).toISOString() }).eq("id", id);
 
-  const { data: maxPos } = await sc
-    .from("event_waitlist")
-    .select("position")
-    .eq("event_id", id)
-    .order("position", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  const nextPos = ((maxPos as any)?.position ?? 0) + 1;
-
-  await sc.from("event_waitlist").insert({ event_id: id, user_id: user.id, position: nextPos });
-  await sc.from("events").update({ waitlist_count: nextPos, updated_at: new Date(nowMsWl).toISOString() }).eq("id", id);
-
-  res.status(201).json({ position: nextPos });
+  res.status(201).json({ position: seated.position });
 });
 
 // ── POST /api/events/:id/waitlist/accept ──────────────────────────────────────
@@ -2915,7 +3271,7 @@ router.post("/events/:id/waitlist/accept", async (req, res) => {
     // Nulling offer_expires_at would cause promoteNextWaitlisted to re-offer
     // this same user (it queries IS NULL), so we delete instead.
     await sc.from("event_waitlist").delete().eq("event_id", id).eq("user_id", user.id);
-    await promoteNextWaitlisted(sc, id);
+    await promoteNextWaitlisted(sc, id, req);
     sendError(res, "forbidden", "Your spot offer has expired"); return;
   }
 
@@ -2934,7 +3290,7 @@ router.post("/events/:id/waitlist/accept", async (req, res) => {
   if (!acceptVis.ok) {
     // Remove them from the queue so the seat can go to an eligible member.
     await sc.from("event_waitlist").delete().eq("event_id", id).eq("user_id", user.id);
-    await promoteNextWaitlisted(sc, id);
+    await promoteNextWaitlisted(sc, id, req);
     sendError(res, "forbidden", acceptVis.message); return;
   }
   const maxAtt = (evCapCheck as any)?.max_attendees ?? null;
@@ -2943,7 +3299,7 @@ router.post("/events/:id/waitlist/accept", async (req, res) => {
     if (currentGoing >= maxAtt) {
       // Slot was taken — expire this offer and promote the next person
       await sc.from("event_waitlist").update({ offer_expires_at: null }).eq("event_id", id).eq("user_id", user.id);
-      await promoteNextWaitlisted(sc, id);
+      await promoteNextWaitlisted(sc, id, req);
       sendError(res, "forbidden", "This spot was filled before you accepted. You have been returned to the waitlist queue."); return;
     }
   }
@@ -3186,12 +3542,29 @@ router.patch("/events/:id/requests/:userId", async (req, res) => {
       sendError(res, approveElig.errorCode as any, `Cannot approve: ${approveElig.message}`); return;
     }
 
-    // Mark request as approved
-    await sc.from("event_join_requests").update({
+    // Mark request as approved.
+    //
+    // Nothing above this line reads event_join_requests: the handler checks
+    // that the caller may manage attendance and that the TARGET is eligible,
+    // then writes. So an approval for a user who never asked to join matched
+    // ZERO rows — which supabase-js resolves as `{ data: null, error: null }`,
+    // indistinguishable from an approval that landed — and the handler carried
+    // straight on to seat them: an unrequested `going` RSVP, a going_count
+    // bump, a chat-thread add and a "You're in! 🎉" push. `.select()` makes the
+    // statement RETURNING so the request's existence is PROVEN by the write
+    // that approves it, and the route's own not_found is returned when it is
+    // not there. Re-approving an already-approved request still matches (there
+    // is no status guard), so this stays idempotent.
+    const { data: approvedReq, error: approveErr } = await sc.from("event_join_requests").update({
       status: "approved",
       reviewed_by: user.id,
       reviewed_at: new Date().toISOString(),
-    }).eq("event_id", id).eq("user_id", userId);
+    }).eq("event_id", id).eq("user_id", userId).select("user_id");
+    if (approveErr) { sendError(res, "db_error", approveErr.message); return; }
+    if (affectedRows(approvedReq) === 0) {
+      req.log?.warn?.({ eventId: id, targetUserId: userId }, "events: approve matched no join request — no RSVP created");
+      sendError(res, "not_found", "No pending join request from this user"); return;
+    }
 
     // Capacity check: if full, route to waitlist (when enabled) instead of going
     const maxAtt = (evFull as any).max_attendees ?? null;
@@ -3199,17 +3572,9 @@ router.patch("/events/:id/requests/:userId", async (req, res) => {
     if (maxAtt != null && currentGoing >= maxAtt) {
       if ((evFull as any).waitlist_enabled) {
         // Add to waitlist if not already there
-        const { data: existingWl } = await sc
-          .from("event_waitlist").select("position").eq("event_id", id).eq("user_id", userId).maybeSingle();
-        if (!existingWl) {
-          const { data: maxPos } = await sc
-            .from("event_waitlist").select("position").eq("event_id", id)
-            .order("position", { ascending: false }).limit(1).maybeSingle();
-          const nextPos = ((maxPos as any)?.position ?? 0) + 1;
-          await sc.from("event_waitlist").insert({ event_id: id, user_id: userId, position: nextPos });
-          const { data: wlRows } = await sc.from("event_waitlist").select("user_id").eq("event_id", id);
-          await sc.from("events").update({ waitlist_count: ((wlRows as any[]) ?? []).length }).eq("id", id);
-        }
+        const seated = await addToEventWaitlist(sc, id, userId);
+        if (!seated.ok) { sendWaitlistUnavailable(req, res, id, "requests:approve"); return; }
+        if (!seated.alreadyPresent) await recountEventWaitlist(sc, id, req);
         res.json({ ok: true, action, status: "waitlisted" }); return;
       }
       // Waitlist disabled and event full — still approve the request but don't auto-RSVP
@@ -3231,12 +3596,19 @@ router.patch("/events/:id/requests/:userId", async (req, res) => {
       await addUserToChatThread(sc, (evFull as any).chat_thread_id, userId);
     }
   } else {
-    // Deny: just update the request status
-    await sc.from("event_join_requests").update({
+    // Deny: just update the request status — and the same rule applies. A deny
+    // that matched nothing used to answer {ok:true, action:"deny"} and send the
+    // "Join request declined" push to a user who had not requested anything.
+    const { data: deniedReq, error: denyErr } = await sc.from("event_join_requests").update({
       status: "denied",
       reviewed_by: user.id,
       reviewed_at: new Date().toISOString(),
-    }).eq("event_id", id).eq("user_id", userId);
+    }).eq("event_id", id).eq("user_id", userId).select("user_id");
+    if (denyErr) { sendError(res, "db_error", denyErr.message); return; }
+    if (affectedRows(deniedReq) === 0) {
+      req.log?.warn?.({ eventId: id, targetUserId: userId }, "events: deny matched no join request");
+      sendError(res, "not_found", "No pending join request from this user"); return;
+    }
   }
 
   // Notify the requester (fire-and-forget)
@@ -3837,14 +4209,30 @@ function checkTicketUrl(url?: string | null): string | null {
   return null;
 }
 
+/**
+ * Has this host already got an event at the same place within +/-3h?
+ *
+ * Returns a THREE-state answer, not a boolean, and that is the fix. The read
+ * discarded `error`, so an unreadable `events` table answered "no duplicate"
+ * and the duplicate was created.
+ *
+ * The tempting repair — answer "duplicate" on error — is worse than the defect:
+ * it tells a host "an event with the same host, location, and time already
+ * exists", which is a fabricated verdict about their data, and it blocks a
+ * legitimate creation. A guard that could not be EVALUATED has not found
+ * anything; it has failed to look. So the third state is reported honestly and
+ * the callers refuse the write retryably instead of inventing either answer.
+ */
+type DuplicateCheck = "ok" | "duplicate" | "unavailable";
+
 async function checkDuplicateEvent(
   sc: any,
   hostId: string,
   locationName: string | null | undefined,
   startsAt: string | null | undefined,
   excludeId?: string,
-): Promise<boolean> {
-  if (!locationName || !startsAt) return false;
+): Promise<DuplicateCheck> {
+  if (!locationName || !startsAt) return "ok";
   const windowStart = new Date(new Date(startsAt).getTime() - 3 * 60 * 60 * 1000).toISOString();
   const windowEnd   = new Date(new Date(startsAt).getTime() + 3 * 60 * 60 * 1000).toISOString();
   let q = sc.from("events")
@@ -3855,8 +4243,9 @@ async function checkDuplicateEvent(
     .lte("starts_at", windowEnd)
     .not("state", "in", '("cancelled","archived")');
   if (excludeId) q = q.neq("id", excludeId);
-  const { data } = await q;
-  return Array.isArray(data) && data.length > 0;
+  const { data, error } = await q;
+  if (error) return "unavailable";
+  return Array.isArray(data) && data.length > 0 ? "duplicate" : "ok";
 }
 
 /** Check if userId is an active member of circle circleId (accepted/active status).
@@ -3985,11 +4374,37 @@ async function createEventChatThread(sc: any, eventId: string, title: string, ho
 
     if (threadErr || !(thread as any)?.id) {
       // Roll back the claim so another caller can retry.
-      await sc.from("events").update({ chat_thread_id: null, updated_at: new Date().toISOString() }).eq("id", eventId);
+      //
+      // Conditional on the claim still being OURS, and `.error`-checked: the
+      // rollback is the only thing standing between a failed insert and a
+      // PERMANENT dead end — events.chat_thread_id pointing at a message_threads
+      // row that does not exist, which no later call can repair because the
+      // claim (`.is("chat_thread_id", null)`) can never be won again. Unchecked,
+      // a rollback the database refused looked exactly like one that worked.
+      const { error: rbErr } = await sc
+        .from("events")
+        .update({ chat_thread_id: null, updated_at: new Date().toISOString() })
+        .eq("id", eventId)
+        .eq("chat_thread_id", candidateId);
+      if (rbErr) {
+        logger.error(
+          { err: rbErr, eventId, candidateId },
+          "event chat: thread insert failed AND its claim could not be rolled back — " +
+          "events.chat_thread_id now points at a thread that does not exist",
+        );
+      }
       return null;
     }
 
-    await sc.from("message_thread_members").insert({ thread_id: candidateId, user_id: hostId });
+    // The host must be a member of the thread they just created; unchecked, this
+    // produced a live thread its own creator could not see.
+    const { error: memberErr } = await sc
+      .from("message_thread_members")
+      .insert({ thread_id: candidateId, user_id: hostId });
+    if (memberErr) {
+      logger.warn({ err: memberErr, eventId, threadId: candidateId, hostId },
+        "event chat: host could not be added to the thread they created");
+    }
     return candidateId;
   } catch { return null; }
 }
@@ -4038,6 +4453,19 @@ router.post("/events/:id/reviews", async (req, res) => {
     sendError(res, "forbidden", "Only confirmed attendees can review this event"); return;
   }
 
+  // The upsert below keeps the row id on (event_id, reviewer_id) conflict, so
+  // an edit and a first submission are indistinguishable from its result.
+  // Trust must know which: one review is one piece of evidence, and an edit
+  // must not stack a second event on the same review id. A failed read is
+  // treated as "unknown" and no trust event is written.
+  const { data: priorReview, error: priorReviewErr } = await sc
+    .from("event_reviews")
+    .select("id")
+    .eq("event_id", id)
+    .eq("reviewer_id", user.id)
+    .maybeSingle();
+  const isFirstSubmission: boolean | null = priorReviewErr ? null : !priorReview;
+
   const { data: review, error } = await sc
     .from("event_reviews")
     .upsert(
@@ -4055,6 +4483,22 @@ router.post("/events/:id/reviews", async (req, res) => {
     .single();
 
   if (error) { req.log.error({ err: error }, "submit event review"); sendError(res, "db_error", error.message); return; }
+
+  // Trust: the HOST is rated; the reviewer is the counterparty. Bands, key and
+  // the anonymous-reviewer rule live in TrustEventService. Fire-and-forget.
+  if (isFirstSubmission === null) {
+    req.log?.warn({ eventId: id, reviewerId: user.id }, "event review trust event: prior-review read failed — not recorded");
+  } else {
+    void recordEventReviewTrustEvent(sc, {
+      hostId: (ev as any).host_id,
+      reviewerId: user.id,
+      eventId: id,
+      reviewId: (review as any).id,
+      rating: parsed.data.rating,
+      anonymous: parsed.data.anonymous,
+      isFirstSubmission,
+    }).catch((err) => req.log?.warn({ err, eventId: id }, "event review trust event failed (non-fatal)"));
+  }
 
   // Recompute average rating
   const { data: allRatings } = await sc
@@ -4223,18 +4667,23 @@ router.post("/events/:id/publish", async (req, res) => {
     sendError(res, "invalid_payload", ticketErr); return;
   }
 
-  const isDuplicate = await checkDuplicateEvent(sc, user.id, e.location_name, e.starts_at, id);
-  if (isDuplicate) {
+  const dup = await checkDuplicateEvent(sc, user.id, e.location_name, e.starts_at, id);
+  if (dup === "unavailable") {
+    sendError(res, "degraded_unavailable", "Could not check for a duplicate event. Please try again.");
+    return;
+  }
+  if (dup === "duplicate") {
     await logEventActivity(sc, id, user.id, "publish_rejected_duplicate", {});
     sendError(res, "duplicate_event", "An event with the same host, location, and time already exists"); return;
   }
 
-  const { data: updated, error } = await sc.from("events")
-    .update({ state: "open", updated_at: new Date().toISOString() })
-    .eq("id", id)
-    .select("*").single();
-
-  if (error) { req.log.error({ err: error }, "publish event"); sendError(res, "db_error", error.message); return; }
+  const publishWrite = await writeEventState(sc, id, (ev as any).state, "open");
+  if (!publishWrite.ok) {
+    if (publishWrite.code === "db_error") req.log.error({ eventId: id, message: publishWrite.message }, "publish event");
+    sendError(res, publishWrite.code, publishWrite.message); return;
+  }
+  const { data: updated, error } = await sc.from("events").select("*").eq("id", id).single();
+  if (error) { req.log.error({ err: error }, "publish event reread"); sendError(res, "db_error", error.message); return; }
 
   if (e.chat_enabled) {
     await createEventChatThread(sc, id, e.title, user.id);
@@ -4319,19 +4768,25 @@ router.post("/events/:id/cancel", async (req, res) => {
   const role = await getEventRole(sc, id, user.id);
   if (role !== "host") { sendError(res, "forbidden", "Only the host can cancel this event"); return; }
 
-  const { data: ev } = await sc.from("events").select("title, state").eq("id", id).maybeSingle();
+  const { data: ev } = await sc.from("events").select("title, state, starts_at").eq("id", id).maybeSingle();
   if (!ev) { sendError(res, "not_found", "Event not found"); return; }
 
   if ((ev as any).state === "cancelled") { res.json({ ok: true }); return; }
+  const priorState = String((ev as any).state ?? "");
 
   const reason = z.string().max(500).optional().parse(req.body.reason);
 
   // supabase-js resolves rather than throws — unchecked, a failed cancel
   // returned {ok:true} while the event stayed open.
-  const { error: cancelErr } = await sc.from("events").update({ state: "cancelled", updated_at: new Date().toISOString() }).eq("id", id);
-  if (cancelErr) { sendError(res, "db_error", cancelErr.message); return; }
+  const cancelWrite = await writeEventState(sc, id, priorState, "cancelled");
+  if (!cancelWrite.ok) { sendError(res, cancelWrite.code, cancelWrite.message); return; }
 
   await logEventActivity(sc, id, user.id, "cancelled", { reason: reason ?? null });
+
+  // Trust: same action as DELETE /events/:id, same key (the event id).
+  emitHostCancelledTrustEvent(sc, req, {
+    id, hostId: user.id, priorState, startsAt: (ev as any).starts_at ?? null, reason: reason ?? null,
+  });
 
   void (async () => {
     try {
@@ -4378,8 +4833,8 @@ router.post("/events/:id/postpone", async (req, res) => {
 
   // supabase-js resolves rather than throws — unchecked, a failed postpone
   // returned {ok:true} while the event stayed live.
-  const { error: postponeErr } = await sc.from("events").update({ state: "draft", updated_at: new Date().toISOString() }).eq("id", id);
-  if (postponeErr) { sendError(res, "db_error", postponeErr.message); return; }
+  const postponeWrite = await writeEventState(sc, id, (ev as any).state, "draft");
+  if (!postponeWrite.ok) { sendError(res, postponeWrite.code, postponeWrite.message); return; }
   await logEventActivity(sc, id, user.id, "postponed", { reason: reason ?? null });
 
   void (async () => {
@@ -4426,7 +4881,12 @@ router.post("/events/:id/complete", async (req, res) => {
     sendError(res, "invalid_payload", `Event cannot be completed from state '${(ev as any).state}' — it must be active (started) first`); return;
   }
 
-  await sc.from("events").update({ state: "completed", updated_at: new Date().toISOString() }).eq("id", id);
+  // supabase-js resolves rather than throws — unchecked, a failed write returned
+  // {ok:true} and fired trust events, stamps and review pushes for a completion
+  // that never happened. (Reachable at all only once lib/eventLifecycle.ts, or
+  // a future host-initiated route, has written `started`.)
+  const completeWrite = await writeEventState(sc, id, (ev as any).state, "completed");
+  if (!completeWrite.ok) { sendError(res, completeWrite.code, completeWrite.message); return; }
   await logEventActivity(sc, id, user.id, "completed", {});
 
   // Fire-and-forget: award trust signals + send review-prompt push notifications + stamps
@@ -4556,7 +5016,14 @@ router.post("/events/:id/archive", async (req, res) => {
   const role = await getEventRole(sc, id, user.id);
   if (role !== "host") { sendError(res, "forbidden", "Only the host can archive this event"); return; }
 
-  await sc.from("events").update({ state: "archived", updated_at: new Date().toISOString() }).eq("id", id);
+  // This route read no state at all and discarded the UPDATE's `.error`, so a
+  // refused write answered {ok:true} and an already-archived / cancelled /
+  // completed event was re-archived silently.
+  const { data: archEv } = await sc.from("events").select("state").eq("id", id).maybeSingle();
+  if (!archEv) { sendError(res, "not_found", "Event not found"); return; }
+  if ((archEv as any).state === "archived") { res.json({ ok: true }); return; }
+  const archiveWrite = await writeEventState(sc, id, (archEv as any).state, "archived");
+  if (!archiveWrite.ok) { sendError(res, archiveWrite.code, archiveWrite.message); return; }
   await logEventActivity(sc, id, user.id, "archived", {});
 
   res.json({ ok: true });
@@ -4674,7 +5141,7 @@ router.delete("/events/:id/attendees/:userId", async (req, res) => {
   // Promote BEFORE syncing state so the freed seat is reserved by an active
   // offer (see DELETE /rsvp) — otherwise syncEventState reopens to a walk-in.
   const waitlistEnabled = await isFlagEnabled(sc, "events_waitlist_enabled");
-  if (waitlistEnabled) await promoteNextWaitlisted(sc, id);
+  if (waitlistEnabled) await promoteNextWaitlisted(sc, id, req);
   await syncEventState(sc, id);
 
   const { data: ev } = await sc.from("events").select("chat_thread_id").eq("id", id).maybeSingle();
@@ -4775,13 +5242,8 @@ router.post("/events/:id/join-requests/:requestId/approve", async (req, res) => 
   // already nests it this way.
   if (maxAtt != null && currentGoing >= maxAtt) {
     if ((evFull as any).waitlist_enabled) {
-      const { data: existingWl } = await sc.from("event_waitlist").select("position").eq("event_id", id).eq("user_id", targetId).maybeSingle();
-      if (!existingWl) {
-        const { data: maxPos } = await sc.from("event_waitlist").select("position").eq("event_id", id)
-          .order("position", { ascending: false }).limit(1).maybeSingle();
-        const nextPos = ((maxPos as any)?.position ?? 0) + 1;
-        await sc.from("event_waitlist").insert({ event_id: id, user_id: targetId, position: nextPos });
-      }
+      const seated = await addToEventWaitlist(sc, id, targetId);
+      if (!seated.ok) { sendWaitlistUnavailable(req, res, id, "join-requests:approve"); return; }
       await logEventActivity(sc, id, user.id, "join_request_approved", { targetUserId: targetId, outcome: "waitlisted" });
       res.json({ ok: true, status: "waitlisted" }); return;
     }
@@ -4975,23 +5437,10 @@ router.post("/events/:id/invites/:inviteId/accept", async (req, res) => {
       if (!(ev as any).waitlist_enabled) {
         // Invite accepted but event is full with no waitlist — just record acceptance, no RSVP
       } else {
-        const { data: alreadyWaitlisted } = await sc
-          .from("event_waitlist")
-          .select("position")
-          .eq("event_id", id)
-          .eq("user_id", user.id)
-          .maybeSingle();
-        if (!alreadyWaitlisted) {
-          const { data: maxPos } = await sc
-            .from("event_waitlist")
-            .select("position")
-            .eq("event_id", id)
-            .order("position", { ascending: false })
-            .limit(1)
-            .maybeSingle();
-          const nextPos = ((maxPos as any)?.position ?? 0) + 1;
-          await sc.from("event_waitlist").insert({ event_id: id, user_id: user.id, position: nextPos });
-          await sc.from("events").update({ waitlist_count: nextPos }).eq("id", id);
+        const seated = await addToEventWaitlist(sc, id, user.id);
+        if (!seated.ok) { sendWaitlistUnavailable(req, res, id, "invites:accept"); return; }
+        if (!seated.alreadyPresent) {
+          await sc.from("events").update({ waitlist_count: seated.position }).eq("id", id);
         }
         res.json({ ok: true, status: "waitlisted" }); return;
       }
@@ -5924,33 +6373,110 @@ router.post("/events/:id/add-to-trip", async (req, res) => {
     sendError(res, "forbidden", "You must be an accepted trip member to add events"); return;
   }
 
-  // Guard against duplicate: same source already in this trip
-  const { data: existingItem } = await sc.from("trip_plan_items").select("id")
+  // Guard against duplicate: same source already in this trip.
+  // This is the ONLY thing standing between a retry and a second itinerary
+  // entry on the legacy (kernel-off) path, whose INSERT below is unconditional
+  // and carries no idempotency key. An unreadable trip_plan_items resolves as
+  // `{ data: null }` — identical to "not in the plan" — so treating the failure
+  // as "not present" adds the event to the trip twice. Refuse instead: the add
+  // is retryable and the duplicate is not undoable from this route.
+  const { data: existingItem, error: existingItemErr } = await sc.from("trip_plan_items").select("id")
     .eq("trip_id", tripId).eq("source_type", "event").eq("source_id", id)
     .is("removed_at", null).maybeSingle();
+  if (existingItemErr) {
+    req.log.error({ err: existingItemErr, tripId, eventId: id }, "add-to-trip: duplicate check unavailable");
+    sendError(res, "degraded_unavailable", "We could not check whether this event is already in the trip. Please try again shortly.");
+    return;
+  }
   if (existingItem) {
     res.json({ planItemId: (existingItem as any).id, tripId, alreadyAdded: true }); return;
   }
 
   const e = ev as any;
-  const { data: item, error: itemErr } = await sc.from("trip_plan_items").insert({
-    trip_id:       tripId,
-    title:         e.title ?? "Event",
-    category:      "activity",
-    status:        "tentative",
-    source_type:   "event",
-    source_id:     id,
-    starts_at:     e.starts_at ?? null,
-    ends_at:       e.ends_at ?? null,
-    location_name: e.location_name ?? null,
-    lat:           e.location_lat ?? null,
-    lng:           e.location_lng ?? null,
-    sort_order:    0,
-  }).select("id, title, category, status, source_type, source_id, starts_at, ends_at, location_name, lat, lng").single();
 
-  if (itemErr) { sendError(res, "db_error", itemErr.message); return; }
+  // Adding a plan item IS a change to the trip aggregate, so it goes through the
+  // Trip Kernel as ADD_PLAN when the kernel is available. The kernel is what
+  // bumps `trips.version`, emits `trip.plan_added` into `trip_events`, publishes
+  // to `trip_outbox` (which the Map projection drains) and writes the receipt.
+  // A direct INSERT does none of that: the row appears, the aggregate version
+  // does not move, and every downstream consumer keeps serving a stale trip
+  // while looking perfectly healthy.
+  //
+  // actorRole is "user" and the actor is the caller — this is the traveller
+  // adding an event to their own trip, not an administrative act. The kernel
+  // re-checks crew membership itself (TRIP_AUTH_NOT_CREW); the route's own
+  // membership check above stays because it produces a better message and
+  // short-circuits before the event lookup, but the KERNEL is the authority.
+  //
+  // expectedTripVersion is null deliberately. The client here is pressing "add
+  // this event to my trip" from the event screen; it holds no trip version, so
+  // an If-Match would mean "abandon the add if any crew member touched the trip
+  // since this screen loaded" — which would fail constantly on an active trip
+  // and is not what the gesture means.
+  //
+  // The idempotency key is derived from (trip, event) rather than random, so a
+  // double-tap replays the receipt instead of adding the same event twice. That
+  // is the same guarantee the `existingItem` check above gives, made durable:
+  // that check races with itself, the key does not.
+  const kernel = await tripKernelClient(sc);
+  let it: any;
+  if (kernel) {
+    const r = await executeTripCommand(kernel, {
+      commandId: randomUUID(),
+      tripId,
+      actorUserId: user.id,
+      actorRole: "user",
+      expectedTripVersion: null,
+      idempotencyKey: `event-to-trip:${tripId}:${id}`,
+      type: "ADD_PLAN",
+      payload: {
+        title:         e.title ?? "Event",
+        category:      "activity",
+        status:        "tentative",
+        source_type:   "event",
+        source_id:     id,
+        starts_at:     e.starts_at ?? null,
+        ends_at:       e.ends_at ?? null,
+        location_name: e.location_name ?? null,
+        lat:           e.location_lat ?? null,
+        lng:           e.location_lng ?? null,
+        sort_order:    0,
+      },
+    });
+    if (!r.ok) {
+      // A refusal is LOUDER than the legacy insert, not weaker: the legacy path
+      // would have written the row and left the aggregate behind.
+      if (r.reason === "TRIP_AUTH_NOT_CREW") {
+        sendError(res, "forbidden", "You must be an accepted trip member to add events");
+        return;
+      }
+      req.log.warn({ reason: r.reason, detail: r.detail, tripId, eventId: id }, "ADD_PLAN refused");
+      sendError(res, "db_error", `Could not add this event to the trip (${r.reason})`);
+      return;
+    }
+    res.setHeader(TRIP_VERSION_RESPONSE_HEADER, String(r.version));
+    it = r.result;
+  } else {
+    // trip-kernel:legacy-path — the flag-off twin of ADD_PLAN above. Byte-for-byte
+    // the previous behaviour, so turning the flag off restores it exactly.
+    const { data: item, error: itemErr } = await sc.from("trip_plan_items").insert({
+      trip_id:       tripId,
+      title:         e.title ?? "Event",
+      category:      "activity",
+      status:        "tentative",
+      source_type:   "event",
+      source_id:     id,
+      starts_at:     e.starts_at ?? null,
+      ends_at:       e.ends_at ?? null,
+      location_name: e.location_name ?? null,
+      lat:           e.location_lat ?? null,
+      lng:           e.location_lng ?? null,
+      sort_order:    0,
+    }).select("id, title, category, status, source_type, source_id, starts_at, ends_at, location_name, lat, lng").single();
 
-  const it = item as any;
+    if (itemErr) { sendError(res, "db_error", itemErr.message); return; }
+    it = item as any;
+  }
   res.status(201).json({
     planItemId: it.id,
     tripId,
@@ -6069,8 +6595,17 @@ router.post("/events/:id/telegraph-thread", async (req, res) => {
   // Post a pinned context card if this thread was freshly created
   void (async () => {
     try {
-      const { data: existing } = await sc.from("messages").select("id")
+      // "Has the pinned card already been posted?" is what makes this route
+      // idempotent. An unreadable `messages` resolves as `{ data: null }`, the
+      // same shape as "no card yet", so every re-open of the thread while the
+      // table is unhealthy pins ANOTHER copy of the card into the event chat.
+      // Skip on an unreadable check; the next open re-posts it if it is genuinely missing.
+      const { data: existing, error: existingErr } = await sc.from("messages").select("id")
         .eq("thread_id", threadId).eq("msg_type", "system").eq("subtype", "event_context_card").limit(1).maybeSingle();
+      if (existingErr) {
+        req.log?.warn({ err: existingErr, eventId: id, threadId }, "event context card: existing-card check unavailable; not posting");
+        return;
+      }
       if (!existing) {
         const e = ev as any;
         const lines = [

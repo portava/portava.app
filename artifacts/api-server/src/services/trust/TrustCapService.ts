@@ -6,6 +6,9 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { TrustCategory } from "./TrustEventService.js";
+import { logger as rootLogger } from "../../lib/logger.js";
+
+const logger = rootLogger.child({ service: "TrustCapService" });
 
 export interface CreateCapInput {
   userId: string;
@@ -83,9 +86,13 @@ export async function expireOldCaps(db: SupabaseClient): Promise<number> {
       .lt("expires_at", new Date().toISOString())
       .is("lifted_at", null)
       .select("id");
-    if (error) return 0;
+    if (error) {
+      logger.warn({ err: error }, "expireOldCaps failed (non-fatal) — expired ceilings stay in force until the next pass");
+      return 0;
+    }
     return (data as any[])?.length ?? 0;
-  } catch {
+  } catch (err) {
+    logger.warn({ err }, "expireOldCaps threw (non-fatal)");
     return 0;
   }
 }
@@ -128,18 +135,73 @@ export async function liftCapsBySourceEvents(
 }
 
 /** Get all active caps for a user */
+/**
+ * The THREE-state caps read: caps were READ, or the table could not be read.
+ *
+ * `getActiveCaps` is deliberately fail-SOFT — it returns `[]` and logs, so a
+ * Passport projection is not taken down by a caps read. That is right for a
+ * display path and wrong for a GATE, and census-trust A17 found a gate that had
+ * therefore written its own read rather than use the service:
+ * `CompassActiveUserRewardEngine.hasActiveTrustCap` treats an unreadable table
+ * as CAPPED and withholds the boost, which `getActiveCaps` cannot express.
+ *
+ * So the service offers both postures instead of a caller choosing between
+ * obeying the rule and being correct.
+ */
+export type ActiveCapsRead =
+  | { state: "ok"; caps: TrustCap[] }
+  | { state: "unavailable"; reason: string };
+
+export async function getActiveCapsResult(
+  db: SupabaseClient,
+  userId: string,
+): Promise<ActiveCapsRead> {
+  try {
+    const now = new Date().toISOString();
+    const { data, error } = await db
+      .from("trust_caps")
+      .select("id, user_id, category, ceiling_score, reason_code, source_event_id, expires_at, created_at")
+      .eq("user_id", userId)
+      .is("lifted_at", null)
+      .or(`expires_at.is.null,expires_at.gt.${now}`);
+    if (error) {
+      logger.warn({ err: error, userId }, "getActiveCapsResult read failed — reporting unavailable so a GATE can fail closed");
+      return { state: "unavailable", reason: String((error as any).message ?? (error as any).code ?? "db_error") };
+    }
+    return {
+      state: "ok",
+      caps: ((data as any[]) ?? []).map((d) => ({
+        id: d.id, userId: d.user_id, category: d.category, ceilingScore: d.ceiling_score,
+        reasonCode: d.reason_code, sourceEventId: d.source_event_id,
+        expiresAt: d.expires_at, createdAt: d.created_at,
+      })) as TrustCap[],
+    };
+  } catch (err) {
+    logger.warn({ err, userId }, "getActiveCapsResult threw — reporting unavailable");
+    return { state: "unavailable", reason: "threw" };
+  }
+}
+
 export async function getActiveCaps(
   db: SupabaseClient,
   userId: string,
 ): Promise<TrustCap[]> {
   try {
     const now = new Date().toISOString();
-    const { data } = await db
+    const { data, error } = await db
       .from("trust_caps")
       .select("id, user_id, category, ceiling_score, reason_code, source_event_id, expires_at, created_at")
       .eq("user_id", userId)
       .is("lifted_at", null)
       .or(`expires_at.is.null,expires_at.gt.${now}`);
+    // Read-side view (recovery status, admin user page): stays fail-soft so a
+    // Passport projection is not taken down by a caps read, but it is logged —
+    // an empty list from a failed read must leave evidence. The SCORING read of
+    // the same table (TrustScoreService.loadCaps) fails closed.
+    if (error) {
+      logger.warn({ err: error, userId }, "getActiveCaps read failed — returning no caps to a display path (degraded)");
+      return [];
+    }
     return ((data as any[]) ?? []).map((d) => ({
       id:            d.id,
       userId:        d.user_id,
@@ -167,12 +229,23 @@ export async function applyEventCaps(
   // Keys are lowercase — callers must have already lowercased eventType
   // (TrustEventService.recordTrustEvent normalizes on entry; confirmEvent passes the
   // stored value which is always lowercase after that normalization).
+  //
+  // Keys must be the EMITTED vocabulary, not the TRUST_EVENT_TYPES constant
+  // name. The location findings are written by recordLocationTrustEvent as
+  // `gps_${suspicionReason}` — `gps_impossible_speed` and `gps_coordinate_jump`
+  // — so the entry here was `coordinate_jump` for a type nobody has ever
+  // emitted, exactly the mismatch CHECKIN_CLUSTER_EVENT_TYPES documents for the
+  // gaming scan. A coordinate jump is emitted at 'moderate' and is applied
+  // rather than queued, so today this entry is reached only if one is ever
+  // confirmed through the adjudicated path; the key is corrected so that path
+  // caps the right thing when it happens, and so the map stops naming an event
+  // that does not exist.
   const capMap: Record<string, { category: TrustCategory; ceiling: number; reasonCode: string; expiresInDays?: number }[]> = {
     plan_no_show:              [{ category: "plan_attendance",  ceiling: 60, reasonCode: "no_show",              expiresInDays: 30 }],
     behavior_report_confirmed: [{ category: "respect_safety",  ceiling: 40, reasonCode: "behavior_confirmed" }],
     fake_gps_confirmed:        [{ category: "location_honesty", ceiling: 35, reasonCode: "fake_gps_confirmed"                      }],
     gps_impossible_speed:      [{ category: "location_honesty", ceiling: 55, reasonCode: "impossible_speed",     expiresInDays: 14 }],
-    coordinate_jump:           [{ category: "location_honesty", ceiling: 55, reasonCode: "coordinate_jump",      expiresInDays: 7  }],
+    gps_coordinate_jump:       [{ category: "location_honesty", ceiling: 55, reasonCode: "coordinate_jump",      expiresInDays: 7  }],
     content_removed:           [{ category: "content_quality",  ceiling: 50, reasonCode: "content_removed",      expiresInDays: 30 }],
     message_report_confirmed:  [{ category: "communication",    ceiling: 45, reasonCode: "message_report",       expiresInDays: 60 }],
   };

@@ -225,12 +225,30 @@ export async function runDedupTick(scOverride?: any): Promise<void> {
 
           // Resolve the actual group id in case the upsert hit an existing row.
           // Re-query to get the canonical id for the (place, representative) pair.
-          const { data: groupRow } = await sc
+          const { data: groupRow, error: groupReadErr } = await sc
             .from("media_dedup_groups")
             .select("id")
             .eq("canonical_place_id", placeId)
             .eq("representative_media_id", representativeId)
             .maybeSingle();
+
+          // The `?? groupId` fallback is only correct when the read SUCCEEDED
+          // and found nothing (the upsert inserted, so our generated id is the
+          // row's id). A failed read also yields no row, and then the fallback
+          // asserts that an upsert which may well have hit an EXISTING group
+          // created a new one: memberships get written against a group id no
+          // row has, and — because membership success is what marks media
+          // "durable" — every one of these photos is then flagged
+          // dedup_processed and never looked at again. Take the same
+          // `continue` the upsert and membership failures take: nothing is
+          // marked, and the next tick redoes this cluster.
+          if (groupReadErr) {
+            console.error(JSON.stringify({
+              event: "media_dedup.group_resolve_error", place_id: placeId,
+              rep_id: representativeId, error: groupReadErr.message,
+            }));
+            continue; // don't mark processed
+          }
 
           const resolvedGroupId: string = (groupRow as any)?.id ?? groupId;
 

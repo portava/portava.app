@@ -404,11 +404,29 @@ describe("guard — every passport identity builder goes through the choke point
   });
 
   it("no passport service reads a raw display_name outside a sanitized row", () => {
+    let linesScanned = 0;
     for (const f of files) {
-      const src = readFileSync(join(PASSPORT_SERVICES_DIR, f), "utf8");
+      const raw = readFileSync(join(PASSPORT_SERVICES_DIR, f), "utf8");
+      // COMMENTS ARE STRIPPED FIRST, and stripping them cannot weaken this
+      // guard: a comment does not read a column. Leaving them in DID weaken it,
+      // in the direction of false failure — a header explaining WHY a module
+      // must not write `prof.display_name` inline was itself reported as writing
+      // it, and the only way to satisfy the guard was to stop explaining the
+      // rule in the file the rule is about. A check that punishes its own
+      // documentation gets its documentation deleted.
+      //
+      // Newlines are preserved so the reported line number still points at the
+      // real line.
+      const src = raw
+        .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, " "))
+        .split("\n")
+        .map((l) => l.replace(/\/\/.*$/, ""))
+        .join("\n");
       src.split("\n").forEach((line, i) => {
+        linesScanned += 1;
         // Column lists in SELECT strings are fine; reads off an object are not,
-        // unless the object is the sanitized copy.
+        // unless the object is the sanitized copy. String literals are NOT
+        // stripped — a template read like `${row.display_name}` is a real read.
         const read = /\b([A-Za-z_$][\w$]*)\.(display_name|full_name)\b/.exec(line);
         if (!read) return;
         assert.equal(
@@ -419,6 +437,34 @@ describe("guard — every passport identity builder goes through the choke point
         );
       });
     }
+    // Non-vacuous: comment-stripping must not have blanked the corpus.
+    assert.ok(linesScanned > 500, `scanned only ${linesScanned} lines — the strip ate the source`);
+  });
+
+  it("the comment strip does not blind the guard to a real read", () => {
+    // The strip above is the kind of change that can silently turn a guard off,
+    // so the guard is run against a synthetic file containing BOTH shapes: a
+    // comment that mentions the pattern (must be ignored) and a live read on the
+    // next line (must be caught).
+    const strip = (raw: string): string =>
+      raw
+        .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, " "))
+        .split("\n")
+        .map((l) => l.replace(/\/\/.*$/, ""))
+        .join("\n");
+    const hits = (raw: string): string[] =>
+      strip(raw)
+        .split("\n")
+        .map((l) => /\b([A-Za-z_$][\w$]*)\.(display_name|full_name)\b/.exec(l))
+        .filter((m): m is RegExpExecArray => m !== null)
+        .map((m) => m[0]);
+
+    assert.deepEqual(hits("// never write prof.display_name inline"), []);
+    assert.deepEqual(hits("/* prof.display_name is forbidden here */"), []);
+    assert.deepEqual(hits("const n = prof.display_name;"), ["prof.display_name"]);
+    assert.deepEqual(hits("const n = `${row.full_name}`;"), ["row.full_name"]);
+    // A read and a comment on the same line: the read still wins.
+    assert.deepEqual(hits("const n = prof.display_name; // like other.display_name"), ["prof.display_name"]);
   });
 
   it("PassportProjectionService imports the canonical choke point", () => {

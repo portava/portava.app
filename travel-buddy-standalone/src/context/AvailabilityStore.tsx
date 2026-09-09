@@ -1,6 +1,5 @@
 import React, { createContext, useContext, useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import type { Availability, Weekday, TimeBlock, TripWindow } from '../types/models.ts';
-import { mockAvailability } from '../data/events.ts';
 import {
   getMyAvailability,
   patchMyAvailability,
@@ -29,13 +28,30 @@ interface AvailabilityContextValue {
 
 const AvailabilityContext = createContext<AvailabilityContextValue | null>(null);
 
+/**
+ * The pre-load value. Availability is user data: until the server has answered
+ * we know nothing, and "nothing" must render as nothing.
+ *
+ * This used to seed from `mockAvailability` (src/__fixtures__/events.ts, a
+ * fixture whose own header says "not live user data — do not use as primary
+ * data source in authenticated flows"). Because this provider is mounted
+ * app-wide in app/_layout.tsx, that seed was live for every viewer: anyone
+ * signed out, or signed in but before the mount fetch resolved, saw a stranger's
+ * fabricated week (Fri/Sat/Sun evening+late) and `openToMeet: true` — which
+ * app/availability.tsx renders as "Open to meet — shown on your Passport."
+ *
+ * It was also writable: `save()` PATCHes whatever is in state, so a user who
+ * toggled anything before the fetch landed would persist the fixture's blocks
+ * onto their real account.
+ *
+ * EMPTY is the fail-closed value in both directions — nothing shown, nothing
+ * claimed on the user's behalf.
+ */
 const EMPTY: Availability = { weekly: { days: {} }, trips: [], openToMeet: false };
 
 export function AvailabilityProvider({ children }: { children: React.ReactNode }) {
   const { configured, isAuthed } = useSession();
-  const [availability, setAvailability] = useState<Availability>(
-    (mockAvailability as Availability) ?? EMPTY,
-  );
+  const [availability, setAvailability] = useState<Availability>(EMPTY);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [quickStatus, setQuickStatusState] = useState<QuickStatus | null>(null);
@@ -43,9 +59,10 @@ export function AvailabilityProvider({ children }: { children: React.ReactNode }
 
   // Tracks the last value confirmed by the server so save() can roll back to it
   // on failure rather than to the current (already-toggled) optimistic value.
-  const confirmedOpenToMeet = useRef<boolean>(
-    ((mockAvailability as Availability) ?? EMPTY).openToMeet,
-  );
+  // Seeded from EMPTY, not a fixture: before the server confirms anything the
+  // last confirmed value is "not open to meet", so a failed save rolls back to
+  // fail-closed rather than to a fabricated `true`.
+  const confirmedOpenToMeet = useRef<boolean>(EMPTY.openToMeet);
 
   // Load from backend on mount when authenticated
   useEffect(() => {
@@ -165,12 +182,16 @@ export function AvailabilityProvider({ children }: { children: React.ReactNode }
   return <AvailabilityContext.Provider value={value}>{children}</AvailabilityContext.Provider>;
 }
 
-/** Read + edit availability. Falls back to mock (read-only) if provider missing. */
+/**
+ * Read + edit availability. With no provider above it this returns an inert,
+ * read-only store seeded from EMPTY — a missing provider must render as "no
+ * availability known", never as a fixture's week.
+ */
 export function useAvailabilityStore(): AvailabilityContextValue {
   const ctx = useContext(AvailabilityContext);
   if (!ctx) {
     return {
-      availability: (mockAvailability as Availability) ?? EMPTY,
+      availability: EMPTY,
       toggleBlock: () => {}, applyWeekly: () => {}, clearWeekly: () => {},
       setOpenToMeet: () => {}, addTripWindow: () => {}, removeTripWindow: () => {},
       save: async () => {}, refresh: async () => {}, saveError: null, saving: false,

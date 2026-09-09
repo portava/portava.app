@@ -4,7 +4,9 @@
  * Verifies schema alignment against actual migrations:
  *   0034_geo_zones.sql  — geo_zones columns: zone_type, name, city, country_code,
  *                         bounds_json, center_lat/lng, radius_meters,
- *                         safety_rating, featured, verified, created_by
+ *                         safety_rating, featured, verified, created_by,
+ *                         and (live, 2026-09-07) is_system, metadata,
+ *                         polygon_geojson — see src/test/geoZoneSeed.test.ts
  *   0033_location_sessions.sql — location_trust_events columns: event_type,
  *                         confidence, details, reviewed_at, reviewed_by
  *   0029_discovery_places.sql  — discovery_places: status = provisional|verified|blocked
@@ -151,7 +153,7 @@ describe("admin — geo zones", () => {
     assert.equal(status, 403);
   });
 
-  it("POST /admin/geo-zones uses correct columns (no is_system, no metadata)", async () => {
+  it("POST /admin/geo-zones writes column names, and only the fields it was given", async () => {
     const captured: any[] = [];
     const client = makeFakeClient({ role: "admin" });
     const origFrom = client.from.bind(client);
@@ -182,10 +184,14 @@ describe("admin — geo zones", () => {
     assert.equal(row.zone_type, "neighborhood");
     assert.equal(row.city, "Makati");
     assert.equal(row.country_code, "PH");
-    // Must NOT include columns absent from the migration
-    assert.ok(!("is_system" in row), "is_system must not be sent to DB");
-    assert.ok(!("metadata" in row),  "metadata must not be sent to DB (not in geo_zones)");
-    assert.ok(!("polygon_geojson" in row), "polygon_geojson must not be sent");
+    // is_system, metadata and polygon_geojson ARE live geo_zones columns
+    // (0034; measured 2026-09-07). The single-zone POST does not set the first
+    // two — a curated default (is_system / verified true, seed_source) belongs
+    // to the import path, lib/geoZoneSeed — and sends polygon_geojson only when
+    // the caller supplied one, so a circle zone never carries a null polygon key.
+    assert.ok(!("is_system" in row), "is_system is not set by the single-zone POST");
+    assert.ok(!("metadata" in row),  "metadata is not set by the single-zone POST");
+    assert.ok(!("polygon_geojson" in row), "polygon_geojson is omitted when not supplied");
   });
 
   it("POST /admin/geo-zones rejects unknown zoneType", async () => {

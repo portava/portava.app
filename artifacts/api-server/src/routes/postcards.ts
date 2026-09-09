@@ -553,6 +553,105 @@ const completeSchema = z.object({
  */
 const DIMENSIONS_REQUIRED_MESSAGE = 'width and height are required to complete this upload.';
 
+/* ============================================================================
+ * Why a failed media check is CLASSIFIED before it is reported
+ * ============================================================================
+ * The completion handler below runs three genuinely different kinds of check
+ * over the stored object, and until now a single `try` wrapped all of them and
+ * a single `catch` reported every one of them as
+ *
+ *     400 invalid_payload  "Video could not be verified. Please re-upload."
+ *
+ * Those three kinds are:
+ *
+ *   CONTENT        the bytes are not what they were declared to be
+ *                  (verifyUploadedBytes rejected the magic bytes; Sharp could
+ *                  not decode the image). The uploader CAN fix this, and
+ *                  re-uploading is the right advice. 400.
+ *
+ *   POLICY         the bytes are a legal media file that we refuse
+ *                  (the stored object exceeds MEDIA_SIZE_LIMITS). The uploader
+ *                  can fix this too, but not by re-uploading the same file —
+ *                  the message has to say WHAT the limit is. 400.
+ *
+ *   INFRASTRUCTURE we could not perform the check at all: Storage would not
+ *                  issue a signed URL, the range read returned 5xx, the
+ *                  download errored, the re-upload errored. Nothing is known
+ *                  about the file. Telling this person "your video could not be
+ *                  verified, please re-upload" is a FALSE STATEMENT about their
+ *                  content — it blames the user for our outage, and the advice
+ *                  it gives (re-upload) is the one action that cannot help,
+ *                  because the second attempt fails in the same place. 503
+ *                  `degraded_unavailable`, which lib/http.ts marks retryable, so
+ *                  the client offers "try again" instead of "your file is bad".
+ *
+ * Every throw inside the checked blocks is now raised as a MediaCheckFailure
+ * carrying its kind. An UNCLASSIFIED throw — a bug in this handler, or a new
+ * library error nobody has triaged — is reported as INFRASTRUCTURE, because
+ * "we do not know what went wrong" must never be served as "your file is
+ * broken". The log line carries `classification` so an unclassified failure is
+ * visible to operators rather than hiding inside the retryable bucket.
+ *
+ * This is the same distinction §28.11 draws for reads ("never swallow failures
+ * into plausible-looking empty history without structured error state"), on the
+ * write path.
+ * ============================================================================ */
+type MediaFailureKind = 'content' | 'policy' | 'infrastructure';
+
+class MediaCheckFailure extends Error {
+  readonly kind: MediaFailureKind;
+  constructor(kind: MediaFailureKind, message: string) {
+    super(message);
+    this.name = 'MediaCheckFailure';
+    this.kind = kind;
+  }
+}
+
+/** The stored bytes are not what they were declared to be — the uploader can fix it. */
+const contentFailure = (m: string) => new MediaCheckFailure('content', m);
+/** A legal file we refuse; the message must state the rule. */
+const policyFailure = (m: string) => new MediaCheckFailure('policy', m);
+/** The check could not be performed. Nothing is known about the file. */
+const infraFailure = (m: string) => new MediaCheckFailure('infrastructure', m);
+
+/**
+ * Report a caught media-check failure with the code its KIND earns.
+ *
+ * `contentMessage` is the user-facing sentence for the content case only — the
+ * one case where "please re-upload" is true advice. Policy failures carry their
+ * own specific message (a size limit is useless if it does not say the limit).
+ * Infrastructure failures never repeat the internal reason to the client, but
+ * always log it.
+ */
+function sendMediaCheckFailure(
+  req: any,
+  res: any,
+  err: unknown,
+  stage: string,
+  contentMessage: string,
+): void {
+  const classified = err instanceof MediaCheckFailure ? err : null;
+  const kind: MediaFailureKind = classified?.kind ?? 'infrastructure';
+  req.log.error(
+    { err, stage, classification: classified ? kind : 'unclassified' },
+    `postcards: ${stage} failed (${classified ? kind : 'unclassified — reported as infrastructure'})`,
+  );
+  if (kind === 'content') {
+    sendError(res, 'invalid_payload', contentMessage);
+    return;
+  }
+  if (kind === 'policy') {
+    sendError(res, 'invalid_payload', classified!.message);
+    return;
+  }
+  // INFRASTRUCTURE. 503 + retryable: our outage, not their file.
+  sendError(
+    res,
+    'degraded_unavailable',
+    'We could not check your upload right now. Your file is fine — please try again in a moment.',
+  );
+}
+
 router.post('/postcards/:id/media/:mediaId/complete', async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
@@ -615,22 +714,48 @@ router.post('/postcards/:id/media/:mediaId/complete', async (req, res) => {
   let feedUrl: string | null = null;
   if ((mediaRow as any).media_type === 'image') {
     try {
+      // STORAGE — infrastructure. A download that fails says nothing about the
+      // bytes; it says we could not read them.
       const dl = await sc.storage.from(STORAGE_BUCKET).download(storagePath);
-      if ((dl as any).error || !(dl as any).data) throw new Error((dl as any).error?.message ?? 'download failed');
+      if ((dl as any).error || !(dl as any).data) {
+        throw infraFailure((dl as any).error?.message ?? 'download failed');
+      }
       const rawBuf = Buffer.from(await (dl as any).data.arrayBuffer());
+      // BYTES — content. This is the one verdict that is genuinely about the
+      // uploaded file, and the only one that earns "please re-upload".
       const verified = verifyUploadedBytes(rawBuf, 'image');
-      if (!verified.ok) throw new Error(verified.failure.message);
+      if (!verified.ok) throw contentFailure(verified.failure.message);
       const sniffed = verified.value;
-      const img = await processImage(rawBuf, sniffed);
+      // DECODE — content. Sharp throws on an image it cannot decode; that is a
+      // fact about the file, so it is classified here rather than left to the
+      // unclassified default.
+      let img;
+      try {
+        img = await processImage(rawBuf, sniffed);
+      } catch (decodeErr) {
+        throw contentFailure(decodeErr instanceof Error ? decodeErr.message : 'image could not be decoded');
+      }
+      // STORAGE — infrastructure again.
       const { error: reErr } = await sc.storage
         .from(STORAGE_BUCKET)
         .upload(storagePath, img.buffer, { contentType: img.mime, upsert: true });
-      if (reErr) throw new Error(reErr.message);
+      if (reErr) throw infraFailure(reErr.message);
       measuredWidth = img.width;
       measuredHeight = img.height;
       // Perceptual hash for near-duplicate detection. Fail-soft: null hash
       // never blocks completion — the dedup worker skips rows where phash IS NULL.
-      computedPhash = await computePHash(img.buffer);
+      //
+      // It says "fail-soft" and it was NOT: this call sat bare inside the outer
+      // try, so a Sharp failure computing a dedup hash rejected an upload whose
+      // bytes were already verified, stripped and re-stored. The comment
+      // described the intent; the control flow did the opposite. Its own catch
+      // now makes the sentence true.
+      try {
+        computedPhash = await computePHash(img.buffer);
+      } catch (phashErr) {
+        req.log.warn({ err: phashErr, mediaId }, 'postcards: phash not computed — dedup will skip this row');
+        computedPhash = null;
+      }
 
       // Feed-sized derivative (migration 0208). THIS is the write that matters:
       // post_media is what the Postcard Wall reads, and this handler — not
@@ -659,8 +784,7 @@ router.post('/postcards/:id/media/:mediaId/complete', async (req, res) => {
         req.log.warn({ err: variantErr, mediaId }, 'postcards: feed variant not built — serving original');
       }
     } catch (err) {
-      req.log.error({ err, mediaId }, 'postcards: image processing failed — completion rejected (retryable)');
-      sendError(res, 'invalid_payload', 'Image could not be processed. Please re-upload.');
+      sendMediaCheckFailure(req, res, err, 'image processing', 'Image could not be processed. Please re-upload.');
       return;
     }
   } else {
@@ -710,36 +834,58 @@ router.post('/postcards/:id/media/:mediaId/complete', async (req, res) => {
     //
     // Fail-CLOSED, matching images: completion is refused and is retryable,
     // rather than marking ready a row whose bytes nothing has ever inspected.
+    //
+    // THE THREE FAILURES BELOW ARE NOT THE SAME FAILURE. Signing and the range
+    // read are OUR storage; the magic-byte check is the user's file; the size
+    // ceiling is our rule. They used to share one `catch` and one sentence
+    // ("Video could not be verified. Please re-upload."), which meant a Storage
+    // outage was reported to the uploader as a broken video and the only advice
+    // offered — re-upload — was the one action guaranteed to fail again. See
+    // the classification note above DIMENSIONS_REQUIRED_MESSAGE.
     try {
+      // STORAGE — infrastructure.
       const signed = await sc.storage.from(STORAGE_BUCKET).createSignedUrl(storagePath, 60);
       const signedUrl = (signed as any)?.data?.signedUrl;
       if (!signedUrl) {
-        throw new Error((signed as any)?.error?.message ?? 'could not sign stored object for verification');
+        throw infraFailure((signed as any)?.error?.message ?? 'could not sign stored object for verification');
       }
 
-      const probe = await fetch(signedUrl, { headers: { Range: 'bytes=0-63' } });
+      // NETWORK / STORAGE — infrastructure. A non-2xx here is the store
+      // answering badly, not the file being bad; a fetch that throws (DNS,
+      // socket, abort) is likewise ours and reaches the unclassified default,
+      // which is also infrastructure.
+      let probe: Response;
+      try {
+        probe = await fetch(signedUrl, { headers: { Range: 'bytes=0-63' } });
+      } catch (netErr) {
+        throw infraFailure(netErr instanceof Error ? netErr.message : 'verification read could not be made');
+      }
       if (!probe.ok && probe.status !== 206) {
-        throw new Error(`verification read failed (HTTP ${probe.status})`);
+        throw infraFailure(`verification read failed (HTTP ${probe.status})`);
       }
       const headBuf = Buffer.from(await probe.arrayBuffer());
 
+      // BYTES — content. The only verdict here that is about the user's file.
       const verified = verifyUploadedBytes(headBuf, 'video');
-      if (!verified.ok) throw new Error(verified.failure.message);
+      if (!verified.ok) throw contentFailure(verified.failure.message);
 
       // "bytes 0-63/12345678" — the trailing total is the stored object size.
       // Absent (or a 200 without Content-Range) means the store did not honour
       // the range; skip the size assertion rather than guess from 64 bytes.
+      //
+      // SIZE — policy. A legal video we refuse. Its message names the limit and
+      // is sent to the client verbatim, because "could not be verified" tells
+      // someone with a 300 MB video nothing they can act on.
       const contentRange = probe.headers.get('content-range');
       const totalBytes = contentRange ? Number(contentRange.split('/')[1]) : NaN;
       if (Number.isFinite(totalBytes) && totalBytes > MEDIA_SIZE_LIMITS.video) {
-        throw new Error(
-          `stored video is ${Math.round(totalBytes / 1024 / 1024)}MB; ` +
-          `max ${Math.round(MEDIA_SIZE_LIMITS.video / 1024 / 1024)}MB`,
+        throw policyFailure(
+          `This video is ${Math.round(totalBytes / 1024 / 1024)}MB. ` +
+          `Videos can be up to ${Math.round(MEDIA_SIZE_LIMITS.video / 1024 / 1024)}MB.`,
         );
       }
     } catch (err) {
-      req.log.error({ err, mediaId }, 'postcards: video verification failed — completion rejected (retryable)');
-      sendError(res, 'invalid_payload', 'Video could not be verified. Please re-upload.');
+      sendMediaCheckFailure(req, res, err, 'video verification', 'Video could not be verified. Please re-upload.');
       return;
     }
 
@@ -766,13 +912,15 @@ router.post('/postcards/:id/media/:mediaId/complete', async (req, res) => {
     // Fail-CLOSED, matching images: any failure refuses completion (retryable)
     // rather than marking ready a video whose coordinates are still in it.
     try {
+      // STORAGE — infrastructure.
       const dl = await sc.storage.from(STORAGE_BUCKET).download(storagePath);
       if ((dl as any).error || !(dl as any).data) {
-        throw new Error((dl as any).error?.message ?? 'download failed');
+        throw infraFailure((dl as any).error?.message ?? 'download failed');
       }
       const videoBuf = Buffer.from(await (dl as any).data.arrayBuffer());
+      // BYTES — content.
       const verifiedFull = verifyUploadedBytes(videoBuf, 'video');
-      if (!verifiedFull.ok) throw new Error(verifiedFull.failure.message);
+      if (!verifiedFull.ok) throw contentFailure(verifiedFull.failure.message);
 
       const scrub = stripVideoLocationMetadata(videoBuf, verifiedFull.value);
       if (!scrub.ok) {
@@ -788,12 +936,11 @@ router.post('/postcards/:id/media/:mediaId/complete', async (req, res) => {
           // value is a client assertion, and this write must not be the thing
           // that relabels a stored object.
           .upload(storagePath, scrub.buffer, { contentType: verifiedFull.value.mime, upsert: true });
-        if (reErr) throw new Error(reErr.message);
+        if (reErr) throw infraFailure(reErr.message);
         req.log.info({ mediaId, stripped: scrub.stripped }, 'postcards: video location metadata stripped');
       }
     } catch (err) {
-      req.log.error({ err, mediaId }, 'postcards: video location scrub failed — completion rejected (retryable)');
-      sendError(res, 'invalid_payload', 'Video could not be processed. Please re-upload.');
+      sendMediaCheckFailure(req, res, err, 'video location scrub', 'Video could not be processed. Please re-upload.');
       return;
     }
   }

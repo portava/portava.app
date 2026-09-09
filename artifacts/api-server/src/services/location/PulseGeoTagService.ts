@@ -19,7 +19,7 @@ import {
   isSharingActive,
   type PulseVisibility,
 } from "./LocationPermissionService";
-import { isNearPrivateStay } from "./GeoZoneService";
+import { checkNearPrivateStay } from "./GeoZoneService";
 import { logger as rootLogger } from "../../lib/logger";
 
 const logger = rootLogger.child({ service: "PulseGeoTagService" });
@@ -73,8 +73,20 @@ export async function writePulseGeoTag(
   } = input;
 
   try {
-    // 1. Load user's location preferences
+    // 1. Load user's location preferences.
+    //
+    // `prefs.degraded` means these are NOT the user's stored settings — the
+    // preferences row could not be read and loadPreferences fell back CLOSED.
+    // The fallback already forces `isSharingActive()` false, so the branch
+    // below writes the no_location stub; this log is what makes the reason
+    // visible to an operator instead of the post merely looking un-tagged.
     const prefs = await loadPreferences(db, userId);
+    if (prefs.degraded) {
+      logger.error(
+        { postId, userId, reason: prefs.degradedReason },
+        "location preferences unreadable — geo-tagging this post as no_location; the user's stored sharing settings were NOT applied",
+      );
+    }
 
     // 2. If sharing is off (mode=off or paused), write a no_location stub and return.
     //    This means the post exists but carries no discoverable location context.
@@ -107,10 +119,21 @@ export async function writePulseGeoTag(
     //    If the user is within ~200m of an active private stay and hotel blur is
     //    enabled, cap the stored visibility to neighborhood (city block granularity).
     if (prefs.hotelBlurEnabled && userGpsLat != null && userGpsLng != null) {
-      const nearStay = await isNearPrivateStay(db, userId, userGpsLat, userGpsLng);
-      if (nearStay) {
+      const nearStay = await checkNearPrivateStay(db, userId, userGpsLat, userGpsLng);
+      // `unknown` blurs. The check whose whole job is to stop a post from
+      // naming where someone sleeps does not get to be skipped because the
+      // table it reads was unavailable — the cost of blurring when the user was
+      // NOT at their hotel is a slightly coarser pin on one post; the cost of
+      // the other direction is publishing their accommodation.
+      if (nearStay.near !== false) {
         visibility = capToNeighborhood(visibility);
         hotelBlurApplied = true;
+        if (nearStay.near === "unknown") {
+          logger.warn(
+            { postId, userId, reason: nearStay.reason },
+            "private-stay proximity unreadable — applying hotel blur anyway",
+          );
+        }
       }
     }
 

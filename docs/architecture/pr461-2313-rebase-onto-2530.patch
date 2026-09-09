@@ -1,0 +1,77 @@
+# PR #461 / 2313_highlights_permanent — rebase onto migration 2530
+#
+# Apply to the PR #461 branch (commit 3babd722) with:
+#   git apply docs/architecture/pr461-2313-rebase-onto-2530.patch
+#
+# What it changes in artifacts/api-server/src/migrations/2313_highlights_permanent.sql:
+#   1. The trip_only branch of highlights_select_active calls
+#      authz.shares_accepted_trip(owner_id) instead of reproducing the baseline's
+#      trip_members self-join (no role gate, no status gate -- the defect 2530
+#      closes; measured on portava-ci 2026-09-07).
+#   2. A precondition refuses to run unless authz.shares_accepted_trip(uuid)
+#      exists (migration 2337 first).
+#   3. A postcondition refuses to leave any policy on highlights that names
+#      trip_members.
+# Everything else in 2313 -- the column change, the CHECK, the owner-first /
+# NULL-arm restructure of both SELECT policies, the index, the two existing
+# postconditions -- is untouched.
+#
+# Verified on a local PostgreSQL 16 harness (real 2334/2337 helper bodies,
+# production's 0026 policy shape), 2026-09-07:
+#   2530 then UNPATCHED 2313   -> self-join is back (the hazard)
+#   2530 then patched 2313     -> helper kept, 2313 shape present      rc 0
+#   patched 2313 then 2530     -> 2530 is a no-op NOTICE, helper kept  rc 0
+#   patched 2313 twice         -> idempotent                           rc 0
+#   patched 2313 without 2337  -> PRECONDITION FAILED                  rc 3
+#
+--- a/artifacts/api-server/src/migrations/2313_highlights_permanent.sql	2026-09-07 17:45:28.227068882 +0000
++++ b/artifacts/api-server/src/migrations/2313_highlights_permanent.sql	2026-09-07 17:49:36.967072322 +0000
+@@ -60,6 +60,16 @@
+ --
+ -- Existing rows are untouched: every Highlight keeps the exact expiry it has.
+ 
++-- ── 0. Precondition: 2337 must already be applied ─────────────────────────────
++-- The trip_only branch below calls authz.shares_accepted_trip(uuid) (migration
++-- 2337). Without it CREATE POLICY fails mid-transaction; refusing up front says why.
++DO $$
++BEGIN
++  IF to_regprocedure('authz.shares_accepted_trip(uuid)') IS NULL THEN
++    RAISE EXCEPTION 'PRECONDITION FAILED: authz.shares_accepted_trip(uuid) missing -- apply 2334 and 2337 before 2313.';
++  END IF;
++END $$;
++
+ -- ── 1. The column ─────────────────────────────────────────────────────────────
+ 
+ DO $$
+@@ -147,11 +157,13 @@
+           ))
+         )
+         OR (
++          -- Accepted crew of a common trip, by lib/http.ts requireTripMember's rule
++          -- (role AND status, owner fallback), for BOTH people. authz.shares_accepted_trip
++          -- is 2337's; 2530 puts it here on databases that have the baseline shape.
++          -- Reproducing the baseline's trip_members self-join here would REINTRODUCE
++          -- the pending-invitee leak 2530 closes on any database where 2530 ran first.
+           (visibility = 'trip_only'::text)
+-          AND (EXISTS (
+-            SELECT 1 FROM (public.trip_members tm1 JOIN public.trip_members tm2 ON ((tm1.trip_id = tm2.trip_id)))
+-            WHERE ((tm1.user_id = highlights.owner_id) AND (tm2.user_id = auth.uid()))
+-          ))
++          AND authz.shares_accepted_trip(owner_id)
+         )
+       )
+     )
+@@ -222,4 +234,13 @@
+   IF v_owner_gated > 0 THEN
+     RAISE EXCEPTION 'POSTCONDITION FAILED: % SELECT policy(ies) test expiry before the owner branch, so an expired Highlight is hidden from its own owner. The archive requires the owner arm to be unconditional.', v_owner_gated;
+   END IF;
++  -- CREW: no policy on highlights may hand-roll a trip_members test. The
++  -- trip_only branch must route through authz.shares_accepted_trip (2337/2530).
++  IF EXISTS (
++    SELECT 1 FROM pg_policies
++    WHERE schemaname = 'public' AND tablename = 'highlights'
++      AND coalesce(qual, '') || coalesce(with_check, '') LIKE '%trip_members%'
++  ) THEN
++    RAISE EXCEPTION 'POSTCONDITION FAILED: a policy on highlights references trip_members directly. The trip_only branch must use authz.shares_accepted_trip(owner_id) -- see migration 2530.';
++  END IF;
+ END $$;

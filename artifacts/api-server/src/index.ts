@@ -18,6 +18,7 @@ import { startDiscoveryCacheWarmer } from "./lib/discoveryWarmup";
 import { startPushRetryWorker, queryPushRetryHealth } from "./lib/pushRetryWorker";
 import { startZombieTokenSweeper } from "./lib/zombieTokenSweeper";
 import { startEventWaitlistSweeper } from "./lib/eventWaitlistSweeper";
+import { startEventLifecycleScheduler } from "./lib/eventLifecycle.js";
 import { startCallSweepScheduler } from "./lib/callSweepScheduler";
 import { startTripReminderScheduler } from "./lib/tripReminderScheduler";
 import { startIntelligenceGraphScheduler } from "./lib/intelligenceGraphScheduler";
@@ -37,6 +38,7 @@ import { startCreatorActivityScoreScheduler } from "./lib/creatorActivityScoreSc
 import { startRankingFatigueSweeper } from "./lib/rankingFatigueSweeper";
 import { startTrustMaintenanceScheduler } from "./lib/trustMaintenanceScheduler";
 import { startBuddyRequestSweeper } from "./lib/rentBuddyRequestSweeper";
+import { startNotificationMaintenanceScheduler } from "./lib/notificationMaintenanceScheduler.js";
 import { startPostPlaceBackfillWorker } from "./lib/places/postPlaceBackfillWorker";
 import { startMediaDedupWorker } from "./lib/media/mediaDedupWorker.js";
 import { startPlaceCollectionsWorker } from "./lib/places/placeCollectionsWorker.js";
@@ -44,6 +46,7 @@ import { startCompassSearchDecayFlushScheduler } from "./lib/compassSearchDecayF
 import { startAccountDeletionScheduler } from "./lib/accountDeletionScheduler.js";
 import { startLocationSnapshotPurgeScheduler } from "./lib/locationSnapshotPurgeScheduler.js";
 import { startIntelRetentionScheduler } from "./lib/intelRetentionScheduler.js";
+import { startSensingRetentionScheduler } from "./lib/sensingRetentionScheduler.js";
 import { startIntelProjectionScheduler } from "./lib/intelProjectionScheduler.js";
 import { startIntelPromotionScheduler } from "./lib/intelPromotionScheduler.js";
 import { startIntelPatternScheduler } from "./lib/intelPatternScheduler.js";
@@ -52,6 +55,7 @@ import { startIntelRewardScheduler } from "./lib/intelRewardScheduler.js";
 import { startIntelAttributionScheduler } from "./lib/intelAttributionScheduler.js";
 import { registerScopedTrustApplier } from "./lib/intelScopedTrustApply.js";
 import { startMemoryProjectionScheduler } from "./lib/memoryProjectionScheduler.js";
+import { startTripMapProjectionScheduler } from "./lib/mapTripProjectionWorker.js";
 import { startPlaceDayLifecycleWorker } from "./lib/places/placeDaysWorker.js";
 
 assertRequiredEnv(logger);
@@ -119,6 +123,7 @@ app.listen(port, (err) => {
   startPushRetryWorker();
   startZombieTokenSweeper();
   startEventWaitlistSweeper();
+  startEventLifecycleScheduler(); // open|full|waitlist -> started once now >= starts_at; flag-gated (event_start_transition_enabled, seeded FALSE by 2600), fail-closed
   startCallSweepScheduler();
   startTripReminderScheduler();
   startIntelligenceGraphScheduler();
@@ -133,12 +138,28 @@ app.listen(port, (err) => {
   // it sweeps so they never repeat the location_snapshots defect (expires_at with
   // no cleanup job). Flag-gated and fail-closed; safe to start before enabling.
   startIntelRetentionScheduler();
+  // TTL sweep for the anonymous sensing store (migration 2315). 2315 shipped
+  // purge_expired_sensing_contributions and nothing called it, and there is no
+  // pg_cron in src/migrations, so without this a short-lived store kept its rows
+  // forever — the location_snapshots defect again. Not flag-gated: an expired
+  // row here is already invisible (its only reader filters expires_at) and 72h
+  // is a structural CHECK, so a flag would only add a way to retain expired
+  // personal data. It is gated on the SCHEMA instead — the sweep probes for the
+  // table and never calls the RPC where 2315 is not applied, which today means
+  // production, where this is an inert heartbeat.
+  startSensingRetentionScheduler();
   startIntelPromotionScheduler();
   startIntelProjectionScheduler();
   // Memory + Experience Intelligence projector (spec §22): projects canonical
   // facts + the Experience Graph into memory_projections and sweeps expired
   // memory. Flag-gated on memory_projection, fail-closed; a no-op until enabled.
   startMemoryProjectionScheduler();
+  // Trips spec §19.4 projection worker: drains trip_outbox (2420) into the
+  // Map-owned trip_map_projections (2520), idempotent by event_id +
+  // aggregate_version. Flag-gated on trip_map_projection_worker_enabled,
+  // fail-closed; a no-op (one flag read a minute) until enabled. Production
+  // has no outbox yet, so it has no input there until 2334→2337→2420→2520 apply.
+  startTripMapProjectionScheduler();
   // IG-08 coverage producer: assembles (zone, claim-family) gap snapshots and
   // (when intel_missions is also on) generates mission candidates. Flag-gated on
   // intel_coverage, fail-closed; a no-op until enabled.
@@ -257,6 +278,20 @@ app.listen(port, (err) => {
   // dispute window closes (so a completed booking never auto-confirms), and no
   // reported no-show ever escalates to a dispute.
   startBuddyRequestSweeper();
+  // Drives the notification pipeline's two scheduled jobs. Neither had a
+  // driver: NotificationDigestService.runForAllUsers and
+  // NotificationService.expireOldNotifications were reachable ONLY from
+  // POST /internal/notifications/{digest,expire}, and nothing in this
+  // repository called those routes — no scheduler, no pg_cron (no migration
+  // here contains cron.schedule), no CI job. So no daily digest was ever
+  // built, and notifications.expires_at was a column every reader honoured
+  // and nothing ever acted on. Expiry runs hourly and is probed first so an
+  // unreadable table cannot be reported as an empty one; the digest runs on
+  // the first tick of each local day and is retried until a pass actually
+  // reads the recipient list. Safe on every instance: the delete is
+  // idempotent and the digest is claimed per (user, category, day)
+  // downstream. NOTIFICATION_MAINTENANCE_DISABLED=1 opts an instance out.
+  startNotificationMaintenanceScheduler();
 
   // Startup stamp-worker health summary — log pending queue depth and any
   // jobs stuck in `generating` past their lock (a crashed worker never

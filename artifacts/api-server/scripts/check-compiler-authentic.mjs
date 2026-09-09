@@ -116,5 +116,11 @@ if (problems.length > 0) {
 console.log(
   `check:compiler-authentic: TypeScript ${version} resolved from this package\n` +
   `   ✓ accepts a valid program\n` +
-  `   ✓ rejects a type error with TS2322 — the compiler can fail, so its green means something\n`,
+  `   ✓ rejects a type error with TS2322 — the compiler can fail, so its green means something\n` +
+  // The inspected count. This guard counts PROBE PROGRAMS, not files: its whole
+  // claim is that the resolved compiler both accepts and rejects, so two probes
+  // is the complete population. If a probe ever stops running, this number drops
+  // and check:guard-reachability's inspection contract fails rather than letting
+  // a half-run print the same reassuring text.
+  `   2 probe program(s) compiled\n`,
 );

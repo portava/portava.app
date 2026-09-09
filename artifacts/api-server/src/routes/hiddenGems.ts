@@ -30,9 +30,17 @@
  *          LLM calls (Compass): protected gems excluded entirely.
  */
 import { Router } from "express";
+import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { requireUser, sendError, canEditPlan } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
+import {
+  tripKernelClient,
+  readCommandEnvelope,
+  executeTripCommand,
+  sendKernelRejection,
+  setTripVersionHeader,
+} from "../lib/tripKernel.js";
 import {
   submitGem,
   getGem,
@@ -886,7 +894,15 @@ router.post("/hidden-gems/:id/save", async (req, res) => {
 
   try {
     const result = await saveGem(sc, req.params.id, user.id);
-    res.json({ ok: true, alreadySaved: result.alreadySaved });
+    // `saveCountIncremented` is reported, not inferred. The save row is durable
+    // either way (that is what `ok`/`alreadySaved` claim); the counter is a
+    // separate fact, and a false here means hidden_gems.save_count is now
+    // behind hidden_gem_saves for this gem. See saveGem() for why that matters.
+    res.json({
+      ok: true,
+      alreadySaved: result.alreadySaved,
+      saveCountIncremented: result.saveCountIncremented,
+    });
   } catch (err: any) {
     sendError(res, "db_error", err.message);
   }
@@ -1022,14 +1038,33 @@ router.post("/hidden-gems/:id/verify-visit", async (req, res) => {
           const gem = await getGem(sc, req.params.id);
           if (!gem) return;
 
-          // Insert a Pulse post tagged to the gem's city — no exact coords
-          await sc.from("posts").insert({
+          // Insert a Pulse post tagged to the gem's city — no exact coords.
+          //
+          // supabase-js resolves on a database error, so the `catch` below was
+          // dead code for a refused insert. The cost is user-visible and was
+          // invisible to us: the traveller checked in, the response said the
+          // check-in succeeded (it did), and the post they expect to see on
+          // Pulse simply never exists. Non-fatal by design — the check-in is the
+          // action, the post is a side effect, and failing the request over it
+          // would be worse — but no longer silent.
+          const { error: postErr } = await sc.from("posts").insert({
             author_id: user.id,
             content: `Just verified a hidden gem: "${(gem as any).name}" in ${(gem as any).city} 📍`,
             visibility: "public",
             category: "hidden_gem_checkin",
           });
-        } catch { /* non-fatal */ }
+          if (postErr) {
+            req.log?.warn(
+              { err: postErr, gemId: req.params.id, userId: user.id, code: "gem_checkin_pulse_post_failed" },
+              "hiddenGems: check-in Pulse post not written — the check-in itself still stands",
+            );
+          }
+        } catch (err) {
+          req.log?.warn(
+            { err, gemId: req.params.id, userId: user.id, code: "gem_checkin_pulse_post_failed" },
+            "hiddenGems: check-in Pulse post threw — the check-in itself still stands",
+          );
+        }
       })();
     }
 
@@ -1242,7 +1277,12 @@ router.post("/hidden-gems/:id/plan", async (req, res) => {
     // becomes a db_error and is then SANITIZED to "A database error occurred" —
     // so the client cannot tell a duplicate from a real failure. Return the
     // established 409 shape instead.
-    const { data: existing } = await client
+    // supabase-js RESOLVES on a DB error, so an unbound `error` read an
+    // unreadable trip_plan_items as "not in the plan yet" and fell through to
+    // the ADD_PLAN below — which is exactly the 23505-sanitized-to-
+    // "A database error occurred" outcome the 409 above exists to prevent, and
+    // on the kernel path a genuine duplicate gem row in the trip plan.
+    const { data: existing, error: existingErr } = await client
       .from("trip_plan_items")
       .select("id")
       .eq("trip_id", tripId)
@@ -1250,6 +1290,11 @@ router.post("/hidden-gems/:id/plan", async (req, res) => {
       .eq("source_id", (gem as any).id)
       .is("removed_at", null)
       .maybeSingle();
+    if (existingErr) {
+      req.log.error({ err: existingErr, tripId }, "hidden gem plan duplicate check failed — refusing to add");
+      sendError(res, "db_error", existingErr.message);
+      return;
+    }
     if (existing) {
       res.status(409).json({ error: "duplicate", message: "This gem is already in your trip plan" });
       return;
@@ -1284,7 +1329,38 @@ router.post("/hidden-gems/:id/plan", async (req, res) => {
       category: (gem as any).category,
     };
 
-    const { data, error } = await client
+    // Trip Kernel path (§4.1 ADD_PLAN, capability crew). canEditPlan above is
+    // the authorization; the kernel re-checks crew. This is the ONE writer whose
+    // row needs migration 2590: added_by / description / city / country are
+    // not in a 2500 function's ADD_PLAN column list (it drops them silently),
+    // so the flag must not be flipped ahead of 2590 where this route matters.
+    // creator_id is not sent — the kernel stamps the actor, which is what the
+    // insert sends. location_is_private is the table default the insert relies
+    // on, sent explicitly. Off => the insert below.
+    const kernel = await tripKernelClient(sc);
+    let kernelPlanItemId: string | null = null;
+    if (kernel) {
+      const env = readCommandEnvelope(req);
+      if (!env.ok) { sendError(res, "invalid_payload", env.message); return; }
+      const { trip_id: _tripId, creator_id: _creatorId, ...rest } = planItem;
+      const r = await executeTripCommand(kernel, {
+        commandId: randomUUID(),
+        tripId,
+        actorUserId: user.id,   // always from token
+        expectedTripVersion: env.expectedTripVersion,
+        idempotencyKey: env.idempotencyKey,
+        type: "ADD_PLAN",
+        payload: { ...rest, location_is_private: true },
+      });
+      if (!r.ok) { sendKernelRejection(res, r, req.log); return; }
+      setTripVersionHeader(res, r.version);
+      kernelPlanItemId = r.result.id;
+    }
+
+    // trip-kernel:legacy-path — flag-off twin of ADD_PLAN above.
+    const { data, error } = kernelPlanItemId
+      ? { data: { id: kernelPlanItemId }, error: null }
+      : await client
       .from("trip_plan_items")
       .insert(planItem)
       .select("id")

@@ -15,6 +15,7 @@
  *     exact coords are withheld even during active live-share.
  */
 
+import { freshnessBucket } from "./mapTravelers.js";
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 export type CrewStatusLabel =
@@ -68,6 +69,27 @@ export interface RawMemberLocation {
   } | null;
 }
 
+/**
+ * Presence freshness for a crew card.
+ *
+ *   "live"   position updated within 15 minutes
+ *   "recent" within 60 minutes
+ *   "stale"  older than 60 minutes — last-known, NOT live truth
+ *   null     no position timestamp at all; age unknown, so currency
+ *            cannot be claimed. Treated exactly like "stale" for the
+ *            purposes of what this module will draw.
+ *
+ * THE BOUNDS ARE NOT INVENTED HERE. They come from lib/mapTravelers'
+ * freshnessBucket, the same function the main Map and circleLocationsRead
+ * use, so the two maps cannot drift apart on what "live" means.
+ * (lib/circleLocationsRead.ts:285 states the same rule for the same reason.)
+ * freshnessBucket returns null beyond 60 minutes; the Map DROPS those
+ * travellers, but Trips must not — spec §10.2: "Last-known data may remain
+ * useful but is not live truth." So here that null becomes "stale" and the
+ * member is kept with an area label.
+ */
+export type CrewFreshness = "live" | "recent" | "stale";
+
 export interface CrewMemberCard {
   userId: string;
   name: string | null;
@@ -87,6 +109,13 @@ export interface CrewMemberCard {
   liveShareExpiresAt: string | null;
   ghostMode: boolean;
   updatedAt: string | null;
+  /**
+   * How current this member's position is. null when there is no position
+   * timestamp at all (age unknown). Spec §10.2 requires the marker's visual
+   * treatment and accessible text to expose this; supplying the bucket is the
+   * server's half of that, rendering it is the client's.
+   */
+  freshness: CrewFreshness | null;
 }
 
 // ── TripCrewPrivacyGuard ──────────────────────────────────────────────────────
@@ -101,7 +130,21 @@ export interface CrewMemberCard {
  *
  * In all other cases exactCoords is absent/null.
  */
-export function buildCrewCard(raw: RawMemberLocation): CrewMemberCard {
+export function buildCrewCard(
+  raw: RawMemberLocation,
+  now: number = Date.now(),
+): CrewMemberCard {
+  // Spec §10.2: "The Trip Map must never draw a stale location as if it were
+  // current." freshnessBucket returns null past 60 minutes; for Trips that is
+  // "stale" (kept, labelled), not "drop". A missing timestamp stays null: we
+  // do not know the age, so we cannot assert currency.
+  const freshness: CrewFreshness | null = raw.locationState?.updatedAt
+    ? (freshnessBucket(raw.locationState.updatedAt, now) ?? "stale")
+    : null;
+  // "Current" means a position we can positively vouch for as live or recent.
+  // Anything else — stale, or unknown age — must not be drawn as current.
+  const positionIsCurrent = freshness === "live" || freshness === "recent";
+
   const base = {
     userId: raw.userId,
     name: raw.name,
@@ -113,6 +156,7 @@ export function buildCrewCard(raw: RawMemberLocation): CrewMemberCard {
     liveShareExpiresAt: null as string | null,
     ghostMode: false,
     updatedAt: raw.locationState?.updatedAt ?? null,
+    freshness,
   };
 
   // Ghost mode — member is invisible
@@ -130,8 +174,14 @@ export function buildCrewCard(raw: RawMemberLocation): CrewMemberCard {
   if (raw.liveShare) {
     const areaLabel = resolveAreaLabel(raw.locationState, raw.liveShare.visibilityLevel);
 
-    // Include exact coords only when hotel blur is disabled and coords are available
-    const exactCoords = resolveExactCoords(raw);
+    // Include exact coords only when hotel blur is disabled, coords are
+    // available, AND the position is one we can vouch for as current. An exact
+    // coordinate is the strongest possible claim that someone is somewhere
+    // RIGHT NOW; publishing a three-day-old one as a live-share pin is the
+    // §10.2 violation in its most acute form. The live share itself stays
+    // active (liveShareActive: true) because the GRANT has not expired — what
+    // is stale is the position, and those are different facts.
+    const exactCoords = positionIsCurrent ? resolveExactCoords(raw) : null;
 
     return {
       ...base,

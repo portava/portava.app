@@ -1,3 +1,4 @@
+import { readBlockExclusions, isExcluded, exclusions, type ExclusionSet } from './exclusionSet.js';
 /**
  * enrichSpans — batch-fetch persisted @mention tags and #hashtag usages for a
  * list of content items, then compute character-level positions by searching
@@ -200,22 +201,22 @@ export async function enrichSpans(
     }
   }
 
-  // Optional block check
-  const blockedSet = new Set<string>();
+  // Optional block check.
+  //
+  // FAIL-CLOSED, shape 2 (lib/exclusionSet.ts): this set decorates ONE part of
+  // the enrichment — whether a @mention renders as a link or as plain text.
+  // Everything else this function returns (hashtags, place spans, the text
+  // itself) is not block-scoped, and enrichSpans has no way to refuse: it is
+  // called from inside a dozen feed builders that would each have to grow an
+  // error path. So an unreadable `blocks` table marks EVERY tagged user as
+  // blocked — every mention degrades to plain text, the content still renders,
+  // and no blocked user's handle becomes a live link to their profile.
+  //
+  // Previously `(blockRows ?? [])` made a resolved DB error an empty set, and
+  // every mention linked through as if no block existed.
+  let blockedSet: ExclusionSet = exclusions([]);
   if (viewerUserId && taggedUserIds.length > 0) {
-    const ids = taggedUserIds.join(',');
-    const { data: blockRows } = await sc
-      .from('blocks')
-      .select('blocker_id, blocked_id')
-      .or(
-        `and(blocker_id.eq.${viewerUserId},blocked_id.in.(${ids})),` +
-        `and(blocked_id.eq.${viewerUserId},blocker_id.in.(${ids}))`,
-      );
-    for (const row of (blockRows ?? []) as any[]) {
-      blockedSet.add(
-        row.blocker_id === viewerUserId ? row.blocked_id : row.blocker_id,
-      );
-    }
+    blockedSet = await readBlockExclusions(sc, viewerUserId, { among: taggedUserIds });
   }
 
   // Build per-source raw tag whitelists
@@ -231,7 +232,7 @@ export async function enrichSpans(
       id: uid,
       matchToken: handle ?? '',
       tagRowId: row.id as string,
-      ...(blockedSet.has(uid)  ? { isBlocked:  true } : {}),
+      ...(isExcluded(blockedSet, uid) ? { isBlocked:  true } : {}),
       ...(!handle              ? { isDeleted:  true } : {}),
     });
   }

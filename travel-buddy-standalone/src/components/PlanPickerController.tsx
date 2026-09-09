@@ -99,6 +99,9 @@ export function PlanPickerControllerProvider({ children }: { children: React.Rea
   const [source, setSource]       = useState<PlanPickerSource | null>(null);
   const [trips, setTrips]         = useState<EditableTripRow[]>([]);
   const [loadingTrips, setLoadingTrips] = useState(false);
+  // "No trips with edit access yet" is a PERMISSION claim. A read that failed
+  // has not established it, and this state is what keeps the two apart.
+  const [tripsLoadError, setTripsLoadError] = useState<string | null>(null);
   const [selectedTrip, setSelectedTrip] = useState<EditableTripRow | null>(null);
 
   const [dayDate, setDayDate]   = useState<Date | null>(null);
@@ -127,9 +130,13 @@ export function PlanPickerControllerProvider({ children }: { children: React.Rea
   useEffect(() => {
     if (!sheetOpen || !isAuthed) return;
     setLoadingTrips(true);
+    setTripsLoadError(null);
     fetchPlanEditableTrips()
-      .then(setTrips)
-      .catch(() => setTrips([]))
+      .then((rows) => { setTrips(rows); })
+      .catch(() => {
+        setTrips([]);
+        setTripsLoadError("Couldn't load the trips you can add to. Please try again.");
+      })
       .finally(() => setLoadingTrips(false));
   }, [sheetOpen, isAuthed]);
 
@@ -286,6 +293,10 @@ export function PlanPickerControllerProvider({ children }: { children: React.Rea
             /* ── Step 1: pick a trip ── */
             loadingTrips ? (
               <ActivityIndicator color={color.signal} style={{ marginVertical: space.xl }} />
+            ) : tripsLoadError ? (
+              <View style={s.emptyWrap}>
+                <Text style={s.emptyText}>{tripsLoadError}</Text>
+              </View>
             ) : trips.length === 0 ? (
               <View style={s.emptyWrap}>
                 <Text style={s.emptyText}>

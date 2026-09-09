@@ -2,6 +2,8 @@
  * HiddenGemService — CRUD, save/unsave, ranking helpers.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { randomUUID } from "node:crypto";
+import { tripKernelClient, executeTripCommand } from "../../lib/tripKernel.js";
 import { recordTrustEvent } from "../trust/TrustEventService.js";
 import { logger as rootLogger } from "../../lib/logger.js";
 import { recordEntityMedia } from "../../lib/mediaAssets.js";
@@ -127,6 +129,41 @@ export async function submitGem(db: SupabaseClient, input: CreateGemInput) {
   // a trip_plan_items row (source_type="hidden_gem", source_id=gem id).
   // Best-effort: a failure here should not fail gem submission itself.
   if (input.tripId) {
+    // Trip Kernel path (§4.1 ADD_PLAN, capability crew; needs migration 2590
+    // for added_by / description / city / country — a 2500 function drops
+    // them). routes/hiddenGems.ts POST /hidden-gems verified trip + membership
+    // before calling; this service has no check of its own and the kernel's
+    // crew re-check is the first one at this layer. Two differences on THIS
+    // path only: the kernel stamps creator_id = the submitter where the direct
+    // insert leaves it NULL, and location_is_private is sent as true — the
+    // table default the insert relies on. Key gem:<id>:attach is deterministic:
+    // a gem is attached at submission exactly once. Best-effort, like the
+    // insert: a rejection is logged, never fatal to the submission.
+    const kernel = await tripKernelClient(db);
+    if (kernel) {
+      const r = await executeTripCommand(kernel, {
+        commandId: randomUUID(),
+        tripId: input.tripId,
+        actorUserId: input.submittedBy,
+        expectedTripVersion: null,
+        idempotencyKey: `gem:${(data as any).id}:attach`,
+        type: "ADD_PLAN",
+        payload: {
+          added_by: input.submittedBy,
+          source_type: "hidden_gem",
+          source_id: (data as any).id,
+          title: (data as any).name,
+          description: (data as any).description ?? null,
+          location_name: (data as any).name,
+          city: (data as any).city,
+          country: (data as any).country ?? null,
+          category: (data as any).category,
+          location_is_private: true,
+        },
+      });
+      if (!r.ok) logger.warn({ reason: r.reason, gemId: (data as any).id, tripId: input.tripId }, "submitGem: trip kernel refused attaching gem to trip plan");
+    } else {
+    // trip-kernel:legacy-path — flag-off twin of ADD_PLAN above.
     await db
       .from("trip_plan_items")
       .insert({
@@ -144,6 +181,7 @@ export async function submitGem(db: SupabaseClient, input: CreateGemInput) {
       .then(({ error: planError }) => {
         if (planError) logger.warn({ err: planError, gemId: (data as any).id, tripId: input.tripId }, "submitGem: failed to attach gem to trip plan");
       });
+    }
   }
 
   // Canonical dual-write (flag-gated OFF; fail-soft — legacy image_url path
@@ -212,6 +250,28 @@ export async function listGems(db: SupabaseClient, opts: GemListOptions = {}) {
 }
 
 /** Shared patch builder. */
+/**
+ * The owner-edit column allowlist, and the APPLICATION half of the
+ * self-publish boundary.
+ *
+ * `hidden_gems.status` (publication), `verification_level`, `moderation_status`
+ * and `guide_verified_by` are set by verification/moderation through the
+ * service role. The public Discovery feed and Compass read gems where
+ * status = 'active', so a self-set status injects unmoderated, self-"verified"
+ * content into Discovery. Migration 2147 grants authenticated column-UPDATE on
+ * exactly the fields below and revokes the rest; that grant is asserted by
+ * src/test/hiddenGemSelfPublish.test.ts, which is a LIVE-DB suite and does not
+ * run without CI credentials (it refuses, loudly, rather than passing vacuously).
+ *
+ * This function is the half that runs on every request and IS testable here:
+ * updateGem passes a caller-supplied patch straight into it, so anything not
+ * listed is dropped before the UPDATE is built. Both halves must hold — the
+ * route reaches hidden_gems through the SERVICE client, which bypasses RLS, so
+ * on that path this allowlist is the only thing standing between a caller and
+ * `status`.
+ *
+ * See src/test/hiddenGemUpdateBoundary.test.ts.
+ */
 function buildPatch(patch: Partial<{
   name: string;
   description: string;
@@ -274,12 +334,27 @@ export async function updateGemAsGuide(
   guideId: string,
   patch: Pick<GemPatch, "safetyNotes" | "bestTimeToGo" | "localEtiquette" | "vibeTags">,
 ) {
-  // Verify guide is active
-  const { data: guideRow } = await db
+  // Verify guide is active.
+  //
+  // supabase-js RESOLVES on a database error, so an unreadable
+  // local_guide_profiles arrives as `guideRow === null` — the same shape as
+  // "this user is not a guide". The refusal below is therefore the answer in
+  // both cases, and that is the RIGHT direction (an unverifiable guide claim
+  // must not license editing someone else's gem). It was silent, which is the
+  // part that was accidental: a permanently unreadable guide table would revoke
+  // every guide in the system and look exactly like nobody having applied.
+  const { data: guideRow, error: guideErr } = await db
     .from("local_guide_profiles")
     .select("status, city_expertise")
     .eq("user_id", guideId)
     .maybeSingle();
+
+  if (guideErr) {
+    logger.warn(
+      { err: guideErr, guideId, gemId, code: "guide_status_unreadable" },
+      "updateGemAsGuide: local_guide_profiles unreadable — refusing the edit (fail-closed)",
+    );
+  }
 
   if (!guideRow || (guideRow as any).status !== "active") {
     throw Object.assign(new Error("Not an active local guide"), { code: "not_a_guide" });
@@ -304,39 +379,104 @@ export async function updateGemAsGuide(
   return data;
 }
 
+export interface SaveGemResult {
+  /** The save row already existed; nothing was written and nothing counted. */
+  alreadySaved: boolean;
+  /**
+   * Whether `hidden_gems.save_count` actually moved for this save.
+   *
+   * `false` means the save row IS durable — the user's save happened and their
+   * saved list is correct — but the denormalised counter is now one BEHIND the
+   * number of `hidden_gem_saves` rows, and nothing repairs it. See the comment
+   * on the fallback below for why that is not a cosmetic loss. Always `false`
+   * when `alreadySaved` is true, because nothing was supposed to count.
+   */
+  saveCountIncremented: boolean;
+}
+
 /** Save a gem for the caller (idempotent). Returns whether it was new. */
 export async function saveGem(
   db: SupabaseClient,
   gemId: string,
   userId: string,
-): Promise<{ alreadySaved: boolean }> {
-  const { data: existing } = await db
+): Promise<SaveGemResult> {
+  // The idempotency guard. An unreadable hidden_gem_saves resolves as
+  // `{ data: null }` and so reads as "not saved yet", which sends us into the
+  // INSERT and, more to the point, into the save_count increment below — a
+  // counter that is bumped once per *new* save and has no way back. A user who
+  // already saved the gem gets it counted twice. Throw, matching the insert
+  // failure two lines down.
+  const { data: existing, error: existingErr } = await db
     .from("hidden_gem_saves")
     .select("gem_id")
     .eq("gem_id", gemId)
     .eq("user_id", userId)
     .maybeSingle();
 
-  if (existing) return { alreadySaved: true };
+  if (existingErr) {
+    logger.warn({ err: existingErr, gemId, userId }, "saveGem: existing-save lookup failed");
+    throw existingErr;
+  }
+
+  if (existing) return { alreadySaved: true, saveCountIncremented: false };
 
   const { error } = await db
     .from("hidden_gem_saves")
     .insert({ gem_id: gemId, user_id: userId });
   if (error) throw error;
 
-  // Increment save_count — supabase-js returns { error }, it never throws
+  // ── save_count ──────────────────────────────────────────────────────────
+  // At this point the save row is COMMITTED. Whatever happens to the counter,
+  // throwing from here would tell the caller "your save failed" about a save
+  // that did happen, so this function does not throw past the insert. It
+  // reports instead.
+  //
+  // Losing this increment is NOT cosmetic. `save_count` is a threshold input
+  // to `deriveHiddenGemState` (lib/hiddenGemState.ts):
+  //
+  //     saves >= NO_LONGER_HIDDEN_SAVE_THRESHOLD &&
+  //     visits >= NO_LONGER_HIDDEN_VISIT_THRESHOLD  ->  "no_longer_hidden"
+  //
+  // and "no_longer_hidden" is the state that stops the system pushing a small
+  // real place that has already been discovered out. An UNDER-count is the
+  // harmful direction: the gem keeps reading as still hidden and keeps being
+  // recommended into a place that is already overloaded. Nothing recomputes
+  // save_count from `hidden_gem_saves`, so a lost increment is permanent.
+  //
+  // So: attempt the atomic RPC, fall back to read-then-write (which mirrors
+  // the RPC's `+1` semantics; it is NOT atomic and loses concurrent saves —
+  // see the migration note in the report), and RETURN whether it landed.
+  // supabase-js returns `{ error }`, it never throws, so every leg is checked.
+  let saveCountIncremented = false;
+
   const { error: rpcError } = await db.rpc("increment_counter" as any, {
     table_name: "hidden_gems", column_name: "save_count", row_id: gemId,
   });
-  if (rpcError) {
-    // Fallback: manual increment
-    const { data: cur, error: readError } = await db.from("hidden_gems").select("save_count").eq("id", gemId).maybeSingle();
+  if (!rpcError) {
+    saveCountIncremented = true;
+  } else {
+    // Fallback: manual increment.
+    const { data: cur, error: readError } = await db
+      .from("hidden_gems").select("save_count").eq("id", gemId).maybeSingle();
     if (readError) {
-      logger.warn({ err: readError, gemId }, "saveGem: save_count fallback read failed");
+      // ERROR, not warn: the counter is now permanently one behind and the
+      // gem is one save closer to being wrongly recommended.
+      logger.error(
+        { err: readError, rpcErr: rpcError, gemId, userId, code: "save_count_increment_lost" },
+        "saveGem: save_count increment LOST — fallback read failed; hidden_gems.save_count is behind hidden_gem_saves",
+      );
     } else {
       const next = ((cur as any)?.save_count ?? 0) + 1;
-      const { error: updError } = await db.from("hidden_gems").update({ save_count: next }).eq("id", gemId);
-      if (updError) logger.warn({ err: updError, gemId }, "saveGem: save_count fallback update failed");
+      const { error: updError } = await db
+        .from("hidden_gems").update({ save_count: next }).eq("id", gemId);
+      if (updError) {
+        logger.error(
+          { err: updError, rpcErr: rpcError, gemId, userId, code: "save_count_increment_lost" },
+          "saveGem: save_count increment LOST — fallback update failed; hidden_gems.save_count is behind hidden_gem_saves",
+        );
+      } else {
+        saveCountIncremented = true;
+      }
     }
   }
 
@@ -352,7 +492,7 @@ export async function saveGem(
     dedupWindowHours: 48,
   });
 
-  return { alreadySaved: false };
+  return { alreadySaved: false, saveCountIncremented };
 }
 
 /** Unsave a gem. */
@@ -372,18 +512,33 @@ export async function unsaveGem(
   return { removed: (data ?? []).length > 0 };
 }
 
-/** Check if a user has saved a specific gem. */
+/**
+ * Check if a user has saved a specific gem.
+ *
+ * NO CALLERS as of this commit (reported to the lane owner rather than deleted).
+ * The unreadable-table case is still resolved here rather than left for whoever
+ * wires it up: supabase-js resolves on a database error, so `data === null`
+ * covers both "not saved" and "could not tell". This function's name promises an
+ * ANSWER, and "false" is the wrong shape for "unknown" — a caller would read it
+ * as "not saved" and, for instance, re-save and re-count. It throws, matching
+ * saveGem's own dedup read two functions up, so an unknown cannot be mistaken
+ * for a no.
+ */
 export async function hasSavedGem(
   db: SupabaseClient,
   gemId: string,
   userId: string,
 ): Promise<boolean> {
-  const { data } = await db
+  const { data, error } = await db
     .from("hidden_gem_saves")
     .select("gem_id")
     .eq("gem_id", gemId)
     .eq("user_id", userId)
     .maybeSingle();
+  if (error) {
+    logger.warn({ err: error, gemId, userId }, "hasSavedGem: hidden_gem_saves lookup failed");
+    throw error;
+  }
   return !!data;
 }
 

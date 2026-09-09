@@ -19,8 +19,16 @@
  *   POST /admin/venues/:id/moderate   — approve (→ verified) or reject (→ blocked)
  */
 import { Router } from "express";
+import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { sendError } from "../lib/http";
+import {
+  tripKernelClient,
+  readCommandEnvelope,
+  executeTripCommand,
+  sendKernelRejection,
+  setTripVersionHeader,
+} from "../lib/tripKernel.js";
 import { logger } from "../lib/logger";
 import { clearReminderDedup } from "../lib/tripReminderScheduler";
 import { invalidateCompassHomeCache } from "./compassHome.js";
@@ -31,6 +39,14 @@ import { resolveStoragePath } from "../lib/storagePath.js";
 import { logModerationAction, auditReportAction } from "../lib/moderationAudit.js";
 
 import { requireAdmin } from "../lib/requireAdmin.js";
+import { listRestrictionsForAudit } from "../services/trust/TrustRestrictionService.js";
+import {
+  GEO_ZONE_DB_TYPES,
+  GEO_ZONE_SAFETY_RATINGS,
+  GeoZoneSeedFileSchema,
+  PolygonGeojsonSchema,
+  validateGeoZoneSeed,
+} from "../lib/geoZoneSeed.js";
 import {
   invalidateDiscoveryEngineModeCache,
   DISCOVERY_ENGINE_MODE_FLAG,
@@ -38,6 +54,10 @@ import {
 } from "../lib/discoveryEngineMode.js";
 import { recordAdjudicatedTrustEvent, TRUST_EVENT_TYPES } from "../services/trust/TrustEventService.js";
 import { revokeModerationTrustConsequences } from "../services/trust/TrustAdminService.js";
+// Intel live-scope operator surface (section at the bottom of this file).
+import { promoteLiveScope, withdrawLiveScope, liveScopeKey } from "../lib/intelLiveScopePromotion.js";
+import { isPromotedScopeActive } from "../lib/liveClaimRead.js";
+import { isFlagEnabled, getFlagRow } from "../lib/featureFlags.js";
 
 const router = Router();
 
@@ -45,10 +65,13 @@ const router = Router();
 
 // ── Geo zone schemas ──────────────────────────────────────────────────────────
 
-// Valid zone_type values from the migration comment
-const GEO_ZONE_TYPES = ["city", "neighborhood", "district", "venue_area", "safety_zone"] as const;
-// Valid safety_rating values from the migration comment
-const SAFETY_RATINGS = ["safe", "moderate", "caution", "avoid"] as const;
+// zone_type: the LIVE CHECK constraint (geo_zones_zone_type_check), not the
+// list this file used to carry — `district`, `venue_area` and `safety_zone`
+// were never accepted by the database (every such POST died as a db_error),
+// while `venue`, `custom`, `airport` and `hotel` were refused here and
+// accepted there. One source of truth, shared with the seed validator.
+const GEO_ZONE_TYPES = GEO_ZONE_DB_TYPES;
+const SAFETY_RATINGS = GEO_ZONE_SAFETY_RATINGS;
 
 const createGeoZoneSchema = z.object({
   name:          z.string().min(1).max(200),
@@ -57,6 +80,9 @@ const createGeoZoneSchema = z.object({
   centerLng:     z.number().min(-180).max(180).optional(),
   radiusMeters:  z.number().positive().max(100_000).optional(),
   boundsJson:    z.record(z.unknown()).optional(),
+  // Crowd Flow (lib/mapProjection.parseFlowZones) reads polygon_geojson, not
+  // bounds_json; without this an admin could only ever create circle zones.
+  polygonGeojson: PolygonGeojsonSchema.optional(),
   city:          z.string().max(120).optional(),
   countryCode:   z.string().max(4).optional(),
   safetyRating:  z.enum(SAFETY_RATINGS).optional(),
@@ -115,6 +141,7 @@ router.post("/admin/geo-zones", async (req, res) => {
       center_lng:    d.centerLng     ?? null,
       radius_meters: d.radiusMeters  ?? null,
       bounds_json:   d.boundsJson    ?? null,
+      ...(d.polygonGeojson !== undefined ? { polygon_geojson: d.polygonGeojson } : {}),
       city:          d.city          ?? null,
       country_code:  d.countryCode   ?? null,
       safety_rating: d.safetyRating  ?? null,
@@ -127,6 +154,82 @@ router.post("/admin/geo-zones", async (req, res) => {
 
   if (error) { sendError(res, "db_error", error.message); return; }
   res.status(201).json({ zone: data });
+});
+
+// ── POST /admin/geo-zones/import ─────────────────────────────────────────────
+//
+// The ops door for the Crowd Flow zone model. `geo_zones` is empty in
+// production and routes/mapProjection.ts refuses with `no_zone_model` until it
+// is not; 2159 revoked every client write grant, so the ONLY writers are the
+// service role (this route) and the owner's manual SQL
+// (db/seed/geo_zones_production_seed_template.sql). Both run the same rules —
+// lib/geoZoneSeed.validateGeoZoneSeed — and nothing is inserted unless every
+// zone in the batch passes. `dryRun: true` returns the report without writing.
+// The projection route caches the zone model for 30 s (loadFlowZones), so a
+// fresh import is visible on the map within that window.
+
+const MAX_EXISTING_ZONE_NAMES = 5_000;
+
+const importGeoZonesSchema = GeoZoneSeedFileSchema.extend({
+  dryRun: z.boolean().optional(),
+});
+
+router.post("/admin/geo-zones/import", async (req, res) => {
+  const admin = await requireAdmin(req, res, { withDisplayName: true });
+  if (!admin) return;
+  const { sc } = admin;
+
+  const parsedBody = importGeoZonesSchema.safeParse(req.body);
+  if (!parsedBody.success) {
+    res.status(400).json({
+      error: "invalid_payload",
+      message: parsedBody.error.issues[0]?.message ?? "Invalid payload",
+      issues: parsedBody.error.issues.map((i) => ({
+        index: i.path[0] === "zones" && typeof i.path[1] === "number" ? i.path[1] : null,
+        name: null,
+        code: "schema",
+        message: `${i.path.join(".") || "(root)"}: ${i.message}`,
+      })),
+    });
+    return;
+  }
+  const { dryRun, ...seed } = parsedBody.data;
+
+  // Rule 4 needs the names already stored: a duplicate name makes BOTH zones
+  // unresolvable for the next-stop family. A failed read is a refusal, not an
+  // empty store.
+  const { data: existing, error: readErr } = await sc
+    .from("geo_zones")
+    .select("name")
+    .limit(MAX_EXISTING_ZONE_NAMES);
+  if (readErr) { sendError(res, "db_error", readErr.message); return; }
+
+  const validation = validateGeoZoneSeed(seed, {
+    existingNames: ((existing ?? []) as Array<{ name: string }>).map((r) => r.name),
+    createdBy: admin.userId,
+  });
+  if (!validation.ok) {
+    res.status(400).json({
+      error: "invalid_payload",
+      message: `${validation.issues.length} issue(s); nothing was imported`,
+      issues: validation.issues,
+    });
+    return;
+  }
+
+  if (dryRun) {
+    res.json({ dryRun: true, wouldInsert: validation.rows.length, report: validation.report });
+    return;
+  }
+
+  const { data, error } = await sc
+    .from("geo_zones")
+    .insert(validation.rows)
+    .select("id, name, zone_type");
+  if (error) { sendError(res, "db_error", error.message); return; }
+  const zones = (data ?? []) as Array<{ id: string; name: string; zone_type: string }>;
+  logger.info({ admin: admin.userId, inserted: zones.length, source: seed.source }, "geo_zones import");
+  res.status(201).json({ inserted: zones.length, zones, report: validation.report });
 });
 
 // ── GET /admin/geo-zones/:id ──────────────────────────────────────────────────
@@ -167,6 +270,7 @@ router.patch("/admin/geo-zones/:id", async (req, res) => {
   if (d.centerLng    !== undefined) patch.center_lng    = d.centerLng;
   if (d.radiusMeters !== undefined) patch.radius_meters = d.radiusMeters;
   if (d.boundsJson   !== undefined) patch.bounds_json   = d.boundsJson;
+  if (d.polygonGeojson !== undefined) patch.polygon_geojson = d.polygonGeojson;
   if (d.city         !== undefined) patch.city          = d.city;
   if (d.countryCode  !== undefined) patch.country_code  = d.countryCode;
   if (d.safetyRating !== undefined) patch.safety_rating = d.safetyRating;
@@ -1153,7 +1257,13 @@ router.patch("/admin/users/:userId/moderation-action", async (req, res) => {
   }
 
   if (action_type === "report_resolved" && target_ref_id) {
-    const { error } = await sc
+    // `target_ref_id` is any uuid the caller supplies — it is validated as a
+    // uuid and NOTHING else. An id that names no report matches zero rows, and
+    // PostgREST reports zero matched rows with no error at all, so the old
+    // `error ? "error" : "resolved"` told the admin their report was resolved
+    // whenever the id was simply wrong. `.select("id")` makes the statement
+    // RETURNING so the rows it actually touched can be counted.
+    const { data: resolvedRows, error } = await sc
       .from("reports")
       .update({
         status:           "resolved",
@@ -1162,8 +1272,19 @@ router.patch("/admin/users/:userId/moderation-action", async (req, res) => {
         moderation_notes: reason ?? null,
         updated_at:       now,
       })
-      .eq("id", target_ref_id);
-    sideEffects.reportStatus = error ? "error" : "resolved";
+      .eq("id", target_ref_id)
+      .select("id");
+    if (error) {
+      sideEffects.reportStatus = "error";
+    } else if (!Array.isArray(resolvedRows) || resolvedRows.length === 0) {
+      req.log.error(
+        { targetRefId: target_ref_id, targetUserId: userId, adminUserId },
+        "moderation-action report_resolved matched no report — nothing was resolved",
+      );
+      sideEffects.reportStatus = "not_found";
+    } else {
+      sideEffects.reportStatus = "resolved";
+    }
   }
 
   res.json({ action: auditRow, sideEffects });
@@ -1260,6 +1381,24 @@ router.get("/admin/users", async (req, res) => {
       .maybeSingle(),
   ]);
 
+  const failedDetailReads = failedModerationReads([
+    ["accountStates", accountStateRes],
+    ["openReports", reportCountRes],
+  ]);
+  if (failedDetailReads.length > 0) {
+    req.log.error({ failed: failedDetailReads, userId }, "admin user detail: moderation read failed; refusing to render a partial record");
+    sendError(
+      res,
+      "db_error",
+      `Moderation record incomplete: ${failedDetailReads.join(", ")} could not be read. This is NOT a clean account -- retry before acting.`,
+      { exposeDetail: true },
+    );
+    return;
+  }
+
+  // onboardingStatus is contextual, not a moderation fact: an unreadable
+  // onboarding row cannot make a sanctioned account look clean, so it is
+  // allowed to degrade to null rather than failing the whole record.
   const onboardingRow: any = onboardingRes.data ?? null;
 
   void logAdminAccess(sc, admin.userId, "profile", userId, "view", accessReason(req));
@@ -1316,10 +1455,20 @@ router.get("/admin/users/:userId/summary", async (req, res) => {
       .eq("reporter_id", userId)
       .order("created_at", { ascending: false })
       .limit(20),
-    sc.from("trust_restrictions")
-      .select("id, restriction_type, reason, lifted_at, created_at")
-      .eq("user_id", userId)
-      .is("lifted_at", null),
+    // NOT `sc.from("trust_restrictions")`. TrustRestrictionService's docblock
+    // says "always call this, never query trust_restrictions directly in route
+    // code", and this route was the one place that did. It had a real reason —
+    // the enforcement seam answers in booleans and a dossier needs the ROW — so
+    // the service grew an audit read rather than the rule being bent.
+    //
+    // Mapped back into the { data, error } shape failedModerationReads expects,
+    // so the refusal behaviour below is byte-for-byte what it was: an unreadable
+    // exclusion table must not render as a clean record on a moderator's screen.
+    listRestrictionsForAudit(sc, userId, { activeOnly: true }).then((r) =>
+      r.state === "ok"
+        ? { data: r.rows, error: null }
+        : { data: null, error: { message: r.reason } },
+    ),
     sc.from("blocks")
       .select("id", { count: "exact", head: true })
       .or(`blocker_id.eq.${userId},blocked_id.eq.${userId}`),
@@ -1332,6 +1481,27 @@ router.get("/admin/users/:userId/summary", async (req, res) => {
   ]);
 
   if (!profileRes.data) { sendError(res, "not_found", "User not found"); return; }
+
+  const failedSummaryReads = failedModerationReads([
+    ["accountStates", accountStateRes],
+    ["moderationActions", modActionsRes],
+    ["reportsReceived", reportsReceivedRes],
+    ["reportsFiled", reportsFiledRes],
+    ["trustRestrictions", trustRes as any],
+    ["blockCount", blocksRes],
+    ["muteCount", mutesRes],
+    ["restrictCount", restrictsRes],
+  ]);
+  if (failedSummaryReads.length > 0) {
+    req.log.error({ failed: failedSummaryReads, userId }, "admin user summary: moderation read failed; refusing to render a partial record");
+    sendError(
+      res,
+      "db_error",
+      `Moderation record incomplete: ${failedSummaryReads.join(", ")} could not be read. This is NOT a clean account -- retry before acting.`,
+      { exposeDetail: true },
+    );
+    return;
+  }
 
   void logAdminAccess(sc, admin.userId, "profile", userId, "expand", accessReason(req));
   res.json({
@@ -1346,6 +1516,29 @@ router.get("/admin/users/:userId/summary", async (req, res) => {
     restrictCount:     restrictsRes.count       ?? 0,
   });
 });
+
+/**
+ * A moderation record must never degrade to "clean" because a read failed.
+ *
+ * supabase-js RESOLVES on a database error rather than throwing, so every one
+ * of these reads returns `data: null` in two completely different situations:
+ * the user genuinely has no bans, restrictions, blocks or mutes, and the table
+ * could not be read. `data ?? []` collapses those into the same empty array,
+ * and an operator looking at a banned user is then shown a clean account and
+ * may act on it -- lifting nothing, or approving someone already sanctioned.
+ *
+ * Three states must stay distinguishable: no record, read failed, record
+ * exists. This returns the names of the sections in the middle state so the
+ * caller can refuse to render the record at all rather than render a partial
+ * one that reads as exculpatory.
+ */
+function failedModerationReads(
+  reads: ReadonlyArray<readonly [string, { error?: unknown } | null | undefined]>,
+): string[] {
+  return reads
+    .filter(([, r]) => Boolean(r && (r as { error?: unknown }).error))
+    .map(([name]) => name);
+}
 
 /** POST /admin/users/:userId/verify */
 router.post("/admin/users/:userId/verify", async (req, res) => {
@@ -1750,6 +1943,38 @@ async function removeProfileMediaObject(
   }
 }
 
+/**
+ * Admin removal of profile media → CONTENT_REMOVED, via the adjudicated path
+ * (the removal IS the finding; the admin confirms it in the same request and
+ * is recorded as the reviewer, never the subject). Delta and severity come
+ * from the vocabulary; the ceiling (content_quality 50 for 30 days) from
+ * TrustCapService.applyEventCaps on confirm. Reversible per user through
+ * revokeModerationTrustConsequences (source_type='moderation').
+ */
+function emitProfileMediaRemovedTrustEvent(
+  sc: any,
+  adminUserId: string,
+  targetUserId: string,
+  auditId: string | undefined,
+  field: "avatar" | "cover",
+  outcome: string,
+  reason: string | null,
+): void {
+  if (!auditId || outcome === "no_media") return;
+  const t = TRUST_EVENT_TYPES.CONTENT_REMOVED;
+  void recordAdjudicatedTrustEvent(sc, adminUserId, {
+    userId: targetUserId,
+    eventType: "content_removed",
+    category: t.category,
+    delta: t.delta,
+    severity: t.severity,
+    sourceType: "moderation",
+    sourceId: auditId,
+    dedupWindowHours: 24 * 365,
+    metadata: { actionType: `${field}_removed`, moderationActionId: auditId, storageOutcome: outcome, reason: reason ?? null },
+  }).catch(() => {});
+}
+
 /** DELETE /admin/users/:userId/avatar — remove a user's avatar (admin action) */
 router.delete("/admin/users/:userId/avatar", async (req, res) => {
   const admin = await requireAdmin(req, res, { withDisplayName: true });
@@ -1776,6 +2001,13 @@ router.delete("/admin/users/:userId/avatar", async (req, res) => {
 
   const { error } = await sc.from("profiles").update({ avatar_url: null }).eq("id", userId);
   if (error) { sendError(res, "db_error", error.message); return; }
+
+  // Trust: charged only when something was actually removed. `no_media` means
+  // the column was already empty — a replayed delete, or nothing to remove —
+  // and removing nothing is not a finding. Keyed on the audit row, which is
+  // the record of THIS removal; a later re-upload removed again is a second
+  // finding with its own row. Fire-and-forget.
+  emitProfileMediaRemovedTrustEvent(sc, adminUserId, userId, auditR.id, "avatar", removal.outcome, reason);
   res.json({ ok: true, storage: removal.outcome });
 });
 
@@ -1802,6 +2034,8 @@ router.delete("/admin/users/:userId/cover", async (req, res) => {
 
   const { error } = await sc.from("profiles").update({ cover_photo_url: null }).eq("id", userId);
   if (error) { sendError(res, "db_error", error.message); return; }
+
+  emitProfileMediaRemovedTrustEvent(sc, adminUserId, userId, auditR.id, "cover", removal.outcome, reason);
   res.json({ ok: true, storage: removal.outcome });
 });
 
@@ -1913,6 +2147,18 @@ router.get("/admin/reports", async (req, res) => {
 const resolveReportSchema = z.object({
   action: z.string().max(100),
   notes:  z.string().max(1000).optional().nullable(),
+  /**
+   * Explicit adjudication: the admin confirms the report was FOUNDED. `action`
+   * is free text (the admin client passes whatever was typed into the resolve
+   * prompt), so "resolved" alone cannot be read as "upheld" — an admin can
+   * resolve with "no action needed". Only `upheld: true` charges the content
+   * owner (message_report_confirmed for a message report). Absent or false is
+   * inert: the report resolves exactly as before and no trust event is
+   * written. The admin client does not send this yet — enabling it is a
+   * one-line client change, and whether every resolve should default to
+   * upheld is an owner decision (see the Trust report).
+   */
+  upheld: z.boolean().optional(),
 });
 
 /** POST /admin/reports/:id/resolve */
@@ -1959,6 +2205,38 @@ router.post("/admin/reports/:id/resolve", async (req, res) => {
     .maybeSingle();
 
   if (error) { sendError(res, "db_error", error.message); return; }
+
+  // Trust: an UPHELD report against a message charges the message's SENDER
+  // (the accountable user auditReportAction resolved — never the reporter,
+  // never the admin, who is recorded by recordAdjudicatedTrustEvent as the
+  // confirming reviewer). Keyed on the MESSAGE id, so two reports against one
+  // message confirm once; the report and audit row ride in metadata. The
+  // status guard above (`neq status resolved`) already makes a replayed
+  // resolve a 404, so this cannot fire twice for one report. Only
+  // `upheld: true` reaches here — see resolveReportSchema. Fire-and-forget.
+  const targetType = (reportRow as any).target_type as string;
+  if (parsed.data.upheld === true && targetType === "message" && auditR.audit === "recorded" && auditR.ownerUserId) {
+    const t = TRUST_EVENT_TYPES.MESSAGE_REPORT_CONFIRMED;
+    void recordAdjudicatedTrustEvent(sc, adminUserId, {
+      userId: auditR.ownerUserId,
+      eventType: "message_report_confirmed",
+      category: t.category,
+      delta: t.delta,
+      severity: t.severity,
+      sourceType: "moderation",
+      sourceId: (reportRow as any).target_id as string,
+      dedupWindowHours: 24 * 365,
+      metadata: {
+        actionType: "report_upheld",
+        reportId: req.params.id,
+        moderationActionId: auditR.id ?? null,
+        targetType,
+        targetId: (reportRow as any).target_id,
+        action: parsed.data.action,
+      },
+    }).catch(() => {});
+  }
+
   res.json({
     report: { id: (data as any).id, status: (data as any).status, reviewedAt: (data as any).reviewed_at },
     audit: auditR.audit,
@@ -2060,23 +2338,106 @@ router.post("/admin/reports/:id/hide-content", async (req, res) => {
   // Apply content mutation based on target type
   let contentHidden = false;
   if (target_type === "post") {
-    const { error } = await sc.from("posts")
+    // `.select("id")` is load-bearing: a report can name content that has since
+    // been hard-deleted, and an UPDATE matching zero rows resolves with no
+    // error. `contentHidden = true` therefore told the admin the post had been
+    // removed AND — via the `if (contentHidden)` gate below — charged the
+    // resolved owner a content_removed Trust penalty for a removal that never
+    // happened. The kernel's trip path already answers TRIP_NOT_FOUND here; the
+    // other target types now agree with it instead of contradicting it.
+    const { data: hiddenRows, error } = await sc.from("posts")
       .update({ post_status: "removed", updated_at: now })
-      .eq("id", target_id);
+      .eq("id", target_id)
+      .select("id");
     if (error) { sendError(res, "db_error", error.message); return; }
-    contentHidden = true;
+    contentHidden = Array.isArray(hiddenRows) && hiddenRows.length > 0;
   } else if (target_type === "trip") {
-    const { error } = await sc.from("trips")
-      .update({ visibility: "private", updated_at: now })
-      .eq("id", target_id);
-    if (error) { sendError(res, "db_error", error.message); return; }
-    contentHidden = true;
+    // Trip Kernel path (ADMIN_HIDE_TRIP, admin family: actor_role 'admin' AND
+    // profiles.role = 'admin' — exactly requireAdmin's DEFAULT_ROLES, so the
+    // kernel admits every caller the route admits). The kernel writes the same
+    // two columns and records visibility_from + reason on the event. One
+    // difference on THIS path only: a report whose target trip no longer
+    // exists is TRIP_NOT_FOUND (404) where the direct update matched nothing
+    // and reported contentHidden = true. Off => the direct update below.
+    const kernelHide = await tripKernelClient(sc);
+    let kernelHidden = false;
+    if (kernelHide) {
+      const env = readCommandEnvelope(req);
+      if (!env.ok) { sendError(res, "invalid_payload", env.message); return; }
+      const r = await executeTripCommand(kernelHide, {
+        commandId: randomUUID(),
+        tripId: target_id,
+        actorUserId: adminUserId,
+        actorRole: "admin",
+        expectedTripVersion: env.expectedTripVersion,
+        idempotencyKey: env.idempotencyKey,
+        type: "ADMIN_HIDE_TRIP",
+        payload: { reason, updated_at: now },
+      });
+      if (!r.ok) { sendKernelRejection(res, r, req.log); return; }
+      setTripVersionHeader(res, r.version);
+      kernelHidden = true;
+    }
+    // trip-kernel:legacy-path — the flag-off twin of ADMIN_HIDE_TRIP above.
+    // The type annotation uses a COMMA, not a semicolon: checkTripKernelWriters
+    // binds the marker above to the statement that starts after the previous
+    // `;`, so a `;` inside this annotation would cut the marker off from the
+    // write it documents and the write would resurface as UNGATED.
+    const hideRes: { data?: unknown, error: { message: string } | null } = kernelHidden
+      ? { data: [{ id: target_id }], error: null }
+      : await sc.from("trips")
+        .update({ visibility: "private", updated_at: now })
+        .eq("id", target_id)
+        .select("id");
+    if (hideRes.error) { sendError(res, "db_error", hideRes.error.message); return; }
+    // Flag ON the kernel has already refused a missing trip with TRIP_NOT_FOUND,
+    // so reaching here means it hid one. Flag OFF the same refusal has to come
+    // from the affected-row count, or the legacy twin keeps reporting a removal
+    // the gated path would have rejected.
+    contentHidden = Array.isArray(hideRes.data) && hideRes.data.length > 0;
   } else if (target_type === "event") {
-    const { error } = await sc.from("events")
+    const { data: hiddenEvents, error } = await sc.from("events")
       .update({ visibility: "invite_only", updated_at: now })
-      .eq("id", target_id);
+      .eq("id", target_id)
+      .select("id");
     if (error) { sendError(res, "db_error", error.message); return; }
-    contentHidden = true;
+    contentHidden = Array.isArray(hiddenEvents) && hiddenEvents.length > 0;
+  }
+
+  if (!contentHidden && ["post", "trip", "event"].includes(target_type)) {
+    req.log.error(
+      { reportId: req.params.id, targetType: target_type, targetId: target_id, adminUserId },
+      "content_removed matched no row — the content was NOT hidden and no Trust charge is recorded",
+    );
+  }
+
+  // Trust: content was actually removed from public view (post/trip/event —
+  // the branches above; a target type with no mutation removes nothing and
+  // charges nothing). Subject = the content OWNER auditReportAction resolved;
+  // the admin is provenance. Keyed on the CONTENT id rather than the audit row:
+  // this route has no status guard, so a second click writes a second audit
+  // row, and keying on that would charge twice for one removal. One content
+  // item, one content_removed. Fire-and-forget.
+  if (contentHidden && auditR.audit === "recorded" && auditR.ownerUserId) {
+    const t = TRUST_EVENT_TYPES.CONTENT_REMOVED;
+    void recordAdjudicatedTrustEvent(sc, adminUserId, {
+      userId: auditR.ownerUserId,
+      eventType: "content_removed",
+      category: t.category,
+      delta: t.delta,
+      severity: t.severity,
+      sourceType: "moderation",
+      sourceId: target_id,
+      dedupWindowHours: 24 * 365,
+      metadata: {
+        actionType: "content_removed",
+        reportId: req.params.id,
+        moderationActionId: auditR.id ?? null,
+        targetType: target_type,
+        targetId: target_id,
+        reason,
+      },
+    }).catch(() => {});
   }
 
   // Move report to in_review
@@ -2285,7 +2646,31 @@ router.post("/admin/trips/:tripId/hide", async (req, res) => {
 
   const reason = typeof req.body?.reason === "string" ? req.body.reason.slice(0, 500) : "Admin hide";
 
-  await sc.from("trips").update({ visibility: "private", updated_at: new Date().toISOString() }).eq("id", tripId);
+  // Trip Kernel path (ADMIN_HIDE_TRIP, admin family) — see /admin/reports/:id/
+  // hide-content. The existence check above is unchanged; the kernel re-checks
+  // profiles.role = 'admin' for the actor. Off => the direct update below,
+  // whose result was — and with the flag off still is — discarded.
+  const kernelHide = await tripKernelClient(sc);
+  let kernelHidden = false;
+  if (kernelHide) {
+    const env = readCommandEnvelope(req);
+    if (!env.ok) { sendError(res, "invalid_payload", env.message); return; }
+    const r = await executeTripCommand(kernelHide, {
+      commandId: randomUUID(),
+      tripId,
+      actorUserId: admin.userId,
+      actorRole: "admin",
+      expectedTripVersion: env.expectedTripVersion,
+      idempotencyKey: env.idempotencyKey,
+      type: "ADMIN_HIDE_TRIP",
+      payload: { reason, updated_at: new Date().toISOString() },
+    });
+    if (!r.ok) { sendKernelRejection(res, r, req.log); return; }
+    setTripVersionHeader(res, r.version);
+    kernelHidden = true;
+  }
+  // trip-kernel:legacy-path — the flag-off twin of ADMIN_HIDE_TRIP above.
+  if (!kernelHidden) await sc.from("trips").update({ visibility: "private", updated_at: new Date().toISOString() }).eq("id", tripId);
 
   await sc.from("moderation_actions").insert({
     target_user_id: (trip as any).owner_id,
@@ -2364,6 +2749,27 @@ router.post("/admin/trips/:tripId/reset-reminder", async (req, res) => {
     .maybeSingle();
   if (!trip) { sendError(res, "not_found", "Trip not found"); return; }
 
+  // trip-kernel:non-aggregate(trips.reminder_retry_count, trips.reminder_sent_at, trips.reminder_delivered_at)
+  //
+  // The inverse of lib/tripReminderScheduler's two-phase claim: it RELEASES the
+  // at-most-once claim so the hourly sweep will consider this trip again. It
+  // touches exactly the three claim columns and nothing a client can see — the
+  // trip's title, dates, status, visibility, crew and plan are all untouched,
+  // and the response below returns no trip state at all.
+  //
+  // Not a Trip Command, for the same reason the scheduler's writes are not: a
+  // command bumps trips.version, and trips.version is the client's If-Match
+  // concurrency token (Trips spec §18.3/§18.4). An operator clearing a stuck
+  // reminder would then hand a TRIP_VERSION_CONFLICT to every crew member
+  // holding a version, for a change none of them can observe. There is also no
+  // command that could carry it: the kernel's UPDATE_TRIP allow-list
+  // (migration 2450, c_trip_patch) does not contain these three columns, and
+  // widening it would put scheduler bookkeeping inside the aggregate rather
+  // than take it out.
+  //
+  // The audit trail for this action is the moderation_actions row written
+  // below, not a trip_events row — which is the right place for it: it is an
+  // operator action on the notification pipeline, not a change to the trip.
   const { error } = await sc
     .from("trips")
     .update({
@@ -2690,6 +3096,23 @@ router.get("/admin/users/:userId/moderation-summary", async (req, res) => {
 
   if (!profileRes.data) { sendError(res, "not_found", "User not found"); return; }
 
+  const failedModSummaryReads = failedModerationReads([
+    ["accountStates", accountStateRes],
+    ["moderationActions", modActionsRes],
+    ["reportsReceived", reportsReceivedRes],
+    ["reportsFiled", reportsFiledRes],
+  ]);
+  if (failedModSummaryReads.length > 0) {
+    req.log.error({ failed: failedModSummaryReads, userId }, "admin moderation-summary: read failed; refusing to render a partial record");
+    sendError(
+      res,
+      "db_error",
+      `Moderation record incomplete: ${failedModSummaryReads.join(", ")} could not be read. This is NOT a clean account -- retry before acting.`,
+      { exposeDetail: true },
+    );
+    return;
+  }
+
   void logAdminAccess(sc, admin.userId, "profile", userId, "expand", accessReason(req));
   res.json({
     profile:           profileRes.data,
@@ -2740,6 +3163,337 @@ router.get("/admin/health/schema-drift", async (req, res) => {
     checkedAt: cached.checkedAt,
     cached: fromCache,
   });
+});
+
+// ── Intel live-scope promotion — the operator surface ─────────────────────────
+//
+// intel_live_promoted_scopes (2179) is the per-scope allowlist that
+// lib/liveClaimRead.ts consults before ANY live claim is served. 2430 built
+// the ONE write path — three SECURITY DEFINER, service_role-only SQL functions
+// wrapped by lib/intelLiveScopePromotion.ts — and, until this section, nothing
+// called promoteLiveScope / withdrawLiveScope: no route, no CLI, no scheduler
+// (only the expiry sweep was wired). These four routes are that caller.
+//
+//   GET  /admin/intel/live-scopes                 list (active by default; ?all=1 for the audit trail)
+//   GET  /admin/intel/live-scopes/:scopeKey       inspect one row: provenance, evidence, state
+//   POST /admin/intel/live-scopes/promote         { zoneId, claimType, expiresAt, evidence, note? }
+//   POST /admin/intel/live-scopes/withdraw        { zoneId, claimType, reason }
+//
+// WHAT THIS DOES NOT DO. It does not decide which scope goes live. Promotion is
+// a human decision (2179's header, lib/intelLiveScope.ts,
+// lib/intelCalibrationScheduler.ts, docs/architecture/intel-spine-liveness.md),
+// and assessDensityGate's `certifiable` is false BY CONSTRUCTION while two §26
+// inputs are uninstrumented — so every promoter is overriding a non-certifiable
+// assessment. This surface RECORDS that override (who, on what evidence, with
+// what reasoning, until when); it never makes it, and nothing here runs
+// without a request from an authenticated admin.
+//
+// FAIL-CLOSED, IN ORDER, ON EVERY ROUTE
+//   1. requireAdmin (403), exactly as every other route in this file.
+//   2. intel_live_scope_admin_surface_enabled (2570, seeded FALSE) must read
+//      TRUE through isFlagEnabled (the house reader: absent, false and
+//      unreadable are all OFF). Closed → 404 feature_disabled; the message
+//      says whether the row is missing (apply 2570) or off.
+//   3. Writes only: intel_live_scope_promotion_enabled (2430's writer flag),
+//      the same way. When it is not ON, getFlagRow says whether the row is
+//      MISSING — which on a pre-2430 database it is — so the answer is 503
+//      naming migration 2430 rather than an indistinguishable "disabled";
+//      a row that is FALSE → 404 naming the flag. (Both readers are the
+//      shared ones scripts/check-flag-polarity.mjs recognises; a direct
+//      feature_flags read here would need a DIRECT_READS entry in a file this
+//      lane does not own. The cost is that "unreadable" and "absent" share a
+//      message; both are closed.)
+//   4. The library call. A RESOLVED database error is checked, never ignored;
+//      42883 / PGRST202 (function missing) and 42703 / PGRST* (column missing)
+//      are the pre-2430 shape and answer 503 "requires 2430". Any other error
+//      is 500. There is no path that reports an empty success on a failure.
+// Reads (list / inspect) select the 2430 columns explicitly and answer 503 on
+// a pre-2430 schema rather than falling back to the six-column shape: an
+// operator surface that silently showed rows without expiry/withdrawal would
+// be lying about what is live.
+//
+// AUDIT. The row IS the audit trail (2430: "the allowlist is also the audit
+// trail of what was ever live"): promoted_by / withdrawn_by are the admin's
+// user id, withdrawn_reason and evidence are what they typed, and a withdrawal
+// keeps the row. This file has no admin-action audit table that fits a scope
+// (admin_access_log's record_type CHECK is profile|event|trip|gps_event|
+// check_in; moderation_actions needs a target user; feature_flag_audit_log is
+// per flag), so nothing new is invented: the row carries the who/why, and the
+// request log line carries the display name, the same way the feature-flag
+// toggle above logs its actor.
+
+/** CAPABILITY flag (2570). Literal so scripts/check-flag-polarity.mjs resolves it. */
+export const LIVE_SCOPE_ADMIN_SURFACE_FLAG = "intel_live_scope_admin_surface_enabled";
+/**
+ * 2430's writer flag, restated as a local literal because the polarity check
+ * resolves flag names within one file only. MUST equal
+ * lib/intelLiveScopePromotion.LIVE_SCOPE_PROMOTION_FLAG — pinned by
+ * src/test/intelLiveScopeOps.test.ts.
+ */
+export const LIVE_SCOPE_WRITER_FLAG = "intel_live_scope_promotion_enabled";
+
+/** Every column 2179 + 2430 put on the row; the operator sees all of it. */
+export const LIVE_SCOPE_ROW_COLUMNS =
+  "scope_key, zone_id, claim_type, promoted_at, promoted_by, note, expires_at, " +
+  "withdrawn_at, withdrawn_by, withdrawn_reason, promoted_via, evidence, updated_at";
+
+/** Codes meaning "the 2430 column/table/function is not on this database" (same sets as lib/schemaDriftCheck). */
+const LIVE_SCOPE_SCHEMA_MISSING_CODES: ReadonlySet<string> = new Set(["42703", "42P01", "PGRST100", "PGRST204", "PGRST205"]);
+const LIVE_SCOPE_FUNCTION_MISSING_CODES: ReadonlySet<string> = new Set(["42883", "PGRST202"]);
+
+const REQUIRES_2430 =
+  "migration 2430 (intel_live_scope_promotion_writer) is not applied to this database — " +
+  "the promotion functions and the expires_at/withdrawn_at/evidence columns do not exist";
+
+/**
+ * Gate 2: the surface flag, through isFlagEnabled (fail-closed). Sends the
+ * response and returns false when the surface is closed; getFlagRow is
+ * consulted only then, to say WHY (null = no row or unreadable; else off).
+ */
+async function requireLiveScopeSurface(res: any, sc: any): Promise<boolean> {
+  if (await isFlagEnabled(sc, LIVE_SCOPE_ADMIN_SURFACE_FLAG)) return true;
+  const row = await getFlagRow(sc, LIVE_SCOPE_ADMIN_SURFACE_FLAG);
+  sendError(
+    res,
+    "feature_disabled",
+    row === null
+      ? `${LIVE_SCOPE_ADMIN_SURFACE_FLAG} has no row (or could not be read) — migration 2570 seeds it; the intel live-scope admin surface is closed`
+      : `${LIVE_SCOPE_ADMIN_SURFACE_FLAG} is off; the intel live-scope admin surface is closed`,
+  );
+  return false;
+}
+
+/**
+ * Gate 3 (writes): 2430's writer flag, through isFlagEnabled (fail-closed).
+ * When it is not ON, a MISSING row (getFlagRow null — production today, and
+ * also an unreadable read) is 503 naming 2430; a FALSE row is 404 naming the
+ * flag. Neither path reaches the library.
+ */
+async function requireLiveScopeWriter(res: any, sc: any): Promise<boolean> {
+  if (await isFlagEnabled(sc, LIVE_SCOPE_WRITER_FLAG)) return true;
+  const row = await getFlagRow(sc, LIVE_SCOPE_WRITER_FLAG);
+  if (row === null) {
+    sendError(res, "server_not_configured", `${LIVE_SCOPE_WRITER_FLAG} has no row (or could not be read): ${REQUIRES_2430}. Apply 2430, then enable the flag. No promotion is made on a missing or unreadable flag.`);
+    return false;
+  }
+  sendError(res, "feature_disabled", `${LIVE_SCOPE_WRITER_FLAG} is off; the writer refuses every promotion and withdrawal until it is enabled`);
+  return false;
+}
+
+/**
+ * Map a library refusal onto the wire. `skipped:false` never reaches here.
+ * Returns the receipt's disposition so the caller can log it.
+ */
+function sendLiveScopeWriterFailure(
+  req: any,
+  res: any,
+  verb: "promotion" | "withdrawal",
+  r: { reason: string | null; errorCode?: string | null; errorMessage?: string | null; scopeKey: string },
+): void {
+  switch (r.reason) {
+    case "invalid_input":
+      sendError(res, "invalid_payload", `${verb} refused by the writer as invalid input (claim type empty, horizon not in the future, or reason empty)`);
+      return;
+    case "disabled":
+      // The flag row was ON a moment ago (gate 3) and OFF when the library read it.
+      sendError(res, "feature_disabled", `${LIVE_SCOPE_WRITER_FLAG} is off; ${verb} not made`);
+      return;
+    case "no_client":
+      sendError(res, "server_not_configured", "service client unavailable; no promotion write is possible");
+      return;
+    default: {
+      const code = r.errorCode ?? null;
+      if (code && (LIVE_SCOPE_FUNCTION_MISSING_CODES.has(code) || LIVE_SCOPE_SCHEMA_MISSING_CODES.has(code))) {
+        req.log.error({ scopeKey: r.scopeKey, pgCode: code, verb }, `intel live-scope ${verb}: 2430 function/column missing — apply migration 2430`);
+        sendError(res, "server_not_configured", `${verb} failed (${code}): ${REQUIRES_2430}`);
+        return;
+      }
+      req.log.error({ scopeKey: r.scopeKey, pgCode: code, err: r.errorMessage, verb }, `intel live-scope ${verb} failed`);
+      sendError(res, "db_error", `${verb} failed${code ? ` (${code})` : ""}: ${r.errorMessage ?? "database error"}`, { exposeDetail: true });
+    }
+  }
+}
+
+/** Serve-path truth (lib/liveClaimRead.isPromotedScopeActive) labelled for a human. */
+function liveScopeState(row: { scope_key: string; expires_at?: string | null; withdrawn_at?: string | null }, nowMs: number): "active" | "withdrawn" | "expired" {
+  if (row.withdrawn_at != null) return "withdrawn";
+  return isPromotedScopeActive(row, nowMs) ? "active" : "expired";
+}
+
+/**
+ * Sends the response for a RESOLVED read error on intel_live_promoted_scopes.
+ * A pre-2430 schema answers 503 naming the migration; anything else is 500.
+ * Never lets an error read as "no rows".
+ */
+function sendLiveScopeReadFailure(req: any, res: any, error: { code?: unknown; message?: unknown }): void {
+  const code = typeof error?.code === "string" ? error.code : null;
+  if (code && LIVE_SCOPE_SCHEMA_MISSING_CODES.has(code)) {
+    req.log.error({ pgCode: code }, "intel live-scope list: 2430 columns missing — apply migration 2430");
+    sendError(res, "server_not_configured", `intel_live_promoted_scopes read failed (${code}): ${REQUIRES_2430}`);
+    return;
+  }
+  sendError(res, "db_error", `intel_live_promoted_scopes read failed${code ? ` (${code})` : ""}: ${String(error?.message ?? "database error")}`, { exposeDetail: true });
+}
+
+const liveScopeTargetSchema = z.object({
+  // The scope is (zone_id, claim_type). null is the zone-less scope 2179's CHECK
+  // composes as '' — it must be SAID, not defaulted, so the key is required.
+  zoneId:    z.string().min(1).max(200).nullable(),
+  claimType: z.string().min(1).max(120),
+});
+
+/**
+ * Provenance is mandatory. `evidence` is what the promoter looked at (the §26
+ * density-gate assessment, `npm run report:intel-funnel`) AND why they are
+ * signing for it anyway (certifiable is false by construction — see the section
+ * header). `expiresAt` is the review horizon: the read path treats an expired
+ * row as not promoted, so it is a safety property, and NULL — allowed on the
+ * column only so legacy hand inserts stay valid — is not offered here.
+ */
+const promoteLiveScopeSchema = liveScopeTargetSchema.extend({
+  expiresAt: z.string().datetime({ offset: true }),
+  evidence:  z.object({
+    assessment: z.record(z.unknown()),
+    reasoning:  z.string().min(1).max(4000),
+  }).passthrough(),
+  note: z.string().max(1000).optional(),
+});
+
+const withdrawLiveScopeSchema = liveScopeTargetSchema.extend({
+  reason: z.string().min(1).max(1000),
+});
+
+/**
+ * GET /admin/intel/live-scopes
+ * Active scopes by default (the allowlist as the serve path sees it right
+ * now); ?all=1 adds withdrawn and expired rows (the audit trail).
+ */
+router.get("/admin/intel/live-scopes", async (req, res) => {
+  const admin = await requireAdmin(req, res, { withDisplayName: true });
+  if (!admin) return;
+  const { sc } = admin;
+  if (!(await requireLiveScopeSurface(res, sc))) return;
+
+  const all = req.query["all"] === "1" || req.query["all"] === "true";
+  const now = new Date();
+  const { data, error } = await sc
+    .from("intel_live_promoted_scopes")
+    .select(LIVE_SCOPE_ROW_COLUMNS)
+    .order("promoted_at", { ascending: false });
+  if (error) { sendLiveScopeReadFailure(req, res, error); return; }
+
+  const rows = (Array.isArray(data) ? data : []).map((r: any) => ({ ...r, state: liveScopeState(r, now.getTime()) }));
+  const scopes = all ? rows : rows.filter((r: any) => r.state === "active");
+  res.json({ scopes, total: scopes.length, includesInactive: all, now: now.toISOString() });
+});
+
+/**
+ * GET /admin/intel/live-scopes/:scopeKey
+ * One row, everything on it. scopeKey is the canonical `zone|claim_type`
+ * (URL-encode the bar as %7C).
+ */
+router.get("/admin/intel/live-scopes/:scopeKey", async (req, res) => {
+  const admin = await requireAdmin(req, res, { withDisplayName: true });
+  if (!admin) return;
+  const { sc } = admin;
+  if (!(await requireLiveScopeSurface(res, sc))) return;
+
+  const scopeKey = String(req.params.scopeKey ?? "");
+  if (!scopeKey.includes("|")) {
+    sendError(res, "invalid_payload", "scopeKey must be the canonical `<zone_id>|<claim_type>` (bar URL-encoded as %7C)");
+    return;
+  }
+  const now = new Date();
+  const { data, error } = await sc
+    .from("intel_live_promoted_scopes")
+    .select(LIVE_SCOPE_ROW_COLUMNS)
+    .eq("scope_key", scopeKey)
+    .maybeSingle();
+  if (error) { sendLiveScopeReadFailure(req, res, error); return; }
+  if (!data) { sendError(res, "not_found", `scope ${scopeKey} has never been promoted`); return; }
+
+  res.json({ scope: { ...(data as any), state: liveScopeState(data as any, now.getTime()) }, now: now.toISOString() });
+});
+
+/**
+ * POST /admin/intel/live-scopes/promote
+ * Promote / re-promote / renew one scope through promoteLiveScope →
+ * system_promote_intel_live_scope. Idempotent per scope_key (2430's action
+ * table: promoted / repromoted / renewed / already_active); the response says
+ * which happened. promoted_by is the admin.
+ */
+router.post("/admin/intel/live-scopes/promote", async (req, res) => {
+  const admin = await requireAdmin(req, res, { withDisplayName: true });
+  if (!admin) return;
+  const { sc, userId, displayName } = admin;
+  if (!(await requireLiveScopeSurface(res, sc))) return;
+
+  const parsed = promoteLiveScopeSchema.safeParse(req.body);
+  if (!parsed.success) {
+    sendError(res, "invalid_payload", `Body must be { zoneId: string|null, claimType, expiresAt: ISO-8601, evidence: { assessment: object, reasoning: string }, note? } — ${parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ")}`);
+    return;
+  }
+  const { zoneId, claimType, expiresAt, evidence, note } = parsed.data;
+  const now = new Date();
+  if (Date.parse(expiresAt) <= now.getTime()) {
+    sendError(res, "invalid_payload", "expiresAt (the review horizon) must be in the future");
+    return;
+  }
+
+  if (!(await requireLiveScopeWriter(res, sc))) return;
+
+  const r = await promoteLiveScope(
+    { zoneId, claimType, expiresAt, evidence, note: note ?? null, promotedBy: userId, now },
+    { client: sc },
+  );
+  if (r.skipped) { sendLiveScopeWriterFailure(req, res, "promotion", r); return; }
+
+  req.log.info(
+    { scopeKey: r.scopeKey, action: r.action, expiresAt: r.expiresAt, adminId: userId, adminName: displayName },
+    "intel live scope promoted via admin surface",
+  );
+  res.json({
+    scopeKey: r.scopeKey,
+    action: r.action,
+    expiresAt: r.expiresAt,
+    promotedBy: { userId, displayName },
+  });
+});
+
+/**
+ * POST /admin/intel/live-scopes/withdraw
+ * Withdraw one scope through withdrawLiveScope → system_withdraw_intel_live_scope.
+ * The row is KEPT (audit); the read path stops serving it at once. Idempotent:
+ * a second withdrawal is already_withdrawn (200, no write). A scope that was
+ * never promoted is 404 — there is nothing to withdraw and the key is probably wrong.
+ */
+router.post("/admin/intel/live-scopes/withdraw", async (req, res) => {
+  const admin = await requireAdmin(req, res, { withDisplayName: true });
+  if (!admin) return;
+  const { sc, userId, displayName } = admin;
+  if (!(await requireLiveScopeSurface(res, sc))) return;
+
+  const parsed = withdrawLiveScopeSchema.safeParse(req.body);
+  if (!parsed.success) {
+    sendError(res, "invalid_payload", `Body must be { zoneId: string|null, claimType, reason } — ${parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ")}`);
+    return;
+  }
+  const { zoneId, claimType, reason } = parsed.data;
+
+  if (!(await requireLiveScopeWriter(res, sc))) return;
+
+  const r = await withdrawLiveScope({ zoneId, claimType, reason, withdrawnBy: userId, now: new Date() }, { client: sc });
+  if (r.skipped) { sendLiveScopeWriterFailure(req, res, "withdrawal", r); return; }
+  if (r.action === "not_found") {
+    sendError(res, "not_found", `scope ${liveScopeKey(zoneId, claimType)} has never been promoted; nothing to withdraw`);
+    return;
+  }
+
+  req.log.info(
+    { scopeKey: r.scopeKey, action: r.action, reason, adminId: userId, adminName: displayName },
+    "intel live scope withdrawn via admin surface",
+  );
+  res.json({ scopeKey: r.scopeKey, action: r.action, withdrawnBy: { userId, displayName } });
 });
 
 export default router;

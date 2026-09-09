@@ -243,6 +243,123 @@ describe("evaluateCitations over a synthetic tree", () => {
 
 // ---------------------------------------------------------------------------
 
+describe("Expo dynamic-route paths — `app/messages/[id].tsx`", () => {
+  /**
+   * WHY THE GRAMMAR HAS SQUARE BRACKETS IN IT.
+   *
+   * The client is an Expo Router app, so its route files are literally named
+   * `[id].tsx`, `[slug].tsx`, `[handle].tsx`. The path segment class excluded
+   * `[` and `]`, which made those citations INVISIBLE — and invisible is worse
+   * than unchecked here, because the line-local inheritance rule then resolves a
+   * following bare `:NNN` against whatever file WAS visible.
+   *
+   * Measured on the real corpus: census-telegraph.md:780 cites
+   * `app/messages/[id].tsx:1247-1252` and `:1260-1266` side by side. The first
+   * was not extracted at all; the second inherited `src/services/messaging.ts`
+   * (767 lines) from earlier on the line and was reported as out of range. The
+   * citation was right and the grammar was wrong — a false failure and a missed
+   * one from a single omission. 62 lines across docs/architecture/ carry a
+   * bracketed path.
+   */
+  it("extracts a bracketed route path as its own citation", () => {
+    const { citations } = extractCitations("see `app/messages/[id].tsx:1247-1252`");
+    assert.equal(citations.length, 1);
+    assert.equal(citations[0]?.file, "app/messages/[id].tsx");
+    assert.equal(citations[0]?.spec, "1247-1252");
+  });
+
+  it("a following bare :NNN inherits the BRACKETED file, not the one before it", () => {
+    // This is the whole point. Without brackets in the grammar the second spec
+    // silently belongs to messaging.ts.
+    const { citations } = extractCitations(
+      "`src/services/messaging.ts:238`, then `app/messages/[id].tsx:1247-1252` and `:1260-1266`",
+    );
+    assert.deepEqual(
+      citations.map((c) => `${c.file}:${c.spec}`),
+      ["src/services/messaging.ts:238", "app/messages/[id].tsx:1247-1252", "app/messages/[id].tsx:1260-1266"],
+    );
+  });
+
+  it("resolves a bracketed path by its real basename", () => {
+    const byBasename = new Map<string, string[]>([
+      ["[id].tsx", ["travel-buddy-standalone/app/messages/[id].tsx"]],
+    ]);
+    assert.deepEqual(
+      resolveCitationPath("app/messages/[id].tsx", byBasename),
+      ["travel-buddy-standalone/app/messages/[id].tsx"],
+    );
+  });
+
+  it("does not swallow a markdown link into the path", () => {
+    // `[text](path.ts:12)` must not extract `[text](path.ts` — the closing
+    // paren and the opening one are outside the segment class, so the path can
+    // only be what follows `(`.
+    const { citations } = extractCitations("[the runner](scripts/run.ts:12) does it");
+    assert.deepEqual(citations.map((c) => c.file), ["scripts/run.ts"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+
+describe("an anchored citation that goes OUT OF RANGE is still an anchored citation", () => {
+  /**
+   * THE DEFECT THIS PINS, AND HOW IT WAS FOUND.
+   *
+   * `anchored` used to be incremented AFTER the range checks, so a citation
+   * whose file had shrunk past the cited line bailed out before ever being
+   * counted. MIN_ANCHORED_CITATIONS sits AT the measured count by the
+   * SHRINK-ONLY rule, so one moved file dropped the count below the floor and
+   * the checker exited 2 with "restore the anchors, or lower the floor" — about
+   * a citation whose anchor nobody had touched. The failure was real; the
+   * diagnosis pointed at the wrong thing, and at an exit code that means "this
+   * checker could not run honestly" rather than "your citation is stale".
+   *
+   * Found by mutation, not by reading: changing a live citation in
+   * wall-certification.md from `WallDiversityService.ts:218#applyFeedDiversity`
+   * to `:263` in a 254-line file produced exit 2 and that message. With the
+   * count taken first, the same mutation now produces exit 1 and names the
+   * range failure. The floor asks how many claims in the corpus are ANCHORED,
+   * which is a property of the text; whether an anchor currently HOLDS is what
+   * badAnchor is for.
+   */
+  const tree: Record<string, string> = {
+    "docs/x/GUIDE.md": [
+      "anchored and true: `src/thing.ts:2#beta`",
+      "anchored, file has shrunk past it: `src/thing.ts:99#beta`",
+      "anchored, file gone entirely: `src/ghost.ts:1#beta`",
+      "not anchored, also past the end: `src/thing.ts:98`",
+    ].join("\n"),
+    "src/thing.ts": ["alpha", "beta", "gamma"].join("\n"),
+  };
+  const byBasename = new Map<string, string[]>([
+    ["thing.ts", ["src/thing.ts"]],
+    ["GUIDE.md", ["docs/x/GUIDE.md"]],
+  ]);
+  const readFile = (rel: string): string | null => tree[rel] ?? null;
+  const res = evaluateCitations({ coveredFiles: ["docs/x/GUIDE.md"], readFile, byBasename });
+
+  it("counts all three anchored citations, including the two that cannot resolve", () => {
+    assert.equal(res.total, 4);
+    assert.equal(res.anchored, 3);
+  });
+
+  it("reports both unresolvable citations as RANGE failures", () => {
+    assert.deepEqual(
+      res.badRange.map((f) => f.cited).sort(),
+      ["src/ghost.ts:1#beta", "src/thing.ts:98", "src/thing.ts:99#beta"],
+    );
+  });
+
+  it("charges neither of them a second time as a broken anchor", () => {
+    // One defect, one finding. A citation pointing past the end of its file is
+    // stale for one reason, and reporting it twice would inflate the count the
+    // CLI prints and make the fix look bigger than it is.
+    assert.deepEqual(res.badAnchor, []);
+  });
+});
+
+// ---------------------------------------------------------------------------
+
 describe("the real corpus — every covered citation resolves and every anchor holds", () => {
   const { files, missing } = resolveCoveredFiles(REPO_ROOT, COVERED);
 

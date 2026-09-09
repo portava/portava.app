@@ -128,6 +128,19 @@ export async function loadNearbyEvents(
   return out;
 }
 
+/**
+ * One source's contribution to a search answer.
+ *
+ * `refusal` names WHY a source produced nothing, or is null when it genuinely
+ * had nothing to give. The two are different facts and the envelope must not
+ * conflate them: an empty neighbourhood is an answer, an unreadable table is
+ * not. Mirrors ProducerLayerReport in routes/mapProjection.ts.
+ */
+interface SourceReport {
+  refusal: string | null;
+  collected: number;
+}
+
 // ── GET /api/map/search ───────────────────────────────────────────────────────
 router.get("/map/search", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
@@ -139,7 +152,7 @@ router.get("/map/search", asyncHandler(async (req, res) => {
 
   const generatedAt = new Date().toISOString();
   if (!(await isFlagEnabled(sc, "map_search_enabled"))) {
-    res.json({ enabled: false, results: [], viewport: null, total: 0, nextCursor: null, generatedAt });
+    res.json({ enabled: false, results: [], viewport: null, total: 0, nextCursor: null, sources: null, generatedAt });
     return;
   }
 
@@ -160,30 +173,83 @@ router.get("/map/search", asyncHandler(async (req, res) => {
   const cursor = req.query.cursor ? String(req.query.cursor) : null;
 
   // One shared, fail-closed block set for every source.
+  //
+  // `enabled: false` WITH A NAMED REFUSAL, not `enabled: true, results: []`.
+  // "Nothing matched your search" is a claim about the world, and an unreadable
+  // `blocks` table cannot support it: the honest answer is that the server
+  // cannot tell whether it is safe to show anything. The gateway
+  // (routes/mapProjection.ts) reached the same conclusion for the §24 policy —
+  // the client treats an `enabled: true` answer as authoritative and stops
+  // asking — and `blocks` failing is the more ordinary event of the two.
+  //
+  // `fetchBlockedSet` returns null for a READ FAILURE precisely so this caller
+  // can tell it from "this user blocks nobody"; serving an empty payload threw
+  // that distinction away at the last step.
   const blockedSet = await fetchBlockedSet(sc, user.id);
   if (blockedSet === null) {
-    res.json({ enabled: true, results: [], viewport: { lat, lng, radiusKm }, total: 0, nextCursor: null, generatedAt });
+    res.json({
+      enabled: false,
+      refusal: "block_set_unreadable",
+      results: [], viewport: { lat, lng, radiusKm }, total: 0, nextCursor: null, sources: null, generatedAt,
+    });
     return;
   }
 
   const results: MapSearchResult[] = [];
   const tasks: Promise<void>[] = [];
 
+  // PER-SOURCE REFUSALS, so "empty" and "broken" stay distinguishable.
+  //
+  // `loadNearbyEvents` returns null for a READ FAILURE specifically so a caller
+  // "that needs the distinction can tell them apart" — and this route used to
+  // answer it with `?? []`, collapsing "the events table could not be read"
+  // into "there are no events near you". That is a confident claim about the
+  // world assembled from a query that did not answer, and nothing in the
+  // response let a client or an operator tell the two apart.
+  //
+  // Refusing the WHOLE request would be worse than the defect: one broken
+  // table would blank a search three healthy sources could still answer. The
+  // gateway next door already settled this shape — `producers` and
+  // `crowdFlow.refusal` in routes/mapProjection.ts report per-layer refusals
+  // for exactly this reason — so map search reports the same way. `null` means
+  // the caller did not ask for that source, which is not the same fact as
+  // having collected nothing from it.
+  const sources: Record<string, SourceReport | null> = { traveler: null, gem: null, event: null };
+
   if (want("traveler")) tasks.push((async () => {
-    const travelers = await listMapTravelers(sc, { viewerId: user.id, lat, lng, radiusKm, blockedSet }).catch(() => []);
+    // KNOWN GAP: listMapTravelers returns a bare array and has no failure
+    // channel, so a failed read inside it is already indistinguishable from an
+    // empty one before this route sees it. `threw` is the only failure signal
+    // available here, and it is NOT how supabase-js reports a database error —
+    // so a null refusal from this source means "nothing was thrown", not
+    // "the read succeeded". Closing that needs listMapTravelers' signature to
+    // change; it is recorded rather than papered over.
+    const travelers = await listMapTravelers(sc, { viewerId: user.id, lat, lng, radiusKm, blockedSet })
+      .catch(() => null);
+    if (travelers === null) { sources.traveler = { refusal: "travelers_threw", collected: 0 }; return; }
     for (const t of travelers) results.push(normalizeTraveler(t));
+    sources.traveler = { refusal: null, collected: travelers.length };
   })());
 
   if (want("gem")) tasks.push((async () => {
-    const ranked = await findNearbyGems(sc, lat, lng, radiusKm, { limit: 60 }).catch(() => []);
+    // Same gap as travelers: findNearbyGems returns a bare array.
+    const ranked = await findNearbyGems(sc, lat, lng, radiusKm, { limit: 60 }).catch(() => null);
+    if (ranked === null) { sources.gem = { refusal: "gems_threw", collected: 0 }; return; }
     const notBlocked = ranked.filter((r: any) => !r.gem?.submitted_by || !blockedSet.has(r.gem.submitted_by));
-    const safe = await applyGemPrivacyBatch(notBlocked.map((r: any) => r.gem), sc, user.id).catch(() => []);
+    const safe = await applyGemPrivacyBatch(notBlocked.map((r: any) => r.gem), sc, user.id).catch(() => null);
+    // The privacy batch failing is NOT "no gems". Reporting it separately keeps
+    // a privacy-filter outage from reading as a quiet neighbourhood.
+    if (safe === null) { sources.gem = { refusal: "gem_privacy_unavailable", collected: 0 }; return; }
     safe.forEach((g: any, i: number) => results.push(normalizeGem(g, notBlocked[i]?.distanceKm ?? null)));
+    sources.gem = { refusal: null, collected: safe.length };
   })());
 
   if (want("event")) tasks.push((async () => {
-    const events = (await loadNearbyEvents(sc, user.id, lat, lng, radiusKm, blockedSet).catch(() => null)) ?? [];
+    // The one source that DOES carry the distinction. null is a read failure.
+    const events = await loadNearbyEvents(sc, user.id, lat, lng, radiusKm, blockedSet).catch(() => null);
+    if (events === null) { sources.event = { refusal: "events_unreadable", collected: 0 }; return; }
     for (const ev of events) results.push(normalizeEvent(ev));
+    sources.event = { refusal: null, collected: events.length };
   })());
 
   await Promise.all(tasks);
@@ -198,6 +264,7 @@ router.get("/map/search", asyncHandler(async (req, res) => {
     viewport: { lat, lng, radiusKm },
     total: rankedResults.length,
     nextCursor,
+    sources,
     generatedAt,
   });
 

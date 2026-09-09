@@ -11,6 +11,9 @@
  * Never auto-bans. Serious/severe events are queued for admin review.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { logger as rootLogger } from "../../lib/logger.js";
+
+const logger = rootLogger.child({ service: "TrustEventService" });
 
 export type TrustCategory =
   | "plan_attendance"
@@ -65,7 +68,13 @@ export interface RecordEventResult {
   ok: boolean;
   eventId?: string;
   skipped?: boolean;
-  skipReason?: "dedup" | "daily_cap" | "flag_off";
+  /**
+   * `dedup_unverifiable` — the dedup read itself failed, so whether this event
+   * is a repeat could not be established. The event is NOT written: with the
+   * flag on, an unverifiable dedup that inserted anyway would turn every
+   * transient trust_events read failure into a double award (see isDuplicate).
+   */
+  skipReason?: "dedup" | "daily_cap" | "flag_off" | "dedup_unverifiable";
   pendingReview?: boolean;
 }
 
@@ -79,13 +88,22 @@ export interface RecordEventResult {
  */
 export async function isTrustEnabled(db: SupabaseClient): Promise<boolean> {
   try {
-    const { data } = await db
+    const { data, error } = await db
       .from("feature_flags")
       .select("enabled")
       .eq("flag", "trust_engine_enabled")
       .maybeSingle();
+    if (error) {
+      // Fail closed — but never silently. supabase-js resolves on a database
+      // error, and an unread `error` here made a broken feature_flags read
+      // indistinguishable from the flag being off: every emitter returned
+      // `flag_off` and the ledger went quiet with nothing in the logs.
+      logger.warn({ err: error }, "trust_engine_enabled read failed — treating the engine as OFF for this call");
+      return false;
+    }
     return Boolean((data as any)?.enabled);
-  } catch {
+  } catch (err) {
+    logger.warn({ err }, "trust_engine_enabled read threw — treating the engine as OFF for this call");
     return false;
   }
 }
@@ -201,7 +219,18 @@ async function getEarningCaps(
   }
 }
 
-/** Check deduplication window */
+/**
+ * Check the deduplication window.
+ *
+ * Returns `"duplicate"`, `"new"`, or `"unverifiable"`. The third answer is the
+ * one that used to be missing: this read `const { data }` and ignored `error`,
+ * and supabase-js RESOLVES on a database error — so a failed read looked like
+ * "no prior event" and the insert went ahead. That is the idempotency key
+ * failing open: a transient trust_events outage during a retry, a re-delivered
+ * webhook, or a re-bridged intel row would have written the same event twice
+ * and scored it twice. `countInWindow` already fails closed (Infinity = at
+ * cap) for the same reason; dedup now does too.
+ */
 async function isDuplicate(
   db: SupabaseClient,
   userId: string,
@@ -209,11 +238,11 @@ async function isDuplicate(
   sourceType: string,
   sourceId: string | undefined,
   windowHours: number,
-): Promise<boolean> {
-  if (!sourceId) return false;
+): Promise<"duplicate" | "new" | "unverifiable"> {
+  if (!sourceId) return "new";
   try {
     const since = new Date(Date.now() - windowHours * 60 * 60 * 1000).toISOString();
-    const { data } = await db
+    const { data, error } = await db
       .from("trust_events")
       .select("id")
       .eq("user_id", userId)
@@ -222,9 +251,14 @@ async function isDuplicate(
       .eq("source_id", sourceId)
       .gt("created_at", since)
       .maybeSingle();
-    return Boolean(data);
-  } catch {
-    return false;
+    if (error) {
+      logger.warn({ err: error, userId, eventType, sourceType, sourceId }, "dedup read failed — event NOT recorded (fail-closed)");
+      return "unverifiable";
+    }
+    return data ? "duplicate" : "new";
+  } catch (err) {
+    logger.warn({ err, userId, eventType, sourceType, sourceId }, "dedup read threw — event NOT recorded (fail-closed)");
+    return "unverifiable";
   }
 }
 
@@ -250,9 +284,10 @@ export async function recordTrustEvent(
   // Normalize to lowercase so "PLAN_ATTENDED" and "plan_attended" are the same bucket
   const eventType = input.eventType.toLowerCase();
 
-  // Deduplication check
+  // Deduplication check — fails CLOSED when it cannot be performed.
   const dup = await isDuplicate(db, userId, eventType, sourceType, sourceId, dedupWindowHours);
-  if (dup) return { ok: false, skipped: true, skipReason: "dedup" };
+  if (dup === "duplicate")    return { ok: false, skipped: true, skipReason: "dedup" };
+  if (dup === "unverifiable") return { ok: false, skipped: true, skipReason: "dedup_unverifiable" };
 
   // Daily and weekly cap checks (only for positive events)
   if (delta > 0) {
@@ -287,13 +322,99 @@ export async function recordTrustEvent(
     .select("id")
     .single();
 
-  if (error) throw new Error(`recordTrustEvent DB error: ${error.message}`);
+  if (error) {
+    // 23505 = unique_violation. Migration 2540 adds a partial UNIQUE index on
+    // the dedup key for the one-shot event types; when two concurrent emitters
+    // both pass the read-then-insert dedup above, the database refuses the
+    // second insert. That is the same fact as `dup === "duplicate"` — the
+    // event already exists — so it is reported as a dedup skip, not thrown.
+    // Any other insert error is still a failure the caller must see.
+    if ((error as any).code === "23505") {
+      logger.info({ userId, eventType, sourceType, sourceId }, "trust_events insert refused by unique index — treated as dedup");
+      return { ok: false, skipped: true, skipReason: "dedup" };
+    }
+    throw new Error(`recordTrustEvent DB error: ${error.message}`);
+  }
+
+  const eventId: string = (data as any).id;
+  if (status === "pending_review") {
+    await queueEventForReview(db, userId, eventId, { eventType, category, severity, sourceType });
+  }
 
   return {
     ok: true,
-    eventId: (data as any).id,
+    eventId,
     pendingReview: status === "pending_review",
   };
+}
+
+/**
+ * Put a pending_review event on the admin review queue.
+ *
+ * The header of this module has always said "Serious/severe events are queued
+ * for admin review". They were routed to status='pending_review' — and that
+ * was the whole of the queueing. The queue an admin actually reads is
+ * `trust_reviews` (GET /admin/trust/reviews), and nothing wrote a row there
+ * for a pending event: recordAdjudicatedTrustEvent's own comment records the
+ * gap ("nothing would prompt them to, since recordTrustEvent writes no
+ * trust_reviews row"), and TrustAdminService.confirmEvent / dismissEvent both
+ * close `trust_reviews WHERE source_event_id = eventId` — a row that never
+ * existed. The schema was built for this: `review_type` admits 'event_review'
+ * and `source_event_id` is a foreign key to trust_events. So an unattended
+ * serious finding — an impossible-speed GPS trace, a host no-show — sat in
+ * pending_review, excluded from the score by design, visible only to an admin
+ * who happened to open that one user's page. Queued into a queue nobody could
+ * list.
+ *
+ * One review per event, keyed by source_event_id; the event itself is already
+ * deduplicated upstream. Non-fatal: the event is the record of the finding
+ * and is already written; a failed review insert delays the adjudication
+ * rather than losing the evidence, and is logged so it cannot fail silently.
+ */
+async function queueEventForReview(
+  db: SupabaseClient,
+  userId: string,
+  eventId: string,
+  facts: { eventType: string; category: TrustCategory; severity: TrustSeverity; sourceType: string },
+): Promise<void> {
+  try {
+    const { error } = await db.from("trust_reviews").insert({
+      user_id:         userId,
+      review_type:     "event_review",
+      source_event_id: eventId,
+      status:          "open",
+      metadata: {
+        event_type:  facts.eventType,
+        category:    facts.category,
+        severity:    facts.severity,
+        source_type: facts.sourceType,
+      },
+    });
+    if (error) {
+      // 23505 — migration 2650's partial unique index on
+      // trust_reviews (source_event_id). The event is already on the queue,
+      // put there by a concurrent emitter or by the maintenance repair sweep.
+      // That is DELIVERY, not failure, and reporting it as a failure would send
+      // an operator looking for a lost review that is sitting in front of them.
+      if ((error as any).code === "23505") {
+        logger.info(
+          { userId, eventId, eventType: facts.eventType },
+          "trust_reviews queue insert refused by the unique index — this event is already queued",
+        );
+        return;
+      }
+      logger.warn(
+        { err: error, userId, eventId, eventType: facts.eventType },
+        "pending_review event recorded but trust_reviews queue insert failed — adjudication delayed, not lost; " +
+          "the trust maintenance sweep re-queues it (repairMissingEventReviews)",
+      );
+    }
+  } catch (err) {
+    logger.warn(
+      { err, userId, eventId, eventType: facts.eventType },
+      "pending_review event recorded but trust_reviews queue insert threw — adjudication delayed, not lost",
+    );
+  }
 }
 
 /** Batch record multiple events (ignores individual failures) */
@@ -391,6 +512,270 @@ export async function recordAdjudicatedTrustEvent(
   }
 }
 
+
+/**
+ * The Trust-owned half of STAMP_VERIFIED.
+ *
+ * ── WHAT WAS MEASURED ────────────────────────────────────────────────────────
+ * `STAMP_VERIFIED` (+3 passport_authenticity) has been declared below since the
+ * vocabulary was written and emitted by nothing. In production, every
+ * `user_stamps` row awarded since `trust_engine_enabled` went TRUE on
+ * 2026-07-17 (18 rows by earned_at, 23 stamp_award_events by created_at, read
+ * 2026-09-07) produced ZERO trust events. The live award path is
+ * `services/passport/StampAwardEngine.awardStamp`, which already classifies
+ * every award by provenance tier (`stampVerificationTier`: everything
+ * server-derived is "verified"; only self_reported/self/decorative is
+ * "reported") and emits the §32 `stamp_verified` TELEMETRY event on that tier —
+ * but never the trust event. `passport_authenticity` can therefore only go DOWN
+ * on the live pipeline (`stamp_disputed`, StampAwardEngine.revokeStamp).
+ *
+ * ── WHY THE CALL IS NOT MADE HERE ────────────────────────────────────────────
+ * The triggering action — a fresh, non-recovery stamp award — happens inside
+ * StampAwardEngine, which is Passport-owned (services/passport/**, §12/§32 of
+ * the Passport spec, `recordPassportEvent` telemetry). Trust does not reach
+ * into another surface's award path. This function is the exact one-line call
+ * that path needs to make, on its `awarded: true` return only, so the delta,
+ * severity, category, provenance and idempotency key are fixed HERE, in the
+ * vocabulary's own file, and the Passport change is a call, not a decision.
+ *
+ * ── PROVENANCE AND IDEMPOTENCY ───────────────────────────────────────────────
+ *   user_id     — the stamp OWNER (the actor whose travel fact was verified);
+ *                 an admin-awarded stamp still credits the owner, and the admin
+ *                 is recorded in metadata, never as the subject.
+ *   source_type — 'passport'; source_id — the user_stamps row id. One stamp can
+ *                 pay once, ever (365-day dedup window; recordTrustEvent's
+ *                 dedup fails closed).
+ *   tier        — only 'verified' provenance emits. A 'reported' (self-declared)
+ *                 stamp is a decoration, not evidence; nothing is written and
+ *                 `{ ok: false, skipped: true, skipReason: "not_verified" }` is
+ *                 returned so the caller can tell "skipped by rule" from
+ *                 "skipped by the engine".
+ *   recovery    — awardStamp's recovery path (`skipToStampInsert`) re-inserts a
+ *                 user_stamps row for an award event that already exists; the
+ *                 caller must pass the SAME userStampId semantics it uses for
+ *                 the §32 telemetry (fresh award only), and the dedup key
+ *                 catches the rest.
+ *
+ * Never throws: an award must not fail because trust bookkeeping did.
+ */
+export async function recordStampVerifiedTrustEvent(
+  db: SupabaseClient,
+  input: {
+    /** The stamp owner — the subject of the evidence. */
+    userId: string;
+    /** user_stamps.id of the FRESH award (never a recovery/no-op result). */
+    userStampId: string;
+    /** StampAwardEngine's provenance tier for this award. */
+    tier: "verified" | "reported";
+    /** user_stamps.source_type — trips | events | posts | admin | … */
+    stampSourceType: string;
+    stampDefinitionId?: string | null;
+    /** Present only for admin-awarded stamps; recorded, never made the subject. */
+    awardedByAdminId?: string | null;
+  },
+): Promise<Omit<RecordEventResult, "skipReason"> & { skipReason?: NonNullable<RecordEventResult["skipReason"]> | "not_verified" }> {
+  if (input.tier !== "verified") {
+    return { ok: false, skipped: true, skipReason: "not_verified" };
+  }
+  const t = TRUST_EVENT_TYPES.STAMP_VERIFIED;
+  try {
+    return await recordTrustEvent(db, {
+      userId: input.userId,
+      eventType: "stamp_verified",
+      category: t.category,
+      delta: t.delta,
+      severity: t.severity,
+      sourceType: "passport",
+      sourceId: input.userStampId,
+      dedupWindowHours: 24 * 365,
+      metadata: {
+        userStampId:       input.userStampId,
+        stampSourceType:   input.stampSourceType,
+        stampDefinitionId: input.stampDefinitionId ?? null,
+        awardedByAdminId:  input.awardedByAdminId ?? null,
+        tier:              input.tier,
+      },
+    });
+  } catch (err) {
+    logger.warn({ err, userId: input.userId, userStampId: input.userStampId }, "stamp_verified trust event failed (non-fatal to the award)");
+    return { ok: false };
+  }
+}
+
+/**
+ * Host-cancel trigger conditions. Trust-owned POLICY surface (like the review
+ * bands below): the vocabulary fixes the delta and severity of
+ * EVENT_HOST_CANCELLED; it does not say WHICH cancellations count. These two
+ * constants do, and they are exported so the rule is inspectable and testable
+ * rather than buried in a route.
+ *
+ *   - Only a PUBLISHED event can be broken: a draft was never a commitment to
+ *     anyone, and a completed/archived event has nothing left to cancel.
+ *   - Only a cancellation that lets somebody down is host-quality evidence: at
+ *     least one OTHER user must have committed ("going") to it. Cancelling an
+ *     empty event — a mistake, a test, a change of plan nobody had joined — is
+ *     recorded as a skip with a reason, never as a penalty.
+ *
+ * Both are the conservative subset. Whether a far-in-advance cancellation
+ * should be exempt, or a "maybe" should count as commitment, is an owner
+ * decision; the facts needed to decide it (lead time, counts) are written into
+ * the event's metadata so the policy can be tightened or loosened later
+ * without losing the evidence.
+ */
+export const EVENT_HOST_CANCEL_TRIGGER_STATES: readonly string[] = ["open", "started"];
+export const EVENT_HOST_CANCEL_MIN_COMMITTED_ATTENDEES = 1;
+
+/**
+ * The Trust-owned half of EVENT_HOST_CANCELLED.
+ *
+ * Called by routes/events.ts from BOTH host-cancel routes (DELETE /events/:id
+ * and POST /events/:id/cancel — the same action behind two verbs) AFTER the
+ * state transition to 'cancelled' has been written. Never for an admin cancel
+ * (routes/admin.ts `event_cancel`): that is the admin's act, not the host's.
+ *
+ *   user_id     — the HOST (the actor whose commitment was broken).
+ *   source_type — 'event'; source_id — the event id. One event can charge its
+ *                 host once (365-day dedup; recordTrustEvent's dedup fails
+ *                 closed; migration 2540 makes the key unique in the database).
+ *                 Two routes, one key: the second route hitting the same event
+ *                 is a dedup skip, not a second penalty.
+ *
+ * Returns `{ skipReason: "not_published" | "no_committed_attendees" }` when the
+ * trigger conditions above are not met, so the caller (and a test) can tell
+ * "skipped by rule" from "skipped by the engine". Never throws.
+ */
+export async function recordEventHostCancelledTrustEvent(
+  db: SupabaseClient,
+  input: {
+    hostId: string;
+    eventId: string;
+    /** events.state BEFORE the transition to 'cancelled'. */
+    priorState: string;
+    /** Live count of event_rsvps with status='going' for users OTHER than the host. */
+    committedAttendees: number;
+    startsAt?: string | null;
+    reason?: string | null;
+  },
+): Promise<Omit<RecordEventResult, "skipReason"> & { skipReason?: NonNullable<RecordEventResult["skipReason"]> | "not_published" | "no_committed_attendees" }> {
+  if (!EVENT_HOST_CANCEL_TRIGGER_STATES.includes(input.priorState)) {
+    return { ok: false, skipped: true, skipReason: "not_published" };
+  }
+  if (input.committedAttendees < EVENT_HOST_CANCEL_MIN_COMMITTED_ATTENDEES) {
+    return { ok: false, skipped: true, skipReason: "no_committed_attendees" };
+  }
+  const t = TRUST_EVENT_TYPES.EVENT_HOST_CANCELLED;
+  const startsAtMs = input.startsAt ? Date.parse(input.startsAt) : NaN;
+  const leadTimeHours = Number.isFinite(startsAtMs) ? Math.round((startsAtMs - Date.now()) / 36e5) : null;
+  try {
+    return await recordTrustEvent(db, {
+      userId: input.hostId,
+      eventType: "event_host_cancelled",
+      category: t.category,
+      delta: t.delta,
+      severity: t.severity,
+      sourceType: "event",
+      sourceId: input.eventId,
+      dedupWindowHours: 24 * 365,
+      metadata: {
+        eventId:            input.eventId,
+        priorState:         input.priorState,
+        committedAttendees: input.committedAttendees,
+        startsAt:           input.startsAt ?? null,
+        leadTimeHours,
+        reason:             input.reason ?? null,
+      },
+    });
+  } catch (err) {
+    logger.warn({ err, hostId: input.hostId, eventId: input.eventId }, "event_host_cancelled trust event failed (non-fatal to the cancel)");
+    return { ok: false };
+  }
+}
+
+/**
+ * Rating bands for event reviews. Trust-owned POLICY surface.
+ *
+ * The vocabulary fixes EVENT_POSITIVE_REVIEW (+3 minor) and
+ * EVENT_NEGATIVE_REVIEW (-6 moderate) but not where on a 1–5 scale "positive"
+ * and "negative" begin. This follows the one precedent already in the tree —
+ * routes/rentABuddy.ts treats `rating >= 4` as the positive band — and mirrors
+ * it for the negative side. A 3 is neutral and emits NOTHING: a middling
+ * review is not evidence of host quality in either direction. Owner decision
+ * to confirm; see the report.
+ */
+export const EVENT_REVIEW_RATING_BANDS = { positiveMin: 4, negativeMax: 2 } as const;
+
+/**
+ * The Trust-owned half of EVENT_POSITIVE_REVIEW / EVENT_NEGATIVE_REVIEW.
+ *
+ * Called by routes/events.ts POST /events/:id/reviews on the FIRST submission
+ * of a review only. That route already guarantees the trigger is real: the
+ * event is 'completed', the reviewer is a confirmed attendee, and the host
+ * cannot review their own event.
+ *
+ *   user_id       — the HOST (the subject of the review; the person being
+ *                   rated). The reviewer is the counterparty, never the subject.
+ *   source_type   — 'event_review'; source_id — the event_reviews row id. One
+ *                   review can charge or credit once (365-day dedup; 2540
+ *                   makes the key unique). The route upserts on
+ *                   (event_id, reviewer_id), so an EDITED review keeps its id —
+ *                   the caller must pass `isFirstSubmission: false` for an edit
+ *                   and nothing is written: otherwise a 5 edited to a 1 would
+ *                   stand as +3 AND -6 for one review. Whether an edit that
+ *                   flips sentiment should re-score is an owner decision.
+ *   counterparty  — the reviewer, for the mutual-ring scan — EXCEPT when the
+ *                   review is anonymous. `trust_events` carries an RLS policy
+ *                   (te_select_own) that lets the subject read their own
+ *                   applied rows including metadata until migration 2370 is on
+ *                   production; recording an anonymous reviewer's id there
+ *                   would let the host unmask them with one PostgREST call.
+ *                   The ring scan is therefore blind to anonymous reviews for
+ *                   now; `reviewerAnonymous: true` is recorded so the gap is
+ *                   visible. Flip when 2370 is live — owner decision.
+ *
+ * Never throws: a review must not fail because trust bookkeeping did.
+ */
+export async function recordEventReviewTrustEvent(
+  db: SupabaseClient,
+  input: {
+    hostId: string;
+    reviewerId: string;
+    eventId: string;
+    reviewId: string;
+    rating: number;
+    anonymous: boolean;
+    isFirstSubmission: boolean;
+  },
+): Promise<Omit<RecordEventResult, "skipReason"> & { skipReason?: NonNullable<RecordEventResult["skipReason"]> | "review_edit" | "neutral_rating" | "self_review" }> {
+  if (input.hostId === input.reviewerId) return { ok: false, skipped: true, skipReason: "self_review" };
+  if (!input.isFirstSubmission)          return { ok: false, skipped: true, skipReason: "review_edit" };
+  const positive = input.rating >= EVENT_REVIEW_RATING_BANDS.positiveMin;
+  const negative = input.rating <= EVENT_REVIEW_RATING_BANDS.negativeMax;
+  if (!positive && !negative)            return { ok: false, skipped: true, skipReason: "neutral_rating" };
+  const t = positive ? TRUST_EVENT_TYPES.EVENT_POSITIVE_REVIEW : TRUST_EVENT_TYPES.EVENT_NEGATIVE_REVIEW;
+  try {
+    return await recordTrustEvent(db, {
+      userId: input.hostId,
+      eventType: positive ? "event_positive_review" : "event_negative_review",
+      category: t.category,
+      delta: t.delta,
+      severity: t.severity,
+      sourceType: "event_review",
+      sourceId: input.reviewId,
+      counterpartyUserId: input.anonymous ? undefined : input.reviewerId,
+      dedupWindowHours: 24 * 365,
+      metadata: {
+        eventId:           input.eventId,
+        reviewId:          input.reviewId,
+        rating:            input.rating,
+        reviewerAnonymous: input.anonymous,
+      },
+    });
+  } catch (err) {
+    logger.warn({ err, hostId: input.hostId, reviewId: input.reviewId }, "event review trust event failed (non-fatal to the review)");
+    return { ok: false };
+  }
+}
+
 /** All event types by source system */
 export const TRUST_EVENT_TYPES = {
   // Plans
@@ -417,11 +802,55 @@ export const TRUST_EVENT_TYPES = {
   TRAVEL_CIRCLE_JOIN:       { category: "community_value" as TrustCategory, delta: 1,  severity: "minor" as TrustSeverity },
   MUTUAL_REPORT:            { category: "community_value" as TrustCategory, delta: -3, severity: "minor" as TrustSeverity },
   // Local Guide / Hidden Gems
-  GEM_VERIFIED_BY_GUIDE:    { category: "guide_accuracy" as TrustCategory,  delta: 4,  severity: "minor" as TrustSeverity },
+  // 5, not 4. check:trust-event-vocabulary found HiddenGemVerificationService
+  // awarding 5 against a declared 4 — the one place in this vocabulary where the
+  // declaration was actively FALSE rather than merely incomplete. The
+  // declaration is corrected to what the system does, and the emitter now reads
+  // this constant, so the two can no longer drift. Whether 4 or 5 is the RIGHT
+  // number is a product question this does not answer; what it fixes is that
+  // there is now ONE place to answer it in.
+  GEM_VERIFIED_BY_GUIDE:    { category: "guide_accuracy" as TrustCategory,  delta: 5,  severity: "minor" as TrustSeverity },
 
   /** Emitted when a user completes Portava Verified (id or id_selfie tier). */
   IDENTITY_VERIFIED:        { category: "respect_safety" as TrustCategory,  delta: 10, severity: "minor" as TrustSeverity },
   GEM_DISPUTED:             { category: "guide_accuracy" as TrustCategory,  delta: -5, severity: "moderate" as TrustSeverity },
+  // ── Emitted and previously UNDECLARED ──────────────────────────────────────
+  // Nineteen types the tree emits that this constant did not contain, so its own
+  // claim to be "all event types by source system" was false. Each carries the
+  // values its emitter ACTUALLY passes, read out of the call site rather than
+  // chosen here — the declaration is being made true, not being used to change
+  // behaviour. check:trust-event-vocabulary keeps them in step from now on.
+  //
+  // Events
+  EVENT_ATTENDANCE_CONFIRMED:  { category: "plan_attendance" as TrustCategory, delta: 4,  severity: "minor" as TrustSeverity },
+  EVENT_NO_SHOW:               { category: "plan_attendance" as TrustCategory, delta: -5, severity: "moderate" as TrustSeverity },
+  FIRST_EVENT_HOSTED:          { category: "host_quality" as TrustCategory,    delta: 10, severity: "minor" as TrustSeverity },
+  FIRST_EVENT_JOINED:          { category: "plan_attendance" as TrustCategory, delta: 10, severity: "minor" as TrustSeverity },
+  // Hidden Gems / Local Guides
+  GEM_CONTRIBUTION:            { category: "community_value" as TrustCategory, delta: 1,  severity: "minor" as TrustSeverity },
+  GEM_SAVED:                   { category: "community_value" as TrustCategory, delta: 1,  severity: "minor" as TrustSeverity },
+  GEM_VERIFIED_BY_GUIDE_AUTHOR:{ category: "guide_accuracy" as TrustCategory,  delta: 5,  severity: "minor" as TrustSeverity },
+  GUIDE_VERIFICATION:          { category: "guide_accuracy" as TrustCategory,  delta: 3,  severity: "minor" as TrustSeverity },
+  // Passport / content
+  PASSPORT_STAMP_EARNED:       { category: "passport_authenticity" as TrustCategory, delta: 2, severity: "minor" as TrustSeverity },
+  PULSE_POST_CREATED:          { category: "content_quality" as TrustCategory, delta: 1,  severity: "minor" as TrustSeverity },
+  // Telegraph
+  TELEGRAPH_CONNECTION_ACCEPTED: { category: "communication" as TrustCategory, delta: 1,  severity: "minor" as TrustSeverity },
+  // Appeals
+  APPEAL_APPROVED:             { category: "community_value" as TrustCategory, delta: 2,  severity: "minor" as TrustSeverity },
+  // Rent-a-Buddy. Three of these compute their delta from a rating or a
+  // severity band, so the value here is the BASE the emitter starts from and
+  // the checker cannot compare a computed argument against it — stated rather
+  // than implied, because a declaration nobody can check is the thing this
+  // vocabulary was.
+  RENT_BUDDY_APPLICATION_APPROVED:   { category: "community_value" as TrustCategory, delta: 10, severity: "minor" as TrustSeverity },
+  RENT_BUDDY_BOOKING_ACCEPTED:       { category: "community_value" as TrustCategory, delta: 3,  severity: "minor" as TrustSeverity },
+  RENT_BUDDY_CASH_BALANCE_CONFIRMED: { category: "community_value" as TrustCategory, delta: 2,  severity: "minor" as TrustSeverity },
+  RENT_BUDDY_COMPLETED:              { category: "community_value" as TrustCategory, delta: 5,  severity: "minor" as TrustSeverity },
+  RENT_BUDDY_POSITIVE_REVIEW:        { category: "community_value" as TrustCategory, delta: 4,  severity: "minor" as TrustSeverity },
+  RENT_BUDDY_POLICY_FLAG_CONFIRMED:  { category: "respect_safety" as TrustCategory,  delta: -5, severity: "minor" as TrustSeverity },
+  RENT_BUDDY_ROUTE_CHANGE_DECLINED:  { category: "respect_safety" as TrustCategory,  delta: -5, severity: "minor" as TrustSeverity },
+
   // Passport
   STAMP_VERIFIED:           { category: "passport_authenticity" as TrustCategory, delta: 3,  severity: "minor" as TrustSeverity },
   STAMP_DISPUTED:           { category: "passport_authenticity" as TrustCategory, delta: -6, severity: "moderate" as TrustSeverity },

@@ -56,11 +56,18 @@ async function requireBudgetIntelMember(
     return null;
   }
 
-  const { data: trip } = await sc
+  // `error` is bound because `!trip` is this gate's whole answer. Unbound, a
+  // failed read became "Trip not found" — a confident, non-retryable claim
+  // about a trip nobody actually looked at. Unreadable is not absent.
+  const { data: trip, error: tripErr } = await sc
     .from("trips")
     .select("id, owner_id, destination_city, destination_country, start_date, end_date")
     .eq("id", tripId)
     .maybeSingle();
+  if (tripErr) {
+    sendError(res, "degraded_unavailable", "We could not read this trip right now. Please try again shortly.");
+    return null;
+  }
   if (!trip) { sendError(res, "not_found", "Trip not found"); return null; }
 
   const isOwner = (trip as any).owner_id === user.id;
@@ -74,13 +81,22 @@ async function requireBudgetIntelMember(
   return { sc, userId: user.id, trip, role };
 }
 
-/** Count of ACCEPTED members on a trip (owner/co_host/member/viewer). */
-async function countAcceptedMembers(sc: any, tripId: string): Promise<number> {
+/**
+ * Count of ACCEPTED members on a trip (owner/co_host/member/viewer).
+ *
+ * NULL, NOT 1, WHEN THE READ FAILS. This number is the party size: it is
+ * returned on the wire and it builds the assumption sentence "Trip currently
+ * has N accepted members" that the budget is justified by. Falling back to 1
+ * budgeted a six-person trip as a solo trip, and nothing in the response
+ * distinguished that from a genuine solo trip — the user would have had to
+ * already know the answer to spot it.
+ */
+async function countAcceptedMembers(sc: any, tripId: string): Promise<number | null> {
   const { data, error } = await sc
     .from("trip_members")
     .select("role, status")
     .eq("trip_id", tripId);
-  if (error || !Array.isArray(data)) return 1;
+  if (error || !Array.isArray(data)) return null;
   const n = (data as any[]).filter(
     (m) =>
       ACCEPTED_ROLES.includes(String(m.role)) &&
@@ -123,6 +139,13 @@ router.get("/trips/:tripId/cost-estimate", asyncHandler(async (req, res) => {
 
   const tier = await resolveCallerTier(sc, userId, explicitTier);
   const partySize = await countAcceptedMembers(sc, (trip as any).id);
+  if (partySize === null) {
+    // The party size is an INPUT to every band in the estimate. Serving one
+    // computed from a guessed party of 1 would be a confident wrong number,
+    // and the response has no field in which to say it was guessed.
+    sendError(res, "degraded_unavailable", "Could not read this trip's members, so the party size is unknown");
+    return;
+  }
 
   const estimate = await estimateTripCost(sc, trip as any, { tier, partySize });
 
@@ -168,6 +191,13 @@ router.post("/trips/:tripId/budget/sandbox", asyncHandler(async (req, res) => {
 
   const tier = await resolveCallerTier(sc, userId, whatIf.tier);
   const partySize = await countAcceptedMembers(sc, (trip as any).id);
+  if (partySize === null) {
+    // The party size is an INPUT to every band in the estimate. Serving one
+    // computed from a guessed party of 1 would be a confident wrong number,
+    // and the response has no field in which to say it was guessed.
+    sendError(res, "degraded_unavailable", "Could not read this trip's members, so the party size is unknown");
+    return;
+  }
   const estimate = await estimateTripCost(sc, trip as any, { tier, partySize });
 
   // Trip budget stays owner/co_host-only (matches /trips/:tripId/budget).
@@ -267,7 +297,18 @@ router.post("/admin/price-baselines", asyncHandler(async (req, res) => {
     .eq("tier", b.tier);
   findQ = country === null ? findQ.is("country", null) : findQ.eq("country", country);
   findQ = city    === null ? findQ.is("city", null)    : findQ.eq("city", city);
-  const { data: existing } = await findQ.maybeSingle();
+  // supabase-js RESOLVES on a DB error, so an unbound `error` read an
+  // unreadable price_baselines as "no row for this (country, city, category,
+  // tier)" and took the INSERT branch instead of the UPDATE — which the
+  // COALESCE unique index then rejects, so the admin's curated daily_amount is
+  // reported as a raw db_error while the stale baseline stays in force for
+  // every trip budget that reads it.
+  const { data: existing, error: existingErr } = await findQ.maybeSingle();
+  if (existingErr) {
+    req.log?.error({ err: existingErr, category: b.category, tier: b.tier }, "price_baselines lookup failed — refusing to insert over a possible existing baseline");
+    sendError(res, "db_error", existingErr.message);
+    return;
+  }
 
   const values: Record<string, any> = {
     country,

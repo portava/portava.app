@@ -95,5 +95,8 @@ const s = StyleSheet.create({
   locRow: { flexDirection: 'row', alignItems: 'center', gap: space.xs },
   place: { ...t.heading, color: color.ink, flexShrink: 1 },
   caption: { ...t.body, color: color.mute, fontStyle: 'italic' },
-  byline: { ...t.stamp, color: color.faint, marginTop: space.xs },
+  // §36 contrast: `faint` (#9C988F) is 2.73:1 on paper — below WCAG AA for
+  // normal text (4.5:1) and below even the 3:1 large-text floor. `mute` is
+  // 5.27:1 and is the quietest token that actually passes.
+  byline: { ...t.stamp, color: color.mute, marginTop: space.xs },
 });

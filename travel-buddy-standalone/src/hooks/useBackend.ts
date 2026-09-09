@@ -74,13 +74,19 @@ export function useTrip(id: string | undefined) {
 export function usePendingTripInvites() {
   const [invites, setInvites] = useState<TripInvite[]>([]);
   const [loading, setLoading] = useState(true);
+  // `error` exists because `invites: []` is a claim — "nobody has invited you"
+  // — and this hook used to make it out of a request that failed. The two
+  // states are now distinct and a consumer that shows an empty state has to
+  // check which one it is looking at.
+  const [error, setError] = useState<string | null>(null);
 
   const reload = useCallback(async () => {
-    setLoading(true);
+    setLoading(true); setError(null);
     try {
       setInvites(await getPendingTripInvites());
-    } catch {
+    } catch (e: any) {
       setInvites([]);
+      setError(e?.message ?? 'Could not load your trip invites');
     } finally {
       setLoading(false);
     }
@@ -88,5 +94,5 @@ export function usePendingTripInvites() {
 
   useEffect(() => { reload(); }, [reload]);
 
-  return { invites, loading, reload };
+  return { invites, loading, error, reload };
 }

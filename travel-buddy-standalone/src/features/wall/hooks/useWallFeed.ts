@@ -21,6 +21,7 @@ import { fetchWall } from '../services/wallApi.ts';
 import {
   prefetchWallMedia,
   readFirstPageCache,
+  revalidateFirstPageCache,
   writeFirstPageCache,
 } from '../services/wallPrefetch.ts';
 import type { WallMode, WallProjection } from '../types/wallProjection.ts';
@@ -179,6 +180,20 @@ export function useWallFeed(
               setCachedAt(cached.cachedAt);
               setHasMore(false);
               setCaughtUp(false);
+              // §37: the offline cached page is the ONE path on which a
+              // taken-down object could still paint. Ask the server which of
+              // these the viewer may still be shown, and drop the rest from
+              // BOTH the screen and the persisted page. If the server cannot be
+              // reached — the usual reason this branch ran at all — the answer
+              // is null and the cache is left exactly as it was (§31: cached
+              // social content must still work offline). Fire-and-forget: the
+              // feed is already on screen and never waits for this.
+              void revalidateFirstPageCache(mode).then((survivors) => {
+                if (survivors === null) return; // unreachable ≠ a takedown
+                if (gen !== genRef.current) return; // a newer session took over
+                const allowed = new Set(survivors.map((i) => i.canonicalObjectId));
+                setItems((prev) => prev.filter((i) => allowed.has(i.canonicalObjectId)));
+              });
             }
           }
         }

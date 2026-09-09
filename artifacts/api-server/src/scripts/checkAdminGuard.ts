@@ -207,19 +207,46 @@ function tsFilesIn(dir: string): string[] {
 
 const violations: Array<{ file: string; fn: string }> = [];
 
+/**
+ * How much was actually looked at.
+ *
+ * Until this was added, a clean run printed "PASSED — no local admin guards in
+ * src/routes/" — and would have printed exactly that if `routesDir` had been
+ * renamed, if the walker had broken, or if it had scanned ZERO files. A security
+ * guard whose success message is identical whether it inspected 143 files or none
+ * is a guard that cannot be trusted the day it silently stops working, and this
+ * one is now enforced in check:all.
+ *
+ * So the count is printed on every run and a scan below the floor FAILS. The
+ * floor is deliberately well under the real number (143 route files today): it is
+ * there to catch a scan that collapsed, not to freeze the route count.
+ */
+const MIN_ROUTE_FILES = 50;
+let filesScanned = 0;
+
 for (const file of tsFilesIn(routesDir)) {
   if (file in ALLOWED) continue;
+  filesScanned += 1;
   const source = readFileSync(join(routesDir, file), "utf8");
   for (const fn of findLocalGuards(source)) {
     violations.push({ file, fn });
   }
 }
 
+if (filesScanned < MIN_ROUTE_FILES) {
+  console.error(
+    `\ncheck-admin-guard FAILED — VACUOUS: scanned ${filesScanned} route file(s) in ${routesDir} ` +
+      `(minimum ${MIN_ROUTE_FILES}). A guard that examined almost nothing must not report that nothing is wrong.`,
+  );
+  process.exit(1);
+}
+
 if (violations.length === 0) {
   const skipped = Object.keys(ALLOWED).length;
   console.log(
-    `check-admin-guard PASSED — no local admin guards in src/routes/` +
-      (skipped ? ` (${skipped} allowlisted)` : ""),
+    `check-admin-guard — ${filesScanned} route file(s) inspected` +
+      (skipped ? `, ${skipped} allowlisted` : "") +
+      `; PASSED, no local admin guards in src/routes/`,
   );
   process.exit(0);
 }

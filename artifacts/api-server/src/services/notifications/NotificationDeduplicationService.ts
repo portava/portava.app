@@ -80,6 +80,26 @@ export class NotificationDeduplicationService {
     return { isDuplicate: false };
   }
 
+  /**
+   * Has an equivalent notification already been written inside the window?
+   *
+   * ── AN UNREADABLE LEDGER IS A DUPLICATE ───────────────────────────────────
+   * supabase-js RESOLVES on a DB error rather than throwing, so the `catch`
+   * below — and its "DB check failed, allowing notification" log — could never
+   * fire for the case it was written for: a PostgREST/Postgres failure came
+   * back as `{ data: null, error }`, `Array.isArray(null)` was false, and the
+   * function answered "not a duplicate" SILENTLY. Every coalescing rule in
+   * `check()` (telegraph message bursts, nearby-traveler throttling, the
+   * general per-source dedupe) then let the notification through, once per
+   * event, for as long as the table stayed unreadable.
+   *
+   * An unknown ledger now answers `true` — treat as already sent. The direction
+   * is not arbitrary: the row this check exists to avoid duplicating is written
+   * to `notifications`, the very table that just failed to read, so a read
+   * failure is overwhelmingly a write failure too and suppressing costs a
+   * notification that was not going to be persisted anyway. Duplicated push
+   * spam, by contrast, is delivered, durable and impossible to recall.
+   */
   private async hasRecentNotification(
     userId: string,
     category: string,
@@ -102,29 +122,56 @@ export class NotificationDeduplicationService {
       if (eventType) {
         query = query.eq('event_type', eventType);
       }
-      const { data } = await query
+      const { data, error } = await query
         .gt('created_at', since)
         .limit(1);
+      if (error) {
+        logger.warn({ err: error, userId, category }, 'dedup: DB check failed, suppressing as duplicate');
+        return true;
+      }
       return Array.isArray(data) && data.length > 0;
     } catch (err) {
-      logger.warn({ err }, 'dedup: DB check failed, allowing notification');
-      return false;
+      logger.warn({ err }, 'dedup: DB check threw, suppressing as duplicate');
+      return true;
     }
   }
 
+  /**
+   * How many notifications of this category has the user already had today?
+   *
+   * ── SAME LEDGER, SAME DIRECTION ───────────────────────────────────────────
+   * `hasRecentNotification` above was fixed to answer "already sent" when the
+   * notifications table cannot be read. This function is the OTHER half of the
+   * same ledger and it disagreed: `const { data } = await …` discarded the
+   * error, `Array.isArray(null)` was false, and an unreadable table counted as
+   * ZERO notifications sent today — i.e. the Compass daily cap read as "no
+   * budget used" and every Compass suggestion went out, uncapped, for as long
+   * as the table stayed unreadable. The `catch { return 0 }` could never fire
+   * for that case either: supabase-js RESOLVES on a database error.
+   *
+   * An unknown count now answers COMPASS_DAILY_LIMIT — treat the budget as
+   * spent. Same asymmetry as its sibling: a suppressed suggestion is a
+   * suggestion the user can still get tomorrow; a burst of delivered pushes
+   * cannot be recalled.
+   */
   private async countTodayNotifications(userId: string, category: string): Promise<number> {
     try {
       const startOfDay = new Date();
       startOfDay.setHours(0, 0, 0, 0);
-      const { data } = await this.db
+      const { data, error } = await this.db
         .from('notifications')
         .select('id')
         .eq('user_id', userId)
         .eq('category', category)
         .gt('created_at', startOfDay.toISOString());
+      if (error) {
+        logger.warn({ err: error, userId, category }, 'dedup: daily-count read failed, treating the daily budget as spent');
+        return COMPASS_DAILY_LIMIT;
+      }
       return Array.isArray(data) ? data.length : 0;
-    } catch {
-      return 0;
+    } catch (err) {
+      logger.warn({ err, userId, category }, 'dedup: daily-count read threw, treating the daily budget as spent');
+      return COMPASS_DAILY_LIMIT;
     }
   }
 }

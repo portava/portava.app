@@ -117,6 +117,29 @@ async function isTripMember(
   } catch { return false; }
 }
 
+/**
+ * How many `post_media` rows one object may be attached to before this module
+ * refuses to reason about it. `post_media` carries no UNIQUE constraint on
+ * `storage_path`, so the row count is genuinely unbounded; a bound is needed
+ * both to cap the per-row `posts` reads and to keep the deny-if-any scan from
+ * running over a truncated page.
+ */
+const POST_MEDIA_ATTACHMENT_CAP = 50;
+
+/**
+ * `post_media.moderation_status` values that deny the bytes. IDENTICAL to what
+ * this branch has always denied. `post_media_moderation_status_check` is
+ * `CHECK (moderation_status = ANY (ARRAY['pending','approved','flagged','rejected']))`
+ * in both databases (lib/media/mediaProjection.ts:187-193 records the
+ * pg_constraint read), so this set is the whole unservable half of that
+ * vocabulary. It is NOT widened to the §36 canonical values — that is a
+ * MEDIA_CANONICAL_FLAG question and this file does not answer it.
+ */
+const UNSERVABLE_ATTACHMENT_MODERATION: ReadonlySet<string> = new Set([
+  "rejected",
+  "flagged",
+]);
+
 function postVisible(post: any, viewerId: string): "allow" | "deny" | "trip" {
   if (post.status && post.status !== "active") return "deny";
   // Delayed-publish gate (audit 1e): unpublished post media is owner-only.
@@ -293,40 +316,77 @@ async function decide(
   const inList = `(${urlForms.map((u) => `"${u.replace(/"/g, '\\"')}"`).join(",")})`;
 
   // 3a. Postcard media (post_media.storage_path → parent post rules).
+  //
+  // THIS BRANCH IS THE ONLY MODERATION CARRIER ON THE post-media PATH, so it is
+  // the one branch where falling through is not the safe outcome. Every other
+  // branch that fails to read denies (§4). This one used to hand the decision to
+  // 3b, which reads `posts.media_urls` — an array of strings carrying no
+  // moderation column at all — and allows a public post. MEASURED, three ways,
+  // with a request-counting fake:
+  //
+  //   healthy read, moderation_status='rejected'          → denied   (correct)
+  //   same rows, post_media read resolves {error:57P01}   → ALLOWED  (leak)
+  //   two post_media rows on one storage_path (PGRST116)  → ALLOWED  (leak)
+  //
+  // The third needs no injected failure. `post_media_storage_path_idx`
+  // (2027_media_private_buckets_prep.sql:31) is a PLAIN index and NO migration
+  // puts a UNIQUE constraint on post_media — only `media_assets` has
+  // `UNIQUE (storage_bucket, storage_path)` (0191:39). One object attached to
+  // two posts is therefore ordinary data, and `.maybeSingle()` answers it with a
+  // RESOLVED PGRST116, which read as "no row" exactly like a healthy miss. A
+  // moderator's rejection was undone by a second attachment, or by an outage.
+  //
+  // So: read the rows as a LIST, bind the error, and deny on it.
+  //
+  // The moderation deny-list is deliberately UNCHANGED (`rejected` | `flagged`).
+  // Whether it should also carry the §36 canonical values is a
+  // MEDIA_CANONICAL_FLAG question and is not taken here.
   try {
-    const { data: pm, error: pmErr } = await sc
+    const { data: pms, error: pmErr } = await sc
       .from("post_media")
       .select("post_id, moderation_status, processing_status")
       .eq("storage_path", path)
-      .maybeSingle();
+      .limit(POST_MEDIA_ATTACHMENT_CAP);
     noteLookupFailure("3a post_media", pmErr, { bucket, path });
-    if (pm) {
-      if (
-        (pm as any).moderation_status === "rejected" ||
-        (pm as any).moderation_status === "flagged"
-      )
+    // The moderation carrier could not be read. Nothing later in this function
+    // can answer the question it was asked, so deny rather than fall through.
+    if (pmErr) return false;
+    const pmRows = ((pms as any[]) ?? []);
+    if (pmRows.length > 0) {
+      // A truncated page cannot support a deny-if-any scan: an unservable row
+      // could be the one that did not fit. Deny instead of guessing.
+      if (pmRows.length >= POST_MEDIA_ATTACHMENT_CAP) return false;
+      // ANY attachment moderated away denies the object. A rejection is recorded
+      // per attachment, and this function answers about the BYTES — one post's
+      // clean row is not authority to serve what another post's row removed.
+      if (pmRows.some((r) => UNSERVABLE_ATTACHMENT_MODERATION.has(String(r?.moderation_status ?? ""))))
         return false;
-      const { data: post, error: postErr } = await sc
-        .from("posts")
-        .select("author_id, visibility, status, post_status, trip_id")
-        .eq("id", (pm as any).post_id)
-        .maybeSingle();
-      // Here the deny is returned, not fallen through: a rejected read denies
-      // the object as firmly as a deleted parent post does.
-      noteLookupFailure("3a parent post", postErr, { bucket, path, postId: (pm as any).post_id });
-      if (!post) return false;
       // Only a post that OWNS the object may authorize it via post rules. If this
       // post_media row points at an object owned by someone else (or ownership
       // can't be attributed), the post has no authority to publish it — fall
       // through to the other branches (it may be legitimately reachable as e.g. a
       // generated_visual, and if not, §4 denies). This is the trap branches 3d/3e
       // already guard against.
-      if (owner && owner === (post as any).author_id) {
+      let decidable = false;
+      for (const pm of pmRows) {
+        const { data: post, error: postErr } = await sc
+          .from("posts")
+          .select("author_id, visibility, status, post_status, trip_id")
+          .eq("id", (pm as any).post_id)
+          .maybeSingle();
+        // Here the deny is returned, not fallen through: a rejected read denies
+        // the object as firmly as a deleted parent post does.
+        noteLookupFailure("3a parent post", postErr, { bucket, path, postId: (pm as any).post_id });
+        if (!post) return false;
+        if (!(owner && owner === (post as any).author_id)) continue;
+        decidable = true;
         const v = postVisible(post, viewerId);
         if (v === "allow") return true;
-        if (v === "trip") return isTripMember(sc, (post as any).trip_id, viewerId);
-        return false;
+        if (v === "trip" && (await isTripMember(sc, (post as any).trip_id, viewerId))) return true;
       }
+      // At least one row was the object owner's own post and none of them
+      // authorized this viewer — that is a decision, not a miss.
+      if (decidable) return false;
     }
   } catch { /* fall through */ }
 

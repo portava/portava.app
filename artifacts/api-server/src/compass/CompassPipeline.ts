@@ -42,6 +42,7 @@ import {
   type PlanBEntry,
 } from "./CompassLiveConstraints.js";
 import { logger } from "../lib/logger.js";
+import { fetchCompassFlags } from "./flags.js";
 
 export interface PipelineResult {
   item:             CompassItem;
@@ -121,23 +122,32 @@ export interface PipelineTestOverrides {
   liveIntel?: LiveIntelStageOverrides;
 }
 
-/** Load all COMPASS_ feature flags in a single DB query. */
+/**
+ * Load all COMPASS_ feature flags for this pipeline run.
+ *
+ * This used to be its own copy of the query, with its own `try/catch` that
+ * never fired (supabase-js RESOLVES on a database error) and its own answer for
+ * a failed read: an empty map, i.e. "every flag off". That is safe for the
+ * capability flags and it is NOT safe for `COMPASS_<TYPE>_SAFETY_BLOCK`, which
+ * rule 15 of runSafetyFilter — fed from this very map — reads as an emergency
+ * stop. An empty map lifted every one of those stops.
+ *
+ * It now delegates to compass/flags.ts `fetchCompassFlags`, the single loader
+ * shared with CompassFrontLoadEngine and this module's own `getFlags`, so all
+ * three agree on what unreadable means. Deliberately the UNCACHED entry point:
+ * the pipeline wants the live flag state for the batch it is about to score,
+ * not a value up to 30 s old.
+ */
 async function loadFlags(db: SupabaseClient | null): Promise<Record<string, boolean>> {
-  if (!db) return {};
-  try {
-    const { data } = await db
-      .from("feature_flags")
-      .select("flag, enabled")
-      .like("flag", "COMPASS_%");
-    const out: Record<string, boolean> = {};
-    for (const row of (data as any[]) ?? []) {
-      out[row.flag] = Boolean(row.enabled);
-    }
-    return out;
-  } catch (err) {
-    logger.warn({ err }, "Compass feed: COMPASS_* feature flag lookup failed — degraded to all-defaults");
-    return {};
+  const load = await fetchCompassFlags(db);
+  if (!load.ok) {
+    logger.warn(
+      { err: load.error },
+      "Compass feed: COMPASS_* feature flag lookup failed — degraded to the fail-safe answer " +
+        "(see compass/flags.ts fetchCompassFlags)",
+    );
   }
+  return load.flags;
 }
 
 /**

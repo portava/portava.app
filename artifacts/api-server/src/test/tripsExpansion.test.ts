@@ -45,6 +45,41 @@ const REM_ID     = "b2b2b2b2-b2b2-b2b2-b2b2-b2b2b2b2b2b2";
 type Row = Record<string, any>;
 interface FakeTable { rows: Row[]; nextInsertError?: string; }
 
+/**
+ * Compile a PostgREST `.or()` / `.and()` expression into a row predicate.
+ *
+ * Supports `col.eq.value` leaves plus nested `and(...)` / `or(...)` groups —
+ * every shape routes/trips-expansion.ts and lib/blockGuard.ts actually issue.
+ * An unrecognised operator THROWS: a double that quietly passes everything is
+ * how the document/note privacy filter went uncovered.
+ */
+function compilePostgrestBoolExpr(expr: string, join: "or" | "and"): (r: Row) => boolean {
+  const parts: string[] = [];
+  let depth = 0, cur = "";
+  for (const ch of expr) {
+    if (ch === "(") depth++;
+    if (ch === ")") depth--;
+    if (ch === "," && depth === 0) { parts.push(cur); cur = ""; continue; }
+    cur += ch;
+  }
+  if (cur.trim()) parts.push(cur);
+
+  const preds = parts.map((raw) => {
+    const term = raw.trim();
+    const group = /^(and|or)\((.*)\)$/s.exec(term);
+    if (group) return compilePostgrestBoolExpr(group[2], group[1] as "or" | "and");
+    const leaf = /^([A-Za-z0-9_]+)\.eq\.(.*)$/.exec(term);
+    if (!leaf) throw new Error(`fake .or()/.and() does not model the term "${term}" — model it or use a different instrument`);
+    const [, col, rawVal] = leaf;
+    const val: any = rawVal === "true" ? true : rawVal === "false" ? false : rawVal === "null" ? null : rawVal;
+    return (r: Row) => r[col] === val;
+  });
+
+  return join === "or"
+    ? (r: Row) => preds.some((p) => p(r))
+    : (r: Row) => preds.every((p) => p(r));
+}
+
 function makeFakeClient(tables: Record<string, FakeTable> = {}) {
   const db: Record<string, FakeTable> = {
     trips:               tables.trips               ?? { rows: [] },
@@ -102,7 +137,22 @@ function makeFakeClient(tables: Record<string, FakeTable> = {}) {
         return obj;
       },
       or(expr: string) {
-        // minimal: pass all rows (safe for test data)
+        // A REAL or-filter, not a pass-through.
+        //
+        // This used to be `return obj` under the comment "minimal: pass all rows
+        // (safe for test data)", and it was not safe. Two live filters reach it:
+        //   - the non-owner privacy filter on the document and note listings
+        //     (`is_private.eq.false,<author_col>.eq.<viewer>`), and
+        //   - lib/blockGuard.ts's mutual-block lookup, which is NESTED
+        //     (`and(a.eq.X,b.eq.Y),and(a.eq.Y,b.eq.X)`).
+        // With a pass-through, DELETING the privacy filter — handing every
+        // member's private notes and documents to every other member — left this
+        // suite fully green. That was measured by deleting it.
+        //
+        // PostgREST or/and syntax, restricted to `col.eq.value` leaves and
+        // and()/or() groups. Anything else THROWS rather than silently passing,
+        // so a new filter shape cannot inherit the old blind spot.
+        filters.push(compilePostgrestBoolExpr(expr, "or"));
         return obj;
       },
       gte(col: string, val: any) { filters.push((r) => r[col] >= val); return obj; },
@@ -1301,6 +1351,47 @@ describe("trips-expansion routes", () => {
       assert.equal(r.status, 403);
     });
 
+    it("GET is refused to a plain member and allowed to a co_host", async () => {
+      // "Budget: get/put owner-only" was covered on PUT only. Deleting the GET
+      // gate left this suite green (measured), i.e. every trip member could read
+      // the trip's money.
+      const { client } = makeFakeClient({
+        trips: { rows: [
+          { id: TRIP_ID, owner_id: OWNER_ID, title: "Trip", destination_city: "Rome", created_at: "2026-01-01T00:00:00Z" },
+        ]},
+        trip_members: { rows: [
+          { trip_id: TRIP_ID, user_id: OWNER_ID,  role: "owner",  status: "accepted" },
+          { trip_id: TRIP_ID, user_id: MEMBER_ID, role: "member", status: "accepted" },
+        ]},
+        trip_budget: { rows: [
+          { trip_id: TRIP_ID, currency: "EUR", total_budget: 4200, spent: 100 },
+        ]},
+      });
+      _setTestClient(client, true);
+
+      const asMember = await req(port, "GET", `/trips/${TRIP_ID}/budget`, { token: "member-token" });
+      assert.equal(asMember.status, 403, `a plain member must not read the budget (got ${JSON.stringify(asMember.body)})`);
+      assert.equal(asMember.body.error, "forbidden");
+
+      const asOwner = await req(port, "GET", `/trips/${TRIP_ID}/budget`, { token: "owner-token" });
+      assert.equal(asOwner.status, 200);
+      assert.equal(asOwner.body.budget.total_budget, 4200);
+
+      // A co_host is explicitly allowed by the same gate.
+      const { client: coHostClient } = makeFakeClient({
+        trips: { rows: [
+          { id: TRIP_ID, owner_id: OWNER_ID, title: "Trip", destination_city: "Rome", created_at: "2026-01-01T00:00:00Z" },
+        ]},
+        trip_members: { rows: [
+          { trip_id: TRIP_ID, user_id: MEMBER_ID, role: "co_host", status: "accepted" },
+        ]},
+        trip_budget: { rows: [{ trip_id: TRIP_ID, currency: "EUR", total_budget: 4200, spent: 100 }]},
+      });
+      _setTestClient(coHostClient, true);
+      const asCoHost = await req(port, "GET", `/trips/${TRIP_ID}/budget`, { token: "member-token" });
+      assert.equal(asCoHost.status, 200, `a co_host must read the budget (got ${JSON.stringify(asCoHost.body)})`);
+    });
+
     it("GET returns null budget when none set", async () => {
       const { client } = makeFakeClient({
         trips: { rows: [
@@ -1344,6 +1435,101 @@ describe("trips-expansion routes", () => {
       assert.equal(listR.body.documents.length, 1);
     });
 
+    it("a member does NOT see another member's PRIVATE document (owner does)", async () => {
+      // The file header has always claimed "Documents: create, list, delete with
+      // privacy". Nothing tested the privacy half: deleting the `is_private`
+      // or-filter from the route left the whole suite green (measured). This is
+      // the assertion that claim needed.
+      const PRIVATE_DOC = "d0000000-0000-0000-0000-00000000000a";
+      const PUBLIC_DOC  = "d0000000-0000-0000-0000-00000000000b";
+      const OWN_DOC     = "d0000000-0000-0000-0000-00000000000c";
+      const { client } = makeFakeClient({
+        trips: { rows: [
+          { id: TRIP_ID, owner_id: OWNER_ID, title: "Trip", destination_city: "Rome", created_at: "2026-01-01T00:00:00Z" },
+        ]},
+        trip_members: { rows: [
+          { trip_id: TRIP_ID, user_id: OWNER_ID,  role: "owner",  status: "accepted" },
+          { trip_id: TRIP_ID, user_id: MEMBER_ID, role: "member", status: "accepted" },
+        ]},
+        trip_documents: { rows: [
+          { id: PRIVATE_DOC, trip_id: TRIP_ID, creator_id: OWNER_ID,  title: "Owner passport scan", is_private: true,  document_type: "visa",  created_at: "2026-01-01T00:00:00Z" },
+          { id: PUBLIC_DOC,  trip_id: TRIP_ID, creator_id: OWNER_ID,  title: "Shared itinerary",    is_private: false, document_type: "itinerary", created_at: "2026-01-02T00:00:00Z" },
+          { id: OWN_DOC,     trip_id: TRIP_ID, creator_id: MEMBER_ID, title: "My own private note", is_private: true,  document_type: "note",  created_at: "2026-01-03T00:00:00Z" },
+        ]},
+      });
+      _setTestClient(client, true);
+
+      const asMember = await req(port, "GET", `/trips/${TRIP_ID}/documents`, { token: "member-token" });
+      assert.equal(asMember.status, 200);
+      const memberIds = (asMember.body.documents as any[]).map((d) => d.id).sort();
+      assert.deepEqual(memberIds, [OWN_DOC, PUBLIC_DOC].sort(),
+        "a member must see the shared doc and their OWN private doc, and NOT another member's private doc");
+
+      const asOwner = await req(port, "GET", `/trips/${TRIP_ID}/documents`, { token: "owner-token" });
+      assert.equal(asOwner.status, 200);
+      assert.equal((asOwner.body.documents as any[]).length, 3, "the trip owner sees every document");
+    });
+
+    it("GET one document returns its CONTENT, which no other route ever returned", async () => {
+      // The gap: `trip_documents.content` was written by POST and PATCH and
+      // returned by nothing — the list, the create response and the patch
+      // response all select the same content-free column set, and there was no
+      // by-id route. A client could store a body it could never read back.
+      const D = "d1000000-0000-0000-0000-00000000000a";
+      const { client } = makeFakeClient({
+        trips: { rows: [
+          { id: TRIP_ID, owner_id: OWNER_ID, title: "Trip", destination_city: "Rome", created_at: "2026-01-01T00:00:00Z" },
+        ]},
+        trip_members: { rows: [
+          { trip_id: TRIP_ID, user_id: OWNER_ID, role: "owner", status: "accepted" },
+        ]},
+        trip_documents: { rows: [
+          { id: D, trip_id: TRIP_ID, creator_id: OWNER_ID, title: "Visa", content: "Application number 12345",
+            document_type: "visa", is_private: false, created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:00:00Z" },
+        ]},
+      });
+      _setTestClient(client, true);
+
+      const one = await req(port, "GET", `/trips/${TRIP_ID}/documents/${D}`, { token: "owner-token" });
+      assert.equal(one.status, 200, JSON.stringify(one.body));
+      assert.equal(one.body.content, "Application number 12345");
+
+      // The listing deliberately does NOT carry bodies, but that cannot be
+      // asserted here: this fake does not model PostgREST column projection —
+      // `.select(cols)` returns whole rows — so an assertion that the list omits
+      // `content` would be measuring the double, not the route. The listing's
+      // column set is visible in routes/trips-expansion.ts and is unchanged.
+      const list = await req(port, "GET", `/trips/${TRIP_ID}/documents`, { token: "owner-token" });
+      assert.equal(list.status, 200);
+      assert.equal(list.body.documents.length, 1);
+    });
+
+    it("GET one document: another member's PRIVATE document is 404, not 403", async () => {
+      const D = "d1000000-0000-0000-0000-00000000000b";
+      const { client } = makeFakeClient({
+        trips: { rows: [
+          { id: TRIP_ID, owner_id: OWNER_ID, title: "Trip", destination_city: "Rome", created_at: "2026-01-01T00:00:00Z" },
+        ]},
+        trip_members: { rows: [
+          { trip_id: TRIP_ID, user_id: OWNER_ID,  role: "owner",  status: "accepted" },
+          { trip_id: TRIP_ID, user_id: MEMBER_ID, role: "member", status: "accepted" },
+        ]},
+        trip_documents: { rows: [
+          { id: D, trip_id: TRIP_ID, creator_id: OWNER_ID, title: "Passport scan", content: "SECRET",
+            document_type: "other", is_private: true, created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:00:00Z" },
+        ]},
+      });
+      _setTestClient(client, true);
+
+      const r = await req(port, "GET", `/trips/${TRIP_ID}/documents/${D}`, { token: "member-token" });
+      assert.equal(r.status, 404, `a private document must not be readable by another member (got ${JSON.stringify(r.body)})`);
+      assert.equal(JSON.stringify(r.body).includes("SECRET"), false, "the body must not leak");
+
+      const asOwner = await req(port, "GET", `/trips/${TRIP_ID}/documents/${D}`, { token: "owner-token" });
+      assert.equal(asOwner.status, 200);
+      assert.equal(asOwner.body.content, "SECRET");
+    });
+
     it("non-member cannot list documents", async () => {
       const { client } = makeFakeClient({
         trips: { rows: [
@@ -1378,6 +1564,37 @@ describe("trips-expansion routes", () => {
       });
       assert.equal(r.status, 201);
       assert.equal(r.body.title, "Day 1");
+    });
+
+    it("a member does NOT see another member's PRIVATE note (owner does)", async () => {
+      // Same untested claim as the documents listing, same or-filter, same
+      // consequence if it is deleted.
+      const PRIV_NOTE = "e0000000-0000-0000-0000-00000000000a";
+      const PUB_NOTE  = "e0000000-0000-0000-0000-00000000000b";
+      const OWN_NOTE  = "e0000000-0000-0000-0000-00000000000c";
+      const { client } = makeFakeClient({
+        trips: { rows: [
+          { id: TRIP_ID, owner_id: OWNER_ID, title: "Trip", destination_city: "Rome", created_at: "2026-01-01T00:00:00Z" },
+        ]},
+        trip_members: { rows: [
+          { trip_id: TRIP_ID, user_id: OWNER_ID,  role: "owner",  status: "accepted" },
+          { trip_id: TRIP_ID, user_id: MEMBER_ID, role: "member", status: "accepted" },
+        ]},
+        trip_notes: { rows: [
+          { id: PRIV_NOTE, trip_id: TRIP_ID, author_id: OWNER_ID,  content: "owner secret", is_private: true,  created_at: "2026-01-01T00:00:00Z" },
+          { id: PUB_NOTE,  trip_id: TRIP_ID, author_id: OWNER_ID,  content: "shared",       is_private: false, created_at: "2026-01-02T00:00:00Z" },
+          { id: OWN_NOTE,  trip_id: TRIP_ID, author_id: MEMBER_ID, content: "my secret",    is_private: true,  created_at: "2026-01-03T00:00:00Z" },
+        ]},
+      });
+      _setTestClient(client, true);
+
+      const asMember = await req(port, "GET", `/trips/${TRIP_ID}/notes`, { token: "member-token" });
+      assert.equal(asMember.status, 200);
+      assert.deepEqual((asMember.body.notes as any[]).map((n) => n.id).sort(), [OWN_NOTE, PUB_NOTE].sort(),
+        "a member must not read another member's private note");
+
+      const asOwner = await req(port, "GET", `/trips/${TRIP_ID}/notes`, { token: "owner-token" });
+      assert.equal((asOwner.body.notes as any[]).length, 3, "the trip owner sees every note");
     });
 
     it("DELETE note by author succeeds (204)", async () => {
@@ -1558,6 +1775,55 @@ describe("trips-expansion routes", () => {
       });
       assert.equal(patchR.status, 200);
       assert.equal(patchR.body.is_done, true);
+    });
+
+    it("PATCH an item can change assignedTo and dueDate, which used to be write-once", async () => {
+      // POST .../items accepts assignedTo and dueDate and the list route returns
+      // both, but the PATCH accepted NEITHER: a mis-assigned item or a wrong date
+      // could only be corrected by deleting and recreating the item, losing its
+      // id and its place in the list. `null` clears the field.
+      const LIST2 = "77777777-0000-0000-0000-000000000001";
+      const ITEM2 = "88888888-0000-0000-0000-000000000001";
+      const { client, db } = makeFakeClient({
+        trips: { rows: [
+          { id: TRIP_ID, owner_id: OWNER_ID, title: "Trip", destination_city: "Rome", created_at: "2026-01-01T00:00:00Z" },
+        ]},
+        trip_members: { rows: [
+          { trip_id: TRIP_ID, user_id: OWNER_ID,  role: "owner",  status: "accepted" },
+          { trip_id: TRIP_ID, user_id: MEMBER_ID, role: "member", status: "accepted" },
+        ]},
+        trip_checklists: { rows: [
+          { id: LIST2, trip_id: TRIP_ID, title: "Packing", created_by: OWNER_ID, created_at: "2026-01-01T00:00:00Z" },
+        ]},
+        trip_checklist_items: { rows: [
+          { id: ITEM2, checklist_id: LIST2, trip_id: TRIP_ID, label: "Passport", is_done: false,
+            assigned_to: OWNER_ID, due_date: "2026-05-01", sort_order: 1 },
+        ]},
+      });
+      _setTestClient(client, true);
+
+      const reassign = await req(port, "PATCH", `/trips/${TRIP_ID}/checklists/${LIST2}/items/${ITEM2}`, {
+        token: "owner-token",
+        body: { assignedTo: MEMBER_ID, dueDate: "2026-06-15" },
+      });
+      assert.equal(reassign.status, 200, JSON.stringify(reassign.body));
+      assert.equal(reassign.body.assigned_to, MEMBER_ID);
+      assert.equal(reassign.body.due_date, "2026-06-15");
+      assert.equal(db.trip_checklist_items.rows[0].assigned_to, MEMBER_ID);
+
+      const unassign = await req(port, "PATCH", `/trips/${TRIP_ID}/checklists/${LIST2}/items/${ITEM2}`, {
+        token: "owner-token",
+        body: { assignedTo: null, dueDate: null },
+      });
+      assert.equal(unassign.status, 200, JSON.stringify(unassign.body));
+      assert.equal(unassign.body.assigned_to, null, "null must actually unassign, not be ignored");
+      assert.equal(unassign.body.due_date, null);
+
+      const bad = await req(port, "PATCH", `/trips/${TRIP_ID}/checklists/${LIST2}/items/${ITEM2}`, {
+        token: "owner-token",
+        body: { assignedTo: "not-a-uuid" },
+      });
+      assert.equal(bad.status, 400, "a non-UUID assignee must be refused, not written");
     });
   });
 

@@ -111,7 +111,25 @@ export async function createStamp(
   } else {
     dedupQuery = dedupQuery.is("city", null) as typeof dedupQuery;
   }
-  const { data: existing } = await dedupQuery.maybeSingle();
+  const { data: existing, error: dedupError } = await dedupQuery.maybeSingle();
+
+  // The dedup read decides whether a stamp is MINTED. Unchecked, two different
+  // failures both arrive as `{ data: null }` and both read as "no such stamp":
+  // a genuine database error, and PGRST116 — which `maybeSingle` returns when
+  // the user ALREADY has more than one matching stamp, i.e. precisely when a
+  // duplicate must not be created. Either way the insert below adds another row
+  // to the traveller's passport and fires another passport_authenticity trust
+  // event keyed on the new stamp id, so the 48 h dedup window does not catch
+  // it. Fail closed with the null this function already returns on a failed
+  // insert; the visibility-preference lookup above is the file's precedent for
+  // logging the resolved error rather than assuming a value.
+  if (dedupError) {
+    logger.error(
+      { table: "passport_stamps", op: "select", message: dedupError.message, userId, stampType },
+      "createStamp dedup lookup failed — refusing to mint a possibly duplicate stamp",
+    );
+    return null;
+  }
 
   if (existing) {
     return { id: (existing as any).id, isNew: false };

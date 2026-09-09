@@ -42,12 +42,25 @@ export async function getOrCreateConversation(
   incomingConvId?: string,
 ): Promise<string> {
   if (incomingConvId) {
-    const { data } = await sc
+    // A failed read resolves as `{ data: null }`, which the branch below cannot
+    // tell from "that conversation is not yours / does not exist" — and the
+    // answer decides whether we INSERT. Reading an outage as "no such
+    // conversation" abandons a live session mid-thread: a fresh row is created,
+    // the client is handed a new id, and every prior turn drops out of the
+    // model's context while the user is still typing into what they think is
+    // the same chat. Throw instead; this function already documents that the
+    // caller turns a throw into an honest error response, and a retry against a
+    // healthy database reuses the conversation.
+    const { data, error: lookupErr } = await sc
       .from("compass_conversations")
       .select("id, last_active_at")
       .eq("id", incomingConvId)
       .eq("user_id", userId)
       .maybeSingle();
+
+    if (lookupErr) {
+      throw new Error(`compass_conversations: lookup failed — ${lookupErr.message}`);
+    }
 
     if (data) {
       const lastActive = new Date((data as any).last_active_at as string).getTime();

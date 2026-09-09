@@ -48,6 +48,7 @@ import {
   resolveOgImageBytes,
   renderOgImagePng,
 } from "../lib/ogImage.js";
+import { isBlockedBetween } from "../lib/blockGuard.js";
 
 const router = Router();
 
@@ -82,17 +83,24 @@ async function getViewerId(
   }
 }
 
-/** Minimal block check: returns true if either party has blocked the other. */
+/**
+ * Block check: returns true if either party has blocked the other.
+ *
+ * FAIL-CLOSED, shape 1 (lib/exclusionSet.ts): this gates ONE interaction — may
+ * this viewer be shown an OG preview of this subject — so an unreadable
+ * `blocks` table withholds that one preview and nothing else.
+ *
+ * Both halves of the old body were fail-OPEN. `(data ?? []).length > 0` read a
+ * resolved DB error as "no block row"; and the `catch` returning false could
+ * only ever fire on a client/network fault, which is equally not evidence of
+ * "not blocked". supabase-js resolves rather than throws, so the catch was
+ * never the path that ran — the silent one above it was.
+ */
 async function blocked(sc: any, userA: string, userB: string): Promise<boolean> {
   try {
-    const { data } = await sc
-      .from("blocks")
-      .select("id")
-      .or(`and(blocker_id.eq.${userA},blocked_id.eq.${userB}),and(blocker_id.eq.${userB},blocked_id.eq.${userA})`)
-      .limit(1);
-    return ((data as any[]) ?? []).length > 0;
+    return await isBlockedBetween(sc, userA, userB);
   } catch {
-    return false;
+    return true; // cannot establish block state → withhold the preview
   }
 }
 

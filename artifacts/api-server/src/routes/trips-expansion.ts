@@ -11,6 +11,7 @@ import { isBlockedBetween } from "../lib/blockGuard.js";
 import { z } from "zod";
 import crypto from "node:crypto";
 import { getServiceClient } from "../lib/supabase.js";
+import { logger } from "../lib/logger.js";
 import {
   requireUser,
   optionalUser,
@@ -26,9 +27,30 @@ import {
   toAuthorizedTripView,
 } from "../lib/privacy/tripSerializers.js";
 import { computeTripStatus } from "../lib/tripStatus.js";
+import {
+  isTripKernelEnabled,
+  readCommandEnvelope,
+  executeTripCommand,
+  sendKernelRejection,
+  setTripVersionHeader,
+  type TripKernelResult,
+} from "../lib/tripKernel.js";
 
 const router = Router();
 const UUID_RE = /^[0-9a-f-]{36}$/i;
+
+/**
+ * Trip Kernel gate (Trips spec §4; lib/tripKernel.ts; migrations 2420/2450/2500).
+ * Returns the service client when `trip_kernel_enabled` is TRUE, else null.
+ * Null means: run the pre-kernel direct write exactly as before. The flag read
+ * is fail-closed, so an unreadable feature_flags table is "off", never "on".
+ * Same shape as routes/trips.ts.
+ */
+async function tripKernel(): Promise<any | null> {
+  const sc = getServiceClient();
+  if (!sc) return null;
+  return (await isTripKernelEnabled(sc)) ? sc : null;
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -46,6 +68,62 @@ async function isBlocked(client: any, userA: string, userB: string): Promise<boo
   return isBlockedBetween(client, userA, userB);
 }
 
+/**
+ * A read in this file that DID NOT ANSWER, refused rather than answered.
+ *
+ * supabase-js RESOLVES on a database error: `{ data: null, error }` is what a
+ * failed read looks like, and it is byte-identical to "no such row" unless
+ * `error` is bound. Every gate below turns `null` into a confident sentence —
+ * "Trip not found", "Document not found", "Not a trip member", "you have no
+ * upcoming trips", "this checklist is empty", "this link has no joiners". Those
+ * are claims about a person's data and their access, and the rule lib/http.ts
+ * states for `TripAccessUnavailableError` applies verbatim: A FAILED READ MUST
+ * NEVER BE REPORTED AS EMPTY, CLEAN, OR DONE.
+ *
+ * So the 60 call sites in this file that used to drop `.error` now bind it and
+ * throw this. `status`/`code` are read by the global error handler
+ * (lib/errorEnvelope.ts), which turns it into 503 `degraded_unavailable` with
+ * `retryable: true` — exactly the response the route would have sent by hand.
+ * Express 5 forwards a rejected async handler there automatically, so no route
+ * needs a try/catch (and a try/catch around a resolving PostgREST read would be
+ * dead code anyway).
+ *
+ * Deliberately NOT converted, and annotated at their sites: the fire-and-forget
+ * push blocks (a notification that cannot be addressed is not an answer to
+ * anyone), the display-name/avatar enrichment lookups (an absent label renders
+ * as null and reveals nothing), and `getJoinRequestStatus` in GET /trips/:tripId
+ * (documented fail-open; it only decorates a preview the caller already sees).
+ */
+class TripReadUnavailableError extends Error {
+  readonly status = 503;
+  readonly code: ApiErrorCode = "degraded_unavailable";
+  readonly table: string;
+  constructor(table: string, detail: string) {
+    super(`trip read input ${table} unavailable — refusing to answer: ${detail}`);
+    this.name = "TripReadUnavailableError";
+    this.table = table;
+  }
+}
+
+/** Build the refusal for an unreadable `table`, from a PostgREST error object. */
+function readUnavailable(table: string, error: any): TripReadUnavailableError {
+  return new TripReadUnavailableError(table, String(error?.message ?? error?.code ?? "db_error"));
+}
+
+/**
+ * Append to the trip's audit log. Deliberately non-fatal: a trip really WAS
+ * cancelled even if the audit row did not land, and failing the route would
+ * report the opposite. But the write is not silent any more.
+ *
+ * The old body was `.then(undefined, () => {})`, which is worse than it reads:
+ * a PostgREST builder RESOLVES on a database error, so the rejection handler
+ * never ran and the resolved `{ error }` was discarded unread. Every row this
+ * log failed to write vanished with no trace anywhere. It now binds the error
+ * and logs it, so a systematically-unwritable trip_activity_log — the table
+ * GET /trips/:tripId/activity and the invite-link joiner list both read — is
+ * visible in the server log instead of being inferred from a permanently empty
+ * activity feed.
+ */
 async function logActivity(
   client: any,
   tripId: string,
@@ -53,10 +131,11 @@ async function logActivity(
   eventType: string,
   metadata: Record<string, any> = {},
 ): Promise<void> {
-  await client
+  const { error } = await client
     .from("trip_activity_log")
     .insert({ trip_id: tripId, actor_id: actorId, event_type: eventType, metadata })
-    .then(undefined, () => {});
+    .then((r: any) => r, (err: any) => ({ error: err }));
+  if (error) logger.warn({ err: error, tripId, actorId, eventType }, "trip_activity_log insert failed — audit row lost");
 }
 
 // ---------------------------------------------------------------------------
@@ -104,11 +183,12 @@ router.get("/trips/upcoming", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured"); return; }
 
-  const { data: memberRows } = await sc
+  const { data: memberRows, error: memberRowsErr } = await sc
     .from("trip_members")
     .select("trip_id")
     .eq("user_id", user.id)
     .neq("role", "invited");
+  if (memberRowsErr) throw readUnavailable("trip_members", memberRowsErr);
 
   const tripIds = (memberRows ?? []).map((r: any) => r.trip_id as string);
   if (tripIds.length === 0) { res.json({ trips: [] }); return; }
@@ -138,11 +218,12 @@ router.get("/trips/active", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured"); return; }
 
-  const { data: memberRows } = await sc
+  const { data: memberRows, error: memberRowsErr } = await sc
     .from("trip_members")
     .select("trip_id")
     .eq("user_id", user.id)
     .neq("role", "invited");
+  if (memberRowsErr) throw readUnavailable("trip_members", memberRowsErr);
 
   const tripIds = (memberRows ?? []).map((r: any) => r.trip_id as string);
   if (tripIds.length === 0) { res.json({ trips: [] }); return; }
@@ -173,11 +254,12 @@ router.get("/trips/past", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured"); return; }
 
-  const { data: memberRows } = await sc
+  const { data: memberRows, error: memberRowsErr } = await sc
     .from("trip_members")
     .select("trip_id")
     .eq("user_id", user.id)
     .neq("role", "invited");
+  if (memberRowsErr) throw readUnavailable("trip_members", memberRowsErr);
 
   const tripIds = (memberRows ?? []).map((r: any) => r.trip_id as string);
   if (tripIds.length === 0) { res.json({ trips: [] }); return; }
@@ -215,10 +297,11 @@ router.get("/trips/invites", async (req, res) => {
   if (!rows || rows.length === 0) { res.json({ invites: [] }); return; }
 
   const tripIds = (rows as any[]).map((r) => r.trip_id as string);
-  const { data: trips } = await sc
+  const { data: trips, error: tripsErr } = await sc
     .from("trips")
     .select("id, title, destination_city, destination_country, start_date, end_date, cover_url, owner_id")
     .in("id", tripIds);
+  if (tripsErr) throw readUnavailable("trips", tripsErr);
 
   const tripMap: Record<string, any> = {};
   for (const t of trips ?? []) tripMap[(t as any).id] = t;
@@ -226,6 +309,9 @@ router.get("/trips/invites", async (req, res) => {
   const ownerIds = [...new Set((trips ?? []).map((t: any) => t.owner_id as string))];
   const profileMap: Record<string, any> = {};
   if (ownerIds.length > 0) {
+    // Enrichment only: an unreadable `profiles` leaves `inviter: null` on the
+    // invite card. The invite itself still lists, and no access decision reads
+    // this map — so emptiness IS the right answer here.
     const { data: profiles } = await sc
       .from("profiles")
       .select("id, handle, name, avatar_url")
@@ -268,10 +354,11 @@ router.get("/trips/join-requests", async (req, res) => {
   if (!sc) { sendError(res, "server_not_configured"); return; }
 
   // Owner's trips only
-  const { data: ownedTrips } = await sc
+  const { data: ownedTrips, error: ownedTripsErr } = await sc
     .from("trips")
     .select("id")
     .eq("owner_id", user.id);
+  if (ownedTripsErr) throw readUnavailable("trips", ownedTripsErr);
 
   const tripIds = (ownedTrips ?? []).map((t: any) => t.id as string);
   if (tripIds.length === 0) { res.json({ requests: [] }); return; }
@@ -288,6 +375,9 @@ router.get("/trips/join-requests", async (req, res) => {
   const userIds = [...new Set((reqs ?? []).map((r: any) => r.user_id as string))];
   const profileMap: Record<string, any> = {};
   if (userIds.length > 0) {
+    // Enrichment only: an unreadable `profiles` leaves `user: null` on the
+    // request row. The request, its id and its status still list; nothing
+    // gates on this map.
     const { data: profiles } = await sc
       .from("profiles")
       .select("id, handle, name, avatar_url")
@@ -365,7 +455,8 @@ router.patch("/trips/:tripId/settings", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured"); return; }
 
-  const { data: trip } = await sc.from("trips").select("*").eq("id", tripId).maybeSingle();
+  const { data: trip, error: tripErr } = await sc.from("trips").select("*").eq("id", tripId).maybeSingle();
+  if (tripErr) throw readUnavailable("trips", tripErr);
   if (!trip) { sendError(res, "not_found", "Trip not found"); return; }
   const t = trip as any;
   if (t.owner_id !== user.id) { sendError(res, "forbidden", "Only the trip owner can update this trip"); return; }
@@ -413,7 +504,34 @@ router.patch("/trips/:tripId/settings", async (req, res) => {
   const effectiveTimezone = (b.timezone ?? (t as any).timezone) as string | null;
   patch.status = computeTripStatus(effectiveTitle, effectiveCity, newStart as string | null, newEnd as string | null, effectiveStatus, effectiveTimezone);
 
-  const { data: updated, error } = await sc
+  // Trip Kernel path (UPDATE_TRIP, contract v2). The owner check above is the
+  // authorization; the kernel re-checks owner, refuses a way out of a terminal
+  // status (§3.1) and a start > end, and records which columns changed. Off
+  // => the direct update below, exactly as before.
+  const kernelPatch = await tripKernel();
+  let kernelUpdated: Record<string, unknown> | null = null;
+  if (kernelPatch) {
+    const env = readCommandEnvelope(req);
+    if (!env.ok) { sendError(res, "invalid_payload", env.message); return; }
+    const { updated_at: patchStamp, ...columnPatch } = patch;
+    const r = await executeTripCommand(kernelPatch, {
+      commandId: crypto.randomUUID(),
+      tripId,
+      actorUserId: user.id,
+      expectedTripVersion: env.expectedTripVersion,
+      idempotencyKey: env.idempotencyKey,
+      type: "UPDATE_TRIP",
+      payload: { patch: columnPatch, updated_at: patchStamp },
+    });
+    if (!r.ok) { sendKernelRejection(res, r, req.log); return; }
+    setTripVersionHeader(res, r.version);
+    kernelUpdated = r.result as Record<string, unknown>;
+  }
+
+  // trip-kernel:legacy-path — the flag-off twin of UPDATE_TRIP above.
+  const { data: updated, error } = kernelUpdated
+    ? { data: kernelUpdated, error: null }
+    : await sc
     .from("trips")
     .update(patch)
     .eq("id", tripId)
@@ -424,9 +542,21 @@ router.patch("/trips/:tripId/settings", async (req, res) => {
 
   // Handle planEditors replacement
   if (b.planEditors !== undefined) {
-    await sc.from("plan_editors").delete().eq("trip_id", tripId);
+    // Delete-then-insert, and NEITHER write was bound. The failure that matters
+    // is the second one: the delete lands, the insert does not, and the trip is
+    // left with an EMPTY plan-editor list under `plan_edit_permission:
+    // 'specific_members'` — every delegated editor silently loses plan access
+    // while the route answers 200 with the updated trip. Both are bound now.
+    //
+    // The pair is still NOT atomic: there is no transaction across two PostgREST
+    // calls, so a failed insert leaves the list empty and the client must retry.
+    // Making it atomic needs a DB function; that is a migration and is recorded
+    // in the lane report rather than done here.
+    const { error: peDelErr } = await sc.from("plan_editors").delete().eq("trip_id", tripId);
+    if (peDelErr) { sendError(res, "db_error", peDelErr.message); return; }
     if (b.planEditors.length > 0) {
-      await sc.from("plan_editors").insert(b.planEditors.map((uid) => ({ trip_id: tripId, user_id: uid })));
+      const { error: peInsErr } = await sc.from("plan_editors").insert(b.planEditors.map((uid) => ({ trip_id: tripId, user_id: uid })));
+      if (peInsErr) { sendError(res, "db_error", peInsErr.message); return; }
     }
   }
 
@@ -451,13 +581,50 @@ router.post("/trips/:tripId/cancel", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured"); return; }
 
-  const { data: trip } = await sc.from("trips").select("owner_id, status").eq("id", tripId).maybeSingle();
+  const { data: trip, error: tripErr } = await sc.from("trips").select("owner_id, status").eq("id", tripId).maybeSingle();
+  if (tripErr) throw readUnavailable("trips", tripErr);
   if (!trip) { sendError(res, "not_found", "Trip not found"); return; }
   if ((trip as any).owner_id !== user.id) { sendError(res, "forbidden", "Only the owner can cancel a trip"); return; }
   if ((trip as any).status === "cancelled") { res.json({ status: "cancelled", idempotent: true }); return; }
   if ((trip as any).status === "archived")  { sendError(res, "invalid_state_transition", "Cannot cancel an archived trip"); return; }
 
-  await sc.from("trips").update({ status: "cancelled", updated_at: new Date().toISOString() }).eq("id", tripId);
+  // Trip Kernel path (CANCEL_TRIP, contract v2). The owner and terminal-state
+  // checks above are the authorization and the idempotent answer; the kernel
+  // re-checks owner and the §3.1 edge. Off => the direct update below.
+  const kernelCancel = await tripKernel();
+  let kernelCancelled = false;
+  if (kernelCancel) {
+    const env = readCommandEnvelope(req);
+    if (!env.ok) { sendError(res, "invalid_payload", env.message); return; }
+    const r = await executeTripCommand(kernelCancel, {
+      commandId: crypto.randomUUID(),
+      tripId,
+      actorUserId: user.id,
+      expectedTripVersion: env.expectedTripVersion,
+      idempotencyKey: env.idempotencyKey,
+      type: "CANCEL_TRIP",
+      payload: { updated_at: new Date().toISOString() },
+    });
+    if (!r.ok) { sendKernelRejection(res, r, req.log); return; }
+    setTripVersionHeader(res, r.version);
+    kernelCancelled = true;
+  }
+
+  // A bodyless UPDATE returns `data: null`, so it cannot say how many rows it
+  // matched — `error === null` is NOT "it worked". This route answered the
+  // status word for a write that may have touched NOTHING (and, before this,
+  // for a write that outright FAILED: `.error` was never bound). `.select("id")`
+  // makes the affected-row count observable; zero rows now refuses.
+  // trip-kernel:legacy-path — the flag-off twin of CANCEL_TRIP above.
+  if (!kernelCancelled) {
+    const { data: cancelRows, error: cancelErr } = await sc
+      .from("trips")
+      .update({ status: "cancelled", updated_at: new Date().toISOString() })
+      .eq("id", tripId)
+      .select("id");
+    if (cancelErr) { sendError(res, "db_error", cancelErr.message); return; }
+    if ((cancelRows ?? []).length === 0) { sendError(res, "not_found", "Trip not found"); return; }
+  }
   await logActivity(sc, tripId, user.id, "trip_cancelled");
 
   // Fire-and-forget: notify all accepted trip members that the trip was cancelled.
@@ -473,6 +640,11 @@ router.post("/trips/:tripId/cancel", async (req, res) => {
       if (members && members.length > 0) {
         const memberIds = (members as any[]).map((m: any) => m.user_id).filter((id: string) => id !== user.id);
         if (memberIds.length > 0) {
+          // Inside the fire-and-forget push block: an unreadable `profiles`
+          // means no push tokens and therefore no notification. That is the
+          // correct outcome for a best-effort courtesy send — the state change
+          // itself already succeeded and was answered — and it is why this read
+          // is not converted to a refusal like the ones on the request path.
           const { data: profiles } = await sc2.from("profiles").select("id, expo_push_token").in("id", memberIds);
           (profiles ?? []).forEach((p: any) => recipients.push({ userId: p.id as string, tokens: [p.expo_push_token] }));
         }
@@ -502,7 +674,8 @@ router.post("/trips/:tripId/complete", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured"); return; }
 
-  const { data: trip } = await sc.from("trips").select("owner_id, status").eq("id", tripId).maybeSingle();
+  const { data: trip, error: tripErr } = await sc.from("trips").select("owner_id, status").eq("id", tripId).maybeSingle();
+  if (tripErr) throw readUnavailable("trips", tripErr);
   if (!trip) { sendError(res, "not_found", "Trip not found"); return; }
   if ((trip as any).owner_id !== user.id) { sendError(res, "forbidden", "Only the owner can complete a trip"); return; }
   if ((trip as any).status === "completed") { res.json({ status: "completed", idempotent: true }); return; }
@@ -513,7 +686,41 @@ router.post("/trips/:tripId/complete", async (req, res) => {
     return;
   }
 
-  await sc.from("trips").update({ status: "completed", updated_at: new Date().toISOString() }).eq("id", tripId);
+  // Trip Kernel path (COMPLETE_TRIP, contract v2). Off => the direct update below.
+  const kernelComplete = await tripKernel();
+  let kernelCompleted = false;
+  if (kernelComplete) {
+    const env = readCommandEnvelope(req);
+    if (!env.ok) { sendError(res, "invalid_payload", env.message); return; }
+    const r = await executeTripCommand(kernelComplete, {
+      commandId: crypto.randomUUID(),
+      tripId,
+      actorUserId: user.id,
+      expectedTripVersion: env.expectedTripVersion,
+      idempotencyKey: env.idempotencyKey,
+      type: "COMPLETE_TRIP",
+      payload: { updated_at: new Date().toISOString() },
+    });
+    if (!r.ok) { sendKernelRejection(res, r, req.log); return; }
+    setTripVersionHeader(res, r.version);
+    kernelCompleted = true;
+  }
+
+  // A bodyless UPDATE returns `data: null`, so it cannot say how many rows it
+  // matched — `error === null` is NOT "it worked". This route answered the
+  // status word for a write that may have touched NOTHING (and, before this,
+  // for a write that outright FAILED: `.error` was never bound). `.select("id")`
+  // makes the affected-row count observable; zero rows now refuses.
+  // trip-kernel:legacy-path — the flag-off twin of COMPLETE_TRIP above.
+  if (!kernelCompleted) {
+    const { data: completeRows, error: completeErr } = await sc
+      .from("trips")
+      .update({ status: "completed", updated_at: new Date().toISOString() })
+      .eq("id", tripId)
+      .select("id");
+    if (completeErr) { sendError(res, "db_error", completeErr.message); return; }
+    if ((completeRows ?? []).length === 0) { sendError(res, "not_found", "Trip not found"); return; }
+  }
   await logActivity(sc, tripId, user.id, "trip_completed");
   res.json({ status: "completed", tripId });
 });
@@ -530,12 +737,47 @@ router.post("/trips/:tripId/archive", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured"); return; }
 
-  const { data: trip } = await sc.from("trips").select("owner_id, status").eq("id", tripId).maybeSingle();
+  const { data: trip, error: tripErr } = await sc.from("trips").select("owner_id, status").eq("id", tripId).maybeSingle();
+  if (tripErr) throw readUnavailable("trips", tripErr);
   if (!trip) { sendError(res, "not_found", "Trip not found"); return; }
   if ((trip as any).owner_id !== user.id) { sendError(res, "forbidden", "Only the owner can archive a trip"); return; }
   if ((trip as any).status === "archived") { res.json({ status: "archived", idempotent: true }); return; }
 
-  await sc.from("trips").update({ status: "archived", updated_at: new Date().toISOString() }).eq("id", tripId);
+  // Trip Kernel path (ARCHIVE_TRIP, contract v2). Off => the direct update below.
+  const kernelArchive = await tripKernel();
+  let kernelArchived = false;
+  if (kernelArchive) {
+    const env = readCommandEnvelope(req);
+    if (!env.ok) { sendError(res, "invalid_payload", env.message); return; }
+    const r = await executeTripCommand(kernelArchive, {
+      commandId: crypto.randomUUID(),
+      tripId,
+      actorUserId: user.id,
+      expectedTripVersion: env.expectedTripVersion,
+      idempotencyKey: env.idempotencyKey,
+      type: "ARCHIVE_TRIP",
+      payload: { updated_at: new Date().toISOString() },
+    });
+    if (!r.ok) { sendKernelRejection(res, r, req.log); return; }
+    setTripVersionHeader(res, r.version);
+    kernelArchived = true;
+  }
+
+  // A bodyless UPDATE returns `data: null`, so it cannot say how many rows it
+  // matched — `error === null` is NOT "it worked". This route answered the
+  // status word for a write that may have touched NOTHING (and, before this,
+  // for a write that outright FAILED: `.error` was never bound). `.select("id")`
+  // makes the affected-row count observable; zero rows now refuses.
+  // trip-kernel:legacy-path — the flag-off twin of ARCHIVE_TRIP above.
+  if (!kernelArchived) {
+    const { data: archiveRows, error: archiveErr } = await sc
+      .from("trips")
+      .update({ status: "archived", updated_at: new Date().toISOString() })
+      .eq("id", tripId)
+      .select("id");
+    if (archiveErr) { sendError(res, "db_error", archiveErr.message); return; }
+    if ((archiveRows ?? []).length === 0) { sendError(res, "not_found", "Trip not found"); return; }
+  }
   await logActivity(sc, tripId, user.id, "trip_archived");
 
   // Fire-and-forget: notify all accepted trip members that the trip was archived.
@@ -551,6 +793,11 @@ router.post("/trips/:tripId/archive", async (req, res) => {
       if (members && members.length > 0) {
         const memberIds = (members as any[]).map((m: any) => m.user_id).filter((id: string) => id !== user.id);
         if (memberIds.length > 0) {
+          // Inside the fire-and-forget push block: an unreadable `profiles`
+          // means no push tokens and therefore no notification. That is the
+          // correct outcome for a best-effort courtesy send — the state change
+          // itself already succeeded and was answered — and it is why this read
+          // is not converted to a refusal like the ones on the request path.
           const { data: profiles } = await sc2.from("profiles").select("id, expo_push_token").in("id", memberIds);
           (profiles ?? []).forEach((p: any) => recipients.push({ userId: p.id as string, tokens: [p.expo_push_token] }));
         }
@@ -580,11 +827,66 @@ router.delete("/trips/:tripId", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured"); return; }
 
-  const { data: trip } = await sc.from("trips").select("owner_id, status").eq("id", tripId).maybeSingle();
+  const { data: trip, error: tripErr } = await sc.from("trips").select("owner_id, status").eq("id", tripId).maybeSingle();
+  if (tripErr) throw readUnavailable("trips", tripErr);
   if (!trip) { sendError(res, "not_found", "Trip not found"); return; }
   if ((trip as any).owner_id !== user.id) { sendError(res, "forbidden", "Only the owner can delete a trip"); return; }
 
-  await sc.from("trips").update({ status: "archived", updated_at: new Date().toISOString() }).eq("id", tripId);
+  // Trip Kernel path (ARCHIVE_TRIP, contract v2). Legacy writes 'archived'
+  // unconditionally, so a second DELETE re-writes an archived row; ARCHIVE_TRIP
+  // refuses archived -> archived as a non-transition, so under the kernel an
+  // already-archived trip is answered 204 with NO command (nothing to
+  // transition; only the legacy updated_at bump is lost, recorded in the lane
+  // report). Off => the direct update below, exactly as before.
+  const kernelDelete = await tripKernel();
+  let deleteWrite: "legacy" | "kernel" | "already_archived" = "legacy";
+  if (kernelDelete) {
+    if ((trip as any).status === "archived") {
+      deleteWrite = "already_archived";
+    } else {
+      const env = readCommandEnvelope(req);
+      if (!env.ok) { sendError(res, "invalid_payload", env.message); return; }
+      const r = await executeTripCommand(kernelDelete, {
+        commandId: crypto.randomUUID(),
+        tripId,
+        actorUserId: user.id,
+        expectedTripVersion: env.expectedTripVersion,
+        idempotencyKey: env.idempotencyKey,
+        type: "ARCHIVE_TRIP",
+        payload: { updated_at: new Date().toISOString(), soft_delete: true },
+      });
+      if (!r.ok) { sendKernelRejection(res, r, req.log); return; }
+      setTripVersionHeader(res, r.version);
+      deleteWrite = "kernel";
+    }
+  }
+
+  // TRANSITION AGREEMENT (lib/stateMachines/registry.ts, TRIPS_STATUS): the
+  // registry declares `-> archived` from draft/planning/upcoming/active/
+  // completed/cancelled — `archived` is NOT in that `from` list, yet this legacy
+  // path writes 'archived' unconditionally, so a second DELETE re-writes an
+  // already-archived row. The kernel path refuses that as a non-transition; the
+  // two paths therefore disagree by design, and tripKernelExpansion.test.ts pins
+  // the legacy side ("legacy writes archived again, unconditionally") as the
+  // flag-off byte-identity baseline. Left as it is deliberately: a self-write of
+  // the same value is idempotent, not a state change, and unpinning another
+  // lane's recorded baseline to make the two agree is not this lane's call. The
+  // divergence is reported rather than silently closed.
+  // A bodyless UPDATE returns `data: null`, so it cannot say how many rows it
+  // matched — `error === null` is NOT "it worked". This route answered the
+  // status word for a write that may have touched NOTHING (and, before this,
+  // for a write that outright FAILED: `.error` was never bound). `.select("id")`
+  // makes the affected-row count observable; zero rows now refuses.
+  // trip-kernel:legacy-path — the flag-off twin of ARCHIVE_TRIP above.
+  if (deleteWrite === "legacy") {
+    const { data: deleteRows, error: deleteErr } = await sc
+      .from("trips")
+      .update({ status: "archived", updated_at: new Date().toISOString() })
+      .eq("id", tripId)
+      .select("id");
+    if (deleteErr) { sendError(res, "db_error", deleteErr.message); return; }
+    if ((deleteRows ?? []).length === 0) { sendError(res, "not_found", "Trip not found"); return; }
+  }
   await logActivity(sc, tripId, user.id, "trip_deleted");
   res.status(204).send();
 });
@@ -605,11 +907,12 @@ router.post("/trips/:tripId/join-request", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured"); return; }
 
-  const { data: trip } = await sc
+  const { data: trip, error: tripErr } = await sc
     .from("trips")
     .select("owner_id, allow_join_requests, status, visibility")
     .eq("id", tripId)
     .maybeSingle();
+  if (tripErr) throw readUnavailable("trips", tripErr);
 
   if (!trip) { sendError(res, "not_found", "Trip not found"); return; }
   const t = trip as any;
@@ -628,12 +931,24 @@ router.post("/trips/:tripId/join-request", async (req, res) => {
   if (existing) { res.status(200).json({ status: "already_member", idempotent: true }); return; }
 
   // Existing pending request?
-  const { data: existingReq } = await sc
+  // supabase-js RESOLVES on a DB error, so an unbound `error` read an
+  // unreadable trip_join_requests as "this user has never asked" and fell
+  // through to the INSERT — filing a fresh pending request (and a fresh push to
+  // the trip owner) for someone whose earlier request the owner already
+  // DENIED, which is the one state this lookup exists to keep from being
+  // reopened by the requester alone.
+  const { data: existingReq, error: existingReqErr } = await sc
     .from("trip_join_requests")
     .select("id, status")
     .eq("trip_id", tripId)
     .eq("user_id", user.id)
     .maybeSingle();
+
+  if (existingReqErr) {
+    req.log?.error({ err: existingReqErr, tripId }, "trip_join_requests lookup failed — refusing to file a possible duplicate request");
+    sendError(res, "db_error", existingReqErr.message);
+    return;
+  }
 
   if (existingReq) {
     if ((existingReq as any).status === "pending") {
@@ -698,7 +1013,8 @@ router.post("/trips/:tripId/join-requests/:requestId/approve", async (req, res) 
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured"); return; }
 
-  const { data: trip } = await sc.from("trips").select("owner_id").eq("id", tripId).maybeSingle();
+  const { data: trip, error: tripErr } = await sc.from("trips").select("owner_id").eq("id", tripId).maybeSingle();
+  if (tripErr) throw readUnavailable("trips", tripErr);
   if (!trip) { sendError(res, "not_found", "Trip not found"); return; }
   const approveIsOwner = (trip as any).owner_id === user.id;
   if (!approveIsOwner) {
@@ -708,12 +1024,13 @@ router.post("/trips/:tripId/join-requests/:requestId/approve", async (req, res) 
     }
   }
 
-  const { data: req_ } = await sc
+  const { data: req_, error: req_Err } = await sc
     .from("trip_join_requests")
     .select("*")
     .eq("id", requestId)
     .eq("trip_id", tripId)
     .maybeSingle();
+  if (req_Err) throw readUnavailable("trip_join_requests", req_Err);
 
   if (!req_) { sendError(res, "not_found", "Join request not found"); return; }
   if ((req_ as any).status !== "pending") {
@@ -723,17 +1040,58 @@ router.post("/trips/:tripId/join-requests/:requestId/approve", async (req, res) 
 
   const requestedUserId = (req_ as any).user_id as string;
 
+  // Trip Kernel path (contract v2 + 2500). The legacy upsert hides which case
+  // it is, so read the row first: no row => ADD_PARTICIPANT (member, accepted,
+  // joined now); an existing row => SET_PARTICIPANT_ROLE to member (the kernel
+  // refuses to touch the owner's row, which the upsert would silently
+  // downgrade). The route's owner/co_host check above is the authorization;
+  // the kernel re-checks `host` (owner or accepted co_host; 2500 — under 2450
+  // alone a co_host approver is refused TRIP_AUTH_NOT_OWNER). Off => the
+  // direct upsert below, exactly as before.
+  const kernelApprove = await tripKernel();
+  let kernelApproved = false;
+  if (kernelApprove) {
+    const env = readCommandEnvelope(req);
+    if (!env.ok) { sendError(res, "invalid_payload", env.message); return; }
+    const { data: existingRow, error: existingErr } = await kernelApprove
+      .from("trip_members").select("role").eq("trip_id", tripId).eq("user_id", requestedUserId).maybeSingle();
+    if (existingErr) { sendError(res, "db_error", existingErr.message); return; }
+    const r = await executeTripCommand(kernelApprove, {
+      commandId: crypto.randomUUID(),
+      tripId,
+      actorUserId: user.id,
+      expectedTripVersion: env.expectedTripVersion,
+      idempotencyKey: env.idempotencyKey,
+      type: existingRow ? "SET_PARTICIPANT_ROLE" : "ADD_PARTICIPANT",
+      payload: existingRow
+        ? { user_id: requestedUserId, role: "member" }
+        : { user_id: requestedUserId, role: "member", status: "accepted", joined_at: new Date().toISOString() },
+    });
+    if (!r.ok) { sendKernelRejection(res, r, req.log); return; }
+    setTripVersionHeader(res, r.version);
+    kernelApproved = true;
+  }
+
   // Add to trip_members
-  const { error: memErr } = await sc
+  // trip-kernel:legacy-path — the flag-off twin of ADD_PARTICIPANT / SET_PARTICIPANT_ROLE above.
+  const { error: memErr } = kernelApproved ? { error: null } : await sc
     .from("trip_members")
     .upsert({ trip_id: tripId, user_id: requestedUserId, role: "member", status: "accepted", joined_at: new Date().toISOString() },
              { onConflict: "trip_id,user_id" });
   if (memErr) { sendError(res, "db_error", memErr.message); return; }
 
-  await sc
+  // The member row above is committed by this point, so a request that stays
+  // 'pending' here is the WORST outcome this route has: the user IS on the trip
+  // and the owner's join-request queue still shows an unanswered request they
+  // can "approve" again. The write bound no `.error` and had no `.select()`, so
+  // both a failure and a zero-row match answered {status:"approved"}.
+  const { data: approvedRows, error: approvedErr } = await sc
     .from("trip_join_requests")
     .update({ status: "approved", reviewed_by: user.id, reviewed_at: new Date().toISOString() })
-    .eq("id", requestId);
+    .eq("id", requestId)
+    .select("id");
+  if (approvedErr) { sendError(res, "db_error", approvedErr.message); return; }
+  if ((approvedRows ?? []).length === 0) { sendError(res, "not_found", "Join request not found"); return; }
 
   await logActivity(sc, tripId, user.id, "join_request_approved", { userId: requestedUserId });
 
@@ -786,7 +1144,8 @@ router.post("/trips/:tripId/join-requests/:requestId/decline", async (req, res) 
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured"); return; }
 
-  const { data: trip } = await sc.from("trips").select("owner_id").eq("id", tripId).maybeSingle();
+  const { data: trip, error: tripErr } = await sc.from("trips").select("owner_id").eq("id", tripId).maybeSingle();
+  if (tripErr) throw readUnavailable("trips", tripErr);
   if (!trip) { sendError(res, "not_found", "Trip not found"); return; }
   const declineIsOwner = (trip as any).owner_id === user.id;
   if (!declineIsOwner) {
@@ -796,12 +1155,13 @@ router.post("/trips/:tripId/join-requests/:requestId/decline", async (req, res) 
     }
   }
 
-  const { data: req_ } = await sc
+  const { data: req_, error: req_Err } = await sc
     .from("trip_join_requests")
     .select("status, user_id")
     .eq("id", requestId)
     .eq("trip_id", tripId)
     .maybeSingle();
+  if (req_Err) throw readUnavailable("trip_join_requests", req_Err);
 
   if (!req_) { sendError(res, "not_found", "Join request not found"); return; }
   if ((req_ as any).status !== "pending") {
@@ -809,10 +1169,17 @@ router.post("/trips/:tripId/join-requests/:requestId/decline", async (req, res) 
     return;
   }
 
-  await sc
+  // A decline that did not land leaves the request 'pending' while the requester
+  // is told (and pushed) that it was declined — and the route would say so on a
+  // hard DB failure too, since `.error` was never bound and a bodyless UPDATE
+  // reports no affected-row count.
+  const { data: declinedRows, error: declinedErr } = await sc
     .from("trip_join_requests")
     .update({ status: "declined", reviewed_by: user.id, reviewed_at: new Date().toISOString() })
-    .eq("id", requestId);
+    .eq("id", requestId)
+    .select("id");
+  if (declinedErr) { sendError(res, "db_error", declinedErr.message); return; }
+  if ((declinedRows ?? []).length === 0) { sendError(res, "not_found", "Join request not found"); return; }
 
   await logActivity(sc, tripId, user.id, "join_request_declined", { requestId });
 
@@ -865,12 +1232,13 @@ router.post("/trips/:tripId/join-requests/:requestId/cancel", async (req, res) =
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured"); return; }
 
-  const { data: req_ } = await sc
+  const { data: req_, error: req_Err } = await sc
     .from("trip_join_requests")
     .select("*")
     .eq("id", requestId)
     .eq("trip_id", tripId)
     .maybeSingle();
+  if (req_Err) throw readUnavailable("trip_join_requests", req_Err);
 
   if (!req_) { sendError(res, "not_found", "Join request not found"); return; }
   if ((req_ as any).user_id !== user.id) { sendError(res, "forbidden", "Can only cancel your own request"); return; }
@@ -879,7 +1247,16 @@ router.post("/trips/:tripId/join-requests/:requestId/cancel", async (req, res) =
     return;
   }
 
-  await sc.from("trip_join_requests").update({ status: "cancelled" }).eq("id", requestId);
+  // Same shape: {status:"cancelled"} was answered for a write whose outcome the
+  // route never asked about. A request that is still 'pending' after this keeps
+  // notifying the owner about someone who withdrew.
+  const { data: cancelledRows, error: cancelledErr } = await sc
+    .from("trip_join_requests")
+    .update({ status: "cancelled" })
+    .eq("id", requestId)
+    .select("id");
+  if (cancelledErr) { sendError(res, "db_error", cancelledErr.message); return; }
+  if ((cancelledRows ?? []).length === 0) { sendError(res, "not_found", "Join request not found"); return; }
   res.json({ status: "cancelled", requestId });
 });
 
@@ -899,7 +1276,8 @@ router.post("/trips/:tripId/invite-link", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured"); return; }
 
-  const { data: trip } = await sc.from("trips").select("owner_id").eq("id", tripId).maybeSingle();
+  const { data: trip, error: tripErr } = await sc.from("trips").select("owner_id").eq("id", tripId).maybeSingle();
+  if (tripErr) throw readUnavailable("trips", tripErr);
   if (!trip) { sendError(res, "not_found", "Trip not found"); return; }
   if ((trip as any).owner_id !== user.id) { sendError(res, "forbidden", "Only the owner can create invite links"); return; }
 
@@ -940,20 +1318,32 @@ router.delete("/trips/:tripId/invite-link/:linkId", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured"); return; }
 
-  const { data: trip } = await sc.from("trips").select("owner_id").eq("id", tripId).maybeSingle();
+  const { data: trip, error: tripErr } = await sc.from("trips").select("owner_id").eq("id", tripId).maybeSingle();
+  if (tripErr) throw readUnavailable("trips", tripErr);
   if (!trip) { sendError(res, "not_found", "Trip not found"); return; }
   if ((trip as any).owner_id !== user.id) { sendError(res, "forbidden", "Only the owner can revoke invite links"); return; }
 
-  const { data: link } = await sc
+  const { data: link, error: linkErr } = await sc
     .from("trip_invite_links")
     .select("id")
     .eq("id", linkId)
     .eq("trip_id", tripId)
     .maybeSingle();
+  if (linkErr) throw readUnavailable("trip_invite_links", linkErr);
 
   if (!link) { sendError(res, "not_found", "Invite link not found"); return; }
 
-  await sc.from("trip_invite_links").update({ revoked_at: new Date().toISOString() }).eq("id", linkId);
+  // The one on this list with a security consequence: 204 told the owner the
+  // link was revoked while the link went on admitting strangers to their trip.
+  // `.error` was unbound and the bodyless UPDATE reported no row count, so a
+  // failed revoke and a successful one were the same 204.
+  const { data: revokedRows, error: revokedErr } = await sc
+    .from("trip_invite_links")
+    .update({ revoked_at: new Date().toISOString() })
+    .eq("id", linkId)
+    .select("id");
+  if (revokedErr) { sendError(res, "db_error", revokedErr.message); return; }
+  if ((revokedRows ?? []).length === 0) { sendError(res, "not_found", "Invite link not found"); return; }
   res.status(204).send();
 });
 
@@ -969,19 +1359,25 @@ router.get("/trips/:tripId/invite-links", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured"); return; }
 
-  const { data: trip } = await sc.from("trips").select("owner_id").eq("id", tripId).maybeSingle();
+  const { data: trip, error: tripErr } = await sc.from("trips").select("owner_id").eq("id", tripId).maybeSingle();
+  if (tripErr) throw readUnavailable("trips", tripErr);
   if (!trip) { sendError(res, "not_found", "Trip not found"); return; }
   if ((trip as any).owner_id !== user.id) { sendError(res, "forbidden", "Only the owner can view invite links"); return; }
 
-  const { data: links } = await sc
+  const { data: links, error: linksErr } = await sc
     .from("trip_invite_links")
     .select("id, token, use_count, max_uses, expires_at, created_at, revoked_at")
     .eq("trip_id", tripId)
     .order("created_at", { ascending: false });
+  if (linksErr) throw readUnavailable("trip_invite_links", linksErr);
 
   if (!links || links.length === 0) { res.json([]); return; }
 
   // Pull who joined via each link from the activity log
+  // Enrichment only: the joiner list decorates each link row. An unreadable
+  // `trip_activity_log` renders `joiners: []`, which understates who used a
+  // link but never overstates it, and the link's own use_count (read above,
+  // and now bound) is the authoritative number the owner acts on.
   const { data: activityRows } = await sc
     .from("trip_activity_log")
     .select("actor_id, metadata")
@@ -1000,6 +1396,10 @@ router.get("/trips/:tripId/invite-links", async (req, res) => {
   const profileMap = new Map<string, { id: string; name: string | null; handle: string | null; avatarUrl: string | null }>();
 
   if (allJoinerIds.length > 0) {
+    // Enrichment only: an unreadable `profiles` leaves each joiner as
+    // `{ id, name: null, handle: null, avatarUrl: null }` (the fallback below).
+    // The joiner's id and their `removed` flag — the two facts the owner acts
+    // on — come from trip_activity_log and trip_members, not from here.
     const { data: profiles } = await sc
       .from("profiles")
       .select("id, display_name, name, full_name, username, avatar_url")
@@ -1019,11 +1419,12 @@ router.get("/trips/:tripId/invite-links", async (req, res) => {
   // Cross-check joiners against current trip_members so removed users can be flagged
   const currentMemberIds = new Set<string>();
   if (allJoinerIds.length > 0) {
-    const { data: members } = await sc
+    const { data: members, error: membersErr } = await sc
       .from("trip_members")
       .select("user_id")
       .eq("trip_id", tripId)
       .in("user_id", allJoinerIds);
+    if (membersErr) throw readUnavailable("trip_members", membersErr);
     for (const m of (members ?? []) as any[]) {
       currentMemberIds.add(m.user_id as string);
     }
@@ -1069,11 +1470,12 @@ router.get("/trips/invite-link/:token/preview", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured"); return; }
 
-  const { data: link } = await sc
+  const { data: link, error: linkErr } = await sc
     .from("trip_invite_links")
     .select("*")
     .eq("token", token)
     .maybeSingle();
+  if (linkErr) throw readUnavailable("trip_invite_links", linkErr);
 
   if (!link) { sendError(res, "not_found", "Invite link not found or expired"); return; }
   const lk = link as any;
@@ -1091,11 +1493,12 @@ router.get("/trips/invite-link/:token/preview", async (req, res) => {
     return;
   }
 
-  const { data: trip } = await sc
+  const { data: trip, error: tripErr } = await sc
     .from("trips")
     .select("id, title, destination_city, destination_country, start_date, end_date, cover_url, owner_id, visibility, status, max_members")
     .eq("id", lk.trip_id)
     .maybeSingle();
+  if (tripErr) throw readUnavailable("trips", tripErr);
 
   if (!trip) { sendError(res, "not_found", "Trip not found"); return; }
 
@@ -1134,11 +1537,12 @@ router.get("/trips/invite-link/:token/preview", async (req, res) => {
   const maxMembers = (trip as any).max_members as number | null;
   let isFull = false;
   if (maxMembers != null) {
-    const { data: memberRows } = await sc
+    const { data: memberRows, error: memberRowsErr } = await sc
       .from("trip_members")
       .select("user_id")
       .eq("trip_id", lk.trip_id)
       .eq("status", "accepted");
+    if (memberRowsErr) throw readUnavailable("trip_members", memberRowsErr);
     isFull = (memberRows?.length ?? 0) >= maxMembers;
   }
 
@@ -1173,11 +1577,12 @@ router.post("/trips/invite-link/:token/accept", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured"); return; }
 
-  const { data: link } = await sc
+  const { data: link, error: linkErr } = await sc
     .from("trip_invite_links")
     .select("*")
     .eq("token", token)
     .maybeSingle();
+  if (linkErr) throw readUnavailable("trip_invite_links", linkErr);
 
   if (!link) { sendError(res, "not_found", "Invite link not found"); return; }
   const lk = link as any;
@@ -1198,7 +1603,8 @@ router.post("/trips/invite-link/:token/accept", async (req, res) => {
   const tripId = lk.trip_id as string;
 
   // Block check against owner
-  const { data: trip } = await sc.from("trips").select("owner_id, status, end_date, max_members").eq("id", tripId).maybeSingle();
+  const { data: trip, error: tripErr } = await sc.from("trips").select("owner_id, status, end_date, max_members").eq("id", tripId).maybeSingle();
+  if (tripErr) throw readUnavailable("trips", tripErr);
   if (!trip) { sendError(res, "not_found", "Trip not found"); return; }
   const blocked = await isBlocked(sc, user.id, (trip as any).owner_id);
   if (blocked) { sendError(res, "forbidden", "Blocked"); return; }
@@ -1235,16 +1641,26 @@ router.post("/trips/invite-link/:token/accept", async (req, res) => {
   // never blocked by a later capacity squeeze.
   const maxMembers = (trip as any).max_members as number | null;
   if (maxMembers != null) {
-    const { data: memberRows } = await sc
+    const { data: memberRows, error: memberRowsErr } = await sc
       .from("trip_members")
       .select("user_id")
       .eq("trip_id", tripId)
       .eq("status", "accepted");
+    if (memberRowsErr) throw readUnavailable("trip_members", memberRowsErr);
     if ((memberRows?.length ?? 0) >= maxMembers) {
       res.status(410).json({ error: "gone", reason: "trip_full", message: "This trip is already full" });
       return;
     }
   }
+
+  // Trip Kernel gate (JOIN_VIA_LINK, contract v2 + migration 2500), read
+  // BEFORE the slot is claimed so a malformed envelope is refused without
+  // consuming or stranding a slot. The actor is the JOINER; the kernel's
+  // `link_holder` capability is exactly what the claim below establishes: an
+  // attempt row for (this link, this user) on a link that belongs to this trip.
+  const kernelJoin = await tripKernel();
+  const joinEnv = kernelJoin ? readCommandEnvelope(req) : null;
+  if (joinEnv && !joinEnv.ok) { sendError(res, "invalid_payload", joinEnv.message); return; }
 
   // ── Capacity-enforcement guarantee ────────────────────────────────────────
   // claim_invite_link_slot_for_user is the SINGLE authoritative gate for slot
@@ -1306,8 +1722,34 @@ router.post("/trips/invite-link/:token/accept", async (req, res) => {
       .eq("link_id", lk.id)
       .eq("user_id", user.id);
 
+  // Kernel twin of the insert: a rejection is mapped onto the SAME error shapes
+  // the legacy insert produces, so every compensation branch below (release the
+  // freshly claimed slot, clear the attempt row, answer already_member / 410)
+  // runs unchanged for both paths. TRIP_PARTICIPANT_ALREADY_EXISTS is the
+  // unique-violation case; TRIP_PARTICIPANT_CAPACITY_REACHED is the trigger's
+  // trip_full; anything else reaches the generic branch, which then answers
+  // with the kernel's reason instead of db_error.
+  const kernelJoinOutcome: { rejection: Extract<TripKernelResult, { ok: false }> | null } = { rejection: null };
+  const joinViaKernel = async (): Promise<{ error: { code?: string; message: string } | null }> => {
+    const r = await executeTripCommand(kernelJoin, {
+      commandId: crypto.randomUUID(),
+      tripId,
+      actorUserId: user.id,
+      expectedTripVersion: joinEnv!.ok ? joinEnv!.expectedTripVersion : null,
+      idempotencyKey: joinEnv!.ok ? joinEnv!.idempotencyKey : crypto.randomUUID(),
+      type: "JOIN_VIA_LINK",
+      payload: { invite_link_id: lk.id, joined_at: new Date().toISOString() },
+    });
+    if (r.ok) { setTripVersionHeader(res, r.version); return { error: null }; }
+    if (r.reason === "TRIP_PARTICIPANT_ALREADY_EXISTS") return { error: { code: "23505", message: "duplicate key value violates unique constraint" } };
+    if (r.reason === "TRIP_PARTICIPANT_CAPACITY_REACHED") return { error: { code: "P0001", message: "trip_full" } };
+    kernelJoinOutcome.rejection = r;
+    return { error: { code: "TRIP_KERNEL", message: r.detail ?? r.reason } };
+  };
+
   // Add member
-  const { error: memErr } = await sc
+  // trip-kernel:legacy-path — the flag-off twin of JOIN_VIA_LINK above.
+  const { error: memErr } = kernelJoin ? await joinViaKernel() : await sc
     .from("trip_members")
     .insert({ trip_id: tripId, user_id: user.id, role: "member", status: "accepted", joined_at: new Date().toISOString(), invite_link_id: lk.id });
 
@@ -1369,6 +1811,7 @@ router.post("/trips/invite-link/:token/accept", async (req, res) => {
       }
       await clearAttempt();
     }
+    if (kernelJoinOutcome.rejection) { sendKernelRejection(res, kernelJoinOutcome.rejection, req.log); return; }
     sendError(res, "db_error", memErr.message);
     return;
   }
@@ -1395,11 +1838,12 @@ router.get("/trips/:tripId/nearby-places", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured"); return; }
 
-  const { data: trip } = await sc
+  const { data: trip, error: tripErr } = await sc
     .from("trips")
     .select("owner_id, status, visibility, destination_city, destination_country, destination_lat, destination_lng")
     .eq("id", tripId)
     .maybeSingle();
+  if (tripErr) throw readUnavailable("trips", tripErr);
   if (!trip) { sendError(res, "not_found", "Trip not found"); return; }
 
   const t = trip as any;
@@ -1415,12 +1859,13 @@ router.get("/trips/:tripId/nearby-places", async (req, res) => {
   }
 
   // Return discovery places matching the destination city
-  const { data: places } = await sc
+  const { data: places, error: placesErr } = await sc
     .from("discovery_places")
     .select("id, name, category, lat, lng, city, image_url, rating")
     .ilike("city", `%${t.destination_city}%`)
     .order("rating", { ascending: false })
     .limit(30);
+  if (placesErr) throw readUnavailable("discovery_places", placesErr);
 
   // Live discovery_places has image_url (not cover_url) and no country column —
   // preserve the response shape the client expects.
@@ -1449,7 +1894,8 @@ router.get("/trips/:tripId/destinations", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured"); return; }
 
-  const { data: trip } = await sc.from("trips").select("owner_id").eq("id", tripId).maybeSingle();
+  const { data: trip, error: tripErr } = await sc.from("trips").select("owner_id").eq("id", tripId).maybeSingle();
+  if (tripErr) throw readUnavailable("trips", tripErr);
   if (!trip) { sendError(res, "not_found", "Trip not found"); return; }
 
   const isOwner = (trip as any).owner_id === user.id;
@@ -1495,7 +1941,8 @@ router.post("/trips/:tripId/destinations", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured"); return; }
 
-  const { data: trip } = await sc.from("trips").select("owner_id").eq("id", tripId).maybeSingle();
+  const { data: trip, error: tripErr } = await sc.from("trips").select("owner_id").eq("id", tripId).maybeSingle();
+  if (tripErr) throw readUnavailable("trips", tripErr);
   if (!trip) { sendError(res, "not_found", "Trip not found"); return; }
 
   const isOwner = (trip as any).owner_id === user.id;
@@ -1558,23 +2005,46 @@ async function handleDestinationsReorder(req: any, res: any): Promise<void> {
   const { order } = parsed.data;
 
   // Validate that all IDs belong to this trip
-  const { data: existing } = await sc
+  const { data: existing, error: existingErr } = await sc
     .from("trip_destinations")
     .select("id")
     .eq("trip_id", tripId)
     .in("id", order);
+  if (existingErr) throw readUnavailable("trip_destinations", existingErr);
 
   const existingIds = new Set((existing ?? []).map((r: any) => r.id as string));
   if (order.some((id) => !existingIds.has(id))) {
     sendError(res, "invalid_payload", "One or more destination IDs do not belong to this trip"); return;
   }
 
-  // Apply positions sequentially
-  await Promise.all(
+  // Apply positions sequentially.
+  //
+  // The `.then(undefined, () => {})` here was doing nothing useful and hiding
+  // something real: a PostgREST builder RESOLVES on a database error, so the
+  // rejection handler never fires, and the resolved `{ error }` was thrown away
+  // with the value. Every one of these updates could fail and the route still
+  // answered {status:"reordered", count:N} — a reorder the client then renders
+  // optimistically and the server never performed. `.select("id")` also makes
+  // the affected-row count observable, so an id that matched nothing (a
+  // destination deleted between the validation read above and here) is caught
+  // rather than counted as reordered.
+  const positionWrites = await Promise.all(
     order.map((id, idx) =>
-      sc.from("trip_destinations").update({ position: idx + 1 }).eq("id", id).then(undefined, () => {}),
+      sc.from("trip_destinations").update({ position: idx + 1 }).eq("id", id).eq("trip_id", tripId).select("id"),
     ),
   );
+  const failed = positionWrites.filter((w: any) => w.error);
+  if (failed.length > 0) {
+    req.log?.error({ tripId, failed: failed.length, of: order.length, err: (failed[0] as any).error },
+      "trip_destinations reorder partially failed — positions are now inconsistent");
+    sendError(res, "db_error", String((failed[0] as any).error?.message ?? "reorder failed"));
+    return;
+  }
+  const missed = positionWrites.filter((w: any) => ((w.data ?? []) as any[]).length === 0);
+  if (missed.length > 0) {
+    sendError(res, "invalid_payload", "One or more destination IDs do not belong to this trip");
+    return;
+  }
 
   res.json({ status: "reordered", tripId, count: order.length });
 }
@@ -1598,7 +2068,8 @@ router.delete("/trips/:tripId/destinations/:destId", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured"); return; }
 
-  const { data: trip } = await sc.from("trips").select("owner_id").eq("id", tripId).maybeSingle();
+  const { data: trip, error: tripErr } = await sc.from("trips").select("owner_id").eq("id", tripId).maybeSingle();
+  if (tripErr) throw readUnavailable("trips", tripErr);
   if (!trip) { sendError(res, "not_found", "Trip not found"); return; }
 
   const isOwner = (trip as any).owner_id === user.id;
@@ -1611,12 +2082,13 @@ router.delete("/trips/:tripId/destinations/:destId", async (req, res) => {
   }
 
   // Verify the destination belongs to this trip before deleting.
-  const { data: dest } = await sc
+  const { data: dest, error: destErr } = await sc
     .from("trip_destinations")
     .select("id")
     .eq("id", destId)
     .eq("trip_id", tripId)
     .maybeSingle();
+  if (destErr) throw readUnavailable("trip_destinations", destErr);
 
   if (!dest) { sendError(res, "not_found", "Destination not found"); return; }
 
@@ -1660,7 +2132,8 @@ router.patch("/trips/:tripId/destinations/:destId", async (req, res) => {
   if (!sc) { sendError(res, "server_not_configured"); return; }
 
   // Require trip membership (owner, co_host, or member)
-  const { data: trip } = await sc.from("trips").select("owner_id").eq("id", tripId).maybeSingle();
+  const { data: trip, error: tripErr } = await sc.from("trips").select("owner_id").eq("id", tripId).maybeSingle();
+  if (tripErr) throw readUnavailable("trips", tripErr);
   if (!trip) { sendError(res, "not_found", "Trip not found"); return; }
 
   const isOwner = (trip as any).owner_id === user.id;
@@ -1673,12 +2146,13 @@ router.patch("/trips/:tripId/destinations/:destId", async (req, res) => {
   }
 
   // Verify the destination belongs to this trip
-  const { data: dest } = await sc
+  const { data: dest, error: destErr } = await sc
     .from("trip_destinations")
     .select("id")
     .eq("id", destId)
     .eq("trip_id", tripId)
     .maybeSingle();
+  if (destErr) throw readUnavailable("trip_destinations", destErr);
 
   if (!dest) { sendError(res, "not_found", "Destination not found"); return; }
 
@@ -1714,7 +2188,8 @@ router.get("/trips/:tripId/budget", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured"); return; }
 
-  const { data: trip } = await sc.from("trips").select("owner_id").eq("id", tripId).maybeSingle();
+  const { data: trip, error: tripErr } = await sc.from("trips").select("owner_id").eq("id", tripId).maybeSingle();
+  if (tripErr) throw readUnavailable("trips", tripErr);
   if (!trip) { sendError(res, "not_found", "Trip not found"); return; }
 
   const isOwner = (trip as any).owner_id === user.id;
@@ -1725,11 +2200,12 @@ router.get("/trips/:tripId/budget", async (req, res) => {
     }
   }
 
-  const { data: budget } = await sc
+  const { data: budget, error: budgetErr } = await sc
     .from("trip_budget")
     .select("*")
     .eq("trip_id", tripId)
     .maybeSingle();
+  if (budgetErr) throw readUnavailable("trip_budget", budgetErr);
 
   res.json({ budget: budget ?? null });
 });
@@ -1746,7 +2222,8 @@ router.put("/trips/:tripId/budget", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured"); return; }
 
-  const { data: trip } = await sc.from("trips").select("owner_id").eq("id", tripId).maybeSingle();
+  const { data: trip, error: tripErr } = await sc.from("trips").select("owner_id").eq("id", tripId).maybeSingle();
+  if (tripErr) throw readUnavailable("trips", tripErr);
   if (!trip) { sendError(res, "not_found", "Trip not found"); return; }
 
   const isPutOwner = (trip as any).owner_id === user.id;
@@ -1800,7 +2277,8 @@ router.get("/trips/:tripId/documents", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured"); return; }
 
-  const { data: trip } = await sc.from("trips").select("owner_id").eq("id", tripId).maybeSingle();
+  const { data: trip, error: tripErr } = await sc.from("trips").select("owner_id").eq("id", tripId).maybeSingle();
+  if (tripErr) throw readUnavailable("trips", tripErr);
   if (!trip) { sendError(res, "not_found", "Trip not found"); return; }
 
   const membership = await requireTripMember(sc, tripId, user.id);
@@ -1860,6 +2338,60 @@ router.post("/trips/:tripId/documents", async (req, res) => {
   res.status(201).json(data);
 });
 
+// GET /api/trips/:tripId/documents/:docId  — one document, WITH its content
+//
+// THE GAP THIS CLOSES. `trip_documents.content` is written by POST and by PATCH
+// and was returned by NOTHING: the list route selects
+// `id, title, document_type, is_private, creator_id, created_at, updated_at`,
+// POST and PATCH return the same column set, and there was no by-id route at
+// all. A client could store a document's body and could never read it back —
+// so "no mobile consumer" was a symptom here, not the disease. The listing
+// deliberately stays lean (a packing list or an itinerary body does not belong
+// in a collection response); this is where the body lives.
+//
+// Visibility is the SAME rule the listing enforces, restated here because a
+// by-id route cannot inherit an or-filter: the trip owner reads every document;
+// anyone else reads a document only if it is not private or they created it.
+router.get("/trips/:tripId/documents/:docId", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const { tripId, docId } = req.params;
+  if (!UUID_RE.test(tripId) || !UUID_RE.test(docId)) { sendError(res, "invalid_payload", "Invalid ID"); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured"); return; }
+
+  const { data: trip, error: tripErr } = await sc.from("trips").select("owner_id").eq("id", tripId).maybeSingle();
+  if (tripErr) throw readUnavailable("trips", tripErr);
+  if (!trip) { sendError(res, "not_found", "Trip not found"); return; }
+
+  const membership = await requireTripMember(sc, tripId, user.id);
+  const isOwner = (trip as any).owner_id === user.id;
+  if (!membership && !isOwner) { sendError(res, "not_member", "Not a trip member"); return; }
+
+  const { data: doc, error: docErr } = await sc
+    .from("trip_documents")
+    .select("id, title, content, document_type, is_private, creator_id, created_at, updated_at")
+    .eq("id", docId)
+    .eq("trip_id", tripId)
+    .maybeSingle();
+  if (docErr) throw readUnavailable("trip_documents", docErr);
+  if (!doc) { sendError(res, "not_found", "Document not found"); return; }
+
+  const d = doc as any;
+  // A private document the caller did not create is answered 404, not 403: a
+  // 403 would confirm that a document with this id exists on this trip, which
+  // is exactly what the privacy flag is withholding.
+  if (!isOwner && d.is_private === true && d.creator_id !== user.id) {
+    sendError(res, "not_found", "Document not found");
+    return;
+  }
+
+  res.json(d);
+});
+
 // PATCH /api/trips/:tripId/documents/:docId  — update document
 router.patch("/trips/:tripId/documents/:docId", async (req, res) => {
   const auth = await requireUser(req, res);
@@ -1872,9 +2404,11 @@ router.patch("/trips/:tripId/documents/:docId", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured"); return; }
 
-  const { data: trip } = await sc.from("trips").select("owner_id").eq("id", tripId).maybeSingle();
+  const { data: trip, error: tripErr } = await sc.from("trips").select("owner_id").eq("id", tripId).maybeSingle();
+  if (tripErr) throw readUnavailable("trips", tripErr);
   if (!trip) { sendError(res, "not_found", "Trip not found"); return; }
-  const { data: doc } = await sc.from("trip_documents").select("creator_id").eq("id", docId).eq("trip_id", tripId).maybeSingle();
+  const { data: doc, error: docErr } = await sc.from("trip_documents").select("creator_id").eq("id", docId).eq("trip_id", tripId).maybeSingle();
+  if (docErr) throw readUnavailable("trip_documents", docErr);
   if (!doc) { sendError(res, "not_found", "Document not found"); return; }
 
   const isOwner   = (trip as any).owner_id === user.id;
@@ -1905,6 +2439,10 @@ router.patch("/trips/:tripId/documents/:docId", async (req, res) => {
     .maybeSingle();
 
   if (error) { sendError(res, "db_error", error.message); return; }
+  // `.maybeSingle()` on an UPDATE that matched nothing gives `data: null` with
+  // `error: null`, and the route sent that straight out as a 200 whose body is
+  // literally `null` — a success answer for a document that was not updated.
+  if (!updated) { sendError(res, "not_found", "Document not found"); return; }
   res.json(updated);
 });
 
@@ -1920,17 +2458,25 @@ router.delete("/trips/:tripId/documents/:docId", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured"); return; }
 
-  const { data: trip } = await sc.from("trips").select("owner_id").eq("id", tripId).maybeSingle();
+  const { data: trip, error: tripErr } = await sc.from("trips").select("owner_id").eq("id", tripId).maybeSingle();
+  if (tripErr) throw readUnavailable("trips", tripErr);
   if (!trip) { sendError(res, "not_found", "Trip not found"); return; }
 
-  const { data: doc } = await sc.from("trip_documents").select("creator_id").eq("id", docId).eq("trip_id", tripId).maybeSingle();
+  const { data: doc, error: docErr } = await sc.from("trip_documents").select("creator_id").eq("id", docId).eq("trip_id", tripId).maybeSingle();
+  if (docErr) throw readUnavailable("trip_documents", docErr);
   if (!doc) { sendError(res, "not_found", "Document not found"); return; }
 
   const isOwner   = (trip as any).owner_id === user.id;
   const isCreator = (doc as any).creator_id === user.id;
   if (!isOwner && !isCreator) { sendError(res, "forbidden", "Cannot delete this document"); return; }
 
-  await sc.from("trip_documents").delete().eq("id", docId);
+  // A DELETE that matched no row is genuinely idempotent here — the row was just
+  // read and authorized two statements above — so a zero-row delete keeps its
+  // 204. A DELETE that FAILED is not idempotent and is not a 204: `.error` was
+  // unbound, so a refused or errored delete answered "deleted" and the client
+  // dropped the item from its list.
+  const { error: docDelErr } = await sc.from("trip_documents").delete().eq("id", docId);
+  if (docDelErr) { sendError(res, "db_error", docDelErr.message); return; }
   res.status(204).send();
 });
 
@@ -1950,7 +2496,8 @@ router.get("/trips/:tripId/notes", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured"); return; }
 
-  const { data: trip } = await sc.from("trips").select("owner_id").eq("id", tripId).maybeSingle();
+  const { data: trip, error: tripErr } = await sc.from("trips").select("owner_id").eq("id", tripId).maybeSingle();
+  if (tripErr) throw readUnavailable("trips", tripErr);
   if (!trip) { sendError(res, "not_found", "Trip not found"); return; }
   const membership = await requireTripMember(sc, tripId, user.id);
   if (!membership && (trip as any).owner_id !== user.id) { sendError(res, "not_member", "Not a trip member"); return; }
@@ -2018,9 +2565,11 @@ router.patch("/trips/:tripId/notes/:noteId", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured"); return; }
 
-  const { data: trip } = await sc.from("trips").select("owner_id").eq("id", tripId).maybeSingle();
+  const { data: trip, error: tripErr } = await sc.from("trips").select("owner_id").eq("id", tripId).maybeSingle();
+  if (tripErr) throw readUnavailable("trips", tripErr);
   if (!trip) { sendError(res, "not_found", "Trip not found"); return; }
-  const { data: note } = await sc.from("trip_notes").select("author_id").eq("id", noteId).eq("trip_id", tripId).maybeSingle();
+  const { data: note, error: noteErr } = await sc.from("trip_notes").select("author_id").eq("id", noteId).eq("trip_id", tripId).maybeSingle();
+  if (noteErr) throw readUnavailable("trip_notes", noteErr);
   if (!note) { sendError(res, "not_found", "Note not found"); return; }
 
   const isOwner  = (trip as any).owner_id === user.id;
@@ -2049,6 +2598,8 @@ router.patch("/trips/:tripId/notes/:noteId", async (req, res) => {
     .maybeSingle();
 
   if (error) { sendError(res, "db_error", error.message); return; }
+  // Same as the document PATCH above: a zero-row UPDATE answered 200 `null`.
+  if (!updated) { sendError(res, "not_found", "Note not found"); return; }
   res.json(updated);
 });
 
@@ -2064,16 +2615,24 @@ router.delete("/trips/:tripId/notes/:noteId", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured"); return; }
 
-  const { data: trip } = await sc.from("trips").select("owner_id").eq("id", tripId).maybeSingle();
+  const { data: trip, error: tripErr } = await sc.from("trips").select("owner_id").eq("id", tripId).maybeSingle();
+  if (tripErr) throw readUnavailable("trips", tripErr);
   if (!trip) { sendError(res, "not_found", "Trip not found"); return; }
-  const { data: note } = await sc.from("trip_notes").select("author_id").eq("id", noteId).eq("trip_id", tripId).maybeSingle();
+  const { data: note, error: noteErr } = await sc.from("trip_notes").select("author_id").eq("id", noteId).eq("trip_id", tripId).maybeSingle();
+  if (noteErr) throw readUnavailable("trip_notes", noteErr);
   if (!note) { sendError(res, "not_found", "Note not found"); return; }
 
   const isOwner  = (trip as any).owner_id === user.id;
   const isAuthor = (note as any).author_id === user.id;
   if (!isOwner && !isAuthor) { sendError(res, "forbidden", "Cannot delete this note"); return; }
 
-  await sc.from("trip_notes").delete().eq("id", noteId);
+  // A DELETE that matched no row is genuinely idempotent here — the row was just
+  // read and authorized two statements above — so a zero-row delete keeps its
+  // 204. A DELETE that FAILED is not idempotent and is not a 204: `.error` was
+  // unbound, so a refused or errored delete answered "deleted" and the client
+  // dropped the item from its list.
+  const { error: noteDelErr } = await sc.from("trip_notes").delete().eq("id", noteId);
+  if (noteDelErr) { sendError(res, "db_error", noteDelErr.message); return; }
   res.status(204).send();
 });
 
@@ -2134,15 +2693,25 @@ router.post("/trips/:tripId/saved-places", async (req, res) => {
   if (!parsed.success) { sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid body"); return; }
   const b = parsed.data;
 
-  // Duplicate prevention
+  // Duplicate prevention.
+  // supabase-js RESOLVES on a DB error, so an unbound `error` read an
+  // unreadable trip_saved_places as "not saved yet" and inserted a second copy
+  // of the same place for the same member — the 409 this block owes the client
+  // becomes a 201, and the trip's saved-places list grows a duplicate that only
+  // manual deletion removes.
   if (b.placeId) {
-    const { data: dup } = await sc
+    const { data: dup, error: dupErr } = await sc
       .from("trip_saved_places")
       .select("id")
       .eq("trip_id", tripId)
       .eq("user_id", user.id)
       .eq("place_id", b.placeId)
       .maybeSingle();
+    if (dupErr) {
+      req.log?.error({ err: dupErr, tripId, placeId: b.placeId }, "trip_saved_places duplicate check failed — refusing to save");
+      sendError(res, "db_error", dupErr.message);
+      return;
+    }
     if (dup) {
       res.status(409).json({ error: "duplicate", message: "This place is already saved to the trip" });
       return;
@@ -2171,16 +2740,24 @@ router.delete("/trips/:tripId/saved-places/:placeEntryId", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured"); return; }
 
-  const { data: trip } = await sc.from("trips").select("owner_id").eq("id", tripId).maybeSingle();
+  const { data: trip, error: tripErr } = await sc.from("trips").select("owner_id").eq("id", tripId).maybeSingle();
+  if (tripErr) throw readUnavailable("trips", tripErr);
   if (!trip) { sendError(res, "not_found", "Trip not found"); return; }
-  const { data: entry } = await sc.from("trip_saved_places").select("user_id").eq("id", placeEntryId).eq("trip_id", tripId).maybeSingle();
+  const { data: entry, error: entryErr } = await sc.from("trip_saved_places").select("user_id").eq("id", placeEntryId).eq("trip_id", tripId).maybeSingle();
+  if (entryErr) throw readUnavailable("trip_saved_places", entryErr);
   if (!entry) { sendError(res, "not_found", "Saved place not found"); return; }
 
   const isOwner   = (trip as any).owner_id === user.id;
   const isCreator = (entry as any).user_id === user.id;
   if (!isOwner && !isCreator) { sendError(res, "forbidden", "Cannot remove this saved place"); return; }
 
-  await sc.from("trip_saved_places").delete().eq("id", placeEntryId);
+  // A DELETE that matched no row is genuinely idempotent here — the row was just
+  // read and authorized two statements above — so a zero-row delete keeps its
+  // 204. A DELETE that FAILED is not idempotent and is not a 204: `.error` was
+  // unbound, so a refused or errored delete answered "deleted" and the client
+  // dropped the item from its list.
+  const { error: placeDelErr } = await sc.from("trip_saved_places").delete().eq("id", placeEntryId);
+  if (placeDelErr) { sendError(res, "db_error", placeDelErr.message); return; }
   res.status(204).send();
 });
 
@@ -2215,11 +2792,12 @@ router.get("/trips/:tripId/checklists", async (req, res) => {
   const listIds = (lists ?? []).map((l: any) => l.id as string);
   let itemMap: Record<string, any[]> = {};
   if (listIds.length > 0) {
-    const { data: items } = await sc
+    const { data: items, error: itemsErr } = await sc
       .from("trip_checklist_items")
       .select("id, checklist_id, label, is_done, assigned_to, due_date, sort_order")
       .in("checklist_id", listIds)
       .order("sort_order", { ascending: true });
+    if (itemsErr) throw readUnavailable("trip_checklist_items", itemsErr);
     for (const item of items ?? []) {
       const cid = (item as any).checklist_id as string;
       if (!itemMap[cid]) itemMap[cid] = [];
@@ -2309,17 +2887,25 @@ router.delete("/trips/:tripId/checklists/:checklistId", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured"); return; }
 
-  const { data: trip } = await sc.from("trips").select("owner_id").eq("id", tripId).maybeSingle();
+  const { data: trip, error: tripErr } = await sc.from("trips").select("owner_id").eq("id", tripId).maybeSingle();
+  if (tripErr) throw readUnavailable("trips", tripErr);
   if (!trip) { sendError(res, "not_found", "Trip not found"); return; }
-  const { data: list } = await sc.from("trip_checklists").select("created_by").eq("id", checklistId).eq("trip_id", tripId).maybeSingle();
+  const { data: list, error: listErr } = await sc.from("trip_checklists").select("created_by").eq("id", checklistId).eq("trip_id", tripId).maybeSingle();
+  if (listErr) throw readUnavailable("trip_checklists", listErr);
   if (!list) { sendError(res, "not_found", "Checklist not found"); return; }
 
   const isOwner   = (trip as any).owner_id === user.id;
   const isCreator = (list as any).created_by === user.id;
   if (!isOwner && !isCreator) { sendError(res, "forbidden", "Cannot delete this checklist"); return; }
 
-  await sc.from("trip_checklist_items").delete().eq("checklist_id", checklistId);
-  await sc.from("trip_checklists").delete().eq("id", checklistId);
+  // Two writes, neither bound. The dangerous ordering is items-then-list: if the
+  // items delete failed and the list delete succeeded, the items are ORPHANED
+  // (no checklist row to reach them by) and the caller was told 204. Refuse on
+  // the first failure so the list is still there to retry against.
+  const { error: itemsDelErr } = await sc.from("trip_checklist_items").delete().eq("checklist_id", checklistId);
+  if (itemsDelErr) { sendError(res, "db_error", itemsDelErr.message); return; }
+  const { error: listDelErr } = await sc.from("trip_checklists").delete().eq("id", checklistId);
+  if (listDelErr) { sendError(res, "db_error", listDelErr.message); return; }
   res.status(204).send();
 });
 
@@ -2338,7 +2924,8 @@ router.post("/trips/:tripId/checklists/:checklistId/items", async (req, res) => 
   const membership = await requireTripMember(sc, tripId, user.id);
   if (!membership) { sendError(res, "not_member", "Not a trip member"); return; }
 
-  const { data: list } = await sc.from("trip_checklists").select("id").eq("id", checklistId).eq("trip_id", tripId).maybeSingle();
+  const { data: list, error: listErr } = await sc.from("trip_checklists").select("id").eq("id", checklistId).eq("trip_id", tripId).maybeSingle();
+  if (listErr) throw readUnavailable("trip_checklists", listErr);
   if (!list) { sendError(res, "not_found", "Checklist not found"); return; }
 
   const ItemSchema = z.object({
@@ -2376,16 +2963,18 @@ router.delete("/trips/:tripId/checklists/:checklistId/items/:itemId", async (req
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured"); return; }
 
-  const { data: trip } = await sc.from("trips").select("owner_id").eq("id", tripId).maybeSingle();
+  const { data: trip, error: tripErr } = await sc.from("trips").select("owner_id").eq("id", tripId).maybeSingle();
+  if (tripErr) throw readUnavailable("trips", tripErr);
   if (!trip) { sendError(res, "not_found", "Trip not found"); return; }
 
-  const { data: item } = await sc
+  const { data: item, error: itemErr } = await sc
     .from("trip_checklist_items")
     .select("id, assigned_to")
     .eq("id", itemId)
     .eq("checklist_id", checklistId)
     .eq("trip_id", tripId)
     .maybeSingle();
+  if (itemErr) throw readUnavailable("trip_checklist_items", itemErr);
   if (!item) { sendError(res, "not_found", "Checklist item not found"); return; }
 
   const isOwner = (trip as any).owner_id === user.id;
@@ -2394,7 +2983,13 @@ router.delete("/trips/:tripId/checklists/:checklistId/items/:itemId", async (req
     sendError(res, "forbidden", "Not a trip member"); return;
   }
 
-  await sc.from("trip_checklist_items").delete().eq("id", itemId).eq("trip_id", tripId);
+  // A DELETE that matched no row is genuinely idempotent here — the row was just
+  // read and authorized two statements above — so a zero-row delete keeps its
+  // 204. A DELETE that FAILED is not idempotent and is not a 204: `.error` was
+  // unbound, so a refused or errored delete answered "deleted" and the client
+  // dropped the item from its list.
+  const { error: itemDelErr } = await sc.from("trip_checklist_items").delete().eq("id", itemId).eq("trip_id", tripId);
+  if (itemDelErr) { sendError(res, "db_error", itemDelErr.message); return; }
   res.status(204).send();
 });
 
@@ -2419,6 +3014,18 @@ router.patch("/trips/:tripId/checklists/:checklistId/items/:itemId", async (req,
   if (typeof req.body?.isDone === "boolean")   patch.is_done    = req.body.isDone;
   if (typeof req.body?.label  === "string")    patch.label      = req.body.label.slice(0, 300);
   if (typeof req.body?.sortOrder === "number") patch.sort_order = req.body.sortOrder;
+  // `assigned_to` and `due_date` were WRITE-ONCE: POST .../items accepts both
+  // and the list route returns both, but this PATCH accepted neither, so an
+  // item assigned to the wrong person or given the wrong date could only be
+  // corrected by deleting and recreating it (which loses its id and its place
+  // in the list). `null` clears the field, which is the only way to unassign.
+  if (req.body?.assignedTo === null)                  patch.assigned_to = null;
+  else if (typeof req.body?.assignedTo === "string") {
+    if (!UUID_RE.test(req.body.assignedTo)) { sendError(res, "invalid_payload", "assignedTo must be a UUID or null"); return; }
+    patch.assigned_to = req.body.assignedTo;
+  }
+  if (req.body?.dueDate === null)                     patch.due_date = null;
+  else if (typeof req.body?.dueDate === "string")     patch.due_date = req.body.dueDate;
 
   if (Object.keys(patch).length === 0) { sendError(res, "invalid_payload", "No fields to update"); return; }
 
@@ -2428,7 +3035,7 @@ router.patch("/trips/:tripId/checklists/:checklistId/items/:itemId", async (req,
     .eq("id", itemId)
     .eq("checklist_id", checklistId)
     .eq("trip_id", tripId)
-    .select("id, label, is_done, sort_order")
+    .select("id, label, is_done, assigned_to, due_date, sort_order")
     .maybeSingle();
 
   if (error) { sendError(res, "db_error", error.message); return; }
@@ -2511,17 +3118,24 @@ router.delete("/trips/:tripId/reminders/:reminderId", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured"); return; }
 
-  const { data: rem } = await sc
+  const { data: rem, error: remErr } = await sc
     .from("trip_reminders")
     .select("user_id")
     .eq("id", reminderId)
     .eq("trip_id", tripId)
     .maybeSingle();
+  if (remErr) throw readUnavailable("trip_reminders", remErr);
 
   if (!rem) { sendError(res, "not_found", "Reminder not found"); return; }
   if ((rem as any).user_id !== user.id) { sendError(res, "forbidden", "Can only delete your own reminders"); return; }
 
-  await sc.from("trip_reminders").delete().eq("id", reminderId);
+  // A DELETE that matched no row is genuinely idempotent here — the row was just
+  // read and authorized two statements above — so a zero-row delete keeps its
+  // 204. A DELETE that FAILED is not idempotent and is not a 204: `.error` was
+  // unbound, so a refused or errored delete answered "deleted" and the client
+  // dropped the item from its list.
+  const { error: remDelErr } = await sc.from("trip_reminders").delete().eq("id", reminderId);
+  if (remDelErr) { sendError(res, "db_error", remDelErr.message); return; }
   res.status(204).send();
 });
 
@@ -2540,7 +3154,8 @@ router.get("/trips/:tripId/activity", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured"); return; }
 
-  const { data: trip } = await sc.from("trips").select("owner_id").eq("id", tripId).maybeSingle();
+  const { data: trip, error: tripErr } = await sc.from("trips").select("owner_id").eq("id", tripId).maybeSingle();
+  if (tripErr) throw readUnavailable("trips", tripErr);
   if (!trip) { sendError(res, "not_found", "Trip not found"); return; }
 
   const isOwner = (trip as any).owner_id === user.id;
@@ -2586,7 +3201,12 @@ router.get("/trips/:tripId", async (req, res) => {
     .eq("id", tripId)
     .maybeSingle();
 
-  if (error || !trip) { sendError(res, "not_found", "Trip not found"); return; }
+  // `error || !trip` conflated two different facts and reported both as the
+  // same sentence: an unreadable `trips` told an unauthenticated deep-link
+  // visitor (and a MEMBER) that the trip does not exist. Absent is an answer;
+  // unreadable is not.
+  if (error) throw readUnavailable("trips", error);
+  if (!trip) { sendError(res, "not_found", "Trip not found"); return; }
 
   const t = trip as any;
 

@@ -10,9 +10,14 @@
  *   - Trip context only available if user is an accepted trip member
  *   - Circle context only available if user is an accepted circle member
  *   - Non-members get canShowRecommendation: false
+ *   - An UNREADABLE `profiles` row (a resolved PostgREST error, not an absent
+ *     row) gets canShowRecommendation: false and reason
+ *     "telegraph_settings_unavailable" — the opt-out defaults to ON, so a read
+ *     failure must not be allowed to look like consent.
  */
 
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { logger } from "../lib/logger.js";
 import type { IntentResult } from "./telegraphIntent.js";
 
 export interface TelegraphChatPrivacyVerdict {
@@ -146,8 +151,21 @@ export async function resolvePrivacyVerdict(
     }
   }
 
-  // Availability: only if user has enabled sharing
-  const { data: profile } = await client
+  // ── The user's own telegraph opt-out (FAIL-CLOSED on an unreadable read) ──
+  //
+  // `show_telegraph_*` are OPT-OUTS: the product default is on, so the test is
+  // `!== false` and an ABSENT column or row correctly means "enabled". That is
+  // right for a user who has never touched the setting, and it was wrong for a
+  // user who has: supabase-js RESOLVES on a database error, so a failed read
+  // arrives as `profile === null`, `undefined !== false` is true, and a user who
+  // set `show_telegraph_dm = false` had suggestions generated into their chat —
+  // and persisted, since routes/telegraphChat.ts inserts the shown cards.
+  //
+  // An opt-out we could not read is not an opt-out we may ignore. On a read
+  // error the verdict withholds, and it says so in `reason` with a value
+  // distinct from "telegraph_disabled": a caller (or a log reader) must be able
+  // to tell "this user turned it off" apart from "we could not find out".
+  const { data: profile, error: profileErr } = await client
     .from("profiles")
     .select("show_telegraph_dm, show_telegraph_trip, show_telegraph_circle")
     .eq("id", userId)
@@ -160,7 +178,14 @@ export async function resolvePrivacyVerdict(
         ? "show_telegraph_circle"
         : "show_telegraph_dm";
 
-  const telegraphEnabled = (profile as any)?.[settingKey] !== false;
+  if (profileErr) {
+    logger.error(
+      { err: profileErr, userId, threadId, threadType },
+      "telegraphChatSuggestions: could not read the viewer's show_telegraph_* opt-outs — " +
+        "suppressing suggestions rather than assuming consent",
+    );
+  }
+  const telegraphEnabled = !profileErr && (profile as any)?.[settingKey] !== false;
 
   // Non-members of trip/circle chats cannot see suggestions
   if (threadType === "trip" && !canUseTripContext) {
@@ -195,7 +220,11 @@ export async function resolvePrivacyVerdict(
     canUseCircleContext,
     canShowRecommendation: telegraphEnabled,
     canUseAvailability: false, // availability feature gated in future
-    reason: telegraphEnabled ? "ok" : "telegraph_disabled",
+    reason: profileErr
+      ? "telegraph_settings_unavailable"
+      : telegraphEnabled
+        ? "ok"
+        : "telegraph_disabled",
     tripId,
     circleOwnerId,
     tripDestination,
@@ -377,6 +406,19 @@ function buildSecondaryCard(
 /**
  * Check rate limits: max 3 suggestions shown per thread per hour.
  * Returns true if a new suggestion can be shown.
+ *
+ * ── AN UNCOUNTABLE LIMIT IS A REACHED LIMIT ─────────────────────────────────
+ * supabase-js RESOLVES on a DB error, so `const { count } = await …` produced
+ * `count: undefined` — coerced by `?? 0` to ZERO — for both "no suggestions in
+ * the last hour" and "telegraph_chat_suggestions could not be read". Zero is
+ * the maximally permissive count: the cap could never be reached while the
+ * table was unreadable, and every detected intent inserted another suggestion
+ * row into that same table.
+ *
+ * An uncountable cap therefore answers "not within limit". The whole effect is
+ * that ONE suggestion card is not shown on ONE message — the thread, its
+ * messages and every other part of the response are untouched (shape 2 of
+ * lib/exclusionSet.ts). Nothing is disclosed, denied or written.
  */
 export async function checkRateLimit(
   client: SupabaseClient,
@@ -384,18 +426,35 @@ export async function checkRateLimit(
   threadId: string,
 ): Promise<boolean> {
   const cutoff = new Date(Date.now() - 60 * 60 * 1000).toISOString();
-  const { count } = await client
+  const { count, error } = await client
     .from("telegraph_chat_suggestions")
     .select("id", { count: "exact", head: true })
     .eq("user_id", userId)
     .eq("thread_id", threadId)
     .gte("created_at", cutoff);
+  if (error) return false; // cap unknown — do not show
   return (count ?? 0) < 3;
 }
 
 /**
  * Check cooldown: has this intent already been shown/dismissed in the last
  * 30 minutes for this (user, thread)?  Prevents instant re-surfacing.
+ *
+ * Returns true when it is safe to show. TWO ways this used to clear a cooldown
+ * that was actually in force, both of them the same defect wearing different
+ * clothes:
+ *
+ *   1. A DB error. supabase-js RESOLVES rather than throwing, so the failed
+ *      read arrived as `{ data: null, error }` and `!data` said "no cooldown".
+ *   2. `.maybeSingle()` RAISES on more than one row. Showing the same intent
+ *      twice inside the window — which is exactly what a cooldown bug looks
+ *      like — produced two rows, maybeSingle turned that into an error, and
+ *      case 1 then cleared the cooldown. The STRONGEST evidence of a cooldown
+ *      was read as its absence. `checkCategoryDeclineCooldown` below already
+ *      documents this trap and uses `.limit(1)`; so does this now.
+ *
+ * An unknown cooldown answers "in cooldown" — one suggestion card is withheld
+ * from one response and nothing else changes.
  */
 export async function checkCooldown(
   client: SupabaseClient,
@@ -404,15 +463,16 @@ export async function checkCooldown(
   intentType: string,
 ): Promise<boolean> {
   const cutoff = new Date(Date.now() - 30 * 60 * 1000).toISOString();
-  const { data } = await client
+  const { data, error } = await client
     .from("telegraph_chat_suggestions")
     .select("id, status")
     .eq("user_id", userId)
     .eq("thread_id", threadId)
     .eq("intent_type", intentType)
     .gte("created_at", cutoff)
-    .maybeSingle();
-  return !data; // true = no cooldown, safe to show
+    .limit(1);
+  if (error) return false; // cooldown state unknown — do not show
+  return !data || (data as any[]).length === 0; // true = no cooldown, safe to show
 }
 
 /**
@@ -429,7 +489,7 @@ export async function checkCategoryDeclineCooldown(
   category: string,
 ): Promise<boolean> {
   const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-  const { data } = await client
+  const { data, error } = await client
     .from("user_preference_events")
     .select("user_id")
     .eq("user_id", userId)
@@ -437,5 +497,12 @@ export async function checkCategoryDeclineCooldown(
     .eq("signal", "dismiss")
     .gte("created_at", cutoff)
     .limit(1);
+  // The dismissal IS the user's stated preference, and this read is the only
+  // place it is honoured. supabase-js RESOLVES on a DB error, so a dropped
+  // `.error` made "user_preference_events could not be read" identical to "the
+  // user has not declined anything" — and re-surfaced a category they
+  // explicitly dismissed. An unreadable preference resolves the
+  // privacy-preserving way: assume the decline stands and suppress the card.
+  if (error) return false; // decline history unknown — respect the stricter answer
   return !data || (data as any[]).length === 0; // true = no recent decline, safe to show
 }

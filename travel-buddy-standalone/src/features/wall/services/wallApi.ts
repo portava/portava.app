@@ -8,6 +8,7 @@
  *   DELETE /api/wall/session-intent
  *   POST   /api/wall/impression       { objectId, objectType, session? }
  *   POST   /api/wall/action           { objectId, objectType, action, session? }
+ *   POST   /api/wall/revalidate       { objectIds }
  *
  * FAIL-SOFT BY DESIGN (spec §34 / §40). The Wall is flag-gated OFF server-side,
  * so `feature_disabled` and "not configured / not authenticated" are NORMAL,
@@ -298,6 +299,59 @@ export async function sendImpression(target: WallMutationTarget): Promise<void> 
     objectType: target.objectType,
     ...(target.session ? { session: target.session } : {}),
   });
+}
+
+// ── POST /wall/revalidate (spec §31 revalidate eligibility, §37 takedowns) ───
+
+/**
+ * Ask the server which of these cached objects the viewer may STILL be shown.
+ *
+ * The answer is an ALLOWLIST, and the failure modes are deliberately
+ * indistinguishable from "nothing is eligible" only where that is the safe
+ * reading. Three distinct outcomes:
+ *
+ *   { ok: true,  eligibleObjectIds }  — authoritative. Anything absent from the
+ *                                       list has been taken down, deleted,
+ *                                       blocked, hidden or narrowed out, and the
+ *                                       caller MUST drop it.
+ *   { ok: false }                     — the server was not reached (offline, or
+ *                                       the app is not configured). NOT a
+ *                                       verdict: the caller leaves the cache
+ *                                       alone and retries later, because
+ *                                       deleting a whole cached feed on a flaky
+ *                                       connection would destroy the offline
+ *                                       behaviour §31 requires.
+ *
+ * The distinction matters: an empty `eligibleObjectIds` from a REACHED server is
+ * a real "all of it is gone", and is honoured.
+ */
+export async function revalidateCachedObjects(
+  objectIds: string[],
+): Promise<{ ok: true; eligibleObjectIds: string[] } | { ok: false; error: string }> {
+  const ids = [...new Set(objectIds)].filter((id) => typeof id === 'string' && id.length > 0);
+  if (ids.length === 0) return { ok: true, eligibleObjectIds: [] };
+  if (!isSupabaseConfigured || !apiBase()) return { ok: false, error: 'not_configured' };
+  const token = await freshToken();
+  if (!token) return { ok: false, error: 'not_authenticated' };
+  try {
+    const res = await fetch(`${apiBase()}/api/wall/revalidate`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ objectIds: ids.slice(0, 50) }),
+    });
+    if (!res.ok) {
+      const code = await readErrorCode(res);
+      // The Wall being switched off is not a moderation verdict about the cache.
+      return { ok: false, error: code };
+    }
+    const body = (await res.json()) as { eligibleObjectIds?: unknown };
+    const eligible = Array.isArray(body?.eligibleObjectIds)
+      ? body.eligibleObjectIds.filter((x): x is string => typeof x === 'string')
+      : [];
+    return { ok: true, eligibleObjectIds: eligible };
+  } catch (err: any) {
+    return { ok: false, error: err?.message ?? 'Network error' };
+  }
 }
 
 /** Record a user action on an object. Carries ONLY ids + verb (never text). */

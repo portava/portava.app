@@ -123,13 +123,39 @@ export async function getVerifiedPlaces(
   }
 }
 
-/** Is this coordinate within ~200 m of a known private stay? */
-export async function isNearPrivateStay(
+/**
+ * Is this coordinate within ~200 m of a known private stay?
+ *
+ * ── WHY THE THIRD ANSWER EXISTS ─────────────────────────────────────────────
+ * The one caller is PulseGeoTagService's hotel blur: `true` caps the stored
+ * `location_visibility` at `neighborhood`, so a post made from where someone
+ * SLEEPS is not published at venue precision. supabase-js RESOLVES on a
+ * database error, so `if (error || !data) return false` answered "not near a
+ * private stay" for a read that never happened — and `false` is the answer that
+ * SKIPS the blur. An unreadable `location_sessions` therefore published a
+ * hotel-precision pin, silently, exactly for the users whose accommodation the
+ * table would have named.
+ *
+ * "We could not check" is not "we checked and they are not there", so the
+ * result is a three-state union rather than a boolean. `unknown` is a distinct
+ * value precisely so a caller cannot spend it as `false` by writing `?? false`
+ * — the caller decides, in the open, what an unperformed check means for it,
+ * and for the blur that is: BLUR ANYWAY.
+ *
+ * `near: false` is still a real answer: the read succeeded and found no live
+ * private-stay session.
+ */
+export type PrivateStayProximity =
+  | { near: true }
+  | { near: false }
+  | { near: "unknown"; reason: string };
+
+export async function checkNearPrivateStay(
   db: SupabaseClient,
   userId: string,
   lat: number,
   lng: number,
-): Promise<boolean> {
+): Promise<PrivateStayProximity> {
   try {
     const { data, error } = await db
       .from("location_sessions")
@@ -139,15 +165,42 @@ export async function isNearPrivateStay(
       .is("ended_at", null)
       .limit(10);
 
-    if (error || !data) return false;
+    if (error) {
+      return {
+        near: "unknown",
+        reason: String((error as any)?.message ?? (error as any)?.code ?? "db_error"),
+      };
+    }
+    if (!Array.isArray(data)) {
+      return { near: "unknown", reason: "location_sessions read returned no rows array" };
+    }
 
-    return (data as any[]).some((row) => {
+    const near = (data as any[]).some((row) => {
       if (!row.lat || !row.lng) return false;
       return haversineKm(lat, lng, row.lat, row.lng) * 1000 < 200;
     });
-  } catch {
-    return false;
+    return near ? { near: true } : { near: false };
+  } catch (err) {
+    // Transport-level rejection only; PostgREST failures arrive via `error`.
+    return { near: "unknown", reason: String((err as any)?.message ?? err) };
   }
+}
+
+/**
+ * Boolean form, for callers that have no way to represent "unknown".
+ *
+ * It resolves `unknown` to TRUE — the blur-applying direction — so the boolean
+ * is safe by construction. Callers that can distinguish should use
+ * `checkNearPrivateStay` and log the reason.
+ */
+export async function isNearPrivateStay(
+  db: SupabaseClient,
+  userId: string,
+  lat: number,
+  lng: number,
+): Promise<boolean> {
+  const result = await checkNearPrivateStay(db, userId, lat, lng);
+  return result.near !== false;
 }
 
 // ── Mappers ───────────────────────────────────────────────────────────────────

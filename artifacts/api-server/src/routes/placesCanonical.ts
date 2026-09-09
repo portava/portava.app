@@ -18,22 +18,10 @@ import { requireUser, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { isFlagEnabled } from "../lib/featureFlags.js";
 import { resolveExternalPlace, toCanonicalPlace, type ExternalPlaceRecord } from "../lib/places/placeResolve.js";
+import { requireAdmin } from "../lib/requireAdmin.js";
 
 const router = Router();
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-async function requireAdmin(req: any, res: any): Promise<{ userId: string; sc: any } | null> {
-  const auth = await requireUser(req, res);
-  if (!auth) return null;
-  const sc = getServiceClient();
-  if (!sc) { sendError(res, "server_not_configured"); return null; }
-  const { data } = await sc.from("profiles").select("role").eq("id", auth.user.id).maybeSingle();
-  if (!data || (data as any).role !== "admin") {
-    res.status(403).json({ error: "forbidden", message: "Admin role required" });
-    return null;
-  }
-  return { userId: auth.user.id, sc };
-}
 
 /** Load a place + every reference in its merge group (self + merged-in rows). */
 async function loadGroup(sc: any, survivorId: string): Promise<{ place: any; refs: any[] } | null> {

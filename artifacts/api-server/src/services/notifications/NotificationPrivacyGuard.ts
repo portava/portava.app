@@ -115,16 +115,32 @@ export class NotificationPrivacyGuard {
     return { title: safeTitle, body: safeBody, blocked: false, privacyLevel };
   }
 
+  /**
+   * Every predicate in this guard answers "should this notification be
+   * suppressed", and each one must return the SUPPRESSING value when it cannot
+   * tell. supabase-js resolves on a database error rather than throwing, so
+   * `data` is null both when the user has no preference row and when the table
+   * could not be read -- and the second case used to mean "not ghost", sending
+   * a location-bearing notification about someone who had deliberately hidden
+   * their location, precisely while the database was unhealthy.
+   *
+   * A suppressed notification is recoverable; a leaked location is not.
+   */
   private async isUserInGhostMode(userId: string): Promise<boolean> {
     try {
-      const { data } = await this.db
+      const { data, error } = await this.db
         .from('location_preferences')
         .select('location_mode')
         .eq('user_id', userId)
         .maybeSingle();
+      if (error) {
+        logger.error({ err: error, userId }, 'PrivacyGuard: ghost-mode read failed; treating as GHOST and suppressing');
+        return true;
+      }
       return (data as any)?.location_mode === 'ghost';
-    } catch {
-      return false;
+    } catch (err) {
+      logger.error({ err, userId }, 'PrivacyGuard: ghost-mode read threw; treating as GHOST and suppressing');
+      return true;
     }
   }
 
@@ -139,22 +155,32 @@ export class NotificationPrivacyGuard {
       // No row = removed/never member; "removed" role if that exists
       if (!data) return true;
       return (data as any).role === 'removed';
-    } catch {
-      return false;
+    } catch (err) {
+      // A throw here previously returned false -- "not removed" -- and delivered
+      // trip updates to someone who may have been removed from the trip. The
+      // resolved-error path above already yields true via `if (!data)`; this
+      // makes the thrown path agree with it instead of contradicting it.
+      logger.error({ err, userId, tripId }, 'PrivacyGuard: trip-member read threw; treating as REMOVED and suppressing');
+      return true;
     }
   }
 
   private async isTripMemberPending(userId: string, tripId: string): Promise<boolean> {
     try {
-      const { data } = await this.db
+      const { data, error } = await this.db
         .from('trip_members')
         .select('role')
         .eq('user_id', userId)
         .eq('trip_id', tripId)
         .maybeSingle();
+      if (error) {
+        logger.error({ err: error, userId, tripId }, 'PrivacyGuard: pending-member read failed; treating as PENDING and suppressing');
+        return true;
+      }
       return (data as any)?.role === 'invited';
-    } catch {
-      return false;
+    } catch (err) {
+      logger.error({ err, userId, tripId }, 'PrivacyGuard: pending-member read threw; treating as PENDING and suppressing');
+      return true;
     }
   }
 }

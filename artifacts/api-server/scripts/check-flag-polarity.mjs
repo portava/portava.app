@@ -243,6 +243,92 @@ const CLASSIFIED = [
       'opposite call from disable_signups, which sits two lines away in routes/auth.ts and IS a stop. This is ' +
       'the entry that justifies the whole file: no name-pattern rule would ever have looked at this flag.',
   },
+
+  // ── The Rent-a-Buddy rollout flags. ────────────────────────────────────────
+  //
+  // These seven were carried as a `covers` list on a DIRECT_READS 'var' entry
+  // until 2026-09-08, because routes/rentABuddyRollout.ts read them all through
+  // one local getFlag(sc, flag) helper and this check cannot follow a flag name
+  // through a parameter. A `covers` list WAIVES the polarity rule: it says "a
+  // human read these at their call sites once", and it kept saying so after the
+  // call sites changed. It was hiding a real defect — all three *_MODE
+  // restrictions were read with CAPABILITY polarity, so one unreadable
+  // feature_flags row disengaged admin-only, MVP and beta-only mode together.
+  // The helper is gone (routes/rentABuddyRollout.ts now names every flag as a
+  // literal at its read site), so each of these is CLASSIFIED with the kind of
+  // the reader it actually goes through, and the polarity rule VERIFIES rather
+  // than waives. Line numbers below were read off the file, not carried over.
+  {
+    flag: 'RENT_BUDDY_ADMIN_ONLY_MODE',
+    kind: 'STOP',
+    reason:
+      'LAUNCH-PHASE RESTRICTION, READ AS A STOP. `true` narrows the whole Rent-a-Buddy surface to admins. ' +
+      'Read through isKillSwitchEngaged at routes/rentABuddyRollout.ts:247, so an unreadable row ENGAGES the ' +
+      'restriction and non-admins are refused. This is the OPPOSITE call from invite_only_beta above, which ' +
+      'is CLASSIFIED CAPABILITY on the reasoning that opening signup on a failed read is a rollout decision ' +
+      'rather than an outage. The difference is what the two admit: signup admits a row, this admits a ' +
+      'stranger to an in-person meeting with another stranger, and the surface it guards is off by declared ' +
+      'default anyway (src/migrations/2210_rent_buddy_default_off.sql), so nobody is served by the ' +
+      'restriction lifting itself. Before 82f603cf all three RENT_BUDDY_*_MODE flags were read with ' +
+      'capability polarity and disengaged together on one failed feature_flags read.',
+  },
+  {
+    flag: 'RENT_BUDDY_MVP_MODE',
+    kind: 'STOP',
+    reason:
+      'RESTRICTION. `true` narrows Rent-a-Buddy to the MVP category whitelist (rentABuddyRollout.ts:312) and ' +
+      'additionally requires ID verification of the BOOKING TRAVELLER (:359-:375). Read through ' +
+      'isKillSwitchEngaged at :311, so an unreadable row keeps the narrowing in place. False-on-error would ' +
+      'open every category AND drop the verification requirement in one step — the widest single fail-open ' +
+      'in this file, and it also silently disarms the three gates below, each of which is only consulted ' +
+      'while MVP mode is engaged.',
+  },
+  {
+    flag: 'RENT_BUDDY_BETA_ONLY_MODE',
+    kind: 'STOP',
+    reason:
+      'RESTRICTION. `true` requires an active rent_buddy_beta_access row for every non-read action ' +
+      '(rentABuddyRollout.ts:487-:505). Read through isKillSwitchEngaged, so an unreadable row keeps beta ' +
+      'gating engaged; the beta-access lookup that follows denies on a null row, so the two agree in the ' +
+      'same direction rather than one undoing the other.',
+  },
+  {
+    flag: 'RENT_BUDDY_GROUP_BOOKINGS_ENABLED',
+    kind: 'CAPABILITY',
+    reason:
+      'Ordinary capability gate, consulted only while MVP mode is engaged: `true` re-opens the group ' +
+      'bookings (category "group", or groupSize > 4) that MVP mode otherwise refuses with 403 ' +
+      'group_bookings_unavailable. Read through isFlagEnabled at rentABuddyRollout.ts:323, so an unreadable ' +
+      'row leaves group bookings shut — the safe direction. Listed despite the _ENABLED suffix because ' +
+      'SCREAMING_CASE deliberately gets no convention in this file.',
+  },
+  {
+    flag: 'RENT_BUDDY_PACKAGES_ENABLED',
+    kind: 'CAPABILITY',
+    reason:
+      'Capability gate for action:"package-book" while MVP mode is engaged (rentABuddyRollout.ts:336); ' +
+      'false-on-error refuses the package booking with 403 packages_unavailable, so isFlagEnabled is the ' +
+      'correct reader.',
+  },
+  {
+    flag: 'RENT_BUDDY_OFFERS_ENABLED',
+    kind: 'CAPABILITY',
+    reason:
+      'Capability gate for action:"offer-accept" while MVP mode is engaged (rentABuddyRollout.ts:349); ' +
+      'false-on-error refuses the offer acceptance with 403 offers_unavailable, so isFlagEnabled is the ' +
+      'correct reader.',
+  },
+  {
+    flag: 'RENT_BUDDY_NIGHTLIFE_ENABLED',
+    kind: 'CAPABILITY',
+    reason:
+      'Capability gate for the nightlife category, the highest-risk one in the product. False-on-error ' +
+      'refuses nightlife (403 nightlife_disabled at rentABuddyRollout.ts:381-:390), which is the safe ' +
+      'direction, so isFlagEnabled is correct. Note it is ORed against the ' +
+      'rent_buddy_global_controls.nightlife_paused kill switch, which lives in a different table and, as of ' +
+      '82f603cf, engages when that row is unreadable — so nightlife is refused whether the flag row or the ' +
+      'controls row is the one that cannot be read.',
+  },
   {
     flag: 'rent_buddy_allow_bookings_without_kyc',
     kind: 'CAPABILITY',
@@ -444,6 +530,17 @@ const CLASSIFIED = [
       'inert no-op. The store exists regardless (migration 2279); this gates only the writer. Nothing client-facing; no cash.',
   },
   {
+    flag: 'intel_live_scope_promotion_enabled',
+    kind: 'CAPABILITY',
+    reason:
+      '`true` lets lib/intelLiveScopePromotion.ts WRITE intel_live_promoted_scopes (the IG-09 per-scope Live ' +
+      'allowlist) through the 2430 service functions: an operator-initiated promote/withdraw, and the expiry ' +
+      'sweep the intelPromotionScheduler tick runs. False-on-error is correct and is the design: every writer ' +
+      'returns {skipped:true, reason:"disabled"} before any RPC, the allowlist is untouched, and the live read ' +
+      'path answers exactly as before 2430. It NEVER promotes a scope by itself — which scope goes live is a ' +
+      'human decision (2179 header, lib/intelLiveScope). Seeded FALSE by 2430.',
+  },
+  {
     flag: 'intel_calibration_report',
     kind: 'CAPABILITY',
     reason:
@@ -606,6 +703,13 @@ const INERT_SEEDED_FLAGS = [
   //
   // R7 now fails on this shape (FALSE INERT DECLARATION), so the six cannot
   // come back, and no seventh can be added.
+  // NOTE: layover_safe_return_status_enabled was declared inert here with
+  // disposition `write-reader`, blocked on migration 2741. 2741 was applied to
+  // production on 2026-09-08 (20260908133347) and POST /return-now was wired,
+  // so the flag now HAS a reader and the declaration became false. R7 —- an
+  // inert declaration must still be TRUE — turned red and forced this deletion,
+  // which is the rule doing exactly what it was written for. The flag remains
+  // seeded FALSE; having a reader is not the same as being on.
   {
     flag: 'MEDIA_GRID_RANKING_ENABLED', seededIn: '2038_media_admin_flags.sql:25', kind: 'CAPABILITY',
     disposition: 'owner-decision',
@@ -945,15 +1049,28 @@ const SHADOW_READERS = [
     file: 'routes/safeReturn.ts',
     fn: 'isFlagEnabled',
     reason:
-      'Shadow. `if (!db) return false`, try/catch returns false. Fails closed. Verified by hand at c89f09a77: ' +
-      'reads only safe_return_* CAPABILITY flags.',
+      'Shadow, and NO LONGER A BOOLEAN. It returns a THREE-STATE FlagState — "on" / "off" / "unknown" — and ' +
+      'returns "unknown" for a missing client, a returned error object and a thrown query alike; only a row ' +
+      'it actually read produces "on" or "off". The prose here said "Fails closed" until 2026-09-08, which ' +
+      'was the description of the previous shape and was wrong about this one in the direction that matters: ' +
+      'a boolean false collapses "the flag is off" into "the flag could not be read", and this route answered ' +
+      'the second with a 404 feature_disabled — telling someone walking home that Safe Return does not exist ' +
+      'for them because a table was unreadable. The third state is what lets sendFlagUnknown answer 503 and ' +
+      'retryable instead. Reads only safe_return_* CAPABILITY flags (verified by hand at c89f09a77; the ' +
+      'reader shape re-read at 6639d347).',
   },
   {
     file: 'lib/safeReturnScheduler.ts',
     fn: 'isFlagEnabled',
     reason:
-      'Shadow. Destructures `data` only; `(data as any)?.enabled === true`, catch returns false. Fails closed. ' +
-      'Verified by hand at c89f09a77: reads only safe_return_* CAPABILITY flags.',
+      'Shadow, and NO LONGER A BOOLEAN. Same three-state FlagState as routes/safeReturn.ts above: a returned ' +
+      'error and a thrown query each yield "unknown", both logged at ERROR, and only a row actually read ' +
+      'yields "on" or "off". The prose here said "Fails closed" until 2026-09-08 and described the previous ' +
+      'shape. The distinction is load-bearing HERE IN THE OPPOSITE DIRECTION from the route: this is the ' +
+      'missed-check-in escalation loop, and standing it down because a flag row could not be read would ' +
+      'silently switch off the escalation for everyone. On "unknown" the scheduler does NOT stand down — ' +
+      'per-session consent still gates every action it takes. Reads only safe_return_* CAPABILITY flags ' +
+      '(verified by hand at c89f09a77; the reader shape re-read at 6639d347).',
   },
   {
     file: 'lib/accountDeletionScheduler.ts',
@@ -1032,6 +1149,21 @@ const UNRESOLVABLE = [
 // ─────────────────────────────────────────────────────────────────────────────
 const V = 'verified by hand at c89f09a77';
 const DIRECT_READS = [
+  // ── The capability contract's own four-state flag read ───────────────────
+  {
+    file: 'lib/capability/schemaCapability.ts',
+    shape: 'var',
+    covers: ['media_canonical_enabled', 'map_trip_projection_read_enabled'],
+    reason:
+      'readFlagState() — the capability contract reads feature_flags through a flag name passed in by ' +
+      'the caller, so no literal is resolvable at this site. Fail-closed by construction and verified by ' +
+      'hand: off, ABSENT and unreadable all resolve to enabled:false, which is the whole point of a ' +
+      'four-state read (lib/capability/capabilityContract.test.ts pins each of the four). `covers` is the ' +
+      'machine-checked list of every flag that reaches feature_flags through here, and it is what stops ' +
+      'those flags being reported seeded-but-never-read: they ARE read, through this one site. Add a flag ' +
+      'here when you add it to CAPABILITIES in lib/capability/registry.ts.',
+  },
+
   // ── Reads whose failure direction is genuinely fail-closed ───────────────
   { file: 'compass/CompassFallbackFeedBuilder.ts', flag: 'COMPASS_FALLBACK_MODE_ENABLED', reason: `Read directly, error branch ${V}: try/catch → false. Fail-closed.` },
   { file: 'lib/creatorActivityScoreScheduler.ts',  flag: 'ACTIVITY_DISCOVERY_BOOST_ENABLED', reason: `Read directly, error branch ${V}: catch → false, with an inline comment stating the job is skipped rather than run on a degraded connection. Fail-closed.` },
@@ -1116,9 +1248,34 @@ const DIRECT_READS = [
   },
 
   // ── Bulk reads: no resolvable flag name at all ────────────────────────────
-  { file: 'compass/flags.ts',                        shape: 'bulk', reason: `Wildcard \`.like("flag", "COMPASS_%")\` — no flag-name literal exists to inventory. ${V}: catch → {}, all Compass flags read as undefined/falsy. Fail-closed.` },
-  { file: 'compass/CompassPipeline.ts',              shape: 'bulk', reason: `Wildcard \`.like("flag", "COMPASS_%")\`. ${V}: catch → {} with a warning log, degrading to all-defaults. Fail-closed.` },
-  { file: 'compass/CompassFrontLoadEngine.ts',       shape: 'bulk', reason: `Wildcard \`.like("flag", "COMPASS_%")\`. ${V}: catch is non-fatal and \`flags\` stays {} from its initializer. Fail-closed.` },
+  // THE COMPASS BULK READ WAS THREE COPIES, AND "FAIL-CLOSED" WAS WRONG FOR ALL
+  // THREE. Until 2026-09-08 CompassPipeline and CompassFrontLoadEngine each
+  // carried their own `.like("flag", "COMPASS_%")` with its own dead try/catch,
+  // and each of the three entries here said the same reassuring thing: catch →
+  // {}, fail-closed. That is true of a CAPABILITY name and false of a STOP.
+  // COMPASS_<TYPE>_SAFETY_BLOCK is a STOP — CompassSafetyFilter rule 15 reads it
+  // out of that very map, in the normal feed and again through getFlags in
+  // CompassFallbackFeedBuilder — so an empty map DISENGAGED the emergency switch
+  // on exactly the failure an operator reaches for it during. The three loaders
+  // did not agree by design; they coincided, and nothing made them agree.
+  //
+  // The other two entries are struck because the reads are gone: both files now
+  // call fetchCompassFlags here. No new entry was needed for the survivor — it
+  // was already declared, which is why the guard reported two stale entries and
+  // not three.
+  { file: 'compass/flags.ts', shape: 'bulk',
+    reason: `Wildcard \`.like("flag", "COMPASS_%")\` — no flag-name literal exists to inventory. THE ONLY ` +
+      `COMPASS_% read in the tree since 2026-09-08: CompassPipeline and CompassFrontLoadEngine had their own ` +
+      `copies and now call \`fetchCompassFlags\` here. ${V}: \`.error\` IS observed (it was not before), and ` +
+      `the answer is polarity-aware rather than uniformly "off". CAPABILITY names stay absent/falsy — ` +
+      `fail-closed. COMPASS_<TYPE>_SAFETY_BLOCK is a STOP, and an empty map disengaged it on exactly the ` +
+      `failure an operator reaches for it during, so a failed read returns \`FAILSAFE_COMPASS_FLAGS\` with ` +
+      `every _SAFETY_BLOCK ENGAGED — the whole CompassItemType vocabulary, tsc-enforced. Launch-control flags ` +
+      `are deliberately NOT engaged (see the module header). A failed load is never cached. A THROWN read ` +
+      `keeps the empty map: measured against supabase-js 2.108.2, a network failure RESOLVES ` +
+      `(\`{ error: { message: "TypeError: fetch failed" }, status: 0 }\`), so a catch here means a non-builder ` +
+      `client — a wiring bug — not an unhealthy database, and blanking every content type for a wiring bug ` +
+      `would hide it behind an empty feed.` },
   { file: 'services/ranking/DiscoveryRankingService.ts', shape: 'bulk', reason: `\`.in("flag", [...])\` over five SCREAMING_CASE ranking boosts, each individually present in CLASSIFIED. ${V}: catch → {}, boosts off. Fail-closed.` },
   { file: 'services/ranking/MediaFeedRankingService.ts', shape: 'bulk', reason: `\`.in("flag", [...])\` over eight SCREAMING_CASE media ranking flags, each individually present in CLASSIFIED. ${V}: a \`defaults\` object of all-false is returned on failure. Fail-closed.` },
   { file: 'routes/adminRankingConfig.ts',            shape: 'bulk', reason: `Admin listing of ranking flags for display. ${V}: not a gate.` },
@@ -1129,25 +1286,6 @@ const DIRECT_READS = [
   { file: 'routes/admin.ts',              shape: 'management', reason: `Admin dashboard listing all flags for display (select flag/enabled/description/updated_at, no filter). Not a gate — it reports flag state. ${V}.` },
   { file: 'routes/adminCompass.ts',       shape: 'management', reason: `Admin upsert of Compass flags by variable. A write. ${V}.` },
   { file: 'routes/circle.ts',             shape: 'management', reason: `POST /admin/circle/kill-switch — the OPERATOR'S CONTROL SURFACE for find_your_circle_disabled. It upserts the stop; it does not read it to gate. Fails LOUDLY (db_error) on write failure, which is correct: an operator flipping a stop must learn if it did not take. ${V}.` },
-  { file: 'routes/rentABuddyRollout.ts',  shape: 'var',
-    covers: [
-      'RENT_BUDDY_MVP_MODE',
-      // Added 2026-08-12. These six were ALWAYS read through this same helper —
-      // getFlag(sc, "<literal>") at :171, :245, :258, :271, :304 and :410, each
-      // gating a 403 — but they were never listed here because the seed scanner
-      // could not see them being seeded (0090:197-203, behind a semicolon in a
-      // description) and so R6 never asked. Fixing the matcher surfaced them as
-      // "seeded but never read", which was wrong in the informative direction:
-      // they are read, by a helper this check cannot follow, which is exactly
-      // what a `covers` list is for.
-      'RENT_BUDDY_ADMIN_ONLY_MODE',       // :171  admin-only rollout gate
-      'RENT_BUDDY_BETA_ONLY_MODE',        // :410  beta-only rollout gate
-      'RENT_BUDDY_GROUP_BOOKINGS_ENABLED',// :245  403 group_bookings_unavailable
-      'RENT_BUDDY_PACKAGES_ENABLED',      // :258  403 packages_unavailable
-      'RENT_BUDDY_OFFERS_ENABLED',        // :271  403 offers_unavailable
-      'RENT_BUDDY_NIGHTLIFE_ENABLED',     // :304  403 when off
-    ],
-    reason: `Local getFlag(sc, flag) helper reading rollout flags by parameter. ${V}: no try/catch, \`!!data?.enabled\`; reads only rent_buddy_* CAPABILITY flags from admin rollout routes. Every name in \`covers\` was verified at its call site by the 2026-08-12 census (docs/ops/flag-disposition.md), which read each one in context rather than trusting the string match.` },
   // notifications.ts and admin.ts (safe-return) previously wrote flags via a raw
   // `.update({enabled}).eq("flag", <var>)`; audit FLAG-1/2 moved both onto the
   // audited toggle_feature_flag_with_audit RPC, so those var-shaped direct
@@ -1318,6 +1456,35 @@ const CONST_DECL = /(?:const|let)\s+([A-Za-z_$][\w$]*)\s*(?::[^=\n]+)?=\s*(['"`]
  * problem in prose. A check that cannot tell code from commentary about code
  * will be ignored, and an ignored check enforces nothing.
  */
+/**
+ * Replace the CONTENTS of string literals with spaces, keeping the quotes and
+ * the file's length and line structure. Used only where the question is "is this
+ * a definition", which a string can never be.
+ */
+function maskStringContents(src) {
+  let out = '';
+  let i = 0;
+  while (i < src.length) {
+    const c = src[i];
+    if (c === '"' || c === "'" || c === '`') {
+      const quote = c;
+      out += quote;
+      i++;
+      while (i < src.length) {
+        if (src[i] === '\\') { out += '  '; i += 2; continue; }
+        if (src[i] === quote) break;
+        out += src[i] === '\n' ? '\n' : ' ';
+        i++;
+      }
+      if (i < src.length) { out += quote; i++; }
+      continue;
+    }
+    out += c;
+    i++;
+  }
+  return out;
+}
+
 function stripComments(src) {
   let out = '';
   let i = 0;
@@ -1398,10 +1565,23 @@ for (const abs of scanFiles) {
   for (const m of src.matchAll(CONST_DECL)) consts.set(m[1], m[3]);
 
   // Shadow helper definitions.
+  //
+  // STRING CONTENTS MASKED FIRST. A function DEFINITION cannot occur inside a
+  // string literal, and matching the raw text reports one that does:
+  // src/scripts/lib/layoverCutoverEvaluate.ts searches a source file for the
+  // needle "export async function isFlagEnabled" in order to CHECK that reader's
+  // polarity, and this rule read its own needle as a competing definition. A
+  // guard that fails on a file auditing the very thing the guard cares about is
+  // the kind that gets an exemption bolted on instead of a fix.
+  //
+  // Narrowed only to strings, and only for the DEFINITION question. A flag NAME
+  // in a string is still a use — that is how nearly every read in this tree is
+  // written — so `maskStringContents` is not applied anywhere else.
+  const defSrc = maskStringContents(src);
   for (const fn of [STOP_READER, ...CAP_READERS]) {
     const defRe = new RegExp(`(?:async\\s+function|function|const)\\s+${fn}\\b`, 'g');
     if (SHARED_HELPER_FILES.has(rel)) continue;
-    if (defRe.test(src)) shadowsFound.add(`${rel}::${fn}`);
+    if (defRe.test(defSrc)) shadowsFound.add(`${rel}::${fn}`);
   }
   const shadowedHere = new Set(
     [...shadowsFound].filter((k) => k.startsWith(`${rel}::`)).map((k) => k.split('::')[1]),

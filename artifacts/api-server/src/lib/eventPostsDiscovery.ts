@@ -244,9 +244,18 @@ export function _clearEventPostsCache(): void {
 // Fetches raw posts without proximity or viewer filters.  The caller applies
 // those after the cache is consulted (see fetchEventPostsForDiscovery).
 
+/**
+ * `null` means "this path could not be read", which is NOT the same answer as
+ * `[]` ("there is nothing to show"). The caller needs the difference: an empty
+ * array used to be written into the 5-minute L1 cache, so ONE transient database
+ * error blanked the event-posts feed for every viewer in that (city, radius)
+ * bucket for the whole TTL — long after the database had recovered. supabase-js
+ * RESOLVES on a database error, so nothing here ever threw and the outage was
+ * indistinguishable from a quiet city.
+ */
 async function fetchPathA(
   db: SupabaseClient,
-): Promise<RawPost[]> {
+): Promise<RawPost[] | null> {
   try {
     // Fetch post_event_links joined with posts and events.
     // Proximity filtering is deferred to the caller so the result can be cached
@@ -288,7 +297,7 @@ async function fetchPathA(
       `)
       .limit(200);
 
-    if (error || !data) return [];
+    if (error || !data) return null;
 
     // post_media is canonical for storage-backed media; posts.media_urls holds
     // external references only (ruled 2026-08-12).
@@ -335,7 +344,7 @@ async function fetchPathA(
     }
     return results;
   } catch {
-    return [];
+    return null;
   }
 }
 
@@ -347,7 +356,7 @@ async function fetchPathA(
 async function fetchPathB(
   db: SupabaseClient,
   city: string | null,
-): Promise<RawPost[]> {
+): Promise<RawPost[] | null> {
   try {
     // Join posts → discovery_places via location_place_id = osm_id
     // Filter for event-category venues.
@@ -390,7 +399,7 @@ async function fetchPathB(
     }
 
     const { data, error } = await query;
-    if (error || !data) return [];
+    if (error || !data) return null;
 
     // post_media is canonical for storage-backed media; posts.media_urls holds
     // external references only (ruled 2026-08-12).
@@ -437,7 +446,7 @@ async function fetchPathB(
     }
     return results;
   } catch {
-    return [];
+    return null;
   }
 }
 
@@ -470,17 +479,26 @@ export async function fetchEventPostsForDiscovery(
       fetchPathB(db, city),
     ]);
 
+    // A path that could not be READ answers null. Serving what the other path
+    // returned keeps this supplementary feed fail-open, as it has always been —
+    // but the result is NOT written to the cache, because a 5-minute-old empty
+    // answer produced by a blip is served to every viewer of that city long
+    // after the database has recovered, and nothing retries until it expires.
+    const readFailed = pathA === null || pathB === null;
+
     // Merge and deduplicate by post id (Path A wins on duplicates for richer metadata)
     const seenIds = new Set<string>();
     const merged: RawPost[] = [];
-    for (const post of [...pathA, ...pathB]) {
+    for (const post of [...(pathA ?? []), ...(pathB ?? [])]) {
       if (!seenIds.has(post.id)) {
         seenIds.add(post.id);
         merged.push(post);
       }
     }
 
-    _eventPostsCache.set(cacheKey, { posts: merged, cachedAt: Date.now() });
+    if (!readFailed) {
+      _eventPostsCache.set(cacheKey, { posts: merged, cachedAt: Date.now() });
+    }
     cachedPosts = merged;
   }
 

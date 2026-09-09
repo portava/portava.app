@@ -98,13 +98,23 @@ export interface LayoverWindow {
   tierLabel: string;
   tierBlurb: string;
   overnight: boolean;
+  /**
+   * §15 escalation state at the instant the server computed this window.
+   * `serializeEnvelope` (routes/airport.ts) spreads the whole engine envelope,
+   * so this and `engineVersion` have always been on the wire.
+   */
+  returnState: LayoverReturnState;
+  engineVersion: string;
 }
 
 export interface LeaveAdvice {
   verdict: 'yes' | 'tight' | 'no' | 'stay_airside';
   reasons: string[];
   unknowns: string[];
+  /** §9 machine-readable reason codes. Sent on /overview and /safety. */
+  reasonCodes: string[];
   disclaimer: string;
+  engineVersion: string;
 }
 
 export interface PlanStop {
@@ -158,6 +168,177 @@ export interface LayoverLocalTimes {
   hardReturnLocal: string;
 }
 
+// ── §2.1 certification · §15 safe return · §16 offline bundle ─────────────────
+//
+// Every type below is transcribed from the server that produces it, not from
+// what a screen happens to want:
+//   certificationHeader()   services/airport/LayoverFeasibility.ts
+//   safeReturnPosture()     services/airport/LayoverSafeReturnService.ts
+//   buildReturnContract()   services/airport/LayoverSafeReturnService.ts
+//   AbortResult             services/airport/LayoverSafeReturnService.ts
+//   buildOfflineBundle()    services/airport/LayoverDegradedService.ts
+// A field is listed here only if that source puts it on the wire.
+
+export type LayoverReturnState = 'NORMAL' | 'RETURN_SOON' | 'RETURN_NOW' | 'CONNECTION_AT_RISK';
+export type EstimateConfidence = 'INSUFFICIENT' | 'LOW' | 'MEDIUM' | 'HIGH';
+export type EstimatePercentile = 'p50' | 'p75' | 'p90';
+
+/**
+ * §2.1 "versioned, explainable and replayable" — what lets a stored answer be
+ * traced to the rules and inputs that produced it. `computedAt` is the instant
+ * the SERVER certified the answer; it is the only freshness claim on this
+ * object, and the client must not upgrade it into a stronger one.
+ */
+export interface LayoverCertification {
+  engineVersion: string;
+  feasibilityVersion: string;
+  inputHash: string;
+  /** ISO instant the record was computed for. */
+  computedAt: string;
+  verdict: LeaveAdvice['verdict'];
+  confidence: EstimateConfidence;
+  bufferPercentile: EstimatePercentile;
+}
+
+export type SafeReturnPrimaryAction = 'explore' | 'plan_return' | 'return_now' | 'recover_connection';
+
+/** §15 — what the surface must do now, derived from the certified record. */
+export interface SafeReturnPosture {
+  safeReturnVersion: string;
+  returnState: LayoverReturnState;
+  explorationCollapsed: boolean;
+  returnRoutePrimary: boolean;
+  pinTerminalContext: boolean;
+  notifyCrew: boolean;
+  offerRecoveryHelp: boolean;
+  primaryAction: SafeReturnPrimaryAction;
+  /** §15.1: true in EVERY state, including NORMAL. */
+  abortAvailable: boolean;
+  minutesToHardReturn: number;
+}
+
+/** §15.1 — the contract handed back by the abort, and cacheable offline. */
+export interface ReturnContract {
+  safeReturnVersion: string;
+  hardReturnTime: string;
+  returnState: LayoverReturnState;
+  minutesToHardReturn: number;
+  bufferMinutes: number;
+  breakdown: LayoverWindow['breakdown'];
+  airport: {
+    id: string | null;
+    iataCode: string;
+    name: string;
+    city: string;
+    country: string;
+    timezone: string;
+    lat: number | null;
+    lng: number | null;
+    terminalInfo: unknown | null;
+  };
+  /** Always null on this tree — there is no routing provider. */
+  route: null;
+  routeUnavailableReason: 'no_routing_provider';
+  certification: LayoverCertification;
+}
+
+export type OfflineUnavailableReason =
+  | 'no_routing_provider'
+  | 'no_envelope_geometry'
+  | 'no_flight_feed'
+  | 'no_crew_storage'
+  | 'no_phrase_catalogue';
+
+export interface OfflineCapability<T> {
+  available: boolean;
+  value: T | null;
+  reason: OfflineUnavailableReason | null;
+}
+
+export interface LayoverOfflineBundle {
+  bundleVersion: string;
+  sessionId: string;
+  /** Instant the underlying feasibility record was certified for. */
+  certifiedAt: string;
+  /** After this instant a client MUST badge the bundle stale. */
+  staleAfter: string;
+  certification: LayoverCertification;
+  returnDeadline: {
+    hardReturnTime: string;
+    hardReturnLocal: string | null;
+    returnState: LayoverReturnState;
+    bufferMinutes: number;
+    returnReminderAt: string | null;
+  };
+  airport: {
+    iataCode: string;
+    name: string;
+    city: string;
+    country: string;
+    timezone: string;
+    lat: number | null;
+    lng: number | null;
+    terminalInfo: Record<string, unknown> | null;
+  };
+  mapGeometry: OfflineCapability<never>;
+  route: OfflineCapability<never>;
+  flightStatus: OfflineCapability<never>;
+  crewMeetingPoint: OfflineCapability<never>;
+  translationPhrases: OfflineCapability<never>;
+  stops: Array<{ title: string; durationMin: number; travelMin: number; insideAirport: boolean }>;
+}
+
+export type AbortEffect =
+  | 'itinerary_cancelled'
+  | 'itinerary_cancel_failed'
+  | 'itinerary_nothing_to_cancel'
+  | 'status_marked_returning'
+  | 'status_unchanged_flag_off'
+  | 'status_unchanged_no_active_row'
+  | 'status_write_failed'
+  | 'ledger_recorded'
+  | 'ledger_write_failed'
+  | 'crew_notify_unavailable';
+
+export type ReturnNowStatusCapability = 'enabled' | 'flag_on_readers_not_widened' | 'flag_off';
+
+/** The 200 body of POST /airport/sessions/:id/return-now. */
+export interface ReturnNowSuccess {
+  ok: true;
+  safeReturnVersion: string;
+  abortedAt: string;
+  returnContract: ReturnContract;
+  posture: SafeReturnPosture;
+  cancelledStopIds: string[];
+  effects: AbortEffect[];
+  crewNotified: string[];
+  crewNotifyUnavailableReason: 'no_crew_storage' | null;
+  statusApplied: boolean;
+  statusCapability: ReturnNowStatusCapability;
+}
+
+/**
+ * The abort's outcomes, as the SERVER distinguishes them.
+ *
+ * `partial` is the load-bearing one: the route answers 500 with `ok:false` AND
+ * still carries `returnContract` + `posture`, because "head to the airport now"
+ * must survive a half-failed abort. Collapsing that into a generic error would
+ * throw away the only instruction that matters at that moment — so the shape
+ * forces every caller to have somewhere to put the contract.
+ */
+export type ReturnNowOutcome =
+  | { kind: 'ok'; result: ReturnNowSuccess }
+  | {
+      kind: 'partial';
+      message: string;
+      returnContract: ReturnContract;
+      posture: SafeReturnPosture;
+      effects: AbortEffect[];
+    }
+  | { kind: 'already_ended'; message: string }
+  | { kind: 'offline' }
+  | { kind: 'error'; status: number | null; message: string };
+
 export interface LayoverOverview {
   session: LayoverSession;
   airport: PublicAirport;
@@ -166,6 +347,12 @@ export interface LayoverOverview {
   stops: PlanStop[];
   planFit: PlanFit;
   share: { enabled: boolean; othersInCity: number };
+  /** §2.1 — which rules and which inputs produced `advice`/`window`. */
+  certification: LayoverCertification;
+  /** §15 — the posture the surface should take now. */
+  safeReturn: SafeReturnPosture;
+  /** §16 — the bundle that lets an offline client say how old its answer is. */
+  offlineBundle: LayoverOfflineBundle;
   returnReminderAt: string | null;
   localTimes: LayoverLocalTimes;
 }
@@ -260,14 +447,48 @@ export interface LayoverSafetyResult {
     totalBuffer: number;
   };
   layoverMinutes: number;
+  tier: LayoverTier;
+  tierLabel: string;
+  /** Provenance of the 20-minute landside probe leg. Never "measured" here. */
+  travelTimeSource: string;
+  advice: LeaveAdvice;
+  certification: LayoverCertification;
+  safeReturn: SafeReturnPosture;
+}
+
+export interface CompassClarifyingQuestion {
+  field: string;
+  question: string;
+  impact: {
+    verdictChanges: boolean;
+    riskBandChanges: boolean;
+    returnStateChanges: boolean;
+    usableMinutesDelta: number;
+  };
+  valueOfInformation: number;
+}
+
+export interface CompassBoundaryViolation {
+  kind: string;
+  /** The exact substring that violated the certified envelope. */
+  stated: string;
+  /** The certified value it exceeded. */
+  certified: string;
 }
 
 export interface CompassAnswer {
+  ok: true;
   answer: string;
   safetyNote: string | null;
   hardReturnTime: string | null;
   bufferMinutes: number;
   involvesLeaving: boolean;
+  /** §12.1 — the single highest-value clarifying question, or null. */
+  clarifyingQuestion: CompassClarifyingQuestion | null;
+  /** §12 — envelope-widening the model attempted. Empty is the norm. */
+  boundaryViolations: CompassBoundaryViolation[];
+  /** §20 — which rules and which inputs produced the figures above. */
+  certification: LayoverCertification;
 }
 
 // ── API calls ─────────────────────────────────────────────────────────────────
@@ -345,16 +566,92 @@ export async function askCompass(sessionId: string, question: string): Promise<C
   return res.json();
 }
 
+export interface ReturnDeadlineResult {
+  ok: true;
+  hardReturnTime: string;
+  hardReturnLocal: string;
+  reminderAt: string;
+  bufferMinutes: number;
+  reminderMinutesBefore: number;
+  certification: LayoverCertification;
+  safeReturn: SafeReturnPosture;
+}
+
 export async function setReturnDeadline(
   sessionId: string,
   minutesBefore = 30,
-): Promise<{ hardReturnTime: string; hardReturnLocal?: string; reminderAt?: string; bufferMinutes: number } | null> {
+): Promise<ReturnDeadlineResult | null> {
   const res = await authedFetch(airportUrl('sessions', sessionId, 'return-deadline'), {
     method: 'POST',
     body: JSON.stringify({ minutesBefore }),
   });
   if (!res.ok) return null;
   return res.json();
+}
+
+/**
+ * §15.1 one-tap abort — POST /api/airport/sessions/:id/return-now.
+ *
+ * ── WHY THE FAILURE PATH IS NOT AN ERROR PATH ────────────────────────────────
+ * The route answers 500 with `ok:false` and STILL sends `returnContract` and
+ * `posture`, deliberately: the itinerary may not have been cleared and the
+ * ledger may not have been written, but the hard return time is still true and
+ * "head to the airport now" is the one instruction that must survive a partial
+ * failure. So this function does not decide by status code — it decides by
+ * WHAT IS IN THE BODY. A body carrying a return contract is never reported as
+ * a bare error, whatever the status line said.
+ *
+ * Nothing here guards against a double tap; the caller owns the press. The
+ * server is idempotent-safe either way (see the route's comment), and a guard
+ * living in the service would silently swallow a deliberate retry.
+ */
+export async function returnToAirportNow(sessionId: string): Promise<ReturnNowOutcome> {
+  let res: Response;
+  try {
+    res = await authedFetch(airportUrl('sessions', sessionId, 'return-now'), { method: 'POST' });
+  } catch {
+    // No response at all: airplane mode, dead tunnel, DNS. The caller falls
+    // back to the last certified deadline it already holds.
+    return { kind: 'offline' };
+  }
+
+  let body: any = null;
+  try {
+    body = await res.json();
+  } catch {
+    body = null;
+  }
+
+  // Body first, status second. A 500 that carries the contract is a PARTIAL
+  // abort, not an outage, and the traveller still gets their return time.
+  if (body && body.returnContract && body.posture) {
+    if (body.ok === true) return { kind: 'ok', result: body as ReturnNowSuccess };
+    return {
+      kind: 'partial',
+      message: typeof body.message === 'string' && body.message
+        ? body.message
+        : 'Your plan could not be fully cleared. Head to the airport now.',
+      returnContract: body.returnContract as ReturnContract,
+      posture: body.posture as SafeReturnPosture,
+      effects: Array.isArray(body.effects) ? (body.effects as AbortEffect[]) : [],
+    };
+  }
+
+  // 400 invalid_payload on this route means exactly one thing: the session has
+  // already ended. `invalid_payload` is not in the server's SANITIZED_CODES, so
+  // the specific message ("This layover is already completed.") reaches us.
+  if (res.status === 400) {
+    return {
+      kind: 'already_ended',
+      message: typeof body?.message === 'string' ? body.message : 'This layover has already ended.',
+    };
+  }
+
+  return {
+    kind: 'error',
+    status: res.status ?? null,
+    message: typeof body?.message === 'string' ? body.message : 'Could not start the return.',
+  };
 }
 
 export async function endLayoverSession(sessionId: string): Promise<boolean> {
@@ -387,7 +684,17 @@ export async function getLayoverOverview(sessionId: string): Promise<LayoverOver
   const res = await authedFetch(airportUrl('sessions', sessionId, 'overview'));
   if (!res.ok) return null;
   const json = await res.json();
-  return json.ok ? (json as LayoverOverview) : null;
+  if (!json.ok) return null;
+  // The cast below is the only thing standing between this type and the wire.
+  // A screen that renders a field ONLY when it is present looks perfectly fine
+  // against a server that never sends it, so the absence is made loud here
+  // rather than left to show up as a missing badge nobody notices.
+  for (const field of ['certification', 'safeReturn', 'offlineBundle'] as const) {
+    if (json[field] == null) {
+      console.warn(`[layover] overview is missing "${field}" — server contract mismatch`);
+    }
+  }
+  return json as LayoverOverview;
 }
 
 // ── Mini-itinerary plan stops ─────────────────────────────────────────────────

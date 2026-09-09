@@ -79,13 +79,34 @@ export async function startLiveShare(
   const visibilityLevel = input.visibilityLevel ?? "neighborhood";
   const expiresAt = expiresAtFromDuration(duration, planEndAt);
 
-  // Stop any existing active session
-  await db
+  // Stop any existing active session.
+  //
+  // THE ORDER IS THE CONTRACT: "only one active session per user per trip" is
+  // enforced solely by this UPDATE landing before the INSERT below. Its error
+  // was never bound, and supabase-js RESOLVES on a database error, so a stop
+  // that FAILED was indistinguishable from a stop that matched nothing — and
+  // the insert then ran unconditionally. The trip was left holding TWO active
+  // sessions for one user, and the stale one still names the OLD
+  // allowed_member_ids and the OLD expiry. getCrewMap and getActiveLiveShares
+  // both grant on "any active session that names you", so narrowing a share
+  // (dropping a recipient, shortening the window) silently did not narrow
+  // anything, while the route answered 201. Refusing here leaves the caller's
+  // existing share exactly as it was — a state they already consented to — and
+  // tells them to retry.
+  const { error: stopError } = await db
     .from("trip_crew_location_sessions")
     .update({ status: "stopped", stopped_at: new Date().toISOString() })
     .eq("trip_id", tripId)
     .eq("user_id", userId)
     .eq("status", "active");
+
+  if (stopError) {
+    logger.error(
+      { err: stopError, tripId, userId },
+      "startLiveShare: could not stop the existing session; refusing to add a second active one",
+    );
+    return { ok: false, error: stopError.message };
+  }
 
   const { data, error } = await db
     .from("trip_crew_location_sessions")
@@ -183,29 +204,70 @@ export async function revokeAccessForMember(
   tripId: string,
   removedUserId: string,
 ): Promise<void> {
-  try {
-    // Fetch active sessions for the trip
-    const { data } = await db
-      .from("trip_crew_location_sessions")
-      .select("id, allowed_member_ids")
-      .eq("trip_id", tripId)
-      .eq("status", "active");
+  // Fetch active sessions for the trip.
+  //
+  // This read's error was unchecked, and it is the defect: supabase-js RESOLVES
+  // on a database error rather than throwing, so `data` is null both when the
+  // trip has no active live shares and when the table could not be read. The
+  // loop below then iterates nothing, the function falls through to logging
+  // "access_revoked", and the removed member KEEPS LIVE LOCATION ACCESS with an
+  // audit trail asserting it was taken away. Of the fail-open reads in this
+  // service that is the one with a physical consequence.
+  const { data, error: readError } = await db
+    .from("trip_crew_location_sessions")
+    .select("id, allowed_member_ids")
+    .eq("trip_id", tripId)
+    .eq("status", "active");
 
-    for (const row of (data as any[]) ?? []) {
-      const current: string[] = row.allowed_member_ids ?? [];
-      if (current.includes(removedUserId)) {
-        const updated = current.filter((id: string) => id !== removedUserId);
-        await db
-          .from("trip_crew_location_sessions")
-          .update({ allowed_member_ids: updated })
-          .eq("id", row.id);
+  if (readError) {
+    // The audit trail must record the ATTEMPT and its failure. Staying silent
+    // here is what made the original defect invisible: the member is already
+    // gone from trip_members, so without this row nothing anywhere says their
+    // live-share access may still stand.
+    await logEvent(db, tripId, removedUserId, "access_revoke_failed", {
+      reason: "member_removed",
+      stage: "read_sessions",
+      detail: readError.message,
+    });
+    logger.error({ err: readError, tripId, removedUserId }, "revokeAccessForMember: could not read active sessions; access may still stand");
+    throw new Error(
+      `revokeAccessForMember: could not read active live-share sessions for trip ${tripId}: ${readError.message}`,
+    );
+  }
+
+  const failedSessionIds: string[] = [];
+  for (const row of (data as any[]) ?? []) {
+    const current: string[] = row.allowed_member_ids ?? [];
+    if (current.includes(removedUserId)) {
+      const updated = current.filter((id: string) => id !== removedUserId);
+      // Same reasoning on the write: an unchecked error here is a revocation
+      // that silently did not happen.
+      const { error: updateError } = await db
+        .from("trip_crew_location_sessions")
+        .update({ allowed_member_ids: updated })
+        .eq("id", row.id);
+      if (updateError) {
+        failedSessionIds.push(row.id as string);
+        logger.error({ err: updateError, tripId, removedUserId, sessionId: row.id }, "revokeAccessForMember: session update failed");
       }
     }
-
-    await logEvent(db, tripId, removedUserId, "access_revoked", { reason: "member_removed" });
-  } catch (err) {
-    logger.error({ err, tripId, removedUserId }, "revokeAccessForMember: failed");
   }
+
+  if (failedSessionIds.length > 0) {
+    await logEvent(db, tripId, removedUserId, "access_revoke_failed", {
+      reason: "member_removed",
+      stage: "update_sessions",
+      failedSessionIds,
+    });
+    throw new Error(
+      `revokeAccessForMember: ${failedSessionIds.length} live-share session(s) still grant access to ${removedUserId} on trip ${tripId}`,
+    );
+  }
+
+  // Only now, and only because every session that named them was actually
+  // rewritten. "access_revoked" is an assertion about the world, not a note
+  // that the function ran.
+  await logEvent(db, tripId, removedUserId, "access_revoked", { reason: "member_removed" });
 }
 
 // ── Background expiry sweep ───────────────────────────────────────────────────

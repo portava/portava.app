@@ -61,13 +61,25 @@ router.post("/users/:userId/follow", async (req, res) => {
         return;
       }
 
-      // Check for an existing request in this direction
-      const { data: existing } = await client
+      // Check for an existing request in this direction.
+      // supabase-js RESOLVES on a DB error, so an unbound `error` read an
+      // unreadable friend_requests table as "no request exists" and fell all
+      // the way through to the INSERT at the bottom of this branch — creating a
+      // second row for a pair that already has one, which either duplicates the
+      // outgoing request or dies on the pair unique index and surfaces as an
+      // unexplained db_error instead of the idempotent 200 this branch owes.
+      const { data: existing, error: existingErr } = await client
         .from("friend_requests")
         .select("id, status")
         .eq("requester_id", user.id)
         .eq("recipient_id", target)
         .maybeSingle();
+
+      if (existingErr) {
+        req.log.error({ err: existingErr }, "outgoing friend_requests lookup failed — refusing to create a possible duplicate");
+        sendError(res, "db_error", existingErr.message);
+        return;
+      }
 
       if (existing) {
         if (existing.status === "pending") {
@@ -93,14 +105,26 @@ router.post("/users/:userId/follow", async (req, res) => {
         return;
       }
 
-      // Check if target already sent us a request → auto-accept both sides
-      const { data: incoming } = await client
+      // Check if target already sent us a request → auto-accept both sides.
+      // supabase-js RESOLVES on a DB error, so an unbound `error` read an
+      // unreadable friend_requests table as "they never asked" and skipped the
+      // auto-accept — inserting a fresh outgoing request against a pending
+      // INCOMING one, so two people who each asked to be friends are both left
+      // waiting on each other instead of becoming friends, and no
+      // user_friendships row is ever written.
+      const { data: incoming, error: incomingErr } = await client
         .from("friend_requests")
         .select("id")
         .eq("requester_id", target)
         .eq("recipient_id", user.id)
         .eq("status", "pending")
         .maybeSingle();
+
+      if (incomingErr) {
+        req.log.error({ err: incomingErr }, "incoming friend_requests lookup failed — refusing to bypass auto-accept");
+        sendError(res, "db_error", incomingErr.message);
+        return;
+      }
 
       if (incoming) {
         const now = new Date().toISOString();
@@ -266,6 +290,13 @@ router.delete("/users/:userId/follow", async (req, res) => {
     return;
   }
 
+  // ZERO-ROW DECISION. No `.select()`, so `error === null` says the statement
+  // ran, not that a row went away. Acceptable here because the filters are the
+  // table's key AND `canUnfollow` above already established the edge existed:
+  // a zero-row delete therefore means a concurrent unfollow won the race, and
+  // the response asserts the END STATE ("you are not following them"), which
+  // both outcomes satisfy. It would NOT be acceptable if this response claimed
+  // to have changed something.
   const { error } = await client
     .from("user_follows")
     .delete()
@@ -297,6 +328,35 @@ router.get("/users/:userId/follow-status", async (req, res) => {
     client.from("user_follows").select("follower_id").eq("follower_id", target).eq("following_id", user.id).maybeSingle(),
     client.from("profiles").select("is_private").eq("id", target).maybeSingle(),
   ]);
+
+  // EVERY FIELD OF THIS RESPONSE IS A CLAIM ABOUT TWO PEOPLE, so none of it may
+  // be derived from a read that failed. supabase-js RESOLVES on a database
+  // error, so each of the five reads above hands back `{ data: null, count:
+  // null, error }` — and read without its `.error` that is indistinguishable
+  // from the row genuinely not existing:
+  //   mine        -> isFollowing:false  — "you do not follow them" (you may)
+  //   theyFollow  -> followsYou:false   — "they do not follow you" (they may)
+  //   prof        -> is_private falsy   -> canSeeCounts TRUE. This is the
+  //                 FAIL-OPEN one: an unreadable `profiles` row downgrades a
+  //                 PRIVATE account to public and serves its exact follower and
+  //                 following counts to a stranger, the very leak the
+  //                 canSeeCounts rule exists to stop.
+  //   followers/following -> `count ?? 0` -> "0 followers", stated as fact.
+  //
+  // There is no sub-part of this payload left to answer honestly, and `null`
+  // counts are already spoken for ("withheld because the account is private"),
+  // so degrading into that shape would substitute one false statement for
+  // another. Refuse the whole response with a RETRYABLE 503 — the code this
+  // codebase uses for "the check could not be PERFORMED" (lib/exclusionSet.ts)
+  // — so the caller can tell an outage from a relationship that is absent.
+  const readErr =
+    (mine as any).error ?? (theyFollow as any).error ?? (prof as any).error ??
+    (followers as any).error ?? (following as any).error;
+  if (readErr) {
+    req.log.error({ err: readErr }, "follow-status reads failed — refusing to state a relationship");
+    sendError(res, "degraded_unavailable", "Follow status is temporarily unavailable");
+    return;
+  }
 
   // A private account's exact follower/following counts must not leak to a
   // caller who is neither the owner nor an (accepted) follower — same contract
@@ -340,21 +400,41 @@ router.get("/me/following", async (req, res) => {
 
   // Determine which of these users also follow the caller back (mutual).
   const followingIds = rows.map((r: any) => r.following_id as string);
+  // MUTUALITY IS A CLAIM ABOUT EACH PERSON IN THE LIST. supabase-js resolves on
+  // a database error, so an unbound `error` here made an unreadable reverse edge
+  // table read as "nobody in this list follows you back" — stated as fact for
+  // every row at once. So did a missing service client, silently.
+  //
+  // The LIST itself is authoritative (its read above is error-checked), so
+  // refusing the whole response over a decoration would be the wrong trade.
+  // Instead the unknown is REPORTED: `followsYou` becomes null (not false) and
+  // the response carries `mutualStatusUnavailable`, so a caller can tell "they
+  // do not follow you back" from "we could not find out".
   const { getServiceClient } = await import("../lib/supabase");
   const sc = getServiceClient();
-  let mutualSet = new Set<string>();
-  if (sc) {
-    const { data: back } = await sc
+  let mutualSet: Set<string> | null = null;
+  if (!sc) {
+    req.log.error({}, "me/following: no service client — mutual follow status unknown");
+  } else {
+    const { data: back, error: backErr } = await sc
       .from("user_follows")
       .select("follower_id")
       .eq("following_id", user.id)
       .in("follower_id", followingIds);
-    mutualSet = new Set((back ?? []).map((r: any) => r.follower_id as string));
+    if (backErr) {
+      req.log.error({ err: backErr }, "me/following: reverse follow read failed — mutual status unknown");
+    } else {
+      mutualSet = new Set((back ?? []).map((r: any) => r.follower_id as string));
+    }
   }
 
   const allowedNamesFwd = await nameVisibilitySet(sc, rows.map((r: any) => r.profile?.id));
   res.status(200).json({
-    users: rows.map((r: any) => ({ ...rowToUser(r, allowedNamesFwd, user.id), followsYou: mutualSet.has(r.following_id as string) })),
+    users: rows.map((r: any) => ({
+      ...rowToUser(r, allowedNamesFwd, user.id),
+      followsYou: mutualSet ? mutualSet.has(r.following_id as string) : null,
+    })),
+    ...(mutualSet ? {} : { mutualStatusUnavailable: true }),
   });
 });
 
@@ -375,21 +455,36 @@ router.get("/me/followers", async (req, res) => {
 
   // Determine which of these followers the caller also follows back (mutual).
   const followerIds = rows.map((r: any) => r.follower_id as string);
+  // Same contract as /me/following above: an unreadable forward edge table (or a
+  // missing service client) used to assert "you follow none of these people".
+  // The follower list is authoritative; only the decoration is unknown, and the
+  // unknown is now reported as null + `mutualStatusUnavailable` rather than
+  // spoken as false.
   const { getServiceClient } = await import("../lib/supabase");
   const sc = getServiceClient();
-  let youFollowSet = new Set<string>();
-  if (sc) {
-    const { data: fwd } = await sc
+  let youFollowSet: Set<string> | null = null;
+  if (!sc) {
+    req.log.error({}, "me/followers: no service client — you-follow status unknown");
+  } else {
+    const { data: fwd, error: fwdErr } = await sc
       .from("user_follows")
       .select("following_id")
       .eq("follower_id", user.id)
       .in("following_id", followerIds);
-    youFollowSet = new Set((fwd ?? []).map((r: any) => r.following_id as string));
+    if (fwdErr) {
+      req.log.error({ err: fwdErr }, "me/followers: forward follow read failed — you-follow status unknown");
+    } else {
+      youFollowSet = new Set((fwd ?? []).map((r: any) => r.following_id as string));
+    }
   }
 
   const allowedNamesBack = await nameVisibilitySet(sc, rows.map((r: any) => r.profile?.id));
   res.status(200).json({
-    users: rows.map((r: any) => ({ ...rowToUser(r, allowedNamesBack, user.id), youFollow: youFollowSet.has(r.follower_id as string) })),
+    users: rows.map((r: any) => ({
+      ...rowToUser(r, allowedNamesBack, user.id),
+      youFollow: youFollowSet ? youFollowSet.has(r.follower_id as string) : null,
+    })),
+    ...(youFollowSet ? {} : { mutualStatusUnavailable: true }),
   });
 });
 
@@ -411,11 +506,21 @@ router.get("/users/:userId/followers", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
-  const { data: profile } = await sc
+  // An unreadable `profiles` row resolves as `{ data: null }` and used to fall
+  // straight into `not_found` — telling the caller this ACCOUNT DOES NOT EXIST
+  // when in fact the lookup failed. Worse, `profile` is then handed to
+  // resolveProfileVisibility as the subject's privacy state, so a 404 was the
+  // gentler of the two outcomes. Observe the error and say so instead.
+  const { data: profile, error: profileErr } = await sc
     .from("profiles")
     .select("id, is_private, account_status")
     .eq("id", target)
     .maybeSingle();
+  if (profileErr) {
+    req.log.error({ err: profileErr }, "follow-list: profile lookup failed — refusing to report the account missing");
+    sendError(res, "degraded_unavailable", "Profile lookup is temporarily unavailable");
+    return;
+  }
   if (!profile) { sendError(res, "not_found"); return; }
 
   let viewerId: string | null = null;
@@ -471,11 +576,21 @@ router.get("/users/:userId/following", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
-  const { data: profile } = await sc
+  // An unreadable `profiles` row resolves as `{ data: null }` and used to fall
+  // straight into `not_found` — telling the caller this ACCOUNT DOES NOT EXIST
+  // when in fact the lookup failed. Worse, `profile` is then handed to
+  // resolveProfileVisibility as the subject's privacy state, so a 404 was the
+  // gentler of the two outcomes. Observe the error and say so instead.
+  const { data: profile, error: profileErr } = await sc
     .from("profiles")
     .select("id, is_private, account_status")
     .eq("id", target)
     .maybeSingle();
+  if (profileErr) {
+    req.log.error({ err: profileErr }, "follow-list: profile lookup failed — refusing to report the account missing");
+    sendError(res, "degraded_unavailable", "Profile lookup is temporarily unavailable");
+    return;
+  }
   if (!profile) { sendError(res, "not_found"); return; }
 
   let viewerId: string | null = null;
@@ -1631,11 +1746,11 @@ router.get("/users/:userId", async (req, res) => {
       needBlockCheck
         ? sc.from("blocks").select("blocker_id", { count: "exact", head: true })
             .eq("blocker_id", callerId!).eq("blocked_id", target)
-        : Promise.resolve({ count: 0 }),
+        : Promise.resolve({ count: 0, error: null }),
       needBlockCheck
         ? sc.from("blocks").select("blocker_id", { count: "exact", head: true })
             .eq("blocker_id", target).eq("blocked_id", callerId!)
-        : Promise.resolve({ count: 0 }),
+        : Promise.resolve({ count: 0, error: null }),
     ]);
 
   if (profileRes.error || !profileRes.data) {
@@ -1654,6 +1769,39 @@ router.get("/users/:userId", async (req, res) => {
   // Deactivated is also unavailable unless it is the owner checking their own profile.
   if (acctStatus === "deactivated" && !isOwnProfile) {
     res.status(404).json({ unavailable: true, reason: "deleted" });
+    return;
+  }
+
+  // ── THE BLOCK GATE MUST NOT BE ANSWERED BY A READ THAT FAILED ──────────────
+  // `blocks` is an EXCLUSION table: a row means DENY, so "no row" means ALLOW.
+  // These two reads are `{ count: "exact", head: true }` and supabase-js
+  // RESOLVES on a database error rather than throwing -- a failed count comes
+  // back as `{ count: null, error }`. `.error` was never bound, so
+  // `(res.count ?? 0) > 0` turned an unreadable `blocks` table into `false` on
+  // BOTH directions and the handler fell straight through to serving the full
+  // passport. A person who had blocked this caller had their profile, home
+  // city, travel styles, follower counts and shared-destination reason handed
+  // over because the database blinked. That is fail-open by construction, and
+  // it is the exact shape lib/blockGuard.ts was written to stamp out (this call
+  // site cannot use `isBlockedBetween` because it needs the DIRECTION to decide
+  // between `isBlocker: true` and `isBlocker: false`).
+  //
+  // There is no honest answer available from a failed read. "Not blocked" may be
+  // untrue and leaks a profile; "blocked" would be a fabrication that hides a
+  // profile nobody hid. So the endpoint reports that it could not tell, with the
+  // same posture GET /users/:userId/block-status already takes (routes/blocks.ts)
+  // and the retryable 503 code reserved for "the check could not be performed".
+  if ((callerBlockedTargetRes as any).error || (targetBlockedCallerRes as any).error) {
+    req.log?.error?.(
+      {
+        err: (callerBlockedTargetRes as any).error ?? (targetBlockedCallerRes as any).error,
+        callerId,
+        target,
+      },
+      "profile fetch: block-state read FAILED -- refusing to serve a profile rather than " +
+        "reporting 'not blocked' from a read that did not answer",
+    );
+    sendError(res, "degraded_unavailable", "This profile is temporarily unavailable. Please try again.");
     return;
   }
 
@@ -1756,14 +1904,48 @@ router.get("/users/by-handle/:handle", async (req, res) => {
       needBlockCheck
         ? sc.from("blocks").select("blocker_id", { count: "exact", head: true })
             .eq("blocker_id", callerId!).eq("blocked_id", target)
-        : Promise.resolve({ count: 0 }),
+        : Promise.resolve({ count: 0, error: null }),
       needBlockCheck
         ? sc.from("blocks").select("blocker_id", { count: "exact", head: true })
             .eq("blocker_id", target).eq("blocked_id", callerId!)
-        : Promise.resolve({ count: 0 }),
+        : Promise.resolve({ count: 0, error: null }),
     ]);
 
-  // Guard: blocks.
+  // ── THE BLOCK GATE MUST NOT BE ANSWERED BY A READ THAT FAILED ──────────────
+  // `blocks` is an EXCLUSION table: a row means DENY, so "no row" means ALLOW.
+  // These two reads are `{ count: "exact", head: true }` and supabase-js
+  // RESOLVES on a database error rather than throwing -- a failed count comes
+  // back as `{ count: null, error }`. `.error` was never bound, so
+  // `(res.count ?? 0) > 0` turned an unreadable `blocks` table into `false` on
+  // BOTH directions and the handler fell straight through to serving the full
+  // passport. A person who had blocked this caller had their profile, home
+  // city, travel styles, follower counts and shared-destination reason handed
+  // over because the database blinked. That is fail-open by construction, and
+  // it is the exact shape lib/blockGuard.ts was written to stamp out (this call
+  // site cannot use `isBlockedBetween` because it needs the DIRECTION to decide
+  // between `isBlocker: true` and `isBlocker: false`).
+  //
+  // There is no honest answer available from a failed read. "Not blocked" may be
+  // untrue and leaks a profile; "blocked" would be a fabrication that hides a
+  // profile nobody hid. So the endpoint reports that it could not tell, with the
+  // same posture GET /users/:userId/block-status already takes (routes/blocks.ts)
+  // and the retryable 503 code reserved for "the check could not be performed".
+  if ((callerBlockedTargetRes as any).error || (targetBlockedCallerRes as any).error) {
+    req.log?.error?.(
+      {
+        err: (callerBlockedTargetRes as any).error ?? (targetBlockedCallerRes as any).error,
+        callerId,
+        target,
+      },
+      "profile fetch: block-state read FAILED -- refusing to serve a profile rather than " +
+        "reporting 'not blocked' from a read that did not answer",
+    );
+    sendError(res, "degraded_unavailable", "This profile is temporarily unavailable. Please try again.");
+    return;
+  }
+
+  // Guard: blocks. Same read, same refusal, same reason as GET /users/:userId --
+  // this handler is the by-handle twin and carried an identical copy of the bug.
   const callerBlockedTarget = ((callerBlockedTargetRes as any).count ?? 0) > 0;
   const targetBlockedCaller = ((targetBlockedCallerRes as any).count ?? 0) > 0;
   if (targetBlockedCaller) {

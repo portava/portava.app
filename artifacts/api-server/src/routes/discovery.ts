@@ -65,6 +65,12 @@ import {
 // to the discovery_places.id space place memory keys on, then annotate the served
 // page. Additive + fail-safe + flag-gated (memory_projection) — see placeIdBridge.
 import { annotateNewToMe, recordDiscoveryAlreadyKnown } from "../lib/placeIdBridge.js";
+// Sensing §8 DiscoveryCandidate projection (census-discovery A03/A25). Attached
+// to the OUTGOING slice only, behind discovery_candidate_projection_enabled
+// (2361, seeded OFF): with the flag off withDiscoveryCandidates returns the very
+// array it was handed, so the served JSON is byte-identical.
+import { withDiscoveryCandidates } from "../lib/discoveryCandidate.js";
+import { logger } from "../lib/logger.js";
 
 const router = Router();
 
@@ -934,7 +940,24 @@ async function queryDbPlaces(
       // size. Cap to 60 AFTER filtering (discovery_places is small, so 200 is cheap).
       .limit(200);
 
-    if (error || !data) return [];
+    // "no community places in this city" and "discovery_places could not be
+    // read" are the same empty array to every caller of this funnel. The
+    // DIRECTION is left alone and is defensible: the discovery feed merges this
+    // half with OSM/Foursquare results, so an unreadable community table costs
+    // the feed its community rows and never renders the page as "there is
+    // nothing here" — and failing the whole request over it would be worse.
+    //
+    // What was not defensible is that it was SILENT. A city whose community rows
+    // stopped appearing looks exactly like a city that has none, from the
+    // outside and from the inside alike. The refusal stands; it now says so.
+    if (error) {
+      logger.warn(
+        { err: error, code: "discovery_places_read_failed", city: cityBase, category },
+        "discovery: discovery_places read failed — this request serves external results only",
+      );
+      return [];
+    }
+    if (!data) return [];
 
     const dbPlaces = (data as any[])
       .filter((row: any) => {
@@ -1080,7 +1103,18 @@ async function queryCanonicalPlaces(
     // Deterministic order so pagination/results are stable across requests.
     const { data, error } = await q.order("normalized_name", { ascending: true }).limit(400);
 
-    if (error || !data) return [];
+    // Same call as queryDbPlaces above, on the canonical `places` table: an
+    // unreadable table and a city with no canonical places are one empty array.
+    // The direction stands (the feed still merges external results, so this is
+    // never a "nothing here" claim); the silence does not.
+    if (error) {
+      logger.warn(
+        { err: error, code: "canonical_places_read_failed", city: cityBase, category },
+        "discovery: places read failed — this request serves external results only",
+      );
+      return [];
+    }
+    if (!data) return [];
 
     return (data as any[])
       .filter((row: any) => {
@@ -1626,7 +1660,7 @@ router.get("/discovery", async (req, res) => {
   // Shared by L1 (in-memory) and L2 (Postgres) hit paths.  OSM places are
   // served from cache; community DB places are always re-queried (they change
   // more often and are not part of the OSM cache key).
-  async function serveCachedPlaces(osmPlaces: DiscoveryPlace[], cacheLevel: string): Promise<void> {
+  async function serveCachedPlaces(osmPlaces: DiscoveryPlace[], cacheLevel: string, cachedAt: number | null): Promise<void> {
     const distRef = userCoords ?? clientCoords;
     // destination! — narrowed by the guard above; TypeScript can't see it through the closure.
     const dbPlaces = await loadCuratedAndCanonicalPlaces(destination!, category, distRef?.lat ?? null, distRef?.lng ?? null, viewerBlockedIds);
@@ -1680,8 +1714,11 @@ router.get("/discovery", async (req, res) => {
     req.log.info({ cacheLevel, destination, category, totalMs, pdeServed: pdeScoredById !== null }, "discovery: cache hit");
     // §7 New-to-Me annotation — additive, order-preserving, flag-gated, fail-safe.
     const annotatedSlice = await annotateNewToMe(getServiceClient(), callerUserId, slice);
+    const candidateSlice = await withDiscoveryCandidates(getServiceClient(), annotatedSlice, {
+      cacheLevel, cachedAt, scoredById: pdeScoredById, rankedBy: pdeScoredById ? "pde" : "none",
+    });
     res.json({
-      places: annotatedSlice, total: servedFiltered.length, destination, context: ctxLabel, cached: true, ageFilterMeta,
+      places: candidateSlice, total: servedFiltered.length, destination, context: ctxLabel, cached: true, ageFilterMeta,
       sourceSummary: { seededDbCount: dbPlaces.length, osmCount: osmPlaces.length, userCreatedCount: 0 },
       meta: { cacheLevel, timings: { totalMs } },
     });
@@ -1784,7 +1821,7 @@ router.get("/discovery", async (req, res) => {
 
   // ── L1: in-process memory (fastest — zero network) ─────────────────────────
   if (cached && isFresh(cached)) {
-    await serveCachedPlaces(cached.places, "L1");
+    await serveCachedPlaces(cached.places, "L1", cached.cachedAt);
     return;
   }
 
@@ -1800,7 +1837,7 @@ router.get("/discovery", async (req, res) => {
     setCacheA(key, { places: dbCacheEntry.entry.places as DiscoveryPlace[], cachedAt: dbCacheEntry.entry.cachedAt });
 
     if (!dbCacheEntry.isStale) {
-      await serveCachedPlaces(dbCacheEntry.entry.places as DiscoveryPlace[], "L2_fresh");
+      await serveCachedPlaces(dbCacheEntry.entry.places as DiscoveryPlace[], "L2_fresh", dbCacheEntry.entry.cachedAt);
       return;
     }
 
@@ -1821,7 +1858,7 @@ router.get("/discovery", async (req, res) => {
       } catch { /* non-fatal background revalidation */ }
     })();
 
-    await serveCachedPlaces(dbCacheEntry.entry.places as DiscoveryPlace[], "L2_stale");
+    await serveCachedPlaces(dbCacheEntry.entry.places as DiscoveryPlace[], "L2_stale", dbCacheEntry.entry.cachedAt);
     return;
   }
 
@@ -1899,7 +1936,10 @@ router.get("/discovery", async (req, res) => {
               const cSlice = cFiltered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE).map(toPublic);
               req.log.info({ destination, cacheLevel: "compass_candidate_hit" }, "discovery: compass candidate cache hit");
               const cAnnotated = await annotateNewToMe(getServiceClient(), callerUserId, cSlice);
-              res.json({ places: cAnnotated, total: cFiltered.length, destination, context: ctxLabel, cached: true, ageFilterMeta,
+              const cCandidates = await withDiscoveryCandidates(getServiceClient(), cAnnotated, {
+                cacheLevel: "compass_candidate_hit", cachedAt: null, scoredById: null, rankedBy: "compass",
+              });
+              res.json({ places: cCandidates, total: cFiltered.length, destination, context: ctxLabel, cached: true, ageFilterMeta,
                 sourceSummary: { seededDbCount: dbPlaces.length, osmCount: osmPlaces.length, userCreatedCount: 0 } });
               // Stage 0 — serve point 4. Replays a stored Compass order; no
               // ranker ran in this request, so rankedInRequest is false.
@@ -1958,7 +1998,10 @@ router.get("/discovery", async (req, res) => {
             const cFiltered  = applyFilters(merged);
             const cSlice     = cFiltered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE).map(toPublic);
             const cFreshAnnotated = await annotateNewToMe(getServiceClient(), callerUserId, cSlice);
-            res.json({ places: cFreshAnnotated, total: cFiltered.length, destination, context: ctxLabel, cached: false, ageFilterMeta,
+            const cFreshCandidates = await withDiscoveryCandidates(getServiceClient(), cFreshAnnotated, {
+              cacheLevel: "compass_fresh_rank", cachedAt: Date.now(), scoredById: null, rankedBy: "compass",
+            });
+            res.json({ places: cFreshCandidates, total: cFiltered.length, destination, context: ctxLabel, cached: false, ageFilterMeta,
               sourceSummary: { seededDbCount: dbPlaces.length, osmCount: osmPlaces.length, userCreatedCount: 0 } });
             // Stage 0 — serve point 5. The Compass ranker DID run here, but
             // this path has never written a rank_events row: it returns before
@@ -2036,7 +2079,14 @@ router.get("/discovery", async (req, res) => {
       "discovery: cold fetch",
     );
     const coldAnnotated = await annotateNewToMe(getServiceClient(), callerUserId, slice);
-    res.json({ places: coldAnnotated, total: filtered.length, destination, context: ctxLabel, cached: false, ageFilterMeta,
+    const coldCandidates = await withDiscoveryCandidates(getServiceClient(), coldAnnotated, {
+      // scoredByPlaceId is always a Map here; it is EMPTY when no per-user
+      // ranker ran (anonymous caller, or a ranker failure). Empty ⇒ "none".
+      cacheLevel: "miss", cachedAt: Date.now(),
+      scoredById: scoredByPlaceId.size > 0 ? scoredByPlaceId : null,
+      rankedBy:   scoredByPlaceId.size > 0 ? "pde" : "none",
+    });
+    res.json({ places: coldCandidates, total: filtered.length, destination, context: ctxLabel, cached: false, ageFilterMeta,
       sourceSummary: { seededDbCount: dbPlaces.length, osmCount: osmPlaces.length, userCreatedCount: 0 },
       meta: { cacheLevel: "miss", timings: { geocodeMs, osmMs, totalMs } },
     });
@@ -2431,7 +2481,28 @@ export interface CommunityDiscoveryItem {
   neighborhood: string | null;
   blurb: string | null;
   imageUrl: string | null;
-  submittedBy: { id: string; name: string; avatarUrl: string | null } | null;
+  submittedBy: {
+    id: string;
+    /**
+     * LEGACY byline. Carries the real name when the viewer may see it, else the
+     * literal `@username` — a redaction SHAPE no other surface uses (the rule
+     * everywhere else is a null name + a separate handle; see displayName).
+     * Kept verbatim because travel-buddy-standalone renders it raw
+     * (`components/DiscoveryWall.tsx` "By {submittedBy.name}") and this route
+     * is live: changing this field changes what a user sees. Retire it once the
+     * client resolves the byline through displayIdentity(displayName, handle).
+     */
+    name: string;
+    /**
+     * CANONICAL byline, .agents/memory/display-name-privacy.md shape: the real
+     * name iff the submitter is the viewer or opted in via
+     * profile_privacy_settings.show_real_name; otherwise null. Never a handle.
+     * The handle travels separately in `handle`.
+     */
+    displayName: string | null;
+    avatarUrl: string | null;
+    handle: string | null;
+  } | null;
   savedCount: number;
   tag: string | null;
   note: string | null;
@@ -2639,6 +2710,20 @@ router.get("/discovery/community", async (req, res) => {
       rows.map((r: any) => r.submitted_by).filter(Boolean),
     );
 
+    // SELF-EXEMPTION, applied before the opt-in check.
+    // .agents/memory/display-name-privacy.md: "The viewer must always see their
+    // own name (self-exemption before the opt-in check)." Without this a user
+    // who has not opted in, looking at a place THEY submitted, sees their own
+    // byline rendered as `@username` — the redaction rule turned on its author.
+    // Not a leak (it withholds rather than reveals), but it is the same rule
+    // behaving differently here than in discoverySearch.ts:539, compass.ts and
+    // safeReturn.ts, all of which exempt the viewer.
+    // resolveCommunityViewer() is memoised (commViewerPromise), so this costs no
+    // extra auth round trip when the block filter above already resolved it.
+    // Guarded on rows.length to preserve the property documented above: a
+    // request whose query came back empty still resolves no viewer.
+    const selfSubmitterId = rows.length > 0 ? await resolveCommunityViewer() : null;
+
     const items: CommunityDiscoveryItem[] = rows.map((row: any) => {
       const profile = Array.isArray(row.profiles) ? row.profiles[0] : row.profiles;
       return {
@@ -2651,14 +2736,23 @@ router.get("/discovery/community", async (req, res) => {
         blurb:        row.blurb ?? null,
         imageUrl:     row.image_url ?? null,
         submittedBy:  profile
-          ? {
-              id:        profile.id as string,
-              name:      (allowedSubmitterNames.has(profile.id as string)
-                ? (profile.name ?? "Traveler")
-                : (profile.username ? `@${profile.username}` : "Traveler")) as string,
-              avatarUrl: (profile.avatar_url ?? null) as string | null,
-              handle:    (profile.username ?? null) as string | null,
-            }
+          ? (() => {
+              // One decision, two presentations. `nameAllowed` is the whole
+              // privacy rule (self-exemption first, then opt-in); the two
+              // fields below differ only in the SHAPE they give a withheld
+              // name, never in whether it is withheld.
+              const nameAllowed = (profile.id as string) === selfSubmitterId
+                || allowedSubmitterNames.has(profile.id as string);
+              return {
+                id:          profile.id as string,
+                name:        (nameAllowed
+                  ? (profile.name ?? "Traveler")
+                  : (profile.username ? `@${profile.username}` : "Traveler")) as string,
+                displayName: nameAllowed ? ((profile.name ?? null) as string | null) : null,
+                avatarUrl:   (profile.avatar_url ?? null) as string | null,
+                handle:      (profile.username ?? null) as string | null,
+              };
+            })()
           : null,
         savedCount: (row.saved_count as number) ?? 0,
         // `tag` doubles as an internal OSM dedup key on seeded rows

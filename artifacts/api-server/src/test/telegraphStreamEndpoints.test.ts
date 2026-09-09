@@ -123,9 +123,18 @@ function makeFakeClient(opts: {
     let selectArg = "*";
     let isUpdate = false;
     let isMaybe = false;
+    // `.update(patch)` with a trailing `.select()` returns the AFFECTED ROWS in
+    // PostgREST; without one it returns data: null. This fake used to answer
+    // {data: null} for EVERY update, which made a compare-and-swap
+    // (`.update(...).eq("status","pending").select("id")`) read as "matched
+    // nothing" and turned a correct atomic transition into a test failure. A
+    // double that cannot express a client behaviour will veto the fix for a
+    // real defect, which is what happened here.
+    let selectCalled = false;
+    let updatePatch: FakeRow | null = null;
 
     const q: any = {
-      select(fields = "*") { selectArg = fields; return q; },
+      select(fields = "*") { selectArg = fields; selectCalled = true; return q; },
       eq(col: string, val: any) {
         rows = rows.filter((r) => r[col] === val);
         return q;
@@ -138,10 +147,20 @@ function makeFakeClient(opts: {
       limit(n: number) { rows = rows.slice(0, n); return q; },
       maybeSingle() { isMaybe = true; return q; },
       single()      { return q; },
-      update(_data: FakeRow) { isUpdate = true; return q; },
+      update(data: FakeRow) { isUpdate = true; updatePatch = data; return q; },
       insert(_data: FakeRow | FakeRow[]) { return q; },
       then(resolve: (v: any) => void, _reject?: (e: any) => void) {
-        if (isUpdate) return resolve({ data: null, error: null });
+        if (isUpdate) {
+          // Apply the patch in place. `rows` is a shallow copy of the table's
+          // array, so the row OBJECTS are shared with tableData and a later
+          // read in the same test observes the write — which is the other half
+          // of what makes an update assertion mean anything.
+          for (const r of rows) Object.assign(r, updatePatch ?? {});
+          if (!selectCalled) return resolve({ data: null, error: null });
+          const affected = rows.map((r) => projectRow(r, selectArg));
+          if (isMaybe) return resolve({ data: affected[0] ?? null, error: null });
+          return resolve({ data: affected, error: null });
+        }
         const projected = rows.map((r) => projectRow(r, selectArg));
         if (isMaybe)  return resolve({ data: projected[0] ?? null, error: null });
         return resolve({ data: projected, error: null });
