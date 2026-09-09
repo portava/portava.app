@@ -802,3 +802,74 @@ Adding a step to it changes what "CERTIFIED" means, and doing that in the same
 pass that discovered the gap — without the suite green to calibrate against —
 would be measuring with an instrument altered mid-measurement. It is the next
 unit of work, not a footnote to this one.
+
+---
+
+## `TRIP_KERNEL_NEVER_DEPLOYED` — three migrations that exist only in this repository
+
+Not an owner decision. A measurement, recorded here because it changes how every
+Trips §4 verdict in `census-trips.md` should be read, and because acting on it
+requires a deployment gate this session does not hold.
+
+### The measurement
+
+Read-only, 2026-09-09, against both databases:
+
+| | repo | portava-ci (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|---|
+| `trip_kernel_execute` length | 44,343 ch | 11,314 ch | 11,976 ch |
+| `SET_TRIP_COVER` | present | **absent** | **absent** |
+| `CREATE_TRIP` | present | **absent** | **absent** |
+| `JOIN_VIA_LINK` | present | **absent** | **absent** |
+
+Both carry `2420_trip_kernel_foundation.sql`'s original plan-family-only kernel.
+`portava-ci`'s `supabase_migrations.schema_migrations` lists 2420 and **none** of
+2450, 2500 or 2590.
+
+The three files' own headers say why: each records being rehearsed on portava-ci
+**inside a transaction that ended in `ROLLBACK`**. That was the correct thing to
+do at the time and nothing was left behind — which is precisely the point. A
+rehearsal that rolls back leaves the database exactly where it was, and nothing
+in the tree since has noticed that it was never followed by an apply.
+
+### Why it matters more than "three migrations are pending"
+
+`census-trips.md` §26 moved twelve §4 rows from N to C. Every one of those
+verdicts is true of the repository and none of them is true of any database. The
+programme's rule already covers this — BUILT ON BRANCH IS NOT MERGED, MERGED IS
+NOT DEPLOYED — but until this measurement there was no number attached to it for
+Trips, and the census read as though the kernel were live.
+
+It also gates work. `2764_trip_kernel_stage_family.sql` is a transform of the
+2590 body; it cannot be rehearsed on Supabase because no Supabase database has
+that body. Every §5 command family after it — legs, commitments, goals,
+decisions, risks, presence, proposals, snapshots, outcomes — is in the same
+position, which is why `db/harness/run.sh` was built.
+
+### What went right, and should be kept
+
+2764's base assertion checks for `SET_TRIP_COVER` before touching anything. It
+was pointed at portava-ci, found none, and raised. Without it the file would have
+applied cleanly and produced a kernel carrying the stage family and missing three
+migrations' worth of commands — a silent, plausible-looking wrong function.
+**Every future kernel transform must carry the same assertion.**
+
+### What is buildable now, in this order
+
+1. **Apply `2450 → 2500 → 2590` to portava-ci and leave them applied.** All three
+   are flag-gated (`trip_kernel_enabled` is false; the only caller checks it
+   fail-closed), so the user-visible change is nothing. This is what makes
+   portava-ci a rehearsal database again rather than a stale one.
+2. **Then rehearse 2764 there**, and re-rehearse 2760–2763's rollbacks against a
+   kernel that has the stage family.
+3. **Then, and separately, the production question**, which is not step 3 of this
+   list so much as a different list: production has none of 2334, 2337 or 2420
+   either, so the chain there is six migrations, not three.
+
+### Not done here, deliberately
+
+Step 1 persists a change to a database. Every prior lane that touched these three
+files chose to rehearse and roll back, and reversing that choice inside the pass
+that discovered the gap — with no one asking for it — would be crossing a
+standing decision on the strength of my own measurement. The measurement is the
+deliverable; the apply is the owner's call.

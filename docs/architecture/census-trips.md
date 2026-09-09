@@ -262,12 +262,12 @@ Nothing in this section exists. The evidence is one grep, run over
 
 | id | Requirement | V | Evidence |
 | --- | --- | --- | --- |
-| TR49 | The `TripCommand` envelope (commandId, tripId, actorUserId, expectedTripVersion, idempotencyKey, type, payload, clientObservedAt) | **C** | **Moved N→C in the §26 recensus.** The row said "No type, no table, no route." All three exist: the envelope is `lib/tripKernel.ts:198#TripCommand` (commandId, tripId, actorUserId, expectedTripVersion, idempotencyKey, type, payload), the receipt table is `migrations/2420_trip_kernel_foundation.sql:139#trip_command_receipts`, and the route is the `trip_kernel_execute` RPC that `lib/tripKernel.ts:427#executeTripCommand` calls. |
+| TR49 | The `TripCommand` envelope (commandId, tripId, actorUserId, expectedTripVersion, idempotencyKey, type, payload, clientObservedAt) | **C** | **Moved N→C in the §26 recensus.** The row said "No type, no table, no route." All three exist: the envelope is `lib/tripKernel.ts:203#TripCommand` (commandId, tripId, actorUserId, expectedTripVersion, idempotencyKey, type, payload), the receipt table is `migrations/2420_trip_kernel_foundation.sql:139#trip_command_receipts`, and the route is the `trip_kernel_execute` RPC that `lib/tripKernel.ts:439#executeTripCommand` calls. |
 | TR50 | A typed command vocabulary (ADD_PLAN, MOVE_PLAN, CONFIRM_PLAN, CANCEL_PLAN, JOIN_PLAN, LEAVE_PLAN, CREATE_SUBGROUP, SET_PRESENCE, CREATE_PROPOSAL, ACCEPT_PROPOSAL, COMPLETE_ACTIVITY) | **N** | None of the eleven exists as a command. Four have a *route* that does something adjacent (`POST /trips/:id/plan/items`, `PATCH …/items/:itemId`, `POST /trips/:id/complete`); seven have no analogue at all. |
 | TR51 | Command service validates schema | **C** | This one requirement is genuinely met by the CRUD layer: every trip write parses a zod schema first (`routes/trips.ts:1499-1501`; `routes/tripReservations.ts` schemas; `routes/trips-expansion.ts` per-endpoint schemas). It is validation without a command service, which is the requirement's testable half. |
 | TR52 | …validates actor capability | **C** | `lib/http.ts:534` `canEditPlan` and `:594` `canEditPlanItem` are called before every plan mutation (`routes/trips.ts:1505-1509,1443,1573`), and membership is checked through the shared `lib/tripMembership.ts:23` `isAcceptedTripMember`. |
 | TR53 | …validates aggregate version | **C** | **Moved N→C.** The row said "No version exists." `trips.version` is added by `2420_trip_kernel_foundation.sql:96#version` and the kernel refuses a mismatch: `2590_trip_kernel_add_plan_attachment_columns.sql:365#TRIP_VERSION_CONFLICT` returns the current and expected versions so a caller can refetch and retry (§18.3 "explicit conflict"). |
-| TR54 | …validates temporal/spatial consistency | **W** | **Moved N→W 2026-09-08, and the W is the honest half.** The row said the write "accepts any `starts_at`/`ends_at` pair, including one that overlaps a confirmed item or precedes its predecessor." ORDERING is now checked: the kernel already refused an inverted range on the TRIP (`2590:...#TRIP_TEMPORAL_RANGE_INVERTED`, on create and on update, comparing the MERGED value), and the plan-item half is now enforced by `migrations/2750_trip_plan_item_interval_ordered.sql` (a CHECK, NOT VALID, rehearsed on portava-ci — an UPDATE into an inverted range is refused) plus the typed refusal at `lib/tripKernel.ts:427#executeTripCommand`. **OVERLAP is still unchecked** — an item may still be written across a confirmed item's interval, because that is the §7 consistency engine (TR128, TR134) and needs a route provider this tree does not have. Ordering built, overlap not. **Also recorded here rather than lost:** the plan-item check lives at the kernel's entry point rather than inside `trip_kernel_execute`, because every kernel change replaces that 700-line function in full; it should ride along with the next migration that replaces it for its own reasons. |
+| TR54 | …validates temporal/spatial consistency | **W** | **Moved N→W 2026-09-08, and the W is the honest half.** The row said the write "accepts any `starts_at`/`ends_at` pair, including one that overlaps a confirmed item or precedes its predecessor." ORDERING is now checked: the kernel already refused an inverted range on the TRIP (`2590:...#TRIP_TEMPORAL_RANGE_INVERTED`, on create and on update, comparing the MERGED value), and the plan-item half is now enforced by `migrations/2750_trip_plan_item_interval_ordered.sql` (a CHECK, NOT VALID, rehearsed on portava-ci — an UPDATE into an inverted range is refused) plus the typed refusal at `lib/tripKernel.ts:439#executeTripCommand`. **OVERLAP is still unchecked** — an item may still be written across a confirmed item's interval, because that is the §7 consistency engine (TR128, TR134) and needs a route provider this tree does not have. Ordering built, overlap not. **Also recorded here rather than lost:** the plan-item check lives at the kernel's entry point rather than inside `trip_kernel_execute`, because every kernel change replaces that 700-line function in full; it should ride along with the next migration that replaces it for its own reasons. |
 | TR55 | …validates dependent commitments | **N** | No commitments exist (TR15). |
 | TR56 | …validates sensitive-domain boundaries | **W** | Partially, by construction rather than by a validator: `trip_documents` and crew location have their own routes with their own gates (`routes/tripCrewLocation.ts:170-174`), so a plan write cannot touch them. There is no boundary *check* — there is simply no shared write path that could cross one. |
 | TR57 | Successful commands write canonical state plus an immutable domain event in the same transaction where feasible | **C** | **Moved N→C.** The row said "No event is written by any trip mutation." One plpgsql function does both writes in one transaction: `2590_trip_kernel_add_plan_attachment_columns.sql:798#version` bumps `trips.version` and `:804#trip_events` appends the event, with the outbox row at `:818#trip_outbox`. `logActivity` — the thing the row measured — is no longer the nearest artifact. |
@@ -293,7 +293,7 @@ Nothing in this section exists. The evidence is one grep, run over
 | id | Requirement (§5.1 table) | V | Evidence |
 | --- | --- | --- | --- |
 | TR77 | `trips` (id, owner_user_id, title, lifecycle_state, **current_stage_id**, home_timezone, **version**) | **W** | `migrations/0001_spine.sql:72-89`. `owner_id` not `owner_user_id`; `status` not `lifecycle_state`; **no `current_stage_id`, no `home_timezone`, no `version`** — three of the seven key columns, and the three the kernel depends on. Timezone is passed in per call instead (`lib/tripStatus.ts:33`). |
-| TR78 | `trip_stages` | **N** | Does not exist. Nearest: `trip_destinations` (TR13). |
+| TR78 | `trip_stages` | **W** | **Moved N→W 2026-09-09; see §27.** The table exists (`2760_trip_stages.sql`) with the §5.1 columns, five CHECKs and a crew-read RLS policy, and now has the writer §4 requires (`2764_trip_kernel_stage_family.sql`). **W and not C because 2764 cannot be applied to any database**: both portava-ci and production still carry 2420's plan-family-only kernel, so a command family that nothing can execute is built, not deployed. |
 | TR79 | `trip_legs` | **N** | Does not exist. |
 | TR80 | `trip_participants` (with membership_state, permissions_version) | **W** | `trip_members` (`0001_spine.sql:100-106`) — four columns, no membership state, no permissions version (TR19). |
 | TR81 | `trip_commitments` | **N** | Does not exist. |
@@ -958,3 +958,97 @@ provider this tree does not have. Ordering built; overlap not.
 - The headline table is unchanged and now understates the surface. Correcting it
   from a partial re-read would be inventing a number; §4's twelve rows are
   itemised above so the arithmetic is available to whoever finishes the job.
+
+---
+
+## 27. §5.1 recensus at `HEAD` — the stage spine, and the kernel deployment gap
+
+This section re-reads **§5.1's table roster only** (TR77–TR90) plus the rows that
+depend on stages existing. It does **not** re-read the other twenty-three
+sections, and the headline table stays where §26 left it, for the reason §26
+gives.
+
+### The fact that changes how every other Trips row should be read
+
+Measured 2026-09-09, read-only, against both databases:
+
+| | repo | portava-ci | production |
+|---|---|---|---|
+| `trip_kernel_execute` length | 44,343 ch | 11,314 ch | 11,976 ch |
+| `SET_TRIP_COVER` present | yes | **no** | **no** |
+| `CREATE_TRIP` present | yes | **no** | **no** |
+| `JOIN_VIA_LINK` present | yes | **no** | **no** |
+
+**Both databases carry 2420's original plan-family-only kernel.** Migrations
+2450, 2500 and 2590 have never been applied to either — confirmed against
+portava-ci's `supabase_migrations.schema_migrations`, which lists 2420 and none
+of the three. The trip family, the participant family, `JOIN_VIA_LINK` and
+2590's four attachment columns exist **only in this repository**.
+
+This is the same class of error §26 found and larger. §26 corrected twelve rows
+from N to C on the strength of migrations that are in the tree; every one of
+those C verdicts is a claim about *code that exists*, and this table is the
+reminder that none of it is a claim about *a database that has it*. The
+programme's own rule already says this — BUILT ON BRANCH IS NOT MERGED, MERGED
+IS NOT DEPLOYED — and here is the measurement that makes it concrete for §4.
+
+It is also why `2764_trip_kernel_stage_family.sql` refused to apply to
+portava-ci. Its base assertion checks for `SET_TRIP_COVER` before touching
+anything, found none, and raised. Without that assertion the file would have
+applied cleanly and produced a kernel with the stage family and without three
+migrations' worth of commands.
+
+### §5.1: one row moves, and only to W
+
+| id | was | now | what exists |
+|---|---|---|---|
+| TR78 | N | **W** | `trip_stages` exists (`2760_trip_stages.sql`) with the §5.1 columns, five CHECK constraints and a crew-read RLS policy, and now has the writer §4 requires: `ADD_STAGE` / `UPDATE_STAGE` / `REMOVE_STAGE` in `2764_trip_kernel_stage_family.sql`. **W and not C because 2764 cannot be applied anywhere** — see the table above. A command family that no database can execute is built, not deployed. |
+
+**TR79, TR81, TR84–TR90 stay N.** `trip_legs`, `trip_commitments`, `trip_goals`,
+`trip_decision_tasks`, `trip_risks`, `trip_presence`, `trip_proposals`,
+`trip_snapshots` and `trip_outcomes` all have tables now (2761–2763) and **no
+writer**. Rule 2 of this census is unchanged and decides them: *a table nothing
+writes satisfies nothing.* They are N until their command families land, exactly
+as TR78 was N between 2760 and 2764.
+
+**TR83 stays N and is blocked, not merely unbuilt.** `trip_plan_participants` is
+keyed on `plan_id`, and `trip_plans` does not exist — `trip_plan_items` is a
+different shape (TR82). Building the table against `trip_plan_items` would be
+inventing the specified table rather than building it.
+
+**TR136 and TR255 stay N.** Both say "there are no stages"; there are now stages
+in the repository, but stage-locality (TR136) is a §7.4 consistency check with no
+implementation, and the stage map layer (TR255) has no consumer. Neither becomes
+W because a table they would read now exists.
+
+### What was actually verified, and how
+
+2764 is not rehearsed on Supabase and cannot be. It is rehearsed on
+`db/harness/run.sh`, a local PostgreSQL 16 cluster built for it: the 2590 body is
+sliced out of 2590's own file rather than transcribed, the **real** 2760 runs
+with all its postconditions, then 2764 applies and its commands **execute** —
+rows written, events emitted, `trips.version` bumped, receipts and outbox rows
+agreeing, refusals refusing and leaving nothing behind. The rollback must restore
+`pg_get_functiondef` byte-for-byte or the run fails.
+
+The harness found a defect the seven contract tests could not: the first draft
+set `v_event_type` on all three branches and `v_family` on none, so every stage
+event was filed in the ledger under family `plan`. The names all agreed with
+TypeScript; only executing the command found it.
+
+**What a green harness run is not:** it is bare PostgreSQL, not Supabase. Every
+table except `trip_stages` is a column-shape stub taken from portava-ci with keys
+and defaults added back, so a constraint that exists there and not here refuses
+nothing here. Four enum types are text `DOMAIN`s. Every probe runs as superuser,
+so RLS is bypassed — the same bypass `service_role` has, which is why the
+kernel's own writes still mean something and why nothing here says anything about
+client access.
+
+### What this section does NOT claim
+
+- **No `head_commit` is declared here either**, for §26's reason: twenty-three
+  sections were not re-read.
+- **The headline is unchanged.** One row moved N→W; correcting a percentage from
+  that would be inventing a number.
+- **Nothing here is a deployment claim.** 2760–2763 are applied to portava-ci
+  and to nothing else; 2764 is applied to nothing at all.
