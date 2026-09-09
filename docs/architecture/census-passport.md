@@ -46,11 +46,18 @@ three times and make the surface look worse than it is — the same arithmetic
 error in the other direction from the one the layover headline made.
 
 **This census still declares NO `head_commit`, deliberately.** The 169 verdicts
-were taken at working tree `ebe72b34` and only P98/P169 have been re-read since.
+were taken at working tree `ebe72b34`; only **P98, P169, P45 and P50** have been
+re-read since (P45/P50 on 2026-09-09, against the code cited in those rows).
 Declaring a commit would make `check:census-freshness` report FRESH about a
-document whose other 167 rows have not been re-verified — a worse lie than
+document whose other 165 rows have not been re-verified — a worse lie than
 CANNOT BE CHECKED. It joins the checkable set when it is recensused, the way the
 Wall and Trust censuses did.
+
+The four re-read rows do NOT move the headline percentages below, which are still
+the `ebe72b34` measurement: P45 and P50 were **W** before this re-read and are
+**W** after it, for a materially smaller reason. A recount is a recensus's job,
+not a two-row edit's, and quoting a new percentage off two rows would be the
+arithmetic error §1 of this document warns about in the other direction.
 
 **Verdict on "~92% construction complete": too low on construction, too high on
 correctness, and resting on a CANNOT-VERIFY bucket that the spec does not ask
