@@ -115,6 +115,13 @@ ALTER TABLE public.highlights
 -- read. There is nothing to validate anyway — every existing row is NULL, which
 -- a CHECK admits. VALIDATE CONSTRAINT can be run later at leisure if a reader
 -- wants the catalog to say `validated`.
+-- DROP CONSTRAINT IF EXISTS before each ADD, added 2026-09-09, for the reason
+-- given at the head of 2720: both constraints already exist on portava-ci from
+-- a hand-apply that left no ledger row, and `ADD CONSTRAINT` on an existing name
+-- is a 42710 that stops the applier and everything behind it. Dropping and
+-- re-adding inside this file's own transaction restates the same predicate; the
+-- constraints are added NOT VALID either way, so no existing row is re-scanned.
+ALTER TABLE public.highlights DROP CONSTRAINT IF EXISTS highlights_lifetime_class_check;
 ALTER TABLE public.highlights
   ADD CONSTRAINT highlights_lifetime_class_check
   CHECK (lifetime_class IS NULL OR lifetime_class IN
@@ -125,6 +132,7 @@ ALTER TABLE public.highlights
 -- lifecycle (ACTIVE -> DELETION_REQUESTED -> ... -> DELETED) is a SEPARATE
 -- machine, and `deleted_at` already carries it. Admitting 'DELETED' here would
 -- be the same collapse §21 forbids, expressed as a CHECK.
+ALTER TABLE public.highlights DROP CONSTRAINT IF EXISTS highlights_lifecycle_state_check;
 ALTER TABLE public.highlights
   ADD CONSTRAINT highlights_lifecycle_state_check
   CHECK (lifecycle_state IS NULL OR lifecycle_state IN

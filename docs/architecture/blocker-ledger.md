@@ -1185,3 +1185,87 @@ and still defers.
 **The decision is smaller than it was.** It was "we have no source and no
 policy". It is now "we have a source; which policy?" — three questions with
 concrete options, rather than an open-ended one.
+
+---
+
+## `CI_DB_HAND_APPLIED_FROM_UNMERGED_BRANCHES` — portava-ci carries schema no merged branch can show you
+
+**Opened 2026-09-09.** Type: `OPS_DATA`. Owner: whoever owns the three open
+branches named below. Buildable now? **No** — nothing in this repository can
+close it, and the two obvious closures are both wrong.
+
+### The measurement
+
+The first two runs of the sanctioned applier that had anything to apply (main at
+`42aeac38`, then at `d9ee61b2`) surfaced this. It is not a Trips finding; it is
+about the shared CI database.
+
+**Three ledger rows name a migration file that does not exist in this
+repository**, and `check:migration-ledger` — stage 1 of `certify:migrations` —
+fails on them by design:
+
+| Ledger row on portava-ci | `applied_by` | Its own note says |
+|---|---|---|
+| `2311_intel_claim_reviews.sql` | `manual` | "Applied by hand 2026-09-07 … to unblock PRs #456/#457" |
+| `2320_memory_episode_provenance_spine.sql` | `manual` | "Applied by hand 2026-09-07 to unblock PR #470" |
+| `2325_telegraph_unsend_before_seen.sql` | `manual` | "Applied by hand 2026-09-07 to unblock PR #472" |
+
+There is no `2311`, `2320` or `2325` anywhere in `src/migrations` — the whole
+band holds one file, `2315_sensing_anon_contributions.sql`. The rows are
+honest: they record something that really happened. What happened is that three
+feature branches applied their own migrations to the SHARED CI database, and
+none of those branches has merged. **PR #470 is still open and its own
+description ends "DO NOT MERGE — for review."**
+
+**Six more migrations were applied the same way and left no row at all.** The
+applier proved it by dying on the collision: `2720_highlight_resurfacing_
+preferences.sql` failed `42710: policy "highlight_resurfacing_select_own" for
+table "highlight_resurfacing_preferences" already exists`, and a direct query
+confirms the objects of `2720`, `2721`, `2722`, `2723`, `2724` and `2730` are
+all present on portava-ci while every one of them was still in the applier's
+pending list.
+
+### Why it matters more than "one gate is red"
+
+`certify:migrations` stage 1 is the gate that answers **"does this database
+represent this branch?"** Three rows say no, and they will keep saying no
+however much of `main` is applied. So the live-DB lane cannot reach a clean
+verdict from work done on `main` alone — which is exactly the property the gate
+exists to report, and it is reporting it correctly.
+
+The deeper cost is that portava-ci is no longer a clean baseline for anyone.
+Every other lane's `CI (live DB)` run reads a database carrying tables,
+policies and a widened `erase_memory_for_user` that only three unmerged
+branches declare. A guard that passes there is passing against a schema no
+merged commit describes.
+
+### The two wrong closures, named so nobody reaches for them
+
+* **Deleting the three rows.** The checker's own message says why: deleting a
+  row makes the gate ask for a re-apply of something that already ran. It also
+  destroys the only record of who applied what and when, while leaving the
+  objects in place — the database would then be silently, rather than loudly,
+  misrepresented.
+* **Merging #456/#457, #470 or #472 to make the rows legitimate.** #470 says DO
+  NOT MERGE on its face. Merging someone else's branch to tidy a ledger is the
+  same class of act as applying it by hand in the first place.
+
+### What is actually available
+
+1. **The owners of those three branches merge them, or run the rollback their
+   own ledger notes name** (`db/rollback/2026-09-07-ci-migrations-rollback.sql`)
+   and delete the rows in the same transaction that removes the objects. Either
+   ends the state honestly; the choice is theirs, not this lane's.
+2. **The six unrecorded ones are being closed properly**, not back-filled:
+   `2720`–`2723` are now idempotent (`DROP POLICY IF EXISTS` / `DROP CONSTRAINT
+   IF EXISTS` before each create, the convention `2335` already used), so the
+   sanctioned applier can re-assert them and write a real sha256 ledger row.
+   `2724` and `2730` were already idempotent and needed no change. That is the
+   difference between a row that says "this file ran" and a row that proves it.
+
+### Not done here, deliberately
+
+No row was written by hand, no row was deleted, and no branch was merged. §33 of
+`census-trips.md` records the last time this lane back-filled ledger rows and
+why those six carry `checksum='backfill'` rather than a hash; repeating that for
+another six would trade a loud problem for a quiet one.
