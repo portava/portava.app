@@ -1374,3 +1374,98 @@ No migration was hand-applied to work around the outage. That is the mechanism
 `CI_DB_HAND_APPLIED_FROM_UNMERGED_BRANCHES` above exists to record, and doing it
 again to route around an expired token would be the same mistake with a better
 excuse.
+
+---
+
+## `TRIP_KERNEL_CREATE_TRIP_UNGUARDED_INSERT` — a malformed command reported as an outage
+
+**Opened 2026-09-09.** Type: `CODE`. Owner: Trips. Buildable now? **Yes**, and
+deliberately not built in the change that found it — see "Why it is open" below.
+
+### The measurement
+
+Executed against portava-ci inside a rolled-back transaction, through the real
+`public.trip_kernel_execute` (`md5(prosrc) 5fd683a4…`, 103,400 chars):
+
+```
+CREATE_TRIP  payload {"title":"S"}          -- no destination_city
+->  ERROR: 23502 null value in column "destination_city" of relation "trips"
+    CONTEXT: PL/pgSQL function trip_kernel_execute(jsonb) line 165
+```
+
+The exception escapes the function. Every other command family wraps its INSERT:
+2764's `ADD_STAGE` catches `check_violation` and `unique_violation` and returns
+`TRIP_COMMAND_MALFORMED` with the constraint name. The trip family is older
+(2450) and its `INSERT INTO public.trips` is unguarded — the only `BEGIN …
+EXCEPTION` on that branch wraps the `owner_id` and date parsing above it.
+
+### Why it matters, and exactly how much
+
+`POST /trips` supports drafts. Its own comment says *"Trips without title/city are
+saved as drafts"*, `computeTripStatus` is called with `destinationCity ?? null`,
+and the command payload then carries `destination_city: destinationCity`
+verbatim. So the payload above is not contrived: it is what the route sends for
+a draft.
+
+`executeTripCommand` sees a thrown RPC and returns `TRIP_KERNEL_UNAVAILABLE`,
+whose meaning is *"the kernel could not be reached, try again"*. **A permanent,
+malformed command is reported as a transient outage**, so a client that retries
+on `unavailable` retries something that can never succeed.
+
+Bounded honestly: nothing is corrupted and no row is half-written — the
+transaction aborts. It is also **not a regression the kernel introduced**: the
+flag-off legacy path inserts the same NULL against the same NOT NULL and returns
+`db_error`. The kernel path is not worse at writing. It is worse at explaining,
+and `TRIP_COMMAND_MALFORMED` is the answer the contract already has for this.
+
+### Why it is open rather than fixed
+
+The fix is a new verified-transform migration against `trip_kernel_execute`
+(read `pg_get_functiondef`, assert the anchor occurs exactly once, wrap the
+INSERT, postcondition-check) — that is, it widens the migration set that the
+Trips certification measured at census-trips §35. It invalidates nothing there:
+the twelve-command slice, the §22.4 idempotency receipt, the version conflict
+and the replay equality are all unaffected. So it is recorded and left for its
+own change rather than folded into a certification pass.
+
+### What would close it
+
+A migration that wraps the trip family's INSERT the way 2764 wraps the stage
+family's, plus a case in the live suite the finding below asks for, asserting
+that a `CREATE_TRIP` with no `destination_city` returns
+`TRIP_COMMAND_MALFORMED` rather than raising.
+
+---
+
+## `TRIPS_HAS_NO_LIVE_KERNEL_SUITE` — the largest object in the architecture has no executable guard
+
+**Opened 2026-09-09.** Type: `TEST_COVERAGE`. Owner: Trips. Buildable now?
+**Yes.**
+
+### The measurement
+
+`public.trip_kernel_execute` is 103,400 characters of PL/pgSQL, the largest
+single object in this architecture. The 49 `trip*.test.ts` suites — **993 tests,
+0 skipped, all passing** — run against doubles and against the TypeScript
+around the RPC. They are worth having, and none of them executes the function.
+
+Memory has the proof Trips lacks: `src/test/memoryKernelTransactionLive.test.ts`,
+registered as `test:memory-kernel-transaction`, scored by
+`.github/scripts/run-live-suite.sh` on its OUTPUT (pass > 0 AND skipped == 0) so
+a run without credentials fails the job rather than passing vacuously.
+
+### Why it matters
+
+census-trips §35 certifies the kernel end to end — thirteen commands, idempotency,
+version conflict, presence freshness, and replay determinism proven equal at a
+cut point. All of it was executed by hand through the management API. **It is a
+snapshot, not a guard**: nothing in CI turns red if the kernel changes underneath
+it, and the document would go on reporting a green that no longer holds. That is
+precisely the BUILT-versus-CERTIFIED distinction this census draws everywhere
+else, pointed at the certification itself.
+
+### What would close it
+
+`src/test/tripKernelLive.test.ts` importing `ciSupabaseGuard.mjs` first and
+driving `executeTripCommand` through the same slice, registered as
+`test:trip-kernel-live` and added to the live-DB job beside the Memory one.
