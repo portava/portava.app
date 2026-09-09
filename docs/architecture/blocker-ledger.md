@@ -391,6 +391,53 @@ being fixed. Widening the scope is the honest next step and is deliberately NOT
 done here: it would surface a new population mid-pass and the burn-down would
 stop meaning what it currently means. Recorded as engineering work, not closed.
 
+### `API_TOKEN_SIGNED_OUT_VS_UNREADABLE` — one null for two different facts, app-wide
+
+**Engineering, not an owner decision. Recorded rather than half-fixed, because
+the fix is not Trips-shaped.**
+
+`travel-buddy-standalone/src/services/apiToken.ts` `freshToken()` returns
+`string | null`, and `null` means BOTH of these:
+
+- the user is signed out (no session, and no refresh is possible), and
+- the session refresh FAILED (network, an auth outage, a 5xx from Supabase).
+
+```ts
+if (needsRefresh) {
+  const { data: refreshed } = await _client.auth.refreshSession();
+  return refreshed?.session?.access_token || null;   // both facts, one value
+}
+...
+} catch { return null; }                              // and again here
+```
+
+Every service module in the app is built on it, and each one turns that null
+into a confident answer about the user's data: `if (!token) return []` in
+`services/trips.ts`, `services/tripDestinations.ts` and their siblings. So an
+auth-refresh outage is presented to a signed-in user as "you have no trips" —
+the same sentence a genuinely empty account gets.
+
+**Why the Trips pass did not fix it.** The 2026-09-09 fail-closed pass made the
+Trips reads refuse instead of answering: `listMyTrips`, `getPendingTripInvites`,
+`getInviteLinks`, `listDestinations` and `fetchPlanEditableTrips` now throw
+`TripsReadUnavailableError` when the REQUEST fails. They deliberately keep the
+existing signed-out behaviour for `!token`, because changing it means changing
+`freshToken`'s return type, and that type is read by every service module in
+`src/services/` — not by Trips. Fixing it inside Trips would leave the app with
+two contradictory conventions for the same helper, which is worse than one
+honest record of the defect.
+
+**What the fix is.** `freshToken` returns a three-state — a token, `signed_out`,
+or `unavailable` — and each caller decides which of the two nulls it was
+treating as which. It is one mechanical change across many files, and it is
+engineering work, not a decision.
+
+**What is bounded, and what is not.** The blast radius is display honesty, not
+authorization: a null token produces a request WITHOUT an Authorization header,
+which the server rejects. Nothing is granted. What is wrong is only ever what
+the user is TOLD — which is the same class of defect as the rest of this pass,
+at a layer below it.
+
 ### `STORY_HIGHLIGHT_VISIBILITY` — restated 2026-09-08, and it is NOT the feed-bounding flag
 
 `2339` gates feed bounding, is seeded FALSE, and was left alone. The unbound
