@@ -22,15 +22,34 @@
  *   an unavailable    the read failed. Rendered as a refusal to say anything,
  *   read              never as an empty crew list — "nobody is sharing" is a
  *                     claim about people, and a failed query has not made it.
+ *
+ * THE WRITER IS HERE TOO, AND THAT IS THE POINT
+ * =============================================
+ * SET_PRESENCE and CLEAR_PRESENCE reached the kernel in migration 2768 and
+ * were issuable over §11's command endpoint, and no screen could send either.
+ * A command family nothing can issue is a stored procedure, so the control
+ * lives on the card that reads the result — the shortest loop between the two
+ * halves, and the only arrangement in which one can be seen to affect the other.
+ *
+ * TWO THINGS THE CONTROL DOES THAT A NAIVE ONE WOULD NOT
+ * =====================================================
+ * 1. The idempotency key is derived from the OBSERVATION (trip, state, minute),
+ *    not minted per tap. A double tap is the same observation and must not
+ *    become two commands; the kernel's receipt returns the first result with
+ *    `duplicate: true`, which is the correct outcome and is treated as success.
+ * 2. `applied: false` is reported, not swallowed. A SET_PRESENCE the kernel
+ *    judges STALE succeeds and changes NOTHING — a well-behaved retry causes
+ *    it — and a control that showed a tick would be claiming a write that did
+ *    not happen.
  */
 import React, { useCallback, useEffect, useState } from 'react';
-import { View, Text, ActivityIndicator, StyleSheet } from 'react-native';
+import { View, Text, ActivityIndicator, Pressable, StyleSheet } from 'react-native';
 import { Radio, CloudOff, EyeOff } from 'lucide-react-native';
 
 import { color, space, radius, type as t, shadow } from '../../theme/tokens.ts';
 import {
-  fetchTripPresence, freshnessLabel,
-  type PresenceRead, type PresenceEntry,
+  fetchTripPresence, freshnessLabel, setMyPresence, clearMyPresence, commandWasApplied,
+  type PresenceRead, type PresenceEntry, type PresenceState,
 } from '../../services/tripPresence.ts';
 
 interface Props {
@@ -39,6 +58,36 @@ interface Props {
   names?: Record<string, string>;
   /** Test seam. */
   load?: typeof fetchTripPresence;
+  /** Test seams for the write path. */
+  set?: typeof setMyPresence;
+  clear?: typeof clearMyPresence;
+}
+
+/** How long a reported presence stays live. §10.1 requires a TTL; twenty
+ *  minutes is this surface's choice and it is stated rather than defaulted
+ *  somewhere invisible. */
+export const PRESENCE_TTL_SECONDS = 20 * 60;
+
+/** The states this control offers. A subset of §10.1's eight, chosen because
+ *  they are the ones a person can answer about themselves in one tap. */
+const OFFERED: Array<{ state: PresenceState; label: string }> = [
+  { state: 'available', label: 'Available' },
+  { state: 'transiting', label: 'On the move' },
+  { state: 'at_plan', label: 'At the plan' },
+  { state: 'resting', label: 'Resting' },
+];
+
+/**
+ * The idempotency key for one observation.
+ *
+ * Derived from what is being SAID, not from when the button was pressed: the
+ * trip, the state and the minute. Two taps inside a minute are the same
+ * observation and produce the same key, so the kernel's receipt returns the
+ * first result rather than applying twice. A `randomUUID()` here would make
+ * every retry a new command and defeat the receipt entirely.
+ */
+export function presenceIdempotencyKey(tripId: string, state: string, at: Date): string {
+  return `presence:${tripId}:${state}:${at.toISOString().slice(0, 16)}`;
 }
 
 /** §10.1 states, in words. Unrecognised values pass through rather than
@@ -86,8 +135,15 @@ export function describeAge(seconds: number): string {
   return `seen ${Math.round(hours / 24)}d ago`;
 }
 
-export function TripCrewPresenceCard({ tripId, names = {}, load = fetchTripPresence }: Props) {
+export function TripCrewPresenceCard({
+  tripId, names = {}, load = fetchTripPresence,
+  set = setMyPresence, clear = clearMyPresence,
+}: Props) {
   const [read, setRead] = useState<PresenceRead | undefined>(undefined);
+  const [writing, setWriting] = useState(false);
+  /** What the last write actually did. Never a bare tick: see the header on
+   *  why `applied: false` has to reach the user. */
+  const [writeNote, setWriteNote] = useState<string | null>(null);
 
   const run = useCallback(async () => {
     setRead(undefined);
@@ -97,6 +153,38 @@ export function TripCrewPresenceCard({ tripId, names = {}, load = fetchTripPrese
       setRead({ state: 'unavailable', detail: String(e?.message ?? 'unexpected error') });
     }
   }, [tripId, load]);
+
+  const report = useCallback(async (state: PresenceState | null) => {
+    setWriting(true);
+    setWriteNote(null);
+    try {
+      const now = new Date();
+      const r = state === null
+        ? await clear(tripId, presenceIdempotencyKey(tripId, 'clear', now))
+        : await set(tripId, {
+            state,
+            idempotencyKey: presenceIdempotencyKey(tripId, state, now),
+            ttlSeconds: PRESENCE_TTL_SECONDS,
+            source: 'explicit',
+          });
+
+      if (!r.ok) {
+        // 'refused' and 'unavailable' stay apart: one means the kernel said no,
+        // the other that it may never have been asked.
+        setWriteNote(r.kind === 'refused'
+          ? `Not recorded: ${r.reason}`
+          : `We couldn't tell whether that was recorded (${r.detail}).`);
+      } else if (!commandWasApplied(r)) {
+        // The STALE_OBSERVATION case. A success that changed nothing.
+        setWriteNote('A newer update already covers this, so nothing changed.');
+      } else {
+        setWriteNote(null);
+      }
+      await run();
+    } finally {
+      setWriting(false);
+    }
+  }, [tripId, set, clear, run]);
 
   useEffect(() => { void run(); }, [run]);
 
@@ -146,6 +234,39 @@ export function TripCrewPresenceCard({ tripId, names = {}, load = fetchTripPrese
 
       {sorted.map((e) => <PresenceRow key={e.userId} entry={e} name={nameOf(e.userId)} />)}
 
+      <View style={s.controls} testID="trip-presence-controls">
+        {OFFERED.map((o) => (
+          <Pressable
+            key={o.state}
+            disabled={writing}
+            onPress={() => { void report(o.state); }}
+            style={({ pressed }) => [s.chip, pressed && { opacity: 0.6 }, writing && { opacity: 0.4 }]}
+            accessibilityRole="button"
+            accessibilityLabel={`Tell your crew you are ${o.label}`}
+            testID={`presence-set-${o.state}`}
+          >
+            <Text style={s.chipText}>{o.label}</Text>
+          </Pressable>
+        ))}
+        <Pressable
+          disabled={writing}
+          onPress={() => { void report(null); }}
+          style={({ pressed }) => [s.chip, pressed && { opacity: 0.6 }, writing && { opacity: 0.4 }]}
+          accessibilityRole="button"
+          accessibilityLabel="Stop sharing where you are"
+          testID="presence-clear"
+        >
+          <Text style={s.chipText}>Stop sharing</Text>
+        </Pressable>
+      </View>
+
+      {writeNote && (
+        <Text style={[s.detail, { paddingHorizontal: space.lg, paddingBottom: space.sm }]}
+              testID="trip-presence-write-note">
+          {writeNote}
+        </Text>
+      )}
+
       {noPresence.length > 0 && (
         <View style={s.row} testID="trip-presence-not-sharing">
           <EyeOff size={14} color={color.faint} />
@@ -187,4 +308,13 @@ const s = StyleSheet.create({
   },
   name: { ...t.small, fontWeight: '600', color: color.ink },
   detail: { ...t.stamp, color: color.mute, marginTop: 2, paddingHorizontal: 0 },
+  controls: {
+    flexDirection: 'row', flexWrap: 'wrap', gap: space.sm,
+    paddingHorizontal: space.lg, paddingTop: space.sm, paddingBottom: space.xs,
+  },
+  chip: {
+    borderWidth: 1, borderColor: color.haze, borderRadius: radius.sm,
+    paddingHorizontal: space.sm, paddingVertical: 6,
+  },
+  chipText: { ...t.stamp, color: color.ink, fontWeight: '600' },
 });

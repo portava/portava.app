@@ -16,10 +16,13 @@
  * RNTL v14: always await render().
  */
 import React from 'react';
-import { render, waitFor } from '@testing-library/react-native';
+import { render, waitFor, fireEvent } from '@testing-library/react-native';
 
-import { TripCrewPresenceCard, describeAge } from '../trip/TripCrewPresenceCard.tsx';
+import {
+  TripCrewPresenceCard, describeAge, presenceIdempotencyKey, PRESENCE_TTL_SECONDS,
+} from '../trip/TripCrewPresenceCard.tsx';
 import type { PresenceRead, PresenceEntry } from '../../services/tripPresence.ts';
+import type { TripCommandResult } from '../../services/tripCommands.ts';
 
 const TRIP_ID = 'trip-presence-test';
 const ALICE = 'user-alice';
@@ -149,6 +152,110 @@ describe('TripCrewPresenceCard', () => {
     );
     await waitFor(() => expect(queryByTestId('trip-presence-loading')).toBeNull());
     expect(toJSON()).toBeNull();
+  });
+});
+
+describe('the WRITE path — SET_PRESENCE reaching a screen', () => {
+  // Before this control, SET_PRESENCE and CLEAR_PRESENCE existed in the kernel
+  // (2768), were issuable over §11's endpoint, and no screen could send
+  // either. A command family nothing can issue is a stored procedure.
+  const applied: TripCommandResult = {
+    ok: true, duplicate: false, version: 2, eventId: 'e1', sequence: 1,
+    result: { applied: true }, contractVersion: 2,
+  };
+
+  it('sends the state, a TTL, and an explicit source', async () => {
+    // §10.1 requires a TTL: a presence row without one never goes stale.
+    const set = jest.fn(async () => applied);
+    const { findByTestId } = await render(
+      <TripCrewPresenceCard tripId={TRIP_ID} load={loader(board([]))} set={set as any} />,
+    );
+    fireEvent.press(await findByTestId('presence-set-at_plan'));
+    await waitFor(() => expect(set).toHaveBeenCalled());
+    const [tripId, args] = set.mock.calls[0] as any[];
+    expect(tripId).toBe(TRIP_ID);
+    expect(args.state).toBe('at_plan');
+    expect(args.ttlSeconds).toBe(PRESENCE_TTL_SECONDS);
+    expect(args.source).toBe('explicit');
+    expect(typeof args.idempotencyKey).toBe('string');
+    expect(args.idempotencyKey.length).toBeGreaterThan(0);
+  });
+
+  it('reloads the board after a write, so the read reflects the write', async () => {
+    const load = jest.fn(async () => board([]));
+    const set = jest.fn(async () => applied);
+    const { findByTestId } = await render(
+      <TripCrewPresenceCard tripId={TRIP_ID} load={load as any} set={set as any} />,
+    );
+    await waitFor(() => expect(load).toHaveBeenCalledTimes(1));
+    fireEvent.press(await findByTestId('presence-set-available'));
+    await waitFor(() => expect(load).toHaveBeenCalledTimes(2));
+  });
+
+  it('a STALE write is reported, not shown as a success', async () => {
+    // The kernel returns ok with applied:false when a newer observation already
+    // exists — a well-behaved retry causes it. A tick here would claim a write
+    // that did not happen.
+    const set = jest.fn(async (): Promise<TripCommandResult> => ({
+      ok: true, duplicate: false, version: 2, eventId: null, sequence: null,
+      result: { applied: false, reason: 'STALE_OBSERVATION' }, contractVersion: 2,
+    }));
+    const { findByTestId, findByText } = await render(
+      <TripCrewPresenceCard tripId={TRIP_ID} load={loader(board([]))} set={set as any} />,
+    );
+    fireEvent.press(await findByTestId('presence-set-resting'));
+    expect(await findByText(/newer update already covers this/)).toBeTruthy();
+  });
+
+  it('a REFUSAL names the kernel reason; an UNAVAILABLE says the fate is unknown', async () => {
+    // The two must not be merged: one means the kernel said no, the other that
+    // it may never have been asked.
+    const refused = jest.fn(async (): Promise<TripCommandResult> => ({
+      ok: false, kind: 'refused', status: 403, reason: 'TRIP_PRESENCE_NOT_SELF',
+      detail: null, currentVersion: null, expectedVersion: null,
+    }));
+    const r1 = await render(
+      <TripCrewPresenceCard tripId={TRIP_ID} load={loader(board([]))} set={refused as any} />,
+    );
+    fireEvent.press(await r1.findByTestId('presence-set-available'));
+    expect(await r1.findByText(/Not recorded: TRIP_PRESENCE_NOT_SELF/)).toBeTruthy();
+
+    const lost = jest.fn(async (): Promise<TripCommandResult> => ({
+      ok: false, kind: 'unavailable', detail: 'network error',
+    }));
+    const r2 = await render(
+      <TripCrewPresenceCard tripId={TRIP_ID} load={loader(board([]))} set={lost as any} />,
+    );
+    fireEvent.press(await r2.findByTestId('presence-set-available'));
+    expect(await r2.findByText(/couldn't tell whether that was recorded/)).toBeTruthy();
+  });
+
+  it('Stop sharing issues CLEAR_PRESENCE, not a presence state', async () => {
+    const clear = jest.fn(async () => applied);
+    const set = jest.fn(async () => applied);
+    const { findByTestId } = await render(
+      <TripCrewPresenceCard tripId={TRIP_ID} load={loader(board([]))} set={set as any} clear={clear as any} />,
+    );
+    fireEvent.press(await findByTestId('presence-clear'));
+    await waitFor(() => expect(clear).toHaveBeenCalled());
+    expect(set).not.toHaveBeenCalled();
+  });
+});
+
+describe('presenceIdempotencyKey', () => {
+  it('is derived from the OBSERVATION, so a double tap is one command', async () => {
+    // A randomUUID() here would make every retry a new command and defeat the
+    // kernel receipt that exists for exactly this.
+    const a = presenceIdempotencyKey('t', 'at_plan', new Date('2026-10-01T12:00:10Z'));
+    const b = presenceIdempotencyKey('t', 'at_plan', new Date('2026-10-01T12:00:50Z'));
+    expect(a).toBe(b);
+  });
+
+  it('a different state, trip or minute is a different observation', () => {
+    const base = presenceIdempotencyKey('t', 'at_plan', new Date('2026-10-01T12:00:00Z'));
+    expect(presenceIdempotencyKey('t', 'resting', new Date('2026-10-01T12:00:00Z'))).not.toBe(base);
+    expect(presenceIdempotencyKey('u', 'at_plan', new Date('2026-10-01T12:00:00Z'))).not.toBe(base);
+    expect(presenceIdempotencyKey('t', 'at_plan', new Date('2026-10-01T12:01:00Z'))).not.toBe(base);
   });
 });
 

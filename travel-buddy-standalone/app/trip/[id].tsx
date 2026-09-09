@@ -32,6 +32,7 @@ import { TripReadinessCard } from '../../src/components/trip/TripReadinessCard';
 import { TripFeasibilityCard } from '../../src/components/trip/TripFeasibilityCard';
 import { TripCrewPresenceCard } from '../../src/components/trip/TripCrewPresenceCard';
 import { TripDecisionsCard } from '../../src/components/trip/TripDecisionsCard';
+import { TripStageSpineCard } from '../../src/components/trip/TripStageSpineCard';
 import { BeforeYouGoSection } from '../../src/components/trip/BeforeYouGoSection';
 import { TripFsqPlacesSection } from '../../src/components/trip/TripFsqPlacesSection';
 import { TripDestinationInfoCard } from '../../src/components/trip/TripDestinationInfoCard';
@@ -568,6 +569,13 @@ function TripDetailScreen() {
             the first time. INSUFFICIENT_BASIS renders as itself; the card's
             whole discipline is not letting it look like approval. */}
         {live && trip.id ? <TripDecisionsCard tripId={trip.id} /> : null}
+
+        {/* ── §5.1 stage spine ─────────────────────────────────────────────
+            Stages, legs and plan attendance reaching a screen for the first
+            time. Orphaned references are DISPLAYED rather than tidied away:
+            the FKs make them impossible, which is exactly why silence about
+            one would be a dropped row. */}
+        {live && trip.id ? <TripStageSpineCard tripId={trip.id} /> : null}
 
         {/* ── FSQ places — renders nothing until city is ingested server-side ── */}
         {live ? (
