@@ -792,6 +792,21 @@ export function forAllWriteCheckVerdict(row: PolicySnapshotRow): ForAllVerdict {
  * an entry here that gains WITH CHECK fails the stale check until removed.
  */
 export const FOR_ALL_WITHOUT_WITH_CHECK_BASELINE: ReadonlyArray<string> = [
+  // THREE ENTRIES REMOVED 2026-09-09, for the reason this baseline is
+  // shrink-only: the live suite reported them as no longer FOR ALL-without-
+  // WITH CHECK and demanded their removal, and the live snapshot agrees.
+  //
+  //   trip_checklist_items::trip_checklist_items_members   now cmd=SELECT,
+  //   trip_checklists::trip_checklists_members             USING can_see_trip(trip_id)
+  //     — 2534 moved the write half onto the API's write rules, so neither is a
+  //       FOR ALL policy any more and neither can reuse USING as its WITH CHECK.
+  //   trip_reminders::trip_reminders_own                   GONE. 2535 replaced
+  //     0079's FOR ALL-with-no-WITH-CHECK policy with four verb-scoped ones
+  //     (the same supersession this PR records in audit:schema's allowlist).
+  //
+  // A baseline entry asserts "this policy still reuses its USING as its write
+  // check". Leaving a fixed one keeps excusing the next policy that regresses
+  // into the same shape.
   "buddy_availability_exceptions::bae_own_write",
   "buddy_services::bs_own_write",
   "compass_conversation_messages::compass_conversation_messages_owner",
@@ -837,13 +852,10 @@ export const FOR_ALL_WITHOUT_WITH_CHECK_BASELINE: ReadonlyArray<string> = [
   "traveler_passports::traveler_passports_own",
   "trip_area_preferences::tap_own",
   "trip_budget::trip_budget_owner",
-  "trip_checklist_items::trip_checklist_items_members",
-  "trip_checklists::trip_checklists_members",
   "trip_crew_location_preferences::crew_prefs_self_write",
   "trip_crew_location_sessions::crew_sessions_self",
   "trip_destinations::trip_destinations_manage",
   "trip_invite_links::trip_invite_links_owner",
-  "trip_reminders::trip_reminders_own",
   "trip_traveler_passports::trip_traveler_passports_own",
   "user_mutes::Users can manage their own mutes",
   "user_privacy_settings::Users can manage their own privacy settings",

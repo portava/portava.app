@@ -240,9 +240,28 @@ describe("rule 2 — FOR ALL without WITH CHECK", () => {
     assert.equal(forAllWriteCheckVerdict(row("t", "p", "ALL", "true", null, "{anon,service_role}")), "reuses_using");
   });
 
-  it("the captured baseline names trip_checklists_members / trip_checklist_items_members — the write hole it reports rather than excuses", () => {
-    assert.ok(FOR_ALL_WITHOUT_WITH_CHECK_BASELINE.includes("trip_checklists::trip_checklists_members"));
-    assert.ok(FOR_ALL_WITHOUT_WITH_CHECK_BASELINE.includes("trip_checklist_items::trip_checklist_items_members"));
+  it("the write hole trip_checklists_members / trip_checklist_items_members had is CLOSED, and the rule that found it still bites", () => {
+    // These two were in the baseline as the hole it REPORTED rather than
+    // excused: FOR ALL with no WITH CHECK, so the read predicate doubled as the
+    // write check. 2534 moved the write half onto the API's write rules and both
+    // are now cmd=SELECT with USING can_see_trip(trip_id) — measured on
+    // portava-ci — so they are neither FOR ALL nor reusing anything, and the
+    // live suite reported them stale by name.
+    assert.ok(!FOR_ALL_WITHOUT_WITH_CHECK_BASELINE.includes("trip_checklists::trip_checklists_members"));
+    assert.ok(!FOR_ALL_WITHOUT_WITH_CHECK_BASELINE.includes("trip_checklist_items::trip_checklist_items_members"));
+
+    // The RULE is what deserves the assertion, and it is unchanged: the shape
+    // they USED to have is still reported. Stated over the shape rather than
+    // over the list, so closing the next hole cannot break this test.
+    assert.equal(
+      forAllWriteCheckVerdict(row("trip_checklists", "trip_checklists_members", "ALL", "can_see_trip(trip_id)", null)),
+      "reuses_using",
+    );
+    // And the repaired shape is not.
+    assert.notEqual(
+      forAllWriteCheckVerdict(row("trip_checklists", "trip_checklists_members", "SELECT", "can_see_trip(trip_id)", null)),
+      "reuses_using",
+    );
   });
 });
 
