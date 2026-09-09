@@ -806,7 +806,7 @@ NOT-BUILT row in that census (150 C / 17 W / 1 N / 1 ?).
 
 Passport spec §11 names seven capabilities derived from trust evidence + domain
 policy. Six exist and are derived server-side in
-`services/passport/PassportProjectionService.ts:659#buildOwnerCapabilities`:
+`services/passport/PassportProjectionService.ts:683#buildOwnerCapabilities`:
 
 ```
 canJoinPublicTrip · canHostTrip · canCreateLargePlan

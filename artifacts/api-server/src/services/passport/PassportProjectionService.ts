@@ -247,6 +247,30 @@ export interface TrustProjection {
   /** Numeric 0–100 exposed only where appropriate (§9) — self view. */
   score: number | null;
   confidence: "low" | "medium" | "high";
+  /**
+   * WHAT `confidence` WAS COMPUTED FROM. Added 2026-09-09 for census-trust P45
+   * ("domain-specific/confidence-aware/explainable") and P50 ("an 82 with high
+   * evidence is not an 82 with little").
+   *
+   * `confidence` is derived from TRAVEL statistics — `stats.stamps +
+   * stats.trips * 2 + verified` — and the comment above it has always called
+   * that "evidence-aware". It is aware of evidence about TRAVEL, not about
+   * TRUST: a traveller with twenty stamps and zero trust events reads
+   * `confidence: "high"` over a trust score that is entirely the substituted
+   * neutral 50. Migration 2371 added the trust engine's own measure
+   * (`evidence_weight` = sum of decay weights, `evidence_count` = raw undecayed
+   * count, both written by `measureEvidence`) and nothing here read it.
+   *
+   * This field does not change `confidence` — recalibrating that scale is a
+   * product judgement, not a defect fix. It makes the number EXPLAINABLE, and
+   * it makes a MEASURED 50 distinguishable from a SUBSTITUTED one, which is the
+   * half of P45/P50 that is unambiguously an engineering gap.
+   */
+  confidenceBasis: "trust_evidence" | "travel_proxy" | "unavailable";
+  /** `trust_profiles.evidence_weight` when the profile was read; null otherwise. */
+  evidenceWeight?: number | null;
+  /** `trust_profiles.evidence_count` when the profile was read; null otherwise. */
+  evidenceCount?: number | null;
   strengths: string[];
   /** TABLE 12 per-domain trust presentations (never raw scores). */
   domains: DomainTrust[];
@@ -1065,6 +1089,31 @@ function buildDomainTrust(
   return domains;
 }
 
+/**
+ * What `confidence` rests on. EXPORTED so its test exercises the shipped
+ * predicate rather than a copy of it — a test that reimplements the rule it is
+ * checking passes whatever the rule does.
+ *
+ *   unavailable    trust_profiles could not be READ. Whatever `confidence`
+ *                  says, it is not a statement about this person's trust.
+ *   trust_evidence the profile was read AND carries migration 2371's own
+ *                  measure. Includes ZERO: a profile that was read and holds no
+ *                  evidence HAS been measured, which is a different answer from
+ *                  never having been measured, and collapsing the two is the
+ *                  conflation this field exists to prevent.
+ *   travel_proxy   no trust evidence available, so `confidence` came from
+ *                  stamps/trips/verified — evidence about TRAVEL, not trust.
+ */
+export function trustConfidenceBasis(
+  state: TrustProfileRead["state"],
+  evidenceWeight: number | null | undefined,
+  evidenceCount: number | null | undefined,
+): TrustProjection["confidenceBasis"] {
+  if (state === "unavailable") return "unavailable";
+  if (state !== "ok") return "travel_proxy";
+  return evidenceCount != null || evidenceWeight != null ? "trust_evidence" : "travel_proxy";
+}
+
 async function buildTrust(
   sc: SupabaseClient,
   userId: string,
@@ -1092,6 +1141,15 @@ async function buildTrust(
   );
   const profile = profileRead.state === "ok" ? profileRead.profile : null;
   const degraded = profileRead.state === "unavailable";
+
+  // Explainability, not recalibration. `confidence` above is unchanged; this
+  // says what it rests on, so a consumer can tell a measured score from the
+  // neutral substitution. `null` evidence on an `ok` profile is a pre-2371 row
+  // — "not measured" is a different answer from "measured, nothing there", and
+  // it reports as travel_proxy because that is what the number actually used.
+  const evidenceWeight = profileRead.state === "ok" ? profileRead.profile.evidenceWeight : null;
+  const evidenceCount = profileRead.state === "ok" ? profileRead.profile.evidenceCount : null;
+  const confidenceBasis = trustConfidenceBasis(profileRead.state, evidenceWeight, evidenceCount);
   const overallForDomains = profile && Number.isFinite(Number(profile.overall_score)) ? Number(profile.overall_score) : 50;
   const domains = buildDomainTrust(overallForDomains, profile?.categories as Record<string, number> | undefined, isBuddy);
 
@@ -1101,6 +1159,7 @@ async function buildTrust(
     const label = confidence === "low" ? (verified ? "New Traveler · Verified" : "New Traveler") : badge.label;
     return {
       label, publicLevel: badge.level, score: null, confidence,
+      confidenceBasis, evidenceWeight, evidenceCount,
       strengths: badge.strengths, domains,
       ...(degraded || badge.profileUnavailable ? { degraded: true } : {}),
     };
@@ -1127,6 +1186,7 @@ async function buildTrust(
 
   return {
     label, publicLevel: summary.publicLevel, score, confidence,
+    confidenceBasis, evidenceWeight, evidenceCount,
     strengths: summary.strengths, domains,
     ...(degraded || summary.profileUnavailable ? { degraded: true } : {}),
   };
