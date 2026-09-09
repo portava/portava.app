@@ -1006,3 +1006,74 @@ the first of which reproduces production exactly. Executing that ancestry found
 two defects nothing had read out of it, both fixed in `2769`: no kernel command
 could create a `co_host` even though 2500's `host` capability depends on one,
 and `CANCEL_TRIP` succeeded on a completed trip.
+
+
+---
+
+## `APPEAL_RESTORE_SEMANTICS` — narrowed 2026-09-09: the source exists now
+
+**Still an owner decision, and a smaller one.** This entry records what changed
+so the next reader does not re-derive it.
+
+### What the decision was blocked on
+
+`services/appeals/adminRestoreParticipant.ts` keeps two allowlists, both empty,
+and says why:
+
+> `APPROVED_RESTORATION_SOURCES` — "Also EMPTY, and for the same reason: 'their
+> role at removal' is only a valid source if something durably records it, and
+> nothing does once the row is DELETEd."
+
+So the decision was blocked on TWO things at once: **no source** for a removed
+member's role, and **no policy** for what to restore them to. The first made the
+second unanswerable — you cannot choose "restore their previous role" if nobody
+knows what it was.
+
+### The first half is no longer true
+
+The kernel's `REMOVE_PARTICIPANT` branch has, since 2450, done this immediately
+before deleting the row:
+
+```sql
+v_payload := v_payload || jsonb_build_object('role_at_removal', v_member.role::text);
+```
+
+and the resulting `trip.participant_removed` event lands in `trip_events`, which
+2420 makes **append-only** with `trg_trip_events_append_only` — a trigger that
+refuses every UPDATE. The role at removal is therefore durably recorded, by
+construction, in a table nothing can rewrite. It was put there deliberately:
+2450's own comment says "role at removal lets a consumer tell 'invite cancelled'
+from 'member removed'."
+
+`services/appeals/roleAtRemoval.ts` reads it. That module is the proof the
+source exists — it returns the role — and `src/test/appealRoleAtRemoval.test.ts`
+pins both halves: that the recovery works, and that every failure mode is named
+and none of them yields a role.
+
+### What is STILL the owner's, stated as three questions
+
+None of these is inferable from the code, and each changes what a user is
+entitled to:
+
+1. **May a removed co_host be restored as co_host**, or does an upheld appeal
+   return someone to plain membership? Restoring host authority by appeal is a
+   different product than restoring access.
+2. **Does the crew cap still apply?** `trips.max_members` refuses an insert past
+   the cap. If a trip filled up after the removal, does the appeal override the
+   cap, wait, or fail?
+3. **Which removal, for someone removed twice?** `roleAtRemoval.ts` returns the
+   MOST RECENT, on the reasoning that anything else silently reverses a role
+   change the person consented to in between. That reasoning is stated in the
+   module and is not the same as it being decided.
+
+### What has NOT been done, deliberately
+
+`APPROVED_RESTORATION_ROLES` and `APPROVED_RESTORATION_SOURCES` are **still
+empty**, including for the source this work just proved exists. Adding a value
+to either IS taking the decision, the file says so, and a test now fails if
+either grows a member. `resolveAppeal.ts`'s `trip_membership` case is unchanged
+and still defers.
+
+**The decision is smaller than it was.** It was "we have no source and no
+policy". It is now "we have a source; which policy?" — three questions with
+concrete options, rather than an open-ended one.
