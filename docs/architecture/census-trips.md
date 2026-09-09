@@ -970,20 +970,32 @@ gives.
 
 ### The fact that changes how every other Trips row should be read
 
-Measured 2026-09-09, read-only, against both databases:
+> **Corrected 2026-09-09, later the same day. The table below is the second
+> measurement; the first is kept in §28 with what it got wrong, because the
+> mistake it made is one this document is otherwise built to prevent.**
 
-| | repo | portava-ci | production |
-|---|---|---|---|
-| `trip_kernel_execute` length | 44,343 ch | 11,314 ch | 11,976 ch |
-| `SET_TRIP_COVER` present | yes | **no** | **no** |
-| `CREATE_TRIP` present | yes | **no** | **no** |
-| `JOIN_VIA_LINK` present | yes | **no** | **no** |
+Measured read-only against both databases, comparing `pg_proc.prosrc` — the
+verbatim function body — rather than `pg_get_functiondef` length:
 
-**Both databases carry 2420's original plan-family-only kernel.** Migrations
-2450, 2500 and 2590 have never been applied to either — confirmed against
-portava-ci's `supabase_migrations.schema_migrations`, which lists 2420 and none
-of the three. The trip family, the participant family, `JOIN_VIA_LINK` and
-2590's four attachment columns exist **only in this repository**.
+| | md5 of the installed body | verdict |
+|---|---|---|
+| repo `2420` | `d621c513ef2093054aea014702733649` | — |
+| production | `d621c513ef2093054aea014702733649` | **byte-identical to the repo** |
+| portava-ci | `ed202dc5664f7f46e3b27c7810fb1a2e` | the same file, comments stripped |
+
+portava-ci's kernel is the repo's 2420 with all nine whole-line `--` comments
+removed and **nothing else** — proven by reproducing its exact md5 from the
+repo's body by deleting comment lines. Same commands, same reason codes, same
+branch count. Neither database is behind the other.
+
+**Both databases carry 2420, and neither carries 2450, 2500 or 2590.** The
+reason is not that a lane rehearsed and rolled back: `.github/workflows/
+live-db.yml` applies pending migrations to the sanctioned CI project only when
+`github.ref == refs/heads/main`, and **none of 2420, 2450, 2500, 2590, 2750,
+2760–2763 or 2767 is on main** — this branch is 417 commits ahead of it. The
+designed applier has never seen any of them. 2420 reached both databases by
+hand, which portava-ci's own ledger records in its notes column, and which is
+also how it arrived with its comments stripped.
 
 This is the same class of error §26 found and larger. §26 corrected twelve rows
 from N to C on the strength of migrations that are in the tree; every one of
@@ -997,6 +1009,13 @@ portava-ci. Its base assertion checks for `SET_TRIP_COVER` before touching
 anything, found none, and raised. Without that assertion the file would have
 applied cleanly and produced a kernel with the stage family and without three
 migrations' worth of commands.
+
+The three are therefore not blocked on anything but the merge, and applying
+them by hand would route around the dry run, the one-transaction-with-ledger-row
+guarantee, the certification pass and the sanctioned-project assertion —
+reproducing the exact mechanism that produced the drifted 2420. That assertion
+is not advisory: `artifacts/api-server/src/lib/ciSupabaseGuard.mjs` runs it in
+the execution path and refused this session's attempt to run even the dry run.
 
 ### §5.1: one row moves, and only to W
 
@@ -1052,3 +1071,45 @@ client access.
   that would be inventing a number.
 - **Nothing here is a deployment claim.** 2760–2763 are applied to portava-ci
   and to nothing else; 2764 is applied to nothing at all.
+
+
+---
+
+## 28. Correction to §27's first measurement, and the two defects behind it
+
+§27 originally opened with this table, and drew from it the conclusion that
+portava-ci and production carry *different* kernels:
+
+| | repo | portava-ci | production |
+|---|---|---|---|
+| `trip_kernel_execute` length | 44,343 ch | 11,314 ch | 11,976 ch |
+
+Every number is correct. The conclusion is not. `pg_get_functiondef` length
+counts comments, and portava-ci's copy of 2420 has had its nine whole-line
+comments stripped. The two databases carry the SAME LOGIC: same command
+vocabulary, same reason codes, same five `WHEN` branches. Production's body is
+byte-identical to the repository's.
+
+**The method error is the one worth recording.** A length is a proxy. Three
+lengths that differ tell you the texts differ and nothing about how. The
+measurement that settles it — `md5(prosrc)`, and then reproducing the
+difference from the repo by a stated transformation — costs one more query and
+answers the actual question. This census's own rule about verdicts, that a
+BUILT claim cites a `file:line` that was opened and read, has a database
+equivalent that was not being applied: **a claim about a deployed object cites a
+hash of that object, not a size.**
+
+### The two kernel defects the corrected rehearsal found
+
+Running the ancestry as real migrations and then EXECUTING commands against it
+found two things no amount of reading had:
+
+| | what it is | fixed by |
+|---|---|---|
+| co_host is unreachable | 2500 added the `host` capability as "owner OR an accepted co_host row" and gated two commands on it, but `SET_PARTICIPANT_ROLE` refuses any role outside `('member','invited')`. No kernel command can create a co_host, so `host` and `owner` are the same capability and every co_host came from a writer outside the kernel — what §1 forbids. `viewer` has the same hole, and `authz.accepted_trip_ids` counts a viewer as crew. | `2769` |
+| COMPLETED is not terminal | `CANCEL_TRIP` succeeds on a completed trip. §3.1 runs "… → COMPLETED → MEMORY" and §20.1 builds durable memory from a completed trip's outcomes, which `RECORD_OUTCOME` (2768) may already have written. A trip cannot both have happened and have been called off. | `2769` |
+
+Neither is a row this census had open. Both were invisible to every contract
+test, and both were found in the first minute of executing the ancestry rather
+than reading it — which is the same lesson as the `v_family` defect §27 records,
+arriving a second time.

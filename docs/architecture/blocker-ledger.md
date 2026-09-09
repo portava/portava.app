@@ -807,6 +807,10 @@ unit of work, not a footnote to this one.
 
 ## `TRIP_KERNEL_NEVER_DEPLOYED` — three migrations that exist only in this repository
 
+> **CORRECTED AND RESOLVED 2026-09-09. Read the correction at the foot of this
+> entry before the entry: its measurement was a proxy and its conclusion was
+> wrong, and the thing it called a blocker is a merge.**
+
 Not an owner decision. A measurement, recorded here because it changes how every
 Trips §4 verdict in `census-trips.md` should be read, and because acting on it
 requires a deployment gate this session does not hold.
@@ -934,3 +938,61 @@ Superseded by `2769`, which adds the columns, the votes table and the
 capability derived from `decision_rule`. **This entry stays in the ledger after
 2769 lands**, because the inconsistency is in the spec and the next reader of
 §5.1 will hit it again.
+
+
+### Correction, same day: the measurement was a proxy and the blocker is a merge
+
+Everything above rests on comparing `pg_get_functiondef` LENGTHS. Lengths count
+comments. Comparing `md5(prosrc)` instead:
+
+| | md5 of the installed body |
+|---|---|
+| repo `2420` | `d621c513ef2093054aea014702733649` |
+| production | `d621c513ef2093054aea014702733649` |
+| portava-ci | `ed202dc5664f7f46e3b27c7810fb1a2e` |
+
+**Production's kernel is byte-identical to the repository's 2420.** portava-ci's
+is the same file with its nine whole-line `--` comments stripped and nothing
+else — proven by reproducing ci's md5 from the repo's body by deleting comment
+lines. Same commands, same reasons, same branches. The "11,314 vs 11,976"
+difference this entry leads with is comments, and the sentence "the trip family
+... exist only in this repository" is true of both databases equally, which the
+original framing obscured.
+
+**And the reason the three are absent is not a rollback.**
+`.github/workflows/live-db.yml` applies pending migrations to the sanctioned CI
+project — each in one transaction carrying its ledger row, then
+`certify:migrations` — when `github.ref == refs/heads/main`. None of 2420, 2450,
+2500, 2590, 2750, 2760–2763 or 2767 is on main; this branch is 417 commits ahead
+of it. The designed applier has never seen any of them. 2420 reached both
+databases by hand, which portava-ci's ledger records in its own notes column,
+and which is how it lost its comments.
+
+So this is not a blocker. It is a merge, and the apply is what the merge
+triggers.
+
+**Hand-applying would be the wrong action, not merely an unnecessary one.** It
+routes around the dry run, the one-transaction-with-ledger-row guarantee, the
+certification pass and the sanctioned-project assertion — reproducing exactly
+the mechanism that produced the drifted 2420. That assertion is in the execution
+path, not a workflow step: `artifacts/api-server/src/lib/ciSupabaseGuard.mjs`
+refused this session's attempt to run even the dry run, which is the control
+working.
+
+**Disclosure.** `2767_trip_presence_spec_vocabulary.sql` WAS hand-applied to
+portava-ci in this session, before the designed path was understood, using the
+same mechanism this entry now argues against. It is additive, the table held
+zero rows, and its own preconditions and postconditions ran; leaving it is safer
+than reverting, because portava-ci's `trip_presence` would otherwise carry a
+vocabulary its writer refuses. It is recorded here rather than left for someone
+to find in a ledger diff. `2760`–`2763` reached portava-ci the same way in an
+earlier session.
+
+**What replaced the hand-apply.** `db/harness/run.sh` now rehearses
+2420 → 2450 → 2500 → 2590 as REAL migrations in order, on a bare PostgreSQL 16
+cluster, with the base schema they assume and the authz functions sliced from
+2334 and 2337 rather than stubbed — and prints the prosrc md5 after each step,
+the first of which reproduces production exactly. Executing that ancestry found
+two defects nothing had read out of it, both fixed in `2769`: no kernel command
+could create a `co_host` even though 2500's `host` capability depends on one,
+and `CANCEL_TRIP` succeeded on a completed trip.
