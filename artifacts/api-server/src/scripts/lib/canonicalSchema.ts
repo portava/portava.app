@@ -86,7 +86,7 @@ const CLAUSE_RENAME_RE =
   /\bRENAME\s+(?:COLUMN\s+)?"?([A-Za-z0-9_]+)"?\s+TO\s+"?([A-Za-z0-9_]+)"?/gi;
 
 /**
- * Split SQL into statements on top-level `;`, leaving `$$ ... $$` bodies intact
+ * Split SQL into statements on top-level `;`, leaving `$tag$ ... $tag$` bodies intact
  * so a procedural block is one statement rather than several fragments.
  */
 export function splitStatements(sql: string): string[] {
@@ -94,12 +94,27 @@ export function splitStatements(sql: string): string[] {
   let cur = "";
   let i = 0;
   while (i < sql.length) {
-    if (sql.startsWith("$$", i)) {
-      const end = sql.indexOf("$$", i + 2);
-      const stop = end === -1 ? sql.length : end + 2;
-      cur += sql.slice(i, stop);
-      i = stop;
-      continue;
+    // Dollar quoting, with the TAG, not just `$$`.
+    //
+    // This used to recognise `$$` alone, so every `DO $mig$ ... $mig$` and
+    // `CREATE FUNCTION ... $body$ ... $body$` in the corpus was shredded at
+    // each `;` INSIDE the block, and each fragment was handed to callers as if
+    // it were a top-level statement. Postgres accepts any `$tag$`, this repo's
+    // migrations use named tags throughout, and a caller asking "what does this
+    // statement do" cannot get a true answer from a third of a plpgsql body.
+    // The symptom that found it: checkSecurityDefinerOracles could not see that
+    // migration 2775's DO block installs a kernel calling trip_proposal_tally,
+    // and reported that function as referenced by nothing.
+    if (sql[i] === "$") {
+      const tag = /^\$[A-Za-z_][A-Za-z0-9_]*\$|^\$\$/.exec(sql.slice(i));
+      if (tag) {
+        const t = tag[0];
+        const end = sql.indexOf(t, i + t.length);
+        const stop = end === -1 ? sql.length : end + t.length;
+        cur += sql.slice(i, stop);
+        i = stop;
+        continue;
+      }
     }
     const ch = sql[i]!;
     if (ch === ";") { out.push(cur); cur = ""; i++; continue; }

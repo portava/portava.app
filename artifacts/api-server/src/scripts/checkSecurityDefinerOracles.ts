@@ -94,6 +94,13 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { stripSqlComments, splitStatements } from "./lib/canonicalSchema.js";
 import { stripComments } from "./lib/stripComments.js";
+/**
+ * A DO block can author a function body without a CREATE statement — the Trips
+ * kernel transforms do exactly that. See lib/transformedFunction.ts for the
+ * concrete defect this closes (trip_proposal_tally reported as referenced by
+ * nothing) and for why the marker requires BOTH halves of a transform.
+ */
+import { transformedFunctionName } from "./lib/transformedFunction.js";
 
 const MIGRATIONS_DIR = new URL("../migrations/", import.meta.url).pathname;
 const BASELINE = new URL("../../baseline/20260819_baseline_structure.sql", import.meta.url).pathname;
@@ -141,6 +148,9 @@ const policies = new Map<string, string>();
 const viewBodies: string[] = [];
 const triggerClauses: string[] = [];
 const functionBodies: Array<{ name: string; body: string }> = [];
+/** How many bodies came from a transform rather than a CREATE. Reported, so a
+ *  drop to zero — the marker silently ceasing to match — is visible. */
+let transformedBodies = 0;
 
 const CREATE_FN = /\bCREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+("?[A-Za-z0-9_."]+"?)\s*\(/i;
 const DROP_FN = /\bDROP\s+FUNCTION\s+(?:IF\s+EXISTS\s+)?("?[A-Za-z0-9_."]+"?)\s*\(/i;
@@ -149,6 +159,7 @@ const DROP_POLICY = /\bDROP\s+POLICY\s+(?:IF\s+EXISTS\s+)?("?[A-Za-z0-9_ ."-]+?"
 const CREATE_VIEW = /\bCREATE\s+(?:OR\s+REPLACE\s+)?(?:MATERIALIZED\s+)?VIEW\s+("?[A-Za-z0-9_."]+"?)/i;
 const CREATE_TRIGGER = /\bCREATE\s+(?:OR\s+REPLACE\s+)?(?:CONSTRAINT\s+)?TRIGGER\b/i;
 
+
 for (const { file, sql } of corpus) {
   for (const raw of splitStatements(stripSqlComments(sql))) {
     const stmt = raw.trim();
@@ -156,6 +167,16 @@ for (const { file, sql } of corpus) {
 
     const dropFn = DROP_FN.exec(stmt);
     if (dropFn) definers.delete(ident(dropFn[1]!));
+
+    // A verified transform authors a function body without a CREATE statement.
+    // See TRANSFORM_READS above for why this is recognised and why the marker
+    // is both halves rather than either.
+    const transformed = transformedFunctionName(stmt);
+    if (transformed) {
+      transformedBodies += 1;
+      functionBodies.push({ name: transformed, body: stmt });
+      continue;
+    }
 
     const createFn = CREATE_FN.exec(stmt);
     if (createFn) {

@@ -86,31 +86,56 @@ function hhmm(startsAt: unknown, timezone: unknown): string | null {
 
 /**
  * Build the [Trip context] lines for /compass/ask.
- * Plain strings, no markdown, capped at ~1200 chars. [] on any error.
+ * Plain strings, no markdown, capped at ~1200 chars.
+ *
+ * RETURNING NOTHING IS SAFE. ASSERTING SOMETHING IS NOT.
+ * =====================================================
+ * These lines are GROUNDING for a language model: whatever is in them, the
+ * assistant will treat as fact and repeat to the user in prose. `[] on any
+ * error` covers saying nothing, and that remains the behaviour — an absent
+ * trip context makes the assistant answer without trip knowledge, which is
+ * merely less useful.
+ *
+ * What it did NOT cover is the POSITIVE sentence this function used to emit
+ * when a read failed: an unreadable trip_plan_items produced zero rows, which
+ * fell through to `lines.push("No plan items scheduled today.")`, and the
+ * assistant then told the user their day was empty. That is not a degraded
+ * answer, it is a wrong one, and the user has no way to tell it from the truth.
+ *
+ * So every read below binds `error`, and a failed read either omits the line
+ * or says the state is unknown. Nothing here asserts an absence it did not
+ * observe.
  */
 export async function buildTripContextLines(sc: any, userId: string): Promise<string[]> {
   try {
     // ── Trip selection (mirrors toolGetCurrentTrip) ───────────────────────
-    const { data: memberRows } = await sc
+    // Trip SELECTION reads: a failure here returns no context at all, which is
+    // the safe outcome. It is not silent-by-omission — an incomplete union
+    // would silently drop trips the user is a member of, and the assistant
+    // would then reason about the wrong trip rather than about none.
+    const { data: memberRows, error: memberErr } = await sc
       .from("trip_members")
       .select("trip_id, role")
       .eq("user_id", userId)
       .in("role", ["owner", "member"]);
+    if (memberErr) return [];
     const memberTripIds = ((memberRows ?? []) as any[]).map((r) => r.trip_id as string);
 
-    const { data: owned } = await sc
+    const { data: owned, error: ownedErr } = await sc
       .from("trips")
       .select(TRIP_COLUMNS)
       .eq("owner_id", userId)
       .in("status", TRIP_STATUSES);
+    if (ownedErr) return [];
 
     let memberTrips: any[] = [];
     if (memberTripIds.length > 0) {
-      const { data } = await sc
+      const { data, error: mtErr } = await sc
         .from("trips")
         .select(TRIP_COLUMNS)
         .in("id", memberTripIds)
         .in("status", TRIP_STATUSES);
+      if (mtErr) return [];
       memberTrips = (data ?? []) as any[];
     }
 
@@ -159,7 +184,7 @@ export async function buildTripContextLines(sc: any, userId: string): Promise<st
       );
 
       // Today's plan items (≤5, not cancelled, not removed).
-      const { data: todayItems } = await sc
+      const { data: todayItems, error: todayErr } = await sc
         .from("trip_plan_items")
         .select("title, starts_at, sort_order, status")
         .eq("trip_id", trip.id)
@@ -169,7 +194,7 @@ export async function buildTripContextLines(sc: any, userId: string): Promise<st
         .order("starts_at", { ascending: true })
         .order("sort_order", { ascending: true })
         .limit(MAX_TODAY_ITEMS);
-      const items = (todayItems ?? []) as any[];
+      const items = (todayErr ? [] : (todayItems ?? [])) as any[];
       if (items.length > 0) {
         const parts = items.map((i) => {
           const itemTitle = wrapUgc(String(i.title ?? ""));
@@ -177,6 +202,11 @@ export async function buildTripContextLines(sc: any, userId: string): Promise<st
           return at ? `${itemTitle} (${at})` : itemTitle;
         });
         lines.push(`Today's plan: ${parts.join("; ")}`);
+      } else if (todayErr) {
+        // NOT "no plan items scheduled today". The assistant repeats these
+        // lines as fact; telling someone their day is empty because a query
+        // failed is the worst answer available here.
+        lines.push("Today's plan could not be read — do not state whether anything is scheduled today.");
       } else {
         lines.push("No plan items scheduled today.");
       }
@@ -184,7 +214,7 @@ export async function buildTripContextLines(sc: any, userId: string): Promise<st
       // Tomorrow's count (only mentioned when > 0).
       const tomorrow = addDays(today, 1);
       if (tomorrow) {
-        const { data: tomorrowItems } = await sc
+        const { data: tomorrowItems, error: tomorrowErr } = await sc
           .from("trip_plan_items")
           .select("id")
           .eq("trip_id", trip.id)
@@ -192,7 +222,12 @@ export async function buildTripContextLines(sc: any, userId: string): Promise<st
           .neq("status", "cancelled")
           .is("removed_at", null)
           .limit(50);
-        const n = ((tomorrowItems ?? []) as any[]).length;
+        // Omitted on failure rather than reported as 0. This line is only ever
+        // emitted when n > 0, so an unreadable table already said nothing —
+        // binding the error keeps it that way deliberately rather than by
+        // accident, and stops a future edit from adding an `else` branch that
+        // asserts tomorrow is clear.
+        const n = tomorrowErr ? 0 : ((tomorrowItems ?? []) as any[]).length;
         if (n > 0) lines.push(`Tomorrow: ${n} planned item(s).`);
       }
     } else if (startMs != null) {

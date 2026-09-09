@@ -155,7 +155,11 @@ async function loadPreviousSnapshotScore(sc: any, tripId: string): Promise<numbe
  * trip on its first compute. Both are the pair baselined in
  * scripts/SILENT_SUPABASE_WRITES_BASELINE.json as routes/tripReadiness.ts: 2.
  */
-async function persistTodaySnapshot(sc: any, tripId: string, score: number): Promise<void> {
+async function persistTodaySnapshot(sc: any, tripId: string, score: number | null): Promise<void> {
+  // A score of `null` means no readiness category could be measured at all.
+  // There is nothing to record, and writing a placeholder would make tomorrow's
+  // trend arrow compare against a number nobody computed.
+  if (score === null) return;
   const nowMs = Date.now();
   const nowIso = new Date(nowMs).toISOString();
   const todayStr = nowIso.slice(0, 10);
@@ -409,6 +413,13 @@ router.get("/trips/:tripId/arrival-board", asyncHandler(async (req, res) => {
       : null;
 
   const memberIds = await loadAcceptedMemberIds(sc, tripId, (trip as any).owner_id ?? null);
+  if (memberIds === null) {
+    // The board IS the crew. An unreadable membership would render a
+    // flight-status board containing only the owner, which reads as "nobody
+    // else has a flight" rather than "we could not look".
+    sendError(res, "degraded_unavailable", "Could not read this trip's members");
+    return;
+  }
 
   // Resolve handles for all members in one query — used for profile navigation on the client.
   const profileRows = memberIds.length > 0

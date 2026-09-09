@@ -877,7 +877,15 @@ describe("trip readiness routes", () => {
     assert.equal(r2.body.error, "feature_disabled");
   });
 
-  it("still computes readiness when trip_reservations does not exist (defensive)", async () => {
+  // THIS TEST USED TO ASSERT `categories.reservations === "ready"`.
+  //
+  // It read "Reservations treated as absent", and that is the defect: the
+  // table could not be READ, and the response said the reservations category
+  // was ready — a clean bill of health on a cancellation deadline nobody
+  // looked at. Worse, `unknown` categories counted toward the score exactly
+  // like `ready` did, so the less of a trip could be checked the readier it
+  // scored. Both are fixed; this test now pins the honest shape.
+  it("reports reservations as UNKNOWN — never ready — when trip_reservations cannot be read", async () => {
     const { client } = makeFakeClient(
       {
         trips: { rows: [baseTrip()] },
@@ -890,10 +898,55 @@ describe("trip readiness routes", () => {
 
     const r = await req(port, "GET", `/trips/${TRIP_ID}/readiness`, { token: "owner-token" });
     assert.equal(r.status, 200);
-    assert.ok(Array.isArray(r.body.items), "compute must succeed without the table");
-    // Reservations treated as absent → transport gap still derived from plan items
-    assert.ok(findItem(r.body.items, "transport:none"));
-    assert.equal(r.body.categories.reservations, "ready");
+    assert.ok(Array.isArray(r.body.items), "compute must still succeed without the table");
+
+    // 1. The category is unknown, and unknown is not ready.
+    assert.equal(r.body.categories.reservations, "unknown");
+    assert.notEqual(r.body.categories.reservations, "ready");
+
+    // 2. The failure is SAID, not merely absent, and it is critical-visible.
+    const unreadable = findItem(r.body.items, "reservations:unreadable");
+    assert.ok(unreadable, "the unreadable reservations item must be present");
+    assert.equal(unreadable.status, "unknown");
+    assert.ok(
+      r.body.criticalItems.some((i: any) => /could not be checked/i.test(i.title)),
+      "an unreadable reservations table must ride in criticalItems",
+    );
+
+    // 3. The stay/transport verdicts do not claim a reservation is absent when
+    //    the reservations table is what could not be read. The dedupe keys are
+    //    unchanged (the gap is still reported); the STATUS is not action_needed.
+    const transport = findItem(r.body.items, "transport:none");
+    assert.ok(transport, "the transport gap is still reported");
+    assert.equal(transport.status, "unknown");
+    assert.match(transport.detail, /could not be read/);
+    const stay = findItem(r.body.items, "stay:none");
+    assert.ok(stay);
+    assert.equal(stay.status, "unknown");
+
+    // 4. The score EXCLUDES what it could not measure, rather than counting it
+    //    as ready. Three categories are unknown here, so the denominator is 4.
+    assert.deepEqual(
+      [...r.body.unmeasuredCategories].sort(),
+      ["reservations", "stay", "transport"],
+      "every unmeasured category must be named",
+    );
+    assert.ok(r.body.score <= 100 && r.body.score >= 0);
+    // The precise property that used to fail: an unreadable table cannot raise
+    // the score. Compare against the same trip with the table readable.
+    const { client: healthy } = makeFakeClient({
+      trips: { rows: [baseTrip()] },
+      trip_members: { rows: [ownerMemberRow()] },
+      feature_flags: flagOn(),
+      trip_reservations: { rows: [] },
+    });
+    _setTestClient(healthy, true);
+    const healthyRes = await req(port, "GET", `/trips/${TRIP_ID}/readiness`, { token: "owner-token" });
+    assert.equal(healthyRes.body.categories.reservations, "ready");
+    assert.ok(
+      r.body.score <= healthyRes.body.score,
+      `an unreadable table must not score higher than a readable one (${r.body.score} vs ${healthyRes.body.score})`,
+    );
   });
 
   // ── Arrival board ──────────────────────────────────────────────────────────

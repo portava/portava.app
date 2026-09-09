@@ -37,6 +37,7 @@ import { Router } from "express";
 import { requireUser, requireTripMember, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { logger } from "../lib/logger.js";
+import { asyncHandler } from "../lib/asyncHandler.js";
 import {
   checkFeasibility, foldFeasibility,
   type FeasibilityResult,
@@ -96,7 +97,7 @@ export function intervalToMinutes(v: string | null | undefined): number | null {
   return null;
 }
 
-router.get("/trips/:tripId/feasibility", async (req, res) => {
+router.get("/trips/:tripId/feasibility", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const { user } = auth;
@@ -193,6 +194,6 @@ router.get("/trips/:tripId/feasibility", async (req, res) => {
     // without it is showing a measurement that was never made.
     disclosure: FEASIBILITY_UNVERIFIED_DISCLOSURE,
   });
-});
+}));
 
 export default router;

@@ -114,11 +114,30 @@ async function awardTripCompletionStamps(
   log?: StampLogger,
 ): Promise<void> {
   // Only accepted participants earn completion stamps — exclude pending invitees.
-  const { data: membersData } = await sc
+  //
+  // FAIL-CLOSED, and this one MINTS A PERMANENT USER-VISIBLE CLAIM. The read
+  // used to leave `error` unbound, so an unreadable trip_members produced
+  // memberIds = [owner] and memberCount = 1 — which then awarded
+  // `solo_traveler` to the owner of a six-person trip and withheld
+  // `group_tripper` and `good_host` from everyone who earned them. A stamp is
+  // not a cache: it is a durable statement on someone's Passport about a trip
+  // they took, and the wrong one cannot be un-awarded by a later successful
+  // read. So a failure awards NOTHING and says so; the trip still completes,
+  // because the completion is the user's and the stamps are ours.
+  const { data: membersData, error: membersErr } = await sc
     .from("trip_members")
     .select("user_id")
     .eq("trip_id", tripId)
     .in("role", ["owner", "member"]);
+
+  if (membersErr) {
+    log?.warn?.(
+      { err: membersErr.message, tripId },
+      "awardTripCompletionStamps: trip_members unreadable — awarding NO completion stamps. " +
+      "A party size read from a failed query would mint solo_traveler for a group trip.",
+    );
+    return;
+  }
 
   const memberIds: string[] = (membersData ?? []).map((m: any) => m.user_id as string);
   if (!memberIds.includes(ownerId)) memberIds.push(ownerId);
@@ -165,16 +184,29 @@ async function awardTripCompletionStamps(
   // good_host: owner hosted a trip that completed with at least one other participant
   if (memberCount >= 2)  awards.push({ userId: ownerId, slug: "good_host" });
 
-  // Milestone stamps — count owner's completed trips (patch has already committed)
-  const { count: completedCount } = await sc
+  // Milestone stamps — count owner's completed trips (patch has already
+  // committed). A FAILED COUNT IS NOT ZERO: `count ?? 0` silently withheld
+  // road_warrior and frequent_flyer from someone who had earned them, and
+  // because awardStamp is idempotent the milestone would only reappear on the
+  // NEXT completed trip. The milestones are skipped explicitly and logged, so
+  // the per-member stamps above still land.
+  const { count: completedCount, error: countErr } = await sc
     .from("trips")
     .select("id", { count: "exact", head: true })
     .eq("owner_id", ownerId)
     .eq("status", "completed");
 
-  const n = completedCount ?? 0;
-  if (n >= 5)  awards.push({ userId: ownerId, slug: "road_warrior" });
-  if (n >= 10) awards.push({ userId: ownerId, slug: "frequent_flyer" });
+  if (countErr || completedCount == null) {
+    log?.warn?.(
+      { err: countErr?.message ?? "count was null", ownerId },
+      "awardTripCompletionStamps: completed-trip count unavailable — milestone stamps skipped. " +
+      "A count read as 0 would withhold a milestone that was earned.",
+    );
+  } else {
+    const n = completedCount;
+    if (n >= 5)  awards.push({ userId: ownerId, slug: "road_warrior" });
+    if (n >= 10) awards.push({ userId: ownerId, slug: "frequent_flyer" });
+  }
 
   // ── Call awardStamp() directly to collect results, then batch notifications ─
   // Direct engine calls (not HTTP) so we get AwardResult back for notification logic.
@@ -782,7 +814,17 @@ router.patch("/trips/:tripId", async (req, res) => {
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
   // Only the trip owner may change trip settings
-  const { data: trip } = await sc.from("trips").select("id, owner_id, title, destination_city, destination_country, start_date, end_date, status, timezone, plan_edit_permission").eq("id", tripId).maybeSingle();
+  // `error` is bound because `!trip` is the OWNER CHECK's input. Unbound, a
+  // failed read is indistinguishable from a deleted trip, and the caller is
+  // told "Trip not found" — a confident, non-retryable claim assembled out of a
+  // query that never answered. A trip that could not be read is unknown, not
+  // absent (lib/http.ts TripAccessUnavailableError records the same rule).
+  const { data: trip, error: tripErr } = await sc.from("trips").select("id, owner_id, title, destination_city, destination_country, start_date, end_date, status, timezone, plan_edit_permission").eq("id", tripId).maybeSingle();
+  if (tripErr) {
+    req.log.error({ err: tripErr }, "update trip settings: trip unreadable");
+    sendError(res, "degraded_unavailable", "We could not read this trip right now. Please try again shortly.");
+    return;
+  }
   if (!trip) { sendError(res, "not_found", "Trip not found"); return; }
   const t = trip as any;
   if (t.owner_id !== user.id) { sendError(res, "forbidden", "Only the trip owner can update this trip"); return; }
@@ -1003,21 +1045,42 @@ router.get("/trips/:tripId/plan-permission", async (req, res) => {
   const member = await isAcceptedTripMember(client, tripId, user.id);
   if (!member) { sendError(res, "not_member", "Not a trip member"); return; }
 
-  const { data: trip } = await sc
+  // Both reads bind `error`. This handler is a hand-rolled copy of
+  // lib/http.ts canEditPlan, and it had carried the EXACT two defects that
+  // helper's own comment records as fixed there: an unreadable `trips` row was
+  // reported to the user as "trip not found", and an unreadable `plan_editors`
+  // produced `canEdit: false` with an empty editor list — "you may not edit
+  // this trip", said because a query failed.
+  //
+  // Absent and unreadable are different facts and only one of them is an
+  // answer. Both now answer 503, which is retryable; a 404 is not, and a client
+  // told the trip does not exist will stop asking.
+  const { data: trip, error: tripErr } = await sc
     .from("trips")
     .select("owner_id, plan_edit_permission")
     .eq("id", tripId)
     .maybeSingle();
 
+  if (tripErr) {
+    req.log?.warn?.({ err: tripErr.message, tripId }, "plan-permission: trips unreadable");
+    sendError(res, "degraded_unavailable", "Could not read this trip");
+    return;
+  }
   if (!trip) { sendError(res, "not_found", "Trip not found"); return; }
 
   const perm    = ((trip as any).plan_edit_permission as PlanEditPermission) ?? "all_members";
   const ownerId = (trip as any).owner_id as string;
 
-  const { data: editorRows } = await sc
+  const { data: editorRows, error: editorsErr } = await sc
     .from("plan_editors")
     .select("user_id")
     .eq("trip_id", tripId);
+
+  if (editorsErr) {
+    req.log?.warn?.({ err: editorsErr.message, tripId }, "plan-permission: plan_editors unreadable");
+    sendError(res, "degraded_unavailable", "Could not read this trip's plan editors");
+    return;
+  }
 
   const editorIds = (editorRows ?? []).map((r: any) => r.user_id as string);
 
@@ -1057,7 +1120,15 @@ router.post("/trips/:tripId/invite", async (req, res) => {
   if (userId === user.id) { res.status(400).json({ error: "invalid_payload", message: "You cannot invite yourself" }); return; }
 
   // Only the trip owner may invite
-  const { data: trip } = await client.from("trips").select("owner_id").eq("id", tripId).maybeSingle();
+  // `error` bound for the same reason as the first `trips` read in this file:
+  // unreadable is not absent, and "Trip not found" is not a thing a failed read
+  // may say.
+  const { data: trip, error: tripErr } = await client.from("trips").select("owner_id").eq("id", tripId).maybeSingle();
+  if (tripErr) {
+    req.log.error({ err: tripErr }, "invite member: trip unreadable");
+    sendError(res, "degraded_unavailable", "We could not read this trip right now. Please try again shortly.");
+    return;
+  }
   if (!trip) { res.status(404).json({ error: "not_found", message: "Trip not found" }); return; }
   if ((trip as any).owner_id !== user.id) { res.status(403).json({ error: "forbidden", message: "Only the trip owner can invite members" }); return; }
 
@@ -1566,12 +1637,24 @@ router.get("/trips/:tripId/plan", async (req, res) => {
   const member = await isAcceptedTripMember(client, tripId, user.id);
   if (!member) { sendError(res, "not_member", "You must be an accepted trip member to view the plan"); return; }
 
-  // Fetch trip metadata (dates + plan permission)
-  const { data: trip } = await client
+  // Fetch trip metadata (dates + plan permission).
+  //
+  // `error` is bound because it decides whether the WARNINGS below are a
+  // measurement or an assumption. computeWarnings() treats a null start/end as
+  // "this trip has no dates", so an unreadable `trips` row used to produce a
+  // plan with no `outside_trip_dates` warning on any item — indistinguishable
+  // from a plan whose items are all inside the trip. A failed read is not a
+  // clean plan; refuse and let the client retry.
+  const { data: trip, error: tripErr } = await client
     .from("trips")
     .select("start_date,end_date,owner_id,plan_edit_permission")
     .eq("id", tripId)
     .maybeSingle();
+  if (tripErr) {
+    req.log.error({ err: tripErr }, "get trip plan: trip metadata unreadable");
+    sendError(res, "degraded_unavailable", "We could not read this trip's dates right now, so the plan cannot be checked against them. Please try again shortly.");
+    return;
+  }
   const tripStartDate = (trip as any)?.start_date ?? null;
   const tripEndDate   = (trip as any)?.end_date   ?? null;
 
@@ -1606,10 +1689,19 @@ router.get("/trips/:tripId/plan", async (req, res) => {
     .map((i) => i.source_id as string);
   const cancelledMeetupIds = new Set<string>();
   if (meetupSourceIds.length > 0) {
-    const { data: meetups } = await client
+    const { data: meetups, error: meetupsErr } = await client
       .from("meetups")
       .select("id, status")
       .in("id", meetupSourceIds);
+    // Same reasoning as the trip read above, one step further: an unreadable
+    // `meetups` read left this set EMPTY, and an empty set is exactly what "no
+    // source meetup was cancelled" looks like. The plan then rendered an item
+    // whose meetup had been cancelled as an ordinary, warning-free item.
+    if (meetupsErr) {
+      req.log.error({ err: meetupsErr }, "get trip plan: source meetups unreadable");
+      sendError(res, "degraded_unavailable", "We could not check whether the events behind this plan are still on. Please try again shortly.");
+      return;
+    }
     for (const m of (meetups ?? [])) {
       if ((m as any).status === "cancelled") cancelledMeetupIds.add(m.id);
     }
@@ -1960,7 +2052,15 @@ router.post("/trips/:tripId/members", async (req, res) => {
   if (role !== "member" && role !== "invited") { res.status(400).json({ error: "invalid_payload", message: "role must be 'member' or 'invited'" }); return; }
   if (userId === user.id) { res.status(400).json({ error: "invalid_payload", message: "Cannot add yourself" }); return; }
 
-  const { data: trip } = await client.from("trips").select("owner_id").eq("id", tripId).maybeSingle();
+  // `error` bound for the same reason as the first `trips` read in this file:
+  // unreadable is not absent, and "Trip not found" is not a thing a failed read
+  // may say.
+  const { data: trip, error: tripErr } = await client.from("trips").select("owner_id").eq("id", tripId).maybeSingle();
+  if (tripErr) {
+    req.log.error({ err: tripErr }, "add member: trip unreadable");
+    sendError(res, "degraded_unavailable", "We could not read this trip right now. Please try again shortly.");
+    return;
+  }
   if (!trip) { res.status(404).json({ error: "not_found", message: "Trip not found" }); return; }
   if ((trip as any).owner_id !== user.id) { res.status(403).json({ error: "forbidden", message: "Only the trip owner can add members" }); return; }
 
@@ -2039,11 +2139,29 @@ router.delete("/trips/:tripId/members/:userId", async (req, res) => {
 
   if (userId === user.id) { res.status(400).json({ error: "invalid_payload", message: "Cannot remove yourself" }); return; }
 
-  const { data: trip } = await client.from("trips").select("owner_id").eq("id", tripId).maybeSingle();
+  // `error` bound for the same reason as the first `trips` read in this file:
+  // unreadable is not absent, and "Trip not found" is not a thing a failed read
+  // may say.
+  const { data: trip, error: tripErr } = await client.from("trips").select("owner_id").eq("id", tripId).maybeSingle();
+  if (tripErr) {
+    req.log.error({ err: tripErr }, "remove member: trip unreadable");
+    sendError(res, "degraded_unavailable", "We could not read this trip right now. Please try again shortly.");
+    return;
+  }
   if (!trip) { res.status(404).json({ error: "not_found", message: "Trip not found" }); return; }
   if ((trip as any).owner_id !== user.id) { res.status(403).json({ error: "forbidden", message: "Only the trip owner can remove members" }); return; }
 
-  const { data: memberRow } = await client.from("trip_members").select("role").eq("trip_id", tripId).eq("user_id", userId).maybeSingle();
+  // The same rule one line further in, and it matters more here: the ROLE this
+  // read returns is what stops the trip owner being removed. An unreadable
+  // trip_members row answered "Member not found", which is at least honest in
+  // outcome; but the row could equally have been the owner's, and the branch
+  // below that refuses on role === 'owner' would never have been reached.
+  const { data: memberRow, error: memberErr } = await client.from("trip_members").select("role").eq("trip_id", tripId).eq("user_id", userId).maybeSingle();
+  if (memberErr) {
+    req.log.error({ err: memberErr }, "remove member: membership unreadable");
+    sendError(res, "degraded_unavailable", "We could not check this member's role right now. Please try again shortly.");
+    return;
+  }
   if (!memberRow) { res.status(404).json({ error: "not_found", message: "Member not found on this trip" }); return; }
   if ((memberRow as any).role === "owner") { res.status(400).json({ error: "invalid_payload", message: "Cannot remove the trip owner" }); return; }
 
@@ -2162,7 +2280,15 @@ router.post("/trips/:tripId/plan/reorder", async (req, res) => {
 
   // Owner-only (matches the single-item reorder): the global sort order is the
   // trip owner's prerogative, not any accepted member's.
-  const { data: trip } = await client.from("trips").select("owner_id").eq("id", tripId).maybeSingle();
+  // `error` bound for the same reason as the first `trips` read in this file:
+  // unreadable is not absent, and "Trip not found" is not a thing a failed read
+  // may say.
+  const { data: trip, error: tripErr } = await client.from("trips").select("owner_id").eq("id", tripId).maybeSingle();
+  if (tripErr) {
+    req.log.error({ err: tripErr }, "bulk reorder: trip unreadable");
+    sendError(res, "degraded_unavailable", "We could not read this trip right now. Please try again shortly.");
+    return;
+  }
   if (!trip) { sendError(res, "not_found", "Trip not found"); return; }
   if ((trip as { owner_id: string }).owner_id !== user.id) {
     sendError(res, "forbidden", "Only the trip owner can reorder plan items"); return;

@@ -28,10 +28,13 @@
  * value — not published, not shown, `degraded: true` so the caller can say so.
  * `loadPreferences` (services/location/LocationPermissionService) already does
  * this for `location_preferences`; the ghost-mode read here does it for
- * `trip_crew_location_preferences`, whose existing reader
- * (`TripCrewLocationService.getCrewPreferences:287`) does NOT bind `error` and
- * so reads an unreadable row as "ghost mode off". That reader is out of this
- * lane's ownership; it is reported, not edited.
+ * `trip_crew_location_preferences`.
+ *
+ * That table's other reader, `TripCrewLocationService.getCrewPreferences`, had
+ * the same defect and it is now FIXED: it binds `error` and throws, so an
+ * unreadable row no longer reads as "ghost mode off" on the user's own privacy
+ * screen. This note is kept rather than deleted because the finding is what
+ * made the fix findable.
  *
  * Also: strips exact GPS from all layover outputs; nearby travellers are shown
  * as approximate city/zone only; meetup location is hidden until accepted.

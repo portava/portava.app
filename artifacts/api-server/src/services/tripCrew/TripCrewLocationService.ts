@@ -56,6 +56,13 @@ function crewMapUnavailable(table: string, error: any): CrewMapUnavailableError 
 // ── Public API ────────────────────────────────────────────────────────────────
 
 export interface CrewMapResult {
+  /**
+   * True when `plan_checkins` could not be read. Every card's
+   * `planCheckInStatus` is then `null`, which renders as "has not arrived" —
+   * a claim about a person made from a query that failed. A caller that shows
+   * arrival state MUST show "unknown" instead when this is true.
+   */
+  checkInsUnreadable?: boolean;
   members: CrewMemberCard[];
   totalCount: number;
 }
@@ -127,6 +134,10 @@ export async function getCrewMap(
     .from("profiles")
     .select("id, display_name, name, full_name, username, avatar_url")
     .in("id", allUserIds);
+  // REFUSE. Every card on the map is a person, and a card with no profile is
+  // an anonymous pin next to a location — the crew is shown WHERE somebody is
+  // without being told WHO. There is no honest sub-part of that to serve.
+  if (profilesRes.error) throw crewMapUnavailable("profiles", profilesRes.error);
   const profileMap = new Map<string, any>(
     ((profilesRes.data as any[]) ?? []).map((p) => [p.id, p]),
   );
@@ -156,6 +167,11 @@ export async function getCrewMap(
     .from("user_location_state")
     .select("user_id, city, district, country, updated_at, lat, lng")
     .in("user_id", allUserIds);
+  // REFUSE. This IS the map. An unreadable location table produced a full crew
+  // map on which every member had no location — indistinguishable from a crew
+  // that has genuinely shared nothing, and the more alarming reading of the two
+  // when someone is looking for a person.
+  if (locationRes.error) throw crewMapUnavailable("user_location_state", locationRes.error);
   const locationMap = new Map<string, any>(
     ((locationRes.data as any[]) ?? []).map((l) => [l.user_id, l]),
   );
@@ -192,6 +208,17 @@ export async function getCrewMap(
     .select("user_id, status")
     .eq("trip_id", tripId)
     .in("user_id", allUserIds);
+  // FAIL CLOSED AT THE FIELD, like the hotel blur above rather than like the
+  // refusals. A check-in status governs one badge; an unreadable table used to
+  // produce `planCheckInStatus: null`, which renders as "has not arrived" — a
+  // claim about a person, made from a query that failed. `null` is kept, and
+  // `checkInsUnreadable` travels with the response so the caller can render
+  // "unknown" instead of "not arrived".
+  const checkInsUnreadable = Boolean(checkinsRes.error);
+  if (checkInsUnreadable) {
+    logger.warn({ err: checkinsRes.error, tripId },
+      "getCrewMap: plan_checkins unreadable — arrival status is UNKNOWN, not 'not arrived'");
+  }
   const checkinMap = new Map<string, string>(
     ((checkinsRes.data as any[]) ?? []).map((c) => [c.user_id, c.status]),
   );
@@ -202,6 +229,13 @@ export async function getCrewMap(
     .select("user_id")
     .in("user_id", allUserIds)
     .eq("status", "active");
+  // REFUSE. This is the safety-critical one. An unreadable table produced
+  // `hasSafeReturnActive: false` for everybody, so the crew was told NOBODY is
+  // on an active Safe Return walk home when the truth was "we could not look".
+  // That is the one wrong answer on this map that could stop someone checking
+  // on a person who needed it, and there is no degraded version of it worth
+  // serving.
+  if (srRes.error) throw crewMapUnavailable("safe_return_sessions", srRes.error);
   const activeSRSet = new Set<string>(
     ((srRes.data as any[]) ?? []).map((r) => r.user_id),
   );
@@ -214,6 +248,12 @@ export async function getCrewMap(
     .eq("trip_id", tripId)
     .eq("status", "active")
     .gt("expires_at", now);
+  // REFUSE. An unreadable session table means every live share disappears, so
+  // a viewer who HAS been granted one sees the sharer as not sharing. That is
+  // the same class as the preference refusal above: the row decides each
+  // card's disclosure level, and getting it wrong understates what the viewer
+  // is entitled to see while looking exactly like the truth.
+  if (liveShareRes.error) throw crewMapUnavailable("trip_crew_location_sessions", liveShareRes.error);
   const liveShareMap = new Map<string, any>();
   for (const row of ((liveShareRes.data as any[]) ?? [])) {
     const allowed: string[] = row.allowed_member_ids ?? [];
@@ -267,7 +307,7 @@ export async function getCrewMap(
     return buildCrewCard(raw);
   });
 
-  return { members: cards, totalCount: cards.length };
+  return { members: cards, totalCount: cards.length, checkInsUnreadable };
 }
 
 /**
@@ -284,12 +324,29 @@ export async function getCrewPreferences(
   shareSafeReturnStatus: boolean;
   updatedAt: string | null;
 }> {
-  const { data } = await db
+  // FAIL-CLOSED. This read USED to leave `error` unbound, which made an
+  // UNREADABLE preference row indistinguishable from an ABSENT one — and the
+  // defaults for "absent" are the SHARING defaults. A user with ghost mode ON
+  // was shown "ghost mode off, sharing city" on their own privacy screen, and
+  // would have had no reason to doubt it.
+  //
+  // services/airport/LayoverPrivacyGuard.ts had already found this, written it
+  // down, and left it as out of that lane's ownership. It is fixed here.
+  //
+  // A failure THROWS: the route (routes/tripCrewLocation.ts) already catches
+  // and answers db_error, which is the honest answer to "we could not read your
+  // privacy settings". Returning a default would be answering a question about
+  // consent with a guess.
+  const { data, error } = await db
     .from("trip_crew_location_preferences")
     .select("default_visibility, ghost_mode_enabled, share_arrival_status, share_safe_return_status, updated_at")
     .eq("trip_id", tripId)
     .eq("user_id", userId)
     .maybeSingle();
+
+  if (error) {
+    throw new Error(`trip_crew_location_preferences unreadable: ${error.message}`);
+  }
 
   const row = data as any;
   return {

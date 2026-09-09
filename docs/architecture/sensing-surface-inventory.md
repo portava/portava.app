@@ -282,7 +282,7 @@ are not part of this surface.
 ## 5. The HTTP routes
 
 Six intel routers are mounted in `routes/index.ts` — `routes/intel.ts`, `routes/intelCoverage.ts`, `routes/intelApi.ts`, `routes/intelReadModels.ts`,
-`routes/intelOutcomes.ts` and `routes/intelObservability.ts` (`routes/index.ts:293,295,296,297,300,302#router.use`) — carrying
+`routes/intelOutcomes.ts` and `routes/intelObservability.ts` (`routes/index.ts:295,297,298,299,302,304#router.use`) — carrying
 **24 endpoints**. Two further endpoints on other routers reach intel modules or tables directly.
 
 Mounting is not assumed: `test/intelRouterRegistrationGuard.test.ts` mounts the *composed* router

@@ -374,7 +374,7 @@ export async function requireUser(
 // ---------------------------------------------------------------------------
 
 /** Which trip authorization read failed. */
-export type TripAccessInput = "trip_members" | "trips" | "plan_editors";
+export type TripAccessInput = "trip_members" | "trips" | "plan_editors" | "trip_plan_items";
 
 /**
  * A trip AUTHORIZATION INPUT could not be read. Deliberately distinct from "the
@@ -608,13 +608,19 @@ export async function canEditPlanItem(
   userId: string,
   ownerOnly = false,
 ): Promise<CanEditPlanItemResult> {
-  const { data: item } = await client
+  // `error` bound for the reason this whole file records: this read decides
+  // BOTH whether the item exists AND, through creator_id, whether the caller
+  // may edit it. Unbound, a failed read answered "Plan item not found" — the
+  // 404 an author would see for someone else's item, said about their own.
+  // Refuse instead, the same way requireTripMember does: 503, retryable.
+  const { data: item, error: itemErr } = await client
     .from("trip_plan_items")
     .select("creator_id")
     .eq("id", itemId)
     .eq("trip_id", tripId)
     .is("removed_at", null)
     .maybeSingle();
+  if (itemErr) throw new TripAccessUnavailableError("trip_plan_items", describeReadError(itemErr));
   if (!item) {
     return { permitted: false, code: "not_found", message: "Plan item not found" };
   }

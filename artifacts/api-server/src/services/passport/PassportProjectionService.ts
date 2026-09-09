@@ -317,7 +317,7 @@ export interface MemoryProjection {
  * whose failure mode is a zero or an empty array indistinguishable from the
  * truthful version of the same value.
  */
-export type PassportUnreadableSection = "stats" | "stamps" | "memories" | "trust";
+export type PassportUnreadableSection = "stats" | "stamps" | "memories" | "trust" | "trips";
 
 export interface PassportProjection {
   userId: string;
@@ -1819,7 +1819,11 @@ export async function buildPassportProjection(
     buildStats(sc, userId).catch(
       () => ({ countries: 0, cities: 0, hiddenGemStamps: 0, totalStamps: 0, readFailed: true } as any),
     ),
-    countUserTrips(sc, userId).catch(() => ({ count: 0 })),
+    // `count: null` is the honest answer countUserTrips now gives when a
+    // source read failed. The `.catch` arm matches it rather than the old
+    // confident zero: a thrown client and a failed query are the same
+    // not-knowing, and neither is "this traveller has taken no trips".
+    countUserTrips(sc, userId).catch(() => ({ count: null, unavailable: true as const })),
     buildUnifiedStamps(sc, userId).catch(
       () => ({ stamps: [] as UnifiedStamp[], count: 0, readFailed: true } as any),
     ),
@@ -1839,6 +1843,9 @@ export async function buildPassportProjection(
     countries: statsRaw.countries ?? 0,
     cities: statsRaw.cities ?? 0,
     stamps: unified.count ?? 0,
+    // Still a number on the wire — the field is typed `number` and every
+    // consumer renders it. The ZERO is what `unreadable` below qualifies, so a
+    // client can show "—" instead of "0 trips" for someone with nine.
     trips: tripCount.count ?? 0,
   };
 
@@ -1851,6 +1858,11 @@ export async function buildPassportProjection(
   };
   if (statsRaw.readFailed === true) markUnreadable("stats");
   if (unified.readFailed === true) markUnreadable("stamps");
+  // A trip count that could not be determined. `trips: 0` above is a
+  // placeholder, and this is what says so — the Passport's whole purpose is to
+  // be a record of where someone has been, and telling them they have been
+  // nowhere is the one wrong answer that surface must not give.
+  if (tripCount.count === null) markUnreadable("trips");
 
   // The owner's COLLECTION-level visibility, resolved through the same helper
   // the Yearbook uses. An unreadable preference row withholds both collections

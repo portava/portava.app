@@ -72,11 +72,18 @@ async function requireReservationMember(
     return null;
   }
 
-  const { data: trip } = await sc
+  // `error` is bound because `!trip` is this gate's whole answer. Unbound, a
+  // failed read became "Trip not found" — a confident, non-retryable claim
+  // about a trip nobody actually looked at. Unreadable is not absent.
+  const { data: trip, error: tripErr } = await sc
     .from("trips")
     .select("id, owner_id")
     .eq("id", tripId)
     .maybeSingle();
+  if (tripErr) {
+    sendError(res, "degraded_unavailable", "We could not read this trip right now. Please try again shortly.");
+    return null;
+  }
   if (!trip) { sendError(res, "not_found", "Trip not found"); return null; }
 
   const isOwner = (trip as any).owner_id === user.id;
