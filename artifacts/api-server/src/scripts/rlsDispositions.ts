@@ -881,14 +881,20 @@ export function arrayGrantVerdict(row: PolicySnapshotRow): ArrayGrantVerdict {
 }
 
 export const ARRAY_GRANT_KNOWN_OPEN: ReadonlyArray<KnownOpenEntry> = [
-  {
-    key: "trip_crew_location_sessions::crew_session_owner_select",
-    kind: "array_grant_ungated",
-    reason:
-      "`auth.uid() = ANY(allowed_member_ids)` with no membership, status or expiry test. A stranger listed in the array reads the session (measured on portava-ci 2026-09-07), and this branch dominates crew_sessions_recipients_read completely. Repaired by migration 2531 (owner-only).",
-    since: "2026-09-07",
-    removeWhen: "migration 2531 is applied to portava-ci. The stale-entry check fails until you do.",
-  },
+  // EMPTY as of 2026-09-09. It held
+  // trip_crew_location_sessions::crew_session_owner_select, whose USING was
+  // `auth.uid() = ANY(allowed_member_ids)` with no membership, status or expiry
+  // test — a stranger listed in the array read the session, and that branch
+  // dominated crew_sessions_recipients_read completely. 2531 repaired it to
+  // owner-only and is applied to portava-ci: the live policy now reads
+  // `SELECT ... USING (auth.uid() = user_id)`, with no array grant at all
+  // (measured off pg_policies_snapshot_v2). The live suite reported the entry
+  // stale by name, exactly as its own removeWhen predicted.
+  //
+  // The gated array grant that remains — crew_sessions_recipients_read, with
+  // `= ANY (allowed_member_ids)` AND authz.is_trip_crew(trip_id) AND a status
+  // and expiry test — is array_grant_with_crew_gate, which is not an offence
+  // and never needed an entry.
 ];
 
 /* ── Evaluation ────────────────────────────────────────────────────────────── */

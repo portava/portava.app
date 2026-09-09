@@ -404,15 +404,45 @@ describe("evaluatePolicySnapshot — allowlists are consistent with the rules, a
     assert.deepEqual(after.tripMembersStaleKnownOpen, ["highlights::highlights_select_active"]);
   });
 
-  it("MUTATION: applying 2531 makes the array-grant known-open entry STALE", () => {
-    const rows = ciLikeSnapshot().map((r) =>
-      policyKey(r) === "trip_crew_location_sessions::crew_session_owner_select"
-        ? { ...r, qual: CREW_SESSION_OWNER_SELECT_2531 }
-        : r,
-    );
-    const report = evaluatePolicySnapshot(rows);
-    assert.deepEqual(report.arrayGrantOffenders, []);
-    assert.deepEqual(report.arrayGrantStaleKnownOpen, ["trip_crew_location_sessions::crew_session_owner_select"]);
+  it("MUTATION: the array-grant shrink-only mechanism — a repaired policy makes its entry STALE", () => {
+    // Stated with its OWN dispositions and its own row, for the fourth time in
+    // this file and the same reason: 2531 is applied to portava-ci, the live
+    // policy reads `SELECT ... USING (auth.uid() = user_id)` with no array
+    // grant, and ARRAY_GRANT_KNOWN_OPEN is now empty — so the mechanism cannot
+    // be demonstrated through the shipped list or through ciLikeSnapshot(),
+    // which derives its rows from it.
+    const KEY = "trip_crew_location_sessions::crew_session_owner_select";
+    const asItWas: PolicyDispositions = {
+      reviewed: TRIP_MEMBERS_REVIEWED_ALLOWLIST,
+      tripMembersKnownOpen: TRIP_MEMBERS_KNOWN_OPEN,
+      arrayGrantKnownOpen: [{
+        key: KEY,
+        kind: "array_grant_ungated",
+        reason: "the pre-2531 `auth.uid() = ANY(allowed_member_ids)` with no membership, status or expiry test",
+        since: "2026-09-07",
+        removeWhen: "migration 2531 is applied to portava-ci",
+      }],
+      forAllBaseline: FOR_ALL_WITHOUT_WITH_CHECK_BASELINE,
+    };
+    const withPolicy = (qual: string): PolicySnapshotRow[] =>
+      [...ciLikeSnapshot(), row("trip_crew_location_sessions", "crew_session_owner_select", "SELECT", qual)];
+
+    // Before 2531 the entry is live and excuses the policy.
+    const before = evaluatePolicySnapshot(withPolicy(CREW_SESSION_OWNER_SELECT_0041), asItWas);
+    assert.deepEqual(before.arrayGrantOffenders, []);
+    assert.deepEqual(before.arrayGrantStaleKnownOpen, []);
+
+    // After it, the entry is STALE and the check demands its removal.
+    const after = evaluatePolicySnapshot(withPolicy(CREW_SESSION_OWNER_SELECT_2531), asItWas);
+    assert.deepEqual(after.arrayGrantOffenders, []);
+    assert.deepEqual(after.arrayGrantStaleKnownOpen, [KEY]);
+  });
+
+  it("MUTATION: with the list empty, an ungated array grant is an OFFENDER rather than excused", () => {
+    // The other half, and the one that matters now: nothing is allowlisted, so
+    // a policy in the pre-2531 shape reports instead of being tolerated.
+    const rows = [...ciLikeSnapshot(), row("trip_crew_location_sessions", "crew_session_owner_select", "SELECT", CREW_SESSION_OWNER_SELECT_0041)];
+    assert.deepEqual(evaluatePolicySnapshot(rows).arrayGrantOffenders, ["trip_crew_location_sessions::crew_session_owner_select"]);
   });
 
   it("MUTATION: a NEW FOR ALL policy without WITH CHECK is an offender; a baseline entry that gains WITH CHECK is stale", () => {
