@@ -1126,7 +1126,7 @@ here so the next reader can age this section mechanically.
 
 | Field | Value |
 | --- | --- |
-| `head_commit` | `c3f76a49` — §29 measured `823b6d67`; §30 re-measured §7.4 at this commit. ONE declaration, kept current, because `check:census-freshness` reads the first one it finds and a second row further down is a decoration that ages nothing. |
+| `head_commit` | `6d3e7a56` — §29 measured `823b6d67`; §30 re-measured §7.4 at `c3f76a49`; §31 re-measured §9.3 and §14 at this commit. ONE declaration, kept current, because `check:census-freshness` reads the first one it finds and a second row further down is a decoration that ages nothing. |
 | Branch | `claude/portava-continuation-uqta94` |
 | Scope re-read | §5.1's twelve tables, §7, §8, §9.1, §9.3, §10, §11, §20.1, §22 |
 | NOT re-read | §1–§3, §6, §12–§19, §21, §23–§25. The headline stays where §26 left it. |
@@ -1484,3 +1484,166 @@ to the wrong one half the time.
 - **§7.4's fourth check is not "coming".** It has no input. If a transport-mode
   policy is ever added, this is the row that turns on; until then the honest
   state is the one now visible in the response.
+
+---
+
+## 31. §9.3 ballots and §14.1's projection, at `head_commit` `6d3e7a56`
+
+**This section moves the document's `head_commit` to `6d3e7a56`.** As in §30,
+the declaration itself is updated in §29's field table rather than re-declared
+here — the checker reads the first row it finds, and a second one further down
+ages nothing while looking like it does. (That behaviour is now itself a
+guarded contract; see 31.4.)
+
+| Field | Value |
+| --- | --- |
+| Measured at | `6d3e7a56` |
+| Scope re-read | §9.3's ballot read, §14 (TR254–TR262), and §29.2's two named gaps |
+
+### 31.1 §29.2's first gap is closed
+
+§29.2 named two honest gaps. The first:
+
+> `trip_proposal_votes` has no row-level reader. The tally is served and that is
+> the decision-relevant read, but §9.3 gives proposing and deciding different
+> verbs and a crew member cannot currently see *who* voted.
+
+The consequence was concrete: a crew member could not tell whether **they
+themselves** had voted, and would be sent to vote twice — which the kernel then
+refuses, so the missing information surfaced as a confusing error.
+
+`GET /trips/:tripId/decisions` now carries `myVote` per proposal: `yes | no |
+abstain`, or `null` for "has not voted". `null` is deliberately not rendered as
+`abstain`, because migration 2774's own column comment draws that line — an
+abstention is a recorded decision not to decide and counts toward a unanimous
+rule being SATISFIED; a silence does not, because nobody knows what it means.
+The unanimous rule turns on exactly that difference.
+
+**Nobody else's ballot is served**, and a test asserts it by scanning the whole
+serialised response body for another user's id.
+
+### 31.2 The half that is a decision, not a build
+
+Whether a crew member may see **another** member's ballot is product policy.
+It is recorded as `VOTE_BALLOT_VISIBILITY` in
+`docs/architecture/blocker-ledger.md` with the three defensible answers, and
+shipped narrow.
+
+The asymmetry is the whole argument and is worth repeating here because this
+census will be read by someone deciding it: widening later is a one-line change
+to one route; narrowing after people have seen each other's ballots is not —
+the disclosure has already happened and no migration undoes it.
+
+The ledger also records the argument AGAINST the narrow answer, which is real:
+on a three-person crew, the tally plus your own ballot already tells you the
+other two. That is a reason to think the wide answer is the honest end state.
+It is not a reason to ship it unasked.
+
+### 31.3 §14 — the projection, and a section read one row at a time
+
+§14.1 gives a contract:
+
+> `TripMapProjection { stage · hotel/private anchors (access controlled) ·
+> active plans · confirmed commitments · saved ideas · crew presence summaries
+> · route chains · meetup points · live opportunities · safety/logistics points
+> · generatedAt · sourceTripVersion }`
+
+Ten layers and two envelope fields. `GET /trips/:tripId/map-projection` is
+that contract.
+
+| id | was | now | why |
+|---|---|---|---|
+| TR254 `TripMapProjection` | N | **W** | The endpoint and the type exist, with `generatedAt` and `sourceTripVersion` (= `trips.version`, the kernel aggregate version). |
+| TR255 Layer: stage | N | **W** | The stage layer resolves each stage's anchor to coordinates. §29's TR78 made stages exist; this makes them projectable. |
+| TR256 Private anchors, access controlled | W | **W** (stronger) | Still W, and for a better reason. See 31.3.1. |
+| TR257 Layer: active plans | W | **W** | Unchanged in kind: "active" still cannot mean IN_PROGRESS (TR46). What changed is that the projection now SAYS which reading it used, in an `activePlanReading` field, instead of leaving a reader to assume. |
+| TR258 Layer: confirmed commitments | N | **W** | Commitments resolve to points through `public.places`, the identity `routes/tripFeasibility.ts` established. |
+| TR259 saved ideas | C | **C** | Now also a projection layer. |
+| TR260 crew presence summaries | C | **C** | Deliberately `no_source` in the projection: §14.4 makes it a summary layer with no coordinates unless a live-share grant exists, and synthesising coordinates for it would be the §14.4 violation, not the fix. |
+| TR261 route chains | W | **W** | `no_source` in the projection, with the obstacle named: `route_plans` is owner-only by RLS, so a trip's crew cannot read the trip's own route chain. A policy change, not a projection change. |
+| TR262 meetup points | W | **W** | A projection layer now, still built on `category = 'meeting_point'` — a label on an ordinary item, which is what keeps it at W. |
+
+#### 31.3.1 Why TR256 stays W, and what actually improved
+
+TR256's W was justified thus: *"the safety depends on each writer setting a
+flag."* That is still true — `location_is_private` is still the input — so the
+row does not move.
+
+What the projection adds is that the flag is no longer the LAST line of
+defence:
+
+- private lodging goes into its own layer, so a consumer iterating one list
+  cannot receive it by accident;
+- the privacy check runs **before** the category check, so a private lodging
+  labelled `meeting_point` does not land in a shareable layer;
+- `assertNoPrivateLeak` re-checks the assembled projection and **throws** — a
+  postcondition, because the failure it guards is a coding mistake in the
+  assembly and a convention cannot catch one of those. It throws rather than
+  filtering: filtering hides the leak and leaves the bug;
+- on the client, the convenient accessor `allPoints` EXCLUDES anchors, so the
+  easy call is the safe one, and the card does not even show a COUNT of them —
+  on a two-stop trip "1 private location" is close to naming it.
+
+TR256 becomes C when a writer cannot fail to set the flag — which means the
+concept §14.1 calls an *anchor* existing as a thing, rather than a boolean on a
+plan item.
+
+#### 31.3.2 Four of ten layers have no producer, and the projection says so
+
+`crewPresenceSummaries`, `routeChains`, `liveOpportunities` and `safetyPoints`
+return `{status: "no_source"}` with a reason naming the actual obstacle. This
+is the same device §30 used for §7.4's route availability, and the same
+argument: a projection carrying six layers must not be read as ten with four
+empty.
+
+`no_source` is deliberately distinct from `unread`. One means a retry may work;
+the other means no retry will.
+
+#### 31.3.3 The one place a partial answer is right
+
+Every other Trips read surface in this pass refuses the WHOLE response when any
+input fails, because a partial answer there is a *different* answer. The map
+projection does not, and the route says why: a trip whose saved-ideas read
+failed still has stages, and refusing everything would hide nine working layers
+behind one broken one.
+
+The rule that makes that safe is the per-layer status. A failed read is
+`unread`, never an empty layer, and the client card's load-bearing line names
+the layers that failed — because a map missing its saved places looks exactly
+like a trip with none saved.
+
+### 31.4 A guard defect this document caused, and now pins
+
+Writing §30 required moving the `head_commit`, and it was written as
+`` | **`c3f76a49`** — … `` — bold marks between the pipe and the hash.
+`check:census-freshness` reported *"no head_commit declared — CANNOT BE
+CHECKED"* and then **passed**.
+
+The checker had two branches where it needed three. An absent declaration is
+legitimate (census-passport.md declares none, deliberately, and says so in
+prose) and does not fail. A MALFORMED one fell into the same branch, so a
+document whose author had just written a commit hash into it was silently
+reclassified as one that never had — and was then aged by nothing while
+appearing to be aged.
+
+`src/scripts/lib/censusHeadCommit.ts` is the three-state reader, and
+`censusHeadCommit.test.ts` pins the exact string that passed on 2026-09-09,
+plus two contracts this document now depends on: **census-trips must declare
+exactly one `head_commit` row** (the parser reads the first), and the error
+message must keep describing what the regex accepts, or it sends the next
+author to write the same bug.
+
+That is why §30 and §31 update §29's row instead of declaring their own.
+
+### 31.5 What this section does NOT claim
+
+- **The headline is unchanged**, for §29.8's reason.
+- **Nothing here is a deployment claim.** §29.5 stands: none of 2750 or
+  2760–2777 is on `main`, and both databases still carry 2420. The new routes
+  read tables that exist only in this branch, so on any live database today
+  every §5-backed layer would answer `unread`. That is the honest state and it
+  is what the three-valued layer exists to express.
+- **§29.2's SECOND gap is still open.** `trip_snapshots` has a route and no
+  screen. It is left as recorded rather than closed, because a snapshot is an
+  operator-facing object and building a user-facing snapshot browser would be
+  scope this spec does not ask for. Recorded, not rounded.
