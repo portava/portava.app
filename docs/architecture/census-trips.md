@@ -1126,7 +1126,7 @@ here so the next reader can age this section mechanically.
 
 | Field | Value |
 | --- | --- |
-| `head_commit` | `1ec4d903` — §29 measured `823b6d67`; §30 re-measured §7.4 at `c3f76a49`; §31 re-measured §9.3 and §14 at `6d3e7a56`; §32 corrected TR261/TR437 at this commit. ONE declaration, kept current, because `check:census-freshness` reads the first one it finds and a second row further down is a decoration that ages nothing. |
+| `head_commit` | `6c6995e1` — §29 measured `823b6d67`; §30 re-measured §7.4 at `c3f76a49`; §31 re-measured §9.3 and §14 at `6d3e7a56`; §32 corrected TR261/TR437 at `1ec4d903`; §34 re-read the three §5 read routes at this commit. ONE declaration, kept current, because `check:census-freshness` reads the first one it finds and a second row further down is a decoration that ages nothing. |
 | Branch | `claude/portava-continuation-uqta94` |
 | Scope re-read | §5.1's twelve tables, §7, §8, §9.1, §9.3, §10, §11, §20.1, §22 |
 | NOT re-read | §1–§3, §6, §12–§19, §21, §23–§25. The headline stays where §26 left it. |
@@ -1935,3 +1935,96 @@ branch**, and those are different sentences:
   now accurately *recorded*, still not something to "fix" by applying more.
 
 Nothing here changes §29.5. It replaces its citation with a measurement.
+
+## 34. The three §5 read routes, re-read at `6c6995e1`
+
+**This section moves the document's `head_commit` to `6c6995e1`.** §33 measured at
+`1ec4d903`. Nothing in §29–§33's verdicts changes; three of the files those
+sections certified were edited, and this says what changed and what it does not
+disturb.
+
+| Field | Value |
+| --- | --- |
+| Measured at | `6c6995e1` — declared in §29's field table, the document's single `head_commit` row |
+| Supersedes | §29's `head_commit` VALUE only |
+| Scope re-read | `routes/tripStructure.ts`, `routes/tripDecisions.ts`, `routes/tripMapProjection.ts` — their read construction, not their verdicts |
+| Trigger | `check:write-path-columns` on portava-ci, first run of this branch's code against a live schema |
+
+### 34.1 What the check found
+
+Each of the three routes read its tables through a shared helper that took the
+table NAME:
+
+```ts
+async function readTrip(table: string, cols: string, order?: string) {
+  let q = sc!.from(table).select(cols).eq("trip_id", tripId);
+```
+
+`check:write-path-columns` resolves `.from()` and `.select()` **statically**. A
+variable table name resolves to nothing, so the guard recorded
+`src/routes/tripStructure.ts|select|dynamic table name` — a blind spot — and
+with it every column those routes select.
+
+That is ten §5 tables' worth of columns, on the three routes that read them,
+invisible to the check whose entire job is to catch a select list naming a
+column the live schema does not have. PostgREST fails the WHOLE read with
+PGRST100 in that case; it does not return the other columns. §29.1's finding was
+that nine of ten §5 tables had a writer and no reader. This is its sibling: the
+readers exist and were **unverifiable**.
+
+The helpers now take a built query and use the table name only for the log line,
+so each call site carries its own literal `.from("trip_stages").select("…")`.
+supabase-js builders are lazy, so a query the short-circuit never awaits costs
+nothing.
+
+### 34.2 What it did NOT find, and what it did find instead
+
+No phantom column on any of the three routes. Once they resolved, the check
+reported what it could finally see, and it is a database fact rather than a code
+one — the columns are declared by migrations portava-ci does not have:
+
+| Missing on portava-ci | Declared in | How verified |
+|---|---|---|
+| `trip_plan_items.stage_id`, `.place_id`, `.privacy_scope`, `.plan_scope`, `.version` | 2770 | direct query, `information_schema.columns` |
+| `trip_proposals.decision_rule`, `.proposed_by` | 2774 | same |
+| `trip_events.actor_role`, `trip_command_receipts.actor_role` | **2450** | same |
+| tables `trip_plan_participants`, `trip_proposal_votes`; view `trip_presence_current` | 2771, 2774, 2776 | `to_regclass` |
+
+The **2450** row corrects §29's field table, which said portava-ci "carries 2420
+and nothing after it" and treated the kernel ancestry as settled there. 2450's
+two `actor_role` columns are absent, so 2450 is not applied to portava-ci — the
+harness rehearsal proved the chain, it did not deploy it. §33's ledger repair
+covered 2750 and 2760–2763 and 2767; it did not cover 2450, and nothing claimed
+it did.
+
+None of this is fixed by this document or by any command. §33.4's gate stands:
+the apply is restricted to the default branch, and the way to close it is the
+merge followed by the sanctioned applier.
+
+### 34.3 A contract that approved a grant nobody had opened
+
+Same run, `check:authorization-contract`, four layover tables. The entries added
+on 2026-09-07 are headed **PINNED AS MEASURED** and listed anon/authenticated
+grants of `DELETE, INSERT, REFERENCES, SELECT, TRIGGER, UPDATE`.
+
+`information_schema.role_table_grants` on portava-ci returns
+`DELETE, INSERT, SELECT, UPDATE`. **REFERENCES and TRIGGER were never granted.**
+They were inferred from the phrase "the default ALL grant" and written into a
+document whose heading says they were measured.
+
+The direction matters. The contract was WIDER than the database, so it did not
+hide an open hole — it pre-approved one. The day a migration or a Supabase
+default handed `REFERENCES` to `anon`, the check would have stayed green and the
+contract would have read as a considered approval of it.
+
+This is the §32 mistake in a different file: a claim sourced from a plausible
+sentence rather than from a query. §32.7's rule — *read the object, not the
+sentence about the object* — is not specific to policies, and this is the second
+instance in three days.
+
+### 34.4 One more scope hole, closed
+
+`routes/tripMapProjection.ts` was not in `CENSUS_SCOPE["census-trips.md"]`, so a
+change to §14.1's route could not age this census. It is in the list now. §31
+certified that route; until this commit, nothing would have told anyone when its
+certification went out of date.
