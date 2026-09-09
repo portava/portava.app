@@ -149,6 +149,18 @@ export type TripPlanCommandType =
   | "ADD_COMMITMENT"
   | "UPDATE_COMMITMENT"
   | "REMOVE_COMMITMENT"
+  // §5.1 goal, decision-task and risk families (2766). Trip-scoped: none of the
+  // three references a stage, so the only ownership check is the assignee one
+  // on decision tasks.
+  | "ADD_GOAL"
+  | "UPDATE_GOAL"
+  | "REMOVE_GOAL"
+  | "ADD_DECISION_TASK"
+  | "UPDATE_DECISION_TASK"
+  | "REMOVE_DECISION_TASK"
+  | "ADD_RISK"
+  | "UPDATE_RISK"
+  | "REMOVE_RISK"
   | "REORDER_PLAN"
   | "LINK_PLAN_ROUTE_STOP";
 
@@ -257,6 +269,14 @@ export type TripKernelReason =
   // reason would make the client distinguish a case it cannot act on.
   | "TRIP_LEG_NOT_FOUND"
   | "TRIP_COMMITMENT_NOT_FOUND"
+  // §5.1 goal, decision-task and risk families (2766).
+  | "TRIP_GOAL_NOT_FOUND"
+  | "TRIP_DECISION_TASK_NOT_FOUND"
+  | "TRIP_RISK_NOT_FOUND"
+  // Distinct from TRIP_AUTH_NOT_CREW on purpose: the ACTOR is authorised and
+  // the ASSIGNEE is not. A client that cannot tell those apart shows the wrong
+  // error to the wrong person — "you are not on this trip" to someone who is.
+  | "TRIP_ASSIGNEE_NOT_CREW"
   | "TRIP_TEMPORAL_RANGE_INVERTED"
   | "TRIP_IDENTITY_ALREADY_EXISTS"
   | "TRIP_PLAN_INVALID_TRANSITION"
@@ -316,6 +336,10 @@ export const TRIP_EVENT_TYPES = [
   // leg and commitment families (2765).
   "trip.leg_added", "trip.leg_updated", "trip.leg_removed",
   "trip.commitment_added", "trip.commitment_updated", "trip.commitment_removed",
+  // goal, decision-task and risk families (2766).
+  "trip.goal_added", "trip.goal_updated", "trip.goal_removed",
+  "trip.decision_task_added", "trip.decision_task_updated", "trip.decision_task_removed",
+  "trip.risk_added", "trip.risk_updated", "trip.risk_removed",
 ] as const;
 export type TripEventType = (typeof TRIP_EVENT_TYPES)[number];
 
