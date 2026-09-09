@@ -1322,15 +1322,51 @@ governance proofs, and the whole live-DB verdict.
 
 The 46 that DID land are intact and recorded (real sha256, `applied_by='ci'`).
 
-### The exact action, and it is the only one
+### The exact action — CORRECTED 2026-09-09 16:55, the first version named the wrong place
 
-Rotate `SUPABASE_PROJECT_TOKEN` in **Settings → Secrets and variables →
-Actions** on `portava/portava.app`, to a current Supabase Management API token
-with access to project `hwokxgbmezheskbzskfr`, then re-run `CI (live DB)` on
+**The value these jobs read is an ENVIRONMENT secret, not a repository secret.**
+
+All four database-touching jobs in `live-db.yml` declare, at job level:
+
+```yaml
+    environment: ci-nonprod-supabase
+    env:
+      SUPABASE_PROJECT_TOKEN: ${{ secrets.SUPABASE_PROJECT_TOKEN }}
+```
+
+`api-server-check-all` (line 352), `schema-drift` (609),
+`post-media-revocation-rehearsal` (860) and `live-db-security-suites` (1034).
+Inside a job that names an `environment:`, GitHub resolves `secrets.X` as
+**environment secret → repository secret → organization secret**, so an
+environment secret of that name in `ci-nonprod-supabase` SHADOWS the repository
+one. Rotating the repository secret changes nothing for these jobs.
+
+That is consistent with every symptom: the "required secrets must be non-empty"
+preflight passes (the stale environment secret is non-empty) and the first
+Management API call is refused (it is the old token).
+
+So the action is:
+
+**Settings → Environments → `ci-nonprod-supabase` → Environment secrets →
+`SUPABASE_PROJECT_TOKEN`**, set to a current Supabase **personal access token**
+(`sbp_…`, from Account → Access Tokens) belonging to an account with access to
+the organisation that owns `hwokxgbmezheskbzskfr`. Then re-run `CI (live DB)` on
 `main` (it carries `workflow_dispatch`).
+
+It must be a PAT, not a project API key: the endpoint is
+`https://api.supabase.com/v1/projects/{ref}/database/query` with
+`Authorization: Bearer`, which does not accept the `service_role` or `anon` JWT.
+The repo stores a `SUPABASE_SERVICE_ROLE_KEY` secret too, which makes that
+substitution an easy one to make by accident.
 
 Nothing else is required: the two defects that stopped the applier before this
 are fixed and merged (#477, #478), and the chain resumes at `2724` on its own.
+
+**Evidence that the first remedy was tried and did not work.** Two runs were
+dispatched on `main` after the repository secret was rotated —
+`34377989819` (16:38) and `34378675033` (16:45) — and both returned
+`401 Unauthorized` on the first Management API call, exactly as the two before
+the rotation did. Five consecutive 401s across four runs, 15:22 to 16:48.
 
 ### Not done here, deliberately
 
