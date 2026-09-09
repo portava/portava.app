@@ -134,6 +134,11 @@ export type TripPlanCommandType =
   | "CANCEL_PLAN"
   | "COMPLETE_ACTIVITY"
   | "REMOVE_PLAN"
+  // §5.1 stage family (2764). trip_stages is the root of §5's dependency graph;
+  // these are the commands that make it non-writerless.
+  | "ADD_STAGE"
+  | "UPDATE_STAGE"
+  | "REMOVE_STAGE"
   | "REORDER_PLAN"
   | "LINK_PLAN_ROUTE_STOP";
 
@@ -233,6 +238,9 @@ export type TripKernelReason =
   | "TRIP_AUTH_ROLE_NOT_PERMITTED"
   | "TRIP_AUTH_IDEMPOTENCY_KEY_FOREIGN"
   | "TRIP_VERSION_CONFLICT"
+  // §5.1 stage family (2764).
+  | "TRIP_STAGE_NOT_FOUND"
+  | "TRIP_STAGE_SEQUENCE_TAKEN"
   | "TRIP_TEMPORAL_RANGE_INVERTED"
   | "TRIP_IDENTITY_ALREADY_EXISTS"
   | "TRIP_PLAN_INVALID_TRANSITION"
@@ -285,6 +293,10 @@ export const TRIP_EVENT_TYPES = [
   // trip.participant_joined with payload.via = 'invite_link' — no new type.
   "trip.participant_invited", "trip.participant_added", "trip.participant_role_set",
   "trip.participant_removed", "trip.participant_joined", "trip.participant_declined",
+  // stage family (2764). A stage order that can collide is not an order, so the
+  // sequence is unique per trip and a clash is its own typed rejection rather
+  // than a 23505 reaching the client as a 500.
+  "trip.stage_added", "trip.stage_updated", "trip.stage_removed",
 ] as const;
 export type TripEventType = (typeof TRIP_EVENT_TYPES)[number];
 
