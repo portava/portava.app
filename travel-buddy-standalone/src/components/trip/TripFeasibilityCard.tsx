@@ -20,6 +20,16 @@
  * A read that FAILS gets the same treatment for the same reason: it says so,
  * rather than vanishing. "You cannot get there in time" is precisely the kind
  * of finding an empty state must never be allowed to swallow.
+ *
+ * §7.4's OTHER THREE CHECKS, AND WHY ONLY SOME ARE SHOWN
+ * =====================================================
+ * The route returns stage locality, place identity and route availability
+ * beside the travel verdict. Only the INCONSISTENT findings are rendered as
+ * warnings. There is one UNCHECKABLE per plan without coordinates and a
+ * permanent one for route availability, and a list full of "we could not check
+ * this" teaches a reader to skim past the entry that says "this plan is in the
+ * wrong city". They are COUNTED instead — the absence is stated without being
+ * shouted, which is a different thing from hiding it.
  */
 import React, { useCallback, useEffect, useState } from 'react';
 import { View, Text, ActivityIndicator, StyleSheet } from 'react-native';
@@ -30,6 +40,8 @@ import {
   fetchTripFeasibility,
   feasibilityHeadline,
   feasibilityUnknownDetail,
+  consistencyProblems,
+  consistencyUnchecked,
   type FeasibilityRead,
 } from '../../services/tripFeasibility.ts';
 
@@ -85,12 +97,13 @@ export function TripFeasibilityCard({ tripId, load = fetchTripFeasibility }: Pro
 
   const report = read.report;
   const infeasible = report.verdict === 'INFEASIBLE';
+  const inconsistent = consistencyProblems(report).length > 0;
   const unknown = report.verdict === 'UNKNOWN';
   const Icon = infeasible ? AlertTriangle : unknown ? HelpCircle : CheckCircle2;
   const iconColor = infeasible ? color.signal : unknown ? color.faint : color.success;
 
   return (
-    <View style={[s.wrap, infeasible && s.wrapAlarm]} testID="trip-feasibility-card">
+    <View style={[s.wrap, (infeasible || inconsistent) && s.wrapAlarm]} testID="trip-feasibility-card">
       <View style={s.row}>
         <Icon size={16} color={iconColor} />
         <View style={{ flex: 1 }}>
@@ -109,6 +122,23 @@ export function TripFeasibilityCard({ tripId, load = fetchTripFeasibility }: Pro
           {infeasible && report.offendingHopIndex !== null && (
             <Text style={s.detail}>
               The tightest hop is #{report.offendingHopIndex + 1} of {report.evaluatedHops}.
+            </Text>
+          )}
+
+          {/* §7.4 stage locality and place identity — the checks that found a
+              real disagreement, in words. */}
+          {consistencyProblems(report).map((f) => (
+            <Text key={`${f.check}:${f.planIds.join(',')}`} style={s.detail} testID={`consistency-${f.reason}`}>
+              {f.detail}
+            </Text>
+          ))}
+
+          {consistencyUnchecked(report) > 0 && (
+            // Stated, not shouted. A green tick here would be claiming that
+            // three of §7.4's four checks are all four of them.
+            <Text style={s.detail} testID="consistency-unchecked">
+              {consistencyUnchecked(report)} consistency check
+              {consistencyUnchecked(report) === 1 ? '' : 's'} could not be run.
             </Text>
           )}
 

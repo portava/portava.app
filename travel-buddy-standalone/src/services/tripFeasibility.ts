@@ -59,6 +59,20 @@ export interface FeasibilityHop {
   routed: boolean;
 }
 
+/** §7.4's three-valued outcome, worst last. */
+export const CONSISTENCY_VERDICTS = ['CONSISTENT', 'UNCHECKABLE', 'INCONSISTENT'] as const;
+export type ConsistencyVerdict = (typeof CONSISTENCY_VERDICTS)[number];
+
+export interface ConsistencyFinding {
+  /** STAGE_LOCALITY_TIME | STAGE_LOCALITY_PLACE | PLACE_IDENTITY | ROUTE_AVAILABILITY */
+  check: string;
+  verdict: ConsistencyVerdict;
+  reason: string;
+  planIds: string[];
+  stageId: string | null;
+  detail: string;
+}
+
 export interface FeasibilityReport {
   tripId: string;
   commitmentCount: number;
@@ -73,6 +87,14 @@ export interface FeasibilityReport {
   provider: { id: string; routed: boolean };
   /** The sentence to show next to any non-INFEASIBLE verdict. Always present. */
   disclosure: string;
+  /**
+   * §7.4's OTHER three checks — stage locality, place identity, route
+   * availability. `verdict` cannot be CONSISTENT today: route availability
+   * needs a transport-mode policy this system does not have, so it emits a
+   * permanent UNCHECKABLE. That is §7.4's honest state, and a client that
+   * showed a green tick would be claiming three checks are four.
+   */
+  consistency: { verdict: ConsistencyVerdict; findings: ConsistencyFinding[] };
 }
 
 export type FeasibilityRead =
@@ -103,7 +125,12 @@ export async function fetchTripFeasibility(tripId: string): Promise<FeasibilityR
     // A verdict this client does not recognise is not passed to a screen. That
     // is how a future FEASIBLE — a claim nothing here measures — would reach a
     // user as reassurance.
-    if (!body || !Array.isArray(body.hops) || !isFeasibilityVerdict(body.verdict)) {
+    if (
+      !body || !Array.isArray(body.hops) || !isFeasibilityVerdict(body.verdict)
+      // §7.4 rides in the same response; a body without it is not a partial
+      // answer, it is one this client cannot interpret.
+      || !body.consistency || !Array.isArray(body.consistency.findings)
+    ) {
       return { state: 'unavailable', detail: 'unreadable response' };
     }
     return { state: 'ok', report: body };
@@ -127,6 +154,25 @@ export function feasibilityHeadline(report: FeasibilityReport): string {
     default:
       return "We can't check this schedule yet";
   }
+}
+
+/**
+ * The §7.4 findings a user should be shown: everything INCONSISTENT, and
+ * nothing else.
+ *
+ * The UNCHECKABLE ones are deliberately NOT surfaced as warnings — there is
+ * one per plan with no coordinates and a permanent one for route availability,
+ * and a screen full of "we could not check this" trains a reader to ignore the
+ * list that also carries "this plan is in the wrong city". They are counted
+ * instead, so the absence is stated without being shouted.
+ */
+export function consistencyProblems(report: FeasibilityReport): ConsistencyFinding[] {
+  return report.consistency.findings.filter((f) => f.verdict === 'INCONSISTENT');
+}
+
+/** How many §7.4 checks could not be run. Never zero today: see the type. */
+export function consistencyUnchecked(report: FeasibilityReport): number {
+  return report.consistency.findings.filter((f) => f.verdict === 'UNCHECKABLE').length;
 }
 
 /** Why UNKNOWN, in words, when the report says. */

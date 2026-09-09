@@ -40,6 +40,17 @@ function report(over: Partial<FeasibilityReport> = {}): FeasibilityReport {
     unresolvedPlaceIds: [],
     provider: { id: 'straight-line', routed: false },
     disclosure: DISCLOSURE,
+    // Route availability is UNCHECKABLE in every real response, so the default
+    // fixture carries it. A fixture that omitted it would be testing a shape
+    // the server never sends.
+    consistency: {
+      verdict: 'UNCHECKABLE' as const,
+      findings: [{
+        check: 'ROUTE_AVAILABILITY', verdict: 'UNCHECKABLE' as const,
+        reason: 'NO_TRANSPORT_MODE_POLICY', planIds: [], stageId: null,
+        detail: 'Nothing in this system records which transport modes a trip will or will not use.',
+      }],
+    },
     ...over,
   };
 }
@@ -122,6 +133,70 @@ describe('TripFeasibilityCard', () => {
     expect(await findByText(/can't check this schedule yet/)).toBeTruthy();
     expect(await findByText(/no location, so travel time/)).toBeTruthy();
     expect(getByTestId('trip-feasibility-card')).toBeTruthy();
+  });
+
+  it('§7.4: an INCONSISTENT finding is rendered in words', async () => {
+    const { findByText, findByTestId } = await render(
+      <TripFeasibilityCard
+        tripId={TRIP_ID}
+        load={loader({
+          state: 'ok',
+          report: report({
+            consistency: {
+              verdict: 'INCONSISTENT',
+              findings: [
+                {
+                  check: 'STAGE_LOCALITY_TIME', verdict: 'INCONSISTENT',
+                  reason: 'PLAN_OUTSIDE_STAGE_INTERVAL', planIds: ['pi1'], stageId: 's1',
+                  detail: 'This plan is scheduled outside the dates of the stage it belongs to.',
+                },
+                {
+                  check: 'ROUTE_AVAILABILITY', verdict: 'UNCHECKABLE',
+                  reason: 'NO_TRANSPORT_MODE_POLICY', planIds: [], stageId: null,
+                  detail: 'No transport-mode policy exists.',
+                },
+              ],
+            },
+          }),
+        })}
+      />,
+    );
+    expect(await findByTestId('consistency-PLAN_OUTSIDE_STAGE_INTERVAL')).toBeTruthy();
+    expect(await findByText(/outside the dates of the stage/)).toBeTruthy();
+  });
+
+  it('§7.4: UNCHECKABLE findings are COUNTED, not listed as warnings', async () => {
+    // A list full of "we could not check this" teaches a reader to skim past
+    // the entry that says "this plan is in the wrong city".
+    const { findByTestId, queryByText, findByText } = await render(
+      <TripFeasibilityCard
+        tripId={TRIP_ID}
+        load={loader({
+          state: 'ok',
+          report: report({
+            consistency: {
+              verdict: 'UNCHECKABLE',
+              findings: [
+                {
+                  check: 'STAGE_LOCALITY_PLACE', verdict: 'UNCHECKABLE',
+                  reason: 'NO_COORDINATES', planIds: ['pi1'], stageId: 's1',
+                  detail: 'Either this plan or its stage has no coordinates.',
+                },
+                {
+                  check: 'ROUTE_AVAILABILITY', verdict: 'UNCHECKABLE',
+                  reason: 'NO_TRANSPORT_MODE_POLICY', planIds: [], stageId: null,
+                  detail: 'No transport-mode policy exists.',
+                },
+              ],
+            },
+          }),
+        })}
+      />,
+    );
+    expect(await findByTestId('consistency-unchecked')).toBeTruthy();
+    expect(await findByText(/2 consistency checks could not be run/)).toBeTruthy();
+    // Counted, not spelled out one by one.
+    expect(queryByText(/Either this plan or its stage has no coordinates/)).toBeNull();
   });
 
   it('a dangling place id is surfaced — those hops were not checked at all', async () => {

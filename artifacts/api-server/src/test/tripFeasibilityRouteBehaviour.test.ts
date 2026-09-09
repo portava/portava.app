@@ -79,7 +79,7 @@ function makeClient(tables: Record<string, Row[]>, opts: Opts = {}) {
     },
     from(table: string) {
       const failing: any = {
-        select: () => failing, eq: () => failing, in: () => failing, order: () => failing,
+        select: () => failing, eq: () => failing, in: () => failing, is: () => failing, order: () => failing,
         maybeSingle: async () => ({ data: null, error: { message: `${table} unavailable` } }),
         single: async () => ({ data: null, error: { message: `${table} unavailable` } }),
         then: (onF: any, onR: any) =>
@@ -93,6 +93,7 @@ function makeClient(tables: Record<string, Row[]>, opts: Opts = {}) {
         select: () => chain,
         eq: (col: string, val: any) => { filters.push((r) => r[col] === val); return chain; },
         in: (col: string, vals: any[]) => { filters.push((r) => vals.includes(r[col])); return chain; },
+        is: (col: string, val: any) => { filters.push((r) => (r[col] ?? null) === val); return chain; },
         order: () => chain,
         maybeSingle: async () => { single = true; return settle(); },
         single: async () => { single = true; return settle(); },
@@ -154,6 +155,8 @@ function twoHops(gapMinutes: number, extra: Row = {}) {
     trips: [{ id: TRIP_ID, owner_id: OWNER_ID }],
     trip_members: crew,
     places,
+    trip_stages: [],
+    trip_plan_items: [],
     trip_commitments: [
       commitment({ id: "c1", starts_at: t0, place_id: PLACE_A }),
       commitment({ id: "c2", starts_at: t1, required_arrival_at: t1, place_id: PLACE_B, ...extra }),
@@ -294,6 +297,119 @@ describe("§7 — three ways to have no coordinates, told apart", () => {
     assert.deepEqual(r.body.unresolvedPlaceIds, [],
       "an unlocated place exists; reporting it as unresolved would be a different defect");
   });
+});
+
+describe("§7.4 — the other three checks ride along, and one can never pass", () => {
+  it("route availability is ALWAYS an UNCHECKABLE finding in the response", async () => {
+    // Serving travel feasibility alone, from a route called /feasibility, is
+    // how three quarters of §7.4 disappears. A client with a verdict and no
+    // consistency findings has no way to know the other checks never ran.
+    install(twoHops(TRAVEL_MIN + 5));
+    const r = await get(`/trips/${TRIP_ID}/feasibility`);
+    assert.equal(r.status, 200);
+    const route = r.body.consistency.findings.filter((f: any) => f.check === "ROUTE_AVAILABILITY");
+    assert.equal(route.length, 1);
+    assert.equal(route[0].verdict, "UNCHECKABLE");
+    assert.equal(route[0].reason, "NO_TRANSPORT_MODE_POLICY");
+    // And therefore the fold can never be CONSISTENT today. That is correct:
+    // one of the four checks has no input to check against.
+    assert.notEqual(r.body.consistency.verdict, "CONSISTENT");
+  });
+
+  it("a plan scheduled outside its stage's dates comes back INCONSISTENT", async () => {
+    install({
+      trips: [{ id: TRIP_ID, owner_id: OWNER_ID }],
+      trip_members: crew,
+      places,
+      trip_commitments: [],
+      trip_stages: [{
+        id: "s1", trip_id: TRIP_ID, starts_at: "2026-10-01T00:00:00Z",
+        ends_at: "2026-10-05T00:00:00Z", timezone: "Europe/Lisbon", place_id: PLACE_A,
+      }],
+      trip_plan_items: [{
+        id: "pi1", trip_id: TRIP_ID, stage_id: "s1",
+        starts_at: "2026-10-09T19:00:00Z", day_date: null,
+        location_name: null, place_id: null, lat: null, lng: null, removed_at: null,
+      }],
+    });
+    const r = await get(`/trips/${TRIP_ID}/feasibility`);
+    assert.equal(r.body.consistency.verdict, "INCONSISTENT");
+    const hit = r.body.consistency.findings.find((f: any) => f.reason === "PLAN_OUTSIDE_STAGE_INTERVAL");
+    assert.ok(hit, JSON.stringify(r.body.consistency.findings));
+    assert.deepEqual(hit.planIds, ["pi1"]);
+  });
+
+  it("two plans sharing a name and disagreeing on place id come back INCONSISTENT", async () => {
+    install({
+      trips: [{ id: TRIP_ID, owner_id: OWNER_ID }],
+      trip_members: crew, places, trip_commitments: [], trip_stages: [],
+      trip_plan_items: [
+        { id: "a", trip_id: TRIP_ID, stage_id: null, starts_at: null, day_date: null,
+          location_name: "Time Out Market", place_id: PLACE_A, lat: null, lng: null, removed_at: null },
+        { id: "b", trip_id: TRIP_ID, stage_id: null, starts_at: null, day_date: null,
+          location_name: "time out market", place_id: PLACE_B, lat: null, lng: null, removed_at: null },
+      ],
+    });
+    const r = await get(`/trips/${TRIP_ID}/feasibility`);
+    const hit = r.body.consistency.findings.find((f: any) => f.reason === "SAME_NAME_DIFFERENT_PLACE");
+    assert.ok(hit);
+    assert.deepEqual([...hit.planIds].sort(), ["a", "b"]);
+  });
+
+  it("a REMOVED plan item is not examined", async () => {
+    install({
+      trips: [{ id: TRIP_ID, owner_id: OWNER_ID }],
+      trip_members: crew, places, trip_commitments: [], trip_stages: [],
+      trip_plan_items: [
+        { id: "a", trip_id: TRIP_ID, stage_id: null, starts_at: null, day_date: null,
+          location_name: "Cafe", place_id: PLACE_A, lat: null, lng: null, removed_at: null },
+        { id: "b", trip_id: TRIP_ID, stage_id: null, starts_at: null, day_date: null,
+          location_name: "Cafe", place_id: PLACE_B, lat: null, lng: null,
+          removed_at: "2026-09-01T00:00:00Z" },
+      ],
+    });
+    const r = await get(`/trips/${TRIP_ID}/feasibility`);
+    assert.equal(
+      r.body.consistency.findings.filter((f: any) => f.reason === "SAME_NAME_DIFFERENT_PLACE").length, 0,
+      "a soft-deleted plan collided with a live one",
+    );
+  });
+
+  it("a non-finite lat/lng is NOT coerced to a coordinate", async () => {
+    // 0,0 is off the coast of Ghana. Measuring a plan's distance from a stage
+    // in earnest, from a value that was never a coordinate, is worse than
+    // declining to measure.
+    install({
+      trips: [{ id: TRIP_ID, owner_id: OWNER_ID }],
+      trip_members: crew, places, trip_commitments: [],
+      trip_stages: [{
+        id: "s1", trip_id: TRIP_ID, starts_at: null, ends_at: null,
+        timezone: "Europe/Lisbon", place_id: PLACE_A,
+      }],
+      trip_plan_items: [{
+        id: "pi1", trip_id: TRIP_ID, stage_id: "s1", starts_at: null, day_date: null,
+        location_name: null, place_id: null, lat: "not-a-number", lng: null, removed_at: null,
+      }],
+    });
+    const r = await get(`/trips/${TRIP_ID}/feasibility`);
+    const place = r.body.consistency.findings.filter((f: any) => f.check === "STAGE_LOCALITY_PLACE");
+    assert.equal(place[0].verdict, "UNCHECKABLE");
+    assert.equal(place[0].reason, "NO_COORDINATES");
+  });
+
+  for (const table of ["trip_plan_items", "trip_stages"]) {
+    it(`an unreadable ${table} is 503, never an empty finding list`, async () => {
+      // "We found no inconsistencies" and "we could not look" are the two
+      // sentences this route exists to keep apart. §7.4 is not exempt.
+      install({
+        trips: [{ id: TRIP_ID, owner_id: OWNER_ID }],
+        trip_members: crew, places, trip_commitments: [], trip_stages: [], trip_plan_items: [],
+      }, { errorOn: [table] });
+      const r = await get(`/trips/${TRIP_ID}/feasibility`);
+      assert.equal(r.status, 503, `${table} did not refuse`);
+      assert.equal(r.body.consistency, undefined);
+    });
+  }
 });
 
 describe("§7 — fail-closed", () => {

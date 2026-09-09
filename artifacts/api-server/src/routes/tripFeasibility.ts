@@ -48,6 +48,20 @@
  * commitments read, because a day whose places could not be read is not a day
  * whose commitments are all in the same building.
  *
+ * §7.4 RIDES ALONG, BECAUSE IT IS THE SAME SECTION
+ * ================================================
+ * §7.4 names FOUR spatial consistency checks and travel feasibility is only
+ * the first. Serving the first alone, from a route called `/feasibility`, is
+ * how three quarters of a section disappears: a client that gets a verdict
+ * with no consistency findings beside it has no way to know that place
+ * identity and stage locality were never examined.
+ *
+ * So `consistency` is in the response, and one of its four checks is
+ * permanently UNCHECKABLE — route availability, which needs a transport-mode
+ * policy this system does not have. That finding is EMITTED rather than
+ * omitted for the same reason: a report covering three checks reads as clean
+ * on all four.
+ *
  * FAIL-CLOSED
  * ===========
  * Every read is checked. supabase-js RESOLVES on a database error rather than
@@ -71,6 +85,10 @@ import {
   straightLineTravelTimeProvider,
   type GeoPoint,
 } from "../services/trips/TravelTimeProvider.js";
+import {
+  checkSpatialConsistency, foldConsistency,
+  type PlanForConsistency, type StageForConsistency,
+} from "../services/trips/TripSpatialConsistency.js";
 
 const router = Router();
 const log = logger.child({ mod: "tripFeasibility" });
@@ -263,6 +281,71 @@ router.get("/trips/:tripId/feasibility", asyncHandler(async (req, res) => {
 
   const folded = foldFeasibility(legs);
 
+  // ── §7.4, the other three checks ─────────────────────────────────────────
+  // Read fail-closed like everything else: an unreadable plan or stage list is
+  // a 503, never an empty finding list. "We found no inconsistencies" and "we
+  // could not look" are the two sentences this whole route is arranged to keep
+  // apart, and §7.4 is not exempt.
+  const { data: planData, error: planErr } = await sc
+    .from("trip_plan_items")
+    .select("id, stage_id, starts_at, day_date, location_name, place_id, lat, lng")
+    .eq("trip_id", tripId)
+    .is("removed_at", null);
+  if (planErr) {
+    log.warn({ err: planErr.message, tripId }, "feasibility: plan items read failed");
+    sendError(res, "degraded_unavailable", "Could not read this trip's plan");
+    return;
+  }
+
+  const { data: stageData, error: stageErr } = await sc
+    .from("trip_stages")
+    .select("id, starts_at, ends_at, timezone, place_id")
+    .eq("trip_id", tripId);
+  if (stageErr) {
+    log.warn({ err: stageErr.message, tripId }, "feasibility: stages read failed");
+    sendError(res, "degraded_unavailable", "Could not read this trip's stages");
+    return;
+  }
+
+  const stageRows = (stageData ?? []) as Array<{
+    id: string; starts_at: string | null; ends_at: string | null;
+    timezone: string; place_id: string | null;
+  }>;
+
+  // The stage anchors need the same places table the hops used. Resolve the
+  // ones not already fetched, and refuse if THAT read fails too.
+  const stageAnchorIds = stageRows.map((r) => r.place_id ?? "").filter(Boolean);
+  const stagePlaces = await resolvePlaces(sc, stageAnchorIds);
+  if (!stagePlaces) {
+    log.warn({ tripId }, "feasibility: stage anchor places read failed");
+    sendError(res, "degraded_unavailable", "Could not read the places this trip's stages are anchored to");
+    return;
+  }
+
+  const planRows: PlanForConsistency[] = ((planData ?? []) as any[]).map((p) => ({
+    id: p.id,
+    stageId: p.stage_id ?? null,
+    startsAt: p.starts_at ?? null,
+    dayDate: p.day_date ?? null,
+    locationName: p.location_name ?? null,
+    placeId: p.place_id ?? null,
+    // A coordinate that is not a finite number is NOT a coordinate. Coercing
+    // it would put a plan at 0,0 — off the coast of Ghana — and then measure
+    // its distance from a stage in earnest.
+    lat: typeof p.lat === "number" && Number.isFinite(p.lat) ? p.lat : null,
+    lng: typeof p.lng === "number" && Number.isFinite(p.lng) ? p.lng : null,
+  }));
+
+  const stageList: StageForConsistency[] = stageRows.map((r) => ({
+    id: r.id,
+    startsAt: r.starts_at,
+    endsAt: r.ends_at,
+    timezone: r.timezone,
+    anchor: r.place_id ? stagePlaces.coords.get(r.place_id) ?? null : null,
+  }));
+
+  const consistency = checkSpatialConsistency(planRows, stageList);
+
   res.json({
     tripId,
     commitmentCount: rows.length,
@@ -280,6 +363,17 @@ router.get("/trips/:tripId/feasibility", asyncHandler(async (req, res) => {
     // Always present, and always true today. A client that renders a verdict
     // without it is showing a measurement that was never made.
     disclosure: FEASIBILITY_UNVERIFIED_DISCLOSURE,
+    /**
+     * §7.4's other three checks. `verdict` folds them worst-first, and it
+     * CANNOT be CONSISTENT today — route availability has no policy to check
+     * against and emits a permanent UNCHECKABLE. That is the honest state of
+     * §7.4 in this system, and hiding it would make the other three read as
+     * the whole of it.
+     */
+    consistency: {
+      verdict: foldConsistency(consistency),
+      findings: consistency,
+    },
   });
 }));
 
