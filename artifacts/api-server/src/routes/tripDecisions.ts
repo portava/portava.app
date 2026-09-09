@@ -110,10 +110,14 @@ router.get("/trips/:tripId/decisions", asyncHandler(async (req, res) => {
 
   /** Read one table, or refuse the WHOLE response. See the header on why there
    *  is no partial answer here. */
+  // Takes a BUILT query, not a table name — see the same note in
+  // routes/tripStructure.ts. `.from(variable)` is invisible to
+  // check:write-path-columns, and these are the newest tables in the schema,
+  // so a blind spot here is where a missing column would survive longest.
   let failedInput: string | null = null;
-  async function readAll(table: string, cols: string): Promise<any[]> {
+  async function readAll(table: string, q: PromiseLike<{ data: unknown; error: { message: string } | null }>): Promise<any[]> {
     if (failedInput) return [];
-    const { data, error } = await sc!.from(table).select(cols).eq("trip_id", tripId);
+    const { data, error } = await q;
     if (error) {
       log.warn({ err: error.message, tripId, table }, "decisions: input read failed");
       failedInput = table;
@@ -122,10 +126,14 @@ router.get("/trips/:tripId/decisions", asyncHandler(async (req, res) => {
     return (data ?? []) as any[];
   }
 
-  const goalRows = await readAll("trip_goals", "id, type, priority, status, evidence_json");
-  const taskRows = await readAll("trip_decision_tasks", "id, type, deadline_at, consequence, assigned_user_id, status");
-  const riskRows = await readAll("trip_risks", "id, likelihood, impact, status, trigger_json, mitigation_json");
-  const propRows = await readAll("trip_proposals", "id, proposal_type, payload_json, status, expires_at, decision_rule, proposed_by");
+  const goalRows = await readAll("trip_goals", sc.from("trip_goals")
+    .select("id, type, priority, status, evidence_json").eq("trip_id", tripId));
+  const taskRows = await readAll("trip_decision_tasks", sc.from("trip_decision_tasks")
+    .select("id, type, deadline_at, consequence, assigned_user_id, status").eq("trip_id", tripId));
+  const riskRows = await readAll("trip_risks", sc.from("trip_risks")
+    .select("id, likelihood, impact, status, trigger_json, mitigation_json").eq("trip_id", tripId));
+  const propRows = await readAll("trip_proposals", sc.from("trip_proposals")
+    .select("id, proposal_type, payload_json, status, expires_at, decision_rule, proposed_by").eq("trip_id", tripId));
 
   // The caller's OWN ballots, and nobody else's. See the header on why this is
   // the narrow default rather than a settled answer.

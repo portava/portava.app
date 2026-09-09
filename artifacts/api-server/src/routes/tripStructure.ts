@@ -84,26 +84,40 @@ router.get("/trips/:tripId/structure", asyncHandler(async (req, res) => {
   const membership = await requireTripMember(sc, tripId, user.id);
   if (!membership) { sendError(res, "forbidden", "Not a trip member"); return; }
 
+  // The helper takes a BUILT query, not a table name. It used to take
+  // `(table: string, cols: string)` and call `sc.from(table).select(cols)`,
+  // which reads better and hides more: check:write-path-columns resolves
+  // `.from()`/`.select()` statically, so a variable table name makes every
+  // column on this route invisible to the one guard that would catch a
+  // `trip_stages.place_id` that does not exist live. Five §5 tables added by
+  // this branch were blind spots on exactly the route that reads them.
+  // supabase-js builders are lazy — building one the short-circuit never awaits
+  // costs nothing.
   let failed: string | null = null;
-  async function readTrip(table: string, cols: string, order?: string): Promise<any[]> {
+  async function readTrip(table: string, q: PromiseLike<{ data: unknown; error: { message: string } | null }>): Promise<any[]> {
     if (failed) return [];
-    let q = sc!.from(table).select(cols).eq("trip_id", tripId);
-    if (order) q = q.order(order, { ascending: true, nullsFirst: false });
     const { data, error } = await q;
     if (error) { log.warn({ err: error.message, tripId, table }, "structure: read failed"); failed = table; return []; }
     return (data ?? []) as any[];
   }
 
-  const stages = await readTrip("trip_stages",
-    "id, stage_type, place_id, city_id, timezone, starts_at, ends_at, state, sequence", "sequence");
-  const legs = await readTrip("trip_legs",
-    "id, from_stage_id, to_stage_id, leg_type, starts_at, ends_at, source_ref", "starts_at");
-  const commitments = await readTrip("trip_commitments",
-    "id, stage_id, type, starts_at, required_arrival_at, place_id, lateness_tolerance, prep_duration, flexibility, confidence, source_ref",
-    "starts_at");
-  const planItems = await readTrip("trip_plan_items", "id, title, day_date, starts_at, removed_at", "day_date");
-  const outcomes = await readTrip("trip_outcomes",
-    "id, stage_id, plan_id, outcome_type, occurred_at, evidence_json", "occurred_at");
+  const ORDER = { ascending: true, nullsFirst: false } as const;
+
+  const stages = await readTrip("trip_stages", sc.from("trip_stages")
+    .select("id, stage_type, place_id, city_id, timezone, starts_at, ends_at, state, sequence")
+    .eq("trip_id", tripId).order("sequence", ORDER));
+  const legs = await readTrip("trip_legs", sc.from("trip_legs")
+    .select("id, from_stage_id, to_stage_id, leg_type, starts_at, ends_at, source_ref")
+    .eq("trip_id", tripId).order("starts_at", ORDER));
+  const commitments = await readTrip("trip_commitments", sc.from("trip_commitments")
+    .select("id, stage_id, type, starts_at, required_arrival_at, place_id, lateness_tolerance, prep_duration, flexibility, confidence, source_ref")
+    .eq("trip_id", tripId).order("starts_at", ORDER));
+  const planItems = await readTrip("trip_plan_items", sc.from("trip_plan_items")
+    .select("id, title, day_date, starts_at, removed_at")
+    .eq("trip_id", tripId).order("day_date", ORDER));
+  const outcomes = await readTrip("trip_outcomes", sc.from("trip_outcomes")
+    .select("id, stage_id, plan_id, outcome_type, occurred_at, evidence_json")
+    .eq("trip_id", tripId).order("occurred_at", ORDER));
 
   if (failed) {
     // A partial structure is a picture of a DIFFERENT trip. See the header.

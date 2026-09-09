@@ -107,6 +107,10 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/routes/tripCommands.ts",
     "artifacts/api-server/src/routes/tripDecisions.ts",
     "artifacts/api-server/src/routes/tripFeasibility.ts",
+    // §14.1's route was missing from this list until 2026-09-09, so a change to
+    // the TripMapProjection surface aged nothing — the same shape of hole as a
+    // census that declares no head_commit, one entry down.
+    "artifacts/api-server/src/routes/tripMapProjection.ts",
     "artifacts/api-server/src/routes/tripPresence.ts",
     "artifacts/api-server/src/routes/tripStructure.ts",
     "artifacts/api-server/src/routes/tripReadiness.ts",

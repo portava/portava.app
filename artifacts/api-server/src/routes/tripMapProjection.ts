@@ -82,15 +82,19 @@ router.get("/trips/:tripId/map-projection", asyncHandler(async (req, res) => {
     else if (data && typeof (data as any).version === "number") sourceTripVersion = (data as any).version;
   }
 
-  /** Read one table into a layer. A failure is `unread`, never `[]`. */
+  /**
+   * Read one table into a layer. A failure is `unread`, never `[]`.
+   *
+   * Takes a BUILT query rather than a table name and a column list — see the
+   * same note in routes/tripStructure.ts. `.from(variable)` is invisible to
+   * check:write-path-columns, which is the guard that would catch a column
+   * this projection selects and the live schema does not have.
+   */
   async function layer(
     table: string,
-    cols: string,
+    q: PromiseLike<{ data: unknown; error: { message: string } | null }>,
     project: (rows: any[]) => MapPoint[],
-    filter?: (q: any) => any,
   ): Promise<Layer<MapPoint>> {
-    let q = sc!.from(table).select(cols).eq("trip_id", tripId);
-    if (filter) q = filter(q);
     const { data, error } = await q;
     if (error) {
       log.warn({ err: error.message, tripId, table }, "map projection: layer unread");
@@ -235,7 +239,9 @@ router.get("/trips/:tripId/map-projection", asyncHandler(async (req, res) => {
   // ── saved ideas (§14.1) ──────────────────────────────────────────────────
   const savedIdeas = await layer(
     "trip_saved_places",
-    "id, place_name, place_type, lat, lng",
+    sc.from("trip_saved_places")
+      .select("id, place_name, place_type, lat, lng")
+      .eq("trip_id", tripId),
     (rows) => rows.flatMap((r) => {
       const c = coordsOf(r.lat, r.lng);
       return c ? [{ id: r.id, kind: "saved_idea", lat: c.lat, lng: c.lng,

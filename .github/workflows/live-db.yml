@@ -377,7 +377,19 @@ jobs:
             exit 1
           fi
 
+      # fetch-depth: 0, and this job alone needs it. check:census-freshness
+      # (src/scripts/checkCensusFreshness.ts) ages each census document by
+      # diffing `<its declared head_commit>..HEAD`. Under actions/checkout's
+      # default depth of 1 that commit is not in the clone, so `git diff` exits
+      # `Invalid revision range` for EVERY document that declares one, and the
+      # check reports "cannot be checked" and fails — correctly, since an
+      # unmeasurable census must never read as fresh, but permanently, in the
+      # only environment whose verdict counts. A guard that can be green only on
+      # a developer's full clone gets routed around. Full history makes it
+      # measure what it claims instead of weakening what it accepts.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       # ALLOWLIST, not a denylist. One implementation of the policy, in
       # .github/scripts/assert-nonprod-supabase.sh.
