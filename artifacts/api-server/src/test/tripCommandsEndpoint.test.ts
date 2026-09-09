@@ -25,6 +25,17 @@ import {
 const route = readFileSync(new URL("../routes/tripCommands.ts", import.meta.url), "utf8");
 const index = readFileSync(new URL("../routes/index.ts", import.meta.url), "utf8");
 const kernelTs = readFileSync(new URL("../lib/tripKernel.ts", import.meta.url), "utf8");
+/**
+ * The CLIENT's copy of the issuable list. Read across the package boundary on
+ * purpose: two hand-maintained lists that must agree, in two packages that are
+ * type-checked separately, is exactly the drift a contract test is for. A type
+ * added on the server and forgotten here is a command the app cannot send; one
+ * added here and not there is a 400 at runtime.
+ */
+const clientService = readFileSync(
+  new URL("../../../../travel-buddy-standalone/src/services/tripCommands.ts", import.meta.url),
+  "utf8",
+);
 
 /** Every command type declared in TripCommandType, read from the source. */
 function declaredCommandTypes(): string[] {
@@ -42,6 +53,37 @@ describe("every kernel command is reachable somewhere, and nothing falls between
     const orphans = declared.filter((t) => !issuable.has(t) && !CUTOVER_GATED_TYPES.has(t));
     assert.deepEqual(orphans, [],
       `these commands are declared and unreachable from anywhere: ${orphans.join(", ")}`);
+  });
+
+  it("the CLIENT issues exactly the types this endpoint accepts", () => {
+    // Reachability, not shape. Before travel-buddy-standalone/src/services/
+    // tripCommands.ts existed, every one of these families was unreachable
+    // from the product: the endpoint was mounted and no client file named it.
+    const start = clientService.indexOf("export const TRIP_COMMAND_TYPES = [");
+    assert.ok(start > 0, "the client no longer declares TRIP_COMMAND_TYPES — the app cannot issue commands");
+    const end = clientService.indexOf("] as const;", start);
+    const declared = [...clientService.slice(start, end).matchAll(/'([A-Z_]+)'/g)].map((m) => m[1]!);
+
+    const server = [...COMMANDS_ENDPOINT_TYPES].sort();
+    assert.deepEqual([...declared].sort(), server,
+      "the client's issuable list and the server's have drifted apart");
+  });
+
+  it("the client never sends the fields the server refuses", () => {
+    // The endpoint REFUSES a body naming actor_user_id rather than ignoring it,
+    // so a client that sends one is broken, not merely redundant.
+    for (const forbidden of ["actor_user_id", "actorUserId", "actor_role"]) {
+      assert.ok(!clientService.includes(`${forbidden}:`),
+        `the client sends ${forbidden}, which this endpoint refuses`);
+    }
+  });
+
+  it("the client does not GENERATE an idempotency key", () => {
+    // A key minted per call makes every retry a new command and defeats the
+    // receipt table. The client requires the caller to supply one.
+    assert.ok(!/randomUUID|uuidv4|Math\.random/.test(clientService),
+      "the client mints an idempotency key, which turns every retry into a new command");
+    assert.match(clientService, /idempotencyKey is required/);
   });
 
   it("the two sets do not overlap", () => {

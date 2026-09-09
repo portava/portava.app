@@ -23,6 +23,31 @@
  * `providerId` are in the response so a client cannot mistake one for the other,
  * and `disclosure` is the sentence to show.
  *
+ * WHERE THE COORDINATES COME FROM, AND WHY THIS ROUTE USED TO BE INERT
+ * ===================================================================
+ * Both endpoints were hardcoded `null` here, with a comment saying
+ * trip_commitments.place_id has no foreign key so there is nothing to resolve.
+ * The FK really is absent (§5.2, deliberate), but the consequence was that the
+ * provider answered NO_COORDINATES on EVERY hop, so this route could only ever
+ * return UNKNOWN. An engine that can prove INFEASIBLE, behind a route that can
+ * never ask it to, is the "built but not wired" case: it earns nothing.
+ *
+ * `place_id` denotes `public.places.id` — the canonical place table, the one
+ * carrying `latitude`/`longitude` — and `resolvePlaces` below reads it. There
+ * is still no FK, so three states have to stay apart and do:
+ *
+ *   place_id IS NULL          the commitment names no place. NO_COORDINATES.
+ *   the row is not there      a DANGLING id. NO_COORDINATES for the verdict,
+ *                             but counted and returned in `unresolvedPlaceIds`
+ *                             so it is visible rather than silently the same
+ *                             as "this commitment has no place".
+ *   lat/lng are null          the place exists and is not located.
+ *                             NO_COORDINATES.
+ *
+ * And the read itself failing is none of those: it is a 503, exactly like the
+ * commitments read, because a day whose places could not be read is not a day
+ * whose commitments are all in the same building.
+ *
  * FAIL-CLOSED
  * ===========
  * Every read is checked. supabase-js RESOLVES on a database error rather than
@@ -97,6 +122,50 @@ export function intervalToMinutes(v: string | null | undefined): number | null {
   return null;
 }
 
+/** What a place lookup produced. `null` coords is a fact; a failed read is not. */
+export interface ResolvedPlaces {
+  /** place_id -> coordinates, or null when the row exists and is not located. */
+  coords: Map<string, GeoPoint | null>;
+  /** Ids that were asked for and came back with no row at all. */
+  unresolved: string[];
+}
+
+/**
+ * Resolve commitment place ids to coordinates in ONE read.
+ *
+ * Returns null — never an empty map — when the read fails. The caller turns
+ * that into a 503. An empty map means "none of these places are located",
+ * which is a completely different sentence and one that produces a verdict.
+ */
+export async function resolvePlaces(
+  sc: { from: (t: string) => any },
+  placeIds: string[],
+): Promise<ResolvedPlaces | null> {
+  const wanted = [...new Set(placeIds.filter((id): id is string => typeof id === "string" && id !== ""))];
+  if (wanted.length === 0) return { coords: new Map(), unresolved: [] };
+
+  const { data, error } = await sc
+    .from("places")
+    .select("id, latitude, longitude")
+    .in("id", wanted);
+
+  if (error) return null;
+
+  const coords = new Map<string, GeoPoint | null>();
+  for (const row of ((data ?? []) as Array<{ id: string; latitude: number | null; longitude: number | null }>)) {
+    const lat = row.latitude;
+    const lng = row.longitude;
+    coords.set(
+      row.id,
+      typeof lat === "number" && typeof lng === "number" && Number.isFinite(lat) && Number.isFinite(lng)
+        ? { lat, lng }
+        : null,
+    );
+  }
+  const unresolved = wanted.filter((id) => !coords.has(id));
+  return { coords, unresolved };
+}
+
 router.get("/trips/:tripId/feasibility", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
@@ -128,6 +197,20 @@ router.get("/trips/:tripId/feasibility", asyncHandler(async (req, res) => {
   const rows = (data ?? []) as CommitmentRow[];
   const ordered = rows.filter((r) => r.starts_at !== null || r.required_arrival_at !== null);
 
+  const places = await resolvePlaces(sc, ordered.map((r) => r.place_id ?? "").filter(Boolean));
+  if (!places) {
+    // Same rule as the commitments read one block up. An unreadable set of
+    // places is not a set of unlocated places, and the second one produces
+    // verdicts.
+    log.warn({ tripId }, "feasibility: places read failed");
+    sendError(res, "degraded_unavailable", "Could not read the places this trip's commitments are at");
+    return;
+  }
+  /** null for "no place named", "no such row", and "row is not located" alike —
+   *  the provider's NO_COORDINATES covers all three. `unresolvedPlaceIds` in the
+   *  response is what keeps the dangling case distinguishable to a reader. */
+  const pointOf = (id: string | null): GeoPoint | null => (id ? places.coords.get(id) ?? null : null);
+
   const legs: FeasibilityResult[] = [];
   const hops: Array<Record<string, unknown>> = [];
 
@@ -143,12 +226,12 @@ router.get("/trips/:tripId/feasibility", asyncHandler(async (req, res) => {
     const departFrom = prev.starts_at ? new Date(prev.starts_at) : null;
     if (!departFrom) continue;
 
-    // trip_commitments.place_id has no foreign key by design (§5.2), so there
-    // is no coordinate to resolve without the canonical place bridge. Both
-    // endpoints are therefore null and the provider answers NO_COORDINATES —
-    // which is the truth, and which produces UNKNOWN rather than a guess.
-    const fromPlace: GeoPoint | null = null;
-    const toPlace: GeoPoint | null = null;
+    // Resolved above, in one read, against public.places. Still null whenever
+    // the commitment names no place, names one that is not there, or names one
+    // with no coordinates — see the header for why those three stay apart in
+    // the response even though they produce the same verdict.
+    const fromPlace: GeoPoint | null = pointOf(prev.place_id);
+    const toPlace: GeoPoint | null = pointOf(next.place_id);
 
     const result = await checkFeasibility(
       PROVIDER,
@@ -184,6 +267,10 @@ router.get("/trips/:tripId/feasibility", asyncHandler(async (req, res) => {
     tripId,
     commitmentCount: rows.length,
     evaluatedHops: legs.length,
+    /** Place ids named by a commitment with no row behind them. A dangling
+     *  reference is a data defect, not an unlocated place, and only this field
+     *  tells them apart. */
+    unresolvedPlaceIds: places.unresolved,
     verdict: folded.verdict,
     confidence: folded.confidence,
     worstSlackMinutes: folded.worstSlackMinutes,

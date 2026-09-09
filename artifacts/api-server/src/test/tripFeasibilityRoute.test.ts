@@ -110,12 +110,34 @@ describe("interval parsing — a duration that cannot be read is not zero", () =
 });
 
 describe("the route says what it cannot compute", () => {
-  it("explains why both endpoints are null today", () => {
-    // trip_commitments.place_id has no FK by §5.2's design, so there is no
-    // coordinate without the canonical place bridge. Saying so in the file is
-    // what stops the next reader from "fixing" it with a guess.
-    assert.match(route, /place_id has no foreign key by design/);
+  // THIS TEST USED TO PIN THE ROUTE BEING INERT.
+  //
+  // It asserted the file still carried the comment "place_id has no foreign key
+  // by design", which was true and was also the reason both endpoints of every
+  // hop were hardcoded null — so the provider answered NO_COORDINATES on every
+  // hop and this route could return only UNKNOWN. The absent FK is real; the
+  // conclusion drawn from it was not. `place_id` denotes public.places.id, and
+  // resolvePlaces reads it.
+  it("resolves place coordinates, so INFEASIBLE is reachable at all", () => {
+    assert.match(route, /export async function resolvePlaces/);
+    assert.match(route, /\.from\("places"\)[\s\S]{0,120}latitude, longitude/);
+    assert.match(route, /const fromPlace: GeoPoint \| null = pointOf\(prev\.place_id\)/);
+    assert.match(route, /const toPlace: GeoPoint \| null = pointOf\(next\.place_id\)/);
+  });
+
+  it("a places read that FAILS is 503 — not a set of unlocated places", () => {
+    // The two are one keystroke apart and produce opposite outcomes: an empty
+    // map means "none of these are located" and yields UNKNOWN verdicts, which
+    // a client renders as nothing to worry about.
+    assert.match(route, /if \(!places\) \{[\s\S]{0,400}sendError\(res, "degraded_unavailable"/);
+    assert.match(route, /if \(error\) return null;/);
+  });
+
+  it("still says what it cannot compute, and keeps the three no-coordinate cases apart", () => {
     assert.match(route, /NO_COORDINATES/);
+    // A dangling place id produces the same verdict as "no place named" and
+    // must not be indistinguishable from it in the response.
+    assert.match(route, /unresolvedPlaceIds: places\.unresolved/);
   });
 
   it("uses the earliest possible departure, and says that is the optimistic choice", () => {

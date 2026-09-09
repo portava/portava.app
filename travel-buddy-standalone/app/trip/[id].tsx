@@ -29,6 +29,7 @@ import { ReviewsSection } from '../../src/components/ReviewsSection';
 import { TripBudgetSection } from '../../src/components/trip/TripBudgetSection';
 import { DailyBriefCard } from '../../src/components/DailyBriefCard';
 import { TripReadinessCard } from '../../src/components/trip/TripReadinessCard';
+import { TripFeasibilityCard } from '../../src/components/trip/TripFeasibilityCard';
 import { BeforeYouGoSection } from '../../src/components/trip/BeforeYouGoSection';
 import { TripFsqPlacesSection } from '../../src/components/trip/TripFsqPlacesSection';
 import { TripDestinationInfoCard } from '../../src/components/trip/TripDestinationInfoCard';
@@ -543,6 +544,14 @@ function TripDetailScreen() {
         {live && trip.id ? (
           <TripReadinessCard tripId={trip.id} refresh={readinessRefresh} onSummary={setReadinessRead} />
         ) : null}
+
+        {/* ── §7 schedule feasibility ──────────────────────────────────────
+            Mounted next to readiness deliberately: readiness answers "have you
+            arranged this trip", feasibility answers "can you physically do it".
+            Only INFEASIBLE is a proof — the card draws the other verdicts as
+            what they are, and renders itself rather than vanishing when the
+            check could not run. */}
+        {live && trip.id ? <TripFeasibilityCard tripId={trip.id} /> : null}
 
         {/* ── FSQ places — renders nothing until city is ingested server-side ── */}
         {live ? (
