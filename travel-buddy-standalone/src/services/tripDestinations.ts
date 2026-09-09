@@ -34,9 +34,14 @@ export async function listDestinations(tripId: string): Promise<TripDestination[
   const res = await fetch(`${apiBase()}/api/trips/${tripId}/destinations`, {
     headers: { Authorization: `Bearer ${token}` },
   });
-  if (!res.ok) return [];
+  // A failed read is not "this trip has no destinations". Callers render the
+  // empty array as that sentence; only an answered request may produce it.
+  if (!res.ok) throw new Error(`Could not read this trip's destinations (HTTP ${res.status})`);
   const data = await res.json().catch(() => null);
-  return (data?.destinations ?? []) as TripDestination[];
+  if (!data || !Array.isArray(data.destinations)) {
+    throw new Error("Could not read this trip's destinations");
+  }
+  return data.destinations as TripDestination[];
 }
 
 export async function addDestination(

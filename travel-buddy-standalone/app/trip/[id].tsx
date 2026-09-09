@@ -10,7 +10,7 @@ import { useRentABuddyFlag } from '../../src/hooks/useRentABuddyFlag';
 import { useScreenTiming } from '../../src/hooks/useScreenTiming';
 import { useNextBestAction } from '../../src/hooks/useNextBestAction';
 import { LayoverModeSheet } from '../../src/components/layover/LayoverModeSheet';
-import type { ReadinessSummary } from '../../src/services/tripIntel';
+import type { ReadinessRead, ReadinessSummary } from '../../src/services/tripIntel';
 import {
   TripHero, TodayNextUp, SavedIdeas, TripSavedPlacesSection,
   CompassTripBrief, CompassBriefErrorBoundary, TripStamps, TripPostsSection,
@@ -120,7 +120,14 @@ function TripDetailScreen() {
   const [readinessRefresh, setReadinessRefresh] = useState(false);
   // QA round 2, bug 2: single source of truth for BOTH progress gauges on this
   // page. Populated by TripReadinessCard via onSummary below.
-  const [readiness, setReadiness] = useState<ReadinessSummary | null>(null);
+  const [readinessRead, setReadinessRead] = useState<ReadinessRead | null>(null);
+  // The summary only when there IS one. `readinessRead.state === 'unavailable'`
+  // is deliberately NOT collapsed into this, because the progress ring below
+  // treats a null summary as licence to fall back to `trips.progress` — and
+  // that is how a readiness read that failed used to be painted as 0% ready.
+  const readiness: ReadinessSummary | null =
+    readinessRead?.state === 'ok' ? readinessRead.summary : null;
+  const readinessUnavailable = readinessRead?.state === 'unavailable';
   const [memberRole, setMemberRole] = useState<string | null>(null);
   /** Set when the trip is private and the API returns a minimal preview sentinel. */
   const [privateTrip, setPrivateTrip] = useState<PrivateTripPreview | null>(null);
@@ -362,7 +369,11 @@ function TripDetailScreen() {
     // reservations (api-server/src/lib/tripReadiness.ts). Falls back to the legacy
     // trips.progress column when the readiness flag is off, in which case the card
     // renders nothing and never reports a summary.
-    progress: readiness ? readiness.score : (realTrip.progress ?? 0),
+    // `null` when readiness could not be read: the ring must render an unknown
+    // state rather than a number. `trips.progress` is only a legitimate
+    // fallback when readiness is genuinely OFF — nothing writes that column,
+    // so on a failed read it would have shown a confident 0%.
+    progress: readiness ? readiness.score : (readinessUnavailable ? null : (realTrip.progress ?? 0)),
     // The hero's checklist was hard-coded to [] — it never rendered a single step.
     // Same order/labels as CATEGORIES in TripReadinessCard.tsx and
     // READINESS_CATEGORIES in api-server/src/lib/tripReadiness.ts.
@@ -530,7 +541,7 @@ function TripDetailScreen() {
 
         {/* ── Trip Readiness — renders nothing when flag is off (null response) ── */}
         {live && trip.id ? (
-          <TripReadinessCard tripId={trip.id} refresh={readinessRefresh} onSummary={setReadiness} />
+          <TripReadinessCard tripId={trip.id} refresh={readinessRefresh} onSummary={setReadinessRead} />
         ) : null}
 
         {/* ── FSQ places — renders nothing until city is ingested server-side ── */}

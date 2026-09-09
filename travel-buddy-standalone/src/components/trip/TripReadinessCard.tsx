@@ -3,7 +3,10 @@
  *
  * • Critical items always shown above the score (never collapsed/hidden).
  * • Category rows show worst-status icon for each of the seven categories.
- * • Returns null when fetchTripReadiness returns null (flag off in prod).
+ * • Renders nothing when readiness is `off` (not configured / flag off).
+ * • Renders an honest "couldn't be checked" row when the read is `unavailable`
+ *   — this card is a risk report, and a risk report that failed to load is not
+ *   a report with no risks in it. It used to render nothing for both.
  * • Accepts an optional `refresh` boolean that appends ?refresh=1 to the fetch.
  */
 import React, { useState, useEffect, useCallback } from 'react';
@@ -21,7 +24,7 @@ import {
   Minus,
 } from 'lucide-react-native';
 import { color, space, radius, type as t, shadow } from '../../theme/tokens.ts';
-import { fetchTripReadiness, type ReadinessSummary, type ReadinessItem } from '../../services/tripIntel.ts';
+import { fetchTripReadiness, type ReadinessRead, type ReadinessSummary, type ReadinessItem } from '../../services/tripIntel.ts';
 
 interface TripReadinessCardProps {
   tripId: string;
@@ -31,11 +34,14 @@ interface TripReadinessCardProps {
    * `trips.progress` — a column no client call site ever writes, so it was
    * permanently 0 — while this card rendered the readiness score (14%). Two
    * gauges on one screen, two different numbers. Reporting the summary upward
-   * lets the header render the SAME source. Called with `null` when the
-   * readiness feature flag is off or the fetch fails, in which case the header
-   * falls back to the legacy column.
+   * lets the header render the SAME source.
+   *
+   * It receives the whole `ReadinessRead`, not a nullable summary, because the
+   * header has to tell `off` from `unavailable` too: on `off` it may fall back
+   * to the legacy `trips.progress` column, and on `unavailable` it may not —
+   * that fallback is how a failed read used to become a 0% progress ring.
    */
-  onSummary?: (summary: ReadinessSummary | null) => void;
+  onSummary?: (read: ReadinessRead) => void;
 }
 
 // The seven standard readiness categories (display order + labels)
@@ -147,7 +153,25 @@ function ScoreDelta({ current, previous }: { current: number; previous: number }
   );
 }
 
-function ScoreHeader({ score, previousScore }: { score: number; previousScore: number | null }) {
+function ScoreHeader({
+  score,
+  previousScore,
+  unmeasured,
+}: {
+  score: number | null;
+  previousScore: number | null;
+  unmeasured: string[];
+}) {
+  // A null score means NOTHING could be measured. Rendering 0% there would be
+  // a confident "you are not ready at all" derived from nothing at all.
+  if (score === null) {
+    return (
+      <View style={s.scoreArea}>
+        <Text style={[s.scoreNumber, { color: color.mute }]}>—</Text>
+        <Text style={s.scoreLabel}>Trip Readiness — nothing could be checked</Text>
+      </View>
+    );
+  }
   // score is an integer (0–100) from the API
   const pct = Math.round(score);
   const scoreColor = pct >= 80 ? color.success : pct >= 50 ? color.warn : color.signal;
@@ -155,6 +179,15 @@ function ScoreHeader({ score, previousScore }: { score: number; previousScore: n
     <View style={s.scoreArea}>
       <Text style={[s.scoreNumber, { color: scoreColor }]}>{pct}%</Text>
       <Text style={s.scoreLabel}>Trip Readiness</Text>
+      {/* The score is a fraction of the categories that COULD be measured, so
+          it has to say when that is not all of them. Without this line a 100%
+          over four checked categories is indistinguishable from 100% over
+          seven. */}
+      {unmeasured.length > 0 && (
+        <Text style={s.scoreLabel}>
+          {unmeasured.length} of 7 not checked: {unmeasured.join(', ')}
+        </Text>
+      )}
       {previousScore !== null && (
         <ScoreDelta current={score} previous={previousScore} />
       )}
@@ -163,16 +196,18 @@ function ScoreHeader({ score, previousScore }: { score: number; previousScore: n
 }
 
 export function TripReadinessCard({ tripId, refresh = false, onSummary }: TripReadinessCardProps) {
-  const [summary, setSummary] = useState<ReadinessSummary | null | undefined>(undefined); // undefined = loading
+  const [read, setRead] = useState<ReadinessRead | undefined>(undefined); // undefined = loading
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async (forceRefresh: boolean) => {
     setLoading(true);
     try {
-      const res = await fetchTripReadiness(tripId, forceRefresh);
-      setSummary(res); // null means flag off → render nothing
-    } catch {
-      setSummary(null); // network/unexpected error → treat same as feature flag off
+      setRead(await fetchTripReadiness(tripId, forceRefresh));
+    } catch (e: any) {
+      // fetchTripReadiness does not throw, but a caller must never turn an
+      // unexpected throw into "flag off" — that is the collapse this change
+      // removed. An unexpected failure is still `unavailable`.
+      setRead({ state: 'unavailable', detail: String(e?.message ?? 'unexpected error') });
     } finally {
       setLoading(false);
     }
@@ -185,10 +220,10 @@ export function TripReadinessCard({ tripId, refresh = false, onSummary }: TripRe
   // `summary` only on purpose — adding `onSummary` to the deps would re-fire on
   // every parent render whenever the caller passes an inline lambda.
   useEffect(() => {
-    if (summary !== undefined) onSummary?.(summary);
-  }, [summary]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (read !== undefined) onSummary?.(read);
+  }, [read]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  if (loading || summary === undefined) {
+  if (loading || read === undefined) {
     return (
       <View style={s.wrap}>
         <ActivityIndicator size="small" color={color.signal} style={{ margin: space.lg }} />
@@ -196,8 +231,31 @@ export function TripReadinessCard({ tripId, refresh = false, onSummary }: TripRe
     );
   }
 
-  // null → feature flag off or error → render nothing
-  if (summary === null) return null;
+  // Not available here — nothing was measured, so nothing is shown and nothing
+  // is claimed. This is the ONLY case that renders nothing.
+  if (read.state === 'off') return null;
+
+  // The read failed. Say so. Vanishing here is what let a trip with unmet
+  // critical readiness items look exactly like a trip with none.
+  if (read.state === 'unavailable') {
+    return (
+      <View style={s.wrap} testID="trip-readiness-unavailable">
+        <View style={s.criticalSection}>
+          <View style={s.criticalRow}>
+            <ShieldAlert size={16} color={color.signal} />
+            <View style={{ flex: 1 }}>
+              <Text style={s.criticalTitle}>Readiness couldn't be checked</Text>
+              <Text style={s.criticalDetail}>
+                We could not load this trip's readiness, so this is not a clean bill of health. Pull to refresh to try again.
+              </Text>
+            </View>
+          </View>
+        </View>
+      </View>
+    );
+  }
+
+  const summary = read.summary;
 
   // Build a map from category key → items
   const byCategory = new Map<string, ReadinessItem[]>();
@@ -219,7 +277,11 @@ export function TripReadinessCard({ tripId, refresh = false, onSummary }: TripRe
       )}
 
       {/* Score */}
-      <ScoreHeader score={summary.score} previousScore={summary.previousScore ?? null} />
+      <ScoreHeader
+        score={summary.score}
+        previousScore={summary.previousScore ?? null}
+        unmeasured={summary.unmeasuredCategories ?? []}
+      />
 
       {/* Category rows */}
       <View style={s.categories}>

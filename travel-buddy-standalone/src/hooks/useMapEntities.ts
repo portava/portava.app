@@ -257,6 +257,17 @@ export function quantizeCameraForFetch(
 }
 
 // ── Per-layer fetchers (unchanged privacy behaviour, MapObject output) ────────
+//
+// NONE OF THESE MAY RETURN [] FOR A READ THAT FAILED.
+// ===================================================
+// Every one of them used to. `catch { return [] }` and `if (!result.ok) return
+// []` both hand the caller a layer with nothing on it, and the caller paints
+// exactly that: a map with no trips, no gems, no friends. The user cannot tell
+// that from a map of a place where none of those exist.
+//
+// The failure now propagates. `attempt()` in the fetch body below catches it
+// once, per layer, and records the layer in `unreadLayers` — the signal the
+// gateway path has always had and this path silently did without.
 
 async function fetchBuddies(
   city: string,
@@ -269,7 +280,7 @@ async function fetchBuddies(
       : ({} as Record<string, never>);
 
   const result = await searchBuddies({ city, perPage: 50, ...coordParams });
-  if (!result.ok || !result.data) return [];
+  if (!result.ok || !result.data) throw new Error('buddies layer unreadable');
 
   const out: MapObject[] = [];
   for (const buddy of result.data.buddies) {
@@ -290,7 +301,7 @@ async function fetchEvents(lat: number, lng: number, now: number): Promise<MapOb
     dateTo: cutoff.toISOString(),
     limit: 60,
   });
-  if (!result.ok || !result.data) return [];
+  if (!result.ok || !result.data) throw new Error('events layer unreadable');
 
   const out: MapObject[] = [];
   for (const ev of result.data.events) {
@@ -304,12 +315,7 @@ async function fetchEvents(lat: number, lng: number, now: number): Promise<MapOb
 }
 
 async function fetchGems(city: string): Promise<MapObject[]> {
-  let gems: HiddenGem[];
-  try {
-    gems = await listGems({ city, limit: 100 });
-  } catch {
-    return [];
-  }
+  const gems: HiddenGem[] = await listGems({ city, limit: 100 });
   const out: MapObject[] = [];
   for (const gem of gems) {
     const obj = projectGemLocal(gem);
@@ -319,12 +325,7 @@ async function fetchGems(city: string): Promise<MapObject[]> {
 }
 
 async function fetchTrips(): Promise<MapObject[]> {
-  let trips: TripRow[];
-  try {
-    trips = await listMyTrips();
-  } catch {
-    return [];
-  }
+  const trips: TripRow[] = await listMyTrips();
   const out: MapObject[] = [];
   for (const trip of trips) {
     // Private trips and coordinate-less trips never appear on the map. Unchanged.
@@ -336,12 +337,7 @@ async function fetchTrips(): Promise<MapObject[]> {
 }
 
 async function fetchFriends(): Promise<MapObject[]> {
-  let locs: CircleMemberLocation[];
-  try {
-    locs = await listVisibleCircleLocations();
-  } catch {
-    return [];
-  }
+  const locs: CircleMemberLocation[] = await listVisibleCircleLocations();
   const out: MapObject[] = [];
   for (const loc of locs) {
     if (loc.lat == null || loc.lng == null) continue;
@@ -713,34 +709,52 @@ export function useMapEntities(opts: {
       // re-fetching one it declined would route around a fail-closed decision
       // through a fail-open transport.
       const usedGateway = gatewayObjects !== null;
-      const fetches: Promise<MapObject[]>[] = [];
+      // Each entry carries the LAYER as well as its objects, because a
+      // `.catch(() => [])` that forgets which layer it silenced turns a failed
+      // read into an empty layer — the exact thing `unreadLayers` exists to
+      // prevent on the gateway path. The legacy path used to do that: a map
+      // whose trips layer failed to load looked identical to a map with no
+      // trips on it.
+      const fetches: Promise<{ layer: ToggleableEntityType; objects: MapObject[] | null }>[] = [];
+      const attempt = (
+        layer: ToggleableEntityType,
+        p: Promise<MapObject[]>,
+      ) => fetches.push(p.then(
+        (objects) => ({ layer, objects }),
+        () => ({ layer, objects: null }),
+      ));
 
       if (!usedGateway) {
         if (enabledLayers.includes('events') && effectiveLat != null && effectiveLng != null) {
-          fetches.push(fetchEvents(effectiveLat, effectiveLng, now).catch(() => []));
+          attempt('events', fetchEvents(effectiveLat, effectiveLng, now));
         }
         if (enabledLayers.includes('gems') && city) {
-          fetches.push(fetchGems(city).catch(() => []));
+          attempt('gems', fetchGems(city));
         }
         if (enabledLayers.includes('buddies') && city) {
-          fetches.push(fetchBuddies(city, effectiveLat, effectiveLng).catch(() => []));
+          attempt('buddies', fetchBuddies(city, effectiveLat, effectiveLng));
         }
         if (enabledLayers.includes('trips')) {
-          fetches.push(fetchTrips().catch(() => []));
+          attempt('trips', fetchTrips());
         }
         if (enabledLayers.includes('friends')) {
-          fetches.push(fetchFriends().catch(() => []));
+          attempt('friends', fetchFriends());
         }
       }
 
       // Which enabled layers the gateway did NOT name in `sources` — it read
       // them and failed, or never got to them. An empty layer for that reason
       // must never be presented as "nothing here"; it is surfaced, not refetched.
-      const unread: ToggleableEntityType[] = usedGateway
+      const gatewayUnread: ToggleableEntityType[] = usedGateway
         ? enabledLayers.filter((l) => !gatewaySources.includes(GATEWAY_SOURCE_FOR_LAYER[l]))
         : [];
 
-      const perLayer = await Promise.all(fetches);
+      const settled = await Promise.all(fetches);
+      const perLayer = settled.map((r) => r.objects ?? []);
+      // The legacy path's half of the same signal.
+      const unread: ToggleableEntityType[] = usedGateway
+        ? gatewayUnread
+        : settled.filter((r) => r.objects === null).map((r) => r.layer);
       // A settle superseded this fetch while the legacy transports were in
       // flight — discard so the newer viewport's answer is the one that paints.
       if (!current()) return;

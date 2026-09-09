@@ -107,7 +107,7 @@ jest.mock('../../../src/hooks/useBackend', () => ({
 
 // ── fetchTripReadiness spy ────────────────────────────────────────────────────
 // This is the key mock: we capture every call so we can assert refresh=true.
-const mockFetchTripReadiness = jest.fn().mockResolvedValue(null);
+const mockFetchTripReadiness = jest.fn().mockResolvedValue({ state: 'off' });
 jest.mock('../../../src/services/tripIntel', () => ({
   ...jest.requireActual('../../../src/services/tripIntel'),
   fetchTripReadiness: (...args: unknown[]) => mockFetchTripReadiness(...args),
