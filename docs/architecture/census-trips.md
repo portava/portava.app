@@ -1727,23 +1727,83 @@ needs a test that observed its output. This adds the fourth:
 | TR261 Layer: route chains | W ("crew cannot see it") | **W** | The verdict is unchanged and its REASON was wrong. It stays W because `route_plans` remains a parallel itinerary system attached through a nullable `trip_id`, which is TR437's real point — not because the crew cannot read it. It is now a live layer in the §14.1 projection. |
 | TR437 no second itinerary system | N | **N** | Unchanged, and its evidence is corrected: `route_plans`/`route_stops`/`route_legs` IS a second itinerary system with its own stop ordering, its own optimizer and its own checkpoint state, attached through a nullable `trip_id`, with no shared context and no events. Every one of those is still true. "A trip's crew cannot read the trip's own route plan" is struck. |
 
-### 32.5 Two things that ARE true about those policies, and were not the claim
+### 32.5 ~~Two things that ARE true about those policies~~ — WITHDRAWN, see §32.6
 
-Re-reading them properly surfaced two real narrower findings, recorded here
-rather than asserted as the old claim's replacement:
+This subsection originally reported two narrower findings from re-reading
+`0058_trip_flow.sql`: that the member policies gate on
+`tm.role IN ('owner', 'member')` and so exclude `co_host` and `viewer`, and
+that they check `role` without checking `status`, letting an invited-but-not-
+accepted member read a route chain.
 
-- **The member policies predate `co_host` and `viewer`.** They gate on
-  `tm.role IN ('owner', 'member')`. Migration 2500 introduced the `host`
-  capability over `co_host`, and 2769 made `SET_PARTICIPANT_ROLE` able to grant
-  `co_host` and `viewer` at all. **A co_host cannot read a route plan through
-  RLS**, which is a narrow, real and opposite-shaped defect from the one the
-  census claimed.
-- **They check `role` and not `status`.** A row with `role = 'member'` and
-  `status = 'invited'` passes, so someone who has been invited and has not
-  accepted can read a trip's route chain over RLS. `authz.is_trip_crew` — the
-  helper every 2760-2777 policy uses — checks acceptance. These predate it.
+**Both are false at HEAD, and §32.6 explains how they were produced by the very
+error §32.3 had just finished defining.**
 
-Both are engineering, both are small, and neither is fixed here: they are
-changes to a policy on a table this pass did not otherwise touch, and shipping
-them alongside a correction to a claim about the same policy would make the
-correction harder to audit. They are the next thing to do in this area.
+### 32.6 The correction to the correction, recorded at full strength
+
+§32.3 states a method rule:
+
+> A claim that something is FORBIDDEN must cite EVERY policy on the object, not
+> the first one found.
+
+§32.5 was written in the same sitting, about the same three policies, and broke
+a sibling of that rule immediately: **it cited the file that CREATED the
+policies and never followed the chain to the one that REPLACED them.**
+
+`2334_route_plan_crew_visibility.sql` — a migration whose filename is the
+subject — drops and recreates all three:
+
+```sql
+DROP POLICY IF EXISTS "route_plans_member_select" ON public.route_plans;
+CREATE POLICY "route_plans_member_select" ON public.route_plans
+  FOR SELECT USING (trip_id IS NOT NULL AND authz.is_trip_crew(trip_id));
+```
+
+and the same for `route_stops_member_select` (`:196`) and
+`route_legs_member_select` (`:208`). `authz.is_trip_crew` is exactly the helper
+§32.5 said these policies predate: it checks
+`role IN ('owner','co_host','member','viewer')` **and**
+`coalesce(status,'accepted') = 'accepted'`, with the owner fallback for a trip
+whose owner has no membership row.
+
+So in the repository's migration chain, at HEAD:
+
+- **a co_host CAN read a route plan** — `is_trip_crew` includes the role;
+- **an invited-but-not-accepted member CANNOT** — `is_trip_crew` requires
+  acceptance;
+- both of §32.5's findings are the state of the tree *before* 2334, described
+  as if it were the present.
+
+### 32.7 The rule §32.3 was missing, added here
+
+The rule as written says to read every policy ON THE OBJECT. It does not say
+where to look for them, and that is the hole §32.5 fell through: all three
+policies WERE read, in the file that created them, and the file that replaced
+them was never opened.
+
+> **A schema claim is a claim about the END of the chain, not about the file
+> that first wrote it.** `CREATE POLICY` in migration N is a fact about
+> migration N. The current policy is whatever the LAST `CREATE POLICY` for that
+> name established, and finding it means grepping the policy NAME across the
+> whole chain, not the table name in the file you already have open.
+
+This is the same failure as §28's — where three `pg_get_functiondef` lengths
+were correct and the conclusion drawn from them was wrong — and the same as
+§29.1's, where writers were counted and readers were not. Three times in one
+document, a measurement was made on the wrong object and reported with full
+confidence.
+
+**What did NOT go wrong is worth stating too.** §32.5 explicitly declined to
+fix what it found, on the grounds that shipping a policy change alongside a
+correction to a claim about the same policy would make the correction harder to
+audit. That instinct was right for the wrong reason: had it shipped, the
+"fix" would have been a migration rewriting three policies to say what they
+already said.
+
+### 32.8 What remains genuinely unverified
+
+Whether any DATABASE has 2334 is the standing question of §29.5 and is not
+answered here. Everything above is a claim about the repository's migration
+chain, which is what was read. Production carries 2420 and 2334 numerically
+precedes it, but §27 established that 2420 reached both databases BY HAND
+rather than through the applier — so ordering in the tree is not evidence of
+ordering in a database, and this section does not treat it as such.
