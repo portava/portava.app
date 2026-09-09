@@ -307,3 +307,228 @@ Everything else is independent and may be applied in any order.
 - **2333 section 1 and 2334 section 1 re-open the defects they closed.** Both say so in the file. They exist because a rollback that cannot reach the prior state is not a rollback, not because they should be run.
 - **2250 has no clean reverse.** Dropping the columns again re-breaks the writer; the rows written while it was applied would keep values in columns that no longer exist.
 - **2402's rollback restores a *narrowed* non-recursive policy, never the original tautology** — do not "restore" the pre-2401 shape.
+
+---
+
+## Batch C — Trips v4, `2450 → 2777` (22 files)
+
+**PREPARED 2026-09-09. NOTHING IN THIS BATCH HAS BEEN APPLIED TO PRODUCTION.**
+Production remains at the 2420-era kernel. Every measurement below was taken
+read-only against `ajrurzioarfkagpuxfnb` on 2026-09-09; each row names the query
+that produced it, so a reader can re-run it rather than trust it.
+
+This batch exists because the merge of `claude/portava-continuation-uqta94` puts
+these 22 migrations on `main`, where `live-db.yml` will apply them to
+**portava-ci** automatically. It applies **nothing** to production: there is no
+workflow that targets production, and both `live-db.yml` and
+`clean-build-proof.yml` name `ajrurzioarfkagpuxfnb` only as the ref their
+allowlist guard must REFUSE. Production is an owner action, which is what this
+document is for.
+
+### C0. Where production actually is
+
+| Measured | Value | Query |
+|---|---|---|
+| `trip_kernel_execute` `md5(prosrc)` | `d621c513ef2093054aea014702733649` (11 805 chars) | `md5(prosrc)` on `pg_proc` — a hash, not a length; see census §28 |
+| kernel contains 2450's `actor_role` | **no** | `prosrc LIKE '%actor_role%'` → false |
+| kernel contains 2500's `JOIN_VIA_LINK` | **no** | same shape |
+| kernel contains 2768's `SET_PRESENCE` | **no** | same shape |
+| `trips.version` | present | `information_schema.columns` |
+| `trip_events` / `trip_outbox` / `trip_command_receipts` | present, **0 rows** in `trip_events` | `to_regclass`, `count(*)` |
+| every §5 v4 table (`trip_stages` … `trip_plan_participants`) | **absent** (12 of 12) | `to_regclass` |
+| `public.schema_migration_ledger` | **absent** | `to_regclass` |
+| `trip_kernel_enabled` | **false** | `feature_flags` |
+
+So production carries 2420 and nothing after it, and the flag is off — which
+means none of this is reachable by any user today, before or after the apply.
+
+### C1. Preconditions — all measured, all satisfied
+
+| # | Precondition | Measured | Verdict |
+|---|---|---|---|
+| P1 | `authz.is_trip_crew(uuid)` exists (2334) | 1 | PASS |
+| P2 | `authz.is_accepted_trip_member(uuid,uuid)` exists (2337) | 1 | PASS |
+| P3 | `trips.version` exists (2420 applied) | 1 | PASS |
+| P4 | roles `anon`, `authenticated`, `service_role` exist | all three | PASS |
+| P5 | `pgcrypto` present (`gen_random_uuid`) | 1 | PASS |
+| P6 | PostgreSQL ≥ 11 so `ADD COLUMN … DEFAULT` is metadata-only | **17.6** | PASS |
+| P7 | 2770's backfill mapping covers every `trip_plan_items.visibility` value | distinct values = `{members}`; 0 rows outside `(members, public)` | PASS |
+| P8 | 2750's `NOT VALID` interval CHECK has no violating row today | 0 rows with `ends_at < starts_at` | PASS |
+| P9 | none of the constraints or columns this batch adds already exists | 0 of 5 constraints, 0 of 5 columns | PASS |
+
+Rows in the blast radius: **43 `trips`, 42 `trip_members`, 8 `trip_plan_items`,
+0 `route_stops`**. `places` holds 11 908 rows and is not written by this batch.
+
+### C2. Destructive review — none of it is destructive at apply time
+
+A text scan of the 22 files finds `DELETE FROM` in five of them and no
+`DROP TABLE`, `DROP COLUMN` or `TRUNCATE` anywhere. **Every one of those DELETEs
+is inside the kernel function body** — 2450's `REMOVE_PARTICIPANT` / `LEAVE_TRIP`,
+2764's `REMOVE_STAGE`, 2766's three remove commands, 2772's attendance
+withdrawal. They are runtime command handlers being *defined*, not statements
+being *executed* by the migration. Nothing in this batch deletes a row or drops
+an object when applied.
+
+The only statements that touch existing data are:
+
+* `2750` — one `CHECK … NOT VALID` on `trip_plan_items`. `NOT VALID` skips the
+  existing-row scan on purpose (its own comment says so) and still refuses every
+  future violating write. 8 rows, 0 of them violating.
+* `2770` — five `ADD COLUMN`s and one `UPDATE public.trip_plan_items SET
+  privacy_scope = …` over those same 8 rows, then `SET NOT NULL`. The backfill
+  runs BEFORE the `NOT NULL` and before the `visibility`↔`privacy_scope` tie, so
+  no row is ever inconsistent mid-migration. On PG 17.6 the `DEFAULT`-bearing
+  columns are metadata-only.
+* `2767` — `ALTER TABLE public.trip_presence`, on a table this batch itself
+  creates two files earlier. Zero rows.
+
+### C3. Rollback posture
+
+**All 22 have a rollback file**, and the whole chain is rehearsed by
+`db/harness/run.sh` on a local PostgreSQL 16 cluster: it applies the base
+schema, the authz slices, the ancestry `2420→2450→2500→2590`, the schema
+migrations, then the eight verified transforms, then rolls every transform back
+in reverse and asserts the restored definition is **byte-identical** to what
+preceded it, and that a second rollback REFUSES rather than corrupting.
+
+| Migration | Rollback file (`db/rollback/`) |
+|---|---|
+| 2450 | `2026-09-07-2450-trip-kernel-families-rollback.sql` |
+| 2500 | `2026-09-07-2500-trip-kernel-join-via-link-rollback.sql` |
+| 2590 | `2026-09-07-2590-trip-kernel-add-plan-attachment-columns-rollback.sql` |
+| 2750 | `2026-09-08-2750-trip-plan-item-interval-ordered-rollback.sql` |
+| 2760–2777 | `2026-09-09-<n>-…-rollback.sql`, one per migration |
+
+What a rollback does NOT restore, stated rather than implied: kernel history
+written while the flag was on (`trip_events`, `trip_outbox`,
+`trip_command_receipts` rows and `trips.version` values) and rows written into
+the v4 tables. Canonical `trip_plan_items` rows are never touched. With the flag
+off there is no such history to lose.
+
+### C4. Backup posture — an owner action, not a claim
+
+This document does not assert that a backup exists, because nothing here has
+measured one. Before applying, the owner should confirm in the Supabase
+dashboard for `ajrurzioarfkagpuxfnb` that a physical backup or PITR window
+covers the apply, and record its timestamp here. **A rollback file is not a
+backup**: it reverses DDL, not data.
+
+### C5. The ordered plan
+
+Strict numeric order. Each is one transaction. Stop at the first failure — later
+files depend on earlier ones, and continuing past a failure invents a schema
+state no environment has ever had.
+
+```
+2450  kernel v2: actor_role on trip_events + trip_command_receipts; trip,
+      participant, admin, system families                     [requires 2420]
+2500  kernel: JOIN_VIA_LINK; ADD_PARTICIPANT/SET_PARTICIPANT_ROLE widen to host
+2590  kernel: ADD_PLAN carries added_by, description, city, country
+2750  trip_plan_items: interval CHECK, NOT VALID
+2760  trip_stages          + 2 indexes + trip_stages_select_crew
+2761  trip_legs, trip_commitments + 6 indexes + 2 crew SELECT policies
+2762  trip_goals, trip_decision_tasks, trip_risks + 4 indexes
+2763  trip_presence, trip_proposals, trip_snapshots, trip_outcomes + 4 indexes
+2764  TRANSFORM: stage family
+2765  TRANSFORM: leg + commitment families
+2766  TRANSFORM: goal, decision-task, risk families
+2767  trip_presence: spec vocabulary
+2768  TRANSFORM: presence, proposal, outcome families
+2769  TRANSFORM (correction): participant roles + terminal lifecycle
+2770  trip_plan_items: stage_id, place_id, privacy_scope, plan_scope, version
+2771  trip_plan_participants + 2 indexes + crew SELECT policy
+2772  TRANSFORM: plan attendance + plan version
+2773  trip_snapshot_{seed,fold,fold_all,write,replay,verify_replay}
+2774  trip_proposal_votes + trip_proposal_{electorate,tally} + index + policy
+2775  TRANSFORM: proposal governance and apply
+2776  trip_presence_freshness() + view trip_presence_current
+2777  TRANSFORM (correction): presence ordering
+```
+
+Eight of these (2764, 2765, 2766, 2768, 2769, 2772, 2775, 2777) are **verified
+transforms**: each reads the installed definition with `pg_get_functiondef`,
+asserts every anchor occurs EXACTLY once, splices, re-checks that guarantees it
+did not author survived, and only then `EXECUTE`s. A transform run against the
+wrong base RAISEs instead of producing a wrong function — which is why the
+ancestry `2450 → 2500 → 2590` must land first, and why applying 2764 to
+production **today** would correctly abort.
+
+### C6. Per-file PRE-CHECK and POST-CHECK
+
+Every file in this batch carries its own `DO $pre$` precondition block and
+`DO $post$` postcondition block, in the same transaction as its DDL. That is
+stronger than a checklist in a document: a failed precondition aborts the
+transaction and lands nothing. The owner does not need to run a separate
+pre-check per file — but the whole-batch verdict is worth one query afterwards:
+
+```sql
+-- After the batch: 12 tables, 1 view, 9 functions, and a kernel that
+-- knows the v4 command set.
+select
+  (select count(*) from pg_class c join pg_namespace n on n.oid=c.relnamespace
+    where n.nspname='public' and c.relkind='r' and c.relname in
+    ('trip_stages','trip_legs','trip_commitments','trip_goals','trip_decision_tasks',
+     'trip_risks','trip_presence','trip_proposals','trip_proposal_votes',
+     'trip_outcomes','trip_snapshots','trip_plan_participants'))            as tables_expect_12,
+  (select count(*) from pg_class c join pg_namespace n on n.oid=c.relnamespace
+    where n.nspname='public' and c.relkind='v' and c.relname='trip_presence_current') as view_expect_1,
+  (select count(*) from pg_proc p join pg_namespace n on n.oid=p.pronamespace
+    where n.nspname='public' and p.proname in
+    ('trip_snapshot_seed','trip_snapshot_fold','trip_snapshot_fold_all','trip_snapshot_write',
+     'trip_snapshot_replay','trip_snapshot_verify_replay','trip_proposal_electorate',
+     'trip_proposal_tally','trip_presence_freshness'))                      as functions_expect_9,
+  (select count(*) from pg_tables where schemaname='public' and rowsecurity
+    and tablename in ('trip_stages','trip_legs','trip_commitments','trip_goals',
+     'trip_decision_tasks','trip_risks','trip_presence','trip_proposals',
+     'trip_proposal_votes','trip_outcomes','trip_snapshots','trip_plan_participants'))
+                                                                            as rls_on_expect_12,
+  (select md5(prosrc) from pg_proc p join pg_namespace n on n.oid=p.pronamespace
+    where n.nspname='public' and p.proname='trip_kernel_execute')           as kernel_md5,
+  (select count(*) from information_schema.columns where table_schema='public'
+    and table_name='trip_plan_items'
+    and column_name in ('stage_id','place_id','privacy_scope','plan_scope','version'))
+                                                                            as plan_item_cols_expect_5,
+  (select enabled from public.feature_flags where flag='trip_kernel_enabled') as flag_still_false;
+```
+
+`kernel_md5` must NOT be `d621c513ef2093054aea014702733649` afterwards — that is
+the 2420-era value recorded in C0, and seeing it again means the chain did not
+land.
+
+### C7. The flag stays FALSE, and why that is not caution theatre
+
+`trip_kernel_enabled` is seeded FALSE by 2420 and this batch does not touch it.
+Leaving it false after the apply is **not** rollout gating; it is the only
+correct state until the apply has actually happened, for a reason that is
+measurable rather than cautious:
+
+`lib/tripKernel.ts` declares `TRIP_KERNEL_CONTRACT_VERSION = 2` and the routes
+issue v4 command types (`ADD_STAGE`, `SET_PRESENCE`, `PROPOSE`, `CAST_VOTE`,
+`ACCEPT_PROPOSAL`, …). Against production's 2420-era function every one of those
+is refused as `TRIP_COMMAND_UNKNOWN_TYPE` → HTTP 400. Turning the flag on before
+the chain lands would take a working set of legacy write paths and replace them
+with 400s. That is a **correctness** reason, not a rollout one.
+
+Once the chain HAS landed on production and the postcondition query above
+returns the expected counts, the remaining reason to hold the flag is rollout
+protection only — and per the standing instruction that there are no live users,
+rollout protection alone is not a reason to leave finished work switched off.
+The order is: apply, certify by query, then flip. Not before.
+
+### C8. The literal boundary
+
+Applying migrations to `ajrurzioarfkagpuxfnb` is the one action in this workflow
+that cannot be performed from CI or from this session:
+
+* no workflow targets production — `live-db.yml` and `clean-build-proof.yml`
+  name it only as the ref their allowlist guard must refuse;
+* the in-process guard (`ciProdReadOnlyAuditGuard`) exits before any client is
+  constructed if the resolved ref is production;
+* and the standing instruction is that production must not be hand-mutated from
+  a session.
+
+Everything around it is prepared here: the ordered plan, the measured
+preconditions, the destructive review, the rollback inventory, the
+postcondition query and the flag decision. **The remaining action is the
+owner's: run the 22 files in the order in C5 against production, one
+transaction each, stopping at the first failure.**
