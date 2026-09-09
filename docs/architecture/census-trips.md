@@ -1807,3 +1807,131 @@ chain, which is what was read. Production carries 2420 and 2334 numerically
 precedes it, but §27 established that 2420 reached both databases BY HAND
 rather than through the applier — so ordering in the tree is not evidence of
 ordering in a database, and this section does not treat it as such.
+
+---
+
+## 33. The databases, measured — and a ledger that had stopped being true
+
+**A database measurement, not a code one.** The tree is unchanged from §32's
+`head_commit`; what follows was measured read-only against both Supabase
+projects on 2026-09-09, after the branch reached `205fc095`.
+
+Every previous section's deployment claim rests on §27's single measurement of
+`trip_kernel_execute`. This re-measures it and asks the questions §27 did not.
+
+### 33.1 Production (`ajrurzioarfkagpuxfnb`) — 43 real trips
+
+| what | measured |
+|---|---|
+| `trip_kernel_execute` `md5(prosrc)` | `d621c513ef2093054aea014702733649` — **still byte-identical to the repo's 2420** |
+| `trip_events` | present |
+| `trip_kernel_enabled` | **`false`** |
+| Trips v4 tables (the twelve of §5.1) | **0 of 12** |
+| `trip_snapshot_fold` / `trip_proposal_tally` / `trip_presence_freshness` | 0 of 3 |
+| `trip_presence_current` view | absent |
+| `public.schema_migration_ledger` | **does not exist on production at all** |
+
+Production is exactly where §27 left it, and the flag reading matters: the
+kernel is **deployed and switched off**. `BUILT ON BRANCH → MERGED → DEPLOYED →
+FLAG ENABLED → PRODUCTION REALIZED` — production has reached the third rung for
+2420 and no further, and nothing from this branch has touched it.
+
+**Nothing was written to production.** Every statement above came from a
+`SELECT`.
+
+### 33.2 portava-ci (`hwokxgbmezheskbzskfr`)
+
+| what | measured |
+|---|---|
+| `trip_kernel_execute` `md5(prosrc)` | `ed202dc5664f7f46e3b27c7810fb1a2e` — 2420 with its nine whole-line comments stripped, as §27 established |
+| `SET_TRIP_COVER` in the kernel body | **absent** → 2590 is not applied, so 2450/2500/2590 are not either |
+| `ADD_STAGE` in the kernel body | **absent** → none of 2764–2777 is applied |
+| Trips v4 tables | **10 of 12** — everything from 2760–2763; `trip_plan_participants` (2771) and `trip_proposal_votes` (2774) absent |
+| 2770's plan columns / 2774's proposal columns | 0 and 0 |
+| `trip_presence` `source` column + the eight §10.1 states | **present** → 2767 is applied |
+| 2773 / 2774 / 2776 functions and the presence view | 0 |
+
+So portava-ci carries **2750, 2760, 2761, 2762, 2763, 2767** and nothing else
+from this branch — each verified by its own schema effect (a constraint, a
+table, a column), not by trusting a history table.
+
+### 33.3 The finding: the repo's own ledger had stopped being true
+
+`public.schema_migration_ledger` is the repo's ledger — the one whose row
+`check:migration-ledger` reads to answer "what has this database seen", and
+whose row is meant to be written **in the same transaction as the DDL**. On
+portava-ci it holds 427 rows and its highest Trips-band entry was:
+
+```
+2420_trip_kernel_foundation.sql   2026-09-07   "Applied to portava-ci only."
+```
+
+**Six migrations were applied and none of them was recorded.** Supabase's own
+`supabase_migrations.schema_migrations` had them — 2750 at `20260908224327`,
+2760–2763 across `20260909045549`–`20260909050113`, 2767 at `20260909055621` —
+so the two histories disagreed, and the one the repo's tooling reads was the
+wrong one.
+
+This is the predicted consequence of the mechanism §29.5 names. Applying by
+hand routes around the dry run, `certify:migrations`, the sanctioned-project
+assertion **and the ledger-row-in-the-same-transaction guarantee**. The first
+three were discussed; the fourth is the one that actually bit, and it bit
+silently, because `check:migration-ledger` exits 2 without credentials and had
+never run here.
+
+**Repaired.** Six rows written, each with `applied_by = 'manual'` and
+`checksum = 'backfill'`:
+
+- `'manual'` because that is what happened, and the column's CHECK constraint
+  admits exactly `ci | manual | backfill`;
+- **`'backfill'` rather than a sha256 on purpose.** A sha256 would assert that
+  the database ran the exact bytes now on disk, and that was NOT verified —
+  what was verified is the schema EFFECT. `isComparableChecksum` treats a
+  non-sha256 as NOT COMPARED, which is precisely the claim available. Writing
+  today's file hash would have made the gate green by asserting something
+  nobody measured, which is the failure this whole pass is about.
+
+Each row's note says it was back-filled, that it was not written in the
+transaction, which history table corroborates it, what the schema evidence was,
+and that it is **not applied to production**.
+
+`check:migration-ledger` will now report 2764, 2765, 2766 and 2768–2777 as
+unapplied, and that is true.
+
+### 33.4 Why the rest was NOT applied to portava-ci
+
+The obvious next move is to apply the ancestry and the chain to ci so it matches
+the branch. `.github/workflows/live-db.yml` says not to, in its own words:
+
+> the real apply and the certification are restricted to the default branch,
+> **because applying an unmerged branch's migrations to the shared CI database**
+> …
+
+The applier runs `--dry-run` off the default branch by design. portava-ci is
+shared: other lanes' `CI (live DB)` runs read it, and a table only this branch
+declares is a fact those lanes did not ask for. The six migrations already there
+are that violation, sitting in the shared database — which is how 33.3 happened.
+
+Doing it again by hand would repeat the exact mechanism that produced the drift
+this section repairs. **The gate is a merge, not a command**, and it stays shut.
+
+### 33.5 One piece of history left in place
+
+`supabase_migrations.schema_migrations` on portava-ci carries a row named
+`tmp_comment_fidelity_probe` (`20260909061433`) — §28's experiment, which
+created a throwaway function to establish how Postgres treats comments in
+`prosrc`. **The function is already gone**; only the history row remains, and it
+is left alone. It records something that genuinely happened, no repo tooling
+reads that table, and deleting audit history to tidy an unfamiliar name is the
+wrong instinct. Named here so the next reader does not have to wonder.
+
+### 33.6 The standing answer, now measured rather than cited
+
+Both databases are **correct for their stage and neither is current with this
+branch**, and those are different sentences:
+
+- production: 2420 deployed, flag off, no v4 tables — correct, and untouched;
+- portava-ci: six migrations ahead of main and fourteen behind this branch —
+  now accurately *recorded*, still not something to "fix" by applying more.
+
+Nothing here changes §29.5. It replaces its citation with a measurement.
