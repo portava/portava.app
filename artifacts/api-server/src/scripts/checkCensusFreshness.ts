@@ -73,6 +73,51 @@ const MIN_CENSUS_FILES = 10;
  * makes the check meaningful, and a missing one is a gap, not a pass.
  */
 const CENSUS_SCOPE: Record<string, string[]> = {
+  // Trips §29 declares a head_commit — the first Trips section to do so — and
+  // this is what makes that declaration mean something. The scope is wide on
+  // purpose: §29's central finding is that the WRITERS (the migrations) were
+  // being counted while the READERS did not exist, so a scope listing only
+  // src/migrations would age this census on exactly the half that was never
+  // the problem. Both ends of every vertical slice are listed.
+  "census-trips.md": [
+    // The kernel and its command families.
+    "artifacts/api-server/src/lib/tripKernel.ts",
+    "artifacts/api-server/src/migrations/2760_trip_stages.sql",
+    "artifacts/api-server/src/migrations/2761_trip_legs_and_commitments.sql",
+    "artifacts/api-server/src/migrations/2762_trip_goals_decisions_risks.sql",
+    "artifacts/api-server/src/migrations/2763_trip_presence_proposals_snapshots_outcomes.sql",
+    "artifacts/api-server/src/migrations/2764_trip_kernel_stage_family.sql",
+    "artifacts/api-server/src/migrations/2765_trip_kernel_leg_and_commitment_families.sql",
+    "artifacts/api-server/src/migrations/2766_trip_kernel_goal_decision_risk_families.sql",
+    "artifacts/api-server/src/migrations/2767_trip_presence_spec_vocabulary.sql",
+    "artifacts/api-server/src/migrations/2768_trip_kernel_presence_proposal_outcome_families.sql",
+    "artifacts/api-server/src/migrations/2769_trip_kernel_participant_roles_and_terminal_lifecycle.sql",
+    "artifacts/api-server/src/migrations/2770_trip_plans_spec_columns.sql",
+    "artifacts/api-server/src/migrations/2771_trip_plan_participants.sql",
+    "artifacts/api-server/src/migrations/2772_trip_kernel_plan_attendance_and_plan_version.sql",
+    "artifacts/api-server/src/migrations/2773_trip_snapshot_fold_and_replay.sql",
+    "artifacts/api-server/src/migrations/2774_trip_proposal_governance.sql",
+    "artifacts/api-server/src/migrations/2775_trip_kernel_proposal_governance_and_apply.sql",
+    "artifacts/api-server/src/migrations/2776_trip_presence_freshness_and_ordering.sql",
+    "artifacts/api-server/src/migrations/2777_trip_kernel_presence_ordering.sql",
+    // The READERS — the half §29.1 found missing.
+    "artifacts/api-server/src/routes/trips.ts",
+    "artifacts/api-server/src/routes/tripCommands.ts",
+    "artifacts/api-server/src/routes/tripDecisions.ts",
+    "artifacts/api-server/src/routes/tripFeasibility.ts",
+    "artifacts/api-server/src/routes/tripPresence.ts",
+    "artifacts/api-server/src/routes/tripStructure.ts",
+    "artifacts/api-server/src/routes/tripReadiness.ts",
+    "artifacts/api-server/src/services/trips/",
+    "artifacts/api-server/src/lib/tripReadiness.ts",
+    // The client half — a route with no screen is 29.2's other gap.
+    "travel-buddy-standalone/src/services/tripCommands.ts",
+    "travel-buddy-standalone/src/services/tripDecisions.ts",
+    "travel-buddy-standalone/src/services/tripFeasibility.ts",
+    "travel-buddy-standalone/src/services/tripPresence.ts",
+    "travel-buddy-standalone/src/components/trip/",
+    "travel-buddy-standalone/app/trip/",
+  ],
   "census-layover.md": [
     "artifacts/api-server/src/services/airport/",
     "artifacts/api-server/src/routes/airport.ts",

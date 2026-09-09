@@ -1113,3 +1113,258 @@ Neither is a row this census had open. Both were invisible to every contract
 test, and both were found in the first minute of executing the ancestry rather
 than reading it — which is the same lesson as the `v_family` defect §27 records,
 arriving a second time.
+
+---
+
+## 29. Recensus of Trips WHOLE, at `head_commit` `823b6d67`
+
+**This is the first section of this document that declares a `head_commit`, and
+it is the first that re-reads every §5 row rather than a slice.** §26 and §27
+both declined to declare one and said so; that was correct of them and it is
+also why this document could go stale twice without noticing. It is declared
+here so the next reader can age this section mechanically.
+
+| Field | Value |
+| --- | --- |
+| `head_commit` | `823b6d67` |
+| Branch | `claude/portava-continuation-uqta94` |
+| Scope re-read | §5.1's twelve tables, §7, §8, §9.1, §9.3, §10, §11, §20.1, §22 |
+| NOT re-read | §1–§3, §6, §12–§19, §21, §23–§25. The headline stays where §26 left it. |
+| Databases | Unchanged since §27: production and portava-ci both carry 2420 and nothing after it. Verified by `md5(prosrc)`, not by length — see §28. |
+
+### 29.1 The finding this recensus exists for
+
+Every previous Trips section, this document's own rule 2 included, measured
+**writers**:
+
+> *A table nothing writes satisfies nothing.*
+
+That rule is right and it is half a rule. Measured at `a05971b0`, before the
+work in this section:
+
+```
+for tbl in trip_stages trip_legs trip_commitments trip_goals \
+           trip_decision_tasks trip_risks trip_proposals trip_proposal_votes \
+           trip_outcomes trip_plan_participants; do
+  grep -rl "\"$tbl\"" src/routes src/services src/lib | wc -l
+done
+→ 0 0 1 0 0 0 0 0 0 0
+```
+
+**Nine of the ten had a kernel writer and no reader anywhere** — not in the
+server, not in the app. `trip_commitments` had exactly one, and that one is
+covered in 29.3 because it turned out not to be a reader either.
+
+The rule needs its mirror, and this section adds it as **rule 2b**:
+
+> **A table nothing READS satisfies nothing either.** A row a user can never be
+> shown is not a feature; it is a filing cabinet with a very good lock.
+
+This was invisible for a specific and repeatable reason: §26 and §27 were
+counting migrations, and every migration in the 2760–2777 band adds a WRITER.
+Counting the thing being built is how a build measures itself as complete while
+being unreachable. The check that would have caught it is one line, and it is
+now three tests (`tripStructureRoute`, `tripDecisionsRoute`, `tripPresenceRoute`
+each assert the route is registered in `routes/index.ts`).
+
+### 29.2 The full vertical slice, per §5.1 table
+
+The directive's rule is that a table alone counts as 0 %, and that a capability
+counts only with UI/route → authorization → kernel command → validation → DB
+mutation → event → projection → client-visible state. This is that chain,
+measured rather than asserted. **W** = kernel writer, **R** = HTTP reader,
+**S** = a screen that calls it.
+
+| §5.1 table | W (migration) | R (route) | S (component) |
+|---|---|---|---|
+| `trip_stages` | 2764 ADD/UPDATE/REMOVE_STAGE | `tripStructure.ts` | `TripStageSpineCard` |
+| `trip_legs` | 2765 ADD/UPDATE/REMOVE_LEG | `tripStructure.ts` | `TripStageSpineCard` |
+| `trip_commitments` | 2765 ADD/UPDATE/REMOVE_COMMITMENT | `tripFeasibility.ts`, `tripStructure.ts` | `TripFeasibilityCard`, `TripStageSpineCard` |
+| `trip_goals` | 2766 ADD/UPDATE/REMOVE_GOAL | `tripDecisions.ts` | `TripDecisionsCard` |
+| `trip_decision_tasks` | 2766 ADD/UPDATE/REMOVE_DECISION_TASK | `tripDecisions.ts` | `TripDecisionsCard` |
+| `trip_risks` | 2766 ADD/UPDATE/REMOVE_RISK | `tripDecisions.ts` | `TripDecisionsCard` |
+| `trip_presence` | 2768 SET/CLEAR_PRESENCE, 2777 ordering | `tripPresence.ts` (via `trip_presence_current`) | `TripCrewPresenceCard` (reads **and writes**) |
+| `trip_proposals` | 2768 CREATE/ACCEPT/REJECT, 2775 apply | `tripDecisions.ts` | `TripDecisionsCard` |
+| `trip_proposal_votes` | 2775 VOTE_ON_PROPOSAL | **aggregate only**, via `trip_proposal_tally` | `TripDecisionsCard` (counts, not ballots) |
+| `trip_snapshots` | 2773 `trip_snapshot_write` | `tripCommands.ts` | **none** |
+| `trip_outcomes` | 2768 RECORD_OUTCOME | `tripStructure.ts` | `TripStageSpineCard` (served, not yet rendered per-outcome) |
+| `trip_plan_participants` | 2772 JOIN/LEAVE/SET_PLAN_ATTENDANCE | `tripStructure.ts` | `TripStageSpineCard` (party size) |
+
+**Two honest gaps in that table, stated rather than rounded away:**
+
+- **`trip_proposal_votes` has no row-level reader.** The tally is served and
+  that is the decision-relevant read, but §9.3 gives proposing and deciding
+  different verbs and a crew member cannot currently see *who* voted. This is
+  a real gap, not a design choice, and it is small.
+- **`trip_snapshots` has a route and no screen.** `GET /trips/:id/snapshots/
+  :version` is reachable from `services/tripCommands.ts` and nothing renders
+  it. A snapshot is an operator-facing object and there is a defensible reading
+  in which that is fine; this census does not make that call, it records that
+  the slice stops at the service.
+
+### 29.3 A category the four buckets cannot express, found twice
+
+C / W / N / CANNOT-VERIFY has no cell for **built, wired, tested, and inert** —
+code that runs, is reached, and cannot produce its own primary output. Two
+things in this tree were exactly that, and both would have censused as W.
+
+**§7 feasibility.** `GET /trips/:tripId/feasibility` hardcoded both endpoints of
+every hop to `null`, with a comment explaining that `trip_commitments.place_id`
+carries no foreign key. The absent FK is real and deliberate (§5.2); the
+conclusion drawn from it was not. `place_id` denotes `public.places.id`, the
+table carrying `latitude`/`longitude`. Until `resolvePlaces` landed, the
+provider answered `NO_COORDINATES` on every hop and **the route could return
+only UNKNOWN** — an engine with 44 tests proving it can establish INFEASIBLE,
+behind a route that could never ask it to.
+
+The old route test asserted the file still carried the "no foreign key" comment.
+It was pinning the inertness, and it passed every time.
+
+**§8 decision engine.** Three tables (2762) and nine kernel commands (2766), and
+nothing joined a proposal to a decision task, a risk to the plan element it
+endangers, or a §7 verdict to the option it should disqualify. The rows were
+correct and the chain §8 describes did not exist.
+
+**What to do with this in the buckets.** Nothing — the buckets stay. What
+changes is the *evidence rule*: this census already requires a BUILT verdict to
+cite a `file:line` that was opened and read, and §28 added that a claim about a
+deployed object cites a hash. **A claim that a capability WORKS now requires a
+test that observed its primary output**, not a test that observed its shape. The
+13 behaviour tests in `tripFeasibilityRouteBehaviour.test.ts` exist because the
+16 shape tests beside them could not tell the difference.
+
+### 29.4 Row moves
+
+| id | was | now | why |
+|---|---|---|---|
+| TR78 `trip_stages` | W (§27) | **W** | Writer (2764), reader (`tripStructure.ts`), screen (`TripStageSpineCard`). Stays W for one reason only: **no database has 2764**. |
+| TR79 `trip_legs` | N | **W** | 2765 writer, structure route, spine card. |
+| TR81 `trip_commitments` | N | **W** | 2765 writer; read by feasibility *and* structure. |
+| TR84 `trip_goals` | N | **W** | 2766 writer, decisions route, decisions card. |
+| TR85 `trip_decision_tasks` | N | **W** | 2766 writer; recommendations computed per pending task. |
+| TR86 `trip_risks` | N | **W** | 2766 writer; §8.4 propagation implemented and served. |
+| TR87 `trip_presence` | N | **W** | 2767 vocabulary, 2768 writer, 2776 freshness, 2777 ordering; read AND written from one card. |
+| TR88 `trip_proposals` | N | **W** | 2768 + 2775; served with the §9.3 tally. |
+| TR89 `trip_snapshots` | N | **W** | 2773 fold/replay/verify; served by `tripCommands.ts`. No screen (29.2). |
+| TR90 `trip_outcomes` | N | **W** | 2768 RECORD_OUTCOME; served by `tripStructure.ts` with `planPresent`. |
+| TR83 `trip_plan_participants` | N (**"blocked"**) | **W** | §27 said this was "blocked, not merely unbuilt" because `trip_plans` does not exist. **That was wrong and it contradicted TR82 in the same document**, which already said `trip_plan_items` IS §5.1's `trip_plans`. Migration 2770 made the identity explicit, 2771 built the table, 2772 wrote it. The correction is recorded here rather than silently applied. |
+| TR136 stage-locality | N | **N** | §7.4's consistency check still has no implementation. Stages existing does not build it. |
+| TR144 risk propagation | N | **W** | `propagateRisks` in `TripDecisionEngine.ts`, served as `elementRisks`, rendered by `TripDecisionsCard`. |
+| TR123 arrival semantics | N | **W** | `required_arrival_at` exists (2761) and is now *used*: the feasibility engine judges against it, and a behaviour test drives the spec's own 19:00/18:45 example. |
+| TR255 stage map layer | N | **N** | Still no map consumer for stages. `TripStageSpineCard` is a list, not the map layer §5.1 describes. |
+
+**Not one row moves to C, and that is the whole point of the next section.**
+
+### 29.5 Why nothing is C, stated once so it is not re-litigated
+
+C requires the thing to work. Every row above is code in a branch:
+
+```
+BUILT ON BRANCH → not merged  (this branch is 400+ commits ahead of main)
+MERGED          → not deployed (live-db.yml applies only from main)
+DEPLOYED        → not flag enabled
+FLAG ENABLED    → not production realized
+```
+
+Concretely, at this `head_commit`:
+
+- **None of 2750 or 2760–2777 is on `main`.** `.github/workflows/live-db.yml`
+  applies pending migrations to the sanctioned CI project only when
+  `github.ref == refs/heads/main`, so the designed applier has never seen any
+  of them.
+- **Production and portava-ci both carry 2420 and nothing after it.** Neither
+  has 2450, 2500 or 2590, let alone the 2764–2777 chain. §27 has the `md5`.
+- **The exception is disclosed, not hidden**: 2760–2763 and 2767 were applied
+  to portava-ci by hand in earlier sessions. That is how 2420 arrived with its
+  comments stripped, and it is the mechanism `ciSupabaseGuard.mjs` exists to
+  refuse. It refused this session's attempt to run even a dry run, which is the
+  control working.
+- **The rehearsal that DID happen** is `db/harness/run.sh`: a local PostgreSQL
+  16 cluster that applies the real ancestry (2420 → 2450 → 2500 → 2590), then
+  the schema migrations, then the fourteen transforms; runs 10 probe files that
+  EXECUTE the commands; then rolls every transform back in reverse, checking
+  `pg_get_functiondef` is byte-identical at each step. 18 rollback files, all
+  exercised. What that is not: it is bare PostgreSQL, every table but the ones
+  under test is a column-shape stub, four enums are text DOMAINs, and every
+  probe runs as superuser so RLS is bypassed. It says nothing about client
+  access and nothing about Supabase.
+
+So the honest summary of the §5 rows is: **built, wired, reachable, rehearsed,
+and undeployed.** Four of the five, and the fifth is not an engineering
+blocker — it is a merge.
+
+### 29.6 The fail-closed pass, and what it changed about earlier verdicts
+
+Seventeen defects of one shape, audited and fixed at `d112f215`/`018d44f0`:
+a read that FAILED was reported as an empty, clean, or finished result.
+`supabase-js` **resolves** on a database error, so an unbound `error` is not a
+latent crash — it is a confident wrong answer.
+
+The ones that bear on Trips verdicts specifically:
+
+| where | what it claimed | now |
+|---|---|---|
+| `GET /trips/:id/plan` | an unreadable `trips` row → no date warnings; an unreadable `meetups` read → no `cancelled_source` warning. A plan item pointing at a **cancelled** meetup served as clean. | 503 |
+| five `trips` owner reads | "Trip not found" — a **non-retryable** claim about a trip nobody looked at | 503 |
+| `canEditPlanItem` | "Plan item not found" — the 404 for someone else's item, said about your own | throws `TripAccessUnavailableError` |
+| `lib/tripReadiness.ts` | `readyish = ready + unknown`, so a category nobody could measure **raised** the score. The less of a trip could be checked, the readier it scored. | score is a fraction of the MEASURED categories; `null` when none could be; `unmeasuredCategories` names the rest |
+| `fetchTripReadiness` (client) | one `null` for "flag off" and "the request failed"; the card vanished for both, and `app/trip/[id].tsx` then painted a **0 %** ring from `trips.progress`, a column nothing writes | three states; the ring renders "—" |
+| `listMyTrips`, `getInviteLinks`, … | `[]` for a failed request — "you have no trips", "this trip has no live invite links" | throw `TripsReadUnavailableError` |
+| `useMapEntities` legacy path | every per-layer failure swallowed into `[]`; a map with no trips looked like a map whose trip layer failed | failures recorded in `unreadLayers`, the signal the gateway path already had |
+
+**Two tests asserted the defect verbatim** and are corrected in place rather
+than deleted, with the old text quoted: `tripReadiness.test.ts`'s
+"Reservations treated as absent … `categories.reservations === 'ready'`", and
+`TripReadinessCard.component.test.tsx`'s "renders nothing when
+fetchTripReadiness throws — throw is treated same as null".
+
+The unchecked-read allowlist shrank by four entries, which is the only
+direction it may move.
+
+### 29.7 Two static guards were wrong, and that is a census finding
+
+Fixing the above made three guards fail. One was right (`check:async-handlers`
+— two new route files had bare handlers). **Two were the guard being wrong**,
+and both had the same root cause: a static check that cannot see a construct
+reports its absence as a fact.
+
+1. **`splitStatements` understood `$$` but not `$tag$`.** Every
+   `DO $mig$ … ; … $mig$` in the corpus was shredded at each `;` INSIDE the
+   block and each fragment handed to callers as a top-level statement.
+   Postgres accepts any tag; this repo's migrations use named tags throughout.
+
+2. **`checkSecurityDefinerOracles` resolved reference edges only from
+   `CREATE FUNCTION` bodies.** The Trips kernel migrations author bodies a
+   sixth way — read with `pg_get_functiondef`, splice, install with `EXECUTE` —
+   so the check reported `public.trip_proposal_tally`, called **twice** by the
+   branches 2775 installs, as referenced by nothing, and demanded it be dropped
+   or ledgered. The drop breaks proposal acceptance; the ledger entry would
+   have recorded a sentence that is false.
+
+The second is the one worth keeping: **a guard that cannot see a construct will
+report its absence with total confidence**, and the remedy it proposes will be
+destructive. `lib/transformedFunction.ts` now recognises a transform and
+deliberately requires BOTH halves, so a postcondition that merely CALLS a
+function — 2774's does — still buys it nothing.
+
+### 29.8 What this section does NOT claim
+
+- **The headline is unchanged.** Fifteen rows move; §26's and this section's
+  moves together are not a recount of 451 requirements, and re-deriving a
+  percentage from a partial re-read is exactly the error §26 was written to
+  correct.
+- **Nothing here is a deployment claim.** See 29.5.
+- **No production data was fabricated or inferred.** The only production facts
+  used are the read-only `md5(prosrc)` measurement recorded in §27.
+- **The owner decisions stay open.** `APPEAL_RESTORE_SEMANTICS`,
+  `TRUST_OVERRIDE_PIN_OR_CAP`, `EVENT_START_TRANSITION`,
+  `MAP_CANCELLED_TRIP_VISIBILITY`, `STORY_HIGHLIGHT_VISIBILITY`,
+  `PASSPORT_CREW_PRESENCE_AUDIENCE` and the rest are in
+  `docs/architecture/blocker-ledger.md` and were not decided here.
+- **`API_TOKEN_SIGNED_OUT_VS_UNREADABLE` is recorded, not fixed.**
+  `services/apiToken.ts` returns one `null` for "signed out" and for "the
+  refresh failed", and every service module in the app is built on it. Fixing
+  it inside Trips would leave two contradictory conventions for one helper
+  alive at once. It is in the blocker ledger with what is bounded (nothing is
+  granted — a null token sends no Authorization header) and what is not (what
+  the user is told).

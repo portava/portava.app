@@ -23,6 +23,15 @@
       "files": [
         "travel-buddy-standalone/src/features/wall/components/__tests__/WallPromotionDisclosure.component.test.tsx"
       ]
+    },
+    {
+      "census": "census-layover.md",
+      "since": "743ae78f305ea657ab508a34bdbc574488f4aae7",
+      "acknowledgedAt": "2026-09-09",
+      "reason": "COMMENT-ONLY, verified mechanically rather than claimed. `git diff 743ae78f..HEAD -- src/services/airport/LayoverPrivacyGuard.ts` filtered to added lines that are neither a comment nor blank returns EMPTY, against a --stat of 7 insertions / 4 deletions. No statement, signature, condition or constant changed, so no layover verdict can have moved.\n\nWHAT THE COMMENT SAYS, AND WHY IT IS NOT 'not relevant'. The file's header recorded a FINDING about a read in a different file: `TripCrewLocationService.getCrewPreferences` did not bind `error`, so an unreadable `trip_crew_location_preferences` row read as 'ghost mode off' — a privacy setting reported as its permissive value because a query failed. The layover lane owned the finding and not the file, and said so. The 2026-09-09 Trips fail-closed pass FIXED that read (it now binds `error` and throws), and this edit updates the note to say so, keeping the finding because the finding is what made the fix findable.\n\nThe fixed reader lives in artifacts/api-server/src/services/tripCrew/TripCrewLocationService.ts, which census-layover.md does not count and does not grade — its only mention of that table is the deployment row at census-layover.md:1328, which states that `location_preferences` and `trip_crew_location_preferences` both exist in production. That statement is unaffected. Whether the layover surface's OWN ghost-mode read is fail-closed is graded against this file, and this file's behaviour is byte-for-byte what it was measured as.",
+      "files": [
+        "artifacts/api-server/src/services/airport/LayoverPrivacyGuard.ts"
+      ]
     }
   ]
 }
