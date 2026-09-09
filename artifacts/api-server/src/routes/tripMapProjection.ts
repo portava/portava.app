@@ -243,15 +243,83 @@ router.get("/trips/:tripId/map-projection", asyncHandler(async (req, res) => {
     }),
   );
 
-  // ── the layers with no producer ──────────────────────────────────────────
-  // Stated, not omitted. A projection carrying eight layers must not be
-  // mistaken for one carrying ten, two of them empty.
+  // Stated, not omitted. A projection carrying seven layers must not be
+  // mistaken for one carrying ten, three of them empty. And a `no_source` is
+  // the strongest claim this projection makes about a layer — that NOTHING in
+  // the system produces it — so each of these names an obstacle that was
+  // re-read rather than cited. See the route-chains block above for what
+  // happens when one is not.
+  // ── the layers that genuinely have no producer ───────────────────────────
   const crewPresenceSummaries: Layer<MapPoint> = noSource(
     "Crew presence is served as summary CARDS by GET /trips/:id/crew/map and deliberately carries no coordinates unless a live-share grant exists (§14.4). It is not a coordinate layer and is not synthesised into one here.",
   );
-  const routeChains: Layer<MapPoint> = noSource(
-    "route_plans/route_stops are owner-only by RLS (census-trips TR261), so a trip's crew cannot read the trip's own route chain. Serving it here would require a policy change, not a projection change.",
-  );
+  // ── route chains (§14.1, §14.2) ──────────────────────────────────────────
+  //
+  // THIS LAYER SHIPPED AS `no_source` ON A FALSE PREMISE, AND THAT IS WORTH
+  // RECORDING WHERE THE CODE IS.
+  //
+  // Its reason string said "route_plans/route_stops are owner-only by RLS
+  // (census-trips TR261), so a trip's crew cannot read the trip's own route
+  // chain." Both halves are wrong. `0058_trip_flow.sql` creates
+  // `route_plans_member_select` (:32), `route_stops_member_select` (:85) and
+  // `route_legs_member_select` (:127) — three member-read policies, the first
+  // of them two lines below the owner-only one the census cited and stopped
+  // at. And it would not have mattered here anyway: this route reads through
+  // the service client after `requireTripMember`, which bypasses RLS entirely.
+  //
+  // A `no_source` is a claim that nothing in the system produces a layer. It
+  // is the strongest thing this projection says about a layer and it was made
+  // from a citation nobody re-read. The layer is real, so here it is.
+  //
+  // The stops carry `structured_location` — a jsonb `{label, lat, lng}` — so a
+  // stop is a point when that object holds finite coordinates and is not one
+  // otherwise, exactly as everywhere else in this file.
+  let routeChains: Layer<MapPoint> = unread("not read");
+  {
+    const { data: plans, error: planErr } = await sc
+      .from("route_plans")
+      .select("id, title, status")
+      .eq("trip_id", tripId);
+    if (planErr) {
+      log.warn({ err: planErr.message, tripId }, "map projection: route plans unread");
+      routeChains = unread("route_plans could not be read");
+    } else {
+      const planRows = (plans ?? []) as any[];
+      if (planRows.length === 0) {
+        routeChains = ok([]);
+      } else {
+        const byPlan = new Map(planRows.map((p) => [p.id as string, p]));
+        const { data: stops, error: stopErr } = await sc
+          .from("route_stops")
+          .select("id, route_plan_id, title, structured_location, order_index, checkpoint_status")
+          .in("route_plan_id", planRows.map((p) => p.id as string));
+        if (stopErr) {
+          // The plans read and their stops did not. An unread LAYER, not a set
+          // of routes with no stops.
+          log.warn({ err: stopErr.message, tripId }, "map projection: route stops unread");
+          routeChains = unread("route_stops could not be read");
+        } else {
+          routeChains = ok(((stops ?? []) as any[]).flatMap((st) => {
+            const loc = (st.structured_location ?? {}) as Record<string, unknown>;
+            const c = coordsOf(loc.lat, loc.lng);
+            if (!c) return [];
+            const plan = byPlan.get(st.route_plan_id);
+            return [{
+              id: st.id, kind: "route_stop", lat: c.lat, lng: c.lng,
+              label: st.title ?? (typeof loc.label === "string" ? loc.label : null),
+              meta: {
+                routePlanId: st.route_plan_id,
+                routeTitle: plan?.title ?? null,
+                routeStatus: plan?.status ?? null,
+                orderIndex: st.order_index,
+                checkpointStatus: st.checkpoint_status,
+              },
+            }];
+          }));
+        }
+      }
+    }
+  }
   const liveOpportunities: Layer<MapPoint> = noSource(
     "No opportunity object exists in this system (census-trips TR252/TR253). There is nothing to project.",
   );

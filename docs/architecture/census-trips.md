@@ -526,7 +526,7 @@ PHOTO, EXPLORE, PLAY, LEARN, NIGHTLIFE, TRANSIT) appear nowhere as a vocabulary.
 | TR258 | Layer: confirmed commitments | **N** | TR122. |
 | TR259 | Layer: saved ideas | **C** | `trip_saved_places` (TR25), served at `routes/trips-expansion.ts:2085`, rendered by `src/hooks/useTripSavedPlaces.ts` on the trip page. |
 | TR260 | Layer: crew presence summaries | **C** | `GET /trips/:tripId/crew/map` (`routes/tripCrewLocation.ts:156`) returns per-member summary cards with no coordinates unless a live-share grant exists — a summary layer in the spec's sense; `CrewMapSection.tsx:36-53` renders it as a density map with no SDK and no exact positions. |
-| TR261 | Layer: route chains | **W** | `route_plans` + `route_stops` + `route_legs` (`0058_trip_flow.sql:9,57,102`) are a chain and are a **parallel itinerary system**: `route_plans.trip_id` is nullable (`:12`), the RLS policy is owner-only (`:29` `route_plans_owner_select`), so a trip's crew cannot see the trip's own route chain. See TR437. |
+| TR261 | Layer: route chains | **W** | `route_plans` + `route_stops` + `route_legs` (`0058_trip_flow.sql:9,57,102`) are a chain and are a **parallel itinerary system**: `route_plans.trip_id` is nullable (`:12`), ~~the RLS policy is owner-only (`:29` `route_plans_owner_select`), so a trip's crew cannot see the trip's own route chain~~ — **STRUCK, see §32**: `route_plans_member_select` (`:32`), `route_stops_member_select` (`:85`) and `route_legs_member_select` (`:127`) all exist and RLS policies are a UNION. The row stays W for TR437's actual reason — a parallel itinerary attached through a nullable `trip_id` — and it is now a live layer in the §14.1 projection. See TR437. |
 | TR262 | Layer: meetup points | **W** | `trip_plan_items.category = 'meeting_point'` (`0010:11`) is a label on an ordinary item; there is no meetup object with participants, arrival state or an alternative set. |
 | TR263 | Layer: live opportunities | **N** | §13.3. |
 | TR264 | Layer: safety/logistics points | **N** | No safety layer on any trip map; Safe Return has no map projection. |
@@ -732,7 +732,7 @@ column is proven anywhere.
 | TR434 | §24 Phase 0 — inventory the existing Trip tables/routes/services against the new kernel and freeze semantic drift by documenting current write paths; do not big-bang rewrite | **N** | No such inventory exists. `docs/` holds `TRIP_PASS_2_REPORT.md` (a product QA pass) and no map of trip write paths to a kernel. This census is, so far as I can find, the first enumeration of the trip write surface — which is itself the finding: **Phase 0 was never done, and every later phase depends on it.** |
 | TR435 | §24 Phase 1 — ratchet direct writes: new code must use commands; legacy paths are enumerated and reduced | **N** | No ratchet, no enumeration, no reduction. The platform demonstrably *can* build such ratchets (~40 `check*.ts` scripts, including table-specific write-boundary migrations like `2158_post_media_write_boundary.sql` and `2147_hidden_gems_write_boundary.sql`) — none exists for trips, and the direct-write count grew rather than shrank (97 endpoints). |
 | TR436 | §24 Phase 6 — safety, security, privacy, cost and irreversible-action gates remain independent controls | **C** | They are independent and they are separate flags: `trip_crew_map_enabled`, `trip_crew_live_share_enabled`, `trip_crew_ghost_mode_enabled` (`0041_trip_crew_location.sql:63`) and `trip_readiness_enabled` (`0170:76`) are four distinct gates, all seeded false, each guarding a different class of exposure — plus the platform-wide kill switches (`lib/featureFlags.isKillSwitchEngaged`, consumed at `lib/mediaPipeline.ts:44`). |
-| TR437 | §25 New capabilities integrate by consuming Trip Context, issuing Trip Commands, emitting/consuming typed events and projecting outcomes — **not by adding another isolated itinerary feature** | **N** | The tree contains the counter-example the clause was written to prevent: `route_plans` / `route_stops` / `route_legs` (`0058_trip_flow.sql:9,57,102`) is a **second itinerary system** with its own stop ordering, its own optimizer, its own checkpoint state and its own owner-only RLS (`:29`), attached to a trip through a *nullable* `trip_id` (`:12`). A trip's crew cannot read the trip's own route plan. Two itineraries, no shared context, no events. |
+| TR437 | §25 New capabilities integrate by consuming Trip Context, issuing Trip Commands, emitting/consuming typed events and projecting outcomes — **not by adding another isolated itinerary feature** | **N** | The tree contains the counter-example the clause was written to prevent: `route_plans` / `route_stops` / `route_legs` (`0058_trip_flow.sql:9,57,102`) is a **second itinerary system** with its own stop ordering, its own optimizer, its own checkpoint state and its own checkpoint state, attached to a trip through a *nullable* `trip_id` (`:12`). ~~A trip's crew cannot read the trip's own route plan.~~ **STRUCK, see §32** — three member-read policies exist and the sentence was an inverted reading of `:29`. Everything else in this row stands: two itineraries, no shared context, no events. |
 | TR438 | App A `src/domain/trips/` (contracts, commands, events, policies, invariants, services, projections, replay) | **N** | No `src/domain/` directory exists in `artifacts/api-server/src`. Trip logic lives in `routes/` (10,606 lines across seven files), `lib/trip*.ts` (eight modules) and `services/tripCrew/`. |
 | TR439 | App A `src/features/trips/` (today, timeline, crew, map, planning, disruption) | **W** | `travel-buddy-standalone/src/features/` contains `map`, `media`, `passport` and `wall` — **no `trips`**. Trip UI lives in `src/components/TripPage.tsx`, `TripsTab.tsx`, `components/trip/`, `components/tripCrew/` and `app/trip/`. Two of the six named concerns (crew, planning) have a directory; today, timeline, map and disruption do not. |
 | TR440 | App A `server/trips/` (commandRoute, readRoutes, outboxWorker, projectionWorkers, integrationAdapters) | **W** | Read routes exist and are substantial; `lib/tripReminderScheduler.ts` and `lib/tripCrewLiveShareScheduler.ts` are workers of a kind; `routes/tripReservations.ts:118` is an integration adapter of a kind. The command route, the outbox worker and the projection workers do not exist. |
@@ -1560,7 +1560,7 @@ that contract.
 | TR258 Layer: confirmed commitments | N | **W** | Commitments resolve to points through `public.places`, the identity `routes/tripFeasibility.ts` established. |
 | TR259 saved ideas | C | **C** | Now also a projection layer. |
 | TR260 crew presence summaries | C | **C** | Deliberately `no_source` in the projection: §14.4 makes it a summary layer with no coordinates unless a live-share grant exists, and synthesising coordinates for it would be the §14.4 violation, not the fix. |
-| TR261 route chains | W | **W** | `no_source` in the projection, with the obstacle named: `route_plans` is owner-only by RLS, so a trip's crew cannot read the trip's own route chain. A policy change, not a projection change. |
+| TR261 route chains | W | **W** | Served as `no_source` here on a FALSE premise — **corrected in §32**, where the layer is built for real. The claim that a trip's crew cannot read its own route chain was an inverted reading of one policy out of three. |
 | TR262 meetup points | W | **W** | A projection layer now, still built on `category = 'meeting_point'` — a label on an ordinary item, which is what keeps it at W. |
 
 #### 31.3.1 Why TR256 stays W, and what actually improved
@@ -1590,11 +1590,15 @@ plan item.
 
 #### 31.3.2 Four of ten layers have no producer, and the projection says so
 
-`crewPresenceSummaries`, `routeChains`, `liveOpportunities` and `safetyPoints`
-return `{status: "no_source"}` with a reason naming the actual obstacle. This
-is the same device §30 used for §7.4's route availability, and the same
-argument: a projection carrying six layers must not be read as ten with four
-empty.
+`crewPresenceSummaries`, `liveOpportunities` and `safetyPoints` return
+`{status: "no_source"}` with a reason naming the actual obstacle. This is the
+same device §30 used for §7.4's route availability, and the same argument: a
+projection carrying seven layers must not be read as ten with three empty.
+
+**`routeChains` was a fourth, and it should not have been.** Its reason cited
+TR261's owner-only-RLS claim, which §32 strikes; the layer is real and is now
+built. That is the strongest claim this projection makes about a layer —
+nothing produces it — made from a citation nobody re-read.
 
 `no_source` is deliberately distinct from `unread`. One means a retry may work;
 the other means no retry will.
@@ -1647,3 +1651,99 @@ That is why §30 and §31 update §29's row instead of declaring their own.
   screen. It is left as recorded rather than closed, because a snapshot is an
   operator-facing object and building a user-facing snapshot browser would be
   scope this spec does not ask for. Recorded, not rounded.
+
+---
+
+## 32. A correction: TR261 and TR437 cited a policy and stopped one line short
+
+**This is a census defect, found by trying to build against the census's own
+claim, and it had already propagated into shipped code before it was caught.**
+
+### 32.1 The claim
+
+TR261 and TR437 both say, in slightly different words:
+
+> `route_plans` … the RLS policy is owner-only (`0058_trip_flow.sql:29`
+> `route_plans_owner_select`), so **a trip's crew cannot see the trip's own
+> route chain**.
+
+`0058_trip_flow.sql:29` is real and says exactly what is quoted. Three lines
+later, at `:32`:
+
+```sql
+CREATE POLICY "route_plans_member_select" ON route_plans
+  FOR SELECT USING (
+    trip_id IS NOT NULL
+    AND EXISTS (SELECT 1 FROM trip_members tm
+                 WHERE tm.trip_id = route_plans.trip_id
+                   AND tm.user_id = auth.uid()
+                   AND tm.role IN ('owner', 'member')));
+```
+
+and the same pattern again for `route_stops` (`:85`
+`route_stops_member_select`) and `route_legs` (`:127`
+`route_legs_member_select`). **A trip's crew can read the trip's own route
+chain, and has been able to since that file landed.**
+
+RLS policies are a UNION — any permissive policy that passes grants the row —
+so citing the first one and stopping is not a partial reading, it is an
+inverted one.
+
+### 32.2 How far it travelled before it was caught
+
+Into shipped code. §31's `routeChains` layer was served as
+`{status: "no_source", reason: "route_plans/route_stops are owner-only by RLS
+(census-trips TR261), so a trip's crew cannot read the trip's own route
+chain."}`
+
+`no_source` is the strongest claim that projection makes about a layer — that
+**nothing in the system produces it**. It was made from a citation nobody
+re-read, and it was doubly wrong, because `GET /trips/:tripId/map-projection`
+reads through the service client after `requireTripMember` and **bypasses RLS
+entirely**. The policy was irrelevant to that route even if it had said what
+the census claimed.
+
+The route chains layer is now built: `route_stops.structured_location` is a
+jsonb `{label, lat, lng}`, so a stop is a point when that object holds finite
+coordinates. Six tests, including the one that would have caught this — *"route
+stops with coordinates ARE points"*.
+
+### 32.3 The method rule this adds
+
+This census already requires a BUILT verdict to cite a `file:line` that was
+opened and read (§Method), §28 added that a claim about a deployed object cites
+a hash rather than a size, and §29.3 added that a claim a capability WORKS
+needs a test that observed its output. This adds the fourth:
+
+> **A claim that something is FORBIDDEN must cite every policy on the object,
+> not the first one found.** A permission is a union over policies; a
+> prohibition is an intersection over their absence. The two need different
+> reading, and a grep that stops at the first match answers the wrong one.
+
+### 32.4 Row corrections
+
+| id | was | now | correction |
+|---|---|---|---|
+| TR261 Layer: route chains | W ("crew cannot see it") | **W** | The verdict is unchanged and its REASON was wrong. It stays W because `route_plans` remains a parallel itinerary system attached through a nullable `trip_id`, which is TR437's real point — not because the crew cannot read it. It is now a live layer in the §14.1 projection. |
+| TR437 no second itinerary system | N | **N** | Unchanged, and its evidence is corrected: `route_plans`/`route_stops`/`route_legs` IS a second itinerary system with its own stop ordering, its own optimizer and its own checkpoint state, attached through a nullable `trip_id`, with no shared context and no events. Every one of those is still true. "A trip's crew cannot read the trip's own route plan" is struck. |
+
+### 32.5 Two things that ARE true about those policies, and were not the claim
+
+Re-reading them properly surfaced two real narrower findings, recorded here
+rather than asserted as the old claim's replacement:
+
+- **The member policies predate `co_host` and `viewer`.** They gate on
+  `tm.role IN ('owner', 'member')`. Migration 2500 introduced the `host`
+  capability over `co_host`, and 2769 made `SET_PARTICIPANT_ROLE` able to grant
+  `co_host` and `viewer` at all. **A co_host cannot read a route plan through
+  RLS**, which is a narrow, real and opposite-shaped defect from the one the
+  census claimed.
+- **They check `role` and not `status`.** A row with `role = 'member'` and
+  `status = 'invited'` passes, so someone who has been invited and has not
+  accepted can read a trip's route chain over RLS. `authz.is_trip_crew` — the
+  helper every 2760-2777 policy uses — checks acceptance. These predate it.
+
+Both are engineering, both are small, and neither is fixed here: they are
+changes to a policy on a table this pass did not otherwise touch, and shipping
+them alongside a correction to a claim about the same policy would make the
+correction harder to audit. They are the next thing to do in this area.

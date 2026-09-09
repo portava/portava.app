@@ -91,8 +91,17 @@ const empty = {
   trips: [{ id: TRIP_ID, owner_id: OWNER_ID, version: 7 }],
   trip_members: crew,
   trip_stages: [], trip_plan_items: [], trip_commitments: [],
-  trip_saved_places: [], places: [],
+  trip_saved_places: [], places: [], route_plans: [], route_stops: [],
 };
+
+const routePlan = (o: Row = {}) => ({
+  id: "rp1", trip_id: TRIP_ID, title: "Friday night", status: "active", ...o,
+});
+const routeStop = (o: Row = {}) => ({
+  id: "rs1", route_plan_id: "rp1", title: "Bar",
+  structured_location: { label: "Bar", lat: 38.71, lng: -9.13 },
+  order_index: 0, checkpoint_status: "pending", ...o,
+});
 
 const planItem = (o: Row = {}) => ({
   id: "pi1", trip_id: TRIP_ID, title: "Dinner", category: "activity", status: "planned",
@@ -154,7 +163,7 @@ describe("§14.1 — the envelope a marker list cannot have", () => {
     install({ trip_plan_items: [planItem()] });
     const r = await get();
     assert.equal(r.body.census.ok + r.body.census.unread + r.body.census.noSource, 10);
-    assert.equal(r.body.census.noSource, 4, "the four layers with no producer");
+    assert.equal(r.body.census.noSource, 3, "the three layers with no producer");
     assert.ok(r.body.census.totalPoints >= 1);
   });
 });
@@ -274,21 +283,79 @@ describe("§14.1 — a failed read is `unread`, never an empty layer", () => {
   });
 });
 
-describe("§14.1 — the layers with no producer say so", () => {
-  it("four layers are no_source, each with a reason naming the actual obstacle", async () => {
+describe("§14.2 route chains — the layer that shipped as no_source on a false premise", () => {
+  // Its reason string said route_plans is "owner-only by RLS, so a trip's crew
+  // cannot read the trip's own route chain", citing census-trips TR261. Both
+  // halves are wrong: 0058_trip_flow.sql creates route_plans_member_select,
+  // route_stops_member_select and route_legs_member_select, the first of them
+  // two lines below the owner-only policy the census cited and stopped at —
+  // and this route reads through the service client anyway, which bypasses
+  // RLS entirely. A `no_source` is the strongest claim the projection makes
+  // about a layer, and it was made from a citation nobody re-read.
+  it("route stops with coordinates ARE points", async () => {
+    install({ route_plans: [routePlan()], route_stops: [routeStop()] });
+    const r = await get();
+    assert.equal(r.body.routeChains.status, "ok",
+      "the layer is real; no_source claimed nothing produces it");
+    assert.equal(r.body.routeChains.items.length, 1);
+    assert.equal(r.body.routeChains.items[0].kind, "route_stop");
+    assert.equal(r.body.routeChains.items[0].meta.routeTitle, "Friday night");
+    assert.equal(r.body.routeChains.items[0].meta.orderIndex, 0);
+  });
+
+  it("a stop whose structured_location has no coordinates is not a point", async () => {
+    install({
+      route_plans: [routePlan()],
+      route_stops: [routeStop({ id: "rs-nowhere", structured_location: { label: "Somewhere" } })],
+    });
+    const r = await get();
+    assert.deepEqual(r.body.routeChains.items, []);
+    assert.equal(r.body.routeChains.status, "ok", "absent is not unread");
+  });
+
+  it("a trip with no route plan is an EMPTY layer, not an unread one", async () => {
     install({});
     const r = await get();
-    for (const key of ["crewPresenceSummaries", "routeChains", "liveOpportunities", "safetyPoints"]) {
+    assert.equal(r.body.routeChains.status, "ok");
+    assert.deepEqual(r.body.routeChains.items, []);
+  });
+
+  it("unreadable route_plans is unread; unreadable route_stops is too", async () => {
+    install({ route_plans: [routePlan()], route_stops: [routeStop()] }, ["route_plans"]);
+    const noPlans = await get();
+    assert.equal(noPlans.body.routeChains.status, "unread");
+
+    install({ route_plans: [routePlan()], route_stops: [routeStop()] }, ["route_stops"]);
+    const noStops = await get();
+    assert.equal(noStops.body.routeChains.status, "unread");
+    assert.match(noStops.body.routeChains.reason, /route_stops/);
+  });
+
+  it("route plans belonging to ANOTHER trip are not in this projection", async () => {
+    install({
+      route_plans: [routePlan({ id: "rp1" }), routePlan({ id: "rp2", trip_id: "another-trip" })],
+      route_stops: [routeStop({ id: "mine", route_plan_id: "rp1" }),
+                    routeStop({ id: "theirs", route_plan_id: "rp2" })],
+    });
+    const r = await get();
+    assert.deepEqual(r.body.routeChains.items.map((p: any) => p.id), ["mine"]);
+  });
+});
+
+describe("§14.1 — the layers with no producer say so", () => {
+  it("three layers are no_source, each with a reason naming the actual obstacle", async () => {
+    install({});
+    const r = await get();
+    for (const key of ["crewPresenceSummaries", "liveOpportunities", "safetyPoints"]) {
       assert.equal(r.body[key].status, "no_source", key);
       assert.ok(r.body[key].reason.length > 40, `${key}'s reason is not an explanation`);
     }
-    // The route chains one is a POLICY obstacle, not a missing feature, and
-    // says so — census-trips TR261.
-    assert.match(r.body.routeChains.reason, /owner-only/);
+    // And route chains is NOT one of them any more.
+    assert.notEqual(r.body.routeChains.status, "no_source");
   });
 
   it("no_source is distinct from unread, because no retry will help", async () => {
-    install({}, ["trip_saved_places"]);
+    install({ route_plans: [], route_stops: [] }, ["trip_saved_places"]);
     const r = await get();
     assert.equal(r.body.savedIdeas.status, "unread");
     assert.equal(r.body.liveOpportunities.status, "no_source");
