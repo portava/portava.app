@@ -1126,7 +1126,7 @@ here so the next reader can age this section mechanically.
 
 | Field | Value |
 | --- | --- |
-| `head_commit` | `823b6d67` |
+| `head_commit` | `c3f76a49` — §29 measured `823b6d67`; §30 re-measured §7.4 at this commit. ONE declaration, kept current, because `check:census-freshness` reads the first one it finds and a second row further down is a decoration that ages nothing. |
 | Branch | `claude/portava-continuation-uqta94` |
 | Scope re-read | §5.1's twelve tables, §7, §8, §9.1, §9.3, §10, §11, §20.1, §22 |
 | NOT re-read | §1–§3, §6, §12–§19, §21, §23–§25. The headline stays where §26 left it. |
@@ -1368,3 +1368,119 @@ function — 2774's does — still buys it nothing.
   alive at once. It is in the blocker ledger with what is bounded (nothing is
   granted — a null token sends no Authorization header) and what is not (what
   the user is told).
+
+---
+
+## 30. §7.4 at `head_commit` `c3f76a49` — three quarters of a section, and the check that cannot be built
+
+**This section moves the document's `head_commit` to `c3f76a49`.** §29 measured
+`823b6d67`; this section re-reads §7.4 only, at the newer commit. Everything
+else §29 says stands as measured at `823b6d67` and is not re-derived here.
+
+The declaration itself lives in §29's field table and is UPDATED there rather
+than re-declared here, because `check:census-freshness` reads the first
+`head_commit` row it finds: a second row further down looks like a declaration,
+ages nothing, and would have left this document reporting itself fresh from a
+line no checker reads.
+
+| Field | Value |
+| --- | --- |
+| Measured at | `c3f76a49` — declared in §29's field table, which is the document's single `head_commit` row |
+| Scope re-read | §7.4 (four checks), and TR136 |
+| Supersedes | §29's `head_commit` VALUE only. §29's findings are unchanged and were measured at `823b6d67`. |
+
+### 30.1 What §7.4 actually says, against what was built
+
+§7.4 is a four-row table. Every previous reading of it in this document treated
+the first row as the section:
+
+| §7.4 check | spec's failure example | before | now |
+|---|---|---|---|
+| Travel feasibility | "Dinner in Da Nang 19:00; Hoi An event 19:30." | built (§29) | built |
+| Stage locality | "Plan belongs to a stage whose location/timezone does not contain it." | **absent** | built |
+| Place identity | "External booking and hidden gem share a name but not canonical identity." | **absent** | built |
+| Route availability | "Plan is feasible by taxi but transport mode policy says no taxi." | absent | **cannot be built — see 30.2** |
+
+The route was serving one of four checks from a path called `/feasibility`,
+with nothing beside it. A client receiving a travel verdict and no consistency
+findings has no way to know the other three were never examined — which is the
+same shape as §29.3's "built, wired, tested and inert", one level up: not an
+inert capability, an inert *fraction of a section* hidden by a plausible name.
+
+### 30.2 Route availability is a FINDING, not a TODO
+
+It requires a transport-mode **policy** — a statement that this trip, or this
+traveller, will not use a taxi. Measured across both trees:
+
+```
+grep -rn "transport_mode|transportMode|mode_policy|allowed_modes" --include=*.ts --include=*.sql
+→ services/memoryProjections/episodeDetection.ts only
+```
+
+and there `transport_mode` is an **observed attribute of a past journey**, not
+a permission. There is no table, column, preference or flag anywhere in this
+system that expresses "no taxi".
+
+So the check has no input, and inventing one means inventing the policy. It
+emits a **permanent UNCHECKABLE finding** rather than being omitted, for the
+reason this whole pass keeps arriving at: a report covering three of four
+checks reads as a clean bill of health on all four.
+
+Two consequences are pinned by tests rather than left implicit:
+
+- the finding is **included** in `checkSpatialConsistency`, so it cannot be
+  tidied away by someone cleaning up a noisy list;
+- `foldConsistency` therefore **cannot return CONSISTENT for a real trip
+  today**, and that is correct rather than a bug. A green §7.4 verdict would be
+  claiming three checks are four.
+
+**This is the first row in this census whose blocker is a MISSING PRODUCT
+DECISION rather than missing engineering**, and it is deliberately not filed as
+an owner decision in the blocker ledger, because nobody has asked for the
+feature. It is recorded here as what it is: a spec row with no input in the
+system, whose absence is now visible in the response instead of silent.
+
+### 30.3 Row moves
+
+| id | was | now | why |
+|---|---|---|---|
+| TR136 stage-locality | N (§29) | **W** | `checkStageLocality` in `services/trips/TripSpatialConsistency.ts`, wired into `GET /trips/:tripId/feasibility`, rendered by `TripFeasibilityCard`. W and not C for §29.5's reason: nothing is deployed. |
+
+**TR136's §29 verdict was right and its §27 reasoning was not.** §27 said TR136
+stays N because "stage-locality is a §7.4 consistency check with no
+implementation", and added that stages existing does not build it. Both true.
+What neither section noticed is that §7.4 has three *other* rows, and two of
+them were equally unbuilt and were never censused as anything at all — they had
+no TR id, because the §5.1-shaped reading of §7.4 never got past its first row.
+
+### 30.4 Two decisions inside the implementation worth recording
+
+**The locality radius is 60 km, and it deliberately does not catch the spec's
+own first example.** Da Nang and Hoi An are 30 km apart. §7.4 files that pair
+under travel **feasibility**, and flagging it under locality as well would
+report one problem as two. The threshold is a named constant with that
+reasoning attached, rather than a number inside a condition.
+
+**Time and place are separate findings.** A plan on the wrong day is a
+scheduling mistake; a plan in the wrong city is an attachment mistake. They are
+fixed in different places, and one merged "locality" verdict would send a user
+to the wrong one half the time.
+
+### 30.5 Two fail-closed rules this section adds to the pile
+
+- **An unparseable stage date is UNCHECKABLE, not an open bound.** Treating a
+  date that will not parse as "no limit" converts a data defect into
+  permission. A genuinely `null` bound *is* open — someone wrote null on
+  purpose — and the two are handled separately.
+- **A non-finite `lat`/`lng` is not a coordinate.** Coercing it puts a plan at
+  0,0, off the coast of Ghana, and then measures its distance from a stage in
+  earnest. Declining to measure is better than measuring a value that was never
+  a coordinate.
+
+### 30.6 What this section does NOT claim
+
+- **The headline is unchanged**, for §29.8's reason.
+- **Nothing here is a deployment claim.** §29.5 stands.
+- **§7.4's fourth check is not "coming".** It has no input. If a transport-mode
+  policy is ever added, this is the row that turns on; until then the honest
+  state is the one now visible in the response.

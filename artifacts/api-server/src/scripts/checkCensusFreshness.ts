@@ -60,6 +60,8 @@ import { readdirSync, readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 
+import { readHeadCommit, HEAD_COMMIT_ROW_SHAPE } from "./lib/censusHeadCommit.js";
+
 const REPO = new URL("../../../../", import.meta.url).pathname.replace(/\/$/, "");
 const CENSUS_DIR = join(REPO, "docs/architecture");
 const LEDGER = new URL("./CENSUS_STALENESS_ACKNOWLEDGED.json", import.meta.url).pathname;
@@ -258,13 +260,20 @@ const rows: string[] = [];
 
 for (const f of files) {
   const text = readFileSync(join(CENSUS_DIR, f), "utf8");
-  const m = /head_commit`?\s*\|\s*`?([0-9a-f]{7,40})/i.exec(text);
-  if (!m) {
+  const declared = readHeadCommit(text);
+  if (declared.kind === "malformed") {
+    // A census that TRIED to declare a commit and got the shape wrong used to
+    // be reported as one that never declared, and the run passed. See
+    // lib/censusHeadCommit.ts for the day that happened.
+    problems.push(`::error::${f} mentions head_commit but no hash could be parsed from it. ${HEAD_COMMIT_ROW_SHAPE}`);
+    continue;
+  }
+  if (declared.kind === "absent") {
     undeclared++;
     rows.push(`  ${f.padEnd(34)} no head_commit declared — CANNOT BE CHECKED`);
     continue;
   }
-  const commit = m[1]!;
+  const commit = declared.commit;
   const scope = CENSUS_SCOPE[f];
   if (!scope) {
     unscoped++;
