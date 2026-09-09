@@ -176,6 +176,18 @@ for i in "${!PROBES_A[@]}"; do
   psql -h "$SOCK" -p "$PORT" -U postgres -v ON_ERROR_STOP=1 -f "$REPO/$pr"
 done
 
+# ── extra probes: files that test SCHEMA-side functions rather than a
+#    transform, so they hang off no chain entry. Listed in extra_probes.txt.
+if [ -f "$HERE/extra_probes.txt" ]; then
+  while read -r xp; do
+    xp="$(trim "$xp")"; [ -z "$xp" ] && continue
+    case "$xp" in \#*) continue;; esac
+    echo "== probes: $(basename "$xp") =="
+    "${P[@]}" -f "$HERE/seed.sql"
+    psql -h "$SOCK" -p "$PORT" -U postgres -v ON_ERROR_STOP=1 -f "$REPO/$xp"
+  done < "$HERE/extra_probes.txt"
+fi
+
 # ── roll back in reverse; each must restore its own step byte-for-byte ────────
 for (( i=${#ROLLS_A[@]}-1; i>=0; i-- )); do
   r="${ROLLS_A[$i]}"

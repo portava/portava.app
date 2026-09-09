@@ -9,3 +9,4 @@ artifacts/api-server/src/migrations/2763_trip_presence_proposals_snapshots_outco
 artifacts/api-server/src/migrations/2767_trip_presence_spec_vocabulary.sql
 artifacts/api-server/src/migrations/2770_trip_plans_spec_columns.sql
 artifacts/api-server/src/migrations/2771_trip_plan_participants.sql
+artifacts/api-server/src/migrations/2773_trip_snapshot_fold_and_replay.sql

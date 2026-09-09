@@ -1,0 +1,4 @@
+# db/harness/extra_probes.txt — probes for SCHEMA-side functions, which hang off
+# no chain entry because they are not testing a kernel transform. Each runs
+# against the fully-applied chain, after a fresh seed.
+db/harness/probe_snapshot_replay.sql
