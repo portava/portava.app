@@ -416,10 +416,26 @@ BEGIN
       'POSTCONDITION FAILED: rent_buddy_tips has no UNIQUE (booking_id) — rb_accumulate_booking_tip''s ON CONFLICT arm cannot fire.';
   END IF;
 
+  -- The right-hand side carries PARAMETER NAMES, because that is what
+  -- pg_get_function_identity_arguments returns. CORRECTED 2026-09-09: this list
+  -- was first written as bare type lists ('uuid, uuid, numeric, text'), which
+  -- NOTHING can ever equal — identity_arguments omits DEFAULT values, not
+  -- names. The postcondition therefore raised 'was not created' about a
+  -- function the statement above had just created, and this migration could
+  -- not be applied to any database, ever. It was the first pending file in the
+  -- ordered plan, so it blocked the other 66 behind it the first time the
+  -- sanctioned applier had anything to do.
+  --
+  -- Measured, not assumed: on portava-ci a probe function with this exact
+  -- signature returns
+  --   p_booking_id uuid, p_traveler_id uuid, p_amount_usd numeric, p_note text
+  -- and comparing it to 'uuid, uuid, numeric, text' matches 0 rows.
+  --
+  -- 2297 and 2460 already used the named form; this file was the outlier.
   FOREACH fn_args IN ARRAY ARRAY[
-    'rb_accumulate_booking_tip|uuid, uuid, numeric, text',
-    'rb_confirm_booking_cash|uuid, uuid, boolean, numeric',
-    'rb_buddy_earnings_summary|uuid, numeric'
+    'rb_accumulate_booking_tip|p_booking_id uuid, p_traveler_id uuid, p_amount_usd numeric, p_note text',
+    'rb_confirm_booking_cash|p_booking_id uuid, p_actor_id uuid, p_confirmed boolean, p_amount_usd numeric',
+    'rb_buddy_earnings_summary|p_buddy_id uuid, p_platform_fee_pct numeric'
   ] LOOP
     fn := split_part(fn_args, '|', 1);
 
