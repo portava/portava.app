@@ -20,7 +20,7 @@ production** (§5): the last `surface='discovery'` serve was 2026-08-15, thirtee
 
 | Field | Value |
 | --- | --- |
-| `head_commit` | `090684ab54489d23707a0fd5e3f8ed661072a34f` (`git rev-parse HEAD`) |
+| `head_commit` | `42aeac38` — RE-DECLARED 2026-09-09 from `090684ab54489d23707a0fd5e3f8ed661072a34f`, the working-tree commit §8 measured at. The move is a measurement, not a judgement: `git diff --name-only 090684ab 42aeac38` over this census's 10 scoped paths returns **0 files**, so every verdict is exactly as true at one as at the other. It was necessary because `090684ab` is PRE-SQUASH — this repository squash-merges, so it is an ancestor of nothing, is on no remote branch, and `check:census-freshness` could resolve it only on the clone that wrote it (`CENSUS_HEAD_COMMITS_UNREACHABLE_IN_CI`, where CI measured this census among four that could not be checked at all). `42aeac38` is #476's squash, where this document's content reached `main`. **Changed by the Trips lane, not this one**, because the neutrality above is a measured fact rather than a call about Discovery's verdicts — revert it if you disagree; nothing else in this document is touched. |
 | Originally censused at | working tree `507f8427` plus uncommitted sibling work, 2026-09-07 |
 | Recensused | 2026-09-08 — see §8 for the method and what it does not claim |
 

@@ -1607,9 +1607,20 @@ whether the census aged in between:
 | census-layover | 5 | 1 | **not neutral** — see below |
 | census-wall | 7 | 1 | **not neutral** — see below |
 
-`census-trips` and `census-trust` now declare `42aeac38` and read FRESH at a
-commit CI can actually resolve. `census-discovery` measures identically and the
-change is one line, but it belongs to its lane.
+`census-trips`, `census-trust` and `census-discovery` now declare `42aeac38`.
+
+**Confirmed in CI, not just rehearsed.** On `2d25ead2`, `check:census-freshness`
+reported `census-trips.md FRESH at 42aeac38 (0 counted files changed)` and the
+same for `census-trust.md` — the first time either has been checkable anywhere
+but a developer's clone — and the run went from **6 problems to 4**.
+
+**Correcting a count stated earlier in this session:** four, not three, remained
+at that point. The three that carry acknowledgements are the ones needing a
+lane's judgement, but `census-discovery` was still failing alongside them for the
+unreachable-commit reason alone. It is re-declared here on the same measured
+grounds (0 scoped files changed), by the Trips lane rather than Discovery's,
+because that neutrality is a fact rather than a call about Discovery's verdicts;
+its own declaration row says so and invites a revert. **Three remain.**
 
 ### Why the other three are NOT re-declared
 
