@@ -5,6 +5,7 @@
 # backwards and must not be generated from it: 2767 undoes a CORRECTION to 2763
 # and has to run before 2763's own rollback, and 2763 drops trip_outcomes, which
 # references trip_stages, so it has to run before 2760's.
+db/rollback/2026-09-09-2774-trip-proposal-governance-rollback.sql
 db/rollback/2026-09-09-2773-trip-snapshot-fold-and-replay-rollback.sql
 db/rollback/2026-09-09-2771-trip-plan-participants-rollback.sql
 db/rollback/2026-09-09-2770-trip-plans-spec-columns-rollback.sql

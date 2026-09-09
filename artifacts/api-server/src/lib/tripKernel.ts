@@ -171,6 +171,9 @@ export type TripPlanCommandType =
   | "CREATE_PROPOSAL"
   | "ACCEPT_PROPOSAL"
   | "REJECT_PROPOSAL"
+  // §9.3 governance (2775). Self-only: no user_id key, so there is no way to
+  // spell "vote on someone's behalf".
+  | "VOTE_ON_PROPOSAL"
   // Append-only. There is deliberately no UPDATE_OUTCOME and no REMOVE_OUTCOME:
   // §20.1 builds durable memory from outcomes, and a record of what happened
   // that can be edited afterwards is not evidence. Corrections are new rows.
@@ -303,6 +306,15 @@ export type TripKernelReason =
   // already-rejected one is not a late accept; it is a second decision
   // overwriting a recorded first.
   | "TRIP_PROPOSAL_NOT_PENDING"
+  // §9.3 governance (2775). Under a counted rule the VOTE decides, not whoever
+  // issued the command — a crew member may close a vote and may not overrule it.
+  | "TRIP_PROPOSAL_VOTE_NOT_MET"
+  // An accepted proposal APPLIES. One that cannot be carried out is refused and
+  // stays pending, because a decision that never took effect is not a decision.
+  | "TRIP_PROPOSAL_PAYLOAD_INVALID"
+  // Fail-closed: a decision_rule outside §9.3's four refuses rather than
+  // falling through to something permissive.
+  | "TRIP_PROPOSAL_RULE_UNKNOWN"
   // §9.1 attendance and §5.1 trip_plans.version (2772).
   | "TRIP_PLAN_ATTENDANCE_NOT_FOUND"
   // PLAN-level optimistic concurrency, distinct from TRIP_VERSION_CONFLICT:
@@ -380,6 +392,7 @@ export const TRIP_EVENT_TYPES = [
   // named by the spec itself (§4.2), which is why it is not trip.proposal_set.
   "trip.presence_set", "trip.presence_cleared",
   "trip.proposal_created", "trip.proposal_accepted", "trip.proposal_rejected",
+  "trip.proposal_voted",
   "trip.outcome_recorded",
   // attendance family (2772).
   "trip.plan_joined", "trip.plan_left", "trip.plan_attendance_set",

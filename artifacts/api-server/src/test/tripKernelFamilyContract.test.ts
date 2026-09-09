@@ -149,7 +149,10 @@ describe("every §5 kernel family migration", () => {
         // check that catches an anchor matching somewhere unintended.
         assert.match(sql, /length\(replace\(d, E'\\n      WHEN/,
           "the branch count is not computed from the installed definition");
-        assert.match(sql, /command branches/,
+        // Singular OR plural: 2775 adds one command branch and one capability
+        // arm, and says so in those words. The invariant is the count being
+        // pinned, not the grammar.
+        assert.match(sql, /command branch(es)?/,
           "no branch-count invariant is asserted at all");
       });
 

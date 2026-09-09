@@ -934,10 +934,20 @@ is the only safe direction to be wrong in: widening a capability later cannot
 retroactively legitimise a decision a narrower rule refused, and narrowing one
 later cannot un-make a decision a wider rule allowed.
 
-Superseded by `2769`, which adds the columns, the votes table and the
-capability derived from `decision_rule`. **This entry stays in the ledger after
-2769 lands**, because the inconsistency is in the spec and the next reader of
-§5.1 will hit it again.
+Superseded by **`2774`** (the `decision_rule` and `proposed_by` columns, the
+`trip_proposal_votes` table, and the `trip_proposal_electorate` /
+`trip_proposal_tally` functions) and **`2775`** (the kernel: `VOTE_ON_PROPOSAL`,
+the `proposal_rule` capability resolved per proposal, the tally check, and an
+acceptance that APPLIES the proposal to canonical state instead of flipping a
+status column).
+
+*(An earlier draft of this entry said `2769`. That number went to the
+participant-role and lifecycle corrections instead; the governance work landed
+two lanes later. Corrected rather than quietly renumbered, because a ledger
+entry pointing at the wrong migration is worse than one pointing at none.)*
+
+**This entry stays in the ledger after 2775 lands**, because the inconsistency
+is in the spec and the next reader of §5.1 will hit it again.
 
 
 ### Correction, same day: the measurement was a proxy and the blocker is a merge

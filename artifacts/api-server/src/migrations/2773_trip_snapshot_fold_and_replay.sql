@@ -269,6 +269,13 @@ BEGIN
       s := jsonb_set(s, ARRAY['proposals', res->>'id'], jsonb_build_object(
              'proposal_type', pay->>'proposal_type',
              'status',        coalesce(res->>'status','pending')));
+    -- A vote changes the tally, not the proposal's own state. The snapshot
+    -- carries proposal STATUS; who voted which way lives in
+    -- trip_proposal_votes and is read there, not reconstructed here — a
+    -- version-addressed snapshot of a vote in progress would be a tally that
+    -- looks settled.
+    WHEN t = 'trip.proposal_voted' THEN
+      NULL;
     WHEN t IN ('trip.proposal_accepted','trip.proposal_rejected') THEN
       k := res->>'id';
       cur := coalesce(s->'proposals'->k, '{}'::jsonb);
