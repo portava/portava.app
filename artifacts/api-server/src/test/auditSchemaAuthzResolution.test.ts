@@ -42,6 +42,8 @@ function schema(pub: string[], authz: string[], extra: Partial<LiveSchema> = {})
     rlsEnabled: new Set(),
     tableGrants: new Set(),
     routineGrants: new Set(),
+    authzRoutineGrants: new Set(),
+    collidingFunctionNames: new Set(),
     ...extra,
   };
 }
@@ -85,5 +87,68 @@ describe("audit:schema — function claims resolve in public OR authz", () => {
 
   it("a grantfn on a function in neither schema is still skipped (unchanged)", () => {
     assert.equal(isMissing({ kind: "grantfn", key: "grantfn:gone.authenticated", label: "x" } as any, schema([], [])), false);
+  });
+});
+
+/**
+ * THE SECOND HALF OF THE WIDENING, and the defect it cost to find.
+ *
+ * The case above — "a grantfn on an authz function is CHECKED, not skipped" —
+ * was written as a feature and it was one. What it did not say is where the
+ * GRANT is looked up. `routineGrants` was built from
+ * `routine_schema = 'public'` only, so the moment an authz function stopped
+ * short-circuiting, its grant was checked against a catalogue that could not
+ * contain it. CI measured the result on 2026-09-09: eight grants reported
+ * missing, and all eight are live — `has_function_privilege(anon, …)` is true
+ * for every one of viewer_in_call, is_trip_crew, accepted_trip_ids,
+ * shares_accepted_trip, accepted_trip_role, geofence_trip_id,
+ * is_active_thread_member and is_meetup_invitee.
+ *
+ * These are the mutations for the fix. Each fails if `authzRoutineGrants` is
+ * dropped, folded into `routineGrants`, or consulted in place of it.
+ */
+const grant = (fn: string, grantee = "anon") =>
+  ({ kind: "grantfn", key: `grantfn:${fn}.${grantee}`, label: `grant execute on ${fn}() to ${grantee}` }) as any;
+
+describe("audit:schema — a grant on an authz function is found where it actually lives", () => {
+  it("THE DEFECT: an authz function whose grant is in authz is NOT missing", () => {
+    // The eight from the CI run, each as its own assertion so a partial
+    // regression names the function it broke.
+    for (const fn of [
+      "viewer_in_call", "is_trip_crew", "accepted_trip_ids", "shares_accepted_trip",
+      "accepted_trip_role", "geofence_trip_id", "is_active_thread_member", "is_meetup_invitee",
+    ]) {
+      const live = schema([], [fn], { authzRoutineGrants: new Set([`${fn}.anon`]) });
+      assert.equal(isMissing(grant(fn), live), false, `${fn}: the anon grant is live in authz`);
+    }
+  });
+
+  it("THE MUTATION: an authz function with NO grant anywhere is still MISSING", () => {
+    // The half that must stay red. If reading both catalogues ever becomes
+    // "assume granted", a predicate that RLS calls and anon cannot execute
+    // stops being reportable — which is the failure the grant claim exists for.
+    const live = schema([], ["is_trip_crew"], { authzRoutineGrants: new Set(["is_trip_crew.authenticated"]) });
+    assert.equal(isMissing(grant("is_trip_crew", "anon"), live), true);
+  });
+
+  it("a public function's grant is still read from the public catalogue", () => {
+    // The regression direction: the fix must ADD a lookup, not move one.
+    const live = schema(["pg_policies_snapshot"], [], { routineGrants: new Set(["pg_policies_snapshot.service_role"]) });
+    assert.equal(isMissing(grant("pg_policies_snapshot", "service_role"), live), false);
+    assert.equal(isMissing(grant("pg_policies_snapshot", "anon"), live), true);
+  });
+
+  it("the name-key really is a name-key — either schema satisfies the claim", () => {
+    // Not an endorsement: this pins the LIMITATION so it cannot change by
+    // accident. `is_accepted_trip_member` exists in both schemas on portava-ci
+    // and is the one 2337 grant that did NOT report missing during the defect,
+    // because the public twin carried anon. `collidingFunctionNames` is why the
+    // auditor now prints that case instead of trusting it.
+    const publicTwinOnly = schema(["is_accepted_trip_member"], ["is_accepted_trip_member"], {
+      routineGrants: new Set(["is_accepted_trip_member.anon"]),
+      authzRoutineGrants: new Set(),
+    });
+    assert.equal(isMissing(grant("is_accepted_trip_member"), publicTwinOnly), false,
+      "a name-keyed claim is satisfied by the public twin — the case the NOTE reports");
   });
 });

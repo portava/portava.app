@@ -42,7 +42,35 @@ export interface LiveSchema {
   triggers: Set<string>; // "table.trigger"
   rlsEnabled: Set<string>; // tables with pg_class.relrowsecurity = true
   tableGrants: Set<string>; // "table.grantee.privilege"
-  routineGrants: Set<string>; // "function.grantee" (EXECUTE only)
+  routineGrants: Set<string>; // "function.grantee" (EXECUTE only), routine_schema = public
+  /**
+   * The same, for `authz`. Kept APART from `routineGrants` for the reason
+   * `authzFunctions` is kept apart from `functions`, and then some.
+   *
+   * MEASURED 2026-09-09, and this is why the split matters. Widening the
+   * EXISTENCE check to public-OR-authz without widening this one made eight
+   * present grants read as MISSING: `!live.functions.has(fn)` used to be true
+   * for an authz function and short-circuited the whole grantfn claim, so the
+   * grant was never checked. Once the function resolved, the claim WAS checked
+   * — against a grant catalogue that still only knew `public`. Every one of
+   * `viewer_in_call`, `is_trip_crew`, `accepted_trip_ids`, `shares_accepted_trip`,
+   * `accepted_trip_role`, `geofence_trip_id`, `is_active_thread_member` and
+   * `is_meetup_invitee` holds EXECUTE for anon on the live database.
+   *
+   * THE NAME-KEY LIMITATION, STATED. Claims are name-keyed — a migration's
+   * `GRANT EXECUTE ON FUNCTION authz.f(...)` and one on `public.f(...)` produce
+   * the same claim key — so a satisfied grant on EITHER schema satisfies the
+   * claim. Exactly one name is currently in both schemas on portava-ci:
+   * `is_accepted_trip_member`. That is not hypothetical comfort — it is the one
+   * of 2337's five grants that did NOT report missing in the run that found this
+   * defect, because `public.is_accepted_trip_member` carries the anon grant and
+   * the name-keyed lookup found it there. `collidingFunctionNames` below exists
+   * so that case is REPORTED rather than silently trusted.
+   */
+  authzRoutineGrants: Set<string>;
+  /** Function names present in BOTH schemas, where a name-keyed answer cannot
+   *  say which one satisfied a claim. Reported, not assumed away. */
+  collidingFunctionNames: Set<string>;
 }
 
 export interface Claim {
@@ -112,8 +140,13 @@ export function isMissing(claim: Claim, live: LiveSchema): boolean {
     }
     case "grantfn": {
       const [fn] = key.split(".");
+      // A grant on a function that does not exist is not a MISSING GRANT; the
+      // missing FUNCTION is the finding, and it is reported by its own claim.
       if (!live.functions.has(fn) && !live.authzFunctions.has(fn)) return false;
-      return !live.routineGrants.has(key);
+      // Both catalogues, for the same reason the line above reads both schemas.
+      // See LiveSchema.authzRoutineGrants for what checking only `public` here
+      // cost, measured.
+      return !live.routineGrants.has(key) && !live.authzRoutineGrants.has(key);
     }
   }
 }

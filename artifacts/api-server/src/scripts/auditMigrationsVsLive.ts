@@ -460,10 +460,16 @@ export async function fetchLiveSchema(): Promise<LiveSchema> {
     // GRANT statements in src/migrations/ are GRANT EXECUTE ON FUNCTION, which
     // role_table_grants cannot see at all — modelling only table grants would
     // have covered 1 of 19 while reporting "GRANT" as a covered claim type.
-    liveQuery<{ r: string; g: string }>(
-      `select routine_name as r, grantee as g
+    // `authz` as well as `public`, for the same reason the function query above
+    // reads both: the membership predicates live in authz precisely because it
+    // is outside PostgREST's db-schemas, and their migrations grant EXECUTE on
+    // them there. Reading only `public` here, once the EXISTENCE check had been
+    // widened, turned eight grants that ARE live into reported drift — see
+    // LiveSchema.authzRoutineGrants for the measurement.
+    liveQuery<{ r: string; g: string; s: string }>(
+      `select routine_name as r, grantee as g, routine_schema as s
        from information_schema.role_routine_grants
-       where routine_schema = 'public' and privilege_type = 'EXECUTE'`,
+       where routine_schema in ('public', 'authz') and privilege_type = 'EXECUTE'`,
     ),
   ]);
 
@@ -483,7 +489,12 @@ export async function fetchLiveSchema(): Promise<LiveSchema> {
     triggers: new Set(trgs.map((r) => lc(`${r.t}.${r.g}`))),
     rlsEnabled: new Set(rls.map((r) => lc(r.name))),
     tableGrants: new Set(tgrants.map((r) => lc(`${r.t}.${r.g}.${r.p}`))),
-    routineGrants: new Set(rgrants.map((r) => lc(`${r.r}.${r.g}`))),
+    routineGrants: new Set(rgrants.filter((r) => r.s === "public").map((r) => lc(`${r.r}.${r.g}`))),
+    authzRoutineGrants: new Set(rgrants.filter((r) => r.s === "authz").map((r) => lc(`${r.r}.${r.g}`))),
+    collidingFunctionNames: new Set(
+      [...new Set(fns.filter((r) => r.s === "public").map((r) => lc(r.name)))]
+        .filter((n) => fns.some((r) => r.s === "authz" && lc(r.name) === n)),
+    ),
   };
 }
 
@@ -882,6 +893,22 @@ async function main(): Promise<void> {
         "one that was supposed to be in public:",
     );
     for (const a of authzOnly) console.log(`  · ${a}`);
+  }
+
+  // The one case where name-keying can hide real drift, reported rather than
+  // assumed away: a function name present in BOTH schemas. A grantfn claim on
+  // such a name is satisfied by a grant on EITHER, so a missing authz grant is
+  // invisible if the public twin carries it. That is not hypothetical — it is
+  // exactly what happened to `is_accepted_trip_member` in the run that found
+  // the public-only grant catalogue.
+  if (live.collidingFunctionNames.size > 0) {
+    console.log(
+      `\nNOTE: ${live.collidingFunctionNames.size} function name(s) exist in BOTH \`public\` and ` +
+        "`authz`. Claims here are name-keyed, so an existence or grant claim on one of these " +
+        "is satisfied by EITHER schema and this auditor cannot say which — a missing grant on " +
+        "the authz copy would be masked by the public one:",
+    );
+    for (const n of [...live.collidingFunctionNames].sort()) console.log(`  · ${n}`);
   }
 
   console.log(

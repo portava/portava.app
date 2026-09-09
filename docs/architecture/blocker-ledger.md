@@ -1529,3 +1529,74 @@ invoked by a workflow or carries a written reason — is the closed-set discipli
 `check:guard-coverage` already applies to Supabase-reaching files, and it does
 not exist for test scripts. Until it does, this entry closed one instance by
 hand.
+
+---
+
+## `CENSUS_HEAD_COMMITS_UNREACHABLE_IN_CI` — six declarations that can only be checked on the machine that wrote them
+
+**Opened 2026-09-09.** Type: `CI`. Owner: shared — six censuses across five
+lanes. Buildable now? **Yes, but not by one lane alone**; see "Why this is not
+fixed here".
+
+### The measurement
+
+`check:census-freshness` fails inside `api-server-check-all` with six errors of
+one shape:
+
+```
+fatal: Invalid revision range 7bca4b0d0e19d29ea0a96982f74b35d26402fa52..575ceb45
+##[error]census-trust.md: git could not diff 7bca4b0d..HEAD — the declared
+         head_commit may not exist in this clone.
+```
+
+…for `census-discovery`, `census-highlights-memories`, `census-layover`,
+`census-trips`, `census-trust` and `census-wall` — **every checkable census
+there is**. Measured locally: not one of the six declared commits is an ancestor
+of `origin/main`, and `git branch -r --contains` returns nothing for any of them.
+They are pre-squash working-tree commits. This repository squash-merges, so the
+commit a census was measured at stops existing the moment its branch lands.
+
+**The guard therefore cannot be green in CI, and has been passing locally for a
+reason that is not a property of the repository**: this container's object store
+still holds those commits from the branch work that produced them. A fresh clone
+— which is what CI has, `fetch-depth: 0` and all, since the objects are on no
+ref — cannot resolve any of them.
+
+That is worse than a red check. `check:guard-reachability` prints
+`checkCensusFreshness.ts  inspected  (not read — the guard is currently FAILING,
+exit 1)`, so the one guard that would notice already knows and says so in
+passing.
+
+### Why this is not fixed here
+
+The mechanical fix is to re-declare each `head_commit` to a commit reachable from
+`main`. All six censuses last landed on main in the same squash, `42aeac38`
+(#476), and re-declaring all six to it was rehearsed: the checker then reports
+**6 checkable, 0 STALE, all FRESH at 42aeac38, 0 counted files changed**.
+
+**It was reverted, because for three of them that verdict would be a lie.**
+`census-highlights-memories`, `census-layover` and `census-wall` carry live
+entries in `CENSUS_STALENESS_ACKNOWLEDGED.json` — a scoped file DID change after
+they were measured, and somebody argued in writing why it was harmless. Moving
+the declaration forward converts that acknowledged staleness into a fresh
+measurement nobody took, and the guard says so itself rather than letting it
+pass:
+
+```
+::error::CENSUS_STALENESS_ACKNOWLEDGED for census-wall.md names since=9f8122ff,
+         but that census now declares head_commit 42aeac38. The census was
+         re-measured; the acknowledgement is spent. Delete it.
+```
+
+Re-declaring is honest only for a census whose scope did not change between its
+old commit and the new one, and that judgement belongs to each census's lane.
+
+### What would close it
+
+Per census, by its owner: re-declare `head_commit` to the reachable main commit
+that carries that measurement, delete the acknowledgement it supersedes, and
+re-run the check — accepting STALE where it is true. And, so the next one cannot
+happen silently, a rule in `checkCensusFreshness.ts` that a declared
+`head_commit` must be an ancestor of the default branch: an unreachable
+declaration should fail as MALFORMED, the way `censusHeadCommit.ts` already
+fails a botched row, rather than as "git could not diff".

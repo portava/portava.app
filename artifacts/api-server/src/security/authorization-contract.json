@@ -190,8 +190,8 @@
       ]
     },
     "portava_featured": {
-      "note": "2160 — RLS-off self-feature. SELECT-only for clients; all writes service-role. No client-write policy (RLS carries 0 policies).",
-      "tableGrants": { "anon": ["SELECT"], "authenticated": ["SELECT"] },
+      "note": "2332 — NO client grant at all, which is NARROWER than 2160's SELECT and is the point. 2160 granted SELECT back to anon and authenticated on the reasoning that \"Featured is public\"; 2332 pressed that properly and revoked it, because Featured is public THROUGH THE API and not through PostgREST. Its own header names every reader — routes/featured.ts:113, routes/mediaFeed.ts:1334 and :1573, routes/pulse.ts:311, routes/posts.ts:1893, routes/adminFeatured.ts — and every one is on the service client; `from(\u0027portava_featured\u0027)` appears nowhere in travel-buddy-standalone. CORRECTED 2026-09-09: this entry still approved 2160\u0027s SELECT after 2332 had taken it away, and check:authorization-contract reported the drift as `narrowed: -[SELECT]`. A contract that approves a grant the database does not have approves a hole nobody opened, and it would have read as approval the day someone re-granted it — the same failure the $pinnedAsMeasured note above records for the four layover tables, in the same direction. All writes remain service-role. RLS carries 0 policies.",
+      "tableGrants": {},
       "insertCols": {},
       "updateCols": {},
       "policies": []
