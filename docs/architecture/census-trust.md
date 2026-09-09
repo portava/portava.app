@@ -385,7 +385,7 @@ commit.** Rows not restated keep the verdict the body left them with.
 
 | Field | Value |
 | --- | --- |
-| `head_commit` | `7bca4b0d0e19d29ea0a96982f74b35d26402fa52` (`git rev-parse HEAD`) |
+| `head_commit` | `42aeac38` — RE-DECLARED 2026-09-09 from `7bca4b0d0e19d29ea0a96982f74b35d26402fa52`, the working-tree commit this addendum was measured at. The move is a measurement, not a judgement: `git diff --name-only 7bca4b0d 42aeac38` over this census's 15 scoped paths returns **0 files**, so all 52 verdicts are exactly as true at one as at the other. It was necessary because `7bca4b0d` is PRE-SQUASH — this repository squash-merges, so it is an ancestor of nothing, is on no remote branch, and `check:census-freshness` could resolve it only on the clone that wrote it (`CENSUS_HEAD_COMMITS_UNREACHABLE_IN_CI`). `42aeac38` is #476's squash, where this document's content reached `main`. |
 | `generated_at` | 2026-09-08 |
 | **Denominator (testable requirements)** | **52** |
 | Scanned | `services/trust/` (8 services), `lib/trustScore.ts`, `lib/trustMaintenanceScheduler.ts`, `routes/trust-admin.ts`, plus every file the eight open rows named: `routes/events.ts`, `routes/pulse.ts`, `routes/rentABuddyMarketplace.ts`, `routes/admin.ts`, `routes/trips.ts`, `routes/tripCrewLocation.ts`, `compass/*`, `services/ranking/CreatorActivityScoreService.ts`, `services/passport/*`, `services/hiddenGems/*` |

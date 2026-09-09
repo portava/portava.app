@@ -1567,20 +1567,33 @@ That is worse than a red check. `check:guard-reachability` prints
 exit 1)`, so the one guard that would notice already knows and says so in
 passing.
 
-### Why this is not fixed here
+### Which of the six can be re-declared without lying, measured
 
-The mechanical fix is to re-declare each `head_commit` to a commit reachable from
-`main`. All six censuses last landed on main in the same squash, `42aeac38`
-(#476), and re-declaring all six to it was rehearsed: the checker then reports
-**6 checkable, 0 STALE, all FRESH at 42aeac38, 0 counted files changed**.
+All six last landed on main in the same squash, `42aeac38` (#476). Whether
+moving a declaration there is honest is not a judgement — it is
+`git diff --name-only <old> 42aeac38 -- <that census's scope>`, which says
+whether the census aged in between:
 
-**It was reverted, because for three of them that verdict would be a lie.**
-`census-highlights-memories`, `census-layover` and `census-wall` carry live
-entries in `CENSUS_STALENESS_ACKNOWLEDGED.json` — a scoped file DID change after
-they were measured, and somebody argued in writing why it was harmless. Moving
-the declaration forward converts that acknowledged staleness into a fresh
-measurement nobody took, and the guard says so itself rather than letting it
-pass:
+| census | scoped paths | changed `old..42aeac38` | verdict |
+| --- | ---: | ---: | --- |
+| census-trips | 35 | **0** | provably neutral — **re-declared** |
+| census-trust | 15 | **0** | provably neutral — **re-declared** |
+| census-discovery | 10 | **0** | provably neutral — one line, not this lane's to take |
+| census-highlights-memories | 10 | 4 | **not neutral** — see below |
+| census-layover | 5 | 1 | **not neutral** — see below |
+| census-wall | 7 | 1 | **not neutral** — see below |
+
+`census-trips` and `census-trust` now declare `42aeac38` and read FRESH at a
+commit CI can actually resolve. `census-discovery` measures identically and the
+change is one line, but it belongs to its lane.
+
+### Why the other three are NOT re-declared
+
+Those three carry live entries in `CENSUS_STALENESS_ACKNOWLEDGED.json`, and the
+files their acknowledgements name changed BEFORE `42aeac38` — so moving the
+declaration forward folds an acknowledged staleness into a measurement nobody
+took. The guard refuses it rather than letting it pass, which is the right
+answer:
 
 ```
 ::error::CENSUS_STALENESS_ACKNOWLEDGED for census-wall.md names since=9f8122ff,
@@ -1588,15 +1601,15 @@ pass:
          re-measured; the acknowledgement is spent. Delete it.
 ```
 
-Re-declaring is honest only for a census whose scope did not change between its
-old commit and the new one, and that judgement belongs to each census's lane.
+Deleting the acknowledgement to satisfy that message would be laundering. What
+those three need is their lane's judgement: re-measure at `42aeac38` and let the
+acknowledgement go because it is genuinely spent, or accept STALE, which is true.
 
 ### What would close it
 
-Per census, by its owner: re-declare `head_commit` to the reachable main commit
-that carries that measurement, delete the acknowledgement it supersedes, and
-re-run the check — accepting STALE where it is true. And, so the next one cannot
-happen silently, a rule in `checkCensusFreshness.ts` that a declared
-`head_commit` must be an ancestor of the default branch: an unreachable
-declaration should fail as MALFORMED, the way `censusHeadCommit.ts` already
-fails a botched row, rather than as "git could not diff".
+The three above, by their owners, plus `census-discovery`'s one line. And so the
+next one cannot happen silently, a rule in `checkCensusFreshness.ts` that a
+declared `head_commit` must be an ANCESTOR of the default branch: an unreachable
+declaration should fail as MALFORMED, the way `censusHeadCommit.ts` already fails
+a botched row, rather than as "git could not diff" — a distinction that matters
+because the first names the defect and the second reads like a clone problem.
