@@ -1269,3 +1269,72 @@ No row was written by hand, no row was deleted, and no branch was merged. §33 o
 `census-trips.md` records the last time this lane back-filled ledger rows and
 why those six carry `checksum='backfill'` rather than a hash; repeating that for
 another six would trade a loud problem for a quiet one.
+
+---
+
+## `CI_SUPABASE_TOKEN_401` — the sanctioned applier lost its credential mid-chain
+
+**Opened 2026-09-09 15:46 UTC.** Type: `EXTERNAL`. Owner: repository admin.
+Buildable now? **No** — nothing in this repository can fix it, and no code change
+is involved.
+
+### The measurement
+
+`SUPABASE_PROJECT_TOKEN` stopped being accepted by the Supabase Management API
+between 14:45 and 15:20 UTC. Three runs, same secret, same project ref:
+
+| Run (main) | Time (UTC) | First Management API call | Result |
+|---|---|---|---|
+| `34365037936` (`d9ee61b2`) | 14:41–14:45 | ledger read | OK — **46 migrations applied** |
+| `34369375440` attempt 1 (`8d5b9e99`) | 15:22 | ledger read | **401 Unauthorized** |
+| `34369375440` attempt 2 (re-run of failed jobs) | 15:37 | ledger read | **401 Unauthorized** |
+
+Every DB-touching step fails identically — `db:apply-migrations:dry-run`,
+`db:apply-migrations`, `check:migration-ledger`, `audit:schema`,
+`check:media-objects`, `audit:shadow-append-only` — and each fails on its FIRST
+call, before any query. `apply-migrations` refuses rather than guessing, and
+says so in its own words:
+
+> This is NOT the not-yet-bootstrapped case (that reports 42P01). The ledger is
+> what makes this script idempotent and what makes an apply RECORDED, and we
+> cannot currently read it — so we cannot say what has been applied. Refusing
+> rather than guessing.
+
+### It is the credential, not the project and not the code
+
+* The project is **up**: an independent read path (Supabase MCP, different
+  credential) queried `hwokxgbmezheskbzskfr` successfully at 15:46 and returned
+  `schema_migration_ledger` = 479 rows, 69 of them `applied_by='ci'`, latest
+  apply `2026-09-09 14:44:55`.
+* The failure is `401`, not `429`. Throttling would not present as
+  Unauthorized, and would not have let 46 consecutive applies through half an
+  hour earlier and then refuse the first call twice.
+* The re-run was a *re-run of the same jobs*, so the workflow, the code and the
+  ref were byte-identical between the run that worked and the two that did not.
+
+### What it blocks
+
+The remaining **20 migrations**, which are all of Trips v4 from `2724` onward:
+`2724`, `2730`, `2740`, `2741`, `2764`, `2765`, `2766`, `2768`, `2769`, `2770`,
+`2771`, `2772`, `2773`, `2774`, `2775`, `2776`, `2777`. Nothing downstream of
+those can be certified either — the §5 vertical slices, the feasibility and
+governance proofs, and the whole live-DB verdict.
+
+The 46 that DID land are intact and recorded (real sha256, `applied_by='ci'`).
+
+### The exact action, and it is the only one
+
+Rotate `SUPABASE_PROJECT_TOKEN` in **Settings → Secrets and variables →
+Actions** on `portava/portava.app`, to a current Supabase Management API token
+with access to project `hwokxgbmezheskbzskfr`, then re-run `CI (live DB)` on
+`main` (it carries `workflow_dispatch`).
+
+Nothing else is required: the two defects that stopped the applier before this
+are fixed and merged (#477, #478), and the chain resumes at `2724` on its own.
+
+### Not done here, deliberately
+
+No migration was hand-applied to work around the outage. That is the mechanism
+`CI_DB_HAND_APPLIED_FROM_UNMERGED_BRANCHES` above exists to record, and doing it
+again to route around an expired token would be the same mistake with a better
+excuse.
