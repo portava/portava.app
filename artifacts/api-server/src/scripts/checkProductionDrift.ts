@@ -106,6 +106,34 @@ export const KNOWN_PRODUCTION_GAPS: Record<string, Gap> = {
       "This is the highest-priority entry in this file.",
   },
 
+  // ── Trips v4 §5.1: the schema spine, CI-only and deliberately writerless ──
+  // Ten tables from migrations 2760-2763, applied to portava-ci 2026-09-09 and
+  // NOT to production. They are on this ratchet as one block because they share
+  // one reason, and the reason is not "we have not got round to it":
+  //
+  //   Each ships with RLS on, a crew-only SELECT policy, and NO client write
+  //   grant of any kind — asserted as an equality in every postcondition. They
+  //   have no writer at all yet, because Trips §4 requires every aggregate
+  //   mutation to go through trip_kernel_execute, and each kernel change
+  //   replaces that 700-line function in full. All of §5's command families
+  //   should land in ONE replacement rather than ten.
+  //
+  //   So census-trips TR78/79/81/84/85/86/87/88/90/91 do NOT close on these
+  //   tables existing — the census's own rule 2 is "a table nothing writes
+  //   satisfies nothing", and it is right. Applying an unwritable, unreadable
+  //   table to production buys nothing and adds surface, so it waits for the
+  //   command family and goes with it.
+  trip_stages:         { classification: "unapplied", note: "Trips §5.1 (2760). In portava-ci, absent from production. No writer until the §4 stage command family lands; RLS crew-SELECT only, zero client write grants." },
+  trip_legs:           { classification: "unapplied", note: "Trips §5.1 (2761). In portava-ci, absent from production. Same block as trip_stages." },
+  trip_commitments:    { classification: "unapplied", note: "Trips §5.1 + §7.1 (2761). In portava-ci, absent from production. Carries required_arrival_at / prep_duration / lateness_tolerance / confidence — the §7.2 inputs that did not previously exist. Same block." },
+  trip_goals:          { classification: "unapplied", note: "Trips §5.1/§8 (2762). In portava-ci, absent from production. Same block." },
+  trip_decision_tasks: { classification: "unapplied", note: "Trips §5.1/§8 (2762). In portava-ci, absent from production. Same block." },
+  trip_risks:          { classification: "unapplied", note: "Trips §5.1/§8.4 (2762). In portava-ci, absent from production. The risk register §8.4 propagation (TR144) needs and does not have. Same block." },
+  trip_presence:       { classification: "unapplied", note: "Trips §5.1/§10 (2763). In portava-ci, absent from production. Distinct from trip_crew_location_sessions, which is a live-SHARE session. Same block." },
+  trip_proposals:      { classification: "unapplied", note: "Trips §5.1/§9/§12.2 (2763). In portava-ci, absent from production. Same block." },
+  trip_snapshots:      { classification: "unapplied", note: "Trips §5.1/§22 (2763). In portava-ci, absent from production. Distinct from trip_readiness_snapshots, which is a cached readiness summary. Same block." },
+  trip_outcomes:       { classification: "unapplied", note: "Trips §5.1/§20 (2763). In portava-ci, absent from production. Same block." },
+
   // ── A guarantee the docs rest on, that production does not have ───────────
   protected_zones: {
     classification: "unapplied",
