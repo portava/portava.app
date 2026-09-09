@@ -104,26 +104,50 @@ describe("every §5 kernel family migration", () => {
     const prefix = file.slice(0, 4);
 
     describe(file, () => {
-      it("sets v_family on every branch that emits an event", { skip: !family && "correction migration: emits no events" }, () => {
-        // Scanned over the $branches$ block ONLY — the code the migration
-        // AUTHORS. Outside it, a `v_event_type := '...'` is an ANCHOR the
+      // Unconditional, deliberately. This was `{ skip: !family }` until
+      // 2026-09-09, which meant a CORRECTION migration that authored an
+      // unfamilied event emission was waved through by the one rule written to
+      // catch exactly that — and a skipped test asserts nothing, so nothing
+      // said so. The two kinds get different SCOPES, not different amounts of
+      // scrutiny.
+      it("every event emission it authors sets v_family immediately before it", () => {
+        // Scope for a FAMILY migration is the $branches$ block ONLY — the code
+        // it AUTHORS. Outside it, a `v_event_type := '...'` is an ANCHOR the
         // migration quotes in order to find pre-existing code (2772 quotes
         // ADD_PLAN's), and those branches set v_family before the CASE. Scanning
         // the whole file confuses the two and fails on a correct migration.
+        //
+        // A CORRECTION authors no $branches$ block, so its scope is the whole
+        // file: every event assignment it writes — as an anchor it matches or as
+        // the replacement it installs — must carry its family. 2777's presence
+        // anchor and its replacement both do; 2769 writes none at all, and the
+        // classification assertion below is what makes that a fact rather than
+        // an assumption.
         const authored = sql.match(/\$branches\$([\s\S]*?)\$branches\$/);
-        assert.ok(authored, "a family migration with no $branches$ block: nothing to check, which is itself wrong");
-        const body = authored[1];
-        const events = body.match(/v_event_type := '(trip\.[a-z_]+)'/g) ?? [];
-        assert.ok(events.length > 0, "the authored branches emit no events at all");
+        assert.equal(Boolean(authored), family,
+          authored
+            ? `${file} is classified a correction but authored a $branches$ block`
+            : `${file} is classified a family migration but has no $branches$ block`);
+        const body = authored ? authored[1] : sql;
+        // matchAll, not match+indexOf: two branches emitting the SAME event type
+        // both resolve to the first occurrence under indexOf, so the second one
+        // was never checked. Real indices check every occurrence.
+        const events = [...body.matchAll(/v_event_type := '(trip\.[a-z_]+)'/g)];
+        if (family) {
+          assert.ok(events.length > 0, "the authored branches emit no events at all");
+        }
         for (const m of events) {
-          const idx = body.indexOf(m);
-          const preceding = body.slice(Math.max(0, idx - 140), idx);
+          const preceding = body.slice(Math.max(0, m.index - 140), m.index);
           assert.match(preceding, /v_family\s+:= '[a-z_]+';/,
-            `${m} is emitted with no v_family set immediately before it — the event would be filed under the previous branch's family`);
+            `${m[0]} is emitted with no v_family set immediately before it — the event would be filed under the previous branch's family`);
         }
       });
 
-      it("counts its own family assignments in a postcondition", { skip: !family && "correction migration: has no families of its own" }, () => {
+      // Also unconditional. A correction has no family of its OWN, but it must
+      // still pin the family-assignment count as UNCHANGED — the same invariant
+      // with a different number — and both corrections (2769, 2777) already do,
+      // so skipping this for them protected nothing.
+      it("counts family assignments in a postcondition, derived from the installed definition", () => {
         // Matched on SUBSTANCE, not on one migration's wording: the check must
         // count occurrences of the v_family assignment IN THE INSTALLED
         // DEFINITION, so a dropped assignment is refused at apply time and not

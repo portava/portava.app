@@ -112,7 +112,14 @@ async function start(): Promise<void> {
 }
 after(() => { server?.close(); });
 
-async function get(token = "owner-token") {
+// `res.json()` is typed `Promise<unknown>`, so without this annotation every
+// `r.body.<field>` below is a TS18046 error. The response body of an HTTP
+// route genuinely has no static type at the fetch boundary — the assertions
+// in this file ARE the shape check. Same annotation as
+// src/test/tripPresenceRoute.test.ts:110.
+async function get(
+  token = "owner-token",
+): Promise<{ status: number; body: any }> {
   const res = await fetch(`http://127.0.0.1:${port}/api/trips/${TRIP_ID}/structure`, {
     headers: { Authorization: `Bearer ${token}` },
   });
