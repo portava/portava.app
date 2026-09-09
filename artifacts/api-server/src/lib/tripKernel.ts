@@ -175,6 +175,12 @@ export type TripPlanCommandType =
   // §20.1 builds durable memory from outcomes, and a record of what happened
   // that can be edited afterwards is not evidence. Corrections are new rows.
   | "RECORD_OUTCOME"
+  // §9.1 attendance (2772). JOIN_PLAN and LEAVE_PLAN are the SPEC's names
+  // (§4.1). All three are self-only: none takes a user_id, so there is no way
+  // to spell "mark someone else as going" and no rule about it to get wrong.
+  | "JOIN_PLAN"
+  | "LEAVE_PLAN"
+  | "SET_PLAN_ATTENDANCE"
   | "REORDER_PLAN"
   | "LINK_PLAN_ROUTE_STOP";
 
@@ -297,6 +303,12 @@ export type TripKernelReason =
   // already-rejected one is not a late accept; it is a second decision
   // overwriting a recorded first.
   | "TRIP_PROPOSAL_NOT_PENDING"
+  // §9.1 attendance and §5.1 trip_plans.version (2772).
+  | "TRIP_PLAN_ATTENDANCE_NOT_FOUND"
+  // PLAN-level optimistic concurrency, distinct from TRIP_VERSION_CONFLICT:
+  // trips.version moves on every command in the trip, so two crew editing two
+  // different plans would conflict on it while editing nothing in common.
+  | "TRIP_PLAN_VERSION_CONFLICT"
   // Distinct from TRIP_AUTH_NOT_CREW on purpose: the ACTOR is authorised and
   // the ASSIGNEE is not. A client that cannot tell those apart shows the wrong
   // error to the wrong person — "you are not on this trip" to someone who is.
@@ -369,6 +381,8 @@ export const TRIP_EVENT_TYPES = [
   "trip.presence_set", "trip.presence_cleared",
   "trip.proposal_created", "trip.proposal_accepted", "trip.proposal_rejected",
   "trip.outcome_recorded",
+  // attendance family (2772).
+  "trip.plan_joined", "trip.plan_left", "trip.plan_attendance_set",
 ] as const;
 export type TripEventType = (typeof TRIP_EVENT_TYPES)[number];
 

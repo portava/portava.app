@@ -101,11 +101,19 @@ describe("every §5 kernel family migration", () => {
 
     describe(file, () => {
       it("sets v_family on every branch that emits an event", { skip: !family && "correction migration: emits no events" }, () => {
-        const events = sql.match(/v_event_type := '(trip\.[a-z_]+)'/g) ?? [];
-        assert.ok(events.length > 0, "emits no events at all");
+        // Scanned over the $branches$ block ONLY — the code the migration
+        // AUTHORS. Outside it, a `v_event_type := '...'` is an ANCHOR the
+        // migration quotes in order to find pre-existing code (2772 quotes
+        // ADD_PLAN's), and those branches set v_family before the CASE. Scanning
+        // the whole file confuses the two and fails on a correct migration.
+        const authored = sql.match(/\$branches\$([\s\S]*?)\$branches\$/);
+        assert.ok(authored, "a family migration with no $branches$ block: nothing to check, which is itself wrong");
+        const body = authored[1];
+        const events = body.match(/v_event_type := '(trip\.[a-z_]+)'/g) ?? [];
+        assert.ok(events.length > 0, "the authored branches emit no events at all");
         for (const m of events) {
-          const idx = sql.indexOf(m);
-          const preceding = sql.slice(Math.max(0, idx - 140), idx);
+          const idx = body.indexOf(m);
+          const preceding = body.slice(Math.max(0, idx - 140), idx);
           assert.match(preceding, /v_family\s+:= '[a-z_]+';/,
             `${m} is emitted with no v_family set immediately before it — the event would be filed under the previous branch's family`);
         }

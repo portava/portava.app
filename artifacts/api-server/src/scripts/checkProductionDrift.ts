@@ -133,6 +133,7 @@ export const KNOWN_PRODUCTION_GAPS: Record<string, Gap> = {
   trip_proposals:      { classification: "unapplied", note: "Trips §5.1/§9/§12.2 (2763). In portava-ci, absent from production. Same block." },
   trip_snapshots:      { classification: "unapplied", note: "Trips §5.1/§22 (2763). In portava-ci, absent from production. Distinct from trip_readiness_snapshots, which is a cached readiness summary. Same block." },
   trip_outcomes:       { classification: "unapplied", note: "Trips §5.1/§20 (2763). In portava-ci, absent from production. Same block." },
+  trip_plan_participants: { classification: "unapplied", note: "Trips §5.1/§9.1 (2771) — the attendance relation census-trips TR83 is about. Absent from BOTH databases, unlike the 2760-2763 block which portava-ci carries: nothing in this Trips lane is on main, and .github/workflows/live-db.yml applies only from main. Its writer is 2772 (JOIN_PLAN / LEAVE_PLAN / SET_PLAN_ATTENDANCE). Rehearsed end to end on db/harness/run.sh." },
 
   // ── A guarantee the docs rest on, that production does not have ───────────
   protected_zones: {
