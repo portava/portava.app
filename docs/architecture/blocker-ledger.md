@@ -1522,6 +1522,30 @@ because the guard only sees suites somebody remembered to list.
 `run-live-suite.sh memory-kernel-transaction …`, in the same change that wired
 the Trips one, because the two failures are the same failure.
 
+### And it found something on its first invocation
+
+Run 34399941789, the first time any workflow ran this file:
+`tests=17 pass=16 fail=1`, on
+*"CONCURRENT commands sharing one key produce at most ONE domain effect"* —
+`expected create + exactly one update event, got 1`.
+
+**The defect is in the test, and the mechanism is worth writing down.**
+`createMemory(label)` issues CREATE_MEMORY with `key(label)`, and that case
+called `createMemory("idem-race")` and then raced eight UPDATE_MEMORY commands
+on `key("idem-race")` — **the same key**. The create had already consumed it, so
+all eight racers were refused `MEMORY_IDEMPOTENCY_KEY_REUSED`, which is exactly
+the behaviour the test one line above pins. The two neighbouring cases use
+distinct labels (`idem` / `idem-1`, `idem-reuse` / `idem-2`); this one did not.
+
+What makes it worth a ledger entry rather than a one-line fix note is HOW it
+passed for so long: `receipts.length === 1` and `accepted.length === 1` were
+satisfied by the CREATE's own receipt and its own audit row. Two of the three
+assertions were true by coincidence, and only the third — the event count —
+could tell. A test asserting a race, never executed, with two assertions that
+pass on the wrong evidence, is the strongest possible argument for the wiring
+this entry exists to add. Fixed by giving the setup its own label; every other
+label in the file was checked for the same collision and there is none.
+
 **Left open as a separate ask**, and not built here: nothing PREVENTS the next
 inert live suite. `assert-ci-scripts.mjs` verifies that every script CI invokes
 exists; the inverse — that every live-shaped script in `package.json` is either

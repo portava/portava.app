@@ -341,7 +341,17 @@ describe("§19 idempotency — case 4", () => {
     // stops the second from applying, and it stops it by aborting the whole
     // transaction. Whatever mix of duplicate/unavailable comes back, the
     // invariant is that the world moved exactly once.
-    const id = await createMemory("idem-race", "memkern idem race");
+    // The setup's key label MUST differ from the race's. It did not, and this
+    // test had never run in CI to say so: `createMemory(label)` issues
+    // CREATE_MEMORY with `key(label)`, so `createMemory("idem-race")` CONSUMED
+    // the very key the eight racers then reuse. Every one of them was refused
+    // MEMORY_IDEMPOTENCY_KEY_REUSED — the case the test above this one pins —
+    // and the three assertions below were satisfied by the CREATE's own receipt,
+    // its own accepted audit row and its own event. Measured 2026-09-09, the
+    // first time this suite was invoked by a workflow: `expected create +
+    // exactly one update event, got 1`. The first two assertions passed by
+    // COINCIDENCE, which is why the third is the one that caught it.
+    const id = await createMemory("idem-race-setup", "memkern idem race");
     const k = key("idem-race");
     const N = 8;
     const results = await Promise.all(
