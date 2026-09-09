@@ -14,3 +14,4 @@
 artifacts/api-server/src/migrations/2764_trip_kernel_stage_family.sql | db/rollback/2026-09-09-2764-trip-kernel-stage-family-rollback.sql | db/harness/probe_stage_family.sql
 artifacts/api-server/src/migrations/2765_trip_kernel_leg_and_commitment_families.sql | db/rollback/2026-09-09-2765-trip-kernel-leg-and-commitment-families-rollback.sql | db/harness/probe_leg_commitment_families.sql
 artifacts/api-server/src/migrations/2766_trip_kernel_goal_decision_risk_families.sql | db/rollback/2026-09-09-2766-trip-kernel-goal-decision-risk-families-rollback.sql | db/harness/probe_goal_decision_risk_families.sql
+artifacts/api-server/src/migrations/2768_trip_kernel_presence_proposal_outcome_families.sql | db/rollback/2026-09-09-2768-trip-kernel-presence-proposal-outcome-families-rollback.sql | db/harness/probe_presence_proposal_outcome_families.sql

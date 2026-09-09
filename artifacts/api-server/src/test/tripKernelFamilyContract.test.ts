@@ -93,8 +93,14 @@ describe("every §5 kernel family migration", () => {
       });
 
       it("counts its own family assignments in a postcondition", () => {
-        assert.match(sql, /-family assignments, found/,
+        // Matched on SUBSTANCE, not on one migration's wording: the check must
+        // count occurrences of the v_family assignment IN THE INSTALLED
+        // DEFINITION, so a dropped assignment is refused at apply time and not
+        // only by a source-reading test like this one.
+        assert.match(sql, /family assignments/,
           "no postcondition counts the family assignments, so a dropped one applies silently");
+        assert.match(sql, /length\(replace\(d, E?'v_family/,
+          "the family count is not derived from the installed definition, so it proves nothing about what was applied");
       });
 
       it("refuses a base that is not the kernel it transforms", () => {

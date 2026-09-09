@@ -873,3 +873,64 @@ files chose to rehearse and roll back, and reversing that choice inside the pass
 that discovered the gap — with no one asking for it — would be crossing a
 standing decision on the strength of my own measurement. The measurement is the
 deliverable; the apply is the owner's call.
+
+---
+
+## `PROPOSAL_DECISION_RULE` — §5.1 and §9.3 describe different proposals
+
+**Not an owner decision. A spec inconsistency, resolved here, with the
+resolution being built rather than deferred.**
+
+### The inconsistency
+
+The spec describes `TripProposal` twice and the two do not agree.
+
+§5.1, the storage roster, line 133:
+> `trip_proposals` — id, trip_id, proposal_type, payload_json, status,
+> expires_at, affected_version
+
+§9.3, the domain object:
+> `TripProposal { type, proposedBy, affectedObjects[], rationale,
+> impactSummary, decisionRule: HOST | MAJORITY | UNANIMOUS | ANYONE, status,
+> expiresAt }`
+
+`2763_trip_presence_proposals_snapshots_outcomes.sql` implemented §5.1 exactly.
+So the table is right about §5.1 and missing five of §9.3's fields, `decisionRule`
+among them — and `decisionRule` is the one that is not descriptive. It decides
+who may accept.
+
+### The resolution
+
+Split the two lists by whether a field must be **enforceable** or merely
+**readable**.
+
+- `decision_rule` becomes a COLUMN. A governance rule stored inside
+  `payload_json` cannot be relied on by the code that enforces it: an
+  unconstrained jsonb key can hold any string, including one no branch handles,
+  and the safest behaviour for an unknown governance rule is not something a
+  `->>'decision_rule'` can express. It gets a CHECK with §9.3's four values.
+- `proposed_by` becomes a COLUMN. MAJORITY and UNANIMOUS are computed over the
+  crew, and a proposal whose author is unknown cannot be excluded from, or
+  counted in, its own vote. It is also the attribution §9.3's "proposedBy"
+  asks for.
+- `affectedObjects[]`, `rationale` and `impactSummary` stay in `payload_json`
+  under documented keys. Nothing enforces them, they vary by proposal type, and
+  giving each a column would freeze a shape §9.3 does not fix.
+
+§9.3 also implies a vote: MAJORITY and UNANIMOUS are not computable without
+one, and §1's capability list already names "proposals, votes". So the
+resolution includes `trip_proposal_votes` and a `VOTE_ON_PROPOSAL` command.
+
+### What shipped first, and why it is not the resolution
+
+`2768_trip_kernel_presence_proposal_outcome_families.sql` gates ACCEPT_PROPOSAL
+and REJECT_PROPOSAL on `host`, unconditionally. That is an INTERIM choice and
+the migration's header says so. It is the narrowest of §9.3's four rules, which
+is the only safe direction to be wrong in: widening a capability later cannot
+retroactively legitimise a decision a narrower rule refused, and narrowing one
+later cannot un-make a decision a wider rule allowed.
+
+Superseded by `2769`, which adds the columns, the votes table and the
+capability derived from `decision_rule`. **This entry stays in the ledger after
+2769 lands**, because the inconsistency is in the spec and the next reader of
+§5.1 will hit it again.

@@ -4,3 +4,5 @@
 artifacts/api-server/src/migrations/2760_trip_stages.sql
 artifacts/api-server/src/migrations/2761_trip_legs_and_commitments.sql
 artifacts/api-server/src/migrations/2762_trip_goals_decisions_risks.sql
+artifacts/api-server/src/migrations/2763_trip_presence_proposals_snapshots_outcomes.sql
+artifacts/api-server/src/migrations/2767_trip_presence_spec_vocabulary.sql

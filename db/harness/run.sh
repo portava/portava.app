@@ -62,6 +62,12 @@ trim() { local v="$1"; v="${v#"${v%%[![:space:]]*}"}"; printf '%s' "${v%"${v##*[
 CHAIN="${CHAIN_FILE:-$HERE/chain.txt}"
 TABLES="${TABLES_FILE:-$HERE/tables.txt}"
 
+# Schema-migration rollbacks, rehearsed after the chain has been withdrawn. One
+# path per line in schema_rollbacks.txt, run TOP TO BOTTOM — the file is written
+# in reverse dependency order, because a rollback list is not a migration list
+# read backwards: 2767 undoes a correction to 2763 and must run before it.
+SCHEMA_ROLLBACKS="${SCHEMA_ROLLBACKS_FILE:-$HERE/schema_rollbacks.txt}"
+
 command -v "$PGBIN/initdb" >/dev/null || { echo "no PostgreSQL 16 at $PGBIN"; exit 2; }
 id postgres >/dev/null 2>&1 || useradd -m postgres
 
@@ -159,6 +165,17 @@ for (( i=${#ROLLS_A[@]}-1; i>=0; i-- )); do
   if "${P[@]}" -f "$REPO/$r" >/dev/null 2>&1; then echo "FAIL: $(basename "$r") rolled back twice"; exit 1; fi
   echo "   second rollback refused, as designed"
 done
+
+# ── schema rollbacks, once nothing writes the tables any more ─────────────────
+if [ -f "$SCHEMA_ROLLBACKS" ]; then
+  echo "== schema rollbacks =="
+  while read -r sr; do
+    sr="$(trim "$sr")"; [ -z "$sr" ] && continue
+    case "$sr" in \#*) continue;; esac
+    echo "   $(basename "$sr")"
+    "${P[@]}" -f "$REPO/$sr"
+  done < "$SCHEMA_ROLLBACKS"
+fi
 
 echo
 echo "HARNESS: PASS"

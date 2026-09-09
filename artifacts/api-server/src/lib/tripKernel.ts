@@ -161,6 +161,20 @@ export type TripPlanCommandType =
   | "ADD_RISK"
   | "UPDATE_RISK"
   | "REMOVE_RISK"
+  // §10.1 presence, §9.3 proposals, §20.1 outcomes (2768). SET_PRESENCE,
+  // CREATE_PROPOSAL and ACCEPT_PROPOSAL are the SPEC's names (§4.1), not local
+  // ADD_/UPDATE_ inventions. REJECT_PROPOSAL is the one addition: `rejected` is
+  // in the table's own status vocabulary, and a decision machine that can only
+  // say yes records refusals as silence.
+  | "SET_PRESENCE"
+  | "CLEAR_PRESENCE"
+  | "CREATE_PROPOSAL"
+  | "ACCEPT_PROPOSAL"
+  | "REJECT_PROPOSAL"
+  // Append-only. There is deliberately no UPDATE_OUTCOME and no REMOVE_OUTCOME:
+  // §20.1 builds durable memory from outcomes, and a record of what happened
+  // that can be edited afterwards is not evidence. Corrections are new rows.
+  | "RECORD_OUTCOME"
   | "REORDER_PLAN"
   | "LINK_PLAN_ROUTE_STOP";
 
@@ -273,6 +287,16 @@ export type TripKernelReason =
   | "TRIP_GOAL_NOT_FOUND"
   | "TRIP_DECISION_TASK_NOT_FOUND"
   | "TRIP_RISK_NOT_FOUND"
+  // §10.1 presence, §9.3 proposals (2768).
+  // Presence is a claim about where a PERSON is; a claim someone else can write
+  // is not that person's presence.
+  | "TRIP_PRESENCE_NOT_SELF"
+  | "TRIP_PRESENCE_NOT_FOUND"
+  | "TRIP_PROPOSAL_NOT_FOUND"
+  // Only a pending proposal has a decision left to make. Accepting an
+  // already-rejected one is not a late accept; it is a second decision
+  // overwriting a recorded first.
+  | "TRIP_PROPOSAL_NOT_PENDING"
   // Distinct from TRIP_AUTH_NOT_CREW on purpose: the ACTOR is authorised and
   // the ASSIGNEE is not. A client that cannot tell those apart shows the wrong
   // error to the wrong person — "you are not on this trip" to someone who is.
@@ -340,6 +364,11 @@ export const TRIP_EVENT_TYPES = [
   "trip.goal_added", "trip.goal_updated", "trip.goal_removed",
   "trip.decision_task_added", "trip.decision_task_updated", "trip.decision_task_removed",
   "trip.risk_added", "trip.risk_updated", "trip.risk_removed",
+  // presence, proposal and outcome families (2768). trip.proposal_accepted is
+  // named by the spec itself (§4.2), which is why it is not trip.proposal_set.
+  "trip.presence_set", "trip.presence_cleared",
+  "trip.proposal_created", "trip.proposal_accepted", "trip.proposal_rejected",
+  "trip.outcome_recorded",
 ] as const;
 export type TripEventType = (typeof TRIP_EVENT_TYPES)[number];
 
