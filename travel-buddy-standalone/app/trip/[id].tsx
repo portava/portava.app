@@ -33,6 +33,7 @@ import { TripFeasibilityCard } from '../../src/components/trip/TripFeasibilityCa
 import { TripCrewPresenceCard } from '../../src/components/trip/TripCrewPresenceCard';
 import { TripDecisionsCard } from '../../src/components/trip/TripDecisionsCard';
 import { TripStageSpineCard } from '../../src/components/trip/TripStageSpineCard';
+import { TripMapLayersCard } from '../../src/components/trip/TripMapLayersCard';
 import { BeforeYouGoSection } from '../../src/components/trip/BeforeYouGoSection';
 import { TripFsqPlacesSection } from '../../src/components/trip/TripFsqPlacesSection';
 import { TripDestinationInfoCard } from '../../src/components/trip/TripDestinationInfoCard';
@@ -576,6 +577,13 @@ function TripDetailScreen() {
             the FKs make them impossible, which is exactly why silence about
             one would be a dropped row. */}
         {live && trip.id ? <TripStageSpineCard tripId={trip.id} /> : null}
+
+        {/* ── §14.1 TripMapProjection ──────────────────────────────────────
+            The projection's SHAPE, not its geometry: what this trip has to put
+            on a map, and — the load-bearing part — which layers could not be
+            read. A map missing its saved places looks exactly like a trip with
+            none saved, and only this line tells them apart. */}
+        {live && trip.id ? <TripMapLayersCard tripId={trip.id} /> : null}
 
         {/* ── FSQ places — renders nothing until city is ingested server-side ── */}
         {live ? (
