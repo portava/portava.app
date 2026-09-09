@@ -120,22 +120,35 @@ ALTER TABLE public.highlight_resurfacing_preferences ENABLE ROW LEVEL SECURITY;
 -- its owner does not want to see; nobody else has any business reading it, and
 -- in particular the PERSON hidden by a HIDE_PERSON_FROM_RESURFACING row must
 -- not be able to learn that they were hidden.
+-- DROP POLICY IF EXISTS before each CREATE POLICY, added 2026-09-09. The
+-- policies below already exist on portava-ci: this file was applied there by
+-- hand, from an unmerged branch, with no ledger row — so the first run of the
+-- sanctioned applier that reached it died on
+--   ERROR: 42710: policy "highlight_resurfacing_select_own" for table "highlight_resurfacing_preferences" already exists
+-- and stopped the 20 migrations behind it. A migration that cannot be re-run
+-- against a database that already has its objects is not deployable twice, and
+-- "twice" includes "once on CI and once on production". DROP-then-CREATE inside
+-- the file's own transaction is this repo's existing convention (2335).
+DROP POLICY IF EXISTS highlight_resurfacing_select_own ON public.highlight_resurfacing_preferences;
 CREATE POLICY highlight_resurfacing_select_own
   ON public.highlight_resurfacing_preferences
   FOR SELECT TO authenticated
   USING (owner_id = auth.uid());
 
+DROP POLICY IF EXISTS highlight_resurfacing_insert_own ON public.highlight_resurfacing_preferences;
 CREATE POLICY highlight_resurfacing_insert_own
   ON public.highlight_resurfacing_preferences
   FOR INSERT TO authenticated
   WITH CHECK (owner_id = auth.uid());
 
+DROP POLICY IF EXISTS highlight_resurfacing_update_own ON public.highlight_resurfacing_preferences;
 CREATE POLICY highlight_resurfacing_update_own
   ON public.highlight_resurfacing_preferences
   FOR UPDATE TO authenticated
   USING (owner_id = auth.uid())
   WITH CHECK (owner_id = auth.uid());
 
+DROP POLICY IF EXISTS highlight_resurfacing_delete_own ON public.highlight_resurfacing_preferences;
 CREATE POLICY highlight_resurfacing_delete_own
   ON public.highlight_resurfacing_preferences
   FOR DELETE TO authenticated

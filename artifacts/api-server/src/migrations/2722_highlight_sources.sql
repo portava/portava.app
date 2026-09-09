@@ -104,6 +104,16 @@ ALTER TABLE public.highlight_sources ENABLE ROW LEVEL SECURITY;
 -- private history, and §23 makes owner-only the default for that. A viewer who
 -- may see the Highlight still sees the Highlight; they do not learn what it was
 -- built from.
+-- DROP POLICY IF EXISTS before each CREATE POLICY, added 2026-09-09. The
+-- policies below already exist on portava-ci: this file was applied there by
+-- hand, from an unmerged branch, with no ledger row — so the first run of the
+-- sanctioned applier that reached it died on
+--   ERROR: 42710: policy "highlight_sources_select_owner" for table "highlight_sources" already exists
+-- and stopped the 20 migrations behind it. A migration that cannot be re-run
+-- against a database that already has its objects is not deployable twice, and
+-- "twice" includes "once on CI and once on production". DROP-then-CREATE inside
+-- the file's own transaction is this repo's existing convention (2335).
+DROP POLICY IF EXISTS highlight_sources_select_owner ON public.highlight_sources;
 CREATE POLICY highlight_sources_select_owner
   ON public.highlight_sources
   FOR SELECT TO authenticated
@@ -113,6 +123,7 @@ CREATE POLICY highlight_sources_select_owner
       AND h.owner_id = auth.uid()
   ));
 
+DROP POLICY IF EXISTS highlight_sources_insert_owner ON public.highlight_sources;
 CREATE POLICY highlight_sources_insert_owner
   ON public.highlight_sources
   FOR INSERT TO authenticated
@@ -122,6 +133,7 @@ CREATE POLICY highlight_sources_insert_owner
       AND h.owner_id = auth.uid()
   ));
 
+DROP POLICY IF EXISTS highlight_sources_delete_owner ON public.highlight_sources;
 CREATE POLICY highlight_sources_delete_owner
   ON public.highlight_sources
   FOR DELETE TO authenticated

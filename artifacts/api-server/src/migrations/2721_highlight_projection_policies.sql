@@ -130,22 +130,35 @@ ALTER TABLE public.highlight_projection_policies ENABLE ROW LEVEL SECURITY;
 -- location itself but is still one nobody asked for. The server reads this
 -- table through the service client inside the projection pass, exactly as it
 -- already does for every other Highlights read.
+-- DROP POLICY IF EXISTS before each CREATE POLICY, added 2026-09-09. The
+-- policies below already exist on portava-ci: this file was applied there by
+-- hand, from an unmerged branch, with no ledger row — so the first run of the
+-- sanctioned applier that reached it died on
+--   ERROR: 42710: policy "highlight_projection_policies_select_own" for table "highlight_projection_policies" already exists
+-- and stopped the 20 migrations behind it. A migration that cannot be re-run
+-- against a database that already has its objects is not deployable twice, and
+-- "twice" includes "once on CI and once on production". DROP-then-CREATE inside
+-- the file's own transaction is this repo's existing convention (2335).
+DROP POLICY IF EXISTS highlight_projection_policies_select_own ON public.highlight_projection_policies;
 CREATE POLICY highlight_projection_policies_select_own
   ON public.highlight_projection_policies
   FOR SELECT TO authenticated
   USING (owner_id = auth.uid());
 
+DROP POLICY IF EXISTS highlight_projection_policies_insert_own ON public.highlight_projection_policies;
 CREATE POLICY highlight_projection_policies_insert_own
   ON public.highlight_projection_policies
   FOR INSERT TO authenticated
   WITH CHECK (owner_id = auth.uid());
 
+DROP POLICY IF EXISTS highlight_projection_policies_update_own ON public.highlight_projection_policies;
 CREATE POLICY highlight_projection_policies_update_own
   ON public.highlight_projection_policies
   FOR UPDATE TO authenticated
   USING (owner_id = auth.uid())
   WITH CHECK (owner_id = auth.uid());
 
+DROP POLICY IF EXISTS highlight_projection_policies_delete_own ON public.highlight_projection_policies;
 CREATE POLICY highlight_projection_policies_delete_own
   ON public.highlight_projection_policies
   FOR DELETE TO authenticated
