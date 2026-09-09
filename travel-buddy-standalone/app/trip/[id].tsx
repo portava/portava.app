@@ -31,6 +31,7 @@ import { DailyBriefCard } from '../../src/components/DailyBriefCard';
 import { TripReadinessCard } from '../../src/components/trip/TripReadinessCard';
 import { TripFeasibilityCard } from '../../src/components/trip/TripFeasibilityCard';
 import { TripCrewPresenceCard } from '../../src/components/trip/TripCrewPresenceCard';
+import { TripDecisionsCard } from '../../src/components/trip/TripDecisionsCard';
 import { BeforeYouGoSection } from '../../src/components/trip/BeforeYouGoSection';
 import { TripFsqPlacesSection } from '../../src/components/trip/TripFsqPlacesSection';
 import { TripDestinationInfoCard } from '../../src/components/trip/TripDestinationInfoCard';
@@ -560,6 +561,13 @@ function TripDetailScreen() {
             §10.4 needs last-known data to remain available — but never drawn
             like live ones. */}
         {live && trip.id ? <TripCrewPresenceCard tripId={trip.id} /> : null}
+
+        {/* ── §8 decisions and risks ───────────────────────────────────────
+            The chain §8 describes — goal, decision task, proposals, §7
+            feasibility, risk register, recommendation — reaching a screen for
+            the first time. INSUFFICIENT_BASIS renders as itself; the card's
+            whole discipline is not letting it look like approval. */}
+        {live && trip.id ? <TripDecisionsCard tripId={trip.id} /> : null}
 
         {/* ── FSQ places — renders nothing until city is ingested server-side ── */}
         {live ? (
