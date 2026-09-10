@@ -18,6 +18,7 @@ import {
   type PrivacySettings,
 } from '../../../src/services/profile';
 import { applyPrivacyChange } from '../../../src/services/privacySettingsLogic';
+import { freshToken } from '../../../src/services/apiToken';
 import { useSession } from '../../../src/context/SessionContext';
 import { _clearSnapshot } from '../../../src/hooks/snapshotCacheUtils';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -28,6 +29,19 @@ import {
   SaveBar, ChipGrid, useUnsavedGuard, type SaveState,
 } from '../../../src/components/settings/SettingsUI';
 import { ContributorViewOptInToggle } from '../../../src/features/media/components/ContributorViewOptInToggle';
+
+/**
+ * The five Passport visibility preferences, saved as one batch. Held as a
+ * single nullable object so "we could not read them" is representable — see
+ * loadPassport.
+ */
+interface PassportPrefs {
+  passportPublic: boolean;
+  defaultStampVis: string;
+  defaultMemoryVis: string;
+  showCityMap: boolean;
+  showPlanStamps: boolean;
+}
 
 const VIS_OPTIONS = [
   { key: 'public', label: 'Public' },
@@ -83,57 +97,75 @@ export default function PrivacyVisibilityScreen() {
   );
 
   // ── Batched passport visibility-preferences block ──
+  //
+  // All five values are saved TOGETHER by savePassport (updateMyProfile +
+  // a PATCH carrying every preference). So a value we failed to read is not
+  // merely mis-displayed — flipping any one switch writes the fabricated
+  // values for the other four back to the server, destroying the real ones.
+  // `null` therefore means "we could not find out", and the block refuses to
+  // render editable controls (and refuses to save) until a read succeeds.
   const apiBase = process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
-  const [passportPublic, setPassportPublic] = useState(true);
-  const [defaultStampVis, setDefaultStampVis] = useState<string>('public');
-  const [defaultMemoryVis, setDefaultMemoryVis] = useState<string>('private');
-  const [showCityMap, setShowCityMap] = useState(true);
-  const [showPlanStamps, setShowPlanStamps] = useState(true);
+  const [passport, setPassport] = useState<PassportPrefs | null>(null);
   const [passportLoading, setPassportLoading] = useState(true);
+  const [passportLoadError, setPassportLoadError] = useState(false);
   const [passportDirty, setPassportDirty] = useState(false);
   const [passportSave, setPassportSave] = useState<SaveState>('idle');
   const [passportError, setPassportError] = useState<string | null>(null);
-  // baseline snapshot for dirty comparison
-  const baseline = useRef({
-    passportPublic: true, defaultStampVis: 'public', defaultMemoryVis: 'private',
-    showCityMap: true, showPlanStamps: true,
-  });
+  // baseline snapshot for dirty comparison; null until a read succeeds.
+  const baseline = useRef<PassportPrefs | null>(null);
 
   const loadPassport = useCallback(async () => {
     setPassportLoading(true);
+    setPassportLoadError(false);
     try {
       const profRes = await getMyProfile();
-      let pPublic = true;
-      if (profRes.ok && profRes.data) {
-        pPublic = profRes.data.passportVisibility !== 'private';
+      if (!profRes.ok || !profRes.data) {
+        // Public-Passport state unknown — do not guess "public".
+        setPassport(null);
+        baseline.current = null;
+        setPassportLoadError(true);
+        return;
       }
-      let stampVis = 'public', memoryVis = 'private', cityMap = true, planStamps = true;
-      // Verbatim fetch code from PassportSettingsSheet.tsx
-      const { supabase } = await import('../../../src/lib/supabase');
-      const { data: refreshed } = await supabase.auth.refreshSession();
-      const token = refreshed?.session?.access_token
-        ?? (await supabase.auth.getSession()).data.session?.access_token;
-      if (token) {
-        const res = await fetch(`${apiBase}/api/me/passport/visibility-preferences`, {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        if (res.ok) {
-          const json = await res.json();
-          stampVis = json.defaultStampVisibility ?? 'public';
-          memoryVis = json.defaultMemoryVisibility ?? 'private';
-          cityMap = json.showCityMap ?? true;
-          planStamps = json.showPlanStamps ?? true;
-        }
+      const pPublic = profRes.data.passportVisibility !== 'private';
+
+      // Token via the shared refresh-first helper every other service uses
+      // (src/services/apiToken.ts), replacing an inline copy of the same
+      // refreshSession/getSession dance.
+      const token = await freshToken();
+      if (!token) {
+        setPassport(null);
+        baseline.current = null;
+        setPassportLoadError(true);
+        return;
       }
-      setPassportPublic(pPublic);
-      setDefaultStampVis(stampVis);
-      setDefaultMemoryVis(memoryVis);
-      setShowCityMap(cityMap);
-      setShowPlanStamps(planStamps);
-      baseline.current = { passportPublic: pPublic, defaultStampVis: stampVis, defaultMemoryVis: memoryVis, showCityMap: cityMap, showPlanStamps: planStamps };
+      const res = await fetch(`${apiBase}/api/me/passport/visibility-preferences`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) {
+        setPassport(null);
+        baseline.current = null;
+        setPassportLoadError(true);
+        return;
+      }
+      const json = await res.json();
+      const next: PassportPrefs = {
+        passportPublic: pPublic,
+        // Field-level defaults are for keys the server omitted from a
+        // SUCCESSFUL response — never for a response we never got.
+        defaultStampVis: json.defaultStampVisibility ?? 'public',
+        defaultMemoryVis: json.defaultMemoryVisibility ?? 'private',
+        showCityMap: json.showCityMap ?? true,
+        showPlanStamps: json.showPlanStamps ?? true,
+      };
+      setPassport(next);
+      baseline.current = next;
       setPassportDirty(false);
     } catch {
-      // silent — leave defaults
+      // A throw is also "we could not find out" — say so instead of
+      // presenting the maximally-permissive defaults as the user's settings.
+      setPassport(null);
+      baseline.current = null;
+      setPassportLoadError(true);
     } finally {
       setPassportLoading(false);
     }
@@ -144,24 +176,28 @@ export default function PrivacyVisibilityScreen() {
     loadPassport();
   }, [live, loadPassport]);
 
-  // recompute dirty whenever a passport field changes
-  const markPassport = useCallback((next: Partial<typeof baseline.current>) => {
+  // Apply one passport-field edit and recompute dirty. A no-op while the
+  // values are unknown — there is nothing truthful to edit.
+  const markPassport = useCallback((next: Partial<PassportPrefs>) => {
+    if (!passport) return;
+    const merged = { ...passport, ...next };
     const b = baseline.current;
-    const merged = {
-      passportPublic, defaultStampVis, defaultMemoryVis, showCityMap, showPlanStamps,
-      ...next,
-    };
-    const dirty =
-      merged.passportPublic !== b.passportPublic ||
-      merged.defaultStampVis !== b.defaultStampVis ||
-      merged.defaultMemoryVis !== b.defaultMemoryVis ||
-      merged.showCityMap !== b.showCityMap ||
-      merged.showPlanStamps !== b.showPlanStamps;
+    const dirty = !b
+      || merged.passportPublic !== b.passportPublic
+      || merged.defaultStampVis !== b.defaultStampVis
+      || merged.defaultMemoryVis !== b.defaultMemoryVis
+      || merged.showCityMap !== b.showCityMap
+      || merged.showPlanStamps !== b.showPlanStamps;
+    setPassport(merged);
     setPassportDirty(dirty);
     if (passportSave !== 'idle') setPassportSave('idle');
-  }, [passportPublic, defaultStampVis, defaultMemoryVis, showCityMap, showPlanStamps, passportSave]);
+  }, [passport, passportSave]);
 
   const savePassport = useCallback(async () => {
+    // Refuse to persist values we never successfully read — a save here would
+    // overwrite the user's real preferences with this screen's defaults.
+    if (!passport) return;
+    const { passportPublic, defaultStampVis, defaultMemoryVis, showCityMap, showPlanStamps } = passport;
     setPassportSave('saving');
     setPassportError(null);
     try {
@@ -174,11 +210,8 @@ export default function PrivacyVisibilityScreen() {
         setPassportError(profRes.message ?? 'Save failed');
         return;
       }
-      // Visibility prefs → PATCH (verbatim from PassportSettingsSheet.tsx)
-      const { supabase } = await import('../../../src/lib/supabase');
-      const { data: refreshed } = await supabase.auth.refreshSession();
-      const token = refreshed?.session?.access_token
-        ?? (await supabase.auth.getSession()).data.session?.access_token;
+      // Visibility prefs → PATCH
+      const token = await freshToken();
       if (token) {
         await fetch(`${apiBase}/api/me/passport/visibility-preferences`, {
           method: 'PATCH',
@@ -202,7 +235,7 @@ export default function PrivacyVisibilityScreen() {
       setPassportSave('error');
       setPassportError(e instanceof Error ? e.message : 'Save failed');
     }
-  }, [apiBase, passportPublic, defaultStampVis, defaultMemoryVis, showCityMap, showPlanStamps]);
+  }, [apiBase, passport, userId]);
 
   useUnsavedGuard(passportDirty);
 
@@ -372,78 +405,97 @@ export default function PrivacyVisibilityScreen() {
         />
       </SettingsSection>
 
-      {/* Passport visibility preferences (batched) */}
-      <SettingsSection
-        title="Passport"
-        subtitle="Control how your Passport, stamps, and memories appear to others. Saved together with the button below."
-      >
-        <ToggleRow
-          title="Public Passport"
-          subtitle="Anyone with your profile link can view your Passport"
-          value={passportPublic}
-          onValueChange={(v) => { setPassportPublic(v); markPassport({ passportPublic: v }); }}
-        />
-        {!passportPublic && (
-          <>
-            <SettingsDivider />
-            <View style={st.infoBox}>
-              <Text style={st.infoText}>🔒 Your Passport is private. Only you can see it.</Text>
+      {/* Passport visibility preferences (batched).
+          When the read failed we show this screen's own absence idiom
+          ("Failed to load settings." + Try again, as used by the immediate-save
+          block above) instead of five switches in positions the server never
+          asserted — which the batched Save would then write back. */}
+      {!passport ? (
+        <SettingsSection
+          title="Passport"
+          subtitle={passportLoadError ? 'Failed to load settings.' : undefined}
+        >
+          <SettingsRow
+            title="Try again"
+            onPress={loadPassport}
+            chevron={false}
+          />
+        </SettingsSection>
+      ) : (
+        <>
+          <SettingsSection
+            title="Passport"
+            subtitle="Control how your Passport, stamps, and memories appear to others. Saved together with the button below."
+          >
+            <ToggleRow
+              title="Public Passport"
+              subtitle="Anyone with your profile link can view your Passport"
+              value={passport.passportPublic}
+              onValueChange={(v) => markPassport({ passportPublic: v })}
+            />
+            {!passport.passportPublic && (
+              <>
+                <SettingsDivider />
+                <View style={st.infoBox}>
+                  <Text style={st.infoText}>🔒 Your Passport is private. Only you can see it.</Text>
+                </View>
+              </>
+            )}
+          </SettingsSection>
+
+          <SettingsSection
+            title="Default stamp visibility"
+            subtitle="Stamps you earn default to this visibility (city stamps are always public)."
+          >
+            <View style={st.chipWrap}>
+              <ChipGrid
+                options={VIS_OPTIONS}
+                selected={[passport.defaultStampVis]}
+                onToggle={(key) => markPassport({ defaultStampVis: key })}
+                mode="radio"
+              />
             </View>
-          </>
-        )}
-      </SettingsSection>
+          </SettingsSection>
 
-      <SettingsSection
-        title="Default stamp visibility"
-        subtitle="Stamps you earn default to this visibility (city stamps are always public)."
-      >
-        <View style={st.chipWrap}>
-          <ChipGrid
-            options={VIS_OPTIONS}
-            selected={[defaultStampVis]}
-            onToggle={(key) => { setDefaultStampVis(key); markPassport({ defaultStampVis: key }); }}
-            mode="radio"
+          <SettingsSection
+            title="Default memory visibility"
+            subtitle="Memories you add manually default to this visibility."
+          >
+            <View style={st.chipWrap}>
+              <ChipGrid
+                options={VIS_OPTIONS}
+                selected={[passport.defaultMemoryVis]}
+                onToggle={(key) => markPassport({ defaultMemoryVis: key })}
+                mode="radio"
+              />
+            </View>
+          </SettingsSection>
+
+          <SettingsSection title="Passport display">
+            <ToggleRow
+              title="Show City Map"
+              subtitle="Display a world map of cities you've visited"
+              value={passport.showCityMap}
+              onValueChange={(v) => markPassport({ showCityMap: v })}
+            />
+            <SettingsDivider />
+            <ToggleRow
+              title="Show Plan Stamps"
+              subtitle="Show stamps earned from trip check-ins on your Passport"
+              value={passport.showPlanStamps}
+              onValueChange={(v) => markPassport({ showPlanStamps: v })}
+            />
+          </SettingsSection>
+
+          <SaveBar
+            state={passportSave}
+            error={passportError}
+            disabled={!passportDirty}
+            onPress={savePassport}
+            label="Save passport settings"
           />
-        </View>
-      </SettingsSection>
-
-      <SettingsSection
-        title="Default memory visibility"
-        subtitle="Memories you add manually default to this visibility."
-      >
-        <View style={st.chipWrap}>
-          <ChipGrid
-            options={VIS_OPTIONS}
-            selected={[defaultMemoryVis]}
-            onToggle={(key) => { setDefaultMemoryVis(key); markPassport({ defaultMemoryVis: key }); }}
-            mode="radio"
-          />
-        </View>
-      </SettingsSection>
-
-      <SettingsSection title="Passport display">
-        <ToggleRow
-          title="Show City Map"
-          subtitle="Display a world map of cities you've visited"
-          value={showCityMap}
-          onValueChange={(v) => { setShowCityMap(v); markPassport({ showCityMap: v }); }}
-        />
-        <SettingsDivider />
-        <ToggleRow
-          title="Show Plan Stamps"
-          subtitle="Show stamps earned from trip check-ins on your Passport"
-          value={showPlanStamps}
-          onValueChange={(v) => { setShowPlanStamps(v); markPassport({ showPlanStamps: v }); }}
-        />
-      </SettingsSection>
-
-      <SaveBar
-        state={passportSave}
-        error={passportError}
-        disabled={!passportDirty}
-        onPress={savePassport}
-        label="Save passport settings"
-      />
+        </>
+      )}
 
       <Text style={st.footerNote}>
         Your exact GPS coordinates are never shared publicly. All public surfaces show only city, neighborhood, or approximate distance.

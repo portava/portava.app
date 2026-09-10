@@ -82,9 +82,13 @@ export interface GuideProfile {
   userId: string;
   guideLevel: number;
   cityExpertise: string[];
-  contributionCount: number;
-  helpfulVotes: number;
-  accuracyScore: number;
+  // `null` = the server did not report this figure. It must NOT be shown as a
+  // zero: "0 gems / 0 helpful votes / 0% accuracy" is a damning, and false,
+  // statement about a local guide's record. app/gems/guide.tsx already renders
+  // an em dash for an unknown accuracy — every one of these uses that idiom.
+  contributionCount: number | null;
+  helpfulVotes: number | null;
+  accuracyScore: number | null;
   status: string;
   bio: string | null;
   verifiedAt: string | null;
