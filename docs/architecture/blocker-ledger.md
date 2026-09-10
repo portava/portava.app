@@ -1272,7 +1272,7 @@ another six would trade a loud problem for a quiet one.
 
 ---
 
-## `CI_SUPABASE_TOKEN_401` — the sanctioned applier lost its credential mid-chain
+## `CI_SUPABASE_TOKEN_401` — the sanctioned applier lost its credential mid-chain — **CLOSED 2026-09-10**
 
 **Opened 2026-09-09 15:46 UTC.** Type: `EXTERNAL`. Owner: repository admin.
 Buildable now? **No** — nothing in this repository can fix it, and no code change
@@ -1375,6 +1375,24 @@ No migration was hand-applied to work around the outage. That is the mechanism
 again to route around an expired token would be the same mistake with a better
 excuse.
 
+### CLOSED — the credential works, measured rather than assumed
+
+`SUPABASE_PROJECT_TOKEN` on the `ci-nonprod-supabase` **environment** — not the
+repository secret the first remedy rotated — was replaced with a scoped Supabase
+personal access token for portava-ci carrying Database and Migrations read-write.
+
+**The evidence is a green job that cannot pass without it**, not a statement that
+the secret was changed. On `ed168ed7`,
+`schema drift · apply migrations, certify, then audit vs live (needs
+credentials)` **succeeded**, and so did `live DB · RLS + role/is_official write
+boundaries` and `api-server · check:all + live_pulse gate`. Each opens with a
+Management API call against `hwokxgbmezheskbzskfr`; a 401 fails the job at that
+first call, which is exactly how the five failures above presented. 27 of 27
+check runs pass on that commit.
+
+No migration was hand-applied at any point, before or after. The chain resumed
+through the sanctioned applier.
+
 ---
 
 ## `TRIP_KERNEL_CREATE_TRIP_UNGUARDED_INSERT` — a malformed command reported as an outage
@@ -1437,7 +1455,7 @@ that a `CREATE_TRIP` with no `destination_city` returns
 
 ---
 
-## `TRIPS_HAS_NO_LIVE_KERNEL_SUITE` — the largest object in the architecture has no executable guard
+## `TRIPS_HAS_NO_LIVE_KERNEL_SUITE` — the largest object in the architecture has no executable guard — **CLOSED 2026-09-09**
 
 **Opened 2026-09-09.** Type: `TEST_COVERAGE`. Owner: Trips. Buildable now?
 **Yes.**
@@ -1480,17 +1498,21 @@ imported first, `executeTripCommand` driven through the §35 slice, registered a
 `run-live-suite.sh`. The script alone would not have closed it: that is exactly
 what Memory had, and Memory's never ran.
 
-**The half that is not closed until CI runs it.** The suite has never executed —
-no service-role credential exists in the environment it was written in — so the
-PostgREST path (`sc.rpc("trip_kernel_execute", …)` as `service_role`) is
-asserted, not measured. Every value it asserts came back from this database
-through the management API, and `service_role` demonstrably holds EXECUTE on the
-function; what is unproven is the suite, not the kernel. The first live-DB job to
-run it decides that, and a failure there is a bug in the test.
+**The half that was not closed until CI ran it — now closed.** When this entry
+was written the suite had never executed: no service-role credential existed in
+the environment it was written in, so the PostgREST path
+(`sc.rpc("trip_kernel_execute", …)` as `service_role`) was asserted rather than
+measured, and the sentence above said so.
+
+**It has since run. 12 of 12 pass**, green on its first CI invocation and on
+every run since, most recently on `ed168ed7`. The PostgREST path is measured, not
+asserted, and this entry is closed on both halves. The statement it replaced —
+"the suite has never executed" — was true when written and stopped being true the
+same day; it is corrected here rather than left to be quoted.
 
 ---
 
-## `MEMORY_LIVE_KERNEL_SUITE_NEVER_RUNS` — a live suite that exists and is invoked by nothing
+## `MEMORY_LIVE_KERNEL_SUITE_NEVER_RUNS` — a live suite that exists and is invoked by nothing — **CLOSED 2026-09-09**
 
 **Opened 2026-09-09**, found while looking for the precedent to copy for Trips.
 Type: `CI`. Owner: Memory. Buildable now? **Yes** — one line in `live-db.yml`.
