@@ -46,7 +46,7 @@ delegate's body, verbatim), but only because I diffed it instead of trusting my 
 |---|---|
 | Repo | `portava/portava.app`, checkout at `/home/user/portava.app` |
 | Branch | `claude/portava-continuation-uqta94` — **restarted from `main` after the merge**, per the rule that a merged PR cannot track new work |
-| `main` | **`014a25d5`** — the squash of #481. It was `0edcb3eb` for the whole session until then. |
+| `main` | **`014a25d5`** — the squash of #481. It was `0edcb3eb` for the whole session until then. **`CI (live DB)` is RED on it** — pre-existing, not the merge's doing, see §5A2. `CI` and `Unwired checks` are green. |
 | Measurement commit | `ed168ed7` — every number in §4 was taken there. Its content is in `014a25d5`; the two commits after it changed no code. |
 | Working tree | clean |
 | PR | [#481](https://github.com/portava/portava.app/pull/481) — **MERGED** 2026-09-10, squashed to `014a25d5`, on 27 of 27 green at `28c95411` |
@@ -221,6 +221,44 @@ an ancestor of nothing. **Any census declaring one of them would be exactly the 
 session closed.** None do. The next census measured on a branch must declare a commit that
 survives the squash, and `checkCensusFreshness.ts` will now say so — locally, before CI —
 if it does not. That guard is the reason this paragraph is a note and not a trap.
+
+### A2. `main` is RED on `CI (live DB)` — read this before you "fix" it
+
+The push build of the squash (`34430889373`) fails, and it will keep failing until someone
+outside this repository acts. **Do not try to make it green.**
+
+```
+✖  check:migration-ledger FAILED — this database does not represent this branch.
+   3 ledger row(s) name a migration file that is not in src/migrations/.
+     • 2311_intel_claim_reviews.sql              (applied_by=manual)
+     • 2320_memory_episode_provenance_spine.sql  (applied_by=manual)
+     • 2325_telegraph_unsend_before_seen.sql     (applied_by=manual)
+```
+
+This is `CI_DB_HAND_APPLIED_FROM_UNMERGED_BRANCHES`, opened the day before the merge. The
+three files live in PRs #456/#457/#470/#472, all still open, **#470 marked DO NOT MERGE**.
+`certify:migrations` fails at stage 1, so `schema-drift` fails and the verdict job reports
+`live-db-security-suites` and `post-media-revocation-rehearsal` as NOT EXECUTED.
+
+**Not the merge's doing, and that is measured, not assumed.**
+`git diff --name-status 0edcb3eb 014a25d5 -- artifacts/api-server/src/migrations/` is
+EMPTY: the squash added and changed no migration. All three rows are `applied_by=manual`.
+Everything else in that job passed — `apply-migrations` had nothing to do (109 proven, 0
+pending), and `audit:schema` reported *"Live schema contains every object claimed by the
+migrations"* over 494 files and 5,748 objects.
+
+**Deleting those three rows would turn `main` green in one commit. Do not.** It erases the
+only evidence that portava-ci ran schema no merged branch can show, which is the whole
+finding. The honest closures are in the blocker entry and belong to those branches' owners.
+
+### A3. The limit of "27 of 27 green", stated because I did not state it at the time
+
+`db:apply-migrations` and `certify:migrations` are gated on
+`github.ref == 'refs/heads/main'` (`live-db.yml:746`, `:757`). A PR's `schema-drift` job
+runs the **dry run** and skips both. So #481's 27-of-27 was true and **never covered
+`certify:migrations`** — that gate first executes on the push build *after* a merge. I
+reported the green without this caveat. Any "certified" claim resting on PR checks alone is
+scoped narrower than it sounds; on this repository, merging is part of the test.
 
 ### B. OWNER ACTION — production deploy, Batch C
 
