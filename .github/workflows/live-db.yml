@@ -1166,6 +1166,31 @@ jobs:
           set -uo pipefail
           bash .github/scripts/run-live-suite.sh memory-lifecycle artifacts/api-server @workspace/api-server test:memory-lifecycle
 
+      # The two command kernels, executed. Every other trip*/memory* suite runs
+      # against a double or against the TypeScript wrapped around the RPC; these
+      # two run the PL/pgSQL. trip_kernel_execute alone is 103,400 characters and
+      # nothing in CI had ever executed a line of it — census-trips §35 certified
+      # it BY HAND through the management API, which is a snapshot and not a
+      # guard. memoryKernelTransactionLive.test.ts had existed for some time with
+      # a package script and no caller at all (MEMORY_LIVE_KERNEL_SUITE_NEVER_RUNS
+      # on the blocker ledger); it is wired here in the same change, because a
+      # live suite nothing invokes is the same failure one level up from a live
+      # suite that skips itself, and invisible to the pass>0/skipped==0 rule
+      # below for exactly the reason that rule only sees suites somebody listed.
+      - name: 'test:trip-kernel-live (the §35 vertical slice, idempotency, version conflict)'
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        shell: bash
+        run: |
+          set -uo pipefail
+          bash .github/scripts/run-live-suite.sh trip-kernel-live artifacts/api-server @workspace/api-server test:trip-kernel-live
+
+      - name: 'test:memory-kernel-transaction (§17 atomicity against the real function)'
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        shell: bash
+        run: |
+          set -uo pipefail
+          bash .github/scripts/run-live-suite.sh memory-kernel-transaction artifacts/api-server @workspace/api-server test:memory-kernel-transaction
+
       # Two RLS policy shapes that took down whole tables in production on
       # 2026-08-28: a policy selecting FROM its own table (42P17 recursion, every
       # read fails) and a column compared to itself (always true, so the

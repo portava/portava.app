@@ -385,7 +385,7 @@ commit.** Rows not restated keep the verdict the body left them with.
 
 | Field | Value |
 | --- | --- |
-| `head_commit` | `7bca4b0d0e19d29ea0a96982f74b35d26402fa52` (`git rev-parse HEAD`) |
+| `head_commit` | `42aeac38` — RE-DECLARED 2026-09-09 from `7bca4b0d0e19d29ea0a96982f74b35d26402fa52`, the working-tree commit this addendum was measured at. The move is a measurement, not a judgement: `git diff --name-only 7bca4b0d 42aeac38` over this census's 15 scoped paths returns **0 files**, so all 52 verdicts are exactly as true at one as at the other. It was necessary because `7bca4b0d` is PRE-SQUASH — this repository squash-merges, so it is an ancestor of nothing, is on no remote branch, and `check:census-freshness` could resolve it only on the clone that wrote it (`CENSUS_HEAD_COMMITS_UNREACHABLE_IN_CI`). `42aeac38` is #476's squash, where this document's content reached `main`. |
 | `generated_at` | 2026-09-08 |
 | **Denominator (testable requirements)** | **52** |
 | Scanned | `services/trust/` (8 services), `lib/trustScore.ts`, `lib/trustMaintenanceScheduler.ts`, `routes/trust-admin.ts`, plus every file the eight open rows named: `routes/events.ts`, `routes/pulse.ts`, `routes/rentABuddyMarketplace.ts`, `routes/admin.ts`, `routes/trips.ts`, `routes/tripCrewLocation.ts`, `compass/*`, `services/ranking/CreatorActivityScoreService.ts`, `services/passport/*`, `services/hiddenGems/*` |
@@ -405,7 +405,7 @@ commit.** Rows not restated keep the verdict the body left them with.
 
 | id | Stays | Why |
 | --- | --- | --- |
-| A6 | W | **The code gap is closed; the row is not.** Both emitters the body named now exist and are tested — `StampAwardEngine` calls `recordStampVerifiedTrustEvent` on every fresh award (pinned by `test/trustStampVerified.test.ts`, `test/trustEmissionChain.test.ts`, `test/trustChainEndToEnd.test.ts`), and `routes/posts.ts` emits `pulse_post_created`. But A6's requirement is *"Live evidence actually reaches the ledger from the surfaces that generate it (the first hop of A5, **measured in production**)"*, and this branch is unmerged. The row is defined as a production measurement, so no amount of code closes it: it needs a deploy and then a stamp. It is the one row in this census that is genuinely deployment-gated **by its own wording**. **Measured 2026-09-08, read-only against production — and A6 is now PARTLY measured rather than wholly unmeasurable.** `trust_engine_enabled` is TRUE (since 2026-07-17) and the ledger is not empty: 5 rows, `pulse_post_created` ×4 and `first_event_joined` ×1, last on 2026-08-16, against 2 `trust_profiles` and 58 profile rows. So **two surfaces demonstrably reach the ledger in production and the first hop of A5 is real for them**; the STAMP hop is not, because `recordStampVerifiedTrustEvent` exists only on this unmerged branch. Two caveats that stop this from closing the row: the traffic is TEST ACCOUNTS (Portava has not launched — see the standing note in `truth-percentage-without-deployment.md`), so it measures that the wiring carries an event, not that live evidence flows; and 2 of 50 declared event types have ever been emitted. Stays **W**, with a smaller and better-specified remainder. |
+| A6 | W | **The code gap is closed; the row is not.** Both emitters the body named now exist and are tested — `StampAwardEngine` calls `recordStampVerifiedTrustEvent` on every fresh award (pinned by `test/trustStampVerified.test.ts`, `test/trustEmissionChain.test.ts`, `test/trustChainEndToEnd.test.ts`), and `routes/posts.ts` emits `pulse_post_created`. But A6's requirement is *"Live evidence actually reaches the ledger from the surfaces that generate it (the first hop of A5, **measured in production**)"*, and **the branch carrying those emitters MERGED to main on 2026-09-09** (`StampAwardEngine.ts:21,767` on `origin/main` calls `recordStampVerifiedTrustEvent`), which moves the remainder by exactly one step and no further: MERGED IS NOT DEPLOYED. The row is defined as a production measurement, so no amount of code closes it: it needs a deploy and then a stamp. It is the one row in this census that is genuinely deployment-gated **by its own wording**. **Measured 2026-09-08, read-only against production — and A6 is now PARTLY measured rather than wholly unmeasurable.** `trust_engine_enabled` is TRUE (since 2026-07-17) and the ledger is not empty: 5 rows, `pulse_post_created` ×4 and `first_event_joined` ×1, last on 2026-08-16, against 2 `trust_profiles` and 58 profile rows. So **two surfaces demonstrably reach the ledger in production and the first hop of A5 is real for them**; the STAMP hop is not, because `recordStampVerifiedTrustEvent`, though now on main, has not reached the production runtime — the production `trust_events` ledger measured 2026-09-08 still carries no `stamp_verified` row, and merging does not write one. Two caveats that stop this from closing the row: the traffic is TEST ACCOUNTS (Portava has not launched — see the standing note in `truth-percentage-without-deployment.md`), so it measures that the wiring carries an event, not that live evidence flows; and 2 of 50 declared event types have ever been emitted. Stays **W**, with a smaller and better-specified remainder. |
 | C22 | W | **OWNER DECISION, not work.** `adminOverrideScore` creates a CEILING, then `recalculateTrustScore` recomputes from events — so an override ABOVE the event-derived score does not hold and only downward overrides stick. `trust_caps` has no floor. The question is whether "override" means **pin** (the admin's number wins until lifted) or **cap** (the admin sets a maximum and events move it below). Both are defensible and they are different products: a pin lets an admin grant standing, a cap only lets them withhold it. Building either without the decision would be taking it. Unwired to any route, so nothing live turns on it today. |
 
 ### Recomputed headline — HEAD `7bca4b0d`
@@ -424,9 +424,19 @@ into or out of `N`.
 | CORRECT% | 84.6 % | **96.2 %** (50/52) |
 
 **Two rows remain, and neither is buildable here.** A6 is defined as a production
-measurement and this branch is unmerged; C22 is an owner decision about what the
-word "override" means. Trust is at **96.2 %**, which is the ceiling available
-without a deploy and without an owner.
+measurement; C22 is an owner decision about what the word "override" means. Trust
+is at **96.2 %**, which is the ceiling available without a deploy and without an
+owner.
+
+**Re-checked 2026-09-09, after the merge.** The branch that carried A6's emitters
+is on `main`, so the one thing that changed is which sentence blocks the row: it
+is no longer "unmerged", it is "not deployed". Nothing else about this headline
+moved — no trust-scoped file has changed since `7bca4b0d`
+(`check:census-freshness`: 0 stale), and the addendum's own re-reads confirm
+`recordStampVerifiedTrustEvent` at `StampAwardEngine.ts:21,767` on `origin/main`
+and both guards registered in `package.json:55-56` there. **96.2 % is still the
+engineering ceiling, and merging did not raise it** — which is the point of
+keeping BUILT, MERGED and DEPLOYED as three separate words.
 
 Three new guards hold what closed: `check:trust-table-ownership`,
 `check:trust-event-vocabulary`, and `test/trustRestrictionEnforcement.test.ts`.

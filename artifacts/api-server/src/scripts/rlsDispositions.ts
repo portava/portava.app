@@ -603,15 +603,20 @@ export const AUTHZ_CREW_HELPER_RE =
  * can_post_to_trip, can_see_postcard.
  */
 export const UNGATED_TRIP_MEMBERS_FUNCTIONS: ReadonlyArray<string> = [
-  // role IN (owner,member,co_host,viewer) OR trips.owner_id OR public trip; NO
-  // status. Repaired by migration 2534 (routes through authz.is_trip_crew).
-  // REMOVE once 2534 is applied to portava-ci -- the live suite compares this
-  // list with pg_trip_members_readers_snapshot() (2532) and fails until you do.
-  "can_see_trip",
-  // self-join, no role, no status; EXECUTE held by anon/authenticated — an RPC
-  // oracle of 2182's class. Named in no policy. DROPPED by migration 2533.
-  // REMOVE once 2533 is applied to portava-ci -- same live comparison.
-  "shares_trip_with",
+  // EMPTY as of 2026-09-09, and that is the finished state, not a gap.
+  //
+  // It held `can_see_trip` (repaired by 2534, which routes it through
+  // authz.is_trip_crew) and `shares_trip_with` (dropped by 2533). Both
+  // migrations are now applied to portava-ci, and the live catalogue agrees:
+  // `pg_trip_members_readers_snapshot()` returns exactly ONE row —
+  // authz.is_trip_crew, mentions_role AND mentions_status, and in `authz`, not
+  // `public`. compareUngatedFunctionList's `liveUngated` (public-schema, no
+  // status gate) is therefore the empty set, which is what this list must now
+  // equal. The live suite reported both entries stale by name and told us to
+  // remove them; this is that removal.
+  //
+  // A NEW ungated reader repopulates this list through the `unlisted` half of
+  // compareUngatedFunctionList — an empty list is not a disabled rule.
 ];
 
 /** One row of public.pg_trip_members_readers_snapshot() (migration 2532). */
@@ -631,18 +636,37 @@ export interface TripMembersReaderRow {
  */
 export function compareUngatedFunctionList(
   live: ReadonlyArray<TripMembersReaderRow>,
+  // Takes the captured list for the same reason evaluatePolicySnapshot does: a
+  // test of "2533 makes this entry stale" must be able to state the list that
+  // held it, and the shipped list is now empty because 2533 landed.
+  captured: ReadonlyArray<string> = UNGATED_TRIP_MEMBERS_FUNCTIONS,
 ): { unlisted: string[]; stale: string[] } {
   const liveUngated = new Set(
     live.filter((r) => r.schema_name === "public" && !r.mentions_status).map((r) => r.function_name),
   );
-  const listed = new Set(UNGATED_TRIP_MEMBERS_FUNCTIONS);
+  const listed = new Set(captured);
   return {
     unlisted: [...liveUngated].filter((f) => !listed.has(f)).sort(),
     stale: [...listed].filter((f) => !liveUngated.has(f)).sort(),
   };
 }
-const ungatedFunctionRe = (): RegExp =>
-  new RegExp(`\\b(?:public\\.)?(${UNGATED_TRIP_MEMBERS_FUNCTIONS.join("|")})\\s*\\(`);
+/**
+ * The "reaches trip_members through one of these functions" matcher.
+ *
+ * TAKES THE LIST, and returns null for an EMPTY one. Both matter, and the
+ * second is why this is a function with a parameter rather than the one-liner
+ * it was. `new RegExp("\\b(?:public\\.)?()\\s*\\(")` — what the old form built
+ * once the list emptied — has an empty alternation group, so it matches ANY
+ * expression containing a `(`. Every policy in the database would have read as
+ * `ungated_via_function` the moment 2533 and 2534 let the list shrink to
+ * nothing: a guard that turns into a false-positive generator at exactly the
+ * point its subject is fixed. The parameter is so a test can pass `[]` and
+ * `["can_see_trip"]` without the module constant having to be either.
+ */
+export function ungatedFunctionPattern(fns: ReadonlyArray<string>): RegExp | null {
+  if (fns.length === 0) return null;
+  return new RegExp(`\\b(?:public\\.)?(${fns.join("|")})\\s*\\(`);
+}
 
 export type TripMembersVerdict =
   | { kind: "not_applicable" }
@@ -656,7 +680,8 @@ export function tripMembersVerdict(row: PolicySnapshotRow): TripMembersVerdict {
   if (TRIP_MEMBERS_TEXT_RE.test(expr)) {
     return ROLE_GATE_RE.test(expr) && STATUS_GATE_RE.test(expr) ? { kind: "gated_inline" } : { kind: "ungated_direct" };
   }
-  const fn = expr.match(ungatedFunctionRe());
+  const ungatedRe = ungatedFunctionPattern(UNGATED_TRIP_MEMBERS_FUNCTIONS);
+  const fn = ungatedRe ? expr.match(ungatedRe) : null;
   if (fn) return { kind: "ungated_via_function", via: fn[1] };
   const helper = expr.match(AUTHZ_CREW_HELPER_RE);
   if (helper) return { kind: "gated_by_helper", via: `authz.${helper[1]}` };
@@ -700,49 +725,28 @@ export const TRIP_MEMBERS_REVIEWED_ALLOWLIST: ReadonlyArray<ReviewedAllowlistEnt
   },
 ];
 
-const CAN_SEE_TRIP_CALLERS: ReadonlyArray<string> = [
-  "map_pins::pins_select",
-  "trip_checklist_items::trip_checklist_items_delete",
-  "trip_checklist_items::trip_checklist_items_insert",
-  "trip_checklist_items::trip_checklist_items_members",
-  "trip_checklist_items::trip_checklist_items_update",
-  "trip_checklists::trip_checklists_insert",
-  "trip_checklists::trip_checklists_members",
-  "trip_destinations::trip_destinations_select",
-  "trip_documents::trip_documents_insert",
-  "trip_documents::trip_documents_members",
-  "trip_members::trip_members_select",
-  "trip_notes::trip_notes_insert",
-  "trip_notes::trip_notes_select",
-  "trip_reminders::trip_reminders_insert",
-  "trip_saved_places::trip_saved_places_insert",
-  "trip_saved_places::trip_saved_places_members",
-  "trips::trips_select",
-];
-
 /**
  * Policies the rule reports as UNGATED that are known, recorded, and NOT yet
  * fixed. May only shrink. Adding a row here to make CI green is the one thing
  * this list exists to prevent — every row names the event that removes it.
  */
 export const TRIP_MEMBERS_KNOWN_OPEN: ReadonlyArray<KnownOpenEntry> = [
-  {
-    key: "highlights::highlights_select_active",
-    kind: "ungated_direct",
-    reason:
-      "trip_only branch is a trip_members self-join with no role and no status gate; pending invitees and removed members read trip_only highlights (measured on portava-ci 2026-09-07). Repaired by migration 2530, which rewrites only that branch.",
-    since: "2026-09-07",
-    removeWhen: "migration 2530 is applied to portava-ci. The stale-entry check fails until you do.",
-  },
-  ...CAN_SEE_TRIP_CALLERS.map((key) => ({
-    key,
-    kind: "ungated_via_function",
-    reason:
-      "Reaches trip_members through public.can_see_trip(uuid), whose body gates on role IN (owner,member,co_host,viewer) OR trips.owner_id OR a public trip, and NEVER reads status — so a pending invitee (role='member', status='invited') and a removed member pass (measured on portava-ci 2026-09-07). Repaired by migration 2534, which routes can_see_trip through authz.is_trip_crew and moves every write policy that borrowed it onto the API's write rules.",
-    since: "2026-09-07",
-    removeWhen:
-      "migration 2534 is applied to portava-ci. In the SAME change remove 'can_see_trip' from UNGATED_TRIP_MEMBERS_FUNCTIONS (the live suite compares that list with pg_trip_members_readers_snapshot and fails while it is stale) and delete these seventeen entries (they then read as stale).",
-  })),
+  // EMPTY as of 2026-09-09. Every entry named the migration that would remove
+  // it, and all of them landed on portava-ci:
+  //
+  //   highlights::highlights_select_active   2530 rewrote the trip_only branch
+  //   the seventeen can_see_trip callers     2534 routed can_see_trip through
+  //                                          authz.is_trip_crew
+  //
+  // The live suite reported them stale by name — "These TRIP_MEMBERS_KNOWN_OPEN
+  // entries are FIXED (or gone) on this database" — which is the shrink-only
+  // discipline working exactly as designed: an entry excuses a policy only for
+  // as long as the policy is still broken, and the check fails until somebody
+  // deletes the excuse.
+  //
+  // An entry is added back only by writing the reason and the removeWhen. A
+  // policy that reaches trip_members ungated and is NOT listed here reports as
+  // an offender, so an empty list is the strictest state, not the weakest.
 ];
 
 /* ── Rule 2: FOR ALL without WITH CHECK ─────────────────────────────────────── */
@@ -788,6 +792,21 @@ export function forAllWriteCheckVerdict(row: PolicySnapshotRow): ForAllVerdict {
  * an entry here that gains WITH CHECK fails the stale check until removed.
  */
 export const FOR_ALL_WITHOUT_WITH_CHECK_BASELINE: ReadonlyArray<string> = [
+  // THREE ENTRIES REMOVED 2026-09-09, for the reason this baseline is
+  // shrink-only: the live suite reported them as no longer FOR ALL-without-
+  // WITH CHECK and demanded their removal, and the live snapshot agrees.
+  //
+  //   trip_checklist_items::trip_checklist_items_members   now cmd=SELECT,
+  //   trip_checklists::trip_checklists_members             USING can_see_trip(trip_id)
+  //     — 2534 moved the write half onto the API's write rules, so neither is a
+  //       FOR ALL policy any more and neither can reuse USING as its WITH CHECK.
+  //   trip_reminders::trip_reminders_own                   GONE. 2535 replaced
+  //     0079's FOR ALL-with-no-WITH-CHECK policy with four verb-scoped ones
+  //     (the same supersession this PR records in audit:schema's allowlist).
+  //
+  // A baseline entry asserts "this policy still reuses its USING as its write
+  // check". Leaving a fixed one keeps excusing the next policy that regresses
+  // into the same shape.
   "buddy_availability_exceptions::bae_own_write",
   "buddy_services::bs_own_write",
   "compass_conversation_messages::compass_conversation_messages_owner",
@@ -833,13 +852,10 @@ export const FOR_ALL_WITHOUT_WITH_CHECK_BASELINE: ReadonlyArray<string> = [
   "traveler_passports::traveler_passports_own",
   "trip_area_preferences::tap_own",
   "trip_budget::trip_budget_owner",
-  "trip_checklist_items::trip_checklist_items_members",
-  "trip_checklists::trip_checklists_members",
   "trip_crew_location_preferences::crew_prefs_self_write",
   "trip_crew_location_sessions::crew_sessions_self",
   "trip_destinations::trip_destinations_manage",
   "trip_invite_links::trip_invite_links_owner",
-  "trip_reminders::trip_reminders_own",
   "trip_traveler_passports::trip_traveler_passports_own",
   "user_mutes::Users can manage their own mutes",
   "user_privacy_settings::Users can manage their own privacy settings",
@@ -865,14 +881,20 @@ export function arrayGrantVerdict(row: PolicySnapshotRow): ArrayGrantVerdict {
 }
 
 export const ARRAY_GRANT_KNOWN_OPEN: ReadonlyArray<KnownOpenEntry> = [
-  {
-    key: "trip_crew_location_sessions::crew_session_owner_select",
-    kind: "array_grant_ungated",
-    reason:
-      "`auth.uid() = ANY(allowed_member_ids)` with no membership, status or expiry test. A stranger listed in the array reads the session (measured on portava-ci 2026-09-07), and this branch dominates crew_sessions_recipients_read completely. Repaired by migration 2531 (owner-only).",
-    since: "2026-09-07",
-    removeWhen: "migration 2531 is applied to portava-ci. The stale-entry check fails until you do.",
-  },
+  // EMPTY as of 2026-09-09. It held
+  // trip_crew_location_sessions::crew_session_owner_select, whose USING was
+  // `auth.uid() = ANY(allowed_member_ids)` with no membership, status or expiry
+  // test — a stranger listed in the array read the session, and that branch
+  // dominated crew_sessions_recipients_read completely. 2531 repaired it to
+  // owner-only and is applied to portava-ci: the live policy now reads
+  // `SELECT ... USING (auth.uid() = user_id)`, with no array grant at all
+  // (measured off pg_policies_snapshot_v2). The live suite reported the entry
+  // stale by name, exactly as its own removeWhen predicted.
+  //
+  // The gated array grant that remains — crew_sessions_recipients_read, with
+  // `= ANY (allowed_member_ids)` AND authz.is_trip_crew(trip_id) AND a status
+  // and expiry test — is array_grant_with_crew_gate, which is not an offence
+  // and never needed an entry.
 ];
 
 /* ── Evaluation ────────────────────────────────────────────────────────────── */
@@ -912,13 +934,48 @@ export interface PolicyShapeReport {
   arrayGrantStaleKnownOpen: string[];
 }
 
+/**
+ * The dispositions an evaluation runs against. Defaults to the module constants;
+ * a caller may substitute its own.
+ *
+ * WHY THIS PARAMETER EXISTS. The mutation tests used to assert against whatever
+ * the shipped lists happened to contain — "a NEW policy calling can_see_trip is
+ * an offender" only holds while `can_see_trip` is in
+ * UNGATED_TRIP_MEMBERS_FUNCTIONS, and "applying 2530 makes the highlights entry
+ * STALE" only holds while that entry exists. Both were true when written and
+ * both stopped being true on 2026-09-09, when 2530/2533/2534 reached portava-ci
+ * and the shrink-only rule required the lists to empty. Five unit tests broke
+ * for the RIGHT reason and could not be re-expressed, because the mechanism
+ * they prove had no way to be handed a list.
+ *
+ * Coupling a guard's tests to the guard's current data makes the data
+ * un-shrinkable. The rules are what deserve the tests; the lists are just
+ * today's input.
+ */
+export interface PolicyDispositions {
+  reviewed: ReadonlyArray<ReviewedAllowlistEntry>;
+  tripMembersKnownOpen: ReadonlyArray<KnownOpenEntry>;
+  arrayGrantKnownOpen: ReadonlyArray<KnownOpenEntry>;
+  forAllBaseline: ReadonlyArray<string>;
+}
+
+export const SHIPPED_DISPOSITIONS: PolicyDispositions = {
+  reviewed: TRIP_MEMBERS_REVIEWED_ALLOWLIST,
+  tripMembersKnownOpen: TRIP_MEMBERS_KNOWN_OPEN,
+  arrayGrantKnownOpen: ARRAY_GRANT_KNOWN_OPEN,
+  forAllBaseline: FOR_ALL_WITHOUT_WITH_CHECK_BASELINE,
+};
+
 /** Pure. The live test feeds it pg_policies_snapshot_v2(); the unit test feeds it fixtures. */
-export function evaluatePolicySnapshot(rows: ReadonlyArray<PolicySnapshotRow>): PolicyShapeReport {
+export function evaluatePolicySnapshot(
+  rows: ReadonlyArray<PolicySnapshotRow>,
+  dispositions: PolicyDispositions = SHIPPED_DISPOSITIONS,
+): PolicyShapeReport {
   const byKey = new Map(rows.map((r) => [policyKey(r), r] as const));
-  const reviewed = new Set(TRIP_MEMBERS_REVIEWED_ALLOWLIST.map((e) => e.key));
-  const tmKnown = new Map(TRIP_MEMBERS_KNOWN_OPEN.map((e) => [e.key, e] as const));
-  const agKnown = new Map(ARRAY_GRANT_KNOWN_OPEN.map((e) => [e.key, e] as const));
-  const baseline = new Set(FOR_ALL_WITHOUT_WITH_CHECK_BASELINE);
+  const reviewed = new Set(dispositions.reviewed.map((e) => e.key));
+  const tmKnown = new Map(dispositions.tripMembersKnownOpen.map((e) => [e.key, e] as const));
+  const agKnown = new Map(dispositions.arrayGrantKnownOpen.map((e) => [e.key, e] as const));
+  const baseline = new Set(dispositions.forAllBaseline);
 
   const tripMembersOffenders: string[] = [];
   const forAllOffenders: string[] = [];
@@ -938,17 +995,17 @@ export function evaluatePolicySnapshot(rows: ReadonlyArray<PolicySnapshotRow>): 
     }
   }
 
-  const tripMembersStaleKnownOpen = TRIP_MEMBERS_KNOWN_OPEN.filter((e) => {
+  const tripMembersStaleKnownOpen = dispositions.tripMembersKnownOpen.filter((e) => {
     const r = byKey.get(e.key);
     if (!r) return true; // policy gone: entry is stale
     return tripMembersVerdict(r).kind !== e.kind;
   }).map((e) => e.key);
-  const tripMembersMissingReviewed = TRIP_MEMBERS_REVIEWED_ALLOWLIST.filter((e) => !byKey.has(e.key)).map((e) => e.key);
-  const forAllStaleBaseline = FOR_ALL_WITHOUT_WITH_CHECK_BASELINE.filter((k) => {
+  const tripMembersMissingReviewed = dispositions.reviewed.filter((e) => !byKey.has(e.key)).map((e) => e.key);
+  const forAllStaleBaseline = dispositions.forAllBaseline.filter((k) => {
     const r = byKey.get(k);
     return !r || forAllWriteCheckVerdict(r) !== "reuses_using";
   });
-  const arrayGrantStaleKnownOpen = ARRAY_GRANT_KNOWN_OPEN.filter((e) => {
+  const arrayGrantStaleKnownOpen = dispositions.arrayGrantKnownOpen.filter((e) => {
     const r = byKey.get(e.key);
     return !r || arrayGrantVerdict(r) !== e.kind;
   }).map((e) => e.key);

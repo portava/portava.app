@@ -248,6 +248,16 @@ function git(args: string[]): string {
   return execFileSync("git", args, { cwd: REPO, encoding: "utf8", maxBuffer: 32 * 1024 * 1024 }).trim();
 }
 
+/** Runs a git command for its EXIT CODE only, saying nothing on either path. */
+function gitSucceeds(args: string[]): boolean {
+  try {
+    execFileSync("git", args, { cwd: REPO, stdio: ["ignore", "ignore", "ignore"] });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 const files = readdirSync(CENSUS_DIR).filter((f) => f.startsWith("census-") && f.endsWith(".md")).sort();
 const problems: string[] = [];
 
@@ -286,11 +296,51 @@ for (const f of files) {
   }
   checked++;
 
+  // AN UNREACHABLE DECLARATION IS THE DEFECT, NOT A CLONE PROBLEM, and this
+  // check said the opposite for as long as it existed.
+  //
+  // MEASURED 2026-09-10. Six censuses declared PRE-SQUASH working-tree commits.
+  // This repository squash-merges, so a branch's own commits become ancestors of
+  // nothing the moment it lands: they sit on no ref, ship in no clone, and
+  // survive only in the object store of the container that wrote them. The
+  // consequence is the one shape of failure a guard must not have — it passed on
+  // the developer's machine, where the objects happened to still be lying
+  // around, and failed in CI, where a fresh clone cannot resolve them. The error
+  // it printed there, `git could not diff <commit>..HEAD`, reads like a checkout
+  // problem and sent the reader to the wrong place.
+  //
+  // The rule is ANCESTOR-OF-HEAD, not ancestor-of-main. A census measured on a
+  // branch and declared at that branch's commit is legitimate and must keep
+  // working; what cannot be allowed is a declaration pointing at a commit that
+  // is on no line of history leading here, because that is precisely the one
+  // nobody else will ever be able to check.
+  if (!gitSucceeds(["cat-file", "-e", `${commit}^{commit}`])) {
+    problems.push(
+      `::error::${f} declares head_commit ${commit.slice(0, 8)}, which DOES NOT EXIST in this clone. A census ` +
+        `measured at a commit nobody else can resolve is unverifiable everywhere but the machine that wrote it. ` +
+        `This repository squash-merges, so a pre-squash working-tree commit is an ancestor of nothing — re-declare ` +
+        `at the squash where this document's content reached the default branch, and say in the row what changed ` +
+        `between the two and why it cannot have moved a verdict.`,
+    );
+    stale++;
+    continue;
+  }
+  if (!gitSucceeds(["merge-base", "--is-ancestor", commit, head])) {
+    problems.push(
+      `::error::${f} declares head_commit ${commit.slice(0, 8)}, which exists in THIS clone but is not an ancestor ` +
+        `of HEAD. It is on no line of history leading here, so it is an orphan that will not survive being pushed, ` +
+        `cloned or checked out anywhere else — the check would pass here and fail in CI. Re-declare it at a commit ` +
+        `this branch actually descends from.`,
+    );
+    stale++;
+    continue;
+  }
+
   let changed: string[];
   try {
     changed = git(["diff", "--name-only", `${commit}..${head}`, "--", ...scope]).split("\n").filter(Boolean);
   } catch {
-    problems.push(`::error::${f}: git could not diff ${commit}..HEAD — the declared head_commit may not exist in this clone.`);
+    problems.push(`::error::${f}: git could not diff ${commit}..HEAD, though ${commit.slice(0, 8)} resolves and is an ancestor of HEAD. This is not the unreachable-declaration case; read the git error above.`);
     continue;
   }
 

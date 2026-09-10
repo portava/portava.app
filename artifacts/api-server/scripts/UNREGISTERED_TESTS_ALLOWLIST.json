@@ -142,6 +142,7 @@
   "src/test/stamps-revoke-restore.test.ts",
   "src/test/stamps.test.ts",
   "src/test/tripCrewMap.test.ts",
+  "src/test/tripKernelLive.test.ts",
   "src/test/tripNotFound.test.ts",
   "src/test/tripPrivacy.test.ts",
   "src/test/trustAdminAuditInsertSchemaDrift.test.ts"

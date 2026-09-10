@@ -1126,7 +1126,7 @@ here so the next reader can age this section mechanically.
 
 | Field | Value |
 | --- | --- |
-| `head_commit` | `6c6995e1` — §29 measured `823b6d67`; §30 re-measured §7.4 at `c3f76a49`; §31 re-measured §9.3 and §14 at `6d3e7a56`; §32 corrected TR261/TR437 at `1ec4d903`; §34 re-read the three §5 read routes at this commit. ONE declaration, kept current, because `check:census-freshness` reads the first one it finds and a second row further down is a decoration that ages nothing. |
+| `head_commit` | `42aeac38` — RE-DECLARED 2026-09-09 from `6c6995e1`, and the move is a measurement rather than a judgement: `git diff --name-only 6c6995e1 42aeac38` over this census's 35 scoped paths returns **0 files**, so every verdict is exactly as true at one as at the other. It was necessary because `6c6995e1` is a PRE-SQUASH commit — this repository squash-merges, so it is an ancestor of nothing and is on no remote branch, and `check:census-freshness` could resolve it only on the clone that wrote it (`CENSUS_HEAD_COMMITS_UNREACHABLE_IN_CI`). `42aeac38` is #476's squash, where this document's content actually reached `main`. Measurement lineage unchanged: §29 measured `823b6d67`; §30 re-measured §7.4 at `c3f76a49`; §31 re-measured §9.3 and §14 at `6d3e7a56`; §32 corrected TR261/TR437 at `1ec4d903`; §34 re-read the three §5 read routes at `6c6995e1`; §35 executed the kernel live. ONE declaration, kept current, because `check:census-freshness` reads the first one it finds and a second row further down is a decoration that ages nothing. |
 | Branch | `claude/portava-continuation-uqta94` |
 | Scope re-read | §5.1's twelve tables, §7, §8, §9.1, §9.3, §10, §11, §20.1, §22 |
 | NOT re-read | §1–§3, §6, §12–§19, §21, §23–§25. The headline stays where §26 left it. |
@@ -2028,3 +2028,225 @@ instance in three days.
 change to §14.1's route could not age this census. It is in the list now. §31
 certified that route; until this commit, nothing would have told anyone when its
 certification went out of date.
+
+---
+
+## 35. The kernel, executed — a live vertical slice against portava-ci
+
+**Measured 2026-09-09** against project `hwokxgbmezheskbzskfr` (portava-ci), the
+sanctioned rehearsal database, at repository head `2c9ca4a5` with §29's
+migration chain fully applied. Every statement below ran inside
+`BEGIN … ROLLBACK`, so the database is unchanged by this measurement; the
+fixture rows (two `auth.users`, two `profiles`, one trip) exist only for the
+duration of the transaction.
+
+### Why this section exists
+
+§29 through §34 grade the kernel from its SOURCE and from tests that run against
+doubles. Both are worth having and neither executes the function. `tripKernel.ts`
+and the 49 `trip*.test.ts` suites (993 tests, 0 skipped, all passing at this
+head) prove the TypeScript around the RPC and the SHAPE of the contract; ask
+what would turn them red and the answer is "editing the TypeScript or the fake",
+which is not a property of `public.trip_kernel_execute`. The kernel is 103,400
+characters of PL/pgSQL — the largest single object in this architecture — and
+until now nothing in this repository had run it end to end. Memory has such a
+proof (`test/memoryKernelTransactionLive.test.ts`, script
+`test:memory-kernel-transaction`); **Trips did not**, and that absence is the
+subject of the finding at the end of this section.
+
+### The object, measured
+
+| Fact | Measured |
+| --- | --- |
+| `trip_kernel_execute(p_command jsonb) → jsonb` | present; `pg_get_functiondef` **103,400** chars; `md5(prosrc)` **`5fd683a457c26a4d084887e365a1fb73`** |
+| §5 tables | **12 / 12** present (`trip_stages`, `trip_legs`, `trip_commitments`, `trip_goals`, `trip_decision_tasks`, `trip_risks`, `trip_presence`, `trip_proposals`, `trip_proposal_votes`, `trip_snapshots`, `trip_outcomes`, `trip_plan_participants`) |
+| RLS | **12 / 12** `relrowsecurity`, 1 policy each |
+| `trip_*` functions in `public` | **15** |
+| `trip_presence_current` view | present |
+| Ledger | **500** rows, last applied `2026-09-09 18:17:43Z` |
+
+The table list is measured, not recited: an earlier version of this check asked
+for `trip_decisions` and got 11/12. There is no such table — 2762 creates
+`trip_decision_tasks`. The gap was in the question, and it is recorded here
+because a certification that invents a name proves nothing when it passes and
+raises a false alarm when it fails.
+
+### The eighteen migration files, against the ledger
+
+All **18 / 18** are present in `public.schema_migration_ledger`. Comparing each
+row's `checksum` to `sha256` of the file on disk:
+
+| | count | files |
+| --- | --- | --- |
+| `applied_by='ci'`, checksum **matches the repo file exactly** | **13** | 2764–2766, 2768–2777 |
+| `applied_by='manual'`, `checksum='backfill'` — **NOT COMPARED** | **5** | 2760, 2761, 2762, 2763, 2767 |
+
+The five are the ones hand-applied from an unmerged branch before the applier
+was sanctioned (`CI_DB_HAND_APPLIED_FROM_UNMERGED_BRANCHES`). `backfill` is the
+ledger's own sentinel for "this row records that something was applied and
+cannot say what", so for those five the ledger proves nothing about file
+identity. What stands in for it is object-level: `audit:schema` compares the
+objects every migration CLAIMS against the objects that are live, and the tables,
+columns, RLS flags and policies those five create are all present and are all in
+the counts above. **That is parity of OBJECTS, not proof that the applied TEXT
+was this text**, and the difference is why this row is written out rather than
+folded into "18/18 applied".
+
+### The slice
+
+Thirteen commands, one trip, one actor, in order. Every one returned
+`ok: true` with a monotonic version and an `event_id`:
+
+| # | command | version | result |
+| --- | --- | --- | --- |
+| 1 | `CREATE_TRIP` | 1 | trip row, `trip.created` |
+| 2 | `ADD_STAGE` seq 1 | 2 | `trip.stage_added` |
+| 3 | `ADD_STAGE` seq 2 | 3 | `trip.stage_added` |
+| 4 | `ADD_LEG` s1→s2 | 4 | leg id |
+| 5 | `ADD_COMMITMENT` on s2 | 5 | starts 19:00, required arrival 18:45, prep 20 min, tolerance 5 min |
+| 6 | `ADD_PLAN` | 6 | plan id, `status: tentative` |
+| 7 | `JOIN_PLAN` | 7 | `attendance_state: going` |
+| 8 | `SET_PRESENCE` | 8 | `applied: true`, `expires_at` = now + TTL |
+| 9 | `CREATE_PROPOSAL` | 9 | `status: pending`, `decision_rule: host` |
+| 10 | `VOTE_ON_PROPOSAL` | 10 | tally inline: `electorate 1, yes 1, majority_met, unanimous_met` |
+| 11 | `ACCEPT_PROPOSAL` | 11 | `status: accepted` |
+| 12 | `RECORD_OUTCOME` | 12 | outcome id |
+
+Three properties were then asserted against the same live aggregate:
+
+- **§22.4 idempotency.** Replaying command 7 with the SAME `idempotency_key`
+  returned `ok: true, duplicate: true, version: 6` — the version it originally
+  produced, not a new one. No second transition.
+- **§22 optimistic concurrency.** A command carrying
+  `expected_trip_version: 2` against an aggregate at 12 was refused with
+  `TRIP_VERSION_CONFLICT`.
+- **§10 presence freshness.** `trip_presence_freshness(observed, expires, at)`
+  returned `"live"` for an unexpired row and `"offline"` for one whose
+  `expires_at` is fifty minutes in the past.
+
+### Replay determinism, at a cut point
+
+The claim is that a snapshot plus the events after it reconstructs the same state
+as folding the whole log from the seed. Both sides were computed live:
+
+    trip_snapshot_replay(T, trip_snapshot_seed(T), 0, head)
+      =  trip_snapshot_replay(T, <snapshot written at version 1>, 1, head)
+    -> true
+
+**`true`, as jsonb equality on the whole state**, not on a digest of it. The
+state on both sides is populated — plans, stages, `lifecycle_state: planning`,
+`aggregate_version` — so this is a comparison of two real projections and not
+two empty objects; that was checked, because `equal: true` over `{}` = `{}`
+would have been a green light meaning nothing.
+
+`trip_snapshot_verify_replay(T, 11)` returned
+`{ok: true, equal: true, differing_keys: [], snapshot_version: 11, head_version: 12}`.
+Asked for a version with NO snapshot it returned
+`{ok: false, reason: "TRIP_SNAPSHOT_NOT_FOUND"}` — it refuses rather than
+seeding one and reporting agreement with itself.
+
+Two honest absences survive into the snapshot rather than being filled in:
+`free_window_summary: {available: false, reason: "SECTION_7_ENGINE_ABSENT"}` and
+`source_refs: {available: false, reason: "NOT_CARRIED_BY_EVENTS"}`.
+
+### What the kernel refused, and why that is the good news
+
+Four commands in the first pass were rejected because MY payloads were wrong, and
+each refusal names the reason:
+
+| payload error | kernel answer |
+| --- | --- |
+| stage with neither `place_id` nor `city_id` | `TRIP_COMMAND_MALFORMED` · `trip_stages_one_anchor` |
+| `confidence: "high"` on a numeric column | `TRIP_COMMAND_MALFORMED` · invalid input syntax for numeric |
+| `proposal_type: "change_stage"` (the real value is `stage_change`) | `TRIP_COMMAND_MALFORMED` · `trip_proposals_type_known` |
+| `type: "show"` on a commitment | `TRIP_COMMAND_MALFORMED` · `trip_commitments_type_known` |
+
+Each is a CHECK constraint caught by the family's own `BEGIN … EXCEPTION` and
+returned as a structured, permanent rejection. That is the behaviour §22 asks
+for, measured rather than asserted.
+
+### FINDING — `TRIP_KERNEL_CREATE_TRIP_UNGUARDED_INSERT`
+
+**`CREATE_TRIP` has no such exception handler, and one legitimate payload proves
+it.** `POST /trips` supports drafts — its own comment says *"Trips without
+title/city are saved as drafts"* and `computeTripStatus` takes
+`destinationCity ?? null`. It then passes `destination_city: destinationCity`
+straight into the command. With no city, the kernel's
+`INSERT INTO public.trips` hits `destination_city`'s NOT NULL and the
+exception **escapes the function entirely**:
+
+    ERROR: 23502 null value in column "destination_city" of relation "trips"
+    CONTEXT: PL/pgSQL function trip_kernel_execute(jsonb) line 165
+
+Measured, not inferred: that is the verbatim error from this rehearsal. Every
+other family wraps its INSERT (2764's `ADD_STAGE` catches `check_violation` and
+`unique_violation` and returns `TRIP_COMMAND_MALFORMED`); the trip family, which
+is older (2450), does not.
+
+**What it costs.** `executeTripCommand` sees a thrown RPC and returns
+`TRIP_KERNEL_UNAVAILABLE` — a reason whose whole meaning is *"the kernel could
+not be reached, try again"*. A malformed command is reported as a transient
+outage, so a client with retry-on-unavailable retries a command that can never
+succeed. The row is never written either way, so nothing is corrupted; what is
+wrong is the ANSWER.
+
+**Not fixed here, deliberately.** The fix is a new verified-transform migration
+against `trip_kernel_execute`, which widens the migration scope this
+certification is measuring. It does not invalidate anything above — the twelve
+commands, the idempotency receipt, the version conflict and the replay equality
+are all unaffected — so it is recorded as a finding and left for its own change.
+It is also NOT a regression the kernel introduced: the flag-off legacy path
+inserts the same NULL and fails the same constraint, returning `db_error`. The
+kernel path is not worse at writing; it is worse at explaining.
+
+### FINDING — `TRIPS_HAS_NO_LIVE_KERNEL_SUITE`
+
+Everything in this section was executed by hand through the Supabase management
+API and is reproducible only by re-reading this document. Memory has the equivalent FILE
+(`memoryKernelTransactionLive.test.ts`, script `test:memory-kernel-transaction`)
+and — measured, after the first draft of this section claimed otherwise — **CI
+invokes it nowhere**: `run-live-suite.sh` is called for 26 suites in
+`live-db.yml` and that is not one of them, and the file is on
+`UNREGISTERED_TESTS_ALLOWLIST.json` so the curated `npm test` skips it too. So
+the precedent is weaker than stated: Trips has neither the file nor the script,
+and the one existing example is itself inert
+(`MEMORY_LIVE_KERNEL_SUITE_NEVER_RUNS`). Nothing here turns red on its own if
+the kernel changes. **The measurements above
+are a snapshot; they are not a guard**, and the distinction is the same one this
+census draws between BUILT and CERTIFIED everywhere else.
+
+### §35.1 — the snapshot, made executable (same day)
+
+`src/test/tripKernelLive.test.ts` now encodes everything above that a test can
+reach: the twelve-command slice with its monotonic versions, the rows the §5.1
+read routes serve, §22.4 idempotency (a replayed key returns `duplicate: true`
+**at the original version** — the load-bearing half, since `duplicate: true` with
+a NEW version would mean the command ran twice and the receipt followed), the
+stale-version refusal, the four malformed-payload refusals, and
+`TRIP_KERNEL_CREATE_TRIP_UNGUARDED_INSERT` pinned as CURRENT behaviour so that
+closing the blocker turns this file red on purpose. It is registered as
+`test:trip-kernel-live` and invoked from `live-db.yml` through
+`run-live-suite.sh`, which scores it on pass > 0 AND skipped == 0.
+
+`test:memory-kernel-transaction` is wired in the same change. It had a package
+script and no caller anywhere under `.github/` — found while looking for the
+precedent to copy, and recorded as `MEMORY_LIVE_KERNEL_SUITE_NEVER_RUNS`. **The
+first draft of this section asserted the opposite** ("Memory's equivalent proof
+is a registered test, scored by `run-live-suite.sh`"); it was registered as a
+package script and scored by nobody, and the correction stands above.
+
+**What is NOT yet true, stated rather than implied.** This suite has never
+executed. This container holds no service-role credential, so everything above
+was proven through the management API as raw SQL and the TypeScript path —
+`executeTripCommand` → `sc.rpc("trip_kernel_execute", { p_command })` over
+PostgREST as `service_role` — is asserted, not measured. What IS measured is
+that `service_role` holds EXECUTE on the function, and that each assertion
+matches a value this database actually returned. The first live-DB job to run it
+is the first evidence that the suite itself is right, and if it is wrong there,
+the fix belongs in the suite, not in the reading above.
+
+Snapshot/replay determinism stays outside it, deliberately: `trip_snapshot_write`
+and `trip_snapshot_verify_replay` are granted to `service_role` and reachable,
+but no module in this repository owns those RPC names, and a test that is the
+only place a function name appears is a second source of truth for it. The
+measurement stands in §35; the guard waits for an owner.

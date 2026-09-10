@@ -68,6 +68,7 @@ import { join, dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { FROZEN_LEGACY_FILES, findRogueFrozenFiles } from "./frozenLegacyFiles.js";
 import { FROZEN_ROOT_FILES } from "./frozenRootFiles.js";
+import { isMissing, type Claim, type LiveSchema } from "./lib/schemaClaimResolution.js";
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
@@ -327,55 +328,32 @@ const ALLOWLIST = new Set([
   // If a direct-from-client read of post-media is ever required, restore the
   // policy from 2089's DOWN block and delete this entry in the same change.
   "policy:objects.post_media_storage_public_read",
+  // RETIRED 2026-09-09: `function:is_blocked` and `function:viewer_in_call`
+  // used to sit here. Both existed for one reason — this auditor resolved
+  // claimed functions in `public` only, so the authz-schema membership
+  // predicates read as missing. It now resolves `public` OR `authz` and reports
+  // an authz-only resolution as a NOTE, so both entries became dead: an
+  // allowlist entry asserts "the object does not exist", and these objects do.
+  // Seven further false positives (2334, 2337 x4, 2402, 2460) went with them.
   //
-  // ── RELOCATED TO `authz` (2026-08-28, migration 2182) ───────────────────────
-  //
-  // is_blocked(uuid,uuid) is declared by 0015_blocks.sql in `public` and MOVED
-  // to the `authz` schema by 2182_close_authz_rpc_oracle.sql
-  // (ALTER FUNCTION … SET SCHEMA). This auditor asks "does every object a
-  // migration claims exist live", keyed by function NAME in the `public`
-  // schema — so after 2182 it reports `public.is_blocked` missing. It is not
-  // missing; it is `authz.is_blocked`, with the same OID/ACL/body, and all four
-  // RLS policies (loc_select, messages_hide_blocked_sender, highlights_select,
-  // highlights_select_active) still bind to it by OID. Without this entry 2182
-  // makes schema-drift permanently red — against production too once pressed —
-  // and a permanently red check is one discarded exit code away from being no
-  // check at all.
-  //
-  // AN ALLOWLIST ENTRY MEANS THE `public` OBJECT DOES NOT EXIST, and here that
-  // absence IS the fix: the anonymous PostgREST RPC oracle (POST /rpc/is_blocked
-  // with a caller-supplied identity) is closed precisely BY the function no
-  // longer living in an exposed schema. The purpose the relocation serves is the
-  // reason `public.is_blocked` is gone.
-  //
-  // Scope note: 2182 also relocated in_accepted_circle and can_see_location, but
-  // 0015 is the only file in THIS auditor's chain (api-server src/migrations,
-  // + the archived legacy chain) that declares any of the three, and it declares
-  // only is_blocked — so this is the sole entry the move requires here. The other
-  // two are declared in migration roots this auditor does not scan
-  // (migrations/, travel-buddy-standalone/migrations/, supabase/migrations/).
-  //
-  // If is_blocked is ever collapsed into viewer_is_blocked (the deduplication
-  // 2182's header flags as future cleanup) and 0015's declaration is retired,
-  // delete this entry in the same change.
-  "function:is_blocked",
+  // policy trip_reminders_own — 0079 created it FOR ALL with no WITH CHECK.
+  // 2535_trip_reminders_write_boundary.sql REPLACED it with four verb-scoped
+  // policies (trip_reminders_{select,insert,update,delete}), which is exactly
+  // what portava-ci now carries. 0079's claim is superseded, not unmet. The
+  // blocker ledger records the same supersession for production.
+  "policy:trip_reminders.trip_reminders_own",
 
-  // viewer_in_call(uuid) is created by 2199 in the `authz` schema, for the same
-  // reason is_blocked lives there: `authz` is not in PostgREST's db-schemas, so
-  // a membership predicate placed there is reachable by RLS but not exposed as
-  // an RPC endpoint. This auditor resolves claimed functions in `public` only,
-  // so it reports it missing. It is not missing — it is authz.viewer_in_call,
-  // with a pinned search_path, and both call policies bind to it.
+  // portava_featured SELECT to anon/authenticated — 2160 granted them;
+  // 2332_money_grant_boundary.sql deliberately took them back, and says why in
+  // its own header: the client never reaches this table over PostgREST
+  // (`from('portava_featured')` appears nowhere in travel-buddy-standalone),
+  // every reader goes through the service client, and the grants were Supabase
+  // ALTER DEFAULT PRIVILEGES residue rather than something a migration asked
+  // for. 2160's claim is superseded by a later migration in the same corpus.
   //
-  // Its ABSENCE from public is part of the design, not an omission: the whole
-  // point of 2199 is that the membership read happens inside a SECURITY DEFINER
-  // function that RLS can call without re-entering the policy, and that the
-  // function takes only a call id so it can never answer "is user X in call Y"
-  // for an arbitrary X.
-  //
-  // Delete this entry if 2199 is ever reversed or the function is moved back
-  // into public — in the same change, not later.
-  "function:viewer_in_call",
+  // Delete these two if 2332 is ever reversed, in the same change.
+  "grant:portava_featured.anon.select",
+  "grant:portava_featured.authenticated.select",
 ]);
 
 // ── Environment ───────────────────────────────────────────────────────────────
@@ -421,19 +399,6 @@ export async function liveQuery<T = Record<string, unknown>>(
 
 // ── Live schema snapshot ──────────────────────────────────────────────────────
 
-export interface LiveSchema {
-  relations: Set<string>; // tables + views + matviews
-  columns: Set<string>; // "table.column"
-  functions: Set<string>;
-  indexes: Set<string>;
-  policies: Set<string>; // "table.policy"
-  enums: Set<string>;
-  enumValues: Set<string>; // "enum.value"
-  triggers: Set<string>; // "table.trigger"
-  rlsEnabled: Set<string>; // tables with pg_class.relrowsecurity = true
-  tableGrants: Set<string>; // "table.grantee.privilege"
-  routineGrants: Set<string>; // "function.grantee" (EXECUTE only)
-}
 
 export async function fetchLiveSchema(): Promise<LiveSchema> {
   const [rels, cols, fns, idxs, pols, enums, trgs, rls, tgrants, rgrants] =
@@ -447,10 +412,13 @@ export async function fetchLiveSchema(): Promise<LiveSchema> {
       `select table_name as t, column_name as c
        from information_schema.columns where table_schema = 'public'`,
     ),
-    liveQuery<{ name: string }>(
-      `select p.proname as name from pg_proc p
+    liveQuery<{ name: string; s: string }>(
+      // BOTH schemas, tagged. `authz` holds the SECURITY DEFINER membership
+      // predicates (2182, 2199, 2334, 2337, 2402, 2460); resolving only
+      // `public` reported seven live functions as missing.
+      `select p.proname as name, n.nspname as s from pg_proc p
        join pg_namespace n on n.oid = p.pronamespace
-       where n.nspname = 'public'`,
+       where n.nspname in ('public', 'authz')`,
     ),
     liveQuery<{ name: string }>(
       `select indexname as name from pg_indexes where schemaname = 'public'`,
@@ -492,10 +460,16 @@ export async function fetchLiveSchema(): Promise<LiveSchema> {
     // GRANT statements in src/migrations/ are GRANT EXECUTE ON FUNCTION, which
     // role_table_grants cannot see at all — modelling only table grants would
     // have covered 1 of 19 while reporting "GRANT" as a covered claim type.
-    liveQuery<{ r: string; g: string }>(
-      `select routine_name as r, grantee as g
+    // `authz` as well as `public`, for the same reason the function query above
+    // reads both: the membership predicates live in authz precisely because it
+    // is outside PostgREST's db-schemas, and their migrations grant EXECUTE on
+    // them there. Reading only `public` here, once the EXISTENCE check had been
+    // widened, turned eight grants that ARE live into reported drift — see
+    // LiveSchema.authzRoutineGrants for the measurement.
+    liveQuery<{ r: string; g: string; s: string }>(
+      `select routine_name as r, grantee as g, routine_schema as s
        from information_schema.role_routine_grants
-       where routine_schema = 'public' and privilege_type = 'EXECUTE'`,
+       where routine_schema in ('public', 'authz') and privilege_type = 'EXECUTE'`,
     ),
   ]);
 
@@ -506,7 +480,8 @@ export async function fetchLiveSchema(): Promise<LiveSchema> {
   return {
     relations: new Set(rels.map((r) => lc(r.name))),
     columns: new Set(cols.map((r) => lc(`${r.t}.${r.c}`))),
-    functions: new Set(fns.map((r) => lc(r.name))),
+    functions: new Set(fns.filter((r) => r.s === "public").map((r) => lc(r.name))),
+    authzFunctions: new Set(fns.filter((r) => r.s === "authz").map((r) => lc(r.name))),
     indexes: new Set(idxs.map((r) => lc(r.name))),
     policies: new Set(pols.map((r) => lc(`${r.t}.${r.p}`))),
     enums: new Set(enums.map((r) => lc(r.e))),
@@ -514,30 +489,17 @@ export async function fetchLiveSchema(): Promise<LiveSchema> {
     triggers: new Set(trgs.map((r) => lc(`${r.t}.${r.g}`))),
     rlsEnabled: new Set(rls.map((r) => lc(r.name))),
     tableGrants: new Set(tgrants.map((r) => lc(`${r.t}.${r.g}.${r.p}`))),
-    routineGrants: new Set(rgrants.map((r) => lc(`${r.r}.${r.g}`))),
+    routineGrants: new Set(rgrants.filter((r) => r.s === "public").map((r) => lc(`${r.r}.${r.g}`))),
+    authzRoutineGrants: new Set(rgrants.filter((r) => r.s === "authz").map((r) => lc(`${r.r}.${r.g}`))),
+    collidingFunctionNames: new Set(
+      [...new Set(fns.filter((r) => r.s === "public").map((r) => lc(r.name)))]
+        .filter((n) => fns.some((r) => r.s === "authz" && lc(r.name) === n)),
+    ),
   };
 }
 
 // ── Migration parsing ─────────────────────────────────────────────────────────
 
-export interface Claim {
-  kind:
-    | "table"
-    | "column"
-    | "function"
-    | "index"
-    | "policy"
-    | "enum"
-    | "enumvalue"
-    | "trigger"
-    | "view"
-    | "rls"
-    | "grant"
-    | "grantfn";
-  /** allowlist / report key, e.g. "column:feature_flags.key" */
-  key: string;
-  label: string;
-}
 
 const ident = String.raw`(?:"([^"]+)"|([A-Za-z_][A-Za-z0-9_]*))`;
 const qualIdent = String.raw`(?:(?:"[^"]+"|[A-Za-z_][A-Za-z0-9_]*)\.)?${ident}`;
@@ -836,56 +798,6 @@ export function parseMigration(sql: string): Claim[] {
 
 // ── Diff ──────────────────────────────────────────────────────────────────────
 
-function isMissing(claim: Claim, live: LiveSchema): boolean {
-  const key = claim.key.slice(claim.kind.length + 1);
-  switch (claim.kind) {
-    case "table":
-    case "view":
-      // legacy buddy_* relations live as views; any relation kind counts
-      return !live.relations.has(key);
-    case "column": {
-      const [table] = key.split(".");
-      // If the table itself is missing it's already reported; a column claim
-      // on a view (compat layer) is checked against columns of that view too
-      // (information_schema.columns includes view columns).
-      if (!live.relations.has(table)) return false;
-      return !live.columns.has(key);
-    }
-    case "function":
-      return !live.functions.has(key);
-    case "index":
-      return !live.indexes.has(key);
-    case "policy":
-      return !live.policies.has(key);
-    case "enum":
-      return !live.enums.has(key);
-    case "enumvalue":
-      return !live.enumValues.has(key);
-    case "trigger":
-      return !live.triggers.has(key);
-    case "rls": {
-      // THE DISCRIMINATION THAT MAKES THIS CLAIM TYPE USABLE. A great many RLS
-      // claims come from conditional blocks (`IF to_regclass(...) IS NOT NULL`,
-      // `EXCEPTION WHEN undefined_table`) written to be safe on environments
-      // where the table does not exist. Reporting those as drift would flood
-      // the output with statements that were correctly skipped and drown the
-      // one case that matters. Absent table → not drift; the missing TABLE is
-      // reported separately by its own claim if a migration declares it.
-      if (!live.relations.has(key)) return false;
-      return !live.rlsEnabled.has(key);
-    }
-    case "grant": {
-      const [table] = key.split(".");
-      if (!live.relations.has(table)) return false;
-      return !live.tableGrants.has(key);
-    }
-    case "grantfn": {
-      const [fn] = key.split(".");
-      if (!live.functions.has(fn)) return false;
-      return !live.routineGrants.has(key);
-    }
-  }
-}
 
 // ── Main ──────────────────────────────────────────────────────────────────────
 //
@@ -933,6 +845,7 @@ async function main(): Promise<void> {
   let missingCount = 0;
   let filesAudited = 0;
 
+  const authzOnly: string[] = [];
   for (const dir of MIGRATION_DIRS) {
     let files: string[];
     try {
@@ -949,6 +862,16 @@ async function main(): Promise<void> {
       filesAudited++;
       const claims = parseMigration(readFileSync(join(dir, file), "utf8"));
       totalClaims += claims.length;
+      // Collected, not silenced: a function claim that resolves ONLY in authz
+      // is not drift, but it is also not what the claim's text says, and a
+      // reader deserves to be told which ones those are.
+      for (const c of claims) {
+        if (c.kind !== "function") continue;
+        const name = c.key.slice("function:".length);
+        if (!live.functions.has(name) && live.authzFunctions.has(name)) {
+          authzOnly.push(`${file}: ${name}`);
+        }
+      }
       const missing = claims.filter(
         (c) => !ALLOWLIST.has(c.key) && isMissing(c, live),
       );
@@ -959,6 +882,33 @@ async function main(): Promise<void> {
         for (const c of missing) console.log(`      missing ${c.label}`);
       }
     }
+  }
+
+  if (authzOnly.length > 0) {
+    console.log(
+      `\nNOTE: ${authzOnly.length} function claim(s) resolved in \`authz\`, not \`public\`. ` +
+        "Not drift — `authz` is outside PostgREST's db-schemas, which is why the " +
+        "membership predicates live there — but the claim does not say so, and this " +
+        "auditor is name-keyed, so it cannot tell an intentional authz function from " +
+        "one that was supposed to be in public:",
+    );
+    for (const a of authzOnly) console.log(`  · ${a}`);
+  }
+
+  // The one case where name-keying can hide real drift, reported rather than
+  // assumed away: a function name present in BOTH schemas. A grantfn claim on
+  // such a name is satisfied by a grant on EITHER, so a missing authz grant is
+  // invisible if the public twin carries it. That is not hypothetical — it is
+  // exactly what happened to `is_accepted_trip_member` in the run that found
+  // the public-only grant catalogue.
+  if (live.collidingFunctionNames.size > 0) {
+    console.log(
+      `\nNOTE: ${live.collidingFunctionNames.size} function name(s) exist in BOTH \`public\` and ` +
+        "`authz`. Claims here are name-keyed, so an existence or grant claim on one of these " +
+        "is satisfied by EITHER schema and this auditor cannot say which — a missing grant on " +
+        "the authz copy would be masked by the public one:",
+    );
+    for (const n of [...live.collidingFunctionNames].sort()) console.log(`  · ${n}`);
   }
 
   console.log(
@@ -980,3 +930,6 @@ async function main(): Promise<void> {
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   await main();
 }
+
+export { isMissing };
+export type { Claim, LiveSchema };

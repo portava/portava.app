@@ -806,7 +806,7 @@ NOT-BUILT row in that census (150 C / 17 W / 1 N / 1 ?).
 
 Passport spec §11 names seven capabilities derived from trust evidence + domain
 policy. Six exist and are derived server-side in
-`services/passport/PassportProjectionService.ts:659#buildOwnerCapabilities`:
+`services/passport/PassportProjectionService.ts:683#buildOwnerCapabilities`:
 
 ```
 canJoinPublicTrip · canHostTrip · canCreateLargePlan
@@ -1272,7 +1272,7 @@ another six would trade a loud problem for a quiet one.
 
 ---
 
-## `CI_SUPABASE_TOKEN_401` — the sanctioned applier lost its credential mid-chain
+## `CI_SUPABASE_TOKEN_401` — the sanctioned applier lost its credential mid-chain — **CLOSED 2026-09-10**
 
 **Opened 2026-09-09 15:46 UTC.** Type: `EXTERNAL`. Owner: repository admin.
 Buildable now? **No** — nothing in this repository can fix it, and no code change
@@ -1374,3 +1374,350 @@ No migration was hand-applied to work around the outage. That is the mechanism
 `CI_DB_HAND_APPLIED_FROM_UNMERGED_BRANCHES` above exists to record, and doing it
 again to route around an expired token would be the same mistake with a better
 excuse.
+
+### CLOSED — the credential works, measured rather than assumed
+
+`SUPABASE_PROJECT_TOKEN` on the `ci-nonprod-supabase` **environment** — not the
+repository secret the first remedy rotated — was replaced with a scoped Supabase
+personal access token for portava-ci carrying Database and Migrations read-write.
+
+**The evidence is a green job that cannot pass without it**, not a statement that
+the secret was changed. On `ed168ed7`,
+`schema drift · apply migrations, certify, then audit vs live (needs
+credentials)` **succeeded**, and so did `live DB · RLS + role/is_official write
+boundaries` and `api-server · check:all + live_pulse gate`. Each opens with a
+Management API call against `hwokxgbmezheskbzskfr`; a 401 fails the job at that
+first call, which is exactly how the five failures above presented. 27 of 27
+check runs pass on that commit.
+
+No migration was hand-applied at any point, before or after. The chain resumed
+through the sanctioned applier.
+
+---
+
+## `TRIP_KERNEL_CREATE_TRIP_UNGUARDED_INSERT` — a malformed command reported as an outage
+
+**Opened 2026-09-09.** Type: `CODE`. Owner: Trips. Buildable now? **Yes**, and
+deliberately not built in the change that found it — see "Why it is open" below.
+
+### The measurement
+
+Executed against portava-ci inside a rolled-back transaction, through the real
+`public.trip_kernel_execute` (`md5(prosrc) 5fd683a4…`, 103,400 chars):
+
+```
+CREATE_TRIP  payload {"title":"S"}          -- no destination_city
+->  ERROR: 23502 null value in column "destination_city" of relation "trips"
+    CONTEXT: PL/pgSQL function trip_kernel_execute(jsonb) line 165
+```
+
+The exception escapes the function. Every other command family wraps its INSERT:
+2764's `ADD_STAGE` catches `check_violation` and `unique_violation` and returns
+`TRIP_COMMAND_MALFORMED` with the constraint name. The trip family is older
+(2450) and its `INSERT INTO public.trips` is unguarded — the only `BEGIN …
+EXCEPTION` on that branch wraps the `owner_id` and date parsing above it.
+
+### Why it matters, and exactly how much
+
+`POST /trips` supports drafts. Its own comment says *"Trips without title/city are
+saved as drafts"*, `computeTripStatus` is called with `destinationCity ?? null`,
+and the command payload then carries `destination_city: destinationCity`
+verbatim. So the payload above is not contrived: it is what the route sends for
+a draft.
+
+`executeTripCommand` sees a thrown RPC and returns `TRIP_KERNEL_UNAVAILABLE`,
+whose meaning is *"the kernel could not be reached, try again"*. **A permanent,
+malformed command is reported as a transient outage**, so a client that retries
+on `unavailable` retries something that can never succeed.
+
+Bounded honestly: nothing is corrupted and no row is half-written — the
+transaction aborts. It is also **not a regression the kernel introduced**: the
+flag-off legacy path inserts the same NULL against the same NOT NULL and returns
+`db_error`. The kernel path is not worse at writing. It is worse at explaining,
+and `TRIP_COMMAND_MALFORMED` is the answer the contract already has for this.
+
+### Why it is open rather than fixed
+
+The fix is a new verified-transform migration against `trip_kernel_execute`
+(read `pg_get_functiondef`, assert the anchor occurs exactly once, wrap the
+INSERT, postcondition-check) — that is, it widens the migration set that the
+Trips certification measured at census-trips §35. It invalidates nothing there:
+the twelve-command slice, the §22.4 idempotency receipt, the version conflict
+and the replay equality are all unaffected. So it is recorded and left for its
+own change rather than folded into a certification pass.
+
+### What would close it
+
+A migration that wraps the trip family's INSERT the way 2764 wraps the stage
+family's, plus a case in the live suite the finding below asks for, asserting
+that a `CREATE_TRIP` with no `destination_city` returns
+`TRIP_COMMAND_MALFORMED` rather than raising.
+
+---
+
+## `TRIPS_HAS_NO_LIVE_KERNEL_SUITE` — the largest object in the architecture has no executable guard — **CLOSED 2026-09-09**
+
+**Opened 2026-09-09.** Type: `TEST_COVERAGE`. Owner: Trips. Buildable now?
+**Yes.**
+
+### The measurement
+
+`public.trip_kernel_execute` is 103,400 characters of PL/pgSQL, the largest
+single object in this architecture. The 49 `trip*.test.ts` suites — **993 tests,
+0 skipped, all passing** — run against doubles and against the TypeScript
+around the RPC. They are worth having, and none of them executes the function.
+
+Memory has the FILE Trips lacks — `src/test/memoryKernelTransactionLive.test.ts`,
+with a `test:memory-kernel-transaction` script — and **it is invoked by nothing
+under `.github/`**. Measured 2026-09-09: `run-live-suite.sh` is called for 26
+suites in `live-db.yml` and that is not one of them, and the file sits on
+`scripts/UNREGISTERED_TESTS_ALLOWLIST.json`, so the curated `npm test` does not
+run it either. It is a script a human can run, not a guard.
+
+**This corrects the first version of this entry**, which said Memory's suite was
+"registered … scored by `run-live-suite.sh`". It is registered as a package
+script and scored by nobody. The correction makes the gap bigger, not smaller:
+Trips has neither the file nor the script, and the one precedent for what to
+build is itself not wired in. See `MEMORY_LIVE_KERNEL_SUITE_NEVER_RUNS` below.
+
+### Why it matters
+
+census-trips §35 certifies the kernel end to end — thirteen commands, idempotency,
+version conflict, presence freshness, and replay determinism proven equal at a
+cut point. All of it was executed by hand through the management API. **It is a
+snapshot, not a guard**: nothing in CI turns red if the kernel changes underneath
+it, and the document would go on reporting a green that no longer holds. That is
+precisely the BUILT-versus-CERTIFIED distinction this census draws everywhere
+else, pointed at the certification itself.
+
+### What closed it, and what has not
+
+**Closed 2026-09-09** by `src/test/tripKernelLive.test.ts` — `ciSupabaseGuard.mjs`
+imported first, `executeTripCommand` driven through the §35 slice, registered as
+`test:trip-kernel-live` AND invoked from `live-db.yml` through
+`run-live-suite.sh`. The script alone would not have closed it: that is exactly
+what Memory had, and Memory's never ran.
+
+**The half that was not closed until CI ran it — now closed.** When this entry
+was written the suite had never executed: no service-role credential existed in
+the environment it was written in, so the PostgREST path
+(`sc.rpc("trip_kernel_execute", …)` as `service_role`) was asserted rather than
+measured, and the sentence above said so.
+
+**It has since run. 12 of 12 pass**, green on its first CI invocation and on
+every run since, most recently on `ed168ed7`. The PostgREST path is measured, not
+asserted, and this entry is closed on both halves. The statement it replaced —
+"the suite has never executed" — was true when written and stopped being true the
+same day; it is corrected here rather than left to be quoted.
+
+---
+
+## `MEMORY_LIVE_KERNEL_SUITE_NEVER_RUNS` — a live suite that exists and is invoked by nothing — **CLOSED 2026-09-09**
+
+**Opened 2026-09-09**, found while looking for the precedent to copy for Trips.
+Type: `CI`. Owner: Memory. Buildable now? **Yes** — one line in `live-db.yml`.
+
+### The measurement
+
+`src/test/memoryKernelTransactionLive.test.ts` is 562 lines and asserts §17's
+central claim — canonical mutation and outbox insert in ONE transaction —
+against the real `public.memory_kernel_execute` rather than against
+`memoryCommandKernelFake.ts`. Its own header explains why the fake cannot prove
+it: "the fake rolls back because it was written to roll back".
+
+It is reachable by exactly one route: `npm run test:memory-kernel-transaction`,
+by hand. `.github/workflows/live-db.yml` calls `run-live-suite.sh` for 26 suites
+and this is not one of them; `scripts/UNREGISTERED_TESTS_ALLOWLIST.json` lists
+the file, so the curated `npm test` skips it too. Nothing in CI executes it.
+
+### Why it matters
+
+The reason `run-live-suite.sh` scores on OUTPUT (pass > 0 AND skipped == 0)
+rather than exit code is that a live suite which quietly does nothing is worse
+than none — it reports green while asserting zero. A live suite that is never
+INVOKED is the same failure one level up, and it is invisible to that guard
+because the guard only sees suites somebody remembered to list.
+
+### What closed it, and what is left
+
+**Closed 2026-09-09**: `live-db.yml` now calls
+`run-live-suite.sh memory-kernel-transaction …`, in the same change that wired
+the Trips one, because the two failures are the same failure.
+
+### And it found something on its first invocation
+
+Run 34399941789, the first time any workflow ran this file:
+`tests=17 pass=16 fail=1`, on
+*"CONCURRENT commands sharing one key produce at most ONE domain effect"* —
+`expected create + exactly one update event, got 1`.
+
+**The defect is in the test, and the mechanism is worth writing down.**
+`createMemory(label)` issues CREATE_MEMORY with `key(label)`, and that case
+called `createMemory("idem-race")` and then raced eight UPDATE_MEMORY commands
+on `key("idem-race")` — **the same key**. The create had already consumed it, so
+all eight racers were refused `MEMORY_IDEMPOTENCY_KEY_REUSED`, which is exactly
+the behaviour the test one line above pins. The two neighbouring cases use
+distinct labels (`idem` / `idem-1`, `idem-reuse` / `idem-2`); this one did not.
+
+What makes it worth a ledger entry rather than a one-line fix note is HOW it
+passed for so long: `receipts.length === 1` and `accepted.length === 1` were
+satisfied by the CREATE's own receipt and its own audit row. Two of the three
+assertions were true by coincidence, and only the third — the event count —
+could tell. A test asserting a race, never executed, with two assertions that
+pass on the wrong evidence, is the strongest possible argument for the wiring
+this entry exists to add. Fixed by giving the setup its own label; every other
+label in the file was checked for the same collision and there is none.
+
+**Left open as a separate ask**, and not built here: nothing PREVENTS the next
+inert live suite. `assert-ci-scripts.mjs` verifies that every script CI invokes
+exists; the inverse — that every live-shaped script in `package.json` is either
+invoked by a workflow or carries a written reason — is the closed-set discipline
+`check:guard-coverage` already applies to Supabase-reaching files, and it does
+not exist for test scripts. Until it does, this entry closed one instance by
+hand.
+
+---
+
+## `CENSUS_HEAD_COMMITS_UNREACHABLE_IN_CI` — six declarations that can only be checked on the machine that wrote them — **CLOSED 2026-09-10**
+
+**Opened 2026-09-09.** Type: `CI`. Owner: shared — six censuses across five
+lanes. Buildable now? **Yes, but not by one lane alone**; see "Why this is not
+fixed here".
+
+### The measurement
+
+`check:census-freshness` fails inside `api-server-check-all` with six errors of
+one shape:
+
+```
+fatal: Invalid revision range 7bca4b0d0e19d29ea0a96982f74b35d26402fa52..575ceb45
+##[error]census-trust.md: git could not diff 7bca4b0d..HEAD — the declared
+         head_commit may not exist in this clone.
+```
+
+…for `census-discovery`, `census-highlights-memories`, `census-layover`,
+`census-trips`, `census-trust` and `census-wall` — **every checkable census
+there is**. Measured locally: not one of the six declared commits is an ancestor
+of `origin/main`, and `git branch -r --contains` returns nothing for any of them.
+They are pre-squash working-tree commits. This repository squash-merges, so the
+commit a census was measured at stops existing the moment its branch lands.
+
+**The guard therefore cannot be green in CI, and has been passing locally for a
+reason that is not a property of the repository**: this container's object store
+still holds those commits from the branch work that produced them. A fresh clone
+— which is what CI has, `fetch-depth: 0` and all, since the objects are on no
+ref — cannot resolve any of them.
+
+That is worse than a red check. `check:guard-reachability` prints
+`checkCensusFreshness.ts  inspected  (not read — the guard is currently FAILING,
+exit 1)`, so the one guard that would notice already knows and says so in
+passing.
+
+### Which of the six can be re-declared without lying, measured
+
+All six last landed on main in the same squash, `42aeac38` (#476). Whether
+moving a declaration there is honest is not a judgement — it is
+`git diff --name-only <old> 42aeac38 -- <that census's scope>`, which says
+whether the census aged in between:
+
+| census | scoped paths | changed `old..42aeac38` | verdict |
+| --- | ---: | ---: | --- |
+| census-trips | 35 | **0** | provably neutral — **re-declared** |
+| census-trust | 15 | **0** | provably neutral — **re-declared** |
+| census-discovery | 10 | **0** | provably neutral — one line, not this lane's to take |
+| census-highlights-memories | 10 | 4 | **not neutral** — see below |
+| census-layover | 5 | 1 | **not neutral** — see below |
+| census-wall | 7 | 1 | **not neutral** — see below |
+
+`census-trips`, `census-trust` and `census-discovery` now declare `42aeac38`.
+
+**Confirmed in CI, not just rehearsed.** On `2d25ead2`, `check:census-freshness`
+reported `census-trips.md FRESH at 42aeac38 (0 counted files changed)` and the
+same for `census-trust.md` — the first time either has been checkable anywhere
+but a developer's clone — and the run went from **6 problems to 4**.
+
+**Correcting a count stated earlier in this session:** four, not three, remained
+at that point. The three that carry acknowledgements are the ones needing a
+lane's judgement, but `census-discovery` was still failing alongside them for the
+unreachable-commit reason alone. It is re-declared here on the same measured
+grounds (0 scoped files changed), by the Trips lane rather than Discovery's,
+because that neutrality is a fact rather than a call about Discovery's verdicts;
+its own declaration row says so and invites a revert. **Three remain.**
+
+### Why the other three are NOT re-declared
+
+Those three carry live entries in `CENSUS_STALENESS_ACKNOWLEDGED.json`, and the
+files their acknowledgements name changed BEFORE `42aeac38` — so moving the
+declaration forward folds an acknowledged staleness into a measurement nobody
+took. The guard refuses it rather than letting it pass, which is the right
+answer:
+
+```
+::error::CENSUS_STALENESS_ACKNOWLEDGED for census-wall.md names since=9f8122ff,
+         but that census now declares head_commit 42aeac38. The census was
+         re-measured; the acknowledgement is spent. Delete it.
+```
+
+Deleting the acknowledgement to satisfy that message would be laundering. What
+those three need is their lane's judgement: re-measure at `42aeac38` and let the
+acknowledgement go because it is genuinely spent, or accept STALE, which is true.
+
+### What would close it
+
+The three above, by their owners, plus `census-discovery`'s one line. And so the
+next one cannot happen silently, a rule in `checkCensusFreshness.ts` that a
+declared `head_commit` must be an ANCESTOR of the default branch: an unreachable
+declaration should fail as MALFORMED, the way `censusHeadCommit.ts` already fails
+a botched row, rather than as "git could not diff" — a distinction that matters
+because the first names the defect and the second reads like a clone problem.
+
+### CLOSED 2026-09-10 — all six re-declared, and the guard now catches the next one locally
+
+**Reproduced first, so the fix was aimed at a measurement rather than a
+hypothesis.** A fresh `git clone --single-branch` of this branch — which is what
+CI has — does not carry `cdfff599`, `743ae78f` or `9f8122ff` at all, and
+`check:census-freshness` in that clone printed exactly the three errors the PR
+was red on, against a clean pass in the working container. That is the whole of
+the two failing check runs.
+
+**The delta was re-measured, which is the thing the entry above said those three
+needed.** The choice it named was "re-measure at `42aeac38` and let the
+acknowledgement go because it is genuinely spent, or accept STALE". The first
+was taken, and the work it takes is bounded and was done: six counted files
+changed across the three censuses, each re-verified mechanically over
+`<original>..42aeac38`:
+
+| census | counted file(s) changed | what the re-verification found |
+| --- | --- | --- |
+| highlights-memories | `lib/memoryOutbox.ts` | 48 insertions, **0** lines surviving a not-comment-not-blank filter |
+| highlights-memories | `memoryProjections/derivativeRegistry.ts` + `derivativeRegistryRead.ts` | a split: **identical 18-symbol export set** at both commits, **0** non-comment differing lines in the retained half, and the moved `readRegisteredPayload` inlines the body of the `readRegistration` it used to call — same table, columns, filters and error mapping |
+| highlights-memories | `memoryRetrieval/searchMemories.ts` | **one** changed line, an import path |
+| layover | `services/airport/LayoverPrivacyGuard.ts` | 7 insertions / 4 deletions, **0** surviving the same filter |
+| wall | `wall/…/WallPromotionDisclosure.component.test.tsx` | 4 insertions / 3 deletions, **0** surviving the same filter |
+
+**What that does and does not license, stated rather than implied.** It licenses
+the freshness claim and nothing wider: no counted file changed behaviour between
+where each census was measured and `42aeac38`, so no verdict can have moved. It
+is NOT a re-reading of those censuses against the code — `check:census-freshness`
+never was that, and §"DOES NOT COVER" in the script says so. Each of the three
+declaration rows says this in the document itself, names the changed files, and
+invites the owning lane to revert.
+
+**The acknowledgements are retired, not deleted.** Moving `head_commit` makes
+them spent by the checker's own rule, and deleting them to silence that message
+is the laundering the entry above refused. They now sit in a `retired` array in
+`CENSUS_STALENESS_ACKNOWLEDGED.json` that nothing reads, because the per-file
+argument is the only thing that makes the re-declaration defensible and it should
+outlive the entry that carried it.
+
+**The recurrence guard, which is the half that matters.** `checkCensusFreshness.ts`
+now rejects a declared `head_commit` that does not resolve, and separately one
+that resolves but is **not an ancestor of HEAD** — the orphan case, which is what
+all six of these were. Ancestor-of-HEAD rather than ancestor-of-the-default-branch
+on purpose: a census measured on a branch and declared at that branch's commit is
+legitimate and must keep working. Mutation-tested both ways on 2026-09-10:
+declaring `cdfff599` (present in this container, on no line of history) is caught
+as an orphan, and declaring a hash that exists nowhere is caught as unreachable —
+each with an error that names the defect instead of the previous
+`git could not diff`, which read like a checkout problem. The failure mode this
+blocker is made of — green locally, red in CI — is now red in both.

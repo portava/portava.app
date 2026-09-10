@@ -35,12 +35,14 @@ import {
   TRIP_MEMBERS_REVIEWED_ALLOWLIST,
   UNGATED_TRIP_MEMBERS_FUNCTIONS,
   arrayGrantVerdict,
+  ungatedFunctionPattern,
   assertSnapshotExamined,
   compareUngatedFunctionList,
   evaluatePolicySnapshot,
   forAllWriteCheckVerdict,
   policyKey,
   tripMembersVerdict,
+  type PolicyDispositions,
   type PolicySnapshotRow,
   type TripMembersReaderRow,
 } from "../scripts/rlsDispositions.js";
@@ -129,16 +131,42 @@ describe("rule 1 — trip_members without role AND status", () => {
     assert.ok(TRIP_MEMBERS_REVIEWED_ALLOWLIST.some((e) => e.key === policyKey(r)));
   });
 
-  it("reaching trip_members through can_see_trip (qualified or not) is ungated_via_function", () => {
-    assert.deepEqual(tripMembersVerdict(row("trips", "trips_select", "SELECT", "can_see_trip(id)")), { kind: "ungated_via_function", via: "can_see_trip" });
-    assert.deepEqual(tripMembersVerdict(row("trip_checklists", "trip_checklists_members", "ALL", "public.can_see_trip(trip_id)")), { kind: "ungated_via_function", via: "can_see_trip" });
-    assert.deepEqual(tripMembersVerdict(row("x", "y", "SELECT", "shares_trip_with(owner_id)")), { kind: "ungated_via_function", via: "shares_trip_with" });
+  it("the ungated-function RULE: qualified or not, whole-name only", () => {
+    // The rule is exercised against an EXPLICIT list, not the shipped one. It
+    // used to be tested through tripMembersVerdict with `can_see_trip` in
+    // UNGATED_TRIP_MEMBERS_FUNCTIONS; that list is now empty because 2534
+    // repaired the function, and a rule whose test depends on today's data
+    // cannot survive the data being fixed.
+    const re = ungatedFunctionPattern(["can_see_trip", "shares_trip_with"])!;
+    assert.equal("can_see_trip(id)".match(re)?.[1], "can_see_trip");
+    assert.equal("public.can_see_trip(trip_id)".match(re)?.[1], "can_see_trip");
+    assert.equal("shares_trip_with(owner_id)".match(re)?.[1], "shares_trip_with");
     // A function that merely CONTAINS the name is not the function.
-    assert.deepEqual(tripMembersVerdict(row("x", "y", "SELECT", "my_can_see_trip_wrapper(id)")), { kind: "not_applicable" });
+    assert.equal("my_can_see_trip_wrapper(id)".match(re), null);
   });
 
-  it("the captured function list is exactly the two functions read from pg_proc on CI (until 2533/2534 land there)", () => {
-    assert.deepEqual([...UNGATED_TRIP_MEMBERS_FUNCTIONS].sort(), ["can_see_trip", "shares_trip_with"]);
+  it("AN EMPTY LIST MATCHES NOTHING — the trap the shrink-only rule walks into", () => {
+    // `new RegExp("\\b(?:public\\.)?()\\s*\\(")` has an empty alternation group and
+    // matches ANY expression containing a `(`. That is what the builder produced
+    // once 2533 and 2534 emptied the list, so every policy in the database would
+    // have read as ungated_via_function at exactly the moment the functions were
+    // fixed. Null is the only correct answer for "match one of no functions".
+    assert.equal(ungatedFunctionPattern([]), null);
+  });
+
+  it("2534's result, through the SHIPPED list: calling can_see_trip is no longer a trip_members reach", () => {
+    assert.deepEqual(tripMembersVerdict(row("trips", "trips_select", "SELECT", "can_see_trip(id)")), { kind: "not_applicable" });
+    assert.deepEqual(tripMembersVerdict(row("x", "y", "SELECT", "shares_trip_with(owner_id)")), { kind: "not_applicable" });
+  });
+
+  it("the captured function list is EMPTY, because 2533 and 2534 landed on CI", () => {
+    // Measured 2026-09-09: pg_trip_members_readers_snapshot() on portava-ci
+    // returns one row, authz.is_trip_crew, with mentions_role AND
+    // mentions_status — and in `authz`, not `public`. compareUngatedFunctionList
+    // looks for PUBLIC functions with no status gate, so the live set is empty
+    // and the captured list must equal it. The live suite reported both former
+    // entries stale by name.
+    assert.deepEqual([...UNGATED_TRIP_MEMBERS_FUNCTIONS], []);
   });
 
   it("compareUngatedFunctionList: the CI catalog today matches; 2533 and 2534 each make an entry stale; a new reader is unlisted", () => {
@@ -147,24 +175,34 @@ describe("rule 1 — trip_members without role AND status", () => {
       { schema_name: "public", function_name: "can_see_trip", mentions_role: true, mentions_status: false },
       { schema_name: "public", function_name: "shares_trip_with", mentions_role: false, mentions_status: false },
     ];
-    assert.deepEqual(compareUngatedFunctionList(ciToday), { unlisted: [], stale: [] });
+    // The historical list, passed explicitly — the shipped one is now empty.
+    const THEN = ["can_see_trip", "shares_trip_with"];
+    assert.deepEqual(compareUngatedFunctionList(ciToday, THEN), { unlisted: [], stale: [] });
 
     // 2533 drops shares_trip_with.
     const after2533 = ciToday.filter((r) => r.function_name !== "shares_trip_with");
-    assert.deepEqual(compareUngatedFunctionList(after2533), { unlisted: [], stale: ["shares_trip_with"] });
+    assert.deepEqual(compareUngatedFunctionList(after2533, THEN), { unlisted: [], stale: ["shares_trip_with"] });
 
     // 2534 routes can_see_trip through authz.is_trip_crew, so it no longer reads trip_members at all.
     const after2534 = after2533.filter((r) => r.function_name !== "can_see_trip");
-    assert.deepEqual(compareUngatedFunctionList(after2534), { unlisted: [], stale: ["can_see_trip", "shares_trip_with"] });
+    assert.deepEqual(compareUngatedFunctionList(after2534, THEN), { unlisted: [], stale: ["can_see_trip", "shares_trip_with"] });
 
-    // A gated reader (mentions status) is not ungated; an ungated newcomer is.
-    const gatedNew = [...ciToday, { schema_name: "public", function_name: "is_on_trip", mentions_role: true, mentions_status: true }];
+    // AND WHERE THE DATABASE ACTUALLY IS, against the SHIPPED empty list: the
+    // live catalogue is authz.is_trip_crew alone, gated, and outside `public`.
+    assert.deepEqual(compareUngatedFunctionList(after2534), { unlisted: [], stale: [] });
+
+    // A gated reader (mentions status) is not ungated; an ungated newcomer is —
+    // and this is now the ONLY way a function re-enters the list.
+    const gatedNew = [...after2534, { schema_name: "public", function_name: "is_on_trip", mentions_role: true, mentions_status: true }];
     assert.deepEqual(compareUngatedFunctionList(gatedNew).unlisted, []);
-    const ungatedNew = [...ciToday, { schema_name: "public", function_name: "is_on_trip", mentions_role: true, mentions_status: false }];
+    const ungatedNew = [...after2534, { schema_name: "public", function_name: "is_on_trip", mentions_role: true, mentions_status: false }];
     assert.deepEqual(compareUngatedFunctionList(ungatedNew).unlisted, ["is_on_trip"]);
 
-    // authz functions are not PostgREST-exposed and are the helpers themselves; never "unlisted".
-    const authzUngated = [...ciToday, { schema_name: "authz", function_name: "x", mentions_role: false, mentions_status: false }];
+    // authz functions are not PostgREST-exposed and are the helpers themselves;
+    // never "unlisted". Built on `after2534` — the live shape — rather than on
+    // `ciToday`, whose two PUBLIC ungated functions would be unlisted against
+    // the shipped empty list and would mask what this case is checking.
+    const authzUngated = [...after2534, { schema_name: "authz", function_name: "x", mentions_role: false, mentions_status: false }];
     assert.deepEqual(compareUngatedFunctionList(authzUngated).unlisted, []);
   });
 
@@ -202,9 +240,28 @@ describe("rule 2 — FOR ALL without WITH CHECK", () => {
     assert.equal(forAllWriteCheckVerdict(row("t", "p", "ALL", "true", null, "{anon,service_role}")), "reuses_using");
   });
 
-  it("the captured baseline names trip_checklists_members / trip_checklist_items_members — the write hole it reports rather than excuses", () => {
-    assert.ok(FOR_ALL_WITHOUT_WITH_CHECK_BASELINE.includes("trip_checklists::trip_checklists_members"));
-    assert.ok(FOR_ALL_WITHOUT_WITH_CHECK_BASELINE.includes("trip_checklist_items::trip_checklist_items_members"));
+  it("the write hole trip_checklists_members / trip_checklist_items_members had is CLOSED, and the rule that found it still bites", () => {
+    // These two were in the baseline as the hole it REPORTED rather than
+    // excused: FOR ALL with no WITH CHECK, so the read predicate doubled as the
+    // write check. 2534 moved the write half onto the API's write rules and both
+    // are now cmd=SELECT with USING can_see_trip(trip_id) — measured on
+    // portava-ci — so they are neither FOR ALL nor reusing anything, and the
+    // live suite reported them stale by name.
+    assert.ok(!FOR_ALL_WITHOUT_WITH_CHECK_BASELINE.includes("trip_checklists::trip_checklists_members"));
+    assert.ok(!FOR_ALL_WITHOUT_WITH_CHECK_BASELINE.includes("trip_checklist_items::trip_checklist_items_members"));
+
+    // The RULE is what deserves the assertion, and it is unchanged: the shape
+    // they USED to have is still reported. Stated over the shape rather than
+    // over the list, so closing the next hole cannot break this test.
+    assert.equal(
+      forAllWriteCheckVerdict(row("trip_checklists", "trip_checklists_members", "ALL", "can_see_trip(trip_id)", null)),
+      "reuses_using",
+    );
+    // And the repaired shape is not.
+    assert.notEqual(
+      forAllWriteCheckVerdict(row("trip_checklists", "trip_checklists_members", "SELECT", "can_see_trip(trip_id)", null)),
+      "reuses_using",
+    );
   });
 });
 
@@ -284,31 +341,108 @@ describe("evaluatePolicySnapshot — allowlists are consistent with the rules, a
     assert.deepEqual(evaluatePolicySnapshot(rows).tripMembersOffenders, ["new_table::new_policy [ungated_direct]"]);
   });
 
-  it("MUTATION: a NEW policy calling can_see_trip is an offender, named with the function", () => {
+  it("MUTATION: a policy calling an UNGATED function is an offender, named with the function", () => {
+    // This used to run against the shipped list while it held `can_see_trip`.
+    // 2534 gated that function and the list is empty, so the mutation is now
+    // stated with the list it needs: the RULE is that reaching trip_members
+    // through a listed function is an offence, not that any particular function
+    // is listed.
     const rows = [...ciLikeSnapshot(), row("new_table", "new_policy", "SELECT", "can_see_trip(trip_id)")];
-    assert.deepEqual(evaluatePolicySnapshot(rows).tripMembersOffenders, ["new_table::new_policy [ungated_via_function via can_see_trip]"]);
+    const re = ungatedFunctionPattern(["can_see_trip"])!;
+    assert.equal("can_see_trip(trip_id)".match(re)?.[1], "can_see_trip");
+
+    // And against the SHIPPED list, the same policy is NOT an offender — which
+    // is 2534's whole point, and would be a false green if the empty-list trap
+    // above had not been closed.
+    assert.deepEqual(evaluatePolicySnapshot(rows).tripMembersOffenders, []);
   });
 
-  it("MUTATION: applying 2530 makes the highlights known-open entry STALE (shrink-only mechanism)", () => {
-    const rows = ciLikeSnapshot().map((r) =>
-      policyKey(r) === "highlights::highlights_select_active"
-        ? { ...r, qual: HIGHLIGHTS_CI.replace(TRIP_ONLY_SELF_JOIN, TRIP_ONLY_HELPER) }
-        : r,
-    );
-    const report = evaluatePolicySnapshot(rows);
+  it("MUTATION: the empty list does not make every policy an offender", () => {
+    // The regression the empty-alternation regex would have caused: every
+    // policy whose expression contains a `(` reading as ungated_via_function.
+    // ciLikeSnapshot() is full of such expressions.
+    const report = evaluatePolicySnapshot(ciLikeSnapshot());
     assert.deepEqual(report.tripMembersOffenders, []);
-    assert.deepEqual(report.tripMembersStaleKnownOpen, ["highlights::highlights_select_active"]);
   });
 
-  it("MUTATION: applying 2531 makes the array-grant known-open entry STALE", () => {
-    const rows = ciLikeSnapshot().map((r) =>
-      policyKey(r) === "trip_crew_location_sessions::crew_session_owner_select"
-        ? { ...r, qual: CREW_SESSION_OWNER_SELECT_2531 }
-        : r,
+  it("MUTATION: the shrink-only mechanism — a repaired policy makes its known-open entry STALE", () => {
+    // Stated with its OWN dispositions. The highlights entry was removed on
+    // 2026-09-09 because 2530 landed on portava-ci and the live suite reported
+    // it stale — which is this mechanism working. A test of the mechanism must
+    // not need the entry to still be there; that coupling is why five tests in
+    // this file broke when the lists legitimately emptied.
+    const asItWas: PolicyDispositions = {
+      reviewed: TRIP_MEMBERS_REVIEWED_ALLOWLIST,
+      tripMembersKnownOpen: [{
+        key: "highlights::highlights_select_active",
+        kind: "ungated_direct",
+        reason: "the pre-2530 trip_only self-join",
+        since: "2026-09-07",
+        removeWhen: "migration 2530 is applied to portava-ci",
+      }],
+      arrayGrantKnownOpen: ARRAY_GRANT_KNOWN_OPEN,
+      forAllBaseline: FOR_ALL_WITHOUT_WITH_CHECK_BASELINE,
+    };
+
+    // The row is supplied here rather than taken from ciLikeSnapshot(), which
+    // derives its trip_members rows FROM the shipped list and therefore no
+    // longer contains this policy at all — the same coupling, one level down.
+    const withPolicy = (qual: string): PolicySnapshotRow[] =>
+      [...ciLikeSnapshot(), row("highlights", "highlights_select_active", "SELECT", qual, null, "{authenticated}")];
+
+    // Before the repair the entry is live, and excuses the policy.
+    const before = evaluatePolicySnapshot(withPolicy(HIGHLIGHTS_CI), asItWas);
+    assert.deepEqual(before.tripMembersOffenders, []);
+    assert.deepEqual(before.tripMembersStaleKnownOpen, []);
+
+    // After it, the entry is STALE and the check demands its removal.
+    const after = evaluatePolicySnapshot(
+      withPolicy(HIGHLIGHTS_CI.replace(TRIP_ONLY_SELF_JOIN, TRIP_ONLY_HELPER)),
+      asItWas,
     );
-    const report = evaluatePolicySnapshot(rows);
-    assert.deepEqual(report.arrayGrantOffenders, []);
-    assert.deepEqual(report.arrayGrantStaleKnownOpen, ["trip_crew_location_sessions::crew_session_owner_select"]);
+    assert.deepEqual(after.tripMembersOffenders, []);
+    assert.deepEqual(after.tripMembersStaleKnownOpen, ["highlights::highlights_select_active"]);
+  });
+
+  it("MUTATION: the array-grant shrink-only mechanism — a repaired policy makes its entry STALE", () => {
+    // Stated with its OWN dispositions and its own row, for the fourth time in
+    // this file and the same reason: 2531 is applied to portava-ci, the live
+    // policy reads `SELECT ... USING (auth.uid() = user_id)` with no array
+    // grant, and ARRAY_GRANT_KNOWN_OPEN is now empty — so the mechanism cannot
+    // be demonstrated through the shipped list or through ciLikeSnapshot(),
+    // which derives its rows from it.
+    const KEY = "trip_crew_location_sessions::crew_session_owner_select";
+    const asItWas: PolicyDispositions = {
+      reviewed: TRIP_MEMBERS_REVIEWED_ALLOWLIST,
+      tripMembersKnownOpen: TRIP_MEMBERS_KNOWN_OPEN,
+      arrayGrantKnownOpen: [{
+        key: KEY,
+        kind: "array_grant_ungated",
+        reason: "the pre-2531 `auth.uid() = ANY(allowed_member_ids)` with no membership, status or expiry test",
+        since: "2026-09-07",
+        removeWhen: "migration 2531 is applied to portava-ci",
+      }],
+      forAllBaseline: FOR_ALL_WITHOUT_WITH_CHECK_BASELINE,
+    };
+    const withPolicy = (qual: string): PolicySnapshotRow[] =>
+      [...ciLikeSnapshot(), row("trip_crew_location_sessions", "crew_session_owner_select", "SELECT", qual)];
+
+    // Before 2531 the entry is live and excuses the policy.
+    const before = evaluatePolicySnapshot(withPolicy(CREW_SESSION_OWNER_SELECT_0041), asItWas);
+    assert.deepEqual(before.arrayGrantOffenders, []);
+    assert.deepEqual(before.arrayGrantStaleKnownOpen, []);
+
+    // After it, the entry is STALE and the check demands its removal.
+    const after = evaluatePolicySnapshot(withPolicy(CREW_SESSION_OWNER_SELECT_2531), asItWas);
+    assert.deepEqual(after.arrayGrantOffenders, []);
+    assert.deepEqual(after.arrayGrantStaleKnownOpen, [KEY]);
+  });
+
+  it("MUTATION: with the list empty, an ungated array grant is an OFFENDER rather than excused", () => {
+    // The other half, and the one that matters now: nothing is allowlisted, so
+    // a policy in the pre-2531 shape reports instead of being tolerated.
+    const rows = [...ciLikeSnapshot(), row("trip_crew_location_sessions", "crew_session_owner_select", "SELECT", CREW_SESSION_OWNER_SELECT_0041)];
+    assert.deepEqual(evaluatePolicySnapshot(rows).arrayGrantOffenders, ["trip_crew_location_sessions::crew_session_owner_select"]);
   });
 
   it("MUTATION: a NEW FOR ALL policy without WITH CHECK is an offender; a baseline entry that gains WITH CHECK is stale", () => {
