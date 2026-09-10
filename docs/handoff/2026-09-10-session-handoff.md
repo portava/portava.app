@@ -45,16 +45,23 @@ delegate's body, verbatim), but only because I diffed it instead of trusting my 
 | Thing | State |
 |---|---|
 | Repo | `portava/portava.app`, checkout at `/home/user/portava.app` |
-| Branch | `claude/portava-continuation-uqta94` |
-| Code HEAD | `ed168ed7` — **pushed**. This handoff commit sits directly on top of it and changes no code, so `ed168ed7` is the commit every measurement below was taken at. |
+| Branch | `claude/portava-continuation-uqta94` — **restarted from `main` after the merge**, per the rule that a merged PR cannot track new work |
+| `main` | **`014a25d5`** — the squash of #481. It was `0edcb3eb` for the whole session until then. |
+| Measurement commit | `ed168ed7` — every number in §4 was taken there. Its content is in `014a25d5`; the two commits after it changed no code. |
 | Working tree | clean |
-| PR | [#481](https://github.com/portava/portava.app/pull/481) — **27 of 27 check runs pass, `mergeable_state: clean`** |
-| `main` | `0edcb3eb` — has not moved since the PR opened |
+| PR | [#481](https://github.com/portava/portava.app/pull/481) — **MERGED** 2026-09-10, squashed to `014a25d5`, on 27 of 27 green at `28c95411` |
 | Production Supabase | `ajrurzioarfkagpuxfnb` (travel-buddy) — **read-only queries only; DO NOT mutate** |
 | CI Supabase | `hwokxgbmezheskbzskfr` (portava-ci) — migrations may be applied here for rehearsal |
 
-**PR #481 is green and mergeable but has NOT been merged, and merging it is not
-delegated.** Nothing in this session asked for or received permission to merge.
+**CORRECTED AFTER THE FACT.** This document was written while #481 was still
+open, and said in three places that it was green, mergeable and **not** merged,
+and that merging was not delegated. That was true when written. The owner then
+said "merge it", and it was squashed to `014a25d5` on 27 of 27 green — so all
+three statements are now false and are corrected here rather than left to be
+quoted by whoever reads this next. Everything else in this file was measured at
+`ed168ed7` and still holds; the merge changed no code.
+
+The rest of §1 describes the state **after** that merge.
 
 ---
 
@@ -202,16 +209,18 @@ requirements were correct the ceiling is 55.6 % / 77.9 %. On parsed rows alone: 
 
 ## 5. Pick up here
 
-### A. PR #481 — green, mergeable, NOT merged
+### A. PR #481 — MERGED, and the one thing that follows from it
 
-Merging is the owner's call and was never delegated. If it merges, **`head_commit`
-`42aeac38` stays valid** (it is on `main` already) but the *next* census measured on a
-branch must declare a commit that survives the squash — the new guard will tell you if it
-does not.
+Squashed to `014a25d5` on `main`. The PR-watching subscription and the scheduled
+check-in that went with it are both retired; there is nothing left to babysit.
 
-A self check-in was scheduled into **this** session for 02:59 UTC to re-check CI and
-mergeability. **It will not reach a new account.** If you want that watch, re-subscribe:
-`subscribe_pr_activity(portava, portava.app, 481)`.
+**What the merge means for the census guard, which is the only live consequence.**
+`head_commit` `42aeac38` stays valid — it was already on `main`. But `014a25d5` is a
+*squash*, so every commit on the merged branch (`ed168ed7`, `28c95411`, all sixteen) is now
+an ancestor of nothing. **Any census declaring one of them would be exactly the defect this
+session closed.** None do. The next census measured on a branch must declare a commit that
+survives the squash, and `checkCensusFreshness.ts` will now say so — locally, before CI —
+if it does not. That guard is the reason this paragraph is a note and not a trap.
 
 ### B. OWNER ACTION — production deploy, Batch C
 
