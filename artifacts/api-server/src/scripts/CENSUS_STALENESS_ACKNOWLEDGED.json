@@ -1,6 +1,7 @@
 {
-  "//": "Acknowledgements that a counted architecture file changed WITHOUT the census being re-measured. Read by src/scripts/checkCensusFreshness.ts. An entry names the census, the head_commit it was written against (`since`), the FILES it covers, and why those changes cannot have moved a verdict. It covers the paths it names and nothing else — a counted file that changed and is not listed in `files` makes the census stale again, and an entry with no `files` covers nothing. It is spent the moment that census is re-measured: the checker compares `since` against the census head_commit and FAILS on a mismatch, so an acknowledgement cannot outlive the measurement it was written for.",
-  "acknowledged": [
+  "//": "Acknowledgements that a counted architecture file changed WITHOUT the census being re-measured. Read by src/scripts/checkCensusFreshness.ts. An entry names the census, the head_commit it was written against (`since`), the FILES it covers, and why those changes cannot have moved a verdict. It covers the paths it names and nothing else — a counted file that changed and is not listed in `files` makes the census stale again, and an entry with no `files` covers nothing. It is spent the moment that census is re-measured: the checker compares `since` against the census head_commit and FAILS on a mismatch, so an acknowledgement cannot outlive the measurement it was written for. A second array, `retired`, holds acknowledgements whose census was later re-declared at a reachable commit: the checker does not read it, and it exists so that the per-file argument that justified the re-declaration survives the entry that carried it.",
+  "acknowledged": [],
+  "retired": [
     {
       "census": "census-highlights-memories.md",
       "since": "cdfff5995c92f7adfb3ae7880496bc94002717e9",
@@ -12,7 +13,10 @@
         "artifacts/api-server/src/services/memoryProjections/derivativeRegistry.ts",
         "artifacts/api-server/src/services/memoryProjections/derivativeRegistryRead.ts",
         "artifacts/api-server/src/services/memoryRetrieval/searchMemories.ts"
-      ]
+      ],
+      "retiredAt": "2026-09-10",
+      "retiredBecause": "RETIRED 2026-09-10, not withdrawn. Each of these three censuses declared a PRE-SQUASH head_commit — `cdfff599`, `743ae78f`, `9f8122ff` — and this repository squash-merges, so every one of them is an ancestor of nothing, sits on no remote branch, and exists only in the clone that wrote it. Reproduced in a fresh clone on 2026-09-10: `git diff <commit>..HEAD` aborts with `Invalid revision range`, and check:census-freshness reported all three as unreadable rather than checking them (`CENSUS_HEAD_COMMITS_UNREACHABLE_IN_CI`). The three censuses now declare `42aeac38`, which is on `main`. That re-declaration made these entries spent by the checker's own rule — `since` must equal the census's CURRENT head_commit — so leaving them in `acknowledged` would hard-fail the run. They are moved here rather than deleted because the ARGUMENT is the thing worth keeping: the re-declaration is only defensible if these files really did change nothing a verdict rests on, and each argument below was re-verified mechanically on 2026-09-10 at `<original>..42aeac38` before the move. Nothing reads this array; it is a record.",
+      "reDeclaredHeadCommit": "42aeac38"
     },
     {
       "census": "census-wall.md",
@@ -22,7 +26,10 @@
       "reason": "COMMENT-ONLY, and measured rather than asserted. `git diff 9f8122ff..HEAD` on this file, filtered to lines that are neither a comment nor blank, returns EMPTY (0 lines) against a --stat of 4 insertions / 3 deletions. The edit rewords the jest.mock header so it begins with the literal word NOTE, which is what check-test-mocks.mjs requires before it will start the client runner; the mock factory, every assertion and every testID are byte-identical.\n\nWHY IT CANNOT HAVE MOVED A WALL VERDICT. The file is the test for W178 (§37 promoted-content disclosure). W178's verdict rests on the producers and the render sites — lib/wallProjection.ts, the two Wall services, LiveForYouStrip.tsx and ContextThreadView.tsx — none of which this diff touches. A comment cannot render a disclosure and cannot assert one.\n\nCHECKABLE: the suite is 7 pass / 0 fail before and after, and its assertion count is unchanged. A change that had moved a verdict would have moved an assertion.",
       "files": [
         "travel-buddy-standalone/src/features/wall/components/__tests__/WallPromotionDisclosure.component.test.tsx"
-      ]
+      ],
+      "retiredAt": "2026-09-10",
+      "retiredBecause": "RETIRED 2026-09-10, not withdrawn. Each of these three censuses declared a PRE-SQUASH head_commit — `cdfff599`, `743ae78f`, `9f8122ff` — and this repository squash-merges, so every one of them is an ancestor of nothing, sits on no remote branch, and exists only in the clone that wrote it. Reproduced in a fresh clone on 2026-09-10: `git diff <commit>..HEAD` aborts with `Invalid revision range`, and check:census-freshness reported all three as unreadable rather than checking them (`CENSUS_HEAD_COMMITS_UNREACHABLE_IN_CI`). The three censuses now declare `42aeac38`, which is on `main`. That re-declaration made these entries spent by the checker's own rule — `since` must equal the census's CURRENT head_commit — so leaving them in `acknowledged` would hard-fail the run. They are moved here rather than deleted because the ARGUMENT is the thing worth keeping: the re-declaration is only defensible if these files really did change nothing a verdict rests on, and each argument below was re-verified mechanically on 2026-09-10 at `<original>..42aeac38` before the move. Nothing reads this array; it is a record.",
+      "reDeclaredHeadCommit": "42aeac38"
     },
     {
       "census": "census-layover.md",
@@ -31,7 +38,10 @@
       "reason": "COMMENT-ONLY, verified mechanically rather than claimed. `git diff 743ae78f..HEAD -- src/services/airport/LayoverPrivacyGuard.ts` filtered to added lines that are neither a comment nor blank returns EMPTY, against a --stat of 7 insertions / 4 deletions. No statement, signature, condition or constant changed, so no layover verdict can have moved.\n\nWHAT THE COMMENT SAYS, AND WHY IT IS NOT 'not relevant'. The file's header recorded a FINDING about a read in a different file: `TripCrewLocationService.getCrewPreferences` did not bind `error`, so an unreadable `trip_crew_location_preferences` row read as 'ghost mode off' — a privacy setting reported as its permissive value because a query failed. The layover lane owned the finding and not the file, and said so. The 2026-09-09 Trips fail-closed pass FIXED that read (it now binds `error` and throws), and this edit updates the note to say so, keeping the finding because the finding is what made the fix findable.\n\nThe fixed reader lives in artifacts/api-server/src/services/tripCrew/TripCrewLocationService.ts, which census-layover.md does not count and does not grade — its only mention of that table is the deployment row at census-layover.md:1328, which states that `location_preferences` and `trip_crew_location_preferences` both exist in production. That statement is unaffected. Whether the layover surface's OWN ghost-mode read is fail-closed is graded against this file, and this file's behaviour is byte-for-byte what it was measured as.",
       "files": [
         "artifacts/api-server/src/services/airport/LayoverPrivacyGuard.ts"
-      ]
+      ],
+      "retiredAt": "2026-09-10",
+      "retiredBecause": "RETIRED 2026-09-10, not withdrawn. Each of these three censuses declared a PRE-SQUASH head_commit — `cdfff599`, `743ae78f`, `9f8122ff` — and this repository squash-merges, so every one of them is an ancestor of nothing, sits on no remote branch, and exists only in the clone that wrote it. Reproduced in a fresh clone on 2026-09-10: `git diff <commit>..HEAD` aborts with `Invalid revision range`, and check:census-freshness reported all three as unreadable rather than checking them (`CENSUS_HEAD_COMMITS_UNREACHABLE_IN_CI`). The three censuses now declare `42aeac38`, which is on `main`. That re-declaration made these entries spent by the checker's own rule — `since` must equal the census's CURRENT head_commit — so leaving them in `acknowledged` would hard-fail the run. They are moved here rather than deleted because the ARGUMENT is the thing worth keeping: the re-declaration is only defensible if these files really did change nothing a verdict rests on, and each argument below was re-verified mechanically on 2026-09-10 at `<original>..42aeac38` before the move. Nothing reads this array; it is a record.",
+      "reDeclaredHeadCommit": "42aeac38"
     }
   ]
 }

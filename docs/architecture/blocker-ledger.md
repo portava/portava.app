@@ -1556,7 +1556,7 @@ hand.
 
 ---
 
-## `CENSUS_HEAD_COMMITS_UNREACHABLE_IN_CI` — six declarations that can only be checked on the machine that wrote them
+## `CENSUS_HEAD_COMMITS_UNREACHABLE_IN_CI` — six declarations that can only be checked on the machine that wrote them — **CLOSED 2026-09-10**
 
 **Opened 2026-09-09.** Type: `CI`. Owner: shared — six censuses across five
 lanes. Buildable now? **Yes, but not by one lane alone**; see "Why this is not
@@ -1648,3 +1648,54 @@ declared `head_commit` must be an ANCESTOR of the default branch: an unreachable
 declaration should fail as MALFORMED, the way `censusHeadCommit.ts` already fails
 a botched row, rather than as "git could not diff" — a distinction that matters
 because the first names the defect and the second reads like a clone problem.
+
+### CLOSED 2026-09-10 — all six re-declared, and the guard now catches the next one locally
+
+**Reproduced first, so the fix was aimed at a measurement rather than a
+hypothesis.** A fresh `git clone --single-branch` of this branch — which is what
+CI has — does not carry `cdfff599`, `743ae78f` or `9f8122ff` at all, and
+`check:census-freshness` in that clone printed exactly the three errors the PR
+was red on, against a clean pass in the working container. That is the whole of
+the two failing check runs.
+
+**The delta was re-measured, which is the thing the entry above said those three
+needed.** The choice it named was "re-measure at `42aeac38` and let the
+acknowledgement go because it is genuinely spent, or accept STALE". The first
+was taken, and the work it takes is bounded and was done: six counted files
+changed across the three censuses, each re-verified mechanically over
+`<original>..42aeac38`:
+
+| census | counted file(s) changed | what the re-verification found |
+| --- | --- | --- |
+| highlights-memories | `lib/memoryOutbox.ts` | 48 insertions, **0** lines surviving a not-comment-not-blank filter |
+| highlights-memories | `memoryProjections/derivativeRegistry.ts` + `derivativeRegistryRead.ts` | a split: **identical 18-symbol export set** at both commits, **0** non-comment differing lines in the retained half, and the moved `readRegisteredPayload` inlines the body of the `readRegistration` it used to call — same table, columns, filters and error mapping |
+| highlights-memories | `memoryRetrieval/searchMemories.ts` | **one** changed line, an import path |
+| layover | `services/airport/LayoverPrivacyGuard.ts` | 7 insertions / 4 deletions, **0** surviving the same filter |
+| wall | `wall/…/WallPromotionDisclosure.component.test.tsx` | 4 insertions / 3 deletions, **0** surviving the same filter |
+
+**What that does and does not license, stated rather than implied.** It licenses
+the freshness claim and nothing wider: no counted file changed behaviour between
+where each census was measured and `42aeac38`, so no verdict can have moved. It
+is NOT a re-reading of those censuses against the code — `check:census-freshness`
+never was that, and §"DOES NOT COVER" in the script says so. Each of the three
+declaration rows says this in the document itself, names the changed files, and
+invites the owning lane to revert.
+
+**The acknowledgements are retired, not deleted.** Moving `head_commit` makes
+them spent by the checker's own rule, and deleting them to silence that message
+is the laundering the entry above refused. They now sit in a `retired` array in
+`CENSUS_STALENESS_ACKNOWLEDGED.json` that nothing reads, because the per-file
+argument is the only thing that makes the re-declaration defensible and it should
+outlive the entry that carried it.
+
+**The recurrence guard, which is the half that matters.** `checkCensusFreshness.ts`
+now rejects a declared `head_commit` that does not resolve, and separately one
+that resolves but is **not an ancestor of HEAD** — the orphan case, which is what
+all six of these were. Ancestor-of-HEAD rather than ancestor-of-the-default-branch
+on purpose: a census measured on a branch and declared at that branch's commit is
+legitimate and must keep working. Mutation-tested both ways on 2026-09-10:
+declaring `cdfff599` (present in this container, on no line of history) is caught
+as an orphan, and declaring a hash that exists nowhere is caught as unreachable —
+each with an error that names the defect instead of the previous
+`git could not diff`, which read like a checkout problem. The failure mode this
+blocker is made of — green locally, red in CI — is now red in both.
