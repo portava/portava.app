@@ -2542,12 +2542,12 @@ by saying exactly what it had not done:
 > **No verdict was re-derived.** §37 checked that each cited artifact exists and
 > still says what the row says — not whether the judgement was right.
 
-This section does that, for 39 of the 89 BUILT-AND-CORRECT rows. A C row is the
+This section does that, for 41 of the 89 BUILT-AND-CORRECT rows. A C row is the
 one that matters most: a W row that rots stays wrong, but a C row that rots
 becomes a false assurance, and nothing in this repository had ever asked whether
 one was true.
 
-**37 of the 39 held. Two did not**, and they failed the same way: a universal
+**39 of the 41 held. Two did not**, and they failed the same way: a universal
 claim that had never been counted. TR51 said *every* trip write parses a zod
 schema first; 8 of 53 do not. TR200 said trip events pass an attention policy;
 10 trip push sites never reach the router that applies one. Both moved **C → W**
@@ -2573,6 +2573,7 @@ is handled" is a count, and until this pass none of them had been counted.
 | TR52, TR106, TR107 | Every plan write is gated. All six plan-write endpoints checked individually. |
 | TR7, TR17, TR285 | `trip_reservations` carries no payment, amount, currency or provider column — references and operational facts only; `status` defaults to `pending_confirm`, so an LLM extraction never auto-commits; `confirmation_ref` is opaque text. |
 | TR32, TR94 | The crossing is single — and the ratchet that was claimed to keep it single did not exist. See below. |
+| TR330, TR353 | TR330's four safe-return channels are four separate opt-in booleans on the session, as claimed. TR353's server authority holds — see the false-positive note below, which is the more useful half. |
 | TR355, TR429, TR222 | `trg_trips_updated BEFORE UPDATE ON trips` exists exactly where cited, so client write time is not authoritative. `tripStatus.ts` and `tripCrewLocation.ts` contain **zero** DB references — pure as claimed, measured not asserted. No trip route imports Compass, so Trips is structurally operational without it. |
 | TR331, TR332, TR414, TR37, TR381 | See the corrections below. |
 
@@ -2734,9 +2735,31 @@ foundational file that predates the ledger, and both rows' claims were verified
 against it directly. This is a note for whoever next asks why the applier's
 coverage and this census's evidence are not the same set — not a defect.
 
+### THE COUNTING METHOD HAS FALSE POSITIVES, AND THEY MUST BE OPENED
+
+The quantifier grep is how TR51 and TR200 were caught, so it is worth stating
+precisely where it misleads.
+
+Applied to TR353 ("membership resolved server-side on every read and write"), a
+per-endpoint scan for a membership or ownership gate reported **five trip-scoped
+endpoints with none**, two of which mutate trip content. Every one was opened,
+and **every one was a false positive**:
+
+| endpoint | why the scan missed the gate |
+| --- | --- |
+| `POST …/destinations/reorder` and `…/items/reorder` | both are one-line registrations delegating to a shared `handleDestinationsReorder`, which does `requireUser` → `requireTripMember` → role check. The scan read the registration line, not the handler. |
+| `DELETE …/reminders/:reminderId` | gated on `user_id !== user.id` — own-resource ownership, STRICTER than membership, and a form the pattern did not recognise. |
+| `POST …/decline-invite`, `…/join-requests/:requestId/cancel` | acting on your own invitation or your own request; membership is not the right gate and its absence is correct. |
+
+**TR353 holds.** The lesson is the one this document keeps relearning: a count is
+evidence for opening a file, never a substitute for opening it. TR51 and TR200
+moved because the absence was confirmed by reading the code — `sendPushWithRetry`
+really does consult no policy, `POST /trips` really did destructure the body —
+not because a grep said so.
+
 ### What this pass did NOT do, stated rather than implied
 
-1. **50 of the 89 C rows are not re-derived.** They remain as §36 counted them.
+1. **48 of the 89 C rows are not re-derived.** They remain as §36 counted them.
 2. **No W or N row was re-derived at all.** 129 W and 234 N rows stand entirely
    on earlier passes. A W row asserting something is broken could have been
    fixed since without anyone noticing — that is the cheaper error, but it is

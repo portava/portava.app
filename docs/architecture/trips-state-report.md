@@ -56,7 +56,7 @@ Two passes have now started closing that:
 | pass | what it established | what it explicitly did not |
 | --- | --- | --- |
 | **§37** | 338 citations resolved; **37 had rotted**, all of them still *in range*, so `check:doc-citations` had been green on them the whole time | did not re-derive a single verdict |
-| **§38** | **39 of 89 C rows re-derived. 37 held; TR51 and TR200 did not** | 50 C rows, and **all 129 W and 234 N rows**, stand on earlier passes |
+| **§38** | **41 of 89 C rows re-derived. 39 held; TR51 and TR200 did not** | 48 C rows, and **all 129 W and 234 N rows**, stand on earlier passes |
 
 **Two verdicts moved, both DOWN, both for the same reason** — a universal claim nobody had counted. **TR51**: *every* trip write parses a zod schema first — 8 of 53 do not. **TR200**: trip events pass an attention policy — 10 trip push sites never reach the router that applies one. CONSTRUCTED is unchanged at 47.9 % (both are still built, now graded wrong); CORRECT falls 19.7 % → **19.3 %**. Nothing in either pass raises a number.
 
@@ -112,7 +112,7 @@ per-census floors that ratchet.
 | Batch C production deploy | **OWNER — manual by design** | DEPLOYED. `manual-production-migration-runbook.md` line 313 |
 | PR #482 is draft | owner | MERGED. Deliberately left draft |
 | `TRIP_KERNEL_CREATE_TRIP_UNGUARDED_INSERT` | Trips | a malformed command reports a transient outage. **Pinned in the live suite as current behaviour** — fixing it turns that test red on purpose |
-| 50 C rows + 129 W + 234 N not re-derived | Trips | the honest ceiling on any claim that Trips is verified |
+| 48 C rows + 129 W + 234 N not re-derived | Trips | the honest ceiling on any claim that Trips is verified |
 | 7 trip write endpoints still read `req.body` with no schema | Trips | TR51 returns to C when `check:trip-write-validation`'s list reaches zero |
 | `z.url()` accepts `javascript:` on `coverUrl` | Trips | needs fixing on `PatchTripSchema` and `CreateTripSchema` together; pinned as current behaviour |
 | **10 trip pushes skip per-user preferences, categories and quiet hours** | notifications owner | a user inside quiet hours still receives them. Re-plumbing risks the double-delivery the code names |
@@ -126,15 +126,15 @@ per-census floors that ratchet.
 
 - Both are **floors** derived from a document that has only just begun to be read
   against the code.
-- **39 of 89** C rows have been independently re-derived, and **two of them failed**
-  (TR51, TR200). The other 412 requirements have not been re-derived at all.
+- **41 of 89** C rows have been independently re-derived, and **two of them failed**
+  (TR51, TR200). The other 410 requirements have not been re-derived at all.
 - Nothing is production-deployed. Nothing is certified.
 - `100 %` is not sayable, and will not be until BUILT, WIRED, REACHABLE, TESTED,
   MERGED, CI-MIGRATED, CI-CERTIFIED, PRODUCTION-MIGRATED, PRODUCTION-CERTIFIED,
   ENABLED, GITHUB CLEAN and DATABASE LEDGERS TRUE are all true. Four of those are
   currently false.
 
-**P24 — what would turn this red:** re-deriving the remaining 50 C rows and
+**P24 — what would turn this red:** re-deriving the remaining 48 C rows and
 finding one that does not hold; any of the 127 W rows having been silently fixed
 or silently worsened; `certify:migrations` staying red; a Batch C deploy that
 fails its post-deployment certification.
