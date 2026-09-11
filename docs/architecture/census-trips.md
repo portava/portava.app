@@ -2542,12 +2542,12 @@ by saying exactly what it had not done:
 > **No verdict was re-derived.** §37 checked that each cited artifact exists and
 > still says what the row says — not whether the judgement was right.
 
-This section does that, for 41 of the 89 BUILT-AND-CORRECT rows. A C row is the
+This section does that, for 44 of the 89 BUILT-AND-CORRECT rows. A C row is the
 one that matters most: a W row that rots stays wrong, but a C row that rots
 becomes a false assurance, and nothing in this repository had ever asked whether
 one was true.
 
-**39 of the 41 held. Two did not**, and they failed the same way: a universal
+**42 of the 44 held. Two did not**, and they failed the same way: a universal
 claim that had never been counted. TR51 said *every* trip write parses a zod
 schema first; 8 of 53 do not. TR200 said trip events pass an attention policy;
 10 trip push sites never reach the router that applies one. Both moved **C → W**
@@ -2573,6 +2573,7 @@ is handled" is a count, and until this pass none of them had been counted.
 | TR52, TR106, TR107 | Every plan write is gated. All six plan-write endpoints checked individually. |
 | TR7, TR17, TR285 | `trip_reservations` carries no payment, amount, currency or provider column — references and operational facts only; `status` defaults to `pending_confirm`, so an LLM extraction never auto-commits; `confirmation_ref` is opaque text. |
 | TR32, TR94 | The crossing is single — and the ratchet that was claimed to keep it single did not exist. See below. |
+| TR30, TR289, TR391 | TR30: no trip read path touches a projection, snapshot or cache table — every one assembles from source at request time, as claimed. TR289: `routes/tripReservations.ts` contains **no** provider, booking-API or payment reference at all. TR391: **stronger than the row states** — `trip_area_preferences` has no writer anywhere in `src/` outside RLS and deletion dispositions, so the path to a permanent user preference is not merely closed, it was never opened. |
 | TR330, TR353 | TR330's four safe-return channels are four separate opt-in booleans on the session, as claimed. TR353's server authority holds — see the false-positive note below, which is the more useful half. |
 | TR355, TR429, TR222 | `trg_trips_updated BEFORE UPDATE ON trips` exists exactly where cited, so client write time is not authoritative. `tripStatus.ts` and `tripCrewLocation.ts` contain **zero** DB references — pure as claimed, measured not asserted. No trip route imports Compass, so Trips is structurally operational without it. |
 | TR331, TR332, TR414, TR37, TR381 | See the corrections below. |
@@ -2759,7 +2760,7 @@ not because a grep said so.
 
 ### What this pass did NOT do, stated rather than implied
 
-1. **48 of the 89 C rows are not re-derived.** They remain as §36 counted them.
+1. **45 of the 89 C rows are not re-derived.** They remain as §36 counted them.
 2. **No W or N row was re-derived at all.** 129 W and 234 N rows stand entirely
    on earlier passes. A W row asserting something is broken could have been
    fixed since without anyone noticing — that is the cheaper error, but it is
