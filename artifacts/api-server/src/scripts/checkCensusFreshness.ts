@@ -261,6 +261,133 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "travel-buddy-standalone/src/features/media/",
     "travel-buddy-standalone/src/components/media/",
   ],
+  // census-telegraph.md — declared 2026-09-11 on the same basis as Media above:
+  // 451 requirements out of CANNOT BE CHECKED, a clock started rather than a
+  // past certified. Its verdicts were taken at working trees `ebe72b34` and
+  // `feedfb0a`, both orphaned by squash-merge, so the interval before
+  // `42aeac38` cannot be diffed and is not claimed to be empty.
+  //
+  // THE INTERESTING PART OF THIS SCOPE IS WHAT IS LEFT OUT. Telegraph cites 84
+  // resolvable files and 40 of them are under src/scripts/ and src/test/ — it
+  // leans harder on guards and suites as evidence than any sibling census.
+  // Scoping those would age Telegraph every time an unrelated lane touched a
+  // guard, which is the failure mode the header warns about: a check that cries
+  // stale on every commit gets switched off, and then the real staleness comes
+  // back. A census is a measurement of a SURFACE, not of the tools used to read
+  // it, so only the surface is scoped.
+  "census-telegraph.md": [
+    "artifacts/api-server/src/lib/calls/",
+    "artifacts/api-server/src/lib/telegraphBroadcast.ts",
+    "artifacts/api-server/src/lib/telegraphEvents.ts",
+    "artifacts/api-server/src/lib/messagingPermissions.ts",
+    "artifacts/api-server/src/lib/blockGuard.ts",
+    "artifacts/api-server/src/routes/messaging.ts",
+    "artifacts/api-server/src/routes/telegraphChat.ts",
+    "artifacts/api-server/src/routes/telegraphStream.ts",
+    "artifacts/api-server/src/routes/groupChat.ts",
+    "artifacts/api-server/src/routes/moderation.ts",
+    "artifacts/api-server/src/routes/appeals.ts",
+    "artifacts/api-server/src/services/telegraphIntent.ts",
+    "artifacts/api-server/src/services/groupChatSync.ts",
+    "artifacts/api-server/src/services/interactionPermissions.ts",
+    "artifacts/api-server/src/services/notifications/NotificationRouter.ts",
+    // The client half, per the Trips scope's rule that a server-only scope ages
+    // a census on the end that was never the problem.
+    "travel-buddy-standalone/src/components/telegraph/",
+    "travel-buddy-standalone/src/services/messaging.ts",
+    "travel-buddy-standalone/src/components/TelegraphInboxScreen.tsx",
+    "travel-buddy-standalone/src/components/TelegraphSuggestionTray.tsx",
+    "travel-buddy-standalone/src/components/CompassTelegraphTray.tsx",
+    "travel-buddy-standalone/src/components/MessageMediaBubble.tsx",
+    "travel-buddy-standalone/src/components/ThreadSafetySheet.tsx",
+    "travel-buddy-standalone/src/components/TranslationSettingsSheet.tsx",
+    "travel-buddy-standalone/src/components/RsvpBar.tsx",
+    "travel-buddy-standalone/src/components/RichText.tsx",
+    "travel-buddy-standalone/src/hooks/useMessageMediaPicker.ts",
+  ],
+  // census-map.md, census-sensing.md, census-compass.md and
+  // census-input-intelligence.md — declared 2026-09-11 on the same basis as
+  // Media and Telegraph above, completing six of the seven that were
+  // unmeasurable. Each verdict set was taken at a pre-squash working tree that
+  // does not exist; VERIFIED against FULL history rather than assumed, after a
+  // shallow clone made every one of them look unresolvable for the wrong
+  // reason. `git fetch --unshallow` (4,300 commits) and then `git cat-file -e`:
+  // 68ed59d9, ebe72b34, feedfb0a, e7769a45, 823b6d67 and 6c6995e1 exist
+  // nowhere. So the orphaning is real and is not a clone artifact — but it was
+  // very nearly recorded as proven while resting on a 54-commit clone.
+  //
+  // census-passport.md is deliberately NOT declared. It argues, in its own
+  // header, that declaring would report FRESH about 165 rows nobody re-read and
+  // that this is "a worse lie than CANNOT BE CHECKED". That is a lane's stated
+  // decision about its own document; the six above carry no such refusal.
+  "census-map.md": [
+    "artifacts/api-server/src/lib/mapProducers/",
+    "artifacts/api-server/src/lib/mapObjects.ts",
+    "artifacts/api-server/src/lib/mapProjectionTripContract.ts",
+    "artifacts/api-server/src/lib/mapProjectionTripRead.ts",
+    "artifacts/api-server/src/lib/mapTripProjectionWorker.ts",
+    "artifacts/api-server/src/lib/mapTravelers.ts",
+    "artifacts/api-server/src/lib/temporalProjection.ts",
+    "artifacts/api-server/src/lib/crowdFlowProducer.ts",
+    "artifacts/api-server/src/lib/freshnessPolicy.ts",
+    "artifacts/api-server/src/lib/confidenceScore.ts",
+    "artifacts/api-server/src/lib/intelProjection.ts",
+    "artifacts/api-server/src/lib/intelEvidenceCapture.ts",
+    "artifacts/api-server/src/lib/locateFriendsSession.ts",
+    "artifacts/api-server/src/lib/tripCrewLocation.ts",
+    "artifacts/api-server/src/routes/mapObservations.ts",
+    "artifacts/api-server/src/routes/mapProjection.ts",
+    "artifacts/api-server/src/routes/mapProjectionTemporal.ts",
+    "artifacts/api-server/src/services/intel/",
+    "travel-buddy-standalone/src/components/map/",
+    "travel-buddy-standalone/src/features/map/",
+    "travel-buddy-standalone/app/map/",
+  ],
+  "census-sensing.md": [
+    "artifacts/api-server/src/lib/sensingAnonStore.ts",
+    "artifacts/api-server/src/lib/intelThrottle.ts",
+    "artifacts/api-server/src/lib/liveClaimRead.ts",
+    "artifacts/api-server/src/lib/qiuShadow.ts",
+    "artifacts/api-server/src/lib/discoveryPde.ts",
+    "artifacts/api-server/src/lib/discoveryShadow.ts",
+    "artifacts/api-server/src/lib/temporalProjection.ts",
+    "artifacts/api-server/src/presence/domain/",
+    "artifacts/api-server/src/services/intel/",
+    "artifacts/api-server/src/routes/intel.ts",
+    "artifacts/api-server/src/routes/compassSense.ts",
+    "artifacts/api-server/src/compass/CompassExplanationEngine.ts",
+    "artifacts/api-server/src/services/airport/LayoverRecommendationService.ts",
+    "artifacts/api-server/src/services/wall/wallRabGate.ts",
+  ],
+  "census-compass.md": [
+    "artifacts/api-server/src/compass/",
+    "artifacts/api-server/src/routes/compass.ts",
+    "artifacts/api-server/src/routes/compassAutopilot.ts",
+    "artifacts/api-server/src/routes/compassHome.ts",
+    "artifacts/api-server/src/routes/compassSense.ts",
+    "artifacts/api-server/src/routes/airport.ts",
+  ],
+  // Input Intelligence is the thinnest-citing of the six (36 of 81 backticked
+  // paths resolve) and the most client-weighted: its subject is the typing
+  // surface, so the hooks ARE the measurement, not evidence about it.
+  "census-input-intelligence.md": [
+    "artifacts/api-server/src/lib/inputAssistance/",
+    "artifacts/api-server/src/lib/canonicalLocations.ts",
+    "artifacts/api-server/src/lib/usernameRules.ts",
+    "artifacts/api-server/src/lib/rentaBuddyScanner.ts",
+    "artifacts/api-server/src/lib/openai.ts",
+    "artifacts/api-server/src/compass/CompassStructuredContext.ts",
+    "travel-buddy-standalone/src/hooks/useAiWritingAssist.ts",
+    "travel-buddy-standalone/src/hooks/useCreationAssistance.ts",
+    "travel-buddy-standalone/src/hooks/useGlobalSearchSuggestions.ts",
+    "travel-buddy-standalone/src/hooks/useGooglePlacesAutocomplete.ts",
+    "travel-buddy-standalone/src/hooks/usePlaceSearch.ts",
+    "travel-buddy-standalone/src/hooks/useSearchSuggestions.ts",
+    "travel-buddy-standalone/src/hooks/useTelegraphRecipients.ts",
+    "travel-buddy-standalone/src/components/MentionInput.tsx",
+    "travel-buddy-standalone/src/components/selectors/GlobalPlacePicker.tsx",
+    "travel-buddy-standalone/src/lib/cityCentroids.ts",
+  ],
   "census-discovery.md": [
     "artifacts/api-server/src/routes/discovery.ts",
     "artifacts/api-server/src/routes/discoverySearch.ts",

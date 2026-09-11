@@ -7,6 +7,15 @@ aggregate counts read from the production project on 2026-09-07 (read-only; no u
 
 ---
 
+## Declaration
+
+| Field | Value |
+|---|---|
+| `head_commit` | `42aeac38` — DECLARED 2026-09-11. It **starts a clock; it does not certify a past.** Read the next row before quoting it. |
+| **What that declaration does and does not say** | `42aeac38` is #476's squash — the commit where this document itself reached `main`. Its verdicts were taken at working tree `4a166aeb` **plus uncommitted sibling work**, per the note above — and `4a166aeb` **exists nowhere**: verified against FULL history (`git fetch --unshallow`, 4,300 commits, then `git cat-file -e`), not assumed. This census is therefore the weakest-anchored of the six declared together: its measured state was never a commit at all, so no diff against it is possible even in principle, and this declaration **does not claim otherwise**. What it claims is mechanically checked: `git diff --name-only 42aeac38..HEAD` over the 6 paths in `CENSUS_SCOPE["census-compass.md"]` returns **0 files**, and from here any change to one of them ages this census. Before it, `check:census-freshness` reported this document as CANNOT BE CHECKED. FRESH means *no counted file has moved since `42aeac38`*; it does **not** mean the rows were re-read, and none has been. Declared by the Trips lane while recounting the sibling census; if this lane disagrees, reverting costs only the check. |
+
+---
+
 ## 0. Headline
 
 | | Inbound only (source a) | All three sources (a + c) |
