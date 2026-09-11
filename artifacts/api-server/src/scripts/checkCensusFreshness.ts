@@ -246,6 +246,17 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/test/tripKernelLive.test.ts",
     "artifacts/api-server/src/compass/CompassStructuredContext.ts",
     "artifacts/api-server/src/test/tripsCensusRederivation.test.ts",
+    // WIDENED 2026-09-11 (§39): the N-row re-derivation cited five product
+    // files this census had never watched. Each one CARRIES a verdict now —
+    // tripDiscoveryProjection.ts is the whole of TR364-TR367, projectionRegistry
+    // is TR362, and tripKernelWriterBaseline is the measurement TR1 rests on.
+    // A file that decides a verdict and ages nothing is the inversion §37
+    // found corpus-wide, arriving one section later in the same document.
+    "artifacts/api-server/src/lib/tripDiscoveryProjection.ts",
+    "artifacts/api-server/src/lib/discoveryTripProjectionConsumer.ts",
+    "artifacts/api-server/src/services/memoryProjections/projectionRegistry.ts",
+    "artifacts/api-server/src/scripts/tripKernelWriterBaseline.ts",
+    "artifacts/api-server/src/test/tripFeasibilityRoute.test.ts",
   ],
   "census-layover.md": [
     "artifacts/api-server/src/services/airport/",

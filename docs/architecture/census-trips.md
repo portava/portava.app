@@ -24,10 +24,10 @@ preserved in §36.1 as the record of that measurement.
 | --- | --- |
 | **Denominator (testable requirements)** | **451** |
 | BUILT-AND-CORRECT | **87** |
-| BUILT-BUT-WRONG | **129** |
-| NOT-BUILT | **234** |
+| BUILT-BUT-WRONG | **159** |
+| NOT-BUILT | **204** |
 | CANNOT-VERIFY | **1** |
-| **CONSTRUCTED%** = (C+W)/451 | **216 / 451 = 47.9 %** |
+| **CONSTRUCTED%** = (C+W)/451 | **246 / 451 = 54.5 %** |
 | **CORRECT%** (raw) = C/451 | **87 / 451 = 19.3 %** |
 
 > **RESTATED 2026-09-11 (§38): 89 → 87 CORRECT, 127 → 129 WRONG.** §38 re-derived
@@ -42,13 +42,32 @@ preserved in §36.1 as the record of that measurement.
 > now graded WRONG rather than CORRECT. These are the first verdicts either §37
 > or §38 has moved, and both moved DOWN — the direction a re-derivation has to be
 > able to go if it means anything.
+
+> **RESTATED AGAIN 2026-09-11 (§39): 234 → 204 NOT-BUILT, 129 → 159 WRONG,
+> CONSTRUCTED 47.9 % → 54.5 %.** §39 re-derived N rows for the first time and
+> **thirty are falsified by code on merged `main`** — all thirty by the same
+> squash merge (`42aeac38e`, #476) whose commit this document declares as its
+> `head_commit`. §29.4 re-graded fifteen rows at that commit and stopped; the
+> rest were never revisited. **CORRECT does not move**: every one of the thirty
+> is built and none is shown to work, so all thirty land in WRONG.
+>
+> §38's two verdicts moved DOWN and these thirty move UP. Until §39, every pass
+> this document had run could only travel downward, because only C rows had ever
+> been re-read.
 | **CORRECT% (spec-attributable)** | **WITHDRAWN — not measured. See §36.4** |
 | CANNOT-VERIFY share | **1 / 451 = 0.2 %** |
 
-> **19.7 % is a CEILING on nothing and a FLOOR on nothing — it is the document
-> counted, not the code read.** No pass has ever checked a Trips verdict against the
-> implementation, `check:census-integrity` says so itself, and §36.5 lists what that
-> leaves open. Read §36 before quoting either percentage.
+> **19.3 % is a CEILING on nothing and a FLOOR on nothing — it is the document
+> counted, not the code read.** `check:census-integrity` checks that this document
+> agrees with itself, and says in its own output that it does not check any verdict
+> against the code. §37, §38 and §39 have now read parts of it against the code —
+> 44 of the C rows and 30 of the N rows — and every pass that looked moved
+> something. §36.5 lists what remains open. Read §36, §38 and §39 before quoting
+> either percentage.
+>
+> *(This paragraph read `19.7 %` until 2026-09-11. §38 restated CORRECT% to 19.3 %
+> and did not reach here — the same failure mode §39 is about, one paragraph away
+> from the number it restated.)*
 
 > ### ⚠ SUPERSEDED 2026-09-08 — read §26 before this section
 >
@@ -2773,3 +2792,181 @@ not because a grep said so.
    with an exact allowed-key-set assertion. Recorded because the lesson is the
    census's own: a fixture that pins a fiction is worse than no fixture, and the
    only thing that found it was breaking the code on purpose.
+
+---
+
+## 39. The first pass that re-derived N rows — and the merge they were taken before
+
+§38 closed by naming what it had not done: *"No W or N row was re-derived at
+all. 129 W and 234 N rows stand entirely on earlier passes. A W row asserting
+something is broken could have been fixed since without anyone noticing —
+**that is the cheaper error**, but it is still an error."*
+
+It is not the cheaper error. **Thirty of the 234 N rows are falsified by code on
+merged `main`**, and every one of them is falsified by the *same merge* whose
+commit this document declares as its `head_commit`.
+
+| | C | W | N | X | CONSTRUCTED | CORRECT |
+| --- | --- | --- | --- | --- | --- | --- |
+| after §38 | 87 | 129 | 234 | 1 | 216 / 451 = **47.9 %** | 87 / 451 = **19.3 %** |
+| after §39 | 87 | **159** | **204** | 1 | **246 / 451 = 54.5 %** | 87 / 451 = **19.3 %** |
+
+**CORRECT does not move. CONSTRUCTED moves up 6.6 points.** §38's two verdicts
+moved DOWN; these thirty move UP. A re-derivation that can only travel in one
+direction is not a measurement, and until this pass every pass this document had
+run could only travel down, because **only C rows had ever been re-read**.
+
+### 39.1 Why an N row rots, and why nothing noticed
+
+An N row says a thing is not built. It is falsified by the thing being built —
+which is the *normal outcome of working on the product*. So N rows rot by
+default, silently, and in the direction that makes the architecture look worse
+than it is.
+
+Every one of the thirty was falsified by **one squash merge: `42aeac38e`,
+"Trips v4 architecture, and three days of accumulated work, onto main (#476)"**.
+That merge landed migrations 2420 and 2760–2777, `lib/tripKernel.ts`,
+`services/trips/TripFeasibilityEngine.ts`, `routes/tripStructure.ts`,
+`routes/tripFeasibility.ts`, `routes/tripDecisions.ts`, `routes/tripCommands.ts`
+and `lib/tripDiscoveryProjection.ts`. §26–§35.1 of this document were appended
+**at that commit** and §29.4 moved fifteen rows — so the pass that knew about
+the merge re-graded a *subset* and stopped. §57 is the proof it was row-by-row
+rather than a sweep: TR57 was moved N→C by the very plpgsql function that also
+falsifies TR50 and half of TR58–TR66, and those were left standing.
+
+### 39.2 How the thirty were found — two mechanical routes, then a file opened per row
+
+Neither route is a verdict. Each is a reason to open a file, and every row below
+was graded from the file, not from the count. The TR353 rule from §38 holds:
+*a count is evidence for opening a file, never a substitute for opening it.*
+
+**Route 1 — the code cites the row it falsifies.** 65 distinct `TR\d+` ids are
+cited from non-`docs/` files. Sixteen of them are scored **N** by this document.
+`services/trips/TripFeasibilityEngine.ts:8` is the clearest case and it says so
+in its own header: *"census-trips TR128 records that this 'is not computed
+anywhere' and TR134 that the §7.4 travel-feasibility check is absent. **This file
+is that computation.**"* Six of the sixteen are false leads —
+`checkCensusIntegrity.ts` cites TR38/TR45/TR58/TR62/TR64/TR66 as *parser
+examples*, and `routes/tripMapProjection.ts:330` cites TR252/TR253 to confirm
+they are absent.
+
+**Route 2 — the row names an object it says does not exist.** 46 N rows name a
+backticked identifier in the absence position (`` `trip_outcomes` `` — "Does not
+exist."; `` `TripGoal` `` — "No goal table, type or column anywhere"). Grepping
+each outside `docs/` found twelve with hits. Route 2 catches what Route 1 misses:
+TR14/TR15/TR20/TR21/TR22/TR26/TR27/TR28 name no row id in any source file.
+
+### 39.3 THE STRUCTURAL FINDING — §29.4's labelled ids went off by one, and a requirement fell through the gap
+
+`| TR89 `trip_snapshots` | N | **W** | … |` — that row is in §29.4, and **TR89
+is `trip_events`**. The body's §5.1 table reads TR89 `trip_events`, TR90
+`trip_snapshots`, TR91 `trip_outcomes`. §29.4's last two move rows read TR89
+`trip_snapshots` and TR90 `trip_outcomes`. From TR89 onward the label and the id
+name different objects, and the author's list ran out one row early.
+
+Three consequences, each different:
+
+| row | what §29.4 did | what it cost |
+| --- | --- | --- |
+| TR89 `trip_events` | recorded as moving N→**W** | Nothing numerically — TR89 was **already W**. But its "was" column is wrong, and the evidence attached to it (*"2773 fold/replay/verify; served by `tripCommands.ts`"*) describes `trip_snapshots`. |
+| TR90 `trip_snapshots` | moved N→**W** with `trip_outcomes`' evidence | Nothing numerically — W is right for `trip_snapshots` too. Accidentally correct. |
+| **TR91 `trip_outcomes`** | **nothing** | **A requirement stayed N with the evidence "Does not exist." while `CREATE TABLE public.trip_outcomes` sits at `2763_trip_presence_proposals_snapshots_outcomes.sql:124` on `main`.** |
+
+**The mislabelling propagated into the code.**
+`2768_trip_kernel_presence_proposal_outcome_families.sql:7` carries the comment
+`RECORD_OUTCOME -> trip_outcomes (TR90)`. It is citing the census's own
+off-by-one back at it. Two documents now agreed on a wrong id, which is how a
+wrong id survives review.
+
+**Measured corpus-wide, and it is precise rather than fuzzy.** A labelled id is
+only suspicious when its label is the body identifier of a **different row in
+the same census**. Five labelled ids in the corpus name an identifier the body
+does not; three are legitimate refinements (census-media MD36 `media_assets` for
+`MediaAsset`, census-trips TR12 `version` on the `Trip` aggregate, census-trust
+C13 `gps_coordinate_jump` under `applyEventCaps`) and **two are this defect** —
+TR89 and TR90, consecutive, exactly as an off-by-one looks.
+`check:census-row-move-labels` (new, registered, in `check:all`) enforces the
+precise form: **zero false positives on the corpus today, and it goes red on
+either half of the TR89/TR90 pair restored.**
+
+### 39.4 The thirty rows
+
+Verdicts are **W**, not C, for the reason §29.5 already fixed for their
+siblings: merged is not deployed. `checkProductionDrift.ts:135` classifies
+`trip_outcomes` "unapplied — in portava-ci, absent from production", and
+`trip_kernel_enabled` is seeded **FALSE** (`2420_trip_kernel_foundation.sql:190`).
+Every row below is built, reachable and tested; none of it is realized.
+
+#### Row moves
+
+| id | was | now | why |
+|---|---|---|---|
+| TR1 `Trip Kernel` | N | **W** | *"There is no kernel."* There is: `lib/tripKernel.ts` (709 lines, 36 command types), `public.trip_kernel_execute` (`2420_trip_kernel_foundation.sql`), `routes/tripCommands.ts` registered at `routes/index.ts:158`. The **invariant** is still unmet and that is why it is not C: `tripKernelWriterBaseline.ts:31-33` measures **47 direct writes in 18 files — 41 kernel-gated, 5 declared non-aggregate, 1 ungated** — and the flag is off, so every direct count is live. |
+| TR6 `history` | N | **W** | Four of the five named absences are now built: events (`2420:419` `INSERT INTO public.trip_events`), snapshots (`2763:108`), replay (`2773_trip_snapshot_fold_and_replay.sql`), outcomes (`2763:124`). The fifth — a decision ledger — is genuinely absent, and TR401 still says so. |
+| TR14 `TripLeg` | N | **W** | *"No leg concept."* `trip_legs` (`2761_trip_legs_and_commitments.sql:60`), writer `2765_trip_kernel_leg_and_commitment_families.sql:118`, read at `routes/tripStructure.ts:109`. |
+| TR15 `Commitment` | N | **W** | Falsified in its own words four times. The row says `trip_plan_items` has *"no `required_arrival_at`, `flexibility`, `prep_duration` or `lateness_tolerance`"* — `trip_commitments` has all four, at `2761:101`, `:110`, `:107`, `:106`, plus the `confidence` TR127 measures at `:113`. |
+| TR20 `TripGoal` | N | **W** | *"No goal table, type or column anywhere."* `trip_goals` (`2762_trip_goals_decisions_risks.sql:45`), writer `2766:114`. |
+| TR21 `TripDecisionTask` | N | **W** | *"No decision-task table or type."* `trip_decision_tasks` (`2762:64`), writer `2766:181`. |
+| TR22 `TripRisk` | N | **W** | *"No risk table or type."* `trip_risks` (`2762:84`), writer `2766:249`. |
+| TR24 `TripCrew` | N | **N** | **Holds.** `Subgroup` has zero occurrences outside `docs/`. Listed here because it is the one §3.1 type the merge did not build, and an unmoved row beside twenty-nine moved ones is a claim too. |
+| TR26 `TripProposal` | N | **W** | *"No proposal table or governance type."* `trip_proposals` (`2763:86`), writer `2768:208`, and the governance the row names by name: `2774_trip_proposal_governance.sql` with `trip_proposal_votes` (`:88`) and its writer `2775:198`. |
+| TR27 `TripSnapshot` | N | **W** | *"No snapshot table or type."* `trip_snapshots` (`2763:108`), writer `2773:411`. |
+| TR28 `TripOutcome` | N | **W** | *"No outcome table or type."* `trip_outcomes` (`2763:124`), writer `2768:288` (`RECORD_OUTCOME`). |
+| TR29 `version` | N | **W** | *"No version exists (TR12), so no invariant can be expressed against one."* `trips.version` is `2420:96` — `ALTER TABLE public.trips ADD COLUMN IF NOT EXISTS version bigint NOT NULL DEFAULT 0`, **and it is in production**, since production carries 2420. An invariant IS expressed against it: `trip_proposals.affected_version` (`2763:93`) is the version a proposal was computed against, *"so a stale proposal is detectable rather than silently applied"*. |
+| TR50 `command vocabulary` | N | **W** | *"None of the eleven exists as a command."* **Ten of the eleven do**, in the kernel's own union: ADD_PLAN, MOVE_PLAN, CONFIRM_PLAN, CANCEL_PLAN, JOIN_PLAN, LEAVE_PLAN, SET_PRESENCE, CREATE_PROPOSAL, ACCEPT_PROPOSAL, COMPLETE_ACTIVITY. Only `CREATE_SUBGROUP` is absent — consistent with TR24, which is why TR24 stays N. |
+| TR58, TR59, TR60, TR64 | N | **W** ×4 | *"None is emitted anywhere."* Four of the eight are: `trip.plan_added` (`2420:312`), `trip.plan_moved` and `trip.plan_confirmed` (`2420:352-353`), `trip.proposal_accepted` (`2768:248`). These are `v_event_type :=` assignments inside `trip_kernel_execute`, written to `public.trip_events` in the same transaction (`2420:419`) — the same function §4 already credited at TR57. |
+| TR61, TR62, TR65, TR66 | N | **N** ×4 | **Hold.** `commitment_at_risk`, `free_window_created`, `stage_started` and `trip_disrupted` have zero occurrences outside `docs/`. The row scored eight ids as one; four of them were right. |
+| TR91 `trip_outcomes` | N | **W** | `CREATE TABLE public.trip_outcomes` at `2763:124`; writer `2768:288`; **read** at `routes/tripStructure.ts:118`; asserted live at `tripKernelLive.test.ts:305`. This is the row §29.4 missed — see §39.3. |
+| TR122 `Commitment` contract | N | **W** | *"No commitment type or table (TR15)."* `trip_commitments` (`2761:92`) with a typed vocabulary (`CHECK (type IN ('lodging','transport','event','booking','meeting','other'))`) and a flexibility vocabulary (`:110`). |
+| TR124 `latenessTolerance` | N | **W** | *"Absent."* `lateness_tolerance interval` (`2761:106`), served at `routes/tripStructure.ts:197`, and **used**: `TripFeasibilityEngine.ts:207` computes the deadline as `deadlineBase + latenessToleranceMinutes * MS_PER_MIN`. |
+| TR125 `prepDuration` | N | **W** | *"Absent."* `prep_duration interval` (`2761:107`), served at `routes/tripStructure.ts:197`. |
+| TR128 `core invariant` | N | **W** | *"Not computed anywhere."* `services/trips/TripFeasibilityEngine.ts` is that computation and names this row in its header. Not C for the reason the file states before anything else: **there is no routing provider in this repository**, so a straight-line lower bound can prove INFEASIBLE soundly but can never return FEASIBLE — only FEASIBLE_UNVERIFIED. |
+| TR134 `§7.4 feasibility check` | N | **W** | *"Absent (TR128)."* `GET /trips/:tripId/feasibility` (`routes/tripFeasibility.ts`), registered at `routes/index.ts:153`, with `tripFeasibilityRoute.test.ts` and `tripFeasibilityRouteBehaviour.test.ts`. |
+| TR138 `TripGoal` contract | N | **W** | *"No goal table, type or column (TR20)."* `trip_goals` carries four of the contract's five fields — `type`, `priority`, `status`, `evidence_json` (`2762:45-51`). **`scope` is genuinely missing**, which is why it is W and not C. |
+| TR153 `TripProposal` contract | N | **W** | *"No proposal table or type (TR26)."* `trip_proposals` carries `proposal_type`, `status`, `expires_at` and `affected_version` as columns (`2763:86-93`). `proposedBy`, `affectedObjects`, `rationale`, `impactSummary` and `decisionRule` are **not columns** — they would have to live in `payload_json`, which is a shape the contract does not specify. W, not C. |
+| TR362 `TripMemoryProjection` | N | **W** | *"Nothing projects a trip into Memory."* `services/memoryProjections/projectionRegistry.ts:314` — id `TripMemoryProjection`, audience `TRIP_RECAP`, destination `trip.recap`, `availability: "BUILDABLE"`, scoped by `trip_id`. It points the **other way** (Memory→trip recap, not trip→Memory), which is precisely the grading this document already gave TR363 for the Passport. W for the same reason, stated the same way. |
+| TR364 `generatedAt` | N | **W** | *"None does."* `lib/tripDiscoveryProjection.ts:102`. **One of nine**, which is exactly why it is W: the requirement says *every* projection, and the §19 list TR356–TR363 still carries none. The count is stated because §38's finding was that a universal claim nobody counted is where these break. |
+| TR365 `sourceTripVersion` | N | **W** | *"No version exists (TR12)."* Falsified twice — `trips.version` (`2420:96`) and the projection field itself (`tripDiscoveryProjection.ts:103`). |
+| TR366 `projectionSchemaVersion` | N | **W** | *"Absent."* `lib/tripDiscoveryProjection.ts:100`, with a consumer that rejects on mismatch (`lib/discoveryTripProjectionConsumer.ts:288`). |
+| TR367 `freshness` | N | **W** | *"Absent."* `lib/tripDiscoveryProjection.ts:104`, typed `TripDiscoveryFreshness` with one honest value — `"live"`, documented as *"No other value exists yet (no projection worker)"*. |
+| TR405 `TripSnapshot` contract | N | **W** | *"No snapshot table or type (TR27). `trip_readiness_snapshots` … with none of the contract's fields."* `trip_snapshots` (`2763:108`) carries `aggregate_version`, `snapshot_json` and `engine_versions_json`, and is UNIQUE per `(trip_id, aggregate_version)` — the constraint §22.4's determinism guarantee needs. |
+
+### 39.5 Evidence corrections that move no verdict
+
+Recorded because §37's rule holds: a row can be right for a reason that has
+stopped being true, and the next reader trusts the reason.
+
+1. **TR12 `Trip`** (W) says the trips table *"carries **no `version` column**, so
+   it is a row, not an aggregate root"*. It carries one — `2420:96` — and the
+   column is in production. The verdict stays W: a version column that the
+   kernel bumps only when a flag seeded FALSE is on is not yet an aggregate root.
+2. **TR89 `trip_events`** (W) says *"`trip_activity_log` is the nearest deployed
+   table"*. `public.trip_events` exists and the kernel writes it (`2420:419`).
+   The verdict stays W — `trip_activity_log` is still what the *route* layer
+   writes — but "nearest table" is no longer true.
+3. **TR334** (N) says `grep -rli "offlineBundle|offline.*queue|queuedOperation"`
+   over the client returns *nothing*. It returns `travel-buddy-standalone/src/services/layover.ts:355`
+   and four more — the **Layover** offline bundle. The verdict holds (there is
+   no *trip* bundle, signed or otherwise); the grep as written does not.
+4. **TR213 `explainTripDecision`** (N) holds, and so does its reason — there is
+   no decision ledger. Checked because TR401 was checked: `trip_decision_tasks`
+   (`2762:64`) is a work-item table, not `TripDecision`, and no `trip_decisions`
+   table exists anywhere in the migration set.
+
+### 39.6 What this pass did NOT do
+
+1. **204 N rows remain un-re-derived.** Thirty were checked because two
+   mechanical routes pointed at them. The other 204 were not looked at, and the
+   §39.1 argument — N rows rot in the direction of being built — applies to them
+   exactly as much.
+2. **No W row was re-derived.** 159 W rows now stand entirely on earlier passes,
+   thirty of them placed there by this section on evidence of *existence*, not
+   on a re-reading of what §38 would call the judgement.
+3. **Route 2 is a grep and greps lie in both directions.** It found twelve
+   candidates and four of them (`partySize`, `sourceClass`, `confidence`,
+   `freshness` as bare tokens) matched code in other domains entirely.
+   TR286/TR287 stay N because `TransportSegment` has zero occurrences — the
+   object those fields belong to does not exist, so its fields cannot.
+4. **CORRECT% did not move and nothing here argues it should.** Thirty rows
+   moved from "not built" to "built and wrong". Not one of them was shown to
+   work, and `trip_kernel_enabled` is still FALSE.
