@@ -662,7 +662,7 @@ PHOTO, EXPLORE, PLAY, LEARN, NIGHTLIFE, TRANSIT) appear nowhere as a vocabulary.
 
 | id | Requirement | V | Evidence |
 | --- | --- | --- | --- |
-| TR381 | Operational logs do not become permanent memory wholesale | **C** | They cannot: nothing reads `trip_activity_log` except the trip's own activity endpoint (`routes/trips-expansion.ts:3173#trip_activity_log`), and no Memory or Passport path touches it. The prohibited path does not exist and there is nothing that would create it, because Memory is fed by stamps and posts. |
+| TR381 | Operational logs do not become permanent memory wholesale | **C** | **Evidence corrected 2026-09-11 (§38): there are TWO readers, not one.** The trip's own activity endpoint (`routes/trips-expansion.ts:3173#trip_activity_log`) AND the invite-links endpoint (`routes/trips-expansion.ts:1382#trip_activity_log`), which filters to `joined_via_invite_link` to decorate each link with its joiners. **The verdict is unchanged and the reason it survives is worth stating**: both readers are trip-scoped (`.eq("trip_id", tripId)`), both serve the trip's own surface, and neither writes the log into a durable projection — so the log still does not become permanent memory. What was wrong was the word *nothing*: a universal claim that had never been counted. No Memory or Passport path touches it. The prohibited path does not exist and there is nothing that would create it, because Memory is fed by stamps and posts. |
 | TR382 | Durable post-trip projections are based on meaningful outcomes (places visited, activities completed, people intentionally associated, stamps, media, milestones, user-approved story elements) | **W** | One outcome channel works: trip completion awards stamps that drive Passport counts — `src/test/passportStatsFromTripCompletion.test.ts:1-13` proves a completed trip yields non-zero Countries and Cities *"even if they never make a GPS-verified post from that location."* The other six are absent: no visited-place record, no completed-activity record, no intentional-association record, no milestone, no user-approved story step. |
 | TR383 | §20.2 Closeout: stop/expire temporary presence | **N** | `routes/trips-expansion.ts:494-518` — the whole `POST /trips/:tripId/complete` handler is an authorization check, a status update and a `logActivity` line. It touches no presence table. Live shares expire on their own timer (`lib/tripCrewLiveShareScheduler.ts`) rather than on completion. |
 | TR384 | §20.2 …dissolve temporary crews where appropriate | **N** | Same handler; no crew action. There are no temporary crews (TR151). |
@@ -2518,3 +2518,99 @@ the 26 added are named with their reason in `checkCensusFreshness.ts`.
   line. It cannot tell that the function's behaviour changed underneath a stable name.
 - **593 ambiguous-path citations remain corpus-wide**, 53 of them here. Every one is a
   citation whose resolution depends on which candidate a reader happens to open.
+
+---
+
+## 38. The first pass that re-derived VERDICTS, not citations
+
+§37 read this census against the code and repaired 37 rotted citations. It ended
+by saying exactly what it had not done:
+
+> **No verdict was re-derived.** §37 checked that each cited artifact exists and
+> still says what the row says — not whether the judgement was right.
+
+This section does that, for 28 of the 89 BUILT-AND-CORRECT rows. A C row is the
+one that matters most: a W row that rots stays wrong, but a C row that rots
+becomes a false assurance, and nothing in this repository had ever asked whether
+one was true.
+
+**No verdict moved.** All 28 were re-derived as **C**. That is the honest and
+slightly dull headline, and it is stated before the findings so the findings are
+not mistaken for a collapse.
+
+### What was re-derived, and how
+
+| rows | what was checked, by reading the object |
+| --- | --- |
+| TR68–TR74, TR76 | The eleven kernel rows that moved N→C in §36's recount. Every envelope column against `2420_trip_kernel_foundation.sql` DDL: `aggregate_version` NOT NULL with `CHECK (> 0)`, `CONSTRAINT trip_events_trip_sequence_unique UNIQUE (trip_id, sequence)`, `causation_id`/`correlation_id`, `schema_version NOT NULL DEFAULT 1`, `occurred_at` and `recorded_at` as distinct columns, and append-only as a **TRIGGER** (`trg_trip_events_append_only`) rather than a convention. TR70's sequence is `coalesce(max(sequence), 0) + 1`, a real sequence and not `created_at DESC`. TR74's outbox INSERT is in the same function body as the event INSERT. TR76's scheduler is **called** at `index.ts:162`, not merely imported — the distinction this repository keeps paying for. |
+| TR117, TR118, TR120, TR121 | `toPrivateTripPreview` is a **whitelist**: it names its output fields and never spreads the row, so a column added to `trips` tomorrow cannot reach a non-member by default. That is a stronger fact than the test the rows cite. TR118's coordinate opt-in is strict `=== true`, not truthiness. Wiring checked too: the trip-detail route blocks first, serves the authorized view to members/owner, the stripped preview to public and mutual-buddy viewers, and a `{ locked: true }` sentinel to everyone else. |
+| TR216, TR215, TR219 | `sanitizeToolResult` recurses through arrays and objects and strips coordinate-shaped and private keys at every depth. **Wiring**: `executeCompassTool`'s switch assigns every branch to `raw` and has exactly ONE exit, through the sanitiser — no branch returns around it. TR215's `isAcceptedTripMember` then `canEditPlan` are the same gates the write endpoints use; TR219's `add_to_trip` builds a proposal and issues no INSERT. |
+| TR10, TR110, TR160, TR179, TR112 | The crew privacy guard, and the one defect this pass found — see below. TR112's only client INSERT policy on `trip_crew_location_sessions` scopes to `auth.uid() = user_id`. |
+| TR52, TR106, TR107 | Every plan write is gated. All six plan-write endpoints checked individually. |
+| TR331, TR332, TR414, TR37, TR381 | See the corrections below. |
+
+### THE DEFECT — the privacy guard did not check the grant it was guarding
+
+TR110 and TR160 say exact coordinates require an **active** live-share grant.
+`lib/tripCrewLocation.ts` calls itself a Privacy Guard, states that contract in
+its header, accepts `now`, spends it on position freshness — and never compared
+it to `liveShare.expiresAt`. The comment at the live-share branch asserted *"the
+GRANT has not expired"* as a premise. `raw.liveShare != null` was the whole test.
+
+**It was not a live leak, and the distinction is the point.**
+`TripCrewLocationService` is the only caller and filters `.gt("expires_at", now)`
+in SQL and gates on `allowed_member_ids.includes(viewerId)`; verified by reading
+it. So the premise held — because of a WHERE clause in a different file. That is
+§32.7's hazard in its exact form: the guard asserted a fact it did not establish,
+and a second caller or an edit to that clause would have released coordinates
+with nothing in this module objecting.
+
+Fixed. The expiry already arrives on the grant and `now` was already a parameter,
+so the check is one comparison, and it fails closed on an unparseable timestamp.
+Seven tests, **five of which failed against the unfixed guard**; the two that
+passed were the positive control and ghost-mode precedence, which is what stops a
+suite passing for the wrong reason. Both rules mutation-tested.
+
+### Three evidence corrections, none of which moves a verdict
+
+**TR381 said *nothing* reads `trip_activity_log` except one endpoint. There are
+two.** The invite-links endpoint reads it at `:1382` to decorate each link with
+its joiners. The verdict survives because both readers are trip-scoped and
+neither writes the log into a durable projection — but *nothing* was a universal
+claim that had never been counted. The row is corrected above.
+
+**TR107's citation is accurate but incomplete.** `canEditPlanItem` has four call
+sites (`:1878`, `:1946`, `:1995`, `:2215`); the row names two.
+
+**TR37 cites an ambiguous basename.** Two files carry `0001_spine.sql` and
+neither is in the canonical `src/migrations/` tree. Per §37's rule a basename
+resolving to more than one file has not been resolved, so the claim was asserted
+against **both** candidates. They agree — which is what makes TR37 safe, and the
+opposite of the `0041` case where three same-named files disagreed.
+
+### A latent shape recorded rather than fixed, because it is another lane's file
+
+`safe_return_live_shares.expires_at` is **nullable**, and
+`SafeReturnPrivacyGuard` checks expiry as `if (s.expires_at && …)` — so a row
+with a NULL expiry would skip the check entirely and read as a live share with no
+end. `startShare` is the only writer and always sets it, so this is not
+reachable today. It is the same shape as the defect fixed above and the same fix
+would close it (treat NULL as expired), but the file belongs to the Safety lane
+(TR11: specialist domains retain ownership) and this lane does not cross that
+boundary to harden it. Recorded here so the next Safety pass has it.
+
+### What this pass did NOT do, stated rather than implied
+
+1. **61 of the 89 C rows are not re-derived.** They remain as §36 counted them.
+2. **No W or N row was re-derived at all.** 127 W and 234 N rows stand entirely
+   on earlier passes. A W row asserting something is broken could have been
+   fixed since without anyone noticing — that is the cheaper error, but it is
+   still an error, and it is untested here.
+3. **A test pins an invariant, not a judgement.** `tripsCensusRederivation.test.ts`
+   makes these 28 derivations repeatable; it does not make them complete.
+4. **I wrote a test that could not fail, and the mutation caught it.** The first
+   draft of the preview test listed forbidden snake_case column names while the
+   serializer emits camelCase, so leaking `ownerId` passed it 13/13. Replaced
+   with an exact allowed-key-set assertion. Recorded because the lesson is the
+   census's own: a fixture that pins a fiction is worse than no fixture, and the
+   only thing that found it was breaking the code on purpose.
