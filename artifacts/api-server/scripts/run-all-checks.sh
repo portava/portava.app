@@ -174,6 +174,19 @@ run_check "check:census-freshness" pnpm run check:census-freshness
 # policies over authz.is_trip_crew. RLS policies are a UNION and a schema claim
 # is a claim about the END of the chain; this checks the citation, not the
 # sentence.
+# check:census-scope-coverage — a census must WATCH the files it CITES.
+# check:census-freshness asks whether anything a census counts has changed, and
+# what it counts is declared by hand in CENSUS_SCOPE. Nothing checked that
+# declaration against the census. Measured 2026-09-11: census-trips cited 49
+# files with 10 in scope, and the scope covered the Trip Kernel programme — so
+# it watched the W rows, the ones saying something is NOT right, and left the C
+# rows unguarded. A W row that rots stays wrong; a C row that rots becomes a
+# false assurance, and census-freshness reported FRESH throughout, truthfully,
+# about the wrong half. The inversion is not a Trips quirk: no census watches
+# even three quarters of what it cites, and the median is under a third.
+# Per-census floors are a ratchet — raise one when you widen a scope; lowering
+# one to get green is the single response that is never right.
+run_check "check:census-scope-coverage" pnpm run check:census-scope-coverage
 run_check "check:census-policy-citations" pnpm run check:census-policy-citations
 # check:memory-table-ownership — public.memory_events (the Memory projection
 # family's log, live in production and read by the account-deletion cascade) and

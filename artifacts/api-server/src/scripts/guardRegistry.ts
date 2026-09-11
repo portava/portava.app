@@ -513,6 +513,26 @@ export const GUARDS: readonly GuardEntry[] = [
     reach: { kind: "check-all", script: "check:census-freshness" },
   },
   {
+    checker: "src/scripts/checkCensusScopeCoverage.ts",
+    inspects: {
+      countPattern: "(\\d+) census(?:es)? measured for scope coverage",
+      unit: "censuses measured for citation-vs-scope coverage",
+    },
+    responsibility:
+      "A census must WATCH the files it CITES, or its freshness guard protects the wrong half of it.",
+    // check:census-freshness asks whether anything a census counts has changed,
+    // and what it counts is declared by hand in CENSUS_SCOPE. Nothing checked
+    // that declaration against the census. Measured 2026-09-11: census-trips
+    // cited 49 files with 10 in scope, and the scope covered the Trip Kernel
+    // programme -- the thing being BUILT -- so it watched the W rows, which say
+    // something is not right, and left the C rows unguarded. A W row that rots
+    // stays wrong; a C row that rots becomes a false assurance, and
+    // census-freshness reported FRESH throughout, truthfully, about the wrong
+    // half. The inversion is not a Trips quirk: no census watches even three
+    // quarters of what it cites and the median is under a third.
+    reach: { kind: "check-all", script: "check:census-scope-coverage" },
+  },
+  {
     checker: "src/scripts/checkCensusPolicyCitations.ts",
     inspects: {
       countPattern: "(\\d+) census policy citation\\(s\\) checked",

@@ -216,7 +216,7 @@ ids named in that row; each id remains individually addressable.
 | TR7 | Trips does not become a booking engine | **C** | `0172_trip_reservations.sql:1-6` stores references and operational facts only; no payment column, no provider API, no inventory. The nearest booking system is Rent-a-Buddy and it is a separate domain. |
 | TR8 | Trips does not become a payment ledger | **C** | `trip_budget` (`0079`) holds planned amounts; `0183_budget_fx_conversion.sql` converts currency for display. No ledger, no transaction table, no settlement. |
 | TR9 | Trips does not become a generic messaging system | **C** | `app/trip/chat.tsx` routes into the existing Telegraph/messaging domain (`src/services/messaging.ts` `openTripChat`, used at `TripPage.tsx:211#openTripChat`); Trips stores no messages. |
-| TR10 | Trips does not become a global location tracker | **C** | `lib/tripCrewLocation.ts:1-16` — exact coordinates are released only under an *active live-share grant* and are withheld anyway when hotel blur is on (`:239#resolveExactCoords` `resolveExactCoords`); ghost mode is absolute (`:163-164#ghostMode`); the whole surface is behind `trip_crew_map_enabled`, seeded false (`0041_trip_crew_location.sql:63`). |
+| TR10 | Trips does not become a global location tracker | **C** | `lib/tripCrewLocation.ts:1-16` — exact coordinates are released only under an *active live-share grant* and are withheld anyway when hotel blur is on (`:261#resolveExactCoords` `resolveExactCoords`); ghost mode is absolute (`:166-168#ghostMode`); the whole surface is behind `trip_crew_map_enabled`, seeded false (`0041_trip_crew_location.sql:63`). |
 | TR11 | Specialist domains retain ownership of regulated or sensitive state | **C** | Safety lives in `services/safeReturn/` with its own tables (`0167_safety_ddl_reconcile.sql:21`), documents in `trip_documents`, identity in `services/identityVerification/`, payments outside Trips entirely. Trips references, it does not absorb. |
 
 ### §2.1 Canonical domain objects
@@ -354,7 +354,7 @@ because there is no stage.*
 | TR107 | `canModifyPlan(actor, plan)` | **C** | `lib/http.ts:604#canEditPlanItem` `canEditPlanItem`, called at `routes/trips.ts:1878,1946#canEditPlanItem`. |
 | TR108 | `canManageBooking(actor, trip)` | **W** | `routes/tripReservations.ts` has `requireReservationMember` plus a stricter delete rule at `:426-429` (*"creator or trip OWNER only"*) — real authorization, expressed as a route-local helper rather than a policy function. |
 | TR109 | `canSeePresence(actor, subject, trip)` | **W** | The decision is made inside `lib/tripCrewLocation.ts:104` `buildCrewCard` per member, honouring ghost mode, default visibility and safe-return opt-in. It is a card builder, not a predicate, so no caller can *ask* the question — and `routes/tripCrewLocation.ts:170-174` admits **invited-but-not-accepted** members (`getMemberRoleAny`) to the crew map. |
-| TR110 | `canSeePreciseLocation(actor, subject, trip)` | **C** | `lib/tripCrewLocation.ts:96-103,131-133` `resolveExactCoords` — exact coordinates require an **active live-share grant** *and* hotel-blur off *and* populated coordinates; ghost mode short-circuits first (`:163-164#ghostMode`). Three independent conditions, all fail-closed, and membership alone never suffices. |
+| TR110 | `canSeePreciseLocation(actor, subject, trip)` | **C** | `lib/tripCrewLocation.ts:261#resolveExactCoords` `resolveExactCoords`, gated on a grant this module now checks for expiry itself (`:187#grantIsActive`) — exact coordinates require an **active live-share grant** *and* hotel-blur off *and* populated coordinates; ghost mode short-circuits first (`:166-168#ghostMode`). Three independent conditions, all fail-closed, and membership alone never suffices. |
 | TR111 | `canManageSafety(actor, trip)` | **W** | `services/safeReturn/SafeReturnPrivacyGuard.ts:116-129` gates by session ownership and expiry — correct, and scoped to the safety domain rather than expressed as a trip capability. |
 | TR112 | §6.2 Default deny client writes to sensitive coordination/safety tables unless an explicit safe client path exists | **C** | `0041_trip_crew_location.sql:39` scopes the only client INSERT policy to the session owner; `0167_safety_ddl_reconcile.sql` puts safety tables behind service-role writes; `scripts/checkSilentSupabaseWrites.ts` and `scripts/rlsDispositions.ts:458` are the standing ratchets. |
 | TR113 | §6.2 Membership does not imply precise location access, payment access, document access or safety access | **C** | Precise location: TR110. Documents: `routes/trips-expansion.ts:1792-1942` gate separately. Safety: its own session ownership. Payment: no payment state exists in Trips (TR8). Each of the four is independently gated. |
@@ -427,7 +427,7 @@ because there is no stage.*
 | TR160 | …`expires_at` | **C** | `liveShareExpiresAt` (`lib/tripCrewLocation.ts:142`), backed by the session's expiry and swept by `lib/tripCrewLiveShareScheduler.ts`. |
 | TR161 | …`source` | **N** | No source field on the crew card or the underlying state; a city derived from a check-in and one derived from a coarse geofence are indistinguishable. |
 | TR162 | …`confidence` | **N** | Absent. |
-| TR163 | …`visibility` | **C** | `CrewVisibility = hidden \| city_only \| neighborhood \| nearby \| arrived_only` (`lib/tripCrewLocation.ts:31`), stored per member in `trip_crew_location_preferences` and honoured at `:163-198#ghostMode`. |
+| TR163 | …`visibility` | **C** | `CrewVisibility = hidden \| city_only \| neighborhood \| nearby \| arrived_only` (`lib/tripCrewLocation.ts:31`), stored per member in `trip_crew_location_preferences` and honoured at `:166-223#ghostMode`. |
 | TR164 | Location freshness LIVE \| RECENT \| LAST_KNOWN \| OFFLINE | **N** | No freshness class is computed anywhere. `updatedAt` is passed through raw (TR159) and never classified. |
 | TR165 | The Trip Map must never draw a stale location as if it were current | **W** | It does. `buildCrewCard` (`lib/tripCrewLocation.ts:131-146`) returns `statusLabel: "live_sharing_active"` with an `areaLabel` whenever a live-share **grant** is active, regardless of how old `locationState.updatedAt` is — the grant's expiry is checked, the observation's age is not. `CrewMapSection.tsx:35-38` then renders that member as `live` in the density map. A three-day-old city, under a grant issued five minutes ago, draws as live. **This is the most consequential single defect in the Trips census.** |
 | TR166 | Marker visual treatment **and accessible text** must expose freshness | **N** | Neither. `src/components/tripCrew/CrewMemberCard.tsx:5` — *"No exact coordinates are ever displayed; statusLabel drives the UI"* — and `statusLabel` carries no age; `:106-120` renders `areaLabel` and two coloured status strings with no timestamp and no accessibility label for recency. |
@@ -443,7 +443,7 @@ because there is no stage.*
 | TR176 | §10.4 Opt-in Bluetooth proximity | **N** | No BLE dependency, no peer-relay code. `grep -rli "bluetooth\|BLE\|peripheral"` over the client → nothing relevant. |
 | TR177 | §10.4 Meeting checkpoints | **W** | `route_stops.checkpoint_status` (`0058:68`) and `trip_plan_items.category = 'meeting_point'` (`0010:11`) both exist as labels; neither is a crew meeting-checkpoint with participants and arrival state. |
 | TR178 | §10.4 Temporary relay metadata | **N** | Absent. |
-| TR179 | §10.4 This must not create covert persistent tracking | **C** | Enforced, and in the strongest available way: ghost mode is absolute and checked first (`lib/tripCrewLocation.ts:163-164#ghostMode`), a member who has not opted in reads `not_shared` (`:198#not_shared`), the whole surface is behind `trip_crew_map_enabled` seeded false (`0041:63`), live shares expire, and `routes/tripCrewLocation.ts:241,277` give explicit enable/disable endpoints. |
+| TR179 | §10.4 This must not create covert persistent tracking | **C** | Enforced, and in the strongest available way: ghost mode is absolute and checked first (`lib/tripCrewLocation.ts:166-168#ghostMode`), a member who has not opted in reads `not_shared` (`:223#not_shared`), the whole surface is behind `trip_crew_map_enabled` seeded false (`0041:63`), live shares expire, and `routes/tripCrewLocation.ts:241,277` give explicit enable/disable endpoints. |
 
 ### §11 Trip Today Projection and Execution UX
 
@@ -532,7 +532,7 @@ PHOTO, EXPLORE, PLAY, LEARN, NIGHTLIFE, TRANSIT) appear nowhere as a vocabulary.
 | --- | --- | --- | --- |
 | TR254 | The `TripMapProjection` contract | **N** | No trip map projection endpoint or type. `GET /trips/:tripId/plan/map` (`routes/trips.ts:1400`) returns plan items with coordinates — a marker list, not a projection with a version and a generated-at. |
 | TR255 | Layer: stage | **N** | No stages (TR78). |
-| TR256 | Layer: hotel/private anchors, **access controlled** | **W** | The control exists at the item level: `trip_plan_items.location_is_private` and `0010:22-23`'s coordinate prohibition, plus the crew card's hotel-blur (`lib/tripCrewLocation.ts:56-58`, `resolveExactCoords` at `:96-103`). There is no *anchor* concept and no projection-level exclusion rule — the safety depends on each writer setting a flag. |
+| TR256 | Layer: hotel/private anchors, **access controlled** | **W** | The control exists at the item level: `trip_plan_items.location_is_private` and `0010:22-23`'s coordinate prohibition, plus the crew card's hotel-blur (`lib/tripCrewLocation.ts:56-58`, `resolveExactCoords` at `:261#resolveExactCoords`). There is no *anchor* concept and no projection-level exclusion rule — the safety depends on each writer setting a flag. |
 | TR257 | Layer: active plans | **W** | `GET /trips/:tripId/plan/map` returns plan items; "active" cannot be expressed (no IN_PROGRESS, TR46). |
 | TR258 | Layer: confirmed commitments | **N** | TR122. |
 | TR259 | Layer: saved ideas | **C** | `trip_saved_places` (TR25), served at `routes/trips-expansion.ts:2085`, rendered by `src/hooks/useTripSavedPlaces.ts` on the trip page. |
@@ -801,7 +801,7 @@ in this census I would fix first.
 The mitigating facts, which are real: the whole surface is behind `trip_crew_map_enabled`
 seeded false (`0041_trip_crew_location.sql:63`), no exact coordinate is exposed without a
 live-share grant plus hotel-blur-off (`lib/tripCrewLocation.ts:96-103`), and ghost mode is
-absolute and checked first (`:163-164#ghostMode`). The privacy architecture is good. The **freshness**
+absolute and checked first (`:166-168#ghostMode`). The privacy architecture is good. The **freshness**
 architecture is absent.
 
 **2. Phase 0 was never done, and it is the phase everything else depends on (TR434).**
