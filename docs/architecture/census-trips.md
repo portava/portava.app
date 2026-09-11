@@ -14,17 +14,28 @@
 
 ## Headline
 
+**RECOUNTED FROM ZERO 2026-09-11 against merged `main` `014a25d5` — see §36.** Every
+figure below is now the document's own 451 rows, counted mechanically by
+`check:census-integrity`, which reads all 451 of them for the first time. The
+`68ed59d9` figures this table used to carry (78 / 110 / 262 / 1 — 41.7 % / 17.3 %) are
+preserved in §36.1 as the record of that measurement.
+
 | Measure | Value |
 | --- | --- |
 | **Denominator (testable requirements)** | **451** |
-| BUILT-AND-CORRECT | **78** |
-| BUILT-BUT-WRONG | **110** |
-| NOT-BUILT | **262** |
+| BUILT-AND-CORRECT | **89** |
+| BUILT-BUT-WRONG | **127** |
+| NOT-BUILT | **234** |
 | CANNOT-VERIFY | **1** |
-| **CONSTRUCTED%** = (C+W)/451 | **188 / 451 = 41.7 %** |
-| **CORRECT%** (raw) = C/451 | **78 / 451 = 17.3 %** |
-| **CORRECT% (spec-attributable)** | **0 / 451 = 0.0 %** |
+| **CONSTRUCTED%** = (C+W)/451 | **216 / 451 = 47.9 %** |
+| **CORRECT%** (raw) = C/451 | **89 / 451 = 19.7 %** |
+| **CORRECT% (spec-attributable)** | **WITHDRAWN — not measured. See §36.4** |
 | CANNOT-VERIFY share | **1 / 451 = 0.2 %** |
+
+> **19.7 % is a CEILING on nothing and a FLOOR on nothing — it is the document
+> counted, not the code read.** No pass has ever checked a Trips verdict against the
+> implementation, `check:census-integrity` says so itself, and §36.5 lists what that
+> leaves open. Read §36 before quoting either percentage.
 
 > ### ⚠ SUPERSEDED 2026-09-08 — read §26 before this section
 >
@@ -1126,7 +1137,7 @@ here so the next reader can age this section mechanically.
 
 | Field | Value |
 | --- | --- |
-| `head_commit` | `42aeac38` — RE-DECLARED 2026-09-09 from `6c6995e1`, and the move is a measurement rather than a judgement: `git diff --name-only 6c6995e1 42aeac38` over this census's 35 scoped paths returns **0 files**, so every verdict is exactly as true at one as at the other. It was necessary because `6c6995e1` is a PRE-SQUASH commit — this repository squash-merges, so it is an ancestor of nothing and is on no remote branch, and `check:census-freshness` could resolve it only on the clone that wrote it (`CENSUS_HEAD_COMMITS_UNREACHABLE_IN_CI`). `42aeac38` is #476's squash, where this document's content actually reached `main`. Measurement lineage unchanged: §29 measured `823b6d67`; §30 re-measured §7.4 at `c3f76a49`; §31 re-measured §9.3 and §14 at `6d3e7a56`; §32 corrected TR261/TR437 at `1ec4d903`; §34 re-read the three §5 read routes at `6c6995e1`; §35 executed the kernel live. ONE declaration, kept current, because `check:census-freshness` reads the first one it finds and a second row further down is a decoration that ages nothing. |
+| `head_commit` | `014a25d5` — RE-DECLARED 2026-09-11 from `42aeac38` by §36's from-zero recount, on the same mechanical test: `git diff --name-only 42aeac38 014a25d5` over this census's **34** scoped paths returns **0 files**, so every verdict is exactly as true at one as at the other. `014a25d5` is #481's squash and is the tip of `main`; declaring it is what makes "recounted against merged `main`" a checkable statement rather than a claim. Previously — RE-DECLARED 2026-09-09 from `6c6995e1`, and that move was a measurement rather than a judgement too: `git diff --name-only 6c6995e1 42aeac38` over this census's scoped paths returned **0 files**. It was necessary because `6c6995e1` is a PRE-SQUASH commit — this repository squash-merges, so it is an ancestor of nothing and is on no remote branch, and `check:census-freshness` could resolve it only on the clone that wrote it (`CENSUS_HEAD_COMMITS_UNREACHABLE_IN_CI`). `42aeac38` is #476's squash, where this document's content actually reached `main`. Measurement lineage unchanged: §29 measured `823b6d67`; §30 re-measured §7.4 at `c3f76a49`; §31 re-measured §9.3 and §14 at `6d3e7a56`; §32 corrected TR261/TR437 at `1ec4d903`; §34 re-read the three §5 read routes at `6c6995e1`; §35 executed the kernel live. ONE declaration, kept current, because `check:census-freshness` reads the first one it finds and a second row further down is a decoration that ages nothing. |
 | Branch | `claude/portava-continuation-uqta94` |
 | Scope re-read | §5.1's twelve tables, §7, §8, §9.1, §9.3, §10, §11, §20.1, §22 |
 | NOT re-read | §1–§3, §6, §12–§19, §21, §23–§25. The headline stays where §26 left it. |
@@ -2250,3 +2261,153 @@ and `trip_snapshot_verify_replay` are granted to `service_role` and reachable,
 but no module in this repository owns those RPC names, and a test that is the
 only place a function name appears is a second source of truth for it. The
 measurement stands in §35; the guard waits for an owner.
+
+---
+
+## 36. Recount from zero, at `head_commit` `014a25d5` — merged `main`
+
+This is the recount the previous nine sections kept deferring. §26 closed by saying
+the headline was left uncorrected because *"correcting it from a partial re-read
+would be inventing a number"* and itemised §4's twelve moves *"so the arithmetic is
+available to whoever finishes the job."* This finishes it.
+
+**It is a recount of the DOCUMENT, not a re-reading of the CODE.** Every one of the
+451 verdicts below was written by an earlier pass; none was re-derived from the
+implementation here. What changed is that all 451 are now *counted*, mechanically and
+reproducibly, for the first time — and that four factual premises those verdicts rest
+on were re-measured against merged `main` and the live databases. §36.5 is the list
+of what that still does not settle, and it is long.
+
+### 36.1 The number
+
+| Bucket | `68ed59d9` headline | **Recount at `014a25d5`** | Move |
+|---|---:|---:|---|
+| C (BUILT-AND-CORRECT) | 78 | **89** | +11 |
+| W (BUILT-BUT-WRONG) | 110 | **127** | +17 |
+| N (NOT-BUILT) | 262 | **234** | −28 |
+| X (CANNOT-VERIFY) | 1 | **1** | — |
+| **Total** | 451 | **451** | — |
+
+**CONSTRUCTED 47.9 % (216/451) · CORRECT 19.7 % (89/451).** Against the headline this
+document carried for eleven sections — 41.7 % / 17.3 % — that is +6.2 and +2.4 points.
+
+Reproduce it with `node --import tsx/esm src/scripts/checkCensusIntegrity.ts`, which
+now prints `trips 451 89 127 234 1 … 0 counted where this tool cannot read`. The
+final zero is the point: **every requirement in the denominator is now machine-read.**
+It was 69 before.
+
+### 36.2 Why nobody could count this document until now
+
+The headline was never the hard part. The hard part is that `check:census-integrity`
+was reading **382 of 451 rows** and reporting 86 / 110 / 186, and both numbers were
+wrong in ways no reader could see. Three row shapes this census uses were invisible to
+it, and all three are shapes the census *documents itself as using*:
+
+| Shape | Example | Cost |
+|---|---|---|
+| **Range** | `\| TR38–TR45 \| …phases… \| **N** ×8 \|` | The row was dropped whole — not read as 8, not read as 1. The census's own key says *"A cell reading `**N** ×9` is one verdict applied to the consecutive ids named in that row"*. |
+| **Compound** | `\| TR58–TR62 + TR64–TR66 \| … \|` | Same, and it deliberately skips TR63, which is scored **W** separately. |
+| **Labelled id** | `` \| TR78 `trip_stages` \| W \| **W** \| why \| `` | The id is there; the label made the cell unparseable. |
+
+The third is the damaging one. **Every "Row moves" table in §29.4, §30.3 and §31.3,
+and every "Row corrections" table in §32.4, writes its id cell that way.** Those
+tables are where this document records its *newest* verdicts — 28 revisions in all.
+So the checker was counting the superseded originals and silently discarding every
+correction that superseded them. A census whose corrections are the one thing its
+guard cannot read is worse than an uncounted one: it reports the state that a later
+pass already found to be wrong, with a guard's authority behind it.
+
+`checkCensusIntegrity.ts` now reads all three, plus `?` (the CANNOT-VERIFY token,
+which was absent from its alias table) and `⌀` (the vacuity flag, which is a footnote
+on a verdict and not a verdict). Each was mutation-tested: break the `×8` and the
+multiplier check fires; break the range and 7 requirements vanish; hide one labelled
+id and TR79 falls back from **W** to the **N** §29.4 superseded.
+
+**This is not a Trips-only fix, and the other twelve censuses moved too.** Corpus
+rows read: 2,921 → 3,087. Requirements counted where the tool cannot read: **369 →
+203**. Six censuses now have no prose gap at all (layover, media, passport, sensing,
+trips, wall), up from two. The verdict distributions of the other twelve changed only
+by rows that were always there and never counted — no verdict was edited by this pass
+outside this file.
+
+### 36.3 A guard bug this recount had to fix before it could land
+
+`checkCensusIntegrity.ts` matched its headline buckets with `CANNOT-VERIFY[^|]*`,
+which also matches the `CANNOT-VERIFY share` row every census writes directly
+beneath. Last-block-wins then took the share row, and "last number on the line" read
+`**1 / 451 = 0.2 %**` as **2**.
+
+It had never fired, because the check it feeds runs only when parsed rows equal the
+denominator — which no affected census reached while whole row shapes were being
+dropped. Fixing the parser reaches it for six censuses at once. **Measured both ways:**
+unanchored, the sums come out media 168, passport 174, trips 452, wall 206 against
+denominators of 450 / 169 / 451 / 205 — four false failures on arithmetic that was
+never wrong. Anchored, all four sum exactly to their denominator.
+
+This is the §0 rule paying out in the other direction: a guard that had been green for
+its whole life was green only because nothing had ever reached it.
+
+Two checks were added on top, both of which fire only where a census has **no prose
+gap**, so they accuse nobody of prose-counting:
+
+1. **The headline must EQUAL the rows, not merely sum to the denominator.** Summing
+   proves the four numbers partition the right total; it does not prove they are
+   *this* document's partition. 78 / 110 / 262 / 1 and 89 / 127 / 234 / 1 both sum to
+   451. Applied to the six eligible censuses, five already agree to the row. The only
+   one that did not was this one, which is how the check earned its place.
+2. **A `×N` must equal the number of ids in its own cell.** `| TR38–TR45 | … | N ×9 |`
+   claims nine requirements on eight ids; whichever is right, the headline is wrong by
+   one in a row no reader would re-count. Zero mismatches exist today.
+
+### 36.4 Four premises that merged `main` falsified, measured not assumed
+
+The merge of #481 (`014a25d5`) and the live databases were read directly. Four
+load-bearing statements in this document are now false, and one is now true only of
+production:
+
+| Stated | Where | Measured at `014a25d5` |
+|---|---|---|
+| *"None of 2750 or 2760–2777 is on `main`"* | §29.5 | **False.** All 21 are on `main`. |
+| *"Production and portava-ci both carry 2420 and nothing after it"* | §29.5 | **False for portava-ci**, which carries through `2777`. Of the eighteen 2760–2777 rows, **thirteen are `applied_by='ci'`** — the sanctioned applier, which runs only on `refs/heads/main`. The five `manual` rows are exactly the ones §29.5 disclosed (2760–2763, 2767). **True for production.** |
+| *"eleven do not exist at all"* (the §5.1 tables) | Headline | **False on portava-ci** — all eleven exist. **True in production**: `trip_stages`, `trip_legs`, `trip_commitments`, `trip_plan_participants`, `trip_goals`, `trip_decision_tasks`, `trip_risks`, `trip_presence`, `trip_proposals`, `trip_snapshots`, `trip_outcomes` — 0 of 11 present. |
+| *"no code anywhere reads or writes a trip version"* | §7, on TR12/TR77 | **False.** 61 files on `main` carry `sourceTripVersion` / `expectedTripVersion` / `aggregate_version` / `trips.version`. `trips.version` exists on portava-ci as `bigint DEFAULT 0`. `current_stage_id` and `home_timezone` are still absent, so that clause is 1 of 3 falsified, not 3 of 3. |
+
+The document's two opening greps, re-run on merged `main`: the spec/kernel/projection
+grep returns **56 files** (1 at `68ed59d9`, 47 at §26); the one this census calls *"the
+whole story in one line"* returns **76** (0 at `68ed59d9`, 34 at §26); `aggregate_version`
+alone, **32** (0, then 17).
+
+**No verdict moves because of any of this, and that is deliberate.** §29.5 held every
+§5 row at W on the rule *"C requires the thing to work"*, and its chain — BUILT ON
+BRANCH → MERGED → DEPLOYED → FLAG ENABLED → PRODUCTION REALIZED — has advanced by
+exactly two links, not five. Merged: yes. Deployed to the CI project: yes, by the
+sanctioned applier. Deployed to production: **no, 0 of 11 tables**. So the verdicts
+stand and their *stated reasons* were wrong; §29.5's reasoning is corrected here
+rather than quietly left to be quoted. The +11 C and +17 W in §36.1 come entirely from
+revisions this document had already written and its guard could not read — **not one
+verdict was moved by this pass.**
+
+The **spec-attributable 0.0 %** is withdrawn rather than restated. §26 established
+that `2420_trip_kernel_foundation.sql` cites this spec by section number, so 0 is
+false; how many of the 89 C rows are attributable has not been measured, and
+substituting a guess for a falsified zero is the error §26 refused to make.
+
+### 36.5 What this section does NOT claim
+
+- **Not one of the 451 verdicts was re-derived from the code.** This is the document
+  counted correctly, not the surface re-read. `check:census-integrity` states the same
+  limit in its own output. The 19.7 % is neither floor nor ceiling on correctness — it
+  is a faithful count of what earlier passes concluded.
+- **Sections §5–§25 outside the ones §26–§35 reopened are still `68ed59d9` verdicts.**
+  §26 listed §7, §11, §12, §13, §14, §16, §19, §21 and §22 as unaudited; §30–§34
+  reopened parts of §7, §9 and §14, and §35 executed §4's kernel. The rest stand
+  unexamined, and the Trip Kernel programme plausibly moved rows in several.
+- **Nothing here is a production claim.** Production carries none of the eleven tables
+  and Batch C of `manual-production-migration-runbook.md` is unapplied. Every C and W
+  in §36.1 describes code that is merged and, at most, applied to portava-ci.
+- **The five `manual` ledger rows are still a disclosed exception**, not a clean
+  application. 2760–2763 and 2767 carry `checksum='backfill'`, which is the mechanism
+  `ciSupabaseGuard.mjs` exists to refuse.
+- **`CI_DB_HAND_APPLIED_FROM_UNMERGED_BRANCHES` is untouched by this pass** and `main`
+  remains red on `CI (live DB)` for it. It concerns 2311 / 2320 / 2325, which are not
+  Trips files and belong to branches this lane does not own.
