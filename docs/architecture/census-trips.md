@@ -1288,13 +1288,28 @@ test that observed its primary output**, not a test that observed its shape. The
 | TR86 `trip_risks` | N | **W** | 2766 writer; §8.4 propagation implemented and served. |
 | TR87 `trip_presence` | N | **W** | 2767 vocabulary, 2768 writer, 2776 freshness, 2777 ordering; read AND written from one card. |
 | TR88 `trip_proposals` | N | **W** | 2768 + 2775; served with the §9.3 tally. |
-| TR89 `trip_snapshots` | N | **W** | 2773 fold/replay/verify; served by `tripCommands.ts`. No screen (29.2). |
-| TR90 `trip_outcomes` | N | **W** | 2768 RECORD_OUTCOME; served by `tripStructure.ts` with `planPresent`. |
+| TR90 `trip_snapshots` | N | **W** | 2773 fold/replay/verify; served by `tripCommands.ts`. No screen (29.2). |
+| TR91 `trip_outcomes` | N | **W** | 2768 RECORD_OUTCOME; served by `tripStructure.ts` with `planPresent`. |
 | TR83 `trip_plan_participants` | N (**"blocked"**) | **W** | §27 said this was "blocked, not merely unbuilt" because `trip_plans` does not exist. **That was wrong and it contradicted TR82 in the same document**, which already said `trip_plan_items` IS §5.1's `trip_plans`. Migration 2770 made the identity explicit, 2771 built the table, 2772 wrote it. The correction is recorded here rather than silently applied. |
 | TR136 stage-locality | N | **N** | §7.4's consistency check still has no implementation. Stages existing does not build it. |
 | TR144 risk propagation | N | **W** | `propagateRisks` in `TripDecisionEngine.ts`, served as `elementRisks`, rendered by `TripDecisionsCard`. |
 | TR123 arrival semantics | N | **W** | `required_arrival_at` exists (2761) and is now *used*: the feasibility engine judges against it, and a behaviour test drives the spec's own 19:00/18:45 example. |
 | TR255 stage map layer | N | **N** | Still no map consumer for stages. `TripStageSpineCard` is a list, not the map layer §5.1 describes. |
+
+> **CORRECTED 2026-09-11 (§39.3).** The last two table rows above were written
+> as `TR89 `trip_snapshots`` and `TR90 `trip_outcomes``. This
+> census's §5.1 body assigns TR89 `trip_events`, TR90 `trip_snapshots` and TR91
+> `trip_outcomes`: from TR89 on, the ids ran one ahead of the objects. The ids
+> are corrected here to the objects the evidence in each row actually describes.
+>
+> The cost was not the two rows. It was the **third**: TR91 `trip_outcomes` was
+> never moved at all, and kept the verdict NOT-BUILT with the evidence "Does not
+> exist." while `CREATE TABLE public.trip_outcomes` sat at
+> `2763_trip_presence_proposals_snapshots_outcomes.sql:124` on merged `main`.
+> TR89 `trip_events` was already **W**, so the row claiming to move it N→W moved
+> nothing and attached `trip_snapshots`' evidence to the wrong object. §39.4
+> moves TR91, and `check:census-row-move-labels` now fails on either half of
+> this pair restored.
 
 **Not one row moves to C, and that is the whole point of the next section.**
 

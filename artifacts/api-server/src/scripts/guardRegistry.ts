@@ -533,6 +533,33 @@ export const GUARDS: readonly GuardEntry[] = [
     reach: { kind: "check-all", script: "check:census-scope-coverage" },
   },
   {
+    checker: "src/scripts/checkCensusRowMoveLabels.ts",
+    inspects: {
+      countPattern: "(\\d+) labelled id cell\\(s\\) scanned",
+      unit: "labelled requirement-id cells scanned for a label naming another row's object",
+    },
+    responsibility:
+      "A labelled requirement id must not name another requirement's object; the id is what every count uses.",
+    // census-trips 29.4 restates the rows it moved, labelling each id with the
+    // object it is about. Its last two rows read TR89 `trip_snapshots` and
+    // TR90 `trip_outcomes` while the body assigns TR89 `trip_events`, TR90
+    // `trip_snapshots`, TR91 `trip_outcomes`: from TR89 on the ids ran one
+    // ahead of the objects. TR89 was already W so the move was a no-op; TR90
+    // was accidentally right; and TR91 -- never moved -- kept NOT-BUILT with
+    // the evidence "Does not exist." while CREATE TABLE public.trip_outcomes
+    // sat in a migration on merged main. The error propagated INTO the code:
+    // migration 2768 comments `RECORD_OUTCOME -> trip_outcomes (TR90)`, citing
+    // the census's own off-by-one back at it.
+    //
+    // Deliberately narrow. A label that REFINES -- the table behind a type, a
+    // column of the object, a key inside the function -- is normal, and three
+    // in the corpus do it. Only a label naming ANOTHER row's object in the SAME
+    // id sequence fails; without that scoping the first run accused
+    // census-discovery twice, where F2 closes D2 and says so by reusing the
+    // word.
+    reach: { kind: "check-all", script: "check:census-row-move-labels" },
+  },
+  {
     checker: "src/scripts/checkPlaceIdBridge.ts",
     inspects: {
       countPattern: "(\\d+) source file\\(s\\) scanned",

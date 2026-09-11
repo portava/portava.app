@@ -187,6 +187,19 @@ run_check "check:census-freshness" pnpm run check:census-freshness
 # Per-census floors are a ratchet — raise one when you widen a scope; lowering
 # one to get green is the single response that is never right.
 run_check "check:census-scope-coverage" pnpm run check:census-scope-coverage
+# check:census-row-move-labels — a census revises a verdict by RESTATING the row
+# in a later "Row moves" section, labelled with the object it is about. When the
+# label and the id name different objects, the id wins (every count uses it) and
+# the wrong requirement moves. census-trips §29.4 did exactly that: its last two
+# rows read TR89 `trip_snapshots` and TR90 `trip_outcomes` while the body assigns
+# TR89 `trip_events`, TR90 `trip_snapshots`, TR91 `trip_outcomes`. TR89 was
+# already W so the move was a no-op, TR90 was accidentally right, and TR91 —
+# never moved — kept NOT-BUILT with the evidence "Does not exist." while CREATE
+# TABLE public.trip_outcomes sat in a merged migration. §39 moved it.
+# The rule is deliberately narrow: a label that REFINES (a table behind a type,
+# a column, a key) is normal and three in the corpus do it. Only a label naming
+# ANOTHER row's object in the SAME id sequence fails.
+run_check "check:census-row-move-labels" pnpm run check:census-row-move-labels
 # check:place-id-bridge — census-trips TR32/TR94 said the single place id-space
 # crossing was "Enforced by a standing ratchet rather than convention", naming
 # check:schema-references as that ratchet. It is not: that check verifies a
