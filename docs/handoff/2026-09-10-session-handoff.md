@@ -472,11 +472,47 @@ not a guard yet.*
   §26–§35 reopened still carry `68ed59d9` verdicts; the Trip Kernel programme plausibly
   moved rows in several of them, and nobody has looked.
 
-### The next cheapest large win
+### The next cheapest large win — **TAKEN for Trips, see census-trips §37**
 
-The Trips recount closed the *counting* problem. The remaining one is *verification*: 
-`check:census-integrity` prints, in its own output, that it does not read the code. A guard
-that took even one census's C rows and confirmed the cited `file:line` still exists and still
-contains what the row says would be the first thing in this repository to check a census
-against the implementation. Six censuses now have zero prose gap, so their rows are fully
-machine-addressable — that is the precondition, and it did not exist before this session.
+That win was stated here as: a guard that takes a census's C rows and confirms the cited
+`file:line` still exists and still contains what the row says. It turned out the guard
+already existed — `check:doc-citations` — with its *range* half enforced over
+`docs/architecture/` and its *anchor* half opt-in and largely unused. §37 is that pass,
+run over Trips.
+
+**It moved no verdict, and it found that 37 citations had rotted.** `census-trips.md`
+carries 338 citations; **315 of 338 were range-only**, and a range check asks only whether
+the file is still long enough. Under the 89 BUILT-AND-CORRECT rows the drift was severe and
+entirely invisible: the only reader of `trip_activity_log` off by **641** lines, the
+`DELETE members` route by **480**, the plan-mutation guard in `routes/trips.ts` by **219**,
+`isAcceptedTripMember` by **22**, `canEditPlan` by **10**. Every one stayed *in range*, so
+the check was green on all of them for as long as they have been wrong. 37 corrected and
+anchored; the repo-wide anchored count is **243 → 278** and the ratchet floor moved with it.
+
+**The structural finding is the one to carry.** `check:census-freshness` reported Trips
+FRESH throughout — truthfully, about the wrong half. The census cites 49 distinct files and
+**10 were in its `CENSUS_SCOPE`**; the 39 missing were led by `lib/tripCrewLocation.ts` (34
+citations), `routes/trips-expansion.ts` (28) and `compass/CompassTools.ts` (26). The scope
+covered the Trip Kernel programme — so it watched the **W** rows, the ones saying something
+is *not* right, and left the **C** rows unguarded. **Check every other census's scope for
+the same inversion**: the five declared on 2026-09-11 were scoped from their citations, so
+they should be better, but none has been audited this way.
+
+**And one method rule, bought at the cost of a near-miss.** §37 almost recorded TR10 as
+wrong — the census says `trip_crew_map_enabled` is seeded false at
+`0041_trip_crew_location.sql:63`, and the first resolution showed line 130 seeding it
+**true**. *Three files share that basename.* The census means the one under
+`src/migrations/`, where line 63 seeds false and the citation is exactly right. **A
+basename that resolves to more than one file has not been resolved** —
+`check:doc-citations` reports **593** such citations corpus-wide, 53 of them in Trips.
+
+### What is still open after §37
+
+- **No verdict has been re-derived.** §37 checked that each cited artifact exists and still
+  says what the row says. Whether the BUILT-AND-CORRECT *judgement* was right is untouched.
+- **Only the C rows' unreadable citations were opened** — 132 range-only citations on W rows
+  and 40 on N rows were not read, and are as likely to have drifted.
+- **An anchor pins a line, not a meaning.** `#canEditPlan` cannot tell that the function's
+  behaviour changed under a stable name.
+- **The other twelve censuses have had no citation pass at all**, and 5,900 of the corpus's
+  6,213 citations remain range-only.
