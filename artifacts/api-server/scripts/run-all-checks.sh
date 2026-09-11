@@ -197,6 +197,15 @@ run_check "check:census-scope-coverage" pnpm run check:census-scope-coverage
 # place memory is keyed on discovery_places.id, and crossing without the bridge
 # reports EVERY place as new to the user — silent and confident, not an error.
 run_check "check:place-id-bridge" pnpm run check:place-id-bridge
+# check:trip-write-validation — census-trips TR51 ("Command service validates
+# schema") was C, and the row's own testable half is the sentence "every trip
+# write parses a zod schema first". Measured 2026-09-11 across the three files it
+# cites: 53 write endpoints, 8 reading req.body with NO schema — POST /trips, the
+# primary create, among them. TR51 moved C -> W. Shrink-only baseline, same idiom
+# as the RLS allowlists: fix one and delete its line, because an entry left in
+# after it stops being true goes on excusing the next. Not about authorization —
+# that is check:route-auth-gate's job and is enforced independently.
+run_check "check:trip-write-validation" pnpm run check:trip-write-validation
 run_check "check:census-policy-citations" pnpm run check:census-policy-citations
 # check:memory-table-ownership — public.memory_events (the Memory projection
 # family's log, live in production and read by the account-deletion cascade) and

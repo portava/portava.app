@@ -293,7 +293,12 @@ router.post("/trips", async (req, res) => {
     return;
   }
 
-  const { title, destinationCity, destinationCountry, startDate, endDate, visibility, coverUrl, coverMediaType, coverImageWidth, coverImageHeight, tripNotes, showHeaderPublicly } = req.body;
+  const parsedBody = CreateTripSchema.safeParse(req.body);
+  if (!parsedBody.success) {
+    sendError(res, "invalid_payload", parsedBody.error.issues[0]?.message ?? "Invalid trip payload");
+    return;
+  }
+  const { title, destinationCity, destinationCountry, startDate, endDate, visibility, coverUrl, coverMediaType, coverImageWidth, coverImageHeight, tripNotes, showHeaderPublicly } = parsedBody.data;
 
   // Date conflict check — applies even when title/city are absent (draft support)
   if (startDate && endDate && new Date(startDate) > new Date(endDate)) {
@@ -334,9 +339,10 @@ router.post("/trips", async (req, res) => {
         cover_image_width: (coverImageWidth as number | null | undefined) ?? null,
         cover_image_height: (coverImageHeight as number | null | undefined) ?? null,
         trip_notes: tripNotes ?? null,
-        show_header_publicly: typeof showHeaderPublicly === "boolean"
-          ? showHeaderPublicly
-          : (visibility ?? "private") === "public",
+        // Typed by CreateTripSchema now, so absence is the only fallback case;
+        // the old `typeof === "boolean"` test silently turned the STRING "false"
+        // into the derived default instead of refusing it.
+        show_header_publicly: showHeaderPublicly ?? ((visibility ?? "private") === "public"),
       },
     });
     if (!r.ok) { sendKernelRejection(res, r, req.log); return; }
@@ -384,7 +390,10 @@ router.post("/trips", async (req, res) => {
   if (newTripIdForLang && (title ?? '').trim()) {
     const _sc = getServiceClient();
     if (_sc) {
-      const textToDetect = tripNotes ? `${title} ${tripNotes}` : title;
+      // `title` is `string | undefined` now that CreateTripSchema types it —
+      // the guard above already proved it is a non-empty string, but the
+      // compiler cannot see through `(title ?? '').trim()`, so narrow it here.
+      const textToDetect = tripNotes ? `${title} ${tripNotes}` : (title ?? "");
       detectAndStoreLanguage(_sc, 'trip', newTripIdForLang, textToDetect, req.log).catch(() => {});
     }
   }
@@ -759,6 +768,37 @@ const PlanEditPermissionEnum = ["owner_only", "all_members", "specific_members"]
 const UUID_RE = /^[0-9a-f-]{36}$/i;
 
 const TripStatusEnum = ["draft", "upcoming", "active", "planning", "completed", "cancelled", "archived"] as const;
+
+/**
+ * POST /trips body. census-trips TR51's testable claim is that "every trip write
+ * parses a zod schema first"; measured 2026-09-11 that was false for eight
+ * endpoints, this one among them — twelve fields came straight off `req.body`
+ * and the only validation was startDate <= endDate. TR51 moved C -> W on that
+ * measurement and this closes the flagship create.
+ *
+ * DELIBERATELY NOT STRICTER THAN PatchTripSchema. Every field below mirrors the
+ * one this router has enforced on PATCH /trips/:tripId all along, so a client
+ * able to patch a field can create with it and this cannot reject a payload the
+ * API already accepted elsewhere. Unknown keys are STRIPPED rather than
+ * rejected — zod's default, and exactly what the destructuring it replaces did.
+ *
+ * Every field is optional: a trip with no title or city is a DRAFT, which
+ * computeTripStatus below depends on and which the client relies on.
+ */
+const CreateTripSchema = z.object({
+  title:              z.string().min(1).max(200).optional(),
+  destinationCity:    z.string().max(100).optional(),
+  destinationCountry: z.string().max(100).nullable().optional(),
+  startDate:          z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
+  endDate:            z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
+  visibility:         z.enum(["public", "private", "buddies", "invite"]).optional(),
+  coverUrl:           z.string().url().nullable().optional(),
+  coverMediaType:     z.enum(["image", "video"]).nullable().optional(),
+  coverImageWidth:    z.number().int().positive().nullable().optional(),
+  coverImageHeight:   z.number().int().positive().nullable().optional(),
+  tripNotes:          z.string().nullable().optional(),
+  showHeaderPublicly: z.boolean().optional(),
+});
 
 const PatchTripSchema = z.object({
   // Plan edit settings

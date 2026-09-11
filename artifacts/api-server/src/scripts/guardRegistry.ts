@@ -553,6 +553,23 @@ export const GUARDS: readonly GuardEntry[] = [
     reach: { kind: "check-all", script: "check:place-id-bridge" },
   },
   {
+    checker: "src/scripts/checkTripWriteValidation.ts",
+    inspects: {
+      countPattern: "(\\d+) trip write endpoint\\(s\\) scanned",
+      unit: "trip write endpoints scanned for body-schema validation",
+    },
+    responsibility:
+      "A trip write that reads req.body parses a schema; the known-unvalidated list only shrinks.",
+    // census-trips TR51 was recorded C on the sentence "every trip write parses
+    // a zod schema first". Measured 2026-09-11: 53 write endpoints across the
+    // three files it cites, 8 reading req.body with no schema, POST /trips among
+    // them. TR51 moved C -> W. POST /trips is closed and its entry deleted; seven
+    // remain. What the absence costs is TYPE validation, not authorization —
+    // requireUser and check:route-auth-gate cover that independently — so a
+    // malformed payload became a 500 from the database where a 400 belongs.
+    reach: { kind: "check-all", script: "check:trip-write-validation" },
+  },
+  {
     checker: "src/scripts/checkCensusPolicyCitations.ts",
     inspects: {
       countPattern: "(\\d+) census policy citation\\(s\\) checked",
