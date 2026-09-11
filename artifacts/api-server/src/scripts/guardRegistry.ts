@@ -570,6 +570,24 @@ export const GUARDS: readonly GuardEntry[] = [
     reach: { kind: "check-all", script: "check:trip-write-validation" },
   },
   {
+    checker: "src/scripts/checkTripPushPolicy.ts",
+    inspects: {
+      countPattern: "(\\d+) trip push site\\(s\\) bypass NotificationRouter",
+      unit: "trip push sites bypassing the attention policy",
+    },
+    responsibility:
+      "A trip push that skips NotificationRouter is counted, and the list only shrinks.",
+    // census-trips TR200 read C because NotificationRouter consults preferences,
+    // dedup and the Compass evaluator before dispatching. It does. Measured
+    // 2026-09-11: ten trip push sites never reach it, calling sendPushWithRetry
+    // directly -- a transport wrapper that filters tokens and retries transient
+    // Expo failures and consults no policy at all. One site documents the bypass
+    // in a comment, to avoid double-delivery. The cost is concrete: per-user
+    // channel preferences, per-category preferences and quiet hours are all
+    // skipped, so a user inside their quiet hours still receives them.
+    reach: { kind: "check-all", script: "check:trip-push-policy" },
+  },
+  {
     checker: "src/scripts/checkCensusPolicyCitations.ts",
     inspects: {
       countPattern: "(\\d+) census policy citation\\(s\\) checked",

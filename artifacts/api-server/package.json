@@ -54,6 +54,7 @@
     "check:census-scope-coverage": "node --import tsx/esm src/scripts/checkCensusScopeCoverage.ts",
     "check:place-id-bridge": "node --import tsx/esm src/scripts/checkPlaceIdBridge.ts",
     "check:trip-write-validation": "node --import tsx/esm src/scripts/checkTripWriteValidation.ts",
+    "check:trip-push-policy": "node --import tsx/esm src/scripts/checkTripPushPolicy.ts",
     "check:memory-table-ownership": "node --import tsx/esm src/scripts/checkMemoryTableOwnership.ts",
     "check:trust-table-ownership": "node --import tsx/esm src/scripts/checkTrustTableOwnership.ts",
     "check:trust-event-vocabulary": "node --import tsx/esm src/scripts/checkTrustEventVocabulary.ts",

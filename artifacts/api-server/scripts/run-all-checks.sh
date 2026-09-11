@@ -206,6 +206,16 @@ run_check "check:place-id-bridge" pnpm run check:place-id-bridge
 # after it stops being true goes on excusing the next. Not about authorization —
 # that is check:route-auth-gate's job and is enforced independently.
 run_check "check:trip-write-validation" pnpm run check:trip-write-validation
+# check:trip-push-policy — census-trips TR200 ("Trip events must pass an attention
+# policy") read C because NotificationRouter consults preferences, dedup and the
+# Compass evaluator. It does. Measured 2026-09-11: TEN trip push sites do not go
+# through it — they call sendPushWithRetry, a pure transport wrapper that filters
+# tokens and retries, consulting nothing. One says so in a comment. That skips
+# per-user channel preferences, per-category preferences and QUIET HOURS, so a
+# user who switched a category off still gets all ten. TR200 moved C -> W.
+# Shrink-only, and keyed on file:line rather than a count, because a bare total
+# stays green across a substitution.
+run_check "check:trip-push-policy" pnpm run check:trip-push-policy
 run_check "check:census-policy-citations" pnpm run check:census-policy-citations
 # check:memory-table-ownership — public.memory_events (the Memory projection
 # family's log, live in production and read by the account-deletion cascade) and

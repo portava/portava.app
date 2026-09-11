@@ -23,21 +23,25 @@ preserved in §36.1 as the record of that measurement.
 | Measure | Value |
 | --- | --- |
 | **Denominator (testable requirements)** | **451** |
-| BUILT-AND-CORRECT | **88** |
-| BUILT-BUT-WRONG | **128** |
+| BUILT-AND-CORRECT | **87** |
+| BUILT-BUT-WRONG | **129** |
 | NOT-BUILT | **234** |
 | CANNOT-VERIFY | **1** |
 | **CONSTRUCTED%** = (C+W)/451 | **216 / 451 = 47.9 %** |
-| **CORRECT%** (raw) = C/451 | **88 / 451 = 19.5 %** |
+| **CORRECT%** (raw) = C/451 | **87 / 451 = 19.3 %** |
 
-> **RESTATED 2026-09-11 (§38): 89 → 88 CORRECT, 127 → 128 WRONG.** §38 re-derived
-> 37 of the C rows against the code and **one did not hold** — TR51, whose
-> testable claim was that *every* trip write parses a zod schema first, and which
-> a count showed false for 8 of 53 write endpoints. CONSTRUCTED is unchanged at
-> 47.9 %: the requirement is still BUILT, it is now graded WRONG rather than
-> CORRECT. This is the first verdict either §37 or §38 has moved, and it moved
-> DOWN, which is the direction a re-derivation should be able to go if it means
-> anything.
+> **RESTATED 2026-09-11 (§38): 89 → 87 CORRECT, 127 → 129 WRONG.** §38 re-derived
+> 39 of the C rows against the code and **two did not hold**, both for the same
+> reason — a universal claim nobody had counted:
+>
+> - **TR51** said *every* trip write parses a zod schema first. 8 of 53 do not.
+> - **TR200** said trip events pass an attention policy. 10 trip push sites never
+>   reach the router that applies it.
+>
+> CONSTRUCTED is unchanged at 47.9 %: both requirements are still BUILT, and are
+> now graded WRONG rather than CORRECT. These are the first verdicts either §37
+> or §38 has moved, and both moved DOWN — the direction a re-derivation has to be
+> able to go if it means anything.
 | **CORRECT% (spec-attributable)** | **WITHDRAWN — not measured. See §36.4** |
 | CANNOT-VERIFY share | **1 / 451 = 0.2 %** |
 
@@ -478,8 +482,8 @@ because there is no stage.*
 | TR197 | §11.3 "I am bored" → builds a short FreedomWindow + experience candidates without changing commitments | **N** | No free windows (TR131). |
 | TR198 | §11.3 "Return / regroup" → creates a route/meeting operation and switches context priority | **W** | Safe Return creates a return operation with contacts and escalation (`services/safeReturn/SafeReturnService.ts:28-40` `CreateSessionInput` carries `tripId` and `planItemId`) — a safety return, not a regroup, and it does not switch any context priority. |
 | TR199 | §11.4 Attention model IGNORE \| PASSIVE \| SURFACE \| NOTIFY \| INTERRUPT | **W** | A different four-value model ships: `services/notifications/NotificationTemplateService.ts:19` `NotificationPriority = 'urgent' \| 'important' \| 'normal' \| 'low'`, crossed with `NotificationChannel` at `:21`. It expresses urgency, not attention *cost*; there is no IGNORE and no INTERRUPT. |
-| TR200 | §11.4 Trip events must pass an attention policy | **C** | They do: `services/notifications/NotificationRouter.ts:1-27` consults `NotificationPreferenceService`, `NotificationDeduplicationService` and `CompassNotificationEngine.evaluateNotification` before dispatching, and logs every attempt. Trip reminders route through it (`lib/tripReminderScheduler.ts`, `src/test/tripReminderPush.test.ts`). |
-| TR201 | §11.4 Do not convert every social or live-intel change into a push notification | **C** | Three independent suppressors: per-user channel preferences (`NotificationPreferenceService`), dedup (`NotificationDeduplicationService`), and digesting (`NotificationDigestService`), plus per-template `defaultChannels` (`NotificationTemplateService.ts:27`) so most event types never default to push. |
+| TR200 | §11.4 Trip events must pass an attention policy | **W** | **MOVED C → W, 2026-09-11 (§38).** The row read C because `services/notifications/NotificationRouter.ts` consults `NotificationPreferenceService`, `NotificationDeduplicationService` and `CompassNotificationEngine.evaluateNotification` before dispatching. **It does — and ten trip push sites never reach it.** They call `sendPushWithRetry` directly (`lib/pushWithRetry.ts`), which is a pure transport wrapper: it filters malformed tokens, retries transient Expo failures and clears dead ones, and consults no policy whatever. Counted: 4 in `routes/trips.ts`, 5 in `routes/trips-expansion.ts`, 1 in `lib/tripReminderScheduler.ts`. The bypass is DELIBERATE — one site carries the comment *"notifRouter.route() is intentionally NOT called here; push was already sent above via sendPushWithRetry to avoid double-delivery"* — which is why it is counted rather than patched in passing. **The cost is concrete:** `NotificationPreferenceService` holds per-user channel preferences, per-category preferences and QUIET HOURS (it computes `localMinutesOfDay` against the user's timezone), so a user who has switched a category off, or who is inside their quiet hours, receives all ten regardless. Held shrink-only by `check:trip-push-policy`, keyed on `file:line` rather than a total so the check cannot stay green across a substitution. Returns to C when that list reaches zero. |
+| TR201 | §11.4 Do not convert every social or live-intel change into a push notification | **C** | Three independent suppressors exist and are real: per-user channel preferences (`NotificationPreferenceService`), dedup (`NotificationDeduplicationService`) and digesting (`NotificationDigestService`), plus per-template `defaultChannels`. **Evidence corrected 2026-09-11 (§38): those three do NOT cover the trip surfaces.** Ten trip pushes bypass the router entirely — see TR200. The verdict nonetheless stands, and the reason it stands is worth stating rather than assuming: this requirement is that not *every* change becomes a push, and the ten bypasses are discrete, deliberately chosen events (invitation received, join request, decision, review prompt, reminders), not a firehose of social or live-intel deltas. Trips does not push on every plan edit, presence beat or member move. What is wrong is the *mechanism* named — TR200 — not the outcome this row grades. |
 
 ### §12 Compass Trip Orchestration Contract
 
@@ -2538,16 +2542,25 @@ by saying exactly what it had not done:
 > **No verdict was re-derived.** §37 checked that each cited artifact exists and
 > still says what the row says — not whether the judgement was right.
 
-This section does that, for 37 of the 89 BUILT-AND-CORRECT rows. A C row is the
+This section does that, for 39 of the 89 BUILT-AND-CORRECT rows. A C row is the
 one that matters most: a W row that rots stays wrong, but a C row that rots
 becomes a false assurance, and nothing in this repository had ever asked whether
 one was true.
 
-**36 of the 37 held. One did not.** TR51 moved **C → W** — the first verdict
-either §37 or §38 has moved, and it moved DOWN, which is the direction a
-re-derivation has to be able to go if it means anything. The census headline is
-restated at the top of this document: 89 → 88 CORRECT, 127 → 128 WRONG,
-CONSTRUCTED unchanged at 47.9 % because the requirement is still built.
+**37 of the 39 held. Two did not**, and they failed the same way: a universal
+claim that had never been counted. TR51 said *every* trip write parses a zod
+schema first; 8 of 53 do not. TR200 said trip events pass an attention policy;
+10 trip push sites never reach the router that applies one. Both moved **C → W**
+— the first verdicts either §37 or §38 has moved, and both moved DOWN, which is
+the direction a re-derivation has to be able to go if it means anything. The
+headline is restated at the top of this document: 89 → 87 CORRECT, 127 → 129
+WRONG, CONSTRUCTED unchanged at 47.9 % because both requirements are still built.
+
+**That is the method finding, and it is worth more than either row.** 35 of the
+89 C rows make a universal claim — *every*, *only*, *never*, *nothing*,
+*cannot*, *always*. Those are the falsifiable ones, and both failures came from
+that set. A row saying "X is handled" is hard to disprove; a row saying "EVERY X
+is handled" is a count, and until this pass none of them had been counted.
 
 ### What was re-derived, and how
 
@@ -2618,6 +2631,42 @@ alone would make create stricter than patch and leave the same value reachable
 through the other door. Pinned as current behaviour in the test, so closing it is
 a deliberate diff.
 
+### THE SECOND VERDICT THAT MOVED — TR200, "Trip events must pass an attention policy"
+
+The row read **C** because `NotificationRouter` consults
+`NotificationPreferenceService`, `NotificationDeduplicationService` and
+`CompassNotificationEngine.evaluateNotification` before dispatching. It does.
+
+**Ten trip push sites never reach it.** They call `sendPushWithRetry` directly,
+and that function is a pure transport wrapper — it filters malformed tokens,
+retries transient Expo failures, clears dead tokens, and consults no policy at
+all. Counted: 4 in `routes/trips.ts`, 5 in `routes/trips-expansion.ts`, 1 in
+`lib/tripReminderScheduler.ts`.
+
+**The bypass is deliberate**, which is why it is counted rather than patched in
+passing — one site carries the comment *"notifRouter.route() is intentionally NOT
+called here; push was already sent above via sendPushWithRetry to avoid
+double-delivery."* Re-plumbing delivery through the router is a design change
+with a hazard the code already names, and it belongs to whoever owns
+notifications.
+
+**What it costs is concrete, not theoretical.** `NotificationPreferenceService`
+holds per-user channel preferences, per-category preferences and QUIET HOURS — it
+computes `localMinutesOfDay` against the user's own timezone. A user who has
+switched a trip category off, or who is inside their quiet hours, receives all
+ten of these pushes anyway.
+
+Held shrink-only by `check:trip-push-policy`, keyed on `file:line` rather than a
+count: a bare total stays green across a substitution, where one site is fixed
+and another appears. TR200 returns to C when the list reaches zero.
+
+**TR201 was checked in the same pass and STAYS C.** Its three suppressors do not
+cover these ten either, and its evidence is corrected to say so — but the
+requirement it grades is that not *every* social or live-intel change becomes a
+push, and the ten are discrete deliberate events, not a firehose. Trips does not
+push on every plan edit, presence beat or member move. What was wrong there is
+the mechanism named, which is TR200's problem, not the outcome.
+
 ### THE THIRD FINDING — a "standing ratchet" that did not exist
 
 TR32 and TR94 both said the single place id-space crossing was **"Enforced by a
@@ -2687,8 +2736,8 @@ coverage and this census's evidence are not the same set — not a defect.
 
 ### What this pass did NOT do, stated rather than implied
 
-1. **52 of the 89 C rows are not re-derived.** They remain as §36 counted them.
-2. **No W or N row was re-derived at all.** 127 W and 234 N rows stand entirely
+1. **50 of the 89 C rows are not re-derived.** They remain as §36 counted them.
+2. **No W or N row was re-derived at all.** 129 W and 234 N rows stand entirely
    on earlier passes. A W row asserting something is broken could have been
    fixed since without anyone noticing — that is the cheaper error, but it is
    still an error, and it is untested here.
