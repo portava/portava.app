@@ -83,7 +83,7 @@ describe("TR117/TR118/TR120/TR121 — the non-member trip preview cannot leak a 
   ]);
 
   it("TR117/TR120/TR121 — the preview carries NOTHING beyond its declared field set", () => {
-    const out = toPrivateTripPreview(loadedRow, null) as Record<string, unknown>;
+    const out = toPrivateTripPreview(loadedRow, null);
     const unexpected = Object.keys(out).filter((k) => !ALLOWED.has(k));
     assert.deepEqual(unexpected, [],
       `non-member preview carried undeclared field(s): ${unexpected.join(", ")}`);
@@ -102,16 +102,16 @@ describe("TR117/TR118/TR120/TR121 — the non-member trip preview cannot leak a 
   });
 
   it("TR118 — exact coordinates appear ONLY under the host's explicit opt-in", () => {
-    const off = toPrivateTripPreview(loadedRow, null) as Record<string, unknown>;
+    const off = toPrivateTripPreview(loadedRow, null);
     assert.ok(!("destinationLat" in off), "coordinates leaked with precise_location_visible false");
 
     // The opt-in is strict equality to true, not truthiness: "1" or 1 must not
     // be read as consent by a row that arrived from a loose source.
     for (const loose of ["true", 1, "1", {}] as unknown[]) {
-      const o = toPrivateTripPreview({ ...loadedRow, precise_location_visible: loose }, null) as Record<string, unknown>;
+      const o = toPrivateTripPreview({ ...loadedRow, precise_location_visible: loose }, null);
       assert.ok(!("destinationLat" in o), `coordinates leaked on a truthy-but-not-true opt-in: ${JSON.stringify(loose)}`);
     }
-    const on = toPrivateTripPreview({ ...loadedRow, precise_location_visible: true }, null) as Record<string, unknown>;
+    const on = toPrivateTripPreview({ ...loadedRow, precise_location_visible: true }, null);
     assert.equal(on.destinationLat, 10.3157);
   });
 
@@ -121,7 +121,7 @@ describe("TR117/TR118/TR120/TR121 — the non-member trip preview cannot leak a 
     // fail this one.
     const out = toPrivateTripPreview(
       { ...loadedRow, some_column_invented_later: "secret" }, null,
-    ) as Record<string, unknown>;
+    );
     assert.ok(!("some_column_invented_later" in out));
   });
 });
