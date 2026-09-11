@@ -7,6 +7,9 @@
  * PRIVACY CONTRACT:
  *   - Exact lat/lng are ONLY included when the viewer has an active live-share
  *     grant from that member AND the member has not enabled hotel/home blur.
+ *     "Active" is enforced here, against the `now` passed in: a grant whose
+ *     `expiresAt` has passed — or cannot be parsed — releases nothing. The
+ *     caller filtering expired rows in SQL is defence in depth, not the check.
  *   - Ghost-mode members appear as status "location_hidden" with no area label.
  *   - Non-accepted members (pending, removed) must be rejected upstream; these
  *     helpers assume the caller has already verified membership.
@@ -165,13 +168,31 @@ export function buildCrewCard(
     return { ...base, ghostMode: true, statusLabel: "location_hidden", areaLabel: null, exactCoords: null };
   }
 
+  // TIME-BOXED MEANS THE BOX IS CHECKED HERE. This module's header promises
+  // exact coordinates only under "an active live-share grant", and until
+  // 2026-09-11 it took `raw.liveShare != null` as proof of that — the comment
+  // below asserted "the GRANT has not expired" as a premise. The premise held
+  // only because TripCrewLocationService filters `.gt("expires_at", now)` in
+  // SQL, in a different file. A guard whose contract is enforced somewhere else
+  // is not a guard; a second caller, or an edit to that WHERE clause, would
+  // release coordinates with nothing here objecting. `now` is already a
+  // parameter and the expiry already arrives on the grant, so the check is one
+  // comparison.
+  //
+  // FAIL CLOSED on an unparseable timestamp: an unknown grant state is not
+  // permission. `Date.parse` returns NaN there, and every comparison with NaN
+  // is false, so the `>` below rejects it — stated explicitly because relying
+  // on NaN semantics silently is how this kind of check rots.
+  const grantExpiresAt = raw.liveShare ? Date.parse(raw.liveShare.expiresAt) : NaN;
+  const grantIsActive = Number.isFinite(grantExpiresAt) && grantExpiresAt > now;
+
   // Live share overrides the default visibility — INCLUDING a 'hidden' default.
   // A live share is an affirmative, time-boxed act of sharing; it must be honored
   // even when the member's passive default is 'hidden'. This check MUST precede
   // the hidden-default short-circuit below, which previously returned 'not_shared'
   // first and silently discarded the member's explicit live share. (Ghost mode
   // above still wins — that is an absolute "invisible" choice.)
-  if (raw.liveShare) {
+  if (raw.liveShare && grantIsActive) {
     const areaLabel = resolveAreaLabel(raw.locationState, raw.liveShare.visibilityLevel);
 
     // Include exact coords only when hotel blur is disabled, coords are
@@ -179,8 +200,9 @@ export function buildCrewCard(
     // coordinate is the strongest possible claim that someone is somewhere
     // RIGHT NOW; publishing a three-day-old one as a live-share pin is the
     // §10.2 violation in its most acute form. The live share itself stays
-    // active (liveShareActive: true) because the GRANT has not expired — what
-    // is stale is the position, and those are different facts.
+    // active (liveShareActive: true) because the GRANT has not expired — checked
+    // above, not assumed — what is stale is the position, and those are
+    // different facts.
     const exactCoords = positionIsCurrent ? resolveExactCoords(raw) : null;
 
     return {
