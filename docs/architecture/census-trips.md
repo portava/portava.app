@@ -2529,12 +2529,12 @@ by saying exactly what it had not done:
 > **No verdict was re-derived.** §37 checked that each cited artifact exists and
 > still says what the row says — not whether the judgement was right.
 
-This section does that, for 34 of the 89 BUILT-AND-CORRECT rows. A C row is the
+This section does that, for 37 of the 89 BUILT-AND-CORRECT rows. A C row is the
 one that matters most: a W row that rots stays wrong, but a C row that rots
 becomes a false assurance, and nothing in this repository had ever asked whether
 one was true.
 
-**No verdict moved.** All 34 were re-derived as **C**. That is the honest and
+**No verdict moved.** All 37 were re-derived as **C**. That is the honest and
 slightly dull headline, and it is stated before the findings so the findings are
 not mistaken for a collapse.
 
@@ -2549,6 +2549,7 @@ not mistaken for a collapse.
 | TR52, TR106, TR107 | Every plan write is gated. All six plan-write endpoints checked individually. |
 | TR7, TR17, TR285 | `trip_reservations` carries no payment, amount, currency or provider column — references and operational facts only; `status` defaults to `pending_confirm`, so an LLM extraction never auto-commits; `confirmation_ref` is opaque text. |
 | TR32, TR94 | The crossing is single — and the ratchet that was claimed to keep it single did not exist. See below. |
+| TR355, TR429, TR222 | `trg_trips_updated BEFORE UPDATE ON trips` exists exactly where cited, so client write time is not authoritative. `tripStatus.ts` and `tripCrewLocation.ts` contain **zero** DB references — pure as claimed, measured not asserted. No trip route imports Compass, so Trips is structurally operational without it. |
 | TR331, TR332, TR414, TR37, TR381 | See the corrections below. |
 
 ### THE DEFECT — the privacy guard did not check the grant it was guarding
@@ -2627,9 +2628,22 @@ would close it (treat NULL as expired), but the file belongs to the Safety lane
 (TR11: specialist domains retain ownership) and this lane does not cross that
 boundary to harden it. Recorded here so the next Safety pass has it.
 
+### One bounded observation, measured because it sounded worse than it is
+
+TR37 and TR355 both rest on `0001_spine.sql`, which is NOT in the canonical
+`artifacts/api-server/src/migrations/` tree the sanctioned applier manages — so
+`certify:migrations` and `audit:schema` do not cover the objects those two rows
+depend on (the `trips` table itself, and `trg_trips_updated`).
+
+Counted rather than left as a worry: census-trips cites **29 distinct `.sql`
+files and 27 are canonical**. The spine is the only exception, it is the
+foundational file that predates the ledger, and both rows' claims were verified
+against it directly. This is a note for whoever next asks why the applier's
+coverage and this census's evidence are not the same set — not a defect.
+
 ### What this pass did NOT do, stated rather than implied
 
-1. **55 of the 89 C rows are not re-derived.** They remain as §36 counted them.
+1. **52 of the 89 C rows are not re-derived.** They remain as §36 counted them.
 2. **No W or N row was re-derived at all.** 127 W and 234 N rows stand entirely
    on earlier passes. A W row asserting something is broken could have been
    fixed since without anyone noticing — that is the cheaper error, but it is
