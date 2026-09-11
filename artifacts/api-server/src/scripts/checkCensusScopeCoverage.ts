@@ -67,7 +67,7 @@ const CENSUS_SCOPE_FLOORS: Record<string, number> = {
   "census-sensing.md": 0.14,
   "census-telegraph.md": 0.18,
   "census-trips.md": 0.30,
-  "census-trust.md": 0.28,
+  "census-trust.md": 0.94,   // widened 2026-09-11: 31% -> 96%
   "census-wall.md": 0.61,
 };
 

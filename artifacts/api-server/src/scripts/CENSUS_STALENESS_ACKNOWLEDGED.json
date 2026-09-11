@@ -18,6 +18,15 @@
       "files": [
         "artifacts/api-server/src/lib/tripCrewLocation.ts"
       ]
+    },
+    {
+      "census": "census-trust.md",
+      "since": "42aeac38",
+      "acknowledgedAt": "2026-09-11",
+      "reason": "FOUND BY WIDENING THE SCOPE, which is the point. This census watched 22 of the 72 files it cites (31%) until 2026-09-11; the scope covered services/trust/ — what was being BUILT — and left unwatched the call sites and suites its six W->C rows actually rest on. Widened to 69 of 72 (96%), and the very first run reported this file STALE. Nothing had noticed it before because nothing was looking.\n\nWHAT CHANGED. #481 added `confidenceBasis` / `evidenceWeight` / `evidenceCount` to TrustProjection, so a measured trust score is distinguishable from the substituted neutral 50. It is trust-relevant by construction — which is exactly why the narrow scope missing it mattered.\n\nWHY NO TRUST VERDICT MOVES. One row grades this file: C10, `getDisplayTrustScore` is THE display number and there is no second engine. Re-read at HEAD: PassportProjectionService still reads through getDisplayTrustScore (imported at :34, called at :1181), no second scoring path was introduced, and the three added fields are additive metadata about what the existing number rests on — they do not compute a score. C10 holds.\n\nTHE CITATION HAD ROTTED, and this is the §37 class showing up in a second census: C10 cited `PassportProjectionService.ts:1015` and the read is now at :1181, off by 166 lines. It stayed IN RANGE, so check:doc-citations was green on it the whole time. Corrected and ANCHORED as `:1181#getDisplayTrustScore` in the same commit, so the next drift is caught rather than tolerated.",
+      "files": [
+        "artifacts/api-server/src/services/passport/PassportProjectionService.ts"
+      ]
     }
   ],
   "retired": [
