@@ -31,6 +31,10 @@
  *       `0041_trip_crew_location.sql` and they disagree. Ambiguous basenames are
  *       counted separately and never treated as covered or uncovered.
  *
+ * CENSUS_STALENESS_ACKNOWLEDGED.json must never be scoped by a census: writing
+ * an acknowledgement would age every census counting it, requiring another
+ * acknowledgement. Measured as a real regress on 2026-09-11.
+ *
  * The floors live in CENSUS_SCOPE_FLOORS below. Raising one is a deliberate
  * commit; the check fails if coverage drops below it, which is what stops a
  * census from growing new citations into unwatched files.
@@ -57,18 +61,18 @@ const CENSUS_SCOPE_FLOORS: Record<string, number> = {
   // statement that most of what the census cites is NOT watched for staleness.
   // The honest reading of this table is that the guard currently protects a
   // minority of each census, and knowing that is the point of measuring it.
-  "census-compass.md": 0.54,
+  "census-compass.md": 0.96,   // widened 2026-09-11
   "census-discovery.md": 0.96,   // widened 2026-09-11: 22% -> 98%
-  "census-highlights-memories.md": 0.27,
-  "census-input-intelligence.md": 0.26,
-  "census-layover.md": 0.31,
-  "census-map.md": 0.67,
-  "census-media.md": 0.68,
+  "census-highlights-memories.md": 0.96,   // widened 2026-09-11
+  "census-input-intelligence.md": 0.95,   // widened 2026-09-11
+  "census-layover.md": 0.90,   // widened 2026-09-11
+  "census-map.md": 0.96,   // widened 2026-09-11
+  "census-media.md": 0.96,   // widened 2026-09-11
   "census-sensing.md": 0.90,   // widened 2026-09-11: 16% -> 92%
   "census-telegraph.md": 0.87,   // widened 2026-09-11: 21% -> 89%
-  "census-trips.md": 0.30,
+  "census-trips.md": 0.86,   // widened 2026-09-11
   "census-trust.md": 0.94,   // widened 2026-09-11: 31% -> 96%
-  "census-wall.md": 0.61,
+  "census-wall.md": 0.95,   // widened 2026-09-11
 };
 
 /** Extract repo-relative-looking file citations from a census. */

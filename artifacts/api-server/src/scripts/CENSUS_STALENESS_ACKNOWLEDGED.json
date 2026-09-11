@@ -5,9 +5,10 @@
       "census": "census-trips.md",
       "since": "014a25d5",
       "acknowledgedAt": "2026-09-11",
-      "reason": "ONE counted file changed, and the change was made while re-deriving the very rows that rest on it, so this is a measured delta rather than an unexamined one. buildCrewCard now checks the live-share grant's own expiresAt against the `now` it already receives, and fails closed on an unparseable timestamp. Before, `raw.liveShare != null` was the whole test and the comment at :182 asserted \"the GRANT has not expired\" as a premise.\n\nWHY NO TRIPS VERDICT MOVES. The four C rows graded against this file were re-read against the code in the same pass: TR10 (no global location tracker), TR110 (canSeePreciseLocation), TR160 (expires_at) and TR179 (no covert persistent tracking). All four were TRUE before this change and are true after. They were true before because TripCrewLocationService — the only caller, verified by reading it — filters `.gt(\"expires_at\", now)` in SQL and gates on allowed_member_ids.includes(viewerId). The change moves those rows from true-because-a-neighbour-filters to true-by-construction. Strictly more restrictive, and only in a state the service already prevented from arriving.\n\nCHECKABLE, not asserted: 7 new tests, 5 of which failed against the unfixed guard, plus 78/78 across tripCrewLocation, tripCrewStatusAndPrivacy and the new file. Both rules mutation-tested. The citations this edit shifted were re-anchored in the same commit — check:doc-citations went from 6 broken anchors to clean, and the anchored floor rose 278 -> 281.",
+      "reason": "ONE counted file changed, and the change was made while re-deriving the very rows that rest on it, so this is a measured delta rather than an unexamined one. buildCrewCard now checks the live-share grant's own expiresAt against the `now` it already receives, and fails closed on an unparseable timestamp. Before, `raw.liveShare != null` was the whole test and the comment at :182 asserted \"the GRANT has not expired\" as a premise.\n\nWHY NO TRIPS VERDICT MOVES. The four C rows graded against this file were re-read against the code in the same pass: TR10 (no global location tracker), TR110 (canSeePreciseLocation), TR160 (expires_at) and TR179 (no covert persistent tracking). All four were TRUE before this change and are true after. They were true before because TripCrewLocationService — the only caller, verified by reading it — filters `.gt(\"expires_at\", now)` in SQL and gates on allowed_member_ids.includes(viewerId). The change moves those rows from true-because-a-neighbour-filters to true-by-construction. Strictly more restrictive, and only in a state the service already prevented from arriving.\n\nCHECKABLE, not asserted: 7 new tests, 5 of which failed against the unfixed guard, plus 78/78 across tripCrewLocation, tripCrewStatusAndPrivacy and the new file. Both rules mutation-tested. The citations this edit shifted were re-anchored in the same commit — check:doc-citations went from 6 broken anchors to clean, and the anchored floor rose 278 -> 281.\n\nSECOND FILE, added 2026-09-11 when the trips scope was widened 38 -> 104 of the 118 files this census cites: `src/test/tripsCensusRederivation.test.ts` is NEW, created by §38 to pin the 37 C-row invariants that pass re-derived. A new test cannot move a verdict — it adds evidence for rows that already held, and every assertion in it was mutation-tested, including one that initially could NOT fail and was rewritten. It is named here rather than left uncovered because an acknowledgement covers the paths it names and nothing else.",
       "files": [
-        "artifacts/api-server/src/lib/tripCrewLocation.ts"
+        "artifacts/api-server/src/lib/tripCrewLocation.ts",
+        "artifacts/api-server/src/test/tripsCensusRederivation.test.ts"
       ]
     },
     {
@@ -45,6 +46,15 @@
       "files": [
         "artifacts/api-server/src/scripts/auditMigrationsVsLive.ts",
         "artifacts/api-server/src/test/rlsPolicyShapeLive.test.ts"
+      ]
+    },
+    {
+      "census": "census-layover.md",
+      "since": "42aeac38",
+      "acknowledgedAt": "2026-09-11",
+      "reason": "FOUND BY WIDENING THE SCOPE from 26 of 77 cited files (34%) to 71 of 77 (92%).\n\nWHAT CHANGED: #481 set `portava_featured.tableGrants` to {} — revoking the SELECT that 2160 had granted to anon and authenticated — because 2332 had already taken that grant away in the database and the contract still approved it. A contract that approves a grant the database does not have approves a hole nobody opened.\n\nWHY NO LAYOVER VERDICT MOVES. `portava_featured` is a Featured table; this census grades none of its rows against it. The two places layover cites this file are L199 — 'migration postconditions and authorization-contract tests for every client-writable table', verdict N, and about whether LAYOVER migrations carry postcondition blocks — and the $pinnedAsMeasured note covering the four LAYOVER tables, which this diff does not touch. The change is also strictly TIGHTENING: a grant was removed, not added, so it cannot widen any surface layover measures.",
+      "files": [
+        "artifacts/api-server/src/security/authorization-contract.json"
       ]
     }
   ],
