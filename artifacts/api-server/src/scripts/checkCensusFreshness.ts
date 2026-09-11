@@ -208,6 +208,59 @@ const CENSUS_SCOPE: Record<string, string[]> = {
   // Listing only the two routes would have kept this census looking fresh while
   // the contract it grades was published underneath it — which is exactly what
   // happened between 507f8427 and 090684ab.
+  // census-media.md — the first of the seven unscoped censuses to join the
+  // checkable set, declared 2026-09-11 alongside the Trips §36 recount. 450
+  // requirements, the largest single block that was CANNOT BE CHECKED.
+  //
+  // WHAT THE DECLARATION IS WORTH, stated here as well as in the document
+  // because a scope entry is the half that can be read from code: the census's
+  // verdicts were taken at working tree `68ed59d9`, which squash-merge orphaned,
+  // so the interval between the measurement and `42aeac38` cannot be diffed by
+  // anyone and is NOT claimed to be empty. The declaration starts the clock; it
+  // does not certify the past. That is still strictly better than unmeasurable,
+  // which is the state it replaces.
+  //
+  // The scope is DERIVED, not guessed: every `file.ts` / `.tsx` / `.sql` cited
+  // in backticks by the census was extracted and resolved against the tree (166
+  // distinct names, 94 resolving — the rest are bare filenames with no
+  // directory), then collapsed to the directories that are wholly Media's plus
+  // the individually-named files that are not. Migrations are deliberately NOT
+  // scoped as a directory: `src/migrations/` grows on every unrelated surface's
+  // work, and a guard that cries stale on every commit gets switched off.
+  "census-media.md": [
+    // Media's own backend modules — whole directories, all of them Media's.
+    "artifacts/api-server/src/lib/media/",
+    "artifacts/api-server/src/services/media/",
+    "artifacts/api-server/src/services/hiddenGems/",
+    "artifacts/api-server/src/services/ranking/",
+    // Media libraries that live beside non-Media ones, so named one by one.
+    "artifacts/api-server/src/lib/mediaAccess.ts",
+    "artifacts/api-server/src/lib/mediaAssets.ts",
+    "artifacts/api-server/src/lib/mediaContributorReputation.ts",
+    "artifacts/api-server/src/lib/mediaLocationVisibility.ts",
+    "artifacts/api-server/src/lib/mediaPipeline.ts",
+    "artifacts/api-server/src/lib/mediaProcessing.ts",
+    "artifacts/api-server/src/lib/videoMetadata.ts",
+    "artifacts/api-server/src/lib/hiddenGemState.ts",
+    "artifacts/api-server/src/lib/moderationAudit.ts",
+    "artifacts/api-server/src/lib/portavaRank.ts",
+    "artifacts/api-server/src/lib/protectedLocations.ts",
+    "artifacts/api-server/src/lib/delayedPostPublisher.ts",
+    // The routes that serve them.
+    "artifacts/api-server/src/routes/adminMedia.ts",
+    "artifacts/api-server/src/routes/mediaActions.ts",
+    "artifacts/api-server/src/routes/mediaAnalyticsBatch.ts",
+    "artifacts/api-server/src/routes/mediaWorld.ts",
+    "artifacts/api-server/src/routes/posts.ts",
+    "artifacts/api-server/src/routes/postcards.ts",
+    "artifacts/api-server/src/routes/hiddenGems.ts",
+    "artifacts/api-server/src/routes/sharedMoments.ts",
+    // The client half. A census that scoped only the server would age on the
+    // one end that was never the problem — the same mistake the Trips scope
+    // above exists to avoid.
+    "travel-buddy-standalone/src/features/media/",
+    "travel-buddy-standalone/src/components/media/",
+  ],
   "census-discovery.md": [
     "artifacts/api-server/src/routes/discovery.ts",
     "artifacts/api-server/src/routes/discoverySearch.ts",
