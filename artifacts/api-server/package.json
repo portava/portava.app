@@ -52,6 +52,7 @@
     "check:census-policy-citations": "node --import tsx/esm src/scripts/checkCensusPolicyCitations.ts",
     "check:census-freshness": "node --import tsx/esm src/scripts/checkCensusFreshness.ts",
     "check:census-scope-coverage": "node --import tsx/esm src/scripts/checkCensusScopeCoverage.ts",
+    "check:place-id-bridge": "node --import tsx/esm src/scripts/checkPlaceIdBridge.ts",
     "check:memory-table-ownership": "node --import tsx/esm src/scripts/checkMemoryTableOwnership.ts",
     "check:trust-table-ownership": "node --import tsx/esm src/scripts/checkTrustTableOwnership.ts",
     "check:trust-event-vocabulary": "node --import tsx/esm src/scripts/checkTrustEventVocabulary.ts",

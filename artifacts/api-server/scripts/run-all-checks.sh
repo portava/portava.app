@@ -187,6 +187,16 @@ run_check "check:census-freshness" pnpm run check:census-freshness
 # Per-census floors are a ratchet — raise one when you widen a scope; lowering
 # one to get green is the single response that is never right.
 run_check "check:census-scope-coverage" pnpm run check:census-scope-coverage
+# check:place-id-bridge — census-trips TR32/TR94 said the single place id-space
+# crossing was "Enforced by a standing ratchet rather than convention", naming
+# check:schema-references as that ratchet. It is not: that check verifies a
+# select-list column exists on the table being read, and says nothing about id
+# spaces. No file under src/scripts/ or scripts/ mentioned placeIdBridge at all.
+# The verdict was true and its stated reason was false. This is the ratchet, so
+# the reason is now true: the Discovery serve path emits three id spaces while
+# place memory is keyed on discovery_places.id, and crossing without the bridge
+# reports EVERY place as new to the user — silent and confident, not an error.
+run_check "check:place-id-bridge" pnpm run check:place-id-bridge
 run_check "check:census-policy-citations" pnpm run check:census-policy-citations
 # check:memory-table-ownership — public.memory_events (the Memory projection
 # family's log, live in production and read by the account-deletion cascade) and

@@ -248,7 +248,7 @@ ids named in that row; each id remains individually addressable.
 | TR29 | The Trip aggregate owns ordering and invariants that require a coherent version | **N** | No version exists (TR12), so no invariant can be expressed against one. Ordering is per-table `sort_order`/`order_index` columns with no aggregate guarantee. |
 | TR30 | Large read models are projections, not transactionally embedded payloads | **C** | Vacuously but genuinely: every read endpoint assembles from source tables at request time (`routes/trips-expansion.ts:2572` `GET /trips/:tripId`), and no trip row carries a denormalised payload blob. The requirement's forbidden shape is absent and the correct shape is what ships. |
 | TR31 | High-volume ephemeral signals stay in specialist stores and are referenced by stable IDs | **C** | Location samples live in `user_location_state` / `trip_crew_location_events`, chat in the messaging domain, crowd intel in `intel_*`. `trip_plan_items` references places by `source_id` (`0010:16`), never by embedding. |
-| TR32 | Never substitute one domain ID for another because names or coordinates look similar | **C** | Enforced by a standing ratchet rather than convention: `lib/placeIdBridge.ts` is the only sanctioned crossing, and `scripts/checkSchemaReferences.ts` + `scripts/checkWritePathColumns.ts` fail the build on an unsanctioned one. `0010_trip_plan.sql:16-17` types the external reference as `source_id text` with an explicit `source_type`. |
+| TR32 | Never substitute one domain ID for another because names or coordinates look similar | **C** | Enforced by a standing ratchet rather than convention: `lib/placeIdBridge.ts` is the only sanctioned crossing, and `src/scripts/checkPlaceIdBridge.ts#SANCTIONED` is the ratchet that keeps it single — **added 2026-09-11 (§38), because until then there was none**: the script this row previously named, `checkSchemaReferences.ts`, verifies that a select-list column exists on the table being read and says nothing about id spaces. The crossing WAS single (measured: the only caller is the bridge), so the verdict was true and its stated reason was false. Also `scripts/checkWritePathColumns.ts` fail the build on an unsanctioned one. `0010_trip_plan.sql:16-17` types the external reference as `source_id text` with an explicit `source_type`. |
 | TR33 | All cross-domain linkage uses explicit foreign keys or reconciliation records | **W** | True for in-domain links (`trip_plan_items.trip_id`, `route_plans.trip_id` at `0058:12`). False for the place link: `trip_plan_items.source_id` is `text` (`0010:16`) with no FK and no reconciliation record, so a plan item pointing at a deleted or merged place is undetectable. |
 | TR34 | Place, hidden-gem, event, booking, buddy and flight IDs remain distinct until a canonical bridge exists | **C** | `lib/placeIdBridge.ts` is the bridge and is the only one; hidden gems carry their own `canonical_place_id` (`2044_hidden_gems_canonical_place_id.sql`) rather than being conflated; `trip_reservations` keeps a provider `confirmation_ref` as opaque text. |
 
@@ -333,7 +333,7 @@ because there is no stage.*
 | --- | --- | --- | --- |
 | TR92 | §5.2 Cross-domain references use explicit `*_id` plus optional `source_ref`/`source_type` | **W** | The pattern is used (`0010_trip_plan.sql:14-17` `source_type` + `source_id`) but the id half is `text`, not a typed `*_id` with a constraint (TR33). |
 | TR93 | §5.2 Never encode foreign IDs into generic text fields | **W** | Violated by the same two lines: `source_id text NULL` at `0010:16` is a foreign identifier in a generic text field, which is the shape the rule names. It is at least *labelled* by `source_type`, which is why this is W and not N. |
-| TR94 | §5.2 Traveler-visible place identity resolves through the canonical place bridge where available | **C** | `lib/placeIdBridge.ts` is the single sanctioned crossing and `scripts/checkSchemaReferences.ts` is the ratchet that keeps it single. |
+| TR94 | §5.2 Traveler-visible place identity resolves through the canonical place bridge where available | **C** | `lib/placeIdBridge.ts` is the single sanctioned crossing and `src/scripts/checkPlaceIdBridge.ts#SANCTIONED` is the ratchet that keeps it single. **Corrected 2026-09-11 (§38):** this row named `checkSchemaReferences.ts` as the ratchet and that was wrong — it checks select-list columns against the schema, not id spaces, and no guard mentioned the bridge at all. The crossing was single by convention; it is now single by enforcement. |
 | TR95 | §5.2 Unresolved external/manual places remain typed as unresolved, not falsely canonical | **C** | `0010_trip_plan.sql:14-15` — `source_type` defaults to `'manual'` and admits `'place'`/`'meetup'`; a manual entry is typed as manual and never acquires a canonical id by default. `:22-23` additionally forbids coordinates on the label: *"public-safe label only — no GPS coordinates stored."* |
 | TR96 | §5.3 Canonical durable class (trip, stages, confirmed plans, membership) retained until deletion/retention policy | **C** | `trips`, `trip_members`, `trip_plan_items` are durable with cascade deletes (`0001_spine.sql:74,101-102`; `0010:7`) and are covered by the account-deletion disposition table (`lib/deletionDispositions.ts:443`). |
 | TR97 | §5.3 Operational class (decision tasks, risks, transient execution state) expires/archives after usefulness | **W** | The only operational artifact is readiness, and it does have a staleness rule — `lib/tripReadiness.ts:24-25` `READINESS_STALE_MS = 10 * 60 * 1000` with a stale-row sweep on recompute (`:5-7`). Decision tasks and risks do not exist, so two-thirds of the class has no policy because it has no rows. |
@@ -2529,12 +2529,12 @@ by saying exactly what it had not done:
 > **No verdict was re-derived.** §37 checked that each cited artifact exists and
 > still says what the row says — not whether the judgement was right.
 
-This section does that, for 28 of the 89 BUILT-AND-CORRECT rows. A C row is the
+This section does that, for 34 of the 89 BUILT-AND-CORRECT rows. A C row is the
 one that matters most: a W row that rots stays wrong, but a C row that rots
 becomes a false assurance, and nothing in this repository had ever asked whether
 one was true.
 
-**No verdict moved.** All 28 were re-derived as **C**. That is the honest and
+**No verdict moved.** All 34 were re-derived as **C**. That is the honest and
 slightly dull headline, and it is stated before the findings so the findings are
 not mistaken for a collapse.
 
@@ -2547,6 +2547,8 @@ not mistaken for a collapse.
 | TR216, TR215, TR219 | `sanitizeToolResult` recurses through arrays and objects and strips coordinate-shaped and private keys at every depth. **Wiring**: `executeCompassTool`'s switch assigns every branch to `raw` and has exactly ONE exit, through the sanitiser — no branch returns around it. TR215's `isAcceptedTripMember` then `canEditPlan` are the same gates the write endpoints use; TR219's `add_to_trip` builds a proposal and issues no INSERT. |
 | TR10, TR110, TR160, TR179, TR112 | The crew privacy guard, and the one defect this pass found — see below. TR112's only client INSERT policy on `trip_crew_location_sessions` scopes to `auth.uid() = user_id`. |
 | TR52, TR106, TR107 | Every plan write is gated. All six plan-write endpoints checked individually. |
+| TR7, TR17, TR285 | `trip_reservations` carries no payment, amount, currency or provider column — references and operational facts only; `status` defaults to `pending_confirm`, so an LLM extraction never auto-commits; `confirmation_ref` is opaque text. |
+| TR32, TR94 | The crossing is single — and the ratchet that was claimed to keep it single did not exist. See below. |
 | TR331, TR332, TR414, TR37, TR381 | See the corrections below. |
 
 ### THE DEFECT — the privacy guard did not check the grant it was guarding
@@ -2570,6 +2572,32 @@ so the check is one comparison, and it fails closed on an unparseable timestamp.
 Seven tests, **five of which failed against the unfixed guard**; the two that
 passed were the positive control and ghost-mode precedence, which is what stops a
 suite passing for the wrong reason. Both rules mutation-tested.
+
+### THE SECOND FINDING — a "standing ratchet" that did not exist
+
+TR32 and TR94 both said the single place id-space crossing was **"Enforced by a
+standing ratchet rather than convention"**, naming `scripts/checkSchemaReferences.ts`
+as that ratchet.
+
+Measured: it is not. `checkSchemaReferences.ts` verifies that a select-list
+column exists on the table being read — the `places.country` / `country_code`
+defect — and says nothing about id spaces. **No file under `src/scripts/` or
+`scripts/` mentioned `placeIdBridge` at all.**
+
+The verdict survives, and only because the crossing really was single: the one
+call carrying `p_subject_type: "place"` is in `lib/placeIdBridge.ts` itself,
+verified by reading every caller in the tree. So TR32 and TR94 were **true by
+convention while claiming to be true by enforcement** — which is the more
+dangerous of the two, because the sentence invites the reader to stop checking.
+
+`check:place-id-bridge` now exists and is run from `check:all`, so the claim is
+enforced as written. It matches the RPC ARGUMENT rather than the RPC name,
+deliberately: that primitive has already been renamed once
+(`memory_is_new_to_user` → `memory_are_new_to_user`) and a guard keyed on the old
+name would have gone silently blind at the rename while still reporting a pass.
+It carries a positive control that FAILS when the crossing appears nowhere at
+all, because a pattern matching nothing looks exactly like a clean tree. Both
+mutation-tested.
 
 ### Three evidence corrections, none of which moves a verdict
 
@@ -2601,7 +2629,7 @@ boundary to harden it. Recorded here so the next Safety pass has it.
 
 ### What this pass did NOT do, stated rather than implied
 
-1. **61 of the 89 C rows are not re-derived.** They remain as §36 counted them.
+1. **55 of the 89 C rows are not re-derived.** They remain as §36 counted them.
 2. **No W or N row was re-derived at all.** 127 W and 234 N rows stand entirely
    on earlier passes. A W row asserting something is broken could have been
    fixed since without anyone noticing — that is the cheaper error, but it is

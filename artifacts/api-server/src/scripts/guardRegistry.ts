@@ -533,6 +533,26 @@ export const GUARDS: readonly GuardEntry[] = [
     reach: { kind: "check-all", script: "check:census-scope-coverage" },
   },
   {
+    checker: "src/scripts/checkPlaceIdBridge.ts",
+    inspects: {
+      countPattern: "(\\d+) source file\\(s\\) scanned",
+      unit: "source files scanned for an unsanctioned place id-space crossing",
+    },
+    responsibility:
+      "The place id-space crossing stays single: only lib/placeIdBridge.ts may cross it.",
+    // census-trips TR32/TR94 claimed this was "enforced by a standing ratchet
+    // rather than convention" and named check:schema-references as the ratchet.
+    // Measured 2026-09-11: that check verifies select-list columns exist and says
+    // nothing about id spaces, and NO file under src/scripts/ or scripts/
+    // mentioned placeIdBridge. The crossing was in fact single -- verified by
+    // reading every caller -- so the verdict was true and its reason was false.
+    // This makes the reason true. The defect it guards is silent: the Discovery
+    // serve path emits db/<discovery_places.id>, db/<places.id> and node/<osm_id>
+    // while place memory is keyed on discovery_places.id, so crossing with a raw
+    // served id matches nothing and reports EVERY place as new to the user.
+    reach: { kind: "check-all", script: "check:place-id-bridge" },
+  },
+  {
     checker: "src/scripts/checkCensusPolicyCitations.ts",
     inspects: {
       countPattern: "(\\d+) census policy citation\\(s\\) checked",
