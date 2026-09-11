@@ -37,6 +37,14 @@ delegate's body, verbatim), but only because I diffed it instead of trusting my 
 3. **Tests that assert an allowlist's *contents* make that list un-shrinkable.** This
    appeared four separate times. The fix is to parameterise the checker so each test
    states the list it needs.
+4. **The checkout may be SHALLOW, and that looks exactly like squash-orphaning.** Added
+   2026-09-11. This container held 54 commits. Every census `head_commit` failed to
+   resolve, which is precisely the symptom of the orphaning those documents describe —
+   and would have been recorded as *proven* while resting on a clone that simply did not
+   contain the history. `git fetch --unshallow` (4,300 commits) confirmed the orphaning is
+   real, so the conclusion survived; the evidence for it did not, until then. **Run
+   `git rev-parse --is-shallow-repository` before concluding anything from a commit that
+   will not resolve.**
 
 ---
 
@@ -49,7 +57,7 @@ delegate's body, verbatim), but only because I diffed it instead of trusting my 
 | `main` | **`014a25d5`** — the squash of #481. It was `0edcb3eb` for the whole session until then. **`CI (live DB)` is RED on it** — pre-existing, not the merge's doing, see §5A2. `CI` and `Unwired checks` are green. |
 | Measurement commit | `ed168ed7` — every number in §4 was taken there. Its content is in `014a25d5`; the two commits after it changed no code. |
 | Working tree | clean |
-| PR | [#481](https://github.com/portava/portava.app/pull/481) — **MERGED** 2026-09-10, squashed to `014a25d5`, on 27 of 27 green at `28c95411` |
+| PR | [#481](https://github.com/portava/portava.app/pull/481) — **MERGED** 2026-09-10, squashed to `014a25d5`, on 27 of 27 green at `28c95411`. **Successor: [#482](https://github.com/portava/portava.app/pull/482)**, opened 2026-09-11 — these doc corrections plus the Trips §36 recount and six census declarations. |
 | Production Supabase | `ajrurzioarfkagpuxfnb` (travel-buddy) — **read-only queries only; DO NOT mutate** |
 | CI Supabase | `hwokxgbmezheskbzskfr` (portava-ci) — migrations may be applied here for rehearsal |
 
@@ -163,47 +171,67 @@ ancestor-of-main on purpose: a census measured on a branch must keep working.
 
 ## 4. Where the architecture actually stands
 
-Thirteen censuses, **3,290 declared requirements**, measured at `ed168ed7` with
-`check:census-integrity`:
+Thirteen censuses, **3,290 declared requirements**. **RE-MEASURED 2026-09-11** at merged
+`main` `014a25d5` with `check:census-integrity`, after that guard was taught to read three
+row shapes it had been silently dropping (see §5C). The figures below are the corpus as it
+actually counts today; the `ed168ed7` column they replace was **44.4 % / 66.7 %**.
 
-| census | denom | C | W | N | unparsed | CORRECT | CONSTRUCTED |
-|---|---:|---:|---:|---:|---:|---:|---:|
-| wall | 205 | 196 | 1 | 0 | 8 | 95.6 % | 96.1 % |
-| passport | 169 | 152 | 15 | 1 | 1 | 89.9 % | 98.8 % |
-| trust | 52 | 44 | 2 | 0 | 6 | 84.6 % | 88.5 % |
-| map | 293 | 213 | 48 | 5 | 27 | 72.7 % | 89.1 % |
-| media | 450 | 282 | 69 | 81 | 18 | 62.7 % | 78.0 % |
-| discovery | 67 | 39 | 6 | 7 | 15 | 58.2 % | 67.2 % |
-| input-intelligence | 373 | 204 | 69 | 70 | 30 | 54.7 % | 73.2 % |
-| compass | 90 | 45 | 18 | 15 | 12 | 50.0 % | 70.0 % |
-| sensing | 127 | 60 | 39 | 22 | 5 | 47.2 % | 78.0 % |
-| telegraph | 451 | 98 | 172 | 157 | 24 | 21.7 % | 59.9 % |
-| trips | 451 | 86 | 110 | 186 | 69 | 19.1 % | 43.5 % |
-| layover | 296 | 28 | 120 | 148 | 0 | 9.5 % | 50.0 % |
-| highlights-memories | 266 | 13 | 65 | 32 | 154 | 4.9 % | 29.3 % |
-| **ALL** | **3,290** | **1,460** | **734** | **724** | **369** | **44.4 %** | **66.7 %** |
+| census | denom | C | W | N | X | unparsed | CORRECT | CONSTRUCTED |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| wall | 205 | 196 | 1 | 0 | 8 | 0 | 95.6 % | 96.1 % |
+| passport | 169 | 152 | 15 | 1 | 1 | 0 | 89.9 % | 98.8 % |
+| trust | 52 | 44 | 5 | 0 | 0 | 3 | 84.6 % | 94.2 % |
+| map | 293 | 231 | 48 | 5 | 5 | 4 | 78.8 % | 95.2 % |
+| media | 450 | 291 | 69 | 88 | 2 | 0 | 64.7 % | 80.0 % |
+| discovery | 67 | 39 | 6 | 7 | 0 | 15 | 58.2 % | 67.2 % |
+| input-intelligence | 373 | 207 | 69 | 70 | 4 | 23 | 55.5 % | 74.0 % |
+| compass | 90 | 47 | 18 | 15 | 0 | 10 | 52.2 % | 72.2 % |
+| sensing | 127 | 65 | 39 | 22 | 1 | 0 | 51.2 % | 81.9 % |
+| telegraph | 451 | 98 | 172 | 157 | 3 | 21 | 21.7 % | 59.9 % |
+| trips | 451 | 89 | 127 | 234 | 1 | 0 | 19.7 % | 47.9 % |
+| layover | 296 | 28 | 120 | 148 | 0 | 0 | 9.5 % | 50.0 % |
+| highlights-memories | 266 | 13 | 65 | 59 | 2 | 127 | 4.9 % | 29.3 % |
+| **ALL** | **3,290** | **1,500** | **754** | **806** | **27** | **203** | **45.6 %** | **68.5 %** |
 
-`C` BUILT-AND-CORRECT · `W` BUILT-BUT-WRONG · `N` NOT-BUILT.
+`C` BUILT-AND-CORRECT · `W` BUILT-BUT-WRONG · `N` NOT-BUILT · `X` CANNOT-VERIFY.
 
-**44.4 % correct / 66.7 % constructed, both floors.** If every one of the 369 prose-counted
-requirements were correct the ceiling is 55.6 % / 77.9 %. On parsed rows alone: 50.0 % /
-75.1 %.
+**45.6 % correct / 68.5 % constructed, both still floors.** The movement from 44.4 % / 66.7 %
+is **not** work landing — **no verdict in any census was edited.** It is 166 rows that were
+always written and never counted: ranges (`| TR38–TR45 | … | **N** ×8 |`), compound ids, and
+the labelled id cells (`` | TR78 `trip_stages` | ``) that every "Row moves" and "Row
+corrections" table uses. The `X` column is new to this table because `?` had never been in
+the checker's alias list at all, so CANNOT-VERIFY was being under-reported corpus-wide —
+wall alone carries 8.
+
+**The unparsed column fell 369 → 203**, and six censuses now have **no prose gap at all**
+(layover, media, passport, sensing, trips, wall), up from two. Where that column reads 0,
+the headline is the table counted and `check:census-integrity` now enforces that they are
+equal, not merely that they sum.
 
 ### What that number is not — quote none of it without these
 
-1. **369 requirements (11 %) are counted in prose the parser cannot read.** Highlights-
-   memories is the extreme: 154 of its 266, so its 4.9 % is a floor with enormous room
-   above it.
-2. **`check:census-integrity` checks each census against *itself*, not against the code.**
-   Its own NOTE says so. Neither census guard reads the implementation.
+1. **203 requirements (6 %) are still counted in prose the parser cannot read**, down from
+   369. Highlights-memories is the extreme and is now almost all of it: **127 of the 203**,
+   against its own denominator of 266, so its 4.9 % remains a floor with enormous room
+   above it. Six censuses have no prose gap at all.
+2. **Neither census guard reads the implementation.** `check:census-integrity` checks each
+   census against *itself*; `check:census-freshness` checks its AGE. Its own NOTE says so.
+   **Nothing in this repository has ever checked a census verdict against the code**, and
+   after the 2026-09-11 recount that is unchanged and is the largest remaining gap.
 3. **Three censuses carry correction headers** admitting their headline drifted from their
    own body, and several bodies are superseded by later addenda: trust's addendum states
-   50/52 → **96.2 % correct, 100 % constructed**, above the 84.6 % its parsed rows give;
-   `census-trips.md`'s body headline still reads 41.7 % / 17.3 % and predates §26–§35.
-4. **7 of 13 censuses declare no `head_commit` at all** — compass, input-intelligence, map,
-   media, passport, sensing, telegraph — so **2,013 of 3,290 requirements cannot be checked
-   for staleness in either direction.** That is a weaker state than STALE, not a safer one,
-   and it is now the largest measurable gap in the tree.
+   50/52 → **96.2 % correct, 100 % constructed**, above the 84.6 % its parsed rows give.
+   `census-trips.md`'s headline is **no longer one of these** — it was restated from its own
+   rows on 2026-09-11 and the guard now enforces that equality wherever a census has no
+   prose gap.
+4. **1 of 13 censuses declares no `head_commit`** — `census-passport.md`, 169 requirements —
+   down from 7 and 2,013. It is the one that **argues** for its own absence: declaring would
+   report FRESH about 165 rows nobody re-read, which its header calls *"a worse lie than
+   CANNOT BE CHECKED"*. Do not overturn that without re-measuring passport.
+5. **A declaration starts a clock; it does not certify a past.** The six declared on
+   2026-09-11 were all measured at pre-squash working trees that exist nowhere, so the
+   interval before `42aeac38` cannot be diffed and is not claimed to be empty. FRESH means
+   *no counted file has moved since the declared commit* — never that a row was re-read.
 
 ---
 
@@ -268,20 +296,53 @@ automatically.** Preconditions, expected objects, rollback points and post-deplo
 certification commands are in that document. Nothing in Batch C has been applied to
 `ajrurzioarfkagpuxfnb`.
 
-### C. Re-run the Trips census from zero on merged main
+### C. Re-run the Trips census from zero on merged main — **DONE 2026-09-11, see §36**
 
-The one task from the owner's plan that is genuinely unfinished. `census-trips.md` has
-§29–§35.1 appended and is FRESH at `42aeac38`, but **a from-zero recount of all 451
-requirements has not been done** — its parsed 86 C / 110 W is the body plus 13 row
-revisions, and its stated headline (41.7 % / 17.3 %) predates everything from §26 onward.
-Expect the real number to be materially higher than 19.1 %. Do not quote either until the
-recount exists.
+**The recount exists: C 89 / W 127 / N 234 / X 1 = CONSTRUCTED 47.9 %, CORRECT 19.7 %**,
+at `head_commit` `014a25d5`. Quote those and not the 41.7 % / 17.3 % or the 19.1 % this
+section used to warn about — both are superseded and both are now wrong.
 
-### D. The seven censuses with no `head_commit`
+The diagnosis was not what this section expected. The headline was never the hard part:
+`check:census-integrity` was reading **382 of 451 rows** because three row shapes were
+invisible to it, and the worst of them was the labelled id cell (`` | TR78 `trip_stages` |
+W | **W** | ``) that **every** "Row moves" table in §29.4/§30.3/§31.3 and every "Row
+corrections" table in §32.4 uses. So the guard was counting superseded originals and
+discarding all **28 revisions** that superseded them. The parser now reads all of them,
+plus `?` and `⌀`; corpus-wide the unreadable gap went **369 → 203**.
 
-Each needs its owning lane to declare one and add a `CENSUS_SCOPE` entry in
-`checkCensusFreshness.ts`. Cheapest large win available: it converts 2,013 requirements
-from unmeasurable to measurable.
+**Not one verdict was moved by that pass.** The +11 C and +17 W are revisions the document
+had already written and its guard could not read. §36.4 records four premises merged `main`
+falsified — 2760–2777 *are* on main, portava-ci carries through 2777 (13 of 18 rows
+`applied_by='ci'`), all eleven §5.1 tables exist there, 61 files read a trip version — and
+explains why none of it moves a verdict: production carries **0 of 11** and Batch C is
+unapplied, so §29.5's chain advanced two links, not five.
+
+**Still true and still the biggest gap: no census has ever been read against the code.**
+19.7 % is the document counted, not the surface measured.
+
+### D. The seven censuses with no `head_commit` — **SIX DONE 2026-09-11**
+
+**12 of 13 censuses are now checkable**, up from 6. Declared with a derived `CENSUS_SCOPE`:
+media (450), telegraph (451), input-intelligence (373), map (293), sensing (127), compass
+(90) — 1,784 requirements out of unmeasurable.
+
+**`census-passport.md` is deliberately left alone.** Its header argues that declaring would
+report FRESH about 165 rows nobody re-read, and that this is *"a worse lie than CANNOT BE
+CHECKED"*. That is a lane's stated decision about its own document. Do not overturn it
+without re-measuring passport.
+
+**Read what those declarations claim before relying on them.** Each starts a clock; none
+certifies a past. Every one of these censuses was measured at a pre-squash working tree
+that exists nowhere, so the interval before `42aeac38` cannot be diffed and is *not*
+claimed to be empty. FRESH means *no counted file has moved since `42aeac38`* — it does not
+mean a row was re-read, and none was.
+
+**A trap worth carrying forward:** this container held a **shallow clone (54 commits)** in
+which every census commit failed to resolve — which looks exactly like the squash-orphaning
+the documents describe and has an entirely different cause. `git fetch --unshallow` (4,300
+commits) confirmed the orphaning is real, but a proof resting on the shallow clone would
+have been worthless. **Check `git rev-parse --is-shallow-repository` before concluding
+anything from a commit that will not resolve.**
 
 ### E. Preserved follow-up finding — do not lose this
 
@@ -365,3 +426,57 @@ A suite that skips everything and exits 0 is a failure.
   earlier; highlights-memories, layover, wall in `ed168ed7`). Each declaration row says it
   was changed by the Trips lane, gives the measurement, and invites a revert. If a lane
   disagrees, reverting costs only the check.
+
+---
+
+## 9. Addendum — the 2026-09-11 session, and what it leaves for the next one
+
+Written by the session that picked this file up from the branch. Three commits on
+`claude/portava-continuation-uqta94`, all on [#482](https://github.com/portava/portava.app/pull/482).
+
+**What was done.** §5A's doc corrections landed on a PR (they were only ever on a branch
+before, so `main`'s copy was still misleading). §5C is DONE — the Trips recount exists and
+the number is **19.7 % correct / 47.9 % constructed**. §5D is six-sevenths done — **12 of 13
+censuses are now ageable**, passport excepted on its own documented argument.
+
+**The finding worth carrying.** The Trips headline was never the hard part. The guard was
+reading 382 of 451 rows, and the shape it dropped hardest was the labelled id cell that
+**every** "Row moves" and "Row corrections" table uses — so it was counting superseded
+verdicts and discarding all 28 corrections that superseded them, with a guard's authority
+behind the wrong answer. A census whose corrections are the one thing its checker cannot
+read is worse than an uncounted one. Corpus unreadable gap: **369 → 203**.
+
+**Two guard defects were found green.** `check:census-integrity` matched headline buckets
+with `CANNOT-VERIFY[^|]*`, which also matches the `CANNOT-VERIFY share` row beneath it and
+read `**1 / 451 = 0.2 %**` as `2`. It had never fired because the check it feeds only runs
+when parsed rows equal the denominator, which no census reached while whole row shapes were
+being dropped — fixing the parser would have failed four censuses on arithmetic that was
+never wrong. And `?` was missing from the verdict alias table entirely, so CANNOT-VERIFY
+was under-counted corpus-wide. **Both were green for their whole lives because nothing had
+ever reached them.** That is the §0 rule in its least obvious direction: not "a green run
+proves nothing until you have seen it go red", but *a guard that has never been reached is
+not a guard yet.*
+
+### What is NOT done, stated plainly
+
+- **No census has ever been read against the code.** Every percentage in §4, the recounted
+  Trips figure included, is a document measuring itself. This is now the largest gap in the
+  tree by a wide margin, and it is unchanged by everything above.
+- **`main` is still RED on `CI (live DB)`** for `CI_DB_HAND_APPLIED_FROM_UNMERGED_BRANCHES`
+  (§5A2). Nothing in this repository can close it. It was not touched.
+- **Batch C is still unapplied.** Production carries **0 of 11** §5.1 trip tables — verified
+  read-only this session, not inherited. Owner action, §5B.
+- **`census-passport.md` is still unmeasurable**, by its lane's choice.
+- **The 32 unbound-`error` Supabase reads (§5E) were not touched** and remain open.
+- **Trips §36.5 lists what the recount does not claim.** Sections of the spec outside those
+  §26–§35 reopened still carry `68ed59d9` verdicts; the Trip Kernel programme plausibly
+  moved rows in several of them, and nobody has looked.
+
+### The next cheapest large win
+
+The Trips recount closed the *counting* problem. The remaining one is *verification*: 
+`check:census-integrity` prints, in its own output, that it does not read the code. A guard
+that took even one census's C rows and confirmed the cited `file:line` still exists and still
+contains what the row says would be the first thing in this repository to check a census
+against the implementation. Six censuses now have zero prose gap, so their rows are fully
+machine-addressable — that is the precondition, and it did not exist before this session.
