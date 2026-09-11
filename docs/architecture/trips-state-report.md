@@ -16,7 +16,7 @@ being collapsed into one number.** The standing rule this repository works under
 
 | state | Trips | evidence |
 | --- | --- | --- |
-| **IMPLEMENTED** | 216 of 451 requirements are BUILT (89 C + 127 W) — **47.9 % constructed** | §36 recount, 451/451 rows parsed, no verdict edited |
+| **IMPLEMENTED** | 216 of 451 requirements are BUILT (**88 C + 128 W**) — **47.9 % constructed** | §36 recount, 451/451 rows parsed, no verdict edited |
 | **TESTED** | **17,707 / 17,707** api-server tests pass, 0 fail, 0 skipped, 0 cancelled. Trips-specific: the kernel live suite **12/12** against portava-ci | full `npm test`; `tripKernelLive.test.ts` in `live-db.yml` |
 | **MERGED** | `014a25d5` on `main` (PR #481). **PR #482 is open and DRAFT** — none of this session's work is merged | `git merge-base --is-ancestor 014a25d5 origin/main` |
 | **DEPLOYED** | **portava-ci only.** Production has received **nothing** from Batch C | `apply-migrations`: 109 proven applied on `hwokxgbmezheskbzskfr` |
@@ -56,9 +56,9 @@ Two passes have now started closing that:
 | pass | what it established | what it explicitly did not |
 | --- | --- | --- |
 | **§37** | 338 citations resolved; **37 had rotted**, all of them still *in range*, so `check:doc-citations` had been green on them the whole time | did not re-derive a single verdict |
-| **§38** | **37 of 89 C rows re-derived against the code.** All 37 hold | 52 C rows, and **all 127 W and 234 N rows**, stand on earlier passes |
+| **§38** | **37 of 89 C rows re-derived against the code. 36 held; TR51 did not** | 51 C rows, and **all 128 W and 234 N rows**, stand on earlier passes |
 
-**No verdict moved in either pass.** Nothing here raises the 47.9 %.
+**One verdict moved, and it moved DOWN.** TR51 C → W: its testable claim was that *every* trip write parses a zod schema first, and a count showed that false for 8 of 53 write endpoints. CONSTRUCTED is unchanged at 47.9 % — the requirement is still built, now graded wrong — and CORRECT falls 19.7 % → **19.5 %**. Nothing in either pass raises a number.
 
 ### What §38 found
 
@@ -66,6 +66,7 @@ Two passes have now started closing that:
 | --- | --- | --- |
 | The crew privacy guard never checked the expiry of the live-share grant it was guarding | **defect**, latent — the sole caller filters expired rows in SQL | **fixed**; 5 of 7 new tests failed first |
 | TR32/TR94 claimed a "standing ratchet" enforcing the single place id-space crossing. **No such ratchet existed** | **false enforcement claim**; crossing was single by convention | **ratchet built** (`check:place-id-bridge`), claim now true as written |
+| **TR51** claimed *every* trip write parses a zod schema first. **8 of 53 do not** | **verdict wrong** — the only one found | **C → W.** `POST /trips` closed with a schema; 7 held shrink-only by `check:trip-write-validation` |
 | TR381 claimed *nothing* reads `trip_activity_log` but one endpoint. There are two | evidence wrong, verdict survives | corrected in place |
 | TR107 names two of `canEditPlanItem`'s four call sites | evidence incomplete | recorded |
 | TR37 cites a basename carried by two files, neither canonical | ambiguous citation | asserted against both; they agree |
@@ -108,26 +109,28 @@ per-census floors that ratchet.
 | Batch C production deploy | **OWNER — manual by design** | DEPLOYED. `manual-production-migration-runbook.md` line 313 |
 | PR #482 is draft | owner | MERGED. Deliberately left draft |
 | `TRIP_KERNEL_CREATE_TRIP_UNGUARDED_INSERT` | Trips | a malformed command reports a transient outage. **Pinned in the live suite as current behaviour** — fixing it turns that test red on purpose |
-| 52 C rows + 127 W + 234 N not re-derived | Trips | the honest ceiling on any claim that Trips is verified |
+| 51 C rows + 128 W + 234 N not re-derived | Trips | the honest ceiling on any claim that Trips is verified |
+| 7 trip write endpoints still read `req.body` with no schema | Trips | TR51 returns to C when `check:trip-write-validation`'s list reaches zero |
+| `z.url()` accepts `javascript:` on `coverUrl` | Trips | needs fixing on `PatchTripSchema` and `CreateTripSchema` together; pinned as current behaviour |
 | 7 censuses declared no `head_commit` at session start; **passport still does not** | each lane | its own header argues declaring would report FRESH about 165 rows nobody re-read |
 
 ---
 
 ## The one number, stated with its caveats attached
 
-**Trips: 47.9 % constructed, 19.7 % correct, of 451 requirements.**
+**Trips: 47.9 % constructed, 19.5 % correct, of 451 requirements.**
 
 - Both are **floors** derived from a document that has only just begun to be read
   against the code.
-- **37 of 89** C rows have been independently re-derived. The other 414
-  requirements have not.
+- **37 of 89** C rows have been independently re-derived, and **one of them failed**
+  (TR51). The other 414 requirements have not been re-derived at all.
 - Nothing is production-deployed. Nothing is certified.
 - `100 %` is not sayable, and will not be until BUILT, WIRED, REACHABLE, TESTED,
   MERGED, CI-MIGRATED, CI-CERTIFIED, PRODUCTION-MIGRATED, PRODUCTION-CERTIFIED,
   ENABLED, GITHUB CLEAN and DATABASE LEDGERS TRUE are all true. Four of those are
   currently false.
 
-**P24 — what would turn this red:** re-deriving the remaining 52 C rows and
+**P24 — what would turn this red:** re-deriving the remaining 51 C rows and
 finding one that does not hold; any of the 127 W rows having been silently fixed
 or silently worsened; `certify:migrations` staying red; a Batch C deploy that
 fails its post-deployment certification.
