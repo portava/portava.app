@@ -27,6 +27,25 @@
       "files": [
         "artifacts/api-server/src/services/passport/PassportProjectionService.ts"
       ]
+    },
+    {
+      "census": "census-sensing.md",
+      "since": "42aeac38",
+      "acknowledgedAt": "2026-09-11",
+      "reason": "FOUND BY WIDENING THE SCOPE from 15 of 92 cited files (16%, the lowest of any census) to 85 of 92 (92%). The first run after widening reported this file STALE; under the old scope nothing was looking at it.\n\nWHAT CHANGED: #481 added confidenceBasis / evidenceWeight / evidenceCount to TrustProjection so a measured trust score is distinguishable from the substituted neutral 50.\n\nWHY NO SENSING VERDICT MOVES. One row cites this file: S93, 'Passport consumes meaningful visited/experienced outcomes, not raw movement logs'. That row is about WHAT PASSPORT CONSUMES — canonical experience events rather than location traces. The change adds three fields describing what an existing trust number rests on; it introduces no new input to Passport, reads no movement log, and changes no projection source. S93's subject is untouched.",
+      "files": [
+        "artifacts/api-server/src/services/passport/PassportProjectionService.ts"
+      ]
+    },
+    {
+      "census": "census-telegraph.md",
+      "since": "42aeac38",
+      "acknowledgedAt": "2026-09-11",
+      "reason": "FOUND BY WIDENING THE SCOPE from 27 of 131 cited files (21%) to 117 of 131 (89%). Both files went STALE on the first run after widening.\n\nauditMigrationsVsLive.ts — cited by T297 ('compare production and CI schemas before writing migrations') and T340 ('every selected/written column exists in CI and production schema'), in both cases as one of several STANDING LANES that exist. #481 taught it to resolve a claimed function in public OR authz and to report an authz-only resolution as a NOTE. That makes the lane MORE accurate, not less; it still runs, still compares the two schemas, and still fails on a real divergence — the run on main reports 'Live schema contains every object claimed by the migrations' across 494 files and 5,748 objects. Both rows assert the lane exists and does this; it does.\n\nrlsPolicyShapeLive.test.ts — #481 emptied four RLS allowlists the migration chain had closed and parameterised the checker so each mutation states the list it needs. The suite is 10/10 on CI. No telegraph row grades a specific allowlist entry; T342 grades that rlsDispositions is a per-table ledger of expected class and policy count, which it still is — the ledger SHRANK because the policies it excused were fixed, which is the direction the guard is designed to allow and the only direction it allows.\n\nNOTE ON SCOPE JUDGEMENT: auditMigrationsVsLive.ts is machinery of the same kind as the src/scripts/check*.ts paths deliberately excluded when this scope was widened. It is acknowledged rather than excluded on purpose — narrowing a guard AFTER seeing it go red is the pattern this repository exists to prevent, even when the narrowing would have been defensible beforehand.",
+      "files": [
+        "artifacts/api-server/src/scripts/auditMigrationsVsLive.ts",
+        "artifacts/api-server/src/test/rlsPolicyShapeLive.test.ts"
+      ]
     }
   ],
   "retired": [

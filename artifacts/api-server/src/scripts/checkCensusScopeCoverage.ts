@@ -58,14 +58,14 @@ const CENSUS_SCOPE_FLOORS: Record<string, number> = {
   // The honest reading of this table is that the guard currently protects a
   // minority of each census, and knowing that is the point of measuring it.
   "census-compass.md": 0.54,
-  "census-discovery.md": 0.20,
+  "census-discovery.md": 0.96,   // widened 2026-09-11: 22% -> 98%
   "census-highlights-memories.md": 0.27,
   "census-input-intelligence.md": 0.26,
   "census-layover.md": 0.31,
   "census-map.md": 0.67,
   "census-media.md": 0.68,
-  "census-sensing.md": 0.14,
-  "census-telegraph.md": 0.18,
+  "census-sensing.md": 0.90,   // widened 2026-09-11: 16% -> 92%
+  "census-telegraph.md": 0.87,   // widened 2026-09-11: 21% -> 89%
   "census-trips.md": 0.30,
   "census-trust.md": 0.94,   // widened 2026-09-11: 31% -> 96%
   "census-wall.md": 0.61,
