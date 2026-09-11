@@ -187,7 +187,16 @@ export const COVERED = [
 // Whoever adds anchors next should move this number up with them in the same
 // PR — that is the ratchet doing its job, not a chore.
 // ---------------------------------------------------------------------------
-export const MIN_ANCHORED_CITATIONS = 243;
+// 2026-09-11: the Trips census pass took this 243 -> 278. Those 35 are not new
+// citations; they are corrections. census-trips.md was measured at `68ed59d9`
+// and its BUILT-AND-CORRECT rows cited lines that the Trip Kernel programme
+// then moved underneath them — `canEditPlan` by 10 lines, `isAcceptedTripMember`
+// by 22, the plan-mutation guard in `routes/trips.ts` by 219, the only reader of
+// `trip_activity_log` by 641. Every one stayed IN RANGE, so the range half of
+// this check was green on all of them. That is the class this file's header
+// predicted was "much larger than the out-of-range one", measured on a second
+// document and found larger there too.
+export const MIN_ANCHORED_CITATIONS = 278;
 
 const SKIP_DIRS = new Set(['.git', 'node_modules']);
 

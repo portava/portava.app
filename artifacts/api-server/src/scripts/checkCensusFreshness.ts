@@ -123,6 +123,54 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "travel-buddy-standalone/src/services/tripPresence.ts",
     "travel-buddy-standalone/src/components/trip/",
     "travel-buddy-standalone/app/trip/",
+    // ── ADDED 2026-09-11, and the reason is a defect this scope had ──────────
+    // Everything above is the Trip KERNEL programme. Everything below is the
+    // DEPLOYED coordination product — and that is where this census's
+    // BUILT-AND-CORRECT rows live. The split mattered: measured on 2026-09-11,
+    // the scope covered 10 of the 49 files the census cites, and the 39 it
+    // missed were led by lib/tripCrewLocation.ts (34 citations),
+    // routes/trips-expansion.ts (28) and compass/CompassTools.ts (26).
+    //
+    // So the census reported FRESH while the files its STRONGEST claims cite
+    // drifted underneath it: canEditPlan by 10 lines, isAcceptedTripMember by
+    // 22, the plan-mutation guard in routes/trips.ts by 219, the only reader of
+    // trip_activity_log by 641. Every C verdict resting on those was unprotected
+    // by exactly the guard that is supposed to protect it, and the W verdicts —
+    // the ones that say something is NOT right — were the half being watched.
+    // A freshness scope that covers the claims you are least worried about is
+    // the wrong way round.
+    "artifacts/api-server/src/lib/tripCrewLocation.ts",
+    "artifacts/api-server/src/routes/tripCrewLocation.ts",
+    "artifacts/api-server/src/routes/trips-expansion.ts",
+    "artifacts/api-server/src/routes/tripReservations.ts",
+    "artifacts/api-server/src/routes/tripBudgetIntel.ts",
+    "artifacts/api-server/src/routes/tripDraft.ts",
+    "artifacts/api-server/src/routes/locateFriends.ts",
+    "artifacts/api-server/src/lib/tripStatus.ts",
+    "artifacts/api-server/src/lib/tripMembership.ts",
+    // lib/http.ts is a SHARED library and is scoped anyway: canEditPlan and
+    // canEditPlanItem live in it and are the whole evidence for TR52, TR106 and
+    // TR107. The cost — unrelated HTTP churn ages this census — is accepted,
+    // because the alternative is three C verdicts nothing watches.
+    "artifacts/api-server/src/lib/http.ts",
+    "artifacts/api-server/src/lib/mapTripProjectionWorker.ts",
+    "artifacts/api-server/src/compass/CompassTools.ts",
+    "artifacts/api-server/src/services/safeReturn/",
+    "artifacts/api-server/src/services/routeOptimizer.ts",
+    // The schema ancestry the deployed product actually runs on. Named file by
+    // file, never as src/migrations/, for the reason the Media scope gives.
+    "artifacts/api-server/src/migrations/0010_trip_plan.sql",
+    "artifacts/api-server/src/migrations/0058_trip_flow.sql",
+    "artifacts/api-server/src/migrations/0079_trip_sub_tables.sql",
+    "artifacts/api-server/src/migrations/0167_safety_ddl_reconcile.sql",
+    "artifacts/api-server/src/migrations/0170_trip_readiness.sql",
+    "artifacts/api-server/src/migrations/0172_trip_reservations.sql",
+    "artifacts/api-server/src/migrations/0041_trip_crew_location.sql",
+    "artifacts/api-server/src/migrations/2420_trip_kernel_foundation.sql",
+    "artifacts/api-server/src/migrations/2590_trip_kernel_add_plan_attachment_columns.sql",
+    "migrations/0001_spine.sql",
+    "travel-buddy-standalone/src/components/TripPage.tsx",
+    "travel-buddy-standalone/src/components/tripCrew/",
   ],
   "census-layover.md": [
     "artifacts/api-server/src/services/airport/",
