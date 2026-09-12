@@ -23,12 +23,12 @@ preserved in §36.1 as the record of that measurement.
 | Measure | Value |
 | --- | --- |
 | **Denominator (testable requirements)** | **451** |
-| BUILT-AND-CORRECT | **145** |
-| BUILT-BUT-WRONG | **156** |
-| NOT-BUILT | **149** |
+| BUILT-AND-CORRECT | **148** |
+| BUILT-BUT-WRONG | **180** |
+| NOT-BUILT | **122** |
 | CANNOT-VERIFY | **1** |
-| **CONSTRUCTED%** = (C+W)/451 | **301 / 451 = 66.7 %** |
-| **CORRECT%** (raw) = C/451 | **145 / 451 = 32.2 %** |
+| **CONSTRUCTED%** = (C+W)/451 | **328 / 451 = 72.7 %** |
+| **CORRECT%** (raw) = C/451 | **148 / 451 = 32.8 %** |
 
 > **RESTATED 2026-09-11 (§38): 89 → 87 CORRECT, 127 → 129 WRONG.** §38 re-derived
 > 39 of the C rows against the code and **two did not hold**, both for the same
@@ -105,6 +105,19 @@ preserved in §36.1 as the record of that measurement.
 > §20.2's presence stop and report the other six steps, ask §20.3's questions,
 > and gave every projection a §21.2 decision record — in a per-process ring,
 > not a table, which is why the ledger rows are W. Same caveat.
+
+> **RESTATED 2026-09-12 (§41): 145 → 148 CORRECT, 156 → 180 WRONG,
+> 149 → 122 NOT-BUILT. CONSTRUCTED 66.7 % → 72.7 %, CORRECT 32.2 % → 32.8 %.**
+> §41.1 built a throwaway database from production's structure dump plus the
+> canonical chain and executed the kernel on it — command → event → outbox →
+> projection → snapshot → replay, with a tampered snapshot failing to verify —
+> which is what moved three §23.1/§22.2 rows to C. §41.2 then executed seven
+> new kernel families on it (2779–2785): §3.3's nine states with §7.2 refused
+> at the write and the override recorded, subgroups, a persisted decision
+> ledger, transport segments, goal scope, append-only reservation history,
+> disruptions and the four §4.2 events that had "zero occurrences". Twenty-four
+> N → W and none to C, for one reason stated thirty-one times in §41.3: no
+> database has these migrations. Same caveat; the two flags stay FALSE.
 | **CORRECT% (spec-attributable)** | **WITHDRAWN — not measured. See §36.4** |
 | CANNOT-VERIFY share | **1 / 451 = 0.2 %** |
 
@@ -3878,3 +3891,258 @@ archive. No screen asks the §20.3 questions.
 | **after §40.7** | **145** | **156** | **149** | 1 | **301 / 451 = 66.7 %** | **145 / 451 = 32.2 %** |
 
 One row into C, five N→W, seven held. Nothing here is deployed.
+
+## 41. Executing the kernel — the database, then seven families on it
+
+§40 built where it could and said, three times, that the rest "needs a kernel
+migration this environment cannot run". §41 removes that sentence's premise:
+a PostgreSQL 16 server was present on this machine, PostGIS installs from apt,
+and the repository already ships production's structure as a dump. Nothing in
+§41 was graded on a reading of SQL; every migration was applied to a database
+built from that dump plus the canonical chain, seen refused on a database
+built without it, and replayed in order on a fresh build at the end. The
+ceiling stated in §40 is unchanged and is restated in §41.3: nothing here is
+merged, deployed, or flag-enabled, and every kernel-era row stays W for
+exactly that reason.
+
+### 41.1 The database: `scripts/local-db`, and the pipeline executed (§23.1, §22.2, §19.4)
+
+**What was measured.** TR431 read *"None of the three stages exists"* for
+command → event → projection integration tests. All three stages existed in
+SQL — 2420 (events, outbox, receipts), 2520 (the projection worker), 2773
+(snapshot fold and replay) — and nothing outside the live CI project had ever
+executed them; this environment holds no credentials for that project, so
+`tripKernelLive.test.ts` skips every suite here. TR430 said idempotency had
+"nothing to test", TR406 that no replay harness existed, TR433 that no
+scenario or replay test existed.
+
+**What was built.**
+
+- `scripts/local-db/up.sh` builds a throwaway PostgreSQL carrying the trip
+  domain's real schema: the Supabase surface the chain references, measured
+  over all 498 canonical files (`scripts/local-db/shim.sql:41#auth.uid` —
+  `auth.uid()/role()/jwt()` read the GUCs PostgREST sets, so RLS sees a test's
+  `set_config` exactly as a signed-in user); then
+  `baseline/20260819_baseline_structure.sql` (`scripts/local-db/up.sh:30#BASELINE`),
+  production's structure on 2026-08-19; then the canonical chain from `2093`,
+  the first file whose objects the baseline lacks, each file as `psql` runs it.
+  Eight files do not replay and are listed with their verbatim errors in
+  `scripts/local-db/KNOWN_UNREPLAYABLE.json` (`scripts/local-db/up.sh:35#KNOWN_UNREPLAYABLE.json`);
+  a listed file that replays in order aborts the run, so the list can only
+  shrink. None is a trip-domain file; every `trip_*` object, the kernel and the
+  worker replay, and `up.sh` refuses to finish unless they are present.
+- `src/test/db/localDb.ts` — `psql` over a child process, the convention
+  `scripts/src/saved-places-truncate-guard.test.ts` set; nothing added to the
+  lockfile. `scripts/local-db/run-tests.sh:21#skip` refuses a vacuous pass:
+  `skipped` must be 0.
+- `src/test/db/tripKernelPipeline.db.test.ts` on the REAL functions: one event
+  at the next aggregate version and one receipt per command; a replay by key is
+  a duplicate that appends nothing (`test/db/tripKernelPipeline.db.test.ts:101#replaying`);
+  the worker applies each outbox event once, a second drain applies nothing,
+  and `source_trip_version` equals `trips.version` (`:127#projection`); a
+  snapshot written at version *v* replays to the state at *v* and a
+  **tampered** snapshot fails to verify (`:149#snapshot`); RLS hides a private
+  trip and its events from a non-member (`:163#RLS`).
+- A CI job runs it on a `postgis/postgis:16-3.4` service container
+  (`.github/workflows/ci.yml:646#api-server-local-db`); the verdict job requires
+  it. The same files sit in the ordinary `test` list and skip there without a
+  database, exactly as `tripKernelLive.test.ts` skips without credentials.
+
+**What it does not prove.** Drift. `docs/ci/BOOTSTRAP.md` §1's argument
+stands: replaying the chain into the CI project would make
+`check:schema-references` compare the files to themselves. This database is
+never that project, is never audited, and holds no data. A migration that
+replays here is *replayable on this baseline*; what is applied anywhere is what
+`public.schema_migration_ledger` and the runbook say.
+
+#### Row moves
+
+| id | was | now | why |
+|---|---|---|---|
+| TR430 §23.1 database tests cover RLS, FK/unique, idempotency, migrations | W | **C** | All four, executed: RLS through the `authenticated` role, the receipt's unique key, idempotency by replay on the real kernel, and 217 migrations replayed in order on every run. |
+| TR431 §23.1 service integration tests cover command → event → projection | N | **C** | `tripKernelPipeline.db.test.ts` on `trip_kernel_execute` → `trip_events` → `trip_outbox` → `trip_map_projection_drain`, in CI. |
+| TR406 replay a Trip from a snapshot plus ordered events and compare | N | **C** | `trip_snapshot_write` then `trip_snapshot_verify_replay` on the real rows, and the tampered case fails — a verifier that compares something. |
+| TR433 §23.1 scenario/replay tests cover cross-domain lifecycle behaviour | N | **W** | One scenario (create → stage → plan → join → drain → snapshot → replay) is a scenario, not a corpus; TR409's diff harness does not exist. |
+| TR409 decision-diff CI over historical/synthetic scenarios | N | **N** | **Holds.** The harness can run one; nothing records a corpus or diffs two runs. |
+
+### 41.2 Seven families, executed: 2779–2785
+
+**What was measured.** The §40 rows that ended "needs a kernel migration this
+environment cannot run": TR194 (START_PLAN), TR46 (four stored states of
+nine), TR55 (no dependent-commitment validation), TR129 (no override path),
+TR61/TR62/TR65/TR66 (four §4.2 events with zero occurrences), TR24/TR151/TR152
+(no subgroup), TR401/TR402/TR387 (a ledger in a ring, not a table), TR18 and
+TR283–TR287 (no transport object), TR297/TR298/TR352 (hard delete, no
+compensation, last-write-wins), TR138/TR139 (no goal scope), TR19/TR80 (no
+permissions version), TR448 (TRIP_DISRUPTION_* emitted nowhere). And three
+rows this pass found already false on the branch and never re-read: TR148
+(plan_scope, 2770), TR149 (attendance, 2771/2772), TR154 (decision_rule,
+2774) — moved on evidence, with the file and line, not on the merge.
+
+**How each was built.** Every migration is a TRANSFORM of the installed
+kernel by 2764's method: the definition is read from `pg_proc`, each anchor is
+counted before it is replaced, the branch count is checked after, and the
+pre-existing guarantees — version conflict, receipt, outbox, crew check — are
+asserted on the INSTALLED text. Each was applied to the replica, seen refused
+on a replica built without it (eight of eight tests `TRIP_COMMAND_UNKNOWN_TYPE`
+before 2779), then green; the fresh build at the end replayed all seven in
+order: 217 files, 35 database tests, 0 skipped.
+
+- **2779** (`migrations/2779_trip_kernel_plan_lifecycle_and_temporal_guard.sql`)
+  — §3.3's vocabulary as a validated CHECK (`:68#trip_plan_items_status_known`):
+  draft, proposed, tentative, confirmed, in_progress, done, moved, cancelled,
+  skipped. `START_PLAN` / `SKIP_PLAN` (`:179#START_PLAN`), `MOVE_PLAN` on a
+  confirmed plan leaves it moved (`:125#moved`), `START_STAGE` /
+  `COMPLETE_STAGE` emit `trip.stage_started` / `trip.stage_completed`
+  (`:214#START_STAGE`). And §7.2 AT THE WRITE: a move whose new interval
+  overlaps a commitment's approach window is refused
+  `TRIP_TEMPORAL_CONFLICT` naming the commitment (`:154#TRIP_TEMPORAL_CONFLICT`)
+  unless the command says `override_conflicts: true` (`:151#override_conflicts`),
+  in which case the EVENT records `{ commitment_id, overridden: true }` — the
+  path TR129 found missing, tested at
+  `test/db/tripPlanLifecycle.db.test.ts:115#override`. The harness found the
+  first draft's guard threw on an inverted interval; the guard now survives it
+  and the plan's own CHECK refuses it.
+- **2780** (`migrations/2780_trip_subgroups.sql`) — `trip_subgroups`
+  (`:62#trip_subgroups`), `trip_subgroup_members` (`:80#trip_subgroup_members`),
+  `plan_scope = 'subgroup'` must name a subgroup (`:93#trip_plan_items_subgroup_scope_named`)
+  and the kernel requires an ACTIVE one the actor is in; a live-share scoped
+  to a subgroup (`:100#subgroup_id`) reaches its current members only
+  (`services/tripCrew/TripCrewLocationService.ts:250#subgroupScoped`,
+  `:277#subgroup_id`); `DISSOLVE_SUBGROUP` (`:267#DISSOLVE_SUBGROUP`) is the
+  creator's or a host's and stops those shares; a named member who is not
+  crew is `TRIP_SUBGROUP_MEMBER_NOT_CREW` (`:220#TRIP_SUBGROUP_MEMBER_NOT_CREW`).
+  The §20.2 closeout issues the dissolution as the completing user, keyed
+  `closeout:dissolve:<id>` (`services/trips/TripCloseoutService.ts:118#DISSOLVE_SUBGROUP`,
+  `services/trips/TripCloseout.ts:96#dissolve_temporary_crews`).
+- **2781** (`migrations/2781_trip_decisions_ledger.sql`) — `trip_decisions`
+  (`:47#trip_decisions`) with §5.3's retention as a column (`:61#retain_until`,
+  90 days) and a prune function (`:80#trip_decisions_prune`); inputs refuse a
+  coordinate by CHECK (`:65#trip_decisions_inputs_minimised`). The ledger
+  persists under the operational gate
+  (`services/trips/TripDecisionLedger.ts:125#persistTripDecision`) and explains
+  from the table when the ring has forgotten (`:144#readTripDecisionFrom`).
+- **2782** (`migrations/2782_trip_transport_segments.sql`) — §15.1's object
+  (`:43#trip_transport_segments`): mode, planned and actual pairs, party size
+  (`:58#party_size`), reliability 0..1 (`:59#reliability`), cost, booking
+  reference, `fallback_of` (`:63#fallback_of`), and the state machine planned →
+  booked → waiting → in_progress → completed, disrupted from any non-terminal
+  state; an illegal arrow is `TRIP_TRANSPORT_INVALID_TRANSITION`
+  (`:183#TRIP_TRANSPORT_INVALID_TRANSITION`), tested arrow by arrow at
+  `test/db/tripTransportAndDisruption.db.test.ts:55#SET_TRANSPORT_STATE`.
+- **2783** (`migrations/2783_trip_goal_scope_and_member_permissions_version.sql`)
+  — `trip_goals.scope` (`:41#scope`) personal | shared with a 0..1 weight; a
+  personal goal is readable by its owner only (`:51#trip_goals_select_scoped`)
+  and editable by its owner only (`TRIP_AUTH_NOT_CREATOR`);
+  `trip_members.permissions_version` (`:56#permissions_version`) bumped by
+  `SET_PARTICIPANT_ROLE` and carried on its event
+  (`test/db/tripLedgerGoalsReservations.db.test.ts:76#permissions_version`).
+- **2784** (`migrations/2784_trip_reservation_history.sql`) — on a PRODUCTION
+  table, additively: `version` bumped by trigger (`:55#version`), cancelled as
+  a state, an append-only `trip_reservation_events` history
+  (`:63#trip_reservation_events`, written by `:110#trip_reservations_history`;
+  UPDATE and DELETE on a history row refused by trigger), clients lose DELETE
+  (`:175#REVOKE`), and compensation as a new event
+  (`:150#trip_reservation_record_compensation`). `routes/tripReservations.ts`
+  honours `If-Match` (`:125#readIfMatch`, 409 `TRIP_VERSION_CONFLICT`), cancels
+  instead of deleting (`:557#cancelled`), serves the history (`:577#history`)
+  and records compensation (`:603#compensation`) — all behind the operational
+  gate through `lib/tripReservationHistory.ts:20#reservationHistoryGate`,
+  byte-identical legacy behaviour otherwise
+  (`test/tripKernelFamiliesWiring.test.ts:223#reservation`; the trigger and the
+  append-only refusals at `test/db/tripLedgerGoalsReservations.db.test.ts:86#2784`).
+- **2785** (`migrations/2785_trip_disruptions_and_derived_events.sql`) —
+  `trip_disruptions` (`:52#trip_disruptions`): `DECLARE_DISRUPTION` →
+  `trip.trip_disrupted` (`:147#trip_disrupted`), `RESOLVE_DISRUPTION` →
+  `trip.disruption_resolved`; `trip_commitments.at_risk_*` (`:77#at_risk_reason`);
+  and the derived events under a new **`engine`** capability
+  (`:125#engine` — actor_role `system` with no user, or accepted crew):
+  `MARK_COMMITMENT_AT_RISK` → `trip.commitment_at_risk` (`:196#commitment_at_risk`),
+  `OPEN_FREE_WINDOW` → `trip.free_window_created` (`:221#free_window_created`).
+  `lib/tripDerivedEvents.ts:49#recordDerivedEvents` issues them from
+  `TripFreedomProjection` (`services/trips/TripFreedomProjection.ts:175#recordDerivedEvents`)
+  with the fact's identity as the idempotency key
+  (`lib/tripDerivedEvents.ts:42#freeWindowKey`), so a re-read is a duplicate
+  at the receipt and the aggregate does not churn — tested on the real kernel
+  (`test/db/tripTransportAndDisruption.db.test.ts:134#engine`) and on the API
+  side (`test/tripKernelFamiliesWiring.test.ts:118#derived`); skipped by name
+  while `trip_kernel_enabled` is false.
+- The client of all of this: `lib/tripKernel.ts:198#TripSubgroupCommandType`,
+  `:205#TripTransportCommandType`, `:219#TripDisruptionCommandType`, the
+  reasons (`:385#TRIP_TEMPORAL_CONFLICT`; Appendix B at
+  `lib/tripReasonCodes.ts:99#TRIP_DISRUPTION_NOT_FOUND`); the `/commands`
+  endpoint issues the seventeen new types (`routes/tripCommands.ts:86#START_PLAN`)
+  and the client's mirror list matches (`src/services/tripCommands.ts:58#START_PLAN`).
+  One operational gate for the whole 2760–2785 batch, on purpose
+  (`lib/tripOperationalProjections.ts:51#trip_subgroups`): the registry is
+  keyed by flag, the batch ships together, and a database with half of it is
+  one the flag must refuse. `check:flag-schema-prerequisites`: 0 unguarded.
+
+#### Row moves
+
+| id | was | now | why |
+|---|---|---|---|
+| TR46 plan state machine, nine states | W | **W** | **Nine of nine now** — eight stored under a validated CHECK, AT_RISK derived (§40.4) — with the arrows in the kernel. Stays W for one reason: no database has 2779. |
+| TR194 START_PLAN → IN_PROGRESS | N | **W** | `START_PLAN` on the real kernel: confirmed → in_progress, `trip.plan_started`, plan version bumped. No database has 2779. |
+| TR55 …validates dependent commitments | N | **W** | §7.2 at the write: a move into a commitment's approach window is `TRIP_TEMPORAL_CONFLICT` naming it; nothing changes. |
+| TR129 confirmed timelines may contain known conflicts only when explicitly overridden | W | **W** | **The override path exists:** `override_conflicts: true` applies the move and the event records the commitment and `overridden: true`. The engine's own conflicts stay `overridden: false` — they are detections. No database has 2779. |
+| TR61 §4.2 domain events (the four with zero occurrences) | N | **W** | `trip.commitment_at_risk` — emitted by `MARK_COMMITMENT_AT_RISK`, issued by the freedom projection's engine path. |
+| TR62 §4.2 domain events (the four with zero occurrences) | N | **W** | `trip.free_window_created` — `OPEN_FREE_WINDOW`, keyed by the window's identity. |
+| TR65 §4.2 domain events (the four with zero occurrences) | N | **W** | `trip.stage_started` — `START_STAGE`, family `stage`. |
+| TR66 §4.2 domain events (the four with zero occurrences) | N | **W** | `trip.trip_disrupted` — `DECLARE_DISRUPTION`. All four: no database has 2779/2785. |
+| TR24 `TripCrew` | N | **W** | `trip_subgroups` + members, four commands, tested. The parent trip stays canonical: the dissolution test asserts `trips.status` unchanged. |
+| TR151 temporary subgroups split and recombine without forking the Trip | N | **W** | `LEAVE_SUBGROUP` keeps the membership as history; `JOIN_SUBGROUP` re-activates the same row. |
+| TR152 a subgroup can own a meetup, shared transport and temporary presence sharing | N | **W** | Presence: a subgroup-scoped live-share, served to members only, stopped on leave/dissolve. Plans: `plan_scope = 'subgroup'`. Shared transport: a segment has no subgroup column yet — one of three is why this is W beyond deployment. |
+| TR148 `PlanScope = ALL_CREW \| OPTIONAL \| SUBGROUP \| SOLO` | N | **W** | **Re-derived:** 2770's `plan_scope` had the four values since before §40; the SUBGROUP value now has a subject and a CHECK. |
+| TR149 `Attendance = INTERESTED \| GOING \| MAYBE \| CANT_GO \| LEFT` | N | **W** | **Re-derived:** `trip_plan_participants.attendance_state` (2771) with exactly those five, written by `SET_PLAN_ATTENDANCE` (2772). The row's "no attendance relation anywhere" was false on the branch it was written against. |
+| TR150 attendance is an explicit relation so downstream calculations use the actual party | N | **N** | **Holds.** The relation exists; no transport, reservation, meeting-point or budget calculation reads it. Transport segments carry a `party_size` the caller states, not one derived from attendance. |
+| TR154 `decisionRule = HOST \| MAJORITY \| UNANIMOUS \| ANYONE` | N | **W** | **Re-derived:** `trip_proposals.decision_rule` (2774) with those four, counted by `VOTE_ON_PROPOSAL` / `ACCEPT_PROPOSAL` (2775). |
+| TR116 §6.3 privacy scopes, six values | W | **W** | **Re-derived, stronger:** `trip_plan_items.privacy_scope` has all six (2770) and `visibility` is derived from it by CHECK. W because the client still writes `visibility`. |
+| TR19 `TripParticipant` with role, membership_state, permissions_version | W | **W** | membership_state is `trip_members.status` (2337, in production); `permissions_version` (2783) bumped by `SET_PARTICIPANT_ROLE`. No database has 2783. |
+| TR80 `trip_participants` (with membership_state, permissions_version) | W | **W** | Same evidence as TR19. |
+| TR138 `TripGoal` contract | W | **W** | `scope` — the field "genuinely missing" — is present, with the owner-only rule it implies. No database has 2783. |
+| TR139 goals personal or shared, weighted, without forcing shared priorities | N | **W** | personal \| shared with owner-only RLS and kernel checks; `weight` 0..1. |
+| TR6 history: events, snapshots, replay, outcomes, decision ledger | W | **W** | **Five of five now.** The ledger is a table with a retention policy. No database has 2781. |
+| TR401 the `TripDecision` ledger contract | W | **W** | Every field as a column, kept 90 days by policy, read back and explained from the table. No database has 2781. |
+| TR402 consequential suggestions explainable from stored inputs and versioned algorithms | W | **W** | **Holds, stronger:** stored, with the engine versions beside them. |
+| TR387 …preserve decision/audit evidence per policy | W | **W** | The policy exists for decisions (`retain_until`, prune). `trip_activity_log` still has none. |
+| TR100 §5.3 historical evidence class is policy-controlled with minimised payloads | W | **W** | Decisions: policy-controlled and minimised by CHECK. The activity log: neither, still. |
+| TR18 `TransportSegment` | N | **W** | `trip_transport_segments`, four commands, the machine tested arrow by arrow. No database has 2782. |
+| TR283 the `TransportSegment` contract | N | **W** | Mode, planned/actual pairs, endpoints, party size, reliability, cost, booking reference, fallback reference, state. |
+| TR284 `state = PLANNED \| BOOKED \| WAITING \| IN_PROGRESS \| COMPLETED \| DISRUPTED` | N | **W** | Those six (plus cancelled) as a CHECK, with the arrows in the kernel and an illegal one refused by name. |
+| TR286 `partySize` | N | **W** | A positive integer on the segment. Stated by the caller, not derived (TR150). |
+| TR287 `reliability` | N | **W** | 0..1 on the segment. Nothing estimates it yet (§16 is later work). |
+| TR297 §15.4 booking history append-only | W | **W** | Behind the gate: cancel instead of delete, history by trigger, DELETE revoked from clients, UPDATE/DELETE on history refused. Legacy behaviour byte-identical without 2784 — which no database has. |
+| TR298 §15.4 compensation as a new state/event | N | **W** | `trip_reservation_record_compensation` writes a `compensated` event against a cancelled reservation; the row is untouched. |
+| TR352 §18.3 confirmed booking/time: optimistic concurrency with explicit conflict | N | **W** | `version` by trigger; `If-Match` → 409 `TRIP_VERSION_CONFLICT`, nothing written; a stale keyed UPDATE touches nothing. |
+| TR354 §18.4 server aggregate version is canonical | N | **W** | **Re-derived:** `trips.version` (2420) is in production and the kernel refuses a stale `expected_trip_version`; the row's "no version (TR12)" predates 2420. W: the kernel path is off everywhere. |
+| TR448 `TRIP_DISRUPTION_` | N | **W** | `TRIP_DISRUPTION_NOT_FOUND` / `_NOT_ACTIVE` emitted by `RESOLVE_DISRUPTION`; `_SUPPRESSED` / `_ACTIVE` still declared only (§17.2's surface suppression is later work). |
+| TR443 `TRIP_TEMPORAL_` | W | **W** | `_CONFLICT` is now emitted by the kernel at the write and by the engine; `_INFEASIBLE` / `_UNKNOWN` still declared only. Two of four. |
+| TR384 …dissolve temporary crews where appropriate | N | **W** | The closeout names the active subgroups and issues `DISSOLVE_SUBGROUP` for each, keyed; deferred by name while `trip_kernel_enabled` is false. |
+| TR407 event payloads are schema-versioned | N | **W** | **Re-derived:** every `trip_events` row carries `schema_version = 1` (2420; TR72 is C). W, not C: one version exists and no adapter (TR408) has ever read another. |
+| TR3 Trips owns coordination (…subgroups…) | W | **W** | **Holds, stronger:** subgroups now exist as an object. |
+| TR4 Trips owns execution (…plan start/complete, transport, disruption recovery) | W | **W** | **Holds, stronger:** plan start/complete, a transport object and a disruption object exist; recovery (§17.3) does not. |
+
+#### The count after §41.2
+
+| | C | W | N | X | CONSTRUCTED | CORRECT |
+| --- | --- | --- | --- | --- | --- | --- |
+| after §40.7 | 145 | 156 | 149 | 1 | 301 / 451 = 66.7 % | 145 / 451 = 32.2 % |
+| after §41.1 | 148 | 156 | 146 | 1 | 304 / 451 = 67.4 % | 148 / 451 = 32.8 % |
+| **after §41.2** | **148** | **180** | **122** | 1 | **328 / 451 = 72.7 %** | **148 / 451 = 32.8 %** |
+
+§41.1: one W → C, two N → C, one N → W, one held. §41.2: twenty-four N → W,
+fourteen W held with stronger reasons, one N held. Nothing here is deployed.
+
+### 41.3 The ceiling, restated with the rows that sit on it
+
+Every row §41.2 moves or holds at W is capped by the same fact: **no database
+has 2760–2785.** That is the merge of this branch, then `live-db.yml`'s apply
+to portava-ci, then Batch C of the production runbook (an owner action, manual
+by design), then the two flags — `trip_kernel_enabled` and
+`trip_operational_projections_enabled` — which stay FALSE until an owner
+decides otherwise. Thirty-one rows in §41.2 carry that cap and nothing else
+(TR6, TR18, TR19, TR24, TR46, TR55, TR61, TR62, TR65, TR66, TR80, TR129,
+TR139, TR148, TR149, TR151, TR154, TR194, TR283, TR284, TR286, TR287, TR297,
+TR298, TR352, TR354, TR384, TR387, TR401, TR402, TR448); §29.5's kernel-era
+rows carry it too. Their next verdict is not this document's to give.
