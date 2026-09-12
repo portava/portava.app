@@ -302,6 +302,26 @@ run_check "check:authorization-contract" pnpm run check:authorization-contract
 # storage rather than a broken image, and a sweep should be scheduled
 # deliberately instead of triggered by a red build.
 run_check "check:media-objects" pnpm run check:media-objects
+# check:telegraph-certification — Telegraph's §26 RLS matrix and §27 certification
+# plan, as data a checker can read. The plan was, at the last census, entirely
+# unbuilt or satisfied incidentally by case tests written for other reasons, and
+# nothing anywhere would have noticed if it stopped being satisfied. Thirty-five
+# entries are declared under src/domain/telegraph/invariants/ and driven by three
+# suites; this enforces completeness, citation resolution, lane existence, test
+# coverage, and a SHRINK-ONLY ratchet on the entries this tree does not satisfy.
+# It does not judge whether a status is right — the suites do that, and a status
+# is a claim about what they prove.
+run_check "check:telegraph-certification" pnpm run check:telegraph-certification
+# check:telegraph-share-producers — every msg_type/subtype literal in either tree
+# is classified in the Telegraph share registry, orphan declarations are removed,
+# and a producer whose source domain is private-by-default may ONLY be declared
+# PRIVATE_SOURCE, which requires a derivative grant from the owning domain. That
+# second rule is what stops the registration rule being satisfiable by declaring
+# a Memory card "PUBLIC". It also requires the DYNAMIC sites a literal scan
+# cannot see to be declared, which is how the unvalidated client-supplied
+# `subtype` on POST /threads/:id/messages got written down.
+run_check "check:telegraph-share-producers" pnpm run check:telegraph-share-producers
+
 run_gate  "check:rank-events-surfaces" pnpm run check:rank-events-surfaces
 
 echo ""

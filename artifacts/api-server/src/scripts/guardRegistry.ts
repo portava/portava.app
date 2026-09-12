@@ -653,4 +653,42 @@ export const GUARDS: readonly GuardEntry[] = [
       seams: ["UNCHECKED_READS_SRC_ROOT", "UNCHECKED_READS_ALLOWLIST"],
     },
   },
+  {
+    checker: "src/scripts/checkTelegraphCertification.ts",
+    responsibility:
+      "Telegraph's §26/§27 certification plan stays complete, cited, executed, and " +
+      "monotone — the set of certification entries this tree does NOT satisfy can only shrink.",
+    // A certification plan that lives only in a spec cannot go red, which is the
+    // same defect this registry exists for, one level out. The ten §26 matrix
+    // cases, seven §27.1 properties, twelve §27.2 fixtures and six §27.3
+    // contracts are declared as data under src/domain/telegraph/invariants/ and
+    // driven by three suites; this verifies that every entry is named by its
+    // suite, that every cited artifact exists, that every named lane is a real
+    // package script, and that the unenforced count never grows. It deliberately
+    // does NOT judge whether a status is correct — that is what the suites do.
+    reach: { kind: "check-all", script: "check:telegraph-certification" },
+    inspects: {
+      countPattern: "(\\d+) certification entries inspected across",
+      unit: "certification entries inspected",
+    },
+  },
+  {
+    checker: "src/scripts/checkTelegraphShareProducers.ts",
+    responsibility:
+      "Every Telegraph message type literal is classified, and a private-by-default " +
+      "domain cannot be declared out of the share authorization policy.",
+    // Telegraph has no share contract: four producers hand-roll their own payload
+    // and nothing asks whether the object behind the card may be shared at all.
+    // The census scored that area as an UNGUARDED ABSENCE — a guarantee that
+    // lasts until the fifth producer. This makes the classification unavoidable,
+    // and its second rule is the one with teeth: a producer whose sourceDomain is
+    // private-by-default may only be PRIVATE_SOURCE, which requires a derivative
+    // grant. It also declares the dynamic sites a literal scan cannot see, the
+    // same admission checkWriterlessReads makes about dynamic .from(expr).
+    reach: { kind: "check-all", script: "check:telegraph-share-producers" },
+    inspects: {
+      countPattern: "(\\d+) file\\(s\\) scanned across",
+      unit: "source files scanned for message type literals",
+    },
+  },
 ];

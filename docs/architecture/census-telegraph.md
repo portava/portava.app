@@ -1106,3 +1106,221 @@ anywhere — a repo-wide grep for `§` over `git diff main...pr/460` returns
 nothing — despite hardening behaviour §7.4, §21 and §27.3 all require. It is
 good work done for the codebase, not for this document, which is the same
 pattern §4 describes for the tree as a whole.
+
+---
+
+## 12. The certification lane — §26, §27, and what executing them found
+
+Written by the Telegraph lane holding §23–§31 and Appendix A, in a worktree off
+`014a25d5`. Sections §1–§11 and §12–§22 were held by other agents in their own
+worktrees at the same time; nothing below depends on their work landing, and
+every row that WOULD depend on it says so.
+
+### 12.1 What was built, and where
+
+**The spec's §26 matrix and §27 plan existed only as prose. They are now data a
+checker reads, and three suites that execute them.**
+
+The census's §5 found the whole of §27 absent — "No monotonicity property test
+exists. `test/accessControl.test.ts` and `test/rlsPrivacy.test.ts` are case
+tests over fixed fixtures" — and §26 satisfied incidentally by route checks
+written for other reasons. That reading was right, and it points at the shape of
+the gap: a certification plan that lives in a document cannot go red. So the
+thirty-five entries of §26 and §27 are declared as TypeScript under a new
+`domain/telegraph/` package, driven by three node:test suites against the
+real handlers, and policed by a checker wired into `check:all`.
+
+**The declarations.** `domain/telegraph/contracts/certification.ts:46`
+defines the four-status vocabulary the whole lane turns on, and the choice of
+four rather than two is the point: `enforced` means *true on every deployment of
+this tree*, `flag_gated` means *built and not running*, `divergent` means *the
+tree does something else*, and `vacuous` means *the case cannot arise*. Nothing
+can be rounded up. The entries themselves:
+
+- §26's ten cases, `domain/telegraph/invariants/rlsAuthorizationMatrix.ts:32`
+  (RLS-01) through `:194` (RLS-10).
+- §27.1's seven properties,
+  `domain/telegraph/invariants/propertyInvariants.ts:27` through `:148`.
+- §27.2's twelve fixtures,
+  `domain/telegraph/invariants/adversarialFixtures.ts:22` through `:218`.
+- §27.3's six live-DB contracts,
+  `domain/telegraph/invariants/liveDbContracts.ts:25` through `:122`.
+
+**The suites.** `test/telegraphRlsAuthorizationMatrix.test.ts:182`–`:593`
+(38 cases), `test/telegraphPropertyInvariants.test.ts:161`–`:584` (19),
+`test/telegraphAdversarialFixtures.test.ts:155`–`:561` (27). Every assertion
+lands on an output of real code: the real `messagingRouter`, the real
+`canMessage`, the real `buildCrewCard`, the real `isBlockedBetween`, the real
+`requireSafeReturnRecipient`, the real event bus, the real `syncTripChatMembers`.
+What is replaced is PostgREST, by
+`test/telegraphCertificationHarness.ts:157` — and it is replaced rather than
+mocked away for a specific reason stated at `:36`: supabase-js RESOLVES on a
+database error, and that is the shape that turns a dropped `.error` into
+fail-open authorization, so a fake that threw instead would make those bugs
+untestable.
+
+**The guard.** `scripts/checkTelegraphCertification.ts:14` states its five
+rules; the fifth is the one that matters — the count of entries that are NOT
+`enforced` is pinned per family in
+`scripts/TELEGRAPH_CERTIFICATION_BASELINE.json:11` and may only shrink. A
+future change cannot make a red case green by reclassifying it. Wired at
+`scripts/run-all-checks.sh:263` and declared in
+`scripts/guardRegistry.ts:657`, with an inspection proof so a pass says how
+much it looked at.
+
+**The share-authorization gate.** §26's private-Memory case and §29's Memory
+prohibition were *unguarded absences* — "no Memory share path exists, so the
+case cannot arise and nothing guards it". That is a guarantee which lasts until
+the fifth producer, and four already exist.
+`domain/telegraph/policies/shareAuthorizationPolicy.ts:113` is now a
+total, fail-closed decision function: an unrecognised object family is refused,
+a private source without a derivative grant is refused, a grant issued by a
+different domain is refused (§29's no-semantic-ID-substitution, applied to
+authorization), an unparseable expiry is refused rather than read as "never
+expires", and a "derivative" that names the private source's own id is refused
+because it is the source wearing a grant. What travels is the derivative id.
+
+`scripts/checkTelegraphShareProducers.ts:15` makes it unavoidable: every
+`msg_type`/`subtype` literal in both trees must be declared, orphan declarations
+fail, and — the rule with teeth — a producer whose `sourceDomain` is
+private-by-default may ONLY be declared `PRIVATE_SOURCE`
+(`domain/telegraph/policies/shareAuthorizationPolicy.ts:446`). The registration rule alone would have been
+satisfiable by declaring a Memory card `PUBLIC`; this closes that route for
+exactly the domains the case is about. It does not close it for a private domain
+nobody has named yet, and the checker says so on every run rather than implying
+otherwise.
+
+### 12.2 Four things executing the plan found that reading it did not
+
+**1. Revoking a live location share can WIDEN what a viewer sees.** Found by the
+§27.1 precision property, not by inspection. A live share overrides the member's
+passive default *in both directions* — `lib/tripCrewLocation.ts:174` honours it
+even over a `hidden` default, deliberately — so a member whose standing default
+is `neighborhood` who starts a `city_only` share discloses LESS while it runs,
+and ending it moves the label from a city back to a district. Recorded with the
+exact input at `test/telegraphPropertyInvariants.test.ts:331`. It is not a
+§27.1 violation: the wider label is one the member separately authorized. It is
+recorded because it is counter-intuitive in the direction that matters — "I
+stopped sharing" makes the label more precise — and any UI that says *sharing
+stopped* while showing a narrower area than before would be telling the truth
+about the grant and the opposite of the truth about the disclosure.
+
+**2. `messages.subtype` carries a highlight's ID.** `routes/highlights.ts:1395`
+writes `subtype: id` — an identifier into the discriminator column a renderer
+dispatches on. It can never match a renderer case, and it puts a
+highlights-domain id into a messaging-domain vocabulary field, which is the
+shape §29's *"No semantic ID substitution across domains"* forbids. Nothing is
+visibly broken, because `msg_type: "highlight_reply"` is the real discriminator
+there — which is why it has survived. Declared at
+`domain/telegraph/policies/shareAuthorizationPolicy.ts:330` so it is a
+decision rather than an accident.
+
+**3. `POST /threads/:threadId/messages` accepts any `subtype` the client sends.**
+`routes/messaging.ts:2042` takes it straight from the request body; the only
+vocabulary constraint anywhere on that handler is that `msgType` collapses to
+`system` or `text` (`:2039`). A client can stamp any discriminator it likes onto
+a message. It cannot forge the payload's authorization — every card's data comes
+from the same client-authored body — so this is a rendering-shape hole rather
+than an access-control one, but it is exactly the seam §30A.10's capability
+registry exists to close. Recorded at `domain/telegraph/policies/shareAuthorizationPolicy.ts:297`.
+
+**4. Two of the six §27.3 lanes are not in `check:all`, and both are still
+reached.** `check:enum-literals` runs as its own static `ci.yml` step —
+deliberately, "needs no database and cannot be starved"
+(`.github/workflows/ci.yml:215`) — and `check:migration-ledger` appears in
+`live-db.yml` only inside a comment, its real reach being `certifyMigrations.ts`,
+which spawns it as a ledger gate (`scripts/guardRegistry.ts:263-269`). The
+first version of the §27.3 assertion checked `run-all-checks.sh` alone and went
+red on both. It now asks the question `guardRegistry.ts` asks — is this checker
+reached by anything — which is the right question and was not the obvious one.
+
+### 12.3 Every green here was seen red first
+
+Twelve deliberate mutations, each reverted immediately, each moving a suite from
+all-pass to one-fail. The three worth recording are the ones that found a test
+wrong rather than the tree:
+
+- **The roster-refusal proof corrected the test.** Removing the block guard's
+  roster-error refusal from `routes/messaging.ts:2078` left the matrix suite
+  GREEN, because failing `message_thread_members` outright denies at the
+  caller's own membership check and the roster guard is never reached. The
+  harness grew per-table operation counting
+  (`test/telegraphCertificationHarness.ts:39`) so the failure lands on the
+  second read. Only then did the mutation go red.
+- **The translation-invalidation proof found two call sites.** Deleting the
+  wrong `markTranslationsPending` left the fixture green; so did asserting on the
+  row's final state, because the edit route fires the re-translation without
+  awaiting it and the regeneration rewrites the row. The assertion now measures
+  the invalidation WRITE (`test/telegraphAdversarialFixtures.test.ts:376`).
+- **The mid-send fixture first failed for the wrong reason.** Removing the
+  sender before the handler's own membership check produced a 403 that proved
+  only that the check works. It now mutates the roster on the second read, after
+  that check has passed (`test/telegraphAdversarialFixtures.test.ts:411`).
+
+And one that corrected the fake rather than the test: the first run of the
+request-flooding fixture reported an unbounded flood the real database does not
+have, because the fake applied no column default, `message_requests.status` came
+back undefined, and the route's one-request-per-pair short-circuit could never
+fire. `columnDefaults` (`test/telegraphCertificationHarness.ts:57`) exists
+for that reason.
+
+### 12.4 Row moves — §26 and §27
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| T311 | C | C | Unchanged verdict, executed evidence. RLS-01 is driven at `test/telegraphRlsAuthorizationMatrix.test.ts:182`: a non-member's read is refused AND the `messages` table is never reached, and an unreadable membership table also denies. Declared `enforced` at `domain/telegraph/invariants/rlsAuthorizationMatrix.ts:32`. |
+| T312 | C | C | RLS-02, `test/telegraphRlsAuthorizationMatrix.test.ts:201`. The departed member is denied the entire thread for read and for send; the route re-checks `left_at` on the returned row as well as filtering on it, so the gate is doubled — measured, removing only the filter left the property green. |
+| T313 | W | W | **Still W, and the reason changed completely.** The bound now EXISTS: migration `migrations/2400_telegraph_history_bound.sql` adds `message_thread_members.visible_from_at` and the flag `telegraph_history_bound_enabled`, and `services/groupChatHistoryBound.ts` is applied at `routes/messaging.ts:1841` and `:1848`. RLS-03 proves both halves at `test/telegraphRlsAuthorizationMatrix.test.ts:222`: with the flag on the pre-membership message is withheld and the bound is applied IN the query so pagination cannot walk past it; with the flag as seeded — FALSE — the whole back history is returned. **Ceiling: no database has 2400 and the flag is seeded off.** BUILT ON BRANCH IS NOT DEPLOYED; this row cannot move from inside the tree. |
+| T314 | W | **C** | The fail-open is closed in the tree. `routes/messaging.ts:2078-2082` now REFUSES the send when the roster read fails ("cannot determine whether this is a blocked 1:1 thread") instead of inferring an empty roster and skipping the guard. RLS-04 drives five configurations at `test/telegraphRlsAuthorizationMatrix.test.ts:261` — recipient-blocked, sender-blocked, mutual (the two-row state that used to make the guard raise), blocks-table unreadable, roster unreadable — and all five deny. Shown red by deleting that refusal. |
+| T315 | C | C | RLS-05, `test/telegraphRlsAuthorizationMatrix.test.ts:309`. Expiry, status and recipient identity are each refused by `services/safeReturn/SafeReturnPrivacyGuard.ts:142-157` before the handler runs, and exact coordinates cannot leave the API at all — `stripGPS` (`:23`) is proved to delete `latitude`/`longitude` at depth. Two independent artifacts, so neither is a single point of failure. |
+| T316 | C | C | RLS-06, `test/telegraphRlsAuthorizationMatrix.test.ts:377`, driving the real predicate `services/passport/OpenToPlansService.ts:168` over the cross-product of five visibility policies, both sources and five viewer relationships: a private window is invisible to every non-self viewer, an INFERRED window is invisible whatever visibility it carries, and an expired one is invisible even to an admitted viewer. |
+| T317 | N `∅` | **C** | The unguarded absence is now a refusal. `domain/telegraph/policies/shareAuthorizationPolicy.ts:113` refuses a private source with no derivative grant, a grant from the wrong domain, a grant for the wrong scope, an expired or unparseable-expiry grant, and a "derivative" that names the source's own id — six refusal branches, exercised at `test/telegraphRlsAuthorizationMatrix.test.ts:425`. `scripts/checkTelegraphShareProducers.ts` makes it unavoidable, and its private-by-default rule (`domain/telegraph/policies/shareAuthorizationPolicy.ts:446`) closes the misdeclaration route for exactly the domains this case names. NO producer is `PRIVATE_SOURCE` today — the gate is the guarantee, not a live path, and the row says so. |
+| T318 | N | N | Unmoved, and now mechanically so. The authorization half answers (`test/telegraphRlsAuthorizationMatrix.test.ts:483`) and there is no *current safe share projection* for it to authorize: no producer resolves a source object's present state. An empty audience is also refused, so the positive case cannot be satisfied vacuously. |
+| T319 | W | W | RLS-09, `test/telegraphRlsAuthorizationMatrix.test.ts:510`, drives both halves: BEFORE `syncTripChatMembers` runs, a removed trip member still reads the thread (200 — the divergence, asserted); AFTER the real sync runs, read and send both deny and the row carries `left_at`. **Ceiling: the trip-membership write and the thread-membership write are not one transaction, and the sync is invoked fire-and-forget from Trips-owned routes.** Closing it is a Trips change, not a Telegraph one. |
+| T320 | W | W | RLS-10, `test/telegraphRlsAuthorizationMatrix.test.ts:544`. The one action that re-derives is correct across the whole status vocabulary (`lib/calls/callGatewayAdapter.ts:73`): cancelled and refunded are refused, disputed and completed-with-both-parties stay callable. The divergence is asserted against the component: `travel-buddy-standalone/src/components/rentabuddy/BookingMilestoneMessage.tsx` contains no `fetch` and no effect, so its buttons outlive the booking state they were rendered from. **Ceiling: §30A.10's action capability registry (T410).** |
+| T321 | N | **C** | P-01 exists and is a property, not a case: `test/telegraphPropertyInvariants.test.ts:161` runs the real `canMessage` over 576 enumerated relationship states and every single-signal weakening of each — 3,000+ comparisons — on the lattice denied < requires_request < allowed (`domain/telegraph/policies/disclosureLattices.ts:33`). Shown red by inverting the circle override in `lib/messagingPermissions.ts:333` so it granted on absence. |
+| T322 | N | **C** | P-02, `test/telegraphPropertyInvariants.test.ts:291`, over the real `buildCrewCard` (`lib/tripCrewLocation.ts:133`) — the resolver that ships, not `presence/domain`, which the census correctly noted nothing uses. Six precision-decreasing transforms over 160 enumerated inputs, measured on what LEAVES the function (`disclosedPrecision`, `domain/telegraph/policies/disclosureLattices.ts:64`). Shown red by making `resolveExactCoords` ignore hotel blur. It also produced finding 1 above. |
+| T323 | N | **C** | P-03, `test/telegraphPropertyInvariants.test.ts:413`. No sequence column exists, so the property is expressed over what a sequence would have ordered — the set of ids the real route returns — and every membership weakening must yield a SUBSET. Shown red by removing BOTH departed-member gates from `routes/messaging.ts` (removing one was not enough, which is itself worth knowing). |
+| T324 | W | **C** | P-04, `test/telegraphPropertyInvariants.test.ts:463`, quantifies over the FAILURE states as well as the healthy ones: block present, blocks table unreadable, roster read unreadable. All deny, none writes a canonical row, and a control proves an unblocked send still succeeds so the property is not vacuously true. Shown red by flipping `lib/blockGuard.ts:38` to fail open. |
+| T325 | W | **C** | P-05, `test/telegraphPropertyInvariants.test.ts:518`. Expressed as a property over 50 window states and both sides of the boundary, including the instant the expiry names, with no sweep having run — which is the distinction that matters, and `2260:38-42` states it. Thread expiry has no referent and the test asserts that structurally rather than passing over it. |
+| T326 | N | N | Unmoved. There is no unsend operation to quantify over. The suite now asserts that absence STRUCTURALLY at `test/telegraphPropertyInvariants.test.ts:584`, so it goes red the moment an unsend route or an `unsent_at` reference lands — shown red by adding a stub unsend route. PR #472 is still unmerged and CI-only. |
+| T327 | N | N | Same absence, same structural assertion. Recorded with it: the receipt an unsend would race — `last_read_at` — DOES exist and is what #472 reuses rather than inventing a competing sequence. |
+| T328 | W | **C** | F-01 exists and drives three separate facts (`test/telegraphAdversarialFixtures.test.ts:155`): flooding ONE recipient is bounded to a single delivered request by the route's pending/accepted short-circuit, which also refuses outright when that table is unreadable rather than delivering a second unsolicited request; flooding TWELVE recipients is unbounded; and in-thread sends are unbounded (25 accepted). The behavioural gap stays at T279, where it belongs; this row asks whether the fixture exists, and it does. |
+| T329 | N | **C** | F-02, `test/telegraphAdversarialFixtures.test.ts:209`. Three retries — healthy, blocks-unreadable, roster-unreadable — all refused, nothing written. The fixture also asserts what makes the scenario real: the stale device's belief is CORRECT, because blocking does not close an existing thread, so the per-send re-check is the only thing standing between them. |
+| T330 | N | **C** | F-03, `test/telegraphAdversarialFixtures.test.ts:244`, posts the same `clientId` twice through the real route and proves TWO canonical rows. The mechanism gap (no idempotency) stays at T231 and the metric at T347; the fixture exists and measures it. |
+| T331 | N | **C** | F-04, `test/telegraphAdversarialFixtures.test.ts:265`, over the real bus: per-subscriber delivery order is the publish order, one throwing subscriber cannot silence the others, and the swallow is COUNTED (`lib/telegraphEvents.ts:279-285`). Shown red by removing that try/catch. |
+| T332 | N | **C** | F-05, `test/telegraphAdversarialFixtures.test.ts:309`. An availability window and a safe-return live share both cross their expiry with no writer, no sweep and no owner device — the condition under which a sweep-based design leaks — and both are refused on the read. |
+| T333 | W | **C** | F-06, `test/telegraphAdversarialFixtures.test.ts:350`, driven as the race the census said was missing: in-flight translations of the previous body are left in place, the edit goes through the real route, and the invalidation WRITE is asserted. Shown red by deleting `markTranslationsPending` from the edit handler — after two earlier mutations that did not go red and corrected the assertion instead. |
+| T334 | N | **C** | F-07, `test/telegraphAdversarialFixtures.test.ts:409`, makes the window deterministic by removing the sender's membership between the handler's own check and the insert. The send COMPLETES: membership is checked once and the insert is not conditioned on it. Asserted as today's outcome with the requirement quoted; closing it is a conditional insert, not a test change. |
+| T335 | N | **C** | F-08, `test/telegraphAdversarialFixtures.test.ts:456`, runs the real `syncTripChatMembers` against a trip the member has been removed from and proves read and send both deny afterwards, with nothing written on the way out — and that a second reconciliation converges rather than re-stamping the departure. Shown red by short-circuiting the departure reconciliation. |
+| T336 | W | **C** | F-09, `test/telegraphAdversarialFixtures.test.ts:493`, walks the booking status vocabulary through the real eligibility function and asserts the card's blindness against the real component. |
+| T337 | N | **C** | F-10, `test/telegraphAdversarialFixtures.test.ts:515`. The safe answer to a conflicting thread is not a correct summary but a refusal to act on one, and that is what is asserted: `requires_confirmation: true` is a LITERAL type in `routes/telegraphCommands.ts:57`, so an unconfirmable action is unrepresentable; the confirm path re-verifies trip membership at execution (`:412`) and refuses a command the caller does not own (`:398`); and no canonical trip write happens before confirmation. |
+| T338 | N | N | Unmoved — there is no unsend, so there is no race to run. The absence is asserted structurally at `test/telegraphAdversarialFixtures.test.ts:546`. #472 implements exactly this race in the database, with `FOR UPDATE` locks on every eligible recipient's receipt row, and is unmerged. |
+| T339 | N | **C** | F-12, `test/telegraphAdversarialFixtures.test.ts:561`, asserts against both real card components that neither performs a fetch, neither has an effect, and the payload carries a `sourceId` with no capability vocabulary beside it. Structural rather than timing-dependent, which is what the defect actually is. |
+| T340 | C | C | LDB-01. Unchanged, and now tied to a test that fails if the lane is renamed: `test/telegraphRlsAuthorizationMatrix.test.ts:593` asserts every named script exists and is REACHED — by `check:all`, a workflow, or a declared delegation. |
+| T341 | C | C | LDB-02. Same, and see finding 4: this lane is not in `check:all` and is still reached, as its own static CI step. |
+| T342 | C | C | LDB-03. Same. |
+| T343 | C | C | LDB-04. Same; reached through `certifyMigrations.ts`'s ledger gate rather than directly. |
+| T344 | W | W | **Still W, and smaller than it was.** Of the four dropped-error reads the census named, one is FIXED (the block-guard roster read now refuses) and two resolve to a 403 rather than an empty inbox — a refusal is not a plausible empty state. What remains is genuinely this defect: the per-viewer translation read (`routes/messaging.ts:1887`), and the trip, booking and circle context reads in the inbox projection (`:1724`, `:1740`, `:1355`), each of which renders an untranslated message or a thread with no trip context when the table is unreadable. Measured and asserted at `test/telegraphRlsAuthorizationMatrix.test.ts:620` so the count cannot silently reach zero without the contract being reclassified. **Ceiling: the fix is in `routes/messaging.ts`, which §12–§22's lane holds concurrently; this lane measured it rather than editing a contested file.** |
+| T345 | C | C | LDB-06. Unchanged. |
+
+### 12.5 The ceiling on this section
+
+Four things bound these rows, and none of them is a test that has not been
+written:
+
+1. **T313 needs a migration no database has and a flag seeded off.** 2400 exists
+   and is proved on both sides of its flag. MERGED IS NOT DEPLOYED; DEPLOYED IS
+   NOT FLAG ENABLED.
+2. **T319 needs a transaction that spans Trips and Telegraph.** The gate is
+   right; the propagation is fire-and-forget from routes this lane does not own.
+3. **T320, T339 and T411 need the §30A.10 action capability registry** — the
+   cards must be given their buttons at render time by something that can
+   re-authorize them. That is a build, not a fix.
+4. **T326, T327 and T338 need PR #472 to merge.** Until then the absence is
+   asserted structurally, which is the strongest thing this tree can say about
+   an operation it does not have.
+
+T344 is bounded differently: its remaining instances are in a file another lane
+holds this week. The measurement is in place and shrink-only; the edit is not
+this lane's to make.
