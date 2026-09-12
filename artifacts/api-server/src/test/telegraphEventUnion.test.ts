@@ -243,7 +243,7 @@ describe("Telegraph §13.2 message.deleted — DELETE /messages/:id", () => {
     app.use(express.json());
     app.use("/api", groupChatRouter);
     server = createServer(app);
-    await new Promise<void>((r) => server.listen(0, r));
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
     base = `http://127.0.0.1:${server.address().port}/api`;
 
     const rec = record([ALICE, BOB]);
@@ -353,7 +353,7 @@ describe("Telegraph §13.2 safety.reported — the reporter, and nobody else", (
     app.use(express.json());
     app.use("/api", messagingRouter);
     server = createServer(app);
-    await new Promise<void>((r) => server.listen(0, r));
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
     base = `http://127.0.0.1:${server.address().port}/api`;
 
     const rec = record([ALICE, BOB]);

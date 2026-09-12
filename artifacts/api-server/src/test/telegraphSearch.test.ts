@@ -404,7 +404,7 @@ describe("GET /telegraph/search · /threads/:id/search · /threads/:id/ask", () 
     app.use(express.json());
     app.use("/api", searchRouter);
     server = createServer(app);
-    await new Promise<void>((r) => server.listen(0, r));
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
     base = `http://127.0.0.1:${server.address().port}/api`;
   });
 

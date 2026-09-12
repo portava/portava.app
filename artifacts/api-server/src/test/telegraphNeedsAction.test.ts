@@ -340,7 +340,7 @@ before(async () => {
   app.use((req, _res, next) => { (req as any).log = { info() {}, warn() {}, error() {}, debug() {} }; next(); });
   app.use(messagingRouter);
   server = createServer(app);
-  await new Promise<void>((r) => server.listen(0, r));
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
   base = `http://127.0.0.1:${(server.address() as any).port}`;
 });
 

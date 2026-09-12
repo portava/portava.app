@@ -389,7 +389,7 @@ describe("GET /threads/:threadId/capabilities", () => {
     app.use(express.json());
     app.use("/api", capabilityRouter);
     server = createServer(app);
-    await new Promise<void>((r) => server.listen(0, r));
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
     base = `http://127.0.0.1:${server.address().port}/api`;
   });
 
@@ -491,7 +491,7 @@ describe("GET /threads/:threadId/read-receipts", () => {
     app.use(express.json());
     app.use("/api", readReceiptsRouter);
     server = createServer(app);
-    await new Promise<void>((r) => server.listen(0, r));
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
     base = `http://127.0.0.1:${server.address().port}/api`;
   });
 

@@ -414,7 +414,7 @@ describe("GET /threads/:threadId/messages — §22 signals reach the RECIPIENT o
     app.use(express.json());
     app.use("/api", messagingRouter);
     server = createServer(app);
-    await new Promise<void>((r) => server.listen(0, r));
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
     base = `http://127.0.0.1:${server.address().port}/api`;
     _setTestClient(readPathClient(), true);
   });

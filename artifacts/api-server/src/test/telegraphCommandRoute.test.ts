@@ -182,7 +182,7 @@ before(async () => {
   app.use(express.json());
   app.use("/api", commandRouter);
   server = createServer(app);
-  await new Promise<void>((r) => server.listen(0, r));
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
   base = `http://127.0.0.1:${server.address().port}/api`;
 });
 
