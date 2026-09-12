@@ -11,6 +11,18 @@
  * lib/intelOutcomes already defines, which is what lib/intelCalibrationScheduler
  * reads back. The route computes no world truth and stores no location.
  *
+ * ── THE LAST ARROW: OUTCOME → CALIBRATION ────────────────────────────────────
+ * A close that NAMES the served snapshot and claim is recorded through the
+ * existing outcome path (`recordIntelOutcome`), so the single event it writes
+ * carries BOTH the exact `payload.intel` envelope the daily calibration report
+ * counts (`intelCalibrationScheduler`: verb ∈ OUTCOME_VERBS AND
+ * `payload->intel` NOT NULL) and this session's closure — and the
+ * served-plausibility check, the claim-belongs-to-this-snapshot check and the
+ * per-(actor, snapshot) dedup are that path's, not a second copy of them here.
+ * A close that names none is the session's own event only, `calibrated: false`:
+ * invisible to calibration, and honestly so, rather than fabricating a
+ * snapshot id to be counted.
+ *
  * ── WHAT IT REFUSES, AND WHY THE REFUSALS ARE NAMED ──────────────────────────
  * A session with no opportunity kind is not a bridge (`no_opportunity_reference`).
  * A second session while one is open is refused (`already_open`) — one open
@@ -36,7 +48,13 @@ import { asyncHandler } from "../lib/asyncHandler.js";
 import { requireUser, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { isFlagEnabled } from "../lib/featureFlags.js";
-import { INTEL_OUTCOMES, EXPERIENCE_RATING_MAX, EXPERIENCE_RATING_MIN } from "../lib/intelOutcomes.js";
+import {
+  ATTRIBUTION_TOUCHES,
+  EXPERIENCE_RATING_MAX,
+  EXPERIENCE_RATING_MIN,
+  INTEL_OUTCOMES,
+  recordIntelOutcome,
+} from "../lib/intelOutcomes.js";
 import { OPPORTUNITY_KINDS } from "../lib/opportunityEngine.js";
 import {
   MAX_SESSION_HOURS,
@@ -63,6 +81,18 @@ const closeSchema = z.object({
   outcome: z.enum(INTEL_OUTCOMES),
   experienceRating: z.number().int().min(EXPERIENCE_RATING_MIN).max(EXPERIENCE_RATING_MAX).optional(),
   surface: z.string().min(1).max(40).optional(),
+  // §5.4's last arrow — OUTCOME → CALIBRATION. Supply the snapshot and claim
+  // the session was served, and the close is recorded through the EXISTING
+  // outcome path (lib/intelOutcomes.recordIntelOutcome): one canonical event
+  // carrying BOTH the exact `payload.intel` envelope the daily calibration
+  // report counts and this session's closure. Omit them and the close is
+  // recorded as the session's own event only — honest, and invisible to
+  // calibration, which is what "when permitted" looks like when nothing
+  // permitted it.
+  snapshotId: uuid.optional(),
+  claimId: uuid.optional(),
+  servedAt: z.string().datetime().optional(),
+  touch: z.enum(ATTRIBUTION_TOUCHES).optional(),
 });
 
 async function gate(req: any, res: any): Promise<{ sc: any; userId: string } | null> {
@@ -181,12 +211,45 @@ router.post(
       res.status(409).json({ ok: false, refusal: built.refusal, state: found.session.state });
       return;
     }
+    // With a served snapshot named, the close goes through the EXISTING
+    // outcome path so the event carries `payload.intel` and is counted by the
+    // calibration report; the served-plausibility, the claim-belongs-to-the-
+    // snapshot check and the per-(actor, snapshot) dedup are that path's, not a
+    // second copy of them here.
+    const q = parsed.data;
+    if (q.snapshotId && q.claimId && q.servedAt) {
+      const recorded = await recordIntelOutcome(g.sc, g.userId, {
+        snapshotId: q.snapshotId,
+        claimId: q.claimId,
+        outcome: q.outcome,
+        experienceRating: q.experienceRating,
+        servedAt: q.servedAt,
+        touch: q.touch ?? "go_tap",
+        surface: q.surface,
+        experienceSession: built.envelope as unknown as Record<string, unknown>,
+      });
+      if (!recorded.ok) {
+        res.status(409).json({ ok: false, refusal: recorded.reason, calibrated: false });
+        return;
+      }
+      res.json({
+        ok: true,
+        session: built.envelope,
+        state: "closed",
+        verb: built.event.verb,
+        outcomeEventId: recorded.eventId,
+        deduped: recorded.deduped === true,
+        calibrated: true,
+      });
+      return;
+    }
+
     const write = await appendSessionEvent(g.sc, built.event);
     if (!write.ok) {
       res.status(500).json({ ok: false, refusal: write.refusal });
       return;
     }
-    res.json({ ok: true, session: built.envelope, state: "closed", verb: built.event.verb });
+    res.json({ ok: true, session: built.envelope, state: "closed", verb: built.event.verb, calibrated: false });
   }),
 );
 

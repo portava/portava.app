@@ -21,7 +21,7 @@ import assert from "node:assert/strict";
 import experienceSessionsRouter from "../routes/experienceSessions.js";
 import { _setTestClient } from "../lib/http.js";
 import { EXPERIENCE_SESSION_PAYLOAD_KEY, SESSION_OPEN_VERB, type ExperienceSessionEnvelope } from "../lib/experienceSession.js";
-import { OUTCOME_VERB } from "../lib/intelOutcomes.js";
+import { OUTCOME_VERB, OUTCOME_VERBS } from "../lib/intelOutcomes.js";
 import { startRouterApp, type FakeState, type ProjectionApp } from "./helpers/fakeMapDb.js";
 
 const VIEWER = "11111111-aaaa-4aaa-8aaa-111111111111";
@@ -53,9 +53,18 @@ function writableEvents(app: ProjectionApp, stored: Stored, opts: { failInsert?:
       return {
         ...live,
         insert(row: Record<string, unknown>) {
-          if (opts.failInsert) return Promise.resolve({ data: null, error: { code: "42501", message: "denied" } });
-          stored.rows.push({ occurred_at: new Date().toISOString(), ...row });
-          return Promise.resolve({ data: null, error: null });
+          const fail = { data: null, error: { code: "42501", message: "denied" } };
+          if (!opts.failInsert) stored.rows.push({ id: `evt-${stored.rows.length + 1}`, occurred_at: new Date().toISOString(), ...row });
+          const result = opts.failInsert ? fail : { data: null, error: null };
+          // Thenable like PostgREST, and also chainable — the outcome path
+          // asks for the inserted id with .select("id").single().
+          return {
+            then: (resolve: (v: unknown) => void) => Promise.resolve(result).then(resolve),
+            select: () => ({
+              single: async () =>
+                opts.failInsert ? fail : { data: { id: stored.rows[stored.rows.length - 1]!.id }, error: null },
+            }),
+          };
         },
       };
     },
@@ -215,6 +224,91 @@ describe("Sensing §5.4 — the ExperienceSession routes", () => {
     assert.equal(opened.status, 500);
     assert.equal(opened.body.refusal, "write_failed");
     assert.equal(stored.rows.length, 0);
+  });
+
+  it("ON: a close that NAMES the served snapshot writes ONE event the calibration report counts — with both envelopes", async () => {
+    const stored: Stored = { rows: [] };
+    const SNAP = "44444444-dddd-4ddd-8ddd-444444444444";
+    const CLAIM = "55555555-eeee-4eee-8eee-555555555555";
+    const served = new Date(Date.now() - 5 * 60_000).toISOString();
+    const intelTables: FakeState = {
+      intel_state_snapshots: [
+        {
+          id: SNAP,
+          subject_id: PLACE_ID,
+          zone_id: null,
+          claim_type: "crowd.level",
+          confidence: 0.8,
+          source_count: 12,
+          privacy_eligible: true,
+          observed_at: new Date(Date.now() - 20 * 60_000).toISOString(),
+          expires_at: new Date(Date.now() + 20 * 60_000).toISOString(),
+        },
+      ],
+      intel_claims: [{ id: CLAIM, subject_id: PLACE_ID, zone_id: null, claim_type: "crowd.level" }],
+    };
+    await start(world([ON], intelTables), stored);
+    const opened = await post("/intel/experience-sessions", { subjectId: PLACE_ID, opportunityKind: "go_now", claimRefs: [SNAP] });
+    const id = opened.body.session!.session_id;
+
+    await start(world([ON], { ...intelTables, canonical_events: stored.rows }), stored);
+    const closed = await post(`/intel/experience-sessions/${id}/close`, {
+      outcome: "better",
+      experienceRating: 4,
+      snapshotId: SNAP,
+      claimId: CLAIM,
+      servedAt: served,
+    });
+    assert.equal(closed.status, 200, JSON.stringify(closed.body));
+    assert.equal((closed.body as Record<string, unknown>).calibrated, true);
+    assert.equal(stored.rows.length, 2, "one close event, not two");
+    const event = stored.rows[1]!;
+    // The exact envelope the daily calibration report filters on, and the
+    // session's closure beside it.
+    assert.equal(event.verb, OUTCOME_VERB.better);
+    assert.deepEqual(event.payload.intel, {
+      snapshot_id: SNAP,
+      claim_id: CLAIM,
+      subject_id: PLACE_ID,
+      outcome: "better",
+      experience_rating: 4,
+      served_at: served,
+    });
+    assert.equal(event.payload[EXPERIENCE_SESSION_PAYLOAD_KEY].session_id, id);
+    assert.equal(event.payload[EXPERIENCE_SESSION_PAYLOAD_KEY].outcome, "better");
+    // intelCalibrationScheduler's own predicate: verb ∈ OUTCOME_VERBS AND
+    // payload->intel NOT NULL. This event satisfies both.
+    assert.ok((OUTCOME_VERBS as readonly string[]).includes(event.verb));
+    assert.notEqual(event.payload.intel, null);
+  });
+
+  it("ON: a close that names NO snapshot is honest about it — the session's own event, and calibration cannot see it", async () => {
+    const stored: Stored = { rows: [] };
+    await start(world([ON]), stored);
+    const opened = await post("/intel/experience-sessions", { subjectId: PLACE_ID, opportunityKind: "go_now" });
+    await start(world([ON], { canonical_events: stored.rows }), stored);
+    const closed = await post(`/intel/experience-sessions/${opened.body.session!.session_id}/close`, { outcome: "same" });
+    assert.equal(closed.status, 200);
+    assert.equal((closed.body as Record<string, unknown>).calibrated, false);
+    assert.equal(stored.rows[1]!.payload.intel, undefined, "no snapshot id was fabricated to be counted");
+  });
+
+  it("ON: a close naming a snapshot the viewer was NOT served is refused, and nothing is written", async () => {
+    const stored: Stored = { rows: [] };
+    const SNAP = "44444444-dddd-4ddd-8ddd-444444444444";
+    const CLAIM = "55555555-eeee-4eee-8eee-555555555555";
+    await start(world([ON], { intel_state_snapshots: [], intel_claims: [] }), stored);
+    const opened = await post("/intel/experience-sessions", { subjectId: PLACE_ID, opportunityKind: "go_now" });
+    await start(world([ON], { intel_state_snapshots: [], intel_claims: [], canonical_events: stored.rows }), stored);
+    const closed = await post(`/intel/experience-sessions/${opened.body.session!.session_id}/close`, {
+      outcome: "better",
+      snapshotId: SNAP,
+      claimId: CLAIM,
+      servedAt: new Date(Date.now() - 60_000).toISOString(),
+    });
+    assert.equal(closed.status, 409);
+    assert.equal(closed.body.refusal, "snapshot_not_found");
+    assert.equal(stored.rows.length, 1, "the open event only");
   });
 
   it("ON: an EXPIRED session cannot be closed with an outcome", async () => {

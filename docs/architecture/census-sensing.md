@@ -2218,11 +2218,11 @@ did **not** build.
   and the coordinate names — is refused at any depth, at build time and again
   on the wire (`lib/experienceSession.ts:105#export const SESSION_FORBIDDEN_KEYS`;
   `lib/experienceSession.ts:127#export function sessionForbiddenKeys(`;
-  `routes/experienceSessions.ts:139#const trail = sessionForbiddenKeys`;
+  `routes/experienceSessions.ts:169#const trail = sessionForbiddenKeys`;
   `test/experienceSession.test.ts:83#cannot be given a trail`; B7-M5 red).
   ONE OPEN SESSION: a second while one is open is refused, so sessions cannot
   accumulate into a parallel trail
-  (`routes/experienceSessions.ts:117#already_open`;
+  (`routes/experienceSessions.ts:147#already_open`;
   `test/experienceSessionsRoute.test.ts:147#a SECOND session`; B7-M9 red).
   NO HISTORY READ: the store exports exactly three functions — the open
   session, one session by id, and an append — and the suite asserts that set
@@ -2239,7 +2239,7 @@ did **not** build.
   late outcome: an outcome reported after the window is not evidence about that
   window, and feeding it to the calibration report would be a lie
   (`test/experienceSession.test.ts:141#an EXPIRED session`;
-  `test/experienceSessionsRoute.test.ts:220#an EXPIRED session`; B7-M1 red).
+  `test/experienceSessionsRoute.test.ts:314#an EXPIRED session`; B7-M1 red).
   The state itself is folded, never a stored status somebody could set
   (`lib/experienceSession.ts:228#export function sessionState(`).
 - **A failed read is a refusal, never "you have no session"** —
@@ -2254,11 +2254,11 @@ did **not** build.
   `experience_session_enabled` (2841, seeded FALSE), read fail-closed: with the
   flag absent — production's state — all three answer `feature_disabled` and
   neither read nor write, asserted by counting the rows the double stored
-  (`routes/experienceSessions.ts:76#experience_session_enabled`;
-  `test/experienceSessionsRoute.test.ts:100#the flag ABSENT`; B7-M10 red).
+  (`routes/experienceSessions.ts:106#experience_session_enabled`;
+  `test/experienceSessionsRoute.test.ts:109#the flag ABSENT`; B7-M10 red).
   Every read and write is keyed on the caller's own id, so another person's
   session simply does not resolve
-  (`test/experienceSessionsRoute.test.ts:187#does not resolve`; B7-M11 red).
+  (`test/experienceSessionsRoute.test.ts:196#does not resolve`; B7-M11 red).
 - **2841 executed (DB-8)** — on the lane's local replica: applied (FALSE),
   rolled back with `db/rollback/2026-09-12-2841-experience-session-flag-rollback.sql`,
   re-applied (FALSE); and over a row an operator had set TRUE **both** files
@@ -2341,3 +2341,72 @@ for the reason §6.4 gives):
 | CANNOT-VERIFY | **1** |
 
 Headline after §6 in this worktree (last statement wins): C=94 W=29 N=3 X=1
+
+### 6.9 The last arrow — an outcome the calibration report can count
+
+§6.6 held **S113** at W with a precise reason: a session close carried a result
+and optional feedback, and `lib/intelCalibrationScheduler.ts:80#payload->intel`
+counts only events carrying the exact `payload.intel` envelope, which a
+session's claim refs cannot supply. That reason is now closed the only way it
+could be closed honestly — by going through the path that already exists.
+
+- **One event, both envelopes** — a close that NAMES the served snapshot and
+  claim is recorded through `lib/intelOutcomes.recordIntelOutcome`, the
+  existing outcome path, with the session's closure riding as a SIBLING of
+  `intel` rather than inside it, so the shared I4a/I4b contract is still
+  exactly its six keys (`lib/intelOutcomes.ts:178#experienceSession?: Record<string, unknown>;`;
+  `lib/intelOutcomes.ts:204#if (input.experienceSession)`;
+  `routes/experienceSessions.ts:220#if (q.snapshotId && q.claimId && q.servedAt)`).
+  Through the real route the single written event carries `payload.intel`
+  byte-exact — snapshot, claim, subject, outcome, the 1..5 rating and
+  `served_at` — and `payload.experience_session` naming the session it closed,
+  under the outcome's own verb; the suite then applies the calibration
+  report's OWN predicate to it (verb ∈ `OUTCOME_VERBS` AND `payload.intel`
+  not null) and it matches
+  (`test/experienceSessionsRoute.test.ts:229#a close that NAMES`; B7-M13,
+  B7-M14 red).
+- **What is NOT a second copy** — the served-plausibility check, the
+  claim-belongs-to-this-snapshot check and the per-(actor, snapshot) dedup all
+  stay in `recordIntelOutcome`; this route adds none of them. A close naming a
+  snapshot the viewer was never served is refused with that path's own reason
+  and writes nothing (`test/experienceSessionsRoute.test.ts:296#NOT served`).
+- **And when nothing permitted it** — §5.4 says MEMORY / CALIBRATION *"when
+  permitted"*. A close that names no snapshot is recorded as the session's own
+  event with `calibrated: false`, invisible to the calibration report and
+  honestly so: no snapshot id is fabricated to be counted
+  (`test/experienceSessionsRoute.test.ts:285#names NO snapshot`;
+  `routes/experienceSessions.ts:14#THE LAST ARROW`).
+
+### 6.10 Row moves (third pass)
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| S113 `ExperienceOutcome`: result / calibration / optional feedback | W | **C** | All three parts, on one event: the result from the existing outcome vocabulary, the optional 1..5 feedback, and the calibration link — the close writes the exact `payload.intel` envelope the daily calibration report filters on, with the session's closure beside it, through the EXISTING outcome path rather than a second copy of its checks (B7-M13, B7-M14 red; the report's own predicate applied to the written event in the suite). A close that names no served snapshot says `calibrated: false` instead of inventing a snapshot id. |
+
+**Held, with the reason.** The ceiling on this row is now a deployment one and
+is stated rather than scored: the calibration reader is gated on
+`intel_calibration_report`, `intel_attributions` (2277) is still absent from
+production, and `experience_session_enabled` is FALSE everywhere — so no such
+event can exist in production today, and the row is C about code that is
+correct, reached and mutation-proven, not about rows that exist. **S54** holds
+C: the bridge is unchanged; this pass only gave its close a second, richer
+destination. **S1** holds C: still no second outcome store — the close writes
+one canonical event through the one path that already owned outcomes.
+
+| # | row(s) | file | what was changed | red | green |
+| --- | --- | --- | --- | ---: | ---: |
+| B7-M13 | S113 | `routes/experienceSessions.ts` | the calibration arm never taken | 2 | 0 |
+| B7-M14 | S113 | `lib/intelOutcomes.ts` | the session's closure dropped from the event | 1 | 0 |
+
+**The headline, restated from the rows after the third pass** (the
+`## Headline` table at the top of this document is still left as §5 wrote it,
+for the reason §6.4 gives):
+
+| Bucket | Count |
+|---|---|
+| BUILT-AND-CORRECT | **95** |
+| BUILT-BUT-WRONG | **28** |
+| NOT-BUILT | **3** |
+| CANNOT-VERIFY | **1** |
+
+Headline after §6 in this worktree (last statement wins): C=95 W=28 N=3 X=1
