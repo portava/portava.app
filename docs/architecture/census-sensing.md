@@ -101,13 +101,13 @@ Paths are relative to `artifacts/api-server/` unless prefixed `travel-buddy-stan
 | Measure | Value |
 |---|---|
 | **Denominator — testable requirements** | **127** |
-| BUILT-AND-CORRECT | **86** |
-| BUILT-BUT-WRONG | **35** |
+| BUILT-AND-CORRECT | **87** |
+| BUILT-BUT-WRONG | **34** |
 | NOT-BUILT | **5** |
 | CANNOT-VERIFY | **1** |
 | **CONSTRUCTED%** = (C+W)/127 | **121 / 127 = 95.3 %** |
-| **CORRECT%** (raw) = C/127 | **86 / 127 = 67.7 %** |
-| **CORRECT% (spec-attributable)** | **21 of the 86 — 16.5 %** |
+| **CORRECT%** (raw) = C/127 | **87 / 127 = 68.5 %** |
+| **CORRECT% (spec-attributable)** | **22 of the 87 — 17.3 %** |
 
 > **RESTATED 2026-09-12 (§1): 65 → 77 CORRECT, 39 → 36 WRONG, 22 → 13
 > NOT-BUILT. CONSTRUCTED 81.9 % → 89.0 %, CORRECT 51.2 % → 60.6 %.** §1 is the
@@ -162,6 +162,17 @@ Paths are relative to `artifacts/api-server/` unless prefixed `travel-buddy-stan
 > green. Opportunity is refused as a kind by name because S56 has no object.
 > Same caveat as before.
 
+> **RESTATED 2026-09-12 (§5): 86 → 87 CORRECT, 35 → 34 WRONG, 5 NOT-BUILT unchanged.
+> CONSTRUCTED 95.3 % unchanged, CORRECT 67.7 % → 68.5 %.** §5 builds §16's
+> two missing stages: an anomaly detector over served envelopes and the
+> projection's own record (density rising past capacity, material conflict
+> at capacity, a rapid density rise; the assertion itself never a
+> candidate), filing each new candidate into the EXISTING review queue —
+> a `moderation_reports` row, place / safety_concern, no reporter — behind
+> `intel_safety_candidates_enabled` (2803, seeded FALSE) and requireAdmin.
+> S103 W → C. Eighteen mutations and one database rehearsal red then green.
+> Operator-triggered, not scheduled; asserts nothing. Same caveat as before.
+
 **I disagree with commit `0597a245`'s CONSTRUCTED 56.4 % / CORRECT 32.1 %.** I land materially
 higher on both — roughly +25 points constructed and +19 points correct. I agree exactly with its
 attribution finding: **zero** implemented items are attributable to this specification.
@@ -172,7 +183,7 @@ its own:
 | Sub-score | Denominator | CONSTRUCTED | CORRECT |
 |---|---|---|---|
 | **Sensing input + inference core** (§3, §4, and the Vibe/Experience/Forecast/Opportunity/Session engines: S17–S38, S42–S46, S51–S54) | 31 | 87.1 % (was 64.5 %) | **35.5 %** (was 22.6 %) |
-| Everything else (invariants, reuse directives, surface integration) | 96 | 99.0 % (was 87.5 %) | 78.1 % (was 60.4 %) |
+| Everything else (invariants, reuse directives, surface integration) | 96 | 99.0 % (was 87.5 %) | 79.2 % (was 60.4 %) |
 
 The high headline is a property of the specification, not a compliment to the tree. This spec is
 titled *UPGRADE, DO NOT REBUILD*; §19 says outright *"Do Not Blindly Materialize"*; and a large
@@ -250,7 +261,7 @@ Five BUILT-AND-CORRECT verdicts are **vacuous or partly vacuous** (the guard is 
 it guards is empty): S90, S91, S105, S22, and — since §1 — S9. They are flagged `⌀` in the
 table or in §1.3; S89 carried the mark until §4 gave Telegraph a real live-intelligence consumer
 and pinned that it exposes no contributor. A reader who rejects vacuous satisfaction should
-subtract them: CORRECT% becomes **81 of 127 = 63.8 %** (60 of 127 = 47.2 % before §1).
+subtract them: CORRECT% becomes **82 of 127 = 64.6 %** (60 of 127 = 47.2 % before §1).
 
 ---
 
@@ -1621,3 +1632,227 @@ does not (S56). The safety ceiling in §4.1 stands. And the comparison is
 stateless by design — the reference carries its own baseline — so nothing
 here records that a recipient ever resolved it; "changed since sharing" is
 answered when asked, not pushed.
+
+## 5. What enters the safety pipeline
+
+**Read against the branch `claude/sensing-lane`, 2026-09-12, by the Sensing
+lane.** One W row of §16: world-intelligence evidence / anomaly → SAFETY
+CANDIDATE → the existing safety policy / review → the canonical safety
+assertion (S103). The row's own finding stands: the last two stages exist
+— the specialist-reviewed `crowd.level = unsafe_density` claim is the one
+assertion, projected by `lib/mapProducers/safetyNoticeProducer.ts` and
+unreachable from every contributor surface — and the first two did not,
+so nothing ever entered the pipeline. This section builds the first two
+and feeds the third rather than replacing it: a candidate is FILED into the
+review queue the platform already has, `moderation_reports`, as a
+system-originated `place` / `safety_concern` row — the queue
+`routes/admin.ts:2050#/admin/moderation/reports` already serves — and
+asserts nothing. One migration, 2803, seeds a flag FALSE; no table, no
+column. Every rule went red under a mutation before its commit; the
+mutations are listed in §5.3.
+
+### 5.1 What was built, and where
+
+- **§16 the anomaly, and what is never one (S103)** —
+  `lib/safetyCandidate.ts:151#detectSafetyCandidates(` reads a subject's
+  SERVED envelopes (from `readLiveClaimEnvelopes`, the one gated path) and
+  the projection's own previous readings, and emits at most one candidate
+  per shape (`lib/safetyCandidate.ts:55#SAFETY_CANDIDATE_REASONS`;
+  `lib/safetyCandidate.ts:20#WHAT IS AN ANOMALY`): density rising past
+  capacity — `packed` with a `building` / `peaking` trajectory
+  (`lib/safetyCandidate.ts:64#CANDIDATE_TRAJECTORIES`;
+  `test/safetyCandidate.test.ts:85#rising`); material conflict at capacity
+  — `packed` with the cohort in MATERIAL conflict, which
+  safetyNoticeProducer's own reading of §10 calls safety information
+  (`lib/safetyCandidate.ts:187#material`; `test/safetyCandidate.test.ts:96#material`);
+  a rapid density rise — `packed` with a reading at most `moderate` that
+  became current inside thirty minutes of the observation
+  (`lib/safetyCandidate.ts:127#rapidRiseFrom(`; `lib/safetyCandidate.ts:140#floor`;
+  `lib/safetyCandidate.ts:66#RAPID_RISE_WINDOW_MINUTES`;
+  `test/safetyCandidate.test.ts:103#rapid`). Never a candidate: the
+  assertion itself, because `unsafe_density` is where the pipeline ends
+  (`lib/safetyCandidate.ts:63#ASSERTED_CROWD_LEVEL`, asserted equal to the
+  map producer's level at `test/safetyCandidate.test.ts:68#producer`;
+  `lib/safetyCandidate.ts:160#CANDIDATE_CROWD_LEVEL`;
+  `test/safetyCandidate.test.ts:122#assertion`); anything below `packed`;
+  and any envelope whose class is not an independent observation — a
+  historical pattern, a prediction, or one party talking about itself —
+  admitted by source class through lib/intelContracts' own predicates and
+  deliberately NOT by truth class, because a cohort in material conflict
+  derives a non-observational truth class and is exactly the second shape
+  (`lib/safetyCandidate.ts:104#evidenceAdmissible(`;
+  `test/safetyCandidate.test.ts:129#non-observational`).
+
+- **§16 the candidate carries evidence and no one** — a candidate is the
+  subject, the reason, the snapshot ids and values it rests on, the §5.1
+  truth block of that evidence, the instant of detection and the evidence's
+  own horizon (`lib/safetyCandidate.ts:86#SafetyCandidate`;
+  `lib/safetyCandidate.ts:75#SafetyCandidateEvidence`). Its stored form
+  refuses, at write, every count-, cohort-, contributor-, device- or
+  user-shaped key (`lib/safetyCandidate.ts:200#CANDIDATE_FORBIDDEN_KEYS`;
+  `lib/safetyCandidate.ts:223#must not carry`;
+  `test/safetyCandidate.test.ts:159#never a count`) — the rule the safety
+  notice keeps ("no presence payload"), because a specialist reading the
+  queue is still a reader. It parses back, and a person's own report does
+  not parse as the detector's (`lib/safetyCandidate.ts:229#parseCandidateDetails(`;
+  `lib/safetyCandidate.ts:235#reason`; `test/safetyCandidate.test.ts:171#did not write`).
+
+- **§16 into the EXISTING review, not a parallel one** —
+  `lib/safetyCandidate.ts:246#candidateReportRow(` is the row a candidate is
+  filed as: `moderation_reports`, `reporter_id` NULL (the reporter is the
+  detector), `subject_type` `place`, `category` `safety_concern`, `status`
+  `open`, the candidate in `details` under its own prefix
+  (`lib/safetyCandidate.ts:256#reporter_id`; `lib/safetyCandidate.ts:260#category`;
+  `lib/safetyCandidate.ts:72#SAFETY_CANDIDATE_DETAILS_PREFIX`;
+  `test/safetyCandidate.test.ts:141#no reporter`). That is the queue
+  `routes/admin.ts:2050#/admin/moderation/reports` serves to reviewers
+  today, with its `place` filter; the row shape is one the table already
+  admits, verified on the object rather than assumed — 2803's preconditions
+  read the table's own CHECK constraints and the column's nullability and
+  refuse to seed a flag for a stage that would fail on its first write
+  (`migrations/2803_intel_safety_candidates_flag.sql:51#safety_concern`;
+  `migrations/2803_intel_safety_candidates_flag.sql:56#place`;
+  `migrations/2803_intel_safety_candidates_flag.sql:61#reporter_id`;
+  `migrations/2803_intel_safety_candidates_flag.sql:22#NO TABLE`). The
+  service client writes it (`lib/safetyCandidateStore.ts:90#fileCandidateReport(`;
+  `lib/safetyCandidateStore.ts:93#insert(`); a candidate already open or
+  reviewing for the same subject and reason is not filed again, and a
+  reviewer's dismissed or actioned row does not block a fresh one
+  (`lib/safetyCandidateStore.ts:64#openCandidateReasons(`;
+  `lib/safetyCandidateStore.ts:31#OPEN_REPORT_STATUSES`;
+  `lib/safetyCandidateStore.ts:73#status`;
+  `test/adminSafetyCandidatesRoute.test.ts:250#not filed again`;
+  `test/adminSafetyCandidatesRoute.test.ts:265#DISMISSED`).
+
+- **the routes** — `routes/adminSafetyCandidates.ts:60#router.post(` is
+  `POST /api/admin/intel/safety-candidates/scan`: requireAdmin
+  (`routes/adminSafetyCandidates.ts:63#requireAdmin(`), the flag read
+  fail-closed (`routes/adminSafetyCandidates.ts:70#isFlagEnabled`), live
+  intelligence servable or a refusal before anything is read
+  (`routes/adminSafetyCandidates.ts:81#liveLabelsServable`;
+  `test/adminSafetyCandidatesRoute.test.ts:304#not servable`); the subjects
+  the caller names (≤ 50) or, absent, the bounded sweep of every place
+  whose current `crowd.level` is served as `packed` — privacy-eligible and
+  unexpired, the safety notice read's own two per-row gates, choosing only
+  WHERE to look (`routes/adminSafetyCandidates.ts:88#listSweepSubjects(`;
+  `lib/safetyCandidateStore.ts:41#listSweepSubjects(`;
+  `lib/safetyCandidateStore.ts:50#packed`;
+  `test/adminSafetyCandidatesRoute.test.ts:294#sweep`); per subject the
+  current envelopes through the gate and the previous readings from the
+  record (`routes/adminSafetyCandidates.ts:101#readLiveClaimEnvelopes`;
+  `routes/adminSafetyCandidates.ts:103#readPreviousReadings`), a history
+  that cannot be read a per-subject REFUSAL and never "no candidate"
+  (`routes/adminSafetyCandidates.ts:105#refusal`;
+  `test/adminSafetyCandidatesRoute.test.ts:317#REFUSAL`), detection
+  (`routes/adminSafetyCandidates.ts:108#detectSafetyCandidates(`), the
+  dedupe against the queue (`routes/adminSafetyCandidates.ts:117#open.reasons`)
+  and the filing, a refused write named on the answer
+  (`routes/adminSafetyCandidates.ts:123#queue_write_failed`;
+  `test/adminSafetyCandidatesRoute.test.ts:332#refuses the write`). One row
+  per new candidate and nothing else on the wire
+  (`test/adminSafetyCandidatesRoute.test.ts:216#ONE report`).
+  `routes/adminSafetyCandidates.ts:140#router.get(` is
+  `GET /api/admin/intel/safety-candidates`: the detector's own rows still
+  open or reviewing, newest first, parsed — a person's report is not among
+  them (`lib/safetyCandidateStore.ts:112#listOpenCandidates(`;
+  `lib/safetyCandidateStore.ts:121#reporter_id`;
+  `test/adminSafetyCandidatesRoute.test.ts:341#not a person`). A non-admin
+  is refused before the flag is read
+  (`test/adminSafetyCandidatesRoute.test.ts:205#non-admin`). Registered at
+  the tail of `routes/index.ts:344#adminSafetyCandidatesRouter`;
+  `routes/admin.ts` and `routes/moderation.ts` are untouched.
+
+- **2803 and its rollback** — `migrations/2803_intel_safety_candidates_flag.sql:70#INSERT`
+  seeds `intel_safety_candidates_enabled` FALSE, one row, `ON CONFLICT DO
+  NOTHING`, with the preconditions above and a postcondition refusing a
+  TRUE row (`migrations/2803_intel_safety_candidates_flag.sql:83#reads TRUE`).
+  `db/rollback/2026-09-12-2803-intel-safety-candidates-flag-rollback.sql:28#DELETE`
+  removes the FALSE row and refuses over a TRUE one
+  (`db/rollback/2026-09-12-2803-intel-safety-candidates-flag-rollback.sql:23#reads TRUE`);
+  it withdraws no candidate already before a reviewer. Rehearsed on the
+  lane's replica: apply → rollback (row gone) → apply (FALSE); then the row
+  set TRUE by hand, and BOTH files refused (exit 3 each), then FALSE
+  restored (DB-6).
+
+- **executed on a database** — `test/db/safetyCandidate.db.test.ts:55#real database`
+  runs against the replica: the row the module builds is accepted by the
+  queue's own CHECK constraints when the service role writes it, and the
+  details the database holds parse back as the candidate
+  (`test/db/safetyCandidate.db.test.ts:76#admits`); a category or subject
+  type outside the queue's vocabulary is refused by the same CHECKs
+  (`test/db/safetyCandidate.db.test.ts:97#CHECK`); no client role reads a
+  reporterless row, because the SELECT policies are `reporter_id =
+  auth.uid()` (`test/db/safetyCandidate.db.test.ts:114#no client role`);
+  and an authenticated INSERT with no reporter is refused, so a client
+  cannot forge a system-originated candidate
+  (`test/db/safetyCandidate.db.test.ts:119#cannot file`).
+
+- **what is NOT here** — no scheduler: the stage is operator-triggered,
+  because wiring one is a line in `src/index.ts`, a shared file this lane
+  does not edit; the sweep is the same read a scheduler would make, and
+  registering it is one line at integration. No write to
+  `intel_state_snapshots`, `intel_claims` or any intel table; no snapshot,
+  no notice, no assertion — a confirmed candidate becomes an assertion only
+  through the specialists' existing path, which this section does not
+  touch and cannot see. No change to `routes/admin.ts`,
+  `routes/moderation.ts` or any file another census counts.
+
+### 5.2 Row moves
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| S103 World intelligence evidence/anomaly → SAFETY CANDIDATE → existing safety policy/review → canonical safety assertion | W | **C** | The two missing stages exist: three anomaly shapes over served envelopes and the projection's record (B5-M2 to B5-M5 red), the assertion itself never a candidate (B5-M1 red), evidence admitted by source class (B5-M6 red), a candidate carrying refs and values and no one (B5-M7 red), filed into the EXISTING `moderation_reports` review as place / safety_concern with no reporter (B5-M8, B5-M10 red) and not filed twice (B5-M11, B5-M13 red); reached from `POST /api/admin/intel/safety-candidates/scan` behind 2803's FALSE flag and requireAdmin (B5-M14, B5-M15 red), through the gated live read (B5-M16 red). The last two stages are the ones the row already found. |
+
+**Held, with the reason.** **S66** holds C: a candidate outranks nothing
+and is rendered nowhere; safety still outranks opportunity on every surface
+that renders it. **S104** and **S105** hold C: a candidate reads no trust
+score and writes none, and no person is scored by it. **S106** holds W:
+the candidate stage is not a Rent-a-Buddy safety path and does not claim
+to be. **S74** holds C: a `safety_notice_activated` moment still comes only
+from a served `unsafe_density`, never from a candidate. **S8** holds C: a
+candidate is not a crowd label; `packed` stays `packed` on every surface
+while a specialist decides. What the census cannot say: whether any
+specialist reads `GET /admin/moderation/reports` for `place` rows, or how
+a confirmed candidate becomes an `unsafe_density` claim — that path is the
+specialists' and is not in the tree.
+
+### 5.3 The mutations, in one place
+
+| # | row(s) | file | what was changed | red | green |
+| --- | --- | --- | --- | ---: | ---: |
+| B5-M1 | S103 | `lib/safetyCandidate.ts` | the assertion itself admitted as a candidate | 1 | 0 |
+| B5-M2 | S103 | `lib/safetyCandidate.ts` | a stable trajectory counted as rising | 2 | 0 |
+| B5-M3 | S103 | `lib/safetyCandidate.ts` | minor conflict read as material | 1 | 0 |
+| B5-M4 | S103 | `lib/safetyCandidate.ts` | the rapid-rise window ignored | 1 | 0 |
+| B5-M5 | S103 | `lib/safetyCandidate.ts` | `busy` admitted as a rise-from level | 2 | 0 |
+| B5-M6 | S103 | `lib/safetyCandidate.ts` | a prediction, a pattern or a sponsored claim admitted as evidence | 1 | 0 |
+| B5-M7 | S103 | `lib/safetyCandidate.ts` | a count key in the evidence not refused | 1 | 0 |
+| B5-M8 | S103 | `lib/safetyCandidate.ts` | filed under another category | 2 | 0 |
+| B5-M9 | S103 | `lib/safetyCandidate.ts` | a foreign reason parsed as the detector's | 1 | 0 |
+| B5-M10 | S103 | `lib/safetyCandidate.ts` | the details prefix dropped | 2 | 0 |
+| B5-M11 | S103 | `lib/safetyCandidateStore.ts` | dismissed and actioned rows treated as still open | 2 | 0 |
+| B5-M12 | S103 | `lib/safetyCandidateStore.ts` | the sweep not limited to places served as packed | 1 | 0 |
+| B5-M13 | S103 | `routes/adminSafetyCandidates.ts` | an open candidate filed again | 1 | 0 |
+| B5-M14 | S103 | `routes/adminSafetyCandidates.ts` | the flag read ignored on both routes | 2 | 0 |
+| B5-M15 | S103 | `routes/adminSafetyCandidates.ts` | members admitted as admins | 1 | 0 |
+| B5-M16 | S103 | `routes/adminSafetyCandidates.ts` | live gates closed, the scan proceeds | 1 | 0 |
+| B5-M17 | S103 | `routes/adminSafetyCandidates.ts` | an unreadable history read as "no candidate" | 1 | 0 |
+| B5-M18 | S103 | `routes/adminSafetyCandidates.ts` | a refused queue write swallowed | 1 | 0 |
+| DB-6 | S103 | replica | 2803 applied, rolled back (row gone), applied (FALSE); over a TRUE row both files refused | — | — |
+
+### 5.4 The ceiling
+
+Nothing here is deployed, enabled or production-realised. 2803 exists on
+the lane's replica and nowhere else; `intel_safety_candidates_enabled` is
+seeded FALSE and is the owner's, and it opens a stage that WRITES to the
+moderation queue. In production every intel table holds zero rows and
+`intel_live_promoted_scopes` is empty, so a scan there reads nothing, sweeps
+nothing and files nothing. The stage is operator-triggered, not scheduled;
+a scheduler is one line in `src/index.ts` at integration and this census
+will not count the stage as automatic until that line exists. A candidate
+is a question; whether anyone answers it — whether a specialist reads the
+`place` filter of the admin queue and by what path a confirmed candidate
+becomes the `unsafe_density` claim the notice producer projects — is
+outside the tree and outside this row. And the three shapes are the three
+the served vocabulary can express today: no dwell, no flow, no acoustic or
+motion signal feeds them, because no such signal is captured (S28, S29).
