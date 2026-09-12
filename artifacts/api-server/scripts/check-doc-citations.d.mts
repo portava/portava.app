@@ -40,6 +40,8 @@ export interface EvaluationResult {
 
 export const COVERED: CoveredEntry[];
 export const MIN_ANCHORED_CITATIONS: number;
+/** Directories the walker never enters — `.git`, `node_modules`, and `.claude` (agent worktrees carry stale copies of every cited file). Shared with src/test/docCitations.test.ts. */
+export const SKIP_DIRS: Set<string>;
 
 export function expandLineSpec(spec: string): {
   max: number;
