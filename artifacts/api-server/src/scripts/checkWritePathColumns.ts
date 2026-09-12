@@ -151,6 +151,13 @@ const ALLOWLIST = new Set<string>([
   // applies only from main; remove once that apply is certified.
   "trip_reservations.cancelled_at",
   "trip_crew_location_sessions.subgroup_id",
+  //
+  // Trips §43 (2783 — goal scope): trip_goals.scope / .weight are read by
+  // TripOpportunityProjection (goals served by an experience) under
+  // trip_operational_projections_enabled. Absent from portava-ci until this
+  // branch reaches main. Remove once 2783 is applied there.
+  "trip_goals.scope",
+  "trip_goals.weight",
 ]);
 
 // Tables that are not real live relations and should be skipped entirely
@@ -175,6 +182,14 @@ const SKIP_TABLES = new Set<string>([
   "trip_subgroups",
   "trip_subgroup_members",
   "trip_reservation_events",
+  //
+  // Trips §41–§45, 2782 (transport segments) and 2785 (disruptions) — the same
+  // pending-apply state as the four above. Every read sits behind
+  // trip_operational_projections_enabled: TripHealthProjection (trip_disruptions,
+  // §17.2), TripTodayProjection / TripImpactState / routes/tripMapProjection
+  // (trip_transport_segments, §8.4 triggers, §9.4 impact, §14.1 logistics).
+  "trip_disruptions",
+  "trip_transport_segments",
 ]);
 
 // ── Unresolvable-site allowlist ───────────────────────────────────────────────

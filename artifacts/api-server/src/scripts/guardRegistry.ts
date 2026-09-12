@@ -614,10 +614,36 @@ export const GUARDS: readonly GuardEntry[] = [
     reach: { kind: "check-all", script: "check:trip-write-validation" },
   },
   {
+    checker: "src/scripts/checkTripDecisionDiff.ts",
+    inspects: {
+      countPattern: "trip decision diff: (\\d+)(?: of \\d+)? scenario\\(s\\)",
+      unit: "synthetic Trip scenarios diffed against golden.json",
+    },
+    responsibility:
+      "A planner or coordination engine that decides a corpus scenario differently from golden.json is red until the golden is regenerated with a note (Trips spec §24; census-trips TR409, TR410).",
+    // The corpus is src/scenarios/trips/corpus.ts; the record is canonical
+    // (sorted keys, rounded scores, no free text); the report classifies
+    // changed decisions, conservatism up/down, new conflicts and large diffs.
+    reach: { kind: "check-all", script: "check:trip-decision-diff" },
+  },
+  {
+    checker: "src/scripts/tripWritePathInventory.ts",
+    inspects: {
+      countPattern: "(\\d+)",
+      unit: "lines of the generated inventory block compared (exit 0 when the document's block is the tree's)",
+      zeroIsProved: "The check prints no count on a pass — it prints PASSED when the document's generated block equals a fresh render, and lists the added/removed lines when it does not. Zero drift is the pass; the test src/test/tripWritePathInventory.test.ts asserts the same equality in-process and that a synthetic drift is reported line by line.",
+    },
+    responsibility:
+      "docs/architecture/trips-phase0-inventory.md's generated block (tables, kernel commands, issuers, direct write paths, /trips routes, modules) equals the tree's; an undocumented write path is red (Trips spec §24 Phase 0; census-trips TR434).",
+    reach: { kind: "check-all", script: "check:trip-write-path-inventory" },
+  },
+  {
     checker: "src/scripts/checkTripPushPolicy.ts",
     inspects: {
       countPattern: "(\\d+) trip push site\\(s\\) bypass NotificationRouter",
       unit: "trip push sites bypassing the attention policy",
+      zeroIsProved:
+        "Since census-trips §42 (2026-09-12) every trip push site calls sendTripPush (lib/tripPush.ts), which applies §11.4's attention policy per recipient; the ten former bypasses are gone. Zero is proved, not assumed: the checker also counts the direct sendPushWithRetry calls in lib/tripPush.ts and fails unless there is exactly ONE — the router's own dispatch — so a renamed call (zero) or a second dispatch path inside the router (two) is red, and a scan that matched nothing cannot pass as a tree with nothing to match.",
     },
     responsibility:
       "A trip push that skips NotificationRouter is counted, and the list only shrinks.",

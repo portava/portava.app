@@ -34,16 +34,15 @@
  * the trip already holds; it does not search the city.
  */
 import { logger } from "../../lib/logger.js";
-import { isFlagEnabled } from "../../lib/featureFlags.js";
 import { tripOperationalProjectionsGate, refusalForGate } from "../../lib/tripOperationalProjections.js";
-import { getCrewMap, CrewMapUnavailableError } from "../tripCrew/TripCrewLocationService.js";
+import { readCrewPresenceForPulse } from "./TripPulseCrewPresence.js";
 import {
   liveEnvelope, acceptTripProjection, TRIP_PROJECTION_SCHEMA_VERSION, type TripProjectionEnvelope,
 } from "./TripProjectionEnvelope.js";
 import { buildTripHealthProjection, type TripHealthProjection } from "./TripHealthProjection.js";
 import type { PrioritySwitch } from "./TripHealth.js";
 import {
-  estimateFromObservations, projectSignals, looksWeatherSensitive, metresBetween,
+  estimateFromObservations, projectSignals, looksWeatherSensitive,
   type SignalObservation, type TripSignal, type PulseContext, type PulseInterpretation, type DroppedSignal,
   type CrowdRisingValue, type RainArrivingValue, type TaxiDemandValue, type EventDelayedValue, type FriendNearbyValue,
   type GeoPoint, type AttentionState,
@@ -95,11 +94,7 @@ export const PULSE_READING =
 export const PULSE_CLAIM_TYPES = ["crowd.level", "crowd.trajectory", "event.status", "transit.condition"] as const;
 
 export const LOCATION_BAND_RADIUS_M = 2_000;
-export const FRIEND_NEARBY_BANDS: readonly { withinM: number; band: FriendNearbyValue["distanceBand"] }[] = [
-  { withinM: 150, band: "same_venue" },
-  { withinM: 1_500, band: "walking" },
-  { withinM: 5_000, band: "nearby" },
-];
+export { FRIEND_NEARBY_BANDS } from "./TripPulseCrewPresence.js";
 const WEATHER_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -150,27 +145,30 @@ export async function buildTripPulseProjection(
   const attentionState: AttentionState = health.attention.mode;
 
   // 2. The trip context.
-  const read = async <T,>(table: string, select: string, filter: (q: any) => any): Promise<{ rows: T[] } | { refused: PulseProjectionResult }> => {
-    const { data, error } = await filter(sc.from(table).select(select));
+  // Takes a BUILT query rather than a table name: `.from(variable)` is invisible
+  // to check:write-path-columns, and these seven reads are exactly what it exists
+  // to hold against the live schema.
+  const read = async <T,>(table: string, q: PromiseLike<{ data: unknown; error: { message: string } | null }>): Promise<{ rows: T[] } | { refused: PulseProjectionResult }> => {
+    const { data, error } = await q;
     if (error) {
       log.warn({ err: error.message, tripId, table }, "pulse: context unreadable — refusing");
       return { refused: { ok: false, reason: "TRIP_PROJECTION_UNAVAILABLE", message: `${table} could not be read` } };
     }
     return { rows: ((data ?? []) as T[]) };
   };
-  const stagesR = await read<any>("trip_stages", "id, place_id, starts_at, ends_at, sequence", (q) => q.eq("trip_id", tripId));
+  const stagesR = await read<any>("trip_stages", sc.from("trip_stages").select("id, place_id, starts_at, ends_at, sequence").eq("trip_id", tripId));
   if ("refused" in stagesR) return stagesR.refused;
-  const savedR = await read<any>("trip_saved_places", "id, place_id, place_name, place_type, lat, lng", (q) => q.eq("trip_id", tripId));
+  const savedR = await read<any>("trip_saved_places", sc.from("trip_saved_places").select("id, place_id, place_name, place_type, lat, lng").eq("trip_id", tripId));
   if ("refused" in savedR) return savedR.refused;
-  const plansR = await read<any>("trip_plan_items", "id, title, category, status, starts_at, ends_at, lat, lng, location_name", (q) => q.eq("trip_id", tripId).is("removed_at", null));
+  const plansR = await read<any>("trip_plan_items", sc.from("trip_plan_items").select("id, title, category, status, starts_at, ends_at, lat, lng, location_name").eq("trip_id", tripId).is("removed_at", null));
   if ("refused" in plansR) return plansR.refused;
-  const commitmentsR = await read<any>("trip_commitments", "id, type, starts_at, required_arrival_at, place_id, source_ref", (q) => q.eq("trip_id", tripId));
+  const commitmentsR = await read<any>("trip_commitments", sc.from("trip_commitments").select("id, type, starts_at, required_arrival_at, place_id, source_ref").eq("trip_id", tripId));
   if ("refused" in commitmentsR) return commitmentsR.refused;
-  const transportR = await read<any>("trip_transport_segments", "id, mode, state, planned_departure_at", (q) => q.eq("trip_id", tripId));
+  const transportR = await read<any>("trip_transport_segments", sc.from("trip_transport_segments").select("id, mode, state, planned_departure_at").eq("trip_id", tripId));
   if ("refused" in transportR) return transportR.refused;
-  const goalsR = await read<any>("trip_goals", "type, scope, status", (q) => q.eq("trip_id", tripId));
+  const goalsR = await read<any>("trip_goals", sc.from("trip_goals").select("type, scope, status").eq("trip_id", tripId));
   if ("refused" in goalsR) return goalsR.refused;
-  const membersR = await read<any>("trip_members", "user_id, status", (q) => q.eq("trip_id", tripId));
+  const membersR = await read<any>("trip_members", sc.from("trip_members").select("user_id, status").eq("trip_id", tripId));
   if ("refused" in membersR) return membersR.refused;
 
   const stage = stagesR.rows.find((s) => s.starts_at && s.ends_at && Date.parse(s.starts_at) <= nowMs && nowMs < Date.parse(s.ends_at)) ?? null;
@@ -196,37 +194,12 @@ export async function buildTripPulseProjection(
   // 3a. Crew presence — through the crew map, which applies §10's privacy
   //     rules; this file never reads a position row itself. Also the viewer's
   //     own position, which is the best location band there is.
-  let viewerPoint: GeoPoint | null = null;
-  const friendObs = new Map<string, SignalObservation<FriendNearbyValue>[]>();
-  if (!(await isFlagEnabled(sc, "trip_crew_map_enabled"))) {
-    sources.push({ name: "crew_presence", status: "no_source", observations: 0, detail: "trip_crew_map_enabled is off; presence not read" });
-  } else {
-    try {
-      const map = await getCrewMap(sc, tripId, viewerId);
-      const me = map.members.find((m) => m.userId === viewerId) ?? null;
-      viewerPoint = me?.exactCoords ?? null;
-      const viewerSharing = me?.liveShareActive === true;
-      let n = 0;
-      for (const m of map.members) {
-        if (m.userId === viewerId || !m.exactCoords || !viewerPoint) continue;
-        const d = metresBetween(viewerPoint, m.exactCoords);
-        const band = FRIEND_NEARBY_BANDS.find((b) => d <= b.withinM)?.band;
-        if (!band) continue;
-        n++;
-        const observedAt = m.observedAt ?? m.updatedAt ?? nowIso;
-        const fresh = nowMs - Date.parse(observedAt) <= 5 * 60 * 1000;
-        friendObs.set(m.userId, [{
-          value: { userId: m.userId, distanceBand: band, bothSharing: viewerSharing && m.liveShareActive },
-          confidence: fresh ? 0.9 : 0.6, sourceClass: "verified_firsthand", observedAt,
-          expiresAt: m.liveShareExpiresAt ?? new Date(nowMs + 15 * 60 * 1000).toISOString(),
-        }]);
-      }
-      sources.push({ name: "crew_presence", status: "ok", observations: n, detail: viewerPoint ? null : "the viewer has no position; distance to crew cannot be judged" });
-    } catch (err) {
-      if (!(err instanceof CrewMapUnavailableError)) throw err;
-      sources.push({ name: "crew_presence", status: "unread", observations: 0, detail: `crew map unavailable: ${err.table}` });
-    }
-  }
+  // The crew half lives in TripPulseCrewPresence.ts (the one Pulse source
+  // behind trip_crew_map_enabled); see that file's header for why it is apart.
+  const crew = await readCrewPresenceForPulse(sc, tripId, viewerId, nowMs);
+  const viewerPoint: GeoPoint | null = crew.viewerPoint;
+  const friendObs = crew.observations;
+  sources.push(crew.source);
   for (const [userId, obs] of friendObs) {
     const est = estimateFromObservations(obs, { now: nowMs });
     if (est) signals.push({ kind: "friend_nearby", subjectId: userId, estimate: est });

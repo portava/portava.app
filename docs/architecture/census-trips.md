@@ -4234,16 +4234,16 @@ the merge, the apply, Batch C and two flags.
   (`services/trips/TripSignals.ts:319#TRIP_DISRUPTION_SUPPRESSED: a safety event`). Friend
   nearby is dropped unless BOTH parties share
   (`services/trips/TripSignals.ts:399#TRIP_PRIVACY_SCOPE`).
-- **The projection** — `services/trips/TripPulseProjection.ts:118#export async function buildTripPulseProjection`:
+- **The projection** — `services/trips/TripPulseProjection.ts:113#export async function buildTripPulseProjection`:
   version first, health accepted against it, the trip context read (stage,
   saved ideas, plans, commitments, transport segments, goals, crew), then three
   sources reported BY NAME with a status (`services/trips/TripPulseProjection.ts:55#export const PULSE_SOURCES`):
   `intel_state_snapshots` for the saved places' `crowd.level` /
   `crowd.trajectory` / `event.status` / `transit.condition`
-  (`services/trips/TripPulseProjection.ts:95#export const PULSE_CLAIM_TYPES`); `weather_cache`
-  READ, never fetched (`services/trips/TripPulseProjection.ts:295#Read, not fetched`);
+  (`services/trips/TripPulseProjection.ts:94#export const PULSE_CLAIM_TYPES`); `weather_cache`
+  READ, never fetched (`services/trips/TripPulseProjection.ts:268#Read, not fetched`);
   crew presence through the crew map, which applies every §10 rule before this
-  file sees a coordinate (`services/trips/TripPulseProjection.ts:196#through the crew map`).
+  file sees a coordinate (`services/trips/TripPulseProjection.ts:5#through the crew map`).
   A source that cannot be read is UNREAD, not empty; context that cannot be
   read refuses. Served at `GET /trips/:id/pulse`
   (`routes/tripProjections.ts:268#/trips/:tripId/pulse`), to Compass as
@@ -4886,6 +4886,37 @@ expire and the ledger's retention ends at closeout, risks still have no
 expiry. TR387 stays W: `trip_activity_log` still has no policy. TR221 stays
 W: §12.3's uncertainty is represented on `get_opportunities`, not yet on the
 brief.
+
+### 45.3 What CI said on 005b71f02, and what changed for it
+
+The head that carried §42–§44 came back with three reds this section owns,
+none of them a verdict moving. **The throwaway-database job** failed on
+one run and passed on the other for the same commit: §41's pipeline test
+asserted that a second outbox drain applies *nothing*, and the drain is
+global while the database suites run in parallel — a sibling suite's event
+landed between the two drains. The assertion is now this trip's: its
+applied set does not grow and its outbox is empty
+(`src/test/db/tripKernelPipeline.db.test.ts:138#appliedAfterFirst`).
+**`check:trip-push-policy`** listed ten bypass sites that §42 had routed
+through `sendTripPush`; the list is empty and the guard proves the zero by
+counting exactly one direct dispatch in the router itself
+(`src/scripts/checkTripPushPolicy.ts:75#routerCalls`). **`check:write-path-columns`**
+named 2782 and 2785's tables and 2783's `trip_goals.scope` / `weight` as
+absent from the CI schema — true until merge, ledgered where 2780/2781/2784
+already were (`src/scripts/checkWritePathColumns.ts:192#trip_transport_segments`) —
+and one read it could not see: the pulse's seven context reads took a table
+*name*, and now take a built query
+(`services/trips/TripPulseProjection.ts:151#PromiseLike`). Making them
+visible showed `check:flag-schema-prerequisites` the class it exists for —
+a file naming `trip_crew_map_enabled` (ON in production) and reading
+kernel-era tables — so the crew half of the pulse is its own module, as
+§43 did for the opportunity projection
+(`services/trips/TripPulseCrewPresence.ts:37#readCrewPresenceForPulse`).
+Two guards were unregistered (`src/scripts/guardRegistry.ts:617#checkTripDecisionDiff`),
+and this census watched 77 % of the files it cites against an 86 % floor:
+the kernel-era migrations, their rollbacks, the database suites, the trip
+guards and the trip test files are in scope now — 90 % — and every one of
+them is on the freshness ledger with the section that graded rows on it.
 
 ### 45.3 The ceiling, unchanged
 

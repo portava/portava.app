@@ -130,8 +130,16 @@ describe("trip kernel pipeline on a real database", { skip: SKIP }, () => {
     const first = JSON.parse(scalar(`SET LOCAL ROLE service_role; SELECT public.trip_map_projection_drain(1000, false)::text`) ?? "{}");
     assert.equal(first.ok, true, JSON.stringify(first));
     assert.ok(first.applied + (first.replayed ?? 0) >= pending, `drained ${JSON.stringify(first)} for ${pending} pending`);
+    // The drain is global and the database suites run in parallel: another
+    // file's trip may have appended to the outbox between the two drains, so
+    // "applies nothing" is asserted for THIS trip — its applied set does not
+    // grow and its outbox is empty — not as a global zero (seen red in CI on
+    // 005b71f02 when a sibling suite's event landed between the drains).
+    const appliedAfterFirst = Number(scalar(`SELECT count(*) FROM public.trip_map_projection_applied WHERE trip_id = '${tripId}'`));
     const second = JSON.parse(scalar(`SET LOCAL ROLE service_role; SELECT public.trip_map_projection_drain(1000, false)::text`) ?? "{}");
-    assert.equal(second.applied, 0, `second drain applied ${JSON.stringify(second)}`);
+    assert.equal(second.ok, true, JSON.stringify(second));
+    assert.equal(Number(scalar(`SELECT count(*) FROM public.trip_map_projection_applied WHERE trip_id = '${tripId}'`)), appliedAfterFirst, `second drain re-applied this trip's events: ${JSON.stringify(second)}`);
+    assert.equal(Number(scalar(`SELECT count(*) FROM public.trip_outbox WHERE trip_id = '${tripId}' AND published_at IS NULL`)), 0, "this trip's outbox is drained");
     const applied = rows<{ event_id: string; n: number }>(
       `SELECT event_id, count(*)::int AS n FROM public.trip_map_projection_applied WHERE trip_id = '${tripId}' GROUP BY event_id`,
     );

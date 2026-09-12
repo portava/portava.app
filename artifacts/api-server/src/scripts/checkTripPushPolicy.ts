@@ -58,21 +58,24 @@ const DIRECT_PUSH = /\bsendPushWithRetry\s*\(/;
  * appear with the total unchanged — the check would stay green across a
  * substitution, which is the failure mode a bare number always has.
  */
-const KNOWN_BYPASSES = new Set([
-  // Re-anchored 2026-09-12 twice: the §6.1 policy conversion (lib/tripPolicy.ts)
-  // and then §40.7's closeout import in trips-expansion.ts added lines above
-  // these nine sites and moved none of them. Measured from the files.
-  "routes/trips.ts:1043",
-  "routes/trips.ts:1247",
-  "routes/trips.ts:1378",
-  "routes/trips.ts:1452",
-  "routes/trips-expansion.ts:656",
-  "routes/trips-expansion.ts:812",
-  "routes/trips-expansion.ts:997",
-  "routes/trips-expansion.ts:1110",
-  "routes/trips-expansion.ts:1194",
-  "lib/tripReminderScheduler.ts:139",
+const KNOWN_BYPASSES = new Set<string>([
+  // EMPTY since 2026-09-12 (census-trips §42, TR200 back to C): the ten sites
+  // this list carried — four in routes/trips.ts, five in routes/trips-expansion.ts,
+  // one in lib/tripReminderScheduler.ts — now call sendTripPush (lib/tripPush.ts),
+  // which decides §11.4's attention level per recipient and is the ONE place
+  // that still calls sendPushWithRetry. The list stays shrink-only: a new
+  // direct call in FILES is a failure here, not an entry.
 ]);
+
+// "Zero bypasses" is only a clean result if the dispatch still exists somewhere
+// and that somewhere is the router. The router file must contain exactly one
+// direct call; zero means the call was renamed and this check is verifying
+// nothing, more than one means a second dispatch path grew inside the router.
+const ROUTER = "lib/tripPush.ts";
+const routerCalls = readFileSync(`${SRC}/${ROUTER}`, "utf8").split("\n").filter((line) => {
+  const t = line.trimStart();
+  return !t.startsWith("*") && !t.startsWith("//") && !line.includes("import") && DIRECT_PUSH.test(line);
+}).length;
 
 const found = new Set<string>();
 for (const rel of FILES) {
@@ -85,12 +88,12 @@ for (const rel of FILES) {
 
 const problems: string[] = [];
 
-// A pattern that matches nothing looks exactly like a tree with no bypasses.
-if (found.size === 0) {
+// A pattern that matches nothing looks exactly like a tree with no bypasses:
+// the router's own dispatch is the proof that the pattern still matches.
+if (routerCalls !== 1) {
   problems.push(
-    "::error::checkTripPushPolicy found NO direct push sites at all, including the ten it knows about. " +
-      "Either every one was routed through NotificationRouter — in which case empty KNOWN_BYPASSES and " +
-      "move TR200 back to C — or the call was renamed and this check is verifying nothing. " +
+    `::error::checkTripPushPolicy expected exactly ONE direct sendPushWithRetry call in ${ROUTER} (the router's dispatch) and found ${routerCalls}. ` +
+      "Zero means the call was renamed and this check is verifying nothing; more than one means a second dispatch path grew inside the router. " +
       "An empty result is not a clean result.",
   );
 }
