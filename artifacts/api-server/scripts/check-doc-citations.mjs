@@ -198,7 +198,7 @@ export const COVERED = [
 // document and found larger there too.
 export const MIN_ANCHORED_CITATIONS = 278;
 
-const SKIP_DIRS = new Set(['.git', 'node_modules']);
+const SKIP_DIRS = new Set(['.git', 'node_modules', '.claude']);
 
 // Extensions a `file.ext:NNN` citation is allowed to name. Same list as
 // check-memory-citations.mjs.
