@@ -2070,10 +2070,25 @@ not the only resolver in the tree, and the row is about the tree.
   decision no dispatcher consumes.
 - **S122 / S123 / S126** hold C on this work's own evidence: 2850 and 2851 are
   additive single-INSERT files with a precondition and a postcondition that
-  refuses a TRUE row; both new surfaces ship with positive cases, flag-absent,
-  flag-false, unreadable-table, gates-closed, malformed-input and expired-claim
-  cases; and both flags are seeded FALSE with the enabling named as an owner
-  decision in the migration itself.
+  refuses a TRUE row — all four refusals EXECUTED, not read (DB-7, DB-8); both
+  new surfaces ship with positive cases, flag-absent, flag-false,
+  unreadable-table, gates-closed, malformed-input and expired-claim cases; and
+  both flags are seeded FALSE with the enabling named as an owner decision in
+  the migration itself.
+- **S121** holds C: `grep -rn intel_live_promoted_scopes src/ --include=*.ts`
+  filtered to writes still returns **zero** outside tests and scripts — the
+  per-scope promotion allowlist has no writer, which is what the row rests on,
+  and neither surface built here writes one.
+- **S127** holds C: `grep -n "requiresSeparateControl: true" lib/locationPurposes.ts`
+  returns six, not four — the row's claim is a floor and the floor still holds.
+- **THE ROUTE-MOUNTING CHECK, applied to §2–§5's C rows rather than assumed.**
+  A surface graded BUILT that no router mounts is not built, and this census
+  has four new routes from the earlier batches. All four are mounted:
+  `src/routes/index.ts:334#compassDecisionRouter` (S78, S79, S80, S86),
+  `:339#wallMomentsRouter` (S73, S74, S76, S102),
+  `:344#telegraphLiveReferencesRouter` (S87, S88, S89) and
+  `:349#adminSafetyCandidatesRouter` (S103). Nothing moves; the check is
+  recorded because a later reader should be able to see it was made.
 
 ### 7.2 Row moves
 
