@@ -24,6 +24,11 @@
 
 import { Router } from 'express';
 import { isBlockedBetween } from '../lib/blockGuard.js';
+// Telegraph §22 — the six travel-scam families and link reputation, computed
+// for the recipient at read time. Pure; no I/O, no clock.
+import { messageSafetySignals } from '../domain/telegraph/policies/travelScamSignals.js';
+// Telegraph §22 — the send step's adaptive rate limit (T279's missing half).
+import { checkSendRateLimit } from '../domain/telegraph/policies/sendRateLimit.js';
 import { z } from 'zod';
 import { requireUser, sendError } from '../lib/http';
 import { canMessage } from '../lib/messagingPermissions';
@@ -2001,6 +2006,18 @@ router.get('/threads/:threadId/messages', async (req, res) => {
       mediaType: (m as any).media_type ?? null,
       mediaThumbnailUrl: (m as any).media_thumbnail_url ?? null,
       mediaDurationSeconds: (m as any).media_duration_seconds ?? null,
+      // Telegraph §22 — travel scam signals and link reputation, for the
+      // RECIPIENT only. A sender who could see their own signals would tune
+      // their wording against the detector; a recipient gets the second
+      // opinion a scam depends on them not having. Nothing is blocked and
+      // nothing is hidden: the annotation is advisory, and deleted messages
+      // carry no body to scan.
+      ...(!isDeleted && m.sender_id !== user.id
+        ? (() => {
+            const sig = messageSafetySignals(m.body as string | null);
+            return sig ? { safetySignals: sig } : {};
+          })()
+        : {}),
     };
   });
 
@@ -2053,6 +2070,26 @@ router.post('/threads/:threadId/messages', async (req, res) => {
 
   if (!membership) { sendError(res, 'forbidden', 'Not a member of this thread'); return; }
   if ((membership as any).left_at !== null) { sendError(res, 'forbidden', 'You no longer have access to this thread'); return; }
+
+  // Telegraph §22 — the send step's adaptive rate limit. census T279: "Message
+  // sending has no rate limit at all." It is placed AFTER membership so a
+  // non-member cannot spend a member's bucket, and BEFORE every other read so
+  // a burst costs one cached tier lookup rather than the whole send pipeline.
+  // The tier falls to the strictest on an unreadable input, which is a pause
+  // and never a block — see the module header for why that direction is safe.
+  {
+    const limiterSc = getServiceClient() ?? client;
+    const decision = await checkSendRateLimit(limiterSc, user.id);
+    if (!decision.allowed) {
+      req.log.warn(
+        { userId: user.id, threadId, tier: decision.tier, limit: decision.limit, reasons: decision.reasons },
+        'telegraph send rate limit reached',
+      );
+      res.setHeader('Retry-After', String(Math.ceil(decision.retryAfterMs / 1000)));
+      sendError(res, 'rate_limited', 'You are sending messages very quickly. Please wait a moment.');
+      return;
+    }
+  }
 
   // Block guard for 1:1 threads. Blocking (blocks.ts) tears down follow/friend
   // edges and pending message-requests but never closes an EXISTING thread, so

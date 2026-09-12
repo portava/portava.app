@@ -1276,4 +1276,117 @@ would drift. (d) `MAX_BOUNDED_QUERIES` being hit silently: it is reported as
 `degraded` today (`services/telegraphSearch.ts:184`), and a change that dropped
 that would turn a truncated search into a confident empty one.
 
-Headline after §11 in this worktree (last statement wins): C=107 W=172 N=149 X=0
+
+---
+
+### 11.4 §18.3's eight accessors, and three §22 controls
+
+The second batch. §18.3 named eight Compass accessors and the tree had two of
+them, under other names and on another surface; §22 named seven controls and the
+original pass counted one and a half. Both were re-read before anything was
+written.
+
+**§18.3 — the eight accessors exist and are offered to the model.**
+`compass/TelegraphConversationTools.ts` implements all eight
+(`:157`, `:198`, `:235`, `:294`, `:345`, `:388`, `:433`, `:471`) and maps each
+to the spec's own name (`compass/TelegraphConversationTools.ts:67`). They are
+registered into the list the model is handed by one spread
+(`compass/CompassTools.ts:231`) and reached through the existing dispatcher by
+one branch (`compass/CompassTools.ts:1208`), so this pass adds one import, one
+spread and one branch to a file it does not own.
+
+Every one of the eight starts at ONE gate
+(`compass/TelegraphConversationTools.ts:110`): active membership read
+fail-closed, then the existing `resolvePrivacyVerdict` (not reimplemented), then
+the §14 capability set — so a tool cannot offer an action the conversation
+refuses. The gate returns a refusal OBJECT rather than throwing, because
+`executeCompassTool` turns a throw into "Tool execution failed", which is
+indistinguishable from a bug; a refusal that names its reason lets the model say
+the true thing. An unreadable membership row refuses as `degraded`, NOT as "not
+a participant" — the test asserts that distinction directly, because a failed
+check reported as a refusal makes the assistant tell a user something untrue.
+
+What the eight structurally cannot return is tested, not asserted: the place
+card in the fixture carries a latitude and a provider id, and `getSharedPlaces`
+is proved to return the title and the §21 safe-field summary and neither of
+those. Availability goes through `projectPublicWindows`, so the PARTICIPANT's
+own visibility policy decides — the fixture gives one member a `private` window
+and the test proves it never appears. `createPlanDraft` has no write in it at
+all, not a write behind a check, and returns `requiresConfirmation: true` as a
+literal (`compass/TelegraphConversationTools.ts:411`). `findSafePublicMeetup`
+labels its basis `public_staffed_category_only`
+(`compass/TelegraphConversationTools.ts:462`) and says in the result that it is
+NOT a claim about crime, lighting or opening hours — this repository has no
+source for any of those, and a confident answer there is the most dangerous one
+available.
+
+**§22 — travel scam signals, all six families, for the RECIPIENT.**
+`domain/telegraph/policies/travelScamSignals.ts:48` declares §22's six families
+verbatim and `:167` detects them. The design decision worth recording is WHO the
+signal is for: the existing off-app detector acts on the SENDER (an admin event,
+and a buddy suspension at the threshold), which is the right shape for platform
+integrity and the wrong shape for traveller safety, because it helps nobody in
+the conversation right now. These signals are computed at read time and attached
+only to messages the caller did NOT send (`routes/messaging.ts:2018`). A sender
+who could see their own signals would tune their wording against the detector in
+an afternoon.
+
+Nothing is blocked. Every pattern has an innocent reading — "can you send me
+money, I lost my card" is what a friend in trouble says and is also the most
+common travel scam — so the signals annotate and the decision stays with the
+person, which is where §16's "scanning must not block basic text delivery"
+points as well. The false-positive corpus is the real specification: ten lines
+of ordinary traveller talk containing every trigger word (taxi, visa, ticket,
+hotel, money, pay) must produce zero signals, and that block goes red before the
+positive block does if a pattern is loosened.
+
+**§22 — links.** `domain/telegraph/policies/travelScamSignals.ts:197` is the
+reserved-official-identity list and `:275` scans a body for structural link
+findings: shortener, punycode, mixed-script, IP literal, credentials-in-URL, and
+a LOOKALIKE of a reserved identity (one edit away, or the brand embedded as a
+label of someone else's domain). `UNKNOWN_HOST` is returned for everything else
+and is deliberately NOT suspicious — most links are to places nobody has heard
+of, and warning on all of them trains the warning away.
+
+**§22 — the send step's rate limit.**
+`domain/telegraph/policies/sendRateLimit.ts:112` folds §22's five named inputs —
+relationship, verification, trust, account age, reports — into four tiers, and
+`:240` is the gate the send path now calls (`routes/messaging.ts:2082`), placed
+after the membership check so a non-member cannot spend a member's bucket. An
+unreadable input falls to the STRICTEST tier, and the module argues the
+direction rather than asserting it: strictest here is 20 messages per ten
+minutes, a pause and not a block, so failing strict costs a chatty user a moment
+during a bad database minute, while failing open would switch the control off
+during exactly the minutes an attacker wants it off.
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| T244 | W | **C** | §18.3 `getConversationContext()` — `compass/TelegraphConversationTools.ts:157`. Conversation-scoped, not message-scoped: type, participant count, the §14 capability set, which context classes are available, and the kinds of shared objects present. Returns no message prose — the test asserts the fixture's plain message text never appears in the result. |
+| T245 | N | **C** | §18.3 `getSharedPlans()` — `compass/TelegraphConversationTools.ts:198`. Meetups attached to the conversation by `chat_thread_id`, cancelled ones excluded, with the place NAME (a `location_name` capped at 300 chars by a CHECK) and never a coordinate. |
+| T246 | N | **C** | §18.3 `getParticipantAvailability()` — `compass/TelegraphConversationTools.ts:235`. Through `projectPublicWindows`, so each participant's own visibility policy decides; the viewer relationship handed to it is the most restrictive the conversation justifies and never widens. A participant not sharing simply does not appear, and the result carries the instruction not to speculate why. This is also the first time Telegraph reads availability at all (compare T28). |
+| T247 | N | **C** | §18.3 `getSharedPlaces()` — `compass/TelegraphConversationTools.ts:294`. Place cards shared into the conversation, rendered through §21's safe-field allowlist, so a card body's latitude cannot reach the model. |
+| T248 | N | **C** | §18.3 `suggestMeetingPoint()` — `compass/TelegraphConversationTools.ts:345`. Drawn from the conversation's shared destination. No midpoint is computed, and the header says why it never will be on this path: a midpoint between two participants is a location inference about both of them from data neither shared with the conversation. |
+| T249 | W | **C** | §18.3 `createPlanDraft()` — `compass/TelegraphConversationTools.ts:388`, now a Compass tool rather than a route-local intent. It has no write in it, returns `requiresConfirmation: true` (`:411`) and refuses when the conversation's `canCreatePlan` is false. |
+| T250 | N | **C** | §18.3 `findSafePublicMeetup()` — `compass/TelegraphConversationTools.ts:433`, with `safetyBasis: "public_staffed_category_only"` (`:462`) and an explicit disclaimer that it is not a claim about crime, lighting or hours. |
+| T251 | N | **C** | §18.3 `searchAuthorizedConversationContent()` — `compass/TelegraphConversationTools.ts:471`, delegating to the SAME `searchConversations` service the user-facing §21 route uses. One scope resolver, one set of exclusions: a second search path for Compass is how the two would come to disagree about what a participant may see. |
+| T279 | W | **C** | §22 adaptive rate limits — both halves. The send step now has a limit (`routes/messaging.ts:2082`), and it is adaptive to all five named inputs (`domain/telegraph/policies/sendRateLimit.ts:112`): relationship, verification, trust, account age and open reports, with an unreadable input falling to the strictest tier. The request step's existing adaptive machinery is untouched. |
+| T281 | N | **W** | §22 links/files — the reserved-identity list and structural link scanning now exist (`domain/telegraph/policies/travelScamSignals.ts:197`, `:275`), including lookalike detection against the official hosts. W and not C for two stated reasons: there is no REPUTATION feed (nothing in this repository can say a host is known-bad, and inventing a verdict of "safe" is the one output here that could get somebody hurt), and there is no file kind to scan at all (T40). |
+| T282 | W | **W** | §22 travel scam signals — all six families are detected (`domain/telegraph/policies/travelScamSignals.ts:48`, `:167`) and attached to the recipient's read (`routes/messaging.ts:2018`), against a ten-line false-positive corpus. Holds W for one reason: **no client surface renders `safetySignals` yet**, so a traveller does not see the warning. The server half is complete and the traveller-facing half is not. |
+
+**Rows looked at that did not move:** T252 and T253 stay C and were re-read —
+the eight new tools do not weaken either, because they run behind the same
+`resolvePrivacyVerdict` T252 cites and because the three prohibitions T253 names
+are each asserted directly in the new suite. T280 stays N (stranger media still
+autoplays; that is a client control). T283 and T284 stay W/N — an evidence
+snapshot needs a table this tree does not have. T278 stays N — `message_requests`
+still has no origin column.
+
+**The ceiling for §11.4.** No migration and no flag; every row above reads
+columns that exist on every deployment, and the eight tools are offered to the
+model on every deployment carrying this branch. Three ceilings: the branch is
+not merged; T282's warning reaches no traveller until a client renders it; and
+the §22 detectors are PATTERNS, so an attacker who reads this file can write
+around them — which is the honest limit of any lexical detector and the reason
+the signals annotate rather than block.
+
+Headline after §11 in this worktree (last statement wins): C=116 W=170 N=142 X=0
