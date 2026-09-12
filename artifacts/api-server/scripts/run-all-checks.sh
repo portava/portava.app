@@ -174,6 +174,61 @@ run_check "check:census-freshness" pnpm run check:census-freshness
 # policies over authz.is_trip_crew. RLS policies are a UNION and a schema claim
 # is a claim about the END of the chain; this checks the citation, not the
 # sentence.
+# check:census-scope-coverage — a census must WATCH the files it CITES.
+# check:census-freshness asks whether anything a census counts has changed, and
+# what it counts is declared by hand in CENSUS_SCOPE. Nothing checked that
+# declaration against the census. Measured 2026-09-11: census-trips cited 49
+# files with 10 in scope, and the scope covered the Trip Kernel programme — so
+# it watched the W rows, the ones saying something is NOT right, and left the C
+# rows unguarded. A W row that rots stays wrong; a C row that rots becomes a
+# false assurance, and census-freshness reported FRESH throughout, truthfully,
+# about the wrong half. The inversion is not a Trips quirk: no census watches
+# even three quarters of what it cites, and the median is under a third.
+# Per-census floors are a ratchet — raise one when you widen a scope; lowering
+# one to get green is the single response that is never right.
+run_check "check:census-scope-coverage" pnpm run check:census-scope-coverage
+# check:census-row-move-labels — a census revises a verdict by RESTATING the row
+# in a later "Row moves" section, labelled with the object it is about. When the
+# label and the id name different objects, the id wins (every count uses it) and
+# the wrong requirement moves. census-trips §29.4 did exactly that: its last two
+# rows read TR89 `trip_snapshots` and TR90 `trip_outcomes` while the body assigns
+# TR89 `trip_events`, TR90 `trip_snapshots`, TR91 `trip_outcomes`. TR89 was
+# already W so the move was a no-op, TR90 was accidentally right, and TR91 —
+# never moved — kept NOT-BUILT with the evidence "Does not exist." while CREATE
+# TABLE public.trip_outcomes sat in a merged migration. §39 moved it.
+# The rule is deliberately narrow: a label that REFINES (a table behind a type,
+# a column, a key) is normal and three in the corpus do it. Only a label naming
+# ANOTHER row's object in the SAME id sequence fails.
+run_check "check:census-row-move-labels" pnpm run check:census-row-move-labels
+# check:place-id-bridge — census-trips TR32/TR94 said the single place id-space
+# crossing was "Enforced by a standing ratchet rather than convention", naming
+# check:schema-references as that ratchet. It is not: that check verifies a
+# select-list column exists on the table being read, and says nothing about id
+# spaces. No file under src/scripts/ or scripts/ mentioned placeIdBridge at all.
+# The verdict was true and its stated reason was false. This is the ratchet, so
+# the reason is now true: the Discovery serve path emits three id spaces while
+# place memory is keyed on discovery_places.id, and crossing without the bridge
+# reports EVERY place as new to the user — silent and confident, not an error.
+run_check "check:place-id-bridge" pnpm run check:place-id-bridge
+# check:trip-write-validation — census-trips TR51 ("Command service validates
+# schema") was C, and the row's own testable half is the sentence "every trip
+# write parses a zod schema first". Measured 2026-09-11 across the three files it
+# cites: 53 write endpoints, 8 reading req.body with NO schema — POST /trips, the
+# primary create, among them. TR51 moved C -> W. Shrink-only baseline, same idiom
+# as the RLS allowlists: fix one and delete its line, because an entry left in
+# after it stops being true goes on excusing the next. Not about authorization —
+# that is check:route-auth-gate's job and is enforced independently.
+run_check "check:trip-write-validation" pnpm run check:trip-write-validation
+# check:trip-push-policy — census-trips TR200 ("Trip events must pass an attention
+# policy") read C because NotificationRouter consults preferences, dedup and the
+# Compass evaluator. It does. Measured 2026-09-11: TEN trip push sites do not go
+# through it — they call sendPushWithRetry, a pure transport wrapper that filters
+# tokens and retries, consulting nothing. One says so in a comment. That skips
+# per-user channel preferences, per-category preferences and QUIET HOURS, so a
+# user who switched a category off still gets all ten. TR200 moved C -> W.
+# Shrink-only, and keyed on file:line rather than a count, because a bare total
+# stays green across a substitution.
+run_check "check:trip-push-policy" pnpm run check:trip-push-policy
 run_check "check:census-policy-citations" pnpm run check:census-policy-citations
 # check:memory-table-ownership — public.memory_events (the Memory projection
 # family's log, live in production and read by the account-deletion cascade) and

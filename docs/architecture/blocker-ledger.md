@@ -1270,6 +1270,50 @@ No row was written by hand, no row was deleted, and no branch was merged. §33 o
 why those six carry `checksum='backfill'` rather than a hash; repeating that for
 another six would trade a loud problem for a quiet one.
 
+### Re-measured on merged `main` at `014a25d5` — this is now the ONLY thing red on main
+
+`CI (live DB)` run `34430889373`, the push build of #481's squash:
+
+```
+✖  check:migration-ledger FAILED — this database does not represent this branch.
+   3 ledger row(s) name a migration file that is not in src/migrations/.
+     • 2311_intel_claim_reviews.sql              (applied_by=manual)
+     • 2320_memory_episode_provenance_spine.sql  (applied_by=manual)
+     • 2325_telegraph_unsend_before_seen.sql     (applied_by=manual)
+   497 file(s) on disk, 500 ledger row(s) on hwokxgbmezheskbzskfr
+```
+
+`certify:migrations` fails at **stage 1**, so no later stage runs, `schema-drift`
+fails, and `live DB · verdict` marks `live-db-security-suites` and
+`post-media-revocation-rehearsal` as NOT EXECUTED. **Everything else in that job
+passed**: `apply-migrations` had nothing to do (109 proven applied, 0 pending),
+`audit:schema` reported *"Live schema contains every object claimed by the
+migrations"* across 494 files and 5,748 objects, `check:media-objects` and
+`audit:shadow-append-only` both passed.
+
+**It is not the merge's doing, measured rather than assumed.**
+`git diff --name-status 0edcb3eb 014a25d5 -- src/migrations/` is EMPTY — that
+squash added and changed no migration at all — and all three rows are
+`applied_by=manual`, written from branches that are still open. The count is
+unchanged from the day this entry was opened.
+
+### Why no pull request can catch this, which is worth knowing before the next green is believed
+
+`db:apply-migrations` and `certify:migrations` are gated on
+`github.ref == 'refs/heads/main'` (`live-db.yml:746` and `:757`). A PR's
+`schema-drift` job runs the **dry run** and then skips both. So #481 was
+truthfully 27 of 27 green and that green **never covered this gate** — the first
+execution of `certify:migrations` against a change is the push build after it
+merges. Any "fully certified" claim resting on PR checks alone is scoped
+narrower than it sounds, and this is the gap.
+
+### Still not done here, and the temptation is now stronger
+
+Deleting three rows would turn `main` green in one commit. It would also erase
+the only evidence that portava-ci ran schema no merged branch can show, which is
+the entire finding. The closures in the section above are still the only honest
+ones, and they belong to the owners of those branches.
+
 ---
 
 ## `CI_SUPABASE_TOKEN_401` — the sanctioned applier lost its credential mid-chain — **CLOSED 2026-09-10**

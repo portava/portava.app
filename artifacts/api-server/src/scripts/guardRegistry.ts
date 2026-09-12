@@ -513,6 +513,108 @@ export const GUARDS: readonly GuardEntry[] = [
     reach: { kind: "check-all", script: "check:census-freshness" },
   },
   {
+    checker: "src/scripts/checkCensusScopeCoverage.ts",
+    inspects: {
+      countPattern: "(\\d+) census(?:es)? measured for scope coverage",
+      unit: "censuses measured for citation-vs-scope coverage",
+    },
+    responsibility:
+      "A census must WATCH the files it CITES, or its freshness guard protects the wrong half of it.",
+    // check:census-freshness asks whether anything a census counts has changed,
+    // and what it counts is declared by hand in CENSUS_SCOPE. Nothing checked
+    // that declaration against the census. Measured 2026-09-11: census-trips
+    // cited 49 files with 10 in scope, and the scope covered the Trip Kernel
+    // programme -- the thing being BUILT -- so it watched the W rows, which say
+    // something is not right, and left the C rows unguarded. A W row that rots
+    // stays wrong; a C row that rots becomes a false assurance, and
+    // census-freshness reported FRESH throughout, truthfully, about the wrong
+    // half. The inversion is not a Trips quirk: no census watches even three
+    // quarters of what it cites and the median is under a third.
+    reach: { kind: "check-all", script: "check:census-scope-coverage" },
+  },
+  {
+    checker: "src/scripts/checkCensusRowMoveLabels.ts",
+    inspects: {
+      countPattern: "(\\d+) labelled id cell\\(s\\) scanned",
+      unit: "labelled requirement-id cells scanned for a label naming another row's object",
+    },
+    responsibility:
+      "A labelled requirement id must not name another requirement's object; the id is what every count uses.",
+    // census-trips 29.4 restates the rows it moved, labelling each id with the
+    // object it is about. Its last two rows read TR89 `trip_snapshots` and
+    // TR90 `trip_outcomes` while the body assigns TR89 `trip_events`, TR90
+    // `trip_snapshots`, TR91 `trip_outcomes`: from TR89 on the ids ran one
+    // ahead of the objects. TR89 was already W so the move was a no-op; TR90
+    // was accidentally right; and TR91 -- never moved -- kept NOT-BUILT with
+    // the evidence "Does not exist." while CREATE TABLE public.trip_outcomes
+    // sat in a migration on merged main. The error propagated INTO the code:
+    // migration 2768 comments `RECORD_OUTCOME -> trip_outcomes (TR90)`, citing
+    // the census's own off-by-one back at it.
+    //
+    // Deliberately narrow. A label that REFINES -- the table behind a type, a
+    // column of the object, a key inside the function -- is normal, and three
+    // in the corpus do it. Only a label naming ANOTHER row's object in the SAME
+    // id sequence fails; without that scoping the first run accused
+    // census-discovery twice, where F2 closes D2 and says so by reusing the
+    // word.
+    reach: { kind: "check-all", script: "check:census-row-move-labels" },
+  },
+  {
+    checker: "src/scripts/checkPlaceIdBridge.ts",
+    inspects: {
+      countPattern: "(\\d+) source file\\(s\\) scanned",
+      unit: "source files scanned for an unsanctioned place id-space crossing",
+    },
+    responsibility:
+      "The place id-space crossing stays single: only lib/placeIdBridge.ts may cross it.",
+    // census-trips TR32/TR94 claimed this was "enforced by a standing ratchet
+    // rather than convention" and named check:schema-references as the ratchet.
+    // Measured 2026-09-11: that check verifies select-list columns exist and says
+    // nothing about id spaces, and NO file under src/scripts/ or scripts/
+    // mentioned placeIdBridge. The crossing was in fact single -- verified by
+    // reading every caller -- so the verdict was true and its reason was false.
+    // This makes the reason true. The defect it guards is silent: the Discovery
+    // serve path emits db/<discovery_places.id>, db/<places.id> and node/<osm_id>
+    // while place memory is keyed on discovery_places.id, so crossing with a raw
+    // served id matches nothing and reports EVERY place as new to the user.
+    reach: { kind: "check-all", script: "check:place-id-bridge" },
+  },
+  {
+    checker: "src/scripts/checkTripWriteValidation.ts",
+    inspects: {
+      countPattern: "(\\d+) trip write endpoint\\(s\\) scanned",
+      unit: "trip write endpoints scanned for body-schema validation",
+    },
+    responsibility:
+      "A trip write that reads req.body parses a schema; the known-unvalidated list only shrinks.",
+    // census-trips TR51 was recorded C on the sentence "every trip write parses
+    // a zod schema first". Measured 2026-09-11: 53 write endpoints across the
+    // three files it cites, 8 reading req.body with no schema, POST /trips among
+    // them. TR51 moved C -> W. POST /trips is closed and its entry deleted; seven
+    // remain. What the absence costs is TYPE validation, not authorization —
+    // requireUser and check:route-auth-gate cover that independently — so a
+    // malformed payload became a 500 from the database where a 400 belongs.
+    reach: { kind: "check-all", script: "check:trip-write-validation" },
+  },
+  {
+    checker: "src/scripts/checkTripPushPolicy.ts",
+    inspects: {
+      countPattern: "(\\d+) trip push site\\(s\\) bypass NotificationRouter",
+      unit: "trip push sites bypassing the attention policy",
+    },
+    responsibility:
+      "A trip push that skips NotificationRouter is counted, and the list only shrinks.",
+    // census-trips TR200 read C because NotificationRouter consults preferences,
+    // dedup and the Compass evaluator before dispatching. It does. Measured
+    // 2026-09-11: ten trip push sites never reach it, calling sendPushWithRetry
+    // directly -- a transport wrapper that filters tokens and retries transient
+    // Expo failures and consults no policy at all. One site documents the bypass
+    // in a comment, to avoid double-delivery. The cost is concrete: per-user
+    // channel preferences, per-category preferences and quiet hours are all
+    // skipped, so a user inside their quiet hours still receives them.
+    reach: { kind: "check-all", script: "check:trip-push-policy" },
+  },
+  {
     checker: "src/scripts/checkCensusPolicyCitations.ts",
     inspects: {
       countPattern: "(\\d+) census policy citation\\(s\\) checked",

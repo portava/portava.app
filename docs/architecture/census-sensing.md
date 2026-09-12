@@ -85,6 +85,16 @@ Paths are relative to `artifacts/api-server/` unless prefixed `travel-buddy-stan
 
 ---
 
+## Declaration
+
+| Field | Value |
+|---|---|
+| `head_commit` | `42aeac38` — DECLARED 2026-09-11. It **starts a clock; it does not certify a past.** Read the next row before quoting it. |
+| **What that declaration does and does not say** | `42aeac38` is #476's squash — the commit where this document itself reached `main`. Its verdicts were taken at a pre-squash working tree that **exists nowhere**: verified against FULL history (`git fetch --unshallow`, 4,300 commits, then `git cat-file -e`), not assumed — a shallow clone had made every such commit look unresolvable for the wrong reason. So nobody can diff that tree against `42aeac38`, and this declaration **does not claim that interval was empty**. What it claims is mechanically checked: `git diff --name-only 42aeac38..HEAD` over the paths in `CENSUS_SCOPE` returns **0 files**, and from here any change to one of them ages this census. Before it, `check:census-freshness` reported this document as CANNOT BE CHECKED — the weakest of the three states, not the safest. FRESH means *no counted file has moved since `42aeac38`*; it does **not** mean the rows were re-read, and none has been. Declared by the Trips lane while recounting the sibling census; if this lane disagrees, reverting costs only the check. |
+| **Note specific to this census** | This document's own CORRECTION HEADER records that it was **already stale when it was committed** — `lib/sensingAnonStore.ts` landed two minutes before it. That file is the first path in this census's scope, so the very defect the header describes by hand is now the one a machine would catch. |
+
+---
+
 ## Headline
 
 | Measure | Value |
