@@ -15,7 +15,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { getServiceClient, isServiceClientReady } from "../lib/supabase";
 import { detectAndStoreLanguage, invalidateContentTranslations } from "../services/contentTranslation.js";
 import { requireUser, isAcceptedTripMember, requireTripMember, sendError, canEditPlanItem, canEditPlan, type PlanEditPermission } from "../lib/http.js";
-import { canEditTrip, canInviteParticipant } from "../lib/tripPolicy.js";
+import { canEditTrip, canInviteParticipant, isTripOwner, planEditPermits } from "../lib/tripPolicy.js";
 import { sendTripRefusal } from "../lib/tripReasonCodes.js";
 import { toCamel } from "./plan.js";
 import { syncTripChatMembers } from "../lib/chatSync.js";
@@ -1374,7 +1374,7 @@ router.post("/trips/:tripId/accept-invite", async (req, res) => {
       const sc2 = getServiceClient();
       if (!sc2) return;
       const { data: tripRow } = await sc2.from("trips").select("title, owner_id").eq("id", tripId).maybeSingle();
-      if (!tripRow || (tripRow as any).owner_id === user.id) return; // skip if caller IS owner
+      if (!tripRow || isTripOwner(tripRow as { owner_id: string }, { userId: user.id })) return; // skip if caller IS owner
       const [{ data: ownerRow }, { data: acceptorRow }] = await Promise.all([
         sc2.from("profiles").select("expo_push_token").eq("id", (tripRow as any).owner_id).maybeSingle(),
         sc2.from("profiles").select("display_name, handle").eq("id", user.id).maybeSingle(),
@@ -1524,13 +1524,8 @@ router.get("/me/plan-editable-trips", async (req, res) => {
     }
   }
 
-  const editable = (trips as any[]).filter((trip) => {
-    if (trip.owner_id === user.id) return true;
-    const perm: string = trip.plan_edit_permission ?? "all_members";
-    if (perm === "all_members") return true;
-    if (perm === "owner_only")  return false;
-    return (editorMap[trip.id] ?? []).includes(user.id);
-  });
+  // §6.2's plan-edit rule, decided by the policy module (TR102), not spelled here.
+  const editable = (trips as any[]).filter((trip) => planEditPermits(trip, user.id, editorMap[trip.id] ?? []));
 
   res.json({
     trips: editable.map((t: any) => ({
@@ -2213,7 +2208,8 @@ router.delete("/trips/:tripId/members/:userId", async (req, res) => {
     return;
   }
   if (!trip) { res.status(404).json({ error: "not_found", message: "Trip not found" }); return; }
-  if ((trip as any).owner_id !== user.id) { res.status(403).json({ error: "forbidden", message: "Only the trip owner can remove members" }); return; }
+  const removeAuth = await canEditTrip(client, { userId: user.id }, tripId, { trip: { id: tripId, owner_id: (trip as any).owner_id } });
+  if (!removeAuth.allowed) { sendTripRefusal(res, "forbidden", removeAuth.reason, "Only the trip owner can remove members"); return; }
 
   // The same rule one line further in, and it matters more here: the ROLE this
   // read returns is what stops the trip owner being removed. An unreadable
@@ -2354,9 +2350,8 @@ router.post("/trips/:tripId/plan/reorder", async (req, res) => {
     return;
   }
   if (!trip) { sendError(res, "not_found", "Trip not found"); return; }
-  if ((trip as { owner_id: string }).owner_id !== user.id) {
-    sendError(res, "forbidden", "Only the trip owner can reorder plan items"); return;
-  }
+  const reorderAuth = await canEditTrip(client, { userId: user.id }, tripId, { trip: { id: tripId, owner_id: (trip as { owner_id: string }).owner_id } });
+  if (!reorderAuth.allowed) { sendTripRefusal(res, "forbidden", reorderAuth.reason, "Only the trip owner can reorder plan items"); return; }
 
   // Current sort_order of exactly the requested items, scoped to this trip and
   // excluding soft-deleted rows.

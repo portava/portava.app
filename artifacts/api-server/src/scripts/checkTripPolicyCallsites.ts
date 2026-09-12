@@ -70,11 +70,13 @@ const INLINE_PATTERNS: Array<{ name: string; re: RegExp }> = [
  * rather than there.) Counts may only go DOWN.
  */
 const BASELINE: Record<string, number> = {
-  "src/routes/trips-expansion.ts": 33,
-  "src/routes/trips.ts": 4,
+  // §50 (2026-09-12): every inline copy converted to lib/tripPolicy.ts — the
+  // ratchet's floor is zero and a NEW inline check in any of these files fails.
+  "src/routes/trips-expansion.ts": 0,
+  "src/routes/trips.ts": 0,
   // Found by this check's own file set on its first run — the hand survey that
   // produced the header's "46" had not looked here. Recorded, not exempted.
-  "src/routes/tripBudgetIntel.ts": 1,
+  "src/routes/tripBudgetIntel.ts": 0,
 };
 
 /**
@@ -93,6 +95,16 @@ const POLICY_FUNCTIONS: Array<{ name: string; aliases: string[] }> = [
   { name: "canSeePresence", aliases: [] },
   { name: "canSeePreciseLocation", aliases: ["resolveExactCoords"] },
   { name: "canManageSafety", aliases: [] },
+  // §50 (census-trips TR102): the five decisions the thirty-eight inline
+  // copies were spelling, plus the role reader and the two pure helpers.
+  { name: "canAccessTripContent", aliases: [] },
+  { name: "canHostTrip", aliases: [] },
+  { name: "canContributeToTrip", aliases: [] },
+  { name: "canEditOwnOrAsOwner", aliases: [] },
+  { name: "canSeePrivateContributions", aliases: [] },
+  { name: "tripRoleOf", aliases: [] },
+  { name: "isTripOwner", aliases: [] },
+  { name: "planEditPermits", aliases: [] },
 ];
 
 const NOT_A_CALLER = new Set([

@@ -23,12 +23,12 @@ preserved in §36.1 as the record of that measurement.
 | Measure | Value |
 | --- | --- |
 | **Denominator (testable requirements)** | **451** |
-| BUILT-AND-CORRECT | **275** |
-| BUILT-BUT-WRONG | **151** |
+| BUILT-AND-CORRECT | **276** |
+| BUILT-BUT-WRONG | **150** |
 | NOT-BUILT | **24** |
 | CANNOT-VERIFY | **1** |
 | **CONSTRUCTED%** = (C+W)/451 | **426 / 451 = 94.5 %** |
-| **CORRECT%** (raw) = C/451 | **275 / 451 = 61.0 %** |
+| **CORRECT%** (raw) = C/451 | **276 / 451 = 61.2 %** |
 
 > **RESTATED 2026-09-11 (§38): 89 → 87 CORRECT, 127 → 129 WRONG.** §38 re-derived
 > 39 of the C rows against the code and **two did not hold**, both for the same
@@ -205,6 +205,15 @@ preserved in §36.1 as the record of that measurement.
 > projection's arrival estimates and a lodging's required arrival (TR146),
 > and re-derived the §7.4 place-identity check that §40.3 had built
 > (TR135). Four W → C. No migration; the ceiling is §41.3's, unchanged.
+
+> **RESTATED 2026-09-12 (§50): 275 → 276 CORRECT, 151 → 150 WRONG,
+> 24 NOT-BUILT unchanged. CONSTRUCTED 94.5 % unchanged, CORRECT 61.0 % → 61.2 %.**
+> §50 converted the thirty-eight inline owner / host / member / creator
+> checks in the trip routes into five policy decisions in lib/tripPolicy.ts
+> (with the role reader and two pure helpers), kept every message and
+> status, added the Appendix B reason to each refusal, and lowered
+> `check:trip-policy-callsites` to a floor of zero (TR102). One W → C. No
+> migration, no flag; the ceiling is §41.3's, unchanged.
 | **CORRECT% (spec-attributable)** | **WITHDRAWN — not measured. See §36.4** |
 | CANNOT-VERIFY share | **1 / 451 = 0.2 %** |
 
@@ -459,7 +468,7 @@ Nothing in this section exists. The evidence is one grep, run over
 | TR49 | The `TripCommand` envelope (commandId, tripId, actorUserId, expectedTripVersion, idempotencyKey, type, payload, clientObservedAt) | **C** | **Moved N→C in the §26 recensus.** The row said "No type, no table, no route." All three exist: the envelope is `lib/tripKernel.ts:257#TripCommand` (commandId, tripId, actorUserId, expectedTripVersion, idempotencyKey, type, payload), the receipt table is `migrations/2420_trip_kernel_foundation.sql:139#trip_command_receipts`, and the route is the `trip_kernel_execute` RPC that `lib/tripKernel.ts:635#executeTripCommand` calls. |
 | TR50 | A typed command vocabulary (ADD_PLAN, MOVE_PLAN, CONFIRM_PLAN, CANCEL_PLAN, JOIN_PLAN, LEAVE_PLAN, CREATE_SUBGROUP, SET_PRESENCE, CREATE_PROPOSAL, ACCEPT_PROPOSAL, COMPLETE_ACTIVITY) | **N** | None of the eleven exists as a command. Four have a *route* that does something adjacent (`POST /trips/:id/plan/items`, `PATCH …/items/:itemId`, `POST /trips/:id/complete`); seven have no analogue at all. |
 | TR51 | Command service validates schema | **W** | **MOVED C → W, 2026-09-11 (§38) — the first verdict this census has moved on a re-derivation.** The row read C on the sentence *"every trip write parses a zod schema first"*, which is its testable half. Counted across the three files it cites: **53 write endpoints, 8 reading `req.body` with no schema at all** — `POST /trips` (the primary create), `/invite`, `/members`, `/join-request`, `/invite-link` and the three checklist writes. 45 of 53 do validate, so the capability is built and used and this is BUILT-BUT-WRONG, not NOT-BUILT; the word *every* had never been counted. `POST /trips` is now closed by `CreateTripSchema` (`routes/trips.ts:791#CreateTripSchema`), mirroring `PatchTripSchema` field for field so it cannot reject what PATCH already accepts, and the remaining seven are held shrink-only by `check:trip-write-validation`. **What the gap costs is TYPE validation, not authorization** — `requireUser` runs first and `check:route-auth-gate` guards that independently — so a malformed payload became a 500 from the database where a 400 belongs. Returns to C when the list reaches zero. |
-| TR52 | …validates actor capability | **C** | `lib/http.ts:554#canEditPlan` `canEditPlan` and `:614#canEditPlanItem` `canEditPlanItem` are called before every plan mutation (`routes/trips.ts:1718,1814,1930#canEditPlan`), and membership is checked through the shared `lib/tripMembership.ts:45#isAcceptedTripMember` `isAcceptedTripMember`. |
+| TR52 | …validates actor capability | **C** | `lib/http.ts:554#canEditPlan` `canEditPlan` and `:614#canEditPlanItem` `canEditPlanItem` are called before every plan mutation (`routes/trips.ts:1713,1809,1925#canEditPlan`), and membership is checked through the shared `lib/tripMembership.ts:45#isAcceptedTripMember` `isAcceptedTripMember`. |
 | TR53 | …validates aggregate version | **C** | **Moved N→C.** The row said "No version exists." `trips.version` is added by `2420_trip_kernel_foundation.sql:96#version` and the kernel refuses a mismatch: `2590_trip_kernel_add_plan_attachment_columns.sql:365#TRIP_VERSION_CONFLICT` returns the current and expected versions so a caller can refetch and retry (§18.3 "explicit conflict"). |
 | TR54 | …validates temporal/spatial consistency | **W** | **Moved N→W 2026-09-08, and the W is the honest half.** The row said the write "accepts any `starts_at`/`ends_at` pair, including one that overlaps a confirmed item or precedes its predecessor." ORDERING is now checked: the kernel already refused an inverted range on the TRIP (`2590:...#TRIP_TEMPORAL_RANGE_INVERTED`, on create and on update, comparing the MERGED value), and the plan-item half is now enforced by `migrations/2750_trip_plan_item_interval_ordered.sql` (a CHECK, NOT VALID, rehearsed on portava-ci — an UPDATE into an inverted range is refused) plus the typed refusal at `lib/tripKernel.ts:635#executeTripCommand`. **OVERLAP is still unchecked** — an item may still be written across a confirmed item's interval, because that is the §7 consistency engine (TR128, TR134) and needs a route provider this tree does not have. Ordering built, overlap not. **Also recorded here rather than lost:** the plan-item check lives at the kernel's entry point rather than inside `trip_kernel_execute`, because every kernel change replaces that 700-line function in full; it should ride along with the next migration that replaces it for its own reasons. |
 | TR55 | …validates dependent commitments | **N** | No commitments exist (TR15). |
@@ -533,8 +542,8 @@ because there is no stage.*
 | TR103 | `canViewTrip(actor, trip)` | **W** | The behaviour exists and the function does not: `routes/trips-expansion.ts:2572` `GET /trips/:tripId` resolves visibility inline and `src/test/tripPrivacy.test.ts:7-15` proves the outcomes (non-member → preview, accepted member → full, removed member → preview on the next request, private non-member → locked sentinel). A tested inline gate, not a policy function. |
 | TR104 | `canInviteParticipant(actor, trip)` | **W** | Inline at `routes/trips.ts:927` and `routes/trips-expansion.ts:891`; no named policy. |
 | TR105 | `canEditTrip(actor, trip)` | **W** | Inline owner checks at `routes/trips.ts:684` and `routes/trips-expansion.ts:350`; no named policy. |
-| TR106 | `canCreatePlan(actor, trip)` | **C** | `lib/http.ts:554#canEditPlan` `canEditPlan`, called before the create at `routes/trips.ts:1718#canEditPlan`. |
-| TR107 | `canModifyPlan(actor, plan)` | **C** | `lib/http.ts:614#canEditPlanItem` `canEditPlanItem`, called at `routes/trips.ts:1934,2004#canEditPlanItem`. |
+| TR106 | `canCreatePlan(actor, trip)` | **C** | `lib/http.ts:554#canEditPlan` `canEditPlan`, called before the create at `routes/trips.ts:1713#canEditPlan`. |
+| TR107 | `canModifyPlan(actor, plan)` | **C** | `lib/http.ts:614#canEditPlanItem` `canEditPlanItem`, called at `routes/trips.ts:1929,1999#canEditPlanItem`. |
 | TR108 | `canManageBooking(actor, trip)` | **W** | `routes/tripReservations.ts` has `requireReservationMember` plus a stricter delete rule at `:426-429` (*"creator or trip OWNER only"*) — real authorization, expressed as a route-local helper rather than a policy function. |
 | TR109 | `canSeePresence(actor, subject, trip)` | **W** | The decision is made inside `lib/tripCrewLocation.ts:104` `buildCrewCard` per member, honouring ghost mode, default visibility and safe-return opt-in. It is a card builder, not a predicate, so no caller can *ask* the question — and `routes/tripCrewLocation.ts:170-174` admits **invited-but-not-accepted** members (`getMemberRoleAny`) to the crew map. |
 | TR110 | `canSeePreciseLocation(actor, subject, trip)` | **C** | `lib/tripCrewLocation.ts:320#resolveExactCoords` `resolveExactCoords`, gated on a grant this module now checks for expiry itself (`:238#grantIsActive`) — exact coordinates require an **active live-share grant** *and* hotel-blur off *and* populated coordinates; ghost mode short-circuits first (`:217-218#TRIP_PRESENCE_GHOST`). Three independent conditions, all fail-closed, and membership alone never suffices. |
@@ -845,7 +854,7 @@ PHOTO, EXPLORE, PLAY, LEARN, NIGHTLIFE, TRANSIT) appear nowhere as a vocabulary.
 
 | id | Requirement | V | Evidence |
 | --- | --- | --- | --- |
-| TR381 | Operational logs do not become permanent memory wholesale | **C** | **Evidence corrected 2026-09-11 (§38): there are TWO readers, not one.** The trip's own activity endpoint (`routes/trips-expansion.ts:3196#trip_activity_log`) AND the invite-links endpoint (`routes/trips-expansion.ts:1401#trip_activity_log`), which filters to `joined_via_invite_link` to decorate each link with its joiners. **The verdict is unchanged and the reason it survives is worth stating**: both readers are trip-scoped (`.eq("trip_id", tripId)`), both serve the trip's own surface, and neither writes the log into a durable projection — so the log still does not become permanent memory. What was wrong was the word *nothing*: a universal claim that had never been counted. No Memory or Passport path touches it. The prohibited path does not exist and there is nothing that would create it, because Memory is fed by stamps and posts. |
+| TR381 | Operational logs do not become permanent memory wholesale | **C** | **Evidence corrected 2026-09-11 (§38): there are TWO readers, not one.** The trip's own activity endpoint (`routes/trips-expansion.ts:3167#trip_activity_log`) AND the invite-links endpoint (`routes/trips-expansion.ts:1412#trip_activity_log`), which filters to `joined_via_invite_link` to decorate each link with its joiners. **The verdict is unchanged and the reason it survives is worth stating**: both readers are trip-scoped (`.eq("trip_id", tripId)`), both serve the trip's own surface, and neither writes the log into a durable projection — so the log still does not become permanent memory. What was wrong was the word *nothing*: a universal claim that had never been counted. No Memory or Passport path touches it. The prohibited path does not exist and there is nothing that would create it, because Memory is fed by stamps and posts. |
 | TR382 | Durable post-trip projections are based on meaningful outcomes (places visited, activities completed, people intentionally associated, stamps, media, milestones, user-approved story elements) | **W** | One outcome channel works: trip completion awards stamps that drive Passport counts — `src/test/passportStatsFromTripCompletion.test.ts:1-13` proves a completed trip yields non-zero Countries and Cities *"even if they never make a GPS-verified post from that location."* The other six are absent: no visited-place record, no completed-activity record, no intentional-association record, no milestone, no user-approved story step. |
 | TR383 | §20.2 Closeout: stop/expire temporary presence | **N** | `routes/trips-expansion.ts:494-518` — the whole `POST /trips/:tripId/complete` handler is an authorization check, a status update and a `logActivity` line. It touches no presence table. Live shares expire on their own timer (`lib/tripCrewLiveShareScheduler.ts`) rather than on completion. |
 | TR384 | §20.2 …dissolve temporary crews where appropriate | **N** | Same handler; no crew action. There are no temporary crews (TR151). |
@@ -888,7 +897,7 @@ PHOTO, EXPLORE, PLAY, LEARN, NIGHTLIFE, TRANSIT) appear nowhere as a vocabulary.
 | TR411 | Safety/authorization invariants block merge regardless of product experiment | **C** | This one is met, and by the platform's strongest machinery: ~40 `src/scripts/check*.ts` ratchets run in CI, including `checkAuthorizationContract.ts`, `checkSilentSupabaseWrites.ts`, `checkLocationPurposes.ts`, `checkDataRights.ts`, `rlsDispositions.ts` (which carries `trip_activity_log` at `:458` and `trip_area_preferences` at `:459`) and `checkWriterlessReads.ts`. A trip change that weakened an authorization contract would fail the build. |
 | TR412 | §22.4 An earlier hard commitment cannot increase the preceding certified free window | **N** | Vacuous and unguarded: no commitments, no windows, no invariant test. |
 | TR413 | §22.4 A closed-before-arrival activity cannot remain executable | **N** | No opening hours as a constraint (TR230), no executability concept. |
-| TR414 | §22.4 A removed participant cannot receive future precise trip presence through that Trip | **C** | Proven, and it is the only §22.4 invariant with a test: removal deletes the `trip_members` row (`routes/trips.ts:2187#members/:userId` `DELETE /trips/:tripId/members/:userId`), `routes/tripCrewLocation.ts:170-174` refuses a non-member with `not_member`, and `src/test/tripPrivacy.test.ts:11` asserts *"A removed member immediately receives the preview on the next request."* Caveat recorded at TR109: the same gate admits *invited* members, so the invariant holds for removal and is looser than it should be for admission. |
+| TR414 | §22.4 A removed participant cannot receive future precise trip presence through that Trip | **C** | Proven, and it is the only §22.4 invariant with a test: removal deletes the `trip_members` row (`routes/trips.ts:2182#members/:userId` `DELETE /trips/:tripId/members/:userId`), `routes/tripCrewLocation.ts:170-174` refuses a non-member with `not_member`, and `src/test/tripPrivacy.test.ts:11` asserts *"A removed member immediately receives the preview on the next request."* Caveat recorded at TR109: the same gate admits *invited* members, so the invariant holds for removal and is looser than it should be for admission. |
 | TR415 | §22.4 An unknown place identity cannot be silently treated as a canonical place match | **C** | `0010_trip_plan.sql:14-15` types the source (`'manual'` default), `lib/placeIdBridge.ts` is the only sanctioned crossing, and `scripts/checkSchemaReferences.ts` is the ratchet. An unresolved place stays typed as manual. |
 | TR416 | §22.4 A projection's `sourceTripVersion` may never exceed the canonical aggregate version | **N** | Neither side of the comparison exists (TR12, TR365). |
 | TR417 | §22.4 A duplicate command with the same idempotency key cannot produce a duplicate state transition | **N** | No idempotency key anywhere in the trip domain. The nearest artifact is a route-level short-circuit — `routes/trips-expansion.ts:508` returns `{ status: "completed", idempotent: true }` when a trip is already completed — a per-endpoint guard, not the invariant. |
@@ -3914,7 +3923,7 @@ to explain and no route.
   the inputs, performs the ONE step this deployment can perform — stopping the
   trip's temporary presence with the live-share service's own update shape
   (`:79#stopped`) — and reports every step. `POST /trips/:tripId/complete`
-  calls it AFTER the transition (`routes/trips-expansion.ts:732#runTripCloseout`),
+  calls it AFTER the transition (`routes/trips-expansion.ts:738#runTripCloseout`),
   so a failed step cannot un-complete a trip, and the response carries the
   closeout rather than implying it. `GET /trips/:tripId/closeout`
   (`routes/tripProjections.ts:594#closeout`) is the same plan as a
@@ -4491,7 +4500,7 @@ production baseline through the chain: 39 database tests, 0 skipped.
   `opportunity_accepted_total` at that route,
   `opportunity_completed_total` where COMPLETE_ACTIVITY succeeds on an
   opportunity-sourced plan (`lib/tripOpportunityMetrics.ts:18#export function recordOpportunityCompletion`)
-  — on the plan PATCH cutover (`routes/trips.ts:1971#recordOpportunityCompletion(planCommandTypeForPatch(patch)`)
+  — on the plan PATCH cutover (`routes/trips.ts:1966#recordOpportunityCompletion(planCommandTypeForPatch(patch)`)
   and the Compass autopilot, the two places that issue it.
 - **2787 — the fold names every event** — `src/migrations/2787_trip_snapshot_fold_vocabulary.sql:53#WHEN t IN ('trip.stage_started','trip.stage_completed') THEN`:
   2773's `trip_snapshot_fold` met the eighteen event types 2779–2786 added
@@ -4837,8 +4846,8 @@ re-derives and cites rather than argues.
 - **§4.1 TR51, the last seven** — `/invite` and `/members`
   (`routes/trips.ts:1151#InviteMemberSchema`, `routes/trips.ts:1152#AddMemberSchema`),
   `/join-request`, `/invite-link` and the three checklist writes
-  (`routes/trips-expansion.ts:912#InviteLinkSchema`,
-  `routes/trips-expansion.ts:914#ChecklistItemPatchSchema`) parse a zod schema
+  (`routes/trips-expansion.ts:920#InviteLinkSchema`,
+  `routes/trips-expansion.ts:922#ChecklistItemPatchSchema`) parse a zod schema
   first, accepting what the hand-rolled checks accepted and refusing only a
   wrong type; `check:trip-write-validation` counts 54 of 54 and its
   shrink-only list is empty (`src/scripts/checkTripWriteValidation.ts:47#KNOWN_UNVALIDATED`).
@@ -4953,7 +4962,7 @@ a file naming `trip_crew_map_enabled` (ON in production) and reading
 kernel-era tables — so the crew half of the pulse is its own module, as
 §43 did for the opportunity projection
 (`services/trips/TripPulseCrewPresence.ts:37#readCrewPresenceForPulse`).
-Two guards were unregistered (`src/scripts/guardRegistry.ts:617#checkTripDecisionDiff`),
+Two guards were unregistered (`src/scripts/guardRegistry.ts:624#checkTripDecisionDiff`),
 and this census watched 77 % of the files it cites against an 86 % floor:
 the kernel-era migrations, their rollbacks, the database suites, the trip
 guards and the trip test files are in scope now — 90 % — and every one of
@@ -5119,7 +5128,7 @@ mutations are named with the rows.
   started, or has no start date is not a future absence. The reason is
   Appendix B's new `TRIP_PRIVACY_FUTURE_ABSENCE`
   (`lib/tripReasonCodes.ts:85#TRIP_PRIVACY_FUTURE_ABSENCE`). The route reads
-  the flag and passes the decision (`routes/trips-expansion.ts:3280#absenceDisclosure(t,`);
+  the flag and passes the decision (`routes/trips-expansion.ts:3251#absenceDisclosure(t,`);
   the serializer renders it — both dates null and
   `datesWithheld: "future_absence"`, the key absent otherwise so a preview
   that carries no dates because of the toggle is byte-for-byte what it was
@@ -5438,3 +5447,70 @@ tables in every deployment the moment this merges and deploys; the
 arrival estimates ride the freedom projection, which reads 2761's
 commitments under the operational gate. Nothing here is deployed, enabled
 or production-realised.
+
+## 50. The thirty-eight inline checks, converted
+
+**Read against the branch `claude/sweet-fermat-fmx7up`.** One W row whose
+gap was a number: §6.1 says application code calls policy functions
+rather than scattering host checks, and `check:trip-policy-callsites`
+counted thirty-eight inline copies of "is this the owner / a host / a
+member / the row's own creator" across three route files — a ratchet that
+refused growth and had no floor. This section gives the policy module the
+five decisions those copies were spelling, converts every site, lowers the
+ratchet to zero, and proves the routes behave as they did: every existing
+route suite passes unmodified, and each refusal now carries its Appendix B
+reason beside the message it always had.
+
+### 50.1 What was built, and where
+
+- **The vocabulary** — `lib/tripPolicy.ts:238#canAccessTripContent(` (the
+  owner or any accepted crew role; `TRIP_AUTH_NOT_CREW`),
+  `lib/tripPolicy.ts:254#canHostTrip(` (owner or co-host; `TRIP_AUTH_NOT_HOST`),
+  `lib/tripPolicy.ts:271#canContributeToTrip(` (owner, co-host or member — a
+  viewer reads and does not contribute; `TRIP_AUTH_ROLE_NOT_PERMITTED`),
+  `lib/tripPolicy.ts:288#canEditOwnOrAsOwner(` (the owner or the row's own
+  creator — a document, a note, a saved place, a checklist;
+  `TRIP_AUTH_NOT_CREATOR`), `lib/tripPolicy.ts:304#canSeePrivateContributions(`
+  (the owner alone), `lib/tripPolicy.ts:318#tripRoleOf(` (the role reader the
+  budget routes needed), and two PURE helpers for the branch picks that are
+  not refusals — `lib/tripPolicy.ts:332#isTripOwner(` and
+  `lib/tripPolicy.ts:341#planEditPermits(`, §6.2's plan-edit rule that
+  `GET /trips/me` was spelling inline. Every function takes `given`, so a
+  route that has already read the trip and the membership pays no second
+  read. `test/tripPolicy.test.ts:374#TR102` pins each decision on every role.
+- **The sites** — thirty-three in `routes/trips-expansion.ts`, four in
+  `routes/trips.ts`, one in `routes/tripBudgetIntel.ts`. Owner-only
+  refusals (update, cancel, complete, archive, delete, the three invite-link
+  routes, remove member, reorder) ask `canEditTrip`
+  (`routes/trips-expansion.ts:596#cancelAuth`); host gates (destinations,
+  budget, activity log) ask `canHostTrip` (`routes/trips-expansion.ts:1976#addDestAuth`);
+  contributing gates (destination dates, checklist items) ask
+  `canContributeToTrip` (`routes/trips-expansion.ts:2155#datesAuth`); the
+  document / note / saved-place / checklist edits ask `canEditOwnOrAsOwner`
+  (`routes/trips-expansion.ts:2417#docEdit`); the document and note lists ask
+  `canAccessTripContent` and then `canSeePrivateContributions` for the
+  private rows (`routes/trips-expansion.ts:2289#canSeePrivateContributions(sc,`);
+  the budget gate asks `tripRoleOf` (`routes/tripBudgetIntel.ts:76#tripRoleOf(sc,`);
+  the plan-editability filter and the owner-skip on an invite notification
+  use the pure helpers (`routes/trips.ts:1528#planEditPermits(trip,`). Every
+  refusal keeps the message it had and adds `reason`.
+- **The ratchet, at zero** — `scripts/checkTripPolicyCallsites.ts:75#"src/routes/trips-expansion.ts": 0,`:
+  the baseline is zero for all three files and the check counts callers of
+  the eight new names; a new inline check in any trip route fails the build.
+
+### 50.2 Row moves
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| TR102 Application code calls policy functions rather than scattering host checks | W | **C** | Zero inline host/owner checks remain in the trip routes (`check:trip-policy-callsites`, floor 0); the thirty-eight became five policy decisions with Appendix B reasons, and every route suite passes unmodified. |
+
+**Held, with the reason.** TR47 and TR48 stay W: authorization is a
+policy call now, and the plan-status write is still the cutover-gated
+legacy path (§41.3). TR378 stays W: ninety-seven direct endpoints are
+ninety-seven direct endpoints, better guarded.
+
+### 50.3 The ceiling, unchanged
+
+No migration, no flag. The policy module runs in every deployment the
+moment this merges and deploys; the routes answer exactly what they did,
+with a reason beside it. Nothing here is deployed.

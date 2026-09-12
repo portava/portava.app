@@ -208,7 +208,9 @@ router.post("/me/location-state", async (req, res) => {
   }
 
   // Anti-fake GPS: run safety checks asynchronously for GPS fixes — non-blocking
-  if (source === "gps" && lat != null && lng != null) {
+  // A stale observation was not written, so it is not snapshotted either: the
+  // anti-fake check reads what the row holds, and the row still holds the newer fix.
+  if (!staleObservation && source === "gps" && lat != null && lng != null) {
     checkAndRecordSnapshot(sc, user.id, lat, lng).catch((err) => {
       req.log.warn({ err }, "location-state: safety check failed (non-fatal)");
     });

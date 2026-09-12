@@ -36,6 +36,8 @@ import {
   canViewTrip, canInviteParticipant, canManageJoinRequests, canEditTrip,
   canCreatePlan, canModifyPlan, canManageBooking, canSeePresence, canManageSafety,
   canSeePreciseLocation, CREW_ROLES, HOST_ROLES,
+  canAccessTripContent, canHostTrip, canContributeToTrip, canEditOwnOrAsOwner, canSeePrivateContributions,
+  tripRoleOf, isTripOwner, planEditPermits, CONTRIBUTING_ROLES,
 } from "../lib/tripPolicy.js";
 import { INTERNAL_ONLY_REASONS } from "../lib/tripReasonCodes.js";
 
@@ -364,5 +366,63 @@ describe("§6.2 service-facing: service role is not business authorization", () 
     assert.equal((await canModifyPlan(c, a, TRIP, PLAN)).allowed, false);
     assert.equal((await canManageBooking(c, a, TRIP, "read")).allowed, false);
     assert.equal((await canManageSafety(c, a, TRIP)).allowed, false);
+  });
+});
+
+
+// ── §50 (census-trips TR102): the vocabulary the routes were spelling inline ──
+describe("TR102 — the five decisions the inline checks became", () => {
+  const trip = { id: TRIP, owner_id: OWNER };
+  const me = (u: string) => ({ userId: u });
+  const withRole = (role: string | null) => fake({ trips: [trip], trip_members: role ? [{ trip_id: TRIP, user_id: ALICE, role, status: "accepted" }] : [] });
+
+  it("canAccessTripContent: the owner and every accepted crew role; a stranger is TRIP_AUTH_NOT_CREW; `given` saves the read", async () => {
+    assert.equal((await canAccessTripContent(withRole(null) as any, me(OWNER), TRIP)).allowed, true);
+    for (const r of CREW_ROLES) assert.equal((await canAccessTripContent(withRole(r) as any, me(ALICE), TRIP)).allowed, true, r);
+    const d = await canAccessTripContent(withRole(null) as any, me(ALICE), TRIP);
+    assert.equal(d.allowed, false); assert.equal(!d.allowed && d.reason, "TRIP_AUTH_NOT_CREW");
+    const given = await canAccessTripContent(fake({}, ["trips", "trip_members"]) as any, me(ALICE), TRIP, { trip, role: "viewer" });
+    assert.equal(given.allowed, true, "with trip and role given, nothing is read");
+    assert.equal((await canAccessTripContent(withRole("member") as any, { userId: null }, TRIP)).allowed, false);
+  });
+  it("canHostTrip: owner and co_host; a member is TRIP_AUTH_NOT_HOST", async () => {
+    assert.equal((await canHostTrip(withRole(null) as any, me(OWNER), TRIP)).allowed, true);
+    assert.equal((await canHostTrip(withRole("co_host") as any, me(ALICE), TRIP)).allowed, true);
+    const d = await canHostTrip(withRole("member") as any, me(ALICE), TRIP);
+    assert.equal(d.allowed, false); assert.equal(!d.allowed && d.reason, "TRIP_AUTH_NOT_HOST");
+  });
+  it("canContributeToTrip: owner, co_host, member; a viewer is TRIP_AUTH_ROLE_NOT_PERMITTED; a stranger TRIP_AUTH_NOT_CREW", async () => {
+    assert.deepEqual([...CONTRIBUTING_ROLES], ["owner", "co_host", "member"]);
+    for (const r of ["co_host", "member"]) assert.equal((await canContributeToTrip(withRole(r) as any, me(ALICE), TRIP)).allowed, true, r);
+    const viewer = await canContributeToTrip(withRole("viewer") as any, me(ALICE), TRIP);
+    assert.equal(!viewer.allowed && viewer.reason, "TRIP_AUTH_ROLE_NOT_PERMITTED");
+    const stranger = await canContributeToTrip(withRole(null) as any, me(ALICE), TRIP);
+    assert.equal(!stranger.allowed && stranger.reason, "TRIP_AUTH_NOT_CREW");
+  });
+  it("canEditOwnOrAsOwner: the owner, or the row's creator; anyone else is TRIP_AUTH_NOT_CREATOR", async () => {
+    assert.equal((await canEditOwnOrAsOwner(withRole("member") as any, me(OWNER), TRIP, ALICE)).allowed, true);
+    assert.equal((await canEditOwnOrAsOwner(withRole("member") as any, me(ALICE), TRIP, ALICE)).allowed, true);
+    const d = await canEditOwnOrAsOwner(withRole("member") as any, me(ALICE), TRIP, OWNER);
+    assert.equal(!d.allowed && d.reason, "TRIP_AUTH_NOT_CREATOR");
+    assert.equal((await canEditOwnOrAsOwner(withRole("member") as any, me(ALICE), TRIP, null)).allowed, false, "no creator: only the owner");
+  });
+  it("canSeePrivateContributions: the owner alone", async () => {
+    assert.equal((await canSeePrivateContributions(withRole("co_host") as any, me(OWNER), TRIP)).allowed, true);
+    const d = await canSeePrivateContributions(withRole("co_host") as any, me(ALICE), TRIP);
+    assert.equal(!d.allowed && d.reason, "TRIP_AUTH_NOT_OWNER");
+  });
+  it("tripRoleOf: owner, the crew role, or null", async () => {
+    assert.equal(await tripRoleOf(withRole(null) as any, me(OWNER), TRIP), "owner");
+    assert.equal(await tripRoleOf(withRole("viewer") as any, me(ALICE), TRIP), "viewer");
+    assert.equal(await tripRoleOf(withRole(null) as any, me(ALICE), TRIP), null);
+    assert.equal(await tripRoleOf(withRole("member") as any, { userId: null }, TRIP), null);
+  });
+  it("isTripOwner and planEditPermits are pure and say what the routes used to spell", () => {
+    assert.equal(isTripOwner(trip, me(OWNER)), true); assert.equal(isTripOwner(trip, me(ALICE)), false); assert.equal(isTripOwner(null, me(OWNER)), false);
+    assert.equal(planEditPermits({ owner_id: OWNER }, OWNER, []), true, "the owner always");
+    assert.equal(planEditPermits({ owner_id: OWNER, plan_edit_permission: null }, ALICE, []), true, "unset means all_members");
+    assert.equal(planEditPermits({ owner_id: OWNER, plan_edit_permission: "owner_only" }, ALICE, [ALICE]), false);
+    assert.equal(planEditPermits({ owner_id: OWNER, plan_edit_permission: "selected_members" }, ALICE, [ALICE]), true);
+    assert.equal(planEditPermits({ owner_id: OWNER, plan_edit_permission: "selected_members" }, ALICE, []), false);
   });
 });

@@ -16,7 +16,9 @@
 import { Router } from "express";
 import { z } from "zod";
 import { asyncHandler } from "../lib/asyncHandler.js";
-import { requireUser, requireTripMember, sendError } from "../lib/http.js";
+import { requireUser, sendError } from "../lib/http.js";
+import { tripRoleOf } from "../lib/tripPolicy.js";
+import { sendTripRefusal } from "../lib/tripReasonCodes.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { isFlagEnabled } from "../lib/featureFlags.js";
 import {
@@ -70,13 +72,9 @@ async function requireBudgetIntelMember(
   }
   if (!trip) { sendError(res, "not_found", "Trip not found"); return null; }
 
-  const isOwner = (trip as any).owner_id === user.id;
-  let role = "owner";
-  if (!isOwner) {
-    const membership = await requireTripMember(sc, tripId, user.id);
-    if (!membership) { sendError(res, "not_member", "You must be an accepted trip member"); return null; }
-    role = membership.role;
-  }
+  // §6.1 (TR102): the policy module says what the actor is on this trip.
+  const role = await tripRoleOf(sc, { userId: user.id }, tripId, { trip: { id: tripId, owner_id: (trip as any).owner_id } });
+  if (!role) { sendTripRefusal(res, "not_member", "TRIP_AUTH_NOT_CREW", "You must be an accepted trip member"); return null; }
 
   return { sc, userId: user.id, trip, role };
 }

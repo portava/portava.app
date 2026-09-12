@@ -564,6 +564,13 @@ export const GUARDS: readonly GuardEntry[] = [
     inspects: {
       countPattern: "(\\d+) inline host/owner check\\(s\\) remain",
       unit: "inline owner/host authorization checks remaining in trip route files",
+      zeroIsProved:
+        "census-trips §50 (2026-09-12): the thirty-eight inline copies were each converted to a lib/tripPolicy.ts " +
+        "decision (canEditTrip, canHostTrip, canAccessTripContent, canContributeToTrip, canEditOwnOrAsOwner, " +
+        "canSeePrivateContributions, tripRoleOf, isTripOwner, planEditPermits) and the BASELINE is zero for all " +
+        "three files. Zero is the expected state; the scan still runs its four patterns over every trip route file " +
+        "and a new inline check fails the build. Proved by the check's own caller counts (every policy name has a " +
+        "caller) and by the route suites that grade TR103/TR106/TR107/TR108/TR117–TR121, which pass unmodified.",
     },
     responsibility:
       "Trip routes authorize through the named §6.1 policy functions; inline host checks may only shrink.",

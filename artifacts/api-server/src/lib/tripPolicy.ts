@@ -225,6 +225,131 @@ export async function canEditTrip(
   return allow("owner");
 }
 
+// ── The vocabulary the routes were spelling inline (census-trips TR102) ─────
+//
+// §6.1 says application code calls policy functions rather than scattering
+// host checks. Thirty-eight inline copies of "is this the owner / a host / a
+// member / the row's own creator" lived in three route files; each is one
+// of the five decisions below now, with the Appendix B reason a refusal
+// carries. Every function takes `given` so a route that has already read the
+// trip and the membership pays no second read.
+
+/** The owner, or any accepted crew role: may read the trip's shared content. */
+export async function canAccessTripContent(
+  client: SupabaseClient,
+  actor: PolicyActor,
+  tripId: string,
+  given?: PolicyInputs,
+): Promise<PolicyDecision> {
+  if (!actor.userId) return deny("TRIP_AUTH_UNAUTHENTICATED", "Sign in to view this trip");
+  const trip = await readTrip(client, tripId, given);
+  if (!trip) return deny("TRIP_PRIVACY_NOT_VISIBLE", "Trip not found");
+  if (trip.owner_id === actor.userId) return allow("owner");
+  const role = await crewRole(client, tripId, actor, given);
+  if (role && (CREW_ROLES as readonly string[]).includes(role)) return allow(`crew:${role}`);
+  return deny("TRIP_AUTH_NOT_CREW", "Not a trip member");
+}
+
+/** The owner or a co-host: the trip's hosts (§6.1). */
+export async function canHostTrip(
+  client: SupabaseClient,
+  actor: PolicyActor,
+  tripId: string,
+  given?: PolicyInputs,
+): Promise<PolicyDecision> {
+  if (!actor.userId) return deny("TRIP_AUTH_UNAUTHENTICATED", "Sign in to manage this trip");
+  const trip = await readTrip(client, tripId, given);
+  if (!trip) return deny("TRIP_PRIVACY_NOT_VISIBLE", "Trip not found");
+  if (trip.owner_id === actor.userId) return allow("owner");
+  const role = await crewRole(client, tripId, actor, given);
+  if (role && (HOST_ROLES as readonly string[]).includes(role)) return allow(`host:${role}`);
+  return deny("TRIP_AUTH_NOT_HOST", "Only the trip owner or co-host may do this");
+}
+
+/** Owner, co-host or member — a contributing role. A viewer reads and does not contribute. */
+export const CONTRIBUTING_ROLES = ["owner", "co_host", "member"] as const;
+export async function canContributeToTrip(
+  client: SupabaseClient,
+  actor: PolicyActor,
+  tripId: string,
+  given?: PolicyInputs,
+): Promise<PolicyDecision> {
+  if (!actor.userId) return deny("TRIP_AUTH_UNAUTHENTICATED", "Sign in to contribute to this trip");
+  const trip = await readTrip(client, tripId, given);
+  if (!trip) return deny("TRIP_PRIVACY_NOT_VISIBLE", "Trip not found");
+  if (trip.owner_id === actor.userId) return allow("owner");
+  const role = await crewRole(client, tripId, actor, given);
+  if (role && (CONTRIBUTING_ROLES as readonly string[]).includes(role)) return allow(`crew:${role}`);
+  if (role) return deny("TRIP_AUTH_ROLE_NOT_PERMITTED", "A viewer cannot contribute to this trip");
+  return deny("TRIP_AUTH_NOT_CREW", "Not a trip member");
+}
+
+/** The owner, or the person who created the row (a document, a note, a saved place, a checklist). */
+export async function canEditOwnOrAsOwner(
+  client: SupabaseClient,
+  actor: PolicyActor,
+  tripId: string,
+  creatorId: string | null | undefined,
+  given?: PolicyInputs,
+): Promise<PolicyDecision> {
+  if (!actor.userId) return deny("TRIP_AUTH_UNAUTHENTICATED", "Sign in to edit this");
+  const trip = await readTrip(client, tripId, given);
+  if (!trip) return deny("TRIP_PRIVACY_NOT_VISIBLE", "Trip not found");
+  if (trip.owner_id === actor.userId) return allow("owner");
+  if (creatorId && creatorId === actor.userId) return allow("creator");
+  return deny("TRIP_AUTH_NOT_CREATOR", "Only the trip owner or the person who created this may change it");
+}
+
+/** The owner sees private contributions (documents, notes marked private) whoever wrote them. */
+export async function canSeePrivateContributions(
+  client: SupabaseClient,
+  actor: PolicyActor,
+  tripId: string,
+  given?: PolicyInputs,
+): Promise<PolicyDecision> {
+  if (!actor.userId) return deny("TRIP_AUTH_UNAUTHENTICATED", "Sign in to view this trip");
+  const trip = await readTrip(client, tripId, given);
+  if (!trip) return deny("TRIP_PRIVACY_NOT_VISIBLE", "Trip not found");
+  if (trip.owner_id === actor.userId) return allow("owner");
+  return deny("TRIP_AUTH_NOT_OWNER", "Private contributions are the owner's to see");
+}
+
+/** The actor's role on the trip — "owner" for the owner, else the accepted crew role, else null. */
+export async function tripRoleOf(
+  client: SupabaseClient,
+  actor: PolicyActor,
+  tripId: string,
+  given?: PolicyInputs,
+): Promise<string | null> {
+  if (!actor.userId) return null;
+  const trip = await readTrip(client, tripId, given);
+  if (!trip) return null;
+  if (trip.owner_id === actor.userId) return "owner";
+  return crewRole(client, tripId, actor, given);
+}
+
+/** PURE: whether the actor owns the trip row — for the branch picks that are not refusals. */
+export function isTripOwner(trip: { owner_id?: string | null } | null | undefined, actor: PolicyActor): boolean {
+  return Boolean(actor.userId && trip && trip.owner_id === actor.userId);
+}
+
+/**
+ * PURE: the §6.2 plan-edit rule over a trip row and the trip's named editors —
+ * the owner always; `all_members` everyone; `owner_only` nobody else;
+ * `selected_members` the named editors.
+ */
+export function planEditPermits(
+  trip: { owner_id?: string | null; plan_edit_permission?: string | null },
+  userId: string,
+  editors: readonly string[],
+): boolean {
+  if (trip.owner_id === userId) return true;
+  const perm = trip.plan_edit_permission ?? "all_members";
+  if (perm === "all_members") return true;
+  if (perm === "owner_only") return false;
+  return editors.includes(userId);
+}
+
 // ── canCreatePlan / canModifyPlan ────────────────────────────────────────────
 // These two already existed under their lib/http.ts names (census TR106,
 // TR107 — C). Re-exported under the spec's names so the nine §6.1 functions
