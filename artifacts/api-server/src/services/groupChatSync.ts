@@ -22,6 +22,9 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { circleThreadTitle } from '../lib/displayName';
+// Telegraph §13.2 member.joined — census T185 measured this sync as silent to
+// open clients.
+import { publishToThread } from '../lib/telegraphEvents.js';
 
 // ---------------------------------------------------------------------------
 // Trip group chat sync
@@ -117,6 +120,24 @@ export async function syncTripChatMembers(
 
   if (acceptedIds.size === 0) return threadId;
 
+  // Telegraph §13.2 `member.joined`. Who was ALREADY here is read before the
+  // upsert, because after it everyone looks like a member and the event would
+  // fire for the whole crew on every sync. census T185 measured the absence:
+  // "a trip-membership sync is silent to open clients", so a crew-mate
+  // appearing in a thread was something you found out by scrolling.
+  //
+  // An unreadable roster means no event rather than an event for everyone: a
+  // burst of false "X joined" lines is worse than a missing one, and the
+  // client's next poll shows the real roster either way.
+  const { data: priorMembers, error: priorErr } = await sc
+    .from('message_thread_members')
+    .select('user_id')
+    .eq('thread_id', threadId)
+    .is('left_at', null);
+  const priorIds = priorErr
+    ? null
+    : new Set(((priorMembers ?? []) as any[]).map((m) => m.user_id as string));
+
   // Upsert all accepted members as active (left_at = null).
   const upsertRows = [...acceptedIds].map((userId) => ({
     thread_id: threadId,
@@ -131,6 +152,16 @@ export async function syncTripChatMembers(
     ignoreDuplicates: false,
   });
   if (upsertErr) throw new Error(`syncTripChatMembers: member upsert failed for trip ${tripId}: ${upsertErr.message}`);
+
+  if (priorIds !== null) {
+    const newcomers = [...acceptedIds].filter((id) => !priorIds.has(id));
+    for (const userId of newcomers) {
+      void publishToThread(sc, threadId, {
+        type: 'member.joined',
+        payload: { userId, source: 'trip_sync', tripId, joinedAt: now },
+      });
+    }
+  }
 
   // Mark any thread members no longer in the accepted set as left.
   const { data: activeMembers } = await sc
@@ -241,6 +272,18 @@ export async function syncCircleChatMembers(
     ...((circleMembers ?? []) as any[]).map((m) => m.other_id as string),
   ]);
 
+  // Telegraph §13.2 `member.joined` — same rule as the trip branch above: the
+  // prior roster is read BEFORE the upsert, and an unreadable roster means no
+  // event rather than an event for every member.
+  const { data: priorCircleMembers, error: priorCircleErr } = await sc
+    .from('message_thread_members')
+    .select('user_id')
+    .eq('thread_id', threadId)
+    .is('left_at', null);
+  const priorCircleIds = priorCircleErr
+    ? null
+    : new Set(((priorCircleMembers ?? []) as any[]).map((m) => m.user_id as string));
+
   // Upsert all current members as active.
   const upsertRows = [...memberIds].map((userId) => ({
     thread_id: threadId,
@@ -255,6 +298,16 @@ export async function syncCircleChatMembers(
     ignoreDuplicates: false,
   });
   if (upsertErr) throw new Error(`syncCircleChatMembers: member upsert failed for circle ${circleOwnerId}: ${upsertErr.message}`);
+
+  if (priorCircleIds !== null) {
+    const newcomers = [...memberIds].filter((id) => !priorCircleIds.has(id));
+    for (const userId of newcomers) {
+      void publishToThread(sc, threadId, {
+        type: 'member.joined',
+        payload: { userId, source: 'circle_sync', circleOwnerId, joinedAt: now },
+      });
+    }
+  }
 
   // Mark any thread members no longer in the circle as left.
   const { data: activeMembers } = await sc

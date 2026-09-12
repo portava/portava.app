@@ -47,6 +47,9 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { logger as rootLogger } from "../lib/logger.js";
 import { historyBoundEnabled, membershipSelect, visibleFromOf } from "./groupChatHistoryBound.js";
+// §21's unsent exclusion, which needs migration 2810's column and must not name
+// it on a database that has not run it.
+import { applyLifecycleExclusion, messageKernelEnabled } from "./telegraphMessageKernel.js";
 import {
   TELEGRAPH_SEARCH_BUCKETS,
   STRUCTURED_SUBTYPES,
@@ -151,6 +154,7 @@ async function runQuery(
   term: string,
   threadIds: string[],
   visibleFrom: string | null,
+  kernelOn: boolean,
 ): Promise<{ rows: any[]; failed: boolean }> {
   if (threadIds.length === 0) return { rows: [], failed: false };
   let q = sc
@@ -161,6 +165,10 @@ async function runQuery(
     .ilike("body", `%${term}%`)
     .order("created_at", { ascending: false })
     .limit(PER_QUERY_LIMIT);
+  // §21's UNSENT half, which had no column to filter on until migration 2810
+  // (census T276). Off by default and, when off, the query does not NAME
+  // unsent_at — so a database without 2810 is never asked for it.
+  q = applyLifecycleExclusion(q, kernelOn);
   if (visibleFrom) q = q.gte("created_at", visibleFrom);
   const { data, error } = await q;
   if (error) {
@@ -191,9 +199,10 @@ export async function searchConversations(
   if (result.conversationsSearched === 0) return result;
   if (scope.truncated) result.degraded = true;
 
+  const kernelOn = await messageKernelEnabled(sc);
   const slices: Array<Promise<{ rows: any[]; failed: boolean }>> = [
-    runQuery(sc, term, scope.unbounded, null),
-    ...scope.bounded.map((b) => runQuery(sc, term, [b.threadId], b.visibleFrom)),
+    runQuery(sc, term, scope.unbounded, null, kernelOn),
+    ...scope.bounded.map((b) => runQuery(sc, term, [b.threadId], b.visibleFrom, kernelOn)),
   ];
   const settled = await Promise.all(slices);
   const rows: any[] = [];

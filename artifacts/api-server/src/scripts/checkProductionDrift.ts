@@ -323,6 +323,27 @@ export const KNOWN_PRODUCTION_GAPS: Record<string, Gap> = {
       "committed. Under Option B the file is never run at all, so applying it " +
       "would TAKE the decision.",
   },
+
+  // Telegraph, migration 2810.
+  telegraph_outbox: {
+    classification: "unapplied",
+    note:
+      "Migration 2810 (Telegraph §13.3 conversation_outbox). Applied to NO database " +
+      "— not production and not portava-ci — and declared here the moment the file " +
+      "entered the tree rather than after somebody noticed it. Two reasons it waits, " +
+      "and neither is 'not got round to it': (1) NOTHING DRAINS IT. The table takes " +
+      "one row per message lifecycle transition and no consumer reads them, so " +
+      "applying it and turning its flag on would grow a table nobody empties — which " +
+      "is why the trigger that writes it is gated on telegraph_message_kernel_enabled " +
+      "and that flag is seeded FALSE. (2) The rest of 2810 adds columns to " +
+      "public.messages, the hottest table in the product, and the sequence it " +
+      "introduces is only meaningful after a per-conversation backfill an operator " +
+      "runs deliberately. DDL and behaviour were EXECUTED on a throwaway PostgreSQL " +
+      "16 carrying the baseline plus the chain from 2093 (209 applied, 6 " +
+      "known-unreplayable, 0 unexpected), and the rollback was executed on the same " +
+      "database and verified to leave migration 2400's visible_from_at intact. " +
+      "RLS is enabled with zero policies, so no non-service role can read it.",
+  },
 };
 
 /**

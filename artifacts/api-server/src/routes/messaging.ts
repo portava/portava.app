@@ -27,6 +27,8 @@ import { isBlockedBetween } from '../lib/blockGuard.js';
 // Telegraph §22 — the six travel-scam families and link reputation, computed
 // for the recipient at read time. Pure; no I/O, no clock.
 import { messageSafetySignals } from '../domain/telegraph/policies/travelScamSignals.js';
+// Telegraph §13.2 safety.reported — reporter-only, audience decided once.
+import { emitSafetyReported } from '../lib/telegraphEvents.js';
 // Telegraph §22 — the send step's adaptive rate limit (T279's missing half).
 import { checkSendRateLimit } from '../domain/telegraph/policies/sendRateLimit.js';
 // Telegraph §22 — "stranger media ... until accepted": the server decides who
@@ -3137,7 +3139,7 @@ router.post('/threads/:threadId/report', async (req, res) => {
   const reason = typeof req.body?.reason === 'string' ? req.body.reason.trim().slice(0, 200) : '';
   if (!reason) { sendError(res, 'invalid_payload', 'reason is required'); return; }
 
-  const { error } = await sc
+  const { data: filedThreadReport, error } = await sc
     .from('reports')
     .insert({
       reporter_id: user.id,
@@ -3146,7 +3148,9 @@ router.post('/threads/:threadId/report', async (req, res) => {
       reason_code: 'other',
       reason_detail: reason,
       severity: 'normal',
-    });
+    })
+    .select('id')
+    .maybeSingle();
 
   if (error) {
     req.log.warn({ err: error }, 'thread report insert failed');
@@ -3158,6 +3162,20 @@ router.post('/threads/:threadId/report', async (req, res) => {
   await invalidateCompassCache(sc, user.id, "thread_report");
 
   res.status(201).json({ ok: true });
+
+  // Telegraph §13.2 `safety.reported`, to the REPORTER ONLY. census T194:
+  // "Not in the union; reports write a row and emit nothing."
+  //
+  // Not published to the thread, and that is the point. Telling the reported
+  // party is the fastest way to get a reporter hurt; telling a group turns a
+  // safety action into a public accusation. The reporter gets it because a
+  // report whose only feedback is a toast that has already gone is a report
+  // people file twice. The payload carries no target identity.
+  emitSafetyReported(user.id, {
+    reportId: (filedThreadReport as any)?.id ?? null,
+    targetType: 'thread',
+    filedAt: new Date().toISOString(),
+  });
 });
 
 // ── Saved messages ─────────────────────────────────────────────────────────────
@@ -3336,7 +3354,7 @@ router.post('/messages/:messageId/report', async (req, res) => {
   const reason = typeof req.body?.reason === 'string' ? req.body.reason.trim().slice(0, 200) : '';
   if (!reason) { sendError(res, 'invalid_payload', 'reason is required'); return; }
 
-  const { error } = await sc
+  const { data: filedMessageReport, error } = await sc
     .from('reports')
     .insert({
       reporter_id: user.id,
@@ -3345,7 +3363,9 @@ router.post('/messages/:messageId/report', async (req, res) => {
       reason_code: 'other',
       reason_detail: reason,
       severity: 'normal',
-    });
+    })
+    .select('id')
+    .maybeSingle();
 
   if (error) {
     req.log.warn({ err: error }, 'message report insert failed');
@@ -3357,6 +3377,14 @@ router.post('/messages/:messageId/report', async (req, res) => {
   await invalidateCompassCache(sc, user.id, "message_report");
 
   res.status(201).json({ ok: true });
+
+  // Telegraph §13.2 `safety.reported` — reporter only. See the thread-report
+  // handler above for why the audience is one person.
+  emitSafetyReported(user.id, {
+    reportId: (filedMessageReport as any)?.id ?? null,
+    targetType: 'message',
+    filedAt: new Date().toISOString(),
+  });
 });
 
 export default router;

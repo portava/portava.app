@@ -45,6 +45,11 @@ import {
   classifyMessage,
   indexableText,
 } from "../domain/telegraph/contracts/conversationSearch.js";
+import {
+  kernelColumns,
+  parseSequenceCursor,
+  sequenceOf,
+} from "../services/telegraphMessageKernel.js";
 
 const ALICE = "aaaaaaaa-0000-4000-8000-000000000001";
 const BOB = "bbbbbbbb-0000-4000-8000-000000000002";
@@ -75,6 +80,8 @@ interface State {
   membershipError?: boolean;
   messagesError?: boolean;
   flag?: boolean;
+  /** telegraph_message_kernel_enabled — migration 2810's capability gate. */
+  kernelFlag?: boolean;
 }
 
 interface Observed {
@@ -123,6 +130,9 @@ function m(id: string, thread_id: string, body: string, over: Record<string, any
 function makeClient(state: State = {}) {
   const db = fixture();
   if (state.flag === false) db["feature_flags"] = [{ flag: "telegraph_history_bound_enabled", enabled: false }];
+  if (state.kernelFlag !== undefined) {
+    (db["feature_flags"] ??= []).push({ flag: "telegraph_message_kernel_enabled", enabled: state.kernelFlag });
+  }
   const observed: Observed = { queries: [] };
 
   function from(table: string) {
@@ -451,5 +461,74 @@ describe("GET /telegraph/search · /threads/:id/search · /threads/:id/ask", () 
     const body = (await res.json()) as any;
     assert.equal(body.degraded, true);
     assert.deepEqual(body.hits, []);
+  });
+});
+
+/* ───────── §21's UNSENT half — migration 2810's column, behind its flag ───── */
+
+describe("Telegraph §21 × §12.1 — the unsent exclusion, and the OFF path's silence", () => {
+  it("kernel flag ABSENT: no messages query names unsent_at", async () => {
+    const sc = makeClient();
+    await searchConversations(sc, ALICE, "sky36");
+    for (const q of messageQueries(sc)) {
+      assert.ok(!q.filters.some((f: any) => f[1] === "unsent_at"),
+        "a database without migration 2810 must never be asked for unsent_at — PostgREST answers 42703, not NULL");
+    }
+  });
+
+  it("kernel flag FALSE: still silent", async () => {
+    const sc = makeClient({ kernelFlag: false });
+    await searchConversations(sc, ALICE, "sky36");
+    for (const q of messageQueries(sc)) {
+      assert.ok(!q.filters.some((f: any) => f[1] === "unsent_at"));
+    }
+  });
+
+  it("kernel flag TRUE: EVERY messages query excludes unsent rows IN THE QUERY", async () => {
+    const sc = makeClient({ kernelFlag: true });
+    await searchConversations(sc, ALICE, "sky36");
+    const qs = messageQueries(sc);
+    assert.ok(qs.length > 0);
+    for (const q of qs) {
+      assert.ok(q.filters.some((f: any) => f[0] === "is" && f[1] === "unsent_at" && f[2] === null),
+        "§21 removes unsent objects from search; a row that reaches the process has already consumed a limit slot");
+    }
+  });
+
+  it("the deleted exclusion is unchanged in both flag states", async () => {
+    for (const kernelFlag of [undefined, true]) {
+      const sc = makeClient(kernelFlag === undefined ? {} : { kernelFlag });
+      await searchConversations(sc, ALICE, "sky36");
+      for (const q of messageQueries(sc)) {
+        assert.ok(q.filters.some((f: any) => f[0] === "is" && f[1] === "deleted_at" && f[2] === null));
+      }
+    }
+  });
+});
+
+describe("Telegraph §17.2 — the resume cursor parser and the kernel column helpers", () => {
+  it("accepts a non-negative integer", () => {
+    assert.equal(parseSequenceCursor("0"), 0);
+    assert.equal(parseSequenceCursor("41"), 41);
+    assert.equal(parseSequenceCursor(41), 41);
+  });
+
+  it("REFUSES anything else rather than coercing it", () => {
+    for (const bad of ["-1", "1.5", "1e3", " 1 2", "abc", "", null, undefined, {}, "0x10", "+1"]) {
+      assert.equal(parseSequenceCursor(bad as unknown), null,
+        `a malformed cursor (${JSON.stringify(bad)}) must mean "from the beginning", never "from wherever this parses to"`);
+    }
+  });
+
+  it("kernelColumns leaves the caller's list untouched when the kernel is off", () => {
+    assert.equal(kernelColumns("id, body", false), "id, body");
+    assert.ok(kernelColumns("id, body", true).includes("sequence"));
+  });
+
+  it("sequenceOf is null when the kernel is off, whatever the row says", () => {
+    assert.equal(sequenceOf({ sequence: 7 }, false), null);
+    assert.equal(sequenceOf({ sequence: 7 }, true), 7);
+    assert.equal(sequenceOf({ sequence: null }, true), null);
+    assert.equal(sequenceOf(null, true), null);
   });
 });

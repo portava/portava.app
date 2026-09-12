@@ -1482,4 +1482,129 @@ mounting, not fetching done by a sibling); a future data-saver level that sheds
 starts computing `senderConnected` locally, which would move an abuse decision
 to the permissive side of a network failure.
 
-Headline after §11 in this worktree (last statement wins): C=119 W=170 N=139 X=0
+
+---
+
+### 11.6 The message kernel: three events with no schema, and one migration with no database
+
+Two halves that must not be confused with each other, so this section keeps them
+apart: three §13.2 events that needed no schema and are therefore BUILT-AND-CORRECT
+on every deployment, and a migration that no database has run and whose rows
+therefore cannot move past BUILT-BUT-WRONG whatever it contains.
+
+#### The three events (no migration, no flag)
+
+census-telegraph found `message.deleted`, `member.joined` and `safety.reported`
+absent from the union AND from every writer. All three are now in the union
+(`lib/telegraphEvents.ts:42`, `:52`, `:73`) and all three are published from the
+real write paths.
+
+`message.deleted` is published by the delete route
+(`routes/groupChat.ts:395`) after the response, excluding the deleter. Before
+it, "a delete reaches other clients only on their next poll" — a retracted
+message stayed on everyone else's screen for a polling interval. The payload
+carries the id and not the body, because the route redacted the body in place;
+a consumer wanting the old text is asking for the thing the delete removed.
+
+`member.joined` is published from BOTH sync implementations
+(`services/groupChatSync.ts:160` and `:306`; `lib/chatSync.ts:128` and `:258`).
+Two, because this tree has two — `routes/messaging.ts` reaches one and
+`routes/groupChat.ts` and `routes/friends.ts` reach the other — and an event
+that fires on one of two paths teaches a client not to trust it. In both, the
+prior roster is read BEFORE the membership write, because after it everyone
+looks like a member and the event would announce the whole crew on every sync;
+an unreadable prior roster emits NOTHING, because a burst of false "X joined"
+lines is worse than a missing one and the next poll shows the truth either way.
+
+`safety.reported` goes to the REPORTER and to nobody else
+(`lib/telegraphEvents.ts:439`, called at `routes/messaging.ts:3174` and `:3383`).
+It is a dedicated emitter rather than a `publishToUsers` call at each handler
+for one reason: the audience is the load-bearing part, and a helper with no
+parameter that could carry a thread id or a second recipient makes it
+impossible to widen by accident. Telling the reported party that a report exists
+is the fastest way to get a reporter hurt; telling a group turns a safety action
+into a public accusation. The payload carries the target TYPE and never the
+target's id.
+
+#### The migration (2810), executed on a throwaway and applied to nothing
+
+`src/migrations/2810_telegraph_message_kernel.sql` adds §12.1's six missing
+envelope fields (`:107` onward), §14.3's sequence bounds and §12's
+delivered/seen cursors (`:175` onward), the per-conversation sequence assigner
+(`:244`), §13.3's transactional outbox (`:193`) and its writer (`:300`), a
+partial unique index that makes an offline resend idempotent (`:147`), a
+per-conversation backfill an operator calls (`:372`), and the flag, seeded FALSE
+(`:420`).
+
+**It was EXECUTED, not read.** On 2026-09-12 against a throwaway PostgreSQL 16
+carrying `baseline/20260819_baseline_structure.sql` (388 public tables) plus
+`src/migrations/*.sql` from 2093 (209 applied in order, 6 known-unreplayable, 0
+unexpected failures): the DDL applies, re-applies cleanly, and the behaviour
+holds — flag OFF gives NULL sequences, zero outbox rows and `last_sequence` 0;
+flag ON gives 1, 2 in insertion order with `lifecycle_state` 'sent'; a repeated
+idempotency key from the same sender is refused by the index while a DIFFERENT
+sender may reuse it; unsend and delete each write exactly one outbox row and
+keep the row so the sequence stays continuous; a ROLLED-BACK message leaves no
+outbox row at all, which is §13.3's actual claim; the outbox payload contains no
+`body`; an invented `lifecycle_state` is refused by the CHECK; and the backfill
+is deterministic across two runs. The rollback
+(`db/rollback/2026-09-12-2810-telegraph-message-kernel-rollback.sql`) was
+executed on the same database and verified to remove every 2810 object while
+leaving migration 2400's `visible_from_at` intact and all 36 message rows
+untouched.
+
+**It is applied to no database**, and it is declared as such in the drift
+ratchet rather than waiting to be noticed
+(`scripts/checkProductionDrift.ts:328` `telegraph_outbox`). Two reasons, both
+recorded there and in the file's own header: nothing drains the outbox, so
+turning it on would grow a table nobody empties; and the sequence is only
+meaningful after a per-conversation backfill an operator runs deliberately.
+
+The application side is `services/telegraphMessageKernel.ts`, built on exactly
+the pattern `groupChatHistoryBound.ts` established: with the flag OFF,
+`kernelColumns` (`:69`) returns the caller's original list, `applyLifecycleExclusion`
+(`:86`) returns the query untouched, and `messageKernelEnabled` (`:58`) is
+false-on-error — so a build carrying this code never NAMES a column a database
+without 2810 would answer 42703 for. Its one live consumer today is §21's
+search, which gains the UNSENT half of "unsent/deleted/revoked objects must be
+removed from normal user search" when the flag is on, in the query.
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| T182 | N | **C** | §13.2 `message.deleted`. In the union (`lib/telegraphEvents.ts:42`) and published by the delete route excluding the deleter (`routes/groupChat.ts:395`). No migration, no flag: true on every deployment of this branch. |
+| T185 | N | **C** | §13.2 `member.joined`. In the union (`:52`) and published from BOTH sync implementations (`services/groupChatSync.ts:160`, `:306`; `lib/chatSync.ts:128`, `:258`), for newcomers only, from a roster read taken before the write. |
+| T194 | N | **C** | §13.2 `safety.reported`. In the union (`:73`) and emitted to the reporter only through a dedicated emitter whose signature cannot carry a second audience (`lib/telegraphEvents.ts:439`; called at `routes/messaging.ts:3174`, `:3383`). |
+| T154 | N | **W** | §12 `conversation_outbox`. The table exists (`migrations/2810_telegraph_message_kernel.sql:193`), with a dedupe key, an unpublished-first index and RLS enabled with zero policies. W and not C for two reasons stated in the file itself: **no database has run it**, and nothing drains it. |
+| T195 | N | **W** | §13.3 "canonical mutation and event-outbox write in the same database transaction". A trigger on `public.messages` (`:300`) gives exactly that, to every writer including the ones that forget — and a rolled-back insert was EXECUTED and proved to leave no event. W because no database has the trigger. |
+| T196 | W | **W** | §13.3 idempotent consumers. `telegraph_outbox.dedupe_key` is the handle a consumer needs and is UNIQUE (`:193`). Still W, and now for a sharper reason than before: the key exists on no database, and idempotency is a property of a consumer that does not exist. |
+| T228 | N | **W** | §17.1 per-conversation sequence ordering. `messages.sequence` allocated under a row lock from `message_threads.last_sequence` (`:107`, `:244`), proved monotonic per conversation on the harness. W: no database has it, historical rows are NULL until a deliberate backfill, and every shipped reader still orders by `created_at`. |
+| T230 | W | **W** | §17.2 offline command fields. Three of four now have columns — `clientMessageId`, `idempotencyKey` and (as `lifecycle_state`) the server side of `syncState`; `createdAtClient` is deliberately still absent because §17.1 says client timestamps are advisory and T229 is C precisely because nothing reads one. W: no database has the columns and no writer populates them. |
+| T231 | N | **W** | §17.2 "offline resend must be idempotent". A PARTIAL unique index on `(thread_id, sender_id, idempotency_key)` (`:147`), EXECUTED: a repeated key from the same sender is refused, a different sender may reuse it. W: no database has the index, and `routes/messaging.ts` does not yet send a key. |
+| T210 | N | **W** | §14.3 `visibleFromSequence` / `visibleUntilSequence`. Both columns exist (`:175`), with comments tying them to 2400's timestamp bound as that migration said they would be. W: no database has them, and the live bound is still 2400's `visible_from_at`. |
+| T139 | W | **W** | §12 `conversation_members`. All four properties the row asks for now have columns — intervals (2400/baseline), role, visible sequence bounds and delivered/seen sequences (`:175` onward). Still W: no database has the last two pairs. |
+| T141 | W | **W** | §12 `messages` envelope. The remaining three of six — sequence, lifecycle, content reference — now have columns. Still W for the same reason as every row in this block. |
+| T156 | W | **W** | §12.1 `Message` contract. All six missing fields are declared (`:107`-`:112`) and the lifecycle vocabulary is a CHECK, proved to refuse an invented state. W: no database has them. |
+| T276 | W | **W** | §21 unsent/deleted/revoked removed from search. The UNSENT half is now expressible and is applied IN THE QUERY behind the kernel flag (`services/telegraphMessageKernel.ts:86`, consumed by `services/telegraphSearch.ts`), with the OFF path proved not to NAME the column. Still W: the flag is off everywhere, and revoked source objects inside frozen cards (T46) are untouched. |
+
+**Rows looked at that did not move:** T161 and T163 stay N — a column and a
+table are not a command; `UNSEND_MESSAGE` and `ADD_REACTION` need routes this
+batch did not write. T142, T143, T144 and T147 stay N — 2810 is the envelope and
+the outbox, not the side tables. T178/T179 stay N/W — `delivered_sequence` and
+`seen_sequence` exist but nothing writes or emits from them. T233 stays N — the
+SSE stream still carries no cursor; `parseSequenceCursor`
+(`services/telegraphMessageKernel.ts:109`) is the parser a resume would need and
+no route calls it yet, which is declared-not-emitted, not built.
+
+**The ceiling for §11.6.** Three events are C because they touch no schema. Every
+other row here is W and cannot be anything else: *BUILT ON BRANCH IS NOT MERGED*,
+and beyond that, **no database has run 2810** — not production, not portava-ci,
+only a throwaway container that is deleted when this session ends. Turning the
+flag on afterwards would still be an owner decision, and it would want a drainer
+first. P24 — what would turn the executed claims red: a writer that sets
+`messages.sequence` itself (two allocators is worse than none); a `body` added
+to the outbox payload, which would put message text into a queue projections,
+indexers and analytics all read; and any reader that names a kernel column
+outside `kernelColumns`, which on a database without 2810 is a 42703 on every
+message query rather than a missing feature.
+
+Headline after §11 in this worktree (last statement wins): C=122 W=175 N=131 X=0
