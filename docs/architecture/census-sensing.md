@@ -101,17 +101,20 @@ Paths are relative to `artifacts/api-server/` unless prefixed `travel-buddy-stan
 | Measure | Value |
 |---|---|
 | **Denominator — testable requirements** | **127** |
-| BUILT-AND-CORRECT | **91** |
-| BUILT-BUT-WRONG | **31** |
+| BUILT-AND-CORRECT | **90** |
+| BUILT-BUT-WRONG | **32** |
 | NOT-BUILT | **4** |
 | CANNOT-VERIFY | **1** |
 | **CONSTRUCTED%** = (C+W)/127 | **122 / 127 = 96.1 %** |
-| **CORRECT%** (raw) = C/127 | **91 / 127 = 71.7 %** |
-| **CORRECT% (spec-attributable)** | **27 of the 91 — 21.3 %** |
+| **CORRECT%** (raw) = C/127 | **90 / 127 = 70.9 %** |
+| **CORRECT% (spec-attributable)** | **26 of the 90 — 20.5 %** |
 
-> **RESTATED 2026-09-12 (§7), from the rows and not by addition.** §7 moves five
-> rows into C (S68, S66, S70, S72, S85) and one OUT of it (S97, C → W, because
-> the evidence it rested on was a grep that is no longer true). These four
+> **RESTATED 2026-09-12 (§7), from the rows and not by addition.** §7 moves four
+> rows into C (S68, S70, S72, S85) and one OUT of it (S97, C → W, because the
+> evidence it rested on was a grep that is no longer true). **S66 is built on
+> three more surfaces and stays W** — it is a prohibition, and on a default
+> deployment none of the three refusals runs; §7.4 gives the reasoning and says
+> what a reader who disagrees should do with the other four. These four
 > numbers are `check:census-integrity`'s count of the table underneath them in
 > THIS worktree, which does not contain the concurrent §6. **The integrator must
 > recompute this table after merging §6 and §7 together; do not carry it
@@ -1886,7 +1889,11 @@ queue is minutes, and the existing safe-return engine — not a new one — deci
 what those minutes cost. And a row this census had marked BUILT-AND-CORRECT
 turned out not to be: **the Map's §22 zone-contribution ingest assigns an
 observation to the NEAREST PLACE to satisfy a foreign key**, which is the one
-thing §14 and §18.3 both forbid by name. S97 goes back to W.
+thing §14 and §18.3 both forbid by name. S97 goes back to W. A fourth thing did
+NOT happen, and is recorded because it nearly did: S66 ("safety outranks
+opportunity") gained the code it was missing on two more surfaces and **stays
+W**, because it is a prohibition and on a default deployment none of the three
+refusals is switched on.
 
 ### 7.1 What was built, and where
 
@@ -2095,7 +2102,7 @@ not the only resolver in the tree, and the row is about the tree.
 | id | was | now | why |
 | --- | --- | --- | --- |
 | S68 Rank using live ExperienceState, forecast, travel time, friction, compatibility, freshness, safety and Opportunity value | N | **C** | All eight inputs are axes of one pure engine (`lib/discoveryLiveRank.ts:369#gradeLiveRow`) over the one gated live read, reusing Compass's own `summariseLiveState` / `experienceValue` rather than restating them; wired into the REAL `GET /discovery` at both serve points and before the page slice (`routes/discovery.ts:1722#withDiscoveryLiveRank`, `:2076#withDiscoveryLiveRank`) behind 2850's FALSE flag; influence bounded in positions, absence never scored, "could not look" distinguishable from "saw nothing". Mutations B7-M1 to B7-M10 and B7-R1 to B7-R5 each red. |
-| S66 Safety constraints outrank opportunity/vibe; a dangerous place is never simultaneously promoted as "best move now" | W | **C** | The row's remaining gap was the third surface: "Discovery's ranker reads no safety state". It reads it now — a Live-qualified `unsafe_density` demotes behind every other row before any score is compared (`lib/discoveryLiveRank.ts:462`), with the suite asserting it over all eight modes and from first position; and on the layover surface the same reading removes the card (`lib/layoverLiveIntersection.ts:179`). Map (§1), Compass (§2), Discovery and Layover: four of four. B7-M1 red. |
+| S66 Safety constraints outrank opportunity/vibe; a dangerous place is never simultaneously promoted as "best move now" | W | **W** | **Built on three more surfaces and still W, deliberately.** The gap the row named is closed in CODE: Discovery's ranker reads safety state now — a Live-qualified `unsafe_density` demotes behind every other row before any score is compared (`lib/discoveryLiveRank.ts:462`), asserted over all eight modes and from first position — and on the layover surface the same reading removes the card (`lib/layoverLiveIntersection.ts:179`). It does not move because of **this census's own stricter rule for prohibitions** (see *"The rule for prohibitions"*): a "must never" is C when an artifact makes the violation unrepresentable or refuses it, and on a DEFAULT deployment nothing refuses it. Discovery's demotion is behind 2850, seeded FALSE; the layover drop is behind 2851, seeded FALSE; Compass's exclusion is behind an env constant whose own comment reads *"Default OFF"* (`src/compass/CompassLiveConstraints.ts:79#liveConstraintsEnabled`). Only the Map's unconditional priority sort (`lib/mapObjects.ts:335#safety`) holds everywhere, and §1's promotion-stripping addition to it is itself behind 2350. Four surfaces can refuse; one does. B7-M1 and B7-L3 red. |
 | S70 Server-built DiscoveryCandidate with why-now, why-for-user, confidence, freshness and truth class | W | **C** | The one field the row is named for has a producer: `whyNow` carries grounded reasons in the claims' own vocabulary (`lib/discoveryCandidate.ts:240#whyNowOf`) and is null — never `[]` — when no grade was computed or no reading was found (`:225#whyNowOf`); route-tested with the candidate projection on, both arms. The other four fields were already carried. B7-R5 red. |
 | S72 Intent modes — Right Now, Tonight, Explore, Quiet, Social, High Energy, Nearby, Trip — on the same shared intelligence | W | **C** | The spec's eight, verbatim and in order (`lib/discoveryLiveRank.ts:99#DISCOVERY_INTENT_MODES`), each a weight vector over the SAME axes of the SAME engine (`:152#INTENT_MODE_PROFILES`) — the suite asserts no mode has an axis of its own — and the crowd preference they declare is Compass's `experienceValue`, so "the same shared intelligence" is literal. Reachable as `GET /discovery?intentMode=…`; an unknown string is not honoured as a mode (B7-R4 red). |
 | S85 Layover Temporal Freedom Engine intersects feasibility with live Experience value, forecast, friction and safe-return | W | **C** | The row's finding was `grep -rn liveClaimRead services/airport/` → nothing. It reads it now, and intersects rather than competing: a live queue becomes minutes the EXISTING `LayoverSafetyEngine` rates against the certified deadline (`services/airport/LayoverRecommendationService.ts:496`, `lib/layoverLiveIntersection.ts:190`), a live `unsafe_density` or refused walk-in removes the card, a decaying window demotes and never drops, and a card with no reading is untouched. Driven through the real `generateRecommendations` (90 → 180 minutes under a 90-minute queue). B7-L1 to B7-L4 red. |
@@ -2183,9 +2190,21 @@ screen. The layover pass reads one claim per bridged candidate and most
 `discovery_places` rows carry no `canonical_location_id`, so even with rows in
 the tables most cards would be untouched.
 
-And S97 is the part of this section that makes the census worse rather than
-better, which is the point of re-reading a C. One row moved the wrong way
+Two rows are the part of this section that makes the census worse rather than
+better, which is the point of re-reading a C. **S97** moved the wrong way
 because a verdict had been taken from a grep rather than from the object, and
-the object had changed. **Realised in production: 0.0 %**, unchanged.
+the object had changed. **S66** did not move at all although this section built
+the thing it was missing — and that is the more useful of the two findings,
+because it is the shape of a mistake this lane could have made four more times.
+Under the convention §1–§5 used, code that is built, correct and behind a FALSE
+flag is C with the ceiling stated, and S68, S70, S72 and S85 are graded that way
+here. S66 is not a capability but a PROHIBITION, and this census's own rule for
+prohibitions is stricter: the violation has to be refused, not merely
+refusable. On a default deployment a dangerous place can still be promoted as
+the best move now by Discovery, by Compass and on a layover card — three
+refusals exist and none of them runs. A reader who applies the strict rule to
+the capability rows as well should read S68, S70, S72 and S85 as W too; the
+distinction is stated here rather than hidden so that disagreement is possible.
+**Realised in production: 0.0 %**, unchanged.
 
-Headline after §7 in this worktree (last statement wins): C=91 W=31 N=4 X=1
+Headline after §7 in this worktree (last statement wins): C=90 W=32 N=4 X=1
