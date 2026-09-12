@@ -11,7 +11,7 @@ import { MapPin, CalendarDays, Users } from 'lucide-react-native';
 import { CachedImage } from '../CachedImage.tsx';
 import { useEntityHeaderImage } from '../../hooks/useEntityHeaderImage.ts';
 import { color, space, radius, shadow, typography, layout } from '../../theme/tokens.ts';
-import { tripStatusColor, tripStatusLabel, deriveTripDisplayStatus } from '../../domain/trips/invariants/tripStatus.ts';
+import { tripStatusColor, tripStatusLabel, deriveTripDisplayStatus } from '../../lib/tripStatus.ts';
 import { formatTripDateRange } from '../../lib/tripDateFormat.ts';
 
 export interface TripCardProps {

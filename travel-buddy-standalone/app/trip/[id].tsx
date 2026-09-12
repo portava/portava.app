@@ -61,7 +61,7 @@ import { color, space, radius, type as t, avatar, dot } from '../../src/theme/to
 import { useStampToast } from '../../src/components/stamps/StampEarnedToast';
 import { useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
 import { usePlainBottomInset } from '../../src/hooks/useBottomInset';
-import { deriveTripDisplayStatus } from '../../src/domain/trips/invariants/tripStatus';
+import { deriveTripDisplayStatus } from '../../src/lib/tripStatus';
 import { canonicalUrl } from '../../src/constants/canonicalUrl';
 
 function TripDetailScreen() {

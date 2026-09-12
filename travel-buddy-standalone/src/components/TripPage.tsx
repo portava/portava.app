@@ -27,7 +27,7 @@ import { HighlightRing } from './HighlightRing.tsx';
 import { HighlightViewer } from './HighlightViewer.tsx';
 import { AddToPlanSheet } from './AddToPlanSheet.tsx';
 import { useHighlightRingState } from '../hooks/useHighlightRingState.ts';
-import { deriveTripDisplayStatus, tripStatusLabel } from '../domain/trips/invariants/tripStatus.ts';
+import { deriveTripDisplayStatus, tripStatusLabel } from '../lib/tripStatus.ts';
 
 /* ── Trip hero header ── */
 export function TripHero({ trip }: { trip: TripDetail }) {
