@@ -101,13 +101,13 @@ Paths are relative to `artifacts/api-server/` unless prefixed `travel-buddy-stan
 | Measure | Value |
 |---|---|
 | **Denominator — testable requirements** | **127** |
-| BUILT-AND-CORRECT | **80** |
-| BUILT-BUT-WRONG | **36** |
-| NOT-BUILT | **10** |
+| BUILT-AND-CORRECT | **84** |
+| BUILT-BUT-WRONG | **35** |
+| NOT-BUILT | **7** |
 | CANNOT-VERIFY | **1** |
-| **CONSTRUCTED%** = (C+W)/127 | **116 / 127 = 91.3 %** |
-| **CORRECT%** (raw) = C/127 | **80 / 127 = 63.0 %** |
-| **CORRECT% (spec-attributable)** | **15 of the 80 — 11.8 %** |
+| **CONSTRUCTED%** = (C+W)/127 | **120 / 127 = 94.5 %** |
+| **CORRECT%** (raw) = C/127 | **84 / 127 = 66.1 %** |
+| **CORRECT% (spec-attributable)** | **19 of the 84 — 15.0 %** |
 
 > **RESTATED 2026-09-12 (§1): 65 → 77 CORRECT, 39 → 36 WRONG, 22 → 13
 > NOT-BUILT. CONSTRUCTED 81.9 % → 89.0 %, CORRECT 51.2 % → 60.6 %.** §1 is the
@@ -137,6 +137,18 @@ Paths are relative to `artifacts/api-server/` unless prefixed `travel-buddy-stan
 > flag the owner's, and nothing to decide on in production while every intel
 > table holds zero rows.
 
+> **RESTATED 2026-09-12 (§3): 80 → 84 CORRECT, 36 → 35 WRONG, 10 → 7 NOT-BUILT.
+> CONSTRUCTED 91.3 % → 94.5 %, CORRECT 63.0 % → 66.1 %.** §3 builds §9's
+> WallMoment — a transition between the current live claim and the
+> projection's own previous version, never a repeated snapshot — and §15's
+> Attention Engine, which every moment the new Wall route serves passes
+> through (relevance, novelty, urgency, half-life, availability,
+> interruption cost, attention budget → NOTIFY / WALL / SILENT / IGNORE),
+> behind `wall_enabled` and `wall_moments_enabled` (2801, seeded FALSE).
+> S73, S74, S102 N → C and S76 W → C; thirteen mutations and one database
+> rehearsal red then green. NOTIFY is a routing decision on the wire; no
+> dispatcher consumes it, and the section says so. Same caveat as before.
+
 **I disagree with commit `0597a245`'s CONSTRUCTED 56.4 % / CORRECT 32.1 %.** I land materially
 higher on both — roughly +25 points constructed and +19 points correct. I agree exactly with its
 attribution finding: **zero** implemented items are attributable to this specification.
@@ -147,7 +159,7 @@ its own:
 | Sub-score | Denominator | CONSTRUCTED | CORRECT |
 |---|---|---|---|
 | **Sensing input + inference core** (§3, §4, and the Vibe/Experience/Forecast/Opportunity/Session engines: S17–S38, S42–S46, S51–S54) | 31 | 87.1 % (was 64.5 %) | **35.5 %** (was 22.6 %) |
-| Everything else (invariants, reuse directives, surface integration) | 96 | 92.7 % (was 87.5 %) | 71.9 % (was 60.4 %) |
+| Everything else (invariants, reuse directives, surface integration) | 96 | 96.9 % (was 87.5 %) | 76.0 % (was 60.4 %) |
 
 The high headline is a property of the specification, not a compliment to the tree. This spec is
 titled *UPGRADE, DO NOT REBUILD*; §19 says outright *"Do Not Blindly Materialize"*; and a large
@@ -224,7 +236,7 @@ Most of §2 and §20 are prohibitions. The rule applied here, uniformly:
 Six BUILT-AND-CORRECT verdicts are **vacuous or partly vacuous** (the guard is real but the path
 it guards is empty): S89, S90, S91, S105, S22, and — since §1 — S9. They are flagged `⌀` in the
 table or in §1.3. A reader who rejects vacuous satisfaction should subtract them: CORRECT% becomes
-**74 of 127 = 58.3 %** (60 of 127 = 47.2 % before §1).
+**78 of 127 = 61.4 %** (60 of 127 = 47.2 % before §1).
 
 ---
 
@@ -1030,35 +1042,35 @@ before its commit; the mutations are listed in §2.3.
 
 ### 2.1 What was built, and where
 
-- **§10 the decision (S78)** — `lib/compassDecision.ts:83#COMPASS_DECISIONS`
-  is the spec's seven words verbatim, and `lib/compassDecision.ts:356#decideCompass(`
+- **§10 the decision (S78)** — `lib/compassDecision.ts:80#COMPASS_DECISIONS`
+  is the spec's seven words verbatim, and `lib/compassDecision.ts:337#decideCompass(`
   runs the rules in the order the spec's precedence implies: safety outranks
   opportunity — a Live-qualified `unsafe_density` is SKIP for every viewer,
   whatever the intent, ETA or current experience
-  (`lib/compassDecision.ts:379#safety_outranks_opportunity`); already at the
+  (`lib/compassDecision.ts:360#safety_outranks_opportunity`); already at the
   candidate is STAY; without a READING the engine cannot say GO — a reading
   is a claim Compass's own rule Live-qualifies
   (`compass/CompassLiveConstraints.ts:268#isLiveConstraintEligible(`) AND the
   Wall's §5.1 derivation classes as an observation
-  (`lib/compassDecision.ts:245#isReading(`), so a sponsored "busy" is
+  (`lib/compassDecision.ts:224#isReading(`), so a sponsored "busy" is
   `inferred` and a materially conflicting one `conflicting` and neither backs
   GO (§2 promotional claim ≠ observed reality); a read the gates refused is
   WAIT with `live_intelligence_unavailable`, nothing served is WAIT with
   `no_live_evidence`, live-but-not-observational evidence is WAIT with
   `evidence_not_observational` — three different facts, three reasons
-  (`lib/compassDecision.ts:386#live_intelligence_unavailable`); an emerging,
+  (`lib/compassDecision.ts:367#live_intelligence_unavailable`); an emerging,
   building candidate is GO SOON, labelled below the live floor; a refused
   walk-in is SKIP and a queue past the tolerance is WAIT; a candidate at the
   intent floor is SKIP; then interception, RETURN, the switching cost, and GO
   NOW. Every decision carries its grounding — the §5.1 block composed
   weakest-on-every-axis over the claims it rests on
-  (`lib/compassDecision.ts:236#truthOf(`; `lib/experienceTruth.ts:159#composeTruth(`) — and a sentence built from templates
+  (`lib/compassDecision.ts:215#truthOf(`; `lib/experienceTruth.ts:159#composeTruth(`) — and a sentence built from templates
   over the claim values with the truth class always in it, a vibe only as
   "reported as", and no template with a behaviour verb, so the engine cannot
-  produce "everyone is dancing" (`lib/compassDecision.ts:445#summariseDecision(`;
+  produce "everyone is dancing" (`lib/compassDecision.ts:426#summariseDecision(`;
   `test/compassDecision.test.ts:305#everyone`). Experience value is
   intent-relative — quiet, social, high energy — and UNKNOWN with no intent:
-  the engine does not read busy as good (`lib/compassDecision.ts:314#experienceValue(`;
+  the engine does not read busy as good (`lib/compassDecision.ts:295#experienceValue(`;
   `test/compassDecision.test.ts:152#intent-relative`). The route
   `GET /api/compass/decision` (`routes/compassDecision.ts:68#router.get(`)
   reads the flag fail-closed (`routes/compassDecision.ts:78#compass_decision_enabled`),
@@ -1087,29 +1099,29 @@ before its commit; the mutations are listed in §2.3.
   (`test/compassDecisionRoute.test.ts:152#CLOSED`;
   `test/compassDecisionRoute.test.ts:160#NOTHING`). Nothing person-shaped is
   on the wire: no contributor, coordinate or count.
-- **§10 the switching cost (S80)** — `lib/compassDecision.ts:94#SWITCHING_COST`
+- **§10 the switching cost (S80)** — `lib/compassDecision.ts:91#SWITCHING_COST`
   is the cost (0.25 of the 0..1 value, a documented tunable; the SHAPE is the
   requirement); with a current experience whose value is known the candidate
   must beat it by more than the cost to be SWITCH, else STAY
-  (`lib/compassDecision.ts:410#better_by_more_than_switching_cost`); with a
+  (`lib/compassDecision.ts:391#better_by_more_than_switching_cost`); with a
   current experience whose value is UNKNOWN — no intent, or no reading where
   the traveller is — the engine has no basis to tell them to leave and says
   STAY for that reason, inventing neither a cost nor a preference
-  (`lib/compassDecision.ts:408#current_value_unknown`); dwell is revealed
+  (`lib/compassDecision.ts:389#current_value_unknown`); dwell is revealed
   preference and can only raise a KNOWN current value, bounded
-  (`lib/compassDecision.ts:327#currentExperienceValue(`), so an hour at a
+  (`lib/compassDecision.ts:308#currentExperienceValue(`), so an hour at a
   moderate place turns a SWITCH into a STAY
   (`test/compassDecision.test.ts:228#dwell`), and creates no value
   (`test/compassDecision.test.ts:237#creates`). The report says whether the
   cost was applied and both values.
-- **§11 peak interception (S86)** — `lib/compassDecision.ts:337#interceptPeak(`:
+- **§11 peak interception (S86)** — `lib/compassDecision.ts:318#interceptPeak(`:
   arrival = now + ETA against the EARLIEST horizon of the claims that
   qualified — min(`validUntil`, `observedAt` + the family's TTL), the rule
   Compass's arrival forecast already uses
   (`compass/CompassLiveConstraints.ts:505#forecastArrival(`) — reachable when
   arrival precedes it, with the margin in minutes either way; arrival after
   the horizon is WAIT with `window_may_decay_before_arrival` and the sentence
-  says by how much (`lib/compassDecision.ts:400#window_may_decay_before_arrival`);
+  says by how much (`lib/compassDecision.ts:381#window_may_decay_before_arrival`);
   an unknown ETA is an unknown interception, stated, never assumed reachable
   (`test/compassDecision.test.ts:190#unknown`;
   `test/compassDecision.test.ts:179#EARLIEST`). The route derives the ETA at
@@ -1167,3 +1179,195 @@ every intel table holds zero rows and `intel_live_promoted_scopes` is empty,
 so the route there answers WAIT with `no_live_evidence` for every place: a
 decision engine with nothing to decide on, and honest about it. No client
 calls the route. **Realised in production: 0.0 %**, unchanged.
+
+## 3. The Wall's moments, and the engine that decides who is interrupted
+
+**Read against the branch `claude/sensing-lane`, 2026-09-12, by the Sensing
+lane.** Three N rows and one W row on the Wall side of the spec: §9's
+demand that the Wall consume meaningful state transitions rather than
+repeated snapshots (S73), the server-built `WallMoment` with subject,
+transition, occurred_at, relevance window, reason, truth class, freshness
+and expiry (S74), the split between the Live Now strip and a chronological
+record of transitions (S76), and §15's mandatory Attention Engine — world
+changes routed through relevance, novelty, urgency, half-life, availability,
+interruption cost and an attention budget before NOTIFY / WALL / SILENT /
+IGNORE (S102). One migration, 2801, seeds a flag FALSE; no table, no column,
+no write path, and the engine sends nothing. The Wall's own route file is
+untouched; the new route sits beside it behind the Wall's master flag. Every
+rule went red under a mutation before its commit; the mutations are listed
+in §3.3.
+
+### 3.1 What was built, and where
+
+- **§9 a moment is a change (S73, S74)** — `lib/wallMoments.ts:41#WALL_TRANSITIONS`
+  is §9's place-state family: warming, building, peaking, cooling, crowd
+  shift, vibe change, queue change, a safety notice activated or cleared.
+  `lib/wallMoments.ts:140#detectTransitions(` compares each CURRENT envelope
+  — from `readLiveClaimEnvelopes`, the one gated read path — against the
+  PREVIOUS readings of the same claim type from the projection's own
+  append-only record, and emits a transition only when the value changed:
+  the same value projected again is not a moment, and a first reading with
+  nothing on record to change from is not a change
+  (`lib/wallMoments.ts:161#record`; `test/wallMoments.test.ts:70#same`;
+  `test/wallMoments.test.ts:74#first`). The transition is dated when the
+  current value BECAME current — the first version that carried it after the
+  last differing one — not when it was last observed
+  (`lib/wallMoments.ts:165#becameCurrentAt`; `test/wallMoments.test.ts:77#dated`).
+  A safety activation comes only from a served `unsafe_density`, the
+  specialist-only level no contributor surface can emit
+  (`lib/wallMoments.ts:125#safety_notice_activated`;
+  `test/wallMoments.test.ts:105#ONLY`); trajectories map emerging → warming,
+  building, peaking, declining → cooling, and stable to no moment.
+  `lib/wallMoments.ts:189#buildWallMoment(` carries §9's eight fields and the
+  §5.1 block of the envelope that evidences it, through the same derivation
+  the Compass decision uses (`lib/liveEnvelopeTruth.ts:16#truthOfEnvelope(`),
+  so a sponsored change is `inferred` and a stale one `stale`
+  (`test/wallMoments.test.ts:136#carries`; `test/wallMoments.test.ts:153#sponsored`);
+  the id names the subject, the claim type, the instant and the value, so a
+  client can say it has seen it. `lib/wallMoments.ts:208#buildWallMoments(`
+  drops the expired and orders newest change first. Nothing person-shaped is
+  in a moment (`test/wallMoments.test.ts:157#contributor`).
+- **§9 the previous side is a baseline, never a value served (S76)** —
+  `lib/wallMomentRead.ts:35#readPreviousReadings(` reads
+  `intel_state_snapshot_versions` (2273; present in the 2026-09-08 production
+  snapshot) for one subject, privacy-eligible rows only
+  (`lib/wallMomentRead.ts:47#privacy_eligible`) — a sub-k version is never
+  read, so nothing the gate withheld can leak through a comparison — and
+  reports a failed read as a NAMED refusal: an absent table is
+  `versions_unavailable`, anything else `error`, never an empty list
+  (`lib/wallMomentRead.ts:51#versions_unavailable`;
+  `test/wallMomentsRoute.test.ts:167#REFUSAL`;
+  `test/wallMomentsRoute.test.ts:163#sub-k`). The Live Now strip is
+  untouched and keeps consuming current projections
+  (`services/wall/LiveForYouService.ts:212#buildLiveForYou(`); the record of
+  transitions is a different object on a different route, so neither
+  duplicates the other.
+- **§15 the Attention Engine (S102)** — `lib/attentionEngine.ts:42#ATTENTION_ROUTES`
+  is NOTIFY / WALL / SILENT / IGNORE, and `lib/attentionEngine.ts:121#routeAttention(`
+  decides one moment for one viewer with every factor the row names on the
+  decision (`test/attentionEngine.test.ts:63#factor`): novelty first — a
+  moment the viewer has seen is IGNORE whatever else is true, a safety
+  activation included (`lib/attentionEngine.ts:134#already_seen`;
+  `test/attentionEngine.test.ts:70#seen`); half-life — past its relevance
+  window IGNORE, most of the way through it stale news
+  (`lib/attentionEngine.ts:141#decayed`; `test/attentionEngine.test.ts:86#stale`);
+  relevance — none is IGNORE, a saved place or trip stop may be interrupted
+  for, a followed place reaches the Wall, merely nearby only when urgent
+  (`lib/attentionEngine.ts:57#NOTIFY_RELEVANCE_FLOOR`;
+  `lib/attentionEngine.ts:61#RELEVANCE_WEIGHT`;
+  `test/attentionEngine.test.ts:102#followed`); urgency from the transition
+  kind (`lib/attentionEngine.ts:69#URGENCY_OF`); availability — quiet hours
+  or push off defer an urgent change to the Wall, and UNKNOWN availability is
+  not availability: an unreadable consent defers too, it is never read as
+  consent (`lib/attentionEngine.ts:144#availability_unknown_deferred_to_wall`;
+  `test/attentionEngine.test.ts:122#UNKNOWN`); interruption cost against the
+  attention budget — the interruptions already delivered in the window
+  exhaust it (`lib/attentionEngine.ts:146#budget_exhausted_deferred_to_wall`;
+  `lib/attentionEngine.ts:49#ATTENTION_BUDGET_PER_WINDOW`;
+  `test/attentionEngine.test.ts:127#budget`); and the safety override — an
+  activation for a saved place or trip stop is NOTIFY through quiet hours,
+  through an unknown consent read and past the budget, the same override the
+  notification path's safety category has, and never past novelty
+  (`lib/attentionEngine.ts:139#safety_override`;
+  `test/attentionEngine.test.ts:139#through`). The engine reads no clock and
+  no database and sends nothing (`test/attentionEngine.test.ts:58#sends`).
+- **The route** — `GET /api/wall/moments` (`routes/wallMoments.ts:94#router.get(`)
+  reads `wall_enabled` and then `wall_moments_enabled` fail-closed
+  (`routes/wallMoments.ts:104#wall_enabled`;
+  `routes/wallMoments.ts:108#wall_moments_enabled`), takes the subjects the
+  client names — its saved places, its trip stops, the places it is near, a
+  viewer-relevant bounded set as the Live For You rule requires — with the
+  relevance the client declares and the moment ids it has shown; per subject
+  it reads the current claims through the seam
+  (`routes/wallMoments.ts:132#readLiveClaimEnvelopes(sc`), the previous
+  readings from the record (`routes/wallMoments.ts:137#readPreviousReadings(sc`),
+  builds the moments and routes each one for this viewer
+  (`routes/wallMoments.ts:144#routeAttention(`) with availability from the
+  viewer's notification preferences — quiet hours, push — and the hour's
+  delivered notifications as the interruption cost
+  (`routes/wallMoments.ts:69#viewerAvailability(sc`;
+  `routes/wallMoments.ts:79#notifiesInWindow(sc`); an unknowable count is
+  treated as the budget spent. It answers newest change first with a report
+  per subject that tells "no moments" from "could not look" and "no versions
+  to compare". It writes nothing and sends nothing. Registered at the tail
+  of `routes/index.ts:335#wallMomentsRouter`. 2801 seeds the flag FALSE and
+  refuses to commit a TRUE row (`migrations/2801_wall_moments_flag.sql:41#INSERT`;
+  `migrations/2801_wall_moments_flag.sql:54#reads`); the rollback refuses
+  over a TRUE row (`db/rollback/2026-09-12-2801-wall-moments-flag-rollback.sql:23#DELETE`)
+  and was rehearsed apply → rollback → apply on the lane's replica. The route
+  suite drives the real handler over the fake PostgREST double: the flag
+  absent (production's state) or false, or the Wall's master off, answer
+  `feature_disabled` and read nothing (`test/wallMomentsRoute.test.ts:99#ABSENT`;
+  `test/wallMomentsRoute.test.ts:104#master`); a changed value is a moment
+  with its transition, occurred_at, truth and a route for the viewer
+  (`test/wallMomentsRoute.test.ts:113#changed`); an unchanged value is not
+  (`test/wallMomentsRoute.test.ts:127#UNCHANGED`); a safety activation for a
+  saved place is NOTIFY in quiet hours and IGNORE once seen
+  (`test/wallMomentsRoute.test.ts:132#safety`); a peak for a saved place is
+  deferred to the Wall when the hour's three notifications have spent the
+  budget (`test/wallMomentsRoute.test.ts:146#urgent`); the Live pilot closed
+  refuses every subject by name, and nothing served for a place — production's
+  state — is no moment and no refusal (`test/wallMomentsRoute.test.ts:172#CLOSED`;
+  `test/wallMomentsRoute.test.ts:177#nothing`). Nothing person-shaped
+  reaches the wire.
+- **One module shared, one refactor** — `lib/liveEnvelopeTruth.ts:16#truthOfEnvelope(`
+  is the §5.1 block of one live envelope through the Wall's derivation;
+  `lib/compassDecision.ts` now imports it instead of defining it, with its
+  behaviour unchanged — its two suites pass unmodified (43 / 43), which is
+  the re-derivation of S78, S80 and S86 on the refactored file. The
+  refactor shortened the file, so every §2 citation into it was re-anchored
+  in this section's commit (`check:doc-citations` reported all fourteen and
+  is clean again); the code each anchor names did not change.
+
+### 3.2 Row moves
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| S73 Wall consumes meaningful state transitions, not repeated snapshots of unchanged state | N | **C** | A transition is a change between the current live claim and the projection's own previous version; the same value again is not one and a first reading is not a change (B3-M1 red); served newest-first on `GET /api/wall/moments` behind 2801's FALSE flag and the Wall's master, route-tested (B3-M13 red). |
+| S74 Server-built `WallMoment` with subject, transition, occurred_at, relevance window, reason, truth class, freshness, expiry | N | **C** | All eight fields on every moment, occurred_at the instant the value became current (B3-M2 red), a safety activation only from a served `unsafe_density` (B3-M3 red), the expired dropped (B3-M4 red), the truth block the evidencing envelope's own. |
+| S76 Live Now strip consumes current projections; chronological Wall records transitions/history; do not duplicate both | W | **C** | The strip is untouched and consumes current envelopes; the moments route is the chronological record of transitions — a different object, with the previous side a privacy-eligible baseline never served (B3-M10, B3-M11 red) — so neither duplicates the other. The Following lane does not interleave moments; a client composes the two. |
+| S102 Attention Engine is mandatory: world changes route through relevance, novelty, urgency, half-life, availability, interruption cost and attention budget before NOTIFY / WALL / SILENT / IGNORE | N | **C** | Every moment the route serves passes through the engine (B3-M12 red when skipped) and every factor is on the decision; novelty, half-life, unknown availability, the budget and the safety override each red under their own mutation (B3-M5 to B3-M9). NOTIFY is a routing decision on the wire: no server dispatcher consumes it, and no world change reaches a notification by any other path. |
+
+**Held, with the reason.** **S75** and **S77** hold C: the Following lane is
+still strict reverse-chronological and the moments route is a record, not a
+ranking; personalization decides whether a moment matters to the viewer and
+rewrites nothing in it. **S89** holds C and is less vacuous than it was:
+Telegraph still consumes no live intelligence, but the Wall now serves
+moments that carry no contributor either. **S87** and **S88** stay N: a
+moment is now a canonical object with an id a Telegraph share could
+reference, and nothing shares one. **S60** and **S44** hold C: the Map's
+world moments are cell-level changes over published aggregates; the Wall's
+are place-level changes over projected claims; the two do not overlap and
+neither reads the other. **S49** stays W: the Wall's moments carry all four
+fields, and Discovery's candidate and Compass's states still do not.
+
+### 3.3 The mutations, in one place
+
+| # | row(s) | file | what was changed | red | green |
+| --- | --- | --- | --- | ---: | ---: |
+| B3-M1 | S73 | `lib/wallMoments.ts` | an unchanged value emitted as a moment | 2 | 0 |
+| B3-M2 | S74 | `lib/wallMoments.ts` | occurred_at taken from the observation, not the change | 4 | 0 |
+| B3-M3 | S74 | `lib/wallMoments.ts` | a safety activation from an ordinary crowd change | 4 | 0 |
+| B3-M4 | S74 | `lib/wallMoments.ts` | expired moments served | 1 | 0 |
+| B3-M5 | S102 | `lib/attentionEngine.ts` | seen moments not ignored | 2 | 0 |
+| B3-M6 | S102 | `lib/attentionEngine.ts` | unknown availability read as available | 1 | 0 |
+| B3-M7 | S102 | `lib/attentionEngine.ts` | the budget ignored | 2 | 0 |
+| B3-M8 | S102 | `lib/attentionEngine.ts` | the half-life ignored | 1 | 0 |
+| B3-M9 | S102 | `lib/attentionEngine.ts` | the safety override dropped | 2 | 0 |
+| B3-M10 | S76 | `lib/wallMomentRead.ts` | a sub-k previous version read | 1 | 0 |
+| B3-M11 | S76 | `lib/wallMomentRead.ts` | a missing versions table read as "no moments" | 1 | 0 |
+| B3-M12 | S102 | `routes/wallMoments.ts` | the engine skipped on the route | 2 | 0 |
+| B3-M13 | S73 | `routes/wallMoments.ts` | the flag read ignored | 2 | 0 |
+| DB-4 | S73 | replica | 2801 applied, rolled back (row gone), applied (FALSE) | — | — |
+
+### 3.4 The ceiling
+
+Nothing here is deployed, enabled or production-realised. 2801 exists on
+the lane's replica and nowhere else; `wall_moments_enabled` is seeded FALSE
+behind a `wall_enabled` that is itself FALSE, and both are the owner's. In
+production every intel table holds zero rows and `intel_live_promoted_scopes`
+is empty, so the route there serves no moment for any place; the versions
+table it compares against is in the 2026-09-08 production snapshot, so
+where it will refuse is the pilot, not the schema. NOTIFY is a decision no
+dispatcher consumes. No client calls the route. **Realised in production:
+0.0 %**, unchanged.
