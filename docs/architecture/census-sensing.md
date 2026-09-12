@@ -101,13 +101,13 @@ Paths are relative to `artifacts/api-server/` unless prefixed `travel-buddy-stan
 | Measure | Value |
 |---|---|
 | **Denominator — testable requirements** | **127** |
-| BUILT-AND-CORRECT | **84** |
+| BUILT-AND-CORRECT | **86** |
 | BUILT-BUT-WRONG | **35** |
-| NOT-BUILT | **7** |
+| NOT-BUILT | **5** |
 | CANNOT-VERIFY | **1** |
-| **CONSTRUCTED%** = (C+W)/127 | **120 / 127 = 94.5 %** |
-| **CORRECT%** (raw) = C/127 | **84 / 127 = 66.1 %** |
-| **CORRECT% (spec-attributable)** | **19 of the 84 — 15.0 %** |
+| **CONSTRUCTED%** = (C+W)/127 | **121 / 127 = 95.3 %** |
+| **CORRECT%** (raw) = C/127 | **86 / 127 = 67.7 %** |
+| **CORRECT% (spec-attributable)** | **21 of the 86 — 16.5 %** |
 
 > **RESTATED 2026-09-12 (§1): 65 → 77 CORRECT, 39 → 36 WRONG, 22 → 13
 > NOT-BUILT. CONSTRUCTED 81.9 % → 89.0 %, CORRECT 51.2 % → 60.6 %.** §1 is the
@@ -149,6 +149,19 @@ Paths are relative to `artifacts/api-server/` unless prefixed `travel-buddy-stan
 > rehearsal red then green. NOTIFY is a routing decision on the wire; no
 > dispatcher consumes it, and the section says so. Same caveat as before.
 
+> **RESTATED 2026-09-12 (§4): 84 → 86 CORRECT, 35 WRONG unchanged, 7 → 5 NOT-BUILT.
+> CONSTRUCTED 94.5 % → 95.3 %, CORRECT 66.1 % → 67.7 %.** §4 builds §12: a
+> conversation shares a CANONICAL REFERENCE to a server-built live object —
+> subject, kind, snapshot id, version id, value at share time, truth block,
+> and a human line that carries no value — as one `messages` card, and a
+> shared reference resolves against the current state with
+> `changedSinceShare` on the answer (NULL, never false, when the state cannot
+> be read), behind `telegraph_live_references_enabled` (2802, seeded FALSE).
+> S87, S88 N → C; S89's vacuity lifted (five `⌀` rows now, strict reading
+> 81 / 127 = 63.8 %). Eighteen mutations and one database rehearsal red then
+> green. Opportunity is refused as a kind by name because S56 has no object.
+> Same caveat as before.
+
 **I disagree with commit `0597a245`'s CONSTRUCTED 56.4 % / CORRECT 32.1 %.** I land materially
 higher on both — roughly +25 points constructed and +19 points correct. I agree exactly with its
 attribution finding: **zero** implemented items are attributable to this specification.
@@ -159,7 +172,7 @@ its own:
 | Sub-score | Denominator | CONSTRUCTED | CORRECT |
 |---|---|---|---|
 | **Sensing input + inference core** (§3, §4, and the Vibe/Experience/Forecast/Opportunity/Session engines: S17–S38, S42–S46, S51–S54) | 31 | 87.1 % (was 64.5 %) | **35.5 %** (was 22.6 %) |
-| Everything else (invariants, reuse directives, surface integration) | 96 | 96.9 % (was 87.5 %) | 76.0 % (was 60.4 %) |
+| Everything else (invariants, reuse directives, surface integration) | 96 | 99.0 % (was 87.5 %) | 78.1 % (was 60.4 %) |
 
 The high headline is a property of the specification, not a compliment to the tree. This spec is
 titled *UPGRADE, DO NOT REBUILD*; §19 says outright *"Do Not Blindly Materialize"*; and a large
@@ -233,10 +246,11 @@ Most of §2 and §20 are prohibitions. The rule applied here, uniformly:
   being added, is **NOT-BUILT** — annotated *unguarded absence*. The guarantee is not
   constructed; it is merely currently unviolated.
 
-Six BUILT-AND-CORRECT verdicts are **vacuous or partly vacuous** (the guard is real but the path
-it guards is empty): S89, S90, S91, S105, S22, and — since §1 — S9. They are flagged `⌀` in the
-table or in §1.3. A reader who rejects vacuous satisfaction should subtract them: CORRECT% becomes
-**78 of 127 = 61.4 %** (60 of 127 = 47.2 % before §1).
+Five BUILT-AND-CORRECT verdicts are **vacuous or partly vacuous** (the guard is real but the path
+it guards is empty): S90, S91, S105, S22, and — since §1 — S9. They are flagged `⌀` in the
+table or in §1.3; S89 carried the mark until §4 gave Telegraph a real live-intelligence consumer
+and pinned that it exposes no contributor. A reader who rejects vacuous satisfaction should
+subtract them: CORRECT% becomes **81 of 127 = 63.8 %** (60 of 127 = 47.2 % before §1).
 
 ---
 
@@ -1371,3 +1385,239 @@ table it compares against is in the 2026-09-08 production snapshot, so
 where it will refuse is the pilot, not the schema. NOTIFY is a decision no
 dispatcher consumes. No client calls the route. **Realised in production:
 0.0 %**, unchanged.
+
+## 4. What a conversation shares, and whether it is still true
+
+**Read against the branch `claude/sensing-lane`, 2026-09-12, by the Sensing
+lane.** The two N rows of §12: Telegraph must share canonical references to
+ExperienceState / Opportunity / WorldMoment / SafetyNotice rather than
+copying stale prose (S87), and a shared live object may say that its state
+changed since it was shared (S88). One migration, 2802, seeds a flag FALSE;
+no table, no column. The write path is ONE `messages` row per share, and
+the reason it is the service client's is a fact read off the object, not
+the sentence: `public.messages` carries `msg_insert … WITH CHECK (false)`
+(`baseline/20260819_baseline_structure.sql:29369#msg_insert`; the same row
+on the lane's replica of the 2026-09-08 snapshot, pinned in
+`test/db/telegraphLiveReferences.db.test.ts:108#msg_insert`), so an
+authenticated member cannot INSERT a message through PostgREST at all.
+Telegraph's own route files are untouched; the new router sits beside them.
+Every rule went red under a mutation before its commit; the mutations are
+listed in §4.3.
+
+### 4.1 What was built, and where
+
+- **§12 a reference, not prose (S87)** — `lib/liveReference.ts:106#LiveReference`
+  is what a conversation shares: the subject (a place, id and name), the
+  kind, and per claim the snapshot id lib/liveClaimRead already serves as
+  provenance, the projection's own version id at share time when the record
+  could be read, the comparable VALUE at share time as the baseline "changed
+  since" is measured from, the observation time, the validity horizon, and
+  the §5.1 truth block composed weakest-wins over the claims
+  (`lib/liveReference.ts:82#LiveReferenceClaim`; `lib/liveReference.ts:206#buildLiveReference(`;
+  `test/liveReference.test.ts:113#carries`). The ONE human line names the
+  subject and the kind and nothing of the state
+  (`lib/liveReference.ts:220#referenceText`; `lib/liveReference.ts:76#KIND_WORD`),
+  so a client that renders only the line can never present the value as it
+  was at share time as if it were current — the test walks every claim's
+  value and asserts it is absent from the line
+  (`test/liveReference.test.ts:136#text must not carry`;
+  `test/telegraphLiveReferencesRoute.test.ts:271#includes`). A sender's own
+  note is bounded and never the state's words (`lib/liveReference.ts:197#NOTE_MAX`).
+  The kinds are exactly the three objects the tree has a canonical producer
+  for — `experience_state` (lib/mapExperienceState, S53), `world_moment`
+  (lib/wallMoments, S74), `safety_notice` (lib/mapProducers/safetyNoticeProducer,
+  S103's last stage) — and the fourth object §12 names, Opportunity, is
+  refused BY NAME because no canonical Opportunity object exists (S56, N):
+  `lib/liveReference.ts:61#UNREFERENCEABLE_SPEC_OBJECTS`,
+  `lib/liveReference.ts:27#THE FOURTH OBJECT`, `test/liveReference.test.ts:79#opportunity`.
+  What each kind points at is fixed: the experience kinds are evidenced by
+  the Wall's claim set (`lib/liveReference.ts:64#EXPERIENCE_REFERENCE_CLAIM_TYPES`,
+  asserted equal to `routes/wallMoments.ts` at `test/liveReference.test.ts:82#Wall`),
+  a safety reference only by the specialist-reviewed `unsafe_density` claim
+  (`lib/liveReference.ts:66#SAFETY_REFERENCE_CLAIM_TYPE`, asserted equal to the
+  map producer's pair at `test/liveReference.test.ts:82#producer`), a world
+  moment only by a transition lib/wallMoments detected
+  (`lib/liveReference.ts:145#selectReferenceEnvelopes(`; `test/liveReference.test.ts:104#transition`).
+  Nothing to point at is a named refusal, never an empty reference
+  (`lib/liveReference.ts:208#nothing_to_reference`; `test/liveReference.test.ts:141#refusal`).
+  A version pins ONLY when its value is the served value; a record that has
+  not caught up pins nothing rather than a version that says something else
+  (`lib/liveReference.ts:168#pinVersionId(`; `test/liveReference.test.ts:175#caught up`).
+  The stored body parses back and a foreign body does not
+  (`lib/liveReference.ts:273#parseLiveReference(`; `test/liveReference.test.ts:193#refuses`).
+
+- **§12 changed since sharing (S88)** — `lib/liveReference.ts:366#compareLiveReference(`
+  measures the shared reference against the CURRENT envelopes the caller
+  read through the gate. Per shared claim: the same value on the same
+  evidence is `unchanged`, the same value on newer evidence `reaffirmed`
+  (`lib/liveReference.ts:354#reaffirmed`), a different value `changed`, no
+  current claim `expired` past the shared horizon and `withdrawn` before it
+  (`lib/liveReference.ts:350#expired`; `test/liveReference.test.ts:234#withdrawn`;
+  `test/liveReference.test.ts:237#expired`); a current claim of a type the
+  reference did not carry, within the kind's types, is `added`
+  (`lib/liveReference.ts:385#added`; `test/liveReference.test.ts:248#added`).
+  `changedSinceShare` is true when any claim is changed / expired /
+  withdrawn / added (`lib/liveReference.ts:292#CHANGES_THAT_DIFFER`;
+  `lib/liveReference.ts:403#changedSinceShare`). A world-moment reference
+  additionally says whether the transition's value is still current
+  (`lib/liveReference.ts:398#momentStillCurrent`; `test/liveReference.test.ts:269#momentStillCurrent`).
+  When the current state cannot be read the answer is NULL with the
+  refusal on it — never false, which would read as "still true"
+  (`lib/liveReference.ts:331#refusedComparison(`; `test/liveReference.test.ts:278#null`).
+
+- **the routes** — `routes/telegraphLiveReferences.ts:100#router.post(` is
+  `POST /api/telegraph/threads/:threadId/live-references`: requireUser, the
+  flag read fail-closed (`routes/telegraphLiveReferences.ts:110#isFlagEnabled`),
+  membership by the predicate `authz.is_active_thread_member` uses — a
+  present member row with `left_at IS NULL`
+  (`lib/liveReferenceMessages.ts:35#isActiveThreadMember(`;
+  `lib/liveReferenceMessages.ts:46#left_at`;
+  `routes/telegraphLiveReferences.ts:130#forbidden`) — an ACTIVE, unmerged
+  place (`routes/telegraphLiveReferences.ts:76#readReferenceablePlace(`), then
+  `liveLabelsServable` and `readLiveClaimEnvelopes` — the one gated read
+  path, with live intelligence not servable a refusal and not a card
+  (`routes/telegraphLiveReferences.ts:141#liveLabelsServable`;
+  `routes/telegraphLiveReferences.ts:146#readLiveClaimEnvelopes`;
+  `test/telegraphLiveReferencesRoute.test.ts:330#live_intelligence_unavailable`).
+  A world moment takes the newest transition lib/wallMoments detects against
+  the previous readings (`routes/telegraphLiveReferences.ts:94#readPreviousReadings`;
+  `routes/telegraphLiveReferences.ts:96#detectTransitions`). The newest
+  privacy-eligible version per claim type is read to pin to, newest-first
+  asserted in code as well as asked of the query
+  (`lib/liveReferenceMessages.ts:66#readLatestVersions(`;
+  `lib/liveReferenceMessages.ts:83#sort`), and an unreadable record is a pin
+  withheld, not a share refused (`routes/telegraphLiveReferences.ts:163#versions`;
+  `routes/telegraphLiveReferences.ts:182#versionsPinned`). The card is
+  written as the service client — `card` / `live_reference`, the body the
+  reference — after membership is established, for the reason in the
+  module header (`lib/liveReferenceMessages.ts:7#WHY THE WRITE`;
+  `lib/liveReferenceMessages.ts:106#insert(`; `lib/liveReferenceMessages.ts:110#msg_type`;
+  `test/telegraphLiveReferencesRoute.test.ts:254#rows.length`;
+  `test/telegraphLiveReferencesRoute.test.ts:267#ver-now`). Nothing to
+  reference is the same named refusal on the wire and no card
+  (`routes/telegraphLiveReferences.ts:169#refusal`;
+  `test/telegraphLiveReferencesRoute.test.ts:295#nothing_to_reference`).
+  `routes/telegraphLiveReferences.ts:188#router.get(` is
+  `GET /api/telegraph/live-references/:messageId`: the card by id — absent,
+  deleted or another subtype reads as not found
+  (`lib/liveReferenceMessages.ts:148#subtype`) — membership on ITS thread,
+  a non-member answered exactly as an absent card so membership is not
+  disclosed (`routes/telegraphLiveReferences.ts:220#not_found`;
+  `test/telegraphLiveReferencesRoute.test.ts:391#absent`), the stored body
+  parsed, then the current envelopes through the same gate and the
+  comparison (`routes/telegraphLiveReferences.ts:236#compareLiveReference`;
+  `routes/telegraphLiveReferences.ts:237#current`), or the refused
+  comparison when live intelligence is not servable
+  (`routes/telegraphLiveReferences.ts:233#refusedComparison`;
+  `test/telegraphLiveReferencesRoute.test.ts:386#null`). The wire carries
+  the current claims only through that gate; nothing person-shaped is on it
+  (`test/telegraphLiveReferencesRoute.test.ts:282#forbidden`). Registered at
+  the tail of `routes/index.ts:339#telegraphLiveReferencesRouter`.
+
+- **2802 and its rollback** — `migrations/2802_telegraph_live_references_flag.sql:47#INSERT`
+  seeds `telegraph_live_references_enabled` FALSE, one row, `ON CONFLICT DO
+  NOTHING`, with a precondition that `messages` and `message_thread_members`
+  exist (`migrations/2802_telegraph_live_references_flag.sql:37#messages`)
+  and a postcondition refusing a TRUE row
+  (`migrations/2802_telegraph_live_references_flag.sql:60#reads TRUE`).
+  `db/rollback/2026-09-12-2802-telegraph-live-references-flag-rollback.sql:28#DELETE`
+  removes the FALSE row and refuses over a TRUE one
+  (`db/rollback/2026-09-12-2802-telegraph-live-references-flag-rollback.sql:23#reads TRUE`);
+  it deletes no card, because a flag removed does not unsend a conversation.
+  Rehearsed on the lane's replica: apply → rollback (row gone) → apply
+  (FALSE); then the row set TRUE by hand, and BOTH files refused (exit 3
+  each), then FALSE restored (DB-5).
+
+- **executed on a database** — `test/db/telegraphLiveReferences.db.test.ts:63#real database`
+  runs against the replica as the roles the policies name: the
+  `msg_insert` policy reads `false` in `pg_policies` and an authenticated
+  active member's INSERT is refused with 42501
+  (`test/db/telegraphLiveReferences.db.test.ts:109#msg_insert`;
+  `test/db/telegraphLiveReferences.db.test.ts:121#42501`); the service role
+  writes the card and the body the database holds parses back as the
+  reference (`test/db/telegraphLiveReferences.db.test.ts:125#service role`);
+  `msg_select` — as re-created by
+  `migrations/2402_telegraph_membership_rls_recursion.sql:176#msg_select`, the
+  definition in force — serves it to the active member and to neither the
+  stranger nor the member who left (`test/db/telegraphLiveReferences.db.test.ts:144#stranger`;
+  `test/db/telegraphLiveReferences.db.test.ts:145#leaver`); and the
+  module's membership predicate agrees with `authz.is_active_thread_member`
+  for all three (`test/db/telegraphLiveReferences.db.test.ts:154#is_active_thread_member`).
+
+- **what is NOT here** — no Opportunity kind (S56 has no object); no
+  dispatcher, no push, no unread count; no change to `routes/telegraph.ts`,
+  `routes/telegraphChat.ts` or any Telegraph census file; no read of
+  `intel_observations`, `distinct_actors` or `source_count` — the reference
+  carries a coarse source class and a band, and the S89 pin walks the
+  stored body for every count- or person-shaped key
+  (`test/telegraphLiveReferencesRoute.test.ts:282#forbidden`). A ceiling the
+  header states outright (`lib/liveReference.ts:35#SAME GATE`): a safety
+  reference resolves through lib/liveClaimRead, which applies the per-scope
+  pilot allowlist that the map's `readSafetyNotices` deliberately skips, so
+  a specialist-reviewed safety claim at a venue outside the promoted scopes
+  is visible on the map and not referenceable from a conversation. That is
+  recorded rather than hidden behind a bypass of the gateway guard.
+
+### 4.2 Row moves
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| S87 Share canonical references to ExperienceState / Opportunity / WorldMoment / SafetyNotice rather than copying stale prose | N | **C** | A share is a `card` whose body is subject, kind, snapshot id, version id, value at share time and the truth block, and whose one human line carries no value (B4-M1 red); three kinds for the three objects with a producer, Opportunity refused by name because S56 has no object (B4-M3 red); a version pins only when its value is the served value (B4-M2 red); reached from `POST /api/telegraph/threads/:threadId/live-references` behind 2802's FALSE flag (B4-M13 red), members only (B4-M14 red), through the gated live read (B4-M16 red). |
+| S88 Shared live objects may indicate that state changed since sharing | N | **C** | `GET /api/telegraph/live-references/:messageId` resolves the stored reference against the current state and answers per claim unchanged / reaffirmed / changed / expired / withdrawn / added and `changedSinceShare` (B4-M6, B4-M7, B4-M9 red), NULL with the refusal — never false — when the current state cannot be read (B4-M8, B4-M17 red); the newest version is the one pinned (B4-M10 red). |
+| S89 Telegraph coordination may consume live intelligence but must not expose anonymous contributors | C | **C** | No longer vacuous: Telegraph now consumes live intelligence through the reference, and the stored body carries no count, cohort, contributor, device or user key (B4-M18 red on the sender id copied in); the current claims reach the wire only through the gated read (B4-M17 red). The `⌀` is lifted. |
+
+**Held, with the reason.** **S90** and **S91** hold C and stay `⌀`: Nearby
+& Available and the other coordination paths still read no intel table.
+**S56** stays N: refusing to name an Opportunity kind is the correct
+consequence of its absence, not a step toward it. **S103** stays W: the
+safety reference points at the last stage of the pipeline and adds no
+candidate stage. **S54** stays N and **S92** W: a share is not an
+ExperienceSession and closes no outcome. **S74** holds C: a world-moment
+reference carries the transition exactly as lib/wallMoments detected it and
+detects nothing of its own. The observation that the hidden-gem and meetup
+card writes in `routes/hiddenGems.ts` and `routes/meetups.ts` go through
+the user client against the same `msg_insert … WITH CHECK (false)` is
+recorded for the Telegraph lane and grades nothing here: this census counts
+no Telegraph row, and whether those writes succeed in production is not
+something the replica can say.
+
+### 4.3 The mutations, in one place
+
+| # | row(s) | file | what was changed | red | green |
+| --- | --- | --- | --- | ---: | ---: |
+| B4-M1 | S87 | `lib/liveReference.ts` | the human line copies the values | 3 | 0 |
+| B4-M2 | S87 | `lib/liveReference.ts` | a version pinned whose value is not the served value | 1 | 0 |
+| B4-M3 | S87 | `lib/liveReference.ts` | Opportunity admitted as a kind with no producer | 2 | 0 |
+| B4-M4 | S87 | `lib/liveReference.ts` | a safety reference to any crowd claim | 3 | 0 |
+| B4-M5 | S87 | `lib/liveReference.ts` | a foreign body parsed as a reference | 2 | 0 |
+| B4-M6 | S88 | `lib/liveReference.ts` | a different value read as reaffirmed | 3 | 0 |
+| B4-M7 | S88 | `lib/liveReference.ts` | expired and withdrawn swapped | 1 | 0 |
+| B4-M8 | S88 | `lib/liveReference.ts` | an unreadable current state read as "unchanged" | 2 | 0 |
+| B4-M9 | S88 | `lib/liveReference.ts` | an added facet not a change | 2 | 0 |
+| B4-M10 | S88 | `lib/liveReferenceMessages.ts` | the pinned version not the newest | 1 | 0 |
+| B4-M11 | S87 | `lib/liveReferenceMessages.ts` | a member who left still a member | 1 | 0 |
+| B4-M12 | S88 | `lib/liveReferenceMessages.ts` | a card of another subtype read as a reference | 1 | 0 |
+| B4-M13 | S87, S88 | `routes/telegraphLiveReferences.ts` | the flag read ignored on both routes | 2 | 0 |
+| B4-M14 | S87 | `routes/telegraphLiveReferences.ts` | a non-member may share | 2 | 0 |
+| B4-M15 | S88 | `routes/telegraphLiveReferences.ts` | a non-member may resolve another thread's card | 1 | 0 |
+| B4-M16 | S87 | `routes/telegraphLiveReferences.ts` | live gates closed, the share proceeds | 1 | 0 |
+| B4-M17 | S88, S89 | `routes/telegraphLiveReferences.ts` | live gates closed, the resolve compares against nothing | 1 | 0 |
+| B4-M18 | S89 | `routes/telegraphLiveReferences.ts` | the sender id copied into the reference | 2 | 0 |
+| DB-5 | S87 | replica | 2802 applied, rolled back (row gone), applied (FALSE); over a TRUE row both files refused | — | — |
+
+### 4.4 The ceiling
+
+Nothing here is deployed, enabled or production-realised. 2802 exists on
+the lane's replica and nowhere else; `telegraph_live_references_enabled` is
+seeded FALSE and is the owner's, and it opens a surface that WRITES a
+members' message, which is a heavier decision than the read-only surfaces of
+§2 and §3. In production every intel table holds zero rows and
+`intel_live_promoted_scopes` is empty, so a share there answers
+`live_intelligence_unavailable` or `nothing_to_reference` for every place
+and writes nothing. No client renders a `live_reference` card; until one
+does, a recipient sees whatever their client shows for an unknown card
+subtype. The Opportunity kind does not exist because the Opportunity object
+does not (S56). The safety ceiling in §4.1 stands. And the comparison is
+stateless by design — the reference carries its own baseline — so nothing
+here records that a recipient ever resolved it; "changed since sharing" is
+answered when asked, not pushed.
