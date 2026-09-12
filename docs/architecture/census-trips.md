@@ -23,12 +23,12 @@ preserved in §36.1 as the record of that measurement.
 | Measure | Value |
 | --- | --- |
 | **Denominator (testable requirements)** | **451** |
-| BUILT-AND-CORRECT | **299** |
-| BUILT-BUT-WRONG | **127** |
+| BUILT-AND-CORRECT | **303** |
+| BUILT-BUT-WRONG | **123** |
 | NOT-BUILT | **24** |
 | CANNOT-VERIFY | **1** |
 | **CONSTRUCTED%** = (C+W)/451 | **426 / 451 = 94.5 %** |
-| **CORRECT%** (raw) = C/451 | **299 / 451 = 66.3 %** |
+| **CORRECT%** (raw) = C/451 | **303 / 451 = 67.2 %** |
 
 > **RESTATED 2026-09-11 (§38): 89 → 87 CORRECT, 127 → 129 WRONG.** §38 re-derived
 > 39 of the C rows against the code and **two did not hold**, both for the same
@@ -268,6 +268,15 @@ preserved in §36.1 as the record of that measurement.
 > (TR47, TR48 W → C); TR378 and TR50 re-read against the kernel paths that
 > exist (22 of 60 write endpoints command-backed behind the flag; eleven of
 > eleven commands) and held W with true reasons. No migration, no flag.
+
+> **RESTATED 2026-09-12 (§56): 299 → 303 CORRECT, 127 → 123 WRONG,
+> 24 NOT-BUILT unchanged. CONSTRUCTED 94.5 % unchanged, CORRECT 66.3 % → 67.2 %.**
+> §56 is Cluster 13's first batch: the Today projection read by a card that
+> answers §11.2's five questions in order and obeys §17.2's switch (TR193,
+> TR317), the timeline's conflicts named above the plan (TR130), and §20.3's
+> questions asked by a screen and recorded through the kernel (TR390), all
+> under `src/features/trips/` (TR439, stronger). Four W → C. No server
+> change; the ceiling is §41.3's.
 | **CORRECT% (spec-attributable)** | **WITHDRAWN — not measured. See §36.4** |
 | CANNOT-VERIFY share | **1 / 451 = 0.2 %** |
 
@@ -6001,3 +6010,97 @@ and the outbox worker and projection workers of §24's layout do not.
 Nothing here needs a migration or a flag; it is the flag-off path itself,
 which is why it is graded on what every deployment runs. Nothing here is
 deployed.
+
+## 56. Today, the conflicts and the closeout reach a screen
+
+**Read against the branch `claude/sweet-fermat-fmx7up`.** Cluster 13's
+first batch: three projections that had a route and no reader. §40.4 built
+the Today projection and TR193 was held W because *"the surface is still the
+client's own and does not read it"*; §40.3's timeline named every conflict
+and TR130 was held W because *"the shipped client still renders `/plan`.
+Wire, not screen"*; §39's closeout asked §20.3's questions on the
+completion response and TR390 was held W because *"no screen asks it"*;
+§42's priority switch was served and TR317 was held W because *"no surface
+applies it yet"*. The client is `travel-buddy-standalone`; its trip screen
+is `app/trip/[id].tsx`. No server change, no migration.
+
+### 56.1 What was built, and where
+
+- **`src/features/trips/`** (`travel-buddy-standalone/src/features/trips/today/index.ts:2#export * from './tripToday.ts'`):
+  the directory TR439 names now exists with seven concerns — `today`,
+  `timeline`, `closeout`, `disruption` and, as facades over the cards and
+  services that were built before it existed, `crew`, `map` and `planning`.
+  The three new concerns live there in full (service, card, tests); the
+  three facades re-export from `components/trip/` and `services/`, which is
+  said in each file rather than pretended away. A shared
+  `travel-buddy-standalone/src/features/trips/shared/auth.ts:26#export async function bearerToken(`
+  reads the token lazily so a service can have a node test: `lib/supabase.ts`
+  reaches `react-native` through `expo-secure-store`, which node:test cannot
+  load (`scripts/run-node-tests.mjs`'s KNOWN_BROKEN records that shape and
+  every service test that imports it directly is on the list).
+- **§11 Today on screen** (`travel-buddy-standalone/src/features/trips/today/TripTodayCard.tsx:35#export function TripTodayCard(`,
+  reading `travel-buddy-standalone/src/features/trips/today/tripToday.ts:82#export async function fetchTripToday(`):
+  `GET /trips/:tripId/today` under §19.1's envelope — a stale or
+  foreign-schema projection is refused with Appendix B's reason and
+  rendered as unavailable, never as a quiet day. The card answers §11.2's
+  five questions in the spec's order — where am I now, what is next, who is
+  around, what can I do, what changed — each from the field the projection
+  names (`travel-buddy-standalone/src/features/trips/today/tripToday.ts:131#export function todayAnswers(`),
+  with the phase as the headline, the unresolved actions, and §10.3's
+  sampling interval stated in the server's words. When §17.2's switch is
+  not NORMAL the banner comes first with the server's priority list, and
+  discovery is not offered while `suppression.discovery` is true — "what
+  can I do" is the server's suppression sentence
+  (`travel-buddy-standalone/src/features/trips/today/tripToday.ts:164#export function attentionBanner(`).
+  Mounted on the trip screen for a signed-in member.
+- **§7.3 conflicts on screen** (`travel-buddy-standalone/src/features/trips/timeline/TripTimelineConflictsCard.tsx:24#export function TripTimelineConflictsCard(`):
+  the timeline projection's `conflicts` and `days[].conflictIds`, read for
+  that one thing and rendered above the plan as the days that carry a
+  conflict, the plans in each and the §7.3 kind in words
+  (`travel-buddy-standalone/src/features/trips/timeline/tripTimeline.ts:74#export function conflictedDays(`).
+  A measured, clean timeline renders nothing — the one silence that is
+  right — and an unreadable one says it is not a clean one.
+- **§20.3 asked** (`travel-buddy-standalone/src/features/trips/closeout/TripCloseoutCard.tsx:31#export function TripCloseoutCard(`):
+  `GET /closeout`'s questions in the spec's words with their two answers,
+  each recorded through `POST /closeout/answers`
+  (`travel-buddy-standalone/src/features/trips/closeout/tripCloseout.ts:62#export async function answerCloseoutQuestion(`)
+  and shown as recorded only on the server's 201; a refusal by name —
+  `TRIP_KERNEL_UNAVAILABLE` where the kernel is off — is "Not recorded" with
+  the reason, never a tick. Mounted once the trip is completed or past its
+  end date.
+- **Pinned.** Three node suites
+  (`travel-buddy-standalone/src/features/trips/today/__tests__/tripToday.test.ts:80#the five answers, in §11.2`)
+  on the reads, the envelope refusals and the pure readings; three jest
+  component suites
+  (`travel-buddy-standalone/src/features/trips/today/__tests__/TripTodayCard.component.test.tsx:69#a SAFETY_EVENT switch puts the banner first`)
+  on what each card is allowed to say, including that the banner precedes
+  the headline in the rendered tree and that a refused answer never shows
+  a tick. Four mutations seen red: the answers out of order, discovery
+  offered under suppression, a conflicted day treated as clean, the card
+  ticking a refused answer.
+
+### 56.2 Row moves
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| TR193 §11.2 the Today surface answers, in order, the five questions | W | **C** | A surface reads the projection and answers the five questions in order, each from the field the projection names; the order is pinned. |
+| TR130 a conflict is not silently rendered as a normal itinerary | W | **C** | The days that carry a conflict are named above the plan with the plans and the kind; only a measured, clean timeline is silent. |
+| TR317 AT_RISK priority: logistics / affected commitments / recovery | W | **C** | The switch's priority list is the first thing the Today card shows when the mode is not NORMAL, and discovery is withheld on the server's word. |
+| TR390 §20.3 minimal reconciliation | W | **C** | The smallest question set, in the spec's words, asked by a screen; answers recorded through the kernel and shown recorded only when the server says so. |
+| TR439 App A `src/features/trips/` (today, timeline, crew, map, planning, disruption) | W | **W** | The directory exists with all six concerns and a seventh; today, timeline and closeout live there in full, crew, map and planning are facades over files that did not move. Stronger, not C. |
+
+**Held, with the reason.** TR319 (commercial and discovery suppressed
+under a severe state) holds W: the Today card withholds discovery, and the
+Pulse and Discovery surfaces have not been read against the switch. TR342
+(stale / live-unavailable visible) holds W: the Today card refuses a stale
+projection and says so; presence freshness on the crew card is TR166's and
+was not re-read here. TR334's client half, TR421 and TR432 hold for
+Cluster 13's remaining batches (the offline bundle's storage and the
+operation queue).
+
+### 56.3 The ceiling, unchanged
+
+The cards read routes that exist behind `trip_operational_projections_enabled`
+(seeded FALSE) and post through the kernel (`trip_kernel_enabled`, FALSE);
+on today's deployment every one of them renders `off` or "Not recorded",
+and says which. Nothing here is deployed.

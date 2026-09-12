@@ -34,6 +34,9 @@ import { TripCrewPresenceCard } from '../../src/components/trip/TripCrewPresence
 import { TripDecisionsCard } from '../../src/components/trip/TripDecisionsCard';
 import { TripStageSpineCard } from '../../src/components/trip/TripStageSpineCard';
 import { TripMapLayersCard } from '../../src/components/trip/TripMapLayersCard';
+import { TripTodayCard } from '../../src/features/trips/today/TripTodayCard.tsx';
+import { TripTimelineConflictsCard } from '../../src/features/trips/timeline/TripTimelineConflictsCard.tsx';
+import { TripCloseoutCard } from '../../src/features/trips/closeout/TripCloseoutCard.tsx';
 import { BeforeYouGoSection } from '../../src/components/trip/BeforeYouGoSection';
 import { TripFsqPlacesSection } from '../../src/components/trip/TripFsqPlacesSection';
 import { TripDestinationInfoCard } from '../../src/components/trip/TripDestinationInfoCard';
@@ -543,6 +546,26 @@ function TripDetailScreen() {
         {live && trip.id ? (
           <DailyBriefCard tripId={trip.id} date={todayDate} onGapDays={handleGapDays} />
         ) : null}
+
+        {/* ── §11 Today ────────────────────────────────────────────────────
+            The five questions in §11.2's order, from GET /today, with §17.2's
+            switch obeyed (a banner first, discovery withheld when the server
+            says so) and §10.3's sampling interval stated. An unreadable Today
+            renders as unavailable, never as a quiet day. */}
+        {live && trip.id ? <TripTodayCard tripId={trip.id} /> : null}
+
+        {/* ── §7.3 conflicts on the timeline ───────────────────────────────
+            A day that carries a temporal conflict is named above the plan,
+            with the plans in it and the kind; a measured, clean timeline
+            shows nothing here. TR130: a conflict is not silently rendered as
+            a normal itinerary. */}
+        {live && trip.id ? <TripTimelineConflictsCard tripId={trip.id} /> : null}
+
+        {/* ── §20.3 the closeout's questions ──────────────────────────────
+            Asked once the trip is over or completed: "Did you make it to X?"
+            with the two answers RECORD_OUTCOME takes. Recorded only on the
+            server's word; refused by name without the kernel. */}
+        {live && trip.id && (deriveTripDisplayStatus(trip.status, trip.endDate) === 'completed' || trip.status === 'completed') ? <TripCloseoutCard tripId={trip.id} /> : null}
 
         {/* ── Trip Readiness — renders nothing when flag is off (null response) ── */}
         {live && trip.id ? (
