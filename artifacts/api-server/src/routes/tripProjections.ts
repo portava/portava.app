@@ -316,6 +316,63 @@ router.get("/trips/:tripId/pulse", asyncHandler(async (req, res) => {
   res.json(built.projection);
 }));
 
+// ── GET /trips/:tripId/bored — §11.3 "I am bored" (census-trips TR197) ───────
+//
+// A short FreedomWindow — the one containing now — and the experience
+// candidates §13 compiled for it, in one answer, without changing any
+// commitment: nothing here writes a plan, a reservation or a commitment; the
+// only kernel traffic is the opportunity projection's own §13.3 diff record,
+// which is a fact about the portfolio, not a change to the timeline.
+router.get("/trips/:tripId/bored", asyncHandler(async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+  const { tripId } = req.params;
+  if (!UUID_RE.test(tripId)) { sendError(res, "invalid_payload", "Invalid trip id"); return; }
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+  const membership = await requireTripMember(sc, tripId, user.id);
+  if (!membership) { sendTripRefusal(res, "not_member", "TRIP_AUTH_NOT_CREW", "You must be an accepted trip member"); return; }
+
+  // `at` (ISO) asks about a moment other than the server's now — a client's own
+  // clock, or a reconnect replaying "I was bored at 14:00" — and is bounded to
+  // the trip's span by the freedom engine itself (no window contains a moment
+  // outside it). Absent, it is now.
+  const atRaw = typeof req.query.at === "string" ? Date.parse(req.query.at) : NaN;
+  const now = Number.isFinite(atRaw) ? new Date(atRaw) : new Date();
+  const nowMs = now.getTime();
+  const freedom = await buildTripFreedomProjection(sc, tripId, { now });
+  if (!freedom.ok) { refuseBuild(res, freedom); return; }
+  const window = freedom.projection.windows.find((w) => Date.parse(w.beginsAt) <= nowMs && nowMs < Date.parse(w.endsAt)) ?? null;
+  const next = window ? null : freedom.projection.windows.filter((w) => Date.parse(w.beginsAt) > nowMs).sort((a, b) => Date.parse(a.beginsAt) - Date.parse(b.beginsAt))[0] ?? null;
+  let candidates: { windowId: string; executable: unknown[]; uncertain: unknown[]; notExecutable: number; suppressed: boolean } | null = null;
+  let candidatesReading = "no free window contains now; nothing was compiled";
+  if (window) {
+    const opp = await buildTripOpportunityProjection(sc, tripId, user.id, { now, freedom: freedom.projection });
+    if (!opp.ok) candidatesReading = `candidates unavailable: ${opp.message}`;
+    else {
+      const view = opp.projection.windows.find((v) => v.windowId === window.id) ?? null;
+      const suppressed = opp.projection.attention.mode !== "NORMAL";
+      candidates = view ? { windowId: view.windowId, executable: view.executable, uncertain: view.uncertain, notExecutable: view.notExecutable.length, suppressed } : null;
+      candidatesReading = !view ? "the compiler produced no portfolio for this window"
+        : suppressed ? `discovery is suppressed under ${opp.projection.attention.mode} (§17.2); the window is real, the candidates are withheld`
+        : `${view.executable.length} executable, ${view.uncertain.length} uncertain, ${view.notExecutable.length} not executable — compiled for the window containing now (§13)`;
+    }
+  }
+  res.json({
+    tripId, now: now.toISOString(),
+    window: window ? { id: window.id, beginsAt: window.beginsAt, endsAt: window.endsAt, durationMinutes: window.durationMinutes, minutesLeft: Math.max(0, Math.round((Date.parse(window.endsAt) - nowMs) / 60_000)), position: window.position, requiredDestination: window.requiredDestination, certified: window.certified, confidence: window.confidence } : null,
+    nextWindow: next ? { id: next.id, beginsAt: next.beginsAt, endsAt: next.endsAt, durationMinutes: next.durationMinutes } : null,
+    candidates,
+    readings: {
+      window: window ? `free until ${window.endsAt}${window.requiredDestination ? `, then ${window.requiredDestination.commitmentId} by ${window.requiredDestination.arriveBy}` : ""}` : next ? `not free now; the next window opens ${next.beginsAt}` : "no free window now or later on this timeline",
+      candidates: candidatesReading,
+      touched: "nothing: no commitment, plan or reservation was changed (§11.3)",
+    },
+    sourceTripVersion: freedom.projection.sourceTripVersion,
+  });
+}));
+
 // ── GET /trips/:tripId/opportunities — §13 the experience compiler's portfolio per open window, and the §13.3 event
 
 router.get("/trips/:tripId/opportunities", asyncHandler(async (req, res) => {

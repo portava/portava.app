@@ -23,12 +23,12 @@ preserved in §36.1 as the record of that measurement.
 | Measure | Value |
 | --- | --- |
 | **Denominator (testable requirements)** | **451** |
-| BUILT-AND-CORRECT | **286** |
-| BUILT-BUT-WRONG | **140** |
+| BUILT-AND-CORRECT | **290** |
+| BUILT-BUT-WRONG | **136** |
 | NOT-BUILT | **24** |
 | CANNOT-VERIFY | **1** |
 | **CONSTRUCTED%** = (C+W)/451 | **426 / 451 = 94.5 %** |
-| **CORRECT%** (raw) = C/451 | **286 / 451 = 63.4 %** |
+| **CORRECT%** (raw) = C/451 | **290 / 451 = 64.3 %** |
 
 > **RESTATED 2026-09-11 (§38): 89 → 87 CORRECT, 127 → 129 WRONG.** §38 re-derived
 > 39 of the C rows against the code and **two did not hold**, both for the same
@@ -235,6 +235,17 @@ preserved in §36.1 as the record of that measurement.
 > (TR262), and §17.4's subgroup context for Safe Return (TR329, TR177).
 > Four W → C. One migration, applied / rolled back / re-applied on the
 > replica; the ceiling is §41.3's, now 2779–2794.
+
+> **RESTATED 2026-09-12 (§53): 286 → 290 CORRECT, 140 → 136 WRONG,
+> 24 NOT-BUILT unchanged. CONSTRUCTED 94.5 % unchanged, CORRECT 63.4 % → 64.3 %.**
+> §53 built 2795 — the kernel's one unguarded write guarded (a draft with no
+> city is refused by name, closing §35's finding; TR450) and a plan that
+> overlaps a confirmed plan refused at the write with a named, recorded
+> override (TR54) — plus §11.3's "I am bored" as one route that changes
+> nothing (TR197) and §15.1's reliability estimated from a mode baseline,
+> the segment's state and §16's signals, served on the Pulse (TR287). Four
+> W → C. One migration, applied / rolled back / re-applied on the replica;
+> the ceiling is §41.3's, now 2779–2795.
 | **CORRECT% (spec-attributable)** | **WITHDRAWN — not measured. See §36.4** |
 | CANNOT-VERIFY share | **1 / 451 = 0.2 %** |
 
@@ -3947,7 +3958,7 @@ to explain and no route.
   calls it AFTER the transition (`routes/trips-expansion.ts:738#runTripCloseout`),
   so a failed step cannot un-complete a trip, and the response carries the
   closeout rather than implying it. `GET /trips/:tripId/closeout`
-  (`routes/tripProjections.ts:594#closeout`) is the same plan as a
+  (`routes/tripProjections.ts:651#closeout`) is the same plan as a
   dry run.
 - `services/trips/TripDecisionLedger.ts` — §21.2's `TripDecision`, every
   field (`:56#TripDecision`), versioned engines
@@ -3959,7 +3970,7 @@ to explain and no route.
   `TripTodayProjection.ts:353#recordTripDecision`) naming ids,
   versions and counts — never a coordinate or a name — and carries its
   `decisionId`. `GET /trips/:tripId/decisions/:decisionId/explain`
-  (`routes/tripProjections.ts:569#explain`) and Compass
+  (`routes/tripProjections.ts:626#explain`) and Compass
   `explain_trip_decision` (`compass/CompassTools.ts:364#explain_trip_decision`,
   `:889#toolExplainTripDecision`, dispatched at
   `:1371#explain_trip_decision`; fourteen tools now) answer
@@ -4305,14 +4316,14 @@ the merge, the apply, Batch C and two flags.
   (`services/trips/TripSignals.ts:319#TRIP_DISRUPTION_SUPPRESSED: a safety event`). Friend
   nearby is dropped unless BOTH parties share
   (`services/trips/TripSignals.ts:399#TRIP_PRIVACY_SCOPE`).
-- **The projection** — `services/trips/TripPulseProjection.ts:113#export async function buildTripPulseProjection`:
+- **The projection** — `services/trips/TripPulseProjection.ts:116#export async function buildTripPulseProjection`:
   version first, health accepted against it, the trip context read (stage,
   saved ideas, plans, commitments, transport segments, goals, crew), then three
   sources reported BY NAME with a status (`services/trips/TripPulseProjection.ts:55#export const PULSE_SOURCES`):
   `intel_state_snapshots` for the saved places' `crowd.level` /
   `crowd.trajectory` / `event.status` / `transit.condition`
-  (`services/trips/TripPulseProjection.ts:94#export const PULSE_CLAIM_TYPES`); `weather_cache`
-  READ, never fetched (`services/trips/TripPulseProjection.ts:268#Read, not fetched`);
+  (`services/trips/TripPulseProjection.ts:97#export const PULSE_CLAIM_TYPES`); `weather_cache`
+  READ, never fetched (`services/trips/TripPulseProjection.ts:275#Read, not fetched`);
   crew presence through the crew map, which applies every §10 rule before this
   file sees a coordinate (`services/trips/TripPulseProjection.ts:5#through the crew map`).
   A source that cannot be read is UNREAD, not empty; context that cannot be
@@ -4353,13 +4364,13 @@ the merge, the apply, Batch C and two flags.
   serves `attention`; Today and the pulse carry it.
 - **§21.1** — `notification_actionability_rate`: sent is counted at dispatch,
   acted at `POST /trips/:id/notifications/acted`
-  (`routes/tripProjections.ts:520#/trips/:tripId/notifications/acted`), and
+  (`routes/tripProjections.ts:577#/trips/:tripId/notifications/acted`), and
   `readNotificationActionability` (`lib/tripPush.ts:147#export function readNotificationActionability`)
   divides per kind, null over zero. `trip_event_replay_mismatch_total`:
   `verifyTripReplay` (`lib/tripReplayVerify.ts:35#export async function verifyTripReplay`)
   calls 2773's `trip_snapshot_verify_replay` and increments on `equal = false`,
   reached from `POST /trips/:id/replay/verify`
-  (`routes/tripProjections.ts:546#/trips/:tripId/replay/verify`).
+  (`routes/tripProjections.ts:603#/trips/:tripId/replay/verify`).
 - **Appendix B** — every §7.4 consistency finding now carries `reasonCode`
   from `SPATIAL_REASON_CODES` (`services/trips/TripSpatialConsistency.ts:90#export const SPATIAL_REASON_CODES`),
   stamped by the check functions themselves, so the feasibility route's
@@ -4491,7 +4502,7 @@ production baseline through the chain: 39 database tests, 0 skipped.
   AT_RISK / SAFETY_EVENT the executable list is served empty with the
   suppression named (`services/trips/TripOpportunityProjection.ts:294#suppressed`).
   Served at `GET /trips/:id/opportunities`
-  (`routes/tripProjections.ts:321#/trips/:tripId/opportunities"`), to Compass as
+  (`routes/tripProjections.ts:378#/trips/:tripId/opportunities"`), to Compass as
   `get_opportunities` — §11.3's "Where next?"
   (`compass/CompassTools.ts:264#name: "get_opportunities"`) — as Today's
   `opportunities` layer, `no_source` since §40.3
@@ -4512,7 +4523,7 @@ production baseline through the chain: 39 database tests, 0 skipped.
   (`db/rollback/2026-09-12-2786-trip-kernel-opportunity-events-rollback.sql`),
   rehearsed apply → rollback → apply.
 - **Accepted and completed** — `POST /trips/:id/opportunities/:experienceId/accept`
-  (`routes/tripProjections.ts:339#/trips/:tripId/opportunities/:experienceId/accept`) writes
+  (`routes/tripProjections.ts:396#/trips/:tripId/opportunities/:experienceId/accept`) writes
   the plan the only way a plan is written: ADD_PLAN through the kernel with
   `source_type 'opportunity'`, keyed by the experience so a double tap is
   one plan; a non-executable experience is refused with its verdict and
@@ -4664,12 +4675,12 @@ route writes goes through the kernel as a command that already exists
   touches. The state is one read under the gate
   (`services/trips/TripImpactState.ts:16#loadImpactState`); the route is
   `POST /trips/:tripId/proposals/preview`
-  (`routes/tripProjections.ts:410#/trips/:tripId/proposals/preview`).
+  (`routes/tripProjections.ts:467#/trips/:tripId/proposals/preview`).
 - **§12.1 simulate** — `services/trips/TripReplan.ts:195#simulateChange`
   returns FEASIBLE / INFEASIBLE / UNKNOWN with the conflicts named and the
   freedom window as it would be after; judged, never written
   (`POST /trips/:tripId/simulate`,
-  `routes/tripProjections.ts:421#/trips/:tripId/simulate`; Compass
+  `routes/tripProjections.ts:478#/trips/:tripId/simulate`; Compass
   `simulate_plan`, `compass/CompassTools.ts:1133#toolSimulatePlan`).
 - **§11.3 replan today, §12.1 createProposal** — `services/trips/TripReplan.ts:107#replanDay`
   produces the candidate diff: keep / move / cancel / add
@@ -4682,7 +4693,7 @@ route writes goes through the kernel as a command that already exists
   Shared mutations are the diff's `proposals`; nothing is written.
   `services/trips/TripReplanService.ts:23#computeReplan` feeds it from the
   trip (pulse, freedom, compiler). `POST /trips/:tripId/replan`
-  (`routes/tripProjections.ts:436#/trips/:tripId/replan`) turns each proposal
+  (`routes/tripProjections.ts:493#/trips/:tripId/replan`) turns each proposal
   into `CREATE_PROPOSAL` only when the caller asks and the kernel is on —
   `proposal_type: replan_<op>`, the suggested decision rule, an idempotency
   key from the day, the op, the plan and the target time, `source: "replan"`
@@ -4715,7 +4726,7 @@ route writes goes through the kernel as a command that already exists
   unplaced by name; candidates are the crew's saved ideas and the day's
   plans with a public point (`services/trips/TripReplanService.ts:49#computeMeetingPoint`).
   `POST /trips/:tripId/meeting-point`
-  (`routes/tripProjections.ts:474#/trips/:tripId/meeting-point`); Compass
+  (`routes/tripProjections.ts:531#/trips/:tripId/meeting-point`); Compass
   `find_meeting_point` (`compass/CompassTools.ts:1207#toolFindMeetingPoint`).
 - **§17.3 rescue** — `services/trips/TripRescue.ts:66#planRescue` over the
   seven typed problems (`services/trips/TripRescue.ts:18#RESCUE_PROBLEMS`):
@@ -4725,7 +4736,7 @@ route writes goes through the kernel as a command that already exists
   (`services/trips/TripRescue.ts:21#ESCALATION_TARGETS`) — or to the crew,
   with why and when, and says what Compass may and must not do; a safe
   return is proposed where the problem is a person. `POST /trips/:tripId/rescue`
-  (`routes/tripProjections.ts:486#/trips/:tripId/rescue`) returns the plan
+  (`routes/tripProjections.ts:543#/trips/:tripId/rescue`) returns the plan
   (201) and declares the disruption through `DECLARE_DISRUPTION` — §17.2's
   switch — when the kernel is on, skipped by name when not; an unknown
   problem is 400. Compass `get_rescue_plan` (`compass/CompassTools.ts:1176#toolGetRescuePlan`)
@@ -4902,7 +4913,7 @@ re-derives and cites rather than argues.
 - **Five rows the tree had already earned.** TR189: Today has carried
   `pulseSignals` since §42 (`services/trips/TripTodayProjection.ts:120#pulseSignals:`).
   TR375: `POST /trips/:tripId/simulate` was registered in §44
-  (`routes/tripProjections.ts:421#/trips/:tripId/simulate`). TR393:
+  (`routes/tripProjections.ts:478#/trips/:tripId/simulate`). TR393:
   `trip_command_rejected_total` by reason has existed in the kernel client
   and been asserted three times (`lib/tripKernel.ts:496#readTripCommandRejectedTotal`,
   `src/test/tripKernel.test.ts:110#counter`). TR379 and TR75: 2520's map
@@ -4977,7 +4988,7 @@ absent from the CI schema — true until merge, ledgered where 2780/2781/2784
 already were (`src/scripts/checkWritePathColumns.ts:203#trip_transport_segments`) —
 and one read it could not see: the pulse's seven context reads took a table
 *name*, and now take a built query
-(`services/trips/TripPulseProjection.ts:151#PromiseLike`). Making them
+(`services/trips/TripPulseProjection.ts:154#PromiseLike`). Making them
 visible showed `check:flag-schema-prerequisites` the class it exists for —
 a file naming `trip_crew_map_enabled` (ON in production) and reading
 kernel-era tables — so the crew half of the pulse is its own module, as
@@ -5704,3 +5715,82 @@ carries it to production; every reader is behind
 `trip_operational_projections_enabled` (FALSE everywhere) and every writer
 behind `trip_kernel_enabled`. Nothing here is deployed, enabled or
 production-realised.
+
+## 53. The write answers for itself: a guarded CREATE_TRIP, plans that may not overlap, "I am bored", and a reliability the segment did not have
+
+**Read against the branch `claude/sweet-fermat-fmx7up`.** Four W rows,
+one migration. §35 recorded the kernel's one unguarded write and left it
+open as `TRIP_KERNEL_CREATE_TRIP_UNGUARDED_INSERT` (TR450); §41 noted that
+two plans overlapping was reported by the freedom engine and never refused
+at the write (TR54); §40.3 built the window half of "I am bored" and left
+the candidate half to Discovery (TR197); §41 put `reliability` on the
+transport segment and estimated nothing (TR287).
+
+### 53.1 What was built, and where
+
+- **2795 — the kernel's write guards** (`migrations/2795_trip_kernel_write_guards.sql:78#not_null_violation`).
+  `CREATE_TRIP`'s INSERT runs inside an exception block: a draft with no
+  `destination_city` — the payload `POST /trips` sends — is
+  `TRIP_COMMAND_MALFORMED` with the constraint's own sentence, and an id
+  collision inside the insert is `TRIP_IDENTITY_ALREADY_EXISTS`; nothing
+  escapes the function as a 23502 to be reported as an outage. `ADD_PLAN`
+  and 2779's `MOVE_PLAN` / `UPDATE_PLAN` guard refuse an interval that
+  overlaps a CONFIRMED or IN_PROGRESS plan of the same trip with
+  `TRIP_TEMPORAL_CONFLICT` naming the plan — unless `override_conflicts:
+  true`, which is recorded on the result and so on the event, exactly as
+  2779 records a commitment override; two unconfirmed plans may still
+  overlap, because only a confirmed timeline is §7.2's. Applied, rolled back
+  (`../../db/rollback/2026-09-12-2795-trip-kernel-write-guards-rollback.sql:32#regexp_replace`)
+  and re-applied on the local replica;
+  `test/db/tripKernelWriteGuards.db.test.ts:39#destination_city` executes the
+  draft, the overlap, the override and the half-open boundary on the real
+  kernel. The live pin in `test/tripKernelLive.test.ts:428#schema_migration_ledger`
+  now reads which world it is measuring from the database's own ledger:
+  with 2795 applied it expects the refusal by name; without it, the §35
+  defect it was written to pin.
+- **§11.3 "I am bored" (TR197)** — `GET /trips/:tripId/bored`
+  (`routes/tripProjections.ts:326#router.get("/trips/:tripId/bored"`): the
+  §7.3 window containing now, its minutes left and the deadline that ends
+  it, and the §13 candidates the opportunity projection compiled for that
+  window — executable, uncertain, and how many were not — in one answer,
+  with `nextWindow` when the moment is not free (`at` asks about a moment other than now) and a `touched: nothing` reading
+  that is true: no commitment, plan or reservation is written, and the
+  only kernel traffic is the projection's own §13.3 diff record.
+  `test/tripBoredRoute.test.ts:51#touched` pins that no changing command is
+  issued.
+- **§15.1 `reliability`, estimated (TR287)** — `lib/tripTransportReliability.ts:52#estimateTransportReliability(`:
+  the crew's stated value wins; else a per-mode baseline lowered by the
+  segment's state (disrupted 0.2, cancelled 0, completed 1) and by the §16
+  signals that bear on it — high taxi demand within six hours of a
+  taxi-like departure, rain on the day of a walk or a ferry, an event
+  delayed thirty minutes or more that day — never raised by anything, every
+  factor named. The Pulse projection serves it per upcoming segment as
+  `transportReliability` (`services/trips/TripPulseProjection.ts:77#transportReliability:`),
+  reading 2782's column beside the mode and state it already read.
+  `test/tripTransportReliability.test.ts:22#stated` and the Pulse
+  suite pin it.
+
+### 53.2 Row moves
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| TR54 …validates temporal/spatial consistency | W | **C** | Ordering (2750), the commitment approach window (2779) and now plan overlap (2795) are refused at the write, the last two with a named, recorded override; spatial consistency is §7.4's feasibility check and its stage-locality rule (§43, §47). |
+| TR197 §11.3 "I am bored" → builds short FreedomWindow + experience candidates without changing commitments | W | **C** | One route: the window containing now and the candidates §13 compiled for it, changing nothing, tested for exactly that. |
+| TR287 `reliability` | W | **C** | Stated or estimated — baseline, state, signals — with the factors named, served on the Pulse per upcoming segment. |
+| TR450 `TRIP_IDENTITY_*` | W | **C** | The family's emitter, `CREATE_TRIP`, is guarded (2795): §35's `TRIP_KERNEL_CREATE_TRIP_UNGUARDED_INSERT` is closed on the replica and the live pin reads the ledger to know which world it is in. |
+
+**Held, with the reason.** TR55 stays W: dependent commitments are guarded
+at the write by 2779 (a move into an approach window), which no database
+but the replica has. TR133 stays W: Compass consumes the windows and now
+"I am bored" does; Discovery, Saved Ideas and Buddy matching still compute
+their own. TR128 stays W for §41's reason (FEASIBLE is unprovable without
+a routed provider); TR412 likewise.
+
+### 53.3 The ceiling, moved by one migration
+
+2795 joins 2779–2794 in §41.3's ceiling: a transform of
+`trip_kernel_execute` that no database but the local replica has until
+this branch merges, CI applies it, and the owner's Batch C carries it to
+production. The bored route sits behind the operational gate; the
+reliability estimate rides the Pulse behind the same gate. Nothing here is
+deployed, enabled or production-realised.

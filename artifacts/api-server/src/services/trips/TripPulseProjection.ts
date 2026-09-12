@@ -48,6 +48,7 @@ import {
   type GeoPoint, type AttentionState,
 } from "./TripSignals.js";
 import { recordTripDecision, persistTripDecision, TRIP_ENGINE_VERSIONS } from "./TripDecisionLedger.js";
+import { estimateTransportReliability, type ReliabilityEstimate } from "../../lib/tripTransportReliability.js";
 
 const log = logger.child({ mod: "tripPulseProjection" });
 
@@ -72,6 +73,8 @@ export interface TripPulseProjection extends TripProjectionEnvelope {
   /** Filtered out, each with the reason — the city feed this is not. */
   dropped: DroppedSignal[];
   sources: PulseSourceReport[];
+  /** §15.1 `reliability` per upcoming segment (TR287): the crew's stated value, else an estimate from the mode baseline lowered by state and the kept signals, every factor named. */
+  transportReliability: ReliabilityEstimate[];
   context: {
     stageId: string | null;
     locationBand: { centre: GeoPoint; radiusM: number; from: "viewer_presence" | "active_plan" | "stage_anchor" } | null;
@@ -164,7 +167,7 @@ export async function buildTripPulseProjection(
   if ("refused" in plansR) return plansR.refused;
   const commitmentsR = await read<any>("trip_commitments", sc.from("trip_commitments").select("id, type, starts_at, required_arrival_at, place_id, source_ref").eq("trip_id", tripId));
   if ("refused" in commitmentsR) return commitmentsR.refused;
-  const transportR = await read<any>("trip_transport_segments", sc.from("trip_transport_segments").select("id, mode, state, planned_departure_at").eq("trip_id", tripId));
+  const transportR = await read<any>("trip_transport_segments", sc.from("trip_transport_segments").select("id, mode, state, planned_departure_at, reliability").eq("trip_id", tripId));
   if ("refused" in transportR) return transportR.refused;
   const goalsR = await read<any>("trip_goals", sc.from("trip_goals").select("type, scope, status").eq("trip_id", tripId));
   if ("refused" in goalsR) return goalsR.refused;
@@ -183,7 +186,11 @@ export async function buildTripPulseProjection(
     id: String(c.id), type: String(c.type ?? ""), startsAt: c.starts_at ?? null, requiredArrivalAt: c.required_arrival_at ?? null,
     placeId: c.place_id ? String(c.place_id) : null, eventId: c.source_ref ? String(c.source_ref) : null,
   }));
-  const transport = transportR.rows.map((t) => ({ id: String(t.id), mode: String(t.mode ?? ""), state: String(t.state ?? ""), plannedDepartureAt: t.planned_departure_at ?? null }));
+  const transport = transportR.rows.map((t) => ({
+    id: String(t.id), mode: String(t.mode ?? ""), state: String(t.state ?? ""), plannedDepartureAt: t.planned_departure_at ?? null,
+    // 2782's numeric(4,3) arrives as a string through PostgREST; a stated value is a number here or null.
+    reliability: t.reliability == null ? null : Number.isFinite(Number(t.reliability)) ? Number(t.reliability) : null,
+  }));
   const goals = goalsR.rows.map((g) => ({ type: String(g.type ?? ""), scope: String(g.scope ?? "shared"), status: String(g.status ?? "open") }));
   const memberIds = membersR.rows.filter((m) => m.status == null || m.status === "accepted").map((m) => String(m.user_id));
 
@@ -355,6 +362,9 @@ export async function buildTripPulseProjection(
       signals: projected.kept,
       dropped: projected.dropped,
       sources,
+      transportReliability: transport
+        .filter((t) => !["completed", "cancelled"].includes(t.state.toLowerCase()))
+        .map((t) => estimateTransportReliability(t, projected.kept, nowMs)),
       context: {
         stageId: ctx.stage?.id ?? null, locationBand,
         goals: goals.length, savedIdeas: savedIdeas.length, commitments: commitments.length, plans: plans.length, transport: transport.length, crew: memberIds.length,

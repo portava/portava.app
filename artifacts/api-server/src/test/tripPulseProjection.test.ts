@@ -206,3 +206,21 @@ describe("GET /trips/:id/pulse, Compass get_live_conditions, Today's pulseSignal
     assert.equal((await post("notifications/acted", { type: "trip_invite_received" }, "other-token")).status, 403);
   });
 });
+
+
+describe("§15.1 transport reliability on the pulse (2782's column, TR287)", () => {
+  it("a stated value is served as stated; an unstated one is estimated from the mode baseline; completed segments are not judged", async () => {
+    const tables = base();
+    tables.trip_transport_segments = [
+      { id: "tx1", trip_id: TRIP_ID, mode: "taxi", state: "planned", planned_departure_at: T("14:00"), reliability: null },
+      { id: "tx2", trip_id: TRIP_ID, mode: "train", state: "booked", planned_departure_at: T("18:00"), reliability: "0.950" },
+      { id: "tx3", trip_id: TRIP_ID, mode: "bus", state: "completed", planned_departure_at: T("08:00"), reliability: null },
+    ];
+    const r = await buildTripPulseProjection(makeClient(withStages(tables)) as any, TRIP_ID, OWNER_ID, { now: NOW });
+    assert.ok(r.ok, JSON.stringify(r));
+    const byId = new Map(r.projection.transportReliability.map((e) => [e.segmentId, e]));
+    assert.equal(byId.get("tx1")!.basis, "estimated"); assert.equal(byId.get("tx1")!.value, 0.85); assert.deepEqual(byId.get("tx1")!.factors, []);
+    assert.equal(byId.get("tx2")!.basis, "stated"); assert.equal(byId.get("tx2")!.value, 0.95);
+    assert.equal(byId.has("tx3"), false, "a completed segment has nothing left to be reliable about");
+  });
+});
