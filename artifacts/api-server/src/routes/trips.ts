@@ -21,6 +21,7 @@ import { toCamel } from "./plan.js";
 import { syncTripChatMembers } from "../lib/chatSync.js";
 import { getRestrictionState } from "../services/trust/TrustRestrictionService.js";
 import { sendTripPush } from "../lib/tripPush.js";
+import { recordOpportunityCompletion } from "../lib/tripOpportunityMetrics.js";
 import { awardStamp, type StampLogger } from "../services/passport/StampAwardEngine.js";
 import { buildConsumerProjection } from "../services/passport/PassportConsumerProjections.js";
 import { nameVisibilitySet, sanitizeIdentity, nameVisibleFor } from "../lib/publicIdentity";
@@ -1959,6 +1960,8 @@ router.patch("/trips/:tripId/plan/items/:itemId", async (req, res) => {
       payload: { item_id: itemId, patch: columnPatch, updated_at: updatedAt },
     });
     if (!r.ok) { sendKernelRejection(res, r, req.log); return; }
+    // §21.1 opportunity_completed_total — a §13 opportunity's plan, done.
+    recordOpportunityCompletion(planCommandTypeForPatch(patch), r.result, tripId, r.duplicate);
     setTripVersionHeader(res, r.version);
     res.json(toCamel(r.result));
     return;

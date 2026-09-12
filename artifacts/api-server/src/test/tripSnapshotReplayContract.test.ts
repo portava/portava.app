@@ -140,7 +140,10 @@ describe("the fold covers the event vocabulary that exists", () => {
     // Named in the CASE — including as an explicit NULL branch, which is how
     // "the snapshot does not carry this" gets said out loud. trip.presence_* is
     // the live example: §10.2 forbids replaying a stale observation as current.
-    const missing = (TRIP_EVENT_TYPES as readonly string[]).filter((t) => !sql.includes(`'${t}'`));
+    // The fold is 2773 plus every later transform of it (2787 named the
+    // 2779–2786 vocabulary); the contract is over the fold as installed.
+    const fold = sql + readFileSync(new URL("../migrations/2787_trip_snapshot_fold_vocabulary.sql", import.meta.url), "utf8");
+    const missing = (TRIP_EVENT_TYPES as readonly string[]).filter((t) => !fold.includes(`'${t}'`));
     assert.deepEqual(missing, [],
       `these event types are not named in the fold and would land in 'unfolded': ${missing.join(", ")}`);
   });

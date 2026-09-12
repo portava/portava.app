@@ -24,6 +24,7 @@ import { isAcceptedTripMember, canEditPlan } from "../lib/http.js";
 import { buildTripCompassProjection } from "../services/trips/TripCompassProjection.js";
 import { buildTripFreedomProjection } from "../services/trips/TripFreedomProjection.js";
 import { buildTripPulseProjection } from "../services/trips/TripPulseProjection.js";
+import { buildTripOpportunityProjection } from "../services/trips/TripOpportunityProjection.js";
 import { tripOperationalProjectionsGate } from "../lib/tripOperationalProjections.js";
 import { buildTripTodayProjection } from "../services/trips/TripTodayProjection.js";
 import { explainTripDecisionFrom } from "../services/trips/TripDecisionLedger.js";
@@ -227,6 +228,19 @@ export const COMPASS_TOOL_DEFINITIONS = [
       name: "get_saved_ideas",
       description:
         "Get the places the crew has saved to the user's current trip (or a named trip) as ideas — the candidates 'where next' and a free window are filled from. Names are user content.",
+      parameters: {
+        type: "object",
+        properties: { tripId: { type: "string", description: "A specific trip's id (optional). The user must be an accepted member." } },
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
+      name: "get_opportunities",
+      description:
+        "§11.3 'Where next?': the feasible opportunity portfolio of the user's current trip (or a named trip) — the crew's saved ideas compiled against the current-or-next free window, travel both ways, the next commitment, live conditions, goals and participants. Each is EXECUTABLE (with arrive-at, stay, leave-by and score), UNCERTAIN (something needed is unknown — never promoted) or NOT_EXECUTABLE (with the reason). Includes the §13.3 change since the last portfolio and whether it would be worth notifying. Under AT_RISK or a safety event the executable list is suppressed and the response says so. Compass proposes from this list; it never books or moves a commitment.",
       parameters: {
         type: "object",
         properties: { tripId: { type: "string", description: "A specific trip's id (optional). The user must be an accepted member." } },
@@ -981,6 +995,28 @@ export async function toolGetSavedIdeas(sc: SupabaseClient, userId: string, args
   };
 }
 
+/** §11.3 "Where next?" / §12.1 — the §13 opportunity projection, accepted per §19.1. */
+export async function toolGetOpportunities(sc: SupabaseClient, userId: string, args: Record<string, unknown>): Promise<unknown> {
+  const t = await resolveMemberTrip(sc, userId, args);
+  if ("info" in t) return { opportunities: null, info: t.info };
+  const built = await buildTripOpportunityProjection(sc, t.id, userId);
+  if (!built.ok) return { opportunities: null, info: built.reason === "FEATURE_DISABLED" ? `Opportunities are not enabled: ${built.message}` : `Opportunities unavailable (${built.reason}): ${built.message}` };
+  const decision = acceptTripProjection(built.projection, { acceptedSchemaVersion: TRIP_PROJECTION_SCHEMA_VERSION, metric: "TripOpportunityProjection" });
+  if (!decision.accepted) return { opportunities: null, info: `Opportunities rejected (${decision.reason}): ${decision.message}` };
+  const p = built.projection;
+  const brief = (e: any) => ({ id: e.id, name: wrapUgc(String(e.name)), primitive: e.primitive, verdict: e.verdict, reasonCodes: e.reasonCodes, arriveAt: e.arriveAt, leaveBy: e.leaveBy, stayMinutes: e.stayMinutes, score: e.score, servesGoalIds: e.servesGoalIds, explanation: e.explanation.map((x: string) => wrapUgc(x)) });
+  return {
+    opportunities: {
+      tripId: p.tripId, decisionId: p.decisionId,
+      attention: { mode: p.attention.mode, suppression: p.attention.suppression },
+      windows: p.windows.map((w) => ({ windowId: w.windowId, window: w.window, executable: w.executable.map(brief), uncertain: w.uncertain.map(brief), notExecutable: w.notExecutable.map(brief), candidates: w.candidates })),
+      event: p.event ? { trigger: p.event.trigger, significance: p.event.significance, added: p.event.opportunitiesAdded.length, removed: p.event.opportunitiesRemoved.length, reasonCodes: p.event.reasonCodes, detail: wrapUgc(p.event.detail) } : null,
+      notify: p.notify, sources: p.sources, reading: p.reading,
+    },
+    projection: { generatedAt: p.generatedAt, sourceTripVersion: p.sourceTripVersion, freshness: p.freshness },
+  };
+}
+
 export async function toolGetTodayState(sc: SupabaseClient, userId: string, args: Record<string, unknown>): Promise<unknown> {
   const tripId = typeof args.tripId === "string" && args.tripId.length > 0 ? args.tripId : null;
   let id: string | null = tripId;
@@ -1498,6 +1534,7 @@ export async function executeCompassTool(
       case "get_freedom_windows":  raw = await toolGetFreedomWindows(sc, userId, args); break;
       case "get_today_state":      raw = await toolGetTodayState(sc, userId, args); break;
       case "get_live_conditions":  raw = await toolGetLiveConditions(sc, userId, args); break;
+      case "get_opportunities":    raw = await toolGetOpportunities(sc, userId, args); break;
       case "get_commitments":      raw = await toolGetCommitments(sc, userId, args); break;
       case "get_saved_ideas":      raw = await toolGetSavedIdeas(sc, userId, args); break;
       case "explain_trip_decision": raw = await toolExplainTripDecision(sc, userId, args); break;

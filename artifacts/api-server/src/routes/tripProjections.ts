@@ -65,6 +65,10 @@ import { buildTripCompassProjection } from "../services/trips/TripCompassProject
 import { buildTripFreedomProjection } from "../services/trips/TripFreedomProjection.js";
 import { buildTripHealthProjection } from "../services/trips/TripHealthProjection.js";
 import { buildTripPulseProjection } from "../services/trips/TripPulseProjection.js";
+import { buildTripOpportunityProjection } from "../services/trips/TripOpportunityProjection.js";
+import { executeTripCommand } from "../lib/tripKernel.js";
+import { incrementTripMetric } from "../lib/tripMetrics.js";
+import { randomUUID } from "node:crypto";
 import { recordNotificationActed } from "../lib/tripPush.js";
 import { verifyTripReplay } from "../lib/tripReplayVerify.js";
 import { tripOperationalProjectionsGate } from "../lib/tripOperationalProjections.js";
@@ -73,7 +77,6 @@ import { buildTripTodayProjection } from "../services/trips/TripTodayProjection.
 import { explainTripDecisionFrom, DECISION_RETENTION } from "../services/trips/TripDecisionLedger.js";
 import { runTripCloseout } from "../services/trips/TripCloseoutService.js";
 import { detectPlanOverlaps } from "../services/trips/TripFreedomEngine.js";
-import { incrementTripMetric } from "../lib/tripMetrics.js";
 import { getCrewMap, CrewMapUnavailableError } from "../services/tripCrew/TripCrewLocationService.js";
 
 const router = Router();
@@ -275,6 +278,72 @@ router.get("/trips/:tripId/pulse", asyncHandler(async (req, res) => {
   const built = await buildTripPulseProjection(sc, tripId, user.id);
   if (!built.ok) { refuseBuild(res, built); return; }
   res.json(built.projection);
+}));
+
+// ── GET /trips/:tripId/opportunities — §13 the experience compiler's portfolio per open window, and the §13.3 event
+
+router.get("/trips/:tripId/opportunities", asyncHandler(async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const { tripId } = req.params;
+  if (!UUID_RE.test(tripId)) { sendError(res, "invalid_payload", "Invalid trip id"); return; }
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const membership = await requireTripMember(sc, tripId, user.id);
+  if (!membership) { sendTripRefusal(res, "not_member", "TRIP_AUTH_NOT_CREW", "You must be an accepted trip member to view opportunities"); return; }
+
+  const built = await buildTripOpportunityProjection(sc, tripId, user.id);
+  if (!built.ok) { refuseBuild(res, built); return; }
+  res.json(built.projection);
+}));
+
+// ── POST /trips/:tripId/opportunities/:experienceId/accept — §13.3 accepted: ADD_PLAN through the kernel
+//
+// An accepted opportunity is a plan item in the window it was compiled for,
+// written the only way a plan item is written (§4.1): ADD_PLAN, with
+// source_type 'opportunity' and source_id the experience id, under an
+// idempotency key made of the experience id so a double tap is one plan.
+// §21.1 opportunity_accepted_total counts the first acceptance.
+
+router.post("/trips/:tripId/opportunities/:experienceId/accept", asyncHandler(async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const { tripId, experienceId } = req.params;
+  if (!UUID_RE.test(tripId)) { sendError(res, "invalid_payload", "Invalid trip id"); return; }
+  if (typeof experienceId !== "string" || experienceId.length === 0 || experienceId.length > 200) { sendError(res, "invalid_payload", "Invalid experience id"); return; }
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const membership = await requireTripMember(sc, tripId, user.id);
+  if (!membership) { sendTripRefusal(res, "not_member", "TRIP_AUTH_NOT_CREW", "You must be an accepted trip member"); return; }
+
+  const built = await buildTripOpportunityProjection(sc, tripId, user.id);
+  if (!built.ok) { refuseBuild(res, built); return; }
+  const experience = built.projection.windows.flatMap((w) => w.executable).find((e) => e.id === experienceId) ?? null;
+  if (!experience) {
+    const known = built.projection.windows.flatMap((w) => [...w.uncertain, ...w.notExecutable]).find((e) => e.id === experienceId) ?? null;
+    if (known) { res.status(409).json({ ok: false, error: "not_executable", reason: known.verdict, reasonCodes: known.reasonCodes, detail: known.explanation.join("; ") }); return; }
+    sendError(res, "not_found", "No such opportunity in the current portfolio"); return;
+  }
+  const dayDate = experience.arriveAt ? experience.arriveAt.slice(0, 10) : null;
+  const result = await executeTripCommand(sc, {
+    commandId: randomUUID(), tripId, actorUserId: user.id, actorRole: "user",
+    idempotencyKey: `opportunity:accept:${experienceId}`, type: "ADD_PLAN",
+    payload: {
+      title: experience.name, category: "activity", status: "tentative", day_date: dayDate,
+      starts_at: experience.arriveAt, ends_at: experience.leaveBy, location_name: experience.name,
+      source_type: "opportunity", source_id: experienceId, notes: `From a §13 opportunity: ${experience.explanation.join("; ")}`.slice(0, 500),
+    },
+    clientObservedAt: new Date().toISOString(),
+  });
+  if (!result.ok) { res.status(result.reason === "TRIP_KERNEL_UNAVAILABLE" ? 503 : 409).json({ ok: false, reason: result.reason, detail: (result as any).detail ?? null }); return; }
+  if (!result.duplicate) incrementTripMetric("opportunity_accepted_total", { trip: tripId, primitive: experience.primitive });
+  res.status(result.duplicate ? 200 : 201).json({ ok: true, duplicate: result.duplicate, version: result.version, eventId: result.eventId, planItem: result.result, experienceId });
 }));
 
 // ── POST /trips/:tripId/notifications/acted — §21.1 notification_actionability_rate

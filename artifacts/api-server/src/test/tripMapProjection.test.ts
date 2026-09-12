@@ -170,7 +170,8 @@ describe("§14.1 — the envelope a marker list cannot have", () => {
     install({ trip_plan_items: [planItem()] });
     const r = await get();
     assert.equal(r.body.census.ok + r.body.census.unread + r.body.census.noSource, 10);
-    assert.equal(r.body.census.noSource, 3, "the three layers with no producer");
+    // §13 gave liveOpportunities a producer (census-trips §43); two layers have none.
+    assert.equal(r.body.census.noSource, 2, "the two layers with no producer");
     assert.ok(r.body.census.totalPoints >= 1);
   });
 });
@@ -350,23 +351,26 @@ describe("§14.2 route chains — the layer that shipped as no_source on a false
 });
 
 describe("§14.1 — the layers with no producer say so", () => {
-  it("three layers are no_source, each with a reason naming the actual obstacle", async () => {
+  it("two layers are no_source, each with a reason naming the actual obstacle; live opportunities has a producer now", async () => {
     install({});
     const r = await get();
-    for (const key of ["crewPresenceSummaries", "liveOpportunities", "safetyPoints"]) {
+    for (const key of ["crewPresenceSummaries", "safetyPoints"]) {
       assert.equal(r.body[key].status, "no_source", key);
       assert.ok(r.body[key].reason.length > 40, `${key}'s reason is not an explanation`);
     }
-    // And route chains is NOT one of them any more.
+    // And route chains is NOT one of them any more — nor, since §13, live opportunities:
+    // here the operational-projections gate is off, so the layer is UNREAD with the reason.
     assert.notEqual(r.body.routeChains.status, "no_source");
+    assert.equal(r.body.liveOpportunities.status, "unread");
+    assert.match(r.body.liveOpportunities.reason, /opportunity projection unavailable/);
   });
 
   it("no_source is distinct from unread, because no retry will help", async () => {
     install({ route_plans: [], route_stops: [] }, ["trip_saved_places"]);
     const r = await get();
     assert.equal(r.body.savedIdeas.status, "unread");
-    assert.equal(r.body.liveOpportunities.status, "no_source");
-    assert.notEqual(r.body.savedIdeas.status, r.body.liveOpportunities.status);
+    assert.equal(r.body.safetyPoints.status, "no_source");
+    assert.notEqual(r.body.savedIdeas.status, r.body.safetyPoints.status);
   });
 });
 

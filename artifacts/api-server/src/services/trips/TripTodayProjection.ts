@@ -54,6 +54,8 @@ import {
 import { buildTripHealthProjection, type TripHealthProjection } from "./TripHealthProjection.js";
 import { buildTripFreedomProjection, type TripFreedomProjection } from "./TripFreedomProjection.js";
 import { buildTripPulseProjection } from "./TripPulseProjection.js";
+import { buildTripOpportunityProjection } from "./TripOpportunityProjection.js";
+import type { ExecutableTripExperience } from "./TripExperienceCompiler.js";
 import type { PulseInterpretation } from "./TripSignals.js";
 import type { PrioritySwitch } from "./TripHealth.js";
 import { noSource, ok as okLayer, unread, type Layer } from "./TripMapProjection.js";
@@ -105,7 +107,8 @@ export interface TripTodayProjection extends TripProjectionEnvelope {
   nextCommitment: TodayNextCommitment | null;
   freeWindows: FreedomWindow[];
   crewSummary: TodayCrewSummary;
-  opportunities: Layer<never>;
+  /** §13 — the current-or-next window's EXECUTABLE experiences, from the opportunity projection accepted against the same version. */
+  opportunities: Layer<ExecutableTripExperience>;
   risks: TodayRisk[];
   unresolvedActions: TodayUnresolvedAction[];
   /** §16 — the Trip Pulse projection's kept signals, accepted against the same version. */
@@ -211,6 +214,26 @@ export async function buildTripTodayProjection(
     pulseDecisionId = pulseBuilt.projection.decisionId;
   }
 
+  // §13: the opportunity projection composes the same health, freedom and pulse.
+  let opportunities: Layer<ExecutableTripExperience>;
+  let opportunityDecisionId: string | null = null;
+  if (!pulseBuilt.ok) {
+    opportunities = unread(`Opportunities need the Trip Pulse, which is unavailable (${pulseBuilt.reason})`);
+  } else {
+    const oppBuilt = await buildTripOpportunityProjection(sc, tripId, viewerId, { now, health, freedom, pulse: pulseBuilt.projection });
+    if (!oppBuilt.ok) {
+      if (oppBuilt.reason === "TRIP_PROJECTION_VERSION_AHEAD" || oppBuilt.reason === "TRIP_PROJECTION_SCHEMA_MISMATCH" || oppBuilt.reason === "TRIP_PROJECTION_STALE") {
+        return { ok: false, reason: oppBuilt.reason, message: `Opportunity projection refused: ${oppBuilt.message}` };
+      }
+      opportunities = unread(`Opportunities unavailable (${oppBuilt.reason}): ${oppBuilt.message}`);
+    } else {
+      const od = acceptTripProjection(oppBuilt.projection, { acceptedSchemaVersion: TRIP_PROJECTION_SCHEMA_VERSION, canonicalVersion, now: nowMs, metric: "TripOpportunityProjection" });
+      if (!od.accepted) return { ok: false, reason: od.reason, message: `Opportunity projection refused: ${od.message}` };
+      opportunities = okLayer(oppBuilt.projection.windows[0]?.executable ?? []);
+      opportunityDecisionId = oppBuilt.projection.decisionId;
+    }
+  }
+
   // 3. The reads this projection makes itself.
   const { data: stages, error: stErr } = await sc.from("trip_stages").select("id, starts_at, ends_at, sequence").eq("trip_id", tripId);
   if (stErr) {
@@ -291,12 +314,12 @@ export async function buildTripTodayProjection(
   const decision = recordTripDecision({
     tripId, type: "today_projection",
     inputs: {
-      canonicalVersion, healthDecisionId: health.decisionId, freedomDecisionId: freedom.decisionId, pulseDecisionId,
+      canonicalVersion, healthDecisionId: health.decisionId, freedomDecisionId: freedom.decisionId, pulseDecisionId, opportunityDecisionId,
       stageId: stage ? String(stage.id) : null, activePlanId: health.phase.evidence.activePlanId,
       nextCommitmentId: nextCommitment?.id ?? null, openWindows: freedom.windows.filter((w) => Date.parse(w.endsAt) > nowMs).length,
       crew: { total: crewSummary.total, featureEnabled: crewSummary.featureEnabled },
     },
-    sources: ["trips", "TripHealthProjection", "TripFreedomProjection", "TripPulseProjection", "trip_stages", "trip_plan_items", "trip_commitments", "trip_members", "trip_risks"],
+    sources: ["trips", "TripHealthProjection", "TripFreedomProjection", "TripPulseProjection", "TripOpportunityProjection", "trip_stages", "trip_plan_items", "trip_commitments", "trip_members", "trip_risks"],
     assumptions: ["composed from the health and freedom projections accepted against trips.version read first (§22.4)"],
     constraints: [`accepted sub-projections at version ${canonicalVersion ?? "unknown"}`],
     result: { phase: health.phase.phase, health: health.health, unresolvedActions: unresolvedActions.length, freeWindows: freedom.windows.length },
@@ -322,7 +345,7 @@ export async function buildTripTodayProjection(
       nextCommitment,
       freeWindows: freedom.windows.filter((w) => Date.parse(w.endsAt) > nowMs),
       crewSummary,
-      opportunities: noSource<never>("No opportunity object exists in this system (census-trips TR252/TR253). There is nothing to project."),
+      opportunities,
       risks,
       unresolvedActions,
       pulseSignals,

@@ -143,6 +143,10 @@ export const TRIP_KERNEL_EXTENSION_CODES = [
   "TRIP_STAGE_INVALID_TRANSITION",
   "TRIP_SUBGROUP_NOT_FOUND", "TRIP_SUBGROUP_NOT_MEMBER", "TRIP_SUBGROUP_MEMBER_NOT_CREW",
   "TRIP_TRANSPORT_NOT_FOUND", "TRIP_TRANSPORT_INVALID_TRANSITION",
+  // §22.2 replay verification could not run at all (lib/tripReplayVerify.ts:
+  // the rpc errored). Distinct from the two snapshot refusals above, which
+  // are the kernel's own answers; this one means no answer was obtained.
+  "TRIP_REPLAY_UNAVAILABLE",
 ] as const;
 
 const KNOWN: ReadonlySet<string> = new Set<string>([...TRIP_REASON_CODES, ...TRIP_KERNEL_EXTENSION_CODES]);

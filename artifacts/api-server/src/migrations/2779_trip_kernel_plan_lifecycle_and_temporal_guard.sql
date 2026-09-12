@@ -86,6 +86,9 @@ BEGIN
   IF position('START_PLAN' in d) > 0 THEN
     RAISE EXCEPTION '2779: the plan lifecycle family is already present; this migration is not idempotent by design';
   END IF;
+  IF position('ADD_STAGE' in d) = 0 OR position('v_plan_version' in d) = 0 THEN
+    RAISE EXCEPTION '2779: the installed kernel is missing 2764''s stage family or 2772''s plan version; this transform needs both applied first';
+  END IF;
 
   -- declarations
   n := (length(d) - length(replace(d, '  v_link_id    uuid;', ''))) / length('  v_link_id    uuid;');
@@ -208,7 +211,13 @@ $res$          ELSE                          'trip.plan_updated' END;
            SET status = v_new_status, version = version + 1, updated_at = now()
          WHERE id = v_item_id
         RETURNING * INTO v_row;
-        v_event_type := CASE v_type WHEN 'START_PLAN' THEN 'trip.plan_started' ELSE 'trip.plan_skipped' END;
+        IF v_type = 'START_PLAN' THEN
+          v_family     := 'plan';
+          v_event_type := 'trip.plan_started';
+        ELSE
+          v_family     := 'plan';
+          v_event_type := 'trip.plan_skipped';
+        END IF;
         v_result := to_jsonb(v_row);
 
       WHEN 'START_STAGE', 'COMPLETE_STAGE' THEN
@@ -227,8 +236,13 @@ $res$          ELSE                          'trip.plan_updated' END;
                                     'from', v_status, 'to', v_new_status, 'contract_version', 2);
         END IF;
         UPDATE public.trip_stages SET state = v_new_status, updated_at = now() WHERE id = v_stage_id;
-        v_family     := 'stage';
-        v_event_type := CASE v_type WHEN 'START_STAGE' THEN 'trip.stage_started' ELSE 'trip.stage_completed' END;
+        IF v_type = 'START_STAGE' THEN
+          v_family     := 'stage';
+          v_event_type := 'trip.stage_started';
+        ELSE
+          v_family     := 'stage';
+          v_event_type := 'trip.stage_completed';
+        END IF;
         v_result     := jsonb_build_object('id', v_stage_id, 'state', v_new_status);
 
       WHEN 'REMOVE_PLAN' THEN$branches$);
@@ -262,7 +276,7 @@ BEGIN
   IF position('TRIP_STAGE_INVALID_TRANSITION' in d) = 0 THEN RAISE EXCEPTION '2779: stage transition refusal missing'; END IF;
   IF position('''skipped'') THEN' in d) = 0 THEN RAISE EXCEPTION '2779: skipped is not terminal'; END IF;
   n := (length(d) - length(replace(d, E'v_family     := ''stage'';', ''))) / length(E'v_family     := ''stage'';');
-  IF n <> 4 THEN RAISE EXCEPTION '2779: expected 4 stage-family assignments (3 from 2764 + 1), found %', n; END IF;
+  IF n <> 5 THEN RAISE EXCEPTION '2779: expected 5 stage-family assignments (3 from 2764 + 2), found %', n; END IF;
   -- pre-existing guarantees must survive verbatim
   IF position('TRIP_VERSION_CONFLICT' in d) = 0 THEN RAISE EXCEPTION '2779: version conflict lost'; END IF;
   IF position('TRIP_PLAN_VERSION_CONFLICT' in d) = 0 THEN RAISE EXCEPTION '2779: plan version conflict lost'; END IF;

@@ -16,7 +16,7 @@ being collapsed into one number.** The standing rule this repository works under
 
 | state | Trips | evidence |
 | --- | --- | --- |
-| **IMPLEMENTED** | 346 of 451 requirements are BUILT (**170 C + 176 W**) — **76.7 % constructed** — ON THE BRANCH `claude/sweet-fermat-fmx7up`, not on `main` | §36 recount, 451/451 rows parsed; §38 and §39 re-derived 78 of them; §40.1–§40.7 BUILT 57 rows into C and 31 N→W, each with file, line, test and a mutation that went red; §41 executed the kernel on a throwaway database built from production's structure dump (3 rows to C) and seven new kernel families on it, 2779–2785 (25 N→W), every migration seen refused before it was applied; §42 built §16's SignalEstimate + Trip Pulse, §11.4's attention model routed through every trip push, §17.2's priority switch on 2785's register, two §21.1 metrics and three §12.1 tools — 22 rows to C, one N→W, no migration |
+| **IMPLEMENTED** | 375 of 451 requirements are BUILT (**201 C + 174 W**) — **83.1 % constructed** — ON THE BRANCH `claude/sweet-fermat-fmx7up`, not on `main` | §36 recount, 451/451 rows parsed; §38 and §39 re-derived 78 of them; §40.1–§40.7 BUILT 57 rows into C and 31 N→W, each with file, line, test and a mutation that went red; §41 executed the kernel on a throwaway database built from production's structure dump (3 rows to C) and seven new kernel families on it, 2779–2785 (25 N→W), every migration seen refused before it was applied; §42 built §16's SignalEstimate + Trip Pulse, §11.4's attention model routed through every trip push, §17.2's priority switch on 2785's register, two §21.1 metrics and three §12.1 tools — 22 rows to C, one N→W, no migration; §43 built §13's compiler, primitives, opportunity events and the 2786 kernel event, 31 rows to C |
 | **TESTED** | **17,737 / 17,738** api-server tests pass, **0 fail, 0 skipped, 1 CANCELLED** — see below. Trips-specific: the kernel live suite **12/12** against portava-ci | full `npm test`; `tripKernelLive.test.ts` in `live-db.yml` |
 | **MERGED** | `014a25d5` on `main` (PR #481). **PR #482 is open and DRAFT** — none of this session's work is merged | `git merge-base --is-ancestor 014a25d5 origin/main` |
 | **DEPLOYED** | **portava-ci only.** Production has received **nothing** from Batch C | `apply-migrations`: 109 proven applied on `hwokxgbmezheskbzskfr` |
@@ -74,7 +74,7 @@ merge. Merging is part of the test here.
 
 ## What "IMPLEMENTED" does and does not mean
 
-The 76.7 % is a **document measuring itself**. `check:census-integrity` states
+The 83.1 % is a **document measuring itself**. `check:census-integrity` states
 its own limit: it verifies a census agrees with itself, not that it agrees with
 the code. Until 2026-09-11 nothing had ever read census-trips against the
 implementation.
@@ -153,7 +153,7 @@ per-census floors that ratchet.
 
 ## The one number, stated with its caveats attached
 
-**Trips: 76.7 % constructed, 37.7 % correct, of 451 requirements — on the branch.**
+**Trips: 83.1 % constructed, 44.6 % correct, of 451 requirements — on the branch.**
 
 > RESTATED 2026-09-12 after census-trips §40.1–§40.7 (from 55.4 % / 19.5 % at
 > §39). §40 is the first section that BUILDS rather than re-reads: §6.1 policy

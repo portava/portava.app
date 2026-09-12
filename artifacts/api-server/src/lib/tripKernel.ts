@@ -221,7 +221,9 @@ export type TripDisruptionCommandType =
   | "RESOLVE_DISRUPTION"
   | "MARK_COMMITMENT_AT_RISK"
   | "CLEAR_COMMITMENT_RISK"
-  | "OPEN_FREE_WINDOW";
+  | "OPEN_FREE_WINDOW"
+  /** §13.3 (2786): the engine records an opportunity-state change as trip.opportunities_changed. */
+  | "RECORD_OPPORTUNITY_CHANGE";
 
 /** Trip family (contract v2). Capability: none for CREATE_TRIP, owner otherwise. */
 export type TripTripCommandType =
@@ -262,7 +264,7 @@ export type TripCommandType =
   | TripTransportCommandType
   | TripDisruptionCommandType;
 
-export type TripCommandFamily = "plan" | "trip" | "participant" | "admin" | "system" | "subgroup" | "transport" | "disruption";
+export type TripCommandFamily = "plan" | "trip" | "participant" | "admin" | "system" | "subgroup" | "transport" | "disruption" | "opportunity";
 
 /** Which family a command type belongs to, and therefore which actor_role it needs. */
 export function tripCommandFamily(type: TripCommandType): TripCommandFamily {
@@ -283,6 +285,8 @@ export function tripCommandFamily(type: TripCommandType): TripCommandFamily {
     case "DECLARE_DISRUPTION": case "RESOLVE_DISRUPTION":
     case "MARK_COMMITMENT_AT_RISK": case "CLEAR_COMMITMENT_RISK": case "OPEN_FREE_WINDOW":
       return "disruption";
+    case "RECORD_OPPORTUNITY_CHANGE":
+      return "opportunity";
     default:
       return "plan";
   }
@@ -461,6 +465,10 @@ export const TRIP_EVENT_TYPES = [
   "trip.outcome_recorded",
   // attendance family (2772).
   "trip.plan_joined", "trip.plan_left", "trip.plan_attendance_set",
+  // plan lifecycle, subgroup, transport, disruption, derived and opportunity
+  // families (2779–2786) — every type trip_kernel_execute assigns.
+  "trip.plan_started", "trip.plan_skipped", "trip.stage_started", "trip.stage_completed",
+  "trip.commitment_at_risk", "trip.commitment_risk_cleared", "trip.disruption_resolved", "trip.free_window_created", "trip.opportunities_changed", "trip.subgroup_created", "trip.subgroup_dissolved", "trip.subgroup_joined", "trip.subgroup_left", "trip.transport_segment_added", "trip.transport_segment_removed", "trip.transport_segment_state_changed", "trip.transport_segment_updated", "trip.trip_disrupted",
 ] as const;
 export type TripEventType = (typeof TRIP_EVENT_TYPES)[number];
 

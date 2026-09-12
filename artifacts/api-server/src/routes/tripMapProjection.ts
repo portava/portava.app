@@ -58,6 +58,7 @@ import {
   type Layer, type MapPoint, type TripMapProjection,
 } from "../services/trips/TripMapProjection.js";
 import { liveEnvelope, type TripProjectionEnvelope } from "../services/trips/TripProjectionEnvelope.js";
+import { buildTripOpportunityProjection } from "../services/trips/TripOpportunityProjection.js";
 
 const router = Router();
 const log = logger.child({ mod: "tripMapProjection" });
@@ -341,9 +342,19 @@ export async function serveMapProjection(req: Request<{ tripId: string }>, res: 
       }
     }
   }
-  const liveOpportunities: Layer<MapPoint> = noSource(
-    "No opportunity object exists in this system (census-trips TR252/TR253). There is nothing to project.",
-  );
+  // §14.1 live opportunities (§13): every open window's EXECUTABLE
+  // experiences that have a point. A refused projection is UNREAD, by reason.
+  let liveOpportunities: Layer<MapPoint>;
+  {
+    const savedPoints = new Map<string, { lat: number; lng: number }>(savedIdeas.status === "ok" ? savedIdeas.items.map((pt) => [pt.id, { lat: pt.lat, lng: pt.lng }]) : []);
+    const built = await buildTripOpportunityProjection(sc, tripId, user.id);
+    if (!built.ok) liveOpportunities = unread(`opportunity projection unavailable (${built.reason}): ${built.message}`);
+    else liveOpportunities = ok(built.projection.windows.flatMap((w) => w.executable).filter((e, i, all) => all.findIndex((x) => x.candidateId === e.candidateId) === i).flatMap((e) => {
+      const c = savedPoints.get(e.candidateId);
+      if (!c) return [];
+      return [{ id: e.id, kind: "opportunity", lat: c.lat, lng: c.lng, label: e.name, meta: { primitive: e.primitive, arriveAt: e.arriveAt, leaveBy: e.leaveBy, stayMinutes: e.stayMinutes, score: e.score, windowId: e.windowId } }];
+    }));
+  }
   const safetyPoints: Layer<MapPoint> = noSource(
     "No trip-scoped safety or logistics point store exists. Safe Return sessions are not map points.",
   );
