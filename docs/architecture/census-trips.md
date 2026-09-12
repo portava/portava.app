@@ -2950,9 +2950,9 @@ Every row below is built, reachable and tested; none of it is realized.
 | TR153 `TripProposal` contract | N | **W** | *"No proposal table or type (TR26)."* `trip_proposals` carries `proposal_type`, `status`, `expires_at` and `affected_version` as columns (`2763:86-93`). `proposedBy`, `affectedObjects`, `rationale`, `impactSummary` and `decisionRule` are **not columns** — they would have to live in `payload_json`, which is a shape the contract does not specify. W, not C. |
 | TR362 `TripMemoryProjection` | N | **W** | *"Nothing projects a trip into Memory."* `services/memoryProjections/projectionRegistry.ts:314` — id `TripMemoryProjection`, audience `TRIP_RECAP`, destination `trip.recap`, `availability: "BUILDABLE"`, scoped by `trip_id`. It points the **other way** (Memory→trip recap, not trip→Memory), which is precisely the grading this document already gave TR363 for the Passport. W for the same reason, stated the same way. |
 | TR364 `generatedAt` | N | **W** | *"None does."* `lib/tripDiscoveryProjection.ts:102`. **One of nine**, which is exactly why it is W: the requirement says *every* projection, and the §19 list TR356–TR363 still carries none. The count is stated because §38's finding was that a universal claim nobody counted is where these break. |
-| TR365 `sourceTripVersion` | N | **W** | *"No version exists (TR12)."* Falsified twice — `trips.version` (`2420:96`) and the projection field itself (`tripDiscoveryProjection.ts:103`). |
+| TR365 `sourceTripVersion` | N | **W** | *"No version exists (TR12)."* Falsified twice — `trips.version` (`2420:96`) and the projection field itself (`tripDiscoveryProjection.ts:104`). |
 | TR366 `projectionSchemaVersion` | N | **W** | *"Absent."* `lib/tripDiscoveryProjection.ts:100`, with a consumer that rejects on mismatch (`lib/discoveryTripProjectionConsumer.ts:288`). |
-| TR367 `freshness` | N | **W** | *"Absent."* `lib/tripDiscoveryProjection.ts:104`, typed `TripDiscoveryFreshness` with one honest value — `"live"`, documented as *"No other value exists yet (no projection worker)"*. |
+| TR367 `freshness` | N | **W** | *"Absent."* `lib/tripDiscoveryProjection.ts:105`, typed `TripDiscoveryFreshness` with one honest value — `"live"`, documented as *"No other value exists yet (no projection worker)"*. |
 | TR405 `TripSnapshot` contract | N | **W** | *"No snapshot table or type (TR27). `trip_readiness_snapshots` … with none of the contract's fields."* `trip_snapshots` (`2763:108`) carries `aggregate_version`, `snapshot_json` and `engine_versions_json`, and is UNIQUE per `(trip_id, aggregate_version)` — the constraint §22.4's determinism guarantee needs. |
 
 ### 39.5 Evidence corrections that move no verdict
@@ -2991,9 +2991,17 @@ stopped being true, and the next reader trusts the reason.
    `freshness` as bare tokens) matched code in other domains entirely.
    TR286/TR287 stay N because `TransportSegment` has zero occurrences — the
    object those fields belong to does not exist, so its fields cannot.
-4. **CORRECT% did not move and nothing here argues it should.** Thirty rows
-   moved from "not built" to "built and wrong". Not one of them was shown to
-   work, and `trip_kernel_enabled` is still FALSE.
+4. **CORRECT% does not move on routes 1–2 and nothing there argues it should.**
+   Thirty rows moved from "not built" to "built and wrong". Not one of them was
+   shown to work, and `trip_kernel_enabled` is still FALSE. §39.7 is the one
+   exception and it is argued separately.
+5. **Two of this section's own citations were off by one line, and only a
+   re-read caught them.** `sourceTripVersion` and `freshness` were written as
+   `tripDiscoveryProjection.ts:103` and `:104`; they are at `:104` and `:105`,
+   because a doc comment sits between them. `check:doc-citations` was GREEN on
+   both — they stayed inside the file's range — which is exactly the §37 finding
+   reproducing itself inside the section that cites §37. Corrected by checking
+   every `file:line` in this section against the line it names, one at a time.
 
 ### 39.7 A third route, run after §39.6 was written — and it moves CORRECT
 
