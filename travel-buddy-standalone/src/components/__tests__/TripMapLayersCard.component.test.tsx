@@ -17,8 +17,8 @@
 import React from 'react';
 import { render, waitFor } from '@testing-library/react-native';
 
-import { TripMapLayersCard } from '../trip/TripMapLayersCard.tsx';
-import type { ProjectionRead, TripMapProjection, MapPoint } from '../../services/tripMapProjection.ts';
+import { TripMapLayersCard } from '../../features/trips/map/TripMapLayersCard.tsx';
+import type { ProjectionRead, TripMapProjection, MapPoint } from '../../features/trips/map/tripMapProjection.ts';
 import { TRIP_PROJECTION_SCHEMA_VERSION } from '../../services/tripProjectionEnvelope.ts';
 
 const TRIP_ID = 'trip-map-projection-test';

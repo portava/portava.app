@@ -14,7 +14,7 @@ import React from 'react';
 import { render, waitFor } from '@testing-library/react-native';
 
 import { TripStageSpineCard, stageDates } from '../trip/TripStageSpineCard.tsx';
-import type { StructureRead, TripStructure } from '../../services/tripDecisions.ts';
+import type { StructureRead, TripStructure } from '../../features/trips/planning/tripDecisions.ts';
 
 const TRIP_ID = 'trip-spine-test';
 

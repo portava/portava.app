@@ -22,8 +22,8 @@ import type { Server } from "node:http";
 import app from "../app.js";
 import { _setTestClient } from "../lib/http.js";
 import { _setTestServiceClient } from "../lib/supabase.js";
-import { invalidateTripOperationalProjectionsGate } from "../lib/tripOperationalProjections.js";
-import { DRIVE_METRES_PER_SECOND, DRIVE_WAIT_SECONDS } from "../services/trips/TravelTimeProvider.js";
+import { invalidateTripOperationalProjectionsGate } from "../domain/trips/policies/tripOperationalProjections.js";
+import { DRIVE_METRES_PER_SECOND, DRIVE_WAIT_SECONDS } from "../domain/trips/contracts/TravelTimeProvider.js";
 
 const OWNER_ID = "11111111-1111-1111-1111-111111111111";
 const MEMBER_ID = "22222222-2222-2222-2222-222222222222";

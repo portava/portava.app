@@ -3,6 +3,6 @@
  * built before this directory existed and keep their paths (TR439 records the
  * layout as a facade for crew, map and planning until the files move).
  */
-export { TripCrewPresenceCard } from '../../../components/trip/TripCrewPresenceCard.tsx';
-export * from '../../../services/tripPresence.ts';
+export { TripCrewPresenceCard } from './TripCrewPresenceCard.tsx';
+export * from './tripPresence.ts';
 export * from './presence.ts';

@@ -6,12 +6,12 @@
 import { describe, it, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 
-import { planCloseout, reconciliationQuestions, CLOSEOUT_STEPS } from "../services/trips/TripCloseout.js";
-import { runTripCloseout } from "../services/trips/TripCloseoutService.js";
+import { planCloseout, reconciliationQuestions, CLOSEOUT_STEPS } from "../domain/trips/services/TripCloseout.js";
+import { runTripCloseout } from "../domain/trips/services/TripCloseoutService.js";
 import {
   recordTripDecision, readTripDecision, listTripDecisions, explainTripDecision, _resetTripDecisionLedger,
   TRIP_DECISION_RING, TRIP_ENGINE_VERSIONS,
-} from "../services/trips/TripDecisionLedger.js";
+} from "../domain/trips/services/TripDecisionLedger.js";
 
 const TRIP_ID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
 const item = (id: string, o: Record<string, any> = {}) => ({ id, title: id, status: "tentative", dayDate: "2026-09-13", locationName: null, ...o });
@@ -195,7 +195,7 @@ import app from "../app.js";
 import { _setTestClient } from "../lib/http.js";
 import { _setTestServiceClient } from "../lib/supabase.js";
 import { toolExplainTripDecision } from "../compass/CompassTools.js";
-import { buildTripFreedomProjection } from "../services/trips/TripFreedomProjection.js";
+import { buildTripFreedomProjection } from "../domain/trips/projections/TripFreedomProjection.js";
 
 const OWNER_ID = "11111111-1111-1111-1111-111111111111";
 const MEMBER_ID = "22222222-2222-2222-2222-222222222222";

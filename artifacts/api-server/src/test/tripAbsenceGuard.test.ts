@@ -23,7 +23,7 @@ import app from "../app.js";
 import { _setTestClient } from "../lib/http.js";
 import { ABSENCE_GUARD_FLAG, absenceDisclosure } from "../lib/privacy/absenceDisclosure.js";
 import { toPrivateTripPreview } from "../lib/privacy/tripSerializers.js";
-import { TRIP_REASON_CODES } from "../lib/tripReasonCodes.js";
+import { TRIP_REASON_CODES } from "../domain/trips/contracts/tripReasonCodes.js";
 
 const NOW = Date.parse("2026-09-12T10:00:00.000Z");
 

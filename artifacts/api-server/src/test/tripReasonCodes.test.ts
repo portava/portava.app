@@ -10,7 +10,7 @@
  *   2. every `reason: "TRIP_…"` string anywhere in src/ (routes, lib,
  *      services) is in the vocabulary — a reason invented at a call site is a
  *      second vocabulary, and a second vocabulary is how TR441 happened;
- *   3. lib/tripKernel.ts's TripKernelReason is a SUBSET — the kernel file is
+ *   3. domain/trips/commands/tripKernel.ts's TripKernelReason is a SUBSET — the kernel file is
  *      read as text, the same way every kernel-family test reads its
  *      migration, so the kernel stays untouched and still cannot drift.
  *
@@ -25,7 +25,7 @@ import { join } from "node:path";
 import {
   TRIP_REASON_CODES, TRIP_REASON_FAMILIES, TRIP_KERNEL_EXTENSION_CODES,
   INTERNAL_ONLY_REASONS, isKnownTripReason, tripReasonFamily, sendTripRefusal,
-} from "../lib/tripReasonCodes.js";
+} from "../domain/trips/contracts/tripReasonCodes.js";
 import { sendError } from "../lib/http.js";
 
 const SRC = new URL("../", import.meta.url).pathname;
@@ -47,7 +47,7 @@ function emittedReasons(): Map<string, string[]> {
     // A reason is EMITTED when it is the value of a `reason` key (TS), the
     // value beside the 'reason' key in a jsonb_build_object (SQL — that is
     // where the kernel refuses), the argument to sendTripRefusal, or a
-    // `deny("…")` in lib/tripPolicy.ts — whose every return is forwarded to
+    // `deny("…")` in domain/trips/policies/tripPolicy.ts — whose every return is forwarded to
     // the wire by a route through sendTripRefusal (check:trip-policy-callsites
     // is what keeps that true). A code that merely appears in a comment or a
     // type union is not an emission.
@@ -90,7 +90,7 @@ describe("the eleven families", () => {
 
 describe("one vocabulary", () => {
   it("every reason the kernel can return is known here (kernel read as text)", () => {
-    const ts = readFileSync(new URL("../lib/tripKernel.ts", import.meta.url), "utf8");
+    const ts = readFileSync(new URL("../domain/trips/commands/tripKernel.ts", import.meta.url), "utf8");
     const union = ts.slice(ts.indexOf("export type TripKernelReason ="), ts.indexOf("export type TripKernelResult"));
     const literals = [...union.matchAll(/\|\s*"(TRIP_[A-Z_]+)"/g)].map((m) => m[1]!);
     assert.ok(literals.length >= 35, `expected the kernel union to be large, read ${literals.length}`);

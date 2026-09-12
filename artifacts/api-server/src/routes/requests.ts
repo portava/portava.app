@@ -25,13 +25,13 @@ import {
   executeTripCommand,
   sendKernelRejection,
   setTripVersionHeader,
-} from "../lib/tripKernel.js";
+} from "../domain/trips/commands/tripKernel.js";
 import { randomUUID } from "node:crypto";
 
 const router = Router();
 
 /**
- * Trip Kernel gate (Trips spec §4; lib/tripKernel.ts; migrations 2420/2450).
+ * Trip Kernel gate (Trips spec §4; domain/trips/commands/tripKernel.ts; migrations 2420/2450).
  * `sc` is auth.client — the service-role client — which is what the kernel
  * function requires. Returns it when `trip_kernel_enabled` is TRUE, else null;
  * null means the pre-kernel direct write runs exactly as before. The flag read

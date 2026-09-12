@@ -9,9 +9,9 @@ import assert from "node:assert/strict";
 
 import {
   deriveOperationalPhase, localClock, OPERATIONAL_PHASES, PRIMARY_FOCUS, type PhaseInputs,
-} from "../services/trips/TripOperationalPhase.js";
-import { deriveTripHealth, surfacePriority, TRIP_HEALTH_LEVELS, HEALTH_REASON_CODES } from "../services/trips/TripHealth.js";
-import type { FreedomWindow } from "../services/trips/TripFreedomEngine.js";
+} from "../domain/trips/services/TripOperationalPhase.js";
+import { deriveTripHealth, surfacePriority, TRIP_HEALTH_LEVELS, HEALTH_REASON_CODES } from "../domain/trips/services/TripHealth.js";
+import type { FreedomWindow } from "../domain/trips/invariants/TripFreedomEngine.js";
 
 const at = (iso: string) => new Date(iso);
 const base = (o: Partial<PhaseInputs> = {}): PhaseInputs => ({

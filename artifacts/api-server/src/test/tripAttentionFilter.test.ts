@@ -19,8 +19,8 @@ import assert from "node:assert/strict";
 import {
   SAFETY_LOGISTICS_TERMS, classifyForAttention, applyAttentionSuppression, attentionFrom, attentionNotConsulted,
   attentionOnTheWire, readTripAttention,
-} from "../services/trips/TripAttentionFilter.js";
-import { prioritySwitch } from "../services/trips/TripHealth.js";
+} from "../domain/trips/policies/TripAttentionFilter.js";
+import { prioritySwitch } from "../domain/trips/services/TripHealth.js";
 import { makeClient, base } from "./tripHealthProjection.test.js";
 
 const OWNER_ID  = "11111111-1111-1111-1111-111111111111";

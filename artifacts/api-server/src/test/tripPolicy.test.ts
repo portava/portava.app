@@ -38,8 +38,8 @@ import {
   canSeePreciseLocation, CREW_ROLES, HOST_ROLES,
   canAccessTripContent, canHostTrip, canContributeToTrip, canEditOwnOrAsOwner, canSeePrivateContributions,
   tripRoleOf, isTripOwner, planEditPermits, CONTRIBUTING_ROLES,
-} from "../lib/tripPolicy.js";
-import { INTERNAL_ONLY_REASONS } from "../lib/tripReasonCodes.js";
+} from "../domain/trips/policies/tripPolicy.js";
+import { INTERNAL_ONLY_REASONS } from "../domain/trips/contracts/tripReasonCodes.js";
 
 const TRIP = "11111111-1111-4111-8111-111111111111";
 const OWNER = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";

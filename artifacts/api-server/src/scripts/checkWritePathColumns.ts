@@ -103,7 +103,7 @@ import { extractSchemaReferences } from "./lib/schemaReferenceExtract.js";
 
 const __dir = dirname(fileURLToPath(import.meta.url));
 const API_ROOT = resolve(__dir, "../..");
-const SCAN_DIRS = [resolve(__dir, "../routes"), resolve(__dir, "../services")];
+const SCAN_DIRS = [resolve(__dir, "../routes"), resolve(__dir, "../services"), resolve(__dir, "../domain"), resolve(__dir, "../server")];
 const VERBOSE = process.argv.includes("--verbose");
 const PRINT_UNRESOLVED_ALLOWLIST = process.argv.includes(
   "--print-unresolved-allowlist",
@@ -193,7 +193,7 @@ const SKIP_TABLES = new Set<string>([
   // Trips §41–§45, 2782 (transport segments) and 2785 (disruptions) — the same
   // pending-apply state as the four above. Every read sits behind
   // trip_operational_projections_enabled: TripHealthProjection (trip_disruptions,
-  // §17.2), TripTodayProjection / TripImpactState / routes/tripMapProjection
+  // §17.2), TripTodayProjection / TripImpactState / server/trips/readRoutes/tripMapProjection
   // (trip_transport_segments, §8.4 triggers, §9.4 impact, §14.1 logistics).
   "trip_disruptions",
   // Trips §47, 2793 — trip_transport_policies, written by PUT /trips/:tripId/transport-policy
@@ -396,7 +396,7 @@ const UNRESOLVED_ALLOWLIST = new Map<string, number>([
   //
   // Three MORE sites were in this batch and are deliberately NOT here:
   // routes/tripStructure.ts, routes/tripDecisions.ts and
-  // routes/tripMapProjection.ts each passed a table NAME to a shared read
+  // server/trips/readRoutes/tripMapProjection.ts each passed a table NAME to a shared read
   // helper, which made every column on the three §5 read routes invisible to
   // this check — on the newest tables in the schema, where a missing column is
   // hardest to notice. Those three were rewritten to build the query at the

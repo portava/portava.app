@@ -394,7 +394,7 @@ Two migrations named in the brief are often misread as pricing infrastructure. T
   tiers. These are what a *trip costs a traveller*, not what Portava charges. The migration marks
   every row `confidence='curated'` and states it is "NOT a live cost-of-living feed", to be
   replaced by a licensed provider later (`0185:12-16`). Before it, every trip estimate returned
-  `no_baseline_data` (`0185:3-5`, reason enum at `lib/tripBudgetIntel.ts:255`).
+  `no_baseline_data` (`0185:3-5`, reason enum at `domain/trips/services/tripBudgetIntel.ts:255`).
 
 **The reusable asset is the honesty contract, not the rates.** `fx.ts` already refuses to invent a
 conversion and labels the ones it makes. When marketplace money becomes multi-currency, it should

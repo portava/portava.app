@@ -18,7 +18,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 
 import { HAVE_DB, command, deleteUser, kernel, rows, scalar, seedUser } from "./localDb.ts";
-import { previewImpact, type ImpactState } from "../../services/trips/TripImpactPreview.js";
+import { previewImpact, type ImpactState } from "../../domain/trips/services/TripImpactPreview.js";
 
 const SKIP = HAVE_DB ? false : "LOCAL_DB_URL not set — scripts/local-db/up.sh provides one";
 

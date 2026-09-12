@@ -18,13 +18,13 @@ import {
   evaluateFeasibility, checkFeasibility, foldFeasibility,
   FEASIBILITY_VERDICTS,
   type FeasibilityLeg, type FeasibilityTarget,
-} from "../services/trips/TripFeasibilityEngine.js";
+} from "../domain/trips/invariants/TripFeasibilityEngine.js";
 import {
   straightLineTravelTimeProvider, noRoutedProvider, estimateTravel,
   haversineMeters,
   WALK_METRES_PER_SECOND, DRIVE_METRES_PER_SECOND, DRIVE_WAIT_SECONDS, WALK_MAX_METRES,
   type TravelTimeProvider, type TravelTimeResult,
-} from "../services/trips/TravelTimeProvider.js";
+} from "../domain/trips/contracts/TravelTimeProvider.js";
 import { pointTravelEstimate, isRoutedSourceClass } from "../lib/travelEstimate.js";
 
 const at = (iso: string) => new Date(iso);

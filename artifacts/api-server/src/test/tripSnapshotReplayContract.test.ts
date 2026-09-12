@@ -20,7 +20,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
-import { TRIP_EVENT_TYPES } from "../lib/tripKernel.js";
+import { TRIP_EVENT_TYPES } from "../domain/trips/commands/tripKernel.js";
 
 const sql = readFileSync(
   new URL("../migrations/2773_trip_snapshot_fold_and_replay.sql", import.meta.url),

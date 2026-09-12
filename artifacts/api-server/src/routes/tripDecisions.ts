@@ -13,7 +13,7 @@
  *
  * WHERE THE JUDGEMENT LIVES
  * =========================
- * In services/trips/TripDecisionEngine.ts, which is pure and has 31 tests. This
+ * In domain/trips/services/TripDecisionEngine.ts, which is pure and has 31 tests. This
  * route reads, shapes and refuses; it does not decide. In particular it does
  * not soften anything the engine says: an INSUFFICIENT_BASIS is served as
  * INSUFFICIENT_BASIS, because the alternative — falling back to "no objection
@@ -69,7 +69,7 @@
  * moment the risks cannot be read. So any read that fails refuses the whole
  * response with 503, and the message names which input was missing.
  */
-import { decisionUrgency, byUrgency } from "../services/trips/TripDecisionUrgency.js";
+import { decisionUrgency, byUrgency } from "../domain/trips/services/TripDecisionUrgency.js";
 import { Router } from "express";
 
 import { requireUser, requireTripMember, sendError } from "../lib/http.js";
@@ -79,7 +79,7 @@ import { asyncHandler } from "../lib/asyncHandler.js";
 import {
   recommendAll, propagateRisks,
   type Goal, type DecisionTask, type Proposal, type Risk,
-} from "../services/trips/TripDecisionEngine.js";
+} from "../domain/trips/services/TripDecisionEngine.js";
 
 const router = Router();
 const log = logger.child({ mod: "tripDecisions" });

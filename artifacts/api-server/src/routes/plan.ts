@@ -15,7 +15,7 @@ import {
   executeTripCommand,
   sendKernelRejection,
   setTripVersionHeader,
-} from "../lib/tripKernel.js";
+} from "../domain/trips/commands/tripKernel.js";
 
 const router = Router();
 

@@ -19,7 +19,7 @@ const sql = readFileSync(
   new URL("../migrations/2766_trip_kernel_goal_decision_risk_families.sql", import.meta.url),
   "utf8",
 );
-const ts = readFileSync(new URL("../lib/tripKernel.ts", import.meta.url), "utf8");
+const ts = readFileSync(new URL("../domain/trips/commands/tripKernel.ts", import.meta.url), "utf8");
 
 describe("§5.1 goal / decision-task / risk — the assignee rule", () => {
   it("both decision-task writes check the assignee is an accepted member", () => {

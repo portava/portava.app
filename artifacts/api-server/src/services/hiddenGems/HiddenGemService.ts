@@ -3,7 +3,7 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { randomUUID } from "node:crypto";
-import { tripKernelClient, executeTripCommand } from "../../lib/tripKernel.js";
+import { tripKernelClient, executeTripCommand } from "../../domain/trips/commands/tripKernel.js";
 import { recordTrustEvent } from "../trust/TrustEventService.js";
 import { logger as rootLogger } from "../../lib/logger.js";
 import { recordEntityMedia } from "../../lib/mediaAssets.js";

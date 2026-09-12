@@ -19,7 +19,7 @@ import assert from "node:assert/strict";
 import {
   stageLocalTime, withStageLocalTimes, orderByInstant, stageContaining, wallClock, buildTripTimeline,
   STAGE_LOCAL_TIME_READINGS, type TimelineStage,
-} from "../services/trips/TripTimelineProjection.js";
+} from "../domain/trips/projections/TripTimelineProjection.js";
 
 const LISBON: TimelineStage = { id: "s1", sequence: 1, timezone: "Europe/Lisbon", startsAt: "2026-09-13T00:00:00Z", endsAt: "2026-09-17T00:00:00Z" };
 const TOKYO: TimelineStage = { id: "s2", sequence: 2, timezone: "Asia/Tokyo", startsAt: "2026-09-17T00:00:00Z", endsAt: null };

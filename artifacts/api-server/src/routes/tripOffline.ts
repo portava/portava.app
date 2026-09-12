@@ -14,7 +14,7 @@
  * tell from an edited one, so the route refuses (503) rather than issue it.
  *
  * THE REPLAY takes the queue, orders it by when the traveller acted, and
- * asks services/trips/TripOfflineQueue.ts what each operation is: replayed
+ * asks domain/trips/services/TripOfflineQueue.ts what each operation is: replayed
  * through the kernel with ITS OWN idempotency key and expected version (so a
  * queue sent twice produces one transition and a stale edit meets
  * TRIP_VERSION_CONFLICT, never an overwrite); or held for revalidation
@@ -39,17 +39,17 @@ import { requireUser, requireTripMember, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { logger } from "../lib/logger.js";
 import { asyncHandler } from "../lib/asyncHandler.js";
-import { sendTripRefusal } from "../lib/tripReasonCodes.js";
-import { executeTripCommand, isTripKernelEnabled, TRIP_KERNEL_FLAG, type TripCommandType } from "../lib/tripKernel.js";
-import { tripOperationalProjectionsGate } from "../lib/tripOperationalProjections.js";
-import { COMMANDS_ENDPOINT_TYPES, CUTOVER_GATED_TYPES } from "./tripCommands.js";
+import { sendTripRefusal } from "../domain/trips/contracts/tripReasonCodes.js";
+import { executeTripCommand, isTripKernelEnabled, TRIP_KERNEL_FLAG, type TripCommandType } from "../domain/trips/commands/tripKernel.js";
+import { tripOperationalProjectionsGate } from "../domain/trips/policies/tripOperationalProjections.js";
+import { COMMANDS_ENDPOINT_TYPES, CUTOVER_GATED_TYPES } from "../server/trips/commandRoute.js";
 import {
   QueuedTripOperationSchema, QUEUE_MAX_OPERATIONS, classifyQueuedOperations,
-} from "../services/trips/TripOfflineQueue.js";
+} from "../domain/trips/services/TripOfflineQueue.js";
 import {
   buildOfflineBundle, bundleSigningSecret, bundleStaleness, signOfflineBundle, verifyOfflineBundle,
   type BundleCommitment, type BundleMeetingPoint, type BundlePlan, type TripOfflineBundle,
-} from "../services/trips/TripOfflineBundle.js";
+} from "../domain/trips/services/TripOfflineBundle.js";
 
 const router = Router();
 const log = logger.child({ mod: "tripOffline" });

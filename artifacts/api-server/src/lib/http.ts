@@ -164,7 +164,7 @@ export function sendError(
   opts?: {
     exposeDetail?: boolean;
     /**
-     * Trips spec Appendix B reason code (lib/tripReasonCodes.ts). ADDITIVE: the
+     * Trips spec Appendix B reason code (domain/trips/contracts/tripReasonCodes.ts). ADDITIVE: the
      * envelope is unchanged when absent, so every existing call site emits
      * exactly what it emitted before. Set through `sendTripRefusal`, which also
      * refuses to put an internal-only reason on the wire.

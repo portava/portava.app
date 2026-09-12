@@ -565,7 +565,7 @@ export const GUARDS: readonly GuardEntry[] = [
       countPattern: "(\\d+) inline host/owner check\\(s\\) remain",
       unit: "inline owner/host authorization checks remaining in trip route files",
       zeroIsProved:
-        "census-trips §50 (2026-09-12): the thirty-eight inline copies were each converted to a lib/tripPolicy.ts " +
+        "census-trips §50 (2026-09-12): the thirty-eight inline copies were each converted to a domain/trips/policies/tripPolicy.ts " +
         "decision (canEditTrip, canHostTrip, canAccessTripContent, canContributeToTrip, canEditOwnOrAsOwner, " +
         "canSeePrivateContributions, tripRoleOf, isTripOwner, planEditPermits) and the BASELINE is zero for all " +
         "three files. Zero is the expected state; the scan still runs its four patterns over every trip route file " +
@@ -576,7 +576,7 @@ export const GUARDS: readonly GuardEntry[] = [
       "Trip routes authorize through the named §6.1 policy functions; inline host checks may only shrink.",
     // census-trips TR102 measured the §6.1 rule true for plans and false for
     // everything else: 46 inline owner/co_host checks across the trip route
-    // files, each a copy of a rule that lived nowhere else. lib/tripPolicy.ts
+    // files, each a copy of a rule that lived nowhere else. domain/trips/policies/tripPolicy.ts
     // now names all nine functions and tests them as rules against every
     // actor kind §6.2 lists. This ratchets the copies down (per-file baseline,
     // may only shrink) and fails when a §6.1 function has no caller outside
@@ -628,7 +628,7 @@ export const GUARDS: readonly GuardEntry[] = [
     },
     responsibility:
       "A planner or coordination engine that decides a corpus scenario differently from golden.json is red until the golden is regenerated with a note (Trips spec §24; census-trips TR409, TR410).",
-    // The corpus is src/scenarios/trips/corpus.ts; the record is canonical
+    // The corpus is src/domain/trips/replay/corpus.ts; the record is canonical
     // (sorted keys, rounded scores, no free text); the report classifies
     // changed decisions, conservatism up/down, new conflicts and large diffs.
     reach: { kind: "check-all", script: "check:trip-decision-diff" },
@@ -650,7 +650,7 @@ export const GUARDS: readonly GuardEntry[] = [
       countPattern: "(\\d+) trip push site\\(s\\) bypass NotificationRouter",
       unit: "trip push sites bypassing the attention policy",
       zeroIsProved:
-        "Since census-trips §42 (2026-09-12) every trip push site calls sendTripPush (lib/tripPush.ts), which applies §11.4's attention policy per recipient; the ten former bypasses are gone. Zero is proved, not assumed: the checker also counts the direct sendPushWithRetry calls in lib/tripPush.ts and fails unless there is exactly ONE — the router's own dispatch — so a renamed call (zero) or a second dispatch path inside the router (two) is red, and a scan that matched nothing cannot pass as a tree with nothing to match.",
+        "Since census-trips §42 (2026-09-12) every trip push site calls sendTripPush (domain/trips/policies/tripPush.ts), which applies §11.4's attention policy per recipient; the ten former bypasses are gone. Zero is proved, not assumed: the checker also counts the direct sendPushWithRetry calls in domain/trips/policies/tripPush.ts and fails unless there is exactly ONE — the router's own dispatch — so a renamed call (zero) or a second dispatch path inside the router (two) is red, and a scan that matched nothing cannot pass as a tree with nothing to match.",
     },
     responsibility:
       "A trip push that skips NotificationRouter is counted, and the list only shrinks.",

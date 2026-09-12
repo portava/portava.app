@@ -177,8 +177,8 @@ test("a derived lifecycle whose evidence touches none of its derivation columns 
 
 test("a declared consumer that never mentions the state FAILS", () => {
   const reg = copy();
-  state(reg, "EVENTS_STATE", "started").consumers = ["lib/tripStatus.ts"];
-  expectFailure(reg, 'declared consumer lib/tripStatus.ts never mentions "started"');
+  state(reg, "EVENTS_STATE", "started").consumers = ["domain/trips/invariants/tripStatus.ts"];
+  expectFailure(reg, 'declared consumer domain/trips/invariants/tripStatus.ts never mentions "started"');
 });
 
 test("an unreachable state with no consumer list FAILS — the cost must be named", () => {
@@ -266,8 +266,8 @@ test("MISSING_WRITER FAILS — it is how a finding is reported, not how it is si
 test("a time-driven transition whose scheduler is never started FAILS", () => {
   const reg = copy();
   machine(reg, "TRUST_RESTRICTION_LIFECYCLE").transitions.find((t: any) => t.to === "expired").scheduler.from =
-    "lib/tripStatus.ts";
-  expectFailure(reg, "startTrustMaintenanceScheduler is never CALLED from lib/tripStatus.ts");
+    "domain/trips/invariants/tripStatus.ts";
+  expectFailure(reg, "startTrustMaintenanceScheduler is never CALLED from domain/trips/invariants/tripStatus.ts");
 });
 
 // ── 11. the pin ──────────────────────────────────────────────────────────────

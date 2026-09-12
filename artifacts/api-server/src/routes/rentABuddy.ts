@@ -45,7 +45,7 @@ import {
 } from "../lib/rentBuddyBookingStatus.js";
 import { runBuddyRequestSweep } from "../lib/rentBuddyRequestSweeper.js";
 import { createEarningsLedgerEntry } from "../lib/rentBuddyEarningsLedger.js";
-import { readSlotFit, type SlotFit } from "../services/trips/TripFreedomConsumers.js";
+import { readSlotFit, type SlotFit } from "../domain/trips/services/TripFreedomConsumers.js";
 // The ONE reader of rent_buddy_fee_rules. The earnings-summary route used to
 // carry its own level-blind 0.15; see lib/rentBuddyFeeSchedule.ts for why a
 // numeric fallback was the defect rather than the safety net (M1 / M10).

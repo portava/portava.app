@@ -22,8 +22,8 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { randomUUID } from "node:crypto";
 import { getWeatherContext, type DailyWeather } from "../lib/weatherCache.js";
-import { tripKernelClient, executeTripCommand, planCommandTypeForPatch } from "../lib/tripKernel.js";
-import { recordOpportunityCompletion } from "../lib/tripOpportunityMetrics.js";
+import { tripKernelClient, executeTripCommand, planCommandTypeForPatch } from "../domain/trips/commands/tripKernel.js";
+import { recordOpportunityCompletion } from "../domain/trips/services/tripOpportunityMetrics.js";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -634,7 +634,7 @@ export async function applyProposal(
   const items = await fetchPlanItems(sc, proposal.trip_id);
   const byId = new Map(items.map((i) => [i.id, i]));
 
-  // Trip Kernel gate, read once per proposal (Trips spec §4.1; lib/tripKernel.ts).
+  // Trip Kernel gate, read once per proposal (Trips spec §4.1; domain/trips/commands/tripKernel.ts).
   // routes/compassAutopilot.ts authorized the actor (own pending proposal,
   // accepted member, canEditPlan) before calling; the kernel re-checks crew.
   const kernel = await tripKernelClient(sc);

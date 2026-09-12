@@ -1,6 +1,6 @@
 /**
  * Trips spec §11.4 — the attention model IGNORE | PASSIVE | SURFACE | NOTIFY |
- * INTERRUPT, and the rule that every trip push passes it (lib/tripPush.ts);
+ * INTERRUPT, and the rule that every trip push passes it (domain/trips/policies/tripPush.ts);
  * §21.1 notification_actionability_rate. census-trips TR199, TR200, TR398.
  *
  * Run: node --import tsx/esm --test src/test/tripAttentionPolicy.test.ts
@@ -14,10 +14,10 @@ import { fileURLToPath } from "node:url";
 import {
   decideAttention, mayPush, ATTENTION_LEVELS, TRIP_PUSH_EVENT_PROFILES, NOTIFY_BUDGET_PER_HOUR, DISCOVERY_EVENT_KINDS,
   type AttentionContext,
-} from "../services/trips/TripAttentionPolicy.js";
-import { sendTripPush, recordNotificationActed, readNotificationActionability, attentionLevelFor, _resetTripPushBudget } from "../lib/tripPush.js";
+} from "../domain/trips/policies/TripAttentionPolicy.js";
+import { sendTripPush, recordNotificationActed, readNotificationActionability, attentionLevelFor, _resetTripPushBudget } from "../domain/trips/policies/tripPush.js";
 import { _setTestFetch } from "../lib/push.js";
-import { readTripMetric, _resetTripMetrics } from "../lib/tripMetrics.js";
+import { readTripMetric, _resetTripMetrics } from "../domain/trips/services/tripMetrics.js";
 
 const NOW = Date.parse("2026-09-13T12:00:00.000Z");
 const ctx = (o: Partial<AttentionContext> = {}): AttentionContext => ({ now: NOW, mode: "NORMAL", recentNotifyCount: 0, quietHours: false, ...o });
@@ -73,10 +73,10 @@ describe("§11.4 decideAttention — a cost ladder", () => {
   });
 });
 
-describe("§11.4 every trip push passes the policy — lib/tripPush.ts", () => {
+describe("§11.4 every trip push passes the policy — domain/trips/policies/tripPush.ts", () => {
   const here = dirname(fileURLToPath(import.meta.url));
   it("no route or scheduler calls sendPushWithRetry for a trip push any more; every push kind those files send has a profile", () => {
-    const files = ["../routes/trips.ts", "../routes/trips-expansion.ts", "../lib/tripReminderScheduler.ts"].map((f) => readFileSync(resolve(here, f), "utf8"));
+    const files = ["../routes/trips.ts", "../routes/trips-expansion.ts", "../server/trips/projectionWorkers/tripReminderScheduler.ts"].map((f) => readFileSync(resolve(here, f), "utf8"));
     for (const src of files) {
       assert.equal(src.includes("sendPushWithRetry("), false, "a trip push bypasses the attention policy");
       for (const m of src.matchAll(/type:\s*"([a-z_0-9]+)"/g)) {

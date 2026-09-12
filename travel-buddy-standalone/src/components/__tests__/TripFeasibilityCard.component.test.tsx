@@ -20,8 +20,8 @@
 import React from 'react';
 import { render, waitFor } from '@testing-library/react-native';
 
-import { TripFeasibilityCard } from '../trip/TripFeasibilityCard.tsx';
-import type { FeasibilityRead, FeasibilityReport } from '../../services/tripFeasibility.ts';
+import { TripFeasibilityCard } from '../../features/trips/planning/TripFeasibilityCard.tsx';
+import type { FeasibilityRead, FeasibilityReport } from '../../features/trips/planning/tripFeasibility.ts';
 
 const TRIP_ID = 'trip-feasibility-test';
 const DISCLOSURE =

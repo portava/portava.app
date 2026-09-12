@@ -10,7 +10,7 @@ import assert from "node:assert/strict";
 import {
   buildOfflineBundle, bundleSigningSecret, bundleStaleness, canonicalBundleJson, signOfflineBundle, verifyOfflineBundle,
   OFFLINE_BUNDLE_SCHEMA_VERSION, OFFLINE_BUNDLE_TTL_MS,
-} from "../services/trips/TripOfflineBundle.js";
+} from "../domain/trips/services/TripOfflineBundle.js";
 
 const NOW = Date.parse("2026-09-13T12:00:00.000Z");
 const T = (h: number) => new Date(NOW + h * 3_600_000).toISOString();

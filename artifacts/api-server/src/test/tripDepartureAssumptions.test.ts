@@ -20,14 +20,14 @@ import assert from "node:assert/strict";
 import {
   DEPARTURE_BANDS, DEPARTURE_FACTORS, DEPARTURE_ASSUMPTIONS_MODEL,
   assumeDeparture, departureBand, withDepartureAssumptions,
-} from "../services/trips/TripDepartureAssumptions.js";
+} from "../domain/trips/services/TripDepartureAssumptions.js";
 import {
   straightLineTravelTimeProvider, noRoutedProvider, estimateTravel,
   type TravelTimeProvider, type TravelTimeResult,
-} from "../services/trips/TravelTimeProvider.js";
+} from "../domain/trips/contracts/TravelTimeProvider.js";
 import { pointTravelEstimate } from "../lib/travelEstimate.js";
-import { buildTripFreedomProjection } from "../services/trips/TripFreedomProjection.js";
-import { TRIP_ENGINE_VERSIONS } from "../services/trips/TripDecisionLedger.js";
+import { buildTripFreedomProjection } from "../domain/trips/projections/TripFreedomProjection.js";
+import { TRIP_ENGINE_VERSIONS } from "../domain/trips/services/TripDecisionLedger.js";
 import { makeClient, base } from "./tripHealthProjection.test.js";
 
 const TRIP_ID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";

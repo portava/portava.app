@@ -9,14 +9,14 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 
-import { evaluateRiskTriggers } from "../services/trips/TripRiskTriggers.js";
-import { replanDay } from "../services/trips/TripReplan.js";
-import { compileExperiences, type ExperienceCandidate, type TravelEstimator } from "../services/trips/TripExperienceCompiler.js";
-import { diffOpportunities, shouldNotify, type OpportunityPortfolio } from "../services/trips/TripOpportunityEngine.js";
-import { projectSignals, type TripSignal, type PulseContext } from "../services/trips/TripSignals.js";
-import { computeFreedomWindows, type FreedomInputs } from "../services/trips/TripFreedomEngine.js";
-import { deriveTripHealth, prioritySwitch } from "../services/trips/TripHealth.js";
-import type { ImpactState } from "../services/trips/TripImpactPreview.js";
+import { evaluateRiskTriggers } from "../domain/trips/services/TripRiskTriggers.js";
+import { replanDay } from "../domain/trips/services/TripReplan.js";
+import { compileExperiences, type ExperienceCandidate, type TravelEstimator } from "../domain/trips/services/TripExperienceCompiler.js";
+import { diffOpportunities, shouldNotify, type OpportunityPortfolio } from "../domain/trips/services/TripOpportunityEngine.js";
+import { projectSignals, type TripSignal, type PulseContext } from "../domain/trips/services/TripSignals.js";
+import { computeFreedomWindows, type FreedomInputs } from "../domain/trips/invariants/TripFreedomEngine.js";
+import { deriveTripHealth, prioritySwitch } from "../domain/trips/services/TripHealth.js";
+import type { ImpactState } from "../domain/trips/services/TripImpactPreview.js";
 
 const T = (hhmm: string, day = "13") => `2026-09-${day}T${hhmm}:00.000Z`;
 const NOW = Date.parse(T("12:00"));

@@ -39,7 +39,7 @@ export interface ReadinessItem {
 /**
  * Trips spec §8: readiness is an EXPLANATORY projection, not a gamified truth
  * score. The server builds this from the same items the counts come from
- * (api-server lib/tripReadiness.ts explainReadiness); a surface renders THIS.
+ * (api-server domain/trips/services/tripReadiness.ts explainReadiness); a surface renders THIS.
  * Optional on the wire only because an older server may not send it.
  */
 export interface ReadinessExplanation {
@@ -63,7 +63,7 @@ export interface ReadinessSummary {
   explanation?: ReadinessExplanation;
   /**
    * Percent of the MEASURED categories that are ready — null when none could
-   * be measured. Mirrors api-server/src/lib/tripReadiness.ts: a category with
+   * be measured. Mirrors api-server/src/domain/trips/services/tripReadiness.ts: a category with
    * status `unknown` is excluded from the fraction rather than counted as
    * ready, so an unreadable source can no longer raise a trip's score.
    *

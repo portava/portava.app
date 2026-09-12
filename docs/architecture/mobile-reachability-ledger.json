@@ -470,8 +470,8 @@
       ]
     },
     {
-      "fn": "deletePlanItem() @ src/services/tripPlan.ts:153",
-      "callSite": "src/services/tripPlan.ts:154",
+      "fn": "deletePlanItem() @ src/features/trips/planning/tripPlan.ts:153",
+      "callSite": "src/features/trips/planning/tripPlan.ts:154",
       "routes": [
         "/api/trips/:tripId/plan/items/:itemId"
       ]
@@ -598,8 +598,8 @@
       ]
     },
     {
-      "fn": "getActiveLiveShares() @ src/services/tripCrewLocation.ts:155",
-      "callSite": "src/services/tripCrewLocation.ts:157",
+      "fn": "getActiveLiveShares() @ src/features/trips/crew/tripCrewLocation.ts:155",
+      "callSite": "src/features/trips/crew/tripCrewLocation.ts:157",
       "routes": [
         "/api/trips/:tripId/crew/live-shares"
       ]
@@ -690,8 +690,8 @@
       ]
     },
     {
-      "fn": "getCrewPreferences() @ src/services/tripCrewLocation.ts:100",
-      "callSite": "src/services/tripCrewLocation.ts:101",
+      "fn": "getCrewPreferences() @ src/features/trips/crew/tripCrewLocation.ts:100",
+      "callSite": "src/features/trips/crew/tripCrewLocation.ts:101",
       "routes": [
         "/api/trips/:tripId/crew/location-preferences"
       ]
@@ -1268,8 +1268,8 @@
       ]
     },
     {
-      "fn": "stopLiveShare() @ src/services/tripCrewLocation.ts:149",
-      "callSite": "src/services/tripCrewLocation.ts:150",
+      "fn": "stopLiveShare() @ src/features/trips/crew/tripCrewLocation.ts:149",
+      "callSite": "src/features/trips/crew/tripCrewLocation.ts:150",
       "routes": [
         "/api/trips/:tripId/crew/live-share/stop"
       ]
@@ -6507,7 +6507,7 @@
             "literal"
           ],
           "consumers": [
-            "src/components/tripCrew/CrewCallCard.tsx"
+            "src/features/trips/crew/CrewCallCard.tsx"
           ],
           "screens": []
         }
@@ -13820,8 +13820,8 @@
       "classification": "WIRED",
       "chain": [
         {
-          "callSite": "src/services/tripPlan.ts:213",
-          "clientFn": "fetchPlanEditableTrips() @ src/services/tripPlan.ts:211",
+          "callSite": "src/features/trips/planning/tripPlan.ts:213",
+          "clientFn": "fetchPlanEditableTrips() @ src/features/trips/planning/tripPlan.ts:211",
           "via": [
             "literal"
           ],
@@ -14740,7 +14740,7 @@
             "literal"
           ],
           "consumers": [
-            "src/components/TripPlanSection.tsx",
+            "src/features/trips/planning/TripPlanSection.tsx",
             "src/components/safeReturn/SafeReturnSetupSheet.tsx",
             "src/hooks/useSafeReturnActive.ts",
             "app/(rent-a-buddy)/active.tsx",
@@ -14771,7 +14771,7 @@
             "literal"
           ],
           "consumers": [
-            "src/components/TripPlanSection.tsx"
+            "src/features/trips/planning/TripPlanSection.tsx"
           ],
           "screens": []
         }
@@ -16349,8 +16349,8 @@
           "screens": []
         },
         {
-          "callSite": "src/services/tripPlan.ts:224",
-          "clientFn": "addMeetupToPlan() @ src/services/tripPlan.ts:219",
+          "callSite": "src/features/trips/planning/tripPlan.ts:224",
+          "clientFn": "addMeetupToPlan() @ src/features/trips/planning/tripPlan.ts:219",
           "via": [
             "literal"
           ],
@@ -17459,8 +17459,8 @@
       "classification": "WIRED",
       "chain": [
         {
-          "callSite": "src/services/tripPlan.ts:240",
-          "clientFn": "addPlaceToPlan() @ src/services/tripPlan.ts:235",
+          "callSite": "src/features/trips/planning/tripPlan.ts:240",
+          "clientFn": "addPlaceToPlan() @ src/features/trips/planning/tripPlan.ts:235",
           "via": [
             "literal"
           ],
@@ -25032,13 +25032,13 @@
           ]
         },
         {
-          "callSite": "src/services/tripPlan.ts:94",
-          "clientFn": "updateTripPlanPermission() @ src/services/tripPlan.ts:89",
+          "callSite": "src/features/trips/planning/tripPlan.ts:94",
+          "clientFn": "updateTripPlanPermission() @ src/features/trips/planning/tripPlan.ts:89",
           "via": [
             "literal"
           ],
           "consumers": [
-            "src/components/TripPlanSettingsSheet.tsx"
+            "src/features/trips/planning/TripPlanSettingsSheet.tsx"
           ],
           "screens": []
         },
@@ -25198,7 +25198,7 @@
             "literal"
           ],
           "consumers": [
-            "src/components/tripCrew/ArrivalBoard.tsx"
+            "src/features/trips/crew/ArrivalBoard.tsx"
           ],
           "screens": []
         }
@@ -25543,13 +25543,13 @@
       "classification": "WIRED",
       "chain": [
         {
-          "callSite": "src/services/tripCrewLocation.ts:128",
-          "clientFn": "disableGhostMode() @ src/services/tripCrewLocation.ts:127",
+          "callSite": "src/features/trips/crew/tripCrewLocation.ts:128",
+          "clientFn": "disableGhostMode() @ src/features/trips/crew/tripCrewLocation.ts:127",
           "via": [
             "literal"
           ],
           "consumers": [
-            "src/components/tripCrew/CrewMapSection.tsx"
+            "src/features/trips/crew/CrewMapSection.tsx"
           ],
           "screens": []
         }
@@ -25565,13 +25565,13 @@
       "classification": "WIRED",
       "chain": [
         {
-          "callSite": "src/services/tripCrewLocation.ts:122",
-          "clientFn": "enableGhostMode() @ src/services/tripCrewLocation.ts:121",
+          "callSite": "src/features/trips/crew/tripCrewLocation.ts:122",
+          "clientFn": "enableGhostMode() @ src/features/trips/crew/tripCrewLocation.ts:121",
           "via": [
             "literal"
           ],
           "consumers": [
-            "src/components/tripCrew/CrewMapSection.tsx"
+            "src/features/trips/crew/CrewMapSection.tsx"
           ],
           "screens": []
         }
@@ -25587,13 +25587,13 @@
       "classification": "WIRED",
       "chain": [
         {
-          "callSite": "src/services/tripCrewLocation.ts:144",
-          "clientFn": "startLiveShare() @ src/services/tripCrewLocation.ts:135",
+          "callSite": "src/features/trips/crew/tripCrewLocation.ts:144",
+          "clientFn": "startLiveShare() @ src/features/trips/crew/tripCrewLocation.ts:135",
           "via": [
             "literal"
           ],
           "consumers": [
-            "src/components/tripCrew/LiveShareSheet.tsx"
+            "src/features/trips/crew/LiveShareSheet.tsx"
           ],
           "screens": []
         }
@@ -25609,8 +25609,8 @@
       "classification": "WIRED",
       "chain": [
         {
-          "callSite": "src/services/tripCrewLocation.ts:150",
-          "clientFn": "stopLiveShare() @ src/services/tripCrewLocation.ts:149",
+          "callSite": "src/features/trips/crew/tripCrewLocation.ts:150",
+          "clientFn": "stopLiveShare() @ src/features/trips/crew/tripCrewLocation.ts:149",
           "via": [
             "literal"
           ],
@@ -25629,8 +25629,8 @@
       "classification": "WIRED",
       "chain": [
         {
-          "callSite": "src/services/tripCrewLocation.ts:157",
-          "clientFn": "getActiveLiveShares() @ src/services/tripCrewLocation.ts:155",
+          "callSite": "src/features/trips/crew/tripCrewLocation.ts:157",
+          "clientFn": "getActiveLiveShares() @ src/features/trips/crew/tripCrewLocation.ts:155",
           "via": [
             "literal"
           ],
@@ -25650,8 +25650,8 @@
       "classification": "WIRED",
       "chain": [
         {
-          "callSite": "src/services/tripCrewLocation.ts:101",
-          "clientFn": "getCrewPreferences() @ src/services/tripCrewLocation.ts:100",
+          "callSite": "src/features/trips/crew/tripCrewLocation.ts:101",
+          "clientFn": "getCrewPreferences() @ src/features/trips/crew/tripCrewLocation.ts:100",
           "via": [
             "literal"
           ],
@@ -25659,13 +25659,13 @@
           "screens": []
         },
         {
-          "callSite": "src/services/tripCrewLocation.ts:113",
-          "clientFn": "updateCrewPreferences() @ src/services/tripCrewLocation.ts:104",
+          "callSite": "src/features/trips/crew/tripCrewLocation.ts:113",
+          "clientFn": "updateCrewPreferences() @ src/features/trips/crew/tripCrewLocation.ts:104",
           "via": [
             "literal"
           ],
           "consumers": [
-            "src/components/tripCrew/CrewMapSection.tsx"
+            "src/features/trips/crew/CrewMapSection.tsx"
           ],
           "screens": []
         }
@@ -25681,8 +25681,8 @@
       "classification": "WIRED",
       "chain": [
         {
-          "callSite": "src/services/tripCrewLocation.ts:95",
-          "clientFn": "getCrewMap() @ src/services/tripCrewLocation.ts:94",
+          "callSite": "src/features/trips/crew/tripCrewLocation.ts:95",
+          "clientFn": "getCrewMap() @ src/features/trips/crew/tripCrewLocation.ts:94",
           "via": [
             "literal"
           ],
@@ -26367,13 +26367,13 @@
       "classification": "WIRED",
       "chain": [
         {
-          "callSite": "src/components/TripPlanSettingsSheet.tsx:88",
-          "clientFn": "TripPlanSettingsSheet() @ src/components/TripPlanSettingsSheet.tsx:46",
+          "callSite": "src/features/trips/planning/TripPlanSettingsSheet.tsx:88",
+          "clientFn": "TripPlanSettingsSheet() @ src/features/trips/planning/TripPlanSettingsSheet.tsx:46",
           "via": [
             "literal"
           ],
           "consumers": [
-            "src/components/TripPlanSection.tsx"
+            "src/features/trips/planning/TripPlanSection.tsx"
           ],
           "screens": []
         },
@@ -26556,13 +26556,13 @@
       "classification": "WIRED",
       "chain": [
         {
-          "callSite": "src/services/tripPlan.ts:70",
-          "clientFn": "fetchTripPlan() @ src/services/tripPlan.ts:68",
+          "callSite": "src/features/trips/planning/tripPlan.ts:70",
+          "clientFn": "fetchTripPlan() @ src/features/trips/planning/tripPlan.ts:68",
           "via": [
             "builder:planUrl"
           ],
           "consumers": [
-            "src/components/TripPlanSection.tsx",
+            "src/features/trips/planning/TripPlanSection.tsx",
             "src/hooks/usePlanSync.ts",
             "app/reminders/new.tsx"
           ],
@@ -26582,13 +26582,13 @@
       "classification": "WIRED",
       "chain": [
         {
-          "callSite": "src/services/tripPlan.ts:84",
-          "clientFn": "fetchTripPlanPermission() @ src/services/tripPlan.ts:83",
+          "callSite": "src/features/trips/planning/tripPlan.ts:84",
+          "clientFn": "fetchTripPlanPermission() @ src/features/trips/planning/tripPlan.ts:83",
           "via": [
             "literal"
           ],
           "consumers": [
-            "src/components/TripPlanSettingsSheet.tsx"
+            "src/features/trips/planning/TripPlanSettingsSheet.tsx"
           ],
           "screens": []
         }
@@ -26613,8 +26613,8 @@
           "screens": []
         },
         {
-          "callSite": "src/services/tripPlan.ts:116",
-          "clientFn": "createPlanItem() @ src/services/tripPlan.ts:112",
+          "callSite": "src/features/trips/planning/tripPlan.ts:116",
+          "clientFn": "createPlanItem() @ src/features/trips/planning/tripPlan.ts:112",
           "via": [
             "builder:planUrl"
           ],
@@ -26641,8 +26641,8 @@
       "classification": "WIRED",
       "chain": [
         {
-          "callSite": "src/services/tripPlan.ts:132",
-          "clientFn": "updatePlanItem() @ src/services/tripPlan.ts:127",
+          "callSite": "src/features/trips/planning/tripPlan.ts:132",
+          "clientFn": "updatePlanItem() @ src/features/trips/planning/tripPlan.ts:127",
           "via": [
             "builder:planUrl"
           ],
@@ -26653,8 +26653,8 @@
           "screens": []
         },
         {
-          "callSite": "src/services/tripPlan.ts:154",
-          "clientFn": "deletePlanItem() @ src/services/tripPlan.ts:153",
+          "callSite": "src/features/trips/planning/tripPlan.ts:154",
+          "clientFn": "deletePlanItem() @ src/features/trips/planning/tripPlan.ts:153",
           "via": [
             "builder:planUrl"
           ],
@@ -26673,8 +26673,8 @@
       "classification": "WIRED",
       "chain": [
         {
-          "callSite": "src/services/tripPlan.ts:144",
-          "clientFn": "removePlanItem() @ src/services/tripPlan.ts:143",
+          "callSite": "src/features/trips/planning/tripPlan.ts:144",
+          "clientFn": "removePlanItem() @ src/features/trips/planning/tripPlan.ts:143",
           "via": [
             "builder:planUrl"
           ],
@@ -26696,8 +26696,8 @@
       "classification": "WIRED",
       "chain": [
         {
-          "callSite": "src/services/tripPlan.ts:168",
-          "clientFn": "reorderPlanItem() @ src/services/tripPlan.ts:163",
+          "callSite": "src/features/trips/planning/tripPlan.ts:168",
+          "clientFn": "reorderPlanItem() @ src/features/trips/planning/tripPlan.ts:163",
           "via": [
             "builder:planUrl"
           ],
@@ -26718,13 +26718,13 @@
       "classification": "WIRED",
       "chain": [
         {
-          "callSite": "src/services/tripPlan.ts:106",
-          "clientFn": "fetchTripPlanMap() @ src/services/tripPlan.ts:104",
+          "callSite": "src/features/trips/planning/tripPlan.ts:106",
+          "clientFn": "fetchTripPlanMap() @ src/features/trips/planning/tripPlan.ts:104",
           "via": [
             "builder:planUrl"
           ],
           "consumers": [
-            "src/components/TripPlanSection.tsx",
+            "src/features/trips/planning/TripPlanSection.tsx",
             "app/map/index.tsx"
           ],
           "screens": [
@@ -26743,8 +26743,8 @@
       "classification": "WIRED",
       "chain": [
         {
-          "callSite": "src/services/tripPlan.ts:189",
-          "clientFn": "reorderPlanItems() @ src/services/tripPlan.ts:185",
+          "callSite": "src/features/trips/planning/tripPlan.ts:189",
+          "clientFn": "reorderPlanItems() @ src/features/trips/planning/tripPlan.ts:185",
           "via": [
             "builder:planUrl"
           ],
@@ -27007,13 +27007,13 @@
       "classification": "WIRED",
       "chain": [
         {
-          "callSite": "src/services/tripPlan.ts:94",
-          "clientFn": "updateTripPlanPermission() @ src/services/tripPlan.ts:89",
+          "callSite": "src/features/trips/planning/tripPlan.ts:94",
+          "clientFn": "updateTripPlanPermission() @ src/features/trips/planning/tripPlan.ts:89",
           "via": [
             "literal"
           ],
           "consumers": [
-            "src/components/TripPlanSettingsSheet.tsx"
+            "src/features/trips/planning/TripPlanSettingsSheet.tsx"
           ],
           "screens": []
         },
@@ -27080,13 +27080,13 @@
           ]
         },
         {
-          "callSite": "src/services/tripPlan.ts:94",
-          "clientFn": "updateTripPlanPermission() @ src/services/tripPlan.ts:89",
+          "callSite": "src/features/trips/planning/tripPlan.ts:94",
+          "clientFn": "updateTripPlanPermission() @ src/features/trips/planning/tripPlan.ts:89",
           "via": [
             "literal"
           ],
           "consumers": [
-            "src/components/TripPlanSettingsSheet.tsx"
+            "src/features/trips/planning/TripPlanSettingsSheet.tsx"
           ],
           "screens": []
         },
@@ -27188,13 +27188,13 @@
       "classification": "WIRED",
       "chain": [
         {
-          "callSite": "src/services/tripPlan.ts:94",
-          "clientFn": "updateTripPlanPermission() @ src/services/tripPlan.ts:89",
+          "callSite": "src/features/trips/planning/tripPlan.ts:94",
+          "clientFn": "updateTripPlanPermission() @ src/features/trips/planning/tripPlan.ts:89",
           "via": [
             "literal"
           ],
           "consumers": [
-            "src/components/TripPlanSettingsSheet.tsx"
+            "src/features/trips/planning/TripPlanSettingsSheet.tsx"
           ],
           "screens": []
         },
@@ -27248,13 +27248,13 @@
       "classification": "WIRED",
       "chain": [
         {
-          "callSite": "src/services/tripPlan.ts:94",
-          "clientFn": "updateTripPlanPermission() @ src/services/tripPlan.ts:89",
+          "callSite": "src/features/trips/planning/tripPlan.ts:94",
+          "clientFn": "updateTripPlanPermission() @ src/features/trips/planning/tripPlan.ts:89",
           "via": [
             "literal"
           ],
           "consumers": [
-            "src/components/TripPlanSettingsSheet.tsx"
+            "src/features/trips/planning/TripPlanSettingsSheet.tsx"
           ],
           "screens": []
         },
@@ -27308,13 +27308,13 @@
       "classification": "WIRED",
       "chain": [
         {
-          "callSite": "src/services/tripPlan.ts:94",
-          "clientFn": "updateTripPlanPermission() @ src/services/tripPlan.ts:89",
+          "callSite": "src/features/trips/planning/tripPlan.ts:94",
+          "clientFn": "updateTripPlanPermission() @ src/features/trips/planning/tripPlan.ts:89",
           "via": [
             "literal"
           ],
           "consumers": [
-            "src/components/TripPlanSettingsSheet.tsx"
+            "src/features/trips/planning/TripPlanSettingsSheet.tsx"
           ],
           "screens": []
         },
@@ -27393,13 +27393,13 @@
       "classification": "WIRED",
       "chain": [
         {
-          "callSite": "src/services/tripPlan.ts:94",
-          "clientFn": "updateTripPlanPermission() @ src/services/tripPlan.ts:89",
+          "callSite": "src/features/trips/planning/tripPlan.ts:94",
+          "clientFn": "updateTripPlanPermission() @ src/features/trips/planning/tripPlan.ts:89",
           "via": [
             "literal"
           ],
           "consumers": [
-            "src/components/TripPlanSettingsSheet.tsx"
+            "src/features/trips/planning/TripPlanSettingsSheet.tsx"
           ],
           "screens": []
         },
@@ -27453,13 +27453,13 @@
       "classification": "WIRED",
       "chain": [
         {
-          "callSite": "src/services/tripPlan.ts:94",
-          "clientFn": "updateTripPlanPermission() @ src/services/tripPlan.ts:89",
+          "callSite": "src/features/trips/planning/tripPlan.ts:94",
+          "clientFn": "updateTripPlanPermission() @ src/features/trips/planning/tripPlan.ts:89",
           "via": [
             "literal"
           ],
           "consumers": [
-            "src/components/TripPlanSettingsSheet.tsx"
+            "src/features/trips/planning/TripPlanSettingsSheet.tsx"
           ],
           "screens": []
         },

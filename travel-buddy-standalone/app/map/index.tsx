@@ -75,15 +75,15 @@ import {
   dismissProposal,
   type TripStop,
   type OptimizeProposal,
-} from '../../src/features/map/trip/tripMapModel.ts';
+} from '../../src/features/trips/map/tripMapModel.ts';
 import {
   composeTripMap,
   persistOptimizeAcceptance,
   type ComposedTripMap,
-} from '../../src/features/map/trip/tripMapSources.ts';
-import { fetchTripPlanMap, reorderPlanItems, createPlanItem } from '../../src/services/tripPlan.ts';
+} from '../../src/features/trips/map/tripMapSources.ts';
+import { fetchTripPlanMap, reorderPlanItems, createPlanItem } from '../../src/features/trips/planning/tripPlan.ts';
 import { listSaved } from '../../src/services/discoveryBookmarks.ts';
-import { getCrewMap } from '../../src/services/tripCrewLocation.ts';
+import { getCrewMap } from '../../src/features/trips/crew/tripCrewLocation.ts';
 import { fetchTripRoutePlan } from '../../src/services/routePlan.ts';
 import { getActiveSession } from '../../src/services/safeReturn.ts';
 import { fetchCompassRecommendations } from '../../src/services/compass.ts';

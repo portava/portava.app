@@ -18,9 +18,9 @@ import {
   computeFreedomWindows, detectPlanOverlaps, leaveAt, orderCommitments,
   HARD_CONSTRAINT_KINDS, TEMPORAL_CONFLICT_KINDS,
   type EngineCommitment, type HopTravel,
-} from "../services/trips/TripFreedomEngine.js";
-import { checkFeasibility } from "../services/trips/TripFeasibilityEngine.js";
-import { straightLineTravelTimeProvider, type GeoPoint } from "../services/trips/TravelTimeProvider.js";
+} from "../domain/trips/invariants/TripFreedomEngine.js";
+import { checkFeasibility } from "../domain/trips/invariants/TripFeasibilityEngine.js";
+import { straightLineTravelTimeProvider, type GeoPoint } from "../domain/trips/contracts/TravelTimeProvider.js";
 
 const T = (hhmm: string, day = "13") => new Date(`2026-09-${day}T${hhmm}:00.000Z`);
 const P: GeoPoint = { lat: 48.8566, lng: 2.3522 };

@@ -282,7 +282,7 @@ const KNOWN: Record<string, Known> = {
   //
   // Trips §52 (2794). Neither flag is in lib/capability/registry.ts, so the
   // taxonomy here says "unguarded"; the RUNTIME guard is not the registry but
-  // tripOperationalProjectionsGate (lib/tripOperationalProjections.ts), whose
+  // tripOperationalProjectionsGate (domain/trips/policies/tripOperationalProjections.ts), whose
   // schema probe names trip_subgroups / trip_subgroup_members (2780): the
   // subgroup branch of POST /me/safe-return/sessions refuses feature_disabled
   // before either table is read, and SafeReturnNotificationService reads

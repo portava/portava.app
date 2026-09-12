@@ -10,9 +10,9 @@ import assert from "node:assert/strict";
 import {
   QueuedTripOperationSchema, OFFLINE_SAFE_TYPES, QUEUE_HORIZON_MS, QUEUE_FUTURE_SKEW_MS,
   classifyQueuedOperation, classifyQueuedOperations, orderQueuedOperations, type QueuedTripOperation,
-} from "../services/trips/TripOfflineQueue.js";
-import { COMMANDS_ENDPOINT_TYPES, CUTOVER_GATED_TYPES } from "../routes/tripCommands.js";
-import { TRIP_REASON_CODES } from "../lib/tripReasonCodes.js";
+} from "../domain/trips/services/TripOfflineQueue.js";
+import { COMMANDS_ENDPOINT_TYPES, CUTOVER_GATED_TYPES } from "../server/trips/commandRoute.js";
+import { TRIP_REASON_CODES } from "../domain/trips/contracts/tripReasonCodes.js";
 
 const TRIP = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1";
 const NOW = Date.parse("2026-09-13T12:00:00.000Z");

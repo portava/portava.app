@@ -8,14 +8,14 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 
-import { replanDay, simulateChange, REPLAN_OPS, type ReplanInputs } from "../services/trips/TripReplan.js";
-import { findMeetingPoint, MEETING_REFUSALS, type MeetingPointInputs } from "../services/trips/TripMeetingPoint.js";
-import { planRescue, RESCUE_PROBLEMS, ESCALATION_TARGETS } from "../services/trips/TripRescue.js";
-import { valueOfInformation, unknownsFromExperiences, VOI_MAX_QUESTIONS } from "../services/trips/TripValueOfInformation.js";
-import type { ImpactState } from "../services/trips/TripImpactPreview.js";
-import type { FreedomWindow } from "../services/trips/TripFreedomEngine.js";
-import type { ExecutableTripExperience } from "../services/trips/TripExperienceCompiler.js";
-import type { PulseInterpretation } from "../services/trips/TripSignals.js";
+import { replanDay, simulateChange, REPLAN_OPS, type ReplanInputs } from "../domain/trips/services/TripReplan.js";
+import { findMeetingPoint, MEETING_REFUSALS, type MeetingPointInputs } from "../domain/trips/services/TripMeetingPoint.js";
+import { planRescue, RESCUE_PROBLEMS, ESCALATION_TARGETS } from "../domain/trips/services/TripRescue.js";
+import { valueOfInformation, unknownsFromExperiences, VOI_MAX_QUESTIONS } from "../domain/trips/services/TripValueOfInformation.js";
+import type { ImpactState } from "../domain/trips/services/TripImpactPreview.js";
+import type { FreedomWindow } from "../domain/trips/invariants/TripFreedomEngine.js";
+import type { ExecutableTripExperience } from "../domain/trips/services/TripExperienceCompiler.js";
+import type { PulseInterpretation } from "../domain/trips/services/TripSignals.js";
 
 const T = (hhmm: string, day = "13") => `2026-09-${day}T${hhmm}:00.000Z`;
 const NOW = Date.parse(T("12:00"));

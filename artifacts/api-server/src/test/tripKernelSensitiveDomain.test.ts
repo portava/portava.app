@@ -12,8 +12,8 @@
 import { describe, it, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 
-import { executeTripCommand, sensitiveDomainKey, SENSITIVE_DOMAIN_KEY, readTripCommandRejectedTotal, _resetTripCommandRejectedTotal } from "../lib/tripKernel.js";
-import { TRIP_KERNEL_EXTENSION_CODES } from "../lib/tripReasonCodes.js";
+import { executeTripCommand, sensitiveDomainKey, SENSITIVE_DOMAIN_KEY, readTripCommandRejectedTotal, _resetTripCommandRejectedTotal } from "../domain/trips/commands/tripKernel.js";
+import { TRIP_KERNEL_EXTENSION_CODES } from "../domain/trips/contracts/tripReasonCodes.js";
 
 const TRIP_ID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
 const USER_ID = "11111111-1111-1111-1111-111111111111";

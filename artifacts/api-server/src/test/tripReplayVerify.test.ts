@@ -1,6 +1,6 @@
 /**
  * Trips spec §22.2 / §21.1 — `trip_event_replay_mismatch_total` is recorded
- * where a replay is verified (lib/tripReplayVerify.ts), and reachable at
+ * where a replay is verified (domain/trips/replay/tripReplayVerify.ts), and reachable at
  * POST /trips/:id/replay/verify. census-trips TR400.
  *
  * Run: node --import tsx/esm --test src/test/tripReplayVerify.test.ts
@@ -13,8 +13,8 @@ import type { Server } from "node:http";
 import app from "../app.js";
 import { _setTestClient } from "../lib/http.js";
 import { _setTestServiceClient } from "../lib/supabase.js";
-import { verifyTripReplay } from "../lib/tripReplayVerify.js";
-import { readTripMetric, _resetTripMetrics } from "../lib/tripMetrics.js";
+import { verifyTripReplay } from "../domain/trips/replay/tripReplayVerify.js";
+import { readTripMetric, _resetTripMetrics } from "../domain/trips/services/tripMetrics.js";
 import { makeClient, base } from "./tripHealthProjection.test.js";
 
 const TRIP_ID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";

@@ -6,9 +6,9 @@
 import { describe, it, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 
-import { classifyPresence, presenceConfidence, PRESENCE_FRESHNESS_CLASSES, PRESENCE_LIVE_MS, PRESENCE_RECENT_MS } from "../lib/tripPresenceFreshness.js";
-import { buildCrewCard, type RawMemberLocation } from "../lib/tripCrewLocation.js";
-import { readTripMetric, _resetTripMetrics } from "../lib/tripMetrics.js";
+import { classifyPresence, presenceConfidence, PRESENCE_FRESHNESS_CLASSES, PRESENCE_LIVE_MS, PRESENCE_RECENT_MS } from "../domain/trips/policies/tripPresenceFreshness.js";
+import { buildCrewCard, type RawMemberLocation } from "../domain/trips/services/tripCrewLocation.js";
+import { readTripMetric, _resetTripMetrics } from "../domain/trips/services/tripMetrics.js";
 
 const NOW = Date.parse("2026-09-13T12:00:00Z");
 const ago = (ms: number) => new Date(NOW - ms).toISOString();

@@ -8,7 +8,7 @@
  *
  * Measured 2026-09-11 on census-trips, before its scope was widened: the
  * document cited 49 distinct files and 10 were in scope. The 39 missing were
- * led by `lib/tripCrewLocation.ts` (34 citations), `routes/trips-expansion.ts`
+ * led by `domain/trips/services/tripCrewLocation.ts` (34 citations), `routes/trips-expansion.ts`
  * (28) and `compass/CompassTools.ts` (26). The scope covered the Trip Kernel
  * migrations — the programme that was being BUILT — so it watched the rows
  * saying something is not yet right, and left unguarded the rows claiming

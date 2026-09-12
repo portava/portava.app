@@ -31,7 +31,7 @@ import {
   executeTripCommand,
   sendKernelRejection,
   setTripVersionHeader,
-} from "../lib/tripKernel.js";
+} from "../domain/trips/commands/tripKernel.js";
 
 const chatLogger = rootLogger.child({ route: "telegraphChat" });
 import { requireUser, sendError } from "../lib/http.js";

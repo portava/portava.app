@@ -16,10 +16,10 @@ import assert from "node:assert/strict";
 import { createServer, type Server } from "node:http";
 import express from "express";
 
-import { runTripCloseout } from "../services/trips/TripCloseoutService.js";
-import { recordDerivedEvents, freeWindowKey, commitmentAtRiskKey } from "../lib/tripDerivedEvents.js";
-import { persistTripDecision, readTripDecisionFrom, explainTripDecisionFrom, recordTripDecision, _resetTripDecisionLedger } from "../services/trips/TripDecisionLedger.js";
-import { invalidateTripOperationalProjectionsGate } from "../lib/tripOperationalProjections.js";
+import { runTripCloseout } from "../domain/trips/services/TripCloseoutService.js";
+import { recordDerivedEvents, freeWindowKey, commitmentAtRiskKey } from "../domain/trips/events/tripDerivedEvents.js";
+import { persistTripDecision, readTripDecisionFrom, explainTripDecisionFrom, recordTripDecision, _resetTripDecisionLedger } from "../domain/trips/services/TripDecisionLedger.js";
+import { invalidateTripOperationalProjectionsGate } from "../domain/trips/policies/tripOperationalProjections.js";
 import { _setTestClient } from "../lib/http.js";
 import { _setTestServiceClient } from "../lib/supabase.js";
 import tripReservationsRouter from "../routes/tripReservations.js";
@@ -198,7 +198,7 @@ describe("§9.2 subgroup-scoped live shares on the crew map (2780)", () => {
     trip_commitments: [], trip_risks: [], trip_stages: [], trip_subgroups: [{ id: "g1", trip_id: TRIP_ID, state: "active" }], trip_decisions: [], trip_disruptions: [], trip_reservations: [], trip_reservation_events: [],
   });
   it("gate on: a share scoped to a subgroup reaches a viewer in it, and not one outside it", async () => {
-    const { getCrewMap } = await import("../services/tripCrew/TripCrewLocationService.js");
+    const { getCrewMap } = await import("../domain/trips/services/TripCrewLocationService.js");
     const inside = await getCrewMap(fake(crewTables(true, true)).client as any, TRIP_ID, VIEWER);
     const sharerIn = inside.members.find((c) => c.userId === SHARER)!;
     assert.ok(sharerIn, "sharer card missing");
@@ -211,7 +211,7 @@ describe("§9.2 subgroup-scoped live shares on the crew map (2780)", () => {
     assert.notEqual(sharerOut.statusLabel, sharerIn.statusLabel, "the subgroup scope changed nothing");
   });
   it("gate off: subgroup_id is not read and the session is trip-scoped exactly as before", async () => {
-    const { getCrewMap } = await import("../services/tripCrew/TripCrewLocationService.js");
+    const { getCrewMap } = await import("../domain/trips/services/TripCrewLocationService.js");
     invalidateTripOperationalProjectionsGate();
     const f = fake(crewTables(false, false));
     const r = await getCrewMap(f.client as any, TRIP_ID, VIEWER);

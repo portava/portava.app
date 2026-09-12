@@ -1,6 +1,6 @@
 /**
  * Trip Kernel, third pass — the gated writers in routes/trips-expansion.ts and
- * routes/requests.ts (Trips spec §4, §6.1, §24 Phase 1; lib/tripKernel.ts;
+ * routes/requests.ts (Trips spec §4, §6.1, §24 Phase 1; domain/trips/commands/tripKernel.ts;
  * migrations 2420 / 2450 / 2500).
  *
  * WHAT IS PROVEN HERE
@@ -42,8 +42,8 @@ import express from "express";
 import { _setTestClient } from "../lib/http.js";
 import tripsExpansionRouter from "../routes/trips-expansion.js";
 import requestsRouter from "../routes/requests.js";
-import { _resetTripCommandRejectedTotal, readTripCommandRejectedTotal } from "../lib/tripKernel.js";
-import { CLOSEOUT_STEPS } from "../services/trips/TripCloseout.js";
+import { _resetTripCommandRejectedTotal, readTripCommandRejectedTotal } from "../domain/trips/commands/tripKernel.js";
+import { CLOSEOUT_STEPS } from "../domain/trips/services/TripCloseout.js";
 
 // ── IDs ───────────────────────────────────────────────────────────────────────
 const ALICE = "aaaaaaaa-0000-0000-0000-000000000001"; // owner (trip_members role owner)

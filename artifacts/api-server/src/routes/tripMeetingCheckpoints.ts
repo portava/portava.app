@@ -21,12 +21,12 @@ import { requireUser, requireTripMember, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { logger } from "../lib/logger.js";
 import { asyncHandler } from "../lib/asyncHandler.js";
-import { sendTripRefusal } from "../lib/tripReasonCodes.js";
-import { executeTripCommand, isTripKernelEnabled, TRIP_KERNEL_FLAG, type TripKernelResult } from "../lib/tripKernel.js";
-import { tripOperationalProjectionsGate, refusalForGate } from "../lib/tripOperationalProjections.js";
+import { sendTripRefusal } from "../domain/trips/contracts/tripReasonCodes.js";
+import { executeTripCommand, isTripKernelEnabled, TRIP_KERNEL_FLAG, type TripKernelResult } from "../domain/trips/commands/tripKernel.js";
+import { tripOperationalProjectionsGate, refusalForGate } from "../domain/trips/policies/tripOperationalProjections.js";
 import {
   ARRIVAL_STATES, CHECKPOINT_PURPOSES, listMeetingCheckpoints, regroup, REGROUP_PRIORITY_READING,
-} from "../services/trips/TripMeetingCheckpoints.js";
+} from "../domain/trips/services/TripMeetingCheckpoints.js";
 
 const router = Router();
 const log = logger.child({ mod: "tripMeetingCheckpoints" });

@@ -168,7 +168,7 @@ PR #461 right now.
 ## 11. Outbox
 
 `lib/intelDomainEvents.ts` is the intel lane's event surface. There is **no general application
-outbox** — `grep` for `outbox` outside it reaches only `lib/tripReminderScheduler.ts` and
+outbox** — `grep` for `outbox` outside it reaches only `server/trips/projectionWorkers/tripReminderScheduler.ts` and
 `routes/admin.ts`. The spec's §1 assumption that "outbox/event patterns" exist to reuse holds for
 the intel lane and **not** platform-wide. An implementer expecting a shared outbox will not find
 one.

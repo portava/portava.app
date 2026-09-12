@@ -12,8 +12,8 @@
 import React from 'react';
 import { render, waitFor } from '@testing-library/react-native';
 
-import { TripDecisionsCard } from '../trip/TripDecisionsCard.tsx';
-import type { DecisionRead, DecisionBoard } from '../../services/tripDecisions.ts';
+import { TripDecisionsCard } from '../../features/trips/planning/TripDecisionsCard.tsx';
+import type { DecisionRead, DecisionBoard } from '../../features/trips/planning/tripDecisions.ts';
 
 const TRIP_ID = 'trip-decisions-test';
 

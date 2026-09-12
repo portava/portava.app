@@ -21,7 +21,7 @@ import app from "../app.js";
 import { _setTestClient } from "../lib/http.js";
 import { _setTestServiceClient } from "../lib/supabase.js";
 import { observedAtOf } from "../routes/location.js";
-import { TRIP_REASON_CODES } from "../lib/tripReasonCodes.js";
+import { TRIP_REASON_CODES } from "../domain/trips/contracts/tripReasonCodes.js";
 
 const USER_ID = "11111111-1111-4111-8111-111111111111";
 type Row = Record<string, any>;

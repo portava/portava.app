@@ -42,7 +42,7 @@ const SRC = new URL("../", import.meta.url).pathname.replace(/\/$/, "");
 const FILES = [
   "routes/trips.ts",
   "routes/trips-expansion.ts",
-  "lib/tripReminderScheduler.ts",
+  "server/trips/projectionWorkers/tripReminderScheduler.ts",
 ];
 
 /** Direct dispatch: the transport wrapper, called without the router. */
@@ -61,7 +61,7 @@ const DIRECT_PUSH = /\bsendPushWithRetry\s*\(/;
 const KNOWN_BYPASSES = new Set<string>([
   // EMPTY since 2026-09-12 (census-trips §42, TR200 back to C): the ten sites
   // this list carried — four in routes/trips.ts, five in routes/trips-expansion.ts,
-  // one in lib/tripReminderScheduler.ts — now call sendTripPush (lib/tripPush.ts),
+  // one in server/trips/projectionWorkers/tripReminderScheduler.ts — now call sendTripPush (domain/trips/policies/tripPush.ts),
   // which decides §11.4's attention level per recipient and is the ONE place
   // that still calls sendPushWithRetry. The list stays shrink-only: a new
   // direct call in FILES is a failure here, not an entry.
@@ -71,7 +71,7 @@ const KNOWN_BYPASSES = new Set<string>([
 // and that somewhere is the router. The router file must contain exactly one
 // direct call; zero means the call was renamed and this check is verifying
 // nothing, more than one means a second dispatch path grew inside the router.
-const ROUTER = "lib/tripPush.ts";
+const ROUTER = "domain/trips/policies/tripPush.ts";
 const routerCalls = readFileSync(`${SRC}/${ROUTER}`, "utf8").split("\n").filter((line) => {
   const t = line.trimStart();
   return !t.startsWith("*") && !t.startsWith("//") && !line.includes("import") && DIRECT_PUSH.test(line);

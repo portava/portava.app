@@ -19,12 +19,12 @@ import assert from "node:assert/strict";
 
 import {
   checkRouteAvailability, foldRouteAvailability, isPolicyMode, NO_TRANSPORT_POLICY, POLICY_MODES,
-} from "../services/trips/TripTransportPolicy.js";
+} from "../domain/trips/policies/TripTransportPolicy.js";
 import {
   straightLineTravelTimeProvider, DRIVE_METRES_PER_SECOND, DRIVE_WAIT_SECONDS, WALK_METRES_PER_SECOND,
   type TravelTimeProvider, type TravelTimeQuery,
-} from "../services/trips/TravelTimeProvider.js";
-import { TRIP_REASON_CODES } from "../lib/tripReasonCodes.js";
+} from "../domain/trips/contracts/TravelTimeProvider.js";
+import { TRIP_REASON_CODES } from "../domain/trips/contracts/tripReasonCodes.js";
 
 const EARTH_RADIUS_M = 6_371_000;
 const ORIGIN = { lat: 48.8566, lng: 2.3522 };

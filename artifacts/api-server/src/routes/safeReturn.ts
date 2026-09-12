@@ -24,9 +24,9 @@
 import { Router } from "express";
 import { z } from "zod";
 import { requireUser, sendError } from "../lib/http";
-import { canManageSafety } from "../lib/tripPolicy.js";
-import { tripOperationalProjectionsGate } from "../lib/tripOperationalProjections.js";
-import { sendTripRefusal } from "../lib/tripReasonCodes.js";
+import { canManageSafety } from "../domain/trips/policies/tripPolicy.js";
+import { tripOperationalProjectionsGate } from "../domain/trips/policies/tripOperationalProjections.js";
+import { sendTripRefusal } from "../domain/trips/contracts/tripReasonCodes.js";
 import { getServiceClient } from "../lib/supabase";
 import { nameVisibilitySet } from "../lib/publicIdentity";
 import { buildConsumerProjection } from "../services/passport/PassportConsumerProjections.js";

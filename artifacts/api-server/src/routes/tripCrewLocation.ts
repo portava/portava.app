@@ -32,12 +32,12 @@ import {
   upsertCrewPreferences,
   setGhostMode,
   CrewMapUnavailableError,
-} from "../services/tripCrew/TripCrewLocationService.js";
+} from "../domain/trips/services/TripCrewLocationService.js";
 import {
   startLiveShare,
   stopLiveShare,
   getActiveLiveShares,
-} from "../services/tripCrew/TripCrewLiveShareService.js";
+} from "../domain/trips/services/TripCrewLiveShareService.js";
 
 const router = Router();
 

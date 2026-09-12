@@ -20,11 +20,11 @@ import { readFileSync } from "node:fs";
 
 import {
   COMMANDS_ENDPOINT_TYPES, CUTOVER_GATED_TYPES,
-} from "../routes/tripCommands.js";
+} from "../server/trips/commandRoute.js";
 
-const route = readFileSync(new URL("../routes/tripCommands.ts", import.meta.url), "utf8");
+const route = readFileSync(new URL("../server/trips/commandRoute.ts", import.meta.url), "utf8");
 const index = readFileSync(new URL("../routes/index.ts", import.meta.url), "utf8");
-const kernelTs = readFileSync(new URL("../lib/tripKernel.ts", import.meta.url), "utf8");
+const kernelTs = readFileSync(new URL("../domain/trips/commands/tripKernel.ts", import.meta.url), "utf8");
 /**
  * The CLIENT's copy of the issuable list. Read across the package boundary on
  * purpose: two hand-maintained lists that must agree, in two packages that are
@@ -110,7 +110,7 @@ describe("every kernel command is reachable somewhere, and nothing falls between
 
 describe("the route is registered and authorized", () => {
   it("is mounted", () => {
-    assert.match(index, /import tripCommandsRouter from "\.\/tripCommands"/);
+    assert.match(index, /import tripCommandsRouter from "\.\.\/server\/trips\/commandRoute"/);
     assert.match(index, /router\.use\(tripCommandsRouter\)/);
   });
 

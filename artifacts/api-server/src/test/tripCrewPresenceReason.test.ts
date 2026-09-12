@@ -9,8 +9,8 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 
-import { buildCrewCard, type RawMemberLocation } from "../lib/tripCrewLocation.js";
-import { TRIP_REASON_CODES } from "../lib/tripReasonCodes.js";
+import { buildCrewCard, type RawMemberLocation } from "../domain/trips/services/tripCrewLocation.js";
+import { TRIP_REASON_CODES } from "../domain/trips/contracts/tripReasonCodes.js";
 
 const NOW = Date.parse("2026-09-11T12:00:00.000Z");
 const FRESH = new Date(NOW - 60_000).toISOString();

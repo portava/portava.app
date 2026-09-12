@@ -21,25 +21,25 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { CompassItem, CompassProfile } from "./types.js";
 import { stripCoordinateFields, wrapUgc, buildStructuredCompassContext } from "./CompassStructuredContext.js";
 import { isAcceptedTripMember, canEditPlan } from "../lib/http.js";
-import { buildTripCompassProjection } from "../services/trips/TripCompassProjection.js";
-import { buildTripFreedomProjection } from "../services/trips/TripFreedomProjection.js";
-import { buildTripPulseProjection } from "../services/trips/TripPulseProjection.js";
-import { buildTripOpportunityProjection } from "../services/trips/TripOpportunityProjection.js";
-import { loadImpactState } from "../services/trips/TripImpactState.js";
-import { simulateChange } from "../services/trips/TripReplan.js";
-import { computeReplan, computeMeetingPoint } from "../services/trips/TripReplanService.js";
-import { CHANGE_KINDS as SIM_CHANGE_KINDS } from "../services/trips/TripImpactPreview.js";
-import { planRescue, RESCUE_PROBLEMS } from "../services/trips/TripRescue.js";
-import { valueOfInformation, unknownsFromExperiences } from "../services/trips/TripValueOfInformation.js";
-import { executeTripCommand } from "../lib/tripKernel.js";
+import { buildTripCompassProjection } from "../domain/trips/projections/TripCompassProjection.js";
+import { buildTripFreedomProjection } from "../domain/trips/projections/TripFreedomProjection.js";
+import { buildTripPulseProjection } from "../domain/trips/projections/TripPulseProjection.js";
+import { buildTripOpportunityProjection } from "../domain/trips/projections/TripOpportunityProjection.js";
+import { loadImpactState } from "../domain/trips/services/TripImpactState.js";
+import { simulateChange } from "../domain/trips/services/TripReplan.js";
+import { computeReplan, computeMeetingPoint } from "../domain/trips/services/TripReplanService.js";
+import { CHANGE_KINDS as SIM_CHANGE_KINDS } from "../domain/trips/services/TripImpactPreview.js";
+import { planRescue, RESCUE_PROBLEMS } from "../domain/trips/services/TripRescue.js";
+import { valueOfInformation, unknownsFromExperiences } from "../domain/trips/services/TripValueOfInformation.js";
+import { executeTripCommand } from "../domain/trips/commands/tripKernel.js";
 import { isFlagEnabled as isKernelFlagEnabled } from "../lib/featureFlags.js";
-import { getCrewMap, CrewMapUnavailableError } from "../services/tripCrew/TripCrewLocationService.js";
+import { getCrewMap, CrewMapUnavailableError } from "../domain/trips/services/TripCrewLocationService.js";
 import { randomUUID as newCommandId } from "node:crypto";
-import { tripOperationalProjectionsGate } from "../lib/tripOperationalProjections.js";
-import { buildTripTodayProjection } from "../services/trips/TripTodayProjection.js";
-import { explainTripDecisionFrom } from "../services/trips/TripDecisionLedger.js";
-import { acceptTripProjection, TRIP_PROJECTION_SCHEMA_VERSION } from "../services/trips/TripProjectionEnvelope.js";
-import { readTripAttention, applyAttentionSuppression, attentionNotConsulted, attentionOnTheWire, type AttentionReading } from "../services/trips/TripAttentionFilter.js";
+import { tripOperationalProjectionsGate } from "../domain/trips/policies/tripOperationalProjections.js";
+import { buildTripTodayProjection } from "../domain/trips/projections/TripTodayProjection.js";
+import { explainTripDecisionFrom } from "../domain/trips/services/TripDecisionLedger.js";
+import { acceptTripProjection, TRIP_PROJECTION_SCHEMA_VERSION } from "../domain/trips/contracts/TripProjectionEnvelope.js";
+import { readTripAttention, applyAttentionSuppression, attentionNotConsulted, attentionOnTheWire, type AttentionReading } from "../domain/trips/policies/TripAttentionFilter.js";
 import { buildCompassContext, defaultSignals } from "./CompassContextEngine.js";
 import { runPipeline } from "./CompassPipeline.js";
 import {
@@ -1284,7 +1284,7 @@ export async function toolGetTodayState(sc: SupabaseClient, userId: string, args
 
 /**
  * §12.1 getCrewState(tripId) — census-trips TR204. The crew map's cards
- * (services/tripCrew/TripCrewLocationService.getCrewMap), which already
+ * (domain/trips/services/TripCrewLocationService.getCrewMap), which already
  * decide §6.1's presence rules per member (canSeePresence / canSeePreciseLocation),
  * narrowed to what a conversation may carry: a label, an area, a freshness,
  * the flags, the presence reason — and NEVER a coordinate. `exactCoords` is

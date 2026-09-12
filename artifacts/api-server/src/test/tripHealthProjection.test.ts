@@ -7,9 +7,9 @@
 import { describe, it, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 
-import { buildTripHealthProjection } from "../services/trips/TripHealthProjection.js";
-import { _resetTripMetrics } from "../lib/tripMetrics.js";
-import { DRIVE_METRES_PER_SECOND, DRIVE_WAIT_SECONDS, WALK_MAX_METRES } from "../services/trips/TravelTimeProvider.js";
+import { buildTripHealthProjection } from "../domain/trips/projections/TripHealthProjection.js";
+import { _resetTripMetrics } from "../domain/trips/services/tripMetrics.js";
+import { DRIVE_METRES_PER_SECOND, DRIVE_WAIT_SECONDS, WALK_MAX_METRES } from "../domain/trips/contracts/TravelTimeProvider.js";
 
 const OWNER_ID  = "11111111-1111-1111-1111-111111111111";
 const MEMBER_ID = "22222222-2222-2222-2222-222222222222";

@@ -66,7 +66,7 @@ import {
   haversineKm,
   type SearchQueryContext,
 } from "./discoverySearchHelpers.js";
-import { readTripWindows, fitInstantToWindows } from "../services/trips/TripFreedomConsumers.js";
+import { readTripWindows, fitInstantToWindows } from "../domain/trips/services/TripFreedomConsumers.js";
 import {
   suggestCanonicalLocations,
   normalizeLocationName,
@@ -93,7 +93,7 @@ import {
   searchTripDiscoveryProjections,
   readTripDiscoveryProjections,
   tripDiscoveryAdmits,
-} from "../lib/tripDiscoveryProjection.js";
+} from "../domain/trips/contracts/tripDiscoveryProjection.js";
 import {
   discoveryTripProjectionGate,
   recordDiscoveryTripSource,
@@ -822,7 +822,7 @@ function leadWithTripFit(rows: SearchResult[]): SearchResult[] {
  *   src/test/discoveryTripProjectionConsumer.test.ts.
  *
  *   READY — searchTripDiscoveryProjections, the Trip-owned contract
- *   (lib/tripDiscoveryProjection.ts; Trips spec §25, census-discovery A10/D3).
+ *   (domain/trips/contracts/tripDiscoveryProjection.ts; Trips spec §25, census-discovery A10/D3).
  *   Discovery no longer states the visibility rule; it consumes
  *   `discoverable`. A read that fails AFTER the probe passed
  *   (TRIP_PROJECTION_UNAVAILABLE — a transient error, a revoked grant, a

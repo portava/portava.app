@@ -13,13 +13,13 @@ import {
   compileExperiences, primitiveFor, candidateProperties,
   ACTIVITY_PRIMITIVES, PRIMITIVE_DEFAULTS, EXPERIENCE_REASON_CODES, OPEN_AIR_PRIMITIVES,
   type CompileInputs, type ExperienceCandidate, type TravelEstimator,
-} from "../services/trips/TripExperienceCompiler.js";
+} from "../domain/trips/services/TripExperienceCompiler.js";
 import {
   diffOpportunities, shouldNotify, attentionKindFor, OPPORTUNITY_SIGNIFICANCES,
   type OpportunityPortfolio,
-} from "../services/trips/TripOpportunityEngine.js";
-import type { FreedomWindow } from "../services/trips/TripFreedomEngine.js";
-import type { PulseInterpretation } from "../services/trips/TripSignals.js";
+} from "../domain/trips/services/TripOpportunityEngine.js";
+import type { FreedomWindow } from "../domain/trips/invariants/TripFreedomEngine.js";
+import type { PulseInterpretation } from "../domain/trips/services/TripSignals.js";
 
 const T = (hhmm: string, day = "13") => `2026-09-${day}T${hhmm}:00.000Z`;
 const NOW = Date.parse(T("12:00"));

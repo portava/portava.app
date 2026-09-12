@@ -6,7 +6,7 @@
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { isAcceptedTripMember, acceptedCrewSize, isSharedCrewMember } from "../lib/tripMembership.js";
+import { isAcceptedTripMember, acceptedCrewSize, isSharedCrewMember } from "../domain/trips/invariants/tripMembership.js";
 
 /** trips(id, owner_id) + trip_members(trip_id, user_id, role); eq / in / maybeSingle / list. */
 function makeDb(cfg: { trips?: { id: string; owner_id: string }[]; members?: { trip_id: string; user_id: string; role: string }[]; error?: boolean }) {

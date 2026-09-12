@@ -9,7 +9,7 @@
  * census-trips TR102 found the rule true for plans (canEditPlan /
  * canEditPlanItem, lib/http.ts) and false everywhere else: on 2026-09-12 the
  * trip route files carried FORTY-SIX inline authorization checks of the four
- * shapes below, each a copy of a rule that lived nowhere else. lib/tripPolicy.ts
+ * shapes below, each a copy of a rule that lived nowhere else. domain/trips/policies/tripPolicy.ts
  * now holds the nine §6.1 functions; this check does two things about the
  * copies:
  *
@@ -70,7 +70,7 @@ const INLINE_PATTERNS: Array<{ name: string; re: RegExp }> = [
  * rather than there.) Counts may only go DOWN.
  */
 const BASELINE: Record<string, number> = {
-  // §50 (2026-09-12): every inline copy converted to lib/tripPolicy.ts — the
+  // §50 (2026-09-12): every inline copy converted to domain/trips/policies/tripPolicy.ts — the
   // ratchet's floor is zero and a NEW inline check in any of these files fails.
   "src/routes/trips-expansion.ts": 0,
   "src/routes/trips.ts": 0,
@@ -108,7 +108,7 @@ const POLICY_FUNCTIONS: Array<{ name: string; aliases: string[] }> = [
 ];
 
 const NOT_A_CALLER = new Set([
-  "src/lib/tripPolicy.ts", "src/lib/tripPresencePolicy.ts", "src/lib/http.ts",
+  "src/domain/trips/policies/tripPolicy.ts", "src/domain/trips/policies/tripPresencePolicy.ts", "src/lib/http.ts",
 ]);
 
 function walk(dir: string, out: string[] = []): string[] {
@@ -145,7 +145,7 @@ const problems: string[] = [];
 for (const [file, n] of counts) {
   const base = BASELINE[file];
   if (base === undefined) {
-    problems.push(`${file}: ${n} inline host/owner check(s) in a file NOT in the baseline. New authorization goes through lib/tripPolicy.ts (§6.1).`);
+    problems.push(`${file}: ${n} inline host/owner check(s) in a file NOT in the baseline. New authorization goes through domain/trips/policies/tripPolicy.ts (§6.1).`);
   } else if (n > base) {
     problems.push(`${file}: ${n} inline host/owner check(s), baseline ${base}. Legacy copies may only shrink.`);
   }
@@ -170,7 +170,7 @@ for (const fn of POLICY_FUNCTIONS) {
   if (where.length === 0) unreached.push(fn.name);
 }
 if (unreached.length > 0) {
-  problems.push(`§6.1 function(s) with NO call site outside lib/tripPolicy.ts: ${unreached.join(", ")}. A policy nobody calls is not a capability.`);
+  problems.push(`§6.1 function(s) with NO call site outside domain/trips/policies/tripPolicy.ts: ${unreached.join(", ")}. A policy nobody calls is not a capability.`);
 }
 
 // ── report ───────────────────────────────────────────────────────────────────

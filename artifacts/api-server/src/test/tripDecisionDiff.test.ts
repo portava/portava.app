@@ -22,10 +22,10 @@ import { mkdtempSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { tripScenarioCorpus } from "../scenarios/trips/corpus.js";
-import { DECISION_ENGINES, canonicalJson, conservatismScore, enginesExercised, runTripScenarioCorpus, type ScenarioDecisions } from "../scenarios/trips/run.js";
-import { LARGE_DIFF_RATIO, diffDecisions, flattenLeaves, formatReport } from "../scenarios/trips/diff.js";
-import { GOLDEN_PATH, readGolden, writeGolden } from "../scenarios/trips/golden.js";
+import { tripScenarioCorpus } from "../domain/trips/replay/corpus.js";
+import { DECISION_ENGINES, canonicalJson, conservatismScore, enginesExercised, runTripScenarioCorpus, type ScenarioDecisions } from "../domain/trips/replay/run.js";
+import { LARGE_DIFF_RATIO, diffDecisions, flattenLeaves, formatReport } from "../domain/trips/replay/diff.js";
+import { GOLDEN_PATH, readGolden, writeGolden } from "../domain/trips/replay/golden.js";
 
 const clone = <T,>(v: T): T => JSON.parse(JSON.stringify(v)) as T;
 

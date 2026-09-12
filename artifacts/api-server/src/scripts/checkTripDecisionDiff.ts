@@ -4,7 +4,7 @@
  * TR409 / TR410 / TR433.
  *
  *   pnpm -s check:trip-decision-diff
- *       runs the scenario corpus (src/scenarios/trips/corpus.ts) through the
+ *       runs the scenario corpus (src/domain/trips/replay/corpus.ts) through the
  *       pure engines and compares every decision with golden.json. Exit 0 when
  *       they agree; exit 1 with the classified report — changed decisions by
  *       path, conservatism increased / decreased per scenario, new conflicts,
@@ -23,9 +23,9 @@
  */
 import { execFileSync } from "node:child_process";
 
-import { runTripScenarioCorpus } from "../scenarios/trips/run.js";
-import { diffDecisions, formatReport } from "../scenarios/trips/diff.js";
-import { GOLDEN_PATH, readGolden, writeGolden } from "../scenarios/trips/golden.js";
+import { runTripScenarioCorpus } from "../domain/trips/replay/run.js";
+import { diffDecisions, formatReport } from "../domain/trips/replay/diff.js";
+import { GOLDEN_PATH, readGolden, writeGolden } from "../domain/trips/replay/golden.js";
 
 function arg(name: string): string | null {
   const i = process.argv.indexOf(name);

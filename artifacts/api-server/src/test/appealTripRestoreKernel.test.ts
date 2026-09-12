@@ -1,6 +1,6 @@
 /**
  * Appeal-approved trip restore, through the Trip Kernel
- * (Trips spec §4.1 / §6.1 / §18.3 / §22.4; lib/tripKernel.ts; migration 2450;
+ * (Trips spec §4.1 / §6.1 / §18.3 / §22.4; domain/trips/commands/tripKernel.ts; migration 2450;
  * services/appeals/resolveAppeal.ts case "trip").
  *
  * THE WRITE THIS IS ABOUT

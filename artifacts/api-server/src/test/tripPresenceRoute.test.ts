@@ -270,7 +270,7 @@ describe("§10 — fail-closed", () => {
 describe("the CLIENT and the DATABASE agree on the vocabulary", () => {
   // WHY THIS IS A TEST AND NOT A COMMENT.
   //
-  // The first draft of travel-buddy-standalone/src/services/tripPresence.ts
+  // The first draft of travel-buddy-standalone/src/features/trips/crew/tripPresence.ts
   // declared PRESENCE_STATES as at_home | travelling | in_transit | arrived |
   // at_location | nearby | away | unknown. Not one of those eight is a value
   // the database accepts. Every SET_PRESENCE the app sent would have come back
@@ -278,7 +278,7 @@ describe("the CLIENT and the DATABASE agree on the vocabulary", () => {
   // system could have noticed: one is TypeScript, the other is a CHECK
   // constraint in SQL.
   const client = readFileSync(
-    new URL("../../../../travel-buddy-standalone/src/services/tripPresence.ts", import.meta.url),
+    new URL("../../../../travel-buddy-standalone/src/features/trips/crew/tripPresence.ts", import.meta.url),
     "utf8",
   );
   const m2767 = readFileSync(

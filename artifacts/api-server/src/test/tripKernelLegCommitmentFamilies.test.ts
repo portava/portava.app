@@ -19,13 +19,13 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
-import { TRIP_EVENT_TYPES } from "../lib/tripKernel.js";
+import { TRIP_EVENT_TYPES } from "../domain/trips/commands/tripKernel.js";
 
 const sql = readFileSync(
   new URL("../migrations/2765_trip_kernel_leg_and_commitment_families.sql", import.meta.url),
   "utf8",
 );
-const ts = readFileSync(new URL("../lib/tripKernel.ts", import.meta.url), "utf8");
+const ts = readFileSync(new URL("../domain/trips/commands/tripKernel.ts", import.meta.url), "utf8");
 
 const COMMANDS = [
   "ADD_LEG", "UPDATE_LEG", "REMOVE_LEG",

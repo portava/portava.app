@@ -33,7 +33,7 @@ import {
   TRIP_MAP_PROJECTION_DRAIN_RPC,
   TRIP_MAP_PROJECTION_BATCH_LIMIT,
 } from "../lib/mapTripProjectionWorker.js";
-import { TRIP_EVENT_TYPES } from "../lib/tripKernel.js";
+import { TRIP_EVENT_TYPES } from "../domain/trips/commands/tripKernel.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const migrationsDir = path.resolve(here, "../migrations");

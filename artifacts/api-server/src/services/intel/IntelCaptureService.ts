@@ -40,7 +40,7 @@ import { PHASE1_CAPTURE_CLAIM_TYPES, validateClaimValue } from "../../lib/quickS
 import { projectClaimValue } from "../../lib/intelValueProjection.js";
 import { PHASE1_TRAIL_CAPTURE_CLAIM_TYPES, validateTrailClaimValue, mustAggregate } from "../../lib/trailFollowup.js";
 import { deriveGroupKey, type GroupIdentity } from "../../lib/intelGroupKey.js";
-import { isSharedCrewMember } from "../../lib/tripMembership.js";
+import { isSharedCrewMember } from "../../domain/trips/invariants/tripMembership.js";
 import { resolveActiveCrewId } from "../../lib/activeCrew.js";
 import { hasValidIntelConsent } from "../../lib/intelConsent.js";
 import { logger } from "../../lib/logger.js";

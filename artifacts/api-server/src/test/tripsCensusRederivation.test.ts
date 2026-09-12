@@ -197,14 +197,21 @@ describe("TR68–TR74 — the trip_events envelope is what the census says it is
 // ── TR76: registration is a CALL, not an import ──────────────────────────────
 
 describe("TR76 — the trip map projection worker is actually started", () => {
-  it("is imported AND invoked in index.ts", () => {
+  it("is imported AND invoked in index.ts — since §61 through the Trips outbox worker, which drives the map pass", () => {
     const index = read("src/index.ts");
-    assert.match(index, /import \{ startTripMapProjectionScheduler \}/);
+    assert.match(index, /import \{ startTripOutboxWorker \} from "\.\/server\/trips\/outboxWorker\.js"/);
     // The distinction this repository keeps paying for: an import registers
     // nothing. memoryKernelTransactionLive.test.ts had a package script and no
     // caller and was reported as wired for weeks.
-    assert.match(index, /^\s*startTripMapProjectionScheduler\(\);/m,
-      "startTripMapProjectionScheduler is imported but never called");
+    assert.match(index, /^\s*startTripOutboxWorker\(\);/m,
+      "startTripOutboxWorker is imported but never called");
+    // And the loop it starts reaches the map projection's pass: the one
+    // registered consumer is runTripMapProjectionPass, called, not just imported.
+    const worker = read("src/server/trips/outboxWorker.ts");
+    assert.match(worker, /pass: \(\) => runTripMapProjectionPass\(\)/);
+    // The Map file keeps its old name as an alias of the same loop.
+    const map = read("src/lib/mapTripProjectionWorker.ts");
+    assert.match(map, /startTripOutboxWorker as startTripMapProjectionScheduler/);
   });
 });
 

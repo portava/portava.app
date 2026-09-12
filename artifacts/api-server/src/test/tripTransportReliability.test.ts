@@ -8,8 +8,8 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 
-import { estimateTransportReliability, MODE_BASELINE_RELIABILITY, DEFAULT_BASELINE_RELIABILITY } from "../lib/tripTransportReliability.js";
-import type { PulseInterpretation } from "../services/trips/TripSignals.js";
+import { estimateTransportReliability, MODE_BASELINE_RELIABILITY, DEFAULT_BASELINE_RELIABILITY } from "../domain/trips/services/tripTransportReliability.js";
+import type { PulseInterpretation } from "../domain/trips/services/TripSignals.js";
 
 const NOW = Date.parse("2026-09-13T12:00:00.000Z");
 const seg = (o: Partial<Parameters<typeof estimateTransportReliability>[0]> = {}) => ({ id: "t1", mode: "taxi", state: "planned", plannedDepartureAt: "2026-09-13T14:00:00.000Z", reliability: null, ...o });

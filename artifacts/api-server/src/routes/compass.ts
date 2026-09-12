@@ -29,7 +29,7 @@ import {
   executeTripCommand,
   sendKernelRejection,
   setTripVersionHeader,
-} from "../lib/tripKernel.js";
+} from "../domain/trips/commands/tripKernel.js";
 import { nameVisibilitySet } from "../lib/publicIdentity.js";
 import { buildConsumerProjection } from "../services/passport/PassportConsumerProjections.js";
 import { allowDiscoveryPersonCard } from "../services/passport/PassportConsumerAccess.js";
@@ -93,7 +93,7 @@ import {
   passesTripFilter,
   passesPassportFilter,
 } from "../compass/CompassSurfaceFilters.js";
-import { readTripAttention, applyAttentionSuppression, attentionOnTheWire, type AttentionReading } from "../services/trips/TripAttentionFilter.js";
+import { readTripAttention, applyAttentionSuppression, attentionOnTheWire, type AttentionReading } from "../domain/trips/policies/TripAttentionFilter.js";
 import { buildUiBlocks, type CompassUiBlock } from "../compass/CompassUiBlocks.js";
 import {
   listMemories,

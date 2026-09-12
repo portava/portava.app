@@ -20,7 +20,7 @@ import { color, space, radius, type as t, dot} from '../theme/tokens.ts';
 import { useBottomInset } from '../hooks/useBottomInset.ts';
 import { VideoThumbnail } from './ui/VideoThumbnail.tsx';
 import { fromISODate } from '../lib/dateTime/formatters.ts';
-import { tripStatusColor, tripStatusLabel, deriveTripDisplayStatus } from '../lib/tripStatus.ts';
+import { tripStatusColor, tripStatusLabel, deriveTripDisplayStatus } from '../domain/trips/invariants/tripStatus.ts';
 
 type Filter = 'all' | 'upcoming' | 'ongoing' | 'past';
 

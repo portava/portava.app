@@ -14,7 +14,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 
 import { toolGetCrewState, executeCompassTool, COMPASS_TOOL_NAMES } from "../compass/CompassTools.js";
-import { PRESENCE_FRESHNESS_CLASSES } from "../lib/tripPresenceFreshness.js";
+import { PRESENCE_FRESHNESS_CLASSES } from "../domain/trips/policies/tripPresenceFreshness.js";
 
 const VIEWER_ID = "a0000051-0000-0000-0000-000000000001";
 const SHARER_ID = "a0000051-0000-0000-0000-000000000002";

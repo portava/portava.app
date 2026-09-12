@@ -1125,7 +1125,7 @@ const UNRESOLVABLE = [
     expr: 'READINESS_FLAG',
     covers: ['trip_readiness_enabled'],
     reason:
-      'Imported const from lib/tripReadiness.ts (trip_readiness_enabled), CAPABILITY by convention. The check ' +
+      'Imported const from domain/trips/services/tripReadiness.ts (trip_readiness_enabled), CAPABILITY by convention. The check ' +
       'resolves consts only within a single file and does not follow imports. Verified by hand at c89f09a77.',
   },
   {

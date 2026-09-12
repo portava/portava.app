@@ -16,12 +16,12 @@ import type { Server } from "node:http";
 import app from "../app.js";
 import { _setTestClient } from "../lib/http.js";
 import { _setTestServiceClient } from "../lib/supabase.js";
-import { buildTripTodayProjection } from "../services/trips/TripTodayProjection.js";
+import { buildTripTodayProjection } from "../domain/trips/projections/TripTodayProjection.js";
 import { toolSimulatePlan, toolCreateProposal, toolGetRescuePlan, toolGetOpportunities, toolReplanDay, toolFindMeetingPoint } from "../compass/CompassTools.js";
-import { summarizeReadiness, type ReadinessItem } from "../lib/tripReadiness.js";
-import { _resetTripMetrics } from "../lib/tripMetrics.js";
-import { _resetOpportunityPortfolios } from "../services/trips/TripOpportunityProjection.js";
-import { _resetTripDecisionLedger } from "../services/trips/TripDecisionLedger.js";
+import { summarizeReadiness, type ReadinessItem } from "../domain/trips/services/tripReadiness.js";
+import { _resetTripMetrics } from "../domain/trips/services/tripMetrics.js";
+import { _resetOpportunityPortfolios } from "../domain/trips/projections/TripOpportunityProjection.js";
+import { _resetTripDecisionLedger } from "../domain/trips/services/TripDecisionLedger.js";
 import { makeClient, base } from "./tripHealthProjection.test.js";
 
 const OWNER_ID  = "11111111-1111-1111-1111-111111111111";

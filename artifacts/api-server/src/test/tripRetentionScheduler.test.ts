@@ -12,7 +12,7 @@ import assert from "node:assert/strict";
 import {
   runTripRetentionSweep, startTripRetentionScheduler, stopTripRetentionScheduler, _tripRetentionSchedulerArmed,
   TRIP_RETENTION_FLAG, TRIP_ACTIVITY_LOG_PRUNE_RPC, TRIP_RESERVATION_FORGET_RPC,
-} from "../lib/tripRetentionScheduler.js";
+} from "../server/trips/projectionWorkers/tripRetentionScheduler.js";
 
 function client(opts: { flag: boolean | null; pruned?: unknown; forgotten?: unknown; fail?: string[] }) {
   const calls: string[] = [];

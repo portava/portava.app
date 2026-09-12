@@ -14,7 +14,7 @@ import { sniffMedia, processImage, type ProcessedImage, type SniffResult } from 
 import { appMediaRef } from "../lib/postSchemas";
 import { computeTrustScore } from "../lib/trustScore.js";
 import { countContentStampsReceived } from "../services/stamps/ContentStampService.js";
-import { countUserTrips } from "../lib/tripCounts.js";
+import { countUserTrips } from "../domain/trips/services/tripCounts.js";
 import { validateUsername } from "../lib/usernameRules.js";
 
 /**

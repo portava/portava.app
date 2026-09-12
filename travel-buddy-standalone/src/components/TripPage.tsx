@@ -15,7 +15,7 @@ import { useTripSavedPlaces } from '../hooks/useTripSavedPlaces.ts';
 import { fetchCompassTripBrief, reportCompassViewed, type CompassRecommendation, type CompassBriefAttention } from '../services/compass.ts';
 import { resolveCompassTitle, formatCompassSubtitle } from '../utils/compassFormat.ts';
 import { openTripChat } from '../services/messaging.ts';
-import { createPlanItem } from '../services/tripPlan.ts';
+import { createPlanItem } from '../features/trips/planning/tripPlan.ts';
 import type { BookmarkedPlace } from '../services/discoveryBookmarks.ts';
 import type { TripDetail, SavedIdea, TimelineDay, PassportStamp, User } from '../types/models.ts';
 import type { TripPlan, TripPlanStatus } from '../__fixtures__/tripDetail.ts';
@@ -27,7 +27,7 @@ import { HighlightRing } from './HighlightRing.tsx';
 import { HighlightViewer } from './HighlightViewer.tsx';
 import { AddToPlanSheet } from './AddToPlanSheet.tsx';
 import { useHighlightRingState } from '../hooks/useHighlightRingState.ts';
-import { deriveTripDisplayStatus, tripStatusLabel } from '../lib/tripStatus.ts';
+import { deriveTripDisplayStatus, tripStatusLabel } from '../domain/trips/invariants/tripStatus.ts';
 
 /* ── Trip hero header ── */
 export function TripHero({ trip }: { trip: TripDetail }) {
@@ -922,7 +922,7 @@ export function TripMapPreview({ tripId }: { tripId?: string } = {}) {
 }
 
 /* ── Trip Crew Map section ── */
-export { CrewMapSection as TripCrewSection } from './tripCrew/CrewMapSection.tsx';
+export { CrewMapSection as TripCrewSection } from '../features/trips/crew/CrewMapSection.tsx';
 
 /* ── Safety / Check-In (compact stub) ── */
 export function TripSafety({ tripId }: { tripId?: string }) {

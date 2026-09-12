@@ -11,7 +11,7 @@
  *   tables          every `CREATE TABLE trips | trip_*` in src/migrations, with
  *                   the migration that created it and the kernel migrations
  *                   (2420 and the trip_kernel_* chain) whose SQL writes it;
- *   kernel commands the command unions in lib/tripKernel.ts;
+ *   kernel commands the command unions in domain/trips/commands/tripKernel.ts;
  *   kernel issuers  every server site that issues a command (executeTripCommand
  *                   or the rpc by name);
  *   direct writes   every server site that writes a trip table around the
@@ -74,7 +74,7 @@ function walk(dir: string, out: string[] = []): string[] {
   return out;
 }
 const rel = (p: string): string => path.relative(API_ROOT, p).split(path.sep).join("/");
-const isServer = (r: string): boolean => r.startsWith("src/") && !r.startsWith("src/test/") && !r.startsWith("src/scripts/") && !r.startsWith("src/scenarios/");
+const isServer = (r: string): boolean => r.startsWith("src/") && !r.startsWith("src/test/") && !r.startsWith("src/scripts/") && !r.startsWith("src/scenarios/") && !r.startsWith("src/domain/trips/replay/");
 
 export function buildTripInventory(root: string = API_ROOT): TripInventory {
   const migrationsDir = path.join(root, "src/migrations");
@@ -98,7 +98,7 @@ export function buildTripInventory(root: string = API_ROOT): TripInventory {
   // kernel commands: every quoted name in the command-type unions
   // Line by line, not "up to the first semicolon": the unions carry comments,
   // and a comment with a `;` in it would end the scan early and lose commands.
-  const kernelLines = readFileSync(path.join(root, "src/lib/tripKernel.ts"), "utf8").split("\n");
+  const kernelLines = readFileSync(path.join(root, "src/domain/trips/commands/tripKernel.ts"), "utf8").split("\n");
   const commands = new Set<string>();
   for (let i = 0; i < kernelLines.length; i++) {
     if (!/^export type Trip\w*CommandType =/.test(kernelLines[i]!)) continue;
@@ -121,7 +121,7 @@ export function buildTripInventory(root: string = API_ROOT): TripInventory {
   for (const r of files) {
     const text = readFileSync(path.join(root, r), "utf8");
     bodies.set(r, text);
-    if (r !== "src/lib/tripKernel.ts") {
+    if (r !== "src/domain/trips/commands/tripKernel.ts") {
       for (const kind of ["executeTripCommand", "rpc"] as const) {
         const re = kind === "executeTripCommand" ? /executeTripCommand\(/g : /rpc\(\s*"trip_kernel_execute"/g;
         const types = new Set<string>();
@@ -149,7 +149,7 @@ export function buildTripInventory(root: string = API_ROOT): TripInventory {
 
   // routes, classified by what their handler body does
   const routes: RouteEntry[] = [];
-  for (const r of files.filter((f) => f.startsWith("src/routes/"))) {
+  for (const r of files.filter((f) => f.startsWith("src/routes/") || f.startsWith("src/server/trips/"))) {
     const text = bodies.get(r)!;
     const starts = [...text.matchAll(/^router\.(get|post|patch|put|delete)\(/gm)].map((m) => m.index!);
     for (const m of text.matchAll(ROUTE_RE)) {
@@ -164,7 +164,7 @@ export function buildTripInventory(root: string = API_ROOT): TripInventory {
   }
   routes.sort((a, b) => a.path.localeCompare(b.path) || a.method.localeCompare(b.method));
 
-  const services = files.filter((f) => f.startsWith("src/services/trips/") || f.startsWith("src/services/tripCrew/") || /^src\/lib\/trip[A-Z]/.test(f));
+  const services = files.filter((f) => f.startsWith("src/domain/trips/") && !f.startsWith("src/domain/trips/replay/"));
   return { tables, kernelCommands, kernelIssuers, directWrites, routes, services };
 }
 

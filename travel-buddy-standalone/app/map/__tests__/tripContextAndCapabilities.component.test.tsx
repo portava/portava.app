@@ -83,7 +83,7 @@ jest.mock('../../../src/services/discovery', () => ({
 // single stop has no ordering to propose.
 // NOTE: intentionally exhaustive — the itinerary is an INPUT under test;
 // requireActual would fetch over the network.
-jest.mock('../../../src/services/tripPlan', () => ({
+jest.mock('../../../src/features/trips/planning/tripPlan', () => ({
   fetchTripPlanMap: jest.fn(() => Promise.resolve(knobs.tripStops)),
 }));
 

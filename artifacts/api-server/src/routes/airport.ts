@@ -33,7 +33,7 @@ import {
   executeTripCommand,
   sendKernelRejection,
   setTripVersionHeader,
-} from "../lib/tripKernel.js";
+} from "../domain/trips/commands/tripKernel.js";
 // Capability gates are read through the SHARED fail-closed helper. This file
 // used to define its own `isFlagEnabled` under the same name that failed OPEN
 // (`if (error) return true; if (data == null) return true;`) as a dev-env

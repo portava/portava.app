@@ -37,7 +37,7 @@ import {
   assertNoPrivateLeak, layerCensus, coordsOf, isAttributable,
   PROJECTION_LAYERS, PrivateAnchorLeak,
   ok, unread, noSource, crewPresencePoints, crewPresenceReading, type TripMapProjection,
-} from "../services/trips/TripMapProjection.js";
+} from "../domain/trips/projections/TripMapProjection.js";
 
 const OWNER_ID = "11111111-1111-1111-1111-111111111111";
 const OTHER_ID = "33333333-3333-3333-3333-333333333333";
@@ -391,7 +391,7 @@ describe("§14.1 — the layers with no producer say so", () => {
 
 // ── §14.1 crew presence — the layer with a producer now (§14.4, §10.2) ──────
 //
-// The crew map (TripCrewLocationService.getCrewMap → lib/tripCrewLocation's
+// The crew map (TripCrewLocationService.getCrewMap → domain/trips/services/tripCrewLocation's
 // buildCrewCard) puts exact coordinates on a card only under an active
 // live-share grant to the viewer over a LIVE / RECENT position. The projection
 // draws exactly those, re-checking the class, and summarises everyone else.
@@ -565,14 +565,14 @@ describe("helpers", () => {
 describe("the route is reachable", () => {
   it("is registered in the router index", () => {
     const index = readFileSync(new URL("../routes/index.ts", import.meta.url), "utf8");
-    assert.match(index, /import tripMapProjectionRouter from "\.\/tripMapProjection"/);
+    assert.match(index, /import tripMapProjectionRouter from "\.\.\/server\/trips\/readRoutes\/tripMapProjection"/);
     assert.match(index, /router\.use\(tripMapProjectionRouter\)/);
   });
 
   it("does not read `places` more than once per set of ids", () => {
     // One resolver, shared. The first draft read trip_stages twice and threw
     // the first read away; this is what stops that coming back.
-    const route = readFileSync(new URL("../routes/tripMapProjection.ts", import.meta.url), "utf8");
+    const route = readFileSync(new URL("../server/trips/readRoutes/tripMapProjection.ts", import.meta.url), "utf8");
     assert.equal((route.match(/from\("places"\)/g) ?? []).length, 1);
     assert.equal((route.match(/from\("trip_stages"\)/g) ?? []).length, 1);
   });

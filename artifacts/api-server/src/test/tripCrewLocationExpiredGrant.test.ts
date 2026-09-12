@@ -9,7 +9,7 @@
  * `buildCrewCard`. Verified by reading the only caller. This file is therefore
  * about the GUARD, not about a live leak.
  *
- * THE GAP IT CLOSES. `lib/tripCrewLocation.ts` calls itself a "Privacy Guard"
+ * THE GAP IT CLOSES. `domain/trips/services/tripCrewLocation.ts` calls itself a "Privacy Guard"
  * and states a PRIVACY CONTRACT whose first clause is that exact lat/lng are
  * released only under "an active live-share grant". It accepts `now` and spends
  * it on position freshness, but never compares it to `liveShare.expiresAt`; the
@@ -29,7 +29,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 
-import { buildCrewCard, type RawMemberLocation } from "../lib/tripCrewLocation.js";
+import { buildCrewCard, type RawMemberLocation } from "../domain/trips/services/tripCrewLocation.js";
 
 const NOW = Date.parse("2026-09-11T12:00:00.000Z");
 const FRESH = new Date(NOW - 60_000).toISOString();          // 1 min old → "live"

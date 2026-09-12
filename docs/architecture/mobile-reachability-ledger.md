@@ -94,7 +94,7 @@ first matching family wins; the ledger applies it in source order.
 | Builder | File | Resolves |
 | --- | --- | --- |
 | `airportUrl(...parts)` | `src/services/layover.ts:27` | all 17 `/api/airport/sessions/*` routes |
-| `planUrl(tripId, ...parts)` | `src/services/tripPlan.ts:23` | 7 `/api/trips/:id/plan*` routes |
+| `planUrl(tripId, ...parts)` | `src/features/trips/planning/tripPlan.ts:23` | 7 `/api/trips/:id/plan*` routes |
 | `trustUrl(...parts)` | `src/services/trustAdmin.ts:28` | 11 `/api/admin/trust/*` routes |
 | `api(path)` | `src/services/appeals.ts:42` | `/api/appeals*` |
 | `api(path)` | `src/services/reviews.ts:67` | `/api/reviews*`, `/api/places/:id/reviews`, ... |

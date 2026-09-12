@@ -27,7 +27,7 @@ const MIG = fileURLToPath(new URL("../migrations/", import.meta.url));
 const cols = readFileSync(MIG + "2770_trip_plans_spec_columns.sql", "utf8");
 const parts = readFileSync(MIG + "2771_trip_plan_participants.sql", "utf8");
 const kernel = readFileSync(MIG + "2772_trip_kernel_plan_attendance_and_plan_version.sql", "utf8");
-const ts = readFileSync(new URL("../lib/tripKernel.ts", import.meta.url), "utf8");
+const ts = readFileSync(new URL("../domain/trips/commands/tripKernel.ts", import.meta.url), "utf8");
 
 describe("there is ONE plan aggregate", () => {
   it("no migration in the tree creates a table named trip_plans", () => {

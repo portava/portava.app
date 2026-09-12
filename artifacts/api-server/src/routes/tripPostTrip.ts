@@ -24,11 +24,11 @@ import { requireUser, requireTripMember, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { logger } from "../lib/logger.js";
 import { asyncHandler } from "../lib/asyncHandler.js";
-import { sendTripRefusal } from "../lib/tripReasonCodes.js";
-import { executeTripCommand, isTripKernelEnabled, TRIP_KERNEL_FLAG } from "../lib/tripKernel.js";
-import { liveEnvelope, readTripVersion } from "../services/trips/TripProjectionEnvelope.js";
-import { buildTripMemoryProjection, buildTripPassportProjection, readPostTripInputs } from "../services/trips/TripPostTripProjections.js";
-import { reconciliationQuestions } from "../services/trips/TripCloseout.js";
+import { sendTripRefusal } from "../domain/trips/contracts/tripReasonCodes.js";
+import { executeTripCommand, isTripKernelEnabled, TRIP_KERNEL_FLAG } from "../domain/trips/commands/tripKernel.js";
+import { liveEnvelope, readTripVersion } from "../domain/trips/contracts/TripProjectionEnvelope.js";
+import { buildTripMemoryProjection, buildTripPassportProjection, readPostTripInputs } from "../domain/trips/projections/TripPostTripProjections.js";
+import { reconciliationQuestions } from "../domain/trips/services/TripCloseout.js";
 
 const router = Router();
 const log = logger.child({ mod: "tripPostTrip" });

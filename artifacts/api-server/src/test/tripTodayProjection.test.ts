@@ -13,10 +13,10 @@ import type { Server } from "node:http";
 import app from "../app.js";
 import { _setTestClient } from "../lib/http.js";
 import { _setTestServiceClient } from "../lib/supabase.js";
-import { buildTripTodayProjection, TODAY_ANSWERS } from "../services/trips/TripTodayProjection.js";
+import { buildTripTodayProjection, TODAY_ANSWERS } from "../domain/trips/projections/TripTodayProjection.js";
 import { toolGetTodayState } from "../compass/CompassTools.js";
-import { readTripMetric, _resetTripMetrics } from "../lib/tripMetrics.js";
-import { OPERATIONAL_PHASES } from "../services/trips/TripOperationalPhase.js";
+import { readTripMetric, _resetTripMetrics } from "../domain/trips/services/tripMetrics.js";
+import { OPERATIONAL_PHASES } from "../domain/trips/services/TripOperationalPhase.js";
 import { makeClient, base } from "./tripHealthProjection.test.js";
 
 const OWNER_ID  = "11111111-1111-1111-1111-111111111111";

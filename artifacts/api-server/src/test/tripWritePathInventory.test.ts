@@ -29,13 +29,13 @@ describe("§24 Phase 0 — the inventory finds the tree", () => {
     assert.ok(inv.tables.length >= 25, `${inv.tables.length} tables`);
     assert.deepEqual([...inv.tables.map((t) => t.table)].sort(), inv.tables.map((t) => t.table), "sorted, so the block is stable");
   });
-  it("kernel commands: the union in lib/tripKernel.ts, engine commands included", () => {
+  it("kernel commands: the union in domain/trips/commands/tripKernel.ts, engine commands included", () => {
     for (const c of ["CREATE_TRIP", "ADD_PLAN", "MOVE_PLAN", "CREATE_PROPOSAL", "DECLARE_DISRUPTION", "RECORD_OPPORTUNITY_CHANGE", "OPEN_FREE_WINDOW"]) assert.ok(inv.kernelCommands.includes(c), c);
     assert.ok(inv.kernelCommands.length >= 40, `${inv.kernelCommands.length} commands`);
   });
   it("issuers and direct writes: the commands endpoint issues through the kernel; the legacy plan PATCH writes trip_plan_items directly and is classified `both`", () => {
-    assert.ok(inv.kernelIssuers.some((s) => s.file === "src/routes/tripCommands.ts"), "the commands endpoint is a kernel issuer");
-    assert.ok(inv.kernelIssuers.some((s) => s.file === "src/routes/tripProjections.ts" && s.commandTypes.includes("CREATE_PROPOSAL")), "the replan route issues CREATE_PROPOSAL");
+    assert.ok(inv.kernelIssuers.some((s) => s.file === "src/server/trips/commandRoute.ts"), "the commands endpoint is a kernel issuer");
+    assert.ok(inv.kernelIssuers.some((s) => s.file === "src/server/trips/readRoutes/tripProjections.ts" && s.commandTypes.includes("CREATE_PROPOSAL")), "the replan route issues CREATE_PROPOSAL");
     assert.ok(inv.directWrites.some((d) => d.file === "src/routes/trips.ts" && d.table === "trip_plan_items" && d.verb === "update"), "the legacy plan PATCH is a direct write");
     const patch = inv.routes.find((r) => r.method === "PATCH" && r.path === "/trips/:tripId/plan/items/:itemId");
     assert.ok(patch, "the plan PATCH route is inventoried");
@@ -43,7 +43,7 @@ describe("§24 Phase 0 — the inventory finds the tree", () => {
     const commands = inv.routes.find((r) => r.method === "POST" && r.path === "/trips/:tripId/commands");
     assert.equal(commands?.writes, "kernel");
     assert.ok(inv.routes.every((r) => r.method !== "GET" || r.writes === "read"));
-    assert.ok(inv.services.includes("src/services/trips/TripFreedomEngine.ts") && inv.services.includes("src/lib/tripKernel.ts"));
+    assert.ok(inv.services.includes("src/domain/trips/invariants/TripFreedomEngine.ts") && inv.services.includes("src/domain/trips/commands/tripKernel.ts"));
   });
 });
 

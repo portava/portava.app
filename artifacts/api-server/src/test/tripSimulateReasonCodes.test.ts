@@ -11,9 +11,9 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 
-import { simulateChange } from "../services/trips/TripReplan.js";
-import type { ImpactState } from "../services/trips/TripImpactPreview.js";
-import { TRIP_REASON_CODES } from "../lib/tripReasonCodes.js";
+import { simulateChange } from "../domain/trips/services/TripReplan.js";
+import type { ImpactState } from "../domain/trips/services/TripImpactPreview.js";
+import { TRIP_REASON_CODES } from "../domain/trips/contracts/tripReasonCodes.js";
 
 const T = (hhmm: string) => `2026-09-13T${hhmm}:00.000Z`;
 const NOW = Date.parse(T("12:00"));

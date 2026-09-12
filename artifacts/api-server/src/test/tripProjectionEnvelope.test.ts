@@ -19,13 +19,13 @@ import assert from "node:assert/strict";
 import {
   liveEnvelope, acceptTripProjection, readTripVersion,
   TRIP_PROJECTION_SCHEMA_VERSION, TRIP_PROJECTION_FRESHNESS,
-} from "../services/trips/TripProjectionEnvelope.js";
-import { observeTripMetric, readTripMetric, _resetTripMetrics } from "../lib/tripMetrics.js";
-import { buildTripTimeline, dateLabelOf, MAX_SYNTHESISED_DAYS } from "../services/trips/TripTimelineProjection.js";
+} from "../domain/trips/contracts/TripProjectionEnvelope.js";
+import { observeTripMetric, readTripMetric, _resetTripMetrics } from "../domain/trips/services/tripMetrics.js";
+import { buildTripTimeline, dateLabelOf, MAX_SYNTHESISED_DAYS } from "../domain/trips/projections/TripTimelineProjection.js";
 import {
   operationalState, projectTripSafety, ARRIVED_WINDOW_MS, SAFETY_OPERATIONAL_STATES,
   type SafetySessionRow,
-} from "../services/trips/TripSafetyProjection.js";
+} from "../domain/trips/projections/TripSafetyProjection.js";
 
 const NOW = Date.parse("2026-09-12T12:00:00Z");
 const iso = (msAgo: number) => new Date(NOW - msAgo).toISOString();

@@ -46,7 +46,7 @@ import {
   _resetLiveShareStatus,
   SWEEP_INTERVAL_MS,
   STARTUP_DELAY_MS,
-} from "../lib/tripCrewLiveShareScheduler.js";
+} from "../server/trips/projectionWorkers/tripCrewLiveShareScheduler.js";
 import { _setTestServiceClient } from "../lib/supabase.js";
 
 const DB_ERROR = { message: "permission denied for table", code: "42501" };

@@ -14,12 +14,12 @@ import type { Server } from "node:http";
 import app from "../app.js";
 import { _setTestClient } from "../lib/http.js";
 import { _setTestServiceClient } from "../lib/supabase.js";
-import { buildTripPulseProjection, PULSE_SOURCES } from "../services/trips/TripPulseProjection.js";
-import { buildTripHealthProjection } from "../services/trips/TripHealthProjection.js";
-import { buildTripTodayProjection } from "../services/trips/TripTodayProjection.js";
+import { buildTripPulseProjection, PULSE_SOURCES } from "../domain/trips/projections/TripPulseProjection.js";
+import { buildTripHealthProjection } from "../domain/trips/projections/TripHealthProjection.js";
+import { buildTripTodayProjection } from "../domain/trips/projections/TripTodayProjection.js";
 import { toolGetLiveConditions } from "../compass/CompassTools.js";
-import { readTripDecision } from "../services/trips/TripDecisionLedger.js";
-import { _resetTripMetrics } from "../lib/tripMetrics.js";
+import { readTripDecision } from "../domain/trips/services/TripDecisionLedger.js";
+import { _resetTripMetrics } from "../domain/trips/services/tripMetrics.js";
 import { makeClient, base } from "./tripHealthProjection.test.js";
 
 const OWNER_ID  = "11111111-1111-1111-1111-111111111111";

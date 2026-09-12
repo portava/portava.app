@@ -20,7 +20,7 @@
  * Each write is one of three things:
  *   GATED         its statement's leading comment carries the token
  *                 `trip-kernel:legacy-path` (LEGACY_PATH_MARKER) and the file
- *                 imports lib/tripKernel — a claim that a command exists.
+ *                 imports domain/trips/commands/tripKernel — a claim that a command exists.
  *   NON-AGGREGATE its statement's leading comment carries
  *                 `trip-kernel:non-aggregate(<table>.<column>, ...)`
  *                 (NON_AGGREGATE_MARKER) — a claim that this write must NOT be
@@ -42,7 +42,7 @@
  *     without importing the kernel (an annotation is a claim that a command
  *     exists; the check refuses a claim the file cannot back), or when a
  *     non-aggregate declaration does not match the columns the annotated
- *     statement actually writes. New code must go through lib/tripKernel.ts.
+ *     statement actually writes. New code must go through domain/trips/commands/tripKernel.ts.
  *   PASSES (exit 0) when every count is <= its baseline. A count BELOW the
  *     baseline is reported so the baseline can be lowered; a ratchet that is
  *     never tightened stops being read.
@@ -105,7 +105,7 @@ export interface WriterCount {
   gated: number;
   /** Writes carrying a VERIFIED NON_AGGREGATE_MARKER declaration. */
   nonAggregate: number;
-  /** Whether the file imports lib/tripKernel — without it a marker is refused. */
+  /** Whether the file imports domain/trips/commands/tripKernel — without it a marker is refused. */
   importsKernel: boolean;
   dynamicFrom: boolean;
   /**
@@ -396,7 +396,7 @@ export interface RatchetVerdict {
   newWriters: WriterCount[];
   grew: Array<WriterCount & { baseline: WriterBaseline; ungated: number }>;
   shrank: Array<WriterCount & { baseline: WriterBaseline; ungated: number }>;
-  /** Marker present in a file that does not import lib/tripKernel. */
+  /** Marker present in a file that does not import domain/trips/commands/tripKernel. */
   falseMarkers: WriterCount[];
   /** A non-aggregate declaration the check could not verify, with its reason. */
   refusedExemptions: WriterCount[];
@@ -474,7 +474,7 @@ function main(): number {
   let rc = 0;
   if (v.newWriters.length) {
     rc = 1;
-    console.log(`\nFAIL — ${v.newWriters.length} file(s) write a canonical trip table and are NOT in the baseline. New code issues Trip Commands (lib/tripKernel.ts); it does not write trips / trip_members / trip_plan_items directly:`);
+    console.log(`\nFAIL — ${v.newWriters.length} file(s) write a canonical trip table and are NOT in the baseline. New code issues Trip Commands (domain/trips/commands/tripKernel.ts); it does not write trips / trip_members / trip_plan_items directly:`);
     for (const r of v.newWriters) console.log(`  ${r.file}: ${r.count}`);
   }
   if (v.grew.length) {
@@ -484,7 +484,7 @@ function main(): number {
   }
   if (v.falseMarkers.length) {
     rc = 1;
-    console.log(`\nFAIL — ${v.falseMarkers.length} file(s) carry "${LEGACY_PATH_MARKER}" but never import lib/tripKernel; a write cannot claim a kernel path it does not have:`);
+    console.log(`\nFAIL — ${v.falseMarkers.length} file(s) carry "${LEGACY_PATH_MARKER}" but never import domain/trips/commands/tripKernel; a write cannot claim a kernel path it does not have:`);
     for (const r of v.falseMarkers) console.log(`  ${r.file}: ${r.gated} marker(s)`);
   }
   if (v.refusedExemptions.length) {

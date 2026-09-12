@@ -199,7 +199,7 @@ import {
   type EventState,
 } from "../lib/eventLifecycle.js";
 import { affectedRows } from "../lib/affectedRows.js";
-import { tripKernelClient, executeTripCommand, TRIP_VERSION_RESPONSE_HEADER } from "../lib/tripKernel.js";
+import { tripKernelClient, executeTripCommand, TRIP_VERSION_RESPONSE_HEADER } from "../domain/trips/commands/tripKernel.js";
 import { readBlockExclusions, sendExclusionsUnavailable } from "../lib/exclusionSet.js";
 import { appStorageUrlInfo } from "../lib/mediaUrl.js";
 import { sendPushWithRetry } from "../lib/pushWithRetry.js";

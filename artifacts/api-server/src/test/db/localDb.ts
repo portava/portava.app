@@ -58,7 +58,7 @@ export function jsonLiteral(value: unknown): string {
 }
 
 /**
- * The service path: what routes/tripCommands.ts does through the service
+ * The service path: what server/trips/commandRoute.ts does through the service
  * client. service_role bypasses RLS (shim) and the kernel authorizes on
  * `actor_user_id` in the command, so the actor is the command's, not a JWT's.
  */

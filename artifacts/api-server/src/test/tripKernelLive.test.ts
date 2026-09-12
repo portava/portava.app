@@ -7,7 +7,7 @@
  * There are 49 `trip*.test.ts` suites — 993 tests, 0 skipped — and every one of
  * them runs against a double or against the TypeScript wrapped around the RPC.
  * They are worth having: they pin the SHAPE of the contract and they go red if
- * `lib/tripKernel.ts` starts inventing answers. What they cannot do is prove the
+ * `domain/trips/commands/tripKernel.ts` starts inventing answers. What they cannot do is prove the
  * contract, because `public.trip_kernel_execute` is 103,400 characters of
  * PL/pgSQL and none of them executes a line of it. Ask what would turn them red
  * and the answer is "editing the TypeScript or editing the fake", which is not a
@@ -70,7 +70,7 @@ import { randomUUID } from "node:crypto";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
 import { deleteFixtureUser, findUserByEmail, fixtureEmail, fixtureLabel } from "./liveFixtureUsers.js";
-import { executeTripCommand, type TripCommand, type TripKernelResult } from "../lib/tripKernel.js";
+import { executeTripCommand, type TripCommand, type TripKernelResult } from "../domain/trips/commands/tripKernel.js";
 
 const SUPABASE_URL = process.env.SUPABASE_URL ?? "";
 const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";

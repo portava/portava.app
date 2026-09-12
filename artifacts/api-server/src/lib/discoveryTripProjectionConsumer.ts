@@ -1,6 +1,6 @@
 /**
  * Discovery's consumer of the Trip-owned TripDiscoveryProjection
- * (lib/tripDiscoveryProjection.ts) — the switch, the acceptance check and the
+ * (domain/trips/contracts/tripDiscoveryProjection.ts) — the switch, the acceptance check and the
  * card mapping, and nothing that reads `trips`.
  *
  * Spec: docs/specs/Portava_Trips_Development_Architecture_Spec_v4.txt
@@ -89,8 +89,8 @@ import {
   TRIP_DISCOVERY_PROJECTION_SCHEMA_VERSION,
   TRIP_DISCOVERY_SOURCE_COLUMNS,
   type TripDiscoveryProjection,
-} from "./tripDiscoveryProjection.js";
-import { acceptTripProjection } from "../services/trips/TripProjectionEnvelope.js";
+} from "../domain/trips/contracts/tripDiscoveryProjection.js";
+import { acceptTripProjection } from "../domain/trips/contracts/TripProjectionEnvelope.js";
 
 /** Literal name so check-flag-polarity resolves the read. `*_enabled` ⇒ CAPABILITY, read fail-closed. */
 export const DISCOVERY_TRIP_PROJECTION_FLAG = "discovery_trip_projection_enabled";
@@ -287,7 +287,7 @@ export function acceptTripDiscoveryProjections(
   let rejected = 0;
   const reasons: Record<string, number> = {};
   for (const p of projections) {
-    // The one §19.1 consumer rule (services/trips/TripProjectionEnvelope.ts):
+    // The one §19.1 consumer rule (domain/trips/contracts/TripProjectionEnvelope.ts):
     // schema, then §22.4 version-ahead, then staleness. A search result is not
     // one trip, so this consumer has no canonical version to hand and the
     // second check cannot refuse here; the first and third can.

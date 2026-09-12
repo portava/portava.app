@@ -8,10 +8,10 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 
-import { decisionUrgency, classifyConsequence, byUrgency, URGENCY_WEIGHTS, URGENCY_BANDS, TIME_HORIZON_HOURS } from "../services/trips/TripDecisionUrgency.js";
-import { evaluateRiskTriggers, RISK_MITIGATIONS, RISK_TRIGGER_KINDS, TIGHT_ARRIVAL_THRESHOLD_MIN, type RiskTriggerInputs } from "../services/trips/TripRiskTriggers.js";
-import { previewImpact, type ImpactState, type ProposedChange } from "../services/trips/TripImpactPreview.js";
-import type { PulseInterpretation } from "../services/trips/TripSignals.js";
+import { decisionUrgency, classifyConsequence, byUrgency, URGENCY_WEIGHTS, URGENCY_BANDS, TIME_HORIZON_HOURS } from "../domain/trips/services/TripDecisionUrgency.js";
+import { evaluateRiskTriggers, RISK_MITIGATIONS, RISK_TRIGGER_KINDS, TIGHT_ARRIVAL_THRESHOLD_MIN, type RiskTriggerInputs } from "../domain/trips/services/TripRiskTriggers.js";
+import { previewImpact, type ImpactState, type ProposedChange } from "../domain/trips/services/TripImpactPreview.js";
+import type { PulseInterpretation } from "../domain/trips/services/TripSignals.js";
 
 const T = (hhmm: string, day = "13") => `2026-09-${day}T${hhmm}:00.000Z`;
 const NOW = Date.parse(T("12:00"));

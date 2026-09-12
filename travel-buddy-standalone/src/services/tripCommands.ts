@@ -40,7 +40,7 @@ const apiBase = () => process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
 
 /**
  * The command types this endpoint issues — mirrors COMMANDS_ENDPOINT_TYPES in
- * artifacts/api-server/src/routes/tripCommands.ts. Kept as a literal union so a
+ * artifacts/api-server/src/server/trips/commandRoute.ts. Kept as a literal union so a
  * typo is a compile error rather than a 400 at runtime.
  */
 export const TRIP_COMMAND_TYPES = [

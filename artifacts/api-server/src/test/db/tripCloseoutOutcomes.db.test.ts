@@ -11,7 +11,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 
 import { HAVE_DB, command, deleteUser, kernel, rows, scalar, seedUser } from "./localDb.ts";
-import { latestOutcomeByPlan } from "../../services/trips/TripPostTripProjections.ts";
+import { latestOutcomeByPlan } from "../../domain/trips/projections/TripPostTripProjections.ts";
 
 const SKIP = HAVE_DB ? false : "LOCAL_DB_URL not set — scripts/local-db/up.sh provides one";
 

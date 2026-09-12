@@ -29,7 +29,7 @@ import { View, Text, ActivityIndicator, StyleSheet } from 'react-native';
 import { MapPin, ArrowRight, CloudOff, AlertTriangle } from 'lucide-react-native';
 
 import { color, space, radius, type as t, shadow } from '../../theme/tokens.ts';
-import { fetchTripStructure, type StructureRead, type TripStructure } from '../../services/tripDecisions.ts';
+import { fetchTripStructure, type StructureRead, type TripStructure } from '../../features/trips/planning/tripDecisions.ts';
 
 interface Props {
   tripId: string;

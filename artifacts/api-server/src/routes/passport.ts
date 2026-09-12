@@ -15,7 +15,7 @@ import {
 } from "../lib/privacy/profileSerializers.js";
 import { computeTrustScore } from "../lib/trustScore.js";
 import { countStampsReceived } from "../services/stamps/ContentStampService.js";
-import { countUserTrips } from "../lib/tripCounts.js";
+import { countUserTrips } from "../domain/trips/services/tripCounts.js";
 import {
   buildPassportProjection,
   buildProjectionCachePolicy,

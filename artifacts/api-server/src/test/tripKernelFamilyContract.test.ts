@@ -27,11 +27,11 @@ import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
-import { TRIP_EVENT_TYPES } from "../lib/tripKernel.js";
+import { TRIP_EVENT_TYPES } from "../domain/trips/commands/tripKernel.js";
 
 const MIG_DIR = fileURLToPath(new URL("../migrations/", import.meta.url));
 const ROLLBACK_DIR = fileURLToPath(new URL("../../../../db/rollback/", import.meta.url));
-const ts = readFileSync(new URL("../lib/tripKernel.ts", import.meta.url), "utf8");
+const ts = readFileSync(new URL("../domain/trips/commands/tripKernel.ts", import.meta.url), "utf8");
 
 /**
  * Every migration that changes trip_kernel_execute falls into exactly one of two

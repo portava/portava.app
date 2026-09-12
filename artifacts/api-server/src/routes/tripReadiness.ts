@@ -23,8 +23,8 @@ import { getServiceClient } from "../lib/supabase.js";
 import { logger } from "../lib/logger.js";
 import { requireUser, requireTripMember, sendError } from "../lib/http.js";
 import { isFlagEnabled } from "../lib/featureFlags.js";
-import { tripOperationalProjectionsGate } from "../lib/tripOperationalProjections.js";
-import type { ReadinessStage } from "../lib/tripReadiness.js";
+import { tripOperationalProjectionsGate } from "../domain/trips/policies/tripOperationalProjections.js";
+import type { ReadinessStage } from "../domain/trips/services/tripReadiness.js";
 import {
   READINESS_FLAG,
   READINESS_STALE_MS,
@@ -36,7 +36,7 @@ import {
   safeSelect,
   type ReadinessItem,
   type ReadinessSummary,
-} from "../lib/tripReadiness.js";
+} from "../domain/trips/services/tripReadiness.js";
 
 /** Return today's UTC date string (YYYY-MM-DD). */
 function todayUtc(): string {

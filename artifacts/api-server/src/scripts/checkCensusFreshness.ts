@@ -89,13 +89,13 @@ const CENSUS_SCOPE: Record<string, string[]> = {
   // the problem. Both ends of every vertical slice are listed.
   "census-trips.md": [
     // The kernel and its command families.
-    "artifacts/api-server/src/lib/tripKernel.ts",
+    "artifacts/api-server/src/domain/trips/commands/tripKernel.ts",
     // §45: the decision-diff harness, its golden, and the Phase 0 inventory (generated and hand-written halves).
-    "artifacts/api-server/src/scenarios/trips/corpus.ts",
-    "artifacts/api-server/src/scenarios/trips/run.ts",
-    "artifacts/api-server/src/scenarios/trips/diff.ts",
-    "artifacts/api-server/src/scenarios/trips/golden.ts",
-    "artifacts/api-server/src/scenarios/trips/golden.json",
+    "artifacts/api-server/src/domain/trips/replay/corpus.ts",
+    "artifacts/api-server/src/domain/trips/replay/run.ts",
+    "artifacts/api-server/src/domain/trips/replay/diff.ts",
+    "artifacts/api-server/src/domain/trips/replay/golden.ts",
+    "artifacts/api-server/src/domain/trips/replay/golden.json",
     "artifacts/api-server/src/scripts/checkTripDecisionDiff.ts",
     "artifacts/api-server/src/scripts/tripWritePathInventory.ts",
     "docs/architecture/trips-phase0-inventory.md",
@@ -118,8 +118,8 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "db/rollback/2026-09-12-2786-trip-kernel-opportunity-events-rollback.sql",
     "db/rollback/2026-09-12-2789-trip-activity-log-retention-rollback.sql",
     "artifacts/api-server/src/test/db/",
-    "artifacts/api-server/src/lib/tripDerivedEvents.ts",
-    "artifacts/api-server/src/lib/tripReservationHistory.ts",
+    "artifacts/api-server/src/domain/trips/events/tripDerivedEvents.ts",
+    "artifacts/api-server/src/domain/trips/events/tripReservationHistory.ts",
     "artifacts/api-server/src/scripts/checkTripKernelWriters.ts",
     "artifacts/api-server/src/scripts/checkTripPushPolicy.ts",
     "artifacts/api-server/src/scripts/checkTripWriteValidation.ts",
@@ -139,11 +139,11 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/lib/privacy/absenceDisclosure.ts",
     "artifacts/api-server/src/lib/privacy/dtos.ts",
     "artifacts/api-server/src/lib/privacy/tripSerializers.ts",
-    "artifacts/api-server/src/lib/tripRetentionScheduler.ts",
+    "artifacts/api-server/src/server/trips/projectionWorkers/tripRetentionScheduler.ts",
     "artifacts/api-server/src/index.ts",
-    "artifacts/api-server/src/services/trips/TripTimelineProjection.ts",
-    "artifacts/api-server/src/services/trips/TripSpatialConsistency.ts",
-    "artifacts/api-server/src/services/trips/TripTransportPolicy.ts",
+    "artifacts/api-server/src/domain/trips/projections/TripTimelineProjection.ts",
+    "artifacts/api-server/src/domain/trips/invariants/TripSpatialConsistency.ts",
+    "artifacts/api-server/src/domain/trips/policies/TripTransportPolicy.ts",
     "artifacts/api-server/src/migrations/2790_trip_absence_guard_flag.sql",
     "artifacts/api-server/src/migrations/2791_trip_reservation_raw_text_retention.sql",
     "artifacts/api-server/src/migrations/2792_trip_retention_sweep_flag.sql",
@@ -159,19 +159,19 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/test/db/tripReservationRawTextRetention.db.test.ts",
     "artifacts/api-server/src/test/db/tripTransportPolicies.db.test.ts",
     // §48: the §18 offline bundle, the operation queue, their route and suites.
-    "artifacts/api-server/src/services/trips/TripOfflineQueue.ts",
-    "artifacts/api-server/src/services/trips/TripOfflineBundle.ts",
+    "artifacts/api-server/src/domain/trips/services/TripOfflineQueue.ts",
+    "artifacts/api-server/src/domain/trips/services/TripOfflineBundle.ts",
     "artifacts/api-server/src/routes/tripOffline.ts",
     "artifacts/api-server/src/test/tripOfflineQueue.test.ts",
     "artifacts/api-server/src/test/tripOfflineBundle.test.ts",
     "artifacts/api-server/src/test/tripOfflineRoute.test.ts",
     "artifacts/api-server/src/test/db/tripOfflineReplay.db.test.ts",
     // §49: the presence write (newest observation) and its suite.
-    "artifacts/api-server/src/services/trips/TripFreedomProjection.ts",
-    "artifacts/api-server/src/services/trips/TripTodayProjection.ts",
+    "artifacts/api-server/src/domain/trips/projections/TripFreedomProjection.ts",
+    "artifacts/api-server/src/domain/trips/projections/TripTodayProjection.ts",
     "artifacts/api-server/src/test/tripPresenceNewestObservation.test.ts",
     "artifacts/api-server/src/test/tripCloseout.test.ts",
-    "artifacts/api-server/src/lib/tripCrewLocation.ts",
+    "artifacts/api-server/src/domain/trips/services/tripCrewLocation.ts",
     "artifacts/api-server/src/migrations/2760_trip_stages.sql",
     "artifacts/api-server/src/migrations/2761_trip_legs_and_commitments.sql",
     "artifacts/api-server/src/migrations/2762_trip_goals_decisions_risks.sql",
@@ -192,23 +192,24 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/migrations/2777_trip_kernel_presence_ordering.sql",
     // The READERS — the half §29.1 found missing.
     "artifacts/api-server/src/routes/trips.ts",
-    "artifacts/api-server/src/routes/tripCommands.ts",
+    "artifacts/api-server/src/server/trips/commandRoute.ts",
     "artifacts/api-server/src/routes/tripDecisions.ts",
     "artifacts/api-server/src/routes/tripFeasibility.ts",
     // §14.1's route was missing from this list until 2026-09-09, so a change to
     // the TripMapProjection surface aged nothing — the same shape of hole as a
     // census that declares no head_commit, one entry down.
-    "artifacts/api-server/src/routes/tripMapProjection.ts",
+    "artifacts/api-server/src/server/trips/readRoutes/tripMapProjection.ts",
     "artifacts/api-server/src/routes/tripPresence.ts",
     "artifacts/api-server/src/routes/tripStructure.ts",
     "artifacts/api-server/src/routes/tripReadiness.ts",
-    "artifacts/api-server/src/services/trips/",
-    "artifacts/api-server/src/lib/tripReadiness.ts",
+    "artifacts/api-server/src/domain/trips/",
+    "artifacts/api-server/src/server/trips/",
+    "artifacts/api-server/src/domain/trips/services/tripReadiness.ts",
     // The client half — a route with no screen is 29.2's other gap.
     "travel-buddy-standalone/src/services/tripCommands.ts",
-    "travel-buddy-standalone/src/services/tripDecisions.ts",
-    "travel-buddy-standalone/src/services/tripFeasibility.ts",
-    "travel-buddy-standalone/src/services/tripPresence.ts",
+    "travel-buddy-standalone/src/features/trips/planning/tripDecisions.ts",
+    "travel-buddy-standalone/src/features/trips/planning/tripFeasibility.ts",
+    "travel-buddy-standalone/src/features/trips/crew/tripPresence.ts",
     "travel-buddy-standalone/src/components/trip/",
     "travel-buddy-standalone/app/trip/",
     // ── ADDED 2026-09-11, and the reason is a defect this scope had ──────────
@@ -216,7 +217,7 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     // DEPLOYED coordination product — and that is where this census's
     // BUILT-AND-CORRECT rows live. The split mattered: measured on 2026-09-11,
     // the scope covered 10 of the 49 files the census cites, and the 39 it
-    // missed were led by lib/tripCrewLocation.ts (34 citations),
+    // missed were led by domain/trips/services/tripCrewLocation.ts (34 citations),
     // routes/trips-expansion.ts (28) and compass/CompassTools.ts (26).
     //
     // So the census reported FRESH while the files its STRONGEST claims cite
@@ -227,15 +228,15 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     // the ones that say something is NOT right — were the half being watched.
     // A freshness scope that covers the claims you are least worried about is
     // the wrong way round.
-    "artifacts/api-server/src/lib/tripCrewLocation.ts",
+    "artifacts/api-server/src/domain/trips/services/tripCrewLocation.ts",
     "artifacts/api-server/src/routes/tripCrewLocation.ts",
     "artifacts/api-server/src/routes/trips-expansion.ts",
     "artifacts/api-server/src/routes/tripReservations.ts",
     "artifacts/api-server/src/routes/tripBudgetIntel.ts",
     "artifacts/api-server/src/routes/tripDraft.ts",
     "artifacts/api-server/src/routes/locateFriends.ts",
-    "artifacts/api-server/src/lib/tripStatus.ts",
-    "artifacts/api-server/src/lib/tripMembership.ts",
+    "artifacts/api-server/src/domain/trips/invariants/tripStatus.ts",
+    "artifacts/api-server/src/domain/trips/invariants/tripMembership.ts",
     // lib/http.ts is a SHARED library and is scoped anyway: canEditPlan and
     // canEditPlanItem live in it and are the whole evidence for TR52, TR106 and
     // TR107. The cost — unrelated HTTP churn ages this census — is accepted,
@@ -258,15 +259,15 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/migrations/2590_trip_kernel_add_plan_attachment_columns.sql",
     "migrations/0001_spine.sql",
     "travel-buddy-standalone/src/components/TripPage.tsx",
-    "travel-buddy-standalone/src/components/tripCrew/",
+    "travel-buddy-standalone/src/features/trips/crew/",
     // WIDENED 2026-09-11: cited 117 files, watched 38. Same exclusions as
     // the other censuses — package.json and check* machinery are named as tools,
     // not graded. See check:census-scope-coverage for why the ratio matters.
     "artifacts/api-server/src/test/tripPrivacy.test.ts",
     "src/components/TripPage.tsx",
     "artifacts/api-server/src/lib/placeIdBridge.ts",
-    "artifacts/api-server/src/lib/tripCrewLiveShareScheduler.ts",
-    "artifacts/api-server/src/lib/tripReminderScheduler.ts",
+    "artifacts/api-server/src/server/trips/projectionWorkers/tripCrewLiveShareScheduler.ts",
+    "artifacts/api-server/src/server/trips/projectionWorkers/tripReminderScheduler.ts",
     "artifacts/api-server/src/test/passportStatsFromTripCompletion.test.ts",
     "artifacts/api-server/src/lib/ciSupabaseGuard.mjs",
     "artifacts/api-server/src/migrations/0077_trips_expansion.sql",
@@ -309,7 +310,7 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/scripts/certifyMigrations.ts",
     "artifacts/api-server/src/scripts/auditMigrationsVsLive.ts",
     "artifacts/api-server/src/test/tripsExpansion.test.ts",
-    "travel-buddy-standalone/src/services/tripPlan.ts",
+    "travel-buddy-standalone/src/features/trips/planning/tripPlan.ts",
     "travel-buddy-standalone/src/components/AddToPlanSheet.tsx",
     "artifacts/api-server/src/test/tripCrewLocation.test.ts",
     "artifacts/api-server/src/test/tripCrewMap.test.ts",
@@ -334,7 +335,7 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     // is TR362, and tripKernelWriterBaseline is the measurement TR1 rests on.
     // A file that decides a verdict and ages nothing is the inversion §37
     // found corpus-wide, arriving one section later in the same document.
-    "artifacts/api-server/src/lib/tripDiscoveryProjection.ts",
+    "artifacts/api-server/src/domain/trips/contracts/tripDiscoveryProjection.ts",
     "artifacts/api-server/src/lib/discoveryTripProjectionConsumer.ts",
     "artifacts/api-server/src/services/memoryProjections/projectionRegistry.ts",
     "artifacts/api-server/src/scripts/tripKernelWriterBaseline.ts",
@@ -342,37 +343,37 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     // WIDENED 2026-09-12 (§40.1): the §6.1 policy module, the Appendix B
     // vocabulary, the presence predicate and the callsite ratchet. Each one
     // decides a verdict in §40.1 (TR101-TR111, TR115, TR441-TR451).
-    "artifacts/api-server/src/lib/tripPolicy.ts",
-    "artifacts/api-server/src/lib/tripPresencePolicy.ts",
-    "artifacts/api-server/src/lib/tripReasonCodes.ts",
+    "artifacts/api-server/src/domain/trips/policies/tripPolicy.ts",
+    "artifacts/api-server/src/domain/trips/policies/tripPresencePolicy.ts",
+    "artifacts/api-server/src/domain/trips/contracts/tripReasonCodes.ts",
     "artifacts/api-server/src/scripts/checkTripPolicyCallsites.ts",
     "artifacts/api-server/src/test/tripPolicy.test.ts",
     "artifacts/api-server/src/test/tripReasonCodes.test.ts",
     "artifacts/api-server/src/routes/safeReturn.ts",
     // ── ADDED 2026-09-12 (§40.2): the §19.1 envelope, §19.2's read routes and
     // their consumers. services/trips/ is already scoped as a directory.
-    "artifacts/api-server/src/routes/tripProjections.ts",
-    "artifacts/api-server/src/lib/tripMetrics.ts",
+    "artifacts/api-server/src/server/trips/readRoutes/tripProjections.ts",
+    "artifacts/api-server/src/domain/trips/services/tripMetrics.ts",
     "artifacts/api-server/src/lib/discoveryTripProjectionConsumer.ts",
     "artifacts/api-server/src/test/tripProjectionEnvelope.test.ts",
     "artifacts/api-server/src/test/tripProjections.test.ts",
     "travel-buddy-standalone/src/services/tripProjectionEnvelope.ts",
-    "travel-buddy-standalone/src/services/tripMapProjection.ts",
+    "travel-buddy-standalone/src/features/trips/map/tripMapProjection.ts",
     "travel-buddy-standalone/src/services/__tests__/tripProjectionEnvelope.test.ts",
     // §40.3: the Temporal Freedom Engine's suites (the engine itself is under services/trips/).
     "artifacts/api-server/src/test/tripFreedomEngine.test.ts",
     "artifacts/api-server/src/test/tripFreedomWindows.test.ts",
     // §40.4-§40.5: phase, health, today (under services/trips/), their gate, its
     // flag seed, and their suites.
-    "artifacts/api-server/src/lib/tripOperationalProjections.ts",
+    "artifacts/api-server/src/domain/trips/policies/tripOperationalProjections.ts",
     "artifacts/api-server/src/migrations/2778_trip_operational_projections_flag.sql",
     "artifacts/api-server/src/test/tripOperationalPhase.test.ts",
     "artifacts/api-server/src/test/tripHealthProjection.test.ts",
     "artifacts/api-server/src/test/tripTodayProjection.test.ts",
     // §40.6-§40.7: presence freshness, the closeout, the decision ledger, the
     // crew-map service that forwards the presence columns, and their suites.
-    "artifacts/api-server/src/lib/tripPresenceFreshness.ts",
-    "artifacts/api-server/src/services/tripCrew/TripCrewLocationService.ts",
+    "artifacts/api-server/src/domain/trips/policies/tripPresenceFreshness.ts",
+    "artifacts/api-server/src/domain/trips/services/TripCrewLocationService.ts",
     "artifacts/api-server/src/test/tripPresenceFreshnessClass.test.ts",
     "artifacts/api-server/src/test/tripCloseout.test.ts",
   ],
@@ -465,7 +466,7 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/lib/mapProducers/memoryProducer.ts",
     "artifacts/api-server/src/migrations/2046_phash_dedup.sql",
     "artifacts/api-server/src/lib/memoryProjectionScheduler.ts",
-    "artifacts/api-server/src/lib/tripReminderScheduler.ts",
+    "artifacts/api-server/src/server/trips/projectionWorkers/tripReminderScheduler.ts",
     "artifacts/api-server/src/migrations/0026_highlights.sql",
     "artifacts/api-server/src/migrations/2186_memory_projector_taxonomy.sql",
     "artifacts/api-server/src/lib/publicIdentity.ts",
@@ -629,7 +630,7 @@ const CENSUS_SCOPE: Record<string, string[]> = {
   //
   //   • the A-rows are aged by the CONTRACTS they wait on, not only by
   //     Discovery's own code: A10 turned out to be stale precisely because
-  //     lib/tripDiscoveryProjection.ts appeared and nothing aged the census;
+  //     domain/trips/contracts/tripDiscoveryProjection.ts appeared and nothing aged the census;
   //   • the B-rows grade the shared input-intelligence path, whose failing half
   //     is sometimes in lib/inputAssistance/.
   //
@@ -893,7 +894,7 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/lib/intelProjection.ts",
     "artifacts/api-server/src/lib/intelEvidenceCapture.ts",
     "artifacts/api-server/src/lib/locateFriendsSession.ts",
-    "artifacts/api-server/src/lib/tripCrewLocation.ts",
+    "artifacts/api-server/src/domain/trips/services/tripCrewLocation.ts",
     "artifacts/api-server/src/routes/mapObservations.ts",
     "artifacts/api-server/src/routes/mapProjection.ts",
     "artifacts/api-server/src/routes/mapProjectionTemporal.ts",
@@ -1264,7 +1265,7 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/lib/discoveryModifiers.ts",
     "artifacts/api-server/src/lib/discoveryTripProjectionConsumer.ts",
     // The contracts the A-rows wait on, so publishing one ages this census.
-    "artifacts/api-server/src/lib/tripDiscoveryProjection.ts",
+    "artifacts/api-server/src/domain/trips/contracts/tripDiscoveryProjection.ts",
     "artifacts/api-server/src/lib/inputAssistance/",
     // WIDENED 2026-09-11: cited 49 files, watched 11 (22%). Same exclusions.
     "artifacts/api-server/src/services/passport/PassportConsumerProjections.ts",

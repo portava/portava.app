@@ -37,7 +37,7 @@ import { buildStats } from "./PassportMapService.js";
 import { buildUnifiedStamps, filterUnifiedStamps, type UnifiedStamp, type StampSource } from "./UnifiedStampService.js";
 import { loadMemoriesRead } from "./PassportMemoryService.js";
 import { filterMemories } from "./PassportPrivacyGuard.js";
-import { countUserTrips } from "../../lib/tripCounts.js";
+import { countUserTrips } from "../../domain/trips/services/tripCounts.js";
 import { nameVisibilitySet, sanitizeIdentity } from "../../lib/publicIdentity.js";
 import { buildFeaturedJourney, type JourneyProjection, type JourneyPermissions } from "./PassportJourneyService.js";
 import {

@@ -17,8 +17,8 @@ import { Router } from "express";
 import { z } from "zod";
 import { asyncHandler } from "../lib/asyncHandler.js";
 import { requireUser, sendError } from "../lib/http.js";
-import { tripRoleOf } from "../lib/tripPolicy.js";
-import { sendTripRefusal } from "../lib/tripReasonCodes.js";
+import { tripRoleOf } from "../domain/trips/policies/tripPolicy.js";
+import { sendTripRefusal } from "../domain/trips/contracts/tripReasonCodes.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { isFlagEnabled } from "../lib/featureFlags.js";
 import {
@@ -28,7 +28,7 @@ import {
   estimateTripCost,
   sandboxBudget,
   type BudgetTier,
-} from "../lib/tripBudgetIntel.js";
+} from "../domain/trips/services/tripBudgetIntel.js";
 
 import { requireAdmin } from "../lib/requireAdmin.js";
 

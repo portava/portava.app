@@ -20,7 +20,7 @@ const presence2767 = readFileSync(
   new URL("../migrations/2767_trip_presence_spec_vocabulary.sql", import.meta.url),
   "utf8",
 );
-const ts = readFileSync(new URL("../lib/tripKernel.ts", import.meta.url), "utf8");
+const ts = readFileSync(new URL("../domain/trips/commands/tripKernel.ts", import.meta.url), "utf8");
 
 describe("§10.1 presence", () => {
   it("uses the spec's command name, SET_PRESENCE", () => {

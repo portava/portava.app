@@ -10,21 +10,21 @@ import {
   planCommandTypeForPatch,
   planStatusTransitionRefused,
   IDEMPOTENCY_KEY_HEADER,
-} from "../lib/tripKernel.js";
-import { computeTripStatus } from "../lib/tripStatus.js";
+} from "../domain/trips/commands/tripKernel.js";
+import { computeTripStatus } from "../domain/trips/invariants/tripStatus.js";
 import { z } from "zod";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getServiceClient, isServiceClientReady } from "../lib/supabase";
 import { detectAndStoreLanguage, invalidateContentTranslations } from "../services/contentTranslation.js";
 import { requireUser, isAcceptedTripMember, requireTripMember, sendError, canEditPlanItem, canEditPlan, type PlanEditPermission } from "../lib/http.js";
-import { canEditTrip, canInviteParticipant, isTripOwner, planEditPermits } from "../lib/tripPolicy.js";
-import { sendTripRefusal } from "../lib/tripReasonCodes.js";
+import { canEditTrip, canInviteParticipant, isTripOwner, planEditPermits } from "../domain/trips/policies/tripPolicy.js";
+import { sendTripRefusal } from "../domain/trips/contracts/tripReasonCodes.js";
 import { toCamel } from "./plan.js";
-import { logTripActivity, findTripActivityByKey } from "../lib/tripActivityLog.js";
+import { logTripActivity, findTripActivityByKey } from "../domain/trips/events/tripActivityLog.js";
 import { syncTripChatMembers } from "../lib/chatSync.js";
 import { getRestrictionState } from "../services/trust/TrustRestrictionService.js";
-import { sendTripPush } from "../lib/tripPush.js";
-import { recordOpportunityCompletion } from "../lib/tripOpportunityMetrics.js";
+import { sendTripPush } from "../domain/trips/policies/tripPush.js";
+import { recordOpportunityCompletion } from "../domain/trips/services/tripOpportunityMetrics.js";
 import { awardStamp, type StampLogger } from "../services/passport/StampAwardEngine.js";
 import { buildConsumerProjection } from "../services/passport/PassportConsumerProjections.js";
 import { nameVisibilitySet, sanitizeIdentity, nameVisibleFor } from "../lib/publicIdentity";
@@ -34,7 +34,7 @@ import { readBlockExclusions, isExcluded, sendExclusionsUnavailable } from "../l
 const router = Router();
 
 /**
- * Trip Kernel gate (Trips spec §4; lib/tripKernel.ts; migration 2420).
+ * Trip Kernel gate (Trips spec §4; domain/trips/commands/tripKernel.ts; migration 2420).
  * Returns the service client when `trip_kernel_enabled` is TRUE, else null.
  * Null means: run the pre-kernel direct write exactly as before. The flag read
  * is fail-closed, so an unreadable feature_flags table is "off", never "on".
@@ -2292,7 +2292,7 @@ router.delete("/trips/:tripId/members/:userId", async (req, res) => {
 
   syncTripChatMembers(tripId, client).catch((e) => req.log?.error({ err: e }, "syncTripChatMembers failed"));
 
-  const { revokeAccessForMember } = await import("../services/tripCrew/TripCrewLiveShareService.js");
+  const { revokeAccessForMember } = await import("../domain/trips/services/TripCrewLiveShareService.js");
   revokeAccessForMember(client, tripId, userId).catch((e: unknown) => req.log?.error({ err: e }, "revokeAccessForMember failed"));
 
   res.status(200).json({ status: "removed", tripId, userId });

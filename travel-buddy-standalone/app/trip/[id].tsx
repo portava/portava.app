@@ -21,7 +21,7 @@ import { TripHeartbeatCard } from '../../src/components/compass/TripHeartbeatCar
 import { SafeReturnSetupSheet } from '../../src/components/safeReturn/SafeReturnSetupSheet';
 import { MissedCheckinPrompt } from '../../src/components/safeReturn/MissedCheckinPrompt';
 import { getActiveSession, type SafeReturnSession } from '../../src/services/safeReturn';
-import { TripPlanSection } from '../../src/components/TripPlanSection';
+import { TripPlanSection } from '../../src/features/trips/planning/TripPlanSection';
 import { NeighborhoodMatchSection } from '../../src/components/trip/NeighborhoodMatchSection';
 import { TripAvailabilitySection } from '../../src/components/TripAvailabilitySection';
 import { TripReservationsSection } from '../../src/components/trip/TripReservationsSection';
@@ -29,11 +29,11 @@ import { ReviewsSection } from '../../src/components/ReviewsSection';
 import { TripBudgetSection } from '../../src/components/trip/TripBudgetSection';
 import { DailyBriefCard } from '../../src/components/DailyBriefCard';
 import { TripReadinessCard } from '../../src/components/trip/TripReadinessCard';
-import { TripFeasibilityCard } from '../../src/components/trip/TripFeasibilityCard';
-import { TripCrewPresenceCard } from '../../src/components/trip/TripCrewPresenceCard';
-import { TripDecisionsCard } from '../../src/components/trip/TripDecisionsCard';
+import { TripFeasibilityCard } from '../../src/features/trips/planning/TripFeasibilityCard';
+import { TripCrewPresenceCard } from '../../src/features/trips/crew/TripCrewPresenceCard';
+import { TripDecisionsCard } from '../../src/features/trips/planning/TripDecisionsCard';
 import { TripStageSpineCard } from '../../src/components/trip/TripStageSpineCard';
-import { TripMapLayersCard } from '../../src/components/trip/TripMapLayersCard';
+import { TripMapLayersCard } from '../../src/features/trips/map/TripMapLayersCard';
 import { TripTodayCard } from '../../src/features/trips/today/TripTodayCard.tsx';
 import { TripTimelineConflictsCard } from '../../src/features/trips/timeline/TripTimelineConflictsCard.tsx';
 import { TripCloseoutCard } from '../../src/features/trips/closeout/TripCloseoutCard.tsx';
@@ -61,7 +61,7 @@ import { color, space, radius, type as t, avatar, dot } from '../../src/theme/to
 import { useStampToast } from '../../src/components/stamps/StampEarnedToast';
 import { useNavBarScrollHandler } from '../../src/hooks/useNavBarCollapse';
 import { usePlainBottomInset } from '../../src/hooks/useBottomInset';
-import { deriveTripDisplayStatus } from '../../src/lib/tripStatus';
+import { deriveTripDisplayStatus } from '../../src/domain/trips/invariants/tripStatus';
 import { canonicalUrl } from '../../src/constants/canonicalUrl';
 
 function TripDetailScreen() {
@@ -378,7 +378,7 @@ function TripDetailScreen() {
     coverMediaType: realTrip.coverMediaType ?? null,
     // QA round 2, bug 2: prefer the readiness score — it is the only number that
     // actually counts plan items, stay, transport, budget, entry, documents and
-    // reservations (api-server/src/lib/tripReadiness.ts). Falls back to the legacy
+    // reservations (api-server/src/domain/trips/services/tripReadiness.ts). Falls back to the legacy
     // trips.progress column when the readiness flag is off, in which case the card
     // renders nothing and never reports a summary.
     // `null` when readiness could not be read: the ring must render an unknown
@@ -390,7 +390,7 @@ function TripDetailScreen() {
     readinessHeadline: readiness?.explanation?.headline ?? null,
     // The hero's checklist was hard-coded to [] — it never rendered a single step.
     // Same order/labels as CATEGORIES in TripReadinessCard.tsx and
-    // READINESS_CATEGORIES in api-server/src/lib/tripReadiness.ts.
+    // READINESS_CATEGORIES in api-server/src/domain/trips/services/tripReadiness.ts.
     progressSteps: readiness
       ? ([
           ['plan', 'Plan'], ['stay', 'Stay'], ['transport', 'Transport'],

@@ -9,7 +9,7 @@
  * WHAT THIS ROUTE WILL AND WILL NOT SAY
  * =====================================
  * There is no routing provider in this repository (see
- * services/trips/TravelTimeProvider.ts for the measurement across both trees).
+ * domain/trips/contracts/TravelTimeProvider.ts for the measurement across both trees).
  * So the honest answers this route can give are:
  *
  *   INFEASIBLE           proven, and SOUND — a straight line is a lower bound
@@ -82,22 +82,22 @@ import { asyncHandler } from "../lib/asyncHandler.js";
 import {
   checkFeasibility, foldFeasibility,
   type FeasibilityResult,
-} from "../services/trips/TripFeasibilityEngine.js";
+} from "../domain/trips/invariants/TripFeasibilityEngine.js";
 import {
   straightLineTravelTimeProvider,
   type GeoPoint,
-} from "../services/trips/TravelTimeProvider.js";
+} from "../domain/trips/contracts/TravelTimeProvider.js";
 import {
   checkSpatialConsistency, foldConsistency, routeAvailabilityFindings,
   type PlanForConsistency, type StageForConsistency,
-} from "../services/trips/TripSpatialConsistency.js";
+} from "../domain/trips/invariants/TripSpatialConsistency.js";
 import {
   checkRouteAvailability as checkHopRouteAvailability, foldRouteAvailability, isPolicyMode, NO_TRANSPORT_POLICY, POLICY_MODES,
   type RouteAvailability, type RouteAvailabilityHop, type TransportModePolicy,
-} from "../services/trips/TripTransportPolicy.js";
-import { tripOperationalProjectionsGate, describeOperationalGate, refusalForGate } from "../lib/tripOperationalProjections.js";
-import { canEditTrip } from "../lib/tripPolicy.js";
-import { sendTripRefusal } from "../lib/tripReasonCodes.js";
+} from "../domain/trips/policies/TripTransportPolicy.js";
+import { tripOperationalProjectionsGate, describeOperationalGate, refusalForGate } from "../domain/trips/policies/tripOperationalProjections.js";
+import { canEditTrip } from "../domain/trips/policies/tripPolicy.js";
+import { sendTripRefusal } from "../domain/trips/contracts/tripReasonCodes.js";
 import { z } from "zod";
 
 const router = Router();

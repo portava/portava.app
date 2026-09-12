@@ -24,9 +24,9 @@ import app from "../app.js";
 import { _setTestClient } from "../lib/http.js";
 import { _setTestServiceClient } from "../lib/supabase.js";
 import { toolGetCurrentTrip } from "../compass/CompassTools.js";
-import { readTripMetric, _resetTripMetrics } from "../lib/tripMetrics.js";
+import { readTripMetric, _resetTripMetrics } from "../domain/trips/services/tripMetrics.js";
 import { acceptTripDiscoveryProjections } from "../lib/discoveryTripProjectionConsumer.js";
-import { TRIP_PROJECTION_SCHEMA_VERSION } from "../services/trips/TripProjectionEnvelope.js";
+import { TRIP_PROJECTION_SCHEMA_VERSION } from "../domain/trips/contracts/TripProjectionEnvelope.js";
 
 const OWNER_ID   = "11111111-1111-1111-1111-111111111111";
 const MEMBER_ID  = "22222222-2222-2222-2222-222222222222";

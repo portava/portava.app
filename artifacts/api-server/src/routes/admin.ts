@@ -28,9 +28,9 @@ import {
   executeTripCommand,
   sendKernelRejection,
   setTripVersionHeader,
-} from "../lib/tripKernel.js";
+} from "../domain/trips/commands/tripKernel.js";
 import { logger } from "../lib/logger";
-import { clearReminderDedup } from "../lib/tripReminderScheduler";
+import { clearReminderDedup } from "../server/trips/projectionWorkers/tripReminderScheduler";
 import { invalidateCompassHomeCache } from "./compassHome.js";
 import { executeAccountDeletion } from "../services/accountDeletion/AccountDeletionService.js";
 import { runSchemaDriftCheck, getCachedSchemaDriftResult } from "../lib/schemaDriftCheck";
@@ -2751,7 +2751,7 @@ router.post("/admin/trips/:tripId/reset-reminder", async (req, res) => {
 
   // trip-kernel:non-aggregate(trips.reminder_retry_count, trips.reminder_sent_at, trips.reminder_delivered_at)
   //
-  // The inverse of lib/tripReminderScheduler's two-phase claim: it RELEASES the
+  // The inverse of server/trips/projectionWorkers/tripReminderScheduler's two-phase claim: it RELEASES the
   // at-most-once claim so the hourly sweep will consider this trip again. It
   // touches exactly the three claim columns and nothing a client can see — the
   // trip's title, dates, status, visibility, crew and plan are all untouched,

@@ -21,7 +21,7 @@ import { createServer } from "node:http";
 import type { Server } from "node:http";
 import app from "../app.js";
 import { _setTestClient } from "../lib/http.js";
-import { summarizeReadiness, type ReadinessItem } from "../lib/tripReadiness.js";
+import { summarizeReadiness, type ReadinessItem } from "../domain/trips/services/tripReadiness.js";
 
 // ---------------------------------------------------------------------------
 // Test IDs

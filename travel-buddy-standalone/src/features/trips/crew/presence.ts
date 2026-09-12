@@ -17,7 +17,7 @@
  * FAIL CLOSED. A card with no `freshnessClass` (an older server) is not
  * current: nothing here says "Live" without the server having said so.
  */
-import type { CrewMemberCard } from '../../../services/tripCrewLocation.ts';
+import type { CrewMemberCard } from './tripCrewLocation.ts';
 
 export type CrewPresenceClass = NonNullable<CrewMemberCard['freshnessClass']>;
 

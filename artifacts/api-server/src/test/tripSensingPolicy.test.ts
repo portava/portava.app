@@ -7,7 +7,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 
-import { decideSensing, SENSING_INTERVAL_SECONDS, EXECUTION_LEAD_MINUTES } from "../lib/tripSensingPolicy.js";
+import { decideSensing, SENSING_INTERVAL_SECONDS, EXECUTION_LEAD_MINUTES } from "../domain/trips/policies/tripSensingPolicy.js";
 
 const NOW = Date.parse("2026-09-13T12:00:00.000Z");
 const base = { phase: "FREE_TIME" as const, attentionMode: "NORMAL" as const, mustLeaveBy: null, safeReturnActive: 0, now: NOW };

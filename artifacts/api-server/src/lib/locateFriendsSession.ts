@@ -44,7 +44,7 @@
  * NEITHER is reusable here, so this is new code that copies their posture
  * rather than a third parallel invention:
  *
- *   • services/tripCrew/TripCrewLocationService.ts is TRIP-scoped: it reads
+ *   • domain/trips/services/TripCrewLocationService.ts is TRIP-scoped: it reads
  *     `trips`/`trip_members` and `trip_crew_location_sessions`, and its unit of
  *     sharing is a standing crew relationship with a per-trip preference row.
  *     §12's session is an ad-hoc group for one event, which is not a trip and

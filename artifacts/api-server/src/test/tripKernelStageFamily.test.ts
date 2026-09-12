@@ -32,11 +32,11 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
-import { TRIP_EVENT_TYPES } from "../lib/tripKernel.js";
+import { TRIP_EVENT_TYPES } from "../domain/trips/commands/tripKernel.js";
 
 const MIGRATION = new URL("../migrations/2764_trip_kernel_stage_family.sql", import.meta.url);
 const sql = readFileSync(MIGRATION, "utf8");
-const ts = readFileSync(new URL("../lib/tripKernel.ts", import.meta.url), "utf8");
+const ts = readFileSync(new URL("../domain/trips/commands/tripKernel.ts", import.meta.url), "utf8");
 
 describe("§5.1 stage family — the TS contract and the migration agree", () => {
   it("every stage command type the migration dispatches is declared in TypeScript", () => {

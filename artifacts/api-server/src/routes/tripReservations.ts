@@ -23,14 +23,14 @@ import {
   executeTripCommand,
   sendKernelRejection,
   setTripVersionHeader,
-} from "../lib/tripKernel.js";
+} from "../domain/trips/commands/tripKernel.js";
 import { requireUser, requireTripMember, sendError } from "../lib/http.js";
-import { canManageBooking } from "../lib/tripPolicy.js";
-import { sendTripRefusal } from "../lib/tripReasonCodes.js";
-import { reservationHistoryGate } from "../lib/tripReservationHistory.js";
+import { canManageBooking } from "../domain/trips/policies/tripPolicy.js";
+import { sendTripRefusal } from "../domain/trips/contracts/tripReasonCodes.js";
+import { reservationHistoryGate } from "../domain/trips/events/tripReservationHistory.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { isFlagEnabled } from "../lib/featureFlags.js";
-import { extractReservations, RESERVATION_TYPES } from "../lib/reservationExtract.js";
+import { extractReservations, RESERVATION_TYPES } from "../server/trips/integrationAdapters/reservationExtract.js";
 
 const router = Router();
 const UUID_RE = /^[0-9a-f-]{36}$/i;

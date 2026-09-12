@@ -124,7 +124,7 @@ zone covering the viewport, Crowd Flow refuses rather than approximating.
 | `RAB_EARNINGS_LEDGER_VOIDING` | *nothing* | **OWNER** | Yes, safely | **NEW 2026-09-08.** Declined, expired and cancelled bookings still show estimated earnings — see below |
 | `TRUST_OVERRIDE_PIN_OR_CAP` | *nothing* | **OWNER** | Nothing live turns on it | **NEW 2026-09-08.** The last open row in census-trust, and the only thing between Trust and 100 % — see below |
 | `MESSAGING_DEGRADED_READ_POSTURE` | *nothing* | **OWNER** | Yes, safely | **NEW 2026-09-08.** 43 enrichment reads across ~15 endpoints: 503 or degrade visibly — see below |
-| `TRIP_CREW_SIGNAL_ROLE_COVERAGE` | *nothing* | **OWNER** | Yes, but it WIDENS a gate | **NEW 2026-09-08.** `lib/tripMembership.ts` omits `co_host` and `viewer` while claiming to mirror `getMemberRole` — see below |
+| `TRIP_CREW_SIGNAL_ROLE_COVERAGE` | *nothing* | **OWNER** | Yes, but it WIDENS a gate | **NEW 2026-09-08.** `domain/trips/invariants/tripMembership.ts` omits `co_host` and `viewer` while claiming to mirror `getMemberRole` — see below |
 | `LAYOVER_RETURN_REMINDER_DELIVERY` | *nothing* | **OWNER** | Yes, safely | **NEW 2026-09-08.** The server-side push path for the return deadline is dead code — see below |
 | `MODERATION_TARGET_NULLABILITY` | *needs a schema change* | **OWNER** | No | **NEW 2026-09-08.** `moderation_actions.target_user_id` is NOT NULL, which is what forces the skip-vs-fabricate dilemma — see below |
 | `INTERACTION_COOLDOWN_READ_DIRECTION` | *nothing* | **OWNER** | Yes, safely | **NEW 2026-09-08.** A measured fail-open; flipping it blocks legitimate pairs during an outage across 15+ routes — see below |
@@ -279,7 +279,7 @@ for that reason, not because the work is hard.
 Measured 2026-09-08. `lib/mapProjectionTripRead.ts:195` filters trips only on
 `.not("status","is",null)`, so a CANCELLED trip is projected onto the map (scoped
 to trips the viewer is an accepted member of). `TRIP_DISCOVERY_EXCLUDED_STATUSES`
-in `lib/tripDiscoveryProjection.ts:93` excludes `draft`, `cancelled` and
+in `domain/trips/contracts/tripDiscoveryProjection.ts:93` excludes `draft`, `cancelled` and
 `archived` from discovery.
 
 So the decision is not hypothetical and it is not "what should we do one day":
@@ -290,7 +290,7 @@ which is right — making them agree in either direction IS the decision.
 ### `TRIP_REMINDER_DELIVERY` — a store with a field that promises delivery
 
 **NEW 2026-09-08.** `trip_reminders.remind_at` and `is_sent` have no deliverer
-anywhere in the tree. `is_sent` is only ever READ. `lib/tripReminderScheduler.ts`
+anywhere in the tree. `is_sent` is only ever READ. `server/trips/projectionWorkers/tripReminderScheduler.ts`
 is a different mechanism — it drives "your trip starts tomorrow" from
 `trips.reminder_sent_at` and does not read this table at all.
 
@@ -545,7 +545,7 @@ Today the code refuses those four rungs with `409 not_promotable` and a stable
 
 ### `TRIP_CREW_SIGNAL_ROLE_COVERAGE` — a split the file's own header says must not happen
 
-`lib/tripMembership.ts` admits `owner` and `member`. `getMemberRole`, which its
+`domain/trips/invariants/tripMembership.ts` admits `owner` and `member`. `getMemberRole`, which its
 header claims to mirror, admits `owner`, `co_host` and `member`. Measured: for a
 trip with an owner and an ACCEPTED `co_host`, `isAcceptedTripMember(co_host)` is
 **false**, `acceptedCrewSize` is **1**, and `isSharedCrewMember(owner)` is

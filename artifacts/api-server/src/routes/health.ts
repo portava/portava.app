@@ -20,7 +20,7 @@ import { getSweepStatus as getEventWaitlistSweepStatus } from "../lib/eventWaitl
 import { getSweepStatus as getBuddyRequestSweepStatus } from "../lib/rentBuddyRequestSweeper.js";
 import { getSweeperStatus as getInviteSlotSweeperStatus } from "../lib/inviteSlotSweeper.js";
 import { callSweepFailureState } from "../lib/callSweepScheduler.js";
-import { getLiveShareSweepStatus } from "../lib/tripCrewLiveShareScheduler.js";
+import { getLiveShareSweepStatus } from "../server/trips/projectionWorkers/tripCrewLiveShareScheduler.js";
 import { getNotificationMaintenanceStatus } from "../lib/notificationMaintenanceScheduler.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { sweepExpiredStories } from "./stories.js";

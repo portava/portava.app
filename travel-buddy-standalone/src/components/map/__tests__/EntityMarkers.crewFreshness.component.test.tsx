@@ -6,7 +6,7 @@
  * Pressable had no label — a screen reader read nothing, and a sighted user
  * saw a live-looking pin over a position the server had judged LAST_KNOWN.
  * The Trip Map's crew pins now carry the server's `freshnessClass` as the
- * object's `freshness` (features/map/trip/tripMapSources.composeCrewPositions),
+ * object's `freshness` (features/trips/map/tripMapSources.composeCrewPositions),
  * and the pin says it twice: the ring (solid signal for live, dimmed and
  * dashed for stale / unknown) and the accessibility label.
  */

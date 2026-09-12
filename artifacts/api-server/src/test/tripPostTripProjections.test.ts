@@ -11,7 +11,7 @@ import assert from "node:assert/strict";
 
 import {
   buildTripMemoryProjection, buildTripPassportProjection, latestOutcomeByPlan, readPostTripInputs, type PostTripInputs,
-} from "../services/trips/TripPostTripProjections.js";
+} from "../domain/trips/projections/TripPostTripProjections.js";
 import { makeClient, base } from "./tripHealthProjection.test.js";
 
 const TRIP_ID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";

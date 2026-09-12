@@ -18,7 +18,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 
-import { fitSlotToWindows, fitInstantToWindows, readSlotFit, readTripWindows, SLOT_FIT_VERDICTS } from "../services/trips/TripFreedomConsumers.js";
+import { fitSlotToWindows, fitInstantToWindows, readSlotFit, readTripWindows, SLOT_FIT_VERDICTS } from "../domain/trips/services/TripFreedomConsumers.js";
 import { makeClient, base } from "./tripHealthProjection.test.js";
 
 const OWNER_ID  = "11111111-1111-1111-1111-111111111111";

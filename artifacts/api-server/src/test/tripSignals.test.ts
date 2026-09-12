@@ -11,7 +11,7 @@ import {
   estimateFromObservations, interpretSignal, projectSignals, looksWeatherSensitive,
   SIGNAL_KINDS, SIGNAL_INTERPRETATIONS, SOURCE_CLASS_RANK, FALLBACK_SOURCE_CLASSES, ATTENTION_STATES, PULSE_RELEVANCE,
   type SignalObservation, type PulseContext, type TripSignal,
-} from "../services/trips/TripSignals.js";
+} from "../domain/trips/services/TripSignals.js";
 import { SOURCE_CLASSES } from "../lib/intelContracts.js";
 
 const T = (hhmm: string, day = "13") => `2026-09-${day}T${hhmm}:00.000Z`;

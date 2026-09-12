@@ -15,8 +15,8 @@ import assert from "node:assert/strict";
 
 import { _setTestFetch } from "../lib/push.js";
 import { _setTestServiceClient } from "../lib/supabase.js";
-import { runOnce, clearReminderDedup, _setTestNow, STALE_CLAIM_MS } from "../lib/tripReminderScheduler.js";
-import { _resetTripPushBudget } from "../lib/tripPush.js";
+import { runOnce, clearReminderDedup, _setTestNow, STALE_CLAIM_MS } from "../server/trips/projectionWorkers/tripReminderScheduler.js";
+import { _resetTripPushBudget } from "../domain/trips/policies/tripPush.js";
 
 // §11.4: every reminder now passes the attention policy, whose NOTIFY budget is
 // per recipient per hour, in process. These cases re-deliver to the same owner

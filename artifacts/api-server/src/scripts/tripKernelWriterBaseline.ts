@@ -4,7 +4,7 @@
  *
  * Read by checkTripKernelWriters.ts. A file not listed here that writes one of
  * CANONICAL_TRIP_TABLES fails the check; a listed file whose count grows fails
- * the check. Counts may only go DOWN, as writers move to lib/tripKernel.ts.
+ * the check. Counts may only go DOWN, as writers move to domain/trips/commands/tripKernel.ts.
  *
  * THREE NUMBERS PER FILE
  * ======================
@@ -15,7 +15,7 @@
  *   ungated  the subset of `direct` that has NO kernel path: a write is
  *            "gated" only when it is annotated `trip-kernel:legacy-path` in
  *            the statement's leading comment AND the file imports
- *            lib/tripKernel. The annotation is the writer's own claim that a
+ *            domain/trips/commands/tripKernel. The annotation is the writer's own claim that a
  *            command exists for it; the check refuses the annotation in a file
  *            that never calls the kernel. This is the number the ratchet
  *            exists for. When it reaches zero, the flag can be flipped and the
@@ -46,7 +46,7 @@
  * excluded routes/trips* by construction and both missed the single-quoted
  * writer in services/contentTranslation.ts and the writers in routes/plan.ts,
  * routes/events.ts, routes/hiddenGems.ts, routes/telegraphChat.ts,
- * routes/compass.ts, routes/routePlan.ts, lib/tripReminderScheduler.ts,
+ * routes/compass.ts, routes/routePlan.ts, server/trips/projectionWorkers/tripReminderScheduler.ts,
  * services/appeals/resolveAppeal.ts and services/hiddenGems/HiddenGemService.ts.
  *
  * WHICH OF THESE GO THROUGH THE KERNEL
@@ -124,7 +124,7 @@
  * declared set EQUALS the written set, so none of these can grow a column
  * without failing the check. The argument is per site and lives in the file:
  *
- *   lib/tripReminderScheduler.ts (3)  trips.reminder_sent_at (claim),
+ *   server/trips/projectionWorkers/tripReminderScheduler.ts (3)  trips.reminder_sent_at (claim),
  *     trips.reminder_retry_count (recovery CAS), trips.reminder_delivered_at
  *     (deliver). Two independent reasons, each sufficient. (a) trips.version is
  *     the CLIENT concurrency token (§18.3/§18.4, If-Match); an hourly push
@@ -221,7 +221,7 @@ export const LEGACY_PATH_MARKER = "trip-kernel:legacy-path";
  *     non-aggregate declaration on one is refused.
  *
  * Unlike LEGACY_PATH_MARKER this does NOT require the file to import
- * lib/tripKernel: the whole claim is that no command exists or should exist.
+ * domain/trips/commands/tripKernel: the whole claim is that no command exists or should exist.
  */
 export const NON_AGGREGATE_MARKER = "trip-kernel:non-aggregate";
 
@@ -240,7 +240,7 @@ export interface WriterBaseline {
 
 export const TRIP_KERNEL_DIRECT_WRITERS: Record<string, WriterBaseline> = {
   "compass/CompassAutopilotEngine.ts":     { direct: 1, ungated: 0 }, // KERNEL-GATED (fourth pass): applyProposal update -> MOVE_PLAN / UPDATE_PLAN / ... (crew, actor = proposal owner)
-  "lib/tripReminderScheduler.ts":          { direct: 3, ungated: 0, nonAggregate: 3 }, // DECLARED NON-AGGREGATE per column (fifth pass): reminder_sent_at / reminder_retry_count / reminder_delivered_at
+  "server/trips/projectionWorkers/tripReminderScheduler.ts":          { direct: 3, ungated: 0, nonAggregate: 3 }, // DECLARED NON-AGGREGATE per column (fifth pass): reminder_sent_at / reminder_retry_count / reminder_delivered_at
   "lib/visuals/service.ts":                { direct: 1, ungated: 0 }, // KERNEL-GATED (fourth pass): finalizeVisual cover_url -> SET_TRIP_COVER (system)
   "routes/admin.ts":                       { direct: 3, ungated: 0, nonAggregate: 1 }, // 2 x visibility hide KERNEL-GATED (fourth pass) -> ADMIN_HIDE_TRIP (admin); 1 x reminder reset DECLARED NON-AGGREGATE per column (fifth pass)
   "routes/airport.ts":                     { direct: 3, ungated: 0 }, // ALL KERNEL-GATED (fourth pass): mirror -> UPDATE_PLAN / ADD_PLAN; session plan -> ADD_PLAN (crew)

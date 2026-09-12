@@ -52,7 +52,7 @@
 import { describe, it, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 
-import { runOnce, clearReminderDedup } from "../lib/tripReminderScheduler.js";
+import { runOnce, clearReminderDedup } from "../server/trips/projectionWorkers/tripReminderScheduler.js";
 import {
   runActivityScoreJob,
   _setTestClient as _setActivityClient,

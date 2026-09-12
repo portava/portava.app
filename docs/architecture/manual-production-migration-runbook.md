@@ -502,7 +502,7 @@ Leaving it false after the apply is **not** rollout gating; it is the only
 correct state until the apply has actually happened, for a reason that is
 measurable rather than cautious:
 
-`lib/tripKernel.ts` declares `TRIP_KERNEL_CONTRACT_VERSION = 2` and the routes
+`domain/trips/commands/tripKernel.ts` declares `TRIP_KERNEL_CONTRACT_VERSION = 2` and the routes
 issue v4 command types (`ADD_STAGE`, `SET_PRESENCE`, `PROPOSE`, `CAST_VOTE`,
 `ACCEPT_PROPOSAL`, …). Against production's 2420-era function every one of those
 is refused as `TRIP_COMMAND_UNKNOWN_TYPE` → HTTP 400. Turning the flag on before

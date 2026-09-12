@@ -34,7 +34,7 @@
 > minutes**, so the `social_zone` layer is empty there whatever the flags say.
 >
 > **Method blind spot, confirmed.** This census scored only artifacts citing the
-> Map spec, so `lib/tripCrewLocation.ts` — which cites Trips — was invisible to
+> Map spec, so `domain/trips/services/tripCrewLocation.ts` — which cites Trips — was invisible to
 > it, and the stale-crew-location defect had to be found by the Trips census
 > instead (fixed in `0b4f1934`). The other people-bearing readers were then
 > checked for the same shape: `buddyMapRead.ts` plots a declared meetup base, not
@@ -322,7 +322,7 @@ client paths to `travel-buddy-standalone/` unless stated.
 | M3 | Live Map / Map Home | C | `mapMachine.ts:105` `HOME_MODE = 'LIVE'`; screen at `app/map/index.tsx`. |
 | M4 | Live Place | C | `src/components/map/LivePlaceSheet.tsx`; model `src/features/map/place/livePlaceModel.ts:2`. |
 | M5 | Crowd Flow | **W** | Producer (`lib/crowdFlowProducer.ts`), gateway lane and client renderer all exist. The mode gate is `CROWD_FLOW: inputs.crowdFlowObjectCount > 0` (`src/stores/mapStore.tsx:98`), and the gateway serves zero objects in production (§Headline). The surface can never open there. |
-| M6 | Trip Map | C | `src/features/map/trip/tripMapSources.ts`, `tripMapModel.ts`; capability hard-true at `src/stores/mapStore.tsx:96`. |
+| M6 | Trip Map | C | `src/features/trips/map/tripMapSources.ts`, `tripMapModel.ts`; capability hard-true at `src/stores/mapStore.tsx:96`. |
 | M7 | Locate My Friends | **W** | Complete server (`lib/locateFriendsSession.ts`, 48 KB) and client (`src/services/locateFriends.ts`, `src/components/map/LocateFriendsPanel.tsx`). **All four storage tables are absent from production** — `locate_friends_sessions`, `_members`, `_positions`, `_audit`, `scripts/checkProductionDrift.ts:176-179`. |
 | M8 | Intent Mode | C | `src/components/map/IntentSheet.tsx:2`; opened at `app/map/index.tsx:2667`. |
 | M9 | Compass Map Recommendations | C | `src/features/map/compass/compassMapModel.ts`; capability hard-true, `src/stores/mapStore.tsx:94`. |
@@ -440,10 +440,10 @@ reproduces §8's mock verbatim as the module contract.
 
 | id | Requirement | V | Evidence |
 | --- | --- | --- | --- |
-| M71 | Render the Trip geographically without duplicating or replacing Trip ownership | C | `src/features/map/trip/tripMapSources.ts:16` — pure: DTOs in, `TripMapSource` out; every source is the owning system's own DTO. |
+| M71 | Render the Trip geographically without duplicating or replacing Trip ownership | C | `src/features/trips/map/tripMapSources.ts:16` — pure: DTOs in, `TripMapSource` out; every source is the owning system's own DTO. |
 | M72 | Lodging / home base | C | `tripMapSources.ts:152-172` — first accommodation item with a safe coordinate; *"§11 lists lodging first"*. |
 | M73 | Itinerary | C | `tripMapSources.ts:192` "Everything else is an itinerary stop", `:213` returned. |
-| M74 | Next stop | C | `src/features/map/trip/tripMapModel.ts:275-279` — reservation outranks event start; a planned arrival is not an anchor. |
+| M74 | Next stop | C | `src/features/trips/map/tripMapModel.ts:275-279` — reservation outranks event start; a planned arrival is not an anchor. |
 | M75 | Saved ideas | C | `tripMapSources.ts:220` — ideas with no coordinate are dropped, *"a saved idea with no known location is a wish"*. |
 | M76 | Crew | C | `tripMapSources.ts:29-31,64-102` — crew surfaced as **coarse area labels** (`crewAreas`), `source.crew` left empty because it would require coordinates the §23 rung did not grant. The privacy-correct rendering, not a gap. |
 | M77 | Routes | C | `tripMapSources.ts:251-253` — one LineString through the plan's stops, styled as a dashed guess rather than a routed path. |
@@ -570,7 +570,7 @@ reader rather than querying: `routes/mapProjection.ts:14-27` and `:52-66`.
 | M142 | Discovery → candidate relevance | C | `src/services/discovery.ts` consumed, never re-ranked, by `src/features/map/search/searchAdapter.ts:4`. |
 | M143 | Compass → next-best action | C | `src/features/map/compass/compassMapModel.ts:8`. |
 | M144 | Presence → people/place presence | C | `lib/mapTravelers.ts` + `readCircleLocations`, both approved-caller-only in `gatewayBypassGuard.test.ts`. |
-| M145 | Trips → itinerary and crew context | C | `src/features/map/trip/tripMapSources.ts:16` (DTOs in, no re-derivation). |
+| M145 | Trips → itinerary and crew context | C | `src/features/trips/map/tripMapSources.ts:16` (DTOs in, no re-derivation). |
 | M146 | Telegraph → communication | C | `app/map/index.tsx:153` `openDirectThread` delegates; no message state on the map. |
 | M147 | Memory → personal projection and history | C | `lib/mapProducers/memoryProducer.ts:9` reads `memory_projections`, the Memory system's own read model. |
 | M148 | Passport → travel identity/history | C | `app/map/index.tsx:36` `getPassportMap`; `lib/mapProducers/personalCityProducer.ts` reads the viewer's own `passport_stamps` only. |
@@ -1026,7 +1026,7 @@ right, and stays.
 
 ### What is there now
 
-`travel-buddy-standalone/src/features/map/trip/tripMapSources.ts:133#export function composeCrewPositions(`
+`travel-buddy-standalone/src/features/trips/map/tripMapSources.ts:133#export function composeCrewPositions(`
 takes a pin only from a card that is not hidden, whose live share to THIS
 viewer is active, that carries finite `exactCoords`, and whose
 `freshnessClass` is LIVE / RECENT — the server's verdict, checked again — and

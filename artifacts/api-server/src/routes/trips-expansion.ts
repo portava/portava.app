@@ -11,7 +11,7 @@ import { isBlockedBetween } from "../lib/blockGuard.js";
 import { z } from "zod";
 import crypto from "node:crypto";
 import { getServiceClient } from "../lib/supabase.js";
-import { runTripCloseout } from "../services/trips/TripCloseoutService.js";
+import { runTripCloseout } from "../domain/trips/services/TripCloseoutService.js";
 import { logger } from "../lib/logger.js";
 import {
   requireUser,
@@ -23,18 +23,18 @@ import {
 import {
   canViewTrip, canManageJoinRequests, canEditTrip, canHostTrip, canAccessTripContent, canContributeToTrip,
   canEditOwnOrAsOwner, canSeePrivateContributions, isTripOwner,
-} from "../lib/tripPolicy.js";
+} from "../domain/trips/policies/tripPolicy.js";
 import { isFlagEnabled } from "../lib/featureFlags.js";
 import { absenceDisclosure } from "../lib/privacy/absenceDisclosure.js";
-import { sendTripRefusal } from "../lib/tripReasonCodes.js";
-import { sendTripPush } from "../lib/tripPush.js";
+import { sendTripRefusal } from "../domain/trips/contracts/tripReasonCodes.js";
+import { sendTripPush } from "../domain/trips/policies/tripPush.js";
 import { nameVisibilitySet, sanitizeIdentity, nameVisibleFor, presentedName } from "../lib/publicIdentity.js";
 import { truncateDisplayName } from "../lib/displayName.js";
 import {
   toPrivateTripPreview,
   toAuthorizedTripView,
 } from "../lib/privacy/tripSerializers.js";
-import { computeTripStatus } from "../lib/tripStatus.js";
+import { computeTripStatus } from "../domain/trips/invariants/tripStatus.js";
 import {
   isTripKernelEnabled,
   readCommandEnvelope,
@@ -42,13 +42,13 @@ import {
   sendKernelRejection,
   setTripVersionHeader,
   type TripKernelResult,
-} from "../lib/tripKernel.js";
+} from "../domain/trips/commands/tripKernel.js";
 
 const router = Router();
 const UUID_RE = /^[0-9a-f-]{36}$/i;
 
 /**
- * Trip Kernel gate (Trips spec §4; lib/tripKernel.ts; migrations 2420/2450/2500).
+ * Trip Kernel gate (Trips spec §4; domain/trips/commands/tripKernel.ts; migrations 2420/2450/2500).
  * Returns the service client when `trip_kernel_enabled` is TRUE, else null.
  * Null means: run the pre-kernel direct write exactly as before. The flag read
  * is fail-closed, so an unreadable feature_flags table is "off", never "on".

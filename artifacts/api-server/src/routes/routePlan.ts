@@ -19,7 +19,7 @@
 import { Router } from "express";
 import { randomUUID } from "node:crypto";
 import { asyncHandler } from "../lib/asyncHandler.js";
-import { isTripKernelEnabled, executeTripCommand } from "../lib/tripKernel.js";
+import { isTripKernelEnabled, executeTripCommand } from "../domain/trips/commands/tripKernel.js";
 import { z } from "zod";
 import { requireUser, sendError, canEditPlan, isAcceptedTripMember } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
