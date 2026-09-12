@@ -56,6 +56,7 @@ import { startIntelAttributionScheduler } from "./lib/intelAttributionScheduler.
 import { registerScopedTrustApplier } from "./lib/intelScopedTrustApply.js";
 import { startMemoryProjectionScheduler } from "./lib/memoryProjectionScheduler.js";
 import { startTripMapProjectionScheduler } from "./lib/mapTripProjectionWorker.js";
+import { startTripRetentionScheduler } from "./lib/tripRetentionScheduler.js";
 import { startPlaceDayLifecycleWorker } from "./lib/places/placeDaysWorker.js";
 
 assertRequiredEnv(logger);
@@ -160,6 +161,10 @@ app.listen(port, (err) => {
   // fail-closed; a no-op (one flag read a minute) until enabled. Production
   // has no outbox yet, so it has no input there until 2334→2337→2420→2520 apply.
   startTripMapProjectionScheduler();
+  // Trips spec §5.3 / §21.3 retention: calls 2789's trip_activity_log_prune()
+  // and 2791's trip_reservations_forget_raw_text() every six hours while
+  // trip_retention_sweep_enabled (2792) is on. Fail-closed; a no-op until then.
+  startTripRetentionScheduler();
   // IG-08 coverage producer: assembles (zone, claim-family) gap snapshots and
   // (when intel_missions is also on) generates mission candidates. Flag-gated on
   // intel_coverage, fail-closed; a no-op until enabled.

@@ -21,6 +21,8 @@ import {
   type ApiErrorCode,
 } from "../lib/http.js";
 import { canViewTrip, canManageJoinRequests } from "../lib/tripPolicy.js";
+import { isFlagEnabled } from "../lib/featureFlags.js";
+import { absenceDisclosure } from "../lib/privacy/absenceDisclosure.js";
 import { sendTripRefusal } from "../lib/tripReasonCodes.js";
 import { sendTripPush } from "../lib/tripPush.js";
 import { nameVisibilitySet, sanitizeIdentity, nameVisibleFor, presentedName } from "../lib/publicIdentity.js";
@@ -3270,8 +3272,13 @@ router.get("/trips/:tripId", async (req, res) => {
     return;
   }
   if (view.allowed) {
-    // public, or buddies with a mutual follow: the stripped shape.
-    res.json(toPrivateTripPreview(t, await getJoinRequestStatus()));
+    // public, or buddies with a mutual follow: the stripped shape. §6.3 "must
+    // not leak future absence from home": while trip_absence_guard_enabled is
+    // on, a trip that has not begun carries no dates on this preview whatever
+    // show_exact_dates says, and says why (lib/privacy/absenceDisclosure.ts).
+    // Off — the seeded state — the preview is byte-for-byte what it was.
+    const absence = absenceDisclosure(t, Date.now(), await isFlagEnabled(sc, "trip_absence_guard_enabled"));
+    res.json(toPrivateTripPreview(t, await getJoinRequestStatus(), { withholdFutureDates: absence.withholdDates }));
     return;
   }
 

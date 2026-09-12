@@ -118,3 +118,136 @@ export function buildTripTimeline<T extends TimelineInput>(
 
   return { days, undated, tripDayCount };
 }
+
+// ── §7 cross-timezone multi-city: stage local time and instant order ─────────
+//
+// census-trips TR424: a multi-city trip's days are lived in different zones.
+// Instants (`starts_at`, timestamptz) order correctly on their own — an instant
+// is an instant — and the day labels above are the planner's, compared as
+// labels. What was missing was the third thing: the WALL CLOCK a plan item is
+// experienced at, which is the zone of the STAGE the traveller is in when it
+// happens. 2760's `trip_stages.timezone` is that zone; before it, a trip had
+// one `trips.timezone` for all its cities and stage local time could not be
+// computed (the row's own W reason).
+//
+// The rule: the stage whose interval contains the item's start instant gives
+// the zone. No stage contains it → the trip's own zone, and the reading says
+// so. No zone at all → no local time, stated rather than guessed. The instant
+// is never changed by any of this; only its rendering is.
+
+/** 2760's `trip_stages` row, narrowed to what local time needs. */
+export interface TimelineStage {
+  id: string;
+  sequence: number | null;
+  /** IANA zone (2760: NOT NULL). */
+  timezone: string;
+  /** ISO instants or null. A null `endsAt` is open-ended. */
+  startsAt: string | null;
+  endsAt: string | null;
+}
+
+export interface StageLocalTime {
+  stageId: string | null;
+  stageSequence: number | null;
+  /** The zone the times below are rendered in; null when there was none. */
+  timezone: string | null;
+  /** Wall clock `YYYY-MM-DDTHH:MM` in `timezone`; null when there is no instant or no zone. */
+  localStartsAt: string | null;
+  localEndsAt: string | null;
+  /** Which rule produced this, in one sentence. */
+  reading: string;
+}
+
+export const STAGE_LOCAL_TIME_READINGS = {
+  noInstant: "no start instant: nothing to render locally",
+  stage: "the stage containing the start instant gives the zone",
+  tripZone: "no stage contains the start instant; the trip's own zone is used",
+  noZone: "no stage contains the start instant and the trip has no zone: the instant stands as-is",
+  badZone: "the zone is not one this runtime knows; the instant stands as-is",
+} as const;
+
+function instantMs(iso: string | null | undefined): number | null {
+  if (typeof iso !== "string") return null;
+  const ms = Date.parse(iso);
+  return Number.isFinite(ms) ? ms : null;
+}
+
+/** The stage whose [startsAt, endsAt) contains the instant; the lowest sequence when several do. */
+export function stageContaining(ms: number, stages: readonly TimelineStage[]): TimelineStage | null {
+  let best: TimelineStage | null = null;
+  for (const s of stages) {
+    const from = instantMs(s.startsAt);
+    if (from === null || from > ms) continue;
+    const to = instantMs(s.endsAt);
+    if (to !== null && ms >= to) continue;
+    if (best === null || (s.sequence ?? Infinity) < (best.sequence ?? Infinity)) best = s;
+  }
+  return best;
+}
+
+/** `YYYY-MM-DDTHH:MM` wall clock of an instant in an IANA zone; null when the zone is unknown to this runtime. */
+export function wallClock(ms: number, timeZone: string): string | null {
+  try {
+    const parts = new Intl.DateTimeFormat("en-CA", {
+      timeZone, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23",
+    }).formatToParts(new Date(ms));
+    const get = (t: string) => parts.find((p) => p.type === t)?.value ?? null;
+    const y = get("year"), mo = get("month"), d = get("day"), h = get("hour"), mi = get("minute");
+    if (!y || !mo || !d || !h || !mi) return null;
+    return `${y}-${mo}-${d}T${h === "24" ? "00" : h}:${mi}`;
+  } catch {
+    return null;
+  }
+}
+
+export function stageLocalTime(
+  item: { startsAt?: string | null; endsAt?: string | null },
+  stages: readonly TimelineStage[],
+  tripTimezone: string | null,
+): StageLocalTime {
+  const none = (reading: string): StageLocalTime =>
+    ({ stageId: null, stageSequence: null, timezone: null, localStartsAt: null, localEndsAt: null, reading });
+  const start = instantMs(item.startsAt);
+  if (start === null) return none(STAGE_LOCAL_TIME_READINGS.noInstant);
+  const stage = stageContaining(start, stages);
+  const zone = stage ? stage.timezone : tripTimezone;
+  if (!zone) return none(STAGE_LOCAL_TIME_READINGS.noZone);
+  const localStartsAt = wallClock(start, zone);
+  if (localStartsAt === null) return { ...none(STAGE_LOCAL_TIME_READINGS.badZone), stageId: stage?.id ?? null, stageSequence: stage?.sequence ?? null, timezone: zone };
+  const end = instantMs(item.endsAt);
+  return {
+    stageId: stage?.id ?? null,
+    stageSequence: stage?.sequence ?? null,
+    timezone: zone,
+    localStartsAt,
+    localEndsAt: end === null ? null : wallClock(end, zone),
+    reading: stage ? STAGE_LOCAL_TIME_READINGS.stage : STAGE_LOCAL_TIME_READINGS.tripZone,
+  };
+}
+
+/** Every item, unchanged, plus its `local` rendering. */
+export function withStageLocalTimes<T extends { startsAt?: string | null; endsAt?: string | null }>(
+  items: readonly T[],
+  stages: readonly TimelineStage[],
+  tripTimezone: string | null,
+): Array<T & { local: StageLocalTime }> {
+  return items.map((it) => ({ ...it, local: stageLocalTime(it, stages, tripTimezone) }));
+}
+
+/**
+ * Instant order, stable: by `startsAt` as an instant, whatever zone each was
+ * entered in; items with no instant keep their relative order after the rest.
+ * A day's items from the plan read are already in this order (the SQL orders
+ * by starts_at); this makes the projection state it rather than inherit it.
+ */
+export function orderByInstant<T extends { startsAt?: string | null }>(items: readonly T[]): T[] {
+  return items
+    .map((it, i) => ({ it, i, ms: instantMs(it.startsAt) }))
+    .sort((a, b) => {
+      if (a.ms === null && b.ms === null) return a.i - b.i;
+      if (a.ms === null) return 1;
+      if (b.ms === null) return -1;
+      return a.ms - b.ms || a.i - b.i;
+    })
+    .map((x) => x.it);
+}

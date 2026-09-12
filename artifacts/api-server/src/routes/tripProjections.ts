@@ -59,7 +59,7 @@ import { toCamel } from "./plan.js";
 import { computeWarnings } from "./trips.js";
 import { serveMapProjection } from "./tripMapProjection.js";
 import { liveEnvelope, readTripVersion } from "../services/trips/TripProjectionEnvelope.js";
-import { buildTripTimeline } from "../services/trips/TripTimelineProjection.js";
+import { buildTripTimeline, withStageLocalTimes, orderByInstant, type TimelineStage } from "../services/trips/TripTimelineProjection.js";
 import { projectTripSafety, type SafetySessionRow } from "../services/trips/TripSafetyProjection.js";
 import { buildTripCompassProjection } from "../services/trips/TripCompassProjection.js";
 import { buildTripFreedomProjection } from "../services/trips/TripFreedomProjection.js";
@@ -77,7 +77,7 @@ import { incrementTripMetric } from "../lib/tripMetrics.js";
 import { randomUUID } from "node:crypto";
 import { recordNotificationActed } from "../lib/tripPush.js";
 import { verifyTripReplay } from "../lib/tripReplayVerify.js";
-import { tripOperationalProjectionsGate } from "../lib/tripOperationalProjections.js";
+import { tripOperationalProjectionsGate, describeOperationalGate } from "../lib/tripOperationalProjections.js";
 import { TRIP_PUSH_EVENT_PROFILES } from "../services/trips/TripAttentionPolicy.js";
 import { buildTripTodayProjection } from "../services/trips/TripTodayProjection.js";
 import { explainTripDecisionFrom, DECISION_RETENTION } from "../services/trips/TripDecisionLedger.js";
@@ -117,7 +117,7 @@ router.get("/trips/:tripId/timeline", asyncHandler(async (req, res) => {
   // there is no honest timeline without them.
   const { data: trip, error: tripErr } = await sc
     .from("trips")
-    .select("start_date, end_date, version")
+    .select("start_date, end_date, version, timezone")
     .eq("id", tripId)
     .maybeSingle();
   if (tripErr) {
@@ -130,6 +130,32 @@ router.get("/trips/:tripId/timeline", asyncHandler(async (req, res) => {
   const tripStartDate: string | null = t.start_date ?? null;
   const tripEndDate: string | null = t.end_date ?? null;
   const sourceTripVersion: number | null = typeof t.version === "number" ? t.version : null;
+  const tripTimezone: string | null = typeof t.timezone === "string" && t.timezone ? t.timezone : null;
+
+  // §7 cross-timezone multi-city (TR424): 2760's stages carry the zone each
+  // leg of the trip is lived in, so an item's wall clock is its stage's. Read
+  // under the gate that owns kernel-era tables, exactly as /readiness reads
+  // them; with the gate off the trip's one zone is the only zone there is, and
+  // the response says which of the two it used. Unreadable stages refuse the
+  // timeline like every other read here: a wrong wall clock is not a timeline.
+  let stages: TimelineStage[] = [];
+  let stageZoneReading: string;
+  const gate = await tripOperationalProjectionsGate(sc);
+  if (gate.enabled) {
+    const { data: stageRows, error: stErr } = await sc.from("trip_stages").select("id, sequence, timezone, starts_at, ends_at").eq("trip_id", tripId);
+    if (stErr) {
+      log.warn({ err: stErr.message, tripId }, "timeline: trip_stages unreadable — refusing");
+      sendTripRefusal(res, "degraded_unavailable", "TRIP_PROJECTION_UNAVAILABLE", "The trip's stages could not be read right now, so local times cannot be rendered. Please try again shortly.");
+      return;
+    }
+    stages = ((stageRows ?? []) as any[]).map((st) => ({
+      id: String(st.id), sequence: typeof st.sequence === "number" ? st.sequence : null,
+      timezone: String(st.timezone ?? ""), startsAt: st.starts_at ?? null, endsAt: st.ends_at ?? null,
+    })).filter((st) => st.timezone !== "");
+    stageZoneReading = `${stages.length} stage(s) from trip_stages (2760) give each item its zone; outside every stage the trip's zone ${tripTimezone ?? "(none)"} applies`;
+  } else {
+    stageZoneReading = `${describeOperationalGate(gate)}; every item is rendered in the trip's zone ${tripTimezone ?? "(none)"}`;
+  }
 
   const editAllowed = await canEditPlan(sc, tripId, user.id);
 
@@ -164,7 +190,7 @@ router.get("/trips/:tripId/timeline", asyncHandler(async (req, res) => {
   }
 
   const warnMap = computeWarnings(rows, tripStartDate, tripEndDate, cancelledMeetupIds);
-  const items = rows.map((row) => toCamel(row, { warnings: warnMap.get(row.id) ?? [] }));
+  const items = withStageLocalTimes(rows.map((row) => toCamel(row, { warnings: warnMap.get(row.id) ?? [] })), stages, tripTimezone);
   const timeline = buildTripTimeline(items, { tripStartDate, tripEndDate });
 
   // §7.2: a conflict is not silently rendered as a normal itinerary. Plan
@@ -173,7 +199,9 @@ router.get("/trips/:tripId/timeline", asyncHandler(async (req, res) => {
   const conflicts = detectPlanOverlaps(items.map((i) => ({ id: i.id, dayDate: i.dayDate, startsAt: i.startsAt, endsAt: i.endsAt })));
   for (const c of conflicts) incrementTripMetric("temporal_conflict_total", { kind: c.kind });
   const conflicted = new Set(conflicts.flatMap((c) => c.planIds));
-  const days = timeline.days.map((d) => ({ ...d, conflictIds: d.items.map((i) => i.id).filter((id) => conflicted.has(id)) }));
+  // Instant order within a day, stated by the projection (TR424): two items
+  // entered in two zones sort by when they happen, not by how they were typed.
+  const days = timeline.days.map((d) => ({ ...d, items: orderByInstant(d.items), conflictIds: d.items.map((i) => i.id).filter((id) => conflicted.has(id)) }));
   // §3.3 AT_RISK, DERIVED rather than stored (§3.1: lifecycle is computed from
   // facts): a plan in a conflict is at risk. §21.1 plan_at_risk_total counts it.
   const atRiskPlanIds = [...conflicted];
@@ -189,6 +217,9 @@ router.get("/trips/:tripId/timeline", asyncHandler(async (req, res) => {
     days,
     undated: timeline.undated,
     tripDayCount: timeline.tripDayCount,
+    tripTimezone,
+    stages,
+    stageZoneReading,
     conflicts,
     atRiskPlanIds,
     atRiskReading: "§3.3 AT_RISK is derived, not stored: a plan item in a temporal conflict. No IN_PROGRESS / MOVED state exists (TR46).",

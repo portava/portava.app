@@ -26,6 +26,7 @@ import {
   checkSpatialConsistency, foldConsistency, metresBetween,
   STAGE_LOCALITY_RADIUS_M, CONSISTENCY_VERDICTS, CONSISTENCY_REASONS,
   type PlanForConsistency, type StageForConsistency,
+  routeAvailabilityFindings,
 } from "../services/trips/TripSpatialConsistency.js";
 
 const LISBON = { lat: 38.7223, lng: -9.1393 };
@@ -289,6 +290,8 @@ describe("§7.4 — the fold", () => {
       plan({ id: "b", locationName: "X", placeId: "p2" }),
     ]));
     collect(checkRouteAvailability());
+    // TR137: the policy-checked path (services/trips/TripTransportPolicy.ts) produces the §7.4 sentence.
+    collect(routeAvailabilityFindings([{ planIds: ["a", "b"], availability: { verdict: "POLICY_BLOCKED", detail: "feasible by drive, and the policy disallows drive" } }]));
     const missing = CONSISTENCY_REASONS.filter((r) => !emitted.has(r));
     assert.deepEqual(missing, [], `declared but unreachable: ${missing.join(", ")}`);
   });

@@ -69,8 +69,14 @@ export const CONSISTENCY_REASONS = [
   "NO_COORDINATES",
   /** The stage this plan names is not in the set given. */
   "STAGE_NOT_FOUND",
-  /** No transport-mode policy exists in this system. See the header. */
+  /** No transport-mode policy could be READ for this trip: 2793's
+   *  trip_transport_policies sits behind trip_operational_projections_enabled,
+   *  and with the gate off the check has no input. (Until 2793 this meant "no
+   *  policy exists in this system"; census-trips TR137.) */
   "NO_TRANSPORT_MODE_POLICY",
+  /** §7.4's own sentence: the hop fits only by a mode the policy disallows
+   *  ("feasible by taxi but the transport-mode policy says no taxi"). */
+  "ROUTE_ONLY_BY_DISALLOWED_MODE",
 ] as const;
 export type ConsistencyReason = (typeof CONSISTENCY_REASONS)[number];
 
@@ -90,6 +96,7 @@ export const SPATIAL_REASON_CODES: Readonly<Record<ConsistencyReason, TripReason
   NO_COORDINATES: "TRIP_SPATIAL_NO_COORDINATES",
   STAGE_NOT_FOUND: "TRIP_SPATIAL_STAGE_LOCALITY",
   NO_TRANSPORT_MODE_POLICY: "TRIP_SPATIAL_ROUTE_UNAVAILABLE",
+  ROUTE_ONLY_BY_DISALLOWED_MODE: "TRIP_SPATIAL_ROUTE_UNAVAILABLE",
 };
 
 export interface ConsistencyFinding {
@@ -304,28 +311,59 @@ export function checkPlaceIdentity(plans: PlanForConsistency[]): ConsistencyFind
 }
 
 /**
- * §7.4 route availability. Always UNCHECKABLE, and it says why.
- *
- * Returned rather than omitted: a report covering three of the four checks and
- * saying nothing about the fourth reads as a clean bill of health on all four.
+ * §7.4 route availability when NO POLICY COULD BE READ: one UNCHECKABLE, and
+ * it says why. Returned rather than omitted: a report covering three of the
+ * four checks and saying nothing about the fourth reads as a clean bill of
+ * health on all four. When the policy IS readable the route passes the
+ * per-hop findings from routeAvailabilityFindings instead (TR137).
  */
 export function checkRouteAvailability(): ConsistencyFinding[] {
   return [stampReasonCode({
     check: "ROUTE_AVAILABILITY", verdict: "UNCHECKABLE", reason: "NO_TRANSPORT_MODE_POLICY",
     planIds: [], stageId: null,
-    detail: "Nothing in this system records which transport modes a trip will or will not use, so no plan can be checked against one.",
+    detail: "No transport-mode policy could be read for this trip (2793 trip_transport_policies is read under trip_operational_projections_enabled), so no plan can be checked against the transport modes it will or will not use.",
   })];
 }
 
-/** All of §7.4 except travel feasibility, which is TripFeasibilityEngine. */
+/**
+ * §7.4 route availability WITH a policy: the per-hop verdicts of
+ * services/trips/TripTransportPolicy.ts as consistency findings.
+ *
+ *   POLICY_BLOCKED → INCONSISTENT, ROUTE_ONLY_BY_DISALLOWED_MODE — the §7.4 case.
+ *   UNCHECKABLE    → UNCHECKABLE, NO_COORDINATES — the hop could not be estimated.
+ *   AVAILABLE      → no finding: the check ran and passed.
+ *   NO_MODE_FITS   → no finding here: that is the temporal engine's INFEASIBLE,
+ *                    already on the hop; reporting it twice would count it twice.
+ */
+export function routeAvailabilityFindings(
+  hops: ReadonlyArray<{ planIds: string[]; availability: { verdict: string; detail: string } }>,
+): ConsistencyFinding[] {
+  const out: RawFinding[] = [];
+  for (const h of hops) {
+    if (h.availability.verdict === "POLICY_BLOCKED") {
+      out.push({ check: "ROUTE_AVAILABILITY", verdict: "INCONSISTENT", reason: "ROUTE_ONLY_BY_DISALLOWED_MODE", planIds: [...h.planIds], stageId: null, detail: h.availability.detail });
+    } else if (h.availability.verdict === "UNCHECKABLE") {
+      out.push({ check: "ROUTE_AVAILABILITY", verdict: "UNCHECKABLE", reason: "NO_COORDINATES", planIds: [...h.planIds], stageId: null, detail: h.availability.detail });
+    }
+  }
+  return out.map(stampReasonCode);
+}
+
+/**
+ * All of §7.4 except travel feasibility, which is TripFeasibilityEngine.
+ * `opts.routeAvailability` is the policy-checked result when the policy was
+ * readable (an empty array is "every hop AVAILABLE"); undefined or null means
+ * it was not, and the permanent UNCHECKABLE stands in.
+ */
 export function checkSpatialConsistency(
   plans: PlanForConsistency[],
   stages: StageForConsistency[],
+  opts: { routeAvailability?: ConsistencyFinding[] | null } = {},
 ): ConsistencyFinding[] {
   return [
     ...checkStageLocality(plans, stages),
     ...checkPlaceIdentity(plans),
-    ...checkRouteAvailability(),
+    ...(opts.routeAvailability ?? checkRouteAvailability()),
   ];
 }
 
@@ -334,10 +372,11 @@ export function checkSpatialConsistency(
  *
  * INCONSISTENT beats UNCHECKABLE beats CONSISTENT — the worst thing found
  * wins, and an empty finding list is the ONLY thing that yields CONSISTENT.
- * Note that `checkRouteAvailability` always emits one UNCHECKABLE, so this
- * function cannot currently return CONSISTENT for a real trip. That is
- * correct: one of §7.4's four checks cannot be run, and a green verdict would
- * be claiming otherwise.
+ * Without a readable transport policy `checkRouteAvailability` emits one
+ * UNCHECKABLE, so this function cannot return CONSISTENT for such a trip.
+ * That is correct: one of §7.4's four checks had no input, and a green
+ * verdict would be claiming otherwise. With the policy read (TR137) the
+ * fourth check runs and CONSISTENT is reachable.
  */
 export function foldConsistency(findings: ConsistencyFinding[]): ConsistencyVerdict {
   if (findings.some((f) => f.verdict === "INCONSISTENT")) return "INCONSISTENT";

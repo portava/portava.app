@@ -189,6 +189,10 @@ const SKIP_TABLES = new Set<string>([
   // §17.2), TripTodayProjection / TripImpactState / routes/tripMapProjection
   // (trip_transport_segments, §8.4 triggers, §9.4 impact, §14.1 logistics).
   "trip_disruptions",
+  // Trips §47, 2793 — trip_transport_policies, written by PUT /trips/:tripId/transport-policy
+  // under trip_operational_projections_enabled; absent from portava-ci until this branch
+  // reaches main. Remove once 2793 is applied to the live schema.
+  "trip_transport_policies",
   "trip_transport_segments",
 ]);
 

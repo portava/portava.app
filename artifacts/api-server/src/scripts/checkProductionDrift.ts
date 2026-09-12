@@ -149,6 +149,7 @@ export const KNOWN_PRODUCTION_GAPS: Record<string, Gap> = {
   trip_transport_segments: { classification: "unapplied", note: "Trips §7.4 (2782) — transport legs with a state machine. Written only by the kernel (ADD/UPDATE/SET_STATE/REMOVE_TRANSPORT_SEGMENT); no TS reader yet." },
   trip_reservation_events: { classification: "unapplied", note: "Trips §18.3 (2784) — append-only reservation history, trigger-fed from trip_reservations. Read by GET /trips/:id/reservations/:rid/history under trip_operational_projections_enabled." },
   trip_disruptions:        { classification: "unapplied", note: "Trips §17 (2785) — disruption register. Written only by the kernel (DECLARE/RESOLVE_DISRUPTION); TripHealth does not consult it yet (census §41.3)." },
+  trip_transport_policies: { classification: "unapplied", note: "Trips §7.4 (2793) — the transport-mode policy the route-availability check reads (census-trips §47, TR137). Written by PUT /trips/:tripId/transport-policy (owner, §6.1 canEditTrip) and read by GET /trips/:tripId/feasibility, both under trip_operational_projections_enabled; absent from every database but the local replica until this branch merges and the owner's Batch C applies it." },
 
   // ── A guarantee the docs rest on, that production does not have ───────────
   protected_zones: {

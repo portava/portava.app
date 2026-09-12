@@ -82,6 +82,7 @@ export const TRIP_REASON_CODES = [
   "TRIP_PRIVACY_NOT_VISIBLE",         // §6.3 private / invite-only, and not crew
   "TRIP_PRIVACY_BUDDIES_ONLY",        // §6.3 buddies visibility, no mutual follow
   "TRIP_PRIVACY_PREVIEW_ONLY",        // §6.3 public trip: stripped shape, not full
+  "TRIP_PRIVACY_FUTURE_ABSENCE",      // §6.3 a trip not yet begun: its dates are withheld from non-members
   // ── TRIP_PRESENCE_* ────────────────────────────────────────────────────────
   "TRIP_PRESENCE_NOT_SELF",           // 2768
   "TRIP_PRESENCE_NOT_FOUND",          // 2768
