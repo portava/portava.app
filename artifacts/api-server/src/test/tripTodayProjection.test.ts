@@ -64,6 +64,8 @@ describe("§11.1 buildTripTodayProjection — composed, not re-derived", () => {
     assert.equal(p.opportunities.status, "ok", "§13: the opportunity projection now produces this layer (empty here: nothing saved)");
     assert.equal(p.pulseSignals.status, "ok", "§16: the Trip Pulse projection now produces this layer");
     assert.equal(p.attention.mode, "NORMAL"); assert.equal(p.attention.suppression.discovery, false);
+    // §10.3 (TR172): free time, nothing at risk, the next leave-by hours away — sample slowly, and say why.
+    assert.equal(p.sensing.level, "idle"); assert.equal(p.sensing.intervalSeconds, 900); assert.deepEqual(p.sensing.reasons, []);
     assert.deepEqual(p.risks, []); assert.deepEqual(p.unresolvedActions, []);
     assert.equal(p.health, "HEALTHY");
     assert.deepEqual(Object.keys(p.answers), ["now", "next", "who", "canDo", "changed"], "§11.2's order");

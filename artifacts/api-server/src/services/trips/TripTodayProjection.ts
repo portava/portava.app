@@ -56,6 +56,7 @@ import { buildTripFreedomProjection, type TripFreedomProjection } from "./TripFr
 import { buildTripPulseProjection } from "./TripPulseProjection.js";
 import { buildTripOpportunityProjection } from "./TripOpportunityProjection.js";
 import { evaluateRiskTriggers, type RiskTrigger } from "./TripRiskTriggers.js";
+import { decideSensing, type SensingPolicy } from "../../lib/tripSensingPolicy.js";
 import { looksWeatherSensitive } from "./TripSignals.js";
 import type { ExecutableTripExperience } from "./TripExperienceCompiler.js";
 import type { PulseInterpretation } from "./TripSignals.js";
@@ -119,6 +120,8 @@ export interface TripTodayProjection extends TripProjectionEnvelope {
   pulseSignals: Layer<PulseInterpretation>;
   /** §17.2 — the priority switch this trip is under and what it suppresses. */
   attention: PrioritySwitch;
+  /** §10.3 (TR172): how often a client should sample location right now, and why. */
+  sensing: SensingPolicy;
   /** §11.2's five questions, in order, each naming the field that answers it. */
   answers: { now: string; next: string; who: string; canDo: string; changed: string };
   derivedFrom: { healthSourceTripVersion: number | null; freedomSourceTripVersion: number | null };
@@ -385,6 +388,7 @@ export async function buildTripTodayProjection(
       unresolvedActions,
       pulseSignals,
       attention: health.attention,
+      sensing: decideSensing({ phase: health.phase.phase, attentionMode: health.attention.mode, mustLeaveBy: nextCommitment?.mustLeaveBy ?? null, safeReturnActive: crewSummary.safeReturnActive, now: nowMs }),
       answers: { ...TODAY_ANSWERS },
       derivedFrom: { healthSourceTripVersion: health.sourceTripVersion, freedomSourceTripVersion: freedom.sourceTripVersion },
     },

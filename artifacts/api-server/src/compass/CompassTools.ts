@@ -33,6 +33,7 @@ import { planRescue, RESCUE_PROBLEMS } from "../services/trips/TripRescue.js";
 import { valueOfInformation, unknownsFromExperiences } from "../services/trips/TripValueOfInformation.js";
 import { executeTripCommand } from "../lib/tripKernel.js";
 import { isFlagEnabled as isKernelFlagEnabled } from "../lib/featureFlags.js";
+import { getCrewMap, CrewMapUnavailableError } from "../services/tripCrew/TripCrewLocationService.js";
 import { randomUUID as newCommandId } from "node:crypto";
 import { tripOperationalProjectionsGate } from "../lib/tripOperationalProjections.js";
 import { buildTripTodayProjection } from "../services/trips/TripTodayProjection.js";
@@ -198,6 +199,19 @@ export const COMPASS_TOOL_DEFINITIONS = [
       name: "get_today_state",
       description:
         "Get the Today projection of the user's current trip (or a named trip): the operational phase now, the current plan, the next commitment with its leave-by time, the free windows still open, the crew summary, health with its reasons, risks and unresolved actions. Answers, in order: what is happening now, what is next, who is with me, what can I do, what needs action.",
+      parameters: {
+        type: "object",
+        properties: { tripId: { type: "string", description: "A specific trip's id (optional). The user must be an accepted member." } },
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
+      name: "get_crew_state",
+      description:
+        "Get the crew state of the user's current trip (or a named trip): each accepted member's presence status label, area (never coordinates), freshness class and observed-at, whether a Safe Return or a live share is active for them, and the reason presence is hidden when it is (ghost mode, no grant). Honours every §6.1 presence rule; a member who has not opted in appears as not_shared. Off when the crew map is not enabled, and says so.",
       parameters: {
         type: "object",
         properties: { tripId: { type: "string", description: "A specific trip's id (optional). The user must be an accepted member." } },
@@ -1236,6 +1250,57 @@ export async function toolGetTodayState(sc: SupabaseClient, userId: string, args
   };
 }
 
+/**
+ * §12.1 getCrewState(tripId) — census-trips TR204. The crew map's cards
+ * (services/tripCrew/TripCrewLocationService.getCrewMap), which already
+ * decide §6.1's presence rules per member (canSeePresence / canSeePreciseLocation),
+ * narrowed to what a conversation may carry: a label, an area, a freshness,
+ * the flags, the presence reason — and NEVER a coordinate. `exactCoords` is
+ * dropped here on purpose; the tool-result guard (TR216) refuses it besides.
+ */
+export async function toolGetCrewState(sc: SupabaseClient, userId: string, args: Record<string, unknown>): Promise<unknown> {
+  const tripId = typeof args.tripId === "string" && args.tripId.length > 0 ? args.tripId : null;
+  let id: string | null = tripId;
+  if (id) {
+    if (!(await isAcceptedTripMember(sc, id, userId))) return { crew: null, info: "The user is not a member of that trip." };
+  } else {
+    const current: any = await toolGetCurrentTrip(sc, userId);
+    id = current?.trip?.id ?? null;
+    if (!id) return { crew: null, info: "No active or upcoming trip." };
+  }
+  if (!(await isKernelFlagEnabled(sc, "trip_crew_map_enabled"))) {
+    return { crew: null, info: "The crew map is not enabled (trip_crew_map_enabled is off); no crew was read." };
+  }
+  let map: Awaited<ReturnType<typeof getCrewMap>>;
+  try {
+    map = await getCrewMap(sc, id, userId);
+  } catch (e) {
+    if (e instanceof CrewMapUnavailableError) return { crew: null, info: `Crew state unavailable: ${e.message}` };
+    throw e;
+  }
+  return {
+    crew: {
+      tripId: id,
+      totalCount: map.totalCount,
+      members: map.members.map((m) => ({
+        userId: m.userId,
+        name: m.name ? wrapUgc(String(m.name)) : null,
+        handle: m.handle,
+        statusLabel: m.statusLabel,
+        areaLabel: m.areaLabel ? wrapUgc(String(m.areaLabel)) : null,
+        freshnessClass: m.freshnessClass,
+        observedAt: m.observedAt,
+        confidence: m.confidence,
+        safeReturnActive: m.safeReturnActive,
+        liveShareActive: m.liveShareActive,
+        ghostMode: m.ghostMode,
+        presenceReason: m.presenceReason,
+      })),
+      reading: "each member as §6.1 lets this viewer see them: a label, an area and a freshness — never a coordinate",
+    },
+  };
+}
+
 /** §12.1 explainTripDecision(decisionId) — §21.2's ledger, in sentences, crew only. */
 export async function toolExplainTripDecision(sc: SupabaseClient, userId: string, args: Record<string, unknown>): Promise<unknown> {
   const tripId = typeof args.tripId === "string" ? args.tripId : "";
@@ -1719,6 +1784,7 @@ export async function executeCompassTool(
       case "check_trip_conflicts": raw = await toolCheckTripConflicts(sc, userId, args); break;
       case "get_freedom_windows":  raw = await toolGetFreedomWindows(sc, userId, args); break;
       case "get_today_state":      raw = await toolGetTodayState(sc, userId, args); break;
+      case "get_crew_state":       raw = await toolGetCrewState(sc, userId, args); break;
       case "get_live_conditions":  raw = await toolGetLiveConditions(sc, userId, args); break;
       case "get_opportunities":    raw = await toolGetOpportunities(sc, userId, args); break;
       case "simulate_plan":        raw = await toolSimulatePlan(sc, userId, args); break;
