@@ -6,3 +6,4 @@
 export { TripCrewPresenceCard } from './TripCrewPresenceCard.tsx';
 export * from './tripPresence.ts';
 export * from './presence.ts';
+export * from './tripNavigationHandoff.ts';

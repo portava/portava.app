@@ -11,7 +11,7 @@
  * Run with: pnpm test:component
  */
 import React from 'react';
-import { render, waitFor } from '@testing-library/react-native';
+import { render, waitFor, fireEvent } from '@testing-library/react-native';
 
 import { TripTodayCard } from '../TripTodayCard.tsx';
 import type { TodayRead, TripToday } from '../tripToday.ts';
@@ -37,12 +37,52 @@ function today(over: Partial<TripToday> = {}): TripToday {
   };
 }
 const loader = (read: TodayRead) => jest.fn(async () => read);
+const PLAN = { id: 'p1', title: 'Louvre', category: 'activity', status: 'in_progress', startsAt: '2026-09-13T14:00:00Z', endsAt: null, locationName: 'Musée du Louvre' };
+// NOTE: intentional stub — the handoff itself is proved in
+// src/features/trips/crew/__tests__/tripNavigationHandoff.test.ts; here the
+// question is only whether the screen reaches it.
+const navSeams = (over: { start?: any; resolve?: any } = {}) => ({
+  startNav: over.start ?? jest.fn(async () => ({ state: 'started', url: 'https://maps', presence: { ok: true } as any, pending: {} as any })),
+  resolveNav: over.resolve ?? jest.fn(async () => ({ state: 'nothing_pending' as const })),
+});
 
 describe('TripTodayCard', () => {
   it('renders nothing ONLY when the feature is off', async () => {
     const { toJSON, queryByTestId } = await render(<TripTodayCard tripId={TRIP_ID} load={loader({ state: 'off' })} />);
     await waitFor(() => expect(queryByTestId('trip-today-loading')).toBeNull());
     expect(toJSON()).toBeNull();
+  });
+
+  it('§10.3: a running plan with a place offers navigation, hands off on press, and says what it told the crew', async () => {
+    const nav = navSeams();
+    const { findByTestId, getByTestId } = await render(
+      <TripTodayCard tripId={TRIP_ID} load={loader({ state: 'ok', today: today({ currentPlan: PLAN }), lagSeconds: 1 })} {...nav} />,
+    );
+    const button = await findByTestId('trip-today-navigate');
+    expect(button.props.accessibilityLabel).toBe('Navigate to Musée du Louvre');
+    fireEvent.press(button);
+    await waitFor(() => expect(nav.startNav).toHaveBeenCalled());
+    expect(nav.startNav.mock.calls[0][1]).toMatchObject({ planItemId: 'p1', locationName: 'Musée du Louvre', startsAt: '2026-09-13T14:00:00Z' });
+    await waitFor(() => expect(getByTestId('trip-today-nav-note').props.children).toMatch(/on the way/));
+  });
+
+  it('§10.3: a plan with no place offers no navigation — there is nowhere to go', async () => {
+    const { queryByTestId, findByTestId } = await render(
+      <TripTodayCard tripId={TRIP_ID} load={loader({ state: 'ok', today: today({ currentPlan: { ...PLAN, locationName: null } }), lagSeconds: 1 })} {...navSeams()} />,
+    );
+    await findByTestId('trip-today-card');
+    expect(queryByTestId('trip-today-navigate')).toBeNull();
+  });
+
+  it('§10.3 callback: reaching Today resolves a journey started earlier, and says what it decided', async () => {
+    const resolve = jest.fn(async () => ({ state: 'arrived' as const, planItemId: 'p1', presence: { ok: true } as any }));
+    const { findByTestId } = await render(
+      <TripTodayCard tripId={TRIP_ID} load={loader({ state: 'ok', today: today({ currentPlan: PLAN }), lagSeconds: 1 })} {...navSeams({ resolve })} />,
+    );
+    await findByTestId('trip-today-card');
+    await waitFor(() => expect(resolve).toHaveBeenCalledWith(TRIP_ID));
+    const note = await findByTestId('trip-today-nav-note');
+    expect(note.props.children).toMatch(/arrived/);
   });
 
   it('an unavailable read says so and denies being a quiet day', async () => {

@@ -18,13 +18,14 @@
  * as a quiet day: an empty card and a clean card look the same.
  */
 import React, { useCallback, useEffect, useState } from 'react';
-import { View, Text, ActivityIndicator, StyleSheet } from 'react-native';
-import { AlertTriangle, CloudOff, Compass } from 'lucide-react-native';
+import { View, Text, ActivityIndicator, StyleSheet, Pressable } from 'react-native';
+import { AlertTriangle, CloudOff, Compass, Navigation } from 'lucide-react-native';
 
 import { color, space, radius, type as t, shadow } from '../../../theme/tokens.ts';
 import {
   fetchTripToday, todayHeadline, todayAnswers, attentionBanner, sensingLine, type TodayRead,
 } from './tripToday.ts';
+import { startNavigation, resolveNavigationReturn } from '../crew/tripNavigationHandoff.ts';
 
 interface Props {
   tripId: string;
@@ -32,10 +33,14 @@ interface Props {
   load?: typeof fetchTripToday;
   /** The §17.2 mode after each read (null when Today could not be read), so the screen can mount §17.3's rescue entry under it. */
   onAttention?: (mode: string | null) => void;
+  /** §10.3 test seams — the real navigation handoff and its callback by default. */
+  startNav?: typeof startNavigation;
+  resolveNav?: typeof resolveNavigationReturn;
 }
 
-export function TripTodayCard({ tripId, load = fetchTripToday, onAttention }: Props) {
+export function TripTodayCard({ tripId, load = fetchTripToday, onAttention, startNav = startNavigation, resolveNav = resolveNavigationReturn }: Props) {
   const [read, setRead] = useState<TodayRead | undefined>(undefined);
+  const [navNote, setNavNote] = useState<string | null>(null);
 
   const run = useCallback(async () => {
     setRead(undefined);
@@ -50,6 +55,32 @@ export function TripTodayCard({ tripId, load = fetchTripToday, onAttention }: Pr
   }, [tripId, load, onAttention]);
 
   useEffect(() => { void run(); }, [run]);
+
+  // §10.3's navigation CALLBACK. Reaching Today is the traveller coming back
+  // to the app, which is the only return signal this path has; a journey that
+  // was never started resolves to nothing and writes nothing.
+  useEffect(() => {
+    let live = true;
+    void (async () => {
+      try {
+        const r = await resolveNav(tripId);
+        if (!live) return;
+        if (r.state === 'arrived') setNavNote('Marked you as arrived, from the navigation you started here.');
+        else if (r.state === 'still_transiting') setNavNote('Still on the way — nothing claimed about arriving.');
+      } catch { /* the callback is a courtesy; a failure must not take Today down */ }
+    })();
+    return () => { live = false; };
+  }, [tripId, resolveNav]);
+
+  const navigate = useCallback(async () => {
+    if (read?.state !== 'ok') return;
+    const plan = read.today.currentPlan;
+    if (!plan) return;
+    const r = await startNav(tripId, {
+      planItemId: plan.id, title: plan.title, locationName: plan.locationName, startsAt: plan.startsAt,
+    });
+    setNavNote(r.state === 'started' ? 'Opened directions, and told your crew you are on the way.' : r.detail);
+  }, [read, tripId, startNav]);
 
   if (read === undefined) {
     return (
@@ -116,12 +147,22 @@ export function TripTodayCard({ tripId, load = fetchTripToday, onAttention }: Pr
           ))}
         </View>
       ) : null}
+      {today.currentPlan && (today.currentPlan.locationName ?? '').trim().length > 0 ? (
+        <Pressable onPress={() => void navigate()} style={s.navButton} testID="trip-today-navigate" accessibilityRole="button"
+          accessibilityLabel={`Navigate to ${today.currentPlan.locationName}`}>
+          <Navigation size={14} color={color.signal} />
+          <Text style={s.navText}>Navigate to {today.currentPlan.locationName}</Text>
+        </Pressable>
+      ) : null}
+      {navNote ? <Text style={s.detail} testID="trip-today-nav-note">{navNote}</Text> : null}
       <Text style={s.sensing} testID="trip-today-sensing">{sensingLine(today)}</Text>
     </View>
   );
 }
 
 const s = StyleSheet.create({
+  navButton: { flexDirection: 'row', alignItems: 'center', gap: space.xs, marginTop: space.sm },
+  navText: { ...t.stamp, color: color.signal, fontWeight: '600' },
   wrap: {
     marginHorizontal: space.lg,
     marginTop: space.md,

@@ -24,10 +24,10 @@ preserved in §36.1 as the record of that measurement.
 | --- | --- |
 | **Denominator (testable requirements)** | **451** |
 | BUILT-AND-CORRECT | **316** |
-| BUILT-BUT-WRONG | **130** |
-| NOT-BUILT | **4** |
+| BUILT-BUT-WRONG | **131** |
+| NOT-BUILT | **3** |
 | CANNOT-VERIFY | **1** |
-| **CONSTRUCTED%** = (C+W)/451 | **446 / 451 = 98.9 %** |
+| **CONSTRUCTED%** = (C+W)/451 | **447 / 451 = 99.1 %** |
 | **CORRECT%** (raw) = C/451 | **316 / 451 = 70.1 %** |
 
 > **RESTATED 2026-09-11 (§38): 89 → 87 CORRECT, 127 → 129 WRONG.** §38 re-derived
@@ -348,6 +348,15 @@ preserved in §36.1 as the record of that measurement.
 > twelve move; seven land on W with one deployment reason each, and the four
 > NOT-BUILT rows that remain in the whole census are map tiles, a navigation
 > SDK, Bluetooth proximity and relay metadata. No migration.
+
+> **RESTATED 2026-09-12 (§64): 316 CORRECT unchanged, 130 → 131 WRONG, 4 → 3
+> NOT-BUILT. CONSTRUCTED 98.9 % → 99.1 %, CORRECT 70.1 % unchanged.** §64 gives
+> §10.3's fifth sensing input a producer: a navigation handoff that reports
+> `transiting` from `source: 'navigation'` with a TTL, and a return to the app
+> that concludes `at_plan` only once the plan has started — no SDK, no position
+> read, reachable from Today. TR169 N → W, held there by `trip_kernel_enabled`.
+> The three NOT-BUILT rows left are map tiles, Bluetooth proximity and relay
+> metadata, each waiting on something this tree does not have. No migration.
 | **CORRECT% (spec-attributable)** | **WITHDRAWN — not measured. See §36.4** |
 | CANNOT-VERIFY share | **1 / 451 = 0.2 %** |
 
@@ -6109,7 +6118,7 @@ is `app/trip/[id].tsx`. No server change, no migration.
   reaches `react-native` through `expo-secure-store`, which node:test cannot
   load (`scripts/run-node-tests.mjs`'s KNOWN_BROKEN records that shape and
   every service test that imports it directly is on the list).
-- **§11 Today on screen** (`travel-buddy-standalone/src/features/trips/today/TripTodayCard.tsx:37#export function TripTodayCard(`,
+- **§11 Today on screen** (`travel-buddy-standalone/src/features/trips/today/TripTodayCard.tsx:41#export function TripTodayCard(`,
   reading `travel-buddy-standalone/src/features/trips/today/tripToday.ts:82#export async function fetchTripToday(`):
   `GET /trips/:tripId/today` under §19.1's envelope — a stale or
   foreign-schema projection is refused with Appendix B's reason and
@@ -6990,3 +6999,87 @@ route the certified context does not describe; nothing pins that yet. And a
 queued `COMPLETE_ACTIVITY` for a plan item another member removed while the
 traveller was offline is refused by the kernel as `TRIP_PLAN_NOT_FOUND`,
 which the queue reports on the operation — correct, but no test drives it.
+
+## 64. The fifth sensing input: a navigation callback, and what it is allowed to conclude
+
+**Read against the branch `claude/sweet-fermat-fmx7up`.** §10.3 names five
+things to sense with **before** constant GPS — geofences, significant location
+changes, **navigation callbacks**, semantic checkpoints and explicit user
+actions. Four have had a producer since §40–§52. The fifth had none: nothing
+in the app ever handed a traveller to navigation, and nothing learned anything
+when they came back, so `trip_presence.source = 'navigation'` — a value 2767's
+CHECK has allowed since the kernel batch — was a column value no code path
+could ever write. TR169 has held **N** since the first read for exactly that
+reason. §64 gives it a producer.
+
+### 64.1 What was built, and where
+
+- **The handoff.** `travel-buddy-standalone/src/features/trips/crew/tripNavigationHandoff.ts:136#export async function startNavigation(`
+  opens the platform's own directions link for a plan — coordinates when the
+  plan has them, the place name when it does not, and **nothing at all** when
+  it has neither, because a handoff to nowhere would report a journey that is
+  not happening
+  (`travel-buddy-standalone/src/features/trips/crew/tripNavigationHandoff.ts:124#export function navigationUrl(`).
+  Starting navigation is an observation the traveller made themselves, so it
+  reports §10.1 `transiting` with `source: 'navigation'` and a one-hour TTL —
+  an abandoned journey expires instead of standing as a false "on the way".
+  No position is read at any point.
+- **The callback.** Coming back to the app is the return signal
+  (`travel-buddy-standalone/src/features/trips/crew/tripNavigationHandoff.ts:184#export async function resolveNavigationReturn(`).
+  Back **after** the plan's start is an arrival — `at_plan`, same source.
+  Back **before** it says only that the traveller looked at their phone, and
+  nothing is claimed. A return for another trip does not consume this trip's
+  journey, and a cancelled handoff never becomes an arrival.
+- **Reachable from the screen that knows what is happening now.** The Today
+  card offers "Navigate to …" for a running plan that names a place, and
+  resolves a pending journey every time it is opened — which is the only
+  return event this path has
+  (`travel-buddy-standalone/src/features/trips/today/TripTodayCard.tsx:151#testID="trip-today-navigate"`,
+  `travel-buddy-standalone/src/features/trips/today/TripTodayCard.tsx:66#const r = await resolveNav(tripId);`).
+  A failure of the callback never takes Today down: it is a courtesy, and the
+  five questions are the card's job.
+- **The write is a kernel command like every other.** The presence write goes
+  through `setMyPresence` → `POST /trips/:id/commands`, so it is held by
+  `trip_kernel_enabled` on every deployment today. The module takes the writer
+  as a seam (the pattern `TripCrewPresenceCard` already uses) and loads the
+  real one lazily, because importing it eagerly reaches `react-native` through
+  `lib/supabase.ts` and no node test could then run
+  (`travel-buddy-standalone/src/features/trips/crew/tripNavigationHandoff.ts:98#export type PresenceWriter`).
+- **Tests.** Nine cases on the real module
+  (`travel-buddy-standalone/src/features/trips/crew/__tests__/tripNavigationHandoff.test.ts:54#TR169 — the handoff`):
+  the link prefers coordinates and refuses a blank name and a non-finite
+  number; the handoff opens exactly one URL, writes exactly one presence with
+  the source, the TTL and an idempotency key naming the journey, and remembers
+  it; nowhere to go opens nothing and writes nothing; a maps app that will not
+  open writes nothing either; the callback arrives, stays transiting, takes a
+  bare return when the plan has no start, says nothing when nothing is
+  pending or after a cancel, and does not steal another trip's journey. Three
+  more through the screen
+  (`travel-buddy-standalone/src/features/trips/today/__tests__/TripTodayCard.component.test.tsx:56#a running plan with a place offers navigation`).
+  Seen red first: the screen test with the button replaced by a constant.
+
+### 64.2 Row moves
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| TR169 §10.3 navigation callbacks | N | **W** | Built: a handoff that reports `transiting` from `source: 'navigation'` with a TTL, and a return that concludes `at_plan` only when the plan has started — no SDK, no position read, reachable from Today. W, not C: the presence write is a kernel command, and `trip_kernel_enabled` is off on every deployment, so today the journey is reported to nobody. |
+
+**Rows looked at that did not move:** TR161 / TR162 (C — `source` and
+`confidence` were already forwarded; this gives the source a fifth producer),
+TR172 (C — the sampling-rate policy is what this input exists to keep low),
+TR176 / TR178 (N — Bluetooth proximity and relay metadata need a radio and a
+dependency this tree does not have), TR340 (N — map tiles are a licence the
+server does not hold).
+
+### 64.3 The ceiling
+
+No migration, no new flag, no new dependency. The row is W for one reason:
+the kernel flag. What would turn it red once that flag is on (P24): a
+traveller who starts navigation, never returns to the app, and whose TTL
+expires while they are genuinely in transit reads as `offline` rather than
+`transiting` — correct by §10.2's ladder but weaker than a geofence would be,
+and nothing raises the TTL for a long hop. And a plan whose `locationName` is
+a name the maps provider resolves elsewhere sends the traveller to the wrong
+place; the coordinate path avoids it, and Today's projection does not carry
+coordinates for the current plan yet, so on that screen the name is all there
+is.
