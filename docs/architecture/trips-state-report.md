@@ -40,9 +40,15 @@ What is established about it:
 - It is a runner-teardown artifact in a suite that installs timers, not an
   assertion failure. No assertion in it failed.
 
+**CI runs the same suite and it is GREEN.** `api-server · node:test suite`
+succeeded on head `0aac3fdef` (runs `34660584007` and `34660581124`, both
+green), so the cancellation does not reproduce on the CI runner. That makes
+it a local-environment artifact, and the figure above is stated as what a
+full local `npm test` reports rather than as the state of this branch.
+
 It is **not** claimed to be fixed, and it is not claimed to be someone else's
-problem. It is claimed to be reproducible-as-passing in isolation and unrelated
-to this work, with the evidence for both stated above.
+problem. It is claimed to be reproducible-as-passing in isolation, green on
+CI, and unrelated to this work, with the evidence for each stated above.
 
 ### Why CERTIFIED is red, and why it is not this work's doing
 
