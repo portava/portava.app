@@ -1125,6 +1125,20 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/test/safetyCandidate.test.ts",
     "artifacts/api-server/src/test/adminSafetyCandidatesRoute.test.ts",
     "artifacts/api-server/src/test/db/safetyCandidate.db.test.ts",
+    // WIDENED 2026-09-12 (census-sensing §6): §5's Crowd and Forecast objects,
+    // §18.1's context kernel and §6's opportunity stage — the files §6 grades
+    // S40, S45, S46, S55, S56 and S110 on.
+    "artifacts/api-server/src/lib/crowdState.ts",
+    "artifacts/api-server/src/lib/forecastState.ts",
+    "artifacts/api-server/src/lib/contextKernel.ts",
+    "artifacts/api-server/src/lib/contextKernelRead.ts",
+    "artifacts/api-server/src/lib/opportunityEngine.ts",
+    "artifacts/api-server/src/routes/opportunities.ts",
+    "artifacts/api-server/src/migrations/2840_opportunity_engine_flag.sql",
+    "db/rollback/2026-09-12-2840-opportunity-engine-flag-rollback.sql",
+    "artifacts/api-server/src/test/crowdForecastState.test.ts",
+    "artifacts/api-server/src/test/opportunityEngine.test.ts",
+    "artifacts/api-server/src/test/opportunitiesRoute.test.ts",
   ],
   "census-compass.md": [
     "artifacts/api-server/src/compass/",

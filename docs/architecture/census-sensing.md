@@ -1856,3 +1856,315 @@ becomes the `unsafe_density` claim the notice producer projects — is
 outside the tree and outside this row. And the three shapes are the three
 the served vocabulary can express today: no dwell, no flow, no acoustic or
 motion signal feeds them, because no such signal is captured (S28, S29).
+
+## 6. The stage between the world and the surfaces
+
+**Read against the branch `claude/sensing-lane`, 2026-09-12, by the Sensing
+lane.** §6 draws one pipeline — CANONICAL ENTITIES + WORLD / EXPERIENCE STATE
++ USER / TRIP / SOCIAL + SAFETY / POLICY → **CONTEXT KERNEL** → **OPPORTUNITY
+ENGINE** → FEATURE-SPECIFIC PROJECTIONS → the surfaces — and this tree had
+none of the three middle boxes. S56 read *"no such stage; each surface builds
+candidates directly"*; S55 found a context machine that is *"Compass-local …
+and has no World, Experience or Attention context"*; S46 found four surfaces
+each building its own opportunity. Two of §5's engine rows were in the same
+state one layer down: S40 had the crowd vocabulary and *"no `CrowdState`
+object"*, S45 had *"no horizon field, no calibration attached to a forecast,
+and no `ForecastState`"*.
+
+This section builds those five objects and the route that reaches them. One
+migration, **2840**, seeds a flag FALSE — no table, no column, no write path,
+and nothing here writes anything at all. Every value is a pure fold over the
+ONE live read path every surface already consumes (`lib/liveClaimRead`), the
+decision it rests on is §10's engine CALLED rather than restated, and the
+route sits in its own file: no existing surface's route, ranker or candidate
+builder is touched, so every legacy path keeps working (§1). Every rule went
+red under a mutation of the code that pins it before its commit; the mutations
+are listed in §6.3.
+
+### 6.1 What was built, and where
+
+- **§5 the Crowd engine's object (S40)** — `lib/crowdState.ts:214#export function buildCrowdState(`
+  folds one subject's envelopes into the three axes §5 names and no fourth:
+  density from `crowd.level`, momentum from `crowd.trajectory`, and the
+  arrival-departure balance from `crowd.direction` with the net accumulation
+  that word implies (`lib/crowdState.ts:79#export const NET_ARRIVAL_OF`;
+  `test/crowdForecastState.test.ts:96#every direction`). The two axes stay
+  two: intelContracts' own ruling that trajectory is intensity and direction
+  is flow, and that *"storing one as the other publishes an inference the
+  contributor never made"* (`lib/intelContracts.ts:271#Crowd DIRECTION`), is
+  enforced rather than quoted — a trajectory is never read as a direction and
+  a direction never as a trajectory (`test/crowdForecastState.test.ts:89#never read as direction`;
+  B6-M2b red). A missing axis is null with NO refusal; an unrecognised value
+  is null WITH a named one, never a guess
+  (`test/crowdForecastState.test.ts:108#unrecognised value`). The NEWEST claim
+  of an axis wins and the window closes with its FIRST support — the earliest
+  expiry among the claims that fed it, never the latest
+  (`lib/crowdState.ts:184#export function envelopeTemporal(`;
+  `test/crowdForecastState.test.ts:103#the NEWEST claim`; B6-M3, B6-M4 red).
+- **§5 it must not claim safety, and cannot claim quality** — `unsafe_density`
+  is a specialist-only safety claim, and it is REFUSED as a density rather
+  than promoted to the top of the ladder: the level is dropped, the refusal
+  `unsafe_density_is_a_safety_claim` is recorded, and the claim feeds nothing
+  (`lib/crowdState.ts:227#refusals.push("unsafe_density_is_a_safety_claim")`;
+  `lib/crowdState.ts:67#export const DENSITY_LADDER`;
+  `test/crowdForecastState.test.ts:121#unsafe_density is REFUSED`; B6-M1 red,
+  2 cases). Quality is unrepresentable rather than merely absent: the
+  value-bearing keys are the three axes, a caller's extra key is named by
+  `crowdStateForeignKeys`, and the serialized state carries no score, rating,
+  recommendation, safety word or count
+  (`lib/crowdState.ts:119#export const CROWD_STATE_VALUE_KEYS`;
+  `test/crowdForecastState.test.ts:131#no quality`).
+- **§5 the Forecast engine's object, with the horizon and the calibration the
+  row found missing (S45)** — `lib/forecastState.ts:192#export function buildForecastState(`
+  extrapolates the current crowd state ONE rung along the density ladder over
+  a NAMED horizon (`lib/forecastState.ts:169#export function stepDensity(`;
+  `test/crowdForecastState.test.ts:190#one rung`; B6-M8 red), and refuses
+  rather than invents in four places: no trajectory evidence is no forecast,
+  because silence is not "steady"
+  (`lib/forecastState.ts:203#return refuse("no_trajectory_evidence")`;
+  `test/crowdForecastState.test.ts:173#silence is not`; B6-M5 red); a safety
+  reading makes the subject unforecastable
+  (`lib/forecastState.ts:202#safety_level_not_forecastable`; B6-M9 red); a
+  horizon past the evidence's usable life is refused
+  (`lib/forecastState.ts:87#export const MAX_FORECAST_HORIZON_MINUTES`;
+  B6-M10 red); and a trajectory with no level forecasts a DIRECTION and no
+  density rather than inventing one. `peaking` is `steady`, not `falling`:
+  the evidence says the apex is now and says nothing about a decay rate
+  (`lib/forecastState.ts:67#DIRECTION_OF_TRAJECTORY`).
+- **§5 a prediction that cannot be read as an observation** — three separate
+  mechanisms, because that is the row's whole point. The truth class is
+  ASSIGNED `predicted`, never inherited: an `observed`, strong-band,
+  many-cohort input still yields a predicted output
+  (`lib/forecastState.ts:234#truthClass: "predicted"`;
+  `test/crowdForecastState.test.ts:218#ASSIGNED`; B6-M6 red, 2 cases). The
+  §18.2 envelope carries `predicted_for` and satisfies lib/experienceTruth's
+  predicted_for ⟺ predicted-class invariant on every forecast the module
+  returns. And the band can only fall: it is the weaker of the evidence's own
+  and the band the CALIBRATION supports, where an uncalibrated forecast's
+  calibration band is a ceiling strictly below the Live floor — so no
+  uncalibrated forecast can occupy a Live slot
+  (`lib/forecastState.ts:90#export const UNCALIBRATED_BAND_CEILING`;
+  `lib/forecastState.ts:163#export function bandFromCalibration(`;
+  `test/crowdForecastState.test.ts:231#UNCALIBRATED is capped`; B6-M7b red).
+  A calibration with an empty sample or no measured accuracy is not a
+  calibration (`test/crowdForecastState.test.ts:239#a MEASURED calibration`),
+  and the reader supplies none at all, which it says in its own header rather
+  than papering over with a default accuracy
+  (`lib/contextKernelRead.ts:65#calibration: null`; B6-M25 red).
+- **§18.1 the nine contexts, as a platform object (S55)** —
+  `lib/contextKernel.ts:49#export const KERNEL_CONTEXTS` is the spec's nine
+  names in the spec's order (User · Temporal · Spatial · Trip · Social ·
+  Experience · World · Safety · Attention) and
+  `lib/contextKernel.ts:222#export function assembleContextKernel(` returns
+  every one of them as a value or an explicit null
+  (`test/opportunityEngine.test.ts:109#the spec's nine names`). A context
+  nobody supplied is UNKNOWN and is REPORTED as unknown, never read as its
+  empty value — no trip is not "not on a trip"
+  (`lib/contextKernel.ts:244#export function unknownContexts(`). Local time
+  comes from a DECLARED offset or is null: the server's clock is not a guess
+  about a viewer's evening, and an impossible offset is refused rather than
+  clamped (`lib/contextKernel.ts:186#export function localHourFrom(`;
+  B6-M17b, B6-M18 red). Safety is DERIVED from the world reading and cannot
+  be declared: the kernel takes no safety input at all, and a subject is
+  suppressed exactly when the crowd fold refused its level as a safety claim
+  (`lib/contextKernel.ts:209#export function deriveSafetyContext(`;
+  `test/opportunityEngine.test.ts:144#SAFETY is derived`). The kernel carries
+  no viewer id, no profile and no coordinate — the viewer's position becomes
+  one ETA scalar per subject in the route and is dropped
+  (`test/opportunityEngine.test.ts:157#no viewer id`).
+- **§5 / §6 the Opportunity stage, and what it refuses to be (S56, S46)** —
+  `lib/opportunityEngine.ts:222#export function buildOpportunities(` runs once
+  per subject in the kernel's world context and REIMPLEMENTS NO ENGINE: the
+  verdict is `lib/compassDecision.decideCompass` — §10's seven decisions with
+  safety first, the live-reading rule, friction, intent compatibility, peak
+  interception and the switching cost — and this stage only translates four of
+  those seven into opportunities and the other three into refusals
+  (`lib/opportunityEngine.ts:72#export const KIND_OF_DECISION`;
+  `test/opportunityEngine.test.ts:178#only four decisions`). Relevance is
+  user-specific and is built from tables that already exist: the Attention
+  Engine's own `RELEVANCE_WEIGHT`, the decision engine's own intent-relative
+  value, and a discount when the interception is unknown — an unknown ETA is
+  an unknown interception, stated, never assumed reachable
+  (B6-M13, B6-M14, B6-M15 red). An undeclared intent is an absence, not a
+  preference the engine invents.
+- **§5 an opportunity claims nothing about the world** — the projection is a
+  canonical subject id, a kind, a relevance for THIS request, the reasons, the
+  §18.2 window the evidence supports, the §5.1 truth block OF THAT EVIDENCE
+  and the claim refs. It has no world value, and that is enforced on the wire
+  rather than asserted in a comment: the route scans both the projections and
+  the exact bytes it is about to serialize, and REFUSES the whole response if
+  either ever grows a density, a trajectory, a vibe or a count
+  (`lib/opportunityEngine.ts:151#export const FORBIDDEN_WORLD_VALUE_KEYS`;
+  `lib/opportunityEngine.ts:172#export function opportunityWorldValueKeys(`;
+  `routes/opportunities.ts:211#const worldValues`). The guard is not vacuous —
+  it finds a planted key (`test/opportunityEngine.test.ts:271#not a vacuous check`) —
+  and with one planted in the surface projection the route answered
+  `db_error` instead of serving it (B6-M20, red, the refusal observed on the
+  wire).
+- **§20 safety outranks opportunity, before ranking exists** — a suppressed
+  subject yields NO projection at ANY relevance label and a refusal that says
+  which kind of "no" it is
+  (`lib/opportunityEngine.ts:232#reason: "safety_suppressed"`;
+  `test/opportunityEngine.test.ts:211#at any relevance`; B6-M11 red). This is
+  a second gate, not the only one: the decision engine already answers SKIP on
+  a Live `unsafe_density`, and the stage removes the subject before either
+  ranking or serialization.
+- **§20 silence is reported, never implied** — every subject that produced no
+  opportunity produces a NAMED refusal, and "we could not look" is spelled
+  differently from "we looked and there is nothing to act on"
+  (`test/opportunityEngine.test.ts:188#a DIFFERENT refusal`; B6-M12 red).
+- **§6 the feature-specific projections** — `lib/opportunityEngine.ts:321#export const SURFACE_FIELDS`
+  and `lib/opportunityEngine.ts:332#export function projectForSurface(` give
+  Map, Discovery, Wall, Home and Compass each a SUBSET of the same projection:
+  a surface may drop a field and may never add one, and every value a surface
+  receives is copied from the stage's output rather than computed
+  (`test/opportunityEngine.test.ts:282#a SUBSET`; B6-M16 red).
+- **§6 the route, and what it does not read** — `routes/opportunities.ts:106#router.get(`
+  serves `GET /api/intel/opportunities` behind `opportunity_engine_enabled`
+  (2840, seeded FALSE), read fail-closed: with the flag absent — production's
+  state — it answers `feature_disabled` and reads nothing, which is the case
+  the suite poisons the snapshot table to prove
+  (`routes/opportunities.ts:116#opportunity_engine_enabled`;
+  `test/opportunitiesRoute.test.ts:102#the flag ABSENT`; B6-M19 red). Behind
+  it the Live gates still decide whether anything is served: with the pilot
+  closed every subject is refused `live_intelligence_unavailable` and no
+  opportunity is invented to fill the page
+  (`routes/opportunities.ts:153#const readable = await liveLabelsServable`;
+  `test/opportunitiesRoute.test.ts:147#Live pilot CLOSED`; B6-M21 red). It
+  reads NO trip table — the Trips lane owns those reads, and the TripContext
+  is what the caller declared for this request and is stored nowhere. The
+  place the viewer is already at is context, not an offer
+  (B6-M23 red).
+- **§5 / §18.2 the world reading is served where a world reading belongs** —
+  the response's `contexts.world` carries each subject's `CrowdState` and
+  `ForecastState`, or the forecast's named refusal
+  (`routes/opportunities.ts:232#world: kernel.world.subjects.map`;
+  `test/opportunitiesRoute.test.ts:197#the WORLD block`). Through the route,
+  over the fake PostgREST double, a `busy` + `building` subject serves density
+  `busy`, momentum `building`, balance NULL (no `crowd.direction` claim: not
+  "holding"), and a forecast at the requested 90-minute horizon that expects
+  `packed`, is classed `predicted`, is `calibrated: false` and sits at
+  `provisional` — below the Live floor. A subject with no trajectory serves
+  `no_trajectory_evidence`; a subject with a safety reading serves no density
+  and `safety_level_not_forecastable` (B6-M24 red).
+- **§18.2 the six temporal fields, on a served state (S110)** — the shared
+  envelope existed and was carried by callerless states; it is now on the wire.
+  Every opportunity carries `observedAt` / `effectiveFrom` / `effectiveUntil` /
+  `expiresAt` / `freshness` / `predictedFor` as its window, a forecast-backed
+  one carrying `predicted_for` and an observation-backed one carrying null, and
+  the same envelope rides every served crowd and forecast state
+  (`lib/crowdState.ts:184#export function envelopeTemporal(`;
+  `test/opportunitiesRoute.test.ts:117#a live reading is one go_now`).
+- **2840 executed (DB-7)** — on the lane's local replica the file applied
+  inside the canonical chain and the row reads FALSE; deleted and re-applied
+  it seeds FALSE again; and applied over a row an operator had set TRUE it
+  RAISED its postcondition and committed nothing —
+  *"this migration refuses to certify a surface an owner has not enabled"*
+  (`migrations/2840_opportunity_engine_flag.sql:54#RAISE EXCEPTION`).
+  Never on portava-ci, never on production.
+
+### 6.2 Row moves
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| S40 Crowd engine → `CrowdState` | W | **C** | The object exists with the row's three axes and no fourth — density, momentum, arrival-departure balance — folded from the one read path, with the safety level refused as a density and no quality field representable (B6-M1, B6-M2b, B6-M3, B6-M4 red); served per subject on `GET /api/intel/opportunities` behind 2840's FALSE flag and route-tested. |
+| S45 Forecast → `ForecastState` with calibration | W | **C** | Horizon, `predicted_for` and a calibration block, always classed `predicted` and never inheriting the evidence's class (B6-M6 red), capped below the Live floor while uncalibrated (B6-M7b red), refusing rather than forecasting on no trajectory, on a safety reading, and past the evidence's life (B6-M5, B6-M9, B6-M10 red); served with its refusal beside it (B6-M24, B6-M25 red). |
+| S46 Opportunity → `OpportunityProjection` | W | **C** | One shared projection for all five surfaces instead of each building its own, carrying relevance, reasons, the evidence's §5.1 truth and §18.2 window and NO world value — the prohibition enforced on the wire, not documented (B6-M20 red, the response refused). The surfaces' legacy builders are untouched and still run, which is what §1 requires of them. |
+| S55 Context Kernel with the nine §18.1 contexts | W | **C** | A platform kernel, not a Compass-local one: the nine names in the spec's order, every one present as a value or an explicit null, unknown contexts reported as unknown, safety derived and undeclarable, no viewer id and no coordinate (B6-M17b, B6-M18 red); assembled per request by the route and consumed by the stage below it. `compass/CompassContextEngine.ts` is unchanged and no pre-existing surface has been migrated onto the kernel — that is integration work, not the row's ask. |
+| S56 Opportunity Engine downstream of the kernel | N | **C** | The stage exists between the kernel and the surfaces, calls §10's decision engine rather than restating one rule of it, and feeds five feature-specific projections that may drop a field and never add one (B6-M11 to B6-M16 red); reached from a registered route behind 2840's FALSE flag, with a refusal for every subject that produced nothing (B6-M12, B6-M19, B6-M21 red). |
+| S110 Six shared temporal semantics | W | **C** | The envelope the row found on callerless states only is now on a served wire: every opportunity's window and every served crowd and forecast state carries all six, with `predicted_for` set iff the state is predicted and null on every observation (B6-M6, B6-M24 red). |
+
+**Held, with the reason.** **S39** stays W: a presence aggregate still has no
+consumer, and publishing one is decision #9. **S42**, **S51** and **S52** stay
+W: the Vibe engine, its seven candidate signals and its state are built and
+guarded, and not one of the signals has a producer — client capture is
+decision #6 and this lane does not take it. **S49** stays W with a narrower
+gap: the Map's objects (§1), the Wall's moments (§3) and now every state this
+section serves carry truth class, confidence, freshness AND coverage;
+Discovery's candidate — §8's row, another unit's file — does not. **S57**
+holds C and is less vacuous: the client still computes no crowd, vibe, safety,
+opportunity or experience value, and there is now a server stage it could
+consume instead. **S47** holds C: the stage reads `lib/liveClaimRead` and
+nothing else, and calls the decision engine rather than re-deriving it.
+**S53** and **S43** hold C: the Map's ExperienceState is untouched and this
+section adds no second one — `lib/crowdState` owns the crowd axes the §5.3
+tree also carries, and the two are folded from the same claims by the same
+vocabulary. **S8** holds C: `unsafe_density` is refused as a density in one
+more place. **S44**, **S60**, **S73**, **S74**, **S78**, **S80**, **S86**,
+**S87**, **S88**, **S102** and **S103** are untouched by this section.
+**S17** stays X. **S18**–**S21**, **S24**–**S26**, **S30**, **S32**, **S33**,
+**S35**, **S111**, **S112**, **S113**, **S118**, **S19** and **S54** are
+unchanged here and hold for the reasons their rows and §1.3 give — the
+anonymous ingest posture, on-device capture and the signal ingest are the
+owner's decisions, and no line of this section touches them.
+
+### 6.3 The mutations, in one place
+
+| # | row(s) | file | what was changed | red | green |
+| --- | --- | --- | --- | ---: | ---: |
+| B6-M1 | S40 | `lib/crowdState.ts` | `unsafe_density` admitted as a density | 2 | 0 |
+| B6-M2b | S40 | `lib/crowdState.ts` | a balance invented from the trajectory | 1 | 0 |
+| B6-M3 | S40 | `lib/crowdState.ts` | the first claim of an axis instead of the newest | 2 | 0 |
+| B6-M4 | S40, S110 | `lib/crowdState.ts` | the LATEST expiry as the window's end | 1 | 0 |
+| B6-M5 | S45 | `lib/forecastState.ts` | no trajectory forecast as "steady" | 1 | 0 |
+| B6-M6 | S45, S110 | `lib/forecastState.ts` | the truth class inherited from the evidence | 2 | 0 |
+| B6-M7b | S45 | `lib/forecastState.ts` | the uncalibrated ceiling raised into the Live band | 1 | 0 |
+| B6-M8 | S45 | `lib/forecastState.ts` | two rungs, and off the end of the ladder | 1 | 0 |
+| B6-M9 | S45 | `lib/forecastState.ts` | a safety reading forecast like any other | 1 | 0 |
+| B6-M10 | S45 | `lib/forecastState.ts` | the horizon bound dropped | 1 | 0 |
+| B6-M11 | S56 | `lib/opportunityEngine.ts` | the safety suppression dropped | 1 | 0 |
+| B6-M12 | S56 | `lib/opportunityEngine.ts` | "could not look" spelled as "nothing found" | 1 | 0 |
+| B6-M13 | S56 | `lib/opportunityEngine.ts` | the relevance label ignored | 1 | 0 |
+| B6-M14 | S56 | `lib/opportunityEngine.ts` | an undeclared intent read as compatible | 1 | 0 |
+| B6-M15 | S56 | `lib/opportunityEngine.ts` | an unknown interception read as reachable | 1 | 0 |
+| B6-M16 | S46 | `lib/opportunityEngine.ts` | a surface projection that ADDS a world value | 1 | 0 |
+| B6-M17b | S55 | `lib/contextKernel.ts` | 3 a.m. classed as early morning | 1 | 0 |
+| B6-M18 | S55 | `lib/contextKernel.ts` | an impossible UTC offset accepted | 1 | 0 |
+| B6-M19 | S56 | `routes/opportunities.ts` | the flag read ignored | 2 | 0 |
+| B6-M20 | S46 | `lib/opportunityEngine.ts` | a world value planted on the WIRE (the route refused: `db_error`) | 4 | 0 |
+| B6-M21 | S56 | `routes/opportunities.ts` | the Live gates ignored | 1 | 0 |
+| B6-M22 | S55 | `lib/contextKernelRead.ts` | an unreadable notification preference read as "available" | 1 | 0 |
+| B6-M23 | S56 | `routes/opportunities.ts` | the place the viewer is at offered back to them | 1 | 0 |
+| B6-M24 | S45 | `routes/opportunities.ts` | the forecast's refusal silenced | 2 | 0 |
+| B6-M25 | S45 | `lib/contextKernelRead.ts` | a calibration nobody measured | 1 | 0 |
+| DB-7 | S56 | replica | 2840 applied in the chain (FALSE), deleted, re-applied (FALSE); over a TRUE row it raised its postcondition and committed nothing | — | — |
+
+### 6.4 The ceiling
+
+Nothing here is deployed, enabled or production-realised. 2840 exists on the
+lane's local replica and nowhere else; `opportunity_engine_enabled` is seeded
+FALSE and flipping it is the owner's, because it opens a user-facing surface.
+No client calls the route — the five surface shapes exist and no surface
+consumes one, so `projectForSurface` is a contract with a registered caller
+(the route) and no product reader. Nothing has been migrated ONTO the kernel
+either: `compass/CompassContextEngine.ts`, the Wall's candidate loaders and
+Discovery's ranker all still build what they build, which is what §1 requires
+while a new stage is partial and gated, and which means §6's "surfaces consume
+projections" is half-built — the projections exist and are served; the
+consumption is integration work with its own owner decision.
+
+The forecast is the weakest object here and says so in its own band: no
+producer in this tree supplies a MEASURED calibration, so every forecast the
+route serves is uncalibrated and capped below the Live floor by construction —
+and `intel_attributions`, which a real calibration would come from, is not in
+production. In production every intel table holds zero rows and
+`intel_live_promoted_scopes` is empty, so behind the flag the route would
+serve no opportunity and an empty world block for every place: what it would
+refuse there is the pilot, not the schema. And the whole stage still stands on
+human taps: there is no device signal, no acoustic feature and no motion
+feature to fold, because none is captured (S28, S29). **Realised in
+production: 0.0 %**, unchanged.
+
+**The headline, restated from the rows** (the `## Headline` table at the top of
+this document is left as §5 wrote it; this lane and the §7 lane land
+separately and the integrator recomputes it after both merge, so the restated
+count lives here where "last statement wins" can read it):
+
+| Bucket | Count |
+|---|---|
+| BUILT-AND-CORRECT | **93** |
+| BUILT-BUT-WRONG | **29** |
+| NOT-BUILT | **4** |
+| CANNOT-VERIFY | **1** |
+
+Headline after §6 in this worktree (last statement wins): C=93 W=29 N=4 X=1
