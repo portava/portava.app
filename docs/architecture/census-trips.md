@@ -2865,7 +2865,11 @@ was graded from the file, not from the count. The TR353 rule from §38 holds:
 *a count is evidence for opening a file, never a substitute for opening it.*
 
 **Route 1 — the code cites the row it falsifies.** 65 distinct `TR\d+` ids are
-cited from non-`docs/` files. Sixteen of them are scored **N** by this document.
+cited from non-`docs/` files, measured at `a86fe8796` — the tree as it stood
+before this section existed. **Re-run today it reports 73**, because this
+section's own guard and its test cite eight more as examples. Every count in
+§39.2 and §39.7 is stated against `a86fe8796` for that reason: a measurement a
+document takes of a tree it is part of moves when the document does. Sixteen of them are scored **N** by this document.
 `services/trips/TripFeasibilityEngine.ts:8` is the clearest case and it says so
 in its own header: *"census-trips TR128 records that this 'is not computed
 anywhere' and TR134 that the §7.4 travel-feasibility check is absent. **This file
@@ -3011,10 +3015,19 @@ paragraph above is left standing rather than edited**, because "I stopped
 looking and then looked again and found more" is the honest shape of this and
 editing it away would hide the rate.
 
-**Route 3 — the row claims an endpoint is not registered.** Ten N rows say
-"Not registered" or name an absent endpoint. `routes/index.ts` registers five
-trip routers added by the same merge (`:153-158`), and their paths are a
-five-line grep.
+**Route 3 — the row claims an endpoint is not registered.** **Eleven** N rows at
+`a86fe8796` match "Not registered", "no … endpoint" or "no such route".
+`routes/index.ts` registers five trip routers added by the same merge
+(`:153-158`), and their paths are a five-line grep.
+
+**Seven of the eleven are genuine endpoint claims and four are regex noise — and
+two of the four moved anyway.** TR361 and TR14 matched on the words "endpoints"
+and "event" and are not endpoint claims at all. **TR417 and TR435 matched on
+"endpoint" in passing, were opened for that reason, and are two of this route's
+four findings** — including the only row this pass moves into CORRECT. A
+deliberately loose pattern found what a precise one would have filtered out,
+which is an argument for opening the false positives rather than tightening the
+grep.
 
 | id | was | now | why |
 |---|---|---|---|
@@ -3057,7 +3070,9 @@ TR286/287, TR369, TR370, TR375, TR376, TR401, TR213, TR131, TR180, TR18, TR211,
 TR212, TR252/253, TR334), because an unmoved row that was actually looked at is a
 different claim from one that was not.
 
-**Route 3 also has a false-lead rate and it is not zero.** Six of its ten
-candidates held: `/context`, `/today`, `/simulate` and `/decisions/:id/explain`
-are genuinely not among the registered paths, and the two projection rows it
-surfaced were about services, not routes.
+**Route 3's false-lead rate is the highest of the three and its yield is not.**
+Seven of eleven candidates held — `/context`, `/today`, `/simulate` and
+`/decisions/:id/explain` are genuinely not among the registered paths (checked
+against `routes/index.ts`, not assumed), TR180's `TripTodayProjection` still
+greps to nothing, and TR361 and TR14 were never endpoint claims. Four moved,
+**two of them found only because the pattern was loose enough to be wrong.**
