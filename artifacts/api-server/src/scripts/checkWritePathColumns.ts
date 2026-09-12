@@ -142,6 +142,29 @@ const ALLOWLIST = new Set<string>([
   "intel_claims.observation_id",
   "intel_claims.source_label",
   "intel_claims.lineage",
+  //
+  // trip_reservations.cancelled_at (2784) and trip_crew_location_sessions
+  // .subgroup_id (2780) — Trips §41 batch. Written by routes/tripReservations
+  // DELETE (cancel, not erase) and read by TripCrewLocationService.getCrewMap,
+  // both only under trip_operational_projections_enabled, whose prerequisite
+  // probe covers the column. This branch is not on main and live-db.yml
+  // applies only from main; remove once that apply is certified.
+  "trip_reservations.cancelled_at",
+  "trip_crew_location_sessions.subgroup_id",
+  //
+  // safe_return_sessions.subgroup_id (2794) — Trips §52: a Safe Return attached
+  // to a subgroup execution context (§17.4). Written by SafeReturnService.
+  // createSession only when the caller names a subgroup, which the route
+  // verifies against trip_subgroups (2780, itself pending apply). Remove once
+  // 2794 is applied to the live schema.
+  "safe_return_sessions.subgroup_id",
+  //
+  // Trips §43 (2783 — goal scope): trip_goals.scope / .weight are read by
+  // TripOpportunityProjection (goals served by an experience) under
+  // trip_operational_projections_enabled. Absent from portava-ci until this
+  // branch reaches main. Remove once 2783 is applied there.
+  "trip_goals.scope",
+  "trip_goals.weight",
 ]);
 
 // Tables that are not real live relations and should be skipped entirely
@@ -154,6 +177,36 @@ const SKIP_TABLES = new Set<string>([
   // (IG unit I1). Written by lib/intelProjection, read by lib/intelReplay.
   // Remove once 2273 is applied to the live schema.
   "intel_state_snapshot_versions",
+  //
+  // Trips §41 batch, 2780/2781/2784 — absent from portava-ci until this branch
+  // reaches main (live-db.yml applies only from main). Every site behind
+  // trip_operational_projections_enabled: TripDecisionLedger.persistTripDecision
+  // / readTripDecisionFrom (trip_decisions), TripCloseoutService §20.2
+  // dissolve (trip_subgroups), TripCrewLocationService subgroup-scoped shares
+  // (trip_subgroup_members), GET .../reservations/:id/history
+  // (trip_reservation_events). Remove once the apply is certified.
+  "trip_decisions",
+  "trip_subgroups",
+  "trip_subgroup_members",
+  "trip_reservation_events",
+  //
+  // Trips §41–§45, 2782 (transport segments) and 2785 (disruptions) — the same
+  // pending-apply state as the four above. Every read sits behind
+  // trip_operational_projections_enabled: TripHealthProjection (trip_disruptions,
+  // §17.2), TripTodayProjection / TripImpactState / routes/tripMapProjection
+  // (trip_transport_segments, §8.4 triggers, §9.4 impact, §14.1 logistics).
+  "trip_disruptions",
+  // Trips §47, 2793 — trip_transport_policies, written by PUT /trips/:tripId/transport-policy
+  // under trip_operational_projections_enabled; absent from portava-ci until this branch
+  // reaches main. Remove once 2793 is applied to the live schema.
+  "trip_transport_policies",
+  "trip_transport_segments",
+  // Trips §52, 2794 — meeting checkpoints, written only by the kernel; read by
+  // routes/tripMeetingCheckpoints, health, the map and the offline bundle under
+  // trip_operational_projections_enabled. Absent from portava-ci until this
+  // branch reaches main. Remove once 2794 is applied to the live schema.
+  "trip_meeting_checkpoints",
+  "trip_meeting_checkpoint_participants",
 ]);
 
 // ── Unresolvable-site allowlist ───────────────────────────────────────────────

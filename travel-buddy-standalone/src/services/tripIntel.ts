@@ -36,13 +36,39 @@ export interface ReadinessItem {
   actionRef: Record<string, unknown> | null;
 }
 
+/**
+ * Trips spec §8: readiness is an EXPLANATORY projection, not a gamified truth
+ * score. The server builds this from the same items the counts come from
+ * (api-server lib/tripReadiness.ts explainReadiness); a surface renders THIS.
+ * Optional on the wire only because an older server may not send it.
+ */
+export interface ReadinessExplanation {
+  /** One sentence: what stands between the trip and ready. Never a number out of 100. */
+  headline: string;
+  byCategory: {
+    category: string;
+    status: 'ready' | 'action_needed' | 'incomplete' | 'unknown';
+    /** The worst item's own words, or "Nothing outstanding" / "Could not be checked". */
+    because: string;
+    nextAction: { title: string; detail: string | null; dueAt: string | null; actionRef: Record<string, unknown> | null } | null;
+  }[];
+  /** Categories that could be checked, and of those, the ready ones. A count — not a percentage. */
+  measured: number;
+  ready: number;
+}
+
 export interface ReadinessSummary {
   computedAt: string;
+  /** §8 first. */
+  explanation?: ReadinessExplanation;
   /**
    * Percent of the MEASURED categories that are ready — null when none could
    * be measured. Mirrors api-server/src/lib/tripReadiness.ts: a category with
    * status `unknown` is excluded from the fraction rather than counted as
    * ready, so an unreadable source can no longer raise a trip's score.
+   *
+   * NOT RENDERED. It is the server's snapshot count (census-trips TR142:
+   * readiness is explanatory); no card, ring or header shows it as a gauge.
    */
   score: number | null;
   /** Score from the previous snapshot (e.g. yesterday). Null when no prior data exists. */

@@ -19,6 +19,7 @@ import { render, waitFor } from '@testing-library/react-native';
 
 import { TripMapLayersCard } from '../trip/TripMapLayersCard.tsx';
 import type { ProjectionRead, TripMapProjection, MapPoint } from '../../services/tripMapProjection.ts';
+import { TRIP_PROJECTION_SCHEMA_VERSION } from '../../services/tripProjectionEnvelope.ts';
 
 const TRIP_ID = 'trip-map-projection-test';
 
@@ -29,8 +30,11 @@ const pt = (id: string, over: Partial<MapPoint> = {}): MapPoint => ({
 function projection(over: Partial<TripMapProjection> = {}): TripMapProjection {
   return {
     tripId: TRIP_ID,
+    // §19.1 envelope — the four fields production emits (services/tripProjectionEnvelope.ts).
+    projectionSchemaVersion: TRIP_PROJECTION_SCHEMA_VERSION,
     generatedAt: '2026-10-01T12:00:00.000Z',
     sourceTripVersion: 7,
+    freshness: 'live',
     census: { ok: 6, unread: 0, noSource: 4, totalPoints: 0 },
     activePlanReading: 'not removed and not cancelled; TR46 — no IN_PROGRESS status exists',
     stage: { status: 'ok', items: [] },

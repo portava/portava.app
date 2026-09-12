@@ -120,10 +120,9 @@ export async function tripKernelClient(sc?: SupabaseClient | null): Promise<Supa
 // LEAVE_PLAN | CREATE_SUBGROUP | SET_PRESENCE | CREATE_PROPOSAL |
 // ACCEPT_PROPOSAL | COMPLETE_ACTIVITY as EXAMPLES. The five plan commands that
 // carry a spec name are those five; every other name below is an extension
-// the existing routes need and the spec does not name. JOIN_PLAN / LEAVE_PLAN /
-// CREATE_SUBGROUP / SET_PRESENCE / *_PROPOSAL have no underlying state to act
-// on (no trip_plan_participants, subgroups, presence or proposals tables
-// exist) and are deliberately NOT declared.
+// the existing routes need and the spec does not name. JOIN_PLAN / LEAVE_PLAN
+// (2772), SET_PRESENCE / *_PROPOSAL (2768, 2775) and CREATE_SUBGROUP (2780)
+// arrived with the tables they act on and are declared beside their families.
 
 /** Plan family (contract v1, migration 2420). Capability: crew. */
 export type TripPlanCommandType =
@@ -185,7 +184,52 @@ export type TripPlanCommandType =
   | "LEAVE_PLAN"
   | "SET_PLAN_ATTENDANCE"
   | "REORDER_PLAN"
-  | "LINK_PLAN_ROUTE_STOP";
+  | "LINK_PLAN_ROUTE_STOP"
+  // §3.3 plan lifecycle (2779): START_PLAN → in_progress, SKIP_PLAN → skipped
+  // (terminal). MOVE_PLAN on a confirmed plan leaves it 'moved' (same file).
+  | "START_PLAN"
+  | "SKIP_PLAN"
+  // §4.2 stage lifecycle (2779): planned → active → completed, emitting
+  // trip.stage_started / trip.stage_completed.
+  | "START_STAGE"
+  | "COMPLETE_STAGE";
+
+/** §9.2 temporary subgroups (2780). Capability: crew; DISSOLVE additionally creator-or-host. */
+export type TripSubgroupCommandType =
+  | "CREATE_SUBGROUP"
+  | "JOIN_SUBGROUP"
+  | "LEAVE_SUBGROUP"
+  | "DISSOLVE_SUBGROUP";
+
+/** §10.4 / §11.3 meeting checkpoints (2794). Capability: crew; CLOSE additionally creator-or-host; SET_MEETING_ARRIVAL is the participant's own. */
+export type TripMeetingCommandType =
+  | "CREATE_MEETING_CHECKPOINT"
+  | "SET_MEETING_ARRIVAL"
+  | "CLOSE_MEETING_CHECKPOINT";
+
+/** §15.1 transport segments (2782). Capability: crew. */
+export type TripTransportCommandType =
+  | "ADD_TRANSPORT_SEGMENT"
+  | "UPDATE_TRANSPORT_SEGMENT"
+  | "SET_TRANSPORT_STATE"
+  | "REMOVE_TRANSPORT_SEGMENT";
+
+/**
+ * §17.2 disruptions and the §4.2 derived events (2785). DECLARE/RESOLVE are
+ * crew. MARK_COMMITMENT_AT_RISK, CLEAR_COMMITMENT_RISK and OPEN_FREE_WINDOW
+ * are the engines' — issued by TripHealthProjection / TripFreedomProjection
+ * as actor_role "system" with a deterministic idempotency key, so a judgement
+ * becomes an event once and re-detection is a duplicate — and also crew's,
+ * so a person may record what they know.
+ */
+export type TripDisruptionCommandType =
+  | "DECLARE_DISRUPTION"
+  | "RESOLVE_DISRUPTION"
+  | "MARK_COMMITMENT_AT_RISK"
+  | "CLEAR_COMMITMENT_RISK"
+  | "OPEN_FREE_WINDOW"
+  /** §13.3 (2786): the engine records an opportunity-state change as trip.opportunities_changed. */
+  | "RECORD_OPPORTUNITY_CHANGE";
 
 /** Trip family (contract v2). Capability: none for CREATE_TRIP, owner otherwise. */
 export type TripTripCommandType =
@@ -221,9 +265,13 @@ export type TripCommandType =
   | TripTripCommandType
   | TripParticipantCommandType
   | TripAdminCommandType
-  | TripSystemCommandType;
+  | TripSystemCommandType
+  | TripSubgroupCommandType
+  | TripMeetingCommandType
+  | TripTransportCommandType
+  | TripDisruptionCommandType;
 
-export type TripCommandFamily = "plan" | "trip" | "participant" | "admin" | "system";
+export type TripCommandFamily = "plan" | "trip" | "participant" | "admin" | "system" | "subgroup" | "meeting" | "transport" | "disruption" | "opportunity";
 
 /** Which family a command type belongs to, and therefore which actor_role it needs. */
 export function tripCommandFamily(type: TripCommandType): TripCommandFamily {
@@ -237,6 +285,17 @@ export function tripCommandFamily(type: TripCommandType): TripCommandFamily {
       return "admin";
     case "SET_TRIP_COVER":
       return "system";
+    case "CREATE_SUBGROUP": case "JOIN_SUBGROUP": case "LEAVE_SUBGROUP": case "DISSOLVE_SUBGROUP":
+      return "subgroup";
+    case "CREATE_MEETING_CHECKPOINT": case "SET_MEETING_ARRIVAL": case "CLOSE_MEETING_CHECKPOINT":
+      return "meeting";
+    case "ADD_TRANSPORT_SEGMENT": case "UPDATE_TRANSPORT_SEGMENT": case "SET_TRANSPORT_STATE": case "REMOVE_TRANSPORT_SEGMENT":
+      return "transport";
+    case "DECLARE_DISRUPTION": case "RESOLVE_DISRUPTION":
+    case "MARK_COMMITMENT_AT_RISK": case "CLEAR_COMMITMENT_RISK": case "OPEN_FREE_WINDOW":
+      return "disruption";
+    case "RECORD_OPPORTUNITY_CHANGE":
+      return "opportunity";
     default:
       return "plan";
   }
@@ -333,6 +392,32 @@ export type TripKernelReason =
   | "TRIP_PARTICIPANT_NOT_FOUND"
   | "TRIP_PARTICIPANT_IS_OWNER"
   | "TRIP_PARTICIPANT_CAPACITY_REACHED"
+  // 2779: §7.2 refused AT THE WRITE — a move into a commitment's approach
+  // window, unless the command carries override_conflicts: true (recorded on
+  // the event). Appendix B's TRIP_TEMPORAL_* family, emitted by the kernel.
+  | "TRIP_TEMPORAL_CONFLICT"
+  | "TRIP_STAGE_INVALID_TRANSITION"
+  // 2780 subgroups.
+  | "TRIP_SUBGROUP_NOT_FOUND"
+  | "TRIP_SUBGROUP_NOT_MEMBER"
+  // Distinct from TRIP_AUTH_NOT_CREW for the same reason as TRIP_ASSIGNEE_NOT_CREW:
+  // the actor is crew; the person they NAMED is not.
+  | "TRIP_SUBGROUP_MEMBER_NOT_CREW"
+  // 2794 meeting checkpoints (§10.4, §11.3).
+  | "TRIP_MEETING_NOT_FOUND"
+  | "TRIP_MEETING_NOT_PARTICIPANT"
+  | "TRIP_MEETING_PARTICIPANT_NOT_CREW"
+  | "TRIP_MEETING_INVALID_TRANSITION"
+  // 2782 transport segments.
+  | "TRIP_TRANSPORT_NOT_FOUND"
+  | "TRIP_TRANSPORT_INVALID_TRANSITION"
+  // 2783: a personal goal is its owner's.
+  | "TRIP_AUTH_NOT_CREATOR"
+  // 2785 disruptions (Appendix B TRIP_DISRUPTION_* family).
+  | "TRIP_DISRUPTION_NOT_FOUND"
+  | "TRIP_DISRUPTION_NOT_ACTIVE"
+  // §4.1 "validates sensitive-domain boundaries": a payload key from another domain.
+  | "TRIP_COMMAND_SENSITIVE_DOMAIN"
   | "TRIP_KERNEL_UNAVAILABLE";
 
 export type TripKernelResult =
@@ -396,6 +481,10 @@ export const TRIP_EVENT_TYPES = [
   "trip.outcome_recorded",
   // attendance family (2772).
   "trip.plan_joined", "trip.plan_left", "trip.plan_attendance_set",
+  // plan lifecycle, subgroup, transport, disruption, derived and opportunity
+  // families (2779–2786) — every type trip_kernel_execute assigns.
+  "trip.plan_started", "trip.plan_skipped", "trip.stage_started", "trip.stage_completed",
+  "trip.commitment_at_risk", "trip.commitment_risk_cleared", "trip.disruption_resolved", "trip.free_window_created", "trip.opportunities_changed", "trip.subgroup_created", "trip.subgroup_dissolved", "trip.subgroup_joined", "trip.subgroup_left", "trip.transport_segment_added", "trip.transport_segment_removed", "trip.transport_segment_state_changed", "trip.transport_segment_updated", "trip.trip_disrupted",
 ] as const;
 export type TripEventType = (typeof TRIP_EVENT_TYPES)[number];
 
@@ -468,6 +557,24 @@ export function setTripVersionHeader(res: Response, version: number): void {
   res.setHeader(TRIP_VERSION_RESPONSE_HEADER, String(version));
 }
 
+// ── §3.3's arrows, for the flag-off twin ─────────────────────────────────────
+// The kernel refuses a status change out of `done`, `cancelled` or `skipped`
+// (TRIP_PLAN_INVALID_TRANSITION: "§3.3 draws no arrow out of COMPLETED or
+// CANCELLED"). A legacy write that copied the client's status into the column
+// accepted every pair (census-trips TR48); the twin now asks this first, so
+// no path — kernel or not — lets a finished plan become tentative again.
+export const PLAN_TERMINAL_STATUSES = ["done", "cancelled", "skipped"] as const;
+
+/** The refused arrow, or null when the patch carries no status or the change is allowed. */
+export function planStatusTransitionRefused(
+  from: string | null | undefined,
+  to: string | null | undefined,
+): { from: string; to: string } | null {
+  if (to === undefined || to === null || !from) return null;
+  if (to !== from && (PLAN_TERMINAL_STATUSES as readonly string[]).includes(from)) return { from, to };
+  return null;
+}
+
 // ── Plan-status command mapping (§3.3) ───────────────────────────────────────
 // A PATCH body carrying `status` is a state transition and gets the spec's
 // command name for that transition; a body moving the item in time is
@@ -521,6 +628,28 @@ export function planCommandTypeForPatch(patch: {
  * Stated rather than hidden, because "validated in TS" would otherwise read as
  * a stronger claim than it is.
  */
+/**
+ * §4.1 sensitive-domain boundary: the payload keys a trip command must not
+ * carry, by name. Travel documents, health and payment instruments have their
+ * own domains; a trip plan, proposal or note is not where they live. Matched
+ * against every key at every depth, so a proposal's free-form payload_json is
+ * held to the same line as a top-level field.
+ */
+export const SENSITIVE_DOMAIN_KEY = /^(passport(_?(number|no|id))?|document_number|national_id|id_number|ssn|tax_id|health|medical|diagnosis|allerg(y|ies)|medication|blood_type|card_number|cvv|cvc|iban|account_number)$/i;
+const SENSITIVE_SCAN_DEPTH = 6;
+
+/** The first sensitive-domain key found in `value`, or null. */
+export function sensitiveDomainKey(value: unknown, depth = 0): string | null {
+  if (!value || typeof value !== "object" || depth > SENSITIVE_SCAN_DEPTH) return null;
+  if (Array.isArray(value)) { for (const v of value) { const k = sensitiveDomainKey(v, depth + 1); if (k) return k; } return null; }
+  for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+    if (SENSITIVE_DOMAIN_KEY.test(k)) return k;
+    const nested = sensitiveDomainKey(v, depth + 1);
+    if (nested) return nested;
+  }
+  return null;
+}
+
 function invertedPlanInterval(cmd: TripCommand): { starts: string; ends: string } | null {
   const p = (cmd.payload ?? {}) as Record<string, unknown>;
   const src = cmd.type === "ADD_PLAN" ? p : ((p.patch as Record<string, unknown> | undefined) ?? {});
@@ -550,6 +679,24 @@ export async function executeTripCommand(sc: any, cmd: TripCommand): Promise<Tri
   // and every kernel change replaces that 700-line function in full, so it
   // should ride along with the next migration that replaces it for its own
   // reasons. Recorded in census-trips TR54.
+  // §4.1 "the command service validates sensitive-domain boundaries". A trip
+  // command carries trip state. A key that names a travel document number, a
+  // health fact or a payment instrument belongs to another domain — documents,
+  // safety, payments — each with its own routes and gates; here it is refused
+  // BY NAME before the kernel sees it, rather than persisted into a plan's or a
+  // proposal's payload_json where nothing would ever look for it again.
+  // census-trips TR56: the boundary is a check now, not an accident of routing.
+  const crossing = sensitiveDomainKey(cmd.payload);
+  if (crossing) {
+    countRejection("TRIP_COMMAND_SENSITIVE_DOMAIN");
+    return {
+      ok: false,
+      reason: "TRIP_COMMAND_SENSITIVE_DOMAIN",
+      detail: `payload key "${crossing}" belongs to a sensitive domain a trip command must not carry`,
+      contractVersion: null,
+    };
+  }
+
   const inverted = invertedPlanInterval(cmd);
   if (inverted) {
     countRejection("TRIP_TEMPORAL_RANGE_INVERTED");

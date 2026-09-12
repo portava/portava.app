@@ -136,6 +136,23 @@ export const KNOWN_PRODUCTION_GAPS: Record<string, Gap> = {
   trip_proposal_votes: { classification: "unapplied", note: "Trips §9.3 / §1 (2774) — one vote per crew member per proposal, the relation MAJORITY and UNANIMOUS are counted over. Absent from BOTH databases like the rest of this lane: nothing in it is on main and .github/workflows/live-db.yml applies only from main. Its writer is 2775 (VOTE_ON_PROPOSAL). Rehearsed end to end on db/harness/run.sh." },
   trip_plan_participants: { classification: "unapplied", note: "Trips §5.1/§9.1 (2771) — the attendance relation census-trips TR83 is about. Absent from BOTH databases, unlike the 2760-2763 block which portava-ci carries: nothing in this Trips lane is on main, and .github/workflows/live-db.yml applies only from main. Its writer is 2772 (JOIN_PLAN / LEAVE_PLAN / SET_PLAN_ATTENDANCE). Rehearsed end to end on db/harness/run.sh." },
 
+  // ── Trips §41 (census-trips), migrations 2780-2785: seven kernel families ──
+  // Absent from BOTH databases, like 2771/2774 above: this branch is not on
+  // main and .github/workflows/live-db.yml applies only from main. Every reader
+  // of these tables sits behind trip_operational_projections_enabled (FALSE in
+  // both projects; check:flag-schema-prerequisites lists the whole batch as that
+  // flag's prerequisite) and every writer behind trip_kernel_enabled (also
+  // FALSE). Rehearsed on scripts/local-db (the api-server-local-db CI job).
+  trip_subgroups:          { classification: "unapplied", note: "Trips §9.5 (2780) — temporary crews. Writer: CREATE_SUBGROUP / JOIN_SUBGROUP / LEAVE_SUBGROUP / DISSOLVE_SUBGROUP in trip_kernel_execute; reader: TripCloseoutService (§20.2 dissolve) under trip_operational_projections_enabled." },
+  trip_subgroup_members:   { classification: "unapplied", note: "Trips §9.5 (2780) — membership of trip_subgroups. Written only by the kernel; read by TripCrewLocationService for subgroup-scoped live shares under the same flag." },
+  trip_decisions:          { classification: "unapplied", note: "Trips §5.3/§21.2 (2781) — the persisted decision ledger. Writer: lib TripDecisionLedger.persistTripDecision, flag-gated and table-probed; absent table = in-process ring only, stated by DECISION_RETENTION." },
+  trip_transport_segments: { classification: "unapplied", note: "Trips §7.4 (2782) — transport legs with a state machine. Written only by the kernel (ADD/UPDATE/SET_STATE/REMOVE_TRANSPORT_SEGMENT); no TS reader yet." },
+  trip_reservation_events: { classification: "unapplied", note: "Trips §18.3 (2784) — append-only reservation history, trigger-fed from trip_reservations. Read by GET /trips/:id/reservations/:rid/history under trip_operational_projections_enabled." },
+  trip_disruptions:        { classification: "unapplied", note: "Trips §17 (2785) — disruption register. Written only by the kernel (DECLARE/RESOLVE_DISRUPTION); TripHealth does not consult it yet (census §41.3)." },
+  trip_transport_policies: { classification: "unapplied", note: "Trips §7.4 (2793) — the transport-mode policy the route-availability check reads (census-trips §47, TR137). Written by PUT /trips/:tripId/transport-policy (owner, §6.1 canEditTrip) and read by GET /trips/:tripId/feasibility, both under trip_operational_projections_enabled; absent from every database but the local replica until this branch merges and the owner's Batch C applies it." },
+  trip_meeting_checkpoints: { classification: "unapplied", note: "Trips §10.4 / §11.3 (2794) — meeting checkpoints: a chosen §14.3 candidate with its explanation, a meet-by and a status (census-trips §52, TR177/TR198). Written only by the kernel (CREATE_MEETING_CHECKPOINT / CLOSE_MEETING_CHECKPOINT); read by routes/tripMeetingCheckpoints, TripHealthProjection (REGROUP_OPEN), the map's meetup layer and the offline bundle, all under trip_operational_projections_enabled; absent from every database but the local replica until this branch merges and the owner's Batch C applies it." },
+  trip_meeting_checkpoint_participants: { classification: "unapplied", note: "Trips §10.4 (2794) — who is expected at a meeting checkpoint and their arrival state. Written only by the kernel (CREATE_MEETING_CHECKPOINT / SET_MEETING_ARRIVAL); read under the same flag as trip_meeting_checkpoints." },
+
   // ── A guarantee the docs rest on, that production does not have ───────────
   protected_zones: {
     classification: "unapplied",

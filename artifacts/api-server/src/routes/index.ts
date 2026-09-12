@@ -6,10 +6,14 @@ import healthRouter from "./health";
 import authRouter from "./auth";
 import tripsRouter from "./trips";
 import tripFeasibilityRouter from "./tripFeasibility";
+import tripOfflineRouter from "./tripOffline";
+import tripMeetingCheckpointsRouter from "./tripMeetingCheckpoints";
+import tripPostTripRouter from "./tripPostTrip";
 import tripPresenceRouter from "./tripPresence";
 import tripDecisionsRouter from "./tripDecisions";
 import tripStructureRouter from "./tripStructure";
 import tripMapProjectionRouter from "./tripMapProjection";
+import tripProjectionsRouter from "./tripProjections";
 import tripCommandsRouter from "./tripCommands";
 import postsRouter from "./posts";
 import followsRouter from "./follows";
@@ -151,10 +155,14 @@ router.use(healthRouter);
 router.use(authRouter);
 router.use(tripsRouter);
 router.use(tripFeasibilityRouter);
+router.use(tripOfflineRouter);
+router.use(tripMeetingCheckpointsRouter);
+router.use(tripPostTripRouter);
 router.use(tripPresenceRouter);
 router.use(tripDecisionsRouter);
 router.use(tripStructureRouter);
 router.use(tripMapProjectionRouter);
+router.use(tripProjectionsRouter);
 router.use(tripCommandsRouter);
 router.use(postsRouter);
 router.use(profileRouter);
@@ -316,5 +324,28 @@ router.use(wallRouter);
 // wallRouter, which owns /wall, /wall/live, /wall/quick-media and the
 // session-intent / impression / action mutations.
 router.use(wallTelemetryRouter);
+
+// ── Sensing §10: the Compass decision surface (GO NOW … RETURN) ─────────────
+// Its own file behind compass_decision_enabled (2800, seeded FALSE);
+// routes/compass*.ts are owned by the Compass unit and are not touched.
+// Registered at the tail, and the import with it, so no line above moves —
+// census-trips.md and sensing-surface-inventory.md cite this file by line.
+import compassDecisionRouter from "./compassDecision.js";
+router.use(compassDecisionRouter);
+// ── Sensing §9 / §15: the Wall's moments, routed through the Attention Engine ─
+// Its own file behind wall_enabled AND wall_moments_enabled (2801, seeded
+// FALSE); routes/wall.ts is untouched. At the tail for the same reason.
+import wallMomentsRouter from "./wallMoments.js";
+router.use(wallMomentsRouter);
+// ── Sensing §12: canonical live references in Telegraph ───────────────────────
+// Its own file behind telegraph_live_references_enabled (2802, seeded FALSE);
+// routes/telegraph*.ts are untouched. At the tail for the same reason.
+import telegraphLiveReferencesRouter from "./telegraphLiveReferences.js";
+router.use(telegraphLiveReferencesRouter);
+// ── Sensing §16: the safety candidate stage, feeding the existing review ─────
+// Its own file behind intel_safety_candidates_enabled (2803, seeded FALSE) and
+// requireAdmin; routes/admin.ts is untouched. At the tail for the same reason.
+import adminSafetyCandidatesRouter from "./adminSafetyCandidates.js";
+router.use(adminSafetyCandidatesRouter);
 
 export default router;

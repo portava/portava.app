@@ -57,10 +57,12 @@
  * identity and stage locality were never examined.
  *
  * So `consistency` is in the response, and one of its four checks is
- * permanently UNCHECKABLE — route availability, which needs a transport-mode
- * policy this system does not have. That finding is EMITTED rather than
- * omitted for the same reason: a report covering three checks reads as clean
- * on all four.
+ * UNCHECKABLE until its input can be read — route availability, which needs
+ * the trip's transport-mode policy (2793, read under the operational gate;
+ * TR137). That finding is EMITTED rather than omitted for the same reason: a
+ * report covering three checks reads as clean on all four. With the policy
+ * read, each hop is checked per mode and a hop that fits only by a
+ * disallowed mode is INCONSISTENT with TRIP_SPATIAL_ROUTE_UNAVAILABLE.
  *
  * FAIL-CLOSED
  * ===========
@@ -86,9 +88,17 @@ import {
   type GeoPoint,
 } from "../services/trips/TravelTimeProvider.js";
 import {
-  checkSpatialConsistency, foldConsistency,
+  checkSpatialConsistency, foldConsistency, routeAvailabilityFindings,
   type PlanForConsistency, type StageForConsistency,
 } from "../services/trips/TripSpatialConsistency.js";
+import {
+  checkRouteAvailability as checkHopRouteAvailability, foldRouteAvailability, isPolicyMode, NO_TRANSPORT_POLICY, POLICY_MODES,
+  type RouteAvailability, type RouteAvailabilityHop, type TransportModePolicy,
+} from "../services/trips/TripTransportPolicy.js";
+import { tripOperationalProjectionsGate, describeOperationalGate, refusalForGate } from "../lib/tripOperationalProjections.js";
+import { canEditTrip } from "../lib/tripPolicy.js";
+import { sendTripRefusal } from "../lib/tripReasonCodes.js";
+import { z } from "zod";
 
 const router = Router();
 const log = logger.child({ mod: "tripFeasibility" });
@@ -231,6 +241,8 @@ router.get("/trips/:tripId/feasibility", asyncHandler(async (req, res) => {
 
   const legs: FeasibilityResult[] = [];
   const hops: Array<Record<string, unknown>> = [];
+  /** The same hops, kept for §7.4 route availability once the policy is read. */
+  const hopInputs: Array<RouteAvailabilityHop & { planIds: [string, string] }> = [];
 
   for (let i = 1; i < ordered.length; i += 1) {
     const prev = ordered[i - 1];
@@ -264,6 +276,16 @@ router.get("/trips/:tripId/feasibility", asyncHandler(async (req, res) => {
     );
 
     legs.push(result);
+    // The deadline the engine tested against, rebuilt from the same inputs so
+    // route availability (below) and travel feasibility agree on it.
+    const deadlineBase = next.required_arrival_at ?? next.starts_at;
+    if (deadlineBase) {
+      hopInputs.push({
+        planIds: [prev.id, next.id], from: fromPlace, to: toPlace, departAt: departFrom,
+        deadline: new Date(Date.parse(deadlineBase) + (intervalToMinutes(next.lateness_tolerance) ?? 0) * 60_000),
+        prepMinutes: intervalToMinutes(next.prep_duration) ?? 0,
+      });
+    }
     hops.push({
       fromCommitmentId: prev.id,
       toCommitmentId: next.id,
@@ -280,6 +302,47 @@ router.get("/trips/:tripId/feasibility", asyncHandler(async (req, res) => {
   }
 
   const folded = foldFeasibility(legs);
+
+  // ── §7.4 route availability against the transport-mode policy (TR137) ────
+  // 2793's policy row is read under the gate that owns kernel-era tables.
+  // Gate off: no policy can be read, and the consistency report keeps its
+  // UNCHECKABLE finding saying so. Gate on: no row is no policy (every mode
+  // allowed), a row is the policy, and each hop is asked once per mode. An
+  // unreadable policy refuses the whole response like every other read here.
+  const gate = await tripOperationalProjectionsGate(sc);
+  let transportPolicy: TransportModePolicy | null = null;
+  let routeAvailabilityReading: string;
+  if (gate.enabled) {
+    const { data: policyRow, error: policyErr } = await sc
+      .from("trip_transport_policies")
+      .select("disallowed_modes, note, updated_at")
+      .eq("trip_id", tripId)
+      .maybeSingle();
+    if (policyErr) {
+      log.warn({ err: policyErr.message, tripId }, "feasibility: transport policy read failed");
+      sendError(res, "degraded_unavailable", "Could not read this trip's transport policy");
+      return;
+    }
+    const row = policyRow as { disallowed_modes?: unknown; note?: unknown } | null;
+    transportPolicy = row
+      ? { disallowedModes: (Array.isArray(row.disallowed_modes) ? row.disallowed_modes : []).filter(isPolicyMode), note: typeof row.note === "string" ? row.note : null }
+      : NO_TRANSPORT_POLICY;
+    routeAvailabilityReading = row
+      ? `the trip's transport policy ${transportPolicy.disallowedModes.length > 0 ? `disallows ${transportPolicy.disallowedModes.join(", ")}` : "disallows nothing"}; each hop was asked once per mode`
+      : "no transport policy row (2793): every mode allowed; each hop was asked once per mode";
+  } else {
+    routeAvailabilityReading = `${describeOperationalGate(gate)}; the transport policy (2793) cannot be read, so route availability is UNCHECKABLE`;
+  }
+  const routeHops: Array<{ fromCommitmentId: string; toCommitmentId: string } & RouteAvailability> = [];
+  if (transportPolicy) {
+    for (const h of hopInputs) {
+      const availability = await checkHopRouteAvailability(PROVIDER, h, transportPolicy);
+      routeHops.push({ fromCommitmentId: h.planIds[0], toCommitmentId: h.planIds[1], ...availability });
+    }
+  }
+  const routeFindings = transportPolicy
+    ? routeAvailabilityFindings(routeHops.map((h) => ({ planIds: [h.fromCommitmentId, h.toCommitmentId], availability: h })))
+    : null;
 
   // ── §7.4, the other three checks ─────────────────────────────────────────
   // Read fail-closed like everything else: an unreadable plan or stage list is
@@ -344,7 +407,7 @@ router.get("/trips/:tripId/feasibility", asyncHandler(async (req, res) => {
     anchor: r.place_id ? stagePlaces.coords.get(r.place_id) ?? null : null,
   }));
 
-  const consistency = checkSpatialConsistency(planRows, stageList);
+  const consistency = checkSpatialConsistency(planRows, stageList, { routeAvailability: routeFindings });
 
   res.json({
     tripId,
@@ -364,15 +427,89 @@ router.get("/trips/:tripId/feasibility", asyncHandler(async (req, res) => {
     // without it is showing a measurement that was never made.
     disclosure: FEASIBILITY_UNVERIFIED_DISCLOSURE,
     /**
-     * §7.4's other three checks. `verdict` folds them worst-first, and it
-     * CANNOT be CONSISTENT today — route availability has no policy to check
-     * against and emits a permanent UNCHECKABLE. That is the honest state of
-     * §7.4 in this system, and hiding it would make the other three read as
-     * the whole of it.
+     * §7.4's transport-mode policy (2793) and the route-availability check
+     * made against it, per hop. Both null / UNCHECKABLE while the gate that
+     * owns the policy table is off, and the reading says so.
+     */
+    transportPolicy,
+    routeAvailability: {
+      verdict: transportPolicy ? foldRouteAvailability(routeHops) : "UNCHECKABLE",
+      hops: routeHops,
+      reading: routeAvailabilityReading,
+    },
+    /**
+     * §7.4's other three checks. `verdict` folds them worst-first. Route
+     * availability is the fourth: with the policy read it is the per-hop
+     * findings above (INCONSISTENT when a hop fits only by a disallowed mode);
+     * without it, one permanent UNCHECKABLE, so the fold cannot be CONSISTENT
+     * and the other three do not read as the whole of §7.4.
      */
     consistency: {
       verdict: foldConsistency(consistency),
       findings: consistency,
+    },
+  });
+}));
+
+// ── PUT /trips/:tripId/transport-policy — §7.4's policy, set by the owner ───
+//
+// The modes this trip does not use. §6.1 canEditTrip decides who: the owner
+// alone, and the refusal carries its Appendix B reason. Written through the
+// service client to 2793's table (authenticated has no write privilege on
+// it), under the same gate the read is behind: with the gate off there is no
+// table to write, and the refusal names the flag. Not a kernel command — see
+// 2793's header — so trips.version does not move.
+
+const TransportPolicySchema = z.object({
+  disallowedModes: z.array(z.enum(POLICY_MODES)).max(POLICY_MODES.length),
+  note: z.string().trim().max(300).nullable().optional(),
+}).strict();
+
+router.put("/trips/:tripId/transport-policy", asyncHandler(async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+  const { tripId } = req.params;
+  if (!UUID_RE.test(tripId)) { sendError(res, "invalid_payload", "Invalid trip id"); return; }
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const parsed = TransportPolicySchema.safeParse(req.body ?? {});
+  if (!parsed.success) { sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid body"); return; }
+
+  const decision = await canEditTrip(sc, { userId: user.id }, tripId);
+  if (!decision.allowed) {
+    sendTripRefusal(res, decision.reason === "TRIP_AUTH_NOT_OWNER" ? "forbidden" : "not_found", decision.reason, decision.message);
+    return;
+  }
+  const gate = await tripOperationalProjectionsGate(sc);
+  if (!gate.enabled) {
+    const refusal = refusalForGate(gate);
+    sendError(res, refusal.reason === "FEATURE_DISABLED" ? "feature_disabled" : "degraded_unavailable", refusal.message);
+    return;
+  }
+
+  const disallowedModes = [...new Set(parsed.data.disallowedModes)];
+  const { data, error } = await sc
+    .from("trip_transport_policies")
+    .upsert(
+      { trip_id: tripId, disallowed_modes: disallowedModes, note: parsed.data.note ?? null, updated_by: user.id, updated_at: new Date().toISOString() },
+      { onConflict: "trip_id" },
+    )
+    .select("trip_id, disallowed_modes, note, updated_at")
+    .maybeSingle();
+  if (error) {
+    log.warn({ err: error.message, tripId }, "transport policy: write failed");
+    sendError(res, "db_error", error.message);
+    return;
+  }
+  const row = (data ?? {}) as { disallowed_modes?: unknown; note?: unknown; updated_at?: unknown };
+  res.json({
+    tripId,
+    transportPolicy: {
+      disallowedModes: (Array.isArray(row.disallowed_modes) ? row.disallowed_modes : disallowedModes).filter(isPolicyMode),
+      note: typeof row.note === "string" ? row.note : parsed.data.note ?? null,
+      updatedAt: typeof row.updated_at === "string" ? row.updated_at : null,
     },
   });
 }));

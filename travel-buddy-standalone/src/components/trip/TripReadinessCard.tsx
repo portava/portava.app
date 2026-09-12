@@ -1,8 +1,19 @@
 /**
- * TripReadinessCard — surfaces the Trip Readiness score on the trip detail page.
+ * TripReadinessCard — Trip Readiness on the trip detail page, EXPLAINED.
  *
- * • Critical items always shown above the score (never collapsed/hidden).
- * • Category rows show worst-status icon for each of the seven categories.
+ * Trips spec §8: "Readiness is an explanatory projection, not a gamified truth
+ * score." Until census-trips §58 this card led with a 36-point percentage,
+ * coloured green / amber / red, with a "+8% since yesterday" trend under it —
+ * the gamified score, and the explanation fought it for the reader's eye. The
+ * header is now the server's `explanation.headline` (what stands between the
+ * trip and ready, in words), each category row carries its own `because`, and
+ * nothing on this card is a number out of 100 or a day-over-day arrow. The
+ * server still computes `score` for its snapshot table; this card does not
+ * read it.
+ *
+ * • Critical items always shown above the explanation (never collapsed/hidden).
+ * • Category rows show worst-status icon for each of the seven categories,
+ *   with the reason under the label.
  * • Renders nothing when readiness is `off` (not configured / flag off).
  * • Renders an honest "couldn't be checked" row when the read is `unavailable`
  *   — this card is a risk report, and a risk report that failed to load is not
@@ -17,14 +28,10 @@ import {
   AlertCircle,
   Circle,
   HelpCircle,
-  AlertTriangle,
   ShieldAlert,
-  TrendingUp,
-  TrendingDown,
-  Minus,
 } from 'lucide-react-native';
 import { color, space, radius, type as t, shadow } from '../../theme/tokens.ts';
-import { fetchTripReadiness, type ReadinessRead, type ReadinessSummary, type ReadinessItem } from '../../services/tripIntel.ts';
+import { fetchTripReadiness, type ReadinessRead, type ReadinessSummary, type ReadinessItem, type ReadinessExplanation } from '../../services/tripIntel.ts';
 
 interface TripReadinessCardProps {
   tripId: string;
@@ -34,7 +41,8 @@ interface TripReadinessCardProps {
    * `trips.progress` — a column no client call site ever writes, so it was
    * permanently 0 — while this card rendered the readiness score (14%). Two
    * gauges on one screen, two different numbers. Reporting the summary upward
-   * lets the header render the SAME source.
+   * lets the header render the SAME source — since §58, the same explanation:
+   * the header shows the headline and the seven checks, not a ring.
    *
    * It receives the whole `ReadinessRead`, not a nullable summary, because the
    * header has to tell `off` from `unavailable` too: on `off` it may fall back
@@ -118,78 +126,53 @@ function CriticalItemRow({ item }: { item: ReadinessItem }) {
   return content;
 }
 
-function CategoryRow({ label, status }: { label: string; status: ItemStatus | null }) {
+function CategoryRow({ label, status, because }: { label: string; status: ItemStatus | null; because: string | null }) {
   return (
     <View style={s.catRow}>
       <StatusIcon status={status} />
-      <Text style={s.catLabel}>{label}</Text>
-    </View>
-  );
-}
-
-function ScoreDelta({ current, previous }: { current: number; previous: number }) {
-  // scores are integers (0–100); delta is in percentage points
-  const delta = Math.round(current) - Math.round(previous);
-  if (delta === 0) {
-    return (
-      <View style={s.deltaRow}>
-        <Minus size={12} color={color.mute} />
-        <Text style={[s.deltaText, { color: color.mute }]}>no change since yesterday</Text>
+      <View style={{ flex: 1 }}>
+        <Text style={s.catLabel}>{label}</Text>
+        {because ? <Text style={s.catBecause} testID={`readiness-because-${label.toLowerCase()}`}>{because}</Text> : null}
       </View>
-    );
-  }
-  const isUp = delta > 0;
-  const deltaColor = isUp ? color.success : color.signal;
-  const sign = isUp ? '+' : '';
-  return (
-    <View style={s.deltaRow}>
-      {isUp
-        ? <TrendingUp size={12} color={deltaColor} />
-        : <TrendingDown size={12} color={deltaColor} />}
-      <Text style={[s.deltaText, { color: deltaColor }]}>
-        {sign}{delta}% since yesterday
-      </Text>
     </View>
   );
 }
 
-function ScoreHeader({
-  score,
-  previousScore,
+/**
+ * §8: the explanation is the header. The headline is the server's sentence;
+ * under it, the count of checks that could be made and were ready — a count,
+ * said as one, never a percentage — and the checks that could not be made.
+ * An older server that sent no explanation gets the counts alone: this card
+ * does not write a sentence the server did not.
+ */
+function ExplanationHeader({
+  explanation,
   unmeasured,
 }: {
-  score: number | null;
-  previousScore: number | null;
+  explanation: ReadinessExplanation | undefined;
   unmeasured: string[];
 }) {
-  // A null score means NOTHING could be measured. Rendering 0% there would be
-  // a confident "you are not ready at all" derived from nothing at all.
-  if (score === null) {
-    return (
-      <View style={s.scoreArea}>
-        <Text style={[s.scoreNumber, { color: color.mute }]}>—</Text>
-        <Text style={s.scoreLabel}>Trip Readiness — nothing could be checked</Text>
-      </View>
-    );
-  }
-  // score is an integer (0–100) from the API
-  const pct = Math.round(score);
-  const scoreColor = pct >= 80 ? color.success : pct >= 50 ? color.warn : color.signal;
+  const measured = explanation?.measured ?? (7 - unmeasured.length);
+  const ready = explanation?.ready ?? null;
   return (
-    <View style={s.scoreArea}>
-      <Text style={[s.scoreNumber, { color: scoreColor }]}>{pct}%</Text>
-      <Text style={s.scoreLabel}>Trip Readiness</Text>
-      {/* The score is a fraction of the categories that COULD be measured, so
-          it has to say when that is not all of them. Without this line a 100%
-          over four checked categories is indistinguishable from 100% over
-          seven. */}
+    <View style={s.explainArea} testID="trip-readiness-explanation">
+      <Text style={s.explainLabel}>Trip Readiness</Text>
+      {explanation ? (
+        <Text style={s.explainHeadline} testID="trip-readiness-headline">{explanation.headline}</Text>
+      ) : null}
+      {measured === 0 ? (
+        <Text style={s.explainCount}>Nothing could be checked</Text>
+      ) : ready !== null ? (
+        <Text style={s.explainCount} testID="trip-readiness-count">
+          {ready} of {measured} check{measured === 1 ? '' : 's'} ready
+        </Text>
+      ) : null}
+      {/* Five ready of seven is not "ready": the checks that could not be made
+          are said, every time. */}
       {unmeasured.length > 0 && (
-        <Text style={s.scoreLabel}>
+        <Text style={s.explainCount}>
           {unmeasured.length} of 7 not checked: {unmeasured.join(', ')}
         </Text>
-      )}
-      {previousScore !== null && (
-        <ScoreDelta current={score} previous={previousScore} />
       )}
     </View>
   );
@@ -276,14 +259,13 @@ export function TripReadinessCard({ tripId, refresh = false, onSummary }: TripRe
         </View>
       )}
 
-      {/* Score */}
-      <ScoreHeader
-        score={summary.score}
-        previousScore={summary.previousScore ?? null}
+      {/* The explanation (§8) — where the score used to be */}
+      <ExplanationHeader
+        explanation={summary.explanation}
         unmeasured={summary.unmeasuredCategories ?? []}
       />
 
-      {/* Category rows */}
+      {/* Category rows, each with its reason */}
       <View style={s.categories}>
         {CATEGORIES.map(({ key, label }) => {
           const items = byCategory.get(key) ?? [];
@@ -292,7 +274,8 @@ export function TripReadinessCard({ tripId, refresh = false, onSummary }: TripRe
           const status: ItemStatus | null = items.length > 0
             ? worstStatus(items)
             : summaryStatus ?? null;
-          return <CategoryRow key={key} label={label} status={status} />;
+          const because = summary.explanation?.byCategory.find((c) => c.category === key)?.because ?? null;
+          return <CategoryRow key={key} label={label} status={status} because={because} />;
         })}
       </View>
     </View>
@@ -338,34 +321,32 @@ const s = StyleSheet.create({
     fontWeight: '700',
     alignSelf: 'center',
   },
-  scoreArea: {
-    alignItems: 'center',
-    paddingVertical: space.lg,
+  explainArea: {
+    paddingHorizontal: space.lg,
+    paddingVertical: space.md,
     borderBottomWidth: 1,
     borderBottomColor: color.haze,
+    gap: 2,
   },
-  scoreNumber: {
-    fontSize: 36,
-    fontWeight: '800',
-    lineHeight: 40,
-    letterSpacing: -1,
-  },
-  scoreLabel: {
+  explainLabel: {
     ...t.stamp,
     color: color.mute,
-    marginTop: space.xs,
     letterSpacing: 1,
     textTransform: 'uppercase',
   },
-  deltaRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    marginTop: space.xs,
+  explainHeadline: {
+    ...t.body,
+    fontWeight: '700',
+    color: color.ink,
   },
-  deltaText: {
+  explainCount: {
     ...t.stamp,
-    fontWeight: '600',
+    color: color.mute,
+  },
+  catBecause: {
+    ...t.stamp,
+    color: color.mute,
+    marginTop: 1,
   },
   categories: {
     paddingVertical: space.sm,

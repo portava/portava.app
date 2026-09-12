@@ -21,6 +21,7 @@ import { createServer } from "node:http";
 import type { Server } from "node:http";
 import app from "../app.js";
 import { _setTestClient } from "../lib/http.js";
+import { summarizeReadiness, type ReadinessItem } from "../lib/tripReadiness.js";
 
 // ---------------------------------------------------------------------------
 // Test IDs
@@ -338,6 +339,19 @@ describe("trip readiness routes", () => {
     // reservations ready → score = round(100 * 1/7)
     assert.deepEqual(r.body.counts, { ready: 1, actionNeeded: 3, incomplete: 3, unknown: 0 });
     assert.equal(r.body.score, 14);
+    // §8: the explanation rides on the wire, built from the same items, and
+    // says in words what the counts say in numbers — never as a percentage.
+    const ex = r.body.explanation;
+    assert.equal(typeof ex.headline, "string");
+    assert.doesNotMatch(ex.headline, /\d+ ?%/);
+    assert.equal(ex.byCategory.length, 7);
+    assert.deepEqual(ex.byCategory.map((c: any) => c.category), ["plan", "stay", "transport", "budget", "entry", "documents", "reservations"]);
+    const plan = ex.byCategory.find((c: any) => c.category === "plan");
+    assert.equal(plan.status, "incomplete");
+    assert.match(plan.because, /^Trip dates not set/);
+    assert.equal(plan.nextAction.title, "Trip dates not set");
+    assert.equal(ex.measured, 7);
+    assert.equal(ex.ready, 1);
   });
 
   it("aggregates open days into ONE plan gap item listing the gap dates", async () => {
@@ -471,7 +485,10 @@ describe("trip readiness routes", () => {
     assert.ok(visa.title.includes("official source"));
     assert.equal(visa.actionRef?.officialSourceUrl, "https://example.gov/visa");
     assert.ok(r.body.criticalItems.some((i: any) => i.dedupeKey === `entry:${OWNER_ID}`));
-  });
+      // §8 headline: the critical item, by its own title, first.
+    assert.match(r.body.explanation.headline, /^1 critical item needs attention: /);
+    assert.doesNotMatch(r.body.explanation.headline, /\d+ ?%/);
+});
 
   it("emits an honest unknown item when the corridor has no verified entry data", async () => {
     const { client } = makeFakeClient({
@@ -1003,5 +1020,74 @@ describe("trip readiness routes", () => {
     const r = await req(port, "GET", `/trips/${TRIP_ID}/arrival-board`, { token: "other-token" });
     assert.equal(r.status, 403);
     assert.equal(r.body.error, "not_member");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// §8 — readiness is an explanatory projection, not a gamified truth score
+// (census-trips TR142). The explanation is mechanical over the items.
+// ---------------------------------------------------------------------------
+describe("§8 readiness explained, never scored", () => {
+  const AT = "2026-09-12T10:00:00.000Z";
+  const item = (o: Partial<ReadinessItem> & { category: ReadinessItem["category"] }): ReadinessItem => ({
+    userId: null, status: "action_needed", severity: "normal", title: "x", detail: null, dueAt: null,
+    actionRef: null, dedupeKey: `${o.category}:x`, computedAt: AT, ...o,
+  });
+
+  it("all seven ready: 'Every check is ready', and every category says nothing is outstanding", () => {
+    const s = summarizeReadiness([], AT);
+    assert.equal(s.explanation.headline, "Every check is ready");
+    assert.equal(s.explanation.measured, 7);
+    assert.equal(s.explanation.ready, 7);
+    for (const c of s.explanation.byCategory) {
+      assert.equal(c.status, "ready");
+      assert.equal(c.because, "Nothing outstanding");
+      assert.equal(c.nextAction, null);
+    }
+  });
+
+  it("critical items lead the headline by their own titles; the category's nextAction is the critical one", () => {
+    const s = summarizeReadiness([
+      item({ category: "entry", severity: "critical", title: "Visa required", detail: "Apply 6 weeks ahead", dueAt: "2026-10-01T00:00:00Z", actionRef: { href: "/entry" } }),
+      item({ category: "entry", title: "Passport validity unknown", status: "incomplete" }),
+      item({ category: "stay", title: "No stay for 2 nights" }),
+    ], AT);
+    assert.equal(s.explanation.headline, "1 critical item needs attention: Visa required");
+    const entry = s.explanation.byCategory.find((c) => c.category === "entry")!;
+    assert.equal(entry.because, "Visa required — Apply 6 weeks ahead");
+    assert.deepEqual(entry.nextAction, { title: "Visa required", detail: "Apply 6 weeks ahead", dueAt: "2026-10-01T00:00:00Z", actionRef: { href: "/entry" } });
+    const stay = s.explanation.byCategory.find((c) => c.category === "stay")!;
+    assert.equal(stay.because, "No stay for 2 nights");
+  });
+
+  it("without criticals the headline names the categories, in words, and never a percentage", () => {
+    const s = summarizeReadiness([
+      item({ category: "stay", title: "No stay booked" }),
+      item({ category: "transport", title: "No way there" }),
+      item({ category: "documents", title: "Passport not chosen", status: "incomplete" }),
+    ], AT);
+    assert.equal(s.explanation.headline, "somewhere to stay, transport need action; documents is incomplete");
+    assert.doesNotMatch(s.explanation.headline, /\d+ ?%/);
+    assert.equal(s.score, 57, "the count survives for the snapshot table; it is not the headline");
+  });
+
+  it("what could not be checked is always said — five ready of seven is not 'ready'", () => {
+    const s = summarizeReadiness([
+      item({ category: "reservations", status: "unknown", title: "Reservations could not be read" }),
+      item({ category: "entry", status: "unknown", title: "No verified entry data" }),
+    ], AT);
+    assert.equal(s.explanation.headline, "Every check that could be made is ready; entry requirements, reservations could not be checked");
+    assert.equal(s.explanation.measured, 5);
+    assert.equal(s.explanation.ready, 5);
+    const res = s.explanation.byCategory.find((c) => c.category === "reservations")!;
+    assert.equal(res.status, "unknown");
+    assert.equal(res.because, "Reservations could not be read");
+    // Every category unknown: nothing could be checked, and the headline says so rather than "ready".
+    const none = summarizeReadiness(
+      (["plan", "stay", "transport", "budget", "entry", "documents", "reservations"] as const).map((c) => item({ category: c, status: "unknown", title: "?" })),
+      AT,
+    );
+    assert.equal(none.explanation.headline, "Nothing about this trip could be checked yet");
+    assert.equal(none.score, null);
   });
 });

@@ -496,8 +496,14 @@ describe("trip_kernel_enabled = false (seeded value): the direct writes run unto
 
     const p = await call(port, "PATCH", `/api/trips/${TRIP_ID}/plan/items/${ITEM_A}`, "alice-tok", { status: "done" });
     assert.equal(p.status, 200);
+    // Until census-trips §55 this pin read "legacy path accepts done -> tentative,
+    // exactly as before" — the defect TR48 names. §3.3 draws no arrow out of a
+    // terminal state, and the flag-off twin now refuses it with the kernel
+    // path's own reason and shape, still without calling the kernel.
     const back = await call(port, "PATCH", `/api/trips/${TRIP_ID}/plan/items/${ITEM_A}`, "alice-tok", { status: "tentative" });
-    assert.equal(back.status, 200, "legacy path accepts done -> tentative, exactly as before");
+    assert.equal(back.status, 409, "the flag-off twin refuses done -> tentative (TR48)");
+    assert.equal(back.body.reason, "TRIP_PLAN_INVALID_TRANSITION");
+    assert.deepEqual([back.body.from, back.body.to], ["done", "tentative"]);
 
     const rm = await call(port, "PATCH", `/api/trips/${TRIP_ID}/plan/items/${ITEM_B}/remove`, "bob-tok");
     assert.equal(rm.status, 200);

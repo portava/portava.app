@@ -20,6 +20,7 @@ import { buildCrewCard, type RawMemberLocation, type CrewMemberCard } from "../.
 import { logger as rootLogger } from "../../lib/logger.js";
 import { nameVisibilitySet, presentedName } from "../../lib/publicIdentity.js";
 import { fetchBlockedSet } from "../../lib/blocks.js";
+import { tripOperationalProjectionsGate } from "../../lib/tripOperationalProjections.js";
 
 const logger = rootLogger.child({ service: "TripCrewLocationService" });
 
@@ -165,7 +166,7 @@ export async function getCrewMap(
   //     privacy-guard to conditionally expose when live-share is active.
   const locationRes = await db
     .from("user_location_state")
-    .select("user_id, city, district, country, updated_at, lat, lng")
+    .select("user_id, city, district, country, updated_at, last_known_at, lat, lng, source, accuracy_meters")
     .in("user_id", allUserIds);
   // REFUSE. This IS the map. An unreadable location table produced a full crew
   // map on which every member had no location — indistinguishable from a crew
@@ -242,24 +243,48 @@ export async function getCrewMap(
 
   // 7. Load active live-share sessions visible to this viewer
   const now = new Date().toISOString();
-  const liveShareRes = await db
-    .from("trip_crew_location_sessions")
-    .select("id, user_id, visibility_level, expires_at, allowed_member_ids")
-    .eq("trip_id", tripId)
-    .eq("status", "active")
-    .gt("expires_at", now);
+  // §9.2 (2780): a live-share scoped to a temporary subgroup is served to that
+  // subgroup's current members only. subgroup_id is kernel-era schema, so it is
+  // read only under trip_operational_projections_enabled (whose probe covers
+  // the column); otherwise every session is trip-scoped, exactly as before.
+  const subgroupScoped = (await tripOperationalProjectionsGate(db)).enabled;
+  // Two literal select lists, not one computed one: check:write-path-columns
+  // resolves each statically, and the column it must see is subgroup_id.
+  const liveShareRes = subgroupScoped
+    ? await db
+        .from("trip_crew_location_sessions")
+        .select("id, user_id, visibility_level, expires_at, allowed_member_ids, subgroup_id")
+        .eq("trip_id", tripId)
+        .eq("status", "active")
+        .gt("expires_at", now)
+    : await db
+        .from("trip_crew_location_sessions")
+        .select("id, user_id, visibility_level, expires_at, allowed_member_ids")
+        .eq("trip_id", tripId)
+        .eq("status", "active")
+        .gt("expires_at", now);
   // REFUSE. An unreadable session table means every live share disappears, so
   // a viewer who HAS been granted one sees the sharer as not sharing. That is
   // the same class as the preference refusal above: the row decides each
   // card's disclosure level, and getting it wrong understates what the viewer
   // is entitled to see while looking exactly like the truth.
   if (liveShareRes.error) throw crewMapUnavailable("trip_crew_location_sessions", liveShareRes.error);
+  let viewerSubgroups: Set<string> | null = null;
+  if (subgroupScoped && ((liveShareRes.data as any[]) ?? []).some((r) => r.subgroup_id)) {
+    const mRes = await db.from("trip_subgroup_members").select("subgroup_id").eq("user_id", viewerId).is("left_at", null);
+    // REFUSE on the same principle as the session read: a subgroup-scoped share
+    // the viewer IS entitled to would silently vanish.
+    if (mRes.error) throw crewMapUnavailable("trip_subgroup_members", mRes.error);
+    viewerSubgroups = new Set(((mRes.data as any[]) ?? []).map((m) => String(m.subgroup_id)));
+  }
   const liveShareMap = new Map<string, any>();
   for (const row of ((liveShareRes.data as any[]) ?? [])) {
     const allowed: string[] = row.allowed_member_ids ?? [];
-    if (allowed.includes(viewerId)) {
-      liveShareMap.set(row.user_id, row);
-    }
+    if (!allowed.includes(viewerId)) continue;
+    // Only under the gate: a select list that happens to return the column on
+    // a database where the gate is off must not scope anything.
+    if (subgroupScoped && row.subgroup_id && !(viewerSubgroups?.has(String(row.subgroup_id)) ?? false)) continue;
+    liveShareMap.set(row.user_id, row);
   }
 
   // Universal display-name rule: crew members show real names only when
@@ -290,6 +315,13 @@ export async function getCrewMap(
         district: loc.district ?? null,
         country: loc.country ?? null,
         updatedAt: loc.updated_at ?? null,
+        // §10.1/§10.2 (census-trips §40.6): the position's own clock, the
+        // client's source word and the reported accuracy, so the card can
+        // carry observed_at / source / confidence and judge freshness on the
+        // right clock.
+        lastKnownAt: loc.last_known_at ?? null,
+        source: loc.source ?? null,
+        accuracyMeters: typeof loc.accuracy_meters === "number" ? loc.accuracy_meters : null,
         // lat/lng are forwarded; buildCrewCard only uses them when live-share is active
         lat: loc.lat ?? null,
         lng: loc.lng ?? null,

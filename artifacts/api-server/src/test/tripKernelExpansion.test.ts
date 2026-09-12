@@ -38,10 +38,12 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import express from "express";
+
 import { _setTestClient } from "../lib/http.js";
 import tripsExpansionRouter from "../routes/trips-expansion.js";
 import requestsRouter from "../routes/requests.js";
 import { _resetTripCommandRejectedTotal, readTripCommandRejectedTotal } from "../lib/tripKernel.js";
+import { CLOSEOUT_STEPS } from "../services/trips/TripCloseout.js";
 
 // ── IDs ───────────────────────────────────────────────────────────────────────
 const ALICE = "aaaaaaaa-0000-0000-0000-000000000001"; // owner (trip_members role owner)
@@ -287,6 +289,19 @@ async function call(port: number, method: string, path: string, token: string, b
 const canonicalWrites = (s: State) => s.writes.filter((w) => CANONICAL.has(w.table)).map((w) => ({ table: w.table, verb: w.verb, payload: w.payload, filters: w.filters }));
 const kernelCalls = (s: State) => s.rpcCalls.filter((c) => c.name === "trip_kernel_execute");
 const ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+/**
+ * §20.2 closeout report on POST /complete (census-trips §40.6). The seven steps
+ * in spec order, each with a status; on these fixtures nothing is stoppable,
+ * so every step is not_applicable or deferred and NO write is made — which is
+ * what lets the write assertions beside it stay byte-for-byte.
+ */
+function assertCloseoutShape(closeout: any): void {
+  assert.ok(closeout && typeof closeout === "object", "POST /complete carries a closeout report");
+  assert.match(closeout.performedAt, ISO);
+  assert.deepEqual(closeout.steps.map((s: any) => s.step), [...CLOSEOUT_STEPS]);
+  for (const step of closeout.steps) assert.ok(["not_applicable", "deferred"].includes(step.status), `${step.step}: ${step.status} on a fixture with nothing to close`);
+  assert.deepEqual(closeout.questions, []); assert.deepEqual(closeout.unread, []);
+}
 
 // ═════════════════════════════════════════════════════════════════════════════
 describe("trip_kernel_enabled = false: the ten writes are the legacy direct writes, byte for byte", () => {
@@ -304,7 +319,11 @@ describe("trip_kernel_enabled = false: the ten writes are the legacy direct writ
       expect: (s, r) => { assert.deepEqual(r.body, { status: "cancelled", tripId: TRIP }); const w = canonicalWrites(s); assert.equal(w.length, 1);
         assert.deepEqual([w[0].table, w[0].verb, w[0].filters, w[0].payload.status], ["trips", "update", [["id", TRIP]], "cancelled"]); assert.match(w[0].payload.updated_at, ISO); } },
     { name: "POST /trips/:id/complete", run: (p) => call(p, "POST", `/api/trips/${TRIP}/complete`, "alice-tok"),
-      expect: (s, r) => { assert.deepEqual(r.body, { status: "completed", tripId: TRIP }); const w = canonicalWrites(s); assert.equal(w.length, 1);
+      // §20.2 (census-trips §40.6): the body carries the closeout report beside
+      // the legacy two keys. The WRITE is still the one legacy update — the
+      // closeout on this fixture has nothing to stop, so it writes nothing.
+      expect: (s, r) => { const { closeout, ...legacy } = r.body; assert.deepEqual(legacy, { status: "completed", tripId: TRIP }); assertCloseoutShape(closeout);
+        const w = canonicalWrites(s); assert.equal(w.length, 1);
         assert.deepEqual([w[0].table, w[0].verb, w[0].filters, w[0].payload.status], ["trips", "update", [["id", TRIP]], "completed"]); } },
     { name: "POST /trips/:id/archive", run: (p) => call(p, "POST", `/api/trips/${TRIP}/archive`, "alice-tok"),
       expect: (s, r) => { assert.deepEqual(r.body, { status: "archived", tripId: TRIP }); const w = canonicalWrites(s); assert.equal(w.length, 1);
@@ -388,7 +407,8 @@ describe("trip_kernel_enabled = true: each write is a command, the legacy twin d
     assert.equal(state.tables.trips[0].status, "upcoming");
 
     const done = await call(port, "POST", `/api/trips/${TRIP}/complete`, "alice-tok", undefined, { "if-match": "0" });
-    assert.deepEqual(done.body, { status: "completed", tripId: TRIP }); assert.equal(done.version, "1");
+    { const { closeout, ...legacy } = done.body; assert.deepEqual(legacy, { status: "completed", tripId: TRIP }); assertCloseoutShape(closeout); }
+    assert.equal(done.version, "1");
     assert.equal(state.tables.trip_events.at(-1)!.type, "trip.trip_completed");
 
     const again = await call(port, "POST", `/api/trips/${TRIP}/complete`, "alice-tok");

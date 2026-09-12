@@ -92,6 +92,7 @@ Paths are relative to `artifacts/api-server/` unless prefixed `travel-buddy-stan
 | `head_commit` | `42aeac38` — DECLARED 2026-09-11. It **starts a clock; it does not certify a past.** Read the next row before quoting it. |
 | **What that declaration does and does not say** | `42aeac38` is #476's squash — the commit where this document itself reached `main`. Its verdicts were taken at a pre-squash working tree that **exists nowhere**: verified against FULL history (`git fetch --unshallow`, 4,300 commits, then `git cat-file -e`), not assumed — a shallow clone had made every such commit look unresolvable for the wrong reason. So nobody can diff that tree against `42aeac38`, and this declaration **does not claim that interval was empty**. What it claims is mechanically checked: `git diff --name-only 42aeac38..HEAD` over the paths in `CENSUS_SCOPE` returns **0 files**, and from here any change to one of them ages this census. Before it, `check:census-freshness` reported this document as CANNOT BE CHECKED — the weakest of the three states, not the safest. FRESH means *no counted file has moved since `42aeac38`*; it does **not** mean the rows were re-read, and none has been. Declared by the Trips lane while recounting the sibling census; if this lane disagrees, reverting costs only the check. |
 | **Note specific to this census** | This document's own CORRECTION HEADER records that it was **already stale when it was committed** — `lib/sensingAnonStore.ts` landed two minutes before it. That file is the first path in this census's scope, so the very defect the header describes by hand is now the one a machine would catch. |
+| **§1 (2026-09-12, the Sensing lane)** | The first pass that re-derived rows against the code. `head_commit` stays `42aeac38`: a commit on `claude/sensing-lane` would be an ancestor of nothing once squashed (handoff §0, trap 1), so the files §1 added and the one counted file that changed are acknowledged in `CENSUS_STALENESS_ACKNOWLEDGED.json` against `42aeac38`, per file, and the scope was widened from 85 to the files §1 cites. FRESH after this still means *no counted file has moved since `42aeac38`* — and, for the twenty-eight rows §1 names, that they were re-read on 2026-09-12. |
 
 ---
 
@@ -100,13 +101,77 @@ Paths are relative to `artifacts/api-server/` unless prefixed `travel-buddy-stan
 | Measure | Value |
 |---|---|
 | **Denominator — testable requirements** | **127** |
-| BUILT-AND-CORRECT | 65 |
-| BUILT-BUT-WRONG | 39 |
-| NOT-BUILT | 22 |
-| CANNOT-VERIFY | 1 |
-| **CONSTRUCTED%** = (65+39)/127 | **81.9 %** |
-| **CORRECT%** (raw) = 65/127 | **51.2 %** |
-| **CORRECT% (spec-attributable)** = 0/127 | **0.0 %** |
+| BUILT-AND-CORRECT | **87** |
+| BUILT-BUT-WRONG | **34** |
+| NOT-BUILT | **5** |
+| CANNOT-VERIFY | **1** |
+| **CONSTRUCTED%** = (C+W)/127 | **121 / 127 = 95.3 %** |
+| **CORRECT%** (raw) = C/127 | **87 / 127 = 68.5 %** |
+| **CORRECT% (spec-attributable)** | **22 of the 87 — 17.3 %** |
+
+> **RESTATED 2026-09-12 (§1): 65 → 77 CORRECT, 39 → 36 WRONG, 22 → 13
+> NOT-BUILT. CONSTRUCTED 81.9 % → 89.0 %, CORRECT 51.2 % → 60.6 %.** §1 is the
+> first pass to read a verdict in this document against the code. It executed
+> the anonymous store on a database (13 cases, two rollback rehearsals) and
+> re-derived twenty-eight rows under the bar `census-trips.md` §40 set: twelve
+> move into C — the Map behind migration 2350's three FALSE flags, the Wall's
+> §5.1 vocabulary, the Experience fold, the mutation-proof list, the S0 map,
+> and one prohibition — five move N → W, and thirteen built, tested,
+> mutation-proven, database-executed rows on the anonymous ingest path are
+> graded **W** because nothing may reach them until the owner decides
+> `SENSING_AUTH_POSTURE`. The CORRECTION HEADER's 78 and 83 were counted under
+> this document's looser original convention and were never re-derived; this
+> is the like-for-like figure under the stricter one. Every verdict moved was
+> watched go red under a mutation named beside it. Nothing here is deployed,
+> enabled or production-realised: production still holds no sensing table
+> and zero rows in every intel table.
+
+> **RESTATED 2026-09-12 (§2): 77 → 80 CORRECT, 13 → 10 NOT-BUILT. CONSTRUCTED
+> 89.0 % → 91.3 %, CORRECT 60.6 % → 63.0 %.** §2 is the first section that
+> BUILDS rather than re-reads: §10's decision (GO NOW · GO SOON · WAIT · STAY
+> · SWITCH · SKIP · RETURN), the switching cost of the current experience and
+> §11's peak interception, as a pure engine over the one live read path and a
+> route behind `compass_decision_enabled` (2800, seeded FALSE). Three N rows
+> into C, S79 re-derived and held; twelve mutations and one database
+> rehearsal red then green. Same caveat: built on a branch, not merged, the
+> flag the owner's, and nothing to decide on in production while every intel
+> table holds zero rows.
+
+> **RESTATED 2026-09-12 (§3): 80 → 84 CORRECT, 36 → 35 WRONG, 10 → 7 NOT-BUILT.
+> CONSTRUCTED 91.3 % → 94.5 %, CORRECT 63.0 % → 66.1 %.** §3 builds §9's
+> WallMoment — a transition between the current live claim and the
+> projection's own previous version, never a repeated snapshot — and §15's
+> Attention Engine, which every moment the new Wall route serves passes
+> through (relevance, novelty, urgency, half-life, availability,
+> interruption cost, attention budget → NOTIFY / WALL / SILENT / IGNORE),
+> behind `wall_enabled` and `wall_moments_enabled` (2801, seeded FALSE).
+> S73, S74, S102 N → C and S76 W → C; thirteen mutations and one database
+> rehearsal red then green. NOTIFY is a routing decision on the wire; no
+> dispatcher consumes it, and the section says so. Same caveat as before.
+
+> **RESTATED 2026-09-12 (§4): 84 → 86 CORRECT, 35 WRONG unchanged, 7 → 5 NOT-BUILT.
+> CONSTRUCTED 94.5 % → 95.3 %, CORRECT 66.1 % → 67.7 %.** §4 builds §12: a
+> conversation shares a CANONICAL REFERENCE to a server-built live object —
+> subject, kind, snapshot id, version id, value at share time, truth block,
+> and a human line that carries no value — as one `messages` card, and a
+> shared reference resolves against the current state with
+> `changedSinceShare` on the answer (NULL, never false, when the state cannot
+> be read), behind `telegraph_live_references_enabled` (2802, seeded FALSE).
+> S87, S88 N → C; S89's vacuity lifted (five `⌀` rows now, strict reading
+> 81 / 127 = 63.8 %). Eighteen mutations and one database rehearsal red then
+> green. Opportunity is refused as a kind by name because S56 has no object.
+> Same caveat as before.
+
+> **RESTATED 2026-09-12 (§5): 86 → 87 CORRECT, 35 → 34 WRONG, 5 NOT-BUILT unchanged.
+> CONSTRUCTED 95.3 % unchanged, CORRECT 67.7 % → 68.5 %.** §5 builds §16's
+> two missing stages: an anomaly detector over served envelopes and the
+> projection's own record (density rising past capacity, material conflict
+> at capacity, a rapid density rise; the assertion itself never a
+> candidate), filing each new candidate into the EXISTING review queue —
+> a `moderation_reports` row, place / safety_concern, no reporter — behind
+> `intel_safety_candidates_enabled` (2803, seeded FALSE) and requireAdmin.
+> S103 W → C. Eighteen mutations and one database rehearsal red then green.
+> Operator-triggered, not scheduled; asserts nothing. Same caveat as before.
 
 **I disagree with commit `0597a245`'s CONSTRUCTED 56.4 % / CORRECT 32.1 %.** I land materially
 higher on both — roughly +25 points constructed and +19 points correct. I agree exactly with its
@@ -117,15 +182,15 @@ its own:
 
 | Sub-score | Denominator | CONSTRUCTED | CORRECT |
 |---|---|---|---|
-| **Sensing input + inference core** (§3, §4, and the Vibe/Experience/Forecast/Opportunity/Session engines: S17–S38, S42–S46, S51–S54) | 31 | 64.5 % | **22.6 %** |
-| Everything else (invariants, reuse directives, surface integration) | 96 | 87.5 % | 60.4 % |
+| **Sensing input + inference core** (§3, §4, and the Vibe/Experience/Forecast/Opportunity/Session engines: S17–S38, S42–S46, S51–S54) | 31 | 87.1 % (was 64.5 %) | **35.5 %** (was 22.6 %) |
+| Everything else (invariants, reuse directives, surface integration) | 96 | 99.0 % (was 87.5 %) | 79.2 % (was 60.4 %) |
 
 The high headline is a property of the specification, not a compliment to the tree. This spec is
 titled *UPGRADE, DO NOT REBUILD*; §19 says outright *"Do Not Blindly Materialize"*; and a large
 fraction of its testable content is **prohibitions and reuse directives** that Portava's
 pre-existing intel and map work already satisfies with unusual care. Score the part of the spec
 that asks for something *new* — a device sensing boundary, a privacy-reduced ingest, Vibe
-inference, ExperienceState, ExperienceSession — and the correct column falls to 22.6 %.
+inference, ExperienceState, ExperienceSession — and the correct column falls to 35.5 % (22.6 % before §1).
 
 ### The caveat that outranks every number here
 
@@ -193,8 +258,10 @@ Most of §2 and §20 are prohibitions. The rule applied here, uniformly:
   constructed; it is merely currently unviolated.
 
 Five BUILT-AND-CORRECT verdicts are **vacuous or partly vacuous** (the guard is real but the path
-it guards is empty): S89, S90, S91, S105, S22. They are flagged `⌀` in the table. A reader who
-rejects vacuous satisfaction should subtract them: CORRECT% becomes 60/127 = **47.2 %**.
+it guards is empty): S90, S91, S105, S22, and — since §1 — S9. They are flagged `⌀` in the
+table or in §1.3; S89 carried the mark until §4 gave Telegraph a real live-intelligence consumer
+and pinned that it exposes no contributor. A reader who rejects vacuous satisfaction should
+subtract them: CORRECT% becomes **82 of 127 = 64.6 %** (60 of 127 = 47.2 % before §1).
 
 ---
 
@@ -595,3 +662,1197 @@ Three structural limits on this census, stated so a re-run can improve on them:
    ground truth and from the two sibling documents that did measure it
    (`intel-spine-liveness.md`, `sensing-surface-inventory.md`). Where those two disagree with a
    migration's seed value, they win — a migration file is not evidence of live state.
+
+---
+
+## 1. The rows the tree had already earned, re-derived — and the anonymous store executed
+
+**Read against the branch `claude/sensing-lane` (from `802fee52` on
+`claude/sweet-fermat-fmx7up`), 2026-09-12, by the Sensing lane.** This is the
+first pass that has read a verdict in this document against the code. The
+CORRECTION HEADER above records that the tree had moved before the body was
+committed and that a later "completion pass" recomputed **78** and then **83**
+BUILT-AND-CORRECT without editing a row. Those figures were sentences about
+the objects; none of them was re-derived, and they were counted under this
+document's original convention — *"code that is correct and would run"*. This
+section re-derives every row that convention would have moved, and one
+cluster of rows it never looked at (the Map behind migration 2350, the
+Discovery candidate behind 2361, the Wall's §5.1 vocabulary), and grades them
+under the bar `census-trips.md` §40 states and every Trips section since has
+held to:
+
+> a row is **C** when the thing it names is built, pinned by a test that was
+> watched go red under a mutation of the code it pins, and **reached** — from a
+> registered surface (behind a flag seeded FALSE is fine), from a registered
+> scheduler, or, for a prohibition, by an artifact that refuses the violation.
+> A row whose thing is built, tested and mutation-proven but reached by
+> **nothing**, and cannot be reached without an owner decision, is **W** with
+> that stated — exactly as Trips graded TR334, TR342 and TR416.
+
+That bar is stricter than the one the body used, which is why this section
+lands at **77** and not 83: the anonymous ingest path (store → policy →
+session → aggregate → presence / vibe / differencing / lineage) is built end to
+end, proven on a database below, and reached by nothing on both ends — no
+route may write it and no surface may read an aggregate until the owner
+decides `SENSING_AUTH_POSTURE`
+(`docs/architecture/sensing-auth-posture-decision.md`, decisions #1, #2 and
+#9 of `sensing-input-gap.md` §3.2). Thirteen rows on that path are graded **W**
+here with that reason, twelve of which the completion pass had called C. Every
+mutation named below was applied to a backup-restored file and the suite run
+red and then green; the two database rehearsals are apply → rollback → red →
+apply → green on the lane's own replica (`portava_sensing`), never on
+portava-ci and never on production.
+
+### 1.1 What was built, and where
+
+- **The anonymous store, executed** —
+  `test/db/sensingAnonStore.db.test.ts:130#foreign` runs 2315, 2340 and 2480
+  on the local replica as the roles the grants name. The catalog holds no
+  foreign key and no identity-shaped column and RLS is on with no user policy
+  (`migrations/2315_sensing_anon_contributions.sql:343#installation_id`); a
+  user role cannot read the table and service_role cannot UPDATE a row
+  (`test/db/sensingAnonStore.db.test.ts:140#UPDATE`;
+  `migrations/2340_sensing_anon_replay_and_time_bounds.sql:137#service_role`);
+  a row past 72 hours is unrepresentable
+  (`migrations/2315_sensing_anon_contributions.sql:171#sensing_anon_contributions_ttl_check`).
+  A replay of one (cohort, contributor) is a unique violation on exactly the
+  replay index and the second row never exists
+  (`test/db/sensingAnonStore.db.test.ts:164#replay`;
+  `migrations/2340_sensing_anon_replay_and_time_bounds.sql:107#sensing_anon_contributions_replay_idx`);
+  forty writes from one device are one row, and the aggregate over what the
+  database returned is one contributor, below k
+  (`test/db/sensingAnonStore.db.test.ts:174#forty`). A bucket two minutes
+  ahead of, or 73 hours behind, its `created_at` is a check violation and the
+  edge of the window is accepted
+  (`test/db/sensingAnonStore.db.test.ts:189#bucket`;
+  `migrations/2340_sensing_anon_replay_and_time_bounds.sql:123#sensing_anon_contributions_time_bounds_check`).
+  One device in two epochs is two unrelated tokens — the device folds the
+  epoch into its secret and the server folds it into the token, each pinned on
+  its own (`test/db/sensingAnonStore.db.test.ts:216#oneCommitment`;
+  `lib/sensingAnonStore.ts:192#deriveEpochSecret(`;
+  `lib/sensingAnonStore.ts:211#deriveContributorToken(`) — and revealing one
+  epoch's secret revokes that epoch only, through the SQL function that sees an
+  epoch and a token and nothing else
+  (`test/db/sensingAnonStore.db.test.ts:205#epochs`;
+  `migrations/2315_sensing_anon_contributions.sql:239#revoke_sensing_contributions(`);
+  both functions refuse `authenticated`
+  (`test/db/sensingAnonStore.db.test.ts:237#service_role`). The purge takes its
+  instant and a second pass deletes nothing
+  (`test/db/sensingAnonStore.db.test.ts:246#purge`;
+  `migrations/2315_sensing_anon_contributions.sql:216#purge_expired_sensing_contributions(`).
+  Then the part no unit suite could do: **k** contributors in six parties
+  written fifteen minutes ago, read back from the database, clear the real
+  privacy gate, and k − 1 do not; the presence state built from the real
+  aggregate is `observed` with an unlabelled ordinal and `few` coverage at k
+  and `unknown` on every axis below it, and nothing the database returned
+  appears in it (`test/db/sensingAnonStore.db.test.ts:260#privacy`;
+  `lib/sensingCoverageAggregate.ts:154#aggregateSensingCohort(`;
+  `lib/sensingPresenceState.ts:133#buildSensingPresenceState(`); one more
+  contributor is not a new publication and the previous value is served
+  (`test/db/sensingAnonStore.db.test.ts:316#evaluateDifferencing(agg,`); the
+  in-memory revocation model predicts exactly what the SQL function does to a
+  fresh read (`test/db/sensingAnonStore.db.test.ts:326#modelSensingRevocation(readCohort(cohortKey),`);
+  fifteen contributors with no party tag earn no group credit on the database
+  either (`test/db/sensingAnonStore.db.test.ts:336#derived,`). And 2480's
+  sessions: a session stores only the bearer's HMAC, its budget is consumed
+  atomically in SQL and refused at zero, `unknown` / `not_started` / `expired`
+  / `revoked` are told apart, UPDATE is not a path, and the purge removes the
+  revoked and the expired (`test/db/sensingAnonStore.db.test.ts:356#budget`;
+  `migrations/2480_sensing_contribution_sessions.sql:126#sensing_session_consume(`);
+  a scope outside §3's seven verbs and a lifetime past 72 hours are check
+  violations, and the contribution store carries no session column
+  (`test/db/sensingAnonStore.db.test.ts:403#seven`;
+  `migrations/2480_sensing_contribution_sessions.sql:113#sensing_contribution_sessions_scopes_check`).
+  The replica carries 2481 because the harness replays every file, so a
+  session row names an issuing profile there and an anonymous one is
+  unrepresentable — the harness's state, recorded as such, not a posture
+  decision. **Rehearsed:** `db/rollback/2026-09-07-2340-sensing-anon-replay-and-time-bounds-rollback.sql`
+  applied → the replay, one-device and time-bounds cases red (3) → 2340
+  re-applied → 13 / 13; `db/rollback/2026-09-07-2481-sensing-sessions-option-a-issuer-rollback.sql`
+  then `db/rollback/2026-09-07-2480-sensing-contribution-sessions-rollback.sql`
+  applied → the two session cases red → 2480 and 2481 re-applied → 13 / 13.
+  The suite cleans both tables and its seeded profile after itself (0 rows
+  either side, measured).
+- **Two pins no suite held** — `test/sensingCensusRederivation.test.ts:32#server`
+  pins the server-side epoch fold separately from the device-side one: the
+  first mutation of the server fold stayed **green** (46 / 46) because the
+  device layer already rotates the commitment, so the layer was unpinned and
+  is now pinned on its own; `test/sensingCensusRederivation.test.ts:50#viewer,`
+  pins that the Map's Experience fold names no viewer, user, profile,
+  preference or taste and that a preference-shaped field on its input changes
+  nothing in the state.
+- **The S0 map's summary, corrected** —
+  `docs/architecture/sensing-s0-reuse-map.md:220#CORRECTION`: the §13 table
+  counts five contracts truly missing, six reusable or extendable and one
+  blocked; the sentence beneath it said four / five / three, and two of its
+  rows name the wrong object (recorded beside them, not rewritten).
+
+### 1.2 What was re-derived, row by row
+
+**(a) The anonymous path — built end to end, proven on the database, reached by nothing until the owner decides.**
+`lib/sensingAuthPosture.ts:54#undecided` is the owner's switch and
+`lib/sensingAuthPosture.ts:90#sensingEligibility(` refuses every caller while
+it reads that; `test/sensingAnonStore.test.ts:501#route` asserts no route
+touches the store. So: **S18** (rotating identifiers, N → W): the derivation
+exists at two layers and is executed on the database; no writer is registered.
+**S20** (eligibility separated from ingest; opaque credential, N → W): the
+separation is code — eligibility in one module, the credential in another
+(`lib/sensingContributionSession.ts:98#buildSensingSessionRow(`), the row
+shape in 2480 with no identity column — and it admits nobody. **S30**
+(`IntelligenceContributionSession`, N → W): all eight §4.2 properties are
+bound to the primitive that owns each
+(`lib/sensingContributionPolicy.ts:66#CONTRIBUTION_PURPOSE_SCOPES`) and the
+issued half is a table with a budget consumed in SQL; nothing issues one.
+**S25** (seven distinct permissions, W → W): the verbs are distinct in the
+policy, in the session row's scope CHECK and in admission
+(`lib/sensingContributionPolicy.ts:275#scope_not_granted`), and the ingest
+that would enforce them does not exist; the intel human-claim consent stays
+one boolean by design. **S33** (replay and rate limit per credential, W → W):
+both now keyed on the credential, not the account — the replay index and the
+session budget, both executed — and the ingest they guard is the owner's.
+**S35** (impossible timestamps, malformed precision, invalid scopes, stale
+credentials, W → W): all four rejections exist and three are executed on the
+database (`lib/sensingAnonStore.ts:376#observed_at_in_future`;
+`lib/sensingContributionSession.ts:141#validateSensingSession(`); the row's
+"two of the four are unimplementable" no longer holds, and the ingest does
+not. **S39** (Presence engine → aggregate + coverage, W → W): the engine
+builds an observed / unknown state from the real gate's decision, names no
+person (`lib/sensingPresenceState.ts:69#presence:`), and no surface consumes
+it (decision #9). **S24** (anti-differencing, W → W): the control the row
+called absent exists (`lib/sensingDifferencingGate.ts:63#minDelta`) and holds
+over two real reads; rare-path suppression stays where it was; nothing
+publishes an aggregate for the gate to guard. **S111** (four reconciliation
+outcomes, W → W): all four are representable and proximity is never ownership
+(`lib/sensingSubjectReconciliation.ts:55#OWNERSHIP_EVIDENCE`;
+`lib/sensingSubjectReconciliation.ts:104#temporary_world_object`); the
+canonical `subject_id NOT NULL` stands and the resolver has no caller.
+**S112** (revocation lineage, W → W): defined per stage as data
+(`lib/sensingRevocationLineage.ts:56#SENSING_REVOCATION_EFFECT`), executable,
+and proven to match the SQL on a real cohort; the stages past aggregate exist
+now and the session and memory stages are "prevented" because S54 does not
+exist. **S42 / S51 / S52** (the Vibe engine, its signals, its state): the
+engine is guarded and pinned (`lib/vibeInference.ts:144#inferVibe(`), its
+output carries every §5.2 field, and **not one of its seven candidate signals
+has a producer** — client capture is decision #6 — so S42 stays W, and S51
+and S52 move N → W: a state nothing can populate is built, not correct.
+
+**(b) The prohibition the engine enforces.** **S9** (rapid movement ≠
+dancing, N → **C** `⌀`): high energy with arrhythmic or unbounded motion cannot
+raise dance likelihood and unknown periodicity yields null
+(`lib/vibeInference.ts:236#VIBE_MIN_PERIODICITY_FOR_DANCE`;
+`test/vibeInference.test.ts:51#arrhythmic`), the artifact this document's own
+rule for prohibitions asks for. Vacuous in the sense S22 is: the engine it
+guards is called by nothing.
+
+**(c) The shared truth vocabulary — on live wires.** **S48** (seven truth
+classes, W → **C**): `lib/truthClass.ts:47#TRUTH_CLASSES` is the vocabulary
+verbatim with CORROBORATED representable and a fail-weak combinator
+(`lib/truthClass.ts:99#weakestTruthClass(`); the Wall serves a class and a
+coverage on every Live For You item today
+(`services/wall/LiveForYouService.ts:277#truthClass:`;
+`test/wallTruthClass.test.ts:229#EVERY`) and derives `corroborated` from
+independent sources (`test/wallTruthClass.test.ts:56#corroborated`); the Map
+stamps the same class behind 2350's flag. **S110** (six temporal semantics,
+W → W): the shared envelope carries all six and enforces `predicted_for` iff
+`predicted` (`lib/experienceTruth.ts:66#TemporalEnvelope`;
+`lib/experienceTruth.ts:102#predicted_for_without_predicted_class`), and
+`predicted_for` reaches the wire on the temporal route; `effective_from` and
+`effective_until` are carried only by the callerless sensing states, so four
+of six are served, up from four of six declared. **S49** (every consumed
+state carries all four fields, W → W): Wall yes, Map yes behind the flag,
+Discovery's candidate carries truth class, confidence and freshness and **no
+coverage** (`lib/discoveryCandidate.ts:114#DiscoveryCandidate`), Compass's
+states carry none of the four.
+
+**(d) The Map behind migration 2350 — three flags seeded FALSE, wired, route-tested.**
+`migrations/2350_map_sensing_projection_flags.sql:74#INSERT` seeds
+`map_experience_state_enabled`, `map_world_moments_enabled` and
+`map_display_resolver_enabled` FALSE and refuses to commit them ON;
+`routes/mapProjection.ts:563#map_experience_state_enabled` reads all three
+fail-closed, and `test/mapSensingProjectionGates.test.ts:131#ABSENT` proves
+that with every flag absent — production's state — not one new field reaches
+the wire while the live claims still flow. **S43** (Experience engine, N →
+**C**) and **S53** (the §5.3 composite, N → **C**):
+`lib/mapExperienceState.ts:220#buildExperienceState(` folds the claims the
+gateway already reads into the spec's six-branch tree, each populated leaf
+from one claim type and every leaf without a producer null, never a default
+(`test/mapExperienceState.test.ts:147#null`); the fold reads no personal
+preference (§1.1's pin); it is served on `payload.experienceState` behind the
+flag (`lib/mapProjection.ts:781#experienceState`;
+`routes/mapProjection.ts:1010#experienceState:`;
+`test/mapSensingProjectionGates.test.ts:165#map_experience_state_enabled`).
+**S59** (ExperienceState on the place object, not separate pins, W → **C**):
+the same fold, onto the same object, and no new kind. **S64** (truth /
+freshness / coverage metadata; predicted visibly distinct, W → **C**): the
+object carries `truthClass` and `coverage` (`lib/mapObjects.ts:454#truthClass?:`;
+`lib/mapProjection.ts:800#truthClass:`) and every forecast object on the
+temporal route is stamped `predicted`
+(`routes/mapProjectionTemporal.ts:634#predicted`;
+`test/mapSensingProjectionGates.test.ts:335#predicted`). **S60** (world_pulse
+promoted into the seven change types, W → **C**) and **S44** (World Dynamics
+— change, anomalies, hotspots, rhythm; no cause when unknown, W → **C**):
+`lib/mapProducers/worldMomentProducer.ts:71#WORLD_CHANGES` is the spec's seven
+verbatim; each rides its own published evidence and carries the truth class it
+earns — event spillover rests on an inferred cause block and is `inferred`,
+never observed (`lib/mapProducers/worldMomentProducer.ts:109#WORLD_CHANGE_TRUTH`;
+`test/mapWorldMoments.test.ts:193#INFERRED`); anomaly is `unexpected_activity`
+(`test/mapWorldMoments.test.ts:183#unexpected`); hotspots are the pulse and
+rhythm is `city_model` (`lib/mapProducers/cityModelProducer.ts`); a sub-floor
+cell and a quiet cell serialize identically; wired at
+`routes/mapProjection.ts:1297#attachWorldMoments(pulses,` and served with
+`moment: null` when nothing changed
+(`test/mapSensingProjectionGates.test.ts:272#map_world_moments_enabled`).
+**S65** (display resolver — safety, mode, zoom, intent, relevance, W → **C**):
+`lib/mapDisplayResolver.ts:268#resolveDisplay(` runs between ranking and
+paging, the band sets the budget, the mode allocates it across classes, the
+intent reorders within a tier, safety notices are never budgeted, and every
+drop is counted by kind (`routes/mapProjection.ts:1319#resolveDisplay(ranked,`;
+`test/mapSensingProjectionGates.test.ts:195#map_display_resolver_enabled`).
+**S38** (coverage tracked separately from activity, W → **C**): the Map
+object now carries `coverage` beside `activity` (`lib/mapObjects.ts:455#coverage?:`),
+folded from the read path's own cohort bucket
+(`lib/mapExperienceState.ts:164#foldCoverage(`), the Wall carries it beside
+its state, and the sensing presence state carries it beside an ordinal.
+**S66** (safety outranks opportunity across surfaces, W → W): on the Map an
+object at or within 100 m of a notice loses its promotion
+(`lib/mapDisplayResolver.ts:226#applySafetyPrecedence(`), and Compass now
+EXCLUDES a Live `unsafe_density` subject before ranking behind an env gate
+(`compass/CompassLiveConstraints.ts`;
+`test/compassCensusGates.test.ts:236#unsafe_density`); Discovery's ranker
+still reads no safety state, so a noticed place can still rank there. **S40**
+and **S45** stay W: crowd momentum is still a human trajectory tap, not a
+computed arrival/departure balance, and a forecast now has a horizon and a
+class but no calibration attached.
+
+**(e) Discovery behind 2361.** **S70** (DiscoveryCandidate with why-now,
+why-for-user, confidence, freshness, truth class, W → W): built and wired
+into `GET /discovery` behind `discovery_candidate_projection_enabled`
+(`lib/discoveryCandidate.ts:103#DISCOVERY_CANDIDATE_PROJECTION_FLAG`), and
+`whyNow` is always null (`lib/discoveryCandidate.ts:118#whyNow:`) because no
+live producer exists for a place on that surface — the module says so itself.
+Built, wrong on the one field the row is named for.
+
+**(f) The mutation list, and the audit artifact.** **S125** (W → **C**):
+all five invariants the row names are mutation-proven now — no permanent
+identity link on the World Intelligence store (2315's postconditions, the
+catalog case, the tripwire; the canonical intel FK is for human claims and is
+the owner's ruling), no single-device crowd (forty writes → one contributor
+on the database; the replay key rolled back → red), no prediction as
+observation (`test/truthClass.test.ts:41#CORROBORATED`'s property tests and
+the temporal stamp, both red under mutation), no anomaly as safety
+(`lib/mapProducers/safetyNoticeProducer.ts:22-32` refuses the fallback and
+`experienceTruth` has no safety member), no client-computed vibe
+(`test/vibeInference.test.ts:200#client` walks the client tree; a planted
+probe turned it red). **S120** (the S0 reuse map, N → **C**):
+`docs/architecture/sensing-s0-reuse-map.md` inventories consent, route-flow
+contribution, device/session, map projection, intel storage, Wall, Discovery,
+Compass, schedulers, RLS, outbox and flags — every item the row lists — and
+its summary arithmetic is corrected in §1.1. A document is falsified by
+reading, not by a test; none applies.
+
+### 1.3 Row moves
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| S9 Rapid movement ≠ dancing | N | **C** | `⌀` The Vibe engine caps dance likelihood at 0.1 under arrhythmic or unbounded motion and answers null under unknown periodicity; mutation M5 (the contradicted branch removed) turned two cases red. Vacuous: the engine is called by nothing. |
+| S18 Short-lived rotating contribution identifiers | N | **W** | Two-layer rotation built and executed on the database, revocation by epoch secret executed; no writer is registered and none may be until `SENSING_AUTH_POSTURE` is decided. Mutations M1 and M1b each red. |
+| S20 Eligibility separated from ingest; opaque credential | N | **W** | Eligibility, credential and session are three modules and a table with no identity column; eligibility refuses everyone while the posture reads `undecided` (M12 red). Built, and admitting nobody by owner decision. |
+| S24 Anti-differencing and rare-path suppression | W | **W** | The anti-differencing gate the row called absent exists and holds over two real reads (M4 red); rare-path suppression stands; nothing publishes an aggregate for it to guard. |
+| S25 Seven verbs as distinct permissions | W | **W** | Distinct in the policy, the session's scope CHECK and admission (M10 red, the scope CHECK executed); the ingest that would enforce them is the owner's; intel human-claim consent stays one boolean. |
+| S30 `IntelligenceContributionSession` | N | **W** | All eight §4.2 properties bound to their owning primitives and the issued half a table whose budget is consumed in SQL (M11 red; 2480 rolled back → red); nothing issues a session. |
+| S33 Replay and rate limit per credential | W | **W** | Both keyed on the credential now — the replay index (M2 red; rolled back → red) and the session budget (M11 red) — and the ingest they protect does not exist. |
+| S35 Reject impossible timestamps, malformed precision, invalid scopes, stale credentials | W | **W** | All four rejections exist (M3, M10, M11 red; the time-bounds CHECK executed and rolled back → red); the row's "two are unimplementable" is false now, and there is no ingest to reject anything. |
+| S38 Track coverage separately from activity | W | **C** | `coverage` beside `activity` on the Map object behind 2350 (M15 red through the route), beside the state on every Wall item (M19 red), beside the ordinal on the sensing presence state (M8 red, executed on real rows). |
+| S39 Presence engine → aggregate + coverage; no person identity | W | **W** | Built from the real gate's decision, observed / unknown only, names no person (M8 red; executed on k and k − 1 real contributors); no surface consumes it (decision #9). |
+| S42 Vibe engine → VibeState; no literal behaviour without evidence | W | **W** | The engine and its guards exist and are pinned (M5 red); none of its inputs has a producer. |
+| S43 Experience engine → ExperienceState; no personal preference as world truth | N | **C** | The fold over the gateway's live claims, six branches, null where no engine exists, reading no viewer preference (M20 red); served behind `map_experience_state_enabled` and route-tested. |
+| S44 World Dynamics → WorldMoment; no cause when unknown | W | **C** | Change (seven moments), anomaly (`unexpected_activity`), hotspots (`world_pulse`), rhythm (`city_model`); cause only from an inferred block, classed `inferred` (M18 red); behind `map_world_moments_enabled`, route-tested. |
+| S48 Seven canonical truth classes | W | **C** | One vocabulary, CORROBORATED representable and produced, fail-weak composition (M9 red); on the Wall's wire today and on the Map's behind the flag. |
+| S51 Vibe inferred from motion energy, periodicity, … | N | **W** | The inference over exactly those signals exists and is guarded; not one signal is produced anywhere (S28, decision #6). |
+| S52 `VibeState` carries energy, sociality, dance_likelihood, volatility, momentum + truth metadata | N | **W** | The state carries every field named, with truth class always `inferred` and a band below the live floor; nothing can populate it. |
+| S53 `ExperienceState` composite | N | **C** | Crowd / Vibe / Behavior / Friction / Dynamics / Truth in the spec's shape on `payload.experienceState`; leaves with no producer are null, never fabricated (M15 red through the route). |
+| S59 Server-built ExperienceState on place/event projections, not separate vibe pins | W | **C** | The same fold onto the same object, no new kind (M15 red). |
+| S60 world_pulse promoted into seven change types | W | **C** | Heating up, forming, moving, clearing, unexpected activity, event spillover, traveler surge — each from its own published evidence, a quiet cell and a sub-floor cell identical (M18 red). |
+| S64 Truth / freshness / coverage metadata; predicted visually distinct | W | **C** | `truthClass` and `coverage` on the object, `predicted` stamped on every forecast object (M15, M16 red through both routes). |
+| S65 Display resolver / clutter budget | W | **C** | Safety never budgeted and constraining, band budget, mode shares, intent affinity within a tier, drops counted by kind (M17 red through the route and the unit suite). |
+| S66 Safety outranks opportunity; never "best move now" | W | **W** | Map: promotion stripped near a notice (M17 red). Compass: a Live `unsafe_density` subject excluded before ranking, env-gated. Discovery: the ranker reads no safety state. Two of three surfaces. |
+| S70 Server-built DiscoveryCandidate | W | **W** | Wired into `GET /discovery` behind 2361's flag with truth class, confidence, freshness and why-for-user; `whyNow` is null on every row because no live producer exists for a place there. |
+| S110 Six shared temporal semantics | W | **W** | The shared envelope carries all six and enforces `predicted_for` iff `predicted` (M7 red); `predicted_for` is on the temporal wire; `effective_from` / `effective_until` are carried by callerless states only. |
+| S111 Reconciliation: Place / Event / Temporary world object / Unknown | W | **W** | All four representable and proximity never ownership (M6 red); the canonical `subject_id NOT NULL` stands and the resolver has no caller. |
+| S112 Revocation lineage | W | **W** | Defined per stage, executable, and proven to match the SQL on a real cohort (M14 red; revocation executed); the session and memory stages are prevented only because nothing bridges to them. |
+| S120 S0 reuse map | N | **C** | `sensing-s0-reuse-map.md` exists for this spec and inventories every item the row lists; its summary arithmetic corrected. No test applies to a document. |
+| S125 Mutation-prove the five invariants | W | **C** | All five proofs exist and each was watched red: identity link (catalog, tripwire), single-device crowd (forty writes, replay key rolled back), prediction-as-observation (M9, M16), anomaly-as-safety (refused producer, no safety member), client-computed vibe (planted probe, M13). |
+
+**Held, with the reason.** **S17** stays X: the code half is answerable and
+built (HSTS via `helmet()`, peppered tokens, the pepper mandatory before any
+write); the deployment half is not a file. **S19** and **S118** stay W:
+`intel_observations.actor_id NOT NULL REFERENCES profiles(id)` is the owner's
+ruling for human claims, the anonymous store carries no FK, and which of the
+two postures makes the World Intelligence path FK-free "without exception" is
+the undecided decision. **S21**, **S28**, **S29** and **S32** stay as they
+are: on-device reduction, the nine device features, acoustic capture and the
+signal ingest are decisions #1, #2 and #6, and this lane does not take them.
+**S26** stays W: the anonymous half is closed (72 h structural, the sweep
+registered at `src/index.ts:151#startSensingRetentionScheduler();`) and the
+intel raw purge is behind `intel_contribution_retention_enabled`, FALSE in
+production, at 180 days. **S3** and **S106** stay W: `src/presence/domain/`
+is unchanged since Phase 0 — types and a transport interface, no store, no
+fusion layer. **S40**, **S45**, **S46**, **S49**, **S55**, **S56**, **S66**,
+**S68**, **S70**, **S72**, **S73**, **S74**, **S76**, **S78**–**S80**,
+**S83**, **S85**–**S88**, **S92**, **S102**, **S103**, **S113** and **S54**
+hold for the reasons their rows give; §1.2 re-derives S40, S45, S49, S66 and
+S70 and moves none. **S22**, **S89**–**S91** and **S105** hold C and stay
+vacuous. **S97** holds C with stronger evidence: the absence the row rested on
+is now guarded by a resolver with no distance threshold
+(`test/sensingSubjectReconciliation.test.ts:27#PROXIMITY`).
+
+### 1.4 The mutations, in one place
+
+| # | row(s) | file | what was changed | red | green |
+| --- | --- | --- | --- | ---: | ---: |
+| M1 | S18 | `lib/sensingAnonStore.ts` | the epoch dropped from the server token HMAC — **stayed green (46 / 46) on the first run**, because the device layer already rotates the commitment; pinned separately, then 1 red | 1 | 0 |
+| M1b | S18 | `lib/sensingAnonStore.ts` | the epoch dropped from the device epoch-secret HMAC | 1 | 0 |
+| M2 | S33, S125 | `lib/sensingAnonStore.ts` | 23505 no longer a duplicate | 2 | 0 |
+| M3 | S35 | `lib/sensingAnonStore.ts` | a future observation accepted | 2 | 0 |
+| M4 | S24 | `lib/sensingDifferencingGate.ts` | the minimum delta lowered to 1 | 4 | 0 |
+| M5 | S9, S42 | `lib/vibeInference.ts` | the contradicted-evidence branch removed | 2 | 0 |
+| M6 | S111 | `lib/sensingSubjectReconciliation.ts` | proximity made ownership | 4 | 0 |
+| M7 | S110 | `lib/experienceTruth.ts` | the `predicted_for` iff rule dropped | 1 | 0 |
+| M8 | S38, S39 | `lib/sensingPresenceState.ts` | a sub-k cohort rendered observed | 4 | 0 |
+| M9 | S48, S125 | `lib/truthClass.ts` | strongest class instead of weakest | 5 | 0 |
+| M10 | S25, S30 | `lib/sensingContributionPolicy.ts` | an ungranted scope admitted | 1 | 0 |
+| M11 | S30, S33, S35 | `lib/sensingContributionSession.ts` | the budget not refused at zero | 2 | 0 |
+| M12 | S20 | `lib/sensingAuthPosture.ts` | the undecided posture admitting a profile | 1 | 0 |
+| M13 | S125 | `travel-buddy-standalone/src/` | a client file deriving dance likelihood from motion, planted then removed | 1 | 0 |
+| M14 | S112 | `lib/sensingRevocationLineage.ts` | the identity detector blinded | 1 | 0 |
+| M15 | S38, S43, S53, S59, S64 | `lib/mapProjection.ts` | the experience state never folded | 14 | 0 |
+| M16 | S64, S125 | `routes/mapProjectionTemporal.ts` | the `predicted` stamp dropped | 1 | 0 |
+| M17 | S65, S66 | `lib/mapDisplayResolver.ts` | safety precedence never constraining | 4 | 0 |
+| M18 | S44, S60 | `lib/mapProducers/worldMomentProducer.ts` | unexpected activity never detected | 1 | 0 |
+| M19 | S38, S48 | `services/wall/LiveForYouService.ts` | an unstated class defaulting to `observed` | 1 | 0 |
+| M20 | S43 | `lib/mapExperienceState.ts` | the fold reading a viewer preference | 1 | 0 |
+| DB-1 | S33, S35, S125 | replica | 2340 rolled back, then re-applied | 3 | 0 |
+| DB-2 | S30, S33, S35 | replica | 2481 then 2480 rolled back, then re-applied | 2 | 0 |
+
+### 1.5 The ceiling
+
+Nothing here is deployed, enabled or production-realised, and the section's
+arithmetic says so twice. The anonymous path is owner-gated at both ends:
+`SENSING_AUTH_POSTURE` reads `undecided`, the tripwire forbids a route, and
+publishing any aggregate is decision #9 — so **thirteen built, tested,
+mutation-proven and database-executed rows are W**, and will be until a
+decision this lane cannot take is taken. 2315 and 2340 exist in portava-ci
+and nowhere else; 2480 and 2481 exist only on this lane's replica and were
+dry-run on portava-ci inside a rolled-back transaction by the pass that wrote
+them; production holds no sensing table and no `SENSING_CONTRIBUTOR_PEPPER`
+is known to be set. The twelve rows that moved to C ride surfaces that are
+live today (the Wall's truth class and coverage) or are seeded FALSE in every
+database (2350's three flags, 2361's one) — and every intel table in
+production still holds zero rows, so the Map's fold serves nothing there
+whatever its flag says. **Realised in production: 0.0 %**, unchanged.
+
+## 2. The decision Compass emits, the cost of leaving, and the window a traveller can still reach
+
+**Read against the branch `claude/sensing-lane`, 2026-09-12, by the Sensing
+lane.** Three N rows whose gap was a whole thing: §10's decision — *GO NOW ·
+GO SOON · WAIT · STAY · SWITCH · SKIP · RETURN* — which Compass never emitted
+(S78), the switching cost a current experience introduces so Compass does
+not keep telling a traveller to abandon a good one (S80), and §11's peak
+interception — can the user reach the experience before its useful window
+decays (S86). One migration, 2800, seeds a flag FALSE; no table, no column,
+no write path. The engine is pure and consumes the ONE live read path every
+surface already uses; the route sits in its own file so `routes/compass*.ts`
+and `src/compass/**` are untouched. Every rule went red under a mutation
+before its commit; the mutations are listed in §2.3.
+
+### 2.1 What was built, and where
+
+- **§10 the decision (S78)** — `lib/compassDecision.ts:80#COMPASS_DECISIONS`
+  is the spec's seven words verbatim, and `lib/compassDecision.ts:337#decideCompass(`
+  runs the rules in the order the spec's precedence implies: safety outranks
+  opportunity — a Live-qualified `unsafe_density` is SKIP for every viewer,
+  whatever the intent, ETA or current experience
+  (`lib/compassDecision.ts:360#safety_outranks_opportunity`); already at the
+  candidate is STAY; without a READING the engine cannot say GO — a reading
+  is a claim Compass's own rule Live-qualifies
+  (`compass/CompassLiveConstraints.ts:268#isLiveConstraintEligible(`) AND the
+  Wall's §5.1 derivation classes as an observation
+  (`lib/compassDecision.ts:224#isReading(`), so a sponsored "busy" is
+  `inferred` and a materially conflicting one `conflicting` and neither backs
+  GO (§2 promotional claim ≠ observed reality); a read the gates refused is
+  WAIT with `live_intelligence_unavailable`, nothing served is WAIT with
+  `no_live_evidence`, live-but-not-observational evidence is WAIT with
+  `evidence_not_observational` — three different facts, three reasons
+  (`lib/compassDecision.ts:367#live_intelligence_unavailable`); an emerging,
+  building candidate is GO SOON, labelled below the live floor; a refused
+  walk-in is SKIP and a queue past the tolerance is WAIT; a candidate at the
+  intent floor is SKIP; then interception, RETURN, the switching cost, and GO
+  NOW. Every decision carries its grounding — the §5.1 block composed
+  weakest-on-every-axis over the claims it rests on
+  (`lib/compassDecision.ts:215#truthOf(`; `lib/experienceTruth.ts:159#composeTruth(`) — and a sentence built from templates
+  over the claim values with the truth class always in it, a vibe only as
+  "reported as", and no template with a behaviour verb, so the engine cannot
+  produce "everyone is dancing" (`lib/compassDecision.ts:426#summariseDecision(`;
+  `test/compassDecision.test.ts:305#everyone`). Experience value is
+  intent-relative — quiet, social, high energy — and UNKNOWN with no intent:
+  the engine does not read busy as good (`lib/compassDecision.ts:295#experienceValue(`;
+  `test/compassDecision.test.ts:152#intent-relative`). The route
+  `GET /api/compass/decision` (`routes/compassDecision.ts:68#router.get(`)
+  reads the flag fail-closed (`routes/compassDecision.ts:78#compass_decision_enabled`),
+  the place for a walking ETA when the client sends none
+  (`routes/compassDecision.ts:106#haversineKm(q.lat,`), asks the Live gates
+  whether it may look (`routes/compassDecision.ts:112#liveLabelsServable(sc)`),
+  reads the candidate and the current experience through
+  `readLiveClaimEnvelopes`, and answers the decision with its reasons,
+  grounding, interception and switching-cost report; it writes nothing and
+  computes no truth of its own. Registered at the tail of `routes/index.ts:334#compassDecisionRouter`, so no line the other censuses cite in that file moved.
+  2800 seeds the flag FALSE and refuses to commit a TRUE row
+  (`migrations/2800_compass_decision_flag.sql:34#INSERT`;
+  `migrations/2800_compass_decision_flag.sql:47#reads`); the rollback refuses
+  over a TRUE row (`db/rollback/2026-09-12-2800-compass-decision-flag-rollback.sql:23#DELETE`)
+  and was rehearsed apply → rollback → apply on the lane's replica. The route
+  suite drives the real handler over the fake PostgREST double: flag absent
+  (production's state), false and unreadable all answer `feature_disabled`
+  and read no place and no claim (`test/compassDecisionRoute.test.ts:93#ABSENT`);
+  unauthenticated, malformed and unknown place refused; GO NOW with
+  corroborated grounding and the interception margin
+  (`test/compassDecisionRoute.test.ts:116#GO`); SKIP on `unsafe_density`;
+  STAY under the switching cost with the current experience read through the
+  same seam; WAIT with `live_intelligence_unavailable` when the pilot is
+  closed and `no_live_evidence` when the gates are open and nothing is served
+  — production's state, where every intel table holds zero rows
+  (`test/compassDecisionRoute.test.ts:152#CLOSED`;
+  `test/compassDecisionRoute.test.ts:160#NOTHING`). Nothing person-shaped is
+  on the wire: no contributor, coordinate or count.
+- **§10 the switching cost (S80)** — `lib/compassDecision.ts:91#SWITCHING_COST`
+  is the cost (0.25 of the 0..1 value, a documented tunable; the SHAPE is the
+  requirement); with a current experience whose value is known the candidate
+  must beat it by more than the cost to be SWITCH, else STAY
+  (`lib/compassDecision.ts:391#better_by_more_than_switching_cost`); with a
+  current experience whose value is UNKNOWN — no intent, or no reading where
+  the traveller is — the engine has no basis to tell them to leave and says
+  STAY for that reason, inventing neither a cost nor a preference
+  (`lib/compassDecision.ts:389#current_value_unknown`); dwell is revealed
+  preference and can only raise a KNOWN current value, bounded
+  (`lib/compassDecision.ts:308#currentExperienceValue(`), so an hour at a
+  moderate place turns a SWITCH into a STAY
+  (`test/compassDecision.test.ts:228#dwell`), and creates no value
+  (`test/compassDecision.test.ts:237#creates`). The report says whether the
+  cost was applied and both values.
+- **§11 peak interception (S86)** — `lib/compassDecision.ts:318#interceptPeak(`:
+  arrival = now + ETA against the EARLIEST horizon of the claims that
+  qualified — min(`validUntil`, `observedAt` + the family's TTL), the rule
+  Compass's arrival forecast already uses
+  (`compass/CompassLiveConstraints.ts:505#forecastArrival(`) — reachable when
+  arrival precedes it, with the margin in minutes either way; arrival after
+  the horizon is WAIT with `window_may_decay_before_arrival` and the sentence
+  says by how much (`lib/compassDecision.ts:381#window_may_decay_before_arrival`);
+  an unknown ETA is an unknown interception, stated, never assumed reachable
+  (`test/compassDecision.test.ts:190#unknown`;
+  `test/compassDecision.test.ts:179#EARLIEST`). The route derives the ETA at
+  walking speed from the viewer's position when the client sends none, and a
+  viewer fifteen kilometres away is told to wait
+  (`test/compassDecisionRoute.test.ts:132#walking`).
+
+### 2.2 Row moves
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| S78 Compass emits a decision: GO NOW · GO SOON · WAIT · STAY · SWITCH · SKIP · RETURN | N | **C** | The seven-word vocabulary verbatim, a pure engine whose rules run safety-first over the one live read path with a reading defined as Live-qualified AND observational, served on `GET /api/compass/decision` behind 2800's FALSE flag with its grounding; route-tested through the real handler; mutations B2-M1 to B2-M4 and B2-M10 to B2-M12 red. |
+| S80 Current Experience value introduces switching cost | N | **C** | A cost the candidate must beat, applied only when the current value is KNOWN and intent-relative — never busy = good — with dwell raising a known value and creating none; STAY with the reason when the value is unknown; B2-M7, B2-M8, B2-M9 red. |
+| S86 Peak interception: can the user reach the experience before its useful window decays? | N | **C** | Arrival against the earliest qualifying horizon, the margin either way, WAIT when the window would decay first, unknown when the ETA is; the route derives a walking ETA when none is sent; B2-M5, B2-M6 red. |
+| S79 Compass must ground natural-language claims in structured truth | W | **W** | The decision surface's language is grounded by construction — templates over claim values with the truth class in every sentence and no behaviour verb, so it cannot say "everyone is dancing" (B2-M11 red) — and the conversational `/compass/ask` and Telegraph model paths are still constrained only by shape sanitizers. One surface of two. |
+
+**Held, with the reason.** **S66** stays W with a narrower gap: the Map
+strips promotion near a notice (§1), Compass's ranking excludes a Live
+`unsafe_density` subject, and now its decision is SKIP on one — Discovery's
+ranker still reads no safety state. **S72** stays W: the intent modes the
+decision accepts (quiet, social, high energy, explore) are the engine's, and
+`compass/CompassIntentModeEngine.ts` is another unit's file with its own
+vocabulary; the shared-intelligence half of the row is not built here.
+**S81** and **S82** hold C: Home still answers "what matters right now" and
+this route is the first place Compass answers "what should I do about it"
+with a decision rather than a ranked list. **S83** stays W: a
+`TripWorldContext` belongs to the Trips lane's files and this lane does not
+enter them. **S85** stays W: the Layover engine still reads no live seam.
+
+### 2.3 The mutations, in one place
+
+| # | row(s) | file | what was changed | red | green |
+| --- | --- | --- | --- | ---: | ---: |
+| B2-M1 | S78 | `lib/compassDecision.ts` | safety no longer outranks | 2 | 0 |
+| B2-M2 | S78 | `lib/compassDecision.ts` | no live evidence answered GO NOW | 4 | 0 |
+| B2-M3 | S78 | `lib/compassDecision.ts` | a sponsored claim counted as a reading | 3 | 0 |
+| B2-M4 | S78 | `lib/compassDecision.ts` | "could not look" collapsed into "saw nothing" | 2 | 0 |
+| B2-M5 | S86 | `lib/compassDecision.ts` | interception never fails | 4 | 0 |
+| B2-M6 | S86 | `lib/compassDecision.ts` | the horizon taken as the latest, not the earliest | 1 | 0 |
+| B2-M7 | S80 | `lib/compassDecision.ts` | the switching cost set to zero | 1 | 0 |
+| B2-M8 | S80 | `lib/compassDecision.ts` | dwell ignored | 1 | 0 |
+| B2-M9 | S80 | `lib/compassDecision.ts` | an unknown current value defaulted to 0.5 | 2 | 0 |
+| B2-M10 | S78 | `lib/compassDecision.ts` | busy read as good with no intent | 2 | 0 |
+| B2-M11 | S78, S79 | `lib/compassDecision.ts` | a vibe described whether or not Live-qualified | 2 | 0 |
+| B2-M12 | S78 | `routes/compassDecision.ts` | the flag read ignored | 3 | 0 |
+| DB-3 | S78 | replica | 2800 applied, rolled back (row gone), applied (FALSE) | — | — |
+
+### 2.4 The ceiling
+
+Nothing here is deployed, enabled or production-realised. 2800 exists on
+the lane's replica and nowhere else; `compass_decision_enabled` is seeded
+FALSE and is the owner's to turn on — it opens a new user-facing surface.
+Behind it the Live gates still decide what is served, and in production
+every intel table holds zero rows and `intel_live_promoted_scopes` is empty,
+so the route there answers WAIT with `no_live_evidence` for every place: a
+decision engine with nothing to decide on, and honest about it. No client
+calls the route. **Realised in production: 0.0 %**, unchanged.
+
+## 3. The Wall's moments, and the engine that decides who is interrupted
+
+**Read against the branch `claude/sensing-lane`, 2026-09-12, by the Sensing
+lane.** Three N rows and one W row on the Wall side of the spec: §9's
+demand that the Wall consume meaningful state transitions rather than
+repeated snapshots (S73), the server-built `WallMoment` with subject,
+transition, occurred_at, relevance window, reason, truth class, freshness
+and expiry (S74), the split between the Live Now strip and a chronological
+record of transitions (S76), and §15's mandatory Attention Engine — world
+changes routed through relevance, novelty, urgency, half-life, availability,
+interruption cost and an attention budget before NOTIFY / WALL / SILENT /
+IGNORE (S102). One migration, 2801, seeds a flag FALSE; no table, no column,
+no write path, and the engine sends nothing. The Wall's own route file is
+untouched; the new route sits beside it behind the Wall's master flag. Every
+rule went red under a mutation before its commit; the mutations are listed
+in §3.3.
+
+### 3.1 What was built, and where
+
+- **§9 a moment is a change (S73, S74)** — `lib/wallMoments.ts:41#WALL_TRANSITIONS`
+  is §9's place-state family: warming, building, peaking, cooling, crowd
+  shift, vibe change, queue change, a safety notice activated or cleared.
+  `lib/wallMoments.ts:140#detectTransitions(` compares each CURRENT envelope
+  — from `readLiveClaimEnvelopes`, the one gated read path — against the
+  PREVIOUS readings of the same claim type from the projection's own
+  append-only record, and emits a transition only when the value changed:
+  the same value projected again is not a moment, and a first reading with
+  nothing on record to change from is not a change
+  (`lib/wallMoments.ts:161#record`; `test/wallMoments.test.ts:70#same`;
+  `test/wallMoments.test.ts:74#first`). The transition is dated when the
+  current value BECAME current — the first version that carried it after the
+  last differing one — not when it was last observed
+  (`lib/wallMoments.ts:165#becameCurrentAt`; `test/wallMoments.test.ts:77#dated`).
+  A safety activation comes only from a served `unsafe_density`, the
+  specialist-only level no contributor surface can emit
+  (`lib/wallMoments.ts:125#safety_notice_activated`;
+  `test/wallMoments.test.ts:105#ONLY`); trajectories map emerging → warming,
+  building, peaking, declining → cooling, and stable to no moment.
+  `lib/wallMoments.ts:189#buildWallMoment(` carries §9's eight fields and the
+  §5.1 block of the envelope that evidences it, through the same derivation
+  the Compass decision uses (`lib/liveEnvelopeTruth.ts:16#truthOfEnvelope(`),
+  so a sponsored change is `inferred` and a stale one `stale`
+  (`test/wallMoments.test.ts:136#carries`; `test/wallMoments.test.ts:153#sponsored`);
+  the id names the subject, the claim type, the instant and the value, so a
+  client can say it has seen it. `lib/wallMoments.ts:208#buildWallMoments(`
+  drops the expired and orders newest change first. Nothing person-shaped is
+  in a moment (`test/wallMoments.test.ts:157#contributor`).
+- **§9 the previous side is a baseline, never a value served (S76)** —
+  `lib/wallMomentRead.ts:35#readPreviousReadings(` reads
+  `intel_state_snapshot_versions` (2273; present in the 2026-09-08 production
+  snapshot) for one subject, privacy-eligible rows only
+  (`lib/wallMomentRead.ts:47#privacy_eligible`) — a sub-k version is never
+  read, so nothing the gate withheld can leak through a comparison — and
+  reports a failed read as a NAMED refusal: an absent table is
+  `versions_unavailable`, anything else `error`, never an empty list
+  (`lib/wallMomentRead.ts:51#versions_unavailable`;
+  `test/wallMomentsRoute.test.ts:167#REFUSAL`;
+  `test/wallMomentsRoute.test.ts:163#sub-k`). The Live Now strip is
+  untouched and keeps consuming current projections
+  (`services/wall/LiveForYouService.ts:212#buildLiveForYou(`); the record of
+  transitions is a different object on a different route, so neither
+  duplicates the other.
+- **§15 the Attention Engine (S102)** — `lib/attentionEngine.ts:42#ATTENTION_ROUTES`
+  is NOTIFY / WALL / SILENT / IGNORE, and `lib/attentionEngine.ts:121#routeAttention(`
+  decides one moment for one viewer with every factor the row names on the
+  decision (`test/attentionEngine.test.ts:63#factor`): novelty first — a
+  moment the viewer has seen is IGNORE whatever else is true, a safety
+  activation included (`lib/attentionEngine.ts:134#already_seen`;
+  `test/attentionEngine.test.ts:70#seen`); half-life — past its relevance
+  window IGNORE, most of the way through it stale news
+  (`lib/attentionEngine.ts:141#decayed`; `test/attentionEngine.test.ts:86#stale`);
+  relevance — none is IGNORE, a saved place or trip stop may be interrupted
+  for, a followed place reaches the Wall, merely nearby only when urgent
+  (`lib/attentionEngine.ts:57#NOTIFY_RELEVANCE_FLOOR`;
+  `lib/attentionEngine.ts:61#RELEVANCE_WEIGHT`;
+  `test/attentionEngine.test.ts:102#followed`); urgency from the transition
+  kind (`lib/attentionEngine.ts:69#URGENCY_OF`); availability — quiet hours
+  or push off defer an urgent change to the Wall, and UNKNOWN availability is
+  not availability: an unreadable consent defers too, it is never read as
+  consent (`lib/attentionEngine.ts:144#availability_unknown_deferred_to_wall`;
+  `test/attentionEngine.test.ts:122#UNKNOWN`); interruption cost against the
+  attention budget — the interruptions already delivered in the window
+  exhaust it (`lib/attentionEngine.ts:146#budget_exhausted_deferred_to_wall`;
+  `lib/attentionEngine.ts:49#ATTENTION_BUDGET_PER_WINDOW`;
+  `test/attentionEngine.test.ts:127#budget`); and the safety override — an
+  activation for a saved place or trip stop is NOTIFY through quiet hours,
+  through an unknown consent read and past the budget, the same override the
+  notification path's safety category has, and never past novelty
+  (`lib/attentionEngine.ts:139#safety_override`;
+  `test/attentionEngine.test.ts:139#through`). The engine reads no clock and
+  no database and sends nothing (`test/attentionEngine.test.ts:58#sends`).
+- **The route** — `GET /api/wall/moments` (`routes/wallMoments.ts:94#router.get(`)
+  reads `wall_enabled` and then `wall_moments_enabled` fail-closed
+  (`routes/wallMoments.ts:104#wall_enabled`;
+  `routes/wallMoments.ts:108#wall_moments_enabled`), takes the subjects the
+  client names — its saved places, its trip stops, the places it is near, a
+  viewer-relevant bounded set as the Live For You rule requires — with the
+  relevance the client declares and the moment ids it has shown; per subject
+  it reads the current claims through the seam
+  (`routes/wallMoments.ts:132#readLiveClaimEnvelopes(sc`), the previous
+  readings from the record (`routes/wallMoments.ts:137#readPreviousReadings(sc`),
+  builds the moments and routes each one for this viewer
+  (`routes/wallMoments.ts:144#routeAttention(`) with availability from the
+  viewer's notification preferences — quiet hours, push — and the hour's
+  delivered notifications as the interruption cost
+  (`routes/wallMoments.ts:69#viewerAvailability(sc`;
+  `routes/wallMoments.ts:79#notifiesInWindow(sc`); an unknowable count is
+  treated as the budget spent. It answers newest change first with a report
+  per subject that tells "no moments" from "could not look" and "no versions
+  to compare". It writes nothing and sends nothing. Registered at the tail
+  of `routes/index.ts:339#wallMomentsRouter`. 2801 seeds the flag FALSE and
+  refuses to commit a TRUE row (`migrations/2801_wall_moments_flag.sql:41#INSERT`;
+  `migrations/2801_wall_moments_flag.sql:54#reads`); the rollback refuses
+  over a TRUE row (`db/rollback/2026-09-12-2801-wall-moments-flag-rollback.sql:23#DELETE`)
+  and was rehearsed apply → rollback → apply on the lane's replica. The route
+  suite drives the real handler over the fake PostgREST double: the flag
+  absent (production's state) or false, or the Wall's master off, answer
+  `feature_disabled` and read nothing (`test/wallMomentsRoute.test.ts:99#ABSENT`;
+  `test/wallMomentsRoute.test.ts:104#master`); a changed value is a moment
+  with its transition, occurred_at, truth and a route for the viewer
+  (`test/wallMomentsRoute.test.ts:113#changed`); an unchanged value is not
+  (`test/wallMomentsRoute.test.ts:127#UNCHANGED`); a safety activation for a
+  saved place is NOTIFY in quiet hours and IGNORE once seen
+  (`test/wallMomentsRoute.test.ts:132#safety`); a peak for a saved place is
+  deferred to the Wall when the hour's three notifications have spent the
+  budget (`test/wallMomentsRoute.test.ts:146#urgent`); the Live pilot closed
+  refuses every subject by name, and nothing served for a place — production's
+  state — is no moment and no refusal (`test/wallMomentsRoute.test.ts:172#CLOSED`;
+  `test/wallMomentsRoute.test.ts:177#nothing`). Nothing person-shaped
+  reaches the wire.
+- **One module shared, one refactor** — `lib/liveEnvelopeTruth.ts:16#truthOfEnvelope(`
+  is the §5.1 block of one live envelope through the Wall's derivation;
+  `lib/compassDecision.ts` now imports it instead of defining it, with its
+  behaviour unchanged — its two suites pass unmodified (43 / 43), which is
+  the re-derivation of S78, S80 and S86 on the refactored file. The
+  refactor shortened the file, so every §2 citation into it was re-anchored
+  in this section's commit (`check:doc-citations` reported all fourteen and
+  is clean again); the code each anchor names did not change.
+
+### 3.2 Row moves
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| S73 Wall consumes meaningful state transitions, not repeated snapshots of unchanged state | N | **C** | A transition is a change between the current live claim and the projection's own previous version; the same value again is not one and a first reading is not a change (B3-M1 red); served newest-first on `GET /api/wall/moments` behind 2801's FALSE flag and the Wall's master, route-tested (B3-M13 red). |
+| S74 Server-built `WallMoment` with subject, transition, occurred_at, relevance window, reason, truth class, freshness, expiry | N | **C** | All eight fields on every moment, occurred_at the instant the value became current (B3-M2 red), a safety activation only from a served `unsafe_density` (B3-M3 red), the expired dropped (B3-M4 red), the truth block the evidencing envelope's own. |
+| S76 Live Now strip consumes current projections; chronological Wall records transitions/history; do not duplicate both | W | **C** | The strip is untouched and consumes current envelopes; the moments route is the chronological record of transitions — a different object, with the previous side a privacy-eligible baseline never served (B3-M10, B3-M11 red) — so neither duplicates the other. The Following lane does not interleave moments; a client composes the two. |
+| S102 Attention Engine is mandatory: world changes route through relevance, novelty, urgency, half-life, availability, interruption cost and attention budget before NOTIFY / WALL / SILENT / IGNORE | N | **C** | Every moment the route serves passes through the engine (B3-M12 red when skipped) and every factor is on the decision; novelty, half-life, unknown availability, the budget and the safety override each red under their own mutation (B3-M5 to B3-M9). NOTIFY is a routing decision on the wire: no server dispatcher consumes it, and no world change reaches a notification by any other path. |
+
+**Held, with the reason.** **S75** and **S77** hold C: the Following lane is
+still strict reverse-chronological and the moments route is a record, not a
+ranking; personalization decides whether a moment matters to the viewer and
+rewrites nothing in it. **S89** holds C and is less vacuous than it was:
+Telegraph still consumes no live intelligence, but the Wall now serves
+moments that carry no contributor either. **S87** and **S88** stay N: a
+moment is now a canonical object with an id a Telegraph share could
+reference, and nothing shares one. **S60** and **S44** hold C: the Map's
+world moments are cell-level changes over published aggregates; the Wall's
+are place-level changes over projected claims; the two do not overlap and
+neither reads the other. **S49** stays W: the Wall's moments carry all four
+fields, and Discovery's candidate and Compass's states still do not.
+
+### 3.3 The mutations, in one place
+
+| # | row(s) | file | what was changed | red | green |
+| --- | --- | --- | --- | ---: | ---: |
+| B3-M1 | S73 | `lib/wallMoments.ts` | an unchanged value emitted as a moment | 2 | 0 |
+| B3-M2 | S74 | `lib/wallMoments.ts` | occurred_at taken from the observation, not the change | 4 | 0 |
+| B3-M3 | S74 | `lib/wallMoments.ts` | a safety activation from an ordinary crowd change | 4 | 0 |
+| B3-M4 | S74 | `lib/wallMoments.ts` | expired moments served | 1 | 0 |
+| B3-M5 | S102 | `lib/attentionEngine.ts` | seen moments not ignored | 2 | 0 |
+| B3-M6 | S102 | `lib/attentionEngine.ts` | unknown availability read as available | 1 | 0 |
+| B3-M7 | S102 | `lib/attentionEngine.ts` | the budget ignored | 2 | 0 |
+| B3-M8 | S102 | `lib/attentionEngine.ts` | the half-life ignored | 1 | 0 |
+| B3-M9 | S102 | `lib/attentionEngine.ts` | the safety override dropped | 2 | 0 |
+| B3-M10 | S76 | `lib/wallMomentRead.ts` | a sub-k previous version read | 1 | 0 |
+| B3-M11 | S76 | `lib/wallMomentRead.ts` | a missing versions table read as "no moments" | 1 | 0 |
+| B3-M12 | S102 | `routes/wallMoments.ts` | the engine skipped on the route | 2 | 0 |
+| B3-M13 | S73 | `routes/wallMoments.ts` | the flag read ignored | 2 | 0 |
+| DB-4 | S73 | replica | 2801 applied, rolled back (row gone), applied (FALSE) | — | — |
+
+### 3.4 The ceiling
+
+Nothing here is deployed, enabled or production-realised. 2801 exists on
+the lane's replica and nowhere else; `wall_moments_enabled` is seeded FALSE
+behind a `wall_enabled` that is itself FALSE, and both are the owner's. In
+production every intel table holds zero rows and `intel_live_promoted_scopes`
+is empty, so the route there serves no moment for any place; the versions
+table it compares against is in the 2026-09-08 production snapshot, so
+where it will refuse is the pilot, not the schema. NOTIFY is a decision no
+dispatcher consumes. No client calls the route. **Realised in production:
+0.0 %**, unchanged.
+
+## 4. What a conversation shares, and whether it is still true
+
+**Read against the branch `claude/sensing-lane`, 2026-09-12, by the Sensing
+lane.** The two N rows of §12: Telegraph must share canonical references to
+ExperienceState / Opportunity / WorldMoment / SafetyNotice rather than
+copying stale prose (S87), and a shared live object may say that its state
+changed since it was shared (S88). One migration, 2802, seeds a flag FALSE;
+no table, no column. The write path is ONE `messages` row per share, and
+the reason it is the service client's is a fact read off the object, not
+the sentence: `public.messages` carries `msg_insert … WITH CHECK (false)`
+(`baseline/20260819_baseline_structure.sql:29369#msg_insert`; the same row
+on the lane's replica of the 2026-09-08 snapshot, pinned in
+`test/db/telegraphLiveReferences.db.test.ts:108#msg_insert`), so an
+authenticated member cannot INSERT a message through PostgREST at all.
+Telegraph's own route files are untouched; the new router sits beside them.
+Every rule went red under a mutation before its commit; the mutations are
+listed in §4.3.
+
+### 4.1 What was built, and where
+
+- **§12 a reference, not prose (S87)** — `lib/liveReference.ts:106#LiveReference`
+  is what a conversation shares: the subject (a place, id and name), the
+  kind, and per claim the snapshot id lib/liveClaimRead already serves as
+  provenance, the projection's own version id at share time when the record
+  could be read, the comparable VALUE at share time as the baseline "changed
+  since" is measured from, the observation time, the validity horizon, and
+  the §5.1 truth block composed weakest-wins over the claims
+  (`lib/liveReference.ts:82#LiveReferenceClaim`; `lib/liveReference.ts:206#buildLiveReference(`;
+  `test/liveReference.test.ts:113#carries`). The ONE human line names the
+  subject and the kind and nothing of the state
+  (`lib/liveReference.ts:220#referenceText`; `lib/liveReference.ts:76#KIND_WORD`),
+  so a client that renders only the line can never present the value as it
+  was at share time as if it were current — the test walks every claim's
+  value and asserts it is absent from the line
+  (`test/liveReference.test.ts:136#text must not carry`;
+  `test/telegraphLiveReferencesRoute.test.ts:271#includes`). A sender's own
+  note is bounded and never the state's words (`lib/liveReference.ts:197#NOTE_MAX`).
+  The kinds are exactly the three objects the tree has a canonical producer
+  for — `experience_state` (lib/mapExperienceState, S53), `world_moment`
+  (lib/wallMoments, S74), `safety_notice` (lib/mapProducers/safetyNoticeProducer,
+  S103's last stage) — and the fourth object §12 names, Opportunity, is
+  refused BY NAME because no canonical Opportunity object exists (S56, N):
+  `lib/liveReference.ts:61#UNREFERENCEABLE_SPEC_OBJECTS`,
+  `lib/liveReference.ts:27#THE FOURTH OBJECT`, `test/liveReference.test.ts:79#opportunity`.
+  What each kind points at is fixed: the experience kinds are evidenced by
+  the Wall's claim set (`lib/liveReference.ts:64#EXPERIENCE_REFERENCE_CLAIM_TYPES`,
+  asserted equal to `routes/wallMoments.ts` at `test/liveReference.test.ts:82#Wall`),
+  a safety reference only by the specialist-reviewed `unsafe_density` claim
+  (`lib/liveReference.ts:66#SAFETY_REFERENCE_CLAIM_TYPE`, asserted equal to the
+  map producer's pair at `test/liveReference.test.ts:82#producer`), a world
+  moment only by a transition lib/wallMoments detected
+  (`lib/liveReference.ts:145#selectReferenceEnvelopes(`; `test/liveReference.test.ts:104#transition`).
+  Nothing to point at is a named refusal, never an empty reference
+  (`lib/liveReference.ts:208#nothing_to_reference`; `test/liveReference.test.ts:141#refusal`).
+  A version pins ONLY when its value is the served value; a record that has
+  not caught up pins nothing rather than a version that says something else
+  (`lib/liveReference.ts:168#pinVersionId(`; `test/liveReference.test.ts:175#caught up`).
+  The stored body parses back and a foreign body does not
+  (`lib/liveReference.ts:273#parseLiveReference(`; `test/liveReference.test.ts:193#refuses`).
+
+- **§12 changed since sharing (S88)** — `lib/liveReference.ts:366#compareLiveReference(`
+  measures the shared reference against the CURRENT envelopes the caller
+  read through the gate. Per shared claim: the same value on the same
+  evidence is `unchanged`, the same value on newer evidence `reaffirmed`
+  (`lib/liveReference.ts:354#reaffirmed`), a different value `changed`, no
+  current claim `expired` past the shared horizon and `withdrawn` before it
+  (`lib/liveReference.ts:350#expired`; `test/liveReference.test.ts:234#withdrawn`;
+  `test/liveReference.test.ts:237#expired`); a current claim of a type the
+  reference did not carry, within the kind's types, is `added`
+  (`lib/liveReference.ts:385#added`; `test/liveReference.test.ts:248#added`).
+  `changedSinceShare` is true when any claim is changed / expired /
+  withdrawn / added (`lib/liveReference.ts:292#CHANGES_THAT_DIFFER`;
+  `lib/liveReference.ts:403#changedSinceShare`). A world-moment reference
+  additionally says whether the transition's value is still current
+  (`lib/liveReference.ts:398#momentStillCurrent`; `test/liveReference.test.ts:269#momentStillCurrent`).
+  When the current state cannot be read the answer is NULL with the
+  refusal on it — never false, which would read as "still true"
+  (`lib/liveReference.ts:331#refusedComparison(`; `test/liveReference.test.ts:278#null`).
+
+- **the routes** — `routes/telegraphLiveReferences.ts:100#router.post(` is
+  `POST /api/telegraph/threads/:threadId/live-references`: requireUser, the
+  flag read fail-closed (`routes/telegraphLiveReferences.ts:110#isFlagEnabled`),
+  membership by the predicate `authz.is_active_thread_member` uses — a
+  present member row with `left_at IS NULL`
+  (`lib/liveReferenceMessages.ts:35#isActiveThreadMember(`;
+  `lib/liveReferenceMessages.ts:46#left_at`;
+  `routes/telegraphLiveReferences.ts:130#forbidden`) — an ACTIVE, unmerged
+  place (`routes/telegraphLiveReferences.ts:76#readReferenceablePlace(`), then
+  `liveLabelsServable` and `readLiveClaimEnvelopes` — the one gated read
+  path, with live intelligence not servable a refusal and not a card
+  (`routes/telegraphLiveReferences.ts:141#liveLabelsServable`;
+  `routes/telegraphLiveReferences.ts:146#readLiveClaimEnvelopes`;
+  `test/telegraphLiveReferencesRoute.test.ts:330#live_intelligence_unavailable`).
+  A world moment takes the newest transition lib/wallMoments detects against
+  the previous readings (`routes/telegraphLiveReferences.ts:94#readPreviousReadings`;
+  `routes/telegraphLiveReferences.ts:96#detectTransitions`). The newest
+  privacy-eligible version per claim type is read to pin to, newest-first
+  asserted in code as well as asked of the query
+  (`lib/liveReferenceMessages.ts:66#readLatestVersions(`;
+  `lib/liveReferenceMessages.ts:83#sort`), and an unreadable record is a pin
+  withheld, not a share refused (`routes/telegraphLiveReferences.ts:163#versions`;
+  `routes/telegraphLiveReferences.ts:182#versionsPinned`). The card is
+  written as the service client — `card` / `live_reference`, the body the
+  reference — after membership is established, for the reason in the
+  module header (`lib/liveReferenceMessages.ts:7#WHY THE WRITE`;
+  `lib/liveReferenceMessages.ts:106#insert(`; `lib/liveReferenceMessages.ts:110#msg_type`;
+  `test/telegraphLiveReferencesRoute.test.ts:254#rows.length`;
+  `test/telegraphLiveReferencesRoute.test.ts:267#ver-now`). Nothing to
+  reference is the same named refusal on the wire and no card
+  (`routes/telegraphLiveReferences.ts:169#refusal`;
+  `test/telegraphLiveReferencesRoute.test.ts:295#nothing_to_reference`).
+  `routes/telegraphLiveReferences.ts:188#router.get(` is
+  `GET /api/telegraph/live-references/:messageId`: the card by id — absent,
+  deleted or another subtype reads as not found
+  (`lib/liveReferenceMessages.ts:148#subtype`) — membership on ITS thread,
+  a non-member answered exactly as an absent card so membership is not
+  disclosed (`routes/telegraphLiveReferences.ts:220#not_found`;
+  `test/telegraphLiveReferencesRoute.test.ts:391#absent`), the stored body
+  parsed, then the current envelopes through the same gate and the
+  comparison (`routes/telegraphLiveReferences.ts:236#compareLiveReference`;
+  `routes/telegraphLiveReferences.ts:237#current`), or the refused
+  comparison when live intelligence is not servable
+  (`routes/telegraphLiveReferences.ts:233#refusedComparison`;
+  `test/telegraphLiveReferencesRoute.test.ts:386#null`). The wire carries
+  the current claims only through that gate; nothing person-shaped is on it
+  (`test/telegraphLiveReferencesRoute.test.ts:282#forbidden`). Registered at
+  the tail of `routes/index.ts:344#telegraphLiveReferencesRouter`.
+
+- **2802 and its rollback** — `migrations/2802_telegraph_live_references_flag.sql:47#INSERT`
+  seeds `telegraph_live_references_enabled` FALSE, one row, `ON CONFLICT DO
+  NOTHING`, with a precondition that `messages` and `message_thread_members`
+  exist (`migrations/2802_telegraph_live_references_flag.sql:37#messages`)
+  and a postcondition refusing a TRUE row
+  (`migrations/2802_telegraph_live_references_flag.sql:60#reads TRUE`).
+  `db/rollback/2026-09-12-2802-telegraph-live-references-flag-rollback.sql:28#DELETE`
+  removes the FALSE row and refuses over a TRUE one
+  (`db/rollback/2026-09-12-2802-telegraph-live-references-flag-rollback.sql:23#reads TRUE`);
+  it deletes no card, because a flag removed does not unsend a conversation.
+  Rehearsed on the lane's replica: apply → rollback (row gone) → apply
+  (FALSE); then the row set TRUE by hand, and BOTH files refused (exit 3
+  each), then FALSE restored (DB-5).
+
+- **executed on a database** — `test/db/telegraphLiveReferences.db.test.ts:63#real database`
+  runs against the replica as the roles the policies name: the
+  `msg_insert` policy reads `false` in `pg_policies` and an authenticated
+  active member's INSERT is refused with 42501
+  (`test/db/telegraphLiveReferences.db.test.ts:109#msg_insert`;
+  `test/db/telegraphLiveReferences.db.test.ts:121#42501`); the service role
+  writes the card and the body the database holds parses back as the
+  reference (`test/db/telegraphLiveReferences.db.test.ts:125#service role`);
+  `msg_select` — as re-created by
+  `migrations/2402_telegraph_membership_rls_recursion.sql:176#msg_select`, the
+  definition in force — serves it to the active member and to neither the
+  stranger nor the member who left (`test/db/telegraphLiveReferences.db.test.ts:144#stranger`;
+  `test/db/telegraphLiveReferences.db.test.ts:145#leaver`); and the
+  module's membership predicate agrees with `authz.is_active_thread_member`
+  for all three (`test/db/telegraphLiveReferences.db.test.ts:154#is_active_thread_member`).
+
+- **what is NOT here** — no Opportunity kind (S56 has no object); no
+  dispatcher, no push, no unread count; no change to `routes/telegraph.ts`,
+  `routes/telegraphChat.ts` or any Telegraph census file; no read of
+  `intel_observations`, `distinct_actors` or `source_count` — the reference
+  carries a coarse source class and a band, and the S89 pin walks the
+  stored body for every count- or person-shaped key
+  (`test/telegraphLiveReferencesRoute.test.ts:282#forbidden`). A ceiling the
+  header states outright (`lib/liveReference.ts:35#SAME GATE`): a safety
+  reference resolves through lib/liveClaimRead, which applies the per-scope
+  pilot allowlist that the map's `readSafetyNotices` deliberately skips, so
+  a specialist-reviewed safety claim at a venue outside the promoted scopes
+  is visible on the map and not referenceable from a conversation. That is
+  recorded rather than hidden behind a bypass of the gateway guard.
+
+### 4.2 Row moves
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| S87 Share canonical references to ExperienceState / Opportunity / WorldMoment / SafetyNotice rather than copying stale prose | N | **C** | A share is a `card` whose body is subject, kind, snapshot id, version id, value at share time and the truth block, and whose one human line carries no value (B4-M1 red); three kinds for the three objects with a producer, Opportunity refused by name because S56 has no object (B4-M3 red); a version pins only when its value is the served value (B4-M2 red); reached from `POST /api/telegraph/threads/:threadId/live-references` behind 2802's FALSE flag (B4-M13 red), members only (B4-M14 red), through the gated live read (B4-M16 red). |
+| S88 Shared live objects may indicate that state changed since sharing | N | **C** | `GET /api/telegraph/live-references/:messageId` resolves the stored reference against the current state and answers per claim unchanged / reaffirmed / changed / expired / withdrawn / added and `changedSinceShare` (B4-M6, B4-M7, B4-M9 red), NULL with the refusal — never false — when the current state cannot be read (B4-M8, B4-M17 red); the newest version is the one pinned (B4-M10 red). |
+| S89 Telegraph coordination may consume live intelligence but must not expose anonymous contributors | C | **C** | No longer vacuous: Telegraph now consumes live intelligence through the reference, and the stored body carries no count, cohort, contributor, device or user key (B4-M18 red on the sender id copied in); the current claims reach the wire only through the gated read (B4-M17 red). The `⌀` is lifted. |
+
+**Held, with the reason.** **S90** and **S91** hold C and stay `⌀`: Nearby
+& Available and the other coordination paths still read no intel table.
+**S56** stays N: refusing to name an Opportunity kind is the correct
+consequence of its absence, not a step toward it. **S103** stays W: the
+safety reference points at the last stage of the pipeline and adds no
+candidate stage. **S54** stays N and **S92** W: a share is not an
+ExperienceSession and closes no outcome. **S74** holds C: a world-moment
+reference carries the transition exactly as lib/wallMoments detected it and
+detects nothing of its own. The observation that the hidden-gem and meetup
+card writes in `routes/hiddenGems.ts` and `routes/meetups.ts` go through
+the user client against the same `msg_insert … WITH CHECK (false)` is
+recorded for the Telegraph lane and grades nothing here: this census counts
+no Telegraph row, and whether those writes succeed in production is not
+something the replica can say.
+
+### 4.3 The mutations, in one place
+
+| # | row(s) | file | what was changed | red | green |
+| --- | --- | --- | --- | ---: | ---: |
+| B4-M1 | S87 | `lib/liveReference.ts` | the human line copies the values | 3 | 0 |
+| B4-M2 | S87 | `lib/liveReference.ts` | a version pinned whose value is not the served value | 1 | 0 |
+| B4-M3 | S87 | `lib/liveReference.ts` | Opportunity admitted as a kind with no producer | 2 | 0 |
+| B4-M4 | S87 | `lib/liveReference.ts` | a safety reference to any crowd claim | 3 | 0 |
+| B4-M5 | S87 | `lib/liveReference.ts` | a foreign body parsed as a reference | 2 | 0 |
+| B4-M6 | S88 | `lib/liveReference.ts` | a different value read as reaffirmed | 3 | 0 |
+| B4-M7 | S88 | `lib/liveReference.ts` | expired and withdrawn swapped | 1 | 0 |
+| B4-M8 | S88 | `lib/liveReference.ts` | an unreadable current state read as "unchanged" | 2 | 0 |
+| B4-M9 | S88 | `lib/liveReference.ts` | an added facet not a change | 2 | 0 |
+| B4-M10 | S88 | `lib/liveReferenceMessages.ts` | the pinned version not the newest | 1 | 0 |
+| B4-M11 | S87 | `lib/liveReferenceMessages.ts` | a member who left still a member | 1 | 0 |
+| B4-M12 | S88 | `lib/liveReferenceMessages.ts` | a card of another subtype read as a reference | 1 | 0 |
+| B4-M13 | S87, S88 | `routes/telegraphLiveReferences.ts` | the flag read ignored on both routes | 2 | 0 |
+| B4-M14 | S87 | `routes/telegraphLiveReferences.ts` | a non-member may share | 2 | 0 |
+| B4-M15 | S88 | `routes/telegraphLiveReferences.ts` | a non-member may resolve another thread's card | 1 | 0 |
+| B4-M16 | S87 | `routes/telegraphLiveReferences.ts` | live gates closed, the share proceeds | 1 | 0 |
+| B4-M17 | S88, S89 | `routes/telegraphLiveReferences.ts` | live gates closed, the resolve compares against nothing | 1 | 0 |
+| B4-M18 | S89 | `routes/telegraphLiveReferences.ts` | the sender id copied into the reference | 2 | 0 |
+| DB-5 | S87 | replica | 2802 applied, rolled back (row gone), applied (FALSE); over a TRUE row both files refused | — | — |
+
+### 4.4 The ceiling
+
+Nothing here is deployed, enabled or production-realised. 2802 exists on
+the lane's replica and nowhere else; `telegraph_live_references_enabled` is
+seeded FALSE and is the owner's, and it opens a surface that WRITES a
+members' message, which is a heavier decision than the read-only surfaces of
+§2 and §3. In production every intel table holds zero rows and
+`intel_live_promoted_scopes` is empty, so a share there answers
+`live_intelligence_unavailable` or `nothing_to_reference` for every place
+and writes nothing. No client renders a `live_reference` card; until one
+does, a recipient sees whatever their client shows for an unknown card
+subtype. The Opportunity kind does not exist because the Opportunity object
+does not (S56). The safety ceiling in §4.1 stands. And the comparison is
+stateless by design — the reference carries its own baseline — so nothing
+here records that a recipient ever resolved it; "changed since sharing" is
+answered when asked, not pushed.
+
+## 5. What enters the safety pipeline
+
+**Read against the branch `claude/sensing-lane`, 2026-09-12, by the Sensing
+lane.** One W row of §16: world-intelligence evidence / anomaly → SAFETY
+CANDIDATE → the existing safety policy / review → the canonical safety
+assertion (S103). The row's own finding stands: the last two stages exist
+— the specialist-reviewed `crowd.level = unsafe_density` claim is the one
+assertion, projected by `lib/mapProducers/safetyNoticeProducer.ts` and
+unreachable from every contributor surface — and the first two did not,
+so nothing ever entered the pipeline. This section builds the first two
+and feeds the third rather than replacing it: a candidate is FILED into the
+review queue the platform already has, `moderation_reports`, as a
+system-originated `place` / `safety_concern` row — the queue
+`routes/admin.ts:2050#/admin/moderation/reports` already serves — and
+asserts nothing. One migration, 2803, seeds a flag FALSE; no table, no
+column. Every rule went red under a mutation before its commit; the
+mutations are listed in §5.3.
+
+### 5.1 What was built, and where
+
+- **§16 the anomaly, and what is never one (S103)** —
+  `lib/safetyCandidate.ts:151#detectSafetyCandidates(` reads a subject's
+  SERVED envelopes (from `readLiveClaimEnvelopes`, the one gated path) and
+  the projection's own previous readings, and emits at most one candidate
+  per shape (`lib/safetyCandidate.ts:55#SAFETY_CANDIDATE_REASONS`;
+  `lib/safetyCandidate.ts:20#WHAT IS AN ANOMALY`): density rising past
+  capacity — `packed` with a `building` / `peaking` trajectory
+  (`lib/safetyCandidate.ts:64#CANDIDATE_TRAJECTORIES`;
+  `test/safetyCandidate.test.ts:85#rising`); material conflict at capacity
+  — `packed` with the cohort in MATERIAL conflict, which
+  safetyNoticeProducer's own reading of §10 calls safety information
+  (`lib/safetyCandidate.ts:187#material`; `test/safetyCandidate.test.ts:96#material`);
+  a rapid density rise — `packed` with a reading at most `moderate` that
+  became current inside thirty minutes of the observation
+  (`lib/safetyCandidate.ts:127#rapidRiseFrom(`; `lib/safetyCandidate.ts:140#floor`;
+  `lib/safetyCandidate.ts:66#RAPID_RISE_WINDOW_MINUTES`;
+  `test/safetyCandidate.test.ts:103#rapid`). Never a candidate: the
+  assertion itself, because `unsafe_density` is where the pipeline ends
+  (`lib/safetyCandidate.ts:63#ASSERTED_CROWD_LEVEL`, asserted equal to the
+  map producer's level at `test/safetyCandidate.test.ts:68#producer`;
+  `lib/safetyCandidate.ts:160#CANDIDATE_CROWD_LEVEL`;
+  `test/safetyCandidate.test.ts:122#assertion`); anything below `packed`;
+  and any envelope whose class is not an independent observation — a
+  historical pattern, a prediction, or one party talking about itself —
+  admitted by source class through lib/intelContracts' own predicates and
+  deliberately NOT by truth class, because a cohort in material conflict
+  derives a non-observational truth class and is exactly the second shape
+  (`lib/safetyCandidate.ts:104#evidenceAdmissible(`;
+  `test/safetyCandidate.test.ts:129#non-observational`).
+
+- **§16 the candidate carries evidence and no one** — a candidate is the
+  subject, the reason, the snapshot ids and values it rests on, the §5.1
+  truth block of that evidence, the instant of detection and the evidence's
+  own horizon (`lib/safetyCandidate.ts:86#SafetyCandidate`;
+  `lib/safetyCandidate.ts:75#SafetyCandidateEvidence`). Its stored form
+  refuses, at write, every count-, cohort-, contributor-, device- or
+  user-shaped key (`lib/safetyCandidate.ts:200#CANDIDATE_FORBIDDEN_KEYS`;
+  `lib/safetyCandidate.ts:223#must not carry`;
+  `test/safetyCandidate.test.ts:159#never a count`) — the rule the safety
+  notice keeps ("no presence payload"), because a specialist reading the
+  queue is still a reader. It parses back, and a person's own report does
+  not parse as the detector's (`lib/safetyCandidate.ts:229#parseCandidateDetails(`;
+  `lib/safetyCandidate.ts:235#reason`; `test/safetyCandidate.test.ts:171#did not write`).
+
+- **§16 into the EXISTING review, not a parallel one** —
+  `lib/safetyCandidate.ts:246#candidateReportRow(` is the row a candidate is
+  filed as: `moderation_reports`, `reporter_id` NULL (the reporter is the
+  detector), `subject_type` `place`, `category` `safety_concern`, `status`
+  `open`, the candidate in `details` under its own prefix
+  (`lib/safetyCandidate.ts:256#reporter_id`; `lib/safetyCandidate.ts:260#category`;
+  `lib/safetyCandidate.ts:72#SAFETY_CANDIDATE_DETAILS_PREFIX`;
+  `test/safetyCandidate.test.ts:141#no reporter`). That is the queue
+  `routes/admin.ts:2050#/admin/moderation/reports` serves to reviewers
+  today, with its `place` filter; the row shape is one the table already
+  admits, verified on the object rather than assumed — 2803's preconditions
+  read the table's own CHECK constraints and the column's nullability and
+  refuse to seed a flag for a stage that would fail on its first write
+  (`migrations/2803_intel_safety_candidates_flag.sql:51#safety_concern`;
+  `migrations/2803_intel_safety_candidates_flag.sql:56#place`;
+  `migrations/2803_intel_safety_candidates_flag.sql:61#reporter_id`;
+  `migrations/2803_intel_safety_candidates_flag.sql:22#NO TABLE`). The
+  service client writes it (`lib/safetyCandidateStore.ts:90#fileCandidateReport(`;
+  `lib/safetyCandidateStore.ts:93#insert(`); a candidate already open or
+  reviewing for the same subject and reason is not filed again, and a
+  reviewer's dismissed or actioned row does not block a fresh one
+  (`lib/safetyCandidateStore.ts:64#openCandidateReasons(`;
+  `lib/safetyCandidateStore.ts:31#OPEN_REPORT_STATUSES`;
+  `lib/safetyCandidateStore.ts:73#status`;
+  `test/adminSafetyCandidatesRoute.test.ts:250#not filed again`;
+  `test/adminSafetyCandidatesRoute.test.ts:265#DISMISSED`).
+
+- **the routes** — `routes/adminSafetyCandidates.ts:60#router.post(` is
+  `POST /api/admin/intel/safety-candidates/scan`: requireAdmin
+  (`routes/adminSafetyCandidates.ts:63#requireAdmin(`), the flag read
+  fail-closed (`routes/adminSafetyCandidates.ts:70#isFlagEnabled`), live
+  intelligence servable or a refusal before anything is read
+  (`routes/adminSafetyCandidates.ts:81#liveLabelsServable`;
+  `test/adminSafetyCandidatesRoute.test.ts:304#not servable`); the subjects
+  the caller names (≤ 50) or, absent, the bounded sweep of every place
+  whose current `crowd.level` is served as `packed` — privacy-eligible and
+  unexpired, the safety notice read's own two per-row gates, choosing only
+  WHERE to look (`routes/adminSafetyCandidates.ts:88#listSweepSubjects(`;
+  `lib/safetyCandidateStore.ts:41#listSweepSubjects(`;
+  `lib/safetyCandidateStore.ts:50#packed`;
+  `test/adminSafetyCandidatesRoute.test.ts:294#sweep`); per subject the
+  current envelopes through the gate and the previous readings from the
+  record (`routes/adminSafetyCandidates.ts:101#readLiveClaimEnvelopes`;
+  `routes/adminSafetyCandidates.ts:103#readPreviousReadings`), a history
+  that cannot be read a per-subject REFUSAL and never "no candidate"
+  (`routes/adminSafetyCandidates.ts:105#refusal`;
+  `test/adminSafetyCandidatesRoute.test.ts:317#REFUSAL`), detection
+  (`routes/adminSafetyCandidates.ts:108#detectSafetyCandidates(`), the
+  dedupe against the queue (`routes/adminSafetyCandidates.ts:117#open.reasons`)
+  and the filing, a refused write named on the answer
+  (`routes/adminSafetyCandidates.ts:123#queue_write_failed`;
+  `test/adminSafetyCandidatesRoute.test.ts:332#refuses the write`). One row
+  per new candidate and nothing else on the wire
+  (`test/adminSafetyCandidatesRoute.test.ts:216#ONE report`).
+  `routes/adminSafetyCandidates.ts:140#router.get(` is
+  `GET /api/admin/intel/safety-candidates`: the detector's own rows still
+  open or reviewing, newest first, parsed — a person's report is not among
+  them (`lib/safetyCandidateStore.ts:112#listOpenCandidates(`;
+  `lib/safetyCandidateStore.ts:121#reporter_id`;
+  `test/adminSafetyCandidatesRoute.test.ts:341#not a person`). A non-admin
+  is refused before the flag is read
+  (`test/adminSafetyCandidatesRoute.test.ts:205#non-admin`). Registered at
+  the tail of `routes/index.ts:349#adminSafetyCandidatesRouter`;
+  `routes/admin.ts` and `routes/moderation.ts` are untouched.
+
+- **2803 and its rollback** — `migrations/2803_intel_safety_candidates_flag.sql:70#INSERT`
+  seeds `intel_safety_candidates_enabled` FALSE, one row, `ON CONFLICT DO
+  NOTHING`, with the preconditions above and a postcondition refusing a
+  TRUE row (`migrations/2803_intel_safety_candidates_flag.sql:83#reads TRUE`).
+  `db/rollback/2026-09-12-2803-intel-safety-candidates-flag-rollback.sql:28#DELETE`
+  removes the FALSE row and refuses over a TRUE one
+  (`db/rollback/2026-09-12-2803-intel-safety-candidates-flag-rollback.sql:23#reads TRUE`);
+  it withdraws no candidate already before a reviewer. Rehearsed on the
+  lane's replica: apply → rollback (row gone) → apply (FALSE); then the row
+  set TRUE by hand, and BOTH files refused (exit 3 each), then FALSE
+  restored (DB-6).
+
+- **executed on a database** — `test/db/safetyCandidate.db.test.ts:55#real database`
+  runs against the replica: the row the module builds is accepted by the
+  queue's own CHECK constraints when the service role writes it, and the
+  details the database holds parse back as the candidate
+  (`test/db/safetyCandidate.db.test.ts:76#admits`); a category or subject
+  type outside the queue's vocabulary is refused by the same CHECKs
+  (`test/db/safetyCandidate.db.test.ts:97#CHECK`); no client role reads a
+  reporterless row, because the SELECT policies are `reporter_id =
+  auth.uid()` (`test/db/safetyCandidate.db.test.ts:114#no client role`);
+  and an authenticated INSERT with no reporter is refused, so a client
+  cannot forge a system-originated candidate
+  (`test/db/safetyCandidate.db.test.ts:119#cannot file`).
+
+- **what is NOT here** — no scheduler: the stage is operator-triggered,
+  because wiring one is a line in `src/index.ts`, a shared file this lane
+  does not edit; the sweep is the same read a scheduler would make, and
+  registering it is one line at integration. No write to
+  `intel_state_snapshots`, `intel_claims` or any intel table; no snapshot,
+  no notice, no assertion — a confirmed candidate becomes an assertion only
+  through the specialists' existing path, which this section does not
+  touch and cannot see. No change to `routes/admin.ts`,
+  `routes/moderation.ts` or any file another census counts.
+
+### 5.2 Row moves
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| S103 World intelligence evidence/anomaly → SAFETY CANDIDATE → existing safety policy/review → canonical safety assertion | W | **C** | The two missing stages exist: three anomaly shapes over served envelopes and the projection's record (B5-M2 to B5-M5 red), the assertion itself never a candidate (B5-M1 red), evidence admitted by source class (B5-M6 red), a candidate carrying refs and values and no one (B5-M7 red), filed into the EXISTING `moderation_reports` review as place / safety_concern with no reporter (B5-M8, B5-M10 red) and not filed twice (B5-M11, B5-M13 red); reached from `POST /api/admin/intel/safety-candidates/scan` behind 2803's FALSE flag and requireAdmin (B5-M14, B5-M15 red), through the gated live read (B5-M16 red). The last two stages are the ones the row already found. |
+
+**Held, with the reason.** **S66** holds C: a candidate outranks nothing
+and is rendered nowhere; safety still outranks opportunity on every surface
+that renders it. **S104** and **S105** hold C: a candidate reads no trust
+score and writes none, and no person is scored by it. **S106** holds W:
+the candidate stage is not a Rent-a-Buddy safety path and does not claim
+to be. **S74** holds C: a `safety_notice_activated` moment still comes only
+from a served `unsafe_density`, never from a candidate. **S8** holds C: a
+candidate is not a crowd label; `packed` stays `packed` on every surface
+while a specialist decides. What the census cannot say: whether any
+specialist reads `GET /admin/moderation/reports` for `place` rows, or how
+a confirmed candidate becomes an `unsafe_density` claim — that path is the
+specialists' and is not in the tree.
+
+### 5.3 The mutations, in one place
+
+| # | row(s) | file | what was changed | red | green |
+| --- | --- | --- | --- | ---: | ---: |
+| B5-M1 | S103 | `lib/safetyCandidate.ts` | the assertion itself admitted as a candidate | 1 | 0 |
+| B5-M2 | S103 | `lib/safetyCandidate.ts` | a stable trajectory counted as rising | 2 | 0 |
+| B5-M3 | S103 | `lib/safetyCandidate.ts` | minor conflict read as material | 1 | 0 |
+| B5-M4 | S103 | `lib/safetyCandidate.ts` | the rapid-rise window ignored | 1 | 0 |
+| B5-M5 | S103 | `lib/safetyCandidate.ts` | `busy` admitted as a rise-from level | 2 | 0 |
+| B5-M6 | S103 | `lib/safetyCandidate.ts` | a prediction, a pattern or a sponsored claim admitted as evidence | 1 | 0 |
+| B5-M7 | S103 | `lib/safetyCandidate.ts` | a count key in the evidence not refused | 1 | 0 |
+| B5-M8 | S103 | `lib/safetyCandidate.ts` | filed under another category | 2 | 0 |
+| B5-M9 | S103 | `lib/safetyCandidate.ts` | a foreign reason parsed as the detector's | 1 | 0 |
+| B5-M10 | S103 | `lib/safetyCandidate.ts` | the details prefix dropped | 2 | 0 |
+| B5-M11 | S103 | `lib/safetyCandidateStore.ts` | dismissed and actioned rows treated as still open | 2 | 0 |
+| B5-M12 | S103 | `lib/safetyCandidateStore.ts` | the sweep not limited to places served as packed | 1 | 0 |
+| B5-M13 | S103 | `routes/adminSafetyCandidates.ts` | an open candidate filed again | 1 | 0 |
+| B5-M14 | S103 | `routes/adminSafetyCandidates.ts` | the flag read ignored on both routes | 2 | 0 |
+| B5-M15 | S103 | `routes/adminSafetyCandidates.ts` | members admitted as admins | 1 | 0 |
+| B5-M16 | S103 | `routes/adminSafetyCandidates.ts` | live gates closed, the scan proceeds | 1 | 0 |
+| B5-M17 | S103 | `routes/adminSafetyCandidates.ts` | an unreadable history read as "no candidate" | 1 | 0 |
+| B5-M18 | S103 | `routes/adminSafetyCandidates.ts` | a refused queue write swallowed | 1 | 0 |
+| DB-6 | S103 | replica | 2803 applied, rolled back (row gone), applied (FALSE); over a TRUE row both files refused | — | — |
+
+### 5.4 The ceiling
+
+Nothing here is deployed, enabled or production-realised. 2803 exists on
+the lane's replica and nowhere else; `intel_safety_candidates_enabled` is
+seeded FALSE and is the owner's, and it opens a stage that WRITES to the
+moderation queue. In production every intel table holds zero rows and
+`intel_live_promoted_scopes` is empty, so a scan there reads nothing, sweeps
+nothing and files nothing. The stage is operator-triggered, not scheduled;
+a scheduler is one line in `src/index.ts` at integration and this census
+will not count the stage as automatic until that line exists. A candidate
+is a question; whether anyone answers it — whether a specialist reads the
+`place` filter of the admin queue and by what path a confirmed candidate
+becomes the `unsafe_density` claim the notice producer projects — is
+outside the tree and outside this row. And the three shapes are the three
+the served vocabulary can express today: no dwell, no flow, no acoustic or
+motion signal feeds them, because no such signal is captured (S28, S29).

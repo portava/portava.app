@@ -258,6 +258,39 @@ describe("the straight-line adapter", () => {
     }
   });
 
+  it("is the FASTEST mode, so it is a lower bound at every distance: a 1.9 km hop is a taxi's 7 minutes, not a walk's 26", async () => {
+    const near = { lat: LISBON.lat + 0.0171, lng: LISBON.lng };   // ~1.9 km
+    const m = haversineMeters(LISBON, near);
+    assert.ok(m > 1800 && m < WALK_MAX_METRES, `${m} m`);
+    const r = await straightLineTravelTimeProvider.estimate({ from: LISBON, to: near, departAt: new Date() });
+    assert.equal(r.kind, "estimate");
+    if (r.kind === "estimate") {
+      assert.equal(r.estimate.minutes, Math.ceil((m / DRIVE_METRES_PER_SECOND + DRIVE_WAIT_SECONDS) / 60));
+      assert.ok(r.estimate.minutes < Math.ceil(m / WALK_METRES_PER_SECOND / 60));
+    }
+    // An explicitly requested mode is a policy, not a bound, and is honoured.
+    const walked = await straightLineTravelTimeProvider.estimate({ from: LISBON, to: near, departAt: new Date(), mode: "walk" });
+    if (walked.kind === "estimate") assert.equal(walked.estimate.minutes, Math.ceil(m / WALK_METRES_PER_SECOND / 60));
+  });
+
+  it("is subadditive: going via a third point is never faster than the direct line (what §22.4's property needs)", async () => {
+    const at = (dLat: number, dLng: number) => ({ lat: LISBON.lat + dLat, lng: LISBON.lng + dLng });
+    const mins = async (from: { lat: number; lng: number }, to: { lat: number; lng: number }) => {
+      const r = await straightLineTravelTimeProvider.estimate({ from, to, departAt: new Date() });
+      return r.kind === "estimate" ? r.estimate.minutes : Number.NaN;
+    };
+    for (const [b, via] of [
+      [at(0.018, 0), at(0.017, 0.001)],       // the case that broke: 2001 m via a point 1 m short of the direct 2000 m
+      [at(0.002, 0), at(0.001, 0.0005)],      // all walking
+      [at(0.2, 0.1), at(0.1, 0.05)],          // all driving
+      [at(0.003, 0), at(0.0015, 0.002)],      // walk + drive mix
+    ] as const) {
+      const direct = await mins(LISBON, b);
+      const detour = (await mins(LISBON, via)) + (await mins(via, b));
+      assert.ok(detour >= direct, `detour ${detour} < direct ${direct}`);
+    }
+  });
+
   it("never claims to be routed, whatever the distance", async () => {
     for (const to of [SINTRA, MADRID, { lat: LISBON.lat + 0.001, lng: LISBON.lng }]) {
       const r = await straightLineTravelTimeProvider.estimate({ from: LISBON, to, departAt: new Date() });

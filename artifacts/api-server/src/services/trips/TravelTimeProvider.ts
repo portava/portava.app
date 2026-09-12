@@ -122,6 +122,26 @@ export const WALK_MAX_METRES = 2000;
  * and TripFeasibilityEngine is built around that asymmetry: a straight-line
  * INFEASIBLE is a real verdict; a straight-line FEASIBLE is not, and comes back
  * as FEASIBLE_UNVERIFIED.
+ *
+ * THE MODE IS THE FASTEST ONE, NOT THE LIKELIEST ONE (corrected 2026-09-12)
+ * =========================================================================
+ * Until census-trips §40.3 this adapter chose WALK for any hop under
+ * WALK_MAX_METRES and DRIVE above it — routeOptimizer's planning heuristic,
+ * which answers "how would a person probably go", not "how fast could they
+ * possibly get there". A 1.9 km hop came back as 26 minutes on foot when a
+ * taxi covers it in 7, so for every hop under two kilometres the number was
+ * NOT a lower bound and "a straight-line INFEASIBLE is a real verdict" was
+ * false there. It was found by the §22.4 property test in
+ * src/test/tripFreedomEngine.test.ts: inserting a commitment could make free
+ * time GROW, because a 2001 m drive was "faster" than a 2000 m walk.
+ *
+ * When no mode is asked for, the bound is now the MINIMUM over the modes this
+ * adapter knows — walking below ~250 m, driving above — which is monotone in
+ * distance and subadditive (a detour is never faster than the direct line),
+ * the two properties a lower bound needs. An explicitly requested mode is
+ * honoured as before: a caller that says "walk" is stating a policy, and the
+ * number is then that mode's time, not a bound over modes. WALK_MAX_METRES
+ * stays exported for routeOptimizer parity and is no longer consulted here.
  */
 export const straightLineTravelTimeProvider: TravelTimeProvider = {
   id: "straight-line",
@@ -132,12 +152,14 @@ export const straightLineTravelTimeProvider: TravelTimeProvider = {
       return { kind: "unknown", reason: "PROVIDER_MALFORMED", detail: "non-finite coordinate" };
     }
     const metres = haversineMeters(q.from, q.to);
-    const mode: TravelMode = q.mode && q.mode !== "unknown"
-      ? q.mode
-      : metres > WALK_MAX_METRES ? "drive" : "walk";
-    const seconds = mode === "walk"
-      ? metres / WALK_METRES_PER_SECOND
-      : metres / DRIVE_METRES_PER_SECOND + DRIVE_WAIT_SECONDS;
+    const walkSeconds = metres / WALK_METRES_PER_SECOND;
+    const driveSeconds = metres / DRIVE_METRES_PER_SECOND + DRIVE_WAIT_SECONDS;
+    const requested: TravelMode = q.mode && q.mode !== "unknown" ? q.mode : "unknown";
+    // No mode asked for: the fastest of the modes this adapter knows. See the
+    // header for why the old "walk under 2 km" rule was not a lower bound.
+    const seconds = requested === "walk" ? walkSeconds
+      : requested === "drive" || requested === "transit" ? driveSeconds
+      : Math.min(walkSeconds, driveSeconds);
     return {
       kind: "estimate",
       estimate: pointTravelEstimate(

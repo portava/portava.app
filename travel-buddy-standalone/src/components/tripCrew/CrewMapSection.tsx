@@ -25,6 +25,7 @@ import { useTripCrewMap } from '../../hooks/useTripCrewMap.ts';
 import { enableGhostMode, disableGhostMode, updateCrewPreferences } from '../../services/tripCrewLocation.ts';
 import type { CrewMemberCard as CrewMemberCardType } from '../../services/tripCrewLocation.ts';
 import { errorCopy } from '../../lib/errorCopy.ts';
+import { crewPresenceBuckets } from '../../features/trips/crew/presence.ts';
 
 interface Props {
   tripId: string;
@@ -35,9 +36,9 @@ interface Props {
 // ── Approximate density map (no SDK) ─────────────────────────────────────────
 
 function DensityMap({ members }: { members: CrewMemberCardType[] }) {
-  const active = members.filter((m) => m.statusLabel !== 'not_shared' && m.statusLabel !== 'location_hidden');
-  const arrived = members.filter((m) => m.statusLabel === 'arrived');
-  const live = members.filter((m) => m.statusLabel === 'live_sharing_active');
+  // §10.2: "Live" is the server's verdict on the position, not the grant. A
+  // share over a stale fix is its own bubble — "Last known" — never the live one.
+  const { active, arrived, live, lastKnown } = crewPresenceBuckets(members);
 
   return (
     <View style={dm.wrap}>
@@ -62,8 +63,13 @@ function DensityMap({ members }: { members: CrewMemberCardType[] }) {
           </View>
         )}
         {live.length > 0 && (
-          <View style={[dm.clusterDot, { top: '35%', left: '30%', backgroundColor: color.signal }]}>
+          <View style={[dm.clusterDot, { top: '35%', left: '30%', backgroundColor: color.signal }]} testID="crew-density-live">
             <Text style={dm.clusterText}>{live.length}</Text>
+          </View>
+        )}
+        {lastKnown.length > 0 && (
+          <View style={[dm.clusterDot, { top: '60%', left: '62%', backgroundColor: color.mute }]} testID="crew-density-last-known">
+            <Text style={dm.clusterText}>{lastKnown.length}</Text>
           </View>
         )}
 
@@ -86,6 +92,10 @@ function DensityMap({ members }: { members: CrewMemberCardType[] }) {
         <View style={dm.legendItem}>
           <View style={[dm.dot, { backgroundColor: color.deep }]} />
           <Text style={dm.legendText}>Nearby</Text>
+        </View>
+        <View style={dm.legendItem}>
+          <View style={[dm.dot, { backgroundColor: color.mute }]} />
+          <Text style={dm.legendText}>Last known</Text>
         </View>
       </View>
 

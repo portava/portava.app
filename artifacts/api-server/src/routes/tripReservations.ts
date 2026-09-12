@@ -25,6 +25,9 @@ import {
   setTripVersionHeader,
 } from "../lib/tripKernel.js";
 import { requireUser, requireTripMember, sendError } from "../lib/http.js";
+import { canManageBooking } from "../lib/tripPolicy.js";
+import { sendTripRefusal } from "../lib/tripReasonCodes.js";
+import { reservationHistoryGate } from "../lib/tripReservationHistory.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { isFlagEnabled } from "../lib/featureFlags.js";
 import { extractReservations, RESERVATION_TYPES } from "../lib/reservationExtract.js";
@@ -86,13 +89,13 @@ async function requireReservationMember(
   }
   if (!trip) { sendError(res, "not_found", "Trip not found"); return null; }
 
-  const isOwner = (trip as any).owner_id === user.id;
-  let role = "owner";
-  if (!isOwner) {
-    const membership = await requireTripMember(sc, tripId, user.id);
-    if (!membership) { sendError(res, "not_member", "You must be an accepted trip member"); return null; }
-    role = membership.role;
-  }
+  // §6.1 canManageBooking: any accepted crew member may read and edit
+  // reservations. requireTripMember already answers "owner" for the trip's
+  // owner_id with no membership row, so one call covers both.
+  const membership = await requireTripMember(sc, tripId, user.id);
+  const booking = await canManageBooking(sc, { userId: user.id }, tripId, "read", { role: membership?.role ?? null });
+  if (!booking.allowed) { sendTripRefusal(res, "not_member", booking.reason, "You must be an accepted trip member"); return null; }
+  const role = membership?.role ?? "owner";
 
   return { sc, userId: user.id, trip, role };
 }
@@ -116,6 +119,15 @@ async function fetchReservation(
     .maybeSingle();
   if (!data) { sendError(res, "not_found", "Reservation not found"); return null; }
   return data;
+}
+
+/** `If-Match: 3` or `If-Match: "3"` → 3; absent or unparseable → null. */
+function readIfMatch(req: any): number | null {
+  const raw = req.headers?.["if-match"];
+  const text = Array.isArray(raw) ? raw[0] : raw;
+  if (typeof text !== "string") return null;
+  const m = /^\s*(?:W\/)?"?(\d+)"?\s*$/.exec(text);
+  return m ? Number(m[1]) : null;
 }
 
 /** creator OR trip owner/co_host may edit / confirm / dismiss. */
@@ -304,6 +316,34 @@ router.patch("/trips/:tripId/reservations/:id", asyncHandler(async (req, res) =>
   if (p.confirmationRef        !== undefined) patch.confirmation_ref         = p.confirmationRef;
   if (p.cancellationDeadlineAt !== undefined) patch.cancellation_deadline_at = toIsoOrNull(p.cancellationDeadlineAt);
 
+  // §18.3 (2784): optimistic concurrency on the ROW version. An If-Match that
+  // names a version the row no longer has is a conflict, stated by name, and
+  // nothing is written. Legacy behaviour — last write wins — where the gate is
+  // off or the schema is not there.
+  const history = await reservationHistoryGate(sc);
+  const ifMatch = readIfMatch(req);
+  if (history.enabled && ifMatch !== null) {
+    if (ifMatch !== Number((reservation as any).version ?? 0)) {
+      sendTripRefusal(res, "conflict", "TRIP_VERSION_CONFLICT",
+        `If-Match ${ifMatch} does not match the reservation's version ${(reservation as any).version}`);
+      return;
+    }
+    const { data: updated, error } = await sc
+      .from("trip_reservations")
+      .update(patch)
+      .eq("id", (reservation as any).id)
+      .eq("version", ifMatch)
+      .select("*")
+      .maybeSingle();
+    if (error) { sendError(res, "db_error", error.message); return; }
+    if (!updated) {
+      sendTripRefusal(res, "conflict", "TRIP_VERSION_CONFLICT", "The reservation changed while you were editing it");
+      return;
+    }
+    res.setHeader("ETag", String((updated as any).version));
+    res.json({ reservation: updated });
+    return;
+  }
   const { data: updated, error } = await sc
     .from("trip_reservations")
     .update(patch)
@@ -311,6 +351,7 @@ router.patch("/trips/:tripId/reservations/:id", asyncHandler(async (req, res) =>
     .select("*")
     .single();
   if (error) { sendError(res, "db_error", error.message); return; }
+  if (history.enabled) res.setHeader("ETag", String((updated as any).version));
 
   res.json({ reservation: updated });
 }));
@@ -490,10 +531,35 @@ router.delete("/trips/:tripId/reservations/:id", asyncHandler(async (req, res) =
   const reservation = await fetchReservation(sc, res, (trip as any).id, req.params.id);
   if (!reservation) return;
 
-  // Delete is stricter than edit: creator or trip OWNER only.
-  const isCreator = (reservation as any).user_id === userId;
-  if (!isCreator && role !== "owner") {
-    sendError(res, "forbidden", "Only the reservation creator or trip owner can delete it");
+  // Delete is stricter than edit: creator or trip OWNER only — §6.1
+  // canManageBooking("delete"), with the creator read off the row in hand.
+  const del = await canManageBooking(sc, { userId }, (trip as any).id, "delete",
+    { role, reservationCreatorId: (reservation as any).user_id ?? null });
+  if (!del.allowed) {
+    sendTripRefusal(res, "forbidden", del.reason, "Only the reservation creator or trip owner can delete it");
+    return;
+  }
+
+  // §15.4 (2784): a reservation is CANCELLED, never deleted by a client —
+  // "confirmed then cancelled, not confirmed row deleted". The history row
+  // names who did it (portava.actor is what the trigger reads; the service
+  // client cannot set a transaction GUC through PostgREST, so the actor is
+  // recorded on the compensation path and the cancel event carries the
+  // change itself). Legacy hard delete where the gate is off.
+  const history = await reservationHistoryGate(sc);
+  if (history.enabled) {
+    if ((reservation as any).status === "cancelled") {
+      res.json({ reservation, idempotent: true });
+      return;
+    }
+    const { data: cancelled, error } = await sc
+      .from("trip_reservations")
+      .update({ status: "cancelled", cancelled_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+      .eq("id", (reservation as any).id)
+      .select("*")
+      .single();
+    if (error) { sendError(res, "db_error", error.message); return; }
+    res.json({ reservation: cancelled });
     return;
   }
 
@@ -504,6 +570,64 @@ router.delete("/trips/:tripId/reservations/:id", asyncHandler(async (req, res) =
   if (error) { sendError(res, "db_error", error.message); return; }
 
   res.status(204).end();
+}));
+
+// ── GET /trips/:tripId/reservations/:id/history — §15.4 ───────────────────────
+
+router.get("/trips/:tripId/reservations/:id/history", asyncHandler(async (req, res) => {
+  const ctx = await requireReservationMember(req, res);
+  if (!ctx) return;
+  const { sc, trip } = ctx;
+  const reservation = await fetchReservation(sc, res, (trip as any).id, req.params.id);
+  if (!reservation) return;
+  const history = await reservationHistoryGate(sc);
+  if (!history.enabled) { sendError(res, "feature_disabled", `Reservation history is not enabled (${history.reason})`); return; }
+  const { data, error } = await sc
+    .from("trip_reservation_events")
+    .select("id, event_type, from_status, to_status, version, actor_user_id, changed_keys, payload_json, created_at")
+    .eq("reservation_id", (reservation as any).id)
+    .order("id", { ascending: true });
+  if (error) { sendError(res, "db_error", error.message); return; }
+  res.json({ reservationId: (reservation as any).id, version: (reservation as any).version ?? null, events: (data as any[]) ?? [] });
+}));
+
+// ── POST /trips/:tripId/reservations/:id/compensation — §15.4 ─────────────────
+
+const CompensationSchema = z.object({
+  amountMinor: z.number().int().nonnegative().optional(),
+  currency: z.string().regex(/^[A-Z]{3}$/).optional(),
+  note: z.string().max(500).optional(),
+  kind: z.enum(["refund", "voucher", "credit", "rebooking", "other"]).optional().default("other"),
+});
+
+router.post("/trips/:tripId/reservations/:id/compensation", asyncHandler(async (req, res) => {
+  const ctx = await requireReservationMember(req, res);
+  if (!ctx) return;
+  const { sc, userId, trip, role } = ctx;
+  const reservation = await fetchReservation(sc, res, (trip as any).id, req.params.id);
+  if (!reservation) return;
+  if (!canManageReservation(reservation, userId, role)) {
+    sendError(res, "forbidden", "Only the reservation creator or trip owner/co-host can record compensation");
+    return;
+  }
+  const history = await reservationHistoryGate(sc);
+  if (!history.enabled) { sendError(res, "feature_disabled", `Reservation history is not enabled (${history.reason})`); return; }
+  const parsed = CompensationSchema.safeParse(req.body ?? {});
+  if (!parsed.success) { sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid body"); return; }
+  const p = parsed.data;
+  const { data, error } = await sc.rpc("trip_reservation_record_compensation", {
+    p_reservation_id: (reservation as any).id, p_actor: userId,
+    p_payload: { kind: p.kind, amount_minor: p.amountMinor ?? null, currency: p.currency ?? null, note: p.note ?? null },
+  });
+  if (error) { sendError(res, "db_error", error.message); return; }
+  const r = (data ?? {}) as { ok?: boolean; reason?: string; detail?: string; event_id?: number; version?: number };
+  if (!r.ok) {
+    if (r.reason === "TRIP_BOOKING_NOT_FOUND") { sendTripRefusal(res, "not_found", "TRIP_BOOKING_NOT_FOUND", "Reservation not found"); return; }
+    if (r.reason === "TRIP_BOOKING_HISTORY_APPEND_ONLY") { sendTripRefusal(res, "conflict", "TRIP_BOOKING_HISTORY_APPEND_ONLY", r.detail ?? "Compensation is recorded against a cancelled reservation"); return; }
+    sendError(res, "invalid_payload", r.detail ?? "Compensation refused");
+    return;
+  }
+  res.status(201).json({ ok: true, eventId: r.event_id ?? null, version: r.version ?? null });
 }));
 
 export default router;

@@ -23,6 +23,8 @@ import { getServiceClient } from "../lib/supabase.js";
 import { logger } from "../lib/logger.js";
 import { requireUser, requireTripMember, sendError } from "../lib/http.js";
 import { isFlagEnabled } from "../lib/featureFlags.js";
+import { tripOperationalProjectionsGate } from "../lib/tripOperationalProjections.js";
+import type { ReadinessStage } from "../lib/tripReadiness.js";
 import {
   READINESS_FLAG,
   READINESS_STALE_MS,
@@ -234,7 +236,13 @@ async function loadOrComputeSummary(
     }
 
     try {
-      const fresh = await computeReadiness(sc, tripId);
+      // §8.3 "by upcoming stage": 2760's stages, read here under the gate that owns them.
+      let stages: ReadinessStage[] | null = null;
+      if ((await tripOperationalProjectionsGate(sc)).enabled) {
+        const { data: stageRows, error: stErr } = await sc.from("trip_stages").select("id, sequence, starts_at, ends_at").eq("trip_id", tripId);
+        if (!stErr) stages = ((stageRows ?? []) as any[]).map((st) => ({ id: String(st.id), sequence: typeof st.sequence === "number" ? st.sequence : null, startsAt: st.starts_at ?? null, endsAt: st.ends_at ?? null }));
+      }
+      const fresh = await computeReadiness(sc, tripId, { stages });
       // 2. Persist today's score so future recomputes can read it as "previous".
       await persistTodaySnapshot(sc, tripId, fresh.score);
       return { ...fresh, previousScore };

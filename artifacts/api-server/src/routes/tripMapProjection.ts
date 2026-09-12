@@ -37,17 +37,30 @@
  * Private lodging goes in its own layer AND the assembled projection is
  * re-checked by `assertNoPrivateLeak`, which throws. See the service header
  * for why a postcondition rather than a convention.
+ *
+ * §19.1 ENVELOPE, §19.2 PATH
+ * ==========================
+ * The response spreads the shared `TripProjectionEnvelope` — the two fields
+ * this route always had (`generatedAt`, `sourceTripVersion`) plus
+ * `projectionSchemaVersion` and `freshness`, from one instant. §19.2's path
+ * for this projection is `GET /trips/:id/map`; routes/tripProjections.ts
+ * registers it and calls `serveMapProjection` below, so the two paths cannot
+ * serve two projections.
  */
-import { Router } from "express";
+import { Router, type Request, type Response } from "express";
 
 import { requireUser, requireTripMember, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { logger } from "../lib/logger.js";
 import { asyncHandler } from "../lib/asyncHandler.js";
 import {
-  ok, unread, noSource, assertNoPrivateLeak, layerCensus, coordsOf,
+  ok, unread, assertNoPrivateLeak, layerCensus, coordsOf,
   type Layer, type MapPoint, type TripMapProjection,
 } from "../services/trips/TripMapProjection.js";
+import { readCrewPresenceLayer } from "../services/trips/TripMapCrewPresence.js";
+import { liveEnvelope, type TripProjectionEnvelope } from "../services/trips/TripProjectionEnvelope.js";
+import { buildTripOpportunityProjection } from "../services/trips/TripOpportunityProjection.js";
+import { describeOperationalGate, tripOperationalProjectionsGate } from "../lib/tripOperationalProjections.js";
 
 const router = Router();
 const log = logger.child({ mod: "tripMapProjection" });
@@ -61,6 +74,11 @@ const INACTIVE_PLAN_STATUSES: ReadonlySet<string> = new Set(["cancelled", "decli
 router.get("/trips/:tripId/map-projection", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
+  await serveMapProjection(req, res, auth);
+}));
+
+/** The projection, after authentication. Shared with `GET /trips/:tripId/map` (routes/tripProjections.ts). */
+export async function serveMapProjection(req: Request<{ tripId: string }>, res: Response, auth: { user: { id: string } }): Promise<void> {
   const { user } = auth;
 
   const { tripId } = req.params;
@@ -163,6 +181,8 @@ router.get("/trips/:tripId/map-projection", asyncHandler(async (req, res) => {
   // trip_plan_items. Reading it once means the three cannot disagree about
   // which items exist, and means one failure marks all three unread rather
   // than three of them differently.
+  /** Public plan points by id, for the layers that place something AT a plan (a private anchor is never here — §14.4). */
+  const planPoints = new Map<string, { lat: number; lng: number }>();
   let activePlans: Layer<MapPoint> = unread("not read");
   let privateAnchors: Layer<MapPoint> = unread("not read");
   let meetupPoints: Layer<MapPoint> = unread("not read");
@@ -190,6 +210,7 @@ router.get("/trips/:tripId/map-projection", asyncHandler(async (req, res) => {
         // else — not also to active plans, not also to meetup points. This
         // `continue` is the enforcement; assertNoPrivateLeak below is the
         // proof that it worked.
+        if (r.location_is_private !== true) planPoints.set(String(r.id), { lat: c.lat, lng: c.lng });
         if (r.location_is_private === true) {
           anchors.push({ ...base, kind: "private_anchor", privateAnchor: true,
             meta: { category: r.category } });
@@ -200,10 +221,33 @@ router.get("/trips/:tripId/map-projection", asyncHandler(async (req, res) => {
           continue;
         }
         if (!INACTIVE_PLAN_STATUSES.has(String(r.status ?? ""))) {
-          active.push({ ...base, kind: "plan", meta: { category: r.category, status: r.status } });
+          active.push({ ...base, kind: "plan", meta: { category: r.category, status: r.status, inProgress: String(r.status ?? "") === "in_progress" } });
         }
       }
       activePlans = ok(active); privateAnchors = ok(anchors); meetupPoints = ok(meetups);
+    }
+  }
+  // 2794 / §10.4: an agreed meeting checkpoint is a meetup point in its own
+  // right, not a label on a plan item (TR262). Read under the operational gate,
+  // whose probe covers the table; off, the layer is what it was.
+  if (meetupPoints.status === "ok" && (await tripOperationalProjectionsGate(sc)).enabled) {
+    const { data: cps, error: cpErr } = await sc
+      .from("trip_meeting_checkpoints")
+      .select("id, label, lat, lng, meet_at, purpose, status, subgroup_id")
+      .eq("trip_id", tripId)
+      .eq("status", "open");
+    if (cpErr) {
+      log.warn({ err: cpErr.message, tripId }, "map projection: meeting checkpoints unread");
+      meetupPoints = unread("trip_meeting_checkpoints could not be read");
+    } else {
+      const points: MapPoint[] = [];
+      for (const r of ((cps ?? []) as any[])) {
+        const c = coordsOf(r.lat, r.lng);
+        if (!c) continue;
+        points.push({ id: String(r.id), kind: "meeting_checkpoint", lat: c.lat, lng: c.lng, label: r.label ?? null,
+          meta: { purpose: r.purpose, meetAt: r.meet_at ?? null, subgroupId: r.subgroup_id ?? null, status: r.status } });
+      }
+      meetupPoints = ok([...meetupPoints.items, ...points]);
     }
   }
 
@@ -249,16 +293,19 @@ router.get("/trips/:tripId/map-projection", asyncHandler(async (req, res) => {
     }),
   );
 
-  // Stated, not omitted. A projection carrying seven layers must not be
-  // mistaken for one carrying ten, three of them empty. And a `no_source` is
-  // the strongest claim this projection makes about a layer — that NOTHING in
-  // the system produces it — so each of these names an obstacle that was
-  // re-read rather than cited. See the route-chains block above for what
-  // happens when one is not.
-  // ── the layers that genuinely have no producer ───────────────────────────
-  const crewPresenceSummaries: Layer<MapPoint> = noSource(
-    "Crew presence is served as summary CARDS by GET /trips/:id/crew/map and deliberately carries no coordinates unless a live-share grant exists (§14.4). It is not a coordinate layer and is not synthesised into one here.",
-  );
+  // ── crew presence summaries (§14.1, §14.4, §10.2) ────────────────────────
+  // Read through the crew map — TripCrewLocationService.getCrewMap applies
+  // every §6.1 and §10 rule (this viewer's grant, ghost mode, hotel/home blur,
+  // the position's own clock) and puts `exactCoords` on a card only under an
+  // active live-share grant over a LIVE / RECENT position. The layer draws
+  // exactly those, re-checking the class, and summarises everyone else by
+  // reason; `crewPresenceReading` says so in the response. It lives in its own
+  // file with its flag (see TripMapCrewPresence.ts for why): off, nothing on
+  // this deployment produces the layer and that is `no_source` with the flag
+  // named — not an empty layer; a crew map that refused is `unread`.
+  const crewPresence = await readCrewPresenceLayer(sc, tripId, user.id, log);
+  const crewPresenceSummaries: Layer<MapPoint> = crewPresence.layer;
+  const crewPresenceReading: string = crewPresence.reading;
   // ── route chains (§14.1, §14.2) ──────────────────────────────────────────
   //
   // THIS LAYER SHIPPED AS `no_source` ON A FALSE PREMISE, AND THAT IS WORTH
@@ -326,17 +373,92 @@ router.get("/trips/:tripId/map-projection", asyncHandler(async (req, res) => {
       }
     }
   }
-  const liveOpportunities: Layer<MapPoint> = noSource(
-    "No opportunity object exists in this system (census-trips TR252/TR253). There is nothing to project.",
-  );
-  const safetyPoints: Layer<MapPoint> = noSource(
-    "No trip-scoped safety or logistics point store exists. Safe Return sessions are not map points.",
-  );
+  // §14.1 live opportunities (§13): every open window's EXECUTABLE
+  // experiences that have a point. A refused projection is UNREAD, by reason.
+  let liveOpportunities: Layer<MapPoint>;
+  {
+    const savedPoints = new Map<string, { lat: number; lng: number }>(savedIdeas.status === "ok" ? savedIdeas.items.map((pt) => [pt.id, { lat: pt.lat, lng: pt.lng }]) : []);
+    const built = await buildTripOpportunityProjection(sc, tripId, user.id);
+    if (!built.ok) liveOpportunities = unread(`opportunity projection unavailable (${built.reason}): ${built.message}`);
+    else liveOpportunities = ok(built.projection.windows.flatMap((w) => w.executable).filter((e, i, all) => all.findIndex((x) => x.candidateId === e.candidateId) === i).flatMap((e) => {
+      const c = savedPoints.get(e.candidateId);
+      if (!c) return [];
+      return [{ id: e.id, kind: "opportunity", lat: c.lat, lng: c.lng, label: e.name, meta: { primitive: e.primitive, arriveAt: e.arriveAt, leaveBy: e.leaveBy, stayMinutes: e.stayMinutes, score: e.score, windowId: e.windowId } }];
+    }));
+  }
+  // §14.1 safety / logistics points — §17.4 Safe Return and §7.4 transport.
+  // The viewer's own pending/active Safe Return sessions, and a crew member's
+  // only when they opted to notify the crew, placed at the plan each is
+  // attached to (a private anchor's plan yields no point — §14.4); and 2782's
+  // transport segment endpoints through public.places, read only under the
+  // gate that owns that table. A layer is one status, so when the transport
+  // half is not read the response says so in `safetyLogisticsReading`.
+  let safetyPoints: Layer<MapPoint>;
+  let safetyLogisticsReading: string;
+  {
+    const { data: srs, error: srsErr } = await sc
+      .from("safe_return_sessions")
+      .select("id, user_id, plan_item_id, status, escalation_level, timer_end_at, notify_trip_crew_enabled")
+      .eq("trip_id", tripId)
+      .in("status", ["pending", "active"]);
+    if (srsErr) {
+      log.warn({ err: srsErr.message, tripId }, "map projection: safe_return_sessions unread");
+      safetyPoints = unread("safe_return_sessions could not be read");
+      safetyLogisticsReading = "not assembled: the safety half could not be read";
+    } else {
+      const points: MapPoint[] = [];
+      for (const srow of (srs ?? []) as any[]) {
+        const own = String(srow.user_id) === user.id;
+        if (!own && srow.notify_trip_crew_enabled !== true) continue;   // §17.4: theirs to share, not the map's
+        const c = srow.plan_item_id ? planPoints.get(String(srow.plan_item_id)) : undefined;
+        if (!c) continue;                                                // no public plan point: not a map object
+        points.push({
+          id: String(srow.id), kind: "safe_return", lat: c.lat, lng: c.lng, label: null,
+          meta: { status: srow.status, escalationLevel: srow.escalation_level, timerEndAt: srow.timer_end_at ?? null, own, planItemId: String(srow.plan_item_id) },
+        });
+      }
+      const gate = await tripOperationalProjectionsGate(sc);
+      if (!gate.enabled) {
+        safetyPoints = ok(points);
+        safetyLogisticsReading = `safety points only; transport endpoints not read: ${describeOperationalGate(gate)}`;
+      } else {
+        const { data: segs, error: segErr } = await sc
+          .from("trip_transport_segments")
+          .select("id, mode, state, from_place_id, to_place_id, from_label, to_label, planned_departure_at, planned_arrival_at")
+          .eq("trip_id", tripId);
+        if (segErr) {
+          log.warn({ err: segErr.message, tripId }, "map projection: trip_transport_segments unread");
+          safetyPoints = unread("trip_transport_segments could not be read");
+          safetyLogisticsReading = "not assembled: the transport half could not be read";
+        } else {
+          const live = ((segs ?? []) as any[]).filter((t) => String(t.state ?? "") !== "cancelled");
+          const coords = await placeCoords(live.flatMap((t) => [t.from_place_id, t.to_place_id].filter(Boolean).map(String)));
+          if (!coords) {
+            safetyPoints = unread("the places these transport segments run between could not be read");
+            safetyLogisticsReading = "not assembled: places unread";
+          } else {
+            for (const t of live) {
+              for (const end of ["from", "to"] as const) {
+                const pid = t[`${end}_place_id`];
+                const c = pid ? coords.get(String(pid)) : undefined;
+                if (!c) continue;
+                points.push({
+                  id: `${t.id}:${end}`, kind: "transport_endpoint", lat: c.lat, lng: c.lng, label: t[`${end}_label`] ?? null,
+                  meta: { segmentId: String(t.id), end, mode: t.mode, state: t.state, plannedAt: (end === "from" ? t.planned_departure_at : t.planned_arrival_at) ?? null },
+                });
+              }
+            }
+            safetyPoints = ok(points);
+            safetyLogisticsReading = `safety points and the endpoints of ${live.length} transport segment(s)`;
+          }
+        }
+      }
+    }
+  }
 
-  const projection: TripMapProjection = {
+  const projection: TripMapProjection & TripProjectionEnvelope = {
+    ...liveEnvelope(sourceTripVersion),
     tripId,
-    generatedAt: new Date().toISOString(),
-    sourceTripVersion,
     stage: stagePoints,
     privateAnchors,
     activePlans,
@@ -368,8 +490,12 @@ router.get("/trips/:tripId/map-projection", asyncHandler(async (req, res) => {
     census: layerCensus(projection),
     /** TR46: there is no IN_PROGRESS status, so "active" means not removed and
      *  not cancelled. Said in the response rather than assumed by the reader. */
-    activePlanReading: "not removed and not cancelled; TR46 — no IN_PROGRESS status exists",
+    activePlanReading: "in_progress plans are active (2779's START_PLAN); the rest are scheduled — not removed and not cancelled; each point says which in meta.inProgress",
+    /** §14.1 safety / logistics: which half of the layer was assembled, and why the other was not. */
+    safetyLogisticsReading,
+    /** §14.1 crew presence: how many of the crew are drawn at a permitted coordinate, how many are summarised, and why (§14.4, §10.2). */
+    crewPresenceReading,
   });
-}));
+}
 
 export default router;

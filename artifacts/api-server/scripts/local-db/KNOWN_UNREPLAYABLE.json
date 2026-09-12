@@ -1,0 +1,15 @@
+{
+  "_what": "Canonical migrations that do not replay onto the 2026-08-19 baseline structure on a plain PostgreSQL 16. Each entry is a measured failure with the migration's own message; up.sh tolerates EXACTLY these and aborts on any other. None touches the trip domain; every trip_* object, the kernel and the projection worker replay cleanly.",
+  "_measured": "2026-09-12, local PostgreSQL 16.13 + PostGIS 3.4.2, chain applied from 2093 (the first file whose objects are absent from the baseline; 2092 is the last present).",
+  "_rule": "An entry here is a fact about the replay, not permission to ignore the file. Remove an entry when the file replays; add one only with the verbatim error.",
+  "files": {
+    "2136_profiles_auth_users_convergence.sql": "PRECONDITION FAILED: 54 foreign key(s) to public.profiles would reject a cascading delete — the baseline predates the D6 FK rulings the file requires; not a trip-domain file.",
+    "2140_deletion_receipt.sql": "POSTCONDITION FAILED: status CHECK does not permit 'completed' — depends on 2136's shape; not a trip-domain file.",
+    "2276_intel_presence_verification.sql": "PRECONDITION FAILED: 2130 append-only trigger functions are missing — the baseline's intel tables predate 2130's trigger set; not a trip-domain file.",
+    "2277_intel_outcomes_attribution.sql": "PRECONDITION FAILED: intel_append_only trigger functions missing (2130).",
+    "2278_intel_scoped_trust.sql": "PRECONDITION FAILED: public.intel_attributions does not exist (needs 2277).",
+    "2279_intel_historical_patterns.sql": "function public.intel_append_only_stmt() does not exist (needs 2130's functions).",
+    "2292_intel_stmt_trigger_removal_ig_campaign.sql": "PRECONDITION FAILED: none of intel_presence_verifications / intel_attributions / intel_historical_patterns exist (needs 2276/2277/2279).",
+    "2490_destructive_privilege_boundary.sql": "unrecognized privilege type \"maintain\" — a PostgreSQL 17 privilege; production is 17.6, this harness is 16."
+  }
+}

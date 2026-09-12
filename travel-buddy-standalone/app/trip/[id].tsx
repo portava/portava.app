@@ -34,6 +34,11 @@ import { TripCrewPresenceCard } from '../../src/components/trip/TripCrewPresence
 import { TripDecisionsCard } from '../../src/components/trip/TripDecisionsCard';
 import { TripStageSpineCard } from '../../src/components/trip/TripStageSpineCard';
 import { TripMapLayersCard } from '../../src/components/trip/TripMapLayersCard';
+import { TripTodayCard } from '../../src/features/trips/today/TripTodayCard.tsx';
+import { TripTimelineConflictsCard } from '../../src/features/trips/timeline/TripTimelineConflictsCard.tsx';
+import { TripCloseoutCard } from '../../src/features/trips/closeout/TripCloseoutCard.tsx';
+import { TripOfflineCard } from '../../src/features/trips/offline/TripOfflineCard.tsx';
+import { TripRescueEntry } from '../../src/features/trips/disruption/TripRescueEntry.tsx';
 import { BeforeYouGoSection } from '../../src/components/trip/BeforeYouGoSection';
 import { TripFsqPlacesSection } from '../../src/components/trip/TripFsqPlacesSection';
 import { TripDestinationInfoCard } from '../../src/components/trip/TripDestinationInfoCard';
@@ -72,6 +77,8 @@ function TripDetailScreen() {
   const navBarScrollHandler = useNavBarScrollHandler();
   const bottomInset = usePlainBottomInset();
   const live = configured && isAuthed;
+  // §17.2's mode as the Today card last read it; §17.3's entry mounts under it when not NORMAL.
+  const [attentionMode, setAttentionMode] = useState<string | null>(null);
   const { data: realTrip, loading, error: tripError, reload: reloadTrip } = useTrip(live ? id : undefined);
   // Next best action (Trip Brain wave) — fail-soft null when the server flag
   // is off or the request fails, so TodayNextUp keeps its empty state.
@@ -379,6 +386,8 @@ function TripDetailScreen() {
     // fallback when readiness is genuinely OFF — nothing writes that column,
     // so on a failed read it would have shown a confident 0%.
     progress: readiness ? readiness.score : (readinessUnavailable ? null : (realTrip.progress ?? 0)),
+    // §8: the hero renders this sentence, not the number above.
+    readinessHeadline: readiness?.explanation?.headline ?? null,
     // The hero's checklist was hard-coded to [] — it never rendered a single step.
     // Same order/labels as CATEGORIES in TripReadinessCard.tsx and
     // READINESS_CATEGORIES in api-server/src/lib/tripReadiness.ts.
@@ -543,6 +552,38 @@ function TripDetailScreen() {
         {live && trip.id ? (
           <DailyBriefCard tripId={trip.id} date={todayDate} onGapDays={handleGapDays} />
         ) : null}
+
+        {/* ── §11 Today ────────────────────────────────────────────────────
+            The five questions in §11.2's order, from GET /today, with §17.2's
+            switch obeyed (a banner first, discovery withheld when the server
+            says so) and §10.3's sampling interval stated. An unreadable Today
+            renders as unavailable, never as a quiet day. */}
+        {live && trip.id ? <TripTodayCard tripId={trip.id} onAttention={setAttentionMode} /> : null}
+
+        {/* ── §17.3 rescue — only under a non-NORMAL switch ───────────────
+            The traveller names the problem in the server's vocabulary and gets
+            the server's plan; whether the disruption was declared is the
+            server's word (with the kernel off it says "not declared"). */}
+        {live && trip.id ? <TripRescueEntry tripId={trip.id} attentionMode={attentionMode} /> : null}
+
+        {/* ── §18 offline copy and queue ─────────────────────────────────
+            The signed bundle kept as issued, its age and version judged by the
+            server's own rule and shown stale as stale; queued changes replayed
+            on reconnect with the server's per-operation decision applied. */}
+        {live && trip.id ? <TripOfflineCard tripId={trip.id} /> : null}
+
+        {/* ── §7.3 conflicts on the timeline ───────────────────────────────
+            A day that carries a temporal conflict is named above the plan,
+            with the plans in it and the kind; a measured, clean timeline
+            shows nothing here. TR130: a conflict is not silently rendered as
+            a normal itinerary. */}
+        {live && trip.id ? <TripTimelineConflictsCard tripId={trip.id} /> : null}
+
+        {/* ── §20.3 the closeout's questions ──────────────────────────────
+            Asked once the trip is over or completed: "Did you make it to X?"
+            with the two answers RECORD_OUTCOME takes. Recorded only on the
+            server's word; refused by name without the kernel. */}
+        {live && trip.id && (deriveTripDisplayStatus(trip.status, trip.endDate) === 'completed' || trip.status === 'completed') ? <TripCloseoutCard tripId={trip.id} /> : null}
 
         {/* ── Trip Readiness — renders nothing when flag is off (null response) ── */}
         {live && trip.id ? (

@@ -20,6 +20,7 @@ import {
   type PlanItemContext,
 } from "../services/safeReturn/SafeReturnTriggerService.js";
 import { stripGPS, toPublicSession } from "../services/safeReturn/SafeReturnPrivacyGuard.js";
+import { notifyTripCrew } from "../services/safeReturn/SafeReturnNotificationService.js";
 
 // ── Test server ───────────────────────────────────────────────────────────────
 
@@ -84,6 +85,8 @@ interface FakeState {
   profiles?: Record<string, any>[];
   trips?: Record<string, any>[];
   tripMembers?: Record<string, any>[];
+  subgroups?: Record<string, any>[];
+  subgroupMembers?: Record<string, any>[];
   follows?: Record<string, any>[];
   locationState?: Record<string, any>[];
 }
@@ -105,6 +108,8 @@ function makeFakeClient(state: FakeState = {}) {
     if (table === "profiles") return state.profiles ?? [];
     if (table === "trips") return state.trips ?? [];
     if (table === "trip_members") return state.tripMembers ?? [];
+    if (table === "trip_subgroups") return state.subgroups ?? [];
+    if (table === "trip_subgroup_members") return state.subgroupMembers ?? [];
     if (table === "follows") return state.follows ?? [];
     if (table === "user_location_state") return state.locationState ?? [];
     return [];
@@ -919,5 +924,67 @@ describe("Emergency help no-auto-dial contract", () => {
     assert.ok(!bodyStr.includes("dial"), "Response must not include dial instruction");
     // Session is now missed — the prompt is shown to the user; they must tap to call
     assert.equal(r.status, 200);
+  });
+});
+
+
+// ── §17.4 Safe Return on a subgroup execution context (2794, TR329) ───────────
+
+describe("§17.4 Safe Return attached to a subgroup (2794, TR329)", () => {
+  const G = "bbbbbbbb-0000-4000-8000-0000000000b1";
+  const TRIP_UUID = "aaaaaaaa-0000-4000-8000-0000000000a1";
+  const BOB = "user-bob-3"; const CAROL = "user-carol-4"; const DAVE = "user-dave-5";
+  const crew = [
+    { trip_id: TRIP_UUID, user_id: OTHER_USER_ID, role: "owner", status: "accepted" },
+    { trip_id: TRIP_UUID, user_id: USER_ID, role: "member", status: "accepted" },
+    { trip_id: TRIP_UUID, user_id: BOB, role: "member", status: "accepted" },
+    { trip_id: TRIP_UUID, user_id: CAROL, role: "member", status: "accepted" },
+    { trip_id: TRIP_UUID, user_id: DAVE, role: "member", status: "accepted" },
+  ];
+  const subgroupMembers = [
+    { subgroup_id: G, user_id: USER_ID, left_at: null },
+    { subgroup_id: G, user_id: BOB, left_at: null },
+    { subgroup_id: G, user_id: CAROL, left_at: "2026-09-12T10:00:00Z" },
+  ];
+  const session = (over: Record<string, unknown>) => ({
+    id: SESSION_ID, userId: USER_ID, planItemId: null, tripId: TRIP_UUID, subgroupId: null, status: "active", triggerReason: null,
+    escalationLevel: 3, timerStartAt: null, timerEndAt: new Date(Date.now() - 1000).toISOString(), lastPromptAt: null, lastSafeConfirmationAt: null,
+    trustedCircleEnabled: false, liveShareEnabled: false, notifyHostEnabled: false, notifyTripCrewEnabled: true,
+    emergencyNote: null, closedAt: null, createdAt: "2026-09-12T09:00:00Z", updatedAt: "2026-09-12T09:00:00Z", ...over,
+  });
+
+  it("the crew alert goes to the subgroup's CURRENT members only; without a subgroup, to the whole crew", async () => {
+    const client = makeFakeClient({ featureFlags: { safe_return_enabled: true, safe_return_trusted_circle_alerts_enabled: true }, tripMembers: crew, subgroupMembers });
+    const scoped = await notifyTripCrew(client as any, session({ subgroupId: G }) as any);
+    assert.equal(scoped.attempted, 1, "bob: alice is the traveller, carol left the subgroup, the owner and dave are not in it");
+    const whole = await notifyTripCrew(client as any, session({ subgroupId: null }) as any);
+    assert.equal(whole.attempted, 4, "the whole crew minus the traveller");
+  });
+
+  it("POST create with subgroupId: needs the operational gate; a non-member is refused; a member's session carries subgroup_id", async () => {
+    const base = { sessions: [], contacts: [], events: [], trips: [{ id: TRIP_UUID, owner_id: OTHER_USER_ID }], tripMembers: crew, subgroups: [{ id: G, trip_id: TRIP_UUID, state: "active" }], subgroupMembers };
+    setClients(makeFakeClient({ ...base, featureFlags: { safe_return_enabled: true } }));
+    let r = await req("POST", "/api/me/safe-return/sessions", { timerMinutes: 30, tripId: TRIP_UUID, subgroupId: G });
+    assert.equal(r.status, 404); assert.equal(r.body.error, "feature_disabled");
+
+    const flags = { safe_return_enabled: true, trip_operational_projections_enabled: true };
+    let client = makeFakeClient({ ...base, featureFlags: flags, subgroupMembers: subgroupMembers.filter((m) => m.user_id !== USER_ID) });
+    setClients(client);
+    r = await req("POST", "/api/me/safe-return/sessions", { timerMinutes: 30, tripId: TRIP_UUID, subgroupId: G });
+    assert.equal(r.status, 403, JSON.stringify(r.body));
+    assert.equal((client.__inserted["safe_return_sessions"] ?? []).length, 0, "nothing was started");
+
+    client = makeFakeClient({ ...base, featureFlags: flags });
+    setClients(client);
+    r = await req("POST", "/api/me/safe-return/sessions", { timerMinutes: 30, tripId: TRIP_UUID, subgroupId: G });
+    const inserted = client.__inserted["safe_return_sessions"] ?? [];
+    assert.equal(inserted.length, 1, JSON.stringify(r.body));
+    assert.equal(inserted[0].subgroup_id, G);
+    assert.equal(inserted[0].trip_id, TRIP_UUID);
+
+    client = makeFakeClient({ ...base, featureFlags: flags });
+    setClients(client);
+    await req("POST", "/api/me/safe-return/sessions", { timerMinutes: 30, tripId: TRIP_UUID });
+    assert.equal("subgroup_id" in (client.__inserted["safe_return_sessions"] ?? [])[0], false, "no subgroup named: the column is not written at all");
   });
 });

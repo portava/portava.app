@@ -24,6 +24,9 @@
 import { Router } from "express";
 import { z } from "zod";
 import { requireUser, sendError } from "../lib/http";
+import { canManageSafety } from "../lib/tripPolicy.js";
+import { tripOperationalProjectionsGate } from "../lib/tripOperationalProjections.js";
+import { sendTripRefusal } from "../lib/tripReasonCodes.js";
 import { getServiceClient } from "../lib/supabase";
 import { nameVisibilitySet } from "../lib/publicIdentity";
 import { buildConsumerProjection } from "../services/passport/PassportConsumerProjections.js";
@@ -140,6 +143,8 @@ const contactSchema = z.object({
 const createSessionSchema = z.object({
   planItemId:           z.string().uuid().optional().nullable(),
   tripId:               z.string().uuid().optional().nullable(),
+  // §17.4 (2794): attach to a subgroup execution context (needs tripId; the caller must be a current member).
+  subgroupId:           z.string().uuid().optional().nullable(),
   triggerReason:        z.string().max(500).optional().nullable(),
   escalationLevel:      z.union([z.literal(0), z.literal(1), z.literal(2), z.literal(3)]).optional().default(0),
   timerMinutes:         z.number().int().min(5).max(480).optional().nullable(),
@@ -291,6 +296,30 @@ router.post("/me/safe-return/sessions", async (req, res) => {
   if (!parsed.success) {
     sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid payload");
     return;
+  }
+
+  // §6.1 canManageSafety / §17.4: a session that names a trip is a statement
+  // that its owner is ON that trip — `notify_trip_crew_enabled` then notifies
+  // that trip's crew. Until 2026-09-12 `trip_id` was written from the body
+  // with no membership check, so any signed-in user could attach a session to
+  // any trip id. Only accepted crew may. (An unreadable membership table
+  // throws TripAccessUnavailableError → 503 via the global handler, never a
+  // silent "no" and never a silent "yes".)
+  if (parsed.data.tripId) {
+    const safety = await canManageSafety(db, { userId: user.id }, parsed.data.tripId);
+    if (!safety.allowed) { sendTripRefusal(res, "forbidden", safety.reason, safety.message); return; }
+  }
+  if (parsed.data.subgroupId) {
+    // §17.4 (2794): a subgroup context is one the caller is currently in, on the trip named.
+    if (!parsed.data.tripId) { sendError(res, "invalid_payload", "subgroupId needs tripId"); return; }
+    const gate = await tripOperationalProjectionsGate(db);
+    if (!gate.enabled) { sendError(res, "feature_disabled", "Subgroup execution contexts need trip_operational_projections_enabled"); return; }
+    const { data: g, error: gErr } = await db.from("trip_subgroups").select("id, state").eq("id", parsed.data.subgroupId).eq("trip_id", parsed.data.tripId).maybeSingle();
+    if (gErr) { sendError(res, "degraded_unavailable", "The subgroup could not be read"); return; }
+    if (!g || (g as any).state !== "active") { sendError(res, "not_found", "No active subgroup by that id on this trip (TRIP_SUBGROUP_NOT_FOUND)"); return; }
+    const { data: m, error: mErr } = await db.from("trip_subgroup_members").select("user_id").eq("subgroup_id", parsed.data.subgroupId).eq("user_id", user.id).is("left_at", null).maybeSingle();
+    if (mErr) { sendError(res, "degraded_unavailable", "The subgroup's members could not be read"); return; }
+    if (!m) { sendError(res, "forbidden", "You are not a current member of that subgroup (TRIP_SUBGROUP_NOT_MEMBER)"); return; }
   }
 
   // Reject if the user already has an active session — prevents double-sessions

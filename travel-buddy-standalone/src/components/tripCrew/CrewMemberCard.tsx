@@ -6,6 +6,16 @@
  *
  * When isBlockedByViewer=true, ALL location signals (Safe Return, live share,
  * area label, plan check-in) are withheld regardless of what the server sent.
+ *
+ * FRESHNESS IS THE SERVER'S VERDICT, AND THE CARD SAYS IT (Trips spec §10.2).
+ * `statusLabel === 'live_sharing_active'` is a fact about the GRANT — the
+ * member chose to share with you for a while — not about the position. Until
+ * census-trips §58 this card wrote "Live" from the grant alone, so a share over
+ * a three-hour-old fix read exactly like one over a fix from a minute ago. Now
+ * the badge says "Live" only when the server's `freshnessClass` is LIVE /
+ * RECENT; a grant over a LAST_KNOWN / OFFLINE position reads "Sharing · last
+ * known", the presence line carries the class and its age, and the row's
+ * accessibility label speaks the same words (features/trips/crew/presence.ts).
  */
 import React, { useState } from 'react';
 import { View, Text, StyleSheet } from 'react-native';
@@ -17,6 +27,7 @@ import {
 import { color, space, radius, type as t, dot} from '../../theme/tokens.ts';
 import type { CrewMemberCard as CrewMemberCardType, CrewStatusLabel } from '../../services/tripCrewLocation.ts';
 import { UserOverflowMenu } from '../interaction/UserOverflowMenu.tsx';
+import { presenceAccessibleLabel, presenceIsCurrent, presenceLine } from '../../features/trips/crew/presence.ts';
 
 interface Props {
   member: CrewMemberCardType;
@@ -30,7 +41,7 @@ type StatusConfig = {
   icon: React.ReactNode;
 };
 
-function getStatusConfig(status: CrewStatusLabel, liveShareExpiresAt?: string | null): StatusConfig {
+function getStatusConfig(status: CrewStatusLabel, liveShareExpiresAt?: string | null, positionIsCurrent = false): StatusConfig {
   switch (status) {
     case 'location_hidden':
       return { label: 'Location hidden', color: color.mute, icon: <EyeOff size={12} color={color.mute} /> };
@@ -48,6 +59,15 @@ function getStatusConfig(status: CrewStatusLabel, liveShareExpiresAt?: string | 
       return { label: 'Safe Return on', color: '#7A4DBF', icon: <Shield size={12} color="#7A4DBF" /> };
     case 'live_sharing_active': {
       const expiry = liveShareExpiresAt ? formatExpiry(liveShareExpiresAt) : null;
+      // §10.2: the grant is active; whether the POSITION is current is the
+      // server's call. Without it, "Live" is a claim this card cannot make.
+      if (!positionIsCurrent) {
+        return {
+          label: expiry ? `Sharing · last known · ${expiry}` : 'Sharing · last known',
+          color: color.mute,
+          icon: <Navigation size={12} color={color.mute} />,
+        };
+      }
       return {
         label: expiry ? `Live · ${expiry}` : 'Live sharing',
         color: color.signal,
@@ -78,10 +98,20 @@ export function CrewMemberCard({ member, isBlockedByViewer = false, onBlockSucce
   const effectiveAreaLabel = isBlockedByViewer ? null : member.areaLabel;
   const effectivePlanCheckIn = isBlockedByViewer ? null : member.planCheckInStatus;
 
-  const status = getStatusConfig(effectiveStatusLabel, isBlockedByViewer ? null : member.liveShareExpiresAt);
+  const positionIsCurrent = !isBlockedByViewer && presenceIsCurrent(member);
+  const status = getStatusConfig(effectiveStatusLabel, isBlockedByViewer ? null : member.liveShareExpiresAt, positionIsCurrent);
+  const displayName = member.name ?? member.handle ?? 'Unknown';
+  // Shown only while the member shares something and the server judged the
+  // position; a hidden or blocked member has no position line to speak of.
+  const showPresence = !isBlockedByViewer && effectiveStatusLabel !== 'location_hidden' && effectiveStatusLabel !== 'not_shared';
+  const line = showPresence ? presenceLine(member) : null;
+  const lineColor = !positionIsCurrent ? color.mute : member.freshnessClass === 'LIVE' ? color.signal : color.deep;
+  const a11y = showPresence
+    ? `${presenceAccessibleLabel(displayName, member)}, ${status.label}`
+    : `${displayName}, ${status.label}`;
 
   return (
-    <View style={s.card}>
+    <View style={s.card} accessible accessibilityLabel={a11y} testID={`crew-member-card-${member.userId ?? 'unknown'}`}>
       {/* Avatar + Name — tappable identity area.
           style preserves the card's horizontal row layout (Pressable defaults
           to column, which would stack avatar on top of name). */}
@@ -93,13 +123,19 @@ export function CrewMemberCard({ member, isBlockedByViewer = false, onBlockSucce
       >
       <View style={s.avatarWrap}>
         <Avatar uri={member.avatarUrl} name={member.name ?? member.handle} size={40} />
-        {effectiveLiveShare && <View style={s.liveDot} />}
+        {effectiveLiveShare && positionIsCurrent && <View style={s.liveDot} testID="crew-member-live-dot" />}
         {member.ghostMode && !isBlockedByViewer && <View style={s.ghostDot} />}
       </View>
 
       {/* Info */}
       <View style={s.body}>
-        <Text style={s.name} numberOfLines={1}>{member.name ?? member.handle ?? 'Unknown'}</Text>
+        <Text style={s.name} numberOfLines={1}>{displayName}</Text>
+        {line ? (
+          <View style={s.areaRow}>
+            <Clock size={11} color={lineColor} />
+            <Text style={[s.areaLabel, { color: lineColor }]} testID="crew-member-presence-line">{line}</Text>
+          </View>
+        ) : null}
         {effectiveAreaLabel ? (
           <View style={s.areaRow}>
             <MapPin size={11} color={color.mute} />

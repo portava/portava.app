@@ -30,6 +30,8 @@ export interface CreateSessionInput {
   userId: string;
   planItemId?: string | null;
   tripId?: string | null;
+  /** §17.4 (2794): the subgroup execution context; requires tripId. The route verifies membership. */
+  subgroupId?: string | null;
   triggerReason?: string | null;
   escalationLevel?: 0 | 1 | 2 | 3;
   timerMinutes?: number | null;
@@ -46,6 +48,8 @@ export interface SafeReturnSession {
   userId: string;
   planItemId: string | null;
   tripId: string | null;
+  /** §17.4 (2794): the subgroup execution context, when attached to one. */
+  subgroupId?: string | null;
   status: SafeReturnStatus;
   triggerReason: string | null;
   escalationLevel: number;
@@ -84,6 +88,7 @@ function mapSession(r: any): SafeReturnSession {
     userId:                   r.user_id,
     planItemId:               r.plan_item_id ?? null,
     tripId:                   r.trip_id ?? null,
+    subgroupId:               r.subgroup_id ?? null,
     status:                   r.status as SafeReturnStatus,
     triggerReason:            r.trigger_reason ?? null,
     escalationLevel:          Number(r.escalation_level ?? 0),
@@ -256,6 +261,9 @@ export async function createSession(
         user_id:                 input.userId,
         plan_item_id:            input.planItemId ?? null,
         trip_id:                 input.tripId ?? null,
+        // 2794: written only when named, so a database without the column
+        // (pending apply) still starts a solo or full-crew session.
+        ...(input.subgroupId ? { subgroup_id: input.subgroupId } : {}),
         trigger_reason:          input.triggerReason ?? null,
         escalation_level:        input.escalationLevel ?? 0,
         timer_end_at:            timerEndAt,

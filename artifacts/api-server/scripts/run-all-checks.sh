@@ -200,6 +200,15 @@ run_check "check:census-scope-coverage" pnpm run check:census-scope-coverage
 # a column, a key) is normal and three in the corpus do it. Only a label naming
 # ANOTHER row's object in the SAME id sequence fails.
 run_check "check:census-row-move-labels" pnpm run check:census-row-move-labels
+# check:trip-policy-callsites — Trips spec §6.1 "application code calls policy
+# functions rather than scattering host checks", as a ratchet. Measured
+# 2026-09-12: the trip route files carried 46 inline owner/host checks, each a
+# copy of a rule that lived nowhere else and could be tested only through a
+# route. lib/tripPolicy.ts now names the nine §6.1 functions; this check fails
+# when a route file's inline count GROWS or a new file gains one, and when a
+# §6.1 function has no call site outside the policy module — a policy nobody
+# calls is a library, not a capability.
+run_check "check:trip-policy-callsites" pnpm run check:trip-policy-callsites
 # check:place-id-bridge — census-trips TR32/TR94 said the single place id-space
 # crossing was "Enforced by a standing ratchet rather than convention", naming
 # check:schema-references as that ratchet. It is not: that check verifies a
@@ -219,6 +228,8 @@ run_check "check:place-id-bridge" pnpm run check:place-id-bridge
 # after it stops being true goes on excusing the next. Not about authorization —
 # that is check:route-auth-gate's job and is enforced independently.
 run_check "check:trip-write-validation" pnpm run check:trip-write-validation
+run_check "check:trip-decision-diff" pnpm run check:trip-decision-diff
+run_check "check:trip-write-path-inventory" pnpm run check:trip-write-path-inventory
 # check:trip-push-policy — census-trips TR200 ("Trip events must pass an attention
 # policy") read C because NotificationRouter consults preferences, dedup and the
 # Compass evaluator. It does. Measured 2026-09-11: TEN trip push sites do not go

@@ -38,6 +38,7 @@ import {
   extractCitations,
   resolveCitationPath,
   resolveCoveredFiles,
+  SKIP_DIRS,
 } from "../../scripts/check-doc-citations.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -375,7 +376,9 @@ describe("the real corpus — every covered citation resolves and every anchor h
         if (e.isSymbolicLink()) continue;
         const full = path.join(dir, e.name);
         if (e.isDirectory()) {
-          if (e.name === ".git" || e.name === "node_modules") continue;
+          // The script's own skip list, so the two walkers cannot disagree
+          // about which tree a citation resolves against (see SKIP_DIRS).
+          if (SKIP_DIRS.has(e.name)) continue;
           walk(full);
         } else if (e.isFile()) {
           const rel = path.relative(REPO_ROOT, full);

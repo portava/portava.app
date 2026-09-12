@@ -198,7 +198,12 @@ export const COVERED = [
 // document and found larger there too.
 export const MIN_ANCHORED_CITATIONS = 278;
 
-const SKIP_DIRS = new Set(['.git', 'node_modules']);
+// Exported so src/test/docCitations.test.ts walks the same tree: a second
+// checkout under .claude/worktrees/ (an agent's) carries stale copies of every
+// cited file, and a walker that indexes them resolves a citation against the
+// wrong tree — first as "ambiguous", then, once the copies diverge, as "does
+// not appear", against a file nobody cited.
+export const SKIP_DIRS = new Set(['.git', 'node_modules', '.claude']);
 
 // Extensions a `file.ext:NNN` citation is allowed to name. Same list as
 // check-memory-citations.mjs.

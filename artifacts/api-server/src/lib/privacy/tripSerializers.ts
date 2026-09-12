@@ -26,12 +26,20 @@ import {
  *
  * @param t                   Raw trips DB row
  * @param myJoinRequestStatus Viewer's pending join-request status, or null
+ * @param opts.withholdFutureDates
+ *   The §6.3 absence guard's decision (lib/privacy/absenceDisclosure.ts): true
+ *   means the trip has not begun and the guard is on, so BOTH dates are null
+ *   whatever show_exact_dates says, and `datesWithheld: "future_absence"`
+ *   says so. The serializer does not decide this — it has no clock and no
+ *   flag — it only renders the decision.
  */
 export function toPrivateTripPreview(
   t: any,
   myJoinRequestStatus: string | null = null,
+  opts: { withholdFutureDates?: boolean } = {},
 ): PrivateTripPreview {
   const showHeaderPublicly = Boolean(t.show_header_publicly);
+  const withholdFutureDates = opts.withholdFutureDates === true;
 
   const preview: PrivateTripPreview = {
     id: t.id as string,
@@ -54,18 +62,20 @@ export function toPrivateTripPreview(
     isPrivate: true,
     createdAt: t.created_at as string,
     updatedAt: t.updated_at as string,
-    // Exact dates respect the host's show_exact_dates toggle.
+    // Exact dates respect the host's show_exact_dates toggle — and, first, the
+    // §6.3 absence guard: a trip that has not begun carries no dates at all.
     startDate:
-      t.show_exact_dates !== false
+      !withholdFutureDates && t.show_exact_dates !== false
         ? ((t.start_date as string | null) ?? null)
         : null,
     endDate:
-      t.show_exact_dates !== false
+      !withholdFutureDates && t.show_exact_dates !== false
         ? ((t.end_date as string | null) ?? null)
         : null,
     myJoinRequestStatus,
     showHeaderPublicly,
   };
+  if (withholdFutureDates) preview.datesWithheld = "future_absence";
 
   // Coordinates only when the host has opted-in to sharing the precise location.
   if (t.precise_location_visible === true) {

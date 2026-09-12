@@ -69,6 +69,7 @@
  * moment the risks cannot be read. So any read that fails refuses the whole
  * response with 503, and the message names which input was missing.
  */
+import { decisionUrgency, byUrgency } from "../services/trips/TripDecisionUrgency.js";
 import { Router } from "express";
 
 import { requireUser, requireTripMember, sendError } from "../lib/http.js";
@@ -132,6 +133,19 @@ router.get("/trips/:tripId/decisions", asyncHandler(async (req, res) => {
     .select("id, type, deadline_at, consequence, assigned_user_id, status").eq("trip_id", tripId));
   const riskRows = await readAll("trip_risks", sc.from("trip_risks")
     .select("id, likelihood, impact, status, trigger_json, mitigation_json").eq("trip_id", tripId));
+  // §8.2's downstream term reads two more tables. They are inputs to the
+  // URGENCY, not to the recommendation: unreadable, the term is 0 and
+  // `urgencyInputsUnread` says so — the decisions are still served.
+  const urgencyInputsUnread: string[] = [];
+  const softRead = async (table: string, q: any): Promise<any[]> => {
+    const { data, error } = await q;
+    if (error) { urgencyInputsUnread.push(table); return []; }
+    return (data ?? []) as any[];
+  };
+  const commitmentRows = await softRead("trip_commitments", sc.from("trip_commitments")
+    .select("id, starts_at, required_arrival_at").eq("trip_id", tripId));
+  const planRows = (await softRead("trip_plan_items", sc.from("trip_plan_items")
+    .select("id, starts_at, removed_at").eq("trip_id", tripId))).filter((p) => p.removed_at == null);
   const propRows = await readAll("trip_proposals", sc.from("trip_proposals")
     .select("id, proposal_type, payload_json, status, expires_at, decision_rule, proposed_by").eq("trip_id", tripId));
 
@@ -229,11 +243,26 @@ router.get("/trips/:tripId/decisions", asyncHandler(async (req, res) => {
       id: g.id, type: g.type, priority: g.priority, status: g.status,
       evidence: g.evidence_json ?? {},
     })),
-    decisionTasks: taskRows.map((t) => ({
-      id: t.id, type: t.type, deadlineAt: t.deadline_at ?? null,
-      consequence: t.consequence ?? null, assignedUserId: t.assigned_user_id ?? null,
-      status: t.status,
-    })),
+    // §8.2: urgency = f(timeRemaining, availabilityDecay, downstreamImpact,
+    // consequence). Downstream is derived: the commitments and plans that
+    // start within a day after the task's deadline depend on it being made
+    // (trip_decision_tasks records no explicit dependency, and this says so).
+    // Availability decay is unknown here and contributes 0, stated on the term.
+    decisionTasks: taskRows.map((t) => {
+      const dl = t.deadline_at ? Date.parse(t.deadline_at) : NaN;
+      const within = (iso: string | null | undefined) => { const x = iso ? Date.parse(iso) : NaN; return Number.isFinite(dl) && Number.isFinite(x) && x >= dl && x <= dl + 24 * 3_600_000; };
+      const urgency = decisionUrgency({
+        deadlineAt: t.deadline_at ?? null, availabilityDecay: null,
+        downstream: { dependentCommitments: commitmentRows.filter((c) => within(c.required_arrival_at ?? c.starts_at)).length, dependentPlans: planRows.filter((pl) => within(pl.starts_at)).length, totalCommitments: commitmentRows.length, totalPlans: planRows.length },
+        consequence: t.consequence ?? null,
+      }, now.getTime());
+      return {
+        id: t.id, type: t.type, deadlineAt: t.deadline_at ?? null,
+        consequence: t.consequence ?? null, assignedUserId: t.assigned_user_id ?? null,
+        status: t.status, urgency,
+      };
+    }).sort(byUrgency),
+    urgencyInputsUnread,
     risks: riskRows.map((r) => ({
       id: r.id, likelihood: r.likelihood, impact: r.impact, status: r.status,
       trigger: r.trigger_json ?? {}, mitigation: r.mitigation_json ?? {},

@@ -23,6 +23,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { randomUUID } from "node:crypto";
 import { getWeatherContext, type DailyWeather } from "../lib/weatherCache.js";
 import { tripKernelClient, executeTripCommand, planCommandTypeForPatch } from "../lib/tripKernel.js";
+import { recordOpportunityCompletion } from "../lib/tripOpportunityMetrics.js";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -660,21 +661,22 @@ export async function applyProposal(
     // not; that lands in `blocked` with the reason, never as a silent skip.
     if (kernel) {
       const { updated_at, ...columns } = patch;
+      const commandType = planCommandTypeForPatch({
+        status: columns.status as string | undefined,
+        dayDate: columns.day_date as string | null | undefined,
+        startsAt: columns.starts_at as string | null | undefined,
+        endsAt: columns.ends_at as string | null | undefined,
+      });
       const r = await executeTripCommand(kernel, {
         commandId: randomUUID(),
         tripId: proposal.trip_id,
         actorUserId: proposal.user_id,
         expectedTripVersion: null,
         idempotencyKey: `autopilot:${proposal.id}:${c.itemId}`,
-        type: planCommandTypeForPatch({
-          status: columns.status as string | undefined,
-          dayDate: columns.day_date as string | null | undefined,
-          startsAt: columns.starts_at as string | null | undefined,
-          endsAt: columns.ends_at as string | null | undefined,
-        }),
+        type: commandType,
         payload: { item_id: c.itemId, patch: columns, updated_at },
       });
-      if (r.ok) applied++;
+      if (r.ok) { applied++; recordOpportunityCompletion(commandType, r.result, proposal.trip_id, r.duplicate); }
       else blocked.push(`${c.title}: ${r.reason}`);
       continue;
     }

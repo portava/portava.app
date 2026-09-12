@@ -16,11 +16,11 @@ being collapsed into one number.** The standing rule this repository works under
 
 | state | Trips | evidence |
 | --- | --- | --- |
-| **IMPLEMENTED** | 250 of 451 requirements are BUILT (**88 C + 162 W**) — **55.4 % constructed** | §36 recount, 451/451 rows parsed; §38 and §39 re-derived 78 of them |
-| **TESTED** | **17,737 / 17,738** api-server tests pass, **0 fail, 0 skipped, 1 CANCELLED** — see below. Trips-specific: the kernel live suite **12/12** against portava-ci | full `npm test`; `tripKernelLive.test.ts` in `live-db.yml` |
-| **MERGED** | `014a25d5` on `main` (PR #481). **PR #482 is open and DRAFT** — none of this session's work is merged | `git merge-base --is-ancestor 014a25d5 origin/main` |
+| **IMPLEMENTED** | 432 of 451 requirements are BUILT (**311 C + 121 W**) — **95.8 % constructed** — ON THE BRANCH `claude/sweet-fermat-fmx7up`, not on `main` | §36 recount, 451/451 rows parsed; §38 and §39 re-derived 78 of them; §40.1–§40.7 BUILT 57 rows into C and 31 N→W, each with file, line, test and a mutation that went red; §41 executed the kernel on a throwaway database built from production's structure dump (3 rows to C) and seven new kernel families on it, 2779–2785 (25 N→W), every migration seen refused before it was applied; §42 built §16's SignalEstimate + Trip Pulse, §11.4's attention model routed through every trip push, §17.2's priority switch on 2785's register, two §21.1 metrics and three §12.1 tools — 22 rows to C, one N→W, no migration; §43 built §13's compiler, primitives, opportunity events and the 2786 kernel event, 31 rows to C; §44 built §8's urgency and triggers, §9.4/§15.3's impact preview and booking side effects, §11.3/§12's replan, simulate, proposals and value of information, §14.3's meeting point, §17.3's rescue and two §23 scenarios as tests, 36 rows to C, one N→W, no migration; §45 built §24's decision-diff CI and Phase 0 write-path inventory (both in check:all), closed TR51's last seven writes, gave the map its tenth layer, made the closeout's two deferred steps act, ran §23's concurrent-edit scenario on the real kernel, 14 rows to C, one N→W, no migration; §46 gave the activity log §5.3's retention policy (2789), closed risks at closeout, proved the kernel's lifecycle events and the map rebuild on a real database, carried three Appendix B families to the wire, 13 W→C; §47–§53 built the absence guard (2790), raw_text retention (2791) and the retention sweep (2792), the transport-mode policy (2793), §18's signed offline bundle and operation queue, presence as the newest observation, the thirty-eight inline checks as five policy decisions, §10.3 sensing on Today and get_crew_state, 2794 meeting checkpoints with §11.3 regroup and Safe Return on a subgroup, and 2795's write guards with "I am bored" and the reliability estimate — 21 W→C, 5 N→C, 2 N→W; §54 built §20's post-trip with no migration — the trip projected into Memory as candidates built from outcomes, checkpoints, crew and stamps (each carrying Memory's own write and marked realized once taken), the trip's Passport row read back from the award engine, the §20.3 answer recorded as RECORD_OUTCOME through the kernel, and the closeout step that projects the candidates and writes one keyed outcome per done plan, 7 W→C; §55 held the plan-item PATCH's flag-off twin to §3.3 — a terminal-state arrow refused with the kernel path's reason, every write audited, an Idempotency-Key replayed from the audit — and re-read TR378 / TR50 against the 22 command-backed write endpoints, 2 W→C; §56 is Cluster 13's first batch on the client (travel-buddy-standalone) — a Today card answering §11.2's five questions in order and obeying §17.2's switch, the timeline's conflicts named above the plan, §20.3's questions asked by a screen and recorded through the kernel, all under src/features/trips/, 4 W→C; §57 the client's offline copy kept as issued and judged by the server's staleness rule, the queue replayed on reconnect with the server's decisions applied and a conflict never overwritten, §17.3's rescue entry under §17.2's switch, and §18.1's freshness re-read on the crew card, 5 W→C; §58 the map projection's crew layer produced from the crew map's permitted coordinate (a grant over a LIVE / RECENT position, re-checked at the projection and at the client's composer), freshness on the pin's ring and accessibility label and on the crew tab's card and density map, and readiness as an explanation on the wire and on both screens with no percentage and no trend, 2 W→C, 1 N→C; §59 built nothing and re-read five rows against what §41 and §48 had built — cost, party size, reliability and fallback references on 2782's transport segment (TR268–TR271) and the offline bundle's cached points (TR174), 5 N→W |
+| **TESTED** | Full api-server suite, run 30 on `991c59c8b`'s tree: **18,506 / 18,506, 0 fail, 0 skipped, 0 cancelled** (the §53 scheduler case that used to end as `cancelledByParent` is fixed in the test, `8fe9e4bf6`). Every database suite on a replica rebuilt from the production baseline through the whole chain (2093 → 2803): **89 / 89, 0 skipped**. Client `check:all` under Node 24: exit 0. CI on `66a0ea468`: every verdict green except the live-DB one, which aggregates only the schema-drift audit (see "After merge" below) | `pnpm test` (run 30); `scripts/local-db/up.sh` + `run-tests.sh`; CI run `34706918422` (CI), `34706918620` (unwired), `34706918503` (live DB) |
+| **MERGED** | `014a25d5` on `main` (PR #481). **PR #482 is open and DRAFT** (`mergeable_state: clean`, base `main`); **PR #483 is open and READY FOR REVIEW at `66a0ea468`**, stacked on #482 — none of this session's work is merged | `git merge-base --is-ancestor 014a25d5 origin/main`; PR #482 / #483 state read 2026-09-12 |
 | **DEPLOYED** | **portava-ci only.** Production has received **nothing** from Batch C | `apply-migrations`: 109 proven applied on `hwokxgbmezheskbzskfr` |
-| **CERTIFIED** | **NO.** `certify:migrations` fails at stage 1 on `main` | run `34430889373`, `check:migration-ledger` |
+| **CERTIFIED** | **NO.** `certify:migrations` fails at stage 1 (ledger parity) on `main` on three `applied_by=manual` rows (2311 / 2320 / 2325), which the owner has ruled are not to be deleted; on a PR the certification step does not run at all (`live-db.yml:757`, main-only) | run `34430889373`, `check:migration-ledger`; job `103588798041` on `66a0ea468` (step skipped) |
 
 ### The one cancelled suite, named rather than rounded away
 
@@ -72,9 +72,73 @@ merge. Merging is part of the test here.
 
 ---
 
+## After merge: apply → certify → audit, and what each red means
+
+Read from `live-db.yml` and from the schema-drift job on `66a0ea468`
+(`103588798041`), 2026-09-12.
+
+**On a pull request** the schema-drift job runs the dry run and the audits and
+skips the apply and the certification (`live-db.yml:746`, `:757` —
+`github.ref == 'refs/heads/main'`). On `66a0ea468`:
+
+| step | result | what it says |
+| --- | --- | --- |
+| `db:apply-migrations:dry-run` | **PASSED** | *"22 pending, 109 already recorded, nothing written"* — every pending file (2779–2795, 2800–2803) classified applicable in one transaction with its ledger row |
+| `db:apply-migrations` | skipped | main-only, by design |
+| `certify:migrations` | skipped | main-only, by design |
+| `audit:schema` | **red** | 57 missing objects across 10 files — 2780, 2781, 2782, 2783, 2784, 2785, 2789, 2791, 2793, 2794 — every one a table, column, index, policy, function or trigger this branch creates and `portava-ci` has not applied |
+| `check:media-objects`, `audit:shadow-append-only` | green | |
+
+That red is the audit reading an unmerged branch against a database the merge
+path has not touched. The job header says why the apply is main-only:
+*"applying an unmerged branch's migrations to the shared CI database would
+leave that database ahead of main with no commit accounting for it."*
+Hand-applying to `portava-ci` is therefore not the fix.
+
+**After the merge**, the `main` push build of the same job runs, in order:
+
+1. the dry run;
+2. `db:apply-migrations` — the 22 pending files applied to `portava-ci` in
+   canonical order, each in one transaction with its ledger row, stopping at
+   the first failure; idempotent on re-run;
+3. `certify:migrations` — five stages, stopping at the first failure: ledger
+   parity (`check:migration-ledger`), the declared objects, grants and RLS,
+   the migrations' own postconditions re-run after the commit, the repo's
+   live-schema checks;
+4. `audit:schema`, `check:media-objects`, `audit:shadow-append-only` against
+   the applied schema.
+
+**Known, pre-existing, not this branch's:** stage 1 of the certification fails
+on `main` today on the three manual ledger rows above. So the post-merge
+build will apply (recorded) and then stop at certification stage 1 until the
+owner resolves those rows; the apply step's own log names the files that
+landed. That red must not be read as this branch's migrations failing, and
+must not be cleared by deleting the rows.
+
+**Kept separate, and started by none of the above:** production Batch C
+(docs/architecture/manual-production-migration-runbook.md) and flag
+activation (`trip_operational_projections_enabled`, `trip_kernel_enabled`,
+`trip_crew_map_enabled`, `trip_absence_guard_enabled`,
+`trip_retention_sweep_enabled`, the four Sensing flags). Owner actions, in
+that order.
+
+## Branch census versus independently verified
+
+The headline percentages are **verdicts read against the code on this
+branch**. The ladder below says what each has been checked by, and what has
+checked nothing.
+
+| claim | verified by | not verified by anything here |
+| --- | --- | --- |
+| BUILT (432 / 451) | the census rows' citations, held by `check:doc-citations`; the guards `check:census-integrity` / `-freshness` / `-scope-coverage` | — |
+| CORRECT (311 / 451) | each section's tests, run in the full suite (run 30, 18,506 / 0 / 0) and in CI on `66a0ea468`; each section's mutations seen red before its commit | behaviour with the flags ON against a deployed database — no database has 2779–2795 or 2800–2803 |
+| kernel SQL (2779–2795) | executed on a replica rebuilt from the production baseline through the whole chain, 89 / 89; rollbacks rehearsed; CI's throwaway-database job green | `portava-ci` (unapplied until merge); production (untouched) |
+| client (§56–§58) | node:test + jest suites, `check:all` under CI's Node version, CI's standalone job | a device; a deployed API with the flags on |
+| Sensing (87 / 127) | the lane's suites in the full run; its db suites on the replica with 2800–2803 | the owner's `SENSING_AUTH_POSTURE` decision; production |
+
 ## What "IMPLEMENTED" does and does not mean
 
-The 55.4 % is a **document measuring itself**. `check:census-integrity` states
+The 94.5 % is a **document measuring itself**. `check:census-integrity` states
 its own limit: it verifies a census agrees with itself, not that it agrees with
 the code. Until 2026-09-11 nothing had ever read census-trips against the
 implementation.
@@ -153,10 +217,29 @@ per-census floors that ratchet.
 
 ## The one number, stated with its caveats attached
 
-**Trips: 55.4 % constructed, 19.5 % correct, of 451 requirements.**
+**Trips: 95.8 % constructed, 69.0 % correct, of 451 requirements — on the branch.**
+
+> RESTATED 2026-09-12 after census-trips §40.1–§40.7 (from 55.4 % / 19.5 % at
+> §39). §40 is the first section that BUILDS rather than re-reads: §6.1 policy
+> functions and Appendix B reason codes on the wire; the §19.1 envelope on every
+> projection and §19.2's `/timeline` `/map` `/crew` `/context` (+ `/safety`);
+> the §7.3 Temporal Freedom Engine with §7.2 conflicts; the §3.2 phase, §17.1
+> health and derived AT_RISK; the §11.1 Today projection checking §22.4 live;
+> §10.1/§10.2 presence source/confidence/freshness with the stale-render guard
+> counted; §20.2's presence stop on completion with §20.3's questions; and an
+> in-process §21.2 decision ledger. Every kernel-era read projection sits behind
+> `trip_operational_projections_enabled`, seeded FALSE, because
+> `check:flag-schema-prerequisites` caught Compass reaching a table production
+> lacks. Two defects in graded code were found by the new tests and fixed:
+> the straight-line travel adapter was not a lower bound under 2 km (TR128's
+> soundness claim was false there), and Safe Return sessions could be attached
+> to any trip. Not built, and said so: START_PLAN/IN_PROGRESS, subgroups and a
+> `trip_decisions` table — each a migration this environment cannot execute.
 
 - Both are **floors** derived from a document that has only just begun to be read
-  against the code.
+  against the code — and, since §40, from code that exists on ONE BRANCH, unmerged,
+  behind flags seeded FALSE: BUILT is not MERGED, MERGED is not DEPLOYED, DEPLOYED
+  is not ENABLED.
 - **44 of 89** C rows have been independently re-derived, and **two of them failed**
   (TR51, TR200). The other 407 requirements have not been re-derived at all.
 - Nothing is production-deployed. Nothing is certified.
