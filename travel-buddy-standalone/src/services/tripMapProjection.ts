@@ -20,6 +20,7 @@
  */
 import { isSupabaseConfigured } from '../lib/supabase.ts';
 import { freshToken } from './apiToken.ts';
+import { acceptProjection, type TripProjectionEnvelope } from './tripProjectionEnvelope.ts';
 
 const apiBase = () => process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
 
@@ -52,11 +53,8 @@ export const PROJECTION_LAYERS = [
 ] as const;
 export type ProjectionLayer = (typeof PROJECTION_LAYERS)[number];
 
-export type TripMapProjection = {
+export type TripMapProjection = TripProjectionEnvelope & {
   tripId: string;
-  generatedAt: string;
-  /** NULL = unattributable. See isAttributable. */
-  sourceTripVersion: number | null;
   census: { ok: number; unread: number; noSource: number; totalPoints: number };
   activePlanReading: string;
 } & Record<ProjectionLayer, Layer<MapPoint>>;
@@ -86,6 +84,11 @@ export async function fetchTripMapProjection(tripId: string): Promise<Projection
     if (!body || PROJECTION_LAYERS.some((k) => !body[k] || typeof body[k].status !== 'string')) {
       return { state: 'unavailable', detail: 'unreadable response' };
     }
+    // §19.1: the envelope decides before the layers are read. A schema this
+    // client does not read, or a projection that says it is stale, is refused
+    // by name — never drawn.
+    const decision = acceptProjection(body);
+    if (!decision.accepted) return { state: 'unavailable', detail: decision.reason };
     return { state: 'ok', projection: body };
   } catch (e: any) {
     return { state: 'unavailable', detail: String(e?.message ?? 'network error') };

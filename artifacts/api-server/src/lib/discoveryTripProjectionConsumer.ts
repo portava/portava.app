@@ -90,6 +90,7 @@ import {
   TRIP_DISCOVERY_SOURCE_COLUMNS,
   type TripDiscoveryProjection,
 } from "./tripDiscoveryProjection.js";
+import { acceptTripProjection } from "../services/trips/TripProjectionEnvelope.js";
 
 /** Literal name so check-flag-polarity resolves the read. `*_enabled` ⇒ CAPABILITY, read fail-closed. */
 export const DISCOVERY_TRIP_PROJECTION_FLAG = "discovery_trip_projection_enabled";
@@ -281,14 +282,22 @@ export function readDiscoveryTripSourceDecisions(): readonly DiscoveryTripSource
  */
 export function acceptTripDiscoveryProjections(
   projections: readonly TripDiscoveryProjection[],
-): { accepted: TripDiscoveryProjection[]; rejected: number } {
+): { accepted: TripDiscoveryProjection[]; rejected: number; reasons: Record<string, number> } {
   const accepted: TripDiscoveryProjection[] = [];
   let rejected = 0;
+  const reasons: Record<string, number> = {};
   for (const p of projections) {
-    if (p.projectionSchemaVersion === DISCOVERY_TRIP_PROJECTION_ACCEPTED_SCHEMA_VERSION) accepted.push(p);
-    else rejected += 1;
+    // The one §19.1 consumer rule (services/trips/TripProjectionEnvelope.ts):
+    // schema, then §22.4 version-ahead, then staleness. A search result is not
+    // one trip, so this consumer has no canonical version to hand and the
+    // second check cannot refuse here; the first and third can.
+    const d = acceptTripProjection(p, {
+      acceptedSchemaVersion: DISCOVERY_TRIP_PROJECTION_ACCEPTED_SCHEMA_VERSION, metric: "TripDiscoveryProjection",
+    });
+    if (d.accepted) accepted.push(p);
+    else { rejected += 1; reasons[d.reason] = (reasons[d.reason] ?? 0) + 1; }
   }
-  return { accepted, rejected };
+  return { accepted, rejected, reasons };
 }
 
 /**

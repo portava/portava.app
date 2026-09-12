@@ -37,8 +37,17 @@
  * Private lodging goes in its own layer AND the assembled projection is
  * re-checked by `assertNoPrivateLeak`, which throws. See the service header
  * for why a postcondition rather than a convention.
+ *
+ * §19.1 ENVELOPE, §19.2 PATH
+ * ==========================
+ * The response spreads the shared `TripProjectionEnvelope` — the two fields
+ * this route always had (`generatedAt`, `sourceTripVersion`) plus
+ * `projectionSchemaVersion` and `freshness`, from one instant. §19.2's path
+ * for this projection is `GET /trips/:id/map`; routes/tripProjections.ts
+ * registers it and calls `serveMapProjection` below, so the two paths cannot
+ * serve two projections.
  */
-import { Router } from "express";
+import { Router, type Request, type Response } from "express";
 
 import { requireUser, requireTripMember, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
@@ -48,6 +57,7 @@ import {
   ok, unread, noSource, assertNoPrivateLeak, layerCensus, coordsOf,
   type Layer, type MapPoint, type TripMapProjection,
 } from "../services/trips/TripMapProjection.js";
+import { liveEnvelope, type TripProjectionEnvelope } from "../services/trips/TripProjectionEnvelope.js";
 
 const router = Router();
 const log = logger.child({ mod: "tripMapProjection" });
@@ -61,6 +71,11 @@ const INACTIVE_PLAN_STATUSES: ReadonlySet<string> = new Set(["cancelled", "decli
 router.get("/trips/:tripId/map-projection", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
+  await serveMapProjection(req, res, auth);
+}));
+
+/** The projection, after authentication. Shared with `GET /trips/:tripId/map` (routes/tripProjections.ts). */
+export async function serveMapProjection(req: Request<{ tripId: string }>, res: Response, auth: { user: { id: string } }): Promise<void> {
   const { user } = auth;
 
   const { tripId } = req.params;
@@ -333,10 +348,9 @@ router.get("/trips/:tripId/map-projection", asyncHandler(async (req, res) => {
     "No trip-scoped safety or logistics point store exists. Safe Return sessions are not map points.",
   );
 
-  const projection: TripMapProjection = {
+  const projection: TripMapProjection & TripProjectionEnvelope = {
+    ...liveEnvelope(sourceTripVersion),
     tripId,
-    generatedAt: new Date().toISOString(),
-    sourceTripVersion,
     stage: stagePoints,
     privateAnchors,
     activePlans,
@@ -370,6 +384,6 @@ router.get("/trips/:tripId/map-projection", asyncHandler(async (req, res) => {
      *  not cancelled. Said in the response rather than assumed by the reader. */
     activePlanReading: "not removed and not cancelled; TR46 — no IN_PROGRESS status exists",
   });
-}));
+}
 
 export default router;

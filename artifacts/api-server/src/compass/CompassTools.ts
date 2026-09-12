@@ -21,6 +21,8 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { CompassItem, CompassProfile } from "./types.js";
 import { stripCoordinateFields, wrapUgc, buildStructuredCompassContext } from "./CompassStructuredContext.js";
 import { isAcceptedTripMember, canEditPlan } from "../lib/http.js";
+import { buildTripCompassProjection } from "../services/trips/TripCompassProjection.js";
+import { acceptTripProjection, TRIP_PROJECTION_SCHEMA_VERSION } from "../services/trips/TripProjectionEnvelope.js";
 import { buildCompassContext, defaultSignals } from "./CompassContextEngine.js";
 import { runPipeline } from "./CompassPipeline.js";
 import {
@@ -77,8 +79,12 @@ export const COMPASS_TOOL_DEFINITIONS = [
     function: {
       name: "get_current_trip",
       description:
-        "Get the user's current or next upcoming trip (destination, dates, status) plus a few planned items. Returns nothing if the user has no active or upcoming trip.",
-      parameters: { type: "object", properties: {}, additionalProperties: false },
+        "Get the user's current or next upcoming trip (destination, dates, status) plus a few planned items. Returns nothing if the user has no active or upcoming trip. Pass tripId to get the context of a specific trip the user is on instead.",
+      parameters: {
+        type: "object",
+        properties: { tripId: { type: "string", description: "A specific trip's id (optional). The user must be an accepted member." } },
+        additionalProperties: false,
+      },
     },
   },
   {
@@ -411,7 +417,29 @@ async function toolGetUserProfile(sc: SupabaseClient, userId: string): Promise<u
   return { profile: data };
 }
 
-async function toolGetCurrentTrip(sc: SupabaseClient, userId: string): Promise<unknown> {
+/**
+ * Which trip is this user's current one is a USER-scoped question, and the
+ * three reads below answer it. What that trip CONTAINS is the
+ * TripCompassProjection (§19.1) — the same object `GET /trips/:id/context`
+ * serves — consumed through the same §19.1 rule a client applies. Exported
+ * so the consumption can be tested with a fake client (census-trips
+ * TR202/TR360: Compass used to read the plan raw and ignore the error).
+ */
+export async function toolGetCurrentTrip(sc: SupabaseClient, userId: string, tripId?: string): Promise<unknown> {
+  // §12.1 getTripContext(tripId): a named trip skips the resolution below.
+  // Membership is checked with the same gate the trip routes use; a trip the
+  // user is not on is answered as "no trip", not as somebody else's context.
+  if (typeof tripId === "string" && tripId.length > 0) {
+    if (!(await isAcceptedTripMember(sc, tripId, userId))) return { trip: null, info: "The user is not a member of that trip." };
+    const { data: named, error: namedErr } = await sc
+      .from("trips")
+      .select("id, title, destination_city, destination_country, start_date, end_date, status")
+      .eq("id", tripId)
+      .maybeSingle();
+    if (namedErr) return { trip: null, info: "Trip context unavailable: the trip could not be read." };
+    if (!named) return { trip: null, info: "No such trip." };
+    return projectCurrentTrip(sc, named);
+  }
   // Trips the user owns or is an accepted member of, active or upcoming.
   const { data: memberRows } = await sc
     .from("trip_members")
@@ -451,18 +479,36 @@ async function toolGetCurrentTrip(sc: SupabaseClient, userId: string): Promise<u
     if (aActive !== bActive) return aActive - bActive;
     return String(a.start_date ?? "9999").localeCompare(String(b.start_date ?? "9999"));
   });
-  const trip = all[0];
+  return projectCurrentTrip(sc, all[0]);
+}
 
-  const { data: items } = await sc
-    .from("trip_plan_items")
-    .select("title, category, day_date, status")
-    .eq("trip_id", trip.id)
-    .is("removed_at", null)
-    .limit(10);
-
+/** The trip's CONTENT, from the projection — one path for a resolved trip and a named one. */
+async function projectCurrentTrip(sc: SupabaseClient, trip: any): Promise<unknown> {
+  // §19.1: the plan comes from the projection, accepted or refused by the one
+  // consumer rule. A refused projection is SAID to be refused — the old read
+  // handed the assistant an empty plan when the table could not be read.
+  const built = await buildTripCompassProjection(sc, trip.id);
+  if (!built.ok) {
+    return { trip, planItems: [], info: `Trip context unavailable: ${built.message}` };
+  }
+  const decision = acceptTripProjection(built.projection, {
+    acceptedSchemaVersion: TRIP_PROJECTION_SCHEMA_VERSION, metric: "TripCompassProjection",
+  });
+  if (!decision.accepted) {
+    return { trip, planItems: [], info: `Trip context rejected (${decision.reason}): ${decision.message}` };
+  }
+  const p = built.projection;
+  const planItems = p.planItems.status === "ok"
+    ? p.planItems.items.map((i) => ({
+        title: wrapUgc(String(i.title ?? "")), category: i.category, day_date: i.dayDate, status: i.status,
+      }))
+    : [];
   return {
     trip,
-    planItems: ((items ?? []) as any[]).map((i) => ({ ...i, title: wrapUgc(String(i.title ?? "")) })),
+    planItems,
+    ...(p.planItems.status !== "ok" ? { info: `Plan items could not be read: ${p.planItems.reason}` } : {}),
+    ...(p.planItemsTruncated ? { planItemsTruncated: true } : {}),
+    projection: { generatedAt: p.generatedAt, sourceTripVersion: p.sourceTripVersion, freshness: p.freshness },
   };
 }
 
@@ -1173,7 +1219,7 @@ export async function executeCompassTool(
     let raw: unknown;
     switch (name) {
       case "get_user_profile":     raw = await toolGetUserProfile(sc, userId); break;
-      case "get_current_trip":     raw = await toolGetCurrentTrip(sc, userId); break;
+      case "get_current_trip":     raw = await toolGetCurrentTrip(sc, userId, typeof args.tripId === "string" ? args.tripId : undefined); break;
       case "search_places":        raw = await toolSearchPlaces(sc, profile, args); break;
       // search_events filters event hosts by the hidden-user set, so it must
       // also re-resolve blocked/muted users per call (same reason as the

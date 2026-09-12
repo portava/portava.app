@@ -267,6 +267,16 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/test/tripPolicy.test.ts",
     "artifacts/api-server/src/test/tripReasonCodes.test.ts",
     "artifacts/api-server/src/routes/safeReturn.ts",
+    // ── ADDED 2026-09-12 (§40.2): the §19.1 envelope, §19.2's read routes and
+    // their consumers. services/trips/ is already scoped as a directory.
+    "artifacts/api-server/src/routes/tripProjections.ts",
+    "artifacts/api-server/src/lib/tripMetrics.ts",
+    "artifacts/api-server/src/lib/discoveryTripProjectionConsumer.ts",
+    "artifacts/api-server/src/test/tripProjectionEnvelope.test.ts",
+    "artifacts/api-server/src/test/tripProjections.test.ts",
+    "travel-buddy-standalone/src/services/tripProjectionEnvelope.ts",
+    "travel-buddy-standalone/src/services/tripMapProjection.ts",
+    "travel-buddy-standalone/src/services/__tests__/tripProjectionEnvelope.test.ts",
   ],
   "census-layover.md": [
     "artifacts/api-server/src/services/airport/",

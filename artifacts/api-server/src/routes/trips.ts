@@ -1591,7 +1591,7 @@ const ReorderBatchSchema = z.object({
 
 // ── Conflict detection helper ─────────────────────────────────────────────────
 
-function computeWarnings(
+export function computeWarnings(
   items: any[],
   tripStartDate: string | null | undefined,
   tripEndDate: string | null | undefined,

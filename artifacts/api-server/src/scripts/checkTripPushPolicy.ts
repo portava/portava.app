@@ -59,15 +59,17 @@ const DIRECT_PUSH = /\bsendPushWithRetry\s*\(/;
  * substitution, which is the failure mode a bare number always has.
  */
 const KNOWN_BYPASSES = new Set([
-  "routes/trips.ts:1038",
-  "routes/trips.ts:1239",
-  "routes/trips.ts:1370",
-  "routes/trips.ts:1444",
-  "routes/trips-expansion.ts:653",
-  "routes/trips-expansion.ts:806",
-  "routes/trips-expansion.ts:991",
-  "routes/trips-expansion.ts:1107",
-  "routes/trips-expansion.ts:1196",
+  // Re-anchored 2026-09-12: the §6.1 policy conversion (lib/tripPolicy.ts)
+  // added lines above every one of these nine sites and moved none of them.
+  "routes/trips.ts:1043",
+  "routes/trips.ts:1247",
+  "routes/trips.ts:1378",
+  "routes/trips.ts:1452",
+  "routes/trips-expansion.ts:655",
+  "routes/trips-expansion.ts:808",
+  "routes/trips-expansion.ts:993",
+  "routes/trips-expansion.ts:1106",
+  "routes/trips-expansion.ts:1190",
   "lib/tripReminderScheduler.ts:139",
 ]);
 

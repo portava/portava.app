@@ -23,12 +23,12 @@ preserved in §36.1 as the record of that measurement.
 | Measure | Value |
 | --- | --- |
 | **Denominator (testable requirements)** | **451** |
-| BUILT-AND-CORRECT | **100** |
-| BUILT-BUT-WRONG | **157** |
-| NOT-BUILT | **193** |
+| BUILT-AND-CORRECT | **117** |
+| BUILT-BUT-WRONG | **145** |
+| NOT-BUILT | **188** |
 | CANNOT-VERIFY | **1** |
-| **CONSTRUCTED%** = (C+W)/451 | **257 / 451 = 57.0 %** |
-| **CORRECT%** (raw) = C/451 | **100 / 451 = 22.2 %** |
+| **CONSTRUCTED%** = (C+W)/451 | **262 / 451 = 58.1 %** |
+| **CORRECT%** (raw) = C/451 | **117 / 451 = 25.9 %** |
 
 > **RESTATED 2026-09-11 (§38): 89 → 87 CORRECT, 127 → 129 WRONG.** §38 re-derived
 > 39 of the C rows against the code and **two did not hold**, both for the same
@@ -68,6 +68,16 @@ preserved in §36.1 as the record of that measurement.
 > and line. §40 opens by stating the ceiling: "100 %" as a system claim needs
 > owner actions (production migration, certification, the flag) that no pass
 > here can take, and every percentage below carries that caveat.
+
+> **RESTATED 2026-09-12 (§40.2): 100 → 117 CORRECT, 157 → 145 WRONG, 193 → 188
+> NOT-BUILT. CONSTRUCTED 57.0 % → 58.1 %, CORRECT 22.2 % → 25.9 %.** §40.2 put
+> the §19.1 envelope on every projection that exists, opened §19.2's
+> `/timeline`, `/map`, `/crew`, `/context` and a `/safety` projection, and made
+> Compass, the discovery consumer and the client decide through one consumer
+> rule. Seventeen rows into C, one N→W (TR416: the §22.4 check exists and no
+> live consumer yet hands it a canonical version), `/today` held N because its
+> engine does not exist. Same caveat: built on a branch, not merged, not
+> deployed.
 | **CORRECT% (spec-attributable)** | **WITHDRAWN — not measured. See §36.4** |
 | CANNOT-VERIFY share | **1 / 451 = 0.2 %** |
 
@@ -3219,3 +3229,143 @@ vocabulary is still `visibility`'s).
 
 Twelve rows into C (nine from W, three from N), four from N to W, four held.
 Nothing here is deployed; `trip_kernel_enabled` is still seeded FALSE.
+
+### 40.2 §19.1 projection envelope and §19.2 read endpoints
+
+**What was measured.** §39 found the four §19.1 envelope fields on ONE
+projection (`lib/tripDiscoveryProjection.ts`) and two of them on the §14.1 map
+projection, and the eight-projection list TR356–TR363 carrying none. Of §19.2's
+five read paths, `/map` and `/timeline` and `/crew` resolved to older endpoints
+under other paths (TR371–TR373 W), `/context` and `/today` to nothing (TR369,
+TR370 N). Compass read the plan raw and ignored the read's error (TR360, TR202).
+No consumer anywhere rejected a projection for staleness, because nothing
+carried a freshness (TR368). No metric measured read-model lag (TR394).
+
+**What was built.**
+
+- `services/trips/TripProjectionEnvelope.ts` — the ONE envelope
+  (`:60#TripProjectionEnvelope`): `projectionSchemaVersion`,
+  `generatedAt`, `sourceTripVersion`, `freshness`. `liveEnvelope`
+  (`:70#liveEnvelope`) is `"live"` when the version is known and
+  `"unattributable"` when it is not — never `0`, never `"live"` on a null.
+  `readTripVersion` (`:85#readTripVersion`) reads `trips.version`
+  BEFORE the rows, the order `routes/tripMapProjection.ts` established.
+  `acceptTripProjection` (`:138#acceptTripProjection`) is the
+  §19.1 consumer rule, three refusals in the only order a consumer can evaluate
+  them: `TRIP_PROJECTION_SCHEMA_MISMATCH` (`:146`), §22.4's
+  `TRIP_PROJECTION_VERSION_AHEAD` (`:158`), `TRIP_PROJECTION_STALE`
+  (`:165`). On acceptance it observes `projection_lag_seconds`
+  (`:174#projection_lag_seconds`) — at the consumer, because a producer
+  measuring its own lag reads zero and measures nothing. Four freshness values
+  are declared (`:56#TRIP_PROJECTION_FRESHNESS`); **two are emitted**
+  (`live`, `unattributable`); `cached` and `stale` have no producer (§19.4,
+  TR379) and the file says so.
+- `lib/tripMetrics.ts` — the in-process registry (`:48#observeTripMetric`,
+  `:62#readTripMetric`). The kernel's `trip_command_rejected_total`
+  predates it and keeps its own counter; nothing in the kernel moved.
+- `services/trips/TripTimelineProjection.ts:83#buildTripTimeline` —
+  PURE; one day per calendar date of the trip, empty or not, then out-of-range
+  days that carry items, `undated` stated rather than dropped, UTC labels so two
+  servers group alike.
+- `services/trips/TripSafetyProjection.ts` — §17.4 as a projection:
+  `operationalState` (`:101#operationalState`: active→RETURNING,
+  escalated or missed→NEEDS_HELP, safe→ARRIVED for 24 h, pending/cancelled→none)
+  and `projectTripSafety` (`:127#projectTripSafety`), which shows a
+  member's state to another member only when opted in
+  (`:142#optedIn` — `share_safe_return_status` or the session's
+  `notify_trip_crew_enabled`), counts the withheld rather than hiding them,
+  and carries NO location field — the test asserts the key set.
+- `services/trips/TripCompassProjection.ts:75#buildTripCompassProjection` —
+  the trip row and its version from ONE read (`:73#TRIP_COLUMNS`),
+  a three-valued `planItems` layer (`ok` / `unread`, reusing §14.1's `Layer`),
+  and `planItemsTruncated` said rather than guessed (cap + 1 rows are read).
+- `routes/tripProjections.ts` — §19.2's paths: `/timeline`
+  (`:73#timeline`), `/map` (`:154#map` — calls
+  `serveMapProjection`, `routes/tripMapProjection.ts:78#serveMapProjection`,
+  so the two paths cannot serve two projections), `/crew` (`:162#crew`),
+  `/context` (`:204#context`), `/safety` (`:228#safety`);
+  registered at `routes/index.ts:159#tripProjectionsRouter`. Every
+  response spreads the envelope; every failed read that a projection IS is
+  refused with `TRIP_PROJECTION_UNAVAILABLE` on the wire
+  (`:96#TRIP_PROJECTION_UNAVAILABLE`), and a flag-off crew
+  projection is served visibly degraded with `freshness: "unattributable"`
+  (`:176#featureEnabled`). The map projection's own response
+  now spreads the envelope too (`routes/tripMapProjection.ts:352#liveEnvelope`).
+  `/plan`, `/plan/map`, `/crew/map`, `/map-projection` keep their shapes.
+- **Consumers.** `compass/CompassTools.ts:428#toolGetCurrentTrip`
+  builds the context projection (`:490#buildTripCompassProjection`)
+  and consumes it through `acceptTripProjection` (`:494#acceptTripProjection`);
+  a refused or unreadable projection is SAID to be so (the old read handed the
+  model an empty plan when the table could not be read). The tool now takes an
+  optional `tripId` (`:85#tripId`), gated by
+  `isAcceptedTripMember` (`:433#isAcceptedTripMember`) — §12.1's
+  `getTripContext(tripId)`. `lib/discoveryTripProjectionConsumer.ts:294#acceptTripProjection`
+  decides through the same function and reports its refusals by reason. On the
+  client, `travel-buddy-standalone/src/services/tripProjectionEnvelope.ts:40#acceptProjection`
+  is the same rule minus §22.4 (no canonical version to hand), and
+  `travel-buddy-standalone/src/services/tripMapProjection.ts:90#acceptProjection`
+  refuses before drawing.
+- **Tests.** `src/test/tripProjectionEnvelope.test.ts` (24: the rule, its
+  order, the metric, the two pure builders), `src/test/tripProjections.test.ts`
+  (23: every endpoint's envelope, gate, reason and refusal; Compass consuming;
+  the discovery consumer), and the client's
+  `travel-buddy-standalone/src/services/__tests__/tripProjectionEnvelope.test.ts`
+  (4). Four mutations went red before commit: dropping §22.4, dropping the
+  safety opt-in gate, serving an empty timeline on an unreadable plan, and
+  claiming `live` on a null version.
+- **Also in this commit, and not a §19 fact:** `checkTripPushPolicy.ts`'s
+  `KNOWN_BYPASSES` re-anchored to the nine lines §40.1's edits moved. That
+  guard was red on the branch between the two commits; TR200's count is
+  unchanged.
+
+**What is NOT built, said before the table.** `/today` — §11.1's projection
+needs the Temporal Freedom Engine (§7.3), which does not exist (TR131); a
+`/today` that returned the plan under another name would be TR371/TR373's
+finding again. `TripMemoryProjection` and `TripPassportProjection` still point
+the other way (TR362, TR363, unchanged). No projection worker: every
+projection here is generated in the request that serves it, so the observed
+lag is ~0 by construction and `cached`/`stale` are words with no producer.
+§22.4 is ENFORCED by `acceptTripProjection` when a consumer hands it a
+canonical version, and today no live consumer does — Compass's version comes
+from the same row as the summary, so comparing them would be comparing a
+number to itself. Enforced-in-a-function is not enforced-live; TR416 is W.
+
+#### Row moves
+
+| id | was | now | why |
+|---|---|---|---|
+| TR357 `TripTimelineProjection` | W | **C** | Server-built (`buildTripTimeline`), under the envelope, at `/timeline`; the client's `TimelineDay[]` (`src/types/models.ts`) is now something it can fetch rather than derive. Route-tested including the refusal on an unreadable plan. |
+| TR358 `TripMapProjection` | W | **C** | *"`/plan/map` … and nothing else from §14.1's eleven layers."* §14.1's ten-layer projection has existed since 42aeac38 (TR254); it now carries all four envelope fields and answers at §19.2's path. |
+| TR359 `TripCrewProjection` | W | **C** | *"carries no generatedAt, no version and no freshness."* Now all three plus the schema version, at `/crew`. The flag it sits behind (`trip_crew_map_enabled`, seeded FALSE) is a deployment fact and is stated in the response (`featureEnabled`), not hidden by it. |
+| TR360 `TripCompassProjection` | N | **C** | *"Compass reads raw tables."* It builds and ACCEPTS `TripCompassProjection` — the object `/context` serves — and says when it could not. The census-compass row CT-02 (*"zero occurrences"*) is falsified by this commit and is that census's to re-derive. |
+| TR361 `TripSafetyProjection` | N | **C** | §17.4's three operational states, opt-in per member, withheld counted, no location. |
+| TR364 every projection includes `generatedAt` | W | **C** | Six projections exist (timeline, map, crew, context, safety, discovery); six carry it, from one function. The three that do not exist (today, memory, passport) are their own N/W rows, not exceptions to this one. |
+| TR365 …`sourceTripVersion` | W | **C** | Same six; `trips.version` and nothing else, null when unreadable. |
+| TR366 …`projectionSchemaVersion` | W | **C** | Same six. The discovery projection keeps its own constant (its shape has its own history); the consumer rule is shared. |
+| TR367 …`freshness` status | W | **C** | Same six; two values emitted and two declared with no producer, stated in the type and above. |
+| TR368 consumers reject or visibly degrade on stale/incompatible projections | W | **C** | Three live consumers decide through one rule and name the refusal: Compass, the discovery consumer, the client map. Flag-off crew is visibly degraded WITH the envelope. Tested at all three. |
+| TR369 `GET /trips/:id/context` | N | **C** | Registered, gated (accepted crew, `TRIP_AUTH_NOT_CREW`), tested. |
+| TR370 `GET /trips/:id/today` | N | **N** | **Holds.** See above. |
+| TR371 `GET /trips/:id/map` | W | **C** | §19.2's path serves §14.1's projection — byte-identical to `/map-projection` less `generatedAt`, and the test says so. |
+| TR372 `GET /trips/:id/crew` | W | **C** | As TR359. Invitees may look, as `/crew/map`'s header explains; strangers get `TRIP_AUTH_NOT_CREW`. |
+| TR373 `GET /trips/:id/timeline` | W | **C** | As TR357. |
+| TR202 `getTripContext(tripId)` | W | **C** | Both halves of the row closed: the content is a typed projection, and the tool takes a `tripId`. Named-trip access is gated by the same membership check the routes use and tested for a member, a stranger and a missing trip. |
+| TR394 `projection_lag_seconds` | N | **C** | Observed by every in-process consumer on acceptance, under the projection's name, readable by `readTripMetric`. Its value is ~0 because there is no read model to lag — the metric is true, and it is the number a projection worker would move. |
+| TR416 §22.4 `sourceTripVersion` may never exceed the canonical version | N | **W** | *"Neither side of the comparison exists."* Both exist and the comparison is written and tested (`acceptTripProjection`, `TRIP_PROJECTION_VERSION_AHEAD`). No live consumer supplies a canonical version yet — see above. W, not C. |
+| TR449 `TRIP_PROJECTION_*` | W | **C** | All four codes emitted: `_UNAVAILABLE` on the wire by five routes and the discovery projection; `_SCHEMA_MISMATCH`, `_VERSION_AHEAD`, `_STALE` returned by the consumer rule and surfaced (Compass `info`, discovery `reasons`, client `detail`). |
+
+**Rows looked at that did not move:** TR5 (typed projections for seven
+consumers — now Compass, Map, Discovery, Safety; not Telegraph, Passport,
+Memory; W by count, 4 of 7), TR254 (already C), TR362/TR363 (unchanged, W),
+TR203 `getTodayProjection` (N, with TR370), TR379 (no projection workers, N).
+
+#### The count after §40.2
+
+| | C | W | N | X | CONSTRUCTED | CORRECT |
+| --- | --- | --- | --- | --- | --- | --- |
+| after §40.1 | 100 | 157 | 193 | 1 | 257 / 451 = 57.0 % | 100 / 451 = 22.2 % |
+| **after §40.2** | **117** | **145** | **188** | 1 | **262 / 451 = 58.1 %** | **117 / 451 = 25.9 %** |
+
+Seventeen rows into C (thirteen from W, four from N), one N→W, one held.
+Nothing here is deployed; `trip_kernel_enabled` is still seeded FALSE, and so
+is `trip_crew_map_enabled`.
