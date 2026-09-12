@@ -41,6 +41,17 @@
  *   • `detectReadRace` returning [] always (compensation never fires)
  *       -> pass 28 / fail 4 (both race-detector unit tests and both
  *          compensation route tests)
+ *   • the post-write read failing OPEN — `if (after.ok) { …race check… }`, so
+ *     an unreadable after-state is treated as "no race"
+ *       -> pass 32 / fail 2 ("FAILS CLOSED when the post-write read cannot rule
+ *          a race out", "reports raceDetected as null — PRESENT and null")
+ *
+ * That last mutation caught a weak assertion in its own new test on the first
+ * measurement: `assert.notEqual(body.raceDetected, false)` passed under the
+ * fail-open version, because the field is simply ABSENT there and
+ * `undefined !== false`. It was pass 33 / fail 1 until the test was changed to
+ * require the field to be present AND null. Both numbers are recorded because
+ * the difference between them is the whole value of running the mutation.
  *
  * THE THIRD MUTATION IS THE ONE WORTH READING. It first stayed GREEN: the
  * fail-closed test injected a failure on the whole `message_thread_members`
@@ -247,6 +258,13 @@ interface State {
    * this flag came to exist.
    */
   failMemberReadsAfterGate?: boolean;
+  /**
+   * Fail ONLY the third member read — the one taken after the write, whose job
+   * is to detect a read that landed during it. An earlier handler skipped the
+   * race check when this read failed, which made the one branch that exists to
+   * catch a §7.4 violation the one branch that assumed there was none.
+   */
+  failMemberReadAfterWrite?: boolean;
   bobReadAt?: string | null;
   /** Stamp this member's read DURING the unsend write, to force the race. */
   raceRead?: { userId: string; at: string };
@@ -290,6 +308,13 @@ function makeClient(state: State) {
         memberReads >= 1
       ) {
         return { message: "injected failure on the receipt read", code: "XX000" };
+      }
+      if (
+        state.failMemberReadAfterWrite &&
+        table === "message_thread_members" &&
+        memberReads >= 2
+      ) {
+        return { message: "injected failure on the post-write receipt read", code: "XX000" };
       }
       return null;
     };
@@ -500,6 +525,37 @@ describe("§7.4 — the read-vs-unsend race is compensated, not locked", () => {
     const row = c._db.messages.find((m: any) => m.id === M_UNSEEN);
     assert.equal(row.deleted_at, null, "the message is back");
     assert.equal(row.body, "meet at the pier", "the body is back verbatim");
+  });
+
+  it("FAILS CLOSED when the post-write read cannot rule a race out", async () => {
+    // We cannot tell whether someone read it during the write. Putting the
+    // message back is always safe — it is the state the conversation was in a
+    // moment ago — so that is what happens, and the sender is told plainly.
+    const c = useState({ failMemberReadAfterWrite: true });
+    const r = await call("POST", `/api/threads/${THREAD}/messages/${M_UNSEEN}/unsend`, ALICE);
+    assert.equal(r.status, 409);
+    assert.equal(r.body.error, "unverifiable");
+    assert.equal(r.body.raceDetected, null, "not false — we did not measure a negative");
+    assert.equal(r.body.compensated, true);
+    const row = c._db.messages.find((m: any) => m.id === M_UNSEEN);
+    assert.equal(row.deleted_at, null, "the message is back");
+    assert.equal(row.body, "meet at the pier", "the body is back verbatim");
+  });
+
+  it("reports raceDetected as null — PRESENT and null, never false or absent", async () => {
+    useState({ failMemberReadAfterWrite: true });
+    const r = await call("POST", `/api/threads/${THREAD}/messages/${M_UNSEEN}/unsend`, ALICE);
+    // `notEqual(…, false)` was not enough here and is worth recording as a
+    // lesson: under the fail-OPEN mutation the field is simply absent, and
+    // `undefined !== false` passes. The contract is that the field is there and
+    // says "we did not look" — `false` would assert a negative nobody measured,
+    // the same distinction §7.3 draws for DELIVERED.
+    assert.ok(
+      Object.prototype.hasOwnProperty.call(r.body, "raceDetected"),
+      "the response must SAY that it could not look",
+    );
+    assert.equal(r.body.raceDetected, null);
+    assert.notEqual(r.body.raceDetected, false);
   });
 
   it("tells the sender the truth when the compensation itself fails", async () => {

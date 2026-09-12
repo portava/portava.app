@@ -2038,7 +2038,7 @@ built in the previous section and mounted nowhere; it is mounted now.
 | --- | --- | --- | --- |
 | T75 | N | **C** | **A sender may unsend only while no eligible recipient has seen the message** — `planUnsend` refuses with `seen_by_recipient` (`services/telegraph/unsend.ts:174#export function planUnsend`) over the translated assertion (`services/telegraph/unsend.ts:123#export function seenByRecipients`), enforced by `POST /threads/:id/messages/:id/unsend` (`routes/telegraphLifecycle.ts:193#messages/:messageId/unsend`), and offered on the client only while unseen (`travel-buddy-standalone/src/features/telegraph/lifecycle/lifecycleApi.ts:201#export function canOfferUnsend`). |
 | T76 | N | **C** | **In a group, one recipient seeing the message closes the window for everyone** — the refusal is `seen.length > 0`, not "all recipients", and a departed member's stale read is excluded (`services/telegraph/unsend.ts:108#export function eligibleRecipients`). The inverted form is the mutation that took the test red. |
-| T77 | N | **W** | **The server resolves read-vs-unsend races transactionally** — it does not. The race is detected and COMPENSATED: the receipts are re-read after the write and the message is restored body-and-all when a read landed inside the window (`routes/telegraphLifecycle.ts:289#detectReadRace`, `services/telegraph/unsend.ts:227#export function detectReadRace`). The outcome is correct; the window is real, and a recipient fetching inside it saw a tombstone. A lock needs a SECURITY DEFINER function, i.e. a migration no database has — **this row cannot exceed W on this tree**. |
+| T77 | N | **W** | **The server resolves read-vs-unsend races transactionally** — it does not. The race is detected and COMPENSATED: the receipts are re-read after the write and the message is restored body-and-all when a read landed inside the window (`routes/telegraphLifecycle.ts:338#detectReadRace`, `services/telegraph/unsend.ts:227#export function detectReadRace`). The outcome is correct; the window is real, and a recipient fetching inside it saw a tombstone. A lock needs a SECURITY DEFINER function, i.e. a migration no database has — **this row cannot exceed W on this tree**. |
 | T73 | N | **W** | **Direct: Sent/Delivered/Seen. Groups: "Seen by N"** — two of three for direct and the group shape in full. `receiptFor` derives the status and count (`services/telegraph/unsend.ts:139#export function receiptFor`), `GET /threads/:id/receipts` serves it (`routes/telegraphLifecycle.ts:110#/threads/:threadId/receipts`), and the client renders "Sent" / "Seen" / "Seen by N" (`travel-buddy-standalone/src/features/telegraph/lifecycle/lifecycleApi.ts:124#export function receiptLabel`). **DELIVERED is still absent** — nothing on this deployment produces a delivery signal, so every receipt returns `delivered: null` with the reason attached (`services/telegraph/unsend.ts:95#export const DELIVERED_UNAVAILABLE`) rather than a measured false. |
 
 ### 10.23 The §7 tests, and how each was shown red
@@ -2318,6 +2318,65 @@ exported functions is what found `fetchReceipts`.
 
 No verdict changes. Both entries in §10.29–§10.33 are corrections to this
 worktree's own work.
+
+### 10.34 A fail-open in the branch whose job was to fail closed
+
+Re-reading §7.4's compensation path found this:
+
+    const after = await readMembers(client, threadId);
+    if (after.ok) {
+      const raced = detectReadRace(…);
+      …
+    }
+
+When the post-write receipt read FAILED, the race check was skipped and the
+unsend was reported as a success. That made the one branch whose entire purpose
+is to catch a §7.4 violation the one branch that assumed there had not been one
+— and it sat two functions away from a `before` read that fails closed
+explicitly, and in the same file as a test named "an unreadable receipt state
+FAILS CLOSED, never as 'nobody saw it'". The rule was stated, tested on one
+read, and inverted on the other.
+
+It is fixed the way the rest of the file already worked. Putting the message
+back is **always safe** — it returns the conversation to the state it was in a
+moment ago — so both reasons to compensate are now handled identically: a race
+that was DETECTED, and a race that COULD NOT BE RULED OUT.
+
+Four outcomes, all of them stated to the caller rather than collapsed into a success:
+
+| after-read | restore | response |
+| --- | --- | --- |
+| ok, race detected | ok | 409 `seen_by_recipient`, `compensated: true` |
+| ok, race detected | failed | 200 `unsent: true`, `compensated: false`, and the message says it is gone |
+| **failed** | ok | 409 `unverifiable`, `raceDetected: null`, "nothing changed — you can try again" |
+| **failed** | failed | 200 `unsent: true`, `raceDetected: null`, "we could not confirm nobody had already seen it" |
+
+`raceDetected` is **null**, never `false`, whenever the read failed. `false`
+would assert a negative nobody measured — the same distinction §7.3 draws for
+DELIVERED, and the same one §10.25 draws for an empty header axis.
+
+**This does not move T77.** T77 is W because compensation is not a transaction,
+and it still is not. What changed is that the compensation now covers the case
+it was written for.
+
+### 10.35 The fail-open's tests
+
+`artifacts/api-server/src/test/telegraphLifecycle.test.ts` — 34 tests
+(32 before), green. Two new: the fail-closed outcome, and the fact that
+`raceDetected` is null rather than false when nothing was measured.
+
+| mutation | result |
+| --- | --- |
+| the post-write read failing OPEN again — `if (after.ok) { …race check… }` | pass 32 / fail 2 |
+
+**The mutation caught a weak assertion in its own new test.** On the first
+measurement it was pass 33 / fail 1: the "raceDetected is not false" test kept
+passing, because under the fail-open version the field is simply ABSENT and
+`undefined !== false`. The test now requires the field to be PRESENT and null —
+the response has to SAY that it could not look — and the mutation costs two
+tests instead of one. Both numbers are recorded because the difference between
+them is the entire value of running the mutation: the first number was the test
+agreeing with itself.
 
 Headline after §10 in this worktree (last statement wins): C=158 W=165 N=110 X=0
 — `pnpm -s check:census-integrity`, which parses 433 of the 451 requirements (18 are counted in prose it cannot read, and the 3 CANNOT-VERIFY rows are among them, which is why it reports X=0 where §1 states 3).

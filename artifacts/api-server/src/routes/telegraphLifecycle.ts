@@ -284,39 +284,82 @@ router.post(
     }
 
     // ── Compensation, not a lock ─────────────────────────────────────────────
+    //
+    // Putting the message back is always safe: it returns the conversation to
+    // the state it was in a moment ago. So both reasons to compensate are
+    // handled the same way — a race we DETECTED, and a race we COULD NOT RULE
+    // OUT because the re-read failed.
+    //
+    // The second one is the point. An earlier version of this handler skipped
+    // the race check entirely when the after-read failed, which made the one
+    // branch whose whole job is to catch a §7.4 violation the one branch that
+    // assumed there had not been one. Every other receipt read in this file
+    // fails closed; this one now does too.
+    const restore = async (): Promise<boolean> => {
+      const { error } = await client
+        .from("messages")
+        .update(restorePatch(originalBody))
+        .eq("id", messageId);
+      if (error) log.error({ err: error, messageId }, "unsend compensation failed");
+      return !error;
+    };
+
     const after = await readMembers(client, threadId);
-    if (after.ok) {
-      const raced = detectReadRace(seenBefore, seenByRecipients(message, after.members));
-      if (raced.length > 0) {
-        const { error: restoreErr } = await client
-          .from("messages")
-          .update(restorePatch(originalBody))
-          .eq("id", messageId);
-        if (restoreErr) {
-          // The message stays unsent and the sender is told the truth: we could
-          // not put it back. Silence here would be the worst option of the three.
-          log.error({ err: restoreErr, messageId }, "unsend compensation failed");
-          res.status(200).json({
-            id: messageId,
-            unsent: true,
-            raceDetected: true,
-            compensated: false,
-            message:
-              "Someone read this message as you unsent it, and we could not put it back. It is gone.",
-            seenBy: raced.length,
-          });
-          return;
-        }
+
+    if (!after.ok) {
+      // We cannot tell whether a read landed. Put it back and say so.
+      if (await restore()) {
         res.status(409).json({
-          error: "seen_by_recipient",
-          message: unsendRefusalMessage("seen_by_recipient", raced.length),
-          seenBy: raced.length,
+          error: "unverifiable",
+          message:
+            "We could not confirm nobody had seen this message, so it was not unsent. " +
+            "Nothing changed — you can try again.",
+          seenBy: 0,
           recipientCount: plan.recipientCount,
-          raceDetected: true,
+          raceDetected: null,
           compensated: true,
         });
         return;
       }
+      // Could not re-read AND could not put it back. The sender is told the
+      // truth rather than being handed a success.
+      res.status(200).json({
+        id: messageId,
+        unsent: true,
+        raceDetected: null,
+        compensated: false,
+        message:
+          "This message was unsent, but we could not confirm nobody had already seen it.",
+        seenBy: 0,
+      });
+      return;
+    }
+
+    const raced = detectReadRace(seenBefore, seenByRecipients(message, after.members));
+    if (raced.length > 0) {
+      if (!(await restore())) {
+        // The message stays unsent and the sender is told the truth: we could
+        // not put it back. Silence here would be the worst option of the three.
+        res.status(200).json({
+          id: messageId,
+          unsent: true,
+          raceDetected: true,
+          compensated: false,
+          message:
+            "Someone read this message as you unsent it, and we could not put it back. It is gone.",
+          seenBy: raced.length,
+        });
+        return;
+      }
+      res.status(409).json({
+        error: "seen_by_recipient",
+        message: unsendRefusalMessage("seen_by_recipient", raced.length),
+        seenBy: raced.length,
+        recipientCount: plan.recipientCount,
+        raceDetected: true,
+        compensated: true,
+      });
+      return;
     }
 
     res.status(200).json({
