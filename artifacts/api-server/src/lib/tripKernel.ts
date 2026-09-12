@@ -120,10 +120,9 @@ export async function tripKernelClient(sc?: SupabaseClient | null): Promise<Supa
 // LEAVE_PLAN | CREATE_SUBGROUP | SET_PRESENCE | CREATE_PROPOSAL |
 // ACCEPT_PROPOSAL | COMPLETE_ACTIVITY as EXAMPLES. The five plan commands that
 // carry a spec name are those five; every other name below is an extension
-// the existing routes need and the spec does not name. JOIN_PLAN / LEAVE_PLAN /
-// CREATE_SUBGROUP / SET_PRESENCE / *_PROPOSAL have no underlying state to act
-// on (no trip_plan_participants, subgroups, presence or proposals tables
-// exist) and are deliberately NOT declared.
+// the existing routes need and the spec does not name. JOIN_PLAN / LEAVE_PLAN
+// (2772), SET_PRESENCE / *_PROPOSAL (2768, 2775) and CREATE_SUBGROUP (2780)
+// arrived with the tables they act on and are declared beside their families.
 
 /** Plan family (contract v1, migration 2420). Capability: crew. */
 export type TripPlanCommandType =
@@ -185,7 +184,44 @@ export type TripPlanCommandType =
   | "LEAVE_PLAN"
   | "SET_PLAN_ATTENDANCE"
   | "REORDER_PLAN"
-  | "LINK_PLAN_ROUTE_STOP";
+  | "LINK_PLAN_ROUTE_STOP"
+  // §3.3 plan lifecycle (2779): START_PLAN → in_progress, SKIP_PLAN → skipped
+  // (terminal). MOVE_PLAN on a confirmed plan leaves it 'moved' (same file).
+  | "START_PLAN"
+  | "SKIP_PLAN"
+  // §4.2 stage lifecycle (2779): planned → active → completed, emitting
+  // trip.stage_started / trip.stage_completed.
+  | "START_STAGE"
+  | "COMPLETE_STAGE";
+
+/** §9.2 temporary subgroups (2780). Capability: crew; DISSOLVE additionally creator-or-host. */
+export type TripSubgroupCommandType =
+  | "CREATE_SUBGROUP"
+  | "JOIN_SUBGROUP"
+  | "LEAVE_SUBGROUP"
+  | "DISSOLVE_SUBGROUP";
+
+/** §15.1 transport segments (2782). Capability: crew. */
+export type TripTransportCommandType =
+  | "ADD_TRANSPORT_SEGMENT"
+  | "UPDATE_TRANSPORT_SEGMENT"
+  | "SET_TRANSPORT_STATE"
+  | "REMOVE_TRANSPORT_SEGMENT";
+
+/**
+ * §17.2 disruptions and the §4.2 derived events (2785). DECLARE/RESOLVE are
+ * crew. MARK_COMMITMENT_AT_RISK, CLEAR_COMMITMENT_RISK and OPEN_FREE_WINDOW
+ * are the engines' — issued by TripHealthProjection / TripFreedomProjection
+ * as actor_role "system" with a deterministic idempotency key, so a judgement
+ * becomes an event once and re-detection is a duplicate — and also crew's,
+ * so a person may record what they know.
+ */
+export type TripDisruptionCommandType =
+  | "DECLARE_DISRUPTION"
+  | "RESOLVE_DISRUPTION"
+  | "MARK_COMMITMENT_AT_RISK"
+  | "CLEAR_COMMITMENT_RISK"
+  | "OPEN_FREE_WINDOW";
 
 /** Trip family (contract v2). Capability: none for CREATE_TRIP, owner otherwise. */
 export type TripTripCommandType =
@@ -221,9 +257,12 @@ export type TripCommandType =
   | TripTripCommandType
   | TripParticipantCommandType
   | TripAdminCommandType
-  | TripSystemCommandType;
+  | TripSystemCommandType
+  | TripSubgroupCommandType
+  | TripTransportCommandType
+  | TripDisruptionCommandType;
 
-export type TripCommandFamily = "plan" | "trip" | "participant" | "admin" | "system";
+export type TripCommandFamily = "plan" | "trip" | "participant" | "admin" | "system" | "subgroup" | "transport" | "disruption";
 
 /** Which family a command type belongs to, and therefore which actor_role it needs. */
 export function tripCommandFamily(type: TripCommandType): TripCommandFamily {
@@ -237,6 +276,13 @@ export function tripCommandFamily(type: TripCommandType): TripCommandFamily {
       return "admin";
     case "SET_TRIP_COVER":
       return "system";
+    case "CREATE_SUBGROUP": case "JOIN_SUBGROUP": case "LEAVE_SUBGROUP": case "DISSOLVE_SUBGROUP":
+      return "subgroup";
+    case "ADD_TRANSPORT_SEGMENT": case "UPDATE_TRANSPORT_SEGMENT": case "SET_TRANSPORT_STATE": case "REMOVE_TRANSPORT_SEGMENT":
+      return "transport";
+    case "DECLARE_DISRUPTION": case "RESOLVE_DISRUPTION":
+    case "MARK_COMMITMENT_AT_RISK": case "CLEAR_COMMITMENT_RISK": case "OPEN_FREE_WINDOW":
+      return "disruption";
     default:
       return "plan";
   }
@@ -333,6 +379,25 @@ export type TripKernelReason =
   | "TRIP_PARTICIPANT_NOT_FOUND"
   | "TRIP_PARTICIPANT_IS_OWNER"
   | "TRIP_PARTICIPANT_CAPACITY_REACHED"
+  // 2779: §7.2 refused AT THE WRITE — a move into a commitment's approach
+  // window, unless the command carries override_conflicts: true (recorded on
+  // the event). Appendix B's TRIP_TEMPORAL_* family, emitted by the kernel.
+  | "TRIP_TEMPORAL_CONFLICT"
+  | "TRIP_STAGE_INVALID_TRANSITION"
+  // 2780 subgroups.
+  | "TRIP_SUBGROUP_NOT_FOUND"
+  | "TRIP_SUBGROUP_NOT_MEMBER"
+  // Distinct from TRIP_AUTH_NOT_CREW for the same reason as TRIP_ASSIGNEE_NOT_CREW:
+  // the actor is crew; the person they NAMED is not.
+  | "TRIP_SUBGROUP_MEMBER_NOT_CREW"
+  // 2782 transport segments.
+  | "TRIP_TRANSPORT_NOT_FOUND"
+  | "TRIP_TRANSPORT_INVALID_TRANSITION"
+  // 2783: a personal goal is its owner's.
+  | "TRIP_AUTH_NOT_CREATOR"
+  // 2785 disruptions (Appendix B TRIP_DISRUPTION_* family).
+  | "TRIP_DISRUPTION_NOT_FOUND"
+  | "TRIP_DISRUPTION_NOT_ACTIVE"
   | "TRIP_KERNEL_UNAVAILABLE";
 
 export type TripKernelResult =

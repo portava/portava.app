@@ -20,6 +20,9 @@
  */
 import { logger } from "../../lib/logger.js";
 import { tripOperationalProjectionsGate } from "../../lib/tripOperationalProjections.js";
+import { randomUUID } from "node:crypto";
+import { isFlagEnabled } from "../../lib/featureFlags.js";
+import { executeTripCommand } from "../../lib/tripKernel.js";
 import { localClock } from "./TripOperationalPhase.js";
 import { planCloseout, type CloseoutStepPlan, type ReconciliationQuestion } from "./TripCloseout.js";
 
@@ -35,7 +38,7 @@ export interface TripCloseoutReport {
   unread: string[];
 }
 
-export async function runTripCloseout(sc: any, tripId: string, opts: { now?: Date; timezone?: string | null; dryRun?: boolean } = {}): Promise<TripCloseoutReport> {
+export async function runTripCloseout(sc: any, tripId: string, opts: { now?: Date; timezone?: string | null; dryRun?: boolean; actorUserId?: string | null } = {}): Promise<TripCloseoutReport> {
   const now = opts.now ?? new Date();
   const unread: string[] = [];
 
@@ -58,15 +61,20 @@ export async function runTripCloseout(sc: any, tripId: string, opts: { now?: Dat
   }));
 
   let pendingDecisionTaskIds: string[] | null = null;
+  let activeSubgroupIds: string[] | null = null;
   const gate = await tripOperationalProjectionsGate(sc);
   if (gate.enabled) {
     const { data: tasks, error: tErr } = await sc.from("trip_decision_tasks").select("id").eq("trip_id", tripId).eq("status", "pending");
     if (tErr) { unread.push("trip_decision_tasks"); log.warn({ err: tErr.message, tripId }, "closeout: decision tasks unreadable"); }
     else pendingDecisionTaskIds = ((tasks ?? []) as any[]).map((t) => String(t.id));
+    // §9.2 / §20.2 (2780): temporary subgroups dissolve at completion.
+    const { data: groups, error: gErr } = await sc.from("trip_subgroups").select("id").eq("trip_id", tripId).eq("state", "active");
+    if (gErr) { unread.push("trip_subgroups"); log.warn({ err: gErr.message, tripId }, "closeout: subgroups unreadable"); }
+    else activeSubgroupIds = ((groups ?? []) as any[]).map((g) => String(g.id));
   }
 
   const plan = planCloseout({
-    activeLiveShareIds, planItems, pendingDecisionTaskIds,
+    activeLiveShareIds, planItems, pendingDecisionTaskIds, activeSubgroupIds,
     tripEndDate: null, today: localClock(now, opts.timezone ?? null).date,
   });
 
@@ -87,6 +95,33 @@ export async function runTripCloseout(sc: any, tripId: string, opts: { now?: Dat
         const ids = ((stopped ?? []) as any[]).map((s) => String(s.id));
         steps.push({ step: step.step, status: "performed", ids, detail: `${ids.length} live-share session(s) stopped at completion (§20.2)` });
       }
+      continue;
+    }
+    if (step.step === "dissolve_temporary_crews" && step.status === "actionable") {
+      if (opts.dryRun) { steps.push(step); continue; }
+      // DISSOLVE_SUBGROUP is a kernel command (2780): the creator's or a host's.
+      // The actor is whoever completed the trip — the owner — and the key is
+      // the closeout's, so a repeated completion is a duplicate, not a second
+      // dissolution. Behind trip_kernel_enabled like every kernel write.
+      if (!opts.actorUserId) {
+        steps.push({ step: step.step, status: "failed", ids: step.ids, detail: "no actor to issue DISSOLVE_SUBGROUP as" });
+        continue;
+      }
+      if (!(await isFlagEnabled(sc, "trip_kernel_enabled"))) {
+        steps.push({ step: step.step, status: "deferred", detail: `${step.ids?.length ?? 0} active subgroup(s) remain (${(step.ids ?? []).join(", ")}): DISSOLVE_SUBGROUP is a kernel command and trip_kernel_enabled is false` });
+        continue;
+      }
+      const dissolved: string[] = []; const failures: string[] = [];
+      for (const id of step.ids ?? []) {
+        const r = await executeTripCommand(sc, {
+          commandId: randomUUID(), tripId, actorUserId: opts.actorUserId, idempotencyKey: `closeout:dissolve:${id}`,
+          type: "DISSOLVE_SUBGROUP", payload: { subgroup_id: id, reason: "trip completed (§20.2 closeout)" },
+        });
+        if (r.ok) dissolved.push(id); else failures.push(`${id}: ${r.reason}`);
+      }
+      steps.push(failures.length === 0
+        ? { step: step.step, status: "performed", ids: dissolved, detail: `${dissolved.length} temporary subgroup(s) dissolved at completion (§9.2, §20.2)` }
+        : { step: step.step, status: "failed", ids: dissolved, detail: `${dissolved.length} dissolved, ${failures.length} refused: ${failures.join("; ")}` });
       continue;
     }
     if (step.step === "reconcile_uncertain_plan_outcomes" && iErr) {

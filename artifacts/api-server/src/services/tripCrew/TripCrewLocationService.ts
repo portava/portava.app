@@ -20,6 +20,7 @@ import { buildCrewCard, type RawMemberLocation, type CrewMemberCard } from "../.
 import { logger as rootLogger } from "../../lib/logger.js";
 import { nameVisibilitySet, presentedName } from "../../lib/publicIdentity.js";
 import { fetchBlockedSet } from "../../lib/blocks.js";
+import { tripOperationalProjectionsGate } from "../../lib/tripOperationalProjections.js";
 
 const logger = rootLogger.child({ service: "TripCrewLocationService" });
 
@@ -242,9 +243,14 @@ export async function getCrewMap(
 
   // 7. Load active live-share sessions visible to this viewer
   const now = new Date().toISOString();
+  // §9.2 (2780): a live-share scoped to a temporary subgroup is served to that
+  // subgroup's current members only. subgroup_id is kernel-era schema, so it is
+  // read only under trip_operational_projections_enabled (whose probe covers
+  // the column); otherwise every session is trip-scoped, exactly as before.
+  const subgroupScoped = (await tripOperationalProjectionsGate(db)).enabled;
   const liveShareRes = await db
     .from("trip_crew_location_sessions")
-    .select("id, user_id, visibility_level, expires_at, allowed_member_ids")
+    .select(subgroupScoped ? "id, user_id, visibility_level, expires_at, allowed_member_ids, subgroup_id" : "id, user_id, visibility_level, expires_at, allowed_member_ids")
     .eq("trip_id", tripId)
     .eq("status", "active")
     .gt("expires_at", now);
@@ -254,12 +260,22 @@ export async function getCrewMap(
   // card's disclosure level, and getting it wrong understates what the viewer
   // is entitled to see while looking exactly like the truth.
   if (liveShareRes.error) throw crewMapUnavailable("trip_crew_location_sessions", liveShareRes.error);
+  let viewerSubgroups: Set<string> | null = null;
+  if (subgroupScoped && ((liveShareRes.data as any[]) ?? []).some((r) => r.subgroup_id)) {
+    const mRes = await db.from("trip_subgroup_members").select("subgroup_id").eq("user_id", viewerId).is("left_at", null);
+    // REFUSE on the same principle as the session read: a subgroup-scoped share
+    // the viewer IS entitled to would silently vanish.
+    if (mRes.error) throw crewMapUnavailable("trip_subgroup_members", mRes.error);
+    viewerSubgroups = new Set(((mRes.data as any[]) ?? []).map((m) => String(m.subgroup_id)));
+  }
   const liveShareMap = new Map<string, any>();
   for (const row of ((liveShareRes.data as any[]) ?? [])) {
     const allowed: string[] = row.allowed_member_ids ?? [];
-    if (allowed.includes(viewerId)) {
-      liveShareMap.set(row.user_id, row);
-    }
+    if (!allowed.includes(viewerId)) continue;
+    // Only under the gate: a select list that happens to return the column on
+    // a database where the gate is off must not scope anything.
+    if (subgroupScoped && row.subgroup_id && !(viewerSubgroups?.has(String(row.subgroup_id)) ?? false)) continue;
+    liveShareMap.set(row.user_id, row);
   }
 
   // Universal display-name rule: crew members show real names only when

@@ -57,7 +57,7 @@ import { noSource, type Layer } from "./TripMapProjection.js";
 import type { FreedomWindow } from "./TripFreedomEngine.js";
 import type { PhaseDecision } from "./TripOperationalPhase.js";
 import type { HealthReason, TripHealthLevel } from "./TripHealth.js";
-import { recordTripDecision, TRIP_ENGINE_VERSIONS } from "./TripDecisionLedger.js";
+import { recordTripDecision, persistTripDecision, TRIP_ENGINE_VERSIONS } from "./TripDecisionLedger.js";
 
 const log = logger.child({ mod: "tripTodayProjection" });
 
@@ -282,6 +282,8 @@ export async function buildTripTodayProjection(
     engineVersions: { TripTodayProjection: TRIP_ENGINE_VERSIONS.TripTodayProjection },
     calculatedAt: envelope.generatedAt, sourceTripVersion: canonicalVersion,
   });
+  // §5.3 (2781): kept for 90 days by policy where the deployment can; the projection is served either way.
+  void persistTripDecision(sc, decision);
 
   return {
     ok: true,

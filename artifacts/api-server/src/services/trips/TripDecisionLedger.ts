@@ -37,7 +37,10 @@
  * passed off as the original. census-trips §40.6 grades this W for exactly
  * that reason and says what the table would change.
  */
+import { randomUUID } from "node:crypto";
+
 import type { TravelConfidence } from "../../lib/travelEstimate.js";
+import { tripOperationalProjectionsGate } from "../../lib/tripOperationalProjections.js";
 
 /** Bump when an engine's OUTPUT for the same inputs changes. Recorded on every decision. */
 export const TRIP_ENGINE_VERSIONS = {
@@ -80,7 +83,9 @@ export function _resetTripDecisionLedger(): void { ring.length = 0; seq = 0; }
 
 export function recordTripDecision(d: Omit<TripDecision, "decisionId">): TripDecision {
   seq += 1;
-  const decision: TripDecision = { ...d, decisionId: `${d.type}:${d.tripId}:${Date.parse(d.calculatedAt)}:${seq}` };
+  // A uuid, because trip_decisions.decision_id (2781) is one; the sequence
+  // number stays as the ring's order and is not part of the identity.
+  const decision: TripDecision = { ...d, decisionId: randomUUID() };
   ring.push(decision);
   if (ring.length > TRIP_DECISION_RING) ring.splice(0, ring.length - TRIP_DECISION_RING);
   return decision;
@@ -108,12 +113,64 @@ export interface TripDecisionExplanation {
 }
 
 export const DECISION_RETENTION =
-  `In-process ring of ${TRIP_DECISION_RING} decisions; not persisted. A decision from another process, or displaced from the ring, is reported as not retained rather than recomputed.`;
+  `In-process ring of ${TRIP_DECISION_RING} decisions, and — where trip_operational_projections_enabled is on and trip_decisions (2781) exists — a table row kept for 90 days by policy (public.trip_decisions_prune). A decision in neither is reported as not retained rather than recomputed.`;
+
+/**
+ * §5.3 / §21.2: persist a decision to trip_decisions (2781) when the
+ * deployment can. Ids, versions and counts only — the ring's record IS
+ * already minimised (§21.3), and the table's CHECK refuses a coordinate.
+ * Never throws: a projection is served whether or not its decision was kept,
+ * and the outcome is reported so a caller can say which.
+ */
+export async function persistTripDecision(sc: any, d: TripDecision): Promise<{ persisted: boolean; reason: string | null }> {
+  try {
+    const gate = await tripOperationalProjectionsGate(sc);
+    if (!gate.enabled) return { persisted: false, reason: gate.reason };
+    const { error } = await sc.from("trip_decisions").insert({
+      decision_id: d.decisionId, trip_id: d.tripId, decision_type: d.type,
+      engine_versions_json: d.engineVersions, inputs_json: d.inputs,
+      sources: d.sources, assumptions: d.assumptions, constraints: d.constraints,
+      result_json: d.result, confidence: d.confidence === "INSUFFICIENT" ? "LOW" : d.confidence,
+      source_trip_version: d.sourceTripVersion, calculated_at: d.calculatedAt,
+    });
+    if (error) return { persisted: false, reason: error.message };
+    return { persisted: true, reason: null };
+  } catch (e: any) {
+    return { persisted: false, reason: String(e?.message ?? e) };
+  }
+}
+
+/** The ring first, then the table (2781) when the deployment can read it. */
+export async function readTripDecisionFrom(sc: any, decisionId: string): Promise<TripDecision | null> {
+  const local = readTripDecision(decisionId);
+  if (local) return local;
+  try {
+    const gate = await tripOperationalProjectionsGate(sc);
+    if (!gate.enabled) return null;
+    const { data, error } = await sc.from("trip_decisions").select("*").eq("decision_id", decisionId).maybeSingle();
+    if (error || !data) return null;
+    return {
+      decisionId: String(data.decision_id), tripId: String(data.trip_id), type: data.decision_type,
+      inputs: data.inputs_json ?? {}, sources: data.sources ?? [], assumptions: data.assumptions ?? [], constraints: data.constraints ?? [],
+      result: data.result_json ?? {}, confidence: data.confidence ?? "N/A", engineVersions: data.engine_versions_json ?? {},
+      calculatedAt: data.calculated_at, sourceTripVersion: data.source_trip_version ?? null,
+    };
+  } catch { return null; }
+}
+
+/** explainTripDecision over the ring OR the table. */
+export async function explainTripDecisionFrom(sc: any, decisionId: string): Promise<TripDecisionExplanation | null> {
+  const d = await readTripDecisionFrom(sc, decisionId);
+  return d ? explainDecision(d) : null;
+}
 
 /** §12.1 explainTripDecision(decisionId): sentences from the stored record, or null when not retained. */
 export function explainTripDecision(decisionId: string): TripDecisionExplanation | null {
   const d = readTripDecision(decisionId);
-  if (!d) return null;
+  return d ? explainDecision(d) : null;
+}
+
+function explainDecision(d: TripDecision): TripDecisionExplanation {
   const explanation: string[] = [
     `This ${d.type.replace(/_/g, " ")} was computed at ${d.calculatedAt} against trip version ${d.sourceTripVersion ?? "unknown"}.`,
     `It read: ${d.sources.join(", ")}.`,

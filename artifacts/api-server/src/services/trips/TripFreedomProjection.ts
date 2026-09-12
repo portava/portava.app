@@ -32,7 +32,8 @@ import { resolvePlaces, intervalToMinutes, FEASIBILITY_UNVERIFIED_DISCLOSURE } f
 import { checkFeasibility } from "./TripFeasibilityEngine.js";
 import { straightLineTravelTimeProvider, type GeoPoint } from "./TravelTimeProvider.js";
 import { liveEnvelope, type TripProjectionEnvelope } from "./TripProjectionEnvelope.js";
-import { recordTripDecision, TRIP_ENGINE_VERSIONS } from "./TripDecisionLedger.js";
+import { recordTripDecision, persistTripDecision, TRIP_ENGINE_VERSIONS } from "./TripDecisionLedger.js";
+import { recordDerivedEvents, type DerivedEventsReport } from "../../lib/tripDerivedEvents.js";
 import {
   computeFreedomWindows, type EngineCommitment, type FreedomWindow, type HopTravel, type TemporalConflict,
 } from "./TripFreedomEngine.js";
@@ -45,6 +46,8 @@ export interface TripFreedomProjection extends TripProjectionEnvelope {
   /** §21.2: the ledger record this projection was computed as; explain it at GET /trips/:id/decisions/:decisionId/explain. */
   decisionId: string;
   windows: FreedomWindow[];
+  /** §4.2: what the engine recorded as domain events for this read (2785), or why nothing was. */
+  derivedEvents: DerivedEventsReport;
   conflicts: TemporalConflict[];
   commitmentCount: number;
   unplacedCommitmentIds: string[];
@@ -164,6 +167,13 @@ export async function buildTripFreedomProjection(
   });
   for (const c of result.conflicts) incrementTripMetric("temporal_conflict_total", { kind: c.kind });
 
+  // §4.2: the engine's judgement becomes domain events — commitment_at_risk
+  // per conflicting commitment, free_window_created per window — through the
+  // kernel's 'engine' capability (2785), keyed by the fact's identity so a
+  // re-read is a duplicate. Skipped, and said so, while trip_kernel_enabled
+  // is false.
+  const derivedEvents = await recordDerivedEvents(sc, tripId, { windows: result.windows, conflicts: result.conflicts }, { now });
+
   // §21.2: ids, versions and counts — never a coordinate or a name.
   const decision = recordTripDecision({
     tripId, type: "freedom_windows",
@@ -188,6 +198,8 @@ export async function buildTripFreedomProjection(
     engineVersions: { TripFreedomEngine: TRIP_ENGINE_VERSIONS.TripFreedomEngine, TripFeasibilityEngine: TRIP_ENGINE_VERSIONS.TripFeasibilityEngine, TravelTimeProvider: TRIP_ENGINE_VERSIONS.TravelTimeProvider },
     calculatedAt: envelope.generatedAt, sourceTripVersion: envelope.sourceTripVersion,
   });
+  // §5.3 (2781): kept for 90 days by policy where the deployment can; the projection is served either way.
+  void persistTripDecision(sc, decision);
 
   return {
     ok: true,
@@ -197,6 +209,7 @@ export async function buildTripFreedomProjection(
       decisionId: decision.decisionId,
       windows: result.windows,
       conflicts: result.conflicts,
+      derivedEvents,
       commitmentCount: commitments.length,
       unplacedCommitmentIds: result.unplacedCommitmentIds,
       unresolvedPlaceIds: places.unresolved,

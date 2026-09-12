@@ -108,7 +108,7 @@ describe("§21.2 the decision ledger, in-process", () => {
     assert.ok(e.explanation.some((s) => s.startsWith("Assumed: a commitment has no end")));
     assert.ok(e.explanation.some((s) => s.startsWith("Constrained by: travel term")));
     assert.ok(e.explanation.some((s) => s.includes("TripFreedomEngine@")));
-    assert.match(e.retention, /not persisted/);
+    assert.match(e.retention, /not retained/);
     assert.deepEqual(listTripDecisions(TRIP_ID).map((x) => x.decisionId), [d.decisionId]);
   });
   it("a decision that is not retained is null, never recomputed", () => {

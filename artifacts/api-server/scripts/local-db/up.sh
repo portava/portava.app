@@ -30,6 +30,8 @@ API=$(cd "$HERE/../.." && pwd)
 BASELINE="$API/baseline/20260819_baseline_structure.sql"
 MIGRATIONS="$API/src/migrations"
 FROM="${LOCAL_DB_FROM:-2093}"
+# Exclusive upper bound, for before/after proofs of one migration: LOCAL_DB_TO=2779 stops before 2779.
+TO="${LOCAL_DB_TO:-}"
 KNOWN="$HERE/KNOWN_UNREPLAYABLE.json"
 ENV_OUT="$HERE/.env.local-db"
 WORK="${LOCAL_DB_WORK:-/tmp/portava-local-db-work}"
@@ -103,6 +105,7 @@ TABLES=$(psql -X -tA "$URL" -c "SELECT count(*) FROM pg_tables WHERE schemaname 
 applied=0; skipped=0; n=0
 for f in $(ls "$MIGRATIONS"/*.sql | LC_ALL=C sort); do
   b=$(basename "$f"); [[ "$b" < "$FROM" ]] && continue
+  if [ -n "$TO" ] && ! [[ "$b" < "$TO" ]]; then continue; fi
   n=$((n+1))
   if psql -X -q -v ON_ERROR_STOP=1 "$URL" -f "$f" >"$WORK/last.out" 2>&1; then
     applied=$((applied+1))
@@ -123,13 +126,16 @@ done
 # and said so; the entry stays in the list because in-order replay still fails.
 retried=0
 for b in $(node -e 'console.log(Object.keys(require(process.argv[1]).files).join("\n"))' "$KNOWN"); do
+  if [ -n "$TO" ] && ! [[ "$b" < "$TO" ]]; then continue; fi
   if psql -X -q -v ON_ERROR_STOP=1 "$URL" -f "$MIGRATIONS/$b" >"$WORK/retry.out" 2>&1; then retried=$((retried+1)); log "applied on retry after the chain: $b"; fi
 done
 
-# ── proof the trip domain is there ────────────────────────────────────────────
+# ── proof the trip domain is there (skipped for a deliberately truncated chain) ─
+if [ -z "$TO" ]; then
 MISSING=$(psql -X -tA "$URL" -c "SELECT string_agg(t, ', ') FROM unnest(ARRAY['trip_stages','trip_legs','trip_commitments','trip_goals','trip_decision_tasks','trip_risks','trip_presence','trip_proposals','trip_proposal_votes','trip_snapshots','trip_outcomes','trip_plan_participants','trip_events','trip_outbox','trip_command_receipts','trip_map_projections']) t WHERE to_regclass('public.' || t) IS NULL")
 [ -z "$MISSING" ] || die "trip-domain tables missing after replay: $MISSING"
 psql -X -tA "$URL" -c "SELECT 1 FROM pg_proc WHERE proname = 'trip_kernel_execute'" | grep -q 1 || die "trip_kernel_execute missing after replay"
+fi
 
 printf 'LOCAL_DB_URL=%s\nLOCAL_DB_MODE=%s\n' "$URL" "$MODE" > "$ENV_OUT"
-log "ready ($MODE): $URL — baseline $TABLES tables; chain from $FROM: $applied applied in order, $skipped known-unreplayable of $n, $retried of those applied on retry"
+log "ready ($MODE): $URL — baseline $TABLES tables; chain from $FROM${TO:+ to before $TO}: $applied applied in order, $skipped known-unreplayable of $n, $retried of those applied on retry"

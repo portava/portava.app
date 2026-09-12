@@ -356,12 +356,12 @@ Nothing in this section exists. The evidence is one grep, run over
 
 | id | Requirement | V | Evidence |
 | --- | --- | --- | --- |
-| TR49 | The `TripCommand` envelope (commandId, tripId, actorUserId, expectedTripVersion, idempotencyKey, type, payload, clientObservedAt) | **C** | **Moved N→C in the §26 recensus.** The row said "No type, no table, no route." All three exist: the envelope is `lib/tripKernel.ts:248#TripCommand` (commandId, tripId, actorUserId, expectedTripVersion, idempotencyKey, type, payload), the receipt table is `migrations/2420_trip_kernel_foundation.sql:139#trip_command_receipts`, and the route is the `trip_kernel_execute` RPC that `lib/tripKernel.ts:538#executeTripCommand` calls. |
+| TR49 | The `TripCommand` envelope (commandId, tripId, actorUserId, expectedTripVersion, idempotencyKey, type, payload, clientObservedAt) | **C** | **Moved N→C in the §26 recensus.** The row said "No type, no table, no route." All three exist: the envelope is `lib/tripKernel.ts:255#TripCommand` (commandId, tripId, actorUserId, expectedTripVersion, idempotencyKey, type, payload), the receipt table is `migrations/2420_trip_kernel_foundation.sql:139#trip_command_receipts`, and the route is the `trip_kernel_execute` RPC that `lib/tripKernel.ts:603#executeTripCommand` calls. |
 | TR50 | A typed command vocabulary (ADD_PLAN, MOVE_PLAN, CONFIRM_PLAN, CANCEL_PLAN, JOIN_PLAN, LEAVE_PLAN, CREATE_SUBGROUP, SET_PRESENCE, CREATE_PROPOSAL, ACCEPT_PROPOSAL, COMPLETE_ACTIVITY) | **N** | None of the eleven exists as a command. Four have a *route* that does something adjacent (`POST /trips/:id/plan/items`, `PATCH …/items/:itemId`, `POST /trips/:id/complete`); seven have no analogue at all. |
 | TR51 | Command service validates schema | **W** | **MOVED C → W, 2026-09-11 (§38) — the first verdict this census has moved on a re-derivation.** The row read C on the sentence *"every trip write parses a zod schema first"*, which is its testable half. Counted across the three files it cites: **53 write endpoints, 8 reading `req.body` with no schema at all** — `POST /trips` (the primary create), `/invite`, `/members`, `/join-request`, `/invite-link` and the three checklist writes. 45 of 53 do validate, so the capability is built and used and this is BUILT-BUT-WRONG, not NOT-BUILT; the word *every* had never been counted. `POST /trips` is now closed by `CreateTripSchema` (`routes/trips.ts:790#CreateTripSchema`), mirroring `PatchTripSchema` field for field so it cannot reject what PATCH already accepts, and the remaining seven are held shrink-only by `check:trip-write-validation`. **What the gap costs is TYPE validation, not authorization** — `requireUser` runs first and `check:route-auth-gate` guards that independently — so a malformed payload became a 500 from the database where a 400 belongs. Returns to C when the list reaches zero. |
 | TR52 | …validates actor capability | **C** | `lib/http.ts:554#canEditPlan` `canEditPlan` and `:614#canEditPlanItem` `canEditPlanItem` are called before every plan mutation (`routes/trips.ts:1710,1806,1922#canEditPlan`), and membership is checked through the shared `lib/tripMembership.ts:45#isAcceptedTripMember` `isAcceptedTripMember`. |
 | TR53 | …validates aggregate version | **C** | **Moved N→C.** The row said "No version exists." `trips.version` is added by `2420_trip_kernel_foundation.sql:96#version` and the kernel refuses a mismatch: `2590_trip_kernel_add_plan_attachment_columns.sql:365#TRIP_VERSION_CONFLICT` returns the current and expected versions so a caller can refetch and retry (§18.3 "explicit conflict"). |
-| TR54 | …validates temporal/spatial consistency | **W** | **Moved N→W 2026-09-08, and the W is the honest half.** The row said the write "accepts any `starts_at`/`ends_at` pair, including one that overlaps a confirmed item or precedes its predecessor." ORDERING is now checked: the kernel already refused an inverted range on the TRIP (`2590:...#TRIP_TEMPORAL_RANGE_INVERTED`, on create and on update, comparing the MERGED value), and the plan-item half is now enforced by `migrations/2750_trip_plan_item_interval_ordered.sql` (a CHECK, NOT VALID, rehearsed on portava-ci — an UPDATE into an inverted range is refused) plus the typed refusal at `lib/tripKernel.ts:538#executeTripCommand`. **OVERLAP is still unchecked** — an item may still be written across a confirmed item's interval, because that is the §7 consistency engine (TR128, TR134) and needs a route provider this tree does not have. Ordering built, overlap not. **Also recorded here rather than lost:** the plan-item check lives at the kernel's entry point rather than inside `trip_kernel_execute`, because every kernel change replaces that 700-line function in full; it should ride along with the next migration that replaces it for its own reasons. |
+| TR54 | …validates temporal/spatial consistency | **W** | **Moved N→W 2026-09-08, and the W is the honest half.** The row said the write "accepts any `starts_at`/`ends_at` pair, including one that overlaps a confirmed item or precedes its predecessor." ORDERING is now checked: the kernel already refused an inverted range on the TRIP (`2590:...#TRIP_TEMPORAL_RANGE_INVERTED`, on create and on update, comparing the MERGED value), and the plan-item half is now enforced by `migrations/2750_trip_plan_item_interval_ordered.sql` (a CHECK, NOT VALID, rehearsed on portava-ci — an UPDATE into an inverted range is refused) plus the typed refusal at `lib/tripKernel.ts:603#executeTripCommand`. **OVERLAP is still unchecked** — an item may still be written across a confirmed item's interval, because that is the §7 consistency engine (TR128, TR134) and needs a route provider this tree does not have. Ordering built, overlap not. **Also recorded here rather than lost:** the plan-item check lives at the kernel's entry point rather than inside `trip_kernel_execute`, because every kernel change replaces that 700-line function in full; it should ride along with the next migration that replaces it for its own reasons. |
 | TR55 | …validates dependent commitments | **N** | No commitments exist (TR15). |
 | TR56 | …validates sensitive-domain boundaries | **W** | Partially, by construction rather than by a validator: `trip_documents` and crew location have their own routes with their own gates (`routes/tripCrewLocation.ts:170-174`), so a plan write cannot touch them. There is no boundary *check* — there is simply no shared write path that could cross one. |
 | TR57 | Successful commands write canonical state plus an immutable domain event in the same transaction where feasible | **C** | **Moved N→C.** The row said "No event is written by any trip mutation." One plpgsql function does both writes in one transaction: `2590_trip_kernel_add_plan_attachment_columns.sql:798#version` bumps `trips.version` and `:804#trip_events` appends the event, with the outbox row at `:818#trip_outbox`. `logActivity` — the thing the row measured — is no longer the nearest artifact. |
@@ -3431,7 +3431,7 @@ never FEASIBLE).
   `overridden: false` typed as the literal (`:132#TemporalConflict`)
   because no override path exists. `detectPlanOverlaps`
   (`:371#detectPlanOverlaps`) is §7.2 on the plan itself.
-- `services/trips/TripFreedomProjection.ts:84#buildTripFreedomProjection` —
+- `services/trips/TripFreedomProjection.ts:87#buildTripFreedomProjection` —
   the reads (trips, commitments, places, members — each REFUSED when it fails;
   a window over "no commitments" is the whole trip), the hop travel terms from
   the feasibility engine (`:151#checkFeasibility`, the same provider
@@ -3492,7 +3492,7 @@ definition `:31#TRIP_OPERATIONAL_PROJECTIONS`, gate
 `lib/capability/registry.ts:160#TRIP_OPERATIONAL_PROJECTIONS`), seeded
 FALSE by `2778_trip_operational_projections_flag.sql`. The gate is a pure
 helper in the ratchet's sense, so the builders that call it first
-(`services/trips/TripFreedomProjection.ts:93#tripOperationalProjectionsGate`)
+(`services/trips/TripFreedomProjection.ts:96#tripOperationalProjectionsGate`)
 are gate boundaries and their schema belongs to this flag, OFF everywhere;
 the ratchet now reports it LATENT, which is what it is. Off, the routes answer
 `feature_disabled` and Compass says "not enabled"; an UNVERIFIABLE probe is
@@ -3751,7 +3751,7 @@ forwarded them.
   coordinates AND the attempt is counted —
   `stale_presence_render_attempt_total` (`:260#stale_presence_render_attempt_total`)
   — so TR399's regression is measurable where it is refused.
-  `services/tripCrew/TripCrewLocationService.ts:168#last_known_at`
+  `services/tripCrew/TripCrewLocationService.ts:169#last_known_at`
   forwards the three columns (`:297#lastKnownAt`). The legacy
   `freshness` bucket stays on the card, computed on the same instant.
 - **Tests.** `src/test/tripPresenceFreshnessClass.test.ts` (8): the classes at
@@ -3810,7 +3810,7 @@ to explain and no route.
   §20.3's questions (`:74#reconciliationQuestions`): one per
   dated plan not already done or cancelled, in the spec's own words, with the
   two `trip_outcomes` answers it admits.
-- `services/trips/TripCloseoutService.ts:38#runTripCloseout` reads
+- `services/trips/TripCloseoutService.ts:41#runTripCloseout` reads
   the inputs, performs the ONE step this deployment can perform — stopping the
   trip's temporary presence with the live-share service's own update shape
   (`:79#stopped`) — and reports every step. `POST /trips/:tripId/complete`
@@ -3824,7 +3824,7 @@ to explain and no route.
   (`:43#TRIP_ENGINE_VERSIONS`), `recordTripDecision`
   (`:81#recordTripDecision`) and `explainTripDecision`
   (`:114#explainTripDecision`) — sentences from the record. Every
-  §40.3–§40.5 build records one (`services/trips/TripFreedomProjection.ts:168#recordTripDecision`,
+  §40.3–§40.5 build records one (`services/trips/TripFreedomProjection.ts:178#recordTripDecision`,
   `TripHealthProjection.ts:154#recordTripDecision`,
   `TripTodayProjection.ts:269#recordTripDecision`) naming ids,
   versions and counts — never a coordinate or a name — and carries its
@@ -3842,7 +3842,7 @@ to explain and no route.
   reporting "performed" without stopping; serving another trip's decision.
 
 **What is NOT built, and said.** The ledger is IN-PROCESS — a ring of
-`TRIP_DECISION_RING` (`services/trips/TripDecisionLedger.ts:74#TRIP_DECISION_RING`)
+`TRIP_DECISION_RING` (`services/trips/TripDecisionLedger.ts:77#TRIP_DECISION_RING`)
 records, not a `trip_decisions` table, because that table is a migration
 this environment cannot execute; a decision from another process is "not
 retained", never recomputed and passed off. Of §20.2's seven steps, one is

@@ -65,7 +65,7 @@ import { buildTripCompassProjection } from "../services/trips/TripCompassProject
 import { buildTripFreedomProjection } from "../services/trips/TripFreedomProjection.js";
 import { buildTripHealthProjection } from "../services/trips/TripHealthProjection.js";
 import { buildTripTodayProjection } from "../services/trips/TripTodayProjection.js";
-import { explainTripDecision, DECISION_RETENTION } from "../services/trips/TripDecisionLedger.js";
+import { explainTripDecisionFrom, DECISION_RETENTION } from "../services/trips/TripDecisionLedger.js";
 import { runTripCloseout } from "../services/trips/TripCloseoutService.js";
 import { detectPlanOverlaps } from "../services/trips/TripFreedomEngine.js";
 import { incrementTripMetric } from "../lib/tripMetrics.js";
@@ -267,7 +267,7 @@ router.get("/trips/:tripId/decisions/:decisionId/explain", asyncHandler(async (r
   const membership = await requireTripMember(sc, tripId, user.id);
   if (!membership) { sendTripRefusal(res, "not_member", "TRIP_AUTH_NOT_CREW", "You must be an accepted trip member to explain a decision"); return; }
 
-  const explained = explainTripDecision(decisionId);
+  const explained = await explainTripDecisionFrom(sc, decisionId);
   // A decision for another trip is not this crew's to read, and is answered
   // exactly as one that was never retained: nothing about it leaks.
   if (!explained || explained.decision.tripId !== tripId) {

@@ -96,6 +96,8 @@ export const TRIP_REASON_CODES = [
   // ── TRIP_DISRUPTION_* ──────────────────────────────────────────────────────
   "TRIP_DISRUPTION_SUPPRESSED",       // §17.2 commercial surface suppressed
   "TRIP_DISRUPTION_ACTIVE",
+  "TRIP_DISRUPTION_NOT_FOUND",        // 2785 RESOLVE_DISRUPTION on an unknown id
+  "TRIP_DISRUPTION_NOT_ACTIVE",       // 2785 RESOLVE_DISRUPTION twice
   // ── TRIP_PROJECTION_* ──────────────────────────────────────────────────────
   "TRIP_PROJECTION_UNAVAILABLE",      // lib/tripDiscoveryProjection.ts
   "TRIP_PROJECTION_STALE",            // §19.1 consumer rejects a stale projection
@@ -136,6 +138,11 @@ export const TRIP_KERNEL_EXTENSION_CODES = [
   // trip_snapshot_verify_replay in SQL; found by the vocabulary test's SQL
   // scan on its first run, which is the second-vocabulary case it exists for.
   "TRIP_SNAPSHOT_NOT_FOUND", "TRIP_SNAPSHOT_NO_EVENTS",
+  // 2779 stage lifecycle; 2780 subgroups; 2782 transport segments. State-machine
+  // and object-identity refusals, like the ones above: not Appendix B families.
+  "TRIP_STAGE_INVALID_TRANSITION",
+  "TRIP_SUBGROUP_NOT_FOUND", "TRIP_SUBGROUP_NOT_MEMBER", "TRIP_SUBGROUP_MEMBER_NOT_CREW",
+  "TRIP_TRANSPORT_NOT_FOUND", "TRIP_TRANSPORT_INVALID_TRANSITION",
 ] as const;
 
 const KNOWN: ReadonlySet<string> = new Set<string>([...TRIP_REASON_CODES, ...TRIP_KERNEL_EXTENSION_CODES]);

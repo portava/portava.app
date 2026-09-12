@@ -727,7 +727,7 @@ router.post("/trips/:tripId/complete", async (req, res) => {
   await logActivity(sc, tripId, user.id, "trip_completed");
   // §20.2: the closeout, AFTER the transition, so a failed step cannot
   // un-complete the trip and every step is reported rather than implied.
-  const closeout = await runTripCloseout(sc, tripId, { timezone: (trip as any).timezone ?? null });
+  const closeout = await runTripCloseout(sc, tripId, { timezone: (trip as any).timezone ?? null, actorUserId: user.id });
   res.json({ status: "completed", tripId, closeout });
 });
 

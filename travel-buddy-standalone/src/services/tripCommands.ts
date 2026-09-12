@@ -54,6 +54,14 @@ export const TRIP_COMMAND_TYPES = [
   'CREATE_PROPOSAL', 'VOTE_ON_PROPOSAL', 'ACCEPT_PROPOSAL', 'REJECT_PROPOSAL',
   'RECORD_OUTCOME',
   'JOIN_PLAN', 'LEAVE_PLAN', 'SET_PLAN_ATTENDANCE',
+  // 2779: §3.3 plan lifecycle and §4.2 stage lifecycle — no legacy twin.
+  'START_PLAN', 'SKIP_PLAN', 'START_STAGE', 'COMPLETE_STAGE',
+  // 2780 subgroups, 2782 transport segments, 2785 disruptions and the
+  // derived events a person may also record.
+  'CREATE_SUBGROUP', 'JOIN_SUBGROUP', 'LEAVE_SUBGROUP', 'DISSOLVE_SUBGROUP',
+  'ADD_TRANSPORT_SEGMENT', 'UPDATE_TRANSPORT_SEGMENT', 'SET_TRANSPORT_STATE', 'REMOVE_TRANSPORT_SEGMENT',
+  'DECLARE_DISRUPTION', 'RESOLVE_DISRUPTION',
+  'MARK_COMMITMENT_AT_RISK', 'CLEAR_COMMITMENT_RISK', 'OPEN_FREE_WINDOW',
 ] as const;
 export type TripCommandType = (typeof TRIP_COMMAND_TYPES)[number];
 

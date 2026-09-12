@@ -24,7 +24,7 @@ import { isAcceptedTripMember, canEditPlan } from "../lib/http.js";
 import { buildTripCompassProjection } from "../services/trips/TripCompassProjection.js";
 import { buildTripFreedomProjection } from "../services/trips/TripFreedomProjection.js";
 import { buildTripTodayProjection } from "../services/trips/TripTodayProjection.js";
-import { explainTripDecision } from "../services/trips/TripDecisionLedger.js";
+import { explainTripDecisionFrom } from "../services/trips/TripDecisionLedger.js";
 import { acceptTripProjection, TRIP_PROJECTION_SCHEMA_VERSION } from "../services/trips/TripProjectionEnvelope.js";
 import { buildCompassContext, defaultSignals } from "./CompassContextEngine.js";
 import { runPipeline } from "./CompassPipeline.js";
@@ -891,8 +891,8 @@ export async function toolExplainTripDecision(sc: SupabaseClient, userId: string
   const decisionId = typeof args.decisionId === "string" ? args.decisionId : "";
   if (!tripId || !decisionId) return { explanation: null, info: "tripId and decisionId are required." };
   if (!(await isAcceptedTripMember(sc, tripId, userId))) return { explanation: null, info: "The user is not a member of that trip." };
-  const e = explainTripDecision(decisionId);
-  if (!e || e.decision.tripId !== tripId) return { explanation: null, info: `Decision ${decisionId} is not retained (in-process ledger; not persisted).` };
+  const e = await explainTripDecisionFrom(sc, decisionId);
+  if (!e || e.decision.tripId !== tripId) return { explanation: null, info: `Decision ${decisionId} is not retained (neither in this process's ledger nor in trip_decisions where the deployment keeps one).` };
   return { explanation: e.explanation, type: e.type, calculatedAt: e.calculatedAt, sourceTripVersion: e.sourceTripVersion, engineVersions: e.engineVersions, retention: e.retention };
 }
 

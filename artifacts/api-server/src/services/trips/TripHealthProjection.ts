@@ -25,7 +25,7 @@ import { buildTripFreedomProjection, type TripFreedomProjection } from "./TripFr
 import { operationalState, type SafetySessionRow } from "./TripSafetyProjection.js";
 import { deriveTripHealth, surfacePriority, type TripHealth, type RiskForHealth } from "./TripHealth.js";
 import { deriveOperationalPhase, localClock, type PhaseDecision, type PhasePlanItem } from "./TripOperationalPhase.js";
-import { recordTripDecision, TRIP_ENGINE_VERSIONS } from "./TripDecisionLedger.js";
+import { recordTripDecision, persistTripDecision, TRIP_ENGINE_VERSIONS } from "./TripDecisionLedger.js";
 
 const log = logger.child({ mod: "tripHealthProjection" });
 
@@ -166,6 +166,8 @@ export async function buildTripHealthProjection(
     engineVersions: { TripHealth: TRIP_ENGINE_VERSIONS.TripHealth, TripOperationalPhase: TRIP_ENGINE_VERSIONS.TripOperationalPhase },
     calculatedAt: envelope.generatedAt, sourceTripVersion: envelope.sourceTripVersion,
   });
+  // §5.3 (2781): kept for 90 days by policy where the deployment can; the projection is served either way.
+  void persistTripDecision(sc, decision);
 
   return {
     ok: true,

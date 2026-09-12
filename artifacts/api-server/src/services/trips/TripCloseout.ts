@@ -58,6 +58,8 @@ export interface CloseoutInputs {
   planItems: readonly { id: string; title: string | null; status: string | null; dayDate: string | null; locationName: string | null }[];
   /** Pending decision tasks, when the deployment can read them (null = could not, or not enabled). */
   pendingDecisionTaskIds: readonly string[] | null;
+  /** Active temporary subgroups (trip_subgroups, 2780), when the deployment can read them (null = could not, or not enabled). */
+  activeSubgroupIds?: readonly string[] | null;
   /** The trip's last day, YYYY-MM-DD. */
   tripEndDate: string | null;
   /** Local date at closeout, YYYY-MM-DD. */
@@ -88,7 +90,11 @@ export function planCloseout(inputs: CloseoutInputs): { steps: CloseoutStepPlan[
     inputs.activeLiveShareIds.length > 0
       ? { step: "stop_temporary_presence", status: "actionable", ids: [...inputs.activeLiveShareIds], detail: `${inputs.activeLiveShareIds.length} active live-share session(s) stop at completion` }
       : { step: "stop_temporary_presence", status: "not_applicable", detail: "no active live-share session" },
-    { step: "dissolve_temporary_crews", status: "not_applicable", detail: "no temporary crew (subgroup) exists in this system (§9.2, census-trips TR24)" },
+    inputs.activeSubgroupIds === null || inputs.activeSubgroupIds === undefined
+      ? { step: "dissolve_temporary_crews", status: "deferred", detail: "trip_subgroups is kernel-era schema (2780) behind trip_operational_projections_enabled; not read" }
+      : inputs.activeSubgroupIds.length > 0
+        ? { step: "dissolve_temporary_crews", status: "actionable", ids: [...inputs.activeSubgroupIds], detail: `${inputs.activeSubgroupIds.length} active temporary subgroup(s) dissolve at completion (§9.2, §20.2) — DISSOLVE_SUBGROUP commands` }
+        : { step: "dissolve_temporary_crews", status: "not_applicable", detail: "no active temporary subgroup" },
     questions.length > 0
       ? { step: "reconcile_uncertain_plan_outcomes", status: "actionable", ids: questions.map((q) => q.planId), detail: `${questions.length} plan(s) with an uncertain outcome; §20.3 questions attached, answers are RECORD_OUTCOME commands (kernel, not enabled here)` }
       : { step: "reconcile_uncertain_plan_outcomes", status: "not_applicable", detail: "every dated plan is already done or cancelled" },
