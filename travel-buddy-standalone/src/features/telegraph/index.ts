@@ -29,3 +29,26 @@ export {
   TELEGRAPH_PALETTES,
   type TelegraphPalette,
 } from './theme/telegraphTheme.ts';
+export { PortavaObjectMessage } from './sharing/PortavaObjectMessage.tsx';
+export { useShareRevocation, revokedLabel } from './sharing/useShareRevocation.ts';
+export {
+  resolveShareProjections,
+  shareObjectIntoThread,
+  parsePortavaObjectBody,
+  legacySourceTypeToObjectType,
+} from './sharing/shareApi.ts';
+export { TypedMessageRenderer, rendersTypedKind, isGifAnimated } from './kinds/TypedMessageRenderer.tsx';
+export {
+  sendTypedMessage,
+  fetchDrawer,
+  searchThread,
+  parseKindEnvelope,
+  DRAWER_TABS,
+  SENDABLE_KINDS,
+  type DrawerTab,
+  type SendableKind,
+} from './kinds/kindsApi.ts';
+export { ContentDrawerSheet } from './drawer/ContentDrawerSheet.tsx';
+export { ComposerPlusMenu } from './composer/ComposerPlusMenu.tsx';
+export { TypedComposePrompt, type TypedComposeKind } from './composer/TypedComposePrompt.tsx';
+export { COMPOSER_ENTRIES, composerEntry, availableEntryCount, type ComposerEntry, type ComposerEntryId } from './composer/composerMenu.ts';

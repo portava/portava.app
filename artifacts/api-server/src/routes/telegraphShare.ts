@@ -20,19 +20,21 @@
  * have: a reference that is not resolved renders as the sender's frozen
  * snapshot, which is the §5.3 violation it exists to close.
  *
+ * The four write gates (kill switch, active membership, 1:1 block guard, E2EE
+ * refusal) live in `lib/telegraphThreadWrite.ts` so this route and the §6.2
+ * typed-kind route cannot drift apart from each other or from the ordinary
+ * send path.
+ *
  * ── THE SENDER MUST BE ABLE TO SEE WHAT THEY SHARE ──────────────────────────
  * `POST /share` resolves the object FOR THE SENDER before writing the message
  * and refuses when the sender cannot see it. Sharing is not a way to launder a
  * reference to something you were never authorized to open.
  */
 import { Router } from "express";
-import type { SupabaseClient } from "@supabase/supabase-js";
 import { z } from "zod";
 import { requireUser, sendError } from "../lib/http.js";
 import { asyncHandler } from "../lib/asyncHandler.js";
-import { getServiceClient } from "../lib/supabase.js";
-import { isKillSwitchEngaged } from "../lib/featureFlags.js";
-import { isBlockedBetween } from "../lib/blockGuard.js";
+import { guardTelegraphThreadWrite } from "../lib/telegraphThreadWrite.js";
 import { publishToThread } from "../lib/telegraphEvents.js";
 import { logger as rootLogger } from "../lib/logger.js";
 import {
@@ -72,74 +74,6 @@ const ResolveSchema = z.object({
     .max(MAX_SHARE_REFS),
 });
 
-type Guard =
-  | { ok: true; sc: SupabaseClient }
-  | { ok: false; code: "feature_disabled" | "forbidden" | "degraded_unavailable" | "e2ee_thread" | "db_error"; message: string };
-
-/**
- * The same four gates the ordinary send path applies, in the same order and
- * with the same posture. A share that skipped them would be a second, weaker
- * door into the same table.
- */
-async function guardThreadWrite(
-  client: SupabaseClient,
-  threadId: string,
-  userId: string,
-): Promise<Guard> {
-  const flagSc = getServiceClient();
-  if (flagSc && (await isKillSwitchEngaged(flagSc, "disable_messaging"))) {
-    return { ok: false, code: "feature_disabled", message: "Messaging is temporarily disabled" };
-  }
-
-  const { data: membership, error: mErr } = await client
-    .from("message_thread_members")
-    .select("user_id, left_at")
-    .eq("thread_id", threadId)
-    .eq("user_id", userId)
-    .is("left_at", null)
-    .maybeSingle();
-  if (mErr) {
-    return { ok: false, code: "degraded_unavailable", message: "We could not verify this conversation right now." };
-  }
-  if (!membership) return { ok: false, code: "forbidden", message: "Not a member of this thread" };
-
-  // 1:1 block guard. Same reasoning as routes/messaging.ts: an unreadable
-  // roster must NOT read as "this is a group thread, skip the block check".
-  const { data: others, error: oErr } = await client
-    .from("message_thread_members")
-    .select("user_id")
-    .eq("thread_id", threadId)
-    .is("left_at", null)
-    .neq("user_id", userId);
-  if (oErr) {
-    return { ok: false, code: "degraded_unavailable", message: "We could not verify this conversation right now." };
-  }
-  const otherIds = ((others as any[]) ?? []).map((m) => m.user_id as string);
-  if (otherIds.length === 1 && otherIds[0]) {
-    const blockSc = getServiceClient() ?? client;
-    if (await isBlockedBetween(blockSc, userId, otherIds[0])) {
-      return { ok: false, code: "forbidden", message: "You cannot message this user" };
-    }
-  }
-
-  // An E2EE thread's promise is that the server never stores plaintext. A
-  // share envelope IS plaintext, so the refusal is explicit rather than the
-  // envelope being quietly written anyway.
-  const { data: meta, error: metaErr } = await client
-    .from("message_threads")
-    .select("is_e2ee")
-    .eq("id", threadId)
-    .maybeSingle();
-  if (metaErr) {
-    return { ok: false, code: "degraded_unavailable", message: "We could not verify this conversation right now." };
-  }
-  if ((meta as any)?.is_e2ee === true) {
-    return { ok: false, code: "e2ee_thread", message: "This conversation is end-to-end encrypted; Portava objects cannot be shared into it yet" };
-  }
-
-  return { ok: true, sc: client };
-}
-
 // ── POST /api/threads/:threadId/share ────────────────────────────────────────
 
 router.post(
@@ -169,12 +103,12 @@ router.post(
       return;
     }
 
-    const guard = await guardThreadWrite(client, threadId, user.id);
+    const guard = await guardTelegraphThreadWrite(client, threadId, user.id);
     if (!guard.ok) {
       sendError(res, guard.code, guard.message);
       return;
     }
-    const sc = guard.sc;
+    const sc = client;
 
     // §5.3, applied at the SEND end: you may only share what you can open.
     const shareable = shareableFor(sc, objectType as TelegraphObjectType, objectId);

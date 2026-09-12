@@ -54,6 +54,11 @@ import { PostCardMessage } from '../../src/components/PostCardMessage';
 import { ThreadSafetySheet } from '../../src/components/ThreadSafetySheet';
 import { SharedContextRail, shouldCollapseOnScroll } from '../../src/features/telegraph/index.ts';
 import { PortavaObjectMessage } from '../../src/features/telegraph/sharing/PortavaObjectMessage.tsx';
+import { TypedMessageRenderer, rendersTypedKind } from '../../src/features/telegraph/kinds/TypedMessageRenderer.tsx';
+import { ContentDrawerSheet } from '../../src/features/telegraph/drawer/ContentDrawerSheet.tsx';
+import { ComposerPlusMenu } from '../../src/features/telegraph/composer/ComposerPlusMenu.tsx';
+import { TypedComposePrompt, type TypedComposeKind } from '../../src/features/telegraph/composer/TypedComposePrompt.tsx';
+import { sendTypedMessage, type SendableKind } from '../../src/features/telegraph/kinds/kindsApi.ts';
 import { TelegraphRecommendationCard } from '../../src/components/TelegraphRecommendationCard';
 import type { TelegraphSuggestion, MeetupPrefill } from '../../src/services/telegraphChat';
 import { blockUser } from '../../src/services/blocks';
@@ -719,6 +724,16 @@ function MessageBubble({
     );
   }
 
+  // Telegraph §6.2 typed kinds — LOCATION, ACTION, ANNOUNCEMENT, SAFETY, GIF,
+  // MEDIA_ALBUM, MEMORY_NOTE. Each carries a validated envelope in the body.
+  if (rendersTypedKind(item.msgType)) {
+    return (
+      <Pressable onLongPress={onLongPress} delayLongPress={300}>
+        <TypedMessageRenderer msgType={item.msgType ?? null} body={item.body ?? null} mine={mine} />
+      </Pressable>
+    );
+  }
+
   // Telegraph §6.2 PORTAVA_OBJECT — a typed REFERENCE, resolved for this
   // viewer at render (§5.2 layer three) and degraded when revoked (§5.3).
   if (item.msgType === 'portava_object') {
@@ -1104,7 +1119,6 @@ export default function TelegraphThread() {
   const listRef = useRef<FlatList>(null);
   const shouldAnimateMessage = useMessageEntranceGate();
   const mediaPicker = useMessageMediaPicker();
-  const [showMediaPickerSheet, setShowMediaPickerSheet] = useState(false);
 
   function handleBlockPress() {
     if (!otherUserId || blockingUser) return;
@@ -1421,6 +1435,11 @@ export default function TelegraphThread() {
   // Telegraph §11.2 row 4: "User scrolls down → Rail collapses/sticks
   // minimally; messages get priority."
   const [railCollapsed, setRailCollapsed] = useState(false);
+  // Telegraph §6.4: the content drawer. Its entry point used to be dead code.
+  const [showContentDrawer, setShowContentDrawer] = useState(false);
+  // Telegraph §6.1: the composer's + menu, and the two typed-compose sheets.
+  const [showPlusMenu, setShowPlusMenu] = useState(false);
+  const [typedCompose, setTypedCompose] = useState<TypedComposeKind | null>(null);
 
   // Send button springs in/out with input content
   const hasInput = input.trim().length > 0 || mediaPicker.media !== null;
@@ -1710,11 +1729,20 @@ export default function TelegraphThread() {
         {/* Right-side action icons */}
         {!compact && (
           <View style={styles.headerActions}>
-            {/* Thread info + message search hidden until built (beta-audit).
-                Safety/overflow controls live in ThreadSafetySheet. */}
-            {false ? <Pressable hitSlop={8} style={styles.headerIconBtn} onPress={() => Alert.alert('Thread info', 'Members, shared media, and settings — coming soon.')}>
+            {/* Telegraph §6.4 content drawer + object-aware search. This
+                entry point was dead code — a Pressable behind a literal
+                `false` whose onPress was an Alert saying "coming soon" —
+                until the drawer route and this sheet existed. */}
+            <Pressable
+              hitSlop={8}
+              style={styles.headerIconBtn}
+              accessibilityRole="button"
+              accessibilityLabel="Shared content and search"
+              testID="telegraph-open-content-drawer"
+              onPress={() => setShowContentDrawer(true)}
+            >
               <Info size={18} color={color.mute} />
-            </Pressable> : null}
+            </Pressable>
             {canShowCallButtons && (
               <>
                 <Pressable
@@ -2079,38 +2107,54 @@ export default function TelegraphThread() {
         </View>
       )}
 
-      {/* Media picker bottom sheet */}
-      <Modal
-        visible={showMediaPickerSheet}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setShowMediaPickerSheet(false)}
-      >
-        <Pressable style={styles.pickerOverlay} onPress={() => setShowMediaPickerSheet(false)} />
-        <View style={[styles.pickerSheet, { paddingBottom: Math.max(insets.bottom, 20) }]}>
-          <View style={styles.pickerHandle} />
-          <Text style={styles.pickerTitle}>Attach media</Text>
-          <Pressable style={styles.pickerRow} onPress={async () => { setShowMediaPickerSheet(false); await mediaPicker.pickFromLibrary(); }}>
-            <Text style={styles.pickerRowIcon}>🖼️</Text>
-            <Text style={styles.pickerRowLabel}>Photo Library</Text>
-          </Pressable>
-          <Pressable style={styles.pickerRow} onPress={async () => { setShowMediaPickerSheet(false); await mediaPicker.pickFromCamera(); }}>
-            <Text style={styles.pickerRowIcon}>📷</Text>
-            <Text style={styles.pickerRowLabel}>Camera</Text>
-          </Pressable>
-          <Pressable style={styles.pickerRow} onPress={async () => { setShowMediaPickerSheet(false); await mediaPicker.pickVideo(); }}>
-            <Text style={styles.pickerRowIcon}>🎬</Text>
-            <Text style={styles.pickerRowLabel}>Video Library</Text>
-          </Pressable>
-          <Pressable style={styles.pickerCancelRow} onPress={() => setShowMediaPickerSheet(false)}>
-            <Text style={styles.pickerCancelLabel}>Cancel</Text>
-          </Pressable>
-        </View>
-      </Modal>
+      {/* Telegraph §6.1: the composer's + menu. Eight entries, each with its
+          own availability and its own reason — an entry that cannot complete
+          in this tree is shown DISABLED rather than hidden. */}
+      <ComposerPlusMenu
+        visible={showPlusMenu}
+        onClose={() => setShowPlusMenu(false)}
+        onSelect={async (entryId) => {
+          setShowPlusMenu(false);
+          if (entryId === 'CAMERA') { await mediaPicker.pickFromCamera(); return; }
+          if (entryId === 'PHOTOS') { await mediaPicker.pickFromLibrary(); return; }
+          if (entryId === 'VIDEO') { await mediaPicker.pickVideo(); return; }
+          if (entryId === 'LOCATION') { setTypedCompose('LOCATION'); return; }
+          if (entryId === 'MEMORY_NOTE') { setTypedCompose('MEMORY_NOTE'); return; }
+        }}
+      />
+
+      <TypedComposePrompt
+        kind={typedCompose}
+        authorId={userId ?? null}
+        onCancel={() => setTypedCompose(null)}
+        onSubmit={async (kind: SendableKind, payload: unknown) => {
+          setTypedCompose(null);
+          if (!id) return;
+          const res = await sendTypedMessage(id, kind, payload);
+          if (!res.ok) {
+            Alert.alert('Could not send', res.message ?? 'Please try again.');
+            return;
+          }
+          await reload();
+        }}
+      />
+
+      <ContentDrawerSheet
+        visible={showContentDrawer}
+        threadId={id ?? ''}
+        onClose={() => setShowContentDrawer(false)}
+      />
 
       <View style={[styles.compose, { paddingBottom: Math.max(insets.bottom, 8) }]}>
         {/* Media attachment button */}
-        <Pressable style={styles.composeIconBtn} onPress={() => setShowMediaPickerSheet(true)} hitSlop={6}>
+        <Pressable
+          style={styles.composeIconBtn}
+          onPress={() => setShowPlusMenu(true)}
+          hitSlop={6}
+          accessibilityRole="button"
+          accessibilityLabel="Add to this message"
+          testID="telegraph-composer-plus"
+        >
           <Paperclip size={18} color={mediaPicker.media ? color.signal : color.mute} />
         </Pressable>
 
