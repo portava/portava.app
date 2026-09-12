@@ -1,5 +1,6 @@
 /**
- * Telegraph §7.3 and §7.4, rendered.
+ * Telegraph §7.1, §7.3 and §7.4 on the client — receipts, and the unsend
+ * affordance.
  *
  *   §7.3 "For direct chats, show Sent/Delivered/Seen. For groups, derive
  *         'Seen by N' …"
@@ -8,74 +9,67 @@
  *
  * The rule itself is the server's and is asserted in
  * `artifacts/api-server/src/test/telegraphLifecycle.test.ts`. What this file
- * settles is what a sender is shown and offered:
+ * settles is what the two chat surfaces derive and offer.
  *
- *   - DIRECT says "Seen"; a GROUP says "Seen by N" — §7.3's two shapes;
- *   - nothing ever says "Delivered", because nothing on this deployment knows
- *     whether it was, and the reason travels on the accessibility label rather
- *     than being silently dropped;
- *   - the Unsend affordance is present while unseen and GONE once seen — which
- *     is how a sender learns §7.4 — and a refusal that arrives anyway is shown
- *     in the server's own words, not paraphrased;
- *   - a receipt that has not been read yet renders NOTHING. "Sent" would be a
- *     state nobody measured.
+ * ── WHY THIS FILE NO LONGER RENDERS A COMPONENT ─────────────────────────────
+ * It used to mount a `MessageReceiptRow`. That component was real, tested and
+ * MOUNTED NOWHERE: both chat screens already render their own receipt line, and
+ * the unsend lives on the long-press sheet. Worse, the two functions it existed
+ * to exercise — `receiptLabel` and `canOfferUnsend` — were called by nothing but
+ * the component and this test, so §7.4's affordance rule was not actually
+ * applied anywhere in the app: the sheet offered Unsend on every own message and
+ * let the server refuse. The component is deleted, both functions are wired into
+ * the long-press sheet, and what is tested here is the logic the app runs.
  *
- * No Modal here, so this file is free of TESTING.md Rule 6.
+ * ── THE FABRICATION THIS REPLACED ───────────────────────────────────────────
+ * Both screens computed the receipt inline and both fabricated "Delivered":
  *
- * The last describe block is about a DELETION. Both chat screens computed the
- * receipt inline and both fabricated "Delivered" — `ageSecs > 3 ? 'delivered' :
- * 'sent'`, a double tick shown because three seconds had elapsed, for a state
- * §7.1 names and this tree cannot produce. The rule now lives in one place,
- * has no 'delivered' branch, and is asserted here.
+ *     const ageSecs = (Date.now() - new Date(msg.createdAt).getTime()) / 1000;
+ *     return ageSecs > 3 ? 'delivered' : 'sent';
  *
- * SHOWN RED before commit (18 pass green), each mutation reverted:
- *   • `canOfferUnsend` returning true whenever a receipt exists
- *       -> 1 failed / 10 passed ("hides Unsend once a recipient has seen it")
- *   • `receiptLabel` collapsed to a single `Seen by N` shape
- *       -> 2 failed / 9 passed ("an unseen message says Sent", "a DIRECT chat
- *          says Seen, with no count")
- *   • the `if (!receipt) return null` guard replaced with a synthesised
- *     all-zero receipt — i.e. "assume Sent"
- *       -> 1 failed / 10 passed ("renders nothing until a receipt has actually
- *          been read")
- *   • `deriveReceiptState` restored to the FABRICATED rule verbatim —
- *     `ageSecs > 3 ? 'delivered' : 'sent'`, plus 'delivered' for an unread
- *     group message
- *       -> 4 failed / 14 passed ("has no 'delivered' outcome at all", "an
+ * A double tick shown because three seconds had elapsed, for a state §7.1 names
+ * and this tree cannot produce — there is no per-device acknowledgement and no
+ * `lastDeliveredSequence`. The rule now lives in one place, has no 'delivered'
+ * branch, and the test asserts the OUTCOME SET rather than each case, so a new
+ * branch cannot be added without failing here.
+ *
+ * SHOWN RED before commit (17 pass green), each mutation reverted:
+ *   • `deriveReceiptState` restored to the fabricated rule verbatim, plus
+ *     'delivered' for an unread group message
+ *       -> 4 failed / 13 passed ("has no 'delivered' outcome at all", "an
  *          unread direct message is SENT however old it is", "no group member
  *          reading it leaves it SENT", "an unparseable timestamp is SENT,
  *          never SEEN")
+ *   • `canOfferUnsend` returning true whenever a receipt exists
+ *       -> 1 failed / 16 passed ("withdraws the offer once a recipient has
+ *          seen it")
+ *   • `receiptLabel` collapsed to a single `Seen by N` shape
+ *       -> 2 failed / 15 passed ("an unseen message says Sent", "a DIRECT chat
+ *          says Seen, with no count")
  */
-import React from 'react';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react-native';
 
 // NOTE: intentional stub — lifecycleApi reaches lib/supabase, which builds a
-// client at import time and fails outside an Expo runtime. Every decision the
-// component and the label functions make is the real module.
+// client at import time and fails outside an Expo runtime. Every function
+// asserted below is the real module.
 jest.mock('../../../lib/supabase.ts', () => ({ isSupabaseConfigured: true, supabase: null }));
 jest.mock('../../../services/apiToken.ts', () => ({ freshToken: async () => 'test-token' }));
 
-import { MessageReceiptRow } from '../lifecycle/MessageReceiptRow.tsx';
 import {
   canOfferUnsend,
   deriveReceiptState,
   deriveSeenBy,
   receiptLabel,
   unsendMessage,
+  DELIVERED_UNAVAILABLE_CLIENT,
   type MessageReceipt,
 } from '../lifecycle/lifecycleApi.ts';
-
-const REASON =
-  'No delivery signal exists on this deployment: there is no per-device ' +
-  'acknowledgement and no lastDeliveredSequence column, so DELIVERED cannot be ' +
-  'reported as true or false.';
 
 function receipt(over: Partial<MessageReceipt> = {}): MessageReceipt {
   return {
     messageId: 'm1',
     status: 'SENT',
     delivered: null,
-    deliveredUnavailableReason: REASON,
+    deliveredUnavailableReason: DELIVERED_UNAVAILABLE_CLIENT,
     seenBy: 0,
     seenByUserIds: [],
     recipientCount: 1,
@@ -96,34 +90,29 @@ describe('§7.3 — the receipt a sender sees', () => {
     expect(receiptLabel(receipt({ seenBy: 3, recipientCount: 5, status: 'SEEN' }))).toBe('Seen by 3');
   });
 
-  it('never says Delivered, and carries the reason instead', async () => {
-    await render(<MessageReceiptRow threadId="t1" messageId="m1" receipt={receipt()} />);
-    const node = screen.getByTestId('telegraph-receipt-m1');
-    expect(String(node.props.children)).not.toMatch(/delivered/i);
-    expect(node.props.accessibilityLabel).toContain('DELIVERED cannot be');
+  it('never says Delivered, in any shape', () => {
+    const labels = [
+      receiptLabel(receipt()),
+      receiptLabel(receipt({ seenBy: 1, recipientCount: 1, status: 'SEEN' })),
+      receiptLabel(receipt({ seenBy: 2, recipientCount: 4, status: 'SEEN' })),
+    ];
+    for (const l of labels) expect(l).not.toMatch(/delivered/i);
   });
 
-  it('renders nothing until a receipt has actually been read', async () => {
-    await render(<MessageReceiptRow threadId="t1" messageId="m1" receipt={null} />);
-    expect(screen.queryByTestId('telegraph-receipt-m1')).toBeNull();
-    // Crucially, not "Sent" either — an unknown state is not a measured one.
-    expect(screen.queryByText('Sent')).toBeNull();
+  it('carries the reason DELIVERED is absent rather than dropping it', () => {
+    expect(receipt().deliveredUnavailableReason).toMatch(/no per-device acknowledgement/i);
+    expect(receipt().delivered).toBeNull();
   });
 });
 
-describe('§7.4 — the unsend affordance teaches the rule', () => {
-  it('offers Unsend while nobody has seen it', async () => {
+describe('§7.4 — the affordance rule the app actually applies', () => {
+  it('offers Unsend while nobody has seen it', () => {
     expect(canOfferUnsend(receipt())).toBe(true);
-    await render(<MessageReceiptRow threadId="t1" messageId="m1" receipt={receipt()} />);
-    expect(screen.getByTestId('telegraph-unsend-m1')).toBeTruthy();
   });
 
-  it('hides Unsend once a recipient has seen it', async () => {
+  it('withdraws the offer once a recipient has seen it', () => {
     expect(canOfferUnsend(receipt({ seenBy: 1, status: 'SEEN' }))).toBe(false);
-    await render(
-      <MessageReceiptRow threadId="t1" messageId="m1" receipt={receipt({ seenBy: 1, status: 'SEEN' })} />,
-    );
-    expect(screen.queryByTestId('telegraph-unsend-m1')).toBeNull();
+    expect(canOfferUnsend(receipt({ seenBy: 4, recipientCount: 9, status: 'SEEN' }))).toBe(false);
   });
 
   it('offers nothing at all without a receipt', () => {
@@ -131,49 +120,6 @@ describe('§7.4 — the unsend affordance teaches the rule', () => {
     expect(canOfferUnsend(undefined)).toBe(false);
   });
 
-  it('reports an unsend upward when the server allows it', async () => {
-    const onUnsent = jest.fn();
-    const unsend = jest.fn().mockResolvedValue({ ok: true, data: { id: 'm1', unsent: true } });
-    await render(
-      <MessageReceiptRow
-        threadId="t1"
-        messageId="m1"
-        receipt={receipt()}
-        onUnsent={onUnsent}
-        unsend={unsend as any}
-      />,
-    );
-    fireEvent.press(screen.getByTestId('telegraph-unsend-m1'));
-    await waitFor(() => expect(onUnsent).toHaveBeenCalledWith('m1'));
-    expect(unsend).toHaveBeenCalledWith('t1', 'm1');
-  });
-
-  it("shows the server's refusal verbatim when a read beat the press", async () => {
-    const onUnsent = jest.fn();
-    const unsend = jest.fn().mockResolvedValue({
-      ok: false,
-      error: 'seen_by_recipient',
-      message: '3 people have already seen this message, so it can no longer be unsent.',
-      seenBy: 3,
-    });
-    await render(
-      <MessageReceiptRow
-        threadId="t1"
-        messageId="m1"
-        receipt={receipt()}
-        onUnsent={onUnsent}
-        unsend={unsend as any}
-      />,
-    );
-    fireEvent.press(screen.getByTestId('telegraph-unsend-m1'));
-    await waitFor(() => expect(screen.getByTestId('telegraph-unsend-refused-m1')).toBeTruthy());
-    // The count the server measured, not a softened "someone".
-    expect(String(screen.getByTestId('telegraph-unsend-refused-m1').props.children)).toContain('3 people');
-    expect(onUnsent).not.toHaveBeenCalled();
-  });
-});
-
-describe('§7 — the request the real module builds', () => {
   it('POSTs to the thread-scoped unsend path with an empty body', async () => {
     process.env.EXPO_PUBLIC_API_BASE_URL = 'https://api.test';
     const calls: Array<[string, any]> = [];
@@ -188,6 +134,32 @@ describe('§7 — the request the real module builds', () => {
       expect(calls[0][0]).toBe('https://api.test/api/threads/t1/messages/m1/unsend');
       expect(calls[0][1].method).toBe('POST');
       expect(JSON.parse(calls[0][1].body)).toEqual({});
+    } finally {
+      (global as any).fetch = realFetch;
+      delete process.env.EXPO_PUBLIC_API_BASE_URL;
+    }
+  });
+
+  it("surfaces the server's refusal message and count", async () => {
+    process.env.EXPO_PUBLIC_API_BASE_URL = 'https://api.test';
+    const realFetch = global.fetch;
+    (global as any).fetch = jest.fn(async () => ({
+      ok: false,
+      json: async () => ({
+        error: 'seen_by_recipient',
+        message: '3 people have already seen this message, so it can no longer be unsent.',
+        seenBy: 3,
+      }),
+    })) as any;
+    try {
+      const r = await unsendMessage('t1', 'm1');
+      expect(r.ok).toBe(false);
+      if (!r.ok) {
+        expect(r.error).toBe('seen_by_recipient');
+        // The count the server measured, not a softened "someone".
+        expect(r.message).toContain('3 people');
+        expect(r.seenBy).toBe(3);
+      }
     } finally {
       (global as any).fetch = realFetch;
       delete process.env.EXPO_PUBLIC_API_BASE_URL;

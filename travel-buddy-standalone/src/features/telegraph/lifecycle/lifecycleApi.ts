@@ -26,12 +26,31 @@ export interface MessageReceipt {
   recipientCount: number;
 }
 
-export interface ReceiptsResponse {
-  threadId: string;
-  receipts: MessageReceipt[];
-  deliveredUnavailableReason: string;
-  receiptStorage: string;
-}
+/**
+ * NOTE — there is deliberately no `fetchReceipts` here.
+ *
+ * `GET /api/threads/:id/receipts` exists, is tested, and applies two guarantees
+ * at the API level: the §14.3 window, and the rule that a caller only ever
+ * learns who read THEIR OWN messages. No screen calls it, because both chat
+ * surfaces already hold every member's `last_read_at` — they fetch it anyway to
+ * render reader-avatar chips — and `deriveReceiptState` below turns that into a
+ * receipt with no extra round trip.
+ *
+ * An unused API client function would be the same dead weight as an unmounted
+ * component, so it is not kept "in case". The endpoint stays because it is the
+ * API-level statement of the rule; the client stays local because the data is
+ * already here.
+ */
+
+/**
+ * The server's own reason, mirrored so a client-built receipt carries it too.
+ * A receipt assembled locally must not quietly drop the explanation for why
+ * DELIVERED is absent — that explanation is the honest part.
+ */
+export const DELIVERED_UNAVAILABLE_CLIENT =
+  'No delivery signal exists on this deployment: there is no per-device ' +
+  'acknowledgement and no lastDeliveredSequence column, so DELIVERED cannot be ' +
+  'reported as true or false.';
 
 export type UnsendRefusal = 'not_sender' | 'not_a_member' | 'already_gone' | 'seen_by_recipient';
 
@@ -83,15 +102,6 @@ async function call<T>(path: string, init?: RequestInit): Promise<LifecycleResul
   } catch (e) {
     return { ok: false, error: 'network', message: e instanceof Error ? e.message : undefined };
   }
-}
-
-export async function fetchReceipts(
-  threadId: string,
-  messageIds: string[],
-): Promise<LifecycleResult<ReceiptsResponse>> {
-  if (messageIds.length === 0) return { ok: false, error: 'no_ids' };
-  const qs = encodeURIComponent(messageIds.join(','));
-  return call<ReceiptsResponse>(`/api/threads/${threadId}/receipts?messageIds=${qs}`);
 }
 
 export async function unsendMessage(

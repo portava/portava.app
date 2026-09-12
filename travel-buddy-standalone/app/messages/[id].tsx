@@ -60,7 +60,15 @@ import { ContentDrawerSheet } from '../../src/features/telegraph/drawer/ContentD
 import { RecapSheet } from '../../src/features/telegraph/memory/RecapSheet.tsx';
 import { useThreadRecap } from '../../src/features/telegraph/memory/useThreadRecap.ts';
 import { saveMessageAsMemoryDraft, draftSavedMessage } from '../../src/features/telegraph/memory/memoryApi.ts';
-import { unsendMessage, deriveReceiptState, deriveSeenBy } from '../../src/features/telegraph/lifecycle/lifecycleApi.ts';
+import {
+  unsendMessage,
+  deriveReceiptState,
+  deriveSeenBy,
+  canOfferUnsend,
+  receiptLabel,
+  DELIVERED_UNAVAILABLE_CLIENT,
+  type MessageReceipt,
+} from '../../src/features/telegraph/lifecycle/lifecycleApi.ts';
 import { headerSubtitle } from '../../src/features/telegraph/header/headerAxes.ts';
 import { useConversationHeader } from '../../src/features/telegraph/header/useConversationHeader.ts';
 import { ComposerPlusMenu } from '../../src/features/telegraph/composer/ComposerPlusMenu.tsx';
@@ -155,10 +163,16 @@ function LongPressActionSheet({
   onReply,
   onSave,
   onUnsent,
+  receipt,
 }: {
   message: Message | null;
   mine: boolean;
   threadId?: string;
+  /**
+   * §7.3's receipt for this message, or null when it is not the caller's own.
+   * The Unsend row is offered from this and nothing else.
+   */
+  receipt: MessageReceipt | null;
   onClose: () => void;
   onDeleteForMe: (id: string) => Promise<void>;
   onReply: (msg: Message) => void;
@@ -237,12 +251,23 @@ function LongPressActionSheet({
             <Text style={las.rowLabel}>Save to Memory</Text>
           </Pressable>
 
-          {/* Telegraph §7.4 — unsend. Offered for the sender's own messages and
-              REFUSED BY THE SERVER once any recipient has seen it; the refusal
-              carries how many, and is shown verbatim rather than softened. This
-              is not the Delete below: a delete works after it has been seen and
+          {/* Telegraph §7.4 — unsend, offered ONLY while nobody has seen it.
+              `canOfferUnsend` is the affordance rule, not the authorization
+              one: the server checks again and is the only thing that decides.
+              Withdrawing the row once a recipient has seen the message is how a
+              sender learns the rule instead of meeting it as a refusal. This is
+              not the Delete below — a delete works after it has been seen and
               leaves a redacted slot. */}
-          {mine && threadId && (
+          {mine && threadId && !canOfferUnsend(receipt) && receipt ? (
+            <View style={las.row}>
+              <RefreshCw size={18} color={color.faint} />
+              <Text style={[las.rowLabel, { color: color.mute }]}>
+                {receiptLabel(receipt)} — too late to unsend
+              </Text>
+            </View>
+          ) : null}
+
+          {mine && threadId && canOfferUnsend(receipt) && (
             <Pressable
               style={las.row}
               testID="telegraph-unsend-message"
@@ -1167,6 +1192,8 @@ export default function TelegraphThread() {
   // Long-press action sheet state
   const [actionMsg, setActionMsg] = useState<Message | null>(null);
   const [actionMsgMine, setActionMsgMine] = useState(false);
+  /** §7.3's receipt for the long-pressed message, built from measured reads. */
+  const [actionMsgReceipt, setActionMsgReceipt] = useState<MessageReceipt | null>(null);
   const [replyingTo, setReplyingTo] = useState<Message | null>(null);
   // Per-thread translation overrides (null = fall back to global langSettings)
   const [threadAutoTranslate, setThreadAutoTranslate] = useState<boolean | null>(null);
@@ -1563,6 +1590,28 @@ export default function TelegraphThread() {
     if (isDirect) return null;
     return deriveSeenBy(msg.createdAt, groupMemberReads);
   }, [isDirect, groupMemberReads]);
+
+  /**
+   * The same receipt in the shape §7.3's helpers take, for the long-press sheet.
+   *
+   * `delivered` is null here for the same reason it is null on the wire: this
+   * deployment has no delivery signal, and the sheet must not invent one either.
+   */
+  const receiptForLongPress = useCallback((msg: Message): MessageReceipt => {
+    const state = receiptForMsg(msg);
+    const seenBy = isDirect
+      ? (state === 'read' ? 1 : 0)
+      : (deriveSeenBy(msg.createdAt, groupMemberReads) ?? 0);
+    return {
+      messageId: msg.id,
+      status: state === 'read' ? 'SEEN' : 'SENT',
+      delivered: null,
+      deliveredUnavailableReason: DELIVERED_UNAVAILABLE_CLIENT,
+      seenBy,
+      seenByUserIds: [],
+      recipientCount: isDirect ? 1 : groupMemberReads.length,
+    };
+  }, [isDirect, groupMemberReads, receiptForMsg]);
 
 
   useEffect(() => {
@@ -2106,6 +2155,7 @@ export default function TelegraphThread() {
                   Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
                   setActionMsg(m);
                   setActionMsgMine(mine);
+                  setActionMsgReceipt(mine ? receiptForLongPress(m) : null);
                 }}
                 receiptState={mine ? receiptForMsg(m) : null}
                 receiptSeenBy={mine ? seenByForMsg(m) : null}
@@ -2459,6 +2509,7 @@ export default function TelegraphThread() {
           });
         }}
         onUnsent={() => { void reload(); }}
+        receipt={actionMsgReceipt}
       />
 
       {/* Per-thread translation settings */}

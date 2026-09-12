@@ -402,7 +402,9 @@ before(async () => {
   app.use((req, _res, next) => { (req as any).log = { error() {}, warn() {}, info() {}, debug() {} }; next(); });
   app.use("/api", telegraphLifecycleRouter);
   server = createServer(app);
-  await new Promise<void>((r) => server.listen(0, r));
+  // 127.0.0.1 explicitly: a host-less listen(0) binds the IPv6 wildcard and the
+  // kernel can hand back a port a foreign process already holds on loopback.
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
   baseUrl = `http://127.0.0.1:${(server.address() as any).port}`;
 });
 
