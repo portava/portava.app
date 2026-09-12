@@ -257,6 +257,16 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/services/memoryProjections/projectionRegistry.ts",
     "artifacts/api-server/src/scripts/tripKernelWriterBaseline.ts",
     "artifacts/api-server/src/test/tripFeasibilityRoute.test.ts",
+    // WIDENED 2026-09-12 (§40.1): the §6.1 policy module, the Appendix B
+    // vocabulary, the presence predicate and the callsite ratchet. Each one
+    // decides a verdict in §40.1 (TR101-TR111, TR115, TR441-TR451).
+    "artifacts/api-server/src/lib/tripPolicy.ts",
+    "artifacts/api-server/src/lib/tripPresencePolicy.ts",
+    "artifacts/api-server/src/lib/tripReasonCodes.ts",
+    "artifacts/api-server/src/scripts/checkTripPolicyCallsites.ts",
+    "artifacts/api-server/src/test/tripPolicy.test.ts",
+    "artifacts/api-server/src/test/tripReasonCodes.test.ts",
+    "artifacts/api-server/src/routes/safeReturn.ts",
   ],
   "census-layover.md": [
     "artifacts/api-server/src/services/airport/",

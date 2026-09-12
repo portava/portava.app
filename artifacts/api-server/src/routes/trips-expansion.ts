@@ -3252,6 +3252,7 @@ router.get("/trips/:tripId", async (req, res) => {
   // return a LockedTripPreview sentinel so deep-link handlers can render a
   // private-wall screen rather than a generic "not found" error.
   // No title, destination, dates, or member information is included.
-  res.status(200).json({ locked: true, tripId, reason: view.reason });});
+  res.status(200).json({ locked: true, tripId, reason: view.reason });
+});
 
 export default router;
