@@ -142,6 +142,15 @@ const ALLOWLIST = new Set<string>([
   "intel_claims.observation_id",
   "intel_claims.source_label",
   "intel_claims.lineage",
+  //
+  // trip_reservations.cancelled_at (2784) and trip_crew_location_sessions
+  // .subgroup_id (2780) — Trips §41 batch. Written by routes/tripReservations
+  // DELETE (cancel, not erase) and read by TripCrewLocationService.getCrewMap,
+  // both only under trip_operational_projections_enabled, whose prerequisite
+  // probe covers the column. This branch is not on main and live-db.yml
+  // applies only from main; remove once that apply is certified.
+  "trip_reservations.cancelled_at",
+  "trip_crew_location_sessions.subgroup_id",
 ]);
 
 // Tables that are not real live relations and should be skipped entirely
@@ -154,6 +163,18 @@ const SKIP_TABLES = new Set<string>([
   // (IG unit I1). Written by lib/intelProjection, read by lib/intelReplay.
   // Remove once 2273 is applied to the live schema.
   "intel_state_snapshot_versions",
+  //
+  // Trips §41 batch, 2780/2781/2784 — absent from portava-ci until this branch
+  // reaches main (live-db.yml applies only from main). Every site behind
+  // trip_operational_projections_enabled: TripDecisionLedger.persistTripDecision
+  // / readTripDecisionFrom (trip_decisions), TripCloseoutService §20.2
+  // dissolve (trip_subgroups), TripCrewLocationService subgroup-scoped shares
+  // (trip_subgroup_members), GET .../reservations/:id/history
+  // (trip_reservation_events). Remove once the apply is certified.
+  "trip_decisions",
+  "trip_subgroups",
+  "trip_subgroup_members",
+  "trip_reservation_events",
 ]);
 
 // ── Unresolvable-site allowlist ───────────────────────────────────────────────

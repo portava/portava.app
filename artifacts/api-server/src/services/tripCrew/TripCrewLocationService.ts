@@ -248,12 +248,21 @@ export async function getCrewMap(
   // read only under trip_operational_projections_enabled (whose probe covers
   // the column); otherwise every session is trip-scoped, exactly as before.
   const subgroupScoped = (await tripOperationalProjectionsGate(db)).enabled;
-  const liveShareRes = await db
-    .from("trip_crew_location_sessions")
-    .select(subgroupScoped ? "id, user_id, visibility_level, expires_at, allowed_member_ids, subgroup_id" : "id, user_id, visibility_level, expires_at, allowed_member_ids")
-    .eq("trip_id", tripId)
-    .eq("status", "active")
-    .gt("expires_at", now);
+  // Two literal select lists, not one computed one: check:write-path-columns
+  // resolves each statically, and the column it must see is subgroup_id.
+  const liveShareRes = subgroupScoped
+    ? await db
+        .from("trip_crew_location_sessions")
+        .select("id, user_id, visibility_level, expires_at, allowed_member_ids, subgroup_id")
+        .eq("trip_id", tripId)
+        .eq("status", "active")
+        .gt("expires_at", now)
+    : await db
+        .from("trip_crew_location_sessions")
+        .select("id, user_id, visibility_level, expires_at, allowed_member_ids")
+        .eq("trip_id", tripId)
+        .eq("status", "active")
+        .gt("expires_at", now);
   // REFUSE. An unreadable session table means every live share disappears, so
   // a viewer who HAS been granted one sees the sharer as not sharing. That is
   // the same class as the preference refusal above: the row decides each

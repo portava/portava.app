@@ -137,6 +137,26 @@ const ALLOWLIST = new Set<string>([
   "intel_claims.lineage",
   "intel_claims.updated_at",
   "intel_claims.version",
+
+  // ── Pending live apply: Trips §41 batch, 2780/2783/2784/2785 ──────────────
+  // Columns on tables portava-ci already carries (2760-2763 block + the older
+  // trip_plan_items / trip_crew_location_sessions / trip_reservations /
+  // trip_members). This branch is not on main and live-db.yml applies only
+  // from main, so they are absent from BOTH databases until it merges. Every
+  // reader is behind trip_operational_projections_enabled (FALSE everywhere).
+  // Remove each entry once the merge-to-main apply is certified in
+  // docs/migrations.md.
+  "trip_plan_items.subgroup_id",            // 2780 — subgroup-scoped plan items
+  "trip_crew_location_sessions.subgroup_id", // 2780 — subgroup-scoped live shares
+  "trip_goals.scope",                       // 2783 — 'shared' | 'personal'
+  "trip_goals.owner_user_id",               // 2783 — owner of a personal goal
+  "trip_goals.weight",                      // 2783 — §8 weighting
+  "trip_members.permissions_version",       // 2783 — bumped on role change
+  "trip_reservations.version",              // 2784 — If-Match row version
+  "trip_reservations.cancelled_at",         // 2784 — DELETE = cancel, not erase
+  "trip_commitments.at_risk_reason",        // 2785 — §7.2 derived at-risk state
+  "trip_commitments.at_risk_at",            // 2785
+  "trip_commitments.at_risk_shortfall_minutes", // 2785
 ]);
 
 // ── Superseded / known-drifted migration files ────────────────────────────────
