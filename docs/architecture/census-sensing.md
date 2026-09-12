@@ -92,6 +92,7 @@ Paths are relative to `artifacts/api-server/` unless prefixed `travel-buddy-stan
 | `head_commit` | `42aeac38` — DECLARED 2026-09-11. It **starts a clock; it does not certify a past.** Read the next row before quoting it. |
 | **What that declaration does and does not say** | `42aeac38` is #476's squash — the commit where this document itself reached `main`. Its verdicts were taken at a pre-squash working tree that **exists nowhere**: verified against FULL history (`git fetch --unshallow`, 4,300 commits, then `git cat-file -e`), not assumed — a shallow clone had made every such commit look unresolvable for the wrong reason. So nobody can diff that tree against `42aeac38`, and this declaration **does not claim that interval was empty**. What it claims is mechanically checked: `git diff --name-only 42aeac38..HEAD` over the paths in `CENSUS_SCOPE` returns **0 files**, and from here any change to one of them ages this census. Before it, `check:census-freshness` reported this document as CANNOT BE CHECKED — the weakest of the three states, not the safest. FRESH means *no counted file has moved since `42aeac38`*; it does **not** mean the rows were re-read, and none has been. Declared by the Trips lane while recounting the sibling census; if this lane disagrees, reverting costs only the check. |
 | **Note specific to this census** | This document's own CORRECTION HEADER records that it was **already stale when it was committed** — `lib/sensingAnonStore.ts` landed two minutes before it. That file is the first path in this census's scope, so the very defect the header describes by hand is now the one a machine would catch. |
+| **§1 (2026-09-12, the Sensing lane)** | The first pass that re-derived rows against the code. `head_commit` stays `42aeac38`: a commit on `claude/sensing-lane` would be an ancestor of nothing once squashed (handoff §0, trap 1), so the files §1 added and the one counted file that changed are acknowledged in `CENSUS_STALENESS_ACKNOWLEDGED.json` against `42aeac38`, per file, and the scope was widened from 85 to the files §1 cites. FRESH after this still means *no counted file has moved since `42aeac38`* — and, for the twenty-eight rows §1 names, that they were re-read on 2026-09-12. |
 
 ---
 
@@ -100,13 +101,30 @@ Paths are relative to `artifacts/api-server/` unless prefixed `travel-buddy-stan
 | Measure | Value |
 |---|---|
 | **Denominator — testable requirements** | **127** |
-| BUILT-AND-CORRECT | 65 |
-| BUILT-BUT-WRONG | 39 |
-| NOT-BUILT | 22 |
-| CANNOT-VERIFY | 1 |
-| **CONSTRUCTED%** = (65+39)/127 | **81.9 %** |
-| **CORRECT%** (raw) = 65/127 | **51.2 %** |
-| **CORRECT% (spec-attributable)** = 0/127 | **0.0 %** |
+| BUILT-AND-CORRECT | **77** |
+| BUILT-BUT-WRONG | **36** |
+| NOT-BUILT | **13** |
+| CANNOT-VERIFY | **1** |
+| **CONSTRUCTED%** = (C+W)/127 | **113 / 127 = 89.0 %** |
+| **CORRECT%** (raw) = C/127 | **77 / 127 = 60.6 %** |
+| **CORRECT% (spec-attributable)** | **12 of the 77 — 9.4 %** |
+
+> **RESTATED 2026-09-12 (§1): 65 → 77 CORRECT, 39 → 36 WRONG, 22 → 13
+> NOT-BUILT. CONSTRUCTED 81.9 % → 89.0 %, CORRECT 51.2 % → 60.6 %.** §1 is the
+> first pass to read a verdict in this document against the code. It executed
+> the anonymous store on a database (13 cases, two rollback rehearsals) and
+> re-derived twenty-eight rows under the bar `census-trips.md` §40 set: twelve
+> move into C — the Map behind migration 2350's three FALSE flags, the Wall's
+> §5.1 vocabulary, the Experience fold, the mutation-proof list, the S0 map,
+> and one prohibition — five move N → W, and thirteen built, tested,
+> mutation-proven, database-executed rows on the anonymous ingest path are
+> graded **W** because nothing may reach them until the owner decides
+> `SENSING_AUTH_POSTURE`. The CORRECTION HEADER's 78 and 83 were counted under
+> this document's looser original convention and were never re-derived; this
+> is the like-for-like figure under the stricter one. Every verdict moved was
+> watched go red under a mutation named beside it. Nothing here is deployed,
+> enabled or production-realised: production still holds no sensing table
+> and zero rows in every intel table.
 
 **I disagree with commit `0597a245`'s CONSTRUCTED 56.4 % / CORRECT 32.1 %.** I land materially
 higher on both — roughly +25 points constructed and +19 points correct. I agree exactly with its
@@ -117,15 +135,15 @@ its own:
 
 | Sub-score | Denominator | CONSTRUCTED | CORRECT |
 |---|---|---|---|
-| **Sensing input + inference core** (§3, §4, and the Vibe/Experience/Forecast/Opportunity/Session engines: S17–S38, S42–S46, S51–S54) | 31 | 64.5 % | **22.6 %** |
-| Everything else (invariants, reuse directives, surface integration) | 96 | 87.5 % | 60.4 % |
+| **Sensing input + inference core** (§3, §4, and the Vibe/Experience/Forecast/Opportunity/Session engines: S17–S38, S42–S46, S51–S54) | 31 | 87.1 % (was 64.5 %) | **35.5 %** (was 22.6 %) |
+| Everything else (invariants, reuse directives, surface integration) | 96 | 89.6 % (was 87.5 %) | 68.8 % (was 60.4 %) |
 
 The high headline is a property of the specification, not a compliment to the tree. This spec is
 titled *UPGRADE, DO NOT REBUILD*; §19 says outright *"Do Not Blindly Materialize"*; and a large
 fraction of its testable content is **prohibitions and reuse directives** that Portava's
 pre-existing intel and map work already satisfies with unusual care. Score the part of the spec
 that asks for something *new* — a device sensing boundary, a privacy-reduced ingest, Vibe
-inference, ExperienceState, ExperienceSession — and the correct column falls to 22.6 %.
+inference, ExperienceState, ExperienceSession — and the correct column falls to 35.5 % (22.6 % before §1).
 
 ### The caveat that outranks every number here
 
@@ -192,9 +210,10 @@ Most of §2 and §20 are prohibitions. The rule applied here, uniformly:
   being added, is **NOT-BUILT** — annotated *unguarded absence*. The guarantee is not
   constructed; it is merely currently unviolated.
 
-Five BUILT-AND-CORRECT verdicts are **vacuous or partly vacuous** (the guard is real but the path
-it guards is empty): S89, S90, S91, S105, S22. They are flagged `⌀` in the table. A reader who
-rejects vacuous satisfaction should subtract them: CORRECT% becomes 60/127 = **47.2 %**.
+Six BUILT-AND-CORRECT verdicts are **vacuous or partly vacuous** (the guard is real but the path
+it guards is empty): S89, S90, S91, S105, S22, and — since §1 — S9. They are flagged `⌀` in the
+table or in §1.3. A reader who rejects vacuous satisfaction should subtract them: CORRECT% becomes
+**71 of 127 = 55.9 %** (60 of 127 = 47.2 % before §1).
 
 ---
 
@@ -595,3 +614,391 @@ Three structural limits on this census, stated so a re-run can improve on them:
    ground truth and from the two sibling documents that did measure it
    (`intel-spine-liveness.md`, `sensing-surface-inventory.md`). Where those two disagree with a
    migration's seed value, they win — a migration file is not evidence of live state.
+
+---
+
+## 1. The rows the tree had already earned, re-derived — and the anonymous store executed
+
+**Read against the branch `claude/sensing-lane` (from `802fee52` on
+`claude/sweet-fermat-fmx7up`), 2026-09-12, by the Sensing lane.** This is the
+first pass that has read a verdict in this document against the code. The
+CORRECTION HEADER above records that the tree had moved before the body was
+committed and that a later "completion pass" recomputed **78** and then **83**
+BUILT-AND-CORRECT without editing a row. Those figures were sentences about
+the objects; none of them was re-derived, and they were counted under this
+document's original convention — *"code that is correct and would run"*. This
+section re-derives every row that convention would have moved, and one
+cluster of rows it never looked at (the Map behind migration 2350, the
+Discovery candidate behind 2361, the Wall's §5.1 vocabulary), and grades them
+under the bar `census-trips.md` §40 states and every Trips section since has
+held to:
+
+> a row is **C** when the thing it names is built, pinned by a test that was
+> watched go red under a mutation of the code it pins, and **reached** — from a
+> registered surface (behind a flag seeded FALSE is fine), from a registered
+> scheduler, or, for a prohibition, by an artifact that refuses the violation.
+> A row whose thing is built, tested and mutation-proven but reached by
+> **nothing**, and cannot be reached without an owner decision, is **W** with
+> that stated — exactly as Trips graded TR334, TR342 and TR416.
+
+That bar is stricter than the one the body used, which is why this section
+lands at **77** and not 83: the anonymous ingest path (store → policy →
+session → aggregate → presence / vibe / differencing / lineage) is built end to
+end, proven on a database below, and reached by nothing on both ends — no
+route may write it and no surface may read an aggregate until the owner
+decides `SENSING_AUTH_POSTURE`
+(`docs/architecture/sensing-auth-posture-decision.md`, decisions #1, #2 and
+#9 of `sensing-input-gap.md` §3.2). Thirteen rows on that path are graded **W**
+here with that reason, twelve of which the completion pass had called C. Every
+mutation named below was applied to a backup-restored file and the suite run
+red and then green; the two database rehearsals are apply → rollback → red →
+apply → green on the lane's own replica (`portava_sensing`), never on
+portava-ci and never on production.
+
+### 1.1 What was built, and where
+
+- **The anonymous store, executed** —
+  `test/db/sensingAnonStore.db.test.ts:130#foreign` runs 2315, 2340 and 2480
+  on the local replica as the roles the grants name. The catalog holds no
+  foreign key and no identity-shaped column and RLS is on with no user policy
+  (`migrations/2315_sensing_anon_contributions.sql:343#installation_id`); a
+  user role cannot read the table and service_role cannot UPDATE a row
+  (`test/db/sensingAnonStore.db.test.ts:140#UPDATE`;
+  `migrations/2340_sensing_anon_replay_and_time_bounds.sql:137#service_role`);
+  a row past 72 hours is unrepresentable
+  (`migrations/2315_sensing_anon_contributions.sql:171#sensing_anon_contributions_ttl_check`).
+  A replay of one (cohort, contributor) is a unique violation on exactly the
+  replay index and the second row never exists
+  (`test/db/sensingAnonStore.db.test.ts:164#replay`;
+  `migrations/2340_sensing_anon_replay_and_time_bounds.sql:107#sensing_anon_contributions_replay_idx`);
+  forty writes from one device are one row, and the aggregate over what the
+  database returned is one contributor, below k
+  (`test/db/sensingAnonStore.db.test.ts:174#forty`). A bucket two minutes
+  ahead of, or 73 hours behind, its `created_at` is a check violation and the
+  edge of the window is accepted
+  (`test/db/sensingAnonStore.db.test.ts:189#bucket`;
+  `migrations/2340_sensing_anon_replay_and_time_bounds.sql:123#sensing_anon_contributions_time_bounds_check`).
+  One device in two epochs is two unrelated tokens — the device folds the
+  epoch into its secret and the server folds it into the token, each pinned on
+  its own (`test/db/sensingAnonStore.db.test.ts:216#oneCommitment`;
+  `lib/sensingAnonStore.ts:192#deriveEpochSecret(`;
+  `lib/sensingAnonStore.ts:211#deriveContributorToken(`) — and revealing one
+  epoch's secret revokes that epoch only, through the SQL function that sees an
+  epoch and a token and nothing else
+  (`test/db/sensingAnonStore.db.test.ts:205#epochs`;
+  `migrations/2315_sensing_anon_contributions.sql:239#revoke_sensing_contributions(`);
+  both functions refuse `authenticated`
+  (`test/db/sensingAnonStore.db.test.ts:237#service_role`). The purge takes its
+  instant and a second pass deletes nothing
+  (`test/db/sensingAnonStore.db.test.ts:246#purge`;
+  `migrations/2315_sensing_anon_contributions.sql:216#purge_expired_sensing_contributions(`).
+  Then the part no unit suite could do: **k** contributors in six parties
+  written fifteen minutes ago, read back from the database, clear the real
+  privacy gate, and k − 1 do not; the presence state built from the real
+  aggregate is `observed` with an unlabelled ordinal and `few` coverage at k
+  and `unknown` on every axis below it, and nothing the database returned
+  appears in it (`test/db/sensingAnonStore.db.test.ts:260#privacy`;
+  `lib/sensingCoverageAggregate.ts:154#aggregateSensingCohort(`;
+  `lib/sensingPresenceState.ts:133#buildSensingPresenceState(`); one more
+  contributor is not a new publication and the previous value is served
+  (`test/db/sensingAnonStore.db.test.ts:316#evaluateDifferencing(agg,`); the
+  in-memory revocation model predicts exactly what the SQL function does to a
+  fresh read (`test/db/sensingAnonStore.db.test.ts:326#modelSensingRevocation(readCohort(cohortKey),`);
+  fifteen contributors with no party tag earn no group credit on the database
+  either (`test/db/sensingAnonStore.db.test.ts:336#derived,`). And 2480's
+  sessions: a session stores only the bearer's HMAC, its budget is consumed
+  atomically in SQL and refused at zero, `unknown` / `not_started` / `expired`
+  / `revoked` are told apart, UPDATE is not a path, and the purge removes the
+  revoked and the expired (`test/db/sensingAnonStore.db.test.ts:356#budget`;
+  `migrations/2480_sensing_contribution_sessions.sql:126#sensing_session_consume(`);
+  a scope outside §3's seven verbs and a lifetime past 72 hours are check
+  violations, and the contribution store carries no session column
+  (`test/db/sensingAnonStore.db.test.ts:403#seven`;
+  `migrations/2480_sensing_contribution_sessions.sql:113#sensing_contribution_sessions_scopes_check`).
+  The replica carries 2481 because the harness replays every file, so a
+  session row names an issuing profile there and an anonymous one is
+  unrepresentable — the harness's state, recorded as such, not a posture
+  decision. **Rehearsed:** `db/rollback/2026-09-07-2340-sensing-anon-replay-and-time-bounds-rollback.sql`
+  applied → the replay, one-device and time-bounds cases red (3) → 2340
+  re-applied → 13 / 13; `db/rollback/2026-09-07-2481-sensing-sessions-option-a-issuer-rollback.sql`
+  then `db/rollback/2026-09-07-2480-sensing-contribution-sessions-rollback.sql`
+  applied → the two session cases red → 2480 and 2481 re-applied → 13 / 13.
+  The suite cleans both tables and its seeded profile after itself (0 rows
+  either side, measured).
+- **Two pins no suite held** — `test/sensingCensusRederivation.test.ts:32#server`
+  pins the server-side epoch fold separately from the device-side one: the
+  first mutation of the server fold stayed **green** (46 / 46) because the
+  device layer already rotates the commitment, so the layer was unpinned and
+  is now pinned on its own; `test/sensingCensusRederivation.test.ts:50#viewer,`
+  pins that the Map's Experience fold names no viewer, user, profile,
+  preference or taste and that a preference-shaped field on its input changes
+  nothing in the state.
+- **The S0 map's summary, corrected** —
+  `docs/architecture/sensing-s0-reuse-map.md:220#CORRECTION`: the §13 table
+  counts five contracts truly missing, six reusable or extendable and one
+  blocked; the sentence beneath it said four / five / three, and two of its
+  rows name the wrong object (recorded beside them, not rewritten).
+
+### 1.2 What was re-derived, row by row
+
+**(a) The anonymous path — built end to end, proven on the database, reached by nothing until the owner decides.**
+`lib/sensingAuthPosture.ts:54#undecided` is the owner's switch and
+`lib/sensingAuthPosture.ts:90#sensingEligibility(` refuses every caller while
+it reads that; `test/sensingAnonStore.test.ts:501#route` asserts no route
+touches the store. So: **S18** (rotating identifiers, N → W): the derivation
+exists at two layers and is executed on the database; no writer is registered.
+**S20** (eligibility separated from ingest; opaque credential, N → W): the
+separation is code — eligibility in one module, the credential in another
+(`lib/sensingContributionSession.ts:98#buildSensingSessionRow(`), the row
+shape in 2480 with no identity column — and it admits nobody. **S30**
+(`IntelligenceContributionSession`, N → W): all eight §4.2 properties are
+bound to the primitive that owns each
+(`lib/sensingContributionPolicy.ts:66#CONTRIBUTION_PURPOSE_SCOPES`) and the
+issued half is a table with a budget consumed in SQL; nothing issues one.
+**S25** (seven distinct permissions, W → W): the verbs are distinct in the
+policy, in the session row's scope CHECK and in admission
+(`lib/sensingContributionPolicy.ts:275#scope_not_granted`), and the ingest
+that would enforce them does not exist; the intel human-claim consent stays
+one boolean by design. **S33** (replay and rate limit per credential, W → W):
+both now keyed on the credential, not the account — the replay index and the
+session budget, both executed — and the ingest they guard is the owner's.
+**S35** (impossible timestamps, malformed precision, invalid scopes, stale
+credentials, W → W): all four rejections exist and three are executed on the
+database (`lib/sensingAnonStore.ts:376#observed_at_in_future`;
+`lib/sensingContributionSession.ts:141#validateSensingSession(`); the row's
+"two of the four are unimplementable" no longer holds, and the ingest does
+not. **S39** (Presence engine → aggregate + coverage, W → W): the engine
+builds an observed / unknown state from the real gate's decision, names no
+person (`lib/sensingPresenceState.ts:69#presence:`), and no surface consumes
+it (decision #9). **S24** (anti-differencing, W → W): the control the row
+called absent exists (`lib/sensingDifferencingGate.ts:63#minDelta`) and holds
+over two real reads; rare-path suppression stays where it was; nothing
+publishes an aggregate for the gate to guard. **S111** (four reconciliation
+outcomes, W → W): all four are representable and proximity is never ownership
+(`lib/sensingSubjectReconciliation.ts:55#OWNERSHIP_EVIDENCE`;
+`lib/sensingSubjectReconciliation.ts:104#temporary_world_object`); the
+canonical `subject_id NOT NULL` stands and the resolver has no caller.
+**S112** (revocation lineage, W → W): defined per stage as data
+(`lib/sensingRevocationLineage.ts:56#SENSING_REVOCATION_EFFECT`), executable,
+and proven to match the SQL on a real cohort; the stages past aggregate exist
+now and the session and memory stages are "prevented" because S54 does not
+exist. **S42 / S51 / S52** (the Vibe engine, its signals, its state): the
+engine is guarded and pinned (`lib/vibeInference.ts:144#inferVibe(`), its
+output carries every §5.2 field, and **not one of its seven candidate signals
+has a producer** — client capture is decision #6 — so S42 stays W, and S51
+and S52 move N → W: a state nothing can populate is built, not correct.
+
+**(b) The prohibition the engine enforces.** **S9** (rapid movement ≠
+dancing, N → **C** `⌀`): high energy with arrhythmic or unbounded motion cannot
+raise dance likelihood and unknown periodicity yields null
+(`lib/vibeInference.ts:236#VIBE_MIN_PERIODICITY_FOR_DANCE`;
+`test/vibeInference.test.ts:51#arrhythmic`), the artifact this document's own
+rule for prohibitions asks for. Vacuous in the sense S22 is: the engine it
+guards is called by nothing.
+
+**(c) The shared truth vocabulary — on live wires.** **S48** (seven truth
+classes, W → **C**): `lib/truthClass.ts:47#TRUTH_CLASSES` is the vocabulary
+verbatim with CORROBORATED representable and a fail-weak combinator
+(`lib/truthClass.ts:99#weakestTruthClass(`); the Wall serves a class and a
+coverage on every Live For You item today
+(`services/wall/LiveForYouService.ts:277#truthClass:`;
+`test/wallTruthClass.test.ts:229#EVERY`) and derives `corroborated` from
+independent sources (`test/wallTruthClass.test.ts:56#corroborated`); the Map
+stamps the same class behind 2350's flag. **S110** (six temporal semantics,
+W → W): the shared envelope carries all six and enforces `predicted_for` iff
+`predicted` (`lib/experienceTruth.ts:66#TemporalEnvelope`;
+`lib/experienceTruth.ts:102#predicted_for_without_predicted_class`), and
+`predicted_for` reaches the wire on the temporal route; `effective_from` and
+`effective_until` are carried only by the callerless sensing states, so four
+of six are served, up from four of six declared. **S49** (every consumed
+state carries all four fields, W → W): Wall yes, Map yes behind the flag,
+Discovery's candidate carries truth class, confidence and freshness and **no
+coverage** (`lib/discoveryCandidate.ts:114#DiscoveryCandidate`), Compass's
+states carry none of the four.
+
+**(d) The Map behind migration 2350 — three flags seeded FALSE, wired, route-tested.**
+`migrations/2350_map_sensing_projection_flags.sql:74#INSERT` seeds
+`map_experience_state_enabled`, `map_world_moments_enabled` and
+`map_display_resolver_enabled` FALSE and refuses to commit them ON;
+`routes/mapProjection.ts:563#map_experience_state_enabled` reads all three
+fail-closed, and `test/mapSensingProjectionGates.test.ts:131#ABSENT` proves
+that with every flag absent — production's state — not one new field reaches
+the wire while the live claims still flow. **S43** (Experience engine, N →
+**C**) and **S53** (the §5.3 composite, N → **C**):
+`lib/mapExperienceState.ts:220#buildExperienceState(` folds the claims the
+gateway already reads into the spec's six-branch tree, each populated leaf
+from one claim type and every leaf without a producer null, never a default
+(`test/mapExperienceState.test.ts:147#null`); the fold reads no personal
+preference (§1.1's pin); it is served on `payload.experienceState` behind the
+flag (`lib/mapProjection.ts:781#experienceState`;
+`routes/mapProjection.ts:1010#experienceState:`;
+`test/mapSensingProjectionGates.test.ts:165#map_experience_state_enabled`).
+**S59** (ExperienceState on the place object, not separate pins, W → **C**):
+the same fold, onto the same object, and no new kind. **S64** (truth /
+freshness / coverage metadata; predicted visibly distinct, W → **C**): the
+object carries `truthClass` and `coverage` (`lib/mapObjects.ts:454#truthClass?:`;
+`lib/mapProjection.ts:800#truthClass:`) and every forecast object on the
+temporal route is stamped `predicted`
+(`routes/mapProjectionTemporal.ts:634#predicted`;
+`test/mapSensingProjectionGates.test.ts:335#predicted`). **S60** (world_pulse
+promoted into the seven change types, W → **C**) and **S44** (World Dynamics
+— change, anomalies, hotspots, rhythm; no cause when unknown, W → **C**):
+`lib/mapProducers/worldMomentProducer.ts:71#WORLD_CHANGES` is the spec's seven
+verbatim; each rides its own published evidence and carries the truth class it
+earns — event spillover rests on an inferred cause block and is `inferred`,
+never observed (`lib/mapProducers/worldMomentProducer.ts:109#WORLD_CHANGE_TRUTH`;
+`test/mapWorldMoments.test.ts:193#INFERRED`); anomaly is `unexpected_activity`
+(`test/mapWorldMoments.test.ts:183#unexpected`); hotspots are the pulse and
+rhythm is `city_model` (`lib/mapProducers/cityModelProducer.ts`); a sub-floor
+cell and a quiet cell serialize identically; wired at
+`routes/mapProjection.ts:1297#attachWorldMoments(pulses,` and served with
+`moment: null` when nothing changed
+(`test/mapSensingProjectionGates.test.ts:272#map_world_moments_enabled`).
+**S65** (display resolver — safety, mode, zoom, intent, relevance, W → **C**):
+`lib/mapDisplayResolver.ts:268#resolveDisplay(` runs between ranking and
+paging, the band sets the budget, the mode allocates it across classes, the
+intent reorders within a tier, safety notices are never budgeted, and every
+drop is counted by kind (`routes/mapProjection.ts:1319#resolveDisplay(ranked,`;
+`test/mapSensingProjectionGates.test.ts:195#map_display_resolver_enabled`).
+**S38** (coverage tracked separately from activity, W → **C**): the Map
+object now carries `coverage` beside `activity` (`lib/mapObjects.ts:455#coverage?:`),
+folded from the read path's own cohort bucket
+(`lib/mapExperienceState.ts:164#foldCoverage(`), the Wall carries it beside
+its state, and the sensing presence state carries it beside an ordinal.
+**S66** (safety outranks opportunity across surfaces, W → W): on the Map an
+object at or within 100 m of a notice loses its promotion
+(`lib/mapDisplayResolver.ts:226#applySafetyPrecedence(`), and Compass now
+EXCLUDES a Live `unsafe_density` subject before ranking behind an env gate
+(`compass/CompassLiveConstraints.ts`;
+`test/compassCensusGates.test.ts:236#unsafe_density`); Discovery's ranker
+still reads no safety state, so a noticed place can still rank there. **S40**
+and **S45** stay W: crowd momentum is still a human trajectory tap, not a
+computed arrival/departure balance, and a forecast now has a horizon and a
+class but no calibration attached.
+
+**(e) Discovery behind 2361.** **S70** (DiscoveryCandidate with why-now,
+why-for-user, confidence, freshness, truth class, W → W): built and wired
+into `GET /discovery` behind `discovery_candidate_projection_enabled`
+(`lib/discoveryCandidate.ts:103#DISCOVERY_CANDIDATE_PROJECTION_FLAG`), and
+`whyNow` is always null (`lib/discoveryCandidate.ts:118#whyNow:`) because no
+live producer exists for a place on that surface — the module says so itself.
+Built, wrong on the one field the row is named for.
+
+**(f) The mutation list, and the audit artifact.** **S125** (W → **C**):
+all five invariants the row names are mutation-proven now — no permanent
+identity link on the World Intelligence store (2315's postconditions, the
+catalog case, the tripwire; the canonical intel FK is for human claims and is
+the owner's ruling), no single-device crowd (forty writes → one contributor
+on the database; the replay key rolled back → red), no prediction as
+observation (`test/truthClass.test.ts:41#CORROBORATED`'s property tests and
+the temporal stamp, both red under mutation), no anomaly as safety
+(`lib/mapProducers/safetyNoticeProducer.ts:22-32` refuses the fallback and
+`experienceTruth` has no safety member), no client-computed vibe
+(`test/vibeInference.test.ts:200#client` walks the client tree; a planted
+probe turned it red). **S120** (the S0 reuse map, N → **C**):
+`docs/architecture/sensing-s0-reuse-map.md` inventories consent, route-flow
+contribution, device/session, map projection, intel storage, Wall, Discovery,
+Compass, schedulers, RLS, outbox and flags — every item the row lists — and
+its summary arithmetic is corrected in §1.1. A document is falsified by
+reading, not by a test; none applies.
+
+### 1.3 Row moves
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| S9 Rapid movement ≠ dancing | N | **C** | `⌀` The Vibe engine caps dance likelihood at 0.1 under arrhythmic or unbounded motion and answers null under unknown periodicity; mutation M5 (the contradicted branch removed) turned two cases red. Vacuous: the engine is called by nothing. |
+| S18 Short-lived rotating contribution identifiers | N | **W** | Two-layer rotation built and executed on the database, revocation by epoch secret executed; no writer is registered and none may be until `SENSING_AUTH_POSTURE` is decided. Mutations M1 and M1b each red. |
+| S20 Eligibility separated from ingest; opaque credential | N | **W** | Eligibility, credential and session are three modules and a table with no identity column; eligibility refuses everyone while the posture reads `undecided` (M12 red). Built, and admitting nobody by owner decision. |
+| S24 Anti-differencing and rare-path suppression | W | **W** | The anti-differencing gate the row called absent exists and holds over two real reads (M4 red); rare-path suppression stands; nothing publishes an aggregate for it to guard. |
+| S25 Seven verbs as distinct permissions | W | **W** | Distinct in the policy, the session's scope CHECK and admission (M10 red, the scope CHECK executed); the ingest that would enforce them is the owner's; intel human-claim consent stays one boolean. |
+| S30 `IntelligenceContributionSession` | N | **W** | All eight §4.2 properties bound to their owning primitives and the issued half a table whose budget is consumed in SQL (M11 red; 2480 rolled back → red); nothing issues a session. |
+| S33 Replay and rate limit per credential | W | **W** | Both keyed on the credential now — the replay index (M2 red; rolled back → red) and the session budget (M11 red) — and the ingest they protect does not exist. |
+| S35 Reject impossible timestamps, malformed precision, invalid scopes, stale credentials | W | **W** | All four rejections exist (M3, M10, M11 red; the time-bounds CHECK executed and rolled back → red); the row's "two are unimplementable" is false now, and there is no ingest to reject anything. |
+| S38 Track coverage separately from activity | W | **C** | `coverage` beside `activity` on the Map object behind 2350 (M15 red through the route), beside the state on every Wall item (M19 red), beside the ordinal on the sensing presence state (M8 red, executed on real rows). |
+| S39 Presence engine → aggregate + coverage; no person identity | W | **W** | Built from the real gate's decision, observed / unknown only, names no person (M8 red; executed on k and k − 1 real contributors); no surface consumes it (decision #9). |
+| S42 Vibe engine → VibeState; no literal behaviour without evidence | W | **W** | The engine and its guards exist and are pinned (M5 red); none of its inputs has a producer. |
+| S43 Experience engine → ExperienceState; no personal preference as world truth | N | **C** | The fold over the gateway's live claims, six branches, null where no engine exists, reading no viewer preference (M20 red); served behind `map_experience_state_enabled` and route-tested. |
+| S44 World Dynamics → WorldMoment; no cause when unknown | W | **C** | Change (seven moments), anomaly (`unexpected_activity`), hotspots (`world_pulse`), rhythm (`city_model`); cause only from an inferred block, classed `inferred` (M18 red); behind `map_world_moments_enabled`, route-tested. |
+| S48 Seven canonical truth classes | W | **C** | One vocabulary, CORROBORATED representable and produced, fail-weak composition (M9 red); on the Wall's wire today and on the Map's behind the flag. |
+| S51 Vibe inferred from motion energy, periodicity, … | N | **W** | The inference over exactly those signals exists and is guarded; not one signal is produced anywhere (S28, decision #6). |
+| S52 `VibeState` carries energy, sociality, dance_likelihood, volatility, momentum + truth metadata | N | **W** | The state carries every field named, with truth class always `inferred` and a band below the live floor; nothing can populate it. |
+| S53 `ExperienceState` composite | N | **C** | Crowd / Vibe / Behavior / Friction / Dynamics / Truth in the spec's shape on `payload.experienceState`; leaves with no producer are null, never fabricated (M15 red through the route). |
+| S59 Server-built ExperienceState on place/event projections, not separate vibe pins | W | **C** | The same fold onto the same object, no new kind (M15 red). |
+| S60 world_pulse promoted into seven change types | W | **C** | Heating up, forming, moving, clearing, unexpected activity, event spillover, traveler surge — each from its own published evidence, a quiet cell and a sub-floor cell identical (M18 red). |
+| S64 Truth / freshness / coverage metadata; predicted visually distinct | W | **C** | `truthClass` and `coverage` on the object, `predicted` stamped on every forecast object (M15, M16 red through both routes). |
+| S65 Display resolver / clutter budget | W | **C** | Safety never budgeted and constraining, band budget, mode shares, intent affinity within a tier, drops counted by kind (M17 red through the route and the unit suite). |
+| S66 Safety outranks opportunity; never "best move now" | W | **W** | Map: promotion stripped near a notice (M17 red). Compass: a Live `unsafe_density` subject excluded before ranking, env-gated. Discovery: the ranker reads no safety state. Two of three surfaces. |
+| S70 Server-built DiscoveryCandidate | W | **W** | Wired into `GET /discovery` behind 2361's flag with truth class, confidence, freshness and why-for-user; `whyNow` is null on every row because no live producer exists for a place there. |
+| S110 Six shared temporal semantics | W | **W** | The shared envelope carries all six and enforces `predicted_for` iff `predicted` (M7 red); `predicted_for` is on the temporal wire; `effective_from` / `effective_until` are carried by callerless states only. |
+| S111 Reconciliation: Place / Event / Temporary world object / Unknown | W | **W** | All four representable and proximity never ownership (M6 red); the canonical `subject_id NOT NULL` stands and the resolver has no caller. |
+| S112 Revocation lineage | W | **W** | Defined per stage, executable, and proven to match the SQL on a real cohort (M14 red; revocation executed); the session and memory stages are prevented only because nothing bridges to them. |
+| S120 S0 reuse map | N | **C** | `sensing-s0-reuse-map.md` exists for this spec and inventories every item the row lists; its summary arithmetic corrected. No test applies to a document. |
+| S125 Mutation-prove the five invariants | W | **C** | All five proofs exist and each was watched red: identity link (catalog, tripwire), single-device crowd (forty writes, replay key rolled back), prediction-as-observation (M9, M16), anomaly-as-safety (refused producer, no safety member), client-computed vibe (planted probe, M13). |
+
+**Held, with the reason.** **S17** stays X: the code half is answerable and
+built (HSTS via `helmet()`, peppered tokens, the pepper mandatory before any
+write); the deployment half is not a file. **S19** and **S118** stay W:
+`intel_observations.actor_id NOT NULL REFERENCES profiles(id)` is the owner's
+ruling for human claims, the anonymous store carries no FK, and which of the
+two postures makes the World Intelligence path FK-free "without exception" is
+the undecided decision. **S21**, **S28**, **S29** and **S32** stay as they
+are: on-device reduction, the nine device features, acoustic capture and the
+signal ingest are decisions #1, #2 and #6, and this lane does not take them.
+**S26** stays W: the anonymous half is closed (72 h structural, the sweep
+registered at `src/index.ts:151#startSensingRetentionScheduler();`) and the
+intel raw purge is behind `intel_contribution_retention_enabled`, FALSE in
+production, at 180 days. **S3** and **S106** stay W: `src/presence/domain/`
+is unchanged since Phase 0 — types and a transport interface, no store, no
+fusion layer. **S40**, **S45**, **S46**, **S49**, **S55**, **S56**, **S66**,
+**S68**, **S70**, **S72**, **S73**, **S74**, **S76**, **S78**–**S80**,
+**S83**, **S85**–**S88**, **S92**, **S102**, **S103**, **S113** and **S54**
+hold for the reasons their rows give; §1.2 re-derives S40, S45, S49, S66 and
+S70 and moves none. **S22**, **S89**–**S91** and **S105** hold C and stay
+vacuous. **S97** holds C with stronger evidence: the absence the row rested on
+is now guarded by a resolver with no distance threshold
+(`test/sensingSubjectReconciliation.test.ts:27#PROXIMITY`).
+
+### 1.4 The mutations, in one place
+
+| # | row(s) | file | what was changed | red | green |
+| --- | --- | --- | --- | ---: | ---: |
+| M1 | S18 | `lib/sensingAnonStore.ts` | the epoch dropped from the server token HMAC — **stayed green (46 / 46) on the first run**, because the device layer already rotates the commitment; pinned separately, then 1 red | 1 | 0 |
+| M1b | S18 | `lib/sensingAnonStore.ts` | the epoch dropped from the device epoch-secret HMAC | 1 | 0 |
+| M2 | S33, S125 | `lib/sensingAnonStore.ts` | 23505 no longer a duplicate | 2 | 0 |
+| M3 | S35 | `lib/sensingAnonStore.ts` | a future observation accepted | 2 | 0 |
+| M4 | S24 | `lib/sensingDifferencingGate.ts` | the minimum delta lowered to 1 | 4 | 0 |
+| M5 | S9, S42 | `lib/vibeInference.ts` | the contradicted-evidence branch removed | 2 | 0 |
+| M6 | S111 | `lib/sensingSubjectReconciliation.ts` | proximity made ownership | 4 | 0 |
+| M7 | S110 | `lib/experienceTruth.ts` | the `predicted_for` iff rule dropped | 1 | 0 |
+| M8 | S38, S39 | `lib/sensingPresenceState.ts` | a sub-k cohort rendered observed | 4 | 0 |
+| M9 | S48, S125 | `lib/truthClass.ts` | strongest class instead of weakest | 5 | 0 |
+| M10 | S25, S30 | `lib/sensingContributionPolicy.ts` | an ungranted scope admitted | 1 | 0 |
+| M11 | S30, S33, S35 | `lib/sensingContributionSession.ts` | the budget not refused at zero | 2 | 0 |
+| M12 | S20 | `lib/sensingAuthPosture.ts` | the undecided posture admitting a profile | 1 | 0 |
+| M13 | S125 | `travel-buddy-standalone/src/` | a client file deriving dance likelihood from motion, planted then removed | 1 | 0 |
+| M14 | S112 | `lib/sensingRevocationLineage.ts` | the identity detector blinded | 1 | 0 |
+| M15 | S38, S43, S53, S59, S64 | `lib/mapProjection.ts` | the experience state never folded | 14 | 0 |
+| M16 | S64, S125 | `routes/mapProjectionTemporal.ts` | the `predicted` stamp dropped | 1 | 0 |
+| M17 | S65, S66 | `lib/mapDisplayResolver.ts` | safety precedence never constraining | 4 | 0 |
+| M18 | S44, S60 | `lib/mapProducers/worldMomentProducer.ts` | unexpected activity never detected | 1 | 0 |
+| M19 | S38, S48 | `services/wall/LiveForYouService.ts` | an unstated class defaulting to `observed` | 1 | 0 |
+| M20 | S43 | `lib/mapExperienceState.ts` | the fold reading a viewer preference | 1 | 0 |
+| DB-1 | S33, S35, S125 | replica | 2340 rolled back, then re-applied | 3 | 0 |
+| DB-2 | S30, S33, S35 | replica | 2481 then 2480 rolled back, then re-applied | 2 | 0 |
+
+### 1.5 The ceiling
+
+Nothing here is deployed, enabled or production-realised, and the section's
+arithmetic says so twice. The anonymous path is owner-gated at both ends:
+`SENSING_AUTH_POSTURE` reads `undecided`, the tripwire forbids a route, and
+publishing any aggregate is decision #9 — so **thirteen built, tested,
+mutation-proven and database-executed rows are W**, and will be until a
+decision this lane cannot take is taken. 2315 and 2340 exist in portava-ci
+and nowhere else; 2480 and 2481 exist only on this lane's replica and were
+dry-run on portava-ci inside a rolled-back transaction by the pass that wrote
+them; production holds no sensing table and no `SENSING_CONTRIBUTOR_PEPPER`
+is known to be set. The twelve rows that moved to C ride surfaces that are
+live today (the Wall's truth class and coverage) or are seeded FALSE in every
+database (2350's three flags, 2361's one) — and every intel table in
+production still holds zero rows, so the Map's fold serves nothing there
+whatever its flag says. **Realised in production: 0.0 %**, unchanged.

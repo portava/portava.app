@@ -217,6 +217,20 @@ needed."* That mapping is the point of S0, and here it is.
 other than this spec** — the ranker HOLD, the consent gap, and a production table that does not
 exist.
 
+> **CORRECTION 2026-09-12 (census-sensing §1).** The sentence above does not summarise the table
+> above it. Counting the table's own verdicts: **five** contracts are TRULY MISSING
+> (`IntelligenceContributionSession`, `VibeState`, `ExperienceState`, `WorldMoment` and
+> `ExperienceSession` — the summary omitted the last), **six** are REUSE / EXTEND / EXISTS
+> (`PrivacyReducedContribution`, `PresenceObservation`, `CrowdState`, `ForecastState`,
+> `OpportunityProjection`, `ExperienceOutcome`), and **one** is BLOCKED (`FlowState`). 5 / 6 / 1, not
+> 4 / 5 / 3. Two rows are also wrong on their object and are left standing so the correction is
+> visible beside them: `PresenceObservation → EXTEND intel_observations` names the very table whose
+> `actor_id NOT NULL` FK is the anonymous path's blocker — the aggregate's owner is
+> `lib/sensingPresenceState.ts` (which did not exist when this map was written); and
+> `CrowdState → REUSE crowdFlowProducer` names the Flow engine, not a crowd state (census S40
+> records that no `CrowdState` object exists). The table's own S-step references (S1/S2, S4,
+> S5/S6, S9) are the spec's §21 steps, not census rows. The inventory in §1–§12 is unaffected.
+
 ---
 
 ## 14. What S0 concludes
