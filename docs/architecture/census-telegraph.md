@@ -1942,9 +1942,20 @@ on other mount lines; it is brittle by construction, and any insertion above it
 will break it again — including the Sensing lane's own next edit. The fix is
 mechanical: the cited numbers 295, 297, 298, 299, 302 and 304 should become 299,
 301, 302, 303, 306 and 308. It is NOT applied here, because that file belongs to
-the Sensing lane and a line, like a row, is corrected by its owner. Measured,
-not assumed: restoring `routes/index.ts` to HEAD makes that anchor resolve again
-and breaks only this census's own citations.
+the Sensing lane and a line, like a row, is corrected by its owner.
+
+Measured, not assumed, and worth stating exactly because it is an accusation
+against my own commits: with `routes/index.ts` temporarily restored to its
+content at this branch's base `014a25d56`, `check:doc-citations` reported that
+anchor as RESOLVING, and reported five broken anchors instead — all five being
+this census's own citations of the Telegraph mounts, which at that moment did
+not exist. Putting the file back made the failure move from the Sensing document
+to mine. That is what identifies the cause.
+
+**This also fails a test, not only a guard.** `src/test/docCitations.test.ts`
+("the real corpus — every covered citation resolves and every anchor holds")
+runs the same check, so the api-server suite cannot reach fail=0 while this
+stands. The one-line fix above is the whole of it.
 
 ### 10.21 §7 — the unsend window that did not exist, and receipts derived rather than stored
 
