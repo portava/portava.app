@@ -52,3 +52,17 @@ export { ContentDrawerSheet } from './drawer/ContentDrawerSheet.tsx';
 export { ComposerPlusMenu } from './composer/ComposerPlusMenu.tsx';
 export { TypedComposePrompt, type TypedComposeKind } from './composer/TypedComposePrompt.tsx';
 export { COMPOSER_ENTRIES, composerEntry, availableEntryCount, type ComposerEntry, type ComposerEntryId } from './composer/composerMenu.ts';
+export { CoordinationPanel } from './coordination/CoordinationPanel.tsx';
+export {
+  fetchCoordination,
+  postQuickState,
+  postVote,
+  postCoordinationKind,
+  quickStateLabel,
+  coordinationStateLabel,
+  QUICK_STATES,
+  STATE_AFFORDANCES,
+  type QuickState,
+  type CoordinationState,
+  type ThreadCoordinationView,
+} from './coordination/coordinationApi.ts';

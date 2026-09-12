@@ -55,6 +55,7 @@ import { ThreadSafetySheet } from '../../src/components/ThreadSafetySheet';
 import { SharedContextRail, shouldCollapseOnScroll } from '../../src/features/telegraph/index.ts';
 import { PortavaObjectMessage } from '../../src/features/telegraph/sharing/PortavaObjectMessage.tsx';
 import { TypedMessageRenderer, rendersTypedKind } from '../../src/features/telegraph/kinds/TypedMessageRenderer.tsx';
+import { CoordinationPanel } from '../../src/features/telegraph/coordination/CoordinationPanel.tsx';
 import { ContentDrawerSheet } from '../../src/features/telegraph/drawer/ContentDrawerSheet.tsx';
 import { ComposerPlusMenu } from '../../src/features/telegraph/composer/ComposerPlusMenu.tsx';
 import { TypedComposePrompt, type TypedComposeKind } from '../../src/features/telegraph/composer/TypedComposePrompt.tsx';
@@ -1870,6 +1871,11 @@ export default function TelegraphThread() {
           and the message stream. It renders nothing when there is no mutual
           canonical state, and nothing when the read failed. */}
       {id ? <SharedContextRail threadId={id} scrolled={railCollapsed} /> : null}
+
+      {/* Telegraph §2.2's optional coordination panel / §9's coordination
+          mode. Renders only while the thread is actually coordinating, or
+          while a decision or commitment is unresolved. */}
+      {id ? <CoordinationPanel threadId={id} /> : null}
 
       <FlatList
         windowSize={9}
