@@ -52,6 +52,7 @@ import { deleteMessage, muteThread, leaveThread, reportThread, retryTranslation,
 import { DiscoveryCardMessage } from '../../src/components/DiscoveryCardMessage';
 import { PostCardMessage } from '../../src/components/PostCardMessage';
 import { ThreadSafetySheet } from '../../src/components/ThreadSafetySheet';
+import { SharedContextRail, shouldCollapseOnScroll } from '../../src/features/telegraph/index.ts';
 import { TelegraphRecommendationCard } from '../../src/components/TelegraphRecommendationCard';
 import type { TelegraphSuggestion, MeetupPrefill } from '../../src/services/telegraphChat';
 import { blockUser } from '../../src/services/blocks';
@@ -1398,6 +1399,9 @@ export default function TelegraphThread() {
 
   // Scroll-to-bottom FAB — shown when the user has scrolled away from newest
   const [showJumpFab, setShowJumpFab] = useState(false);
+  // Telegraph §11.2 row 4: "User scrolls down → Rail collapses/sticks
+  // minimally; messages get priority."
+  const [railCollapsed, setRailCollapsed] = useState(false);
 
   // Send button springs in/out with input content
   const hasInput = input.trim().length > 0 || mediaPicker.media !== null;
@@ -1815,6 +1819,11 @@ export default function TelegraphThread() {
       )}
       <QuickActionBar />
 
+      {/* Telegraph §2.2 / §3: the Shared Context Rail sits between the header
+          and the message stream. It renders nothing when there is no mutual
+          canonical state, and nothing when the read failed. */}
+      {id ? <SharedContextRail threadId={id} scrolled={railCollapsed} /> : null}
+
       <FlatList
         windowSize={9}
         initialNumToRender={18}
@@ -1833,6 +1842,7 @@ export default function TelegraphThread() {
           const { contentSize, layoutMeasurement, contentOffset } = e.nativeEvent;
           const distanceFromBottom = contentSize.height - layoutMeasurement.height - contentOffset.y;
           setShowJumpFab(distanceFromBottom > 320);
+          setRailCollapsed(shouldCollapseOnScroll(contentOffset.y));
         }}
         scrollEventThrottle={120}
         renderItem={({ item }) => {

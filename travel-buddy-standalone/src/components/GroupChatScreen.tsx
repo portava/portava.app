@@ -54,6 +54,7 @@ import { getTripMembers, getCircleMembers, type FriendUser } from '../services/f
 import * as Haptics from 'expo-haptics';
 import * as Clipboard from 'expo-clipboard';
 import { MessageEntrance, useMessageEntranceGate } from './MessageEntrance.tsx';
+import { SharedContextRail } from '../features/telegraph/index.ts';
 import { UserIdentityLink } from './interaction/UserIdentityLink.tsx';
 import { localDateKey, localTodayKey } from '../utils/localDate.ts';
 
@@ -789,6 +790,12 @@ export function GroupChatScreen({ type, id, title, memberLabel }: Props) {
           </>
         )}
       </View>
+
+      {/* Telegraph §3: the Shared Context Rail, on the group surface too —
+          "at the top of EACH conversation". Renders nothing when the pair (or
+          crew) shares no canonical mutual state, and nothing when the read
+          failed. */}
+      {thread?.id ? <SharedContextRail threadId={thread.id} /> : null}
 
       <FlatList
         ref={listRef}

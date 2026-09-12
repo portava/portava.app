@@ -1106,3 +1106,230 @@ anywhere — a repo-wide grep for `§` over `git diff main...pr/460` returns
 nothing — despite hardening behaviour §7.4, §21 and §27.3 all require. It is
 good work done for the codebase, not for this document, which is the same
 pattern §4 describes for the tree as a whole.
+
+---
+
+## 10. §3 built, and §11.2's rail behaviours with it — the Shared Context Rail, end to end
+
+**Read against the branch `worktree-agent-adcce5a16df432ba7`, whose base is
+`014a25d56`.** §3 was the largest all-NOT-BUILT block in this census: nine rows,
+nine N verdicts, no rail element anywhere in either tree. §11.2's five rail
+behaviours were five more N rows for the same reason — a behaviour table about a
+component that did not exist. This section builds the component, the projection
+behind it, and the refusal §3.2 asks for.
+
+Nothing here needs a migration. The rail is computed from canonical tables that
+production already has (`baseline/20260907_production_tables.txt` lists
+`trip_members`, `meetups`, `meetup_invites`, `event_attendees`, `collections`,
+`collection_items` and `rent_buddy_bookings`), and every new artifact is
+TypeScript. That is the reason these rows can reach C at all: a row whose truth
+depends on DDL no database has would stay W however good the code was.
+
+### 10.1 What was built, and where
+
+- **§3.4's contract is a declared type, not a shape that happens to come out
+  of a handler.** `services/telegraph/sharedContext.ts` declares
+  `SharedContextItem` and `TelegraphSharedContextProjection` with §3.4's field
+  names verbatim — `conversationId`, `generatedAt`, `now`, `upcoming`,
+  `unresolved`, `past`; `objectType`, `objectId`, `currentVersion`, `title`,
+  `startsAt`, `endsAt`, `relationship`, `status`, `availableActions` — and
+  `buildSharedContextProjection`
+  (`services/telegraph/sharedContext.ts:648#buildSharedContextProjection`) is
+  the only thing that constructs one. `objectType`, `relationship` and
+  `availableActions` are not free strings: they come from
+  `services/telegraph/vocabulary.ts`, which carries §5's object families
+  (`services/telegraph/vocabulary.ts:33#TELEGRAPH_OBJECT_TYPES`), §3.1's four
+  eligibility clauses as the four relationship values
+  (`services/telegraph/vocabulary.ts:79#SHARED_RELATIONSHIPS`) and §8.1's
+  fourteen native actions in the spec's order
+  (`services/telegraph/vocabulary.ts:99#TELEGRAPH_ACTIONS`). A wrong value is a
+  compile error.
+- **§3.1's four clauses are four resolvers over five canonical tables.**
+  `resolveSharedTrips` (`services/telegraph/sharedContext.ts:344#resolveSharedTrips`)
+  keeps a trip only when the viewer AND at least one other active member of the
+  conversation both hold an `accepted` `trip_members` row; `resolveSharedMeetups`
+  (`:405#resolveSharedMeetups`) does the same over `meetup_invites`, counting the
+  creator as a participant even without an invite row of their own;
+  `resolveSharedEvents` (`:467#resolveSharedEvents`) over `event_attendees`;
+  `resolveSharedBookings` (`:521#resolveSharedBookings`) over the two parties of a
+  `rent_buddy_bookings` row. Clause 1 and clause 2 — "created by me and
+  joined by them", "created by them and joined by me" — are decided by
+  `relationshipFor`, which reads the source object's own owner/creator/host
+  column, so the rail says WHICH side made the thing.
+  Clause 4, "both deliberately promoted an item into a shared wishlist or
+  Want-to-Do state", is `resolveSharedWantToDo`
+  (`:567#resolveSharedWantToDo`): a `collection_items` row exists only because a
+  user pressed Save, so the same `(entity_type, entity_id)` saved independently
+  by two people in the conversation is exactly the clause, and it is canonical
+  state rather than an inference.
+- **§3.2 is REFUSED, not merely not done.** The census's own rule is that a
+  prohibition counts as built only when something makes the violation
+  unrepresentable or refuses it. Two artifacts do:
+  `CANONICAL_MUTUALITY_SOURCES`
+  (`services/telegraph/sharedContext.ts:198#CANONICAL_MUTUALITY_SOURCES`) is a
+  closed five-element list that does not contain `messages`, and
+  `admitCandidate` (`:246#admitCandidate`) — the single gate every rail item
+  passes through — returns `{ admitted: false, refusal: "non_canonical_source" }`
+  for anything outside it. The type refuses the same value at compile time.
+  The test proves both halves *and* the absence:
+  `test/telegraphSharedContext.test.ts:388` asserts the refusal branch fires,
+  and `:394` reads this module's own source, extracts every `.from("…")` it
+  makes, and fails if `messages` is among them or if any table outside the nine
+  canonical ones appears.
+- **§3.1's last bullet has an enforcement, not a hope.** "Past shared objects
+  remain available in the historical view only when still authorized" is
+  enforced twice: the resolvers only admit rows where the viewer's own
+  membership is currently active (`trip_members.status = 'accepted'`), and
+  `admitCandidate` re-checks `viewerStillAuthorized` and refuses
+  `viewer_unauthorized`. `test/telegraphSharedContext.test.ts:490` puts a trip
+  the viewer was REMOVED from into the fixture and asserts it is absent from
+  `past`, not merely greyed out.
+- **§3.3's ordering is the spec's seven bands, in the spec's order, and it is
+  the sort key.** `SHARED_CONTEXT_ORDER`
+  (`services/telegraph/sharedContext.ts:95#SHARED_CONTEXT_ORDER`) lists
+  HAPPENING_NOW, STARTING_SOON, TODAY, UPCOMING, ACTIVE_TRIP, UNRESOLVED, PAST;
+  `classifyBand` (`:137#classifyBand`) puts one object in one band and
+  deliberately bands a trip that spans *now* as ACTIVE_TRIP rather than
+  HAPPENING_NOW, because §3.3 ranks the active trip BELOW a plan starting soon —
+  a fortnight in Da Nang must not outrank the dinner in forty minutes.
+  `test/telegraphSharedContext.test.ts:449` asserts the whole ordered set end to
+  end through the route.
+- **The route.** `GET /api/threads/:threadId/shared-context`
+  (`routes/telegraphSharedContext.ts:155#/threads/:threadId/shared-context`)
+  verifies active membership, resolves the thread's other active members, and
+  returns the projection plus §11.2's server-decided rail mode. `GET
+  /api/threads/:threadId/conversation-header`
+  (`routes/telegraphSharedContext.ts:223#/threads/:threadId/conversation-header`)
+  is §2.2's other two thirds. Both are mounted:
+  `routes/index.ts:22#telegraphSharedContextRouter` imports and
+  `routes/index.ts:169#telegraphSharedContextRouter` uses.
+  A failed membership read is a 500 and a failed RESOLVER read sets
+  `incomplete: true` rather than returning an empty rail — "we could not tell"
+  and "you share nothing with this person" are different statements and the
+  surface must not conflate them (`test/telegraphSharedContext.test.ts:525`).
+- **The client.** `travel-buddy-standalone/src/features/telegraph/` is the
+  feature folder the client convention asks for. `railBehavior.ts` holds
+  §11.2's five rows as pure functions —
+  `shouldCollapseOnScroll` (`travel-buddy-standalone/src/features/telegraph/sharedContext/railBehavior.ts:29#shouldCollapseOnScroll`),
+  `detectCriticalChanges` (`:66#detectCriticalChanges`),
+  `resolveRailPresentation` (`:137#resolveRailPresentation`) —
+  and `SharedContextRail.tsx` renders them. The rail is MOUNTED on both
+  conversation surfaces, which is what "at the top of each conversation" means
+  in a tree that has two of them:
+  `travel-buddy-standalone/app/messages/[id].tsx:1825#SharedContextRail` (direct
+  and booking threads) and
+  `travel-buddy-standalone/src/components/GroupChatScreen.tsx:798#SharedContextRail`
+  (trip and circle threads).
+- **§11.2 row 5, the part that is easy to get wrong.** A critical change
+  (a plan cancelled, a start time moved) is promoted until acknowledged, and
+  the promotion OUTRANKS the scroll rule — a rail that a scroll can silence is
+  not a promotion, and the traveler would never learn the dinner was called
+  off. `railBehavior.ts:137` puts the change branch above the scroll branch and
+  `railBehavior.component.test.ts:172` pins the acknowledgement being
+  per-change rather than global. The first load promotes nothing, because
+  there is no change until there is a previous projection to differ from.
+- **§11.1's rails rule.** `RAIL_MAX_CARDS = 4`
+  (`travel-buddy-standalone/src/features/telegraph/sharedContext/railBehavior.ts:23#RAIL_MAX_CARDS`)
+  and everything past it is behind "See all"
+  (`travel-buddy-standalone/src/features/telegraph/sharedContext/SharedContextRail.tsx:194#telegraph-rail-see-all`).
+- **§11.3's reduced motion, fixed at the one place it was wrong.**
+  `MessageEntrance` had exactly one gate and it was a PAGINATION rule; nothing
+  in the Telegraph tree read the OS setting. It now does —
+  `travel-buddy-standalone/src/components/MessageEntrance.tsx:55#useReducedMotionSetting`
+  — reusing the hook the Wall already had, and a viewer with reduced motion on
+  gets the static View on every message
+  (`travel-buddy-standalone/src/features/telegraph/__tests__/MessageEntrance.reducedMotion.component.test.tsx:53`).
+- **§11.1's two themes exist, and the accents are separated.**
+  `travel-buddy-standalone/src/features/telegraph/theme/telegraphTheme.ts:86#DARK`
+  is the dark palette the token file never had, `telegraphPalette`
+  (`:111#telegraphPalette`) resolves it, and `operational` (teal/cyan) is a
+  different token from `attention` (the app's vermilion), which the rail uses
+  for exactly one thing: the urgent-change card. The contrast of both palettes
+  is computed from the real token values in
+  `travel-buddy-standalone/src/features/telegraph/__tests__/telegraphTheme.component.test.ts:92`.
+
+### 10.2 Row moves
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| T13 | N | **C** | **Rail at the top of each conversation showing mutually relevant objects** — The component exists and is mounted on BOTH conversation surfaces — `travel-buddy-standalone/app/messages/[id].tsx:1825#SharedContextRail` and `travel-buddy-standalone/src/components/GroupChatScreen.tsx:798#SharedContextRail` — between the header and the message list, fed by a mounted route (`routes/index.ts:169#telegraphSharedContextRouter`). What would turn this red (P24): a third conversation surface appearing without it; nothing pins that. |
+| T14 | N | **C** | **Eligibility: created by me, joined/saved/attended by them** — `relationshipFor` reads the source object's own owner column and returns `CREATED_BY_ME_JOINED_BY_THEM` when the viewer created it and a conversation counterpart joined (`services/telegraph/sharedContext.ts:344#resolveSharedTrips`, `:405#resolveSharedMeetups`, `:467#resolveSharedEvents`). Asserted against a trip Alice owns and Bob joined, `test/telegraphSharedContext.test.ts:498`. |
+| T15 | N | **C** | **Eligibility: created by them, joined/saved/attended by me** — Same resolver, the other branch — asserted against a meetup Bob created and Alice accepted, `test/telegraphSharedContext.test.ts:498`. |
+| T16 | N | **C** | **Eligibility: both members of the same Trip, Plan, Crew, Event or booking** — Four resolvers, four canonical membership tables: `trip_members` (the crew table — a trip's crew IS `trip_members`; `circle_memberships` is a personal address book, not a shared crew, and is deliberately not read), `meetup_invites` (Plan), `event_attendees` (Event), `rent_buddy_bookings` (booking). `services/telegraph/sharedContext.ts:521#resolveSharedBookings` is the booking one. |
+| T17 | N | **C** | **Eligibility: both deliberately promoted an item into a shared wishlist / Want-to-Do** — `resolveSharedWantToDo` (`services/telegraph/sharedContext.ts:567#resolveSharedWantToDo`) admits an entity only when two conversation members independently hold a `collection_items` row for it — a row that exists only because each pressed Save. Banded UNRESOLVED, which is §3.3's "UNRESOLVED / WANT TO DO". A place only the viewer saved is absent (`test/telegraphSharedContext.test.ts:480`). |
+| T18 | N `∅` | **C** | **Past shared objects available in the historical view only when still authorized** — No longer an unguarded absence: the historical view exists (`past[]`) and authorization is enforced twice — in the resolvers' `status = 'accepted'` filter and again in `admitCandidate`'s `viewer_unauthorized` refusal (`services/telegraph/sharedContext.ts:246#admitCandidate`). A trip the viewer was removed from is absent from `past`, proved at `test/telegraphSharedContext.test.ts:490`. |
+| T19 | N `∅` | **C** | **Never infer mutuality from chat alone** — The unguarded absence is now a guarded one. A closed source list without `messages` (`services/telegraph/sharedContext.ts:198#CANONICAL_MUTUALITY_SOURCES`), a refusal branch that names the reason (`:246#admitCandidate`), and a test that reads the module's own `.from(...)` calls and fails if the message table ever appears (`test/telegraphSharedContext.test.ts:394`). A discovery card posted in the thread is in the fixture and does not reach the rail (`:468`). |
+| T20 | N | **C** | **Ordering: HAPPENING NOW → STARTING SOON → TODAY → UPCOMING → ACTIVE TRIP → UNRESOLVED → PAST** — `services/telegraph/sharedContext.ts:95#SHARED_CONTEXT_ORDER` is the seven bands in the spec's order and its index IS the sort rank; `classifyBand` (`:137#classifyBand`) assigns them. End-to-end ordering asserted through the route at `test/telegraphSharedContext.test.ts:449`. |
+| T21 | N | **C** | **`TelegraphSharedContextProjection` / `SharedContextItem` contract** — Both interfaces are declared with §3.4's field names and produced by one builder (`services/telegraph/sharedContext.ts:648#buildSharedContextProjection`). This is NOT `services/passport/SharedContextService.ts` — that module answers Passport §17/§18's question about a profile pair and neither imports the other. |
+| T126 | N | **C** | **Horizontal rails only for short high-value context sets, with "See all"** — `RAIL_MAX_CARDS = 4` (`travel-buddy-standalone/src/features/telegraph/sharedContext/railBehavior.ts:23#RAIL_MAX_CARDS`) with the remainder behind a See-all control (`travel-buddy-standalone/src/features/telegraph/sharedContext/SharedContextRail.tsx:194#telegraph-rail-see-all`), asserted both as logic (`railBehavior.component.test.ts:108`) and as rendered tree (`SharedContextRail.component.test.tsx:118`). |
+| T128 | N | **C** | **Rail behaviour: active plan → expanded NOW card at top** — Server decides the mode (`services/telegraph/sharedContext.ts:717#railModeFor`) so client and server cannot disagree; the client renders the first NOW item expanded (`railBehavior.component.test.ts:80`, `SharedContextRail.component.test.tsx:83`). |
+| T129 | N | **C** | **Rail behaviour: upcoming only → compact horizontal cards** — `railModeFor` returns COMPACT_UPCOMING when `now` is empty and `upcoming` is not; rendered as a horizontal card row (`railBehavior.component.test.ts:87`). |
+| T130 | N | **C** | **Rail behaviour: none → collapsed summary ("3 shared plans · 1 past trip")** — `collapsedSummary` (`services/telegraph/sharedContext.ts:725#collapsedSummary`) renders the spec's example string exactly, and the rail collapses to it (`railBehavior.component.test.ts:94`). |
+| T131 | N | **C** | **Rail behaviour: user scrolls down → rail collapses, messages get priority** — `shouldCollapseOnScroll` (`travel-buddy-standalone/src/features/telegraph/sharedContext/railBehavior.ts:29#shouldCollapseOnScroll`) is driven by the conversation's own scroll handler (`travel-buddy-standalone/app/messages/[id].tsx:1845#setRailCollapsed`) and collapses the rail to one line (`railBehavior.component.test.ts:66`, `SharedContextRail.component.test.tsx:148`). |
+| T132 | N | **C** | **Rail behaviour: critical plan change → temporary promoted change card until acknowledged** — `detectCriticalChanges` (`travel-buddy-standalone/src/features/telegraph/sharedContext/railBehavior.ts:66#detectCriticalChanges`) diffs the seen projection against the fetched one for a cancellation or a moved start; the card is promoted above the scroll rule and disappears only on acknowledgement, per change (`railBehavior.component.test.ts:172`). The acknowledgement primitive T132's old evidence said did not exist is this. |
+| T134 | W | **C** | **Reduced-motion behaviour for media, GIFs and animations** — The wrong gate is no longer the only gate: `travel-buddy-standalone/src/components/MessageEntrance.tsx:55#useReducedMotionSetting` consults the OS setting and returns the static View, proved both ways in `travel-buddy-standalone/src/features/telegraph/__tests__/MessageEntrance.reducedMotion.component.test.tsx:53`. Scoped honestly: GIFs and inline video are still N/? rows of their own (T52, T61, T64) — this row is the animation half, which is what Telegraph actually animates today. |
+| T4 | N | **W** | **Pillar **Together** — every conversation can expose shared Trips, plans, events, places, Memories, history** — Five of six now: Trips, plans (meetups), events, places (both-saved `WANT_TO_DO`) and history (`past[]`) all reach the conversation through the rail. **Memories do not** — no resolver reads `memories`, and §10's Memory Note rows (T117–T122) are still N. |
+| T133 | C | **C** | **Do not encode delivery/availability solely by colour** — Unchanged verdict, stronger evidence: every rail band renders its WORD first (`travel-buddy-standalone/src/features/telegraph/theme/telegraphTheme.ts:127#statusLabelFor`), the colour rule beside it is reinforcement, and the three-word assertion is in `SharedContextRail.component.test.tsx:101`. |
+
+**Rows looked at that did NOT move, and why:**
+
+| id | stays | why it did not move |
+| --- | --- | --- |
+| T9 | W | **Conversation header: name · availability · safe presence** — The SERVER half is built and tested — `routes/telegraphSharedContext.ts:223#/threads/:threadId/conversation-header` returns the counterpart's explicit, unexpired, visibility-admitted availability window and their consented coarse presence, and `needs_help` is never selected (`routes/telegraphSharedContext.ts:295#status_label`). The CLIENT header still renders name and one subtitle tag only; nothing consumes the new route yet. A route with no screen is not a header. |
+| T28 | W | **Availability expires automatically and revokes across Telegraph, Discovery and Compass** — Telegraph now READS availability, which it never did, and re-evaluates expiry on the read through Passport's own predicate (`routes/telegraphSharedContext.ts:260#projectPublicWindows`), so an expired window cannot render as current (`test/telegraphSharedContext.test.ts:604`). It stays W for the ceiling §8.5 already records: `open_to_plans_windows_enabled` is seeded OFF and no database has it on, so on every deployment of this tree the read returns `enabled:false` and nothing else. |
+| T123 | W | **Components must support Portava light/dark themes** — The missing half is built — a dark palette, a resolver and a hook (`travel-buddy-standalone/src/features/telegraph/theme/telegraphTheme.ts:86#DARK`) — and the new feature components use it. The inbox, the conversation shell and the message bubbles still import the static single-palette `TG` from `travel-buddy-standalone/src/theme/telegraphTokens.ts:10`, so "components support both themes" is true of the rail and false of Telegraph. Adoption is the remaining work, not construction. |
+| T124 | W | **Restrained teal/cyan as operational emphasis; stronger attention reserved for safety and urgent changes** — Same boundary. The separation now EXISTS and is enforced by test (`travel-buddy-standalone/src/features/telegraph/__tests__/telegraphTheme.component.test.ts:92`), and the rail is the first surface where vermilion means only "urgent change". Everywhere else in Telegraph the accent is still `color.signal` for ordinary actions. |
+| T8 | W | **Inbox is not a generic notification feed** — Untouched by this section. The rail is a CONVERSATION surface; §2.1's status / available-nearby / NOW / UPCOMING bands are an INBOX surface and still do not exist. |
+| T16's "Crew" reading | — | Stated rather than hidden: this section reads §3.1's "Crew" as the trip crew (`trip_members`), which the resolver covers. `circle_memberships` is a per-user list, not a shared crew, and is deliberately not read. A reader who thinks Crew means something else should read T16 as W. |
+
+### 10.3 The tests, and how each was shown red
+
+`test/telegraphSharedContext.test.ts` — 33 tests, node:test, the real service and
+the real router in a real express app over an in-memory PostgREST-shaped fake.
+Shown red twice before commit: with `services/telegraph/sharedContext.ts` moved
+aside the file cannot import (`# tests 1 / # pass 0 / # fail 1`), and with
+`admitCandidate`'s `non_canonical_source` branch deleted the run is
+`# pass 32 / # fail 1`, the one failure being the §3.2 refusal test. Restored:
+33/33.
+
+`travel-buddy-standalone/src/features/telegraph/__tests__/railBehavior.component.test.ts` —
+14 tests. Shown red by disabling the scroll branch and by replacing the
+acknowledgement filter with `[0]`: 2 failed, 12 passed. Restored: 14/14.
+
+`travel-buddy-standalone/src/features/telegraph/__tests__/SharedContextRail.component.test.tsx` —
+9 tests against the rendered tree.
+
+`travel-buddy-standalone/src/features/telegraph/__tests__/MessageEntrance.reducedMotion.component.test.tsx` —
+3 tests. Shown red by pinning `reduceMotion = false` (the state before this
+change): 1 failed, 2 passed. Restored: 3/3.
+
+`travel-buddy-standalone/src/features/telegraph/__tests__/telegraphTheme.component.test.ts` —
+10 tests, contrast computed from the real tokens. Shown red by setting the dark
+palette's operational accent to `color.signal`: 1 failed, 9 passed. Restored:
+10/10.
+
+### 10.4 The ceiling
+
+No migration and no flag bounds §3: the rail reads tables production already
+has, and every artifact is code. That is why nine N rows reach C rather than W.
+
+What is NOT claimed. The rail is **on a branch**, and built on a branch is not
+merged, merged is not deployed, deployed is not flag-enabled. The
+`conversation-header` route has no consumer yet, so §2.2 stays W. The
+availability half of that route is dark on every deployment of this tree because
+`open_to_plans_windows_enabled` is seeded OFF — reading it is built, seeing it is
+not. The theme rows stay W because a palette nobody imports is a palette, not a
+theme. And no guard pins the rail's mount points: a third conversation surface,
+or a Telegraph component created outside `src/features/telegraph/`, would make
+T13 false without anything going red.
+
+One structural gap worth recording, because it bounds this whole document and
+not just this section: **`census-telegraph.md` declares no `head_commit` and has
+no entry in `CENSUS_SCOPE`** (`src/scripts/checkCensusFreshness.ts:77#CENSUS_SCOPE`),
+so `check:census-freshness` reports it as CANNOT BE CHECKED and no change to any
+Telegraph file ages it. Adding both is an owner decision — it would immediately
+mark this census stale for every lane currently writing into it — and is left
+open here rather than taken unilaterally.
+
+Headline after §10 in this worktree (last statement wins): C=114 W=172 N=143 X=0
+— `pnpm -s check:census-integrity`, which parses 429 of the 451 requirements (22 are counted in prose it cannot read, and the 3 CANNOT-VERIFY rows are among them, which is why it reports X=0 where §1 states 3).
