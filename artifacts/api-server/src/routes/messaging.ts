@@ -33,6 +33,8 @@ import { emitSafetyReported } from '../lib/telegraphEvents.js';
 import { checkSendRateLimit } from '../domain/telegraph/policies/sendRateLimit.js';
 // Telegraph §19 — "12 unread · 1 needs action". The second half.
 import { resolveNeedsAction } from '../domain/telegraph/policies/needsAction.js';
+// Telegraph §22 — restricted moderation storage for reported content.
+import { captureMessageEvidence, captureThreadEvidence } from '../services/telegraphReportEvidence.js';
 // Telegraph §22 — "stranger media ... until accepted": the server decides who
 // is a stranger; the client renders the shield.
 import { resolveSenderConnectedness } from '../domain/telegraph/policies/senderConnectedness.js';
@@ -3176,6 +3178,25 @@ router.post('/threads/:threadId/report', async (req, res) => {
     return;
   }
 
+  // Telegraph §22: snapshot the reported conversation into restricted
+  // moderation storage BEFORE responding, because the content can be deleted
+  // the moment the reported party notices. T284 measured what happens without
+  // this: deletion blanks `messages.body` in place, so reported content is
+  // destroyed rather than restricted.
+  //
+  // Awaited, but never fatal: a person who has just reported harassment must
+  // not be told "could not file report" because a snapshot table was slow. The
+  // report is already written; evidence improves it and does not gate it.
+  try {
+    await captureThreadEvidence(sc, {
+      reportId: (filedThreadReport as any)?.id ?? null,
+      threadId,
+      log: req.log,
+    });
+  } catch (err) {
+    req.log.error({ err, threadId }, 'report evidence: thread capture threw — the report stands without content');
+  }
+
   // Compass: reporter's cache should no longer surface content from this thread
   await invalidateCompassCache(sc, user.id, "thread_report");
 
@@ -3389,6 +3410,18 @@ router.post('/messages/:messageId/report', async (req, res) => {
     req.log.warn({ err: error }, 'message report insert failed');
     sendError(res, 'db_error', 'Could not file report');
     return;
+  }
+
+  // Telegraph §22 — see the thread-report handler above for why this is awaited
+  // before the response and why it can never fail the report.
+  try {
+    await captureMessageEvidence(sc, {
+      reportId: (filedMessageReport as any)?.id ?? null,
+      messageId,
+      log: req.log,
+    });
+  } catch (err) {
+    req.log.error({ err, messageId }, 'report evidence: message capture threw — the report stands without content');
   }
 
   // Compass: reporter's cache should no longer surface content from this message author

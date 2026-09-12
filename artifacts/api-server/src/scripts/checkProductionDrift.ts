@@ -400,6 +400,31 @@ export const KNOWN_PRODUCTION_GAPS: Record<string, Gap> = {
       "says is missing when a source object is deleted and the shared card lives on. No " +
       "writer.",
   },
+
+  // ── Telegraph §22 restricted moderation storage (migration 2812) ───────────
+  // The one table in this lane whose ABSENCE is a live harm rather than a
+  // missing feature: census T284 measured that a reported message deleted by
+  // its sender is destroyed, because deletion blanks messages.body in place and
+  // nothing copied it first. The snapshot is taken at REPORT time by
+  // services/telegraphReportEvidence.ts, behind its own flag.
+  //
+  // DDL and re-application were EXECUTED on a throwaway PostgreSQL 16 carrying
+  // the baseline plus the chain from 2093.
+  telegraph_report_evidence: {
+    classification: "unapplied",
+    note:
+      "Migration 2812 (Telegraph §22 evidence). Applied to no database. RLS is ENABLED " +
+      "with FORCE and NO POLICY AT ALL, so only the service role can read it — a " +
+      "membership-keyed policy would hand the reported party their own evidence file — " +
+      "and a postcondition RAISES if any policy is ever added. Deliberately has no foreign " +
+      "key to public.messages, so a deletion cannot cascade the evidence away; its one FK " +
+      "is to public.reports ON DELETE CASCADE, because evidence is retained to serve a " +
+      "report. Written by POST /api/messages/:id/report and POST /api/threads/:id/report " +
+      "behind telegraph_report_evidence_enabled, which is seeded FALSE. retention_until is " +
+      "NULL and nothing purges: a deletion schedule for moderation evidence is an owner " +
+      "decision, and a job running on a number this migration invented would be worse than " +
+      "no job.",
+  },
 };
 
 /**

@@ -1865,4 +1865,85 @@ claim: only meetups are decisions today. A Trip card, a booking change and a
 plan dependency are all things a person must answer, and none of them has an
 object that records whether they did.
 
-Headline after §11 in this worktree (last statement wins): C=123 W=182 N=123 X=0
+
+---
+
+### 11.10 §22's evidence: the report that pointed at an empty string
+
+T284 is the sharpest row in this census and it was still exactly true when
+re-read: "The opposite happens. Deletion redacts in place —
+`routes/groupChat.ts` `.update({ deleted_at: now, body: '' })` — with nothing
+copied to moderation storage first, so reported content is **destroyed**, not
+restricted." T283 is the same failure from the other side: `reports` carries a
+reporter, a target and a 200-character reason, and no content at all.
+
+So the sequence was: a person reports a message, the sender deletes it, and the
+moderator opens a report that points at a row whose body is the empty string.
+The reporter is then the only person who ever saw it, and the product's answer
+to them is a shrug.
+
+**The snapshot is taken at report time, and that is the whole design.** Not at
+delete time. A delete-time hook would have to ask "was this ever reported?" on
+every deletion — a read on the hot path that fails open by default — and it
+would still lose the race when the delete arrived first. Report time is the one
+moment the content is known to exist and the one moment somebody has asked for
+it to be looked at.
+
+**Restricted means no policy at all.** Every other table in this lane ships RLS
+with a SELECT policy keyed on thread membership. `telegraph_report_evidence`
+(`migrations/2812_telegraph_report_evidence.sql:96`) ships RLS `ENABLE` plus
+`FORCE` (`:152`) and **no policy whatsoever**, so every role except the service
+role reads zero rows. A membership-keyed policy would have handed the reported
+party their own evidence file — they are usually still a member of the thread
+they were reported in — which is precisely the disclosure §22 exists to stop. A
+postcondition RAISES if any policy is ever added (`:190`), so relaxing this is a
+migration somebody has to write on purpose rather than a line somebody adds by
+habit. That postcondition was EXECUTED against a real policy and it raised.
+
+**There is deliberately no foreign key to `messages`.** The table exists so
+content outlives the thing it came from; an FK would either block the deletion
+or cascade the evidence away with it. The one FK is to `reports` with
+`ON DELETE CASCADE`, which is the privacy-correct direction: evidence is held to
+serve a report, so when the report stops existing the justification stops with
+it. The catalog was read back and shows exactly one foreign key, to `reports`.
+
+**Three outcomes, not one absence.** `services/telegraphReportEvidence.ts:88`
+records `captured`, `already_deleted` (`:114`, `:118` — the content was gone
+before the report was filed, so there was nothing to copy) or `unreadable`
+(`:111` — the read failed). supabase-js resolves on a database error, so a
+failed read and a deleted message arrive as the same `data: null`; recording
+them as the same fact would tell a moderator "there was nothing there" when the
+truth is "we could not look". And none of the three changes the report's
+outcome: capture is awaited before the response but wrapped so it can never fail
+one (`routes/messaging.ts:3191`, `:3418`). A person who has just reported
+harassment must not be told "could not file report" because a snapshot table was
+slow.
+
+**Minimum necessary is a number, not a feeling.** `body_snapshot` is capped at
+4000 characters by a CHECK and truncated by the service before it gets there;
+a thread report keeps a bounded window of the last twenty messages
+(`telegraphReportEvidence.ts:55`) in a `context` blob the migration caps at
+16 KB. Copying a whole conversation because somebody reported it would retain
+far more than was reported, including messages from people who are not party to
+the complaint.
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| T283 | W | **W** | §22 evidence. There is now a content snapshot, taken at report time, with its own table (`migrations/2812_telegraph_report_evidence.sql:96`), its own restricted posture (`:152`, `:190`) and its own caps. W and not C because **no database has 2812** and the flag (`:160`) is seeded FALSE, so on every live deployment a report still carries nothing but a reason string. The ceiling is an owner decision in two places: applying the migration, and choosing a retention schedule — `retention_until` is NULL and nothing purges, deliberately, because a job destroying moderation evidence on a number this migration invented would be worse than no job. |
+| T284 | N | **W** | §22 reported-deleted content. The mechanism now exists and it is the right one: the snapshot happens before the deletion can, the table has no FK to `messages` so a deletion cannot cascade it away, and RLS-with-no-policy keeps it out of normal retrieval by construction rather than by query discipline. W for the same ceiling as T283 — no database has the table, the flag is FALSE — so **on every live deployment today, reported content is still destroyed when its author deletes it**. That sentence is the honest state of this row and the code on this branch does not change it. |
+| T220 | W | **W** | §15 block rediscovery — re-derived, because the row's evidence is stale and its verdict is still right for a different reason. The fail-open it names ("`routes/messaging.ts:1781-1786` destructures only `{ data: otherMembers }`", "the same hole exists on the media send path") is FIXED on this tree at both sites: `routes/messaging.ts:2171` and `:2652` both check `otherMembersErr` and refuse the send with `degraded_unavailable` rather than skipping the guard. PR #472 landed in the base commit. The row stays W on the strength of the requirement it actually states — "no subsystem may independently rediscover a blocked relationship" — which is still violated: at least eight modules outside the shared helpers query `blocks` directly, each with its own pairwise logic and its own error handling (`services/interactionPermissions.ts:322`, `compass/CompassTools.ts:301`, `compass/CompassNotificationEngine.ts:411`, `compass/CompassProfileService.ts:104`, `compass/CompassFallbackFeedBuilder.ts:224`, `lib/circleAccessGuard.ts:493`, `services/wall/WallProjectionService.ts:179`, `services/ranking/CreatorActivityScoreService.ts:601`). One shared helper that most callers use is not the same as one shared helper that all callers must use. |
+
+**The ceiling for §11.10.** No database has 2812. The flag is seeded FALSE. The
+DDL, the postcondition's refusal of a policy, the rollback and the
+re-application were all EXECUTED on a throwaway PostgreSQL 16 carrying the
+baseline plus the chain, and the catalog was read back rather than assumed. What
+would turn this red (P24): a `CREATE POLICY` on the evidence table (the
+migration's own postcondition raises, and a text assertion fails first); a
+foreign key to `messages` added for tidiness (a text assertion, and it would
+reintroduce exactly the destruction T284 measured); the flag check removed from
+the service, which would name a table on databases that do not have it; and
+collapsing `unreadable` into `already_deleted`, which would tell a moderator
+that nothing existed when the truth is that nobody could look. All four were run
+as deliberate mutations and five of twenty-nine assertions went red.
+
+Headline after §11 in this worktree (last statement wins): C=123 W=183 N=122 X=0
