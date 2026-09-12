@@ -66,6 +66,7 @@ import {
   haversineKm,
   type SearchQueryContext,
 } from "./discoverySearchHelpers.js";
+import { readTripWindows, fitInstantToWindows } from "../services/trips/TripFreedomConsumers.js";
 import {
   suggestCanonicalLocations,
   normalizeLocationName,
@@ -776,10 +777,35 @@ async function searchEvents(
       };
     });
 
+    // Trips §7.3 (census-trips TR133): with a trip in context, each event is
+    // placed against the trip's freedom windows — the engine's windows, not a
+    // local notion of free time — and the ones that fit lead, stably. Windows
+    // that cannot be read are reported as such on every row, never guessed.
+    if (ctx?.tripId) {
+      const read = await readTripWindows(sc, ctx.tripId, userId);
+      for (const r of mapped) {
+        const fit = read.ok ? fitInstantToWindows(read.projection, r.startsAt) : null;
+        r.metadata = {
+          ...(r.metadata ?? {}),
+          tripFit: fit
+            ? { verdict: fit.verdict, windowId: fit.windowId, conflictingCommitmentIds: fit.conflictingCommitmentIds, reason: fit.reason, decisionId: fit.decisionId, info: fit.info }
+            : { verdict: "NOT_CONSULTED", windowId: null, conflictingCommitmentIds: [], reason: null, decisionId: null, info: read.ok ? "" : read.info },
+        };
+      }
+    }
+
     return mapped;
   } catch {
     return [];
   }
+}
+
+/** Trips §7.3 (TR133): rows whose tripFit is FITS first, stably; untouched when nothing carries a verdict. */
+function leadWithTripFit(rows: SearchResult[]): SearchResult[] {
+  if (!rows.some((r) => (r.metadata as any)?.tripFit)) return rows;
+  const fits = rows.filter((r) => (r.metadata as any)?.tripFit?.verdict === "FITS");
+  const rest = rows.filter((r) => (r.metadata as any)?.tripFit?.verdict !== "FITS");
+  return [...fits, ...rest];
 }
 
 /**
@@ -1751,7 +1777,10 @@ export async function dispatchSearch(
     }
     case "events": {
       const raw = await searchEvents(sc, q, userId, blockedSet, ageRestrictedSet, 0, pool, ctx);
-      return rankCombined(raw, q, ctx?.userCity, { upcomingFirst: true }).slice(offset, offset + fetchLimit);
+      // Trips §7.3 (TR133): after the match-tier ranking, the events that fit
+      // the trip's windows lead — a stable partition, so the ranking's order
+      // survives within each half. A no-op when no trip was in context.
+      return leadWithTripFit(rankCombined(raw, q, ctx?.userCity, { upcomingFirst: true })).slice(offset, offset + fetchLimit);
     }
     case "trips": {
       const raw = await searchTrips(sc, q, userId, blockedSet, ageRestrictedSet, 0, pool, ctx);
@@ -1948,7 +1977,12 @@ router.get("/discovery/search", async (req, res) => {
   const rawIntentSafety   = typeof req.query.intentSafety       === "string" ? req.query.intentSafety.trim()       : null;
   const rawIntentLocHint  = typeof req.query.intentLocationHint === "string" ? req.query.intentLocationHint.trim() : null;
 
+  // Trips §7.3 (TR133): a trip in context, for the event results. UUID or nothing.
+  const rawTripId = typeof req.query.tripId === "string" ? req.query.tripId.trim() : "";
+  const ctxTripId = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(rawTripId) ? rawTripId : null;
+
   const ctx: SearchQueryContext = {
+    tripId: ctxTripId,
     lat,
     lng,
     tz,

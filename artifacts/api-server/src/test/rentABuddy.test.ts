@@ -5088,3 +5088,46 @@ describe("Rent a Buddy — booking events are actually written", () => {
     assert.equal(escalation.actor_user_id, BUDDY_USER);
   });
 });
+
+// ── Trips §7.3 — a booking on a trip consults the trip's freedom windows ─────
+//
+// census-trips TR133. The booking route hands a tripId to readSlotFit, which
+// judges the slot against the Temporal Freedom Engine's windows (the CONFLICT
+// refusal and the FITS verdict are proved against the real projection in
+// src/test/tripFreedomConsumers.test.ts). On this harness the trip tables are
+// not modelled, so the traveller is not a member of the named trip and the
+// windows are NOT consulted: the booking proceeds and the response says so —
+// which is the wiring this suite pins, including that a booking without a
+// trip carries no verdict at all.
+
+describe("Trips §7.3: a booking on a trip consults the freedom windows (TR133)", () => {
+  it("with a tripId the response carries tripFit; not a member here → NOT_CONSULTED, booking proceeds", async () => {
+    setupState();
+    const r = await req("POST", "/api/rent-a-buddy/bookings", {
+      buddyId: BUDDY_PROF, bookingDate: new Date().toISOString().slice(0, 10), startTime: "13:00",
+      durationH: 1, city: "Shinjuku Station", category: "city",
+      tripId: "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa",
+    });
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+    assert.ok(r.body.tripFit, "the verdict rides on the response");
+    assert.equal(r.body.tripFit.verdict, "NOT_CONSULTED");
+    assert.equal(r.body.tripFit.consulted, false);
+    assert.match(r.body.tripFit.info, /not a member/);
+  });
+
+  it("without a tripId, or with one that is not a UUID, no windows are consulted and nothing is claimed", async () => {
+    setupState();
+    let r = await req("POST", "/api/rent-a-buddy/bookings", {
+      buddyId: BUDDY_PROF, bookingDate: new Date().toISOString().slice(0, 10),
+      durationH: 1, city: "Shinjuku Station", category: "city",
+    });
+    assert.equal(r.status, 201);
+    assert.equal("tripFit" in r.body, false);
+    r = await req("POST", "/api/rent-a-buddy/bookings", {
+      buddyId: BUDDY_PROF, bookingDate: new Date().toISOString().slice(0, 10),
+      durationH: 1, city: "Shinjuku Station", category: "city", tripId: "trip-1",
+    });
+    assert.equal(r.status, 201);
+    assert.equal("tripFit" in r.body, false);
+  });
+});

@@ -45,6 +45,7 @@ import { tripOperationalProjectionsGate } from "../../lib/tripOperationalProject
 /** Bump when an engine's OUTPUT for the same inputs changes. Recorded on every decision. */
 export const TRIP_ENGINE_VERSIONS = {
   TravelTimeProvider: "straight-line/fastest-mode.2026-09-12",
+  TripDepartureAssumptions: "static-bands.2026-09-12",
   TripFeasibilityEngine: "2026-09-09.1",
   TripFreedomEngine: "2026-09-12.1",
   TripHealth: "2026-09-12.2",

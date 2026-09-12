@@ -93,6 +93,7 @@ import {
   passesTripFilter,
   passesPassportFilter,
 } from "../compass/CompassSurfaceFilters.js";
+import { readTripAttention, applyAttentionSuppression, attentionOnTheWire, type AttentionReading } from "../services/trips/TripAttentionFilter.js";
 import { buildUiBlocks, type CompassUiBlock } from "../compass/CompassUiBlocks.js";
 import {
   listMemories,
@@ -3726,6 +3727,9 @@ router.get("/compass/recommendations", async (req, res) => {
     );
 
     let candidateItems: any[] = feedSection?.items ?? [];
+    // §17.2 (census-trips TR319): the trip surface consults the trip's priority switch.
+    let tripAttention: AttentionReading | null = null;
+    let attentionWithheld = 0;
 
     // ── Surface-specific post-filtering ──────────────────────────────────────
 
@@ -3763,6 +3767,23 @@ router.get("/compass/recommendations", async (req, res) => {
         } catch {
           // Non-fatal: member signal is best-effort; continue without it
         }
+
+        // §17.2 (census-trips TR319): the trip's priority switch decides whether
+        // commercial and entertainment items reach the brief at all. Safety and
+        // logistics items stay; the static safety note below is appended after
+        // this filter and is never withheld. A switch that cannot be read (the
+        // operational-projections gate is closed on every deployment today)
+        // withholds nothing and is reported as not consulted.
+        tripAttention = await readTripAttention(sc, tripId, user.id);
+        const held = applyAttentionSuppression(candidateItems, tripAttention, (fi: any) => {
+          const inner = fi.item ?? fi;
+          return [
+            inner.type ?? fi.type, inner.category ?? fi.category, inner.data?.category, inner.data?.primary_category,
+            ...(Array.isArray(inner.interestTags) ? inner.interestTags : []),
+          ];
+        });
+        candidateItems = held.kept;
+        attentionWithheld = held.withheld;
       }
     } else if (surface === "passport") {
       // Load block list — fail-CLOSED: on any error, return empty to prevent leaking blocked users
@@ -3899,7 +3920,10 @@ router.get("/compass/recommendations", async (req, res) => {
     }
 
     void logCompassImpression(recommendations, user.id, effectiveSessionId);
-    res.json({ recommendations, surface, sessionId: effectiveSessionId });
+    res.json({
+      recommendations, surface, sessionId: effectiveSessionId,
+      ...(tripAttention ? { attention: attentionOnTheWire(tripAttention, attentionWithheld) } : {}),
+    });
   } catch (err) {
     req.log.error({ err }, "compass/recommendations: build failed");
     res.json({ recommendations: [], surface });

@@ -45,6 +45,7 @@ import {
 } from "../lib/rentBuddyBookingStatus.js";
 import { runBuddyRequestSweep } from "../lib/rentBuddyRequestSweeper.js";
 import { createEarningsLedgerEntry } from "../lib/rentBuddyEarningsLedger.js";
+import { readSlotFit, type SlotFit } from "../services/trips/TripFreedomConsumers.js";
 // The ONE reader of rent_buddy_fee_rules. The earnings-summary route used to
 // carry its own level-blind 0.15; see lib/rentBuddyFeeSchedule.ts for why a
 // numeric fallback was the defect rather than the safety net (M1 / M10).
@@ -2112,6 +2113,29 @@ router.post("/rent-a-buddy/bookings", async (req, res) => {
     return sendBuddyUnavailable(res, blockingException.exception_type);
   }
 
+  // Trips §7.3 (census-trips TR133): a booking placed on a trip is judged
+  // against the trip's freedom windows — the same windows Compass and Saved
+  // Ideas consume — never against a second idea of free time computed here.
+  // A slot that runs into a commitment is refused with the commitment named.
+  // Windows that cannot be read (the operational-projections gate is closed
+  // on every deployment today; or the traveller is not on that trip) let the
+  // booking through, and the response says they were not consulted.
+  let tripFit: SlotFit | null = null;
+  if (typeof tripId === "string" && UUID_RE.test(tripId)) {
+    tripFit = await readSlotFit(serviceClient, {
+      tripId, viewerId: user.id, date: String(bookingDate),
+      startTime: typeof startTime === "string" && startTime.length > 0 ? startTime : null,
+      durationHours: Number(durationH),
+    });
+    if (tripFit.verdict === "CONFLICT") {
+      return res.status(409).json({
+        error: "trip_time_conflict", reason: tripFit.reason,
+        message: `This booking overlaps a commitment on your trip: ${tripFit.info}.`,
+        tripFit,
+      });
+    }
+  }
+
   const { data: booking, error } = await serviceClient
     .from("rent_buddy_bookings")
     .insert({
@@ -2162,7 +2186,7 @@ router.post("/rent-a-buddy/bookings", async (req, res) => {
     await notifyBookingParty(getServiceClient(), buddyUserId, "rent_buddy.booking_requested", (booking as any).id);
   }
 
-  return res.status(201).json({ booking: mapBooking(booking), policyText: POLICY_TEXT });
+  return res.status(201).json({ booking: mapBooking(booking), policyText: POLICY_TEXT, ...(tripFit ? { tripFit } : {}) });
 });
 
 router.get("/rent-a-buddy/bookings", async (req, res) => {

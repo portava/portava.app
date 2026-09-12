@@ -72,8 +72,48 @@ export const TRAVEL_UNKNOWN_REASONS = [
 ] as const;
 export type TravelUnknownReason = (typeof TRAVEL_UNKNOWN_REASONS)[number];
 
+/**
+ * §14.2 — "route chains carry … future-time traffic/transit assumptions."
+ *
+ * An assumption is NOT a measurement and is never folded into the bound: the
+ * bound in `estimate.minutes` stays the free-flow lower bound every feasibility
+ * proof rests on, and the assumption rides beside it with its own factor,
+ * source class and confidence, so a consumer can show "expected" without a
+ * conflict verdict ever depending on a constant. services/trips/
+ * TripDepartureAssumptions.ts is the one producer; this is the shape.
+ */
+export interface TravelAssumption {
+  /** PEAK · SHOULDER · OFF_PEAK · NIGHT, from the LOCAL departure hour. */
+  band: string;
+  localHour: number;
+  weekend: boolean;
+  /** The zone the local hour was taken in. */
+  timezone: string;
+  /** True when the trip declared no zone and UTC stood in — the band is then a guess about a guess. */
+  timezoneAssumed: boolean;
+  mode: TravelMode;
+  /** Multiplier over the free-flow bound. ≥ 1 always: an assumption never shortens a bound. */
+  factor: number;
+  /** False when the mode is transit and the band is one many networks do not serve. */
+  transitServiceLikely: boolean;
+  sourceClass: "STATIC_DEFAULT";
+  confidence: "LOW";
+  sourceRefs: string[];
+  detail: string;
+}
+
 export type TravelTimeResult =
-  | { kind: "estimate"; estimate: TravelEstimate }
+  | {
+      kind: "estimate";
+      estimate: TravelEstimate;
+      /** The assumption applied over the bound when an assumption-stating
+       *  provider wrapped this answer; null when a ROUTED provider answered for
+       *  the departure time it was given (nothing to assume); absent when no
+       *  assumption model was in the chain at all. */
+      assumption?: TravelAssumption | null;
+      /** `estimate.minutes` × `assumption.factor`, ceiled. Never below the bound. */
+      expectedMinutes?: number | null;
+    }
   | { kind: "unknown"; reason: TravelUnknownReason; detail?: string };
 
 export interface TravelTimeProvider {

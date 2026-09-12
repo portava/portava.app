@@ -29,8 +29,9 @@ import { logger } from "../../lib/logger.js";
 import { incrementTripMetric } from "../../lib/tripMetrics.js";
 import { tripOperationalProjectionsGate, refusalForGate } from "../../lib/tripOperationalProjections.js";
 import { resolvePlaces, intervalToMinutes, FEASIBILITY_UNVERIFIED_DISCLOSURE } from "../../routes/tripFeasibility.js";
-import { checkFeasibility } from "./TripFeasibilityEngine.js";
-import { straightLineTravelTimeProvider, type GeoPoint } from "./TravelTimeProvider.js";
+import { evaluateFeasibility } from "./TripFeasibilityEngine.js";
+import { straightLineTravelTimeProvider, estimateTravel, type GeoPoint, type TravelAssumption } from "./TravelTimeProvider.js";
+import { withDepartureAssumptions } from "./TripDepartureAssumptions.js";
 import { liveEnvelope, type TripProjectionEnvelope } from "./TripProjectionEnvelope.js";
 import { recordTripDecision, persistTripDecision, TRIP_ENGINE_VERSIONS } from "./TripDecisionLedger.js";
 import { recordDerivedEvents, type DerivedEventsReport } from "../../lib/tripDerivedEvents.js";
@@ -39,7 +40,8 @@ import {
 } from "./TripFreedomEngine.js";
 
 const log = logger.child({ mod: "tripFreedomProjection" });
-const PROVIDER = straightLineTravelTimeProvider;
+/** The BOUND. The departure-time assumption is layered per trip, below. */
+const BOUND_PROVIDER = straightLineTravelTimeProvider;
 
 export interface TripFreedomProjection extends TripProjectionEnvelope {
   tripId: string;
@@ -54,7 +56,7 @@ export interface TripFreedomProjection extends TripProjectionEnvelope {
   /** Commitment place ids that resolved to no `places` row. */
   unresolvedPlaceIds: string[];
   participants: string[];
-  provider: { id: string; routed: boolean };
+  provider: { id: string; routed: boolean; assumptionsModel: string };
   disclosure: string;
   reading: string;
   /**
@@ -69,11 +71,24 @@ export interface TripFreedomProjection extends TripProjectionEnvelope {
 
 export interface ArrivalEstimate {
   commitmentId: string;
-  /** ISO, or null when the hop could not be estimated. */
+  /** ISO, or null when the hop could not be estimated. The BOUND — what conflicts are judged on. */
   estimatedArrivalAt: string | null;
   travelMinutes: number | null;
+  /**
+   * §14.2 (census-trips TR267): the bound under the departure-time assumption
+   * — the route chain's "future-time traffic/transit assumption", stated
+   * beside the bound and never folded into it. null when the hop could not
+   * be estimated.
+   */
+  expectedArrivalAt: string | null;
+  expectedTravelMinutes: number | null;
+  assumption: ArrivalAssumption | null;
   departFrom: string;
 }
+
+/** The assumption as the projection carries it: everything but the source refs. */
+export type ArrivalAssumption = Pick<TravelAssumption,
+  "band" | "factor" | "localHour" | "weekend" | "timezone" | "timezoneAssumed" | "mode" | "transitServiceLikely" | "sourceClass" | "confidence" | "detail">;
 
 export const FREEDOM_READING =
   "§7.3: gaps between commitments, each a LOWER BOUND on free time (window ends when the traveller must leave to make the next commitment against a straight-line travel term). No window is certified without a routed provider. Conflicts are returned beside the windows, never dropped; no override path exists.";
@@ -112,7 +127,7 @@ export async function buildTripFreedomProjection(
   const gate = await tripOperationalProjectionsGate(sc);
   if (!gate.enabled) return refusalForGate(gate);
 
-  const { data: trip, error: tripErr } = await sc.from("trips").select("start_date, end_date, owner_id, version").eq("id", tripId).maybeSingle();
+  const { data: trip, error: tripErr } = await sc.from("trips").select("start_date, end_date, owner_id, version, timezone").eq("id", tripId).maybeSingle();
   if (tripErr) {
     log.warn({ err: tripErr.message, tripId }, "freedom: trip unreadable");
     return { ok: false, reason: "TRIP_PROJECTION_UNAVAILABLE", message: "The trip could not be read" };
@@ -120,6 +135,8 @@ export async function buildTripFreedomProjection(
   if (!trip) return { ok: false, reason: "TRIP_NOT_FOUND", message: "Trip not found" };
   const t = trip as any;
   const envelope = liveEnvelope(typeof t.version === "number" ? t.version : null, now);
+  // §14.2 (TR267): the assumption is stated in the trip's own zone; without one, UTC stands in and the assumption says so.
+  const provider = withDepartureAssumptions(BOUND_PROVIDER, typeof t.timezone === "string" ? t.timezone : null);
 
   const { data: rows, error: cErr } = await sc
     .from("trip_commitments")
@@ -171,15 +188,31 @@ export async function buildTripFreedomProjection(
   for (let i = 1; i < placed.length; i += 1) {
     const prev = placed[i - 1]!; const next = placed[i]!;
     const departFrom = prev.endsAt ?? prev.startsAt ?? prev.requiredArrivalAt!;
-    const r = await checkFeasibility(PROVIDER, { departFrom, fromPlace: prev.place.point }, {
+    const travel = await estimateTravel(provider, { from: prev.place.point, to: next.place.point, departAt: departFrom }, now);
+    const r = evaluateFeasibility({ departFrom, fromPlace: prev.place.point }, {
       toPlace: next.place.point, requiredArrivalAt: next.requiredArrivalAt, startsAt: next.startsAt,
       prepMinutes: next.prepMinutes, latenessToleranceMinutes: next.latenessToleranceMinutes,
-    }, now);
+    }, travel);
     hops.push({ travelMinutes: r.travelMinutes, confidence: r.confidence, routed: r.routed, unknownReason: r.unknownReason });
+    // §14.2 (TR267): the assumption rides beside the bound. estimatedArrivalAt
+    // is the bound (what the windows and conflicts above are judged on);
+    // expectedArrivalAt is the bound under the departure-time assumption, and
+    // the assumption says which band and why. Never below the bound.
+    const assumption = travel.kind === "estimate" ? (travel.assumption ?? null) : null;
+    const expectedTravel = travel.kind === "estimate" && typeof travel.expectedMinutes === "number" && r.travelMinutes !== null
+      ? Math.max(r.travelMinutes, travel.expectedMinutes)
+      : null;
     arrivalEstimates.push({
       commitmentId: next.id,
       estimatedArrivalAt: r.travelMinutes === null ? null : new Date(departFrom.getTime() + (r.travelMinutes + next.prepMinutes) * 60_000).toISOString(),
       travelMinutes: r.travelMinutes,
+      expectedArrivalAt: expectedTravel === null ? null : new Date(departFrom.getTime() + (expectedTravel + next.prepMinutes) * 60_000).toISOString(),
+      expectedTravelMinutes: expectedTravel,
+      assumption: assumption ? {
+        band: assumption.band, factor: assumption.factor, localHour: assumption.localHour, weekend: assumption.weekend,
+        timezone: assumption.timezone, timezoneAssumed: assumption.timezoneAssumed, mode: assumption.mode,
+        transitServiceLikely: assumption.transitServiceLikely, sourceClass: assumption.sourceClass, confidence: assumption.confidence, detail: assumption.detail,
+      } : null,
       departFrom: departFrom.toISOString(),
     });
   }
@@ -211,14 +244,15 @@ export async function buildTripFreedomProjection(
     sources: ["trips", "trip_commitments", "places", "trip_members"],
     assumptions: [
       "a commitment has no end column (2761); a window begins at the commitment's start, never before its latest allowed arrival",
-      `travel term is ${PROVIDER.id}'s fastest-mode straight-line LOWER BOUND at the feasibility percentile; no window is certified`,
+      `travel term is ${provider.id}'s fastest-mode straight-line LOWER BOUND at the feasibility percentile; no window is certified`,
+      `expected arrival applies ${provider.assumptionsModel}'s factor over the bound (§14.2); the bound alone is what windows and conflicts are judged on`,
     ],
     constraints: [...new Set(result.windows.flatMap((w) => w.hardConstraints.map((h) => h.kind)))],
     result: { windows: result.windows.length, conflicts: result.conflicts.map((c) => c.kind), unplaced: result.unplacedCommitmentIds.length },
     confidence: result.windows.reduce<"HIGH" | "MEDIUM" | "LOW" | "INSUFFICIENT">((worst, w) => {
       const order = ["INSUFFICIENT", "LOW", "MEDIUM", "HIGH"]; return order.indexOf(w.confidence) < order.indexOf(worst) ? w.confidence : worst;
     }, "HIGH"),
-    engineVersions: { TripFreedomEngine: TRIP_ENGINE_VERSIONS.TripFreedomEngine, TripFeasibilityEngine: TRIP_ENGINE_VERSIONS.TripFeasibilityEngine, TravelTimeProvider: TRIP_ENGINE_VERSIONS.TravelTimeProvider },
+    engineVersions: { TripFreedomEngine: TRIP_ENGINE_VERSIONS.TripFreedomEngine, TripFeasibilityEngine: TRIP_ENGINE_VERSIONS.TripFeasibilityEngine, TravelTimeProvider: TRIP_ENGINE_VERSIONS.TravelTimeProvider, TripDepartureAssumptions: TRIP_ENGINE_VERSIONS.TripDepartureAssumptions },
     calculatedAt: envelope.generatedAt, sourceTripVersion: envelope.sourceTripVersion,
   });
   // §5.3 (2781): kept for 90 days by policy where the deployment can; the projection is served either way.
@@ -237,7 +271,7 @@ export async function buildTripFreedomProjection(
       unplacedCommitmentIds: result.unplacedCommitmentIds,
       unresolvedPlaceIds: places.unresolved,
       participants: [...participants],
-      provider: { id: PROVIDER.id, routed: PROVIDER.routed },
+      provider: { id: provider.id, routed: provider.routed, assumptionsModel: provider.assumptionsModel },
       disclosure: FEASIBILITY_UNVERIFIED_DISCLOSURE,
       reading: FREEDOM_READING,
       arrivalEstimates,

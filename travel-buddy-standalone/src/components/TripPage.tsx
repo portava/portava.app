@@ -12,7 +12,7 @@ import {
   MessageCircle, ShieldCheck, ImagePlus, Info, X, Bell,
 } from 'lucide-react-native';
 import { useTripSavedPlaces } from '../hooks/useTripSavedPlaces.ts';
-import { fetchCompassTripBrief, reportCompassViewed, type CompassRecommendation } from '../services/compass.ts';
+import { fetchCompassTripBrief, reportCompassViewed, type CompassRecommendation, type CompassBriefAttention } from '../services/compass.ts';
 import { resolveCompassTitle, formatCompassSubtitle } from '../utils/compassFormat.ts';
 import { openTripChat } from '../services/messaging.ts';
 import { createPlanItem } from '../services/tripPlan.ts';
@@ -798,6 +798,7 @@ function BriefItemCard({ item, tripId }: { item: CompassRecommendation; tripId?:
 export function CompassTripBrief({ tripId, city, startDate, endDate }: CompassTripBriefProps) {
   const [expanded, setExpanded]     = useState(true);
   const [items, setItems]           = useState<CompassRecommendation[]>([]);
+  const [attention, setAttention]   = useState<CompassBriefAttention | null>(null);
   const [loading, setLoading]       = useState(false);
   const [fetched, setFetched]       = useState(false);
 
@@ -806,14 +807,21 @@ export function CompassTripBrief({ tripId, city, startDate, endDate }: CompassTr
     setLoading(true);
     fetchCompassTripBrief({ tripId: tripId ?? '', city, startDate, endDate, limit: 6 })
       .then((res) => {
-        if (res.ok && res.data) setItems(res.data.recommendations);
+        if (res.ok && res.data) {
+          setItems(res.data.recommendations);
+          // Trips §17.2 (TR319): the server's switch reading, shown as it was read.
+          setAttention(res.data.attention ?? null);
+        }
       })
       .catch(() => {})
       .finally(() => { setLoading(false); setFetched(true); });
   }, [tripId, city, startDate, endDate]);
 
-  // Hide entirely when loaded with no items (Compass disabled, no results, or no city)
-  if (fetched && items.length === 0 && !loading) return null;
+  const suppressed = attention?.suppressed === true;
+
+  // Hide entirely when loaded with no items (Compass disabled, no results, or
+  // no city) — unless the switch withheld them, which is worth a line.
+  if (fetched && items.length === 0 && !loading && !suppressed) return null;
 
   return (
     <View>
@@ -827,6 +835,12 @@ export function CompassTripBrief({ tripId, city, startDate, endDate }: CompassTr
           <ActivityIndicator size="small" color={color.signal} />
           <Text style={cb.loadingText}>Loading recommendations…</Text>
         </View>
+      )}
+      {!loading && suppressed && (
+        <Text style={cb.attentionNote} testID="compass-brief-attention">
+          Commercial and entertainment suggestions are held back while this trip needs your attention
+          {attention?.withheld ? ` (${attention.withheld} held back)` : ''}. Safety and logistics stay.
+        </Text>
       )}
       {!loading && expanded && items.length > 0 && (
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={cb.strip}>
@@ -1110,6 +1124,7 @@ const cr = StyleSheet.create({
 });
 
 const cb = StyleSheet.create({
+  attentionNote: { fontSize: 13, lineHeight: 18, color: color.mute, paddingHorizontal: 16, paddingBottom: 8 },
   card:        { marginHorizontal: space.lg, backgroundColor: color.ink, borderRadius: radius.lg, padding: space.lg, gap: space.md, ...shadow.card },
   emptyCard:   { marginHorizontal: space.lg, backgroundColor: color.ink, borderRadius: radius.lg, padding: space.lg, gap: space.md, ...shadow.card },
   head:        { flexDirection: 'row', alignItems: 'center', gap: space.md },
