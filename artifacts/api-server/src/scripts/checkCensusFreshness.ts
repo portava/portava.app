@@ -1116,6 +1116,15 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/test/liveReference.test.ts",
     "artifacts/api-server/src/test/telegraphLiveReferencesRoute.test.ts",
     "artifacts/api-server/src/test/db/telegraphLiveReferences.db.test.ts",
+    // WIDENED 2026-09-12 (census-sensing §5): §16's safety candidate stage.
+    "artifacts/api-server/src/lib/safetyCandidate.ts",
+    "artifacts/api-server/src/lib/safetyCandidateStore.ts",
+    "artifacts/api-server/src/routes/adminSafetyCandidates.ts",
+    "artifacts/api-server/src/migrations/2803_intel_safety_candidates_flag.sql",
+    "db/rollback/2026-09-12-2803-intel-safety-candidates-flag-rollback.sql",
+    "artifacts/api-server/src/test/safetyCandidate.test.ts",
+    "artifacts/api-server/src/test/adminSafetyCandidatesRoute.test.ts",
+    "artifacts/api-server/src/test/db/safetyCandidate.db.test.ts",
   ],
   "census-compass.md": [
     "artifacts/api-server/src/compass/",

@@ -342,5 +342,10 @@ router.use(wallMomentsRouter);
 // routes/telegraph*.ts are untouched. At the tail for the same reason.
 import telegraphLiveReferencesRouter from "./telegraphLiveReferences.js";
 router.use(telegraphLiveReferencesRouter);
+// ── Sensing §16: the safety candidate stage, feeding the existing review ─────
+// Its own file behind intel_safety_candidates_enabled (2803, seeded FALSE) and
+// requireAdmin; routes/admin.ts is untouched. At the tail for the same reason.
+import adminSafetyCandidatesRouter from "./adminSafetyCandidates.js";
+router.use(adminSafetyCandidatesRouter);
 
 export default router;
