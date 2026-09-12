@@ -1094,7 +1094,7 @@ before its commit; the mutations are listed in §2.3.
   reads the candidate and the current experience through
   `readLiveClaimEnvelopes`, and answers the decision with its reasons,
   grounding, interception and switching-cost report; it writes nothing and
-  computes no truth of its own. Registered at the tail of `routes/index.ts:330#compassDecisionRouter`, so no line the other censuses cite in that file moved.
+  computes no truth of its own. Registered at the tail of `routes/index.ts:334#compassDecisionRouter`, so no line the other censuses cite in that file moved.
   2800 seeds the flag FALSE and refuses to commit a TRUE row
   (`migrations/2800_compass_decision_flag.sql:34#INSERT`;
   `migrations/2800_compass_decision_flag.sql:47#reads`); the rollback refuses
@@ -1304,7 +1304,7 @@ in §3.3.
   treated as the budget spent. It answers newest change first with a report
   per subject that tells "no moments" from "could not look" and "no versions
   to compare". It writes nothing and sends nothing. Registered at the tail
-  of `routes/index.ts:335#wallMomentsRouter`. 2801 seeds the flag FALSE and
+  of `routes/index.ts:339#wallMomentsRouter`. 2801 seeds the flag FALSE and
   refuses to commit a TRUE row (`migrations/2801_wall_moments_flag.sql:41#INSERT`;
   `migrations/2801_wall_moments_flag.sql:54#reads`); the rollback refuses
   over a TRUE row (`db/rollback/2026-09-12-2801-wall-moments-flag-rollback.sql:23#DELETE`)
@@ -1512,7 +1512,7 @@ listed in §4.3.
   `test/telegraphLiveReferencesRoute.test.ts:386#null`). The wire carries
   the current claims only through that gate; nothing person-shaped is on it
   (`test/telegraphLiveReferencesRoute.test.ts:282#forbidden`). Registered at
-  the tail of `routes/index.ts:339#telegraphLiveReferencesRouter`.
+  the tail of `routes/index.ts:344#telegraphLiveReferencesRouter`.
 
 - **2802 and its rollback** — `migrations/2802_telegraph_live_references_flag.sql:47#INSERT`
   seeds `telegraph_live_references_enabled` FALSE, one row, `ON CONFLICT DO
