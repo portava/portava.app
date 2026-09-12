@@ -44,16 +44,12 @@ const FILES = [
  * a fixed one here and it goes on excusing the next regression, which is exactly
  * what the four RLS allowlists emptied on this branch had been doing.
  */
-const KNOWN_UNVALIDATED = new Set([
+const KNOWN_UNVALIDATED = new Set<string>([
   // "POST /trips" was here and is GONE, closed 2026-09-11 by CreateTripSchema —
-  // the first entry this list has shed. Seven remain.
-  "POST /trips/:tripId/invite",
-  "POST /trips/:tripId/members",
-  "POST /trips/:tripId/join-request",
-  "POST /trips/:tripId/invite-link",
-  "POST /trips/:tripId/checklists",
-  "PATCH /trips/:tripId/checklists/:checklistId",
-  "PATCH /trips/:tripId/checklists/:checklistId/items/:itemId",
+  // the first entry this list shed. The remaining seven — /invite, /members,
+  // /join-request, /invite-link and the three checklist writes — were closed
+  // 2026-09-12 (census-trips §45, TR51). The list is EMPTY and stays
+  // shrink-only: a new unvalidated trip write is a failure here, not an entry.
 ]);
 
 const ROUTE_RE = /^router\.(post|patch|put|delete)\("([^"]+)"/;

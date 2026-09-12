@@ -1145,6 +1145,12 @@ router.get("/trips/:tripId/plan-permission", async (req, res) => {
  * Reuses the existing trip_members table with role='invited'.
  * Friendship alone NEVER creates this row — only explicit owner invitation.
  */
+// TR51 (§4.1 "command service validates schema"): the two membership writes
+// parse a schema first, like the other 46. The messages are the ones the
+// hand-rolled checks used to send, so no client sees a new sentence.
+const InviteMemberSchema = z.object({ userId: z.string().uuid() });
+const AddMemberSchema = z.object({ userId: z.string().uuid(), role: z.enum(["member", "invited"]).default("member") });
+
 router.post("/trips/:tripId/invite", async (req, res) => {
   if (!isServiceClientReady) {
     res.status(503).json({ error: "server_not_configured" });
@@ -1161,8 +1167,9 @@ router.post("/trips/:tripId/invite", async (req, res) => {
   const { tripId } = req.params;
   if (!/^[0-9a-f-]{36}$/i.test(tripId)) { res.status(400).json({ error: "invalid_payload", message: "Invalid trip id" }); return; }
 
-  const userId = req.body?.userId;
-  if (!userId || !/^[0-9a-f-]{36}$/i.test(userId)) { res.status(400).json({ error: "invalid_payload", message: "userId must be a valid UUID" }); return; }
+  const parsedInvite = InviteMemberSchema.safeParse(req.body ?? {});
+  if (!parsedInvite.success) { res.status(400).json({ error: "invalid_payload", message: "userId must be a valid UUID" }); return; }
+  const userId = parsedInvite.data.userId;
   if (userId === user.id) { res.status(400).json({ error: "invalid_payload", message: "You cannot invite yourself" }); return; }
 
   // Only the trip owner may invite
@@ -2098,9 +2105,13 @@ router.post("/trips/:tripId/members", async (req, res) => {
   const { tripId } = req.params;
   if (!/^[0-9a-f-]{36}$/i.test(tripId)) { res.status(400).json({ error: "invalid_payload", message: "Invalid trip id" }); return; }
 
-  const { userId, role = "member" } = req.body ?? {};
-  if (!userId || !/^[0-9a-f-]{36}$/i.test(userId)) { res.status(400).json({ error: "invalid_payload", message: "userId must be a valid UUID" }); return; }
-  if (role !== "member" && role !== "invited") { res.status(400).json({ error: "invalid_payload", message: "role must be 'member' or 'invited'" }); return; }
+  const parsedMember = AddMemberSchema.safeParse(req.body ?? {});
+  if (!parsedMember.success) {
+    const issue = parsedMember.error.issues[0];
+    res.status(400).json({ error: "invalid_payload", message: issue?.path[0] === "role" ? "role must be 'member' or 'invited'" : "userId must be a valid UUID" });
+    return;
+  }
+  const { userId, role } = parsedMember.data;
   if (userId === user.id) { res.status(400).json({ error: "invalid_payload", message: "Cannot add yourself" }); return; }
 
   // `error` bound for the same reason as the first `trips` read in this file:

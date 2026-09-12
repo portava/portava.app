@@ -170,8 +170,8 @@ describe("§14.1 — the envelope a marker list cannot have", () => {
     install({ trip_plan_items: [planItem()] });
     const r = await get();
     assert.equal(r.body.census.ok + r.body.census.unread + r.body.census.noSource, 10);
-    // §13 gave liveOpportunities a producer (census-trips §43); two layers have none.
-    assert.equal(r.body.census.noSource, 2, "the two layers with no producer");
+    // §13 gave liveOpportunities a producer (§43) and §17.4 / §7.4 gave safetyPoints one (§45); one layer has none.
+    assert.equal(r.body.census.noSource, 1, "the one layer with no producer: crew presence summaries");
     assert.ok(r.body.census.totalPoints >= 1);
   });
 });
@@ -351,13 +351,14 @@ describe("§14.2 route chains — the layer that shipped as no_source on a false
 });
 
 describe("§14.1 — the layers with no producer say so", () => {
-  it("two layers are no_source, each with a reason naming the actual obstacle; live opportunities has a producer now", async () => {
+  it("one layer is no_source, with a reason naming the actual obstacle; live opportunities (§13) and safety / logistics (§17.4, §7.4) have producers now", async () => {
     install({});
     const r = await get();
-    for (const key of ["crewPresenceSummaries", "safetyPoints"]) {
+    for (const key of ["crewPresenceSummaries"]) {
       assert.equal(r.body[key].status, "no_source", key);
       assert.ok(r.body[key].reason.length > 40, `${key}'s reason is not an explanation`);
     }
+    assert.equal(r.body.safetyPoints.status, "ok"); assert.equal(typeof r.body.safetyLogisticsReading, "string");
     // And route chains is NOT one of them any more — nor, since §13, live opportunities:
     // here the operational-projections gate is off, so the layer is UNREAD with the reason.
     assert.notEqual(r.body.routeChains.status, "no_source");
@@ -369,8 +370,8 @@ describe("§14.1 — the layers with no producer say so", () => {
     install({ route_plans: [], route_stops: [] }, ["trip_saved_places"]);
     const r = await get();
     assert.equal(r.body.savedIdeas.status, "unread");
-    assert.equal(r.body.safetyPoints.status, "no_source");
-    assert.notEqual(r.body.savedIdeas.status, r.body.safetyPoints.status);
+    assert.equal(r.body.crewPresenceSummaries.status, "no_source");
+    assert.notEqual(r.body.savedIdeas.status, r.body.crewPresenceSummaries.status);
   });
 });
 
@@ -453,5 +454,53 @@ describe("the route is reachable", () => {
     const route = readFileSync(new URL("../routes/tripMapProjection.ts", import.meta.url), "utf8");
     assert.equal((route.match(/from\("places"\)/g) ?? []).length, 1);
     assert.equal((route.match(/from\("trip_stages"\)/g) ?? []).length, 1);
+  });
+});
+
+describe("§14.1 safety / logistics points — Safe Return at the plan it guards, transport endpoints under the gate", () => {
+  const session = (o: Row = {}) => ({ id: "sr1", user_id: OWNER_ID, trip_id: TRIP_ID, plan_item_id: "p1", status: "active", escalation_level: 1, timer_end_at: "2026-09-13T23:00:00Z", notify_trip_crew_enabled: false, ...o });
+  it("the viewer's own active session is a point at its plan; a crew member's only when they notify the crew; a session on a private anchor yields no point; the transport half says why it was not read", async () => {
+    install({
+      trip_plan_items: [planItem({ id: "p1", lat: 38.71, lng: -9.13 }), planItem({ id: "p2", lat: 38.72, lng: -9.14, location_is_private: true })],
+      safe_return_sessions: [
+        session(), session({ id: "sr2", user_id: OTHER_ID, plan_item_id: "p1" }), session({ id: "sr3", user_id: OTHER_ID, plan_item_id: "p1", notify_trip_crew_enabled: true }),
+        session({ id: "sr4", plan_item_id: "p2" }), session({ id: "sr5", status: "safe" }),
+      ],
+      feature_flags: [],
+    });
+    const r = await get();
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(r.body.safetyPoints.status, "ok");
+    const ids = r.body.safetyPoints.items.map((p: any) => p.id).sort();
+    assert.deepEqual(ids, ["sr1", "sr3"], "own + crew-notified; not the silent other, not the private anchor's, not the closed one");
+    const own = r.body.safetyPoints.items.find((p: any) => p.id === "sr1");
+    assert.equal(own.kind, "safe_return"); assert.equal(own.meta.own, true); assert.equal(own.meta.escalationLevel, 1); assert.equal(own.lat, 38.71);
+    assert.equal(r.body.safetyPoints.items.find((p: any) => p.id === "sr3").meta.own, false);
+    assert.match(r.body.safetyLogisticsReading, /transport endpoints not read: trip_operational_projections_enabled is off/);
+    assert.ok(!r.body.safetyPoints.items.some((p: any) => p.privateAnchor), "§14.4");
+  });
+  it("with the gate on, 2782's segments contribute their endpoints through places; a cancelled segment does not", async () => {
+    install({
+      places: [{ id: "pl-a", latitude: 38.70, longitude: -9.10 }, { id: "pl-b", latitude: 38.75, longitude: -9.20 }],
+      trip_transport_segments: [
+        { id: "seg1", trip_id: TRIP_ID, mode: "train", state: "booked", from_place_id: "pl-a", to_place_id: "pl-b", from_label: "Santa Apolónia", to_label: "Cascais", planned_departure_at: "2026-09-13T09:00:00Z", planned_arrival_at: "2026-09-13T09:40:00Z" },
+        { id: "seg2", trip_id: TRIP_ID, mode: "taxi", state: "cancelled", from_place_id: "pl-a", to_place_id: "pl-b", from_label: null, to_label: null, planned_departure_at: null, planned_arrival_at: null },
+      ],
+      feature_flags: [{ flag: "trip_operational_projections_enabled", enabled: true }],
+    });
+    const r = await get();
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    const items = r.body.safetyPoints.items;
+    assert.deepEqual(items.map((p: any) => p.id).sort(), ["seg1:from", "seg1:to"]);
+    const from = items.find((p: any) => p.id === "seg1:from");
+    assert.equal(from.kind, "transport_endpoint"); assert.equal(from.label, "Santa Apolónia"); assert.equal(from.meta.plannedAt, "2026-09-13T09:00:00Z"); assert.equal(from.meta.mode, "train");
+    assert.equal(items.find((p: any) => p.id === "seg1:to").meta.plannedAt, "2026-09-13T09:40:00Z");
+    assert.match(r.body.safetyLogisticsReading, /endpoints of 1 transport segment/);
+  });
+  it("an unreadable safe_return_sessions is an unread layer, never an empty one", async () => {
+    install({ feature_flags: [] }, ["safe_return_sessions"]);
+    const r = await get();
+    assert.equal(r.body.safetyPoints.status, "unread"); assert.match(r.body.safetyPoints.reason, /safe_return_sessions/);
+    assert.match(r.body.safetyLogisticsReading, /not assembled/);
   });
 });

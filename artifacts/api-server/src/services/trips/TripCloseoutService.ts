@@ -62,6 +62,7 @@ export async function runTripCloseout(sc: any, tripId: string, opts: { now?: Dat
 
   let pendingDecisionTaskIds: string[] | null = null;
   let activeSubgroupIds: string[] | null = null;
+  let storedDecisionIds: string[] | null = null;
   const gate = await tripOperationalProjectionsGate(sc);
   if (gate.enabled) {
     const { data: tasks, error: tErr } = await sc.from("trip_decision_tasks").select("id").eq("trip_id", tripId).eq("status", "pending");
@@ -71,10 +72,14 @@ export async function runTripCloseout(sc: any, tripId: string, opts: { now?: Dat
     const { data: groups, error: gErr } = await sc.from("trip_subgroups").select("id").eq("trip_id", tripId).eq("state", "active");
     if (gErr) { unread.push("trip_subgroups"); log.warn({ err: gErr.message, tripId }, "closeout: subgroups unreadable"); }
     else activeSubgroupIds = ((groups ?? []) as any[]).map((g) => String(g.id));
+    // §20.2 / §21.2 (2781): the ledger rows still within retention are what "archive" can act on.
+    const { data: decisions, error: dErr } = await sc.from("trip_decisions").select("decision_id, retain_until").eq("trip_id", tripId);
+    if (dErr) { unread.push("trip_decisions"); log.warn({ err: dErr.message, tripId }, "closeout: decision ledger unreadable"); }
+    else storedDecisionIds = ((decisions ?? []) as any[]).filter((d) => { const t = Date.parse(String(d.retain_until ?? "")); return !Number.isFinite(t) || t > now.getTime(); }).map((d) => String(d.decision_id));
   }
 
   const plan = planCloseout({
-    activeLiveShareIds, planItems, pendingDecisionTaskIds, activeSubgroupIds,
+    activeLiveShareIds, planItems, pendingDecisionTaskIds, activeSubgroupIds, storedDecisionIds,
     tripEndDate: null, today: localClock(now, opts.timezone ?? null).date,
   });
 
@@ -122,6 +127,52 @@ export async function runTripCloseout(sc: any, tripId: string, opts: { now?: Dat
       steps.push(failures.length === 0
         ? { step: step.step, status: "performed", ids: dissolved, detail: `${dissolved.length} temporary subgroup(s) dissolved at completion (§9.2, §20.2)` }
         : { step: step.step, status: "failed", ids: dissolved, detail: `${dissolved.length} dissolved, ${failures.length} refused: ${failures.join("; ")}` });
+      continue;
+    }
+    if (step.step === "close_operational_decision_tasks" && step.status === "actionable") {
+      if (opts.dryRun) { steps.push(step); continue; }
+      // UPDATE_DECISION_TASK is a kernel command (2766): a pending task expires
+      // with the trip. Keyed by the closeout, so a repeated completion is a
+      // duplicate; behind trip_kernel_enabled like every kernel write.
+      if (!opts.actorUserId) {
+        steps.push({ step: step.step, status: "failed", ids: step.ids, detail: "no actor to issue UPDATE_DECISION_TASK as" });
+        continue;
+      }
+      if (!(await isFlagEnabled(sc, "trip_kernel_enabled"))) {
+        steps.push({ step: step.step, status: "deferred", detail: `${step.ids.length} pending task(s) remain (${step.ids.join(", ")}): UPDATE_DECISION_TASK is a kernel command and trip_kernel_enabled is false` });
+        continue;
+      }
+      const expired: string[] = []; const failures: string[] = [];
+      for (const id of step.ids) {
+        const r = await executeTripCommand(sc, {
+          commandId: randomUUID(), tripId, actorUserId: opts.actorUserId, idempotencyKey: `closeout:task:${id}`,
+          type: "UPDATE_DECISION_TASK", payload: { task_id: id, patch: { status: "expired" } },
+        });
+        if (r.ok) expired.push(id); else failures.push(`${id}: ${r.reason}`);
+      }
+      steps.push(failures.length === 0
+        ? { step: step.step, status: "performed", ids: expired, detail: `${expired.length} pending decision task(s) expired at completion (§8.2, §20.2)` }
+        : { step: step.step, status: "failed", ids: expired, detail: `${expired.length} expired, ${failures.length} refused: ${failures.join("; ")}` });
+      continue;
+    }
+    if (step.step === "archive_rebuildable_projections" && step.status === "actionable") {
+      if (opts.dryRun) { steps.push(step); continue; }
+      // The ledger is the server's own table (persistTripDecision writes it
+      // directly): ending retention is a direct write too. Rows stay readable
+      // until the pruner runs; "archived" means the policy no longer keeps them.
+      const { data: archived, error: aErr } = await sc
+        .from("trip_decisions")
+        .update({ retain_until: now.toISOString() })
+        .eq("trip_id", tripId)
+        .in("decision_id", step.ids)
+        .select("decision_id");
+      if (aErr) {
+        log.warn({ err: aErr.message, tripId }, "closeout: ending ledger retention failed");
+        steps.push({ step: step.step, status: "failed", ids: [], detail: `ending retention on ${step.ids.length} stored decision(s) failed: ${aErr.message}` });
+      } else {
+        const ids = ((archived ?? []) as any[]).map((d) => String(d.decision_id));
+        steps.push({ step: step.step, status: "performed", ids, detail: `${ids.length} stored decision(s) archived: retention ended at completion (§20.2, §21.2)` });
+      }
       continue;
     }
     if (step.step === "reconcile_uncertain_plan_outcomes" && iErr) {

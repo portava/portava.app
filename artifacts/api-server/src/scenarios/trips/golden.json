@@ -1,0 +1,1602 @@
+{
+  "decisions": [
+    {
+      "attention": [
+        {
+          "kind": "opportunity_added",
+          "label": "an opportunity on a normal day",
+          "level": "SURFACE",
+          "reasons": [
+            "MEDIUM_SIGNIFICANCE"
+          ],
+          "unbudgetedLevel": "SURFACE"
+        }
+      ],
+      "compile": {
+        "after": null,
+        "before": {
+          "counts": {
+            "EXECUTABLE": 2,
+            "NOT_EXECUTABLE": 0,
+            "UNCERTAIN": 0
+          },
+          "experiences": [
+            {
+              "arriveAt": "2026-09-13T12:05:00.000Z",
+              "candidateId": "park",
+              "leaveBy": "2026-09-13T13:05:00.000Z",
+              "reasonCodes": [
+                "EXPERIENCE_NO_OPEN_GOAL",
+                "EXPERIENCE_WINDOW_UNCERTIFIED"
+              ],
+              "score": 0.458,
+              "verdict": "EXECUTABLE"
+            },
+            {
+              "arriveAt": "2026-09-13T12:10:00.000Z",
+              "candidateId": "cafe",
+              "leaveBy": "2026-09-13T13:40:00.000Z",
+              "reasonCodes": [
+                "EXPERIENCE_NO_OPEN_GOAL",
+                "EXPERIENCE_WINDOW_UNCERTIFIED"
+              ],
+              "score": 0.417,
+              "verdict": "EXECUTABLE"
+            }
+          ]
+        },
+        "opportunity": null,
+        "questions": null,
+        "windowId": "fw:A:B"
+      },
+      "freedom": {
+        "conflicts": [],
+        "unplacedCommitmentIds": [],
+        "windows": [
+          {
+            "beginsAt": "2026-09-12T00:00:00.000Z",
+            "certified": false,
+            "durationMinutes": 2100,
+            "endsAt": "2026-09-13T11:00:00.000Z",
+            "hardConstraints": [
+              "NO_ORIGIN",
+              "TRAVEL_UNKNOWN",
+              "NEXT_IS_FIXED"
+            ],
+            "id": "fw:start:A",
+            "position": "before_first",
+            "reservedMinutes": null
+          },
+          {
+            "beginsAt": "2026-09-13T11:00:00.000Z",
+            "certified": false,
+            "durationMinutes": 525,
+            "endsAt": "2026-09-13T19:45:00.000Z",
+            "hardConstraints": [
+              "PREVIOUS_END_UNKNOWN",
+              "NEXT_IS_FIXED"
+            ],
+            "id": "fw:A:B",
+            "position": "between",
+            "reservedMinutes": 15
+          },
+          {
+            "beginsAt": "2026-09-13T20:00:00.000Z",
+            "certified": false,
+            "durationMinutes": 3119,
+            "endsAt": "2026-09-15T23:59:00.000Z",
+            "hardConstraints": [
+              "NO_DESTINATION",
+              "PREVIOUS_END_UNKNOWN"
+            ],
+            "id": "fw:B:end",
+            "position": "after_last",
+            "reservedMinutes": 0
+          }
+        ]
+      },
+      "health": {
+        "level": "HEALTHY",
+        "priority": {
+          "mode": "NORMAL",
+          "priority": [
+            "discovery",
+            "execution",
+            "social"
+          ],
+          "suppression": {
+            "commercial": false,
+            "discovery": false,
+            "reason": null
+          }
+        },
+        "reasons": []
+      },
+      "impact": [
+        {
+          "affectedParticipants": [
+            "me"
+          ],
+          "affectedReservations": [],
+          "affectedTransport": [],
+          "bookingsAtRisk": [],
+          "cancellationDeadline": null,
+          "change": {
+            "kind": "move_plan",
+            "startsAt": "2026-09-13T16:00:00.000Z",
+            "targetId": "cafe"
+          },
+          "changesConfirmedPlan": false,
+          "conflicts": [],
+          "feasibility": "FEASIBLE",
+          "governance": {
+            "affectsOthers": true,
+            "sharedMutation": false,
+            "suggestedDecisionRule": "anyone"
+          },
+          "potentialCostMinor": 0,
+          "requiresUserConfirmation": false,
+          "windowAfter": {
+            "durationMinutesAfter": 465,
+            "durationMinutesBefore": 525,
+            "id": "fw:A:B"
+          }
+        }
+      ],
+      "meeting": null,
+      "planOverlaps": [],
+      "pulse": {
+        "dropped": [
+          {
+            "kind": "crowd_rising",
+            "reason": "crowd is high/rising, not rising",
+            "subjectId": "bar"
+          }
+        ],
+        "kept": []
+      },
+      "replan": {
+        "counts": {
+          "add": 0,
+          "cancel": 0,
+          "keep": 1,
+          "move": 0
+        },
+        "entries": [
+          {
+            "experienceId": null,
+            "op": "keep",
+            "planId": "cafe",
+            "reason": "NO_CHANGE_NEEDED",
+            "sharedMutation": false,
+            "toStartsAt": "2026-09-13T15:00:00.000Z"
+          }
+        ],
+        "proposals": [],
+        "requiresUserConfirmation": false
+      },
+      "rescue": [],
+      "scenario": "solo_city_day",
+      "spec": [
+        "§23 solo city trip",
+        "§7.3",
+        "§11.1",
+        "§13.1",
+        "§16.2"
+      ],
+      "title": "Solo city trip — one free afternoon, nothing wrong",
+      "triggers": [
+        {
+          "affectedIds": [],
+          "fired": false,
+          "kind": "tight_arrival",
+          "magnitude": null,
+          "participantIds": []
+        },
+        {
+          "affectedIds": [],
+          "fired": false,
+          "kind": "weather_sensitive",
+          "magnitude": null,
+          "participantIds": []
+        },
+        {
+          "affectedIds": [],
+          "fired": false,
+          "kind": "late_check_in",
+          "magnitude": null,
+          "participantIds": []
+        },
+        {
+          "affectedIds": [],
+          "fired": false,
+          "kind": "crew_transport_mismatch",
+          "magnitude": null,
+          "participantIds": []
+        }
+      ],
+      "urgency": [
+        {
+          "band": "low",
+          "consequenceLevel": "minor",
+          "hoursRemaining": 120,
+          "id": "book-museum",
+          "score": 0.228
+        }
+      ]
+    },
+    {
+      "attention": [
+        {
+          "kind": "commitment_at_risk",
+          "label": "the arrival is at risk, an hour out",
+          "level": "NOTIFY",
+          "reasons": [
+            "HIGH_SIGNIFICANCE"
+          ],
+          "unbudgetedLevel": "NOTIFY"
+        }
+      ],
+      "compile": null,
+      "freedom": null,
+      "health": {
+        "level": "HEALTHY",
+        "priority": {
+          "mode": "NORMAL",
+          "priority": [
+            "discovery",
+            "execution",
+            "social"
+          ],
+          "suppression": {
+            "commercial": false,
+            "discovery": false,
+            "reason": null
+          }
+        },
+        "reasons": []
+      },
+      "impact": [
+        {
+          "affectedParticipants": [
+            "me",
+            "ana"
+          ],
+          "affectedReservations": [],
+          "affectedTransport": [],
+          "bookingsAtRisk": [],
+          "cancellationDeadline": null,
+          "change": {
+            "kind": "move_plan",
+            "startsAt": "2026-09-13T17:15:00.000Z",
+            "targetId": "museum"
+          },
+          "changesConfirmedPlan": true,
+          "conflicts": [],
+          "feasibility": "FEASIBLE",
+          "governance": {
+            "affectsOthers": true,
+            "sharedMutation": true,
+            "suggestedDecisionRule": "majority"
+          },
+          "potentialCostMinor": 0,
+          "requiresUserConfirmation": false,
+          "windowAfter": null
+        }
+      ],
+      "meeting": null,
+      "planOverlaps": [],
+      "pulse": null,
+      "replan": {
+        "counts": {
+          "add": 0,
+          "cancel": 0,
+          "keep": 0,
+          "move": 2
+        },
+        "entries": [
+          {
+            "experienceId": null,
+            "op": "move",
+            "planId": "nap",
+            "reason": "PLAN_DOWNSTREAM_OF_TIGHT_ARRIVAL",
+            "sharedMutation": false,
+            "toStartsAt": "2026-09-13T15:45:00.000Z"
+          },
+          {
+            "experienceId": null,
+            "op": "move",
+            "planId": "museum",
+            "reason": "PLAN_DOWNSTREAM_OF_TIGHT_ARRIVAL",
+            "sharedMutation": true,
+            "toStartsAt": "2026-09-13T17:15:00.000Z"
+          }
+        ],
+        "proposals": [
+          "museum"
+        ],
+        "requiresUserConfirmation": false
+      },
+      "rescue": [],
+      "scenario": "flight_delay_on_arrival",
+      "spec": [
+        "§23 flight delay",
+        "§8.4",
+        "§11.3",
+        "§9.4",
+        "§11.4"
+      ],
+      "title": "Flight delay on arrival — dependency propagation, downstream proposal / replan",
+      "triggers": [
+        {
+          "affectedIds": [
+            "flight",
+            "dinner",
+            "museum",
+            "nap"
+          ],
+          "fired": true,
+          "kind": "tight_arrival",
+          "magnitude": 75,
+          "participantIds": [
+            "me",
+            "ana"
+          ]
+        },
+        {
+          "affectedIds": [],
+          "fired": false,
+          "kind": "weather_sensitive",
+          "magnitude": null,
+          "participantIds": []
+        },
+        {
+          "affectedIds": [],
+          "fired": false,
+          "kind": "late_check_in",
+          "magnitude": null,
+          "participantIds": []
+        },
+        {
+          "affectedIds": [],
+          "fired": false,
+          "kind": "crew_transport_mismatch",
+          "magnitude": null,
+          "participantIds": []
+        }
+      ],
+      "urgency": [
+        {
+          "band": "high",
+          "consequenceLevel": "severe",
+          "hoursRemaining": 1.5,
+          "id": "rebook-transfer",
+          "score": 0.797
+        }
+      ]
+    },
+    {
+      "attention": [
+        {
+          "kind": "plan_invalidated",
+          "label": "the plan is invalidated",
+          "level": "NOTIFY",
+          "reasons": [
+            "HIGH_SIGNIFICANCE"
+          ],
+          "unbudgetedLevel": "NOTIFY"
+        }
+      ],
+      "compile": {
+        "after": {
+          "counts": {
+            "EXECUTABLE": 1,
+            "NOT_EXECUTABLE": 1,
+            "UNCERTAIN": 0
+          },
+          "experiences": [
+            {
+              "arriveAt": "2026-09-13T12:10:00.000Z",
+              "candidateId": "museum",
+              "leaveBy": "2026-09-13T13:25:00.000Z",
+              "reasonCodes": [
+                "EXPERIENCE_WINDOW_UNCERTIFIED"
+              ],
+              "score": 0.417,
+              "verdict": "EXECUTABLE"
+            },
+            {
+              "arriveAt": null,
+              "candidateId": "tour",
+              "leaveBy": null,
+              "reasonCodes": [
+                "EXPERIENCE_WEATHER_INVALIDATED",
+                "EXPERIENCE_WINDOW_UNCERTIFIED"
+              ],
+              "score": 0,
+              "verdict": "NOT_EXECUTABLE"
+            }
+          ]
+        },
+        "before": {
+          "counts": {
+            "EXECUTABLE": 2,
+            "NOT_EXECUTABLE": 0,
+            "UNCERTAIN": 0
+          },
+          "experiences": [
+            {
+              "arriveAt": "2026-09-13T12:10:00.000Z",
+              "candidateId": "museum",
+              "leaveBy": "2026-09-13T13:25:00.000Z",
+              "reasonCodes": [
+                "EXPERIENCE_WINDOW_UNCERTIFIED"
+              ],
+              "score": 0.417,
+              "verdict": "EXECUTABLE"
+            },
+            {
+              "arriveAt": "2026-09-13T12:10:00.000Z",
+              "candidateId": "tour",
+              "leaveBy": "2026-09-13T13:10:00.000Z",
+              "reasonCodes": [
+                "EXPERIENCE_WINDOW_UNCERTIFIED"
+              ],
+              "score": 0.417,
+              "verdict": "EXECUTABLE"
+            }
+          ]
+        },
+        "opportunity": {
+          "added": [],
+          "best": "fw:A:B:museum",
+          "kind": "plan_invalidated",
+          "notify": true,
+          "removed": [
+            {
+              "candidateId": "tour",
+              "reasonCodes": [
+                "EXPERIENCE_WEATHER_INVALIDATED",
+                "EXPERIENCE_WINDOW_UNCERTIFIED"
+              ]
+            }
+          ],
+          "significance": "high"
+        },
+        "questions": null,
+        "windowId": "fw:A:B"
+      },
+      "freedom": {
+        "conflicts": [],
+        "unplacedCommitmentIds": [],
+        "windows": [
+          {
+            "beginsAt": "2026-09-12T00:00:00.000Z",
+            "certified": false,
+            "durationMinutes": 2100,
+            "endsAt": "2026-09-13T11:00:00.000Z",
+            "hardConstraints": [
+              "NO_ORIGIN",
+              "TRAVEL_UNKNOWN",
+              "NEXT_IS_FIXED"
+            ],
+            "id": "fw:start:A",
+            "position": "before_first",
+            "reservedMinutes": null
+          },
+          {
+            "beginsAt": "2026-09-13T11:00:00.000Z",
+            "certified": false,
+            "durationMinutes": 525,
+            "endsAt": "2026-09-13T19:45:00.000Z",
+            "hardConstraints": [
+              "PREVIOUS_END_UNKNOWN",
+              "NEXT_IS_FIXED"
+            ],
+            "id": "fw:A:B",
+            "position": "between",
+            "reservedMinutes": 15
+          },
+          {
+            "beginsAt": "2026-09-13T20:00:00.000Z",
+            "certified": false,
+            "durationMinutes": 3119,
+            "endsAt": "2026-09-15T23:59:00.000Z",
+            "hardConstraints": [
+              "NO_DESTINATION",
+              "PREVIOUS_END_UNKNOWN"
+            ],
+            "id": "fw:B:end",
+            "position": "after_last",
+            "reservedMinutes": 0
+          }
+        ]
+      },
+      "health": {
+        "level": "HEALTHY",
+        "priority": {
+          "mode": "NORMAL",
+          "priority": [
+            "discovery",
+            "execution",
+            "social"
+          ],
+          "suppression": {
+            "commercial": false,
+            "discovery": false,
+            "reason": null
+          }
+        },
+        "reasons": []
+      },
+      "impact": [
+        {
+          "affectedParticipants": [
+            "me",
+            "ana"
+          ],
+          "affectedReservations": [
+            "tour-res"
+          ],
+          "affectedTransport": [],
+          "bookingsAtRisk": [
+            "tour-res"
+          ],
+          "cancellationDeadline": "2026-09-13T13:00:00.000Z",
+          "change": {
+            "kind": "cancel_plan",
+            "startsAt": null,
+            "targetId": "walk"
+          },
+          "changesConfirmedPlan": true,
+          "conflicts": [],
+          "feasibility": "FEASIBLE",
+          "governance": {
+            "affectsOthers": true,
+            "sharedMutation": true,
+            "suggestedDecisionRule": "unanimous"
+          },
+          "potentialCostMinor": 4000,
+          "requiresUserConfirmation": true,
+          "windowAfter": null
+        }
+      ],
+      "meeting": null,
+      "planOverlaps": [],
+      "pulse": {
+        "dropped": [],
+        "kept": [
+          {
+            "effects": [
+              {
+                "kind": "plan_invalidated",
+                "subjectIds": [
+                  "walk"
+                ]
+              },
+              {
+                "kind": "fallback_opportunity",
+                "subjectIds": [
+                  "museum"
+                ]
+              }
+            ],
+            "kind": "rain_arriving",
+            "relevance": [
+              "stage",
+              "saved_ideas"
+            ],
+            "subjectId": "2026-09-13"
+          }
+        ]
+      },
+      "replan": {
+        "counts": {
+          "add": 1,
+          "cancel": 1,
+          "keep": 0,
+          "move": 0
+        },
+        "entries": [
+          {
+            "experienceId": null,
+            "op": "cancel",
+            "planId": "walk",
+            "reason": "PLAN_INVALIDATED_BY_SIGNAL",
+            "sharedMutation": true,
+            "toStartsAt": null
+          },
+          {
+            "experienceId": "fw:A:B:museum",
+            "op": "add",
+            "planId": null,
+            "reason": "FALLBACK_OPPORTUNITY",
+            "sharedMutation": true,
+            "toStartsAt": "2026-09-13T12:10:00.000Z"
+          }
+        ],
+        "proposals": [
+          "walk",
+          "fw:A:B:museum"
+        ],
+        "requiresUserConfirmation": true
+      },
+      "rescue": [],
+      "scenario": "rain_invalidates_tour",
+      "spec": [
+        "§23 rain",
+        "§16.2",
+        "§8.4",
+        "§13.3",
+        "§15.3",
+        "§11.3"
+      ],
+      "title": "Rain invalidates the booked tour — trigger, fallback opportunity, booking side effects",
+      "triggers": [
+        {
+          "affectedIds": [],
+          "fired": false,
+          "kind": "tight_arrival",
+          "magnitude": null,
+          "participantIds": []
+        },
+        {
+          "affectedIds": [
+            "walk"
+          ],
+          "fired": true,
+          "kind": "weather_sensitive",
+          "magnitude": 0.7,
+          "participantIds": []
+        },
+        {
+          "affectedIds": [],
+          "fired": false,
+          "kind": "late_check_in",
+          "magnitude": null,
+          "participantIds": []
+        },
+        {
+          "affectedIds": [],
+          "fired": false,
+          "kind": "crew_transport_mismatch",
+          "magnitude": null,
+          "participantIds": []
+        }
+      ],
+      "urgency": [
+        {
+          "band": "high",
+          "consequenceLevel": "major",
+          "hoursRemaining": 1,
+          "id": "cancel-before-deadline",
+          "score": 0.605
+        }
+      ]
+    },
+    {
+      "attention": [
+        {
+          "kind": "opportunity_added",
+          "label": "an opportunity while at risk",
+          "level": "PASSIVE",
+          "reasons": [
+            "AT_RISK_MODE_SUPPRESSES_DISCOVERY"
+          ],
+          "unbudgetedLevel": "PASSIVE"
+        },
+        {
+          "kind": "commitment_at_risk",
+          "label": "the train is at risk",
+          "level": "NOTIFY",
+          "reasons": [
+            "HIGH_SIGNIFICANCE"
+          ],
+          "unbudgetedLevel": "NOTIFY"
+        }
+      ],
+      "compile": null,
+      "freedom": {
+        "conflicts": [
+          {
+            "commitmentIds": [
+              "museum",
+              "train"
+            ],
+            "kind": "NO_TIME_TO_TRAVEL",
+            "planIds": [],
+            "shortfallMinutes": 35
+          }
+        ],
+        "unplacedCommitmentIds": [],
+        "windows": [
+          {
+            "beginsAt": "2026-09-12T00:00:00.000Z",
+            "certified": false,
+            "durationMinutes": 2280,
+            "endsAt": "2026-09-13T14:00:00.000Z",
+            "hardConstraints": [
+              "NO_ORIGIN",
+              "TRAVEL_UNKNOWN"
+            ],
+            "id": "fw:start:museum",
+            "position": "before_first",
+            "reservedMinutes": null
+          },
+          {
+            "beginsAt": "2026-09-13T16:20:00.000Z",
+            "certified": false,
+            "durationMinutes": 3339,
+            "endsAt": "2026-09-15T23:59:00.000Z",
+            "hardConstraints": [
+              "NO_DESTINATION",
+              "PREVIOUS_END_UNKNOWN"
+            ],
+            "id": "fw:train:end",
+            "position": "after_last",
+            "reservedMinutes": 0
+          }
+        ]
+      },
+      "health": {
+        "level": "AT_RISK",
+        "priority": {
+          "mode": "AT_RISK",
+          "priority": [
+            "logistics",
+            "affected_commitments",
+            "recovery"
+          ],
+          "suppression": {
+            "commercial": true,
+            "discovery": true,
+            "reason": "TRIP_DISRUPTION_SUPPRESSED"
+          }
+        },
+        "reasons": [
+          {
+            "code": "TRIP_TEMPORAL_CONFLICT",
+            "level": "AT_RISK",
+            "subjectIds": [
+              "museum",
+              "train"
+            ]
+          },
+          {
+            "code": "TRIP_TEMPORAL_CONFLICT",
+            "level": "AT_RISK",
+            "subjectIds": [
+              "p1",
+              "p2"
+            ]
+          }
+        ]
+      },
+      "impact": [
+        {
+          "affectedParticipants": [
+            "me",
+            "ana"
+          ],
+          "affectedReservations": [],
+          "affectedTransport": [],
+          "bookingsAtRisk": [],
+          "cancellationDeadline": null,
+          "change": {
+            "kind": "move_plan",
+            "startsAt": "2026-09-13T15:45:00.000Z",
+            "targetId": "p2"
+          },
+          "changesConfirmedPlan": true,
+          "conflicts": [
+            {
+              "commitmentIds": [
+                "train"
+              ],
+              "kind": "OVERLAP",
+              "planIds": [
+                "p2"
+              ],
+              "shortfallMinutes": 55
+            }
+          ],
+          "feasibility": "INFEASIBLE",
+          "governance": {
+            "affectsOthers": true,
+            "sharedMutation": true,
+            "suggestedDecisionRule": "majority"
+          },
+          "potentialCostMinor": 0,
+          "requiresUserConfirmation": false,
+          "windowAfter": null
+        }
+      ],
+      "meeting": null,
+      "planOverlaps": [
+        {
+          "commitmentIds": [],
+          "kind": "PLAN_OVERLAP",
+          "planIds": [
+            "p1",
+            "p2"
+          ],
+          "shortfallMinutes": 30
+        }
+      ],
+      "pulse": null,
+      "replan": {
+        "counts": {
+          "add": 0,
+          "cancel": 0,
+          "keep": 0,
+          "move": 2
+        },
+        "entries": [
+          {
+            "experienceId": null,
+            "op": "move",
+            "planId": "p1",
+            "reason": "PLAN_IN_CONFLICT",
+            "sharedMutation": true,
+            "toStartsAt": "2026-09-13T16:20:00.000Z"
+          },
+          {
+            "experienceId": null,
+            "op": "move",
+            "planId": "p2",
+            "reason": "PLAN_IN_CONFLICT",
+            "sharedMutation": true,
+            "toStartsAt": "2026-09-13T16:20:00.000Z"
+          }
+        ],
+        "proposals": [
+          "p1",
+          "p2"
+        ],
+        "requiresUserConfirmation": false
+      },
+      "rescue": [],
+      "scenario": "no_time_to_travel",
+      "spec": [
+        "§7.2",
+        "§7.3",
+        "§17.1",
+        "§17.2",
+        "§12.1",
+        "§11.3"
+      ],
+      "title": "A museum that ends when the train's approach begins, and two plans on top of each other",
+      "triggers": [
+        {
+          "affectedIds": [],
+          "fired": false,
+          "kind": "tight_arrival",
+          "magnitude": null,
+          "participantIds": []
+        },
+        {
+          "affectedIds": [],
+          "fired": false,
+          "kind": "weather_sensitive",
+          "magnitude": null,
+          "participantIds": []
+        },
+        {
+          "affectedIds": [],
+          "fired": false,
+          "kind": "late_check_in",
+          "magnitude": null,
+          "participantIds": []
+        },
+        {
+          "affectedIds": [],
+          "fired": false,
+          "kind": "crew_transport_mismatch",
+          "magnitude": null,
+          "participantIds": []
+        }
+      ],
+      "urgency": [
+        {
+          "band": "medium",
+          "consequenceLevel": "severe",
+          "hoursRemaining": null,
+          "id": "resolve-conflict",
+          "score": 0.45
+        }
+      ]
+    },
+    {
+      "attention": [
+        {
+          "kind": "meetup_opportunity",
+          "label": "a friend is nearby",
+          "level": "PASSIVE",
+          "reasons": [
+            "LOW_SIGNIFICANCE"
+          ],
+          "unbudgetedLevel": "PASSIVE"
+        }
+      ],
+      "compile": null,
+      "freedom": null,
+      "health": {
+        "level": "HEALTHY",
+        "priority": {
+          "mode": "NORMAL",
+          "priority": [
+            "discovery",
+            "execution",
+            "social"
+          ],
+          "suppression": {
+            "commercial": false,
+            "discovery": false,
+            "reason": null
+          }
+        },
+        "reasons": []
+      },
+      "impact": [
+        {
+          "affectedParticipants": [
+            "me",
+            "ana",
+            "bo",
+            "cy",
+            "dee",
+            "eli"
+          ],
+          "affectedReservations": [
+            "club-res"
+          ],
+          "affectedTransport": [
+            "taxi1"
+          ],
+          "bookingsAtRisk": [
+            "club-res"
+          ],
+          "cancellationDeadline": "2026-09-13T18:00:00.000Z",
+          "change": {
+            "kind": "cancel_plan",
+            "startsAt": null,
+            "targetId": "club"
+          },
+          "changesConfirmedPlan": true,
+          "conflicts": [],
+          "feasibility": "FEASIBLE",
+          "governance": {
+            "affectsOthers": true,
+            "sharedMutation": true,
+            "suggestedDecisionRule": "unanimous"
+          },
+          "potentialCostMinor": 12000,
+          "requiresUserConfirmation": true,
+          "windowAfter": null
+        }
+      ],
+      "meeting": {
+        "alternatives": [
+          "cafe",
+          "far-bar"
+        ],
+        "constraintsApplied": [
+          "next commitments",
+          "accessibility",
+          "party size",
+          "venue suitability",
+          "privacy policy",
+          "transport reliability"
+        ],
+        "recommended": "station",
+        "refused": [
+          {
+            "candidateId": "closed",
+            "refusals": [
+              "VENUE_CLOSED"
+            ]
+          },
+          {
+            "candidateId": "hotel",
+            "refusals": [
+              "PRIVATE_ANCHOR"
+            ]
+          },
+          {
+            "candidateId": "mall",
+            "refusals": [
+              "VENUE_UNSUITABLE"
+            ]
+          },
+          {
+            "candidateId": "stairs",
+            "refusals": [
+              "ACCESSIBILITY_UNMET"
+            ]
+          },
+          {
+            "candidateId": "tiny",
+            "refusals": [
+              "PARTY_EXCEEDS_CAPACITY"
+            ]
+          }
+        ],
+        "unplaced": [
+          {
+            "reason": "not sharing",
+            "userId": "dee"
+          }
+        ]
+      },
+      "planOverlaps": [],
+      "pulse": {
+        "dropped": [
+          {
+            "kind": "friend_nearby",
+            "reason": "TRIP_PRIVACY_SCOPE: both parties must be sharing presence for a meetup to be surfaced",
+            "subjectId": "dee"
+          }
+        ],
+        "kept": [
+          {
+            "effects": [
+              {
+                "kind": "meetup_opportunity",
+                "subjectIds": [
+                  "ana"
+                ]
+              }
+            ],
+            "kind": "friend_nearby",
+            "relevance": [
+              "crew",
+              "location"
+            ],
+            "subjectId": "ana"
+          }
+        ]
+      },
+      "replan": {
+        "counts": {
+          "add": 0,
+          "cancel": 0,
+          "keep": 1,
+          "move": 0
+        },
+        "entries": [
+          {
+            "experienceId": null,
+            "op": "keep",
+            "planId": "club",
+            "reason": "NO_CHANGE_NEEDED",
+            "sharedMutation": false,
+            "toStartsAt": "2026-09-13T22:00:00.000Z"
+          }
+        ],
+        "proposals": [],
+        "requiresUserConfirmation": false
+      },
+      "rescue": [],
+      "scenario": "nightlife_crew_meetup",
+      "spec": [
+        "§23 nightlife",
+        "§14.3",
+        "§8.4",
+        "§10",
+        "§16.2",
+        "§15.3"
+      ],
+      "title": "Six-person nightlife trip — regroup at a meeting point, a taxi for four",
+      "triggers": [
+        {
+          "affectedIds": [],
+          "fired": false,
+          "kind": "tight_arrival",
+          "magnitude": null,
+          "participantIds": []
+        },
+        {
+          "affectedIds": [],
+          "fired": false,
+          "kind": "weather_sensitive",
+          "magnitude": null,
+          "participantIds": []
+        },
+        {
+          "affectedIds": [],
+          "fired": false,
+          "kind": "late_check_in",
+          "magnitude": null,
+          "participantIds": []
+        },
+        {
+          "affectedIds": [
+            "taxi1"
+          ],
+          "fired": true,
+          "kind": "crew_transport_mismatch",
+          "magnitude": 2,
+          "participantIds": []
+        }
+      ],
+      "urgency": [
+        {
+          "band": "high",
+          "consequenceLevel": "major",
+          "hoursRemaining": 6,
+          "id": "club-tickets",
+          "score": 0.719
+        }
+      ]
+    },
+    {
+      "attention": [
+        {
+          "kind": "safety_alert",
+          "label": "the safety alert itself",
+          "level": "INTERRUPT",
+          "reasons": [
+            "SAFETY"
+          ],
+          "unbudgetedLevel": "INTERRUPT"
+        },
+        {
+          "kind": "opportunity_added",
+          "label": "an opportunity during a safety event",
+          "level": "PASSIVE",
+          "reasons": [
+            "SAFETY_EVENT_MODE_SUPPRESSES"
+          ],
+          "unbudgetedLevel": "PASSIVE"
+        }
+      ],
+      "compile": null,
+      "freedom": null,
+      "health": {
+        "level": "DISRUPTED",
+        "priority": {
+          "mode": "SAFETY_EVENT",
+          "priority": [
+            "safety",
+            "official_help",
+            "location_coordination"
+          ],
+          "suppression": {
+            "commercial": true,
+            "discovery": true,
+            "reason": "TRIP_DISRUPTION_SUPPRESSED"
+          }
+        },
+        "reasons": [
+          {
+            "code": "TRIP_DISRUPTION_ACTIVE",
+            "level": "DISRUPTED",
+            "subjectIds": [
+              "d1"
+            ]
+          },
+          {
+            "code": "SAFETY_NEEDS_HELP",
+            "level": "DISRUPTED",
+            "subjectIds": [
+              "bo"
+            ]
+          },
+          {
+            "code": "TRIP_RISK_OPEN_HIGH",
+            "level": "AT_RISK",
+            "subjectIds": [
+              "r1"
+            ]
+          }
+        ]
+      },
+      "impact": null,
+      "meeting": null,
+      "planOverlaps": [],
+      "pulse": {
+        "dropped": [
+          {
+            "kind": "crowd_rising",
+            "reason": "TRIP_DISRUPTION_SUPPRESSED: a safety event has the crew's attention (§17.2)",
+            "subjectId": "bar"
+          },
+          {
+            "kind": "friend_nearby",
+            "reason": "TRIP_DISRUPTION_SUPPRESSED: a safety event has the crew's attention (§17.2)",
+            "subjectId": "ana"
+          }
+        ],
+        "kept": []
+      },
+      "replan": null,
+      "rescue": [
+        {
+          "declareKind": "safety",
+          "escalation": [
+            {
+              "to": "trip_crew",
+              "when": "now"
+            },
+            {
+              "to": "local_emergency",
+              "when": "if_unsafe"
+            }
+          ],
+          "problem": "lost_crew",
+          "safeReturn": "offer",
+          "severity": "major",
+          "steps": 3
+        },
+        {
+          "declareKind": "safety",
+          "escalation": [
+            {
+              "to": "local_emergency",
+              "when": "now"
+            },
+            {
+              "to": "trusted_circle",
+              "when": "now"
+            },
+            {
+              "to": "embassy_consulate",
+              "when": "if_unresolved"
+            }
+          ],
+          "problem": "emergency",
+          "safeReturn": "attach",
+          "severity": "critical",
+          "steps": 2
+        }
+      ],
+      "scenario": "safety_event",
+      "spec": [
+        "§17.1",
+        "§17.2",
+        "§17.3",
+        "§16.2",
+        "§11.4",
+        "§17.4"
+      ],
+      "title": "A crew member needs help — everything discretionary steps back",
+      "triggers": null,
+      "urgency": []
+    },
+    {
+      "attention": [],
+      "compile": null,
+      "freedom": null,
+      "health": {
+        "level": "HEALTHY",
+        "priority": {
+          "mode": "NORMAL",
+          "priority": [
+            "discovery",
+            "execution",
+            "social"
+          ],
+          "suppression": {
+            "commercial": false,
+            "discovery": false,
+            "reason": null
+          }
+        },
+        "reasons": []
+      },
+      "impact": [
+        {
+          "affectedParticipants": [
+            "me",
+            "ana",
+            "bo"
+          ],
+          "affectedReservations": [
+            "din-res"
+          ],
+          "affectedTransport": [
+            "cab"
+          ],
+          "bookingsAtRisk": [
+            "din-res"
+          ],
+          "cancellationDeadline": "2026-09-13T18:00:00.000Z",
+          "change": {
+            "kind": "cancel_plan",
+            "startsAt": null,
+            "targetId": "dinner"
+          },
+          "changesConfirmedPlan": true,
+          "conflicts": [],
+          "feasibility": "FEASIBLE",
+          "governance": {
+            "affectsOthers": true,
+            "sharedMutation": true,
+            "suggestedDecisionRule": "unanimous"
+          },
+          "potentialCostMinor": 9000,
+          "requiresUserConfirmation": true,
+          "windowAfter": null
+        },
+        {
+          "affectedParticipants": [
+            "me",
+            "ana",
+            "bo"
+          ],
+          "affectedReservations": [
+            "din-res"
+          ],
+          "affectedTransport": [
+            "cab"
+          ],
+          "bookingsAtRisk": [
+            "din-res"
+          ],
+          "cancellationDeadline": "2026-09-13T18:00:00.000Z",
+          "change": {
+            "kind": "move_plan",
+            "startsAt": "2026-09-13T21:00:00.000Z",
+            "targetId": "dinner"
+          },
+          "changesConfirmedPlan": true,
+          "conflicts": [],
+          "feasibility": "FEASIBLE",
+          "governance": {
+            "affectsOthers": true,
+            "sharedMutation": true,
+            "suggestedDecisionRule": "unanimous"
+          },
+          "potentialCostMinor": 9000,
+          "requiresUserConfirmation": true,
+          "windowAfter": null
+        },
+        {
+          "affectedParticipants": [
+            "me",
+            "ana",
+            "bo"
+          ],
+          "affectedReservations": [
+            "din-res"
+          ],
+          "affectedTransport": [
+            "cab"
+          ],
+          "bookingsAtRisk": [
+            "din-res"
+          ],
+          "cancellationDeadline": "2026-09-13T18:00:00.000Z",
+          "change": {
+            "kind": "remove_plan",
+            "startsAt": null,
+            "targetId": "dinner"
+          },
+          "changesConfirmedPlan": true,
+          "conflicts": [],
+          "feasibility": "FEASIBLE",
+          "governance": {
+            "affectsOthers": true,
+            "sharedMutation": true,
+            "suggestedDecisionRule": "unanimous"
+          },
+          "potentialCostMinor": 9000,
+          "requiresUserConfirmation": true,
+          "windowAfter": null
+        }
+      ],
+      "meeting": null,
+      "planOverlaps": [],
+      "pulse": null,
+      "replan": {
+        "counts": {
+          "add": 0,
+          "cancel": 0,
+          "keep": 1,
+          "move": 0
+        },
+        "entries": [
+          {
+            "experienceId": null,
+            "op": "keep",
+            "planId": "dinner",
+            "reason": "NO_CHANGE_NEEDED",
+            "sharedMutation": false,
+            "toStartsAt": "2026-09-13T20:00:00.000Z"
+          }
+        ],
+        "proposals": [],
+        "requiresUserConfirmation": false
+      },
+      "rescue": [],
+      "scenario": "booked_dinner_cancellation",
+      "spec": [
+        "§9.4",
+        "§15.3",
+        "§12.1",
+        "§8.2",
+        "§9.1"
+      ],
+      "title": "Cancelling, moving or removing a booked shared dinner — and three decisions ranked by urgency",
+      "triggers": null,
+      "urgency": [
+        {
+          "band": "high",
+          "consequenceLevel": "major",
+          "hoursRemaining": 6,
+          "id": "confirm-dinner",
+          "score": 0.719
+        },
+        {
+          "band": "medium",
+          "consequenceLevel": "severe",
+          "hoursRemaining": null,
+          "id": "undated-severe",
+          "score": 0.45
+        },
+        {
+          "band": "medium",
+          "consequenceLevel": "none",
+          "hoursRemaining": 24,
+          "id": "dated-trivia",
+          "score": 0.3
+        }
+      ]
+    },
+    {
+      "attention": [],
+      "compile": {
+        "after": null,
+        "before": {
+          "counts": {
+            "EXECUTABLE": 1,
+            "NOT_EXECUTABLE": 2,
+            "UNCERTAIN": 1
+          },
+          "experiences": [
+            {
+              "arriveAt": "2026-09-13T12:10:00.000Z",
+              "candidateId": "cafe",
+              "leaveBy": "2026-09-13T13:40:00.000Z",
+              "reasonCodes": [
+                "EXPERIENCE_NO_OPEN_GOAL",
+                "EXPERIENCE_WINDOW_UNCERTIFIED"
+              ],
+              "score": 0.417,
+              "verdict": "EXECUTABLE"
+            },
+            {
+              "arriveAt": "2026-09-13T12:10:00.000Z",
+              "candidateId": "unknown-hours",
+              "leaveBy": "2026-09-13T13:25:00.000Z",
+              "reasonCodes": [
+                "EXPERIENCE_HOURS_UNKNOWN",
+                "EXPERIENCE_SERVES_GOAL",
+                "EXPERIENCE_WINDOW_UNCERTIFIED"
+              ],
+              "score": 0,
+              "verdict": "UNCERTAIN"
+            },
+            {
+              "arriveAt": null,
+              "candidateId": "early-closer",
+              "leaveBy": null,
+              "reasonCodes": [
+                "EXPERIENCE_CLOSED_BEFORE_ARRIVAL",
+                "EXPERIENCE_SERVES_GOAL",
+                "EXPERIENCE_WINDOW_UNCERTIFIED"
+              ],
+              "score": 0,
+              "verdict": "NOT_EXECUTABLE"
+            },
+            {
+              "arriveAt": null,
+              "candidateId": "long-queue",
+              "leaveBy": null,
+              "reasonCodes": [
+                "EXPERIENCE_QUEUE_EXCEEDS_WINDOW",
+                "EXPERIENCE_RESERVATION_REQUIRED",
+                "EXPERIENCE_SERVES_GOAL",
+                "EXPERIENCE_WINDOW_UNCERTIFIED"
+              ],
+              "score": 0,
+              "verdict": "NOT_EXECUTABLE"
+            }
+          ]
+        },
+        "opportunity": null,
+        "questions": {
+          "ask": [
+            {
+              "dimension": "feasibility",
+              "key": "hours:fw:A:B:unknown-hours",
+              "value": 0.42
+            }
+          ],
+          "uncertainty": []
+        },
+        "windowId": "fw:A:B"
+      },
+      "freedom": {
+        "conflicts": [],
+        "unplacedCommitmentIds": [],
+        "windows": [
+          {
+            "beginsAt": "2026-09-12T00:00:00.000Z",
+            "certified": false,
+            "durationMinutes": 2100,
+            "endsAt": "2026-09-13T11:00:00.000Z",
+            "hardConstraints": [
+              "NO_ORIGIN",
+              "TRAVEL_UNKNOWN",
+              "NEXT_IS_FIXED"
+            ],
+            "id": "fw:start:A",
+            "position": "before_first",
+            "reservedMinutes": null
+          },
+          {
+            "beginsAt": "2026-09-13T11:00:00.000Z",
+            "certified": false,
+            "durationMinutes": 525,
+            "endsAt": "2026-09-13T19:45:00.000Z",
+            "hardConstraints": [
+              "PREVIOUS_END_UNKNOWN",
+              "NEXT_IS_FIXED"
+            ],
+            "id": "fw:A:B",
+            "position": "between",
+            "reservedMinutes": 15
+          },
+          {
+            "beginsAt": "2026-09-13T20:00:00.000Z",
+            "certified": false,
+            "durationMinutes": 3119,
+            "endsAt": "2026-09-15T23:59:00.000Z",
+            "hardConstraints": [
+              "NO_DESTINATION",
+              "PREVIOUS_END_UNKNOWN"
+            ],
+            "id": "fw:B:end",
+            "position": "after_last",
+            "reservedMinutes": 0
+          }
+        ]
+      },
+      "health": {
+        "level": "HEALTHY",
+        "priority": {
+          "mode": "NORMAL",
+          "priority": [
+            "discovery",
+            "execution",
+            "social"
+          ],
+          "suppression": {
+            "commercial": false,
+            "discovery": false,
+            "reason": null
+          }
+        },
+        "reasons": []
+      },
+      "impact": null,
+      "meeting": null,
+      "planOverlaps": [],
+      "pulse": null,
+      "replan": null,
+      "rescue": [],
+      "scenario": "closed_venue_uncertain_hours",
+      "spec": [
+        "§13.1",
+        "§22.4",
+        "§12.3"
+      ],
+      "title": "Closed before arrival, hours unknown, a queue longer than the afternoon — and what is worth asking",
+      "triggers": null,
+      "urgency": []
+    }
+  ],
+  "head": "005b71f02",
+  "note": "Initial record: the eight synthetic scenarios as the engines decide them on the branch at census-trips §45."
+}

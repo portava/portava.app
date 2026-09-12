@@ -228,6 +228,8 @@ run_check "check:place-id-bridge" pnpm run check:place-id-bridge
 # after it stops being true goes on excusing the next. Not about authorization —
 # that is check:route-auth-gate's job and is enforced independently.
 run_check "check:trip-write-validation" pnpm run check:trip-write-validation
+run_check "check:trip-decision-diff" pnpm run check:trip-decision-diff
+run_check "check:trip-write-path-inventory" pnpm run check:trip-write-path-inventory
 # check:trip-push-policy — census-trips TR200 ("Trip events must pass an attention
 # policy") read C because NotificationRouter consults preferences, dedup and the
 # Compass evaluator. It does. Measured 2026-09-11: TEN trip push sites do not go

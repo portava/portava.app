@@ -902,6 +902,21 @@ router.delete("/trips/:tripId", async (req, res) => {
 // ===========================================================================
 
 // POST /api/trips/:tripId/join-request
+// TR51 (§4.1): the last five trip writes that read the request body without a schema.
+// Each schema accepts exactly what the hand-rolled check accepted (a missing
+// field stays optional, an over-long title is still trimmed to the column) and
+// refuses only a wrong TYPE, which the old code silently ignored.
+const JoinRequestSchema = z.object({ message: z.string().nullish() });
+const InviteLinkSchema = z.object({ maxUses: z.number().nullish(), expiresInHours: z.number().nullish() });
+const ChecklistTitleSchema = z.object({ title: z.string().transform((t) => t.trim().slice(0, 200)).refine((t) => t.length > 0, "title is required") });
+const ChecklistItemPatchSchema = z.object({
+  isDone: z.boolean().optional(),
+  label: z.string().optional(),
+  sortOrder: z.number().optional(),
+  assignedTo: z.string().uuid().nullable().optional(),
+  dueDate: z.string().nullable().optional(),
+});
+
 router.post("/trips/:tripId/join-request", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
@@ -967,7 +982,9 @@ router.post("/trips/:tripId/join-request", async (req, res) => {
     }
   }
 
-  const message = typeof req.body?.message === "string" ? req.body.message.slice(0, 500) : null;
+  const parsedJoin = JoinRequestSchema.safeParse(req.body ?? {});
+  if (!parsedJoin.success) { sendError(res, "invalid_payload", "message must be a string"); return; }
+  const message = parsedJoin.data.message ? parsedJoin.data.message.slice(0, 500) : null;
 
   const { data: newReq, error } = await sc
     .from("trip_join_requests")
@@ -1279,8 +1296,10 @@ router.post("/trips/:tripId/invite-link", async (req, res) => {
   if (!trip) { sendError(res, "not_found", "Trip not found"); return; }
   if ((trip as any).owner_id !== user.id) { sendError(res, "forbidden", "Only the owner can create invite links"); return; }
 
-  const maxUses    = typeof req.body?.maxUses === "number" ? req.body.maxUses : null;
-  const expiresIn  = typeof req.body?.expiresInHours === "number" ? req.body.expiresInHours : null;
+  const parsedLink = InviteLinkSchema.safeParse(req.body ?? {});
+  if (!parsedLink.success) { sendError(res, "invalid_payload", "maxUses and expiresInHours must be numbers when given"); return; }
+  const maxUses    = parsedLink.data.maxUses ?? null;
+  const expiresIn  = parsedLink.data.expiresInHours ?? null;
   const expiresAt  = expiresIn ? new Date(Date.now() + expiresIn * 3_600_000).toISOString() : null;
   const token      = crypto.randomBytes(20).toString("hex");
 
@@ -2829,8 +2848,9 @@ router.post("/trips/:tripId/checklists", async (req, res) => {
   const membership = await requireTripMember(sc, tripId, user.id);
   if (!membership) { sendError(res, "not_member", "Not a trip member"); return; }
 
-  const title = typeof req.body?.title === "string" ? req.body.title.trim().slice(0, 200) : "";
-  if (!title) { sendError(res, "invalid_payload", "title is required"); return; }
+  const parsedChecklist = ChecklistTitleSchema.safeParse(req.body ?? {});
+  if (!parsedChecklist.success) { sendError(res, "invalid_payload", "title is required"); return; }
+  const title = parsedChecklist.data.title;
 
   const { data, error } = await sc
     .from("trip_checklists")
@@ -2857,8 +2877,9 @@ router.patch("/trips/:tripId/checklists/:checklistId", async (req, res) => {
   const membership = await requireTripMember(sc, tripId, user.id);
   if (!membership) { sendError(res, "not_member", "Not a trip member"); return; }
 
-  const title = typeof req.body?.title === "string" ? req.body.title.trim().slice(0, 200) : undefined;
-  if (!title) { sendError(res, "invalid_payload", "title is required"); return; }
+  const parsedChecklistPatch = ChecklistTitleSchema.safeParse(req.body ?? {});
+  if (!parsedChecklistPatch.success) { sendError(res, "invalid_payload", "title is required"); return; }
+  const title = parsedChecklistPatch.data.title;
 
   const { data, error } = await sc
     .from("trip_checklists")
@@ -3008,22 +3029,24 @@ router.patch("/trips/:tripId/checklists/:checklistId/items/:itemId", async (req,
   const membership = await requireTripMember(sc, tripId, user.id);
   if (!membership) { sendError(res, "not_member", "Not a trip member"); return; }
 
+  const parsedItem = ChecklistItemPatchSchema.safeParse(req.body ?? {});
+  if (!parsedItem.success) {
+    const issue = parsedItem.error.issues[0];
+    sendError(res, "invalid_payload", issue?.path[0] === "assignedTo" ? "assignedTo must be a UUID or null" : `${String(issue?.path[0] ?? "body")}: ${issue?.message ?? "invalid"}`);
+    return;
+  }
+  const itemBody = parsedItem.data;
   const patch: Record<string, any> = {};
-  if (typeof req.body?.isDone === "boolean")   patch.is_done    = req.body.isDone;
-  if (typeof req.body?.label  === "string")    patch.label      = req.body.label.slice(0, 300);
-  if (typeof req.body?.sortOrder === "number") patch.sort_order = req.body.sortOrder;
+  if (itemBody.isDone !== undefined)    patch.is_done    = itemBody.isDone;
+  if (itemBody.label !== undefined)     patch.label      = itemBody.label.slice(0, 300);
+  if (itemBody.sortOrder !== undefined) patch.sort_order = itemBody.sortOrder;
   // `assigned_to` and `due_date` were WRITE-ONCE: POST .../items accepts both
   // and the list route returns both, but this PATCH accepted neither, so an
   // item assigned to the wrong person or given the wrong date could only be
   // corrected by deleting and recreating it (which loses its id and its place
   // in the list). `null` clears the field, which is the only way to unassign.
-  if (req.body?.assignedTo === null)                  patch.assigned_to = null;
-  else if (typeof req.body?.assignedTo === "string") {
-    if (!UUID_RE.test(req.body.assignedTo)) { sendError(res, "invalid_payload", "assignedTo must be a UUID or null"); return; }
-    patch.assigned_to = req.body.assignedTo;
-  }
-  if (req.body?.dueDate === null)                     patch.due_date = null;
-  else if (typeof req.body?.dueDate === "string")     patch.due_date = req.body.dueDate;
+  if (itemBody.assignedTo !== undefined) patch.assigned_to = itemBody.assignedTo;
+  if (itemBody.dueDate !== undefined)    patch.due_date    = itemBody.dueDate;
 
   if (Object.keys(patch).length === 0) { sendError(res, "invalid_payload", "No fields to update"); return; }
 

@@ -37,12 +37,15 @@ describe("§20.2 the seven steps, planned in order and each said to be actionabl
     const a = planCloseout({ activeLiveShareIds: ["s1", "s2"], planItems: [item("a")], pendingDecisionTaskIds: ["t1"], tripEndDate: null, today: "2026-09-15" });
     assert.deepEqual(a.steps[0], { step: "stop_temporary_presence", status: "actionable", ids: ["s1", "s2"], detail: "2 active live-share session(s) stop at completion" });
     assert.equal(a.steps[2]!.status, "actionable");
-    assert.equal(a.steps[3]!.status, "deferred");
-    assert.match(a.steps[3]!.detail, /UPDATE_DECISION_TASK/);
+    assert.deepEqual(a.steps[3], { step: "close_operational_decision_tasks", status: "actionable", ids: ["t1"], detail: "1 pending decision task(s) expire at completion — UPDATE_DECISION_TASK through the kernel" });
+    assert.equal(a.steps[6]!.status, "deferred", "the ledger was not read: deferred, by name");
+    assert.match(a.steps[6]!.detail, /trip_decisions/);
     assert.equal(a.questions.length, 1);
-    const b = planCloseout({ activeLiveShareIds: [], planItems: [item("a", { status: "done" })], pendingDecisionTaskIds: [], tripEndDate: null, today: "2026-09-15" });
+    const b = planCloseout({ activeLiveShareIds: [], planItems: [item("a", { status: "done" })], pendingDecisionTaskIds: [], storedDecisionIds: [], tripEndDate: null, today: "2026-09-15" });
     assert.equal(b.steps[0]!.status, "not_applicable"); assert.equal(b.steps[2]!.status, "not_applicable"); assert.equal(b.steps[3]!.status, "not_applicable");
     assert.ok(b.steps.slice(4).every((s) => s.status === "not_applicable"), "the last three have nothing to act on in this system, and say what would");
+    const c = planCloseout({ activeLiveShareIds: [], planItems: [], pendingDecisionTaskIds: [], storedDecisionIds: ["d1", "d2"], tripEndDate: null, today: "2026-09-15" });
+    assert.deepEqual(c.steps[6], { step: "archive_rebuildable_projections", status: "actionable", ids: ["d1", "d2"], detail: "2 stored decision(s) in the §21.2 ledger: retention ends at completion; every other operational projection is generated per request" });
   });
 });
 
@@ -83,6 +86,26 @@ describe("runTripCloseout — performs the one step it can, reports the rest", (
     assert.deepEqual(r.questions.map((q) => q.question), ["Did you make it to Hoi An?"]);
     assert.equal(r.steps[3]!.status, "deferred", "decision tasks are not read while the operational capability is off");
     assert.deepEqual(r.unread, []);
+  });
+  it("§20.2 with the operational capability on: pending tasks are deferred by the kernel flag's name, and the ledger's retention ends; with the kernel on, each task expires through UPDATE_DECISION_TASK, keyed by the closeout", async () => {
+    const tables = {
+      trip_crew_location_sessions: [], trip_plan_items: [], trip_subgroups: [],
+      trip_decision_tasks: [{ id: "t1", trip_id: TRIP_ID, status: "pending" }, { id: "t2", trip_id: TRIP_ID, status: "done" }],
+      trip_decisions: [{ decision_id: "d1", trip_id: TRIP_ID, retain_until: "2026-12-01T00:00:00Z" }, { decision_id: "d0", trip_id: TRIP_ID, retain_until: "2026-09-01T00:00:00Z" }, { decision_id: "dx", trip_id: "other", retain_until: "2026-12-01T00:00:00Z" }],
+      feature_flags: [{ flag: "trip_operational_projections_enabled", enabled: true }],
+    };
+    const r = await runTripCloseout(fake(tables) as any, TRIP_ID, { now: NOW, actorUserId: OWNER_ID });
+    assert.equal(r.steps[3]!.status, "deferred"); assert.match(r.steps[3]!.detail, /t1.*trip_kernel_enabled is false/);
+    assert.equal(r.steps[6]!.status, "performed"); assert.deepEqual((r.steps[6] as any).ids, ["d1"], "only the row still within retention");
+    assert.equal(tables.trip_decisions[0]!.retain_until, NOW.toISOString()); assert.equal(tables.trip_decisions[2]!.retain_until, "2026-12-01T00:00:00Z", "another trip's ledger is untouched");
+    const calls: Row[] = [];
+    const on = { ...tables, trip_decisions: [], feature_flags: [...tables.feature_flags, { flag: "trip_kernel_enabled", enabled: true }] };
+    const k: any = fake(on);
+    k.rpc = async (fn: string, args: Row) => { if (fn !== "trip_kernel_execute") return { data: null, error: null }; calls.push(args.p_command); return { data: { ok: true, duplicate: false, version: 3, event_id: 1, sequence: 1, result: { id: args.p_command.payload.task_id }, contract_version: 2 }, error: null }; };
+    const r2 = await runTripCloseout(k, TRIP_ID, { now: NOW, actorUserId: OWNER_ID });
+    assert.equal(r2.steps[3]!.status, "performed", JSON.stringify(r2.steps[3])); assert.deepEqual((r2.steps[3] as any).ids, ["t1"]);
+    assert.equal(calls.length, 1); assert.equal(calls[0].type, "UPDATE_DECISION_TASK"); assert.deepEqual(calls[0].payload, { task_id: "t1", patch: { status: "expired" } }); assert.equal(calls[0].idempotency_key, "closeout:task:t1");
+    assert.equal(r2.steps[6]!.status, "not_applicable");
   });
   it("a read that fails is a failed step, never a silent skip", async () => {
     const r = await runTripCloseout(fake({ trip_plan_items: [], feature_flags: [] }, ["trip_crew_location_sessions"]) as any, TRIP_ID, { now: NOW });

@@ -90,6 +90,15 @@ const CENSUS_SCOPE: Record<string, string[]> = {
   "census-trips.md": [
     // The kernel and its command families.
     "artifacts/api-server/src/lib/tripKernel.ts",
+    // §45: the decision-diff harness, its golden, and the Phase 0 inventory (generated and hand-written halves).
+    "artifacts/api-server/src/scenarios/trips/corpus.ts",
+    "artifacts/api-server/src/scenarios/trips/run.ts",
+    "artifacts/api-server/src/scenarios/trips/diff.ts",
+    "artifacts/api-server/src/scenarios/trips/golden.ts",
+    "artifacts/api-server/src/scenarios/trips/golden.json",
+    "artifacts/api-server/src/scripts/checkTripDecisionDiff.ts",
+    "artifacts/api-server/src/scripts/tripWritePathInventory.ts",
+    "docs/architecture/trips-phase0-inventory.md",
     "artifacts/api-server/src/migrations/2760_trip_stages.sql",
     "artifacts/api-server/src/migrations/2761_trip_legs_and_commitments.sql",
     "artifacts/api-server/src/migrations/2762_trip_goals_decisions_risks.sql",

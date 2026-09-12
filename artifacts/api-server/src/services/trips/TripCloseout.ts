@@ -60,6 +60,8 @@ export interface CloseoutInputs {
   pendingDecisionTaskIds: readonly string[] | null;
   /** Active temporary subgroups (trip_subgroups, 2780), when the deployment can read them (null = could not, or not enabled). */
   activeSubgroupIds?: readonly string[] | null;
+  /** §21.2 ledger rows (trip_decisions, 2781) still within retention, when the deployment can read them (null / omitted = could not, or not enabled). */
+  storedDecisionIds?: readonly string[] | null;
   /** The trip's last day, YYYY-MM-DD. */
   tripEndDate: string | null;
   /** Local date at closeout, YYYY-MM-DD. */
@@ -101,11 +103,15 @@ export function planCloseout(inputs: CloseoutInputs): { steps: CloseoutStepPlan[
     inputs.pendingDecisionTaskIds === null
       ? { step: "close_operational_decision_tasks", status: "deferred", detail: "trip_decision_tasks is kernel-era schema behind trip_operational_projections_enabled; not read" }
       : inputs.pendingDecisionTaskIds.length > 0
-        ? { step: "close_operational_decision_tasks", status: "deferred", detail: `${inputs.pendingDecisionTaskIds.length} pending task(s); closing them is UPDATE_DECISION_TASK through the kernel, which is not enabled` }
+        ? { step: "close_operational_decision_tasks", status: "actionable", ids: [...inputs.pendingDecisionTaskIds], detail: `${inputs.pendingDecisionTaskIds.length} pending decision task(s) expire at completion — UPDATE_DECISION_TASK through the kernel` }
         : { step: "close_operational_decision_tasks", status: "not_applicable", detail: "no pending decision task" },
     { step: "preserve_decision_evidence", status: "not_applicable", detail: "trip_activity_log keeps completion evidence by default (no retention policy exists — census-trips TR100/TR387); the decision ledger is in-process (§21.2, §40.6)" },
     { step: "project_passport_memory_candidates", status: "not_applicable", detail: "Passport stamps are awarded by the completion path already (awardTripCompletionStamps); no Memory candidate producer exists" },
-    { step: "archive_rebuildable_projections", status: "not_applicable", detail: "every operational projection is generated per request; there is nothing stored to archive" },
+    inputs.storedDecisionIds == null
+      ? { step: "archive_rebuildable_projections", status: "deferred", detail: "trip_decisions (2781, the §21.2 ledger) is kernel-era schema behind trip_operational_projections_enabled; not read" }
+      : inputs.storedDecisionIds.length > 0
+        ? { step: "archive_rebuildable_projections", status: "actionable", ids: [...inputs.storedDecisionIds], detail: `${inputs.storedDecisionIds.length} stored decision(s) in the §21.2 ledger: retention ends at completion; every other operational projection is generated per request` }
+        : { step: "archive_rebuildable_projections", status: "not_applicable", detail: "no stored decision within retention; every other operational projection is generated per request" },
   ];
   return { steps, questions };
 }
