@@ -507,6 +507,46 @@
       "files": [
         "artifacts/api-server/src/routes/rentABuddy.ts"
       ]
+    },
+    {
+      "census": "census-sensing.md",
+      "since": "42aeac38",
+      "acknowledgedAt": "2026-09-12",
+      "reason": "§7 OF THIS CENSUS (2026-09-12, the Sensing lane's surface half) both ADDED and CHANGED these files, and §7 is the measurement of them — this entry records that the change is the section's own, not an unexamined drift. New: lib/discoveryLiveRank.ts and lib/discoveryLiveRankRead.ts (§8's live ranking layer, pure engine plus gated read), lib/layoverLiveIntersection.ts (§11's intersection of feasibility with live friction), migrations 2850 and 2851 with their rollbacks (both seeded FALSE, both postconditions refusing a TRUE row), and three suites. Changed: routes/discovery.ts gains one import and two call sites that re-rank the head window before the page slice and pass the grades to the candidate projection — with 2850's flag absent, false or unreadable the serve path returns the very array it was handed and reads no claim, which the route suite pins on all three arms; lib/discoveryCandidate.ts's whyNow changes from the literal null to a copy of the grade's grounded reasons, null whenever no grade or no reading exists; services/airport/LayoverRecommendationService.ts gains a flag-gated pass before its assessment loop and one extra selected column (discovery_places.canonical_location_id), leaving every card untouched when the flag is off. Rows S68, S66, S70, S72 and S85 are moved in §7.2 on this evidence and S97 is moved back to W on evidence in routes/mapObservations.ts; every other verdict in this census was left where §1–§5 put it, and §7.1(f) re-derives the C rows these files could have broken (S7, S12, S16, S69, S95, S99–S101) rather than assuming they held. Suites green: discoveryLiveRank 30/30, discoveryLiveRankRoute 11/11, layoverLiveIntersection 19/19, discoveryCandidate 28/28, and the four layover suites 60/60.",
+      "files": [
+        "artifacts/api-server/src/lib/discoveryCandidate.ts",
+        "artifacts/api-server/src/lib/discoveryLiveRank.ts",
+        "artifacts/api-server/src/lib/discoveryLiveRankRead.ts",
+        "artifacts/api-server/src/lib/layoverLiveIntersection.ts",
+        "artifacts/api-server/src/migrations/2850_discovery_live_rank_flag.sql",
+        "artifacts/api-server/src/migrations/2851_layover_live_intersection_flag.sql",
+        "artifacts/api-server/src/routes/discovery.ts",
+        "artifacts/api-server/src/services/airport/LayoverRecommendationService.ts",
+        "artifacts/api-server/src/test/discoveryLiveRank.test.ts",
+        "artifacts/api-server/src/test/discoveryLiveRankRoute.test.ts",
+        "artifacts/api-server/src/test/layoverLiveIntersection.test.ts",
+        "db/rollback/2026-09-12-2850-discovery-live-rank-flag-rollback.sql",
+        "db/rollback/2026-09-12-2851-layover-live-intersection-flag-rollback.sql"
+      ]
+    },
+    {
+      "census": "census-discovery.md",
+      "since": "42aeac38",
+      "acknowledgedAt": "2026-09-12",
+      "reason": "§7 OF CENSUS-SENSING (2026-09-12) touched two files this census counts, additively and behind a flag seeded FALSE by migration 2850. routes/discovery.ts gains one import and, at each of the two serve points, one call to withDiscoveryLiveRank over the filtered list before the page slice plus a liveRankById field on the existing withDiscoveryCandidates call and an optional meta.liveRank block; with the flag absent, false or unreadable that call returns the SAME ARRAY REFERENCE it was handed, reads no claim, and the served JSON and order are byte-identical — pinned by three route cases (flag absent, flag false, unreadable feature_flags) that also stage intel_state_snapshots as an error to prove it is never read. lib/discoveryCandidate.ts changes whyNow from the literal null to a copy of the live grade's grounded reasons, and it stays null whenever no grade was computed or the grade found no reading, so with the new flag off nothing about the projection changes. The retrieval path (routes/discoverySearch.ts) is untouched, the ranking layer re-orders and never removes, and this census's own rows were not re-read here — they are graded in census-sensing §7.2 (S68, S70, S72). Line-number citations this census carries into routes/discovery.ts were re-anchored in the same change and check:doc-citations passes. Suites green: discoveryCandidate 28/28, discoveryLiveRankRoute 11/11, discoveryPdeServePath unchanged.",
+      "files": [
+        "artifacts/api-server/src/lib/discoveryCandidate.ts",
+        "artifacts/api-server/src/routes/discovery.ts"
+      ]
+    },
+    {
+      "census": "census-layover.md",
+      "since": "42aeac38",
+      "acknowledgedAt": "2026-09-12",
+      "reason": "§7 OF CENSUS-SENSING (2026-09-12) touched one file this census counts: services/airport/LayoverRecommendationService.ts gains a flag-gated live pass (Sensing §11) before its assessment loop and one extra selected column, discovery_places.canonical_location_id, which is the only bridge from the discovery id space to the canonical places.id an intel subject is keyed on. Behind layover_live_intersection_enabled (migration 2851, seeded FALSE) and, behind that, the Live gates in lib/liveClaimRead, the pass does not run, reads no claim, and every candidate reaches assess() with exactly the travel and activity minutes it already had — pinned by a case that drives the real generateRecommendations with the flag absent and asserts the landside card's 90 unchanged minutes, and by two more with the pilot closed and with an unbridged place. certifySessionFeasibility, LayoverSafetyEngine.assess, the stable-identity upsert, the moderation-state read and its refusal arm, and the privacy sanitiser are all unedited; nothing this census grades about feasibility, safe return, identity or moderation was changed, and no row of this census was re-read here. The Sensing row that moves on it is S85, in census-sensing §7.2. Suites green: layoverLiveIntersection 19/19, layoverRecommendationIdentity, layoverAdminHideVisibility and layoverModerationDurability 60/60 together, unmodified.",
+      "files": [
+        "artifacts/api-server/src/services/airport/LayoverRecommendationService.ts"
+      ]
     }
   ],
   "retired": [

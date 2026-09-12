@@ -70,6 +70,12 @@ import { annotateNewToMe, recordDiscoveryAlreadyKnown } from "../lib/placeIdBrid
 // (2361, seeded OFF): with the flag off withDiscoveryCandidates returns the very
 // array it was handed, so the served JSON is byte-identical.
 import { withDiscoveryCandidates } from "../lib/discoveryCandidate.js";
+// Sensing §8 live ranking (census-sensing S68/S66/S70/S72). Re-orders the HEAD
+// WINDOW of an already-ranked feed on the live claims lib/liveClaimRead serves,
+// behind discovery_live_rank_enabled (2850, seeded OFF): with the flag off
+// withDiscoveryLiveRank returns the very array it was handed, same reference,
+// having read no claim — so the served order and JSON are byte-identical.
+import { parseIntentMode, withDiscoveryLiveRank } from "../lib/discoveryLiveRankRead.js";
 import { logger } from "../lib/logger.js";
 
 const router = Router();
@@ -1709,18 +1715,33 @@ router.get("/discovery", async (req, res) => {
       }
     }
 
-    const slice    = servedFiltered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE).map(toPublic);
+    // Sensing §8 — the live ranking layer, over the FULL filtered list's head
+    // window and BEFORE the page slice, so it decides what page 1 contains
+    // rather than only shuffling what page 1 already held. Flag OFF ⇒
+    // `liveRanked.places` IS `servedFiltered` (same reference, no claim read).
+    const liveRanked = await withDiscoveryLiveRank(getServiceClient(), servedFiltered, {
+      mode: parseIntentMode(req.query.intentMode),
+    });
+    const slice    = liveRanked.places.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE).map(toPublic);
     const totalMs  = Date.now() - t0;
     req.log.info({ cacheLevel, destination, category, totalMs, pdeServed: pdeScoredById !== null }, "discovery: cache hit");
     // §7 New-to-Me annotation — additive, order-preserving, flag-gated, fail-safe.
     const annotatedSlice = await annotateNewToMe(getServiceClient(), callerUserId, slice);
     const candidateSlice = await withDiscoveryCandidates(getServiceClient(), annotatedSlice, {
       cacheLevel, cachedAt, scoredById: pdeScoredById, rankedBy: pdeScoredById ? "pde" : "none",
+      liveRankById: liveRanked.applied ? liveRanked.byId : null,
     });
     res.json({
-      places: candidateSlice, total: servedFiltered.length, destination, context: ctxLabel, cached: true, ageFilterMeta,
+      places: candidateSlice, total: liveRanked.places.length, destination, context: ctxLabel, cached: true, ageFilterMeta,
       sourceSummary: { seededDbCount: dbPlaces.length, osmCount: osmPlaces.length, userCreatedCount: 0 },
-      meta: { cacheLevel, timings: { totalMs } },
+      meta: {
+        cacheLevel, timings: { totalMs },
+        // Present only when 2850's flag is on. `readable: false` says the live
+        // gates refused the read — a different fact from "no place was live".
+        ...(liveRanked.applied
+          ? { liveRank: { mode: liveRanked.mode, readable: liveRanked.readable, windowSize: liveRanked.windowSize, demoted: liveRanked.demoted } }
+          : {}),
+      },
     });
     // Stage 0 instrumentation — serve points 1/2/3. Fire-and-forget, after the
     // response. These three paths ran no ranker; before this they wrote nothing
@@ -2050,7 +2071,12 @@ router.get("/discovery", async (req, res) => {
     }
 
     const filtered = applyFilters(ranked);
-    const slice = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE).map(toPublic);
+    // Sensing §8 — same live layer, same contract, on the cold path. Flag OFF ⇒
+    // `coldLiveRanked.places` IS `filtered` (same reference, no claim read).
+    const coldLiveRanked = await withDiscoveryLiveRank(getServiceClient(), filtered, {
+      mode: parseIntentMode(req.query.intentMode),
+    });
+    const slice = coldLiveRanked.places.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE).map(toPublic);
     // Log impressions for exactly the items that were served — after filter + page slice.
     if (callerUserId && scoredByPlaceId.size > 0) {
       const servedScored = slice
@@ -2085,10 +2111,16 @@ router.get("/discovery", async (req, res) => {
       cacheLevel: "miss", cachedAt: Date.now(),
       scoredById: scoredByPlaceId.size > 0 ? scoredByPlaceId : null,
       rankedBy:   scoredByPlaceId.size > 0 ? "pde" : "none",
+      liveRankById: coldLiveRanked.applied ? coldLiveRanked.byId : null,
     });
-    res.json({ places: coldCandidates, total: filtered.length, destination, context: ctxLabel, cached: false, ageFilterMeta,
+    res.json({ places: coldCandidates, total: coldLiveRanked.places.length, destination, context: ctxLabel, cached: false, ageFilterMeta,
       sourceSummary: { seededDbCount: dbPlaces.length, osmCount: osmPlaces.length, userCreatedCount: 0 },
-      meta: { cacheLevel: "miss", timings: { geocodeMs, osmMs, totalMs } },
+      meta: {
+        cacheLevel: "miss", timings: { geocodeMs, osmMs, totalMs },
+        ...(coldLiveRanked.applied
+          ? { liveRank: { mode: coldLiveRanked.mode, readable: coldLiveRanked.readable, windowSize: coldLiveRanked.windowSize, demoted: coldLiveRanked.demoted } }
+          : {}),
+      },
     });
   } catch (err) {
     req.log.error({ err }, "discovery route failed");

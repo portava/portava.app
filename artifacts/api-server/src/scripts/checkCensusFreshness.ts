@@ -1126,6 +1126,22 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/test/safetyCandidate.test.ts",
     "artifacts/api-server/src/test/adminSafetyCandidatesRoute.test.ts",
     "artifacts/api-server/src/test/db/safetyCandidate.db.test.ts",
+    // WIDENED 2026-09-12 (census-sensing §7): §8's live ranking layer, §11's
+    // layover intersection, and routes/mapObservations.ts — which §7.2 cites
+    // five times as the object that moves S97 back to W. A census that grades a
+    // file for doing the forbidden thing must age when that file changes.
+    "artifacts/api-server/src/lib/discoveryLiveRank.ts",
+    "artifacts/api-server/src/lib/discoveryLiveRankRead.ts",
+    "artifacts/api-server/src/lib/layoverLiveIntersection.ts",
+    "artifacts/api-server/src/routes/mapObservations.ts",
+    "artifacts/api-server/src/services/airport/LayoverRecommendationService.ts",
+    "artifacts/api-server/src/migrations/2850_discovery_live_rank_flag.sql",
+    "artifacts/api-server/src/migrations/2851_layover_live_intersection_flag.sql",
+    "db/rollback/2026-09-12-2850-discovery-live-rank-flag-rollback.sql",
+    "db/rollback/2026-09-12-2851-layover-live-intersection-flag-rollback.sql",
+    "artifacts/api-server/src/test/discoveryLiveRank.test.ts",
+    "artifacts/api-server/src/test/discoveryLiveRankRoute.test.ts",
+    "artifacts/api-server/src/test/layoverLiveIntersection.test.ts",
   ],
   "census-compass.md": [
     "artifacts/api-server/src/compass/",

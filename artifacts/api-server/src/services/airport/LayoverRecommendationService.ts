@@ -23,6 +23,83 @@ import {
 } from "./LayoverFeasibility.js";
 import { sanitizeRecommendation, type SafeRecommendation } from "./LayoverPrivacyGuard.js";
 import { localHour } from "./AirportTime.js";
+// Sensing §11 — intersect feasibility with live Experience value, forecast,
+// friction and safe-return (census-sensing S85). Behind
+// `layover_live_intersection_enabled` (2851, seeded FALSE) and, behind THAT,
+// the Live gates in lib/liveClaimRead: with either closed this reads nothing
+// and every card is generated exactly as it was before.
+import { isFlagEnabled } from "../../lib/featureFlags.js";
+import { liveLabelsServable, readLiveClaimEnvelopes, type LiveClaimEnvelope } from "../../lib/liveClaimRead.js";
+import {
+  compareByLive,
+  intentFromVibeChips,
+  intersectLayoverLive,
+  type LayoverLiveCandidate,
+  type LayoverLiveVerdict,
+} from "../../lib/layoverLiveIntersection.js";
+
+/** Literal name so check-flag-polarity resolves the read. `*_enabled` ⇒ capability, fail-closed. */
+export const LAYOVER_LIVE_INTERSECTION_FLAG = "layover_live_intersection_enabled";
+
+/** The claim families the intersection consumes. Nothing else is read. */
+const LAYOVER_LIVE_CLAIM_TYPES = ["crowd.level", "crowd.trajectory", "queue.wait", "access.walk_in"] as const;
+
+interface LayoverLiveOutcome {
+  /** True only when the flag was on AND the pass actually ran. */
+  applied: boolean;
+  /** False ⇒ the Live gates refused the read; nothing was adjusted. */
+  readable: boolean;
+  byKey: Map<string, LayoverLiveVerdict>;
+  dropped: number;
+  frictionAdjusted: number;
+}
+
+const LIVE_INTERSECTION_OFF: LayoverLiveOutcome = {
+  applied: false, readable: false, byKey: new Map(), dropped: 0, frictionAdjusted: 0,
+};
+
+/**
+ * Read the live claims for the candidates that HAVE a canonical subject, and
+ * grade them. Fail-safe in both directions: a closed flag, closed gates, or any
+ * error leaves every card untouched — this pass may shorten a traveller's
+ * options but must never be able to empty them by failing.
+ */
+async function readLayoverLive(
+  db: SupabaseClient,
+  session: LayoverSession,
+  candidates: ReadonlyArray<{ key: string; subjectId: string | null; travelTimeMin: number; activityTimeMin: number }>,
+  nowMs: number,
+): Promise<LayoverLiveOutcome> {
+  let on = false;
+  try { on = await isFlagEnabled(db as any, LAYOVER_LIVE_INTERSECTION_FLAG); } catch { on = false; }
+  if (!on) return LIVE_INTERSECTION_OFF;
+  try {
+    let readable = false;
+    try { readable = await liveLabelsServable(db as any); } catch { readable = false; }
+    const now = new Date(nowMs);
+    const graded: LayoverLiveCandidate[] = [];
+    for (const c of candidates) {
+      let envelopes: LiveClaimEnvelope[] = [];
+      let rowReadable = readable && c.subjectId !== null;
+      if (rowReadable && c.subjectId) {
+        try {
+          envelopes = await readLiveClaimEnvelopes(db as any, c.subjectId, { claimTypes: LAYOVER_LIVE_CLAIM_TYPES, now });
+        } catch { envelopes = []; rowReadable = false; }
+      }
+      graded.push({ ...c, envelopes, readable: rowReadable });
+    }
+    const outcome = intersectLayoverLive(graded, { nowMs, intent: intentFromVibeChips(session.vibeChips) });
+    return {
+      applied: true, readable,
+      byKey: outcome.byKey,
+      dropped: outcome.dropped.length,
+      frictionAdjusted: outcome.frictionAdjusted,
+    };
+  } catch (err) {
+    logger.warn({ err, sessionId: session.id }, "layover live intersection failed — cards generated without it");
+    return LIVE_INTERSECTION_OFF;
+  }
+}
 
 /**
  * Which parts of the day does the remaining layover window cover, in the
@@ -183,12 +260,17 @@ async function fetchDiscoveryPlaces(
   city: string;
   neighborhood: string | null;
   placeId: string | null;
+  canonicalPlaceId: string | null;
   verified: boolean;
 }>> {
   try {
     let query = db
       .from("discovery_places")
-      .select("id, name, place_type, category, neighborhood, blurb, verified")
+      // canonical_location_id is the ONLY bridge from the discovery id space to
+      // the canonical places.id an intel subject is keyed on (the bridge
+      // lib/coverageAssembly documents). Without it the live intersection has
+      // no subject to look up and, correctly, looks nothing up.
+      .select("id, name, place_type, category, neighborhood, blurb, verified, canonical_location_id")
       .ilike("city", `%${city}%`)
       .eq("status", "active")
       .limit(limit);
@@ -216,6 +298,8 @@ async function fetchDiscoveryPlaces(
       city,
       neighborhood:   p.neighborhood ?? null,
       placeId:        p.id,
+      /** The canonical subject for the live read; null when the row is unbridged. */
+      canonicalPlaceId: (p.canonical_location_id as string | null) ?? null,
       verified:       Boolean(p.verified),
     }));
   } catch (err) {
@@ -357,10 +441,43 @@ export async function generateRecommendations(
     : [];
 
   const allCandidates = [
-    ...insideCandidates.map((c) => ({ ...c, city: null as null, neighborhood: null as null, placeId: null as null, verified: true })),
+    ...insideCandidates.map((c) => ({ ...c, city: null as null, neighborhood: null as null, placeId: null as null, canonicalPlaceId: null as null, verified: true })),
     ...discoveryCandidates,
-    ...cityEscapeCandidates,
+    ...cityEscapeCandidates.map((c) => ({ ...c, canonicalPlaceId: null as null })),
   ];
+
+  // ── Sensing §11: intersect feasibility with live intelligence ──────────────
+  // The live pass runs BEFORE `assess`, because what it produces is one of
+  // `assess`'s inputs: a live queue is minutes the traveller will stand still,
+  // and the existing safe-return arithmetic — not this pass — then decides
+  // whether the card still fits the certified deadline. Flag off, gates
+  // closed, no reading, or any error: `byKey` is empty and every branch below
+  // falls through to the numbers the card already had.
+  const live = await readLayoverLive(
+    db, session,
+    allCandidates.map((c) => ({
+      key: recommendationKey(c),
+      subjectId: (c as { canonicalPlaceId?: string | null }).canonicalPlaceId ?? null,
+      travelTimeMin: c.travelTimeMin,
+      activityTimeMin: c.activityTimeMin,
+    })),
+    nowMs,
+  );
+  const assessable = live.applied
+    ? [...allCandidates]
+        // A Live-qualified unsafe density or refused walk-in is not a card.
+        .filter((c) => !live.byKey.get(recommendationKey(c))?.drop)
+        // Stable: `compareByLive` answers 0 for every pair without readings, so
+        // the existing time-of-day order survives untouched where the world is
+        // silent.
+        .sort((x, y) => compareByLive(live.byKey.get(recommendationKey(x)), live.byKey.get(recommendationKey(y))))
+    : allCandidates;
+  if (live.applied) {
+    logger.info(
+      { sessionId: session.id, readable: live.readable, dropped: live.dropped, frictionAdjusted: live.frictionAdjusted },
+      "layover live intersection applied",
+    );
+  }
 
   // Assess each through safety engine
   const rows: any[] = [];
@@ -370,9 +487,15 @@ export async function generateRecommendations(
   const sources: TravelTimeSource[] = [];
   let sortOrder = 0;
 
-  for (const candidate of allCandidates) {
-    const a = assess(airport, session, candidate, nowMs, certified.deadline);
-    keys.push(recommendationKey(candidate));
+  for (const candidate of assessable) {
+    const key = recommendationKey(candidate);
+    // §11's friction, as minutes: the live queue is added to the activity time
+    // the safety engine is given, so the CARD's own rating and hard return time
+    // account for it. Without a reading this is the candidate's own number.
+    const verdict = live.byKey.get(key);
+    const activityTimeMin = verdict?.adjustedActivityMin ?? candidate.activityTimeMin;
+    const a = assess(airport, session, { ...candidate, activityTimeMin }, nowMs, certified.deadline);
+    keys.push(key);
     sources.push(travelTimeSourceFor(candidate));
     const row = {
       session_id:       session.id,
@@ -381,7 +504,7 @@ export async function generateRecommendations(
       description:      (candidate as any).description ?? null,
       safety_rating:    a.rating,
       travel_time_min:  candidate.travelTimeMin,
-      activity_time_min: candidate.activityTimeMin,
+      activity_time_min: activityTimeMin,
       return_buffer_min: a.returnBufferMin,
       hard_return_time: a.hardReturnTime.toISOString(),
       warning_reason:   a.warningReason,

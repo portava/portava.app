@@ -12,16 +12,23 @@
  * "Candidate relevance" and exposes it to the Map as a projection.
  *
  * census-discovery A03 and A25. Both were NOT-BUILT; this module makes them
- * BUILT — and, stated in the same breath, BUILT-BUT-WRONG on one field:
+ * BUILT — and, when it was written, BUILT-BUT-WRONG on one field:
  *
- *   whyNow is ALWAYS null. There is no live-intelligence producer for a place
- *   (census-discovery A01 — the ranker's inputs are taste, graph, behaviour and
- *   trails; ExperienceState, forecast and friction do not exist). A why-now
- *   that was manufactured from static popularity would be exactly the thing
- *   §5.1 forbids: a prediction dressed as an observation. The field is carried
- *   as null so a consumer can see that the claim is ABSENT, which is a
- *   different fact from "not worth mentioning". ROADMAP invariant: absence of
- *   evidence must never silently become evidence of absence.
+ *   whyNow WAS always null. There was no live-intelligence producer for a
+ *   place (census-discovery A01 — the ranker's inputs are taste, graph,
+ *   behaviour and trails; ExperienceState, forecast and friction did not reach
+ *   it). A why-now manufactured from static popularity would be exactly the
+ *   thing §5.1 forbids: a prediction dressed as an observation.
+ *
+ *   THE PRODUCER NOW EXISTS: lib/discoveryLiveRank grades a served row on the
+ *   live claims lib/liveClaimRead serves and returns `whyNow` as grounded
+ *   reasons in the claims' OWN vocabulary (crowd_busy, trajectory_building,
+ *   walk_in_refused, …). This module copies that list and invents nothing. It
+ *   is null whenever no grade was computed (the live-rank flag is off, the row
+ *   is outside the ranked window, the live gates refused the read) and whenever
+ *   a grade found no reading — so "absent" and "nothing observed" both read as
+ *   null rather than as an empty endorsement. Absence of evidence must never
+ *   silently become evidence of absence.
  *
  * EVERY VALUE HERE IS DERIVED, NONE IS MEASURED — read this before trusting one
  * ======================================================================
@@ -98,6 +105,7 @@
 import type { RankCandidate, ScoredCandidate } from "./portavaRank.js";
 import { isFlagEnabled } from "./featureFlags.js";
 import { loadPdeViewer, rankForViewer, type PdePlace } from "./discoveryPde.js";
+import type { DiscoveryLiveRank } from "./discoveryLiveRank.js";
 
 /** Literal name so check-flag-polarity resolves the read. `*_enabled` ⇒ capability, fail-closed. */
 export const DISCOVERY_CANDIDATE_PROJECTION_FLAG = "discovery_candidate_projection_enabled";
@@ -114,8 +122,12 @@ export type DiscoveryRankedBy = "pde" | "compass" | "none";
 export interface DiscoveryCandidate {
   /** The served place id this projection describes (same id space as the row). */
   id: string;
-  /** ALWAYS null on this surface today — no live producer. See the header. */
-  whyNow: null;
+  /**
+   * Grounded reasons from lib/discoveryLiveRank, in the claims' own
+   * vocabulary. Null when no grade was computed or the grade found no
+   * reading — never an empty array, so "absent" cannot read as "none apply".
+   */
+  whyNow: string[] | null;
   /** Ranker feature keys with positive contribution, strongest first, ≤ 3. */
   whyForUser: string[];
   /** Which ranker produced whyForUser; "none" ⇒ the list is empty by construction. */
@@ -148,6 +160,12 @@ export interface CandidateServeContext {
   scoredById: Map<string, ScoredCandidate<RankCandidate>> | null;
   /** Who ranked. Must be "pde" iff scoredById is non-null. */
   rankedBy: DiscoveryRankedBy;
+  /**
+   * Live grades from lib/discoveryLiveRankRead, keyed by served row id. Absent
+   * / null (the default, and the state whenever `discovery_live_rank_enabled`
+   * is off) ⇒ every `whyNow` is null, exactly as before this existed.
+   */
+  liveRankById?: Map<string, DiscoveryLiveRank> | null;
   /** Clock, injectable for tests. */
   nowMs?: number;
 }
@@ -197,6 +215,20 @@ export function whyForUserFromFeatures(features: Record<string, number> | undefi
     .map(([k]) => k);
 }
 
+/**
+ * The grounded why-now for a row, copied verbatim from the live grade. Null in
+ * every case where no reading backs it: no grade at all, an empty reason list,
+ * or a grade whose evidence label says nothing was observed (`none`) or that
+ * the gates refused the look (`unreadable`). This function composes no reason
+ * of its own and reads no field but the grade's.
+ */
+export function whyNowOf(id: string, ctx: Pick<CandidateServeContext, "liveRankById">): string[] | null {
+  const grade = ctx.liveRankById?.get(id);
+  if (!grade) return null;
+  if (grade.evidence === "none" || grade.evidence === "unreadable") return null;
+  return grade.whyNow.length > 0 ? [...grade.whyNow] : null;
+}
+
 /** Project one served row. Pure; no I/O, no clock unless supplied. */
 export function projectDiscoveryCandidate(row: CandidateSourceRow, ctx: CandidateServeContext): DiscoveryCandidate {
   const nowMs = ctx.nowMs ?? Date.now();
@@ -205,7 +237,7 @@ export function projectDiscoveryCandidate(row: CandidateSourceRow, ctx: Candidat
   const whyForUser = ctx.rankedBy === "pde" && scored ? whyForUserFromFeatures(scored.features) : [];
   return {
     id: row.id,
-    whyNow: null,
+    whyNow: whyNowOf(row.id, ctx),
     whyForUser,
     rankedBy: ctx.rankedBy,
     confidence: CONFIDENCE_PRIOR[truthClass as keyof typeof CONFIDENCE_PRIOR] ?? CONFIDENCE_PRIOR.unknown,
