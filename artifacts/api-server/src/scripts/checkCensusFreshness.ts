@@ -1088,6 +1088,13 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/test/sensingCensusRederivation.test.ts",
     "artifacts/api-server/src/test/db/sensingAnonStore.db.test.ts",
     "docs/architecture/sensing-s0-reuse-map.md",
+    // WIDENED 2026-09-12 (census-sensing §2): the §10 decision surface.
+    "artifacts/api-server/src/lib/compassDecision.ts",
+    "artifacts/api-server/src/routes/compassDecision.ts",
+    "artifacts/api-server/src/migrations/2800_compass_decision_flag.sql",
+    "db/rollback/2026-09-12-2800-compass-decision-flag-rollback.sql",
+    "artifacts/api-server/src/test/compassDecision.test.ts",
+    "artifacts/api-server/src/test/compassDecisionRoute.test.ts",
   ],
   "census-compass.md": [
     "artifacts/api-server/src/compass/",

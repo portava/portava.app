@@ -325,4 +325,12 @@ router.use(wallRouter);
 // session-intent / impression / action mutations.
 router.use(wallTelemetryRouter);
 
+// ── Sensing §10: the Compass decision surface (GO NOW … RETURN) ─────────────
+// Its own file behind compass_decision_enabled (2800, seeded FALSE);
+// routes/compass*.ts are owned by the Compass unit and are not touched.
+// Registered at the tail, and the import with it, so no line above moves —
+// census-trips.md and sensing-surface-inventory.md cite this file by line.
+import compassDecisionRouter from "./compassDecision.js";
+router.use(compassDecisionRouter);
+
 export default router;
