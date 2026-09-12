@@ -54,9 +54,10 @@ import { getServiceClient } from "../lib/supabase.js";
 import { logger } from "../lib/logger.js";
 import { asyncHandler } from "../lib/asyncHandler.js";
 import {
-  ok, unread, noSource, assertNoPrivateLeak, layerCensus, coordsOf,
+  ok, unread, assertNoPrivateLeak, layerCensus, coordsOf,
   type Layer, type MapPoint, type TripMapProjection,
 } from "../services/trips/TripMapProjection.js";
+import { readCrewPresenceLayer } from "../services/trips/TripMapCrewPresence.js";
 import { liveEnvelope, type TripProjectionEnvelope } from "../services/trips/TripProjectionEnvelope.js";
 import { buildTripOpportunityProjection } from "../services/trips/TripOpportunityProjection.js";
 import { describeOperationalGate, tripOperationalProjectionsGate } from "../lib/tripOperationalProjections.js";
@@ -292,16 +293,19 @@ export async function serveMapProjection(req: Request<{ tripId: string }>, res: 
     }),
   );
 
-  // Stated, not omitted. A projection carrying seven layers must not be
-  // mistaken for one carrying ten, three of them empty. And a `no_source` is
-  // the strongest claim this projection makes about a layer — that NOTHING in
-  // the system produces it — so each of these names an obstacle that was
-  // re-read rather than cited. See the route-chains block above for what
-  // happens when one is not.
-  // ── the layers that genuinely have no producer ───────────────────────────
-  const crewPresenceSummaries: Layer<MapPoint> = noSource(
-    "Crew presence is served as summary CARDS by GET /trips/:id/crew/map and deliberately carries no coordinates unless a live-share grant exists (§14.4). It is not a coordinate layer and is not synthesised into one here.",
-  );
+  // ── crew presence summaries (§14.1, §14.4, §10.2) ────────────────────────
+  // Read through the crew map — TripCrewLocationService.getCrewMap applies
+  // every §6.1 and §10 rule (this viewer's grant, ghost mode, hotel/home blur,
+  // the position's own clock) and puts `exactCoords` on a card only under an
+  // active live-share grant over a LIVE / RECENT position. The layer draws
+  // exactly those, re-checking the class, and summarises everyone else by
+  // reason; `crewPresenceReading` says so in the response. It lives in its own
+  // file with its flag (see TripMapCrewPresence.ts for why): off, nothing on
+  // this deployment produces the layer and that is `no_source` with the flag
+  // named — not an empty layer; a crew map that refused is `unread`.
+  const crewPresence = await readCrewPresenceLayer(sc, tripId, user.id, log);
+  const crewPresenceSummaries: Layer<MapPoint> = crewPresence.layer;
+  const crewPresenceReading: string = crewPresence.reading;
   // ── route chains (§14.1, §14.2) ──────────────────────────────────────────
   //
   // THIS LAYER SHIPPED AS `no_source` ON A FALSE PREMISE, AND THAT IS WORTH
@@ -489,6 +493,8 @@ export async function serveMapProjection(req: Request<{ tripId: string }>, res: 
     activePlanReading: "in_progress plans are active (2779's START_PLAN); the rest are scheduled — not removed and not cancelled; each point says which in meta.inProgress",
     /** §14.1 safety / logistics: which half of the layer was assembled, and why the other was not. */
     safetyLogisticsReading,
+    /** §14.1 crew presence: how many of the crew are drawn at a permitted coordinate, how many are summarised, and why (§14.4, §10.2). */
+    crewPresenceReading,
   });
 }
 

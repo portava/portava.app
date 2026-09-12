@@ -5,7 +5,6 @@ import { CachedImage } from './CachedImage.tsx';
 import { fallbackUriFor } from '../lib/visuals/fallbackAssets.ts';
 import { SharedVideoPlayer } from './ui/SharedVideoPlayer.tsx';
 import { router } from 'expo-router';
-import Svg, { Path } from 'react-native-svg';
 import {
   CalendarDays, User as UserIcon, Clock, MapPin, CheckCircle2, Circle as CircleIcon,
   CalendarPlus, UserPlus, Sparkles, Settings, Bookmark, Plus, ChevronRight, Plane,
@@ -29,28 +28,6 @@ import { HighlightViewer } from './HighlightViewer.tsx';
 import { AddToPlanSheet } from './AddToPlanSheet.tsx';
 import { useHighlightRingState } from '../hooks/useHighlightRingState.ts';
 import { deriveTripDisplayStatus, tripStatusLabel } from '../lib/tripStatus.ts';
-
-/* ── Progress ring (semicircle arc) ── */
-function ProgressRing({ pct }: { pct: number | null }) {
-  const r = 46, cx = 60, cy = 60;
-  const start = Math.PI;
-  // A null pct means the readiness read did not answer. The arc stays at the
-  // track (no filled sweep) and the label says so, rather than drawing an
-  // empty ring over "0%" — which reads as a measured, very bad score.
-  const end = Math.PI - ((pct ?? 0) / 100) * Math.PI;
-  const x1 = cx + r * Math.cos(start), y1 = cy - r * Math.sin(start);
-  const x2 = cx + r * Math.cos(end), y2 = cy - r * Math.sin(end);
-  const bgX = cx + r * Math.cos(0), bgY = cy - r * Math.sin(0);
-  return (
-    <View style={{ alignItems: 'center' }}>
-      <Svg width={120} height={70} viewBox="0 0 120 70">
-        <Path d={`M ${x1} ${y1} A ${r} ${r} 0 0 1 ${bgX} ${bgY}`} stroke={color.haze} strokeWidth="9" fill="none" strokeLinecap="round" />
-        <Path d={`M ${x1} ${y1} A ${r} ${r} 0 0 1 ${x2} ${y2}`} stroke={color.signal} strokeWidth="9" fill="none" strokeLinecap="round" />
-      </Svg>
-      <Text style={ring.pct}>{pct === null ? '—' : `${pct}%`}</Text>
-    </View>
-  );
-}
 
 /* ── Trip hero header ── */
 export function TripHero({ trip }: { trip: TripDetail }) {
@@ -107,13 +84,18 @@ export function TripHero({ trip }: { trip: TripDetail }) {
         <Action icon={<Settings size={18} color={color.ink} />} label="Trip Settings" onPress={() => router.push({ pathname: '/trip/edit', params: { id: trip.id } } as any)} />
       </View>
 
-      <View style={hero.progressCard}>
-        <Text style={hero.progressTitle}>Trip Progress</Text>
-        <ProgressRing pct={trip.progress} />
-        <Text style={hero.progressSub}>
-          {trip.progress === null
-            ? "We couldn't check this trip's readiness just now."
-            : 'Your trip is coming together!'}
+      {/* Trips spec §8 (census-trips TR142): readiness is an explanatory
+          projection, not a gamified truth score. This card was a semicircle
+          ring with a percentage in it — "Trip Progress 14%" — fed by the same
+          number TripReadinessCard showed. It now says what the server said:
+          the headline, then the seven checks. No ring, no percentage. */}
+      <View style={hero.progressCard} testID="trip-hero-readiness">
+        <Text style={hero.progressTitle}>Trip readiness</Text>
+        <Text style={hero.progressSub} testID="trip-hero-readiness-line">
+          {trip.readinessHeadline
+            ?? (trip.progress === null
+              ? "We couldn't check this trip's readiness just now."
+              : 'What is ready, and what is not:')}
         </Text>
         <View style={{ gap: space.sm, marginTop: space.md, alignSelf: 'stretch' }}>
           {trip.progressSteps.map((s) => (
@@ -987,9 +969,6 @@ export function TripPostsSection({ posts }: { posts: { id: string; city: string;
 
 /* ─── Styles ─────────────────────────────────────────────────────────────── */
 
-const ring = StyleSheet.create({
-  pct: { ...t.hero, color: color.ink, fontSize: 28, marginTop: -18 },
-});
 
 const hero = StyleSheet.create({
   wrap: { padding: space.lg, gap: space.md },
@@ -1012,9 +991,9 @@ const hero = StyleSheet.create({
   actions: { flexDirection: 'row', gap: space.sm, flexWrap: 'wrap' },
   action: { flexGrow: 1, flexBasis: '47%', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, backgroundColor: color.paperRaised, borderWidth: 1, borderColor: color.haze, borderRadius: radius.md, paddingVertical: space.md },
   actionText: { ...t.small, fontWeight: '700', color: color.ink },
-  progressCard: { backgroundColor: color.paperRaised, borderWidth: 1, borderColor: color.haze, borderRadius: radius.lg, padding: space.lg, alignItems: 'center' },
+  progressCard: { backgroundColor: color.paperRaised, borderWidth: 1, borderColor: color.haze, borderRadius: radius.lg, padding: space.lg, alignItems: 'flex-start' },
   progressTitle: { ...t.title, color: color.ink, fontSize: 18, alignSelf: 'flex-start' },
-  progressSub: { ...t.small, color: color.mute, fontWeight: '600', marginTop: 4 },
+  progressSub: { ...t.small, color: color.ink, fontWeight: '600', marginTop: 4 },
   stepRow: { flexDirection: 'row', alignItems: 'center', gap: space.sm },
   stepText: { ...t.body, color: color.mute },
   stepDone: { color: color.ink },

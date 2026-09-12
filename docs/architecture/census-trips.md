@@ -23,12 +23,12 @@ preserved in §36.1 as the record of that measurement.
 | Measure | Value |
 | --- | --- |
 | **Denominator (testable requirements)** | **451** |
-| BUILT-AND-CORRECT | **308** |
-| BUILT-BUT-WRONG | **118** |
-| NOT-BUILT | **24** |
+| BUILT-AND-CORRECT | **311** |
+| BUILT-BUT-WRONG | **116** |
+| NOT-BUILT | **23** |
 | CANNOT-VERIFY | **1** |
-| **CONSTRUCTED%** = (C+W)/451 | **426 / 451 = 94.5 %** |
-| **CORRECT%** (raw) = C/451 | **308 / 451 = 68.3 %** |
+| **CONSTRUCTED%** = (C+W)/451 | **427 / 451 = 94.7 %** |
+| **CORRECT%** (raw) = C/451 | **311 / 451 = 69.0 %** |
 
 > **RESTATED 2026-09-11 (§38): 89 → 87 CORRECT, 127 → 129 WRONG.** §38 re-derived
 > 39 of the C rows against the code and **two did not hold**, both for the same
@@ -287,6 +287,17 @@ preserved in §36.1 as the record of that measurement.
 > freshness re-read on the crew card (TR342), and §17.3's rescue entry under
 > §17.2's switch (TR318). Five W → C. No server change; the ceiling is
 > §41.3's.
+
+> **RESTATED 2026-09-12 (§58): 308 → 311 CORRECT, 118 → 116 WRONG,
+> 24 → 23 NOT-BUILT. CONSTRUCTED 94.5 % → 94.7 %, CORRECT 68.3 % → 69.0 %.**
+> §58 gives the map projection's crew layer a producer — the crew map's own
+> permitted coordinate, drawn only under an active grant over a LIVE / RECENT
+> position and re-checked where it is drawn (TR281) — puts freshness on the
+> pin's ring and its accessibility label and stops the crew tab calling a
+> grant "live" (TR166), and makes readiness an explanation on the wire and on
+> both screens, with no percentage and no trend (TR142). Two W → C, one N → C.
+> No migration; the crew layer's ceiling is `trip_crew_map_enabled`'s
+> production value.
 | **CORRECT% (spec-attributable)** | **WITHDRAWN — not measured. See §36.4** |
 | CANNOT-VERIFY share | **1 / 451 = 0.2 %** |
 
@@ -480,7 +491,7 @@ ids named in that row; each id remains individually addressable.
 | TR6 | Trips owns history (immutable domain events, decisions, snapshots, replay references, durable outcomes) | **N** | No events (§4.2), no decision ledger (§21.2), no snapshots (§22.1), no replay (§22.2), no outcomes (§20.1). `trip_activity_log` (`0079_trip_sub_tables.sql:240-247`) is a best-effort audit line, not domain history — see TR58. |
 | TR7 | Trips does not become a booking engine | **C** | `0172_trip_reservations.sql:1-6` stores references and operational facts only; no payment column, no provider API, no inventory. The nearest booking system is Rent-a-Buddy and it is a separate domain. |
 | TR8 | Trips does not become a payment ledger | **C** | `trip_budget` (`0079`) holds planned amounts; `0183_budget_fx_conversion.sql` converts currency for display. No ledger, no transaction table, no settlement. |
-| TR9 | Trips does not become a generic messaging system | **C** | `app/trip/chat.tsx` routes into the existing Telegraph/messaging domain (`src/services/messaging.ts` `openTripChat`, used at `TripPage.tsx:211#openTripChat`); Trips stores no messages. |
+| TR9 | Trips does not become a generic messaging system | **C** | `app/trip/chat.tsx` routes into the existing Telegraph/messaging domain (`src/services/messaging.ts` `openTripChat`, used at `TripPage.tsx:193#openTripChat`); Trips stores no messages. |
 | TR10 | Trips does not become a global location tracker | **C** | `lib/tripCrewLocation.ts:1-16` — exact coordinates are released only under an *active live-share grant* and are withheld anyway when hotel blur is on (`:320#resolveExactCoords` `resolveExactCoords`); ghost mode is absolute (`:217-218#TRIP_PRESENCE_GHOST`); the whole surface is behind `trip_crew_map_enabled`, seeded false (`0041_trip_crew_location.sql:63`). |
 | TR11 | Specialist domains retain ownership of regulated or sensitive state | **C** | Safety lives in `services/safeReturn/` with its own tables (`0167_safety_ddl_reconcile.sql:21`), documents in `trip_documents`, identity in `services/identityVerification/`, payments outside Trips entirely. Trips references, it does not absorb. |
 
@@ -801,7 +812,7 @@ PHOTO, EXPLORE, PLAY, LEARN, NIGHTLIFE, TRANSIT) appear nowhere as a vocabulary.
 | TR257 | Layer: active plans | **W** | `GET /trips/:tripId/plan/map` returns plan items; "active" cannot be expressed (no IN_PROGRESS, TR46). |
 | TR258 | Layer: confirmed commitments | **N** | TR122. |
 | TR259 | Layer: saved ideas | **C** | `trip_saved_places` (TR25), served at `routes/trips-expansion.ts:2085`, rendered by `src/hooks/useTripSavedPlaces.ts` on the trip page. |
-| TR260 | Layer: crew presence summaries | **C** | `GET /trips/:tripId/crew/map` (`routes/tripCrewLocation.ts:233#crew/map`) returns per-member summary cards with no coordinates unless a live-share grant exists — a summary layer in the spec's sense; `CrewMapSection.tsx:37-53#DensityMap` renders it as a density map with no SDK and no exact positions. |
+| TR260 | Layer: crew presence summaries | **C** | `GET /trips/:tripId/crew/map` (`routes/tripCrewLocation.ts:233#crew/map`) returns per-member summary cards with no coordinates unless a live-share grant exists — a summary layer in the spec's sense; `CrewMapSection.tsx:38-54#DensityMap` renders it as a density map with no SDK and no exact positions. |
 | TR261 | Layer: route chains | **W** | `route_plans` + `route_stops` + `route_legs` (`0058_trip_flow.sql:9,57,102`) are a chain and are a **parallel itinerary system**: `route_plans.trip_id` is nullable (`:12`), ~~the RLS policy is owner-only (`:29` `route_plans_owner_select`), so a trip's crew cannot see the trip's own route chain~~ — **STRUCK, see §32**: `route_plans_member_select` (`:32`), `route_stops_member_select` (`:85`) and `route_legs_member_select` (`:127`) all exist and RLS policies are a UNION. The row stays W for TR437's actual reason — a parallel itinerary attached through a nullable `trip_id` — and it is now a live layer in the §14.1 projection. See TR437. |
 | TR262 | Layer: meetup points | **W** | `trip_plan_items.category = 'meeting_point'` (`0010:11`) is a label on an ordinary item; there is no meetup object with participants, arrival state or an alternative set. |
 | TR263 | Layer: live opportunities | **N** | §13.3. |
@@ -818,7 +829,7 @@ PHOTO, EXPLORE, PLAY, LEARN, NIGHTLIFE, TRANSIT) appear nowhere as a vocabulary.
 | TR279 | §14.3 The service returns explanation and alternative candidates rather than a magic coordinate | **N** | No service. Worth noting the *pattern* exists elsewhere and would have been reusable: `route_plans.compass_explanation` (`0058:20-21`) caches the pipeline's explanation of stop order, which is exactly the shape §14.3 asks for. |
 | TR280 | §14.4 Sensitive anchors (hotel/private lodging) never appear in public or broad social projections | **C** | `src/test/tripPrivacy.test.ts:5-8` asserts the hotel name is absent from `toPrivateTripPreview`, and `0010_trip_plan.sql:22-23` forbids coordinates on the plan-item label outright. |
 | TR281 | §14.4 Traveler pins obey presence visibility and freshness contracts | **W** | Visibility yes and rigorously (`lib/tripCrewLocation.ts:119-152`). Freshness no — TR165 is exactly this failure: a pin under a live grant is drawn as live regardless of the observation's age. |
-| TR282 | §14.4 Clusters and aggregate counts may be used where exact identity/location is unnecessary | **C** | `CrewMapSection.tsx:37-53#DensityMap` `DensityMap` renders rings and counts from status labels with **no coordinates at all** and no map SDK — the aggregate form the rule permits, chosen as the default rather than as a fallback. |
+| TR282 | §14.4 Clusters and aggregate counts may be used where exact identity/location is unnecessary | **C** | `CrewMapSection.tsx:38-54#DensityMap` `DensityMap` renders rings and counts from status labels with **no coordinates at all** and no map SDK — the aggregate form the rule permits, chosen as the default rather than as a fallback. |
 
 ### §15 Transport, Booking and External References
 
@@ -3490,7 +3501,7 @@ carried a freshness (TR368). No metric measured read-model lag (TR394).
   and `planItemsTruncated` said rather than guessed (cap + 1 rows are read).
 - `routes/tripProjections.ts` — §19.2's paths: `/timeline`
   (`:85#timeline`), `/map` (`:253#map` — calls
-  `serveMapProjection`, `routes/tripMapProjection.ts:80#serveMapProjection`,
+  `serveMapProjection`, `routes/tripMapProjection.ts:81#serveMapProjection`,
   so the two paths cannot serve two projections), `/crew` (`:261#crew`),
   `/context` (`:303#context`), `/safety` (`:327#safety`);
   registered at `routes/index.ts:165#tripProjectionsRouter`. Every
@@ -3499,7 +3510,7 @@ carried a freshness (TR368). No metric measured read-model lag (TR394).
   (`:108#TRIP_PROJECTION_UNAVAILABLE`), and a flag-off crew
   projection is served visibly degraded with `freshness: "unattributable"`
   (`:275#featureEnabled`). The map projection's own response
-  now spreads the envelope too (`routes/tripMapProjection.ts:456#liveEnvelope`).
+  now spreads the envelope too (`routes/tripMapProjection.ts:460#liveEnvelope`).
   `/plan`, `/plan/map`, `/crew/map`, `/map-projection` keep their shapes.
 - **Consumers.** `compass/CompassTools.ts:639#toolGetCurrentTrip`
   builds the context projection (`:521#buildTripCompassProjection`)
@@ -4549,7 +4560,7 @@ production baseline through the chain: 39 database tests, 0 skipped.
   `opportunities` layer, `no_source` since §40.3
   (`services/trips/TripTodayProjection.ts:239#opportunities = okLayer`), and as the map's
   `liveOpportunities` layer, `no_source` since §40.4
-  (`routes/tripMapProjection.ts:372#§14.1 live opportunities`).
+  (`routes/tripMapProjection.ts:376#§14.1 live opportunities`).
 - **2786 `RECORD_OPPORTUNITY_CHANGE` → `trip.opportunities_changed`** —
   `src/migrations/2786_trip_kernel_opportunity_events.sql:63#WHEN 'RECORD_OPPORTUNITY_CHANGE' THEN`: an
   engine-capability command whose payload is the §13.3 contract, refused as
@@ -4686,7 +4697,7 @@ route writes goes through the kernel as a command that already exists
   contributes 0, and the term says so. The reads that feed it are soft:
   a failed one is named in `urgencyInputsUnread`, the decisions are still
   served.
-- **§8.3 readiness by day and by stage** — `lib/tripReadiness.ts:264#groupReadinessByTime`
+- **§8.3 readiness by day and by stage** — `lib/tripReadiness.ts:309#groupReadinessByTime`
   groups the items under their `dueAt` day and under 2760's stages; the
   route reads `trip_stages` under the gate that owns them and passes them
   in (`routes/tripReadiness.ts:242#trip_stages`); `byStage` is `null`, not
@@ -4929,11 +4940,11 @@ re-derives and cites rather than argues.
   when they opted to notify the crew, placed at the plan each guards (a
   private anchor's plan yields no point, §14.4), plus 2782's transport
   segment endpoints through `public.places` under the gate that owns that
-  table (`routes/tripMapProjection.ts:396#safe_return_sessions`,
-  `routes/tripMapProjection.ts:442#transport_endpoint`); a layer is one status,
+  table (`routes/tripMapProjection.ts:400#safe_return_sessions`,
+  `routes/tripMapProjection.ts:446#transport_endpoint`); a layer is one status,
   so `safetyLogisticsReading` on the response says which half was assembled
-  (`routes/tripMapProjection.ts:393#safetyLogisticsReading`;
-  `src/test/tripMapProjection.test.ts:460#guards,`). One layer has no producer
+  (`routes/tripMapProjection.ts:395#safetyLogisticsReading`;
+  `src/test/tripMapProjection.test.ts:581#guards,`). One layer has no producer
   now: crew presence summaries.
 - **§20.2 the two deferred steps** — `close_operational_decision_tasks` is
   actionable when pending tasks exist and the service issues
@@ -5121,7 +5132,7 @@ with every database suite green; no new flag, no new table.
   `src/test/tripKernelSensitiveDomain.test.ts:47#TRIP_COMMAND_SENSITIVE_DOMAIN`).
 - **§14.1 "active" means in progress now** — 2779 gave plans
   `in_progress`; the map's active-plans layer says which points are
-  (`routes/tripMapProjection.ts:223#inProgress`) and `activePlanReading`
+  (`routes/tripMapProjection.ts:224#inProgress`) and `activePlanReading`
   says the reading changed. The write-path inventory moved one line for
   this section — the closeout is an `UPDATE_RISK` issuer — and CI held the
   document to it.
@@ -5712,7 +5723,7 @@ and the column §17.4 needed.
   `test/tripTodayProjection.test.ts:219#kind === "regroup"` pin the flip and
   the flip back; `test/tripMeetingCheckpointsRoute.test.ts:82#chosenBy` pins
   the route.
-- **The map's meetup layer (TR262)** — `routes/tripMapProjection.ts:246#kind: "meeting_checkpoint"`:
+- **The map's meetup layer (TR262)** — `routes/tripMapProjection.ts:247#kind: "meeting_checkpoint"`:
   an open checkpoint is a `meeting_checkpoint` point in the `meetupPoints`
   layer in its own right, read under the operational gate (whose probe now
   names 2794's tables), beside the plan-item label the layer already had.
@@ -6201,3 +6212,148 @@ The bundle is issued only where `TRIP_OFFLINE_BUNDLE_SECRET` is set and
 the replay and the rescue post through the kernel behind
 `trip_kernel_enabled` (FALSE); on today's deployment the card says "not
 issued here" and the entry says "not declared". Nothing here is deployed.
+
+## 58. Traveler pins drawn only under a grant over a current fix, and readiness said in words
+
+**Read against the branch `claude/sweet-fermat-fmx7up`.** Three rows the
+census had held for a long time, each for a reason that had stopped being
+true or could be made false with code over tables production has. TR281
+(§14.4) was W because *"a pin under a live grant is drawn as live
+regardless of the observation's age"*; §40.6 fixed that on the crew card
+(TR165 → C) and then held TR281 because *"the map projection's crew layer
+is still `no_source`"*. TR166 (§10.2's marker treatment) was N — *"Neither
+… no timestamp and no accessibility label for recency"* — and §57 held it
+because *"the map's pins were not re-read"*. TR142 (§8) was W from the
+first read: *"Both halves are present and they fight"* — the gamified
+score and the explanation. No migration; every table read here is in
+production; the crew layer sits behind `trip_crew_map_enabled`, a
+production flag (`0041:63`).
+
+### 58.1 What was built, and where
+
+- **The crew layer of the map projection has a producer**
+  (`services/trips/TripMapCrewPresence.ts:38#export async function readCrewPresenceLayer(`).
+  `crewPresenceSummaries` shipped as `no_source` on a premise that was
+  true when written — synthesising a coordinate from an area label would be
+  the §14.4 violation — and stopped being the whole story once §40.6 gave
+  the crew map a coordinate it is entitled to publish: `exactCoords` on a
+  card only under an active live-share grant to this viewer, hotel/home
+  blur off, over a position judged LIVE or RECENT on its own clock. The
+  layer now reads through `getCrewMap` (every §6.1 / §10 rule applied
+  there, nothing here touches a position row) and
+  `services/trips/TripMapProjection.ts:262#export function crewPresencePoints(`
+  turns exactly those cards into points — re-checking the class where the
+  coordinate is drawn (`services/trips/TripMapProjection.ts:225#export const CREW_POINT_CURRENT_CLASSES`),
+  so a card that carried a coordinate over a LAST_KNOWN / OFFLINE position
+  is refused, named, and counted as `stale_presence_render_attempt_total`
+  at a second emission point (`services/trips/TripMapCrewPresence.ts:59#incrementTripMetric("stale_presence_render_attempt_total"`).
+  Everyone else on the crew is summarised by reason — hidden, area only
+  (no grant to this viewer), under a grant with no publishable position —
+  and `crewPresenceReading` says so on the response
+  (`routes/tripMapProjection.ts:306#const crewPresence = await readCrewPresenceLayer(`).
+  Flag off: `no_source` with the flag named, because nothing on that
+  deployment produces the layer; a crew map that refused: `unread`, by the
+  input it refused on. The read lives in its own file with its flag for the
+  reason `TripPulseCrewPresence.ts` states in its header.
+- **The client's map draws them**
+  (`travel-buddy-standalone/src/features/map/trip/tripMapSources.ts:133#export function composeCrewPositions(`).
+  `tripMapSources.ts` said in its header that the server "declined
+  precision here" and left `source.crew` empty. It never had; this
+  client's `CrewMemberCard` type did not carry the field
+  (`travel-buddy-standalone/src/services/tripCrewLocation.ts:44#exactCoords?:`),
+  so the coordinate the server issued was dropped at the type. The
+  composer now takes a pin only from a card that is not hidden, whose live
+  share to this viewer is active, that carries finite `exactCoords`, AND
+  whose `freshnessClass` is LIVE / RECENT — the server's verdict, checked
+  again — and gives it `precise_temporary` (Map spec §23's "permitted
+  temporary precise", a ceiling `tripToMapObjects` can only tighten), the
+  Map's freshness state, `observedAt`, and the presence line as its label.
+  `crewAreas` keeps every shown member as text, pinned or not.
+- **The pin exposes freshness twice**
+  (`travel-buddy-standalone/src/components/map/EntityMarkers.tsx:331#function pinFreshnessTreatment(`):
+  the friend / crew marker's ring is the solid signal colour for a live
+  position, the layer colour for a recent one, and dimmed and dashed for a
+  stale or unknown one — kept, as §10.4 says last-known data may be, never
+  drawn like a live one — and the marker's `Pressable`, which had no label
+  at all (`travel-buddy-standalone/src/components/map/EntityMarkers.tsx:202#accessibilityLabel?: string;`),
+  now speaks the name and the Map's own freshness words ("Mai, Live";
+  "Mai, Last confirmed 3h ago").
+- **The crew tab stops calling a grant "live"**
+  (`travel-buddy-standalone/src/features/trips/crew/presence.ts:30#export function presenceIsCurrent(`).
+  `CrewMemberCard.tsx` wrote "Live" from `statusLabel === 'live_sharing_active'`
+  — a fact about the grant — and the density map counted the same. One
+  module now answers for the three surfaces from the server's class, and
+  never recomputes it from `observedAt` (a fast device clock would make a
+  stale row live): the badge reads "Live" only under LIVE / RECENT and
+  "Sharing · last known" otherwise
+  (`travel-buddy-standalone/src/components/tripCrew/CrewMemberCard.tsx:101#const positionIsCurrent = !isBlockedByViewer && presenceIsCurrent(member);`),
+  the live dot follows it, a presence line carries the class and its age,
+  the row's accessibility label says the same words, and the density map
+  puts a share over a stale fix in its own "Last known" bubble
+  (`travel-buddy-standalone/src/features/trips/crew/presence.ts:92#export function crewPresenceBuckets<`).
+  A card with no class from the server is not current — nothing here says
+  "Live" without the server having said so.
+- **Readiness explained, on the wire and on both screens**
+  (`lib/tripReadiness.ts:390#export function explainReadiness(`). The
+  summary gains `explanation` (`lib/tripReadiness.ts:76#export interface ReadinessExplanation`):
+  a headline built mechanically from the same items the counts are —
+  critical items first, by their own titles; otherwise the categories that
+  need action or are incomplete, in words; otherwise that the checks are
+  ready — and always which checks could not be made, because five ready of
+  seven is not "ready"; per category, why it reads as it does (the worst
+  item's own words) and the item to act on first. It carries no percentage
+  and no trend. `score` stays what it is — the mechanical share persisted
+  to `trip_readiness_snapshots` and the input to `previousScore` — and is
+  documented as not a gauge. On the client the card's 36-point percentage,
+  its green / amber / red colour and its "+8 % since yesterday" arrow are
+  gone; the header is the headline and a count said as a count
+  (`travel-buddy-standalone/src/components/trip/TripReadinessCard.tsx:148#function ExplanationHeader(`),
+  each category row carries its `because`, and the trip hero's semicircle
+  ring — "Trip Progress · 70 %", fed by the same number — is the headline
+  and the seven checks (`travel-buddy-standalone/src/components/TripPage.tsx:92#testID="trip-hero-readiness"`).
+  An older server that sends no explanation gets the counts and the rows;
+  the client does not write a sentence the server did not.
+- **Also in this commit — §53's 2795, corrected on the chain.** CI's
+  throwaway-database job had refused 2795 since §53: *"expected 41 family
+  assignments after 2794, found 44"*. The 41 was read off a local replica
+  that had applied 2779 before §43 amended it (2779 declares five families
+  since `a63d5bf5b`, not two); the chain replayed from the baseline — CI's
+  job, and now a second local replica built the same way — says 44, and
+  the pin and the rollback's pin say 44 with the reason written beside
+  them. The same replay found the one thing 2795 had changed for a caller
+  that never asked about plans: a commitment override's recorded
+  `temporal_conflict` gained `plan_id: null`, and 2779's suite pins that
+  shape. `plan_id` is now on the result only when the override named a
+  plan. Rolled back and re-applied twice on the fresh replica; the 2779
+  and 2795 suites 11 / 11, every database suite on it green.
+- **Pinned.** The projection suite grows five cases
+  (`src/test/tripMapProjection.test.ts:477#crewPresencePoints refuses a coordinate over a non-current class`),
+  the readiness suite four pure and two route assertions
+  (`src/test/tripReadiness.test.ts:1030#§8 readiness explained, never scored`),
+  the client two node suites and four jest suites (the pin, the crew card,
+  the readiness card, the hero). Six mutations seen red before the commit:
+  the class check dropped in `crewPresencePoints`; the flag ignored by the
+  route; the composer ignoring the class; the card treating every grant as
+  current; the pin treating everything as live; the explanation silent
+  about the checks it could not make.
+
+### 58.2 Row moves
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| TR281 §14.4 Traveler pins obey presence visibility and freshness contracts | W | **C** | Visibility: the pin exists only where the crew map found an active grant to this viewer, and the crew map is the only producer. Freshness: a coordinate reaches the layer only over a LIVE / RECENT position, checked by the card, by the projection, and by the client's composer; a stale one is summarised, named and counted. |
+| TR166 marker visual treatment and accessible text expose freshness | N | **C** | The marker's ring says live / recent / stale-or-unknown and its accessibility label speaks the Map's freshness words with the age; the crew tab's card, dot, line, label and density map say the server's class, never the grant. |
+| TR142 Readiness is an explanatory projection, not a gamified truth score | W | **C** | The explanation is on the wire, built from the items, with no number out of 100 and no trend; both screens render it and neither renders a percentage, a colour-coded score or a day-over-day arrow. The mechanical share survives only as the snapshot count. |
+
+**Rows looked at that did not move:** TR260 (C — still a summary layer:
+everyone without a grant is counted, never placed), TR399 (C — the metric
+has a second emission point), TR165 (C), TR359 (C), TR342 (C), TR440 (W),
+TR319 (W — the Compass brief and the search tools were not read against
+the switch here), TR439 (W — `crew/` has a file of its own now,
+`presence.ts`, and the card and the service still did not move).
+
+### 58.3 The ceiling
+
+`trip_crew_map_enabled` is in production and seeded FALSE (`0041:63`):
+the flag's value is the crew layer's ceiling, as it is the crew map's.
+Readiness sits behind `trip_readiness_enabled`. Nothing here is deployed.

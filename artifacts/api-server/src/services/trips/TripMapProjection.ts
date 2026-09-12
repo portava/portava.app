@@ -198,3 +198,116 @@ export function coordsOf(lat: unknown, lng: unknown): { lat: number; lng: number
     ? { lat, lng }
     : null;
 }
+
+// ── crew presence (§14.1 "crew presence summaries", §14.4, §10.2) ──────────────
+//
+// THE LAYER THAT SHIPPED AS `no_source` ON A TRUE PREMISE THAT STOPPED BEING ONE
+// ================================================================================
+// Its reason string said crew presence "deliberately carries no coordinates
+// unless a live-share grant exists (§14.4). It is not a coordinate layer and is
+// not synthesised into one here." Both halves were right, and the second was
+// the point: synthesising a coordinate from an area label would be the §14.4
+// violation. What changed is that the crew map now HAS a coordinate it is
+// entitled to publish — lib/tripCrewLocation.ts puts `exactCoords` on a card
+// only under an active live-share grant to this viewer, with hotel/home blur
+// off, over a position judged LIVE or RECENT on its own clock (census-trips
+// TR165). A point that arrives through that door is not synthesised; it is the
+// permitted temporary precise position §14.4 allows. Everyone else on the
+// crew stays a summary: counted, never placed.
+//
+// ENFORCED, NOT TRUSTED. The card promises exact coordinates only over a
+// current position; this function checks the class again and refuses a card
+// whose coordinates outlive its currency. The refusal is reported (and the
+// route counts it) rather than silently dropped, because a card in that state
+// is a defect upstream and the projection must not paper over it.
+
+/** The two §10.2 classes a coordinate may be drawn as current under. */
+export const CREW_POINT_CURRENT_CLASSES: ReadonlySet<string> = new Set(["LIVE", "RECENT"]);
+
+/** What this layer reads off a crew card — a subset of lib/tripCrewLocation's CrewMemberCard. */
+export interface CrewPresenceCard {
+  userId: string;
+  name: string | null;
+  handle: string | null;
+  statusLabel: string;
+  ghostMode: boolean;
+  liveShareActive: boolean;
+  liveShareExpiresAt: string | null;
+  exactCoords?: { lat: number; lng: number } | null;
+  freshnessClass: string;
+  observedAt: string | null;
+  confidence: string;
+  source: string | null;
+  presenceReason: string | null;
+}
+
+export interface CrewPresenceLayerBuild {
+  points: MapPoint[];
+  /** Cards read; every one is either a point or summarised. */
+  members: number;
+  /** Cards without a permitted coordinate, by the reason they have none. */
+  summarised: { hidden: number; noGrant: number; noPosition: number; refusedStale: number };
+  /** The cards refused for a coordinate over a non-current class — an upstream defect, reported. */
+  refusedStale: string[];
+}
+
+/**
+ * The crew presence layer's points, from the crew map's cards.
+ *
+ * A card becomes a point only when it carries `exactCoords` (which the crew
+ * map issues only under an active grant) AND its `freshnessClass` is LIVE or
+ * RECENT — the check the card already made, made again where the coordinate
+ * is about to be drawn. Everything else is summarised by reason.
+ */
+export function crewPresencePoints(cards: readonly CrewPresenceCard[]): CrewPresenceLayerBuild {
+  const points: MapPoint[] = [];
+  const summarised = { hidden: 0, noGrant: 0, noPosition: 0, refusedStale: 0 };
+  const refusedStale: string[] = [];
+  for (const c of cards) {
+    if (c.ghostMode || c.presenceReason !== null || c.statusLabel === "location_hidden" || c.statusLabel === "not_shared") {
+      summarised.hidden += 1;
+      continue;
+    }
+    if (!c.liveShareActive) { summarised.noGrant += 1; continue; }
+    const coords = c.exactCoords ? coordsOf(c.exactCoords.lat, c.exactCoords.lng) : null;
+    if (!coords) { summarised.noPosition += 1; continue; }
+    if (!CREW_POINT_CURRENT_CLASSES.has(c.freshnessClass)) {
+      // §10.2: a coordinate over a LAST_KNOWN / OFFLINE position is not drawn
+      // as current — and the card should not have carried it. Refused here,
+      // named for the route to count.
+      summarised.refusedStale += 1;
+      refusedStale.push(c.userId);
+      continue;
+    }
+    points.push({
+      id: c.userId,
+      kind: "crew_member",
+      lat: coords.lat,
+      lng: coords.lng,
+      label: c.name ?? c.handle ?? null,
+      meta: {
+        freshnessClass: c.freshnessClass,
+        observedAt: c.observedAt,
+        confidence: c.confidence,
+        source: c.source,
+        liveShareExpiresAt: c.liveShareExpiresAt,
+        statusLabel: c.statusLabel,
+      },
+    });
+  }
+  return { points, members: cards.length, summarised, refusedStale };
+}
+
+/** The sentence the response carries for this layer: who is drawn, who is summarised, and why. */
+export function crewPresenceReading(b: CrewPresenceLayerBuild): string {
+  const s = b.summarised;
+  const parts = [
+    `${b.members} crew member(s) read`,
+    `${b.points.length} drawn at exact coordinates under an active live-share grant over a LIVE / RECENT position`,
+    `${s.hidden} hidden or not sharing`,
+    `${s.noGrant} sharing an area only (no live-share grant to this viewer)`,
+    `${s.noPosition} under a grant with no publishable position`,
+  ];
+  if (s.refusedStale > 0) parts.push(`${s.refusedStale} REFUSED: a coordinate over a non-current position (§10.2) — counted as stale_presence_render_attempt_total`);
+  return parts.join("; ");
+}

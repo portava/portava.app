@@ -386,6 +386,8 @@ function TripDetailScreen() {
     // fallback when readiness is genuinely OFF — nothing writes that column,
     // so on a failed read it would have shown a confident 0%.
     progress: readiness ? readiness.score : (readinessUnavailable ? null : (realTrip.progress ?? 0)),
+    // §8: the hero renders this sentence, not the number above.
+    readinessHeadline: readiness?.explanation?.headline ?? null,
     // The hero's checklist was hard-coded to [] — it never rendered a single step.
     // Same order/labels as CATEGORIES in TripReadinessCard.tsx and
     // READINESS_CATEGORIES in api-server/src/lib/tripReadiness.ts.

@@ -837,10 +837,17 @@ export interface TripDetail {
   availabilityLabel?: string;
   coverUrl: string;
   coverMediaType?: 'image' | 'video' | null;
-  /** Percent complete, or NULL when readiness could not be read. Null is not
-   *  0: `trips.progress` is a column nothing writes, so falling back to it on a
-   *  failed readiness read painted a confident "0% ready". */
+  /** The readiness count the server keeps for its snapshot table, or NULL
+   *  when readiness could not be read. Null is not 0: `trips.progress` is a
+   *  column nothing writes, so falling back to it on a failed readiness read
+   *  painted a confident "0% ready". NOT RENDERED as a percentage or a ring
+   *  anywhere (Trips spec §8, census-trips TR142) — the hero shows
+   *  `readinessHeadline` and `progressSteps`. */
   progress: number | null;
+  /** §8: the server's one-sentence explanation of what stands between the
+   *  trip and ready. Null when readiness is off, unavailable, or the server
+   *  sent no explanation. */
+  readinessHeadline?: string | null;
   progressSteps: TripProgressStep[];
   nextUpPlanId?: ID | null;
   timeline: TimelineDay[];

@@ -36,7 +36,7 @@ import { _setTestServiceClient } from "../lib/supabase.js";
 import {
   assertNoPrivateLeak, layerCensus, coordsOf, isAttributable,
   PROJECTION_LAYERS, PrivateAnchorLeak,
-  ok, unread, noSource, type TripMapProjection,
+  ok, unread, noSource, crewPresencePoints, crewPresenceReading, type TripMapProjection,
 } from "../services/trips/TripMapProjection.js";
 
 const OWNER_ID = "11111111-1111-1111-1111-111111111111";
@@ -59,6 +59,7 @@ function makeClient(tables: Record<string, Row[]>, errorOn: string[] = []) {
       if (errorOn.includes(table)) {
         const f: any = {
           select: () => f, eq: () => f, in: () => f, is: () => f, order: () => f, limit: () => f,
+          neq: () => f, gt: () => f, gte: () => f, lt: () => f, lte: () => f, or: () => f,
           maybeSingle: async () => ({ data: null, error: { message: `${table} unavailable` } }),
           then: (onF: any, onR: any) =>
             Promise.resolve({ data: null, error: { message: `${table} unavailable` } }).then(onF, onR),
@@ -76,6 +77,17 @@ function makeClient(tables: Record<string, Row[]>, errorOn: string[] = []) {
         eq: (c: string, v: any) => { filters.push((r) => r[c] === v); return chain; },
         in: (c: string, v: any[]) => { filters.push((r) => v.includes(r[c])); return chain; },
         is: (c: string, v: any) => { filters.push((r) => (r[c] ?? null) === v); return chain; },
+        neq: (c: string, v: any) => { filters.push((r) => r[c] !== v); return chain; },
+        gt: (c: string, v: any) => { filters.push((r) => r[c] > v); return chain; },
+        gte: (c: string, v: any) => { filters.push((r) => r[c] >= v); return chain; },
+        lt: (c: string, v: any) => { filters.push((r) => r[c] < v); return chain; },
+        lte: (c: string, v: any) => { filters.push((r) => r[c] <= v); return chain; },
+        // PostgREST's `a.eq.x,b.eq.y` — enough for lib/blocks' one call.
+        or: (expr: string) => {
+          const alts = expr.split(",").map((a) => a.split(".eq."));
+          filters.push((r) => alts.some(([c, v]) => String(r[c]) === v));
+          return chain;
+        },
         order: () => chain, limit: () => chain,
         maybeSingle: async () => { single = true; return settle(); },
         single: async () => { single = true; return settle(); },
@@ -351,13 +363,15 @@ describe("§14.2 route chains — the layer that shipped as no_source on a false
 });
 
 describe("§14.1 — the layers with no producer say so", () => {
-  it("one layer is no_source, with a reason naming the actual obstacle; live opportunities (§13) and safety / logistics (§17.4, §7.4) have producers now", async () => {
+  it("crew presence is no_source ONLY while trip_crew_map_enabled is off, with the flag named; live opportunities (§13) and safety / logistics (§17.4, §7.4) have producers", async () => {
     install({});
     const r = await get();
     for (const key of ["crewPresenceSummaries"]) {
       assert.equal(r.body[key].status, "no_source", key);
       assert.ok(r.body[key].reason.length > 40, `${key}'s reason is not an explanation`);
+      assert.match(r.body[key].reason, /trip_crew_map_enabled is off/);
     }
+    assert.equal(r.body.crewPresenceReading, "not read: trip_crew_map_enabled is off");
     assert.equal(r.body.safetyPoints.status, "ok"); assert.equal(typeof r.body.safetyLogisticsReading, "string");
     // And route chains is NOT one of them any more — nor, since §13, live opportunities:
     // here the operational-projections gate is off, so the layer is UNREAD with the reason.
@@ -372,6 +386,113 @@ describe("§14.1 — the layers with no producer say so", () => {
     assert.equal(r.body.savedIdeas.status, "unread");
     assert.equal(r.body.crewPresenceSummaries.status, "no_source");
     assert.notEqual(r.body.savedIdeas.status, r.body.crewPresenceSummaries.status);
+  });
+});
+
+// ── §14.1 crew presence — the layer with a producer now (§14.4, §10.2) ──────
+//
+// The crew map (TripCrewLocationService.getCrewMap → lib/tripCrewLocation's
+// buildCrewCard) puts exact coordinates on a card only under an active
+// live-share grant to the viewer over a LIVE / RECENT position. The projection
+// draws exactly those, re-checking the class, and summarises everyone else.
+const CREW_ID = "44444444-4444-4444-4444-444444444444";
+const NOW = Date.now();
+const iso = (ms: number) => new Date(ms).toISOString();
+const crewMember = () => ({ trip_id: TRIP_ID, user_id: CREW_ID, status: "accepted", role: "member" });
+const crewProfile = () => ({ id: CREW_ID, display_name: "Mai", name: null, full_name: null, username: "mai", avatar_url: null });
+const position = (o: Row = {}) => ({
+  user_id: CREW_ID, city: "Lisbon", district: "Alfama", country: "PT",
+  updated_at: iso(NOW - 60_000), last_known_at: iso(NOW - 2 * 60_000),
+  lat: 38.7139, lng: -9.1334, source: "gps", accuracy_meters: 12, ...o,
+});
+const grant = (o: Row = {}) => ({
+  id: "ls1", trip_id: TRIP_ID, user_id: CREW_ID, status: "active", visibility_level: "nearby",
+  expires_at: iso(NOW + 30 * 60_000), allowed_member_ids: [OWNER_ID], ...o,
+});
+const crewTables = (o: Record<string, Row[]> = {}) => ({
+  feature_flags: [{ flag: "trip_crew_map_enabled", enabled: true }],
+  trip_members: [...crew, crewMember()],
+  profiles: [crewProfile()],
+  profile_privacy_settings: [{ user_id: CREW_ID, show_real_name: true }],
+  trip_crew_location_preferences: [], location_preferences: [], plan_checkins: [],
+  safe_return_sessions: [], blocks: [],
+  user_location_state: [position()],
+  trip_crew_location_sessions: [grant()],
+  ...o,
+});
+
+describe("§14.1 crew presence — drawn only through the crew map's grant, over a current position (§14.4, §10.2)", () => {
+  it("an active live-share grant to the viewer over a LIVE position is a point, carrying the §10 fields", async () => {
+    install(crewTables());
+    const r = await get();
+    assert.equal(r.status, 200);
+    assert.equal(r.body.crewPresenceSummaries.status, "ok");
+    const pts = r.body.crewPresenceSummaries.items;
+    assert.equal(pts.length, 1);
+    assert.equal(pts[0].id, CREW_ID);
+    assert.equal(pts[0].kind, "crew_member");
+    assert.equal(pts[0].label, "Mai");
+    assert.ok(Math.abs(pts[0].lat - 38.7139) < 1e-9 && Math.abs(pts[0].lng + 9.1334) < 1e-9);
+    assert.equal(pts[0].meta.freshnessClass, "LIVE");
+    assert.equal(pts[0].meta.observedAt, iso(NOW - 2 * 60_000));
+    assert.equal(pts[0].meta.confidence, "HIGH");
+    assert.match(r.body.crewPresenceReading, /1 crew member\(s\) read; 1 drawn at exact coordinates/);
+    assert.equal(r.body.census.ok >= 1, true);
+  });
+
+  it("the same grant over a LAST_KNOWN position (three hours old) is summarised, not drawn — §10.2 at the projection", async () => {
+    install(crewTables({ user_location_state: [position({ last_known_at: iso(NOW - 3 * 3600_000) })] }));
+    const r = await get();
+    assert.equal(r.body.crewPresenceSummaries.status, "ok");
+    assert.deepEqual(r.body.crewPresenceSummaries.items, []);
+    // The card withheld the coordinate itself (TR165), so this is "no publishable position", not a refusal.
+    assert.match(r.body.crewPresenceReading, /0 drawn at exact coordinates/);
+    assert.match(r.body.crewPresenceReading, /1 under a grant with no publishable position/);
+    assert.doesNotMatch(r.body.crewPresenceReading, /REFUSED/);
+  });
+
+  it("no grant to this viewer: an area summary, never a coordinate (§14.4)", async () => {
+    install(crewTables({
+      trip_crew_location_sessions: [grant({ allowed_member_ids: [OTHER_ID] })],
+      // A visible default: the member shares a neighbourhood label with the crew, and nothing more.
+      trip_crew_location_preferences: [{ trip_id: TRIP_ID, user_id: CREW_ID, default_visibility: "neighborhood", ghost_mode_enabled: false, share_arrival_status: true, share_safe_return_status: false }],
+    }));
+    const r = await get();
+    assert.equal(r.body.crewPresenceSummaries.status, "ok");
+    assert.deepEqual(r.body.crewPresenceSummaries.items, []);
+    assert.match(r.body.crewPresenceReading, /1 sharing an area only \(no live-share grant to this viewer\)/);
+  });
+
+  it("a crew map that refused (safe_return_sessions unreadable) is an UNREAD layer, not an empty one", async () => {
+    install(crewTables(), ["safe_return_sessions"]);
+    const r = await get();
+    assert.equal(r.status, 200);
+    assert.equal(r.body.crewPresenceSummaries.status, "unread");
+    assert.match(r.body.crewPresenceSummaries.reason, /crew map could not be read/);
+    assert.equal(r.body.crewPresenceReading, "not assembled: the crew map could not be read");
+    // The other layers are untouched by it: per-layer fail-closed, as the header says.
+    assert.equal(r.body.activePlans.status, "ok");
+  });
+
+  it("crewPresencePoints refuses a coordinate over a non-current class even when the card carried one — enforced, not trusted", () => {
+    const card = {
+      userId: CREW_ID, name: "Mai", handle: "mai", statusLabel: "live_sharing_active", ghostMode: false,
+      liveShareActive: true, liveShareExpiresAt: iso(NOW + 60_000), exactCoords: { lat: 1, lng: 2 },
+      freshnessClass: "LAST_KNOWN", observedAt: iso(NOW - 3600_000), confidence: "HIGH", source: "gps", presenceReason: null,
+    };
+    const built = crewPresencePoints([card]);
+    assert.deepEqual(built.points, []);
+    assert.equal(built.summarised.refusedStale, 1);
+    assert.deepEqual(built.refusedStale, [CREW_ID]);
+    assert.match(crewPresenceReading(built), /1 REFUSED: a coordinate over a non-current position/);
+    // And the same card with a current class is the point.
+    const ok1 = crewPresencePoints([{ ...card, freshnessClass: "RECENT" }]);
+    assert.equal(ok1.points.length, 1);
+    assert.equal(ok1.points[0].meta?.freshnessClass, "RECENT");
+    // A hidden card is never a point, coordinates or not.
+    const hidden = crewPresencePoints([{ ...card, freshnessClass: "LIVE", presenceReason: "TRIP_PRESENCE_GHOST", ghostMode: true }]);
+    assert.deepEqual(hidden.points, []);
+    assert.equal(hidden.summarised.hidden, 1);
   });
 });
 

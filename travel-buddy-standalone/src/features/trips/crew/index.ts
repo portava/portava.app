@@ -5,3 +5,4 @@
  */
 export { TripCrewPresenceCard } from '../../../components/trip/TripCrewPresenceCard.tsx';
 export * from '../../../services/tripPresence.ts';
+export * from './presence.ts';

@@ -19,18 +19,22 @@
  * transform wall. The app layer calls the real services and hands their
  * results in.
  *
- * THE TWO COORDINATE-LESS SOURCES (§23 ruling)
- * ============================================
- * Two owning systems deliberately withhold coordinates, and this module NEVER
+ * THE COORDINATE-LESS SOURCES (§23 ruling), AND THE ONE PERMITTED EXCEPTION
+ * ==========================================================================
+ * Owning systems withhold coordinates on purpose, and this module NEVER
  * invents them:
  *
- *  - CREW. `getCrewMap` returns an AREA LABEL per member and no position. §23:
- *    "Trip Crew: approximate or permitted temporary precise" — but the server
- *    declined precision here, so crew is surfaced as COARSE AREA LABELS ONLY
- *    (`crewAreas`), a companion output with no geometry. `source.crew` (which
- *    requires coordinates) is therefore left empty: a crew ring is drawn only
- *    when a system that legitimately holds permitted coordinates supplies them,
- *    never fabricated from an area label.
+ *  - CREW. `getCrewMap` returns an AREA LABEL per member (`crewAreas`, a
+ *    companion output with no geometry) — and, for a member who has granted
+ *    THIS viewer a time-boxed live share, `exactCoords`: §23's "permitted
+ *    temporary precise". The server issues that coordinate only under an
+ *    active grant, with hotel/home blur off, over a position it judged LIVE
+ *    or RECENT on its own clock (Trips spec §10.2, census-trips TR165), and
+ *    `composeCrewPositions` draws exactly those — re-checking the class, so a
+ *    coordinate that outlived its currency is never a pin (TR166, TR281). The
+ *    header of this file used to say the server "declined precision here";
+ *    it never had — this client's `CrewMemberCard` type simply did not carry
+ *    the field, so `source.crew` stayed empty on a false premise.
  *  - MEETUPS. Meetups carry a text `locationName` and no lat/lng by privacy
  *    design, so a standalone meetup cannot become a positioned pin. A meeting
  *    point becomes geographic only once it is placed into the plan as a
@@ -44,6 +48,7 @@ import {
   type OptimizeProposal,
   type SafeReturnContext,
   type TripCompassAlternative,
+  type TripCrewMember,
   type TripLodging,
   type TripMapSource,
   type TripMeetingPoint,
@@ -54,6 +59,7 @@ import {
 import type { TripPlanItem } from '../../../types/models.ts';
 import type { BookmarkedPlace } from '../../../services/discoveryBookmarks.ts';
 import type { CrewMemberCard, CrewStatusLabel } from '../../../services/tripCrewLocation.ts';
+import { presenceFreshnessState, presenceIsCurrent, presenceLine } from '../../trips/crew/presence.ts';
 import type { FullRoutePlan } from '../../../services/routePlan.ts';
 import type { SafeReturnSession } from '../../../services/safeReturn.ts';
 import type { CompassRecommendation } from '../../../services/compass.ts';
@@ -101,6 +107,54 @@ export function composeCrewAreas(crew: readonly CrewMemberCard[] | undefined): T
       statusLabel: c.statusLabel,
       safeReturnActive: c.safeReturnActive === true,
     });
+  }
+  return out;
+}
+
+// ── Crew: permitted temporary precise positions (§23, Trips §10.2 / §14.4) ─────
+
+/**
+ * The crew members who may be drawn as a pin, with their positions.
+ *
+ * A card becomes a `TripCrewMember` only when ALL of:
+ *   1. it is not hidden (ghost mode, `not_shared`, `location_hidden`);
+ *   2. the member's live share to this viewer is active (`liveShareActive`);
+ *   3. the server put finite `exactCoords` on it — it does so only under that
+ *      grant, with hotel/home blur off, over a current position; and
+ *   4. `freshnessClass` is LIVE or RECENT — the server's verdict, checked
+ *      again here where the pin is about to be drawn. A grant over a
+ *      LAST_KNOWN / OFFLINE position is not a pin; it stays an area label.
+ *
+ * The pin carries `precise_temporary` (the ceiling `tripToMapObjects` can only
+ * tighten), the Map's freshness state and the observed instant, and the
+ * presence line as its label — so the marker can expose freshness visually
+ * and in accessible text (§10.2).
+ */
+export function composeCrewPositions(
+  crew: readonly CrewMemberCard[] | undefined,
+  now: number = Date.now(),
+): TripCrewMember[] {
+  const out: TripCrewMember[] = [];
+  for (const c of crew ?? []) {
+    if (c.ghostMode) continue;
+    if (HIDDEN_CREW_STATUSES.has(c.statusLabel)) continue;
+    if (!c.liveShareActive) continue;
+    const lat = c.exactCoords?.lat;
+    const lng = c.exactCoords?.lng;
+    if (typeof lat !== 'number' || typeof lng !== 'number' || !Number.isFinite(lat) || !Number.isFinite(lng)) continue;
+    if (!presenceIsCurrent(c)) continue;
+    const member: TripCrewMember = {
+      id: c.userId,
+      displayName: c.name ?? c.handle ?? 'Crew member',
+      lat,
+      lng,
+      privacyClass: 'precise_temporary',
+      freshness: presenceFreshnessState(c),
+    };
+    if (c.observedAt) member.observedAt = c.observedAt;
+    const line = presenceLine(c, now);
+    if (line) member.presenceLabel = line;
+    out.push(member);
   }
   return out;
 }
@@ -358,7 +412,7 @@ export interface TripMapComposeInput {
   planItems?: readonly TripPlanItem[];
   /** Saved places kept for this trip (its wishlist). */
   savedPlaces?: readonly BookmarkedPlace[];
-  /** Crew cards — area labels only (§23). */
+  /** Crew cards — area labels for everyone shown; a position only where the server issued one (§23). */
   crew?: readonly CrewMemberCard[];
   /** The trip's route plan, if one is active/drafted. */
   routePlan?: FullRoutePlan | null;
@@ -375,7 +429,7 @@ export interface TripMapComposeInput {
 export interface ComposedTripMap {
   /** The coordinate-bearing projection input for `tripToMapObjects`. */
   source: TripMapSource;
-  /** Coarse crew area labels (§23) — no geometry, surfaced as text only. */
+  /** Coarse crew area labels (§23) — no geometry, surfaced as text only. Every shown member, pinned or not. */
   crewAreas: TripCrewArea[];
 }
 
@@ -396,6 +450,8 @@ export function composeTripMap(input: TripMapComposeInput): ComposedTripMap {
   const safeReturn = composeSafeReturn(input.safeReturnSession, lodging);
   const compassAlternatives = composeCompassAlternatives(input.compassRecommendations, nextStopId);
   const crewAreas = composeCrewAreas(input.crew);
+  const nowMs = input.now ? Date.parse(input.now) : Date.now();
+  const crewPositions = composeCrewPositions(input.crew, Number.isFinite(nowMs) ? nowMs : Date.now());
 
   const source: TripMapSource = {
     tripId: input.tripId,
@@ -403,9 +459,10 @@ export function composeTripMap(input: TripMapComposeInput): ComposedTripMap {
     stops,
     nextStopId,
     savedIdeas,
-    // §23: crew from getCrewMap carries no coordinates, so no crew ring is
-    // drawn here. The coarse labels live in `crewAreas`.
-    crew: [],
+    // §23: a crew pin only where the server issued a permitted temporary
+    // precise position over a current fix (composeCrewPositions). The coarse
+    // labels for everyone shown live in `crewAreas`.
+    crew: crewPositions,
     meetingPoints,
     routes,
     safeReturn,

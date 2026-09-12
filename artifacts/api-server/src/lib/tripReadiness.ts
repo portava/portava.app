@@ -54,10 +54,55 @@ export interface ReadinessItem {
   computedAt: string | null;
 }
 
+/** How a category reads in a sentence. */
+export const READINESS_CATEGORY_PHRASE: Record<ReadinessCategory, string> = {
+  plan: "the plan",
+  stay: "somewhere to stay",
+  transport: "transport",
+  budget: "the budget",
+  entry: "entry requirements",
+  documents: "documents",
+  reservations: "reservations",
+};
+
+/**
+ * Trips spec §8: readiness is an EXPLANATORY projection, not a gamified truth
+ * score (census-trips TR142). This is the explanation — what stands between
+ * the trip and ready, per category, with the item to act on first — built
+ * mechanically from the same items the counts are. It carries no percentage
+ * and no trend: a consumer that renders readiness renders THIS, and `score`
+ * stays what it is below, a count for the snapshot table.
+ */
+export interface ReadinessExplanation {
+  /** One sentence. Never a number out of 100. */
+  headline: string;
+  /** Every category, in READINESS_CATEGORIES order. */
+  byCategory: {
+    category: ReadinessCategory;
+    status: ReadinessStatus;
+    /** Why the category reads as it does — the worst item's own words, or "Nothing outstanding" / "Could not be checked". */
+    because: string;
+    /** The open item to act on first, or null when nothing is open. */
+    nextAction: { title: string; detail: string | null; dueAt: string | null; actionRef: Record<string, any> | null } | null;
+  }[];
+  /** The counts the headline is built from: categories that could be checked, and of those, the ready ones. */
+  measured: number;
+  ready: number;
+}
+
 export interface ReadinessSummary {
   computedAt: string;
   /**
+   * §8 first: the explanation. Rendered by every consumer; the numbers below
+   * are what it is built from, not what a traveller is shown.
+   */
+  explanation: ReadinessExplanation;
+  /**
    * Mechanical: round(100 × share of MEASURED categories that are "ready").
+   *
+   * Not a gauge. It is persisted to trip_readiness_snapshots so a recompute
+   * can tell whether the trip moved, and it is the input to `previousScore`;
+   * no client renders it as a percentage or a ring (census-trips TR142).
    *
    * NULL when no category could be measured at all. Null is not 0 and it is
    * not 100 — it is "we have no readiness figure for this trip", and the two
@@ -315,7 +360,78 @@ export function summarizeReadiness(
   const criticalItems = items.filter((i) => i.severity === "critical");
 
   const { byDay, byStage } = groupReadinessByTime(items, stages);
-  return { computedAt, score, previousScore, counts, unmeasuredCategories, criticalItems, byDay, byStage, categories, items };
+  const explanation = explainReadiness(items, categories, unmeasuredCategories, measured, ready);
+  return { computedAt, explanation, score, previousScore, counts, unmeasuredCategories, criticalItems, byDay, byStage, categories, items };
+}
+
+/** The worst open item of a category: critical before normal, then by status rank, then earliest due. */
+function worstOpenItem(items: ReadinessItem[]): ReadinessItem | null {
+  const open = items.filter((i) => i.status !== "ready");
+  if (open.length === 0) return null;
+  return [...open].sort((a, b) => {
+    const sev = (a.severity === "critical" ? 0 : 1) - (b.severity === "critical" ? 0 : 1);
+    if (sev !== 0) return sev;
+    const rank = STATUS_RANK[b.status] - STATUS_RANK[a.status];
+    if (rank !== 0) return rank;
+    const da = a.dueAt ? Date.parse(a.dueAt) : Number.POSITIVE_INFINITY;
+    const db = b.dueAt ? Date.parse(b.dueAt) : Number.POSITIVE_INFINITY;
+    return da - db;
+  })[0];
+}
+
+const listPhrases = (cs: ReadinessCategory[]): string => cs.map((c) => READINESS_CATEGORY_PHRASE[c]).join(", ");
+
+/**
+ * The §8 explanation, mechanically. The headline names the critical items
+ * when there are any, otherwise the categories that need action or are
+ * incomplete, otherwise says the checks are ready — and always says which
+ * checks could not be made, because "ready on five of seven" is not "ready".
+ */
+export function explainReadiness(
+  items: ReadinessItem[],
+  categories: Record<ReadinessCategory, ReadinessStatus>,
+  unmeasuredCategories: ReadinessCategory[],
+  measured: number,
+  ready: number,
+): ReadinessExplanation {
+  const byCategory: ReadinessExplanation["byCategory"] = READINESS_CATEGORIES.map((category) => {
+    const status = categories[category] ?? "ready";
+    const own = items.filter((i) => i.category === category);
+    const worst = worstOpenItem(own);
+    const because = worst
+      ? (worst.detail ? `${worst.title} — ${worst.detail}` : worst.title)
+      : status === "unknown" ? "Could not be checked" : "Nothing outstanding";
+    return {
+      category,
+      status,
+      because,
+      nextAction: worst ? { title: worst.title, detail: worst.detail, dueAt: worst.dueAt, actionRef: worst.actionRef } : null,
+    };
+  });
+
+  const critical = items.filter((i) => i.severity === "critical" && i.status !== "ready");
+  const needsAction = READINESS_CATEGORIES.filter((c) => categories[c] === "action_needed");
+  const incomplete = READINESS_CATEGORIES.filter((c) => categories[c] === "incomplete");
+
+  let headline: string;
+  if (critical.length > 0) {
+    const titles = critical.slice(0, 3).map((i) => i.title).join("; ");
+    const more = critical.length > 3 ? ` and ${critical.length - 3} more` : "";
+    headline = `${critical.length} critical item${critical.length === 1 ? "" : "s"} need${critical.length === 1 ? "s" : ""} attention: ${titles}${more}`;
+  } else if (needsAction.length > 0 || incomplete.length > 0) {
+    const parts: string[] = [];
+    if (needsAction.length > 0) parts.push(`${listPhrases(needsAction)} need${needsAction.length === 1 ? "s" : ""} action`);
+    if (incomplete.length > 0) parts.push(`${listPhrases(incomplete)} ${incomplete.length === 1 ? "is" : "are"} incomplete`);
+    headline = parts.join("; ");
+  } else if (measured === 0) {
+    headline = "Nothing about this trip could be checked yet";
+  } else {
+    headline = unmeasuredCategories.length > 0 ? "Every check that could be made is ready" : "Every check is ready";
+  }
+  if (unmeasuredCategories.length > 0 && measured > 0) {
+    headline += `; ${listPhrases(unmeasuredCategories)} could not be checked`;
+  }
+  return { headline, byCategory, measured, ready };
 }
 
 // ---------------------------------------------------------------------------

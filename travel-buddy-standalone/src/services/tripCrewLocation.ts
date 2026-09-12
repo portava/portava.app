@@ -33,6 +33,28 @@ export interface CrewMemberCard {
   liveShareExpiresAt: string | null;
   ghostMode: boolean;
   updatedAt: string | null;
+  // ── §10.1 / §10.2, by the spec's names — what the server has carried since
+  // census-trips §40.6 and this client did not read until §58 ─────────────
+  /**
+   * Exact coordinates. Present ONLY when the server put them there: an active
+   * live-share grant to this viewer, hotel/home blur off, and a position
+   * judged LIVE / RECENT on its own clock (api-server lib/tripCrewLocation.ts).
+   * Map spec §23's "permitted temporary precise" — never invented here.
+   */
+  exactCoords?: { lat: number; lng: number } | null;
+  /** Legacy bucket on the same clock as `freshnessClass`. */
+  freshness?: 'live' | 'recent' | 'stale' | null;
+  /** §10.2 LIVE | RECENT | LAST_KNOWN | OFFLINE, judged on the position's own clock. */
+  freshnessClass?: 'LIVE' | 'RECENT' | 'LAST_KNOWN' | 'OFFLINE';
+  /** §10.1 observed_at — the instant `freshnessClass` is about. */
+  observedAt?: string | null;
+  observedAtSource?: 'last_known_at' | 'updated_at' | null;
+  /** §10.1 source: the client's own word for how it got the fix. */
+  source?: string | null;
+  /** §10.1 confidence: the device's accuracy, banded by the server. */
+  confidence?: 'HIGH' | 'MEDIUM' | 'LOW' | 'INSUFFICIENT';
+  /** Appendix B: why presence is withheld; null when it is shown. */
+  presenceReason?: 'TRIP_PRESENCE_GHOST' | 'TRIP_PRESENCE_HIDDEN' | null;
 }
 
 export interface CrewMapResponse {

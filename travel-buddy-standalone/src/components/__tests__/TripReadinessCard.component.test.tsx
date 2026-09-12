@@ -3,8 +3,9 @@
  *
  * Covers:
  *  - null response from fetchTripReadiness → renders nothing
- *  - critical items appear above the score
- *  - category rows rendered
+ *  - critical items appear above the explanation
+ *  - the explanation is rendered and no percentage / trend ever is (§8, TR142)
+ *  - category rows rendered, each with its reason
  *  - actionRef tap navigates via router.push
  *
  * Run with: pnpm test:component
@@ -55,9 +56,25 @@ const PLAN_ITEM = {
   actionRef: null,
 };
 
+const EXPLANATION = {
+  headline: '1 critical item needs attention: Visa required',
+  byCategory: [
+    { category: 'plan', status: 'ready' as const, because: 'Nothing outstanding', nextAction: null },
+    { category: 'stay', status: 'ready' as const, because: 'Nothing outstanding', nextAction: null },
+    { category: 'transport', status: 'incomplete' as const, because: 'No way there yet', nextAction: { title: 'No way there yet', detail: null, dueAt: null, actionRef: null } },
+    { category: 'budget', status: 'ready' as const, because: 'Nothing outstanding', nextAction: null },
+    { category: 'entry', status: 'action_needed' as const, because: 'Visa required — Apply at least 6 weeks before departure.', nextAction: { title: 'Visa required', detail: 'Apply at least 6 weeks before departure.', dueAt: null, actionRef: { href: '/trip/entry' } } },
+    { category: 'documents', status: 'ready' as const, because: 'Nothing outstanding', nextAction: null },
+    { category: 'reservations', status: 'ready' as const, because: 'Nothing outstanding', nextAction: null },
+  ],
+  measured: 7,
+  ready: 5,
+};
+
 const FULL_SUMMARY = {
   computedAt: '2026-07-23T00:00:00Z',
-  score: 72, // integer (0–100) matching server contract
+  explanation: EXPLANATION,
+  score: 72, // integer (0–100) on the wire — the server's snapshot count; never rendered
   counts: { ready: 5, action_needed: 1, incomplete: 1, unknown: 0 },
   criticalItems: [CRITICAL_ITEM],
   categories: {
@@ -150,10 +167,10 @@ describe('TripReadinessCard', () => {
     expect(await findByText(/Readiness couldn't be checked/)).toBeTruthy();
   });
 
-  it('shows critical items above the score', async () => {
+  it('shows critical items above the explanation', async () => {
     fetchTripReadiness.mockResolvedValue({ state: 'ok', summary: FULL_SUMMARY });
 
-    const { findByTestId, findByText, getByText } = await mountCard();
+    const { findByTestId, findByText } = await mountCard();
 
     // Wait for card to appear
     await findByTestId('trip-readiness-card');
@@ -162,17 +179,64 @@ describe('TripReadinessCard', () => {
     const criticalTitle = await findByText('Visa required');
     expect(criticalTitle).toBeTruthy();
 
-    // Score
-    const scoreText = await findByText('72%');
-    expect(scoreText).toBeTruthy();
+    // The explanation, in the server's words
+    const headline = await findByTestId('trip-readiness-headline');
+    expect(headline.props.children).toBe('1 critical item needs attention: Visa required');
+    const count = await findByTestId('trip-readiness-count');
+    expect(count).toBeTruthy();
+  });
 
-    // Critical item must appear before the score in the tree
-    // Both are present — that's the structural guarantee (critical section → score)
-    expect(criticalTitle).toBeTruthy();
-    expect(scoreText).toBeTruthy();
-    // Verify order: critical section renders above score (DOM order check via testID)
-    const card = await findByTestId('trip-readiness-card');
-    expect(card).toBeTruthy();
+  // §8 / census-trips TR142: readiness is an explanatory projection, not a
+  // gamified truth score. The wire still carries `score` and `previousScore`
+  // (the server's snapshot count); the card renders neither.
+  it('renders no percentage and no day-over-day trend, whatever the wire carries', async () => {
+    fetchTripReadiness.mockResolvedValue({ state: 'ok', summary: { ...FULL_SUMMARY, score: 72, previousScore: 64 } });
+
+    const { findByTestId, queryByText } = await mountCard();
+    await findByTestId('trip-readiness-card');
+
+    expect(queryByText(/\d+ ?%/)).toBeNull();
+    expect(queryByText(/since yesterday/)).toBeNull();
+    // The count is a count, said as one.
+    expect(queryByText('5 of 7 checks ready')).toBeTruthy();
+  });
+
+  it('each category row carries its reason from the explanation', async () => {
+    fetchTripReadiness.mockResolvedValue({ state: 'ok', summary: FULL_SUMMARY });
+
+    const { findByTestId } = await mountCard();
+    const entry = await findByTestId('readiness-because-entry');
+    expect(entry.props.children).toBe('Visa required — Apply at least 6 weeks before departure.');
+    const transport = await findByTestId('readiness-because-transport');
+    expect(transport.props.children).toBe('No way there yet');
+    const plan = await findByTestId('readiness-because-plan');
+    expect(plan.props.children).toBe('Nothing outstanding');
+  });
+
+  it('says which checks could not be made — five ready of seven is not "ready"', async () => {
+    const summary = {
+      ...FULL_SUMMARY,
+      explanation: { ...EXPLANATION, headline: 'Every check that could be made is ready; reservations could not be checked', measured: 6, ready: 6 },
+      unmeasuredCategories: ['reservations'],
+    };
+    fetchTripReadiness.mockResolvedValue({ state: 'ok', summary });
+
+    const { findByTestId, findByText } = await mountCard();
+    await findByTestId('trip-readiness-card');
+    expect(await findByText('1 of 7 not checked: reservations')).toBeTruthy();
+    expect(await findByText('6 of 6 checks ready')).toBeTruthy();
+  });
+
+  it('an older server with no explanation gets the counts and the rows, and no invented sentence', async () => {
+    const { explanation: _omit, ...withoutExplanation } = FULL_SUMMARY;
+    fetchTripReadiness.mockResolvedValue({ state: 'ok', summary: withoutExplanation });
+
+    const { findByTestId, queryByTestId, queryByText } = await mountCard();
+    await findByTestId('trip-readiness-card');
+    expect(queryByTestId('trip-readiness-headline')).toBeNull();
+    expect(queryByTestId('readiness-because-entry')).toBeNull();
+    expect(queryByText(/\d+ ?%/)).toBeNull();
+    expect(queryByText('Entry')).toBeTruthy();
   });
 
   it('renders all seven category rows', async () => {
@@ -208,46 +272,6 @@ describe('TripReadinessCard', () => {
 
     await waitFor(() => {
       expect(fetchTripReadiness).toHaveBeenCalledWith(TRIP_ID, true);
-    });
-  });
-
-  // ── Score delta (previousScore) ───────────────────────────────────────────
-
-  it('shows "+8% since yesterday" when score increased by 8 points', async () => {
-    // scores are integers (0–100) on the wire; delta = current − previous
-    fetchTripReadiness.mockResolvedValue({ state: 'ok', summary: { ...FULL_SUMMARY, score: 72, previousScore: 64 } });
-
-    const { findByText } = await mountCard();
-
-    const delta = await findByText('+8% since yesterday');
-    expect(delta).toBeTruthy();
-  });
-
-  it('shows "-8% since yesterday" when score decreased by 8 points', async () => {
-    fetchTripReadiness.mockResolvedValue({ state: 'ok', summary: { ...FULL_SUMMARY, score: 64, previousScore: 72 } });
-
-    const { findByText } = await mountCard();
-
-    const delta = await findByText('-8% since yesterday');
-    expect(delta).toBeTruthy();
-  });
-
-  it('shows "no change since yesterday" when score is identical to previousScore', async () => {
-    fetchTripReadiness.mockResolvedValue({ state: 'ok', summary: { ...FULL_SUMMARY, score: 72, previousScore: 72 } });
-
-    const { findByText } = await mountCard();
-
-    const delta = await findByText('no change since yesterday');
-    expect(delta).toBeTruthy();
-  });
-
-  it('shows no delta when previousScore is null', async () => {
-    fetchTripReadiness.mockResolvedValue({ state: 'ok', summary: { ...FULL_SUMMARY, previousScore: null } });
-
-    const { queryByText } = await mountCard();
-
-    await waitFor(() => {
-      expect(queryByText(/since yesterday/)).toBeNull();
     });
   });
 });

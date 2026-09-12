@@ -6,10 +6,13 @@
  *     Map is fed the whole itinerary — lodging, stops, saved ideas, meeting
  *     points, routes, Safe Return context and Compass alternatives — not just
  *     stops (the state before this unit).
- *   - CREW NEVER CARRIES COORDINATES (§23 ruling). `getCrewMap` returns area
- *     labels, so crew is surfaced as coarse `crewAreas` text with no geometry,
- *     and `source.crew` is left empty — no crew ring is ever fabricated from an
- *     area label, and `tripToMapObjects` therefore emits zero `crew_member`
+ *   - CREW CARRIES A COORDINATE ONLY WHEN THE SERVER ISSUED ONE (§23 ruling).
+ *     `getCrewMap` returns area labels for everyone shown (`crewAreas`, no
+ *     geometry) and `exactCoords` only under an active live share to this
+ *     viewer over a LIVE / RECENT position; `source.crew` carries exactly
+ *     those, re-checked, and nothing is ever fabricated from an area label.
+ *     Before §58 the type lacked the field and `source.crew` was always empty,
+ *     so `tripToMapObjects` emitted zero `crew_member`
  *     objects for a composed source.
  *   - The composition invents no coordinate and sharpens no privacy: private or
  *     coordinate-less items are dropped rather than placed.
@@ -19,6 +22,7 @@ import assert from 'node:assert/strict';
 import {
   composeCompassAlternatives,
   composeCrewAreas,
+  composeCrewPositions,
   composeRoutes,
   composeSafeReturn,
   composeSavedIdeas,
@@ -265,6 +269,61 @@ test('composeCrewAreas produces area labels and NEVER a coordinate', () => {
   }
   const sr = areas.find((a) => a.userId === 'u5') as TripCrewArea;
   assert.equal(sr.safeReturnActive, true);
+});
+
+// ── composeCrewPositions — §23's permitted temporary precise, §10.2 re-checked ──
+
+const NOW_MS = Date.parse('2026-09-04T10:00:00.000Z');
+const agoIso = (ms: number) => new Date(NOW_MS - ms).toISOString();
+const sharing = (over: Partial<CrewMemberCard> & { userId: string }): CrewMemberCard =>
+  crewCard({
+    statusLabel: 'live_sharing_active', liveShareActive: true, liveShareExpiresAt: new Date(NOW_MS + 30 * 60_000).toISOString(),
+    exactCoords: { lat: 16.061, lng: 108.215 }, freshnessClass: 'LIVE', observedAt: agoIso(2 * 60_000), confidence: 'HIGH',
+    ...over,
+  });
+
+test('composeCrewPositions draws ONLY a live-shared, current, coordinate-bearing card — and carries freshness for the pin', () => {
+  const crew: CrewMemberCard[] = [
+    sharing({ userId: 'live' }),
+    sharing({ userId: 'recent', freshnessClass: 'RECENT', observedAt: agoIso(20 * 60_000) }),
+    // §10.2: a grant over a stale fix. The server should not have sent the
+    // coordinate; the client refuses it anyway.
+    sharing({ userId: 'grant-over-stale', freshnessClass: 'LAST_KNOWN', observedAt: agoIso(3 * 3600_000) }),
+    // A grant whose position the server withheld (blur, or not current).
+    sharing({ userId: 'grant-no-coords', exactCoords: null }),
+    // No class from the server: fail closed.
+    sharing({ userId: 'no-class', freshnessClass: undefined }),
+    // No grant to this viewer: an area label, never a pin — even with coordinates on the wire.
+    crewCard({ userId: 'area-only', statusLabel: 'neighborhood', exactCoords: { lat: 16.06, lng: 108.21 }, freshnessClass: 'LIVE' }),
+    sharing({ userId: 'ghost', ghostMode: true }),
+    sharing({ userId: 'nan', exactCoords: { lat: Number.NaN, lng: 108.2 } }),
+  ];
+  const pins = composeCrewPositions(crew, NOW_MS);
+  assert.deepEqual(pins.map((p) => p.id), ['live', 'recent']);
+
+  const live = pins[0];
+  assert.equal(live.displayName, 'Member live');
+  assert.equal(live.lat, 16.061);
+  assert.equal(live.lng, 108.215);
+  assert.equal(live.privacyClass, 'precise_temporary');
+  assert.equal(live.freshness, 'live');
+  assert.equal(live.observedAt, agoIso(2 * 60_000));
+  assert.equal(live.presenceLabel, 'Live · 2m ago');
+  assert.equal(pins[1].freshness, 'recent');
+  assert.equal(pins[1].presenceLabel, 'Recent · 20m ago');
+});
+
+test('composeTripMap puts the permitted positions in source.crew and keeps every shown member in crewAreas', () => {
+  const crew: CrewMemberCard[] = [
+    sharing({ userId: 'pinned', areaLabel: 'Riverside' }),
+    sharing({ userId: 'stale-grant', freshnessClass: 'LAST_KNOWN', observedAt: agoIso(2 * 3600_000), areaLabel: 'Old Town' }),
+    crewCard({ userId: 'coarse', statusLabel: 'city_only', areaLabel: 'Da Nang' }),
+  ];
+  const { source, crewAreas } = composeTripMap({ tripId: 't1', crew, now: new Date(NOW_MS).toISOString() });
+  assert.deepEqual(source.crew?.map((c) => c.id), ['pinned']);
+  // The stale grant is a label, not a pin: the area survives, the coordinate does not.
+  assert.deepEqual(crewAreas.map((a) => a.userId).sort(), ['coarse', 'pinned', 'stale-grant']);
+  for (const a of crewAreas) assert.ok(!('lat' in a) && !('lng' in a));
 });
 
 // ── composeSavedIdeas ────────────────────────────────────────────────────────────
