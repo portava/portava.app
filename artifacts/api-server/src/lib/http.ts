@@ -161,14 +161,24 @@ export function sendError(
   res: Response,
   code: ApiErrorCode,
   message?: string,
-  opts?: { exposeDetail?: boolean },
+  opts?: {
+    exposeDetail?: boolean;
+    /**
+     * Trips spec Appendix B reason code (lib/tripReasonCodes.ts). ADDITIVE: the
+     * envelope is unchanged when absent, so every existing call site emits
+     * exactly what it emitted before. Set through `sendTripRefusal`, which also
+     * refuses to put an internal-only reason on the wire.
+     */
+    reason?: string;
+  },
 ) {
   const sanitize = SANITIZED_CODES.has(code) && !opts?.exposeDetail;
   const body = sanitize
     ? (GENERIC_MESSAGE[code] ?? code)
     : (message ?? code);
   const retryable = RETRYABLE_CODES.has(code) ? { retryable: true } : {};
-  res.status(STATUS[code]).json({ error: code, message: body, ...retryable });
+  const reason = opts?.reason ? { reason: opts.reason } : {};
+  res.status(STATUS[code]).json({ error: code, message: body, ...retryable, ...reason });
 }
 
 /**

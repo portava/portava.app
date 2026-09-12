@@ -25,6 +25,8 @@ import {
   setTripVersionHeader,
 } from "../lib/tripKernel.js";
 import { requireUser, requireTripMember, sendError } from "../lib/http.js";
+import { canManageBooking } from "../lib/tripPolicy.js";
+import { sendTripRefusal } from "../lib/tripReasonCodes.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { isFlagEnabled } from "../lib/featureFlags.js";
 import { extractReservations, RESERVATION_TYPES } from "../lib/reservationExtract.js";
@@ -86,13 +88,13 @@ async function requireReservationMember(
   }
   if (!trip) { sendError(res, "not_found", "Trip not found"); return null; }
 
-  const isOwner = (trip as any).owner_id === user.id;
-  let role = "owner";
-  if (!isOwner) {
-    const membership = await requireTripMember(sc, tripId, user.id);
-    if (!membership) { sendError(res, "not_member", "You must be an accepted trip member"); return null; }
-    role = membership.role;
-  }
+  // §6.1 canManageBooking: any accepted crew member may read and edit
+  // reservations. requireTripMember already answers "owner" for the trip's
+  // owner_id with no membership row, so one call covers both.
+  const membership = await requireTripMember(sc, tripId, user.id);
+  const booking = await canManageBooking(sc, { userId: user.id }, tripId, "read", { role: membership?.role ?? null });
+  if (!booking.allowed) { sendTripRefusal(res, "not_member", booking.reason, "You must be an accepted trip member"); return null; }
+  const role = membership?.role ?? "owner";
 
   return { sc, userId: user.id, trip, role };
 }
@@ -490,10 +492,12 @@ router.delete("/trips/:tripId/reservations/:id", asyncHandler(async (req, res) =
   const reservation = await fetchReservation(sc, res, (trip as any).id, req.params.id);
   if (!reservation) return;
 
-  // Delete is stricter than edit: creator or trip OWNER only.
-  const isCreator = (reservation as any).user_id === userId;
-  if (!isCreator && role !== "owner") {
-    sendError(res, "forbidden", "Only the reservation creator or trip owner can delete it");
+  // Delete is stricter than edit: creator or trip OWNER only — §6.1
+  // canManageBooking("delete"), with the creator read off the row in hand.
+  const del = await canManageBooking(sc, { userId }, (trip as any).id, "delete",
+    { role, reservationCreatorId: (reservation as any).user_id ?? null });
+  if (!del.allowed) {
+    sendTripRefusal(res, "forbidden", del.reason, "Only the reservation creator or trip owner can delete it");
     return;
   }
 

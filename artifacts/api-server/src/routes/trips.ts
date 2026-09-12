@@ -15,6 +15,8 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { getServiceClient, isServiceClientReady } from "../lib/supabase";
 import { detectAndStoreLanguage, invalidateContentTranslations } from "../services/contentTranslation.js";
 import { requireUser, isAcceptedTripMember, requireTripMember, sendError, canEditPlanItem, canEditPlan, type PlanEditPermission } from "../lib/http.js";
+import { canEditTrip, canInviteParticipant } from "../lib/tripPolicy.js";
+import { sendTripRefusal } from "../lib/tripReasonCodes.js";
 import { toCamel } from "./plan.js";
 import { syncTripChatMembers } from "../lib/chatSync.js";
 import { getRestrictionState } from "../services/trust/TrustRestrictionService.js";
@@ -867,7 +869,10 @@ router.patch("/trips/:tripId", async (req, res) => {
   }
   if (!trip) { sendError(res, "not_found", "Trip not found"); return; }
   const t = trip as any;
-  if (t.owner_id !== user.id) { sendError(res, "forbidden", "Only the trip owner can update this trip"); return; }
+  // §6.1 canEditTrip. The row is already in hand, so it is passed rather than
+  // re-read; the RULE (owner only) is the policy module's, tested as a rule.
+  const edit = await canEditTrip(sc, { userId: user.id }, tripId, { trip: { id: tripId, owner_id: t.owner_id } });
+  if (!edit.allowed) { sendTripRefusal(res, "forbidden", edit.reason, edit.message); return; }
 
   // Date conflict check across current + incoming values
   const newStart = b.startDate !== undefined ? b.startDate : (t.start_date ?? null);
@@ -1170,7 +1175,10 @@ router.post("/trips/:tripId/invite", async (req, res) => {
     return;
   }
   if (!trip) { res.status(404).json({ error: "not_found", message: "Trip not found" }); return; }
-  if ((trip as any).owner_id !== user.id) { res.status(403).json({ error: "forbidden", message: "Only the trip owner can invite members" }); return; }
+  // §6.1 canInviteParticipant — owner only, as the kernel's INVITE_PARTICIPANT
+  // capability is. Passed the row already read.
+  const invite = await canInviteParticipant(client, { userId: user.id }, tripId, { trip: { id: tripId, owner_id: (trip as any).owner_id } });
+  if (!invite.allowed) { sendTripRefusal(res, "forbidden", invite.reason, "Only the trip owner can invite members"); return; }
 
   // Blocked-user guard: cannot invite a user with an active block in either
   // direction. Fail-closed shared helper — the previous .maybeSingle() raised on
@@ -2102,7 +2110,9 @@ router.post("/trips/:tripId/members", async (req, res) => {
     return;
   }
   if (!trip) { res.status(404).json({ error: "not_found", message: "Trip not found" }); return; }
-  if ((trip as any).owner_id !== user.id) { res.status(403).json({ error: "forbidden", message: "Only the trip owner can add members" }); return; }
+  // §6.1 canInviteParticipant: adding a member IS inviting them. Owner only.
+  const add = await canInviteParticipant(client, { userId: user.id }, tripId, { trip: { id: tripId, owner_id: (trip as any).owner_id } });
+  if (!add.allowed) { sendTripRefusal(res, "forbidden", add.reason, "Only the trip owner can add members"); return; }
 
   // `existing` picks the WRITE, not just the response: SET_PARTICIPANT_ROLE vs
   // ADD_PARTICIPANT for the kernel, UPDATE vs INSERT on the legacy path. An

@@ -19,6 +19,8 @@ import {
   sendError,
   type ApiErrorCode,
 } from "../lib/http.js";
+import { canViewTrip, canManageJoinRequests } from "../lib/tripPolicy.js";
+import { sendTripRefusal } from "../lib/tripReasonCodes.js";
 import { sendPushWithRetry } from "../lib/pushWithRetry.js";
 import { nameVisibilitySet, sanitizeIdentity, nameVisibleFor, presentedName } from "../lib/publicIdentity.js";
 import { truncateDisplayName } from "../lib/displayName.js";
@@ -1016,13 +1018,10 @@ router.post("/trips/:tripId/join-requests/:requestId/approve", async (req, res) 
   const { data: trip, error: tripErr } = await sc.from("trips").select("owner_id").eq("id", tripId).maybeSingle();
   if (tripErr) throw readUnavailable("trips", tripErr);
   if (!trip) { sendError(res, "not_found", "Trip not found"); return; }
-  const approveIsOwner = (trip as any).owner_id === user.id;
-  if (!approveIsOwner) {
-    const approveM = await requireTripMember(sc, tripId, user.id);
-    if (!approveM || !["owner", "co_host"].includes(approveM.role)) {
-      sendError(res, "forbidden", "Only the owner or co-host can approve join requests"); return;
-    }
-  }
+  // §6.1 host — owner or accepted co-host — as canManageJoinRequests defines
+  // it and as the kernel's `host` capability (2500) re-checks it.
+  const approveHost = await canManageJoinRequests(sc, { userId: user.id }, tripId, { trip: { id: tripId, owner_id: (trip as any).owner_id } });
+  if (!approveHost.allowed) { sendTripRefusal(res, "forbidden", approveHost.reason, "Only the owner or co-host can approve join requests"); return; }
 
   const { data: req_, error: req_Err } = await sc
     .from("trip_join_requests")
@@ -1147,13 +1146,8 @@ router.post("/trips/:tripId/join-requests/:requestId/decline", async (req, res) 
   const { data: trip, error: tripErr } = await sc.from("trips").select("owner_id").eq("id", tripId).maybeSingle();
   if (tripErr) throw readUnavailable("trips", tripErr);
   if (!trip) { sendError(res, "not_found", "Trip not found"); return; }
-  const declineIsOwner = (trip as any).owner_id === user.id;
-  if (!declineIsOwner) {
-    const declineM = await requireTripMember(sc, tripId, user.id);
-    if (!declineM || !["owner", "co_host"].includes(declineM.role)) {
-      sendError(res, "forbidden", "Only the owner or co-host can decline join requests"); return;
-    }
-  }
+  const declineHost = await canManageJoinRequests(sc, { userId: user.id }, tripId, { trip: { id: tripId, owner_id: (trip as any).owner_id } });
+  if (!declineHost.allowed) { sendTripRefusal(res, "forbidden", declineHost.reason, "Only the owner or co-host can decline join requests"); return; }
 
   const { data: req_, error: req_Err } = await sc
     .from("trip_join_requests")
@@ -3210,29 +3204,24 @@ router.get("/trips/:tripId", async (req, res) => {
 
   const t = trip as any;
 
-  // Block check FIRST — blocking overrides all other relationships, including
-  // membership. A blocked user must not access even the minimal preview.
-  if (user) {
-    const blocked = await isBlocked(sc, user.id, t.owner_id);
-    if (blocked) { sendError(res, "not_found", "Trip not found"); return; }
-  }
+  // §6.1 canViewTrip decides the whole §6.3 ladder — block first (blocking
+  // overrides membership), then crew/owner, then public / buddies / private.
+  // The route only RENDERS the decision. Two renderings are deliberate:
+  //
+  //   TRIP_AUTH_BLOCKED   → 404 "Trip not found", with NO reason on the wire.
+  //                         The policy says why; the client must not be told,
+  //                         because "you are blocked" reveals the block.
+  //                         sendTripRefusal would throw on this reason, so it
+  //                         goes through plain sendError on purpose.
+  //   TRIP_PRIVACY_*      → the LockedTripPreview sentinel deep-link handlers
+  //                         expect (200, `locked: true`, nothing else about the
+  //                         trip), now carrying the Appendix B reason.
+  const view = await canViewTrip(sc, { userId: user?.id ?? null }, tripId, { trip: t });
 
-  // Unauthenticated callers cannot be members or owners.
-  const isMember = user ? await requireTripMember(sc, tripId, user.id) : null;
-  const isOwner  = user ? t.owner_id === user.id : false;
-
-  // Members / owner always get the full authorized view regardless of visibility.
-  if (isMember || isOwner) {
-    res.json(toAuthorizedTripView(t));
+  if (!view.allowed && view.reason === "TRIP_AUTH_BLOCKED") {
+    sendError(res, "not_found", "Trip not found");
     return;
   }
-
-  // Enforce visibility for non-members / unauthenticated:
-  //   "public"  — anyone (including unauthenticated) may see the stripped shape
-  //   "buddies" — only authenticated mutual followers may see the stripped shape
-  //   "invite"  — only explicitly accepted members (handled above); others → 404
-  //   "private" — members only (handled above); others → 404
-  const vis = (t.visibility ?? "private") as string;
 
   // Helper: fetch the viewer's pending join-request status (fail-open).
   const getJoinRequestStatus = async (): Promise<string | null> => {
@@ -3248,28 +3237,21 @@ router.get("/trips/:tripId", async (req, res) => {
     } catch { return null; }
   };
 
-  if (vis === "public") {
-    res.json(toPrivateTripPreview(t, await getJoinRequestStatus()));
+  if (view.allowed && view.view === "authorized") {
+    // Members / owner always get the full authorized view regardless of visibility.
+    res.json(toAuthorizedTripView(t));
     return;
   }
-
-  if (vis === "buddies" && user) {
-    // Mutual-follow check: viewer follows owner AND owner follows viewer.
-    const [{ data: viewerFollowsOwner }, { data: ownerFollowsViewer }] = await Promise.all([
-      sc.from("user_follows").select("follower_id").eq("follower_id", user.id).eq("following_id", t.owner_id).maybeSingle(),
-      sc.from("user_follows").select("follower_id").eq("follower_id", t.owner_id).eq("following_id", user.id).maybeSingle(),
-    ]);
-    if (viewerFollowsOwner && ownerFollowsViewer) {
-      res.json(toPrivateTripPreview(t, await getJoinRequestStatus()));
-      return;
-    }
+  if (view.allowed) {
+    // public, or buddies with a mutual follow: the stripped shape.
+    res.json(toPrivateTripPreview(t, await getJoinRequestStatus()));
+    return;
   }
 
   // All other cases (invite/private, not a member, not a mutual buddy):
   // return a LockedTripPreview sentinel so deep-link handlers can render a
   // private-wall screen rather than a generic "not found" error.
   // No title, destination, dates, or member information is included.
-  res.status(200).json({ locked: true, tripId });
-});
+  res.status(200).json({ locked: true, tripId, reason: view.reason });});
 
 export default router;

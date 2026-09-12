@@ -24,6 +24,8 @@
 import { Router } from "express";
 import { z } from "zod";
 import { requireUser, sendError } from "../lib/http";
+import { canManageSafety } from "../lib/tripPolicy.js";
+import { sendTripRefusal } from "../lib/tripReasonCodes.js";
 import { getServiceClient } from "../lib/supabase";
 import { nameVisibilitySet } from "../lib/publicIdentity";
 import { buildConsumerProjection } from "../services/passport/PassportConsumerProjections.js";
@@ -291,6 +293,18 @@ router.post("/me/safe-return/sessions", async (req, res) => {
   if (!parsed.success) {
     sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid payload");
     return;
+  }
+
+  // §6.1 canManageSafety / §17.4: a session that names a trip is a statement
+  // that its owner is ON that trip — `notify_trip_crew_enabled` then notifies
+  // that trip's crew. Until 2026-09-12 `trip_id` was written from the body
+  // with no membership check, so any signed-in user could attach a session to
+  // any trip id. Only accepted crew may. (An unreadable membership table
+  // throws TripAccessUnavailableError → 503 via the global handler, never a
+  // silent "no" and never a silent "yes".)
+  if (parsed.data.tripId) {
+    const safety = await canManageSafety(db, { userId: user.id }, parsed.data.tripId);
+    if (!safety.allowed) { sendTripRefusal(res, "forbidden", safety.reason, safety.message); return; }
   }
 
   // Reject if the user already has an active session — prevents double-sessions

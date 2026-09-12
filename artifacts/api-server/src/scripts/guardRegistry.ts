@@ -560,6 +560,23 @@ export const GUARDS: readonly GuardEntry[] = [
     reach: { kind: "check-all", script: "check:census-row-move-labels" },
   },
   {
+    checker: "src/scripts/checkTripPolicyCallsites.ts",
+    inspects: {
+      countPattern: "(\\d+) inline host/owner check\\(s\\) remain",
+      unit: "inline owner/host authorization checks remaining in trip route files",
+    },
+    responsibility:
+      "Trip routes authorize through the named §6.1 policy functions; inline host checks may only shrink.",
+    // census-trips TR102 measured the §6.1 rule true for plans and false for
+    // everything else: 46 inline owner/co_host checks across the trip route
+    // files, each a copy of a rule that lived nowhere else. lib/tripPolicy.ts
+    // now names all nine functions and tests them as rules against every
+    // actor kind §6.2 lists. This ratchets the copies down (per-file baseline,
+    // may only shrink) and fails when a §6.1 function has no caller outside
+    // the module — the built-but-not-wired case.
+    reach: { kind: "check-all", script: "check:trip-policy-callsites" },
+  },
+  {
     checker: "src/scripts/checkPlaceIdBridge.ts",
     inspects: {
       countPattern: "(\\d+) source file\\(s\\) scanned",

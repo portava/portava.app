@@ -19,6 +19,7 @@
  */
 
 import { freshnessBucket } from "./mapTravelers.js";
+import { canSeePresence } from "./tripPresencePolicy.js";
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 export type CrewStatusLabel =
@@ -162,9 +163,18 @@ export function buildCrewCard(
     freshness,
   };
 
+  // §6.1 canSeePresence decides the FORK — ghost, live-share, hidden default —
+  // and this card only renders the branch it picked. The predicate lives in
+  // lib/tripPresencePolicy.ts and is tested as a rule against every actor
+  // kind; keeping the ordering here as well would be two copies of one rule.
+  const decision = canSeePresence({
+    ghostModeEnabled: raw.prefs?.ghostModeEnabled ?? false,
+    defaultVisibility: raw.prefs?.defaultVisibility ?? null,
+    liveShareExpiresAt: raw.liveShare?.expiresAt ?? null,
+  }, now);
+
   // Ghost mode — member is invisible
-  const ghostMode = raw.prefs?.ghostModeEnabled ?? false;
-  if (ghostMode) {
+  if (!decision.allowed && decision.reason === "TRIP_PRESENCE_GHOST") {
     return { ...base, ghostMode: true, statusLabel: "location_hidden", areaLabel: null, exactCoords: null };
   }
 
@@ -183,8 +193,9 @@ export function buildCrewCard(
   // permission. `Date.parse` returns NaN there, and every comparison with NaN
   // is false, so the `>` below rejects it — stated explicitly because relying
   // on NaN semantics silently is how this kind of check rots.
-  const grantExpiresAt = raw.liveShare ? Date.parse(raw.liveShare.expiresAt) : NaN;
-  const grantIsActive = Number.isFinite(grantExpiresAt) && grantExpiresAt > now;
+  // The predicate above did this comparison (an unparseable expiry fails
+  // closed there too); `grantIsActive` is its verdict, named for the reader.
+  const grantIsActive = decision.allowed && decision.via === "live_share";
 
   // Live share overrides the default visibility — INCLUDING a 'hidden' default.
   // A live share is an affirmative, time-boxed act of sharing; it must be honored
@@ -217,9 +228,10 @@ export function buildCrewCard(
     };
   }
 
-  // Prefs default — if no prefs row, treat as not_shared
+  // Prefs default — if no prefs row, treat as not_shared. The predicate has
+  // already said so (TRIP_PRESENCE_HIDDEN); this is the card for that answer.
   const visibility = raw.prefs?.defaultVisibility ?? "hidden";
-  if (visibility === "hidden") {
+  if (!decision.allowed) {
     return { ...base, statusLabel: "not_shared", areaLabel: null, exactCoords: null };
   }
 
@@ -258,7 +270,7 @@ export function buildCrewCard(
  *   - hotel blur is NOT enabled, AND
  *   - lat + lng are actually available in locationState.
  */
-function resolveExactCoords(
+export function resolveExactCoords(
   raw: RawMemberLocation,
 ): { lat: number; lng: number } | null {
   if (!raw.liveShare) return null;
