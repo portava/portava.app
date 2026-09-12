@@ -81,3 +81,15 @@ export {
   type SessionRecap,
   type MemoryDraft,
 } from './memory/memoryApi.ts';
+export { MessageReceiptRow } from './lifecycle/MessageReceiptRow.tsx';
+export {
+  fetchReceipts,
+  unsendMessage,
+  receiptLabel,
+  canOfferUnsend,
+  type MessageReceipt,
+  type ReceiptsResponse,
+  type ReceiptStatus,
+  type UnsendRefusal,
+  type UnsendSuccess,
+} from './lifecycle/lifecycleApi.ts';

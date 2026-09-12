@@ -59,6 +59,8 @@ import { CoordinationPanel } from '../../src/features/telegraph/coordination/Coo
 import { ContentDrawerSheet } from '../../src/features/telegraph/drawer/ContentDrawerSheet.tsx';
 import { RecapSheet } from '../../src/features/telegraph/memory/RecapSheet.tsx';
 import { useThreadRecap } from '../../src/features/telegraph/memory/useThreadRecap.ts';
+import { saveMessageAsMemoryDraft } from '../../src/features/telegraph/memory/memoryApi.ts';
+import { unsendMessage } from '../../src/features/telegraph/lifecycle/lifecycleApi.ts';
 import { ComposerPlusMenu } from '../../src/features/telegraph/composer/ComposerPlusMenu.tsx';
 import { TypedComposePrompt, type TypedComposeKind } from '../../src/features/telegraph/composer/TypedComposePrompt.tsx';
 import { sendTypedMessage, type SendableKind } from '../../src/features/telegraph/kinds/kindsApi.ts';
@@ -150,6 +152,7 @@ function LongPressActionSheet({
   onDeleteForMe,
   onReply,
   onSave,
+  onUnsent,
 }: {
   message: Message | null;
   mine: boolean;
@@ -158,9 +161,11 @@ function LongPressActionSheet({
   onDeleteForMe: (id: string) => Promise<void>;
   onReply: (msg: Message) => void;
   onSave: (msg: Message) => void;
+  onUnsent: (id: string) => void;
 }) {
   const plainInsetForSheets = usePlainBottomInset();
   const [showReport, setShowReport] = useState(false);
+  const [busy, setBusy] = useState<null | 'unsend' | 'memory'>(null);
 
   if (!message) return null;
   const text = message.displayBody ?? message.body ?? '';
@@ -206,6 +211,64 @@ function LongPressActionSheet({
               <Text style={las.rowLabel}>{label}</Text>
             </Pressable>
           ))}
+          {/* Telegraph §10.2 — promote THIS ONE message into a private Memory
+              draft. Singular by construction: there is no "save this
+              conversation" anywhere, on either side of the wire. */}
+          <Pressable
+            style={las.row}
+            testID="telegraph-save-to-memory"
+            disabled={busy !== null}
+            onPress={async () => {
+              setBusy('memory');
+              const r = await saveMessageAsMemoryDraft(message.id);
+              setBusy(null);
+              onClose();
+              if (r.ok) {
+                const d = r.data.draft;
+                Alert.alert(
+                  'Saved to Memory',
+                  d.state === 'draft' && d.visibility === 'only_me'
+                    ? 'Saved to your private Memory drafts. Only you can see it.'
+                    : `Saved as a ${d.state} Memory, visible to ${d.visibility}.`,
+                );
+              } else {
+                Alert.alert('Not saved', r.message ?? 'We could not save that. Nothing was created.');
+              }
+            }}
+          >
+            <Sparkles size={18} color={color.ink} />
+            <Text style={las.rowLabel}>Save to Memory</Text>
+          </Pressable>
+
+          {/* Telegraph §7.4 — unsend. Offered for the sender's own messages and
+              REFUSED BY THE SERVER once any recipient has seen it; the refusal
+              carries how many, and is shown verbatim rather than softened. This
+              is not the Delete below: a delete works after it has been seen and
+              leaves a redacted slot. */}
+          {mine && threadId && (
+            <Pressable
+              style={las.row}
+              testID="telegraph-unsend-message"
+              disabled={busy !== null}
+              onPress={async () => {
+                setBusy('unsend');
+                const r = await unsendMessage(threadId, message.id);
+                setBusy(null);
+                onClose();
+                if (r.ok) onUnsent(message.id);
+                else {
+                  Alert.alert(
+                    'Not unsent',
+                    r.message ?? 'That message could no longer be unsent.',
+                  );
+                }
+              }}
+            >
+              <RefreshCw size={18} color={color.ink} />
+              <Text style={las.rowLabel}>Unsend</Text>
+            </Pressable>
+          )}
+
           {mine && (
             <Pressable
               style={las.row}
@@ -2358,6 +2421,7 @@ export default function TelegraphThread() {
             else Alert.alert('Error', r.message ?? 'Could not save message.');
           });
         }}
+        onUnsent={() => { void reload(); }}
       />
 
       {/* Per-thread translation settings */}
