@@ -48,8 +48,11 @@ import {
 } from "../domain/trips/services/TripOfflineQueue.js";
 import {
   buildOfflineBundle, bundleSigningSecret, bundleStaleness, signOfflineBundle, verifyOfflineBundle,
+  type BundleInputs, type BundleRoute, type BundleFreeWindow,
   type BundleCommitment, type BundleMeetingPoint, type BundlePlan, type TripOfflineBundle,
 } from "../domain/trips/services/TripOfflineBundle.js";
+import { buildTripRouteChainProjection } from "../domain/trips/projections/TripRouteChainProjection.js";
+import { buildTripFreedomProjection } from "../domain/trips/projections/TripFreedomProjection.js";
 
 const router = Router();
 const log = logger.child({ mod: "tripOffline" });
@@ -103,10 +106,56 @@ router.get("/trips/:tripId/offline-bundle", asyncHandler(async (req, res) => {
 
   // 2794 / §18.1: open meeting checkpoints ride the bundle when the gate is on.
   const meetingPoints = await readOpenMeetingPointsForBundle(sc, tripId, user.id);
-  const bundle = buildOfflineBundle({ tripId, sourceTripVersion: version, commitments, plans, reservations, meetingPoints }, Date.now());
+  // §18.1 "selected route" and "the most recent certified context" (census-trips
+  // TR337, TR341): §62's route chain and the §7.3 windows, both read under the
+  // same gate, each as its own §21.2 decision; either failing to read is said,
+  // not refused — the plan and the addresses still travel.
+  const routeAndContext = await readRouteAndContextForBundle(sc, tripId, gate.enabled);
+  const bundle = buildOfflineBundle({ tripId, sourceTripVersion: version, commitments, plans, reservations, meetingPoints, ...routeAndContext }, Date.now());
   const signed = signOfflineBundle(bundle, secret);
-  res.json({ ...signed, readings: { commitments: commitmentsReading, staleness: bundleStaleness(bundle, Date.now(), version).detail } });
+  res.json({ ...signed, readings: { commitments: commitmentsReading, selectedRoute: bundle.notCarried.selectedRoute, certifiedContext: bundle.contents.certifiedContext.windowsReading, staleness: bundleStaleness(bundle, Date.now(), version).detail } });
 }));
+
+async function readRouteAndContextForBundle(sc: any, tripId: string, gateEnabled: boolean): Promise<Pick<BundleInputs, "selectedRoute" | "routeReading" | "freeWindows" | "windowsDecisionId" | "windowsReading">> {
+  if (!gateEnabled) {
+    const off = "trip_operational_projections_enabled is off: not read for this bundle";
+    return { selectedRoute: null, routeReading: off, freeWindows: null, windowsDecisionId: null, windowsReading: off };
+  }
+  let selectedRoute: BundleRoute | null = null; let routeReading = "";
+  const chain = await buildTripRouteChainProjection(sc, tripId);
+  if (chain.ok) {
+    const p = chain.projection;
+    selectedRoute = {
+      decisionId: p.decisionId, partySize: p.partySize, disclosure: p.disclosure,
+      stops: p.stops.map((st) => ({ planItemId: st.planItemId, title: st.title, startsAt: st.startsAt, endsAt: st.endsAt, locationName: st.locationName })),
+      hops: p.hops.map((h) => ({
+        from: h.fromPlanItemId, to: h.toPlanItemId, departAt: h.departAt,
+        boundMinutes: h.travel.boundMinutes, expectedMinutes: h.travel.expectedMinutes, unknownReason: h.travel.unknownReason,
+        arrivalAtBound: h.arrivalAtBound, expectedArrivalAt: h.expectedArrivalAt, band: h.travel.assumption?.band ?? null,
+      })),
+      unplaced: p.unplaced.map((u) => ({ planItemId: u.planItemId, reason: u.reason })),
+    };
+  } else {
+    routeReading = `the route chain could not be read (${chain.reason}): ${chain.message}`;
+    log.warn({ tripId, reason: chain.reason }, "offline bundle: route chain unreadable — carrying none");
+  }
+  let freeWindows: BundleFreeWindow[] | null = null; let windowsDecisionId: string | null = null; let windowsReading = "";
+  const freedom = await buildTripFreedomProjection(sc, tripId);
+  if (freedom.ok) {
+    const f = freedom.projection;
+    windowsDecisionId = f.decisionId;
+    freeWindows = f.windows.map((w) => ({
+      id: w.id, beginsAt: w.beginsAt, endsAt: w.endsAt, durationMinutes: w.durationMinutes,
+      certified: w.certified, confidence: String(w.confidence), participants: [...w.participants],
+      afterCommitmentId: w.afterCommitmentId, beforeCommitmentId: w.beforeCommitmentId, reservedMinutes: w.reservedMinutes,
+    }));
+    windowsReading = `${f.conflicts.length} temporal conflict(s); provider ${f.provider.id}${f.provider.routed ? " (routed)" : " (not routed: no window can be certified, TR128)"}; decision ${f.decisionId}`;
+  } else {
+    windowsReading = `the §7.3 windows could not be read (${freedom.reason}): ${freedom.message}`;
+    log.warn({ tripId, reason: freedom.reason }, "offline bundle: freedom windows unreadable — carrying none");
+  }
+  return { selectedRoute, routeReading, freeWindows, windowsDecisionId, windowsReading };
+}
 
 async function readOpenMeetingPointsForBundle(sc: any, tripId: string, userId: string): Promise<BundleMeetingPoint[]> {
   if (!(await tripOperationalProjectionsGate(sc)).enabled) return [];

@@ -53,6 +53,29 @@ export interface BundleAddress {
   kind: string; id: string; title: string; address: string; at: string | null;
 }
 
+/** §18.1 "selected route" — §62's route chain, the trip's own plan in order (census-trips TR337). */
+export interface BundleRouteStop { planItemId: string; title: string | null; startsAt: string | null; endsAt: string | null; locationName: string | null }
+export interface BundleRouteHop {
+  from: string; to: string; departAt: string;
+  /** The free-flow LOWER BOUND and the bound under the departure assumption (§60), minutes; null: unknown. */
+  boundMinutes: number | null; expectedMinutes: number | null; unknownReason: string | null;
+  arrivalAtBound: string | null; expectedArrivalAt: string | null; band: string | null;
+}
+export interface BundleRoute {
+  /** The §21.2 decision the chain was read as; explain it at GET /trips/:id/decisions/:decisionId/explain. */
+  decisionId: string;
+  stops: BundleRouteStop[]; hops: BundleRouteHop[]; partySize: number;
+  unplaced: Array<{ planItemId: string; reason: string }>;
+  disclosure: string;
+}
+/** §18.1 "the most recent certified context" — the §7.3 windows as the engine last certified them (census-trips TR341). */
+export interface BundleFreeWindow {
+  id: string; beginsAt: string; endsAt: string; durationMinutes: number;
+  /** §7.3: HIGH confidence with no unknown term — never true without a routed provider (TR128). */
+  certified: boolean; confidence: string; participants: string[];
+  afterCommitmentId: string | null; beforeCommitmentId: string | null; reservedMinutes: number | null;
+}
+
 export interface TripOfflineBundle {
   bundleSchemaVersion: number;
   tripId: string;
@@ -65,11 +88,16 @@ export interface TripOfflineBundle {
     /** The in-progress plan, else the next confirmed one, else null. */
     activePlan: BundlePlan | null;
     plans: BundlePlan[];
-    selectedRoute: null;
+    /** §62's route chain when the operational gate is on and the chain could be read; else null, and `notCarried.selectedRoute` says why. */
+    selectedRoute: BundleRoute | null;
     /** §10.4 / §18.1 (2794): the open meeting checkpoints, so a crew can still regroup offline. */
     meetingPoints: BundleMeetingPoint[];
     criticalAddresses: BundleAddress[];
-    certifiedContext: { sourceTripVersion: number; certifiedAt: string; reading: string };
+    certifiedContext: {
+      sourceTripVersion: number; certifiedAt: string; reading: string;
+      /** The §7.3 windows as last certified, with the §21.2 decision they were read as; null when not read, and `windowsReading` says why. */
+      freeWindows: BundleFreeWindow[] | null; windowsDecisionId: string | null; windowsReading: string;
+    };
   };
   /** What the bundle does not carry, named. */
   notCarried: { selectedRoute: string; meetingPoints: string; mapTiles: string };
@@ -143,6 +171,13 @@ export interface BundleInputs {
   reservations: ReadonlyArray<{ id: string; title: string; locationName: string | null; startsAt: string | null }>;
   /** 2794: open meeting checkpoints, read under the operational gate; omitted when the gate is off. */
   meetingPoints?: readonly BundleMeetingPoint[];
+  /** §62's route chain, read under the operational gate; null with `routeReading` saying why when not. */
+  selectedRoute?: BundleRoute | null;
+  routeReading?: string;
+  /** The §7.3 windows, read under the operational gate; null with `windowsReading` saying why when not. */
+  freeWindows?: readonly BundleFreeWindow[] | null;
+  windowsDecisionId?: string | null;
+  windowsReading?: string;
 }
 
 export interface BundleMeetingPoint {
@@ -184,13 +219,23 @@ export function buildOfflineBundle(input: BundleInputs, now: number, ttlMs: numb
       nextCommitments,
       activePlan: inProgress ?? nextConfirmed,
       plans,
-      selectedRoute: null,
+      selectedRoute: input.selectedRoute ?? null,
       meetingPoints: [...(input.meetingPoints ?? [])],
       criticalAddresses,
-      certifiedContext: { sourceTripVersion: input.sourceTripVersion, certifiedAt: nowIso, reading: `read at trip version ${input.sourceTripVersion} on ${nowIso}; stale after ${new Date(now + ttlMs).toISOString()} or once the trip moves past that version` },
+      certifiedContext: {
+        sourceTripVersion: input.sourceTripVersion, certifiedAt: nowIso,
+        reading: `read at trip version ${input.sourceTripVersion} on ${nowIso}; stale after ${new Date(now + ttlMs).toISOString()} or once the trip moves past that version`,
+        freeWindows: input.freeWindows ? [...input.freeWindows] : null,
+        windowsDecisionId: input.windowsDecisionId ?? null,
+        windowsReading: input.freeWindows
+          ? `${input.freeWindows.length} §7.3 window(s) as the engine certified them at version ${input.sourceTripVersion}; ${input.freeWindows.filter((w) => w.certified).length} certified (HIGH confidence, no unknown term)${input.windowsReading ? `; ${input.windowsReading}` : ""}`
+          : (input.windowsReading ?? "not read"),
+      },
     },
     notCarried: {
-      selectedRoute: "route chains are route_plans, a separate system (TR437); not in the bundle",
+      selectedRoute: input.selectedRoute
+        ? `carried: §62's route chain — ${input.selectedRoute.stops.length} placed plan item(s) in order and ${input.selectedRoute.hops.length} hop(s) with the travel bound and the departure assumption between them; a route_plans row is not a trip's route (TR437)`
+        : (input.routeReading ?? "not read"),
       meetingPoints: (input.meetingPoints ?? []).length > 0
         ? "carried: the open meeting checkpoints (2794); §14.3 candidates not yet agreed are computed on demand and are not"
         : "no open meeting checkpoint (2794); §14.3 computes candidates on demand and none is stored until the crew agrees one",

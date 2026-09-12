@@ -23,12 +23,12 @@ preserved in §36.1 as the record of that measurement.
 | Measure | Value |
 | --- | --- |
 | **Denominator (testable requirements)** | **451** |
-| BUILT-AND-CORRECT | **313** |
-| BUILT-BUT-WRONG | **122** |
-| NOT-BUILT | **15** |
+| BUILT-AND-CORRECT | **316** |
+| BUILT-BUT-WRONG | **130** |
+| NOT-BUILT | **4** |
 | CANNOT-VERIFY | **1** |
-| **CONSTRUCTED%** = (C+W)/451 | **435 / 451 = 96.5 %** |
-| **CORRECT%** (raw) = C/451 | **313 / 451 = 69.4 %** |
+| **CONSTRUCTED%** = (C+W)/451 | **446 / 451 = 98.9 %** |
+| **CORRECT%** (raw) = C/451 | **316 / 451 = 70.1 %** |
 
 > **RESTATED 2026-09-11 (§38): 89 → 87 CORRECT, 127 → 129 WRONG.** §38 re-derived
 > 39 of the C rows against the code and **two did not hold**, both for the same
@@ -336,6 +336,18 @@ preserved in §36.1 as the record of that measurement.
 > found and fixed the Compass sanitizer dropping every camelCase `…lAt` time
 > (`requiredArrivalAt` had never reached the conversation from
 > `get_commitments`; TR206 re-read, C on the wire now). No migration.
+
+> **RESTATED 2026-09-12 (§63): 313 → 316 CORRECT, 122 → 130 WRONG, 15 → 4
+> NOT-BUILT. CONSTRUCTED 96.5 % → 98.9 %, CORRECT 69.4 % → 70.1 %.** §63 reads
+> §18's twelve range-row requirements one at a time for the first time since
+> they were written, builds the two bundle contents that still had nothing to
+> carry (the selected route, from §62's chain, and the certified context, as
+> the §7.3 windows with zero ever certified because no routed provider exists)
+> and the one offline-safe operation the queue still refused (complete
+> activity, replayed through the kernel and held by its flag). Eleven of the
+> twelve move; seven land on W with one deployment reason each, and the four
+> NOT-BUILT rows that remain in the whole census are map tiles, a navigation
+> SDK, Bluetooth proximity and relay metadata. No migration.
 | **CORRECT% (spec-attributable)** | **WITHDRAWN — not measured. See §36.4** |
 | CANNOT-VERIFY share | **1 / 451 = 0.2 %** |
 
@@ -5382,35 +5394,35 @@ the mechanism; the offline path is what asks them the §18.3 questions.
 
 ### 48.1 What was built, and where
 
-- **§18.1 the signed, versioned bundle (TR334)** — `domain/trips/services/TripOfflineBundle.ts:159#buildOfflineBundle(`
+- **§18.1 the signed, versioned bundle (TR334)** — `domain/trips/services/TripOfflineBundle.ts:194#buildOfflineBundle(`
   assembles next commitments (in deadline order, past ones dropped), the
   active plan (in progress, else the next confirmed), the plans, the
   critical addresses (reservations, commitments, upcoming plans) and the
   certified context, stamped `sourceTripVersion` (§18.4) and `expiresAt`;
   what it does not carry — the selected route, meeting points, map tiles —
-  is a named empty field, not an omission. `domain/trips/services/TripOfflineBundle.ts:103#signOfflineBundle(`
+  is a named empty field, not an omission. `domain/trips/services/TripOfflineBundle.ts:131#signOfflineBundle(`
   signs the canonical bytes with HMAC-SHA256 under
   `TRIP_OFFLINE_BUNDLE_SECRET` (SESSION_SECRET as the tree's usual
-  fallback, no default); `domain/trips/services/TripOfflineBundle.ts:109#verifyOfflineBundle(`
+  fallback, no default); `domain/trips/services/TripOfflineBundle.ts:137#verifyOfflineBundle(`
   is constant-time and false for anything edited. `GET /trips/:tripId/offline-bundle`
-  (`routes/tripOffline.ts:60#offline-bundle",`) reads the trip's version, its
+  (`routes/tripOffline.ts:63#offline-bundle",`) reads the trip's version, its
   plan and reservations (no `raw_text`), and its commitments under the
   operational gate, and refuses (503) rather than issue an unsigned bundle
-  when no secret is configured. `test/tripOfflineBundle.test.ts:85#version_behind`
-  and `test/tripOfflineRoute.test.ts:134#unsigned` pin the contents, the
+  when no secret is configured. `test/tripOfflineBundle.test.ts:153#version_behind`
+  and `test/tripOfflineRoute.test.ts:188#unsigned` pin the contents, the
   round trip, the tamper case and the refusal. Mutation: any signature
   verifies (2 red).
-- **§18.1 stale is visible (TR342)** — `domain/trips/services/TripOfflineBundle.ts:123#bundleStaleness(`:
+- **§18.1 stale is visible (TR342)** — `domain/trips/services/TripOfflineBundle.ts:151#bundleStaleness(`:
   past `expiresAt`, or read at a version the trip has moved past,
   `TRIP_OFFLINE_BUNDLE_STALE` says which, and a stale bundle is still the
   last certified context, not the current one. The replay endpoint dates
   the bundle a client carries back. On the wire; no screen renders it.
 - **§18.2 the contract and the rule (TR343, TR349, TR451)** —
   `domain/trips/services/TripOfflineQueue.ts:45#QueuedTripOperationSchema` is the
-  spec's seven fields, strict; `domain/trips/services/TripOfflineQueue.ts:112#classifyQueuedOperation(`
+  spec's seven fields, strict; `domain/trips/services/TripOfflineQueue.ts:129#classifyQueuedOperation(`
   decides one of three things for each operation, in the order the
-  traveller acted (`domain/trips/services/TripOfflineQueue.ts:138#orderQueuedOperations<T`):
-  *replay* for the offline-safe list (`domain/trips/services/TripOfflineQueue.ts:64#OFFLINE_SAFE_TYPES`
+  traveller acted (`domain/trips/services/TripOfflineQueue.ts:160#orderQueuedOperations<T`):
+  *replay* for the offline-safe list (`domain/trips/services/TripOfflineQueue.ts:63#OFFLINE_SAFE_TYPES`
   — join/leave plan, attendance, presence, start/skip a plan, a vote, each
   in the kernel's vocabulary and each issuable), with its own idempotency
   key and expected version; *revalidate* for a sensitive or high-conflict
@@ -5419,14 +5431,14 @@ the mechanism; the offline path is what asks them the §18.3 questions.
   replay once it has; *reject* for a type the kernel does not have or a
   cutover-gated plan write with its own route, or a `clientOccurredAt` in
   the future or past the seven-day horizon — `TRIP_OFFLINE_QUEUE_REJECTED`,
-  with why. `POST /trips/:tripId/operations` (`routes/tripOffline.ts:136#operations",`)
+  with why. `POST /trips/:tripId/operations` (`routes/tripOffline.ts:185#operations",`)
   reads the canonical version first and refuses the whole queue when it
   cannot, replays through `executeTripCommand` with the operation id as the
   correlation, holds everything with `TRIP_KERNEL_UNAVAILABLE` per operation
   when the kernel flag is off, and answers the whole queue — counts of
   replayed, duplicates, conflicts, revalidate, rejected, refused — so one
-  refusal hides nothing. `test/tripOfflineQueue.test.ts:67#horizon` pins the
-  rule; `test/tripOfflineRoute.test.ts:157#TRIP_OFFLINE_REVALIDATION_REQUIRED`
+  refusal hides nothing. `test/tripOfflineQueue.test.ts:101#horizon` pins the
+  rule; `test/tripOfflineRoute.test.ts:211#TRIP_OFFLINE_REVALIDATION_REQUIRED`
   drives the app: the order, the duplicate's receipt, the held sensitive
   operation that never reaches the kernel, the conflict that overwrites
   nothing, the rejected types, the flag off, the bundle current / behind /
@@ -5507,16 +5519,16 @@ under a mutation before its commit.
   `trip_saved_places` is a set keyed (trip, member, place) and the
   interactive route refuses a duplicate; what §18.3 asks for is the MERGE
   on reconnect. §48's queue now carries `SAVE_IDEA` / `UNSAVE_IDEA` as set
-  operations (`domain/trips/services/TripOfflineQueue.ts:79#SET_OPERATION_TYPES`;
-  their payloads are strict, `domain/trips/services/TripOfflineQueue.ts:80#SaveIdeaPayloadSchema`),
+  operations (`domain/trips/services/TripOfflineQueue.ts:96#SET_OPERATION_TYPES`;
+  their payloads are strict, `domain/trips/services/TripOfflineQueue.ts:97#SaveIdeaPayloadSchema`),
   and the replay route applies them by identity — union then no-op,
   difference then no-op — answering `added` / `already_present` /
   `removed` / `already_absent` and moving no aggregate version, because a
-  bookmark is not trip state (`routes/tripOffline.ts:192#applySetOperation(`).
+  bookmark is not trip state (`routes/tripOffline.ts:241#applySetOperation(`).
   A concurrent add of the same element is the same element: the unique key
-  refuses it and the answer is `already_present`. `test/tripOfflineRoute.test.ts:192#already_present`
+  refuses it and the answer is `already_present`. `test/tripOfflineRoute.test.ts:246#already_present`
   replays save, save, unsave, unsave and reads the set empty with the
-  kernel untouched; `test/tripOfflineQueue.test.ts:82#UNSAVE_IDEA` pins the
+  kernel untouched; `test/tripOfflineQueue.test.ts:116#UNSAVE_IDEA` pins the
   classification and the malformed case. Mutation: an add that never
   notices the element is present (1 red).
 - **§8.4 late check-in has a producer (TR146)** — the trigger was built in
@@ -5766,7 +5778,7 @@ and the column §17.4 needed.
   layer in its own right, read under the operational gate (whose probe now
   names 2794's tables), beside the plan-item label the layer already had.
   The offline bundle carries the open checkpoints with the viewer's own
-  arrival state (`domain/trips/services/TripOfflineBundle.ts:70#BundleMeetingPoint`),
+  arrival state (`domain/trips/services/TripOfflineBundle.ts:94#BundleMeetingPoint`),
   so §18.1's "meeting points" is no longer an empty array with an excuse.
 - **§17.4 Safe Return on a subgroup (TR329)** — `safe_return_sessions.subgroup_id`
   (CHECK: needs a trip); `POST /me/safe-return/sessions` accepts
@@ -6177,24 +6189,24 @@ render"* §10's freshness. No server change, no migration.
 
 ### 57.1 What was built, and where
 
-- **The bundle, kept as issued** (`travel-buddy-standalone/src/features/trips/offline/tripOffline.ts:124#export async function storeBundle(`):
+- **The bundle, kept as issued** (`travel-buddy-standalone/src/features/trips/offline/tripOffline.ts:122#export async function storeBundle(`):
   `GET /trips/:tripId/offline-bundle`'s signed bundle is stored byte for
   byte — signature and all — under a versioned key, and never re-signed or
   edited, because the server checks that signature on replay. The client's
   judgement of it is the server's own rule mirrored
-  (`travel-buddy-standalone/src/features/trips/offline/tripOffline.ts:61#export function bundleStaleness(`):
+  (`travel-buddy-standalone/src/features/trips/offline/tripOffline.ts:64#export function bundleStaleness(`):
   expired, or behind the trip's current version, is STALE, said in those
   words and still shown — §18.1's last certified context, never drawn as
   current. Storage is an injectable key-value store (AsyncStorage in the
   app, memory under test).
-- **The queue, §18.3's and not a retry loop** (`travel-buddy-standalone/src/features/trips/offline/tripOffline.ts:177#export async function enqueueOperation(`):
+- **The queue, §18.3's and not a retry loop** (`travel-buddy-standalone/src/features/trips/offline/tripOffline.ts:175#export async function enqueueOperation(`):
   an operation is queued with its own idempotency key, the stored bundle's
   version as `expectedTripVersion`, its client instant, and a bound the
   server also enforces (50; refused, not truncated). On reconnect
-  (`travel-buddy-standalone/src/features/trips/offline/tripOffline.ts:226#export async function replayQueue(`)
+  (`travel-buddy-standalone/src/features/trips/offline/tripOffline.ts:222#export async function replayQueue(`)
   the queue goes to `POST /trips/:tripId/operations` with the stored bundle,
   and the server's per-operation decision is applied, pure and pinned
-  (`travel-buddy-standalone/src/features/trips/offline/tripOffline.ts:209#export function applyReplayResults(`):
+  (`travel-buddy-standalone/src/features/trips/offline/tripOffline.ts:208#export function applyReplayResults(`):
   replayed and duplicate leave as done; rejected leaves with the reason; a
   version conflict is settled as a conflict — never an overwrite, never
   retried on the client's own authority; one the server asks to revalidate
@@ -6223,7 +6235,7 @@ render"* §10's freshness. No server change, no migration.
   than an empty crew. Both halves of §18.1's sentence — stale visible, live
   unavailable visible — are on that screen.
 - **Pinned.** Two node suites
-  (`travel-buddy-standalone/src/features/trips/offline/__tests__/tripOffline.test.ts:95#applyReplayResults: replayed and duplicate leave as done`)
+  (`travel-buddy-standalone/src/features/trips/offline/__tests__/tripOffline.test.ts:96#applyReplayResults: replayed and duplicate leave as done`)
   and two jest component suites; four mutations seen red: a version
   conflict settled as if replayed, the queue unbounded, the rescue entry
   rendering under NORMAL, a stale copy drawn as ready.
@@ -6430,11 +6442,11 @@ code changes in this section.
   it (TR128, TR412).
 - **TR174 cached event maps.** The offline bundle carries the trip's plans
   with their points and the open meeting checkpoints
-  (`domain/trips/services/TripOfflineBundle.ts:188#meetingPoints: [...(input.meetingPoints`),
+  (`domain/trips/services/TripOfflineBundle.ts:223#meetingPoints: [...(input.meetingPoints`),
   the client keeps it byte for byte
-  (`travel-buddy-standalone/src/features/trips/offline/tripOffline.ts:124#export async function storeBundle(`),
+  (`travel-buddy-standalone/src/features/trips/offline/tripOffline.ts:122#export async function storeBundle(`),
   and the tiles are named as not carried — *"a client permission the server
-  does not hold"* (`domain/trips/services/TripOfflineBundle.ts:197#mapTiles: "a client permission`).
+  does not hold"* (`domain/trips/services/TripOfflineBundle.ts:242#mapTiles: "a client permission`).
   The Map's own cache keeps its objects with a freshness that only decays
   (`travel-buddy-standalone/src/features/map/cache/mapCache.ts:472#rehydrate(`).
   The points of an event's map are cached; the map is not. W.
@@ -6859,3 +6871,122 @@ match-by-departure rule does not resolve. What would move it to C: the
 table's optimizer and checkpoint state folded into the kernel's plan
 family, which is a migration and a product decision this section does not
 take.
+
+## 63. The offline bundle's last two contents, and the last offline-safe operation — §18 re-read row by row
+
+**Read against the branch `claude/sweet-fermat-fmx7up`.** §18.1 names seven
+things the bundle carries and §18.2 five operations the queue may replay, and
+the census has held all twelve at **N** since the first read — one range row
+each, written when there was no bundle and no queue at all. §48 built the
+bundle and the queue, §52 put the meeting checkpoints in it, §57 made the
+client keep it; none of those passes went back and read the twelve rows
+individually. §63 does two things: it builds the two contents that still had
+nothing to carry — the **selected route** and the **most recent certified
+context** — and the one offline-safe operation the queue still refused,
+**complete activity**; then it re-derives all twelve rows against the code,
+one at a time.
+
+### 63.1 What was built, and where
+
+- **The selected route is the trip's own route chain.** §62 gave the trip a
+  route chain that IS its plan; the bundle now carries it under the same gate
+  (`routes/tripOffline.ts:119#async function readRouteAndContextForBundle(`),
+  as stops in start order and hops with the travel bound, the departure-time
+  assumption's band, and both arrivals — plus the §21.2 `decisionId` the chain
+  was read as, so an explanation survives the flight
+  (`domain/trips/services/TripOfflineBundle.ts:64#export interface BundleRoute {`).
+  A `route_plans` row is still not a trip's route: `notCarried.selectedRoute`
+  says what is carried and names TR437
+  (`domain/trips/services/TripOfflineBundle.ts:237#carried: §62's route chain`).
+- **The certified context is the §7.3 windows, with what makes them
+  uncertified said.** `certifiedContext` gains the freedom windows as the
+  engine last read them, the decision they were read as, and a reading that
+  counts how many are certified
+  (`domain/trips/services/TripOfflineBundle.ts:72#export interface BundleFreeWindow {`).
+  On this tree that count is always **zero** and the reading says why — no
+  routed provider exists, so no window can be certified (TR128, TR412). A
+  bundle that said "certified" without one would be the lie this row is
+  about.
+- **Neither is refused when it cannot be read.** Each is read softly: a
+  failure carries null and a sentence, and the plan, the addresses and the
+  meeting points travel regardless
+  (`routes/tripOffline.ts:139#the route chain could not be read`). With the gate
+  closed — every deployment today — both are absent and the bundle says which
+  flag is off.
+- **Complete activity is replayable from the queue.** `COMPLETE_ACTIVITY` has
+  a legacy writer and a flag-gated cutover, so `POST /trips/:id/commands`
+  refuses it; the queue was refusing it for the same reason, which left one of
+  §18.2's five named operations unqueueable. It is now its own class
+  (`domain/trips/services/TripOfflineQueue.ts:82#export const QUEUE_KERNEL_ONLY_TYPES`):
+  replayed through the kernel with its own idempotency key, and **held** by
+  `trip_kernel_enabled` like every other kernel replay, so the flag-gated
+  cutover is not routed around. Its payload is exactly `item_id` and a patch
+  of `{ status: "done" }` — a completion is not an edit, and a smuggled column
+  is rejected
+  (`domain/trips/services/TripOfflineQueue.ts:83#export const CompleteActivityPayloadSchema`).
+- **The client shows what it has.** The offline card says how many stops and
+  hops the route carries and how many windows were read and how many of them
+  are certified — and, when it has neither, says which flag is off rather
+  than showing nothing
+  (`travel-buddy-standalone/src/features/trips/offline/TripOfflineCard.tsx:100#testID="trip-offline-route"`,
+  `travel-buddy-standalone/src/features/trips/offline/TripOfflineCard.tsx:107#testID="trip-offline-windows"`).
+- **Tests, on the real builder, the real route and the real card.** The
+  builder carries the route and the windows, counts the certified ones, keeps
+  the plan when neither could be read, and the signature covers both — a hop
+  edited after signing does not verify
+  (`test/tripOfflineBundle.test.ts:56#describe("TR337 / TR341 — the selected route and the certified context"`).
+  Through the app: with the gate off both are absent and the readings say so;
+  with the gate on the route is the trip's own plan with a decision id and the
+  windows are read with "not routed" stated; a queued completion reaches the
+  kernel as issued and is held, not dropped, while the flag is off
+  (`test/tripOfflineRoute.test.ts:164#a queued COMPLETE_ACTIVITY reaches the kernel`).
+  The queue's own rules: replay via kernel, no revalidation wait, and five
+  malformed payloads rejected
+  (`test/tripOfflineQueue.test.ts:71#describe("TR346 — complete activity is replayable from the queue"`).
+  On the client, the card's two lines
+  (`travel-buddy-standalone/src/features/trips/offline/__tests__/TripOfflineCard.component.test.tsx:60#says what the offline copy carries of the route`).
+  Each was seen red first: the queue tests with `QUEUE_KERNEL_ONLY_TYPES`
+  emptied, the route test with the gate forced closed, the card test with its
+  route line replaced by a constant.
+
+### 63.2 Row moves
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| TR335 §18.1 bundle: next commitments | N | **W** | Carried since §48, read from `trip_commitments` — which only 2761 creates and no database has, so with the gate closed the bundle says "commitments are not in this bundle" and carries none. |
+| TR336 §18.1 bundle: active plan | N | **C** | The in-progress plan, else the next confirmed one, else null — from `trip_plan_items`, which every deployment has, with no flag over it. The server cannot boot without a signing secret (`SESSION_SECRET` is a REQUIRED key), so the bundle is always issuable. |
+| TR337 §18.1 bundle: selected route | N | **W** | Built here: §62's route chain, stops and hops with the travel bound and the assumption, and the decision id. W, not C: it rides `trip_operational_projections_enabled`, seeded FALSE by 2778, so no deployment carries it today. |
+| TR338 §18.1 bundle: meeting points | N | **W** | Carried since §52 — the open checkpoints from 2794, which no database has, under the same gate. |
+| TR339 §18.1 bundle: critical addresses | N | **C** | Reservations, commitments and plans that name a place, each with its time — from `trip_reservations` and `trip_plan_items`, on every deployment, with no flag over it. |
+| TR340 §18.1 bundle: cached map tiles where permitted | N | **N** | Still not built, and the bundle says so rather than implying it: `notCarried.mapTiles` reads "a client permission the server does not hold". Tiles are a client-side licence question, not a server read. |
+| TR341 §18.1 bundle: most recent certified context | N | **W** | Built here: the §7.3 windows as last read, with the decision id and a count of the certified ones. W for two reasons, both stated on the wire: the windows ride the same gate, and **nothing is ever certified** on this tree because no routed provider exists (TR128). |
+| TR344 §18.2 offline-safe: join / leave plan | N | **W** | `JOIN_PLAN` / `LEAVE_PLAN` are on the offline-safe list and replay through the kernel with their own idempotency keys. W: `trip_kernel_enabled` is off on every deployment, and the replay endpoint holds every kernel replay while it is (`TRIP_KERNEL_UNAVAILABLE`), never a silent 200. |
+| TR345 §18.2 offline-safe: ready / presence change | N | **W** | `SET_PRESENCE` / `CLEAR_PRESENCE`, same list, same kernel hold. |
+| TR346 §18.2 offline-safe: complete activity | N | **W** | Built here: the one of the five the queue refused. Replayed through the kernel as `COMPLETE_ACTIVITY` with a `{ status: "done" }` patch and nothing else. W: held by `trip_kernel_enabled`, off everywhere. |
+| TR347 §18.2 offline-safe: save idea | N | **C** | The one operation that needs no kernel and no flag: `SAVE_IDEA` / `UNSAVE_IDEA` are §18.3 set operations on `trip_saved_places`, applied by identity (trip, member, place) before the kernel flag is even read — union then no-op, difference then no-op, idempotent by construction on every deployment. |
+| TR348 §18.2 offline-safe: selected low-risk edits | N | **W** | `SET_PLAN_ATTENDANCE`, `START_PLAN`, `SKIP_PLAN` and `VOTE_ON_PROPOSAL` are the low-risk edits the list names; anything else is sensitive and waits for revalidation against the server's version. W: the kernel hold again. |
+
+**Rows looked at that did not move:** TR334 (C — the bundle itself, unchanged
+here and still signed and versioned), TR342 (C — staleness still visible, and
+the two new lines say which flag is off rather than showing an empty card),
+TR343 / TR349 (C — the contract and the revalidation rule are untouched;
+`COMPLETE_ACTIVITY` joins the replay path through them, not around them),
+TR350 (C — the set-operation rule TR347 now rests on), TR128 / TR412 (N and W
+— no routed provider; the certified count is zero because of them).
+
+### 63.3 The ceiling
+
+No migration and no new flag. Seven of the twelve rows are W for one reason
+each, and it is always a deployment: `trip_operational_projections_enabled`
+(2778, FALSE) for the three gated contents, `trip_kernel_enabled` for the four
+kernel-replayed operations. Two rows are C because they touch neither.
+TR340 stays N because tiles are a licence the server does not hold.
+
+What would turn the new work red once the gates are on (P24): a plan item
+added to the trip between the chain read and the windows read would put a
+bundle's route and its context at two different versions — both are read after
+`trips.version` is taken and neither re-checks it, so the bundle would carry a
+route the certified context does not describe; nothing pins that yet. And a
+queued `COMPLETE_ACTIVITY` for a plan item another member removed while the
+traveller was offline is refused by the kernel as `TRIP_PLAN_NOT_FOUND`,
+which the queue reports on the operation — correct, but no test drives it.

@@ -50,6 +50,74 @@ describe("TR334 — the bundle", () => {
   });
 });
 
+// §63 (census-trips TR337, TR341): §18.1 names seven contents, and two of them
+// — "selected route" and "the most recent certified context" — had nothing to
+// carry until §62 gave the trip a route chain and §40.3 the freedom windows.
+describe("TR337 / TR341 — the selected route and the certified context", () => {
+  const route = {
+    decisionId: "dddddddd-dddd-4ddd-8ddd-ddddddddddd1", partySize: 2, disclosure: "straight-line bound, static band",
+    stops: [
+      { planItemId: "p-now", title: "Museum", startsAt: T(-1), endsAt: T(1), locationName: "MAAT" },
+      { planItemId: "p-next", title: "Walk", startsAt: T(2), endsAt: T(3), locationName: "Belém" },
+    ],
+    hops: [{
+      from: "p-now", to: "p-next", departAt: T(1),
+      boundMinutes: 18, expectedMinutes: 24, unknownReason: null,
+      arrivalAtBound: T(1.3), expectedArrivalAt: T(1.4), band: "SHOULDER",
+    }],
+    unplaced: [{ planItemId: "p-loose", reason: "NO_TIME" }],
+  };
+  const windows = [
+    { id: "w1", beginsAt: T(3), endsAt: T(6), durationMinutes: 180, certified: false, confidence: "MEDIUM", participants: ["u1", "u2"], afterCommitmentId: "c-soon", beforeCommitmentId: "c-late", reservedMinutes: 25 },
+  ];
+
+  it("carries the route chain as the selected route, and notCarried says what it is instead of why it is missing", () => {
+    const b = buildOfflineBundle({ ...input, selectedRoute: route, routeReading: "unused" }, NOW);
+    assert.equal(b.contents.selectedRoute?.decisionId, route.decisionId);
+    assert.deepEqual(b.contents.selectedRoute?.stops.map((st) => st.planItemId), ["p-now", "p-next"]);
+    assert.equal(b.contents.selectedRoute?.hops[0]?.boundMinutes, 18);
+    assert.equal(b.contents.selectedRoute?.hops[0]?.expectedArrivalAt, T(1.4));
+    assert.deepEqual(b.contents.selectedRoute?.unplaced, [{ planItemId: "p-loose", reason: "NO_TIME" }]);
+    assert.match(b.notCarried.selectedRoute, /carried/);
+    assert.match(b.notCarried.selectedRoute, /2 placed plan item\(s\)/);
+    assert.match(b.notCarried.selectedRoute, /1 hop\(s\)/);
+    assert.match(b.notCarried.selectedRoute, /TR437/, "a route_plans row is still not a trip's route");
+  });
+
+  it("carries the §7.3 windows as the certified context, counting the certified ones, with the decision they were read as", () => {
+    const b = buildOfflineBundle({ ...input, freeWindows: windows, windowsDecisionId: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee1", windowsReading: "provider straight-line (not routed)" }, NOW);
+    const ctx = b.contents.certifiedContext;
+    assert.equal(ctx.freeWindows?.length, 1);
+    assert.equal(ctx.freeWindows?.[0]?.id, "w1");
+    assert.equal(ctx.freeWindows?.[0]?.certified, false);
+    assert.equal(ctx.windowsDecisionId, "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee1");
+    assert.match(ctx.windowsReading, /1 §7\.3 window\(s\)/);
+    assert.match(ctx.windowsReading, /0 certified/, "no routed provider, so nothing is certified (TR128)");
+    assert.match(ctx.windowsReading, /not routed/);
+    assert.equal(ctx.sourceTripVersion, 12, "the context is the version it was read at");
+  });
+
+  it("neither is refused when it could not be read: the bundle still carries the plan, and says why each is absent", () => {
+    const b = buildOfflineBundle({ ...input, selectedRoute: null, routeReading: "the route chain could not be read (TRIP_PROJECTION_UNAVAILABLE): the plan could not be read", freeWindows: null, windowsReading: "trip_operational_projections_enabled is off: not read for this bundle" }, NOW);
+    assert.equal(b.contents.selectedRoute, null);
+    assert.equal(b.contents.certifiedContext.freeWindows, null);
+    assert.equal(b.contents.certifiedContext.windowsDecisionId, null);
+    assert.match(b.notCarried.selectedRoute, /could not be read/);
+    assert.match(b.contents.certifiedContext.windowsReading, /is off/);
+    assert.equal(b.contents.plans.length, 2, "the plan still travels");
+    assert.ok(b.contents.criticalAddresses.length > 0, "the addresses still travel");
+  });
+
+  it("the signature covers them: a route hop edited after signing does not verify", () => {
+    const b = buildOfflineBundle({ ...input, selectedRoute: route, freeWindows: windows }, NOW);
+    const signed = signOfflineBundle(b, SECRET);
+    assert.equal(verifyOfflineBundle(signed.bundle, signed.signature, SECRET), true);
+    const tampered = JSON.parse(JSON.stringify(b)) as typeof b;
+    tampered.contents.selectedRoute!.hops[0]!.boundMinutes = 1;
+    assert.equal(verifyOfflineBundle(tampered, signed.signature, SECRET), false);
+  });
+});
+
 describe("TR334 — signed", () => {
   it("the same bundle always has the same bytes, whatever the key order", () => {
     assert.equal(canonicalBundleJson({ b: 1, a: [{ d: 2, c: 3 }] }), canonicalBundleJson({ a: [{ c: 3, d: 2 }], b: 1 }));

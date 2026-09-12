@@ -37,7 +37,7 @@ const ago = (h: number) => new Date(NOW - h * 3_600_000).toISOString();
 const opId = (n: number) => `bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbb${String(n).padStart(2, "0")}`;
 
 type Row = Record<string, any>;
-function makeClient(opts: { kernelOn?: boolean; version?: number } = {}) {
+function makeClient(opts: { kernelOn?: boolean; version?: number; operationalOn?: boolean } = {}) {
   const version = opts.version ?? 7;
   const db: Record<string, Row[]> = {
     trips: [{ id: TRIP_ID, owner_id: OWNER_ID, version, start_date: "2026-09-13", end_date: "2026-09-15", title: "Lisbon" }],
@@ -45,7 +45,10 @@ function makeClient(opts: { kernelOn?: boolean; version?: number } = {}) {
       { trip_id: TRIP_ID, user_id: OWNER_ID, role: "owner", status: "accepted" },
       { trip_id: TRIP_ID, user_id: MEMBER_ID, role: "member", status: "accepted" },
     ],
-    feature_flags: opts.kernelOn === false ? [] : [{ flag: "trip_kernel_enabled", enabled: true }],
+    feature_flags: [
+      ...(opts.kernelOn === false ? [] : [{ flag: "trip_kernel_enabled", enabled: true }]),
+      ...(opts.operationalOn ? [{ flag: "trip_operational_projections_enabled", enabled: true }] : []),
+    ],
     trip_plan_items: [
       { id: PLAN_ID, trip_id: TRIP_ID, title: "Museum", status: "confirmed", day_date: "2026-09-14", starts_at: new Date(NOW + 3_600_000).toISOString(), ends_at: null, location_name: "MAAT", removed_at: null },
     ],
@@ -124,6 +127,57 @@ describe("§18 offline — the server's half", () => {
     assert.ok(r.body.bundle.contents.criticalAddresses.some((a: any) => a.kind === "reservation" && a.address === "Av. da Liberdade 1"));
     assert.match(r.body.readings.commitments, /trip_operational_projections_enabled is off/);
   });
+  // §63 (census-trips TR337, TR341, TR346): the two bundle contents that had
+  // nothing to carry, and the one offline-safe operation the queue refused.
+  it("GET offline-bundle: with the gate off, the route and the certified context are absent and the bundle SAYS SO — the plan still travels", async () => {
+    install(makeClient());
+    const r = await call("GET", `/trips/${TRIP_ID}/offline-bundle`, "member-token");
+    assert.equal(r.status, 200);
+    const c = r.body.bundle.contents;
+    assert.equal(c.selectedRoute, null);
+    assert.equal(c.certifiedContext.freeWindows, null);
+    assert.match(r.body.bundle.notCarried.selectedRoute, /trip_operational_projections_enabled is off/);
+    assert.match(c.certifiedContext.windowsReading, /trip_operational_projections_enabled is off/);
+    assert.match(r.body.readings.selectedRoute, /is off/);
+    assert.match(r.body.readings.certifiedContext, /is off/);
+    assert.ok(c.plans.length > 0 && c.criticalAddresses.length > 0, "the plan and the addresses travel regardless");
+  });
+
+  it("GET offline-bundle: with the gate on, the selected route IS the trip's own plan in order and the certified context carries the §7.3 windows", async () => {
+    install(makeClient({ operationalOn: true }));
+    const r = await call("GET", `/trips/${TRIP_ID}/offline-bundle`, "member-token");
+    assert.equal(r.status, 200, JSON.stringify(r.body).slice(0, 300));
+    const c = r.body.bundle.contents;
+    assert.ok(c.selectedRoute, `a route chain was expected: ${r.body.bundle.notCarried.selectedRoute}`);
+    assert.ok(typeof c.selectedRoute.decisionId === "string" && c.selectedRoute.decisionId.length > 0, "the chain is a §21.2 decision, explainable later");
+    assert.ok(Array.isArray(c.selectedRoute.stops) && Array.isArray(c.selectedRoute.hops));
+    assert.ok(c.selectedRoute.partySize >= 1);
+    assert.match(r.body.bundle.notCarried.selectedRoute, /carried/);
+    assert.ok(Array.isArray(c.certifiedContext.freeWindows), `windows were expected: ${c.certifiedContext.windowsReading}`);
+    assert.match(c.certifiedContext.windowsReading, /§7\.3 window\(s\)/);
+    assert.match(c.certifiedContext.windowsReading, /not routed/, "no routed provider on this tree, so nothing is certified (TR128)");
+    // The signature covers the new contents: the bundle the client keeps is the one this server signed.
+    assert.equal(typeof r.body.signature, "string");
+    assert.equal(verifyOfflineBundle(r.body.bundle, r.body.signature, SECRET), true);
+  });
+
+  it("POST operations: a queued COMPLETE_ACTIVITY reaches the kernel — the door the flag opens — and is held, not dropped, while the flag is off", async () => {
+    const item = { item_id: PLAN_ID, patch: { status: "done" } };
+    const on = install(makeClient());
+    const r = await call("POST", `/trips/${TRIP_ID}/operations`, "member-token", { operations: [join(1, { type: "COMPLETE_ACTIVITY", payload: item })] });
+    assert.equal(r.status, 200);
+    assert.equal(r.body.results[0].decision, "replay");
+    assert.equal(r.body.results[0].ok, true);
+    assert.equal(on.kernel.length, 1);
+    assert.equal(on.kernel[0]!.p_command.type, "COMPLETE_ACTIVITY");
+    assert.deepEqual(on.kernel[0]!.p_command.payload, item, "the completion is replayed as issued, not rebuilt");
+    const off = install(makeClient({ kernelOn: false }));
+    const held = await call("POST", `/trips/${TRIP_ID}/operations`, "member-token", { operations: [join(1, { type: "COMPLETE_ACTIVITY", payload: item })] });
+    assert.equal(held.body.results[0].ok, false);
+    assert.equal(held.body.results[0].reasonCode, "TRIP_KERNEL_UNAVAILABLE");
+    assert.deepEqual(off.kernel, [], "the flag-gated cutover is not routed around by a queue replay");
+  });
+
   it("GET offline-bundle: a non-member is refused; without a secret none is issued", async () => {
     install(makeClient());
     assert.equal((await call("GET", `/trips/${TRIP_ID}/offline-bundle`, "outsider-token")).status, 403);
@@ -170,7 +224,7 @@ describe("§18 offline — the server's half", () => {
   });
   it("POST operations: a gated type and an unknown type are rejected by name; a foreign trip id is 400; more than the cap is 400", async () => {
     const c = install(makeClient());
-    const r = await call("POST", `/trips/${TRIP_ID}/operations`, "member-token", { operations: [join(1, { type: "COMPLETE_ACTIVITY" }), join(2, { type: "SAVE_IDEA" })] });
+    const r = await call("POST", `/trips/${TRIP_ID}/operations`, "member-token", { operations: [join(1, { type: "UPDATE_PLAN" }), join(2, { type: "SAVE_IDEA" })] });
     assert.equal(r.status, 200);
     assert.ok(r.body.results.every((x: any) => x.decision === "reject" && x.reasonCode === "TRIP_OFFLINE_QUEUE_REJECTED"));
     assert.deepEqual(c.kernel, []);

@@ -9,6 +9,7 @@ import assert from "node:assert/strict";
 
 import {
   QueuedTripOperationSchema, OFFLINE_SAFE_TYPES, QUEUE_HORIZON_MS, QUEUE_FUTURE_SKEW_MS,
+  QUEUE_KERNEL_ONLY_TYPES,
   classifyQueuedOperation, classifyQueuedOperations, orderQueuedOperations, type QueuedTripOperation,
 } from "../domain/trips/services/TripOfflineQueue.js";
 import { COMMANDS_ENDPOINT_TYPES, CUTOVER_GATED_TYPES } from "../server/trips/commandRoute.js";
@@ -59,10 +60,43 @@ describe("TR349 / TR451 — replay, revalidate, reject", () => {
     assert.equal(c.decision, "replay"); assert.match(c.detail, /revalidated/);
   });
   it("a cutover-gated plan write is rejected and told which door; an unknown type is rejected", () => {
-    const gated = classifyQueuedOperation(op({ type: "COMPLETE_ACTIVITY" }), ctx);
+    const gated = classifyQueuedOperation(op({ type: "UPDATE_PLAN" }), ctx);
     assert.equal(gated.decision, "reject"); assert.equal(gated.reasonCode, "TRIP_OFFLINE_QUEUE_REJECTED"); assert.match(gated.detail, /its own route/);
     const unknown = classifyQueuedOperation(op({ type: "TELEPORT" }), ctx);
     assert.equal(unknown.decision, "reject"); assert.match(unknown.detail, /not a command this endpoint issues/);
+  });
+
+  // §63 (census-trips TR346): "complete activity" is one of §18.2's five
+  // offline-safe operations, and it was the one the queue refused.
+  describe("TR346 — complete activity is replayable from the queue", () => {
+    const ITEM = "cccccccc-cccc-4ccc-8ccc-ccccccccccc7";
+    const done = (over: Record<string, unknown> = {}) =>
+      op({ type: "COMPLETE_ACTIVITY", payload: { item_id: ITEM, patch: { status: "done" } }, ...over });
+    it("replays through the kernel with its own idempotency key, though the commands ENDPOINT refuses the same type", () => {
+      assert.ok(CUTOVER_GATED_TYPES.has("COMPLETE_ACTIVITY"), "the endpoint still refuses it: its legacy twin is flag-gated");
+      assert.ok(QUEUE_KERNEL_ONLY_TYPES.includes("COMPLETE_ACTIVITY"));
+      const c = classifyQueuedOperation(done(), ctx);
+      assert.equal(c.decision, "replay"); assert.equal(c.via, "kernel"); assert.equal(c.reasonCode, null);
+      assert.match(c.detail, /offline-safe/); assert.match(c.detail, /trip_kernel_enabled/);
+    });
+    it("does not wait for revalidation: it is offline-safe, so a stale expected version is the kernel's to judge, not the queue's", () => {
+      const stale = classifyQueuedOperation(done({ expectedTripVersion: 2 }), ctx);
+      assert.equal(stale.decision, "replay"); assert.equal(stale.via, "kernel");
+    });
+    it("a completion is not an edit: only { status: \"done\" } passes, and a smuggled column is rejected", () => {
+      for (const bad of [
+        { item_id: ITEM, patch: { status: "confirmed" } },
+        { item_id: ITEM, patch: { status: "done", title: "renamed offline" } },
+        { item_id: ITEM },
+        { item_id: "not-a-uuid", patch: { status: "done" } },
+        { item_id: ITEM, patch: { status: "done" }, actor_user_id: "someone-else" },
+      ]) {
+        const c = classifyQueuedOperation(done({ payload: bad as Record<string, unknown> }), ctx);
+        assert.equal(c.decision, "reject", JSON.stringify(bad));
+        assert.equal(c.reasonCode, "TRIP_OFFLINE_QUEUE_REJECTED");
+        assert.match(c.detail, /status/);
+      }
+    });
   });
   it("a clientOccurredAt the server cannot believe is rejected: the future, or past the horizon", () => {
     const future = classifyQueuedOperation(op({ clientOccurredAt: new Date(NOW + QUEUE_FUTURE_SKEW_MS + 1000).toISOString() }), ctx);

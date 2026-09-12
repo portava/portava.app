@@ -55,11 +55,10 @@ export type QueuedTripOperation = z.infer<typeof QueuedTripOperationSchema>;
 
 /**
  * §18.2's offline-safe list, in the kernel's vocabulary: join/leave plan,
- * attendance, presence, start/skip a plan, a vote. "Complete activity" is
- * COMPLETE_ACTIVITY, which has a legacy writer and a cutover flag and is
- * issued by its own route — a queue naming it is told so, not silently
- * dropped. "Save idea" is not a kernel command (trip_saved_places is a
- * direct write, TR350) and is told the same.
+ * attendance, presence, start/skip a plan, a vote. "Save idea" is not a
+ * kernel command (trip_saved_places is a direct write, TR350) and is replayed
+ * as a set operation (SET_OPERATION_TYPES). "Complete activity" is
+ * COMPLETE_ACTIVITY (QUEUE_KERNEL_ONLY_TYPES): see there.
  */
 export const OFFLINE_SAFE_TYPES: readonly string[] = [
   "JOIN_PLAN", "LEAVE_PLAN", "SET_PLAN_ATTENDANCE",
@@ -67,6 +66,24 @@ export const OFFLINE_SAFE_TYPES: readonly string[] = [
   "START_PLAN", "SKIP_PLAN",
   "VOTE_ON_PROPOSAL",
 ] as const;
+
+/**
+ * §18.2 "complete activity" (census-trips TR346). COMPLETE_ACTIVITY has a
+ * legacy writer and a flag-gated cutover, so POST /trips/:id/commands refuses
+ * it (CUTOVER_GATED_TYPES) — issuing it there would route around
+ * `trip_kernel_enabled`. A replay from the queue does not: the replay
+ * endpoint reads that flag once for the whole queue and HOLDS every kernel
+ * replay while it is off (TRIP_KERNEL_UNAVAILABLE), so a queued completion
+ * only ever reaches the kernel through the door the flag opens, with its own
+ * idempotency key, and the §3.3 arrow out of `done` / `cancelled` is refused
+ * by the kernel itself. The payload is the plan command's: `item_id` and a
+ * `patch` whose status is `done`, nothing else — a completion is not an edit.
+ */
+export const QUEUE_KERNEL_ONLY_TYPES: readonly string[] = ["COMPLETE_ACTIVITY"] as const;
+export const CompleteActivityPayloadSchema = z.object({
+  item_id: z.string().uuid(),
+  patch: z.object({ status: z.literal("done") }).strict(),
+}).strict();
 
 /**
  * §18.3 "saved ideas / reactions merge as set operations with idempotency"
@@ -119,6 +136,11 @@ export function classifyQueuedOperation(op: QueuedTripOperation, ctx: QueueConte
     const parsed = (op.type === "SAVE_IDEA" ? SaveIdeaPayloadSchema : UnsaveIdeaPayloadSchema).safeParse(op.payload);
     if (!parsed.success) return reject(`${op.type}: ${parsed.error.issues[0]?.message ?? "malformed payload"}`);
     return { operation: op, decision: "replay", via: "set", reasonCode: null, detail: `${op.type} is a §18.3 set operation; applied by identity (trip, member, place) — idempotent by construction` };
+  }
+  if (QUEUE_KERNEL_ONLY_TYPES.includes(op.type)) {
+    const parsed = CompleteActivityPayloadSchema.safeParse(op.payload);
+    if (!parsed.success) return reject(`${op.type}: ${parsed.error.issues[0]?.message ?? "malformed payload"} — a completion names item_id and a patch of exactly { status: "done" }`);
+    return { operation: op, decision: "replay", via: "kernel", reasonCode: null, detail: `${op.type} is offline-safe (§18.2's complete activity); replayed through the kernel with its own idempotency key, and only while trip_kernel_enabled is on — the commands endpoint refuses it because its legacy twin is flag-gated, and a queue replay is held by the same flag${op.expectedTripVersion != null ? ` (expected version ${op.expectedTripVersion})` : ""}` };
   }
   if (ctx.gated.has(op.type)) return reject(`${op.type} has a legacy writer and a flag-gated cutover; it is issued by its own route, not replayed from a queue`);
   if (!ctx.issuable.has(op.type)) return reject(`${op.type} is not a command this endpoint issues`);
