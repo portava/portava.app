@@ -23,12 +23,12 @@ preserved in §36.1 as the record of that measurement.
 | Measure | Value |
 | --- | --- |
 | **Denominator (testable requirements)** | **451** |
-| BUILT-AND-CORRECT | **201** |
-| BUILT-BUT-WRONG | **174** |
-| NOT-BUILT | **75** |
+| BUILT-AND-CORRECT | **237** |
+| BUILT-BUT-WRONG | **170** |
+| NOT-BUILT | **43** |
 | CANNOT-VERIFY | **1** |
-| **CONSTRUCTED%** = (C+W)/451 | **375 / 451 = 83.1 %** |
-| **CORRECT%** (raw) = C/451 | **201 / 451 = 44.6 %** |
+| **CONSTRUCTED%** = (C+W)/451 | **407 / 451 = 90.2 %** |
+| **CORRECT%** (raw) = C/451 | **237 / 451 = 52.5 %** |
 
 > **RESTATED 2026-09-11 (§38): 89 → 87 CORRECT, 127 → 129 WRONG.** §38 re-derived
 > 39 of the C rows against the code and **two did not hold**, both for the same
@@ -140,6 +140,19 @@ preserved in §36.1 as the record of that measurement.
 > the kernel (2786, applied and rolled back on a fresh replica), and the
 > three §21.1 conversion counters. Thirty-one rows to C; TR229 holds at W
 > (travel by estimator, 2782's segments not yet consulted). Same ceiling.
+
+> **RESTATED 2026-09-12 (§44): 201 → 237 CORRECT, 174 → 170 WRONG,
+> 75 → 43 NOT-BUILT. CONSTRUCTED 83.1 % → 90.2 %, CORRECT 44.6 % → 52.5 %.**
+> §44 built the operational judgement: §8.2's urgency on every decision
+> task, §8.3's readiness by day and stage, §8.4's four register triggers on
+> Today, §9.4's impact preview with §15.3's five booking side effects,
+> §11.3's replan diff whose shared mutations become `CREATE_PROPOSAL`,
+> §12.1's simulate and create-proposal tools, §12.3's value of information,
+> §14.3's meeting point with its six constraints by name, §17.3's rescue over
+> the seven typed problems, and §23's flight-delay and rain scenarios as
+> tests. Thirty-six rows to C, one N → W (TR146: the late check-in trigger
+> is built, nothing produces its inputs); TR144 holds at W for the same
+> reason. No migration; the ceiling is §41.3's, unchanged.
 | **CORRECT% (spec-attributable)** | **WITHDRAWN — not measured. See §36.4** |
 | CANNOT-VERIFY share | **1 / 451 = 0.2 %** |
 
@@ -3354,7 +3367,7 @@ carried a freshness (TR368). No metric measured read-model lag (TR394).
   (`:275#featureEnabled`). The map projection's own response
   now spreads the envelope too (`routes/tripMapProjection.ts:363#liveEnvelope`).
   `/plan`, `/plan/map`, `/crew/map`, `/map-projection` keep their shapes.
-- **Consumers.** `compass/CompassTools.ts:529#toolGetCurrentTrip`
+- **Consumers.** `compass/CompassTools.ts:625#toolGetCurrentTrip`
   builds the context projection (`:521#buildTripCompassProjection`)
   and consumes it through `acceptTripProjection` (`:525#acceptTripProjection`);
   a refused or unreadable projection is SAID to be so (the old read handed the
@@ -3475,13 +3488,13 @@ never FEASIBLE).
   at detection by kind (`:162#temporal_conflict_total`;
   `lib/tripMetrics.ts:64#incrementTripMetric`).
 - `GET /trips/:tripId/freedom-windows`
-  (`routes/tripProjections.ts:193#freedom-windows`) — §12.1's
+  (`routes/tripProjections.ts:198#freedom-windows`) — §12.1's
   `getFreedomWindows(tripId)` as a read; accepted crew; refusals by reason.
   `/timeline` now carries `conflicts` and each day's `conflictIds`
   (`:156#detectPlanOverlaps`, `:159#conflictIds`),
   so a renderer that only reads days still sees the mark.
 - **Compass consumes the engine.** `get_freedom_windows`
-  (`compass/CompassTools.ts:173#get_freedom_windows`, implemented
+  (`compass/CompassTools.ts:182#get_freedom_windows`, implemented
   at `:801#toolGetFreedomWindows`, dispatched at
   `:1343#get_freedom_windows`) returns the same object the route
   serves, through `acceptTripProjection`, and with `at` returns the window
@@ -3618,7 +3631,7 @@ AT_RISK, MOVED absent. TR194: no START_PLAN. TR396: no metric.
   opt-in rule, and today's plan; every read refused when it fails, because a
   health computed over "no risks" is HEALTHY by construction. Behind the
   §40.3 gate (`:59#tripOperationalProjectionsGate`).
-- `GET /trips/:tripId/health` (`routes/tripProjections.ts:223#health`),
+- `GET /trips/:tripId/health` (`routes/tripProjections.ts:228#health`),
   accepted crew, under the envelope.
 - **§3.3 AT_RISK, derived.** The timeline projection marks plan items in a
   temporal conflict as at risk (`:162#atRiskPlanIds`) and
@@ -3693,10 +3706,10 @@ nothing to get.
   test drives it with a stateful fake
   (`src/test/tripTodayProjection.test.ts:84#LIVE`) and a
   mutation that stops handing the version over went red.
-- `GET /trips/:tripId/today` (`routes/tripProjections.ts:243#today`);
+- `GET /trips/:tripId/today` (`routes/tripProjections.ts:248#today`);
   one refusal mapping for the three gated builders
   (`:202#refuseBuild`). Compass `get_today_state`
-  (`compass/CompassTools.ts:189#get_today_state`,
+  (`compass/CompassTools.ts:198#get_today_state`,
   `:840#toolGetTodayState`, dispatched at
   `:1344#get_today_state`) consumes the same object through
   the §19.1 rule — §12.1's `getTodayState(tripId)`. Thirteen tools now.
@@ -3852,7 +3865,7 @@ to explain and no route.
   calls it AFTER the transition (`routes/trips-expansion.ts:730#runTripCloseout`),
   so a failed step cannot un-complete a trip, and the response carries the
   closeout rather than implying it. `GET /trips/:tripId/closeout`
-  (`routes/tripProjections.ts:423#closeout`) is the same plan as a
+  (`routes/tripProjections.ts:563#closeout`) is the same plan as a
   dry run.
 - `services/trips/TripDecisionLedger.ts` — §21.2's `TripDecision`, every
   field (`:56#TripDecision`), versioned engines
@@ -3861,11 +3874,11 @@ to explain and no route.
   (`:114#explainTripDecision`) — sentences from the record. Every
   §40.3–§40.5 build records one (`services/trips/TripFreedomProjection.ts:178#recordTripDecision`,
   `TripHealthProjection.ts:173#recordTripDecision`,
-  `TripTodayProjection.ts:314#recordTripDecision`) naming ids,
+  `TripTodayProjection.ts:335#recordTripDecision`) naming ids,
   versions and counts — never a coordinate or a name — and carries its
   `decisionId`. `GET /trips/:tripId/decisions/:decisionId/explain`
-  (`routes/tripProjections.ts:398#explain`) and Compass
-  `explain_trip_decision` (`compass/CompassTools.ts:254#explain_trip_decision`,
+  (`routes/tripProjections.ts:538#explain`) and Compass
+  `explain_trip_decision` (`compass/CompassTools.ts:350#explain_trip_decision`,
   `:889#toolExplainTripDecision`, dispatched at
   `:1371#explain_trip_decision`; fourteen tools now) answer
   a crew member for their own trip; another trip's decision is answered as
@@ -4222,10 +4235,10 @@ the merge, the apply, Batch C and two flags.
   file sees a coordinate (`services/trips/TripPulseProjection.ts:196#through the crew map`).
   A source that cannot be read is UNREAD, not empty; context that cannot be
   read refuses. Served at `GET /trips/:id/pulse`
-  (`routes/tripProjections.ts:263#/trips/:tripId/pulse`), to Compass as
-  `get_live_conditions` (`compass/CompassTools.ts:202#name: "get_live_conditions"`), and
+  (`routes/tripProjections.ts:268#/trips/:tripId/pulse`), to Compass as
+  `get_live_conditions` (`compass/CompassTools.ts:211#name: "get_live_conditions"`), and
   into Today's `pulseSignals` layer, which was `no_source` since §40.3
-  (`services/trips/TripTodayProjection.ts:209#pulseSignals = okLayer`). Ledgered as
+  (`services/trips/TripTodayProjection.ts:213#pulseSignals = okLayer`). Ledgered as
   `pulse_projection`.
 - **§11.4 the attention model** — `services/trips/TripAttentionPolicy.ts:27#export const ATTENTION_LEVELS`
   is the spec's five, read as a COST ladder, and `decideAttention`
@@ -4258,20 +4271,20 @@ the merge, the apply, Batch C and two flags.
   serves `attention`; Today and the pulse carry it.
 - **§21.1** — `notification_actionability_rate`: sent is counted at dispatch,
   acted at `POST /trips/:id/notifications/acted`
-  (`routes/tripProjections.ts:349#/trips/:tripId/notifications/acted`), and
+  (`routes/tripProjections.ts:489#/trips/:tripId/notifications/acted`), and
   `readNotificationActionability` (`lib/tripPush.ts:147#export function readNotificationActionability`)
   divides per kind, null over zero. `trip_event_replay_mismatch_total`:
   `verifyTripReplay` (`lib/tripReplayVerify.ts:35#export async function verifyTripReplay`)
   calls 2773's `trip_snapshot_verify_replay` and increments on `equal = false`,
   reached from `POST /trips/:id/replay/verify`
-  (`routes/tripProjections.ts:375#/trips/:tripId/replay/verify`).
+  (`routes/tripProjections.ts:515#/trips/:tripId/replay/verify`).
 - **Appendix B** — every §7.4 consistency finding now carries `reasonCode`
   from `SPATIAL_REASON_CODES` (`services/trips/TripSpatialConsistency.ts:84#export const SPATIAL_REASON_CODES`),
   stamped by the check functions themselves, so the feasibility route's
   `consistency.findings` emit `TRIP_SPATIAL_*` (TR444 has held N since §38).
-- **§12.1** — `get_commitments` (`compass/CompassTools.ts:215#name: "get_commitments"`)
+- **§12.1** — `get_commitments` (`compass/CompassTools.ts:224#name: "get_commitments"`)
   under the gate that owns `trip_commitments`, and `get_saved_ideas`
-  (`compass/CompassTools.ts:228#name: "get_saved_ideas"`) with names wrapped as user
+  (`compass/CompassTools.ts:237#name: "get_saved_ideas"`) with names wrapped as user
   content.
 
 **Seen red.** 262 tests over the touched suites, 0 skipped, after: the
@@ -4382,23 +4395,23 @@ production baseline through the chain: 39 database tests, 0 skipped.
   `shouldNotify` is significance ≥ high (`services/trips/TripOpportunityEngine.ts:145#export function shouldNotify`);
   "weather changed" with no viable change is none, and the test says so in
   those words (`src/test/tripExperienceCompiler.test.ts:199#raw data`).
-- **The projection** — `services/trips/TripOpportunityProjection.ts:183#export async function buildTripOpportunityProjection`:
+- **The projection** — `services/trips/TripOpportunityProjection.ts:182#export async function buildTripOpportunityProjection`:
   version first; health, freedom and pulse accepted against it; candidates
   from the crew's saved ideas with `closure.state` / `queue.wait` /
   `crowd.level` / `access.reservation` from `intel_state_snapshots` for the
   ones that name a canonical place; goals, accepted members, the viewer's
   position as origin when the window has none. Opening hours: this system
   stores none for a place, so a venue-bound candidate is UNCERTAIN, stated
-  (`services/trips/TripOpportunityProjection.ts:256#no hours source in this system`). Compiled per
+  (`services/trips/TripOpportunityProjection.ts:255#no hours source in this system`). Compiled per
   open window, current-or-next first; the first window's portfolio is
   ledgered as `opportunity_portfolio` and diffed against the last one
-  (`services/trips/TripOpportunityProjection.ts:140#async function readPreviousPortfolio`). Under
+  (`services/trips/TripOpportunityProjection.ts:139#async function readPreviousPortfolio`). Under
   AT_RISK / SAFETY_EVENT the executable list is served empty with the
-  suppression named (`services/trips/TripOpportunityProjection.ts:295#suppressed`).
+  suppression named (`services/trips/TripOpportunityProjection.ts:294#suppressed`).
   Served at `GET /trips/:id/opportunities`
-  (`routes/tripProjections.ts:285#/trips/:tripId/opportunities"`), to Compass as
+  (`routes/tripProjections.ts:290#/trips/:tripId/opportunities"`), to Compass as
   `get_opportunities` — §11.3's "Where next?"
-  (`compass/CompassTools.ts:241#name: "get_opportunities"`) — as Today's
+  (`compass/CompassTools.ts:250#name: "get_opportunities"`) — as Today's
   `opportunities` layer, `no_source` since §40.3
   (`services/trips/TripTodayProjection.ts:232#opportunities = okLayer`), and as the map's
   `liveOpportunities` layer, `no_source` since §40.4
@@ -4409,7 +4422,7 @@ production baseline through the chain: 39 database tests, 0 skipped.
   malformed without a window, a trigger or a known significance, or with a
   non-array list. The projection issues it with actor_role `system` and an
   idempotency key made of the window and the diff
-  (`services/trips/TripOpportunityProjection.ts:177#function diffKey`), so the same change
+  (`services/trips/TripOpportunityProjection.ts:176#function diffKey`), so the same change
   found twice is one event (§22.4). Executed on the replica: the event row,
   the receipt, the malformed refusals, the stranger refused
   (`src/test/db/tripOpportunityEvents.db.test.ts:32#the engine (actor_role system`). A
@@ -4417,7 +4430,7 @@ production baseline through the chain: 39 database tests, 0 skipped.
   (`db/rollback/2026-09-12-2786-trip-kernel-opportunity-events-rollback.sql`),
   rehearsed apply → rollback → apply.
 - **Accepted and completed** — `POST /trips/:id/opportunities/:experienceId/accept`
-  (`routes/tripProjections.ts:303#/trips/:tripId/opportunities/:experienceId/accept`) writes
+  (`routes/tripProjections.ts:308#/trips/:tripId/opportunities/:experienceId/accept`) writes
   the plan the only way a plan is written: ADD_PLAN through the kernel with
   `source_type 'opportunity'`, keyed by the experience so a double tap is
   one plan; a non-executable experience is refused with its verdict and
@@ -4504,3 +4517,197 @@ on §41.3's cap. The projection serves without a database that has 2786 —
 the kernel refuses `RECORD_OPPORTUNITY_CHANGE` as unknown and
 `recorded.failed` says so — which is the honest degraded state, not a
 silent one.
+
+## 44. Urgency, triggers, impact — and the four things a traveller asks when the day breaks
+
+**Read against the branch `claude/sweet-fermat-fmx7up`.** This section is
+the spec's operational judgement: §8's decision urgency and risk triggers,
+§9.4's impact preview with §15.3's booking side effects, §11.3's replan
+and §12.1's simulate / propose, §12.3's value of information, §14.3's
+meeting point, §17.3's rescue, and two of §23's scenarios run end to end
+as tests. Every engine here is a pure function over typed inputs
+(`services/trips/Trip{DecisionUrgency,RiskTriggers,ImpactPreview,Replan,MeetingPoint,Rescue,ValueOfInformation}.ts`
+— no I/O, no clock of their own); one loader and one service feed them
+from the trip under the operational gate; five routes and five Compass
+tools serve them. No migration, no new table, no new flag: everything a
+route writes goes through the kernel as a command that already exists
+(`CREATE_PROPOSAL`, `DECLARE_DISRUPTION`), and only when
+`trip_kernel_enabled` is on.
+
+### 44.1 What was built, and where
+
+- **§8.2 decision urgency, not a due date** — `services/trips/TripDecisionUrgency.ts:85#decisionUrgency`:
+  the four terms with the weights that sum to one
+  (`services/trips/TripDecisionUrgency.ts:64#URGENCY_WEIGHTS`), four bands
+  (`services/trips/TripDecisionUrgency.ts:65#URGENCY_THRESHOLDS`), a
+  seven-day horizon; an undated decision with a severe consequence and
+  everything downstream outranks a dated triviality, and the test says so
+  (`src/test/tripDecisionRiskImpact.test.ts:38#chronological:`).
+  Served on `GET /trips/:tripId/decisions`, where every task carries its
+  `urgency` and the list is sorted by it
+  (`routes/tripDecisions.ts:72#byUrgency`): downstream impact is derived —
+  the commitments and plans that start within a day after the deadline —
+  because `trip_decision_tasks` records no dependency, and availability
+  decay has no producer on that route, so it is passed as unknown,
+  contributes 0, and the term says so. The reads that feed it are soft:
+  a failed one is named in `urgencyInputsUnread`, the decisions are still
+  served.
+- **§8.3 readiness by day and by stage** — `lib/tripReadiness.ts:264#groupReadinessByTime`
+  groups the items under their `dueAt` day and under 2760's stages; the
+  route reads `trip_stages` under the gate that owns them and passes them
+  in (`routes/tripReadiness.ts:242#trip_stages`); `byStage` is `null`, not
+  `[]`, when the stages were not read.
+- **§8.4 the four register triggers** — `services/trips/TripRiskTriggers.ts:98#evaluateRiskTriggers`
+  evaluates all four every time, fired or not, each with the spec's
+  mitigation verbatim (`services/trips/TripRiskTriggers.ts:22#RISK_MITIGATIONS`):
+  tight arrival past `services/trips/TripRiskTriggers.ts:90#TIGHT_ARRIVAL_THRESHOLD_MIN`
+  names the downstream plans and their participants; weather-sensitive is
+  forecast confidence × dependency — a kept pulse signal whose effect is
+  `plan_invalidated` at confidence ≥ `services/trips/TripRiskTriggers.ts:92#WEATHER_CONFIDENCE_THRESHOLD`
+  on a weather-bound plan; late check-in is an arrival estimate past the
+  desk's deadline; crew transport mismatch is the party over the vehicle's
+  seats (`services/trips/TripRiskTriggers.ts:94#DEFAULT_VEHICLE_CAPACITY`).
+  On Today as `riskTriggers` (`services/trips/TripTodayProjection.ts:371#riskTriggers,`),
+  reading 2782's segments under the same gate for the party-size row.
+- **§9.4 the impact preview, §15.3 the booking side effects** —
+  `services/trips/TripImpactPreview.ts:119#previewImpact` over a typed
+  `ProposedChange` (five kinds, `services/trips/TripImpactPreview.ts:22#CHANGE_KINDS`):
+  affected reservations, transport and participants; commitment conflicts
+  through the freedom engine's overlap detection and the approach window;
+  cancellation costs; safety / return implications; and the five §15.3
+  fields on `bookingSideEffects` — booking at risk, cancellation deadline,
+  potential cost, affected participants, required user confirmation — with
+  `potentialCostMinor` **null** when the reservation carries no price,
+  never zero. `governance` suggests the decision rule from who the change
+  touches. The state is one read under the gate
+  (`services/trips/TripImpactState.ts:16#loadImpactState`); the route is
+  `POST /trips/:tripId/proposals/preview`
+  (`routes/tripProjections.ts:379#/trips/:tripId/proposals/preview`).
+- **§12.1 simulate** — `services/trips/TripReplan.ts:193#simulateChange`
+  returns FEASIBLE / INFEASIBLE / UNKNOWN with the conflicts named and the
+  freedom window as it would be after; judged, never written
+  (`POST /trips/:tripId/simulate`,
+  `routes/tripProjections.ts:390#/trips/:tripId/simulate`; Compass
+  `simulate_plan`, `compass/CompassTools.ts:1119#toolSimulatePlan`).
+- **§11.3 replan today, §12.1 createProposal** — `services/trips/TripReplan.ts:107#replanDay`
+  produces the candidate diff: keep / move / cancel / add
+  (`services/trips/TripReplan.ts:32#REPLAN_OPS`), each entry with its reason
+  (`services/trips/TripReplan.ts:35#REPLAN_REASONS`) and, for a confirmed
+  plan, its impact; a plan invalidated by a signal is cancelled and the best
+  executable fallback from §13's compiler is added; a plan in conflict moves
+  to the first free slot that clears it; plans downstream of a tight arrival
+  move by its magnitude; locked and dropped plans obey the constraints.
+  Shared mutations are the diff's `proposals`; nothing is written.
+  `services/trips/TripReplanService.ts:23#computeReplan` feeds it from the
+  trip (pulse, freedom, compiler). `POST /trips/:tripId/replan`
+  (`routes/tripProjections.ts:405#/trips/:tripId/replan`) turns each proposal
+  into `CREATE_PROPOSAL` only when the caller asks and the kernel is on —
+  `proposal_type: replan_<op>`, the suggested decision rule, an idempotency
+  key from the day, the op, the plan and the target time, `source: "replan"`
+  on the payload — and says `trip_kernel_enabled is false` by name when it
+  is not. Compass `replan_day` (`compass/CompassTools.ts:1176#toolReplanDay`)
+  carries the same diff and names `create_proposal`
+  (`compass/CompassTools.ts:1142#toolCreateProposal`) for the shared
+  mutations; that tool goes through `CREATE_PROPOSAL` with
+  `source: "compass"` and is refused by name without the kernel — TR210's
+  unpersisted proposal object is gone.
+- **§12.3 value of information** — `services/trips/TripValueOfInformation.ts:46#valueOfInformation`:
+  value = probability the answer changes the decision × the stakes; above
+  `services/trips/TripValueOfInformation.ts:42#VOI_ASK_THRESHOLD` it is a
+  question, capped at `services/trips/TripValueOfInformation.ts:44#VOI_MAX_QUESTIONS`;
+  below it stays represented as uncertainty. The unknowns come from §13's
+  UNCERTAIN experiences (`services/trips/TripValueOfInformation.ts:67#unknownsFromExperiences`):
+  one that could beat the best executable is worth a question, one that
+  could not is not. `get_opportunities` carries the answer as
+  `questionsWorthAsking` (`compass/CompassTools.ts:1112#questionsWorthAsking:`).
+- **§14.3 the meeting point** — `services/trips/TripMeetingPoint.ts:94#findMeetingPoint`:
+  least group burden, each journey weighted by the mode's reliability; the
+  six constraints applied by name — next commitments, accessibility, party
+  size, venue suitability (`services/trips/TripMeetingPoint.ts:91#MEETING_PRIMITIVES`),
+  privacy policy, transport reliability — every refusal typed
+  (`services/trips/TripMeetingPoint.ts:60#MEETING_REFUSALS`); the result is
+  a recommendation **with** its alternatives by burden, its refusals with
+  their reasons, the participants it could not place and why, and an
+  explanation — never a coordinate. Positions come only through the crew
+  map, so every §10 rule runs first and a participant not sharing is
+  unplaced by name; candidates are the crew's saved ideas and the day's
+  plans with a public point (`services/trips/TripReplanService.ts:49#computeMeetingPoint`).
+  `POST /trips/:tripId/meeting-point`
+  (`routes/tripProjections.ts:443#/trips/:tripId/meeting-point`); Compass
+  `find_meeting_point` (`compass/CompassTools.ts:1193#toolFindMeetingPoint`).
+- **§17.3 rescue** — `services/trips/TripRescue.ts:66#planRescue` over the
+  seven typed problems (`services/trips/TripRescue.ts:18#RESCUE_PROBLEMS`):
+  each plan declares a disruption at a severity, orders its steps by who
+  acts, escalates to an institution — airline, airport, operator, property,
+  embassy / consulate, local emergency, human support
+  (`services/trips/TripRescue.ts:21#ESCALATION_TARGETS`) — or to the crew,
+  with why and when, and says what Compass may and must not do; a safe
+  return is proposed where the problem is a person. `POST /trips/:tripId/rescue`
+  (`routes/tripProjections.ts:455#/trips/:tripId/rescue`) returns the plan
+  (201) and declares the disruption through `DECLARE_DISRUPTION` — §17.2's
+  switch — when the kernel is on, skipped by name when not; an unknown
+  problem is 400. Compass `get_rescue_plan` (`compass/CompassTools.ts:1162#toolGetRescuePlan`)
+  is read-only.
+- **§23, two scenarios as tests** — `src/test/tripScenarios.test.ts:26#TR420`:
+  a 75-minute ETA shift fires `tight_arrival`, names the downstream dinner
+  and museum, and the replan moves both by the same 75 minutes and turns
+  the shared one into a proposal. `src/test/tripScenarios.test.ts:56#TR423`:
+  rain on a booked walking tour fires `weather_sensitive`, the tour leaves
+  the portfolio and the museum enters it (HIGH, notify), the replan cancels
+  the tour with its booking side effects — deadline, confirmation required
+  — and adds the museum.
+
+**Seen red.** The impact suite failed on `potentialCostMinor` (12 000 vs
+13 500) until the engine separated the bookings' cost from the
+cancellation cost; the meeting suite recommended a gym because an unknown
+place type defaults to EXPLORE, which is suitable — the test now uses a
+shopping mall, which is SHOP, which is not; the route suite for
+`GET /decisions` went red twice, first as fulltest10's twenty-three
+failures when an urgency read was fatal (it is soft now, and named), then
+under `check:flag-polarity` for a flag name behind a constant; and the
+Compass `replan_day` case was mutation-tested — `lockedPlanIds` dropped on
+the way to the engine — and failed on "a locked plan is kept" before the
+tool was restored. Then `typecheck`, the four suites (10 + 12 + 2 + 18 with
+the Compass tools) and the census guards.
+
+### 44.2 Row moves
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| TR140 Unresolved decisions are first-class work items | W | **C** | Each task on `GET /decisions` carries a computed `urgency` with its terms and explanation, and the list is ordered by it; `trip_decision_tasks` is the work item. |
+| TR141 `decisionUrgency = f(timeRemaining, availabilityDecay, downstreamImpact, consequence)` | W | **C** | `decisionUrgency` with the four terms and weights; served with derived downstream and an unknown availability term that says so. |
+| TR143 Readiness … by upcoming day/stage | W | **C** | `groupReadinessByTime`: `byDay` always, `byStage` from 2760's stages read under the gate, `null` when not read. |
+| TR145 §8.4 Weather-sensitive → indoor fallback | N | **C** | `weather_sensitive` fires on a kept pulse signal at confidence ≥ 0.5 against a weather-bound plan; the replan cancels it and adds the best executable fallback; `preferIndoor` weights the add. |
+| TR146 §8.4 Late check-in → contact property | N | **W** | `late_check_in` fires on an arrival estimate past the desk's deadline, mitigation verbatim; Today passes no estimate and no deadline because no table carries either — the trigger is built, its inputs have no producer. |
+| TR147 §8.4 Crew transport mismatch → split or larger vehicle | N | **C** | `crew_transport_mismatch` over 2782's segments: `party_size` or the accepted crew against the mode's seats; Today reads the segments under the gate. |
+| TR156 §9.4 Impact preview before accepting a proposal | N | **C** | `previewImpact` over a typed change: affected reservations, transport, participants, commitment conflicts, cancellation costs, safety implications; `POST /proposals/preview`. |
+| TR196 §11.3 "Replan today" → candidate diff; shared mutations become proposals | N | **C** | `replanDay`'s diff with `proposals`; `POST /replan` and `replan_day`; `CREATE_PROPOSAL` per shared mutation only when asked and only under the kernel. |
+| TR209 `simulatePlan(tripId, proposal)` | N | **C** | `simulateChange`, `POST /simulate`, `simulate_plan`: FEASIBLE / INFEASIBLE / UNKNOWN with the window after; never written. |
+| TR210 `createProposal(tripId, change)` | W | **C** | `create_proposal` issues `CREATE_PROPOSAL` through the kernel with a decision rule, expiry and the change; refused by name without the kernel; the old unpersisted object is gone. |
+| TR211 `replanDay(tripId, constraints)` | N | **C** | `replanDay` with locked, dropped, `maxMoves`, `preferIndoor`; `computeReplan` from the trip; route and tool. |
+| TR212 `findMeetingPoint(tripId, participants)` | N | **C** | `findMeetingPoint`; `computeMeetingPoint` with positions through the crew map; route and tool. |
+| TR220 §12.3 Value of information before asking | N | **C** | `valueOfInformation`: probability × stakes against a threshold, capped; below it is uncertainty; on `get_opportunities`. |
+| TR272 §14.3 A smart meeting-point service | N | **C** | `findMeetingPoint` — least group burden with the constraints applied by name. |
+| TR273–TR278 §14.3 constraints: next commitments · accessibility · party size · venue suitability · privacy · transport reliability | N ×6 | **C ×6** | Each is a typed refusal or a weight, listed in `constraintsApplied`, and each has a test that turns it on. |
+| TR279 §14.3 Explanation and alternatives, not a magic coordinate | N | **C** | `recommended` with `alternatives`, `refused`, `unplaced` and `explanation`. |
+| TR291–TR295 §15.3 Explicit side effects on invalidating a booked activity | N ×5 | **C ×5** | `bookingSideEffects`: booking at risk · cancellation deadline · potential cost (null when unpriced) · affected participants · required confirmation; on the preview, the simulation and every replan cancel. |
+| TR320 A rescue entry point | N | **C** | `POST /trips/:tripId/rescue` and `get_rescue_plan`; a typed problem in, a plan out. |
+| TR321–TR327 Typed problems: missed transport … emergency assistance | N ×7 | **C ×7** | `RESCUE_PROBLEMS`, the seven verbatim; each with its own steps and escalation. |
+| TR328 Compass organises context, escalates to the institution | W | **C** | `escalation[]` names the airline, airport, operator, property, embassy / consulate, local emergency or human support, with when; `compass.mustNot` is explicit. |
+| TR420 §23 Flight delay on arrival | N | **C** | The scenario runs: trigger → downstream named → replan moves by the magnitude → shared mutation is a proposal. |
+| TR423 §23 Rain invalidates tour | N | **C** | The scenario runs: trigger → portfolio changes (HIGH) → replan cancels with side effects and adds the fallback. |
+
+**Held, with the reason.** TR142 stays W: the readiness score and its
+explanation still both exist (§40 named the fight, this section did not
+settle it). TR144 stays W: `tight_arrival` is built and tested, and Today
+passes no ETA because no trip table carries one — the same shape as
+TR146. TR195 stays W: "Where next?" as a screen action is Cluster 13's.
+
+### 44.3 The ceiling, unchanged
+
+Every route here sits behind `trip_operational_projections_enabled`, and
+every write behind `trip_kernel_enabled`; both are seeded FALSE and §41.3's
+cap holds. On a database without 2779–2788 the routes still serve their
+judgement — a preview, a diff, a meeting point, a rescue plan — and the
+kernel refuses the command they would issue; `proposals.skipped` and
+`declared.skipped` say so by name rather than pretending.

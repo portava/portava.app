@@ -55,6 +55,8 @@ import { buildTripHealthProjection, type TripHealthProjection } from "./TripHeal
 import { buildTripFreedomProjection, type TripFreedomProjection } from "./TripFreedomProjection.js";
 import { buildTripPulseProjection } from "./TripPulseProjection.js";
 import { buildTripOpportunityProjection } from "./TripOpportunityProjection.js";
+import { evaluateRiskTriggers, type RiskTrigger } from "./TripRiskTriggers.js";
+import { looksWeatherSensitive } from "./TripSignals.js";
 import type { ExecutableTripExperience } from "./TripExperienceCompiler.js";
 import type { PulseInterpretation } from "./TripSignals.js";
 import type { PrioritySwitch } from "./TripHealth.js";
@@ -110,6 +112,8 @@ export interface TripTodayProjection extends TripProjectionEnvelope {
   /** §13 — the current-or-next window's EXECUTABLE experiences, from the opportunity projection accepted against the same version. */
   opportunities: Layer<ExecutableTripExperience>;
   risks: TodayRisk[];
+  /** §8.4 — the four register triggers, each fired or not with its evidence and the spec's mitigation. */
+  riskTriggers: RiskTrigger[];
   unresolvedActions: TodayUnresolvedAction[];
   /** §16 — the Trip Pulse projection's kept signals, accepted against the same version. */
   pulseSignals: Layer<PulseInterpretation>;
@@ -297,6 +301,23 @@ export async function buildTripTodayProjection(
   }
   const risks: TodayRisk[] = ((riskRows ?? []) as any[]).map((r) => ({ id: String(r.id), likelihood: String(r.likelihood), impact: String(r.impact), status: String(r.status) }));
 
+  // §8.4: the four register triggers over what this projection read, plus the
+  // transport segments (2782, under the same gate) for the party-size row.
+  const { data: segRows, error: segErr } = await sc.from("trip_transport_segments").select("id, mode, state, planned_departure_at, party_size").eq("trip_id", tripId);
+  if (segErr) {
+    log.warn({ err: segErr.message, tripId }, "today: trip_transport_segments unreadable — refusing");
+    return { ok: false, reason: "TRIP_PROJECTION_UNAVAILABLE", message: "The transport segments could not be read" };
+  }
+  const crewSize = memberRows.filter((m) => m.status == null || m.status === "accepted").length || 1;
+  const riskTriggers = evaluateRiskTriggers({
+    now: nowMs,
+    commitments: ((commitments ?? []) as any[]).map((c) => ({ id: String(c.id), type: String(c.type ?? ""), startsAt: c.starts_at ?? null, requiredArrivalAt: c.required_arrival_at ?? null, estimatedArrivalAt: c.estimated_arrival_at ?? null, checkInDeadlineAt: c.check_in_deadline_at ?? null })),
+    plans: ((items ?? []) as any[]).map((p) => ({ id: String(p.id), title: p.title ?? null, startsAt: p.starts_at ?? null, endsAt: p.ends_at ?? null, weatherSensitive: looksWeatherSensitive(p.title, p.category === "activity" ? p.location_name : null), partySize: null })),
+    transport: ((segRows ?? []) as any[]).map((t) => ({ id: String(t.id), mode: String(t.mode ?? ""), state: String(t.state ?? ""), plannedDepartureAt: t.planned_departure_at ?? null, partySize: typeof t.party_size === "number" ? t.party_size : null, capacity: null })),
+    signals: pulseSignals.status === "ok" ? pulseSignals.items : [],
+    crewSize,
+  });
+
   // 4. What requires action — derived from what this projection already knows.
   const unresolvedActions: TodayUnresolvedAction[] = [];
   for (const c of freedom.conflicts) {
@@ -319,10 +340,10 @@ export async function buildTripTodayProjection(
       nextCommitmentId: nextCommitment?.id ?? null, openWindows: freedom.windows.filter((w) => Date.parse(w.endsAt) > nowMs).length,
       crew: { total: crewSummary.total, featureEnabled: crewSummary.featureEnabled },
     },
-    sources: ["trips", "TripHealthProjection", "TripFreedomProjection", "TripPulseProjection", "TripOpportunityProjection", "trip_stages", "trip_plan_items", "trip_commitments", "trip_members", "trip_risks"],
+    sources: ["trips", "TripHealthProjection", "TripFreedomProjection", "TripPulseProjection", "TripOpportunityProjection", "trip_stages", "trip_transport_segments", "trip_plan_items", "trip_commitments", "trip_members", "trip_risks"],
     assumptions: ["composed from the health and freedom projections accepted against trips.version read first (§22.4)"],
     constraints: [`accepted sub-projections at version ${canonicalVersion ?? "unknown"}`],
-    result: { phase: health.phase.phase, health: health.health, unresolvedActions: unresolvedActions.length, freeWindows: freedom.windows.length },
+    result: { phase: health.phase.phase, health: health.health, unresolvedActions: unresolvedActions.length, freeWindows: freedom.windows.length, firedTriggers: riskTriggers.filter((t) => t.fired).map((t) => t.kind) },
     confidence: "N/A",
     engineVersions: { TripTodayProjection: TRIP_ENGINE_VERSIONS.TripTodayProjection },
     calculatedAt: envelope.generatedAt, sourceTripVersion: canonicalVersion,
@@ -347,6 +368,7 @@ export async function buildTripTodayProjection(
       crewSummary,
       opportunities,
       risks,
+      riskTriggers,
       unresolvedActions,
       pulseSignals,
       attention: health.attention,

@@ -58,7 +58,6 @@ import {
 } from "./TripOpportunityEngine.js";
 import { decideAttention, TRIP_PUSH_EVENT_PROFILES, type AttentionLevel } from "./TripAttentionPolicy.js";
 import { recordTripDecision, persistTripDecision, listTripDecisions, TRIP_ENGINE_VERSIONS, type TripDecision } from "./TripDecisionLedger.js";
-import { TRIP_KERNEL_FLAG } from "../../lib/tripDerivedEvents.js";
 
 const log = logger.child({ mod: "tripOpportunityProjection" });
 
@@ -327,7 +326,7 @@ export async function buildTripOpportunityProjection(
     void persistTripDecision(sc, pd);
 
     if (event.significance !== "none") {
-      if (!(await isFlagEnabled(sc, TRIP_KERNEL_FLAG))) recorded.skipped = "trip_kernel_enabled is false";
+      if (!(await isFlagEnabled(sc, "trip_kernel_enabled"))) recorded.skipped = "trip_kernel_enabled is false";
       else {
         try {
           const r = await executeTripCommand(sc, {

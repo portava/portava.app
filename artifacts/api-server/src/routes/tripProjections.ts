@@ -66,6 +66,12 @@ import { buildTripFreedomProjection } from "../services/trips/TripFreedomProject
 import { buildTripHealthProjection } from "../services/trips/TripHealthProjection.js";
 import { buildTripPulseProjection } from "../services/trips/TripPulseProjection.js";
 import { buildTripOpportunityProjection } from "../services/trips/TripOpportunityProjection.js";
+import { loadImpactState } from "../services/trips/TripImpactState.js";
+import { previewImpact, CHANGE_KINDS, type ProposedChange } from "../services/trips/TripImpactPreview.js";
+import { simulateChange, type ReplanConstraints } from "../services/trips/TripReplan.js";
+import { computeReplan, computeMeetingPoint } from "../services/trips/TripReplanService.js";
+import { planRescue, RESCUE_PROBLEMS, type RescueProblem } from "../services/trips/TripRescue.js";
+import { getCrewMap, CrewMapUnavailableError } from "../services/tripCrew/TripCrewLocationService.js";
 import { executeTripCommand } from "../lib/tripKernel.js";
 import { incrementTripMetric } from "../lib/tripMetrics.js";
 import { randomUUID } from "node:crypto";
@@ -77,7 +83,6 @@ import { buildTripTodayProjection } from "../services/trips/TripTodayProjection.
 import { explainTripDecisionFrom, DECISION_RETENTION } from "../services/trips/TripDecisionLedger.js";
 import { runTripCloseout } from "../services/trips/TripCloseoutService.js";
 import { detectPlanOverlaps } from "../services/trips/TripFreedomEngine.js";
-import { getCrewMap, CrewMapUnavailableError } from "../services/tripCrew/TripCrewLocationService.js";
 
 const router = Router();
 const log = logger.child({ mod: "tripProjections" });
@@ -344,6 +349,141 @@ router.post("/trips/:tripId/opportunities/:experienceId/accept", asyncHandler(as
   if (!result.ok) { res.status(result.reason === "TRIP_KERNEL_UNAVAILABLE" ? 503 : 409).json({ ok: false, reason: result.reason, detail: (result as any).detail ?? null }); return; }
   if (!result.duplicate) incrementTripMetric("opportunity_accepted_total", { trip: tripId, primitive: experience.primitive });
   res.status(result.duplicate ? 200 : 201).json({ ok: true, duplicate: result.duplicate, version: result.version, eventId: result.eventId, planItem: result.result, experienceId });
+}));
+
+// ── Batch C: §9.4 preview, §12.1 simulate, §11.3 replan, §14.3 meeting point, §17.3 rescue ──
+
+function parseChange(body: any): ProposedChange | string {
+  const c = body?.change;
+  if (!c || typeof c !== "object") return "change is required";
+  if (!(CHANGE_KINDS as readonly string[]).includes(c.kind)) return `change.kind must be one of ${CHANGE_KINDS.join(", ")}`;
+  const targetId = typeof c.targetId === "string" ? c.targetId : null;
+  if (c.kind !== "add_plan" && !targetId) return "change.targetId is required for this kind";
+  for (const k of ["startsAt", "endsAt"]) if (c[k] != null && (typeof c[k] !== "string" || !Number.isFinite(Date.parse(c[k])))) return `change.${k} must be an ISO instant`;
+  return { kind: c.kind, targetId, startsAt: c.startsAt ?? null, endsAt: c.endsAt ?? null, title: typeof c.title === "string" ? c.title.slice(0, 200) : null };
+}
+
+async function memberContext(req: any, res: any): Promise<{ sc: any; tripId: string; userId: string } | null> {
+  const auth = await requireUser(req, res);
+  if (!auth) return null;
+  const { tripId } = req.params;
+  if (!UUID_RE.test(tripId)) { sendError(res, "invalid_payload", "Invalid trip id"); return null; }
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return null; }
+  const membership = await requireTripMember(sc, tripId, auth.user.id);
+  if (!membership) { sendTripRefusal(res, "not_member", "TRIP_AUTH_NOT_CREW", "You must be an accepted trip member"); return null; }
+  return { sc, tripId, userId: auth.user.id };
+}
+
+// §9.4: the impact of a change, before it is proposed or accepted. Reads, never writes.
+router.post("/trips/:tripId/proposals/preview", asyncHandler(async (req, res) => {
+  const ctx = await memberContext(req, res); if (!ctx) return;
+  const change = parseChange(req.body);
+  if (typeof change === "string") { sendError(res, "invalid_payload", change); return; }
+  const loaded = await loadImpactState(ctx.sc, ctx.tripId);
+  if (!loaded.ok) { refuseBuild(res, loaded as any); return; }
+  const preview = previewImpact({ ...change, proposedBy: ctx.userId }, loaded.state, Date.now());
+  res.json({ tripId: ctx.tripId, sourceTripVersion: loaded.sourceTripVersion, unread: loaded.unread, preview });
+}));
+
+// §12.1 simulatePlan: judge one change against the schedule it implies. Reads, never writes.
+router.post("/trips/:tripId/simulate", asyncHandler(async (req, res) => {
+  const ctx = await memberContext(req, res); if (!ctx) return;
+  const change = parseChange(req.body);
+  if (typeof change === "string") { sendError(res, "invalid_payload", change); return; }
+  const loaded = await loadImpactState(ctx.sc, ctx.tripId);
+  if (!loaded.ok) { refuseBuild(res, loaded as any); return; }
+  const freedom = await buildTripFreedomProjection(ctx.sc, ctx.tripId);
+  if (!freedom.ok) { refuseBuild(res, freedom as any); return; }
+  const verdict = simulateChange({ ...change, proposedBy: ctx.userId }, loaded.state, freedom.projection.windows, Date.now());
+  res.json({ tripId: ctx.tripId, sourceTripVersion: loaded.sourceTripVersion, simulation: verdict });
+}));
+
+// §11.3 "Replan today": a candidate diff; shared mutations become proposals
+// (CREATE_PROPOSAL through the kernel) only when asked, and only under the
+// kernel flag. Nothing else is written.
+router.post("/trips/:tripId/replan", asyncHandler(async (req, res) => {
+  const ctx = await memberContext(req, res); if (!ctx) return;
+  const body = (req.body ?? {}) as any;
+  const now = new Date();
+  const constraints: ReplanConstraints = {
+    lockedPlanIds: Array.isArray(body.lockedPlanIds) ? body.lockedPlanIds.filter((x: unknown) => typeof x === "string") : [],
+    dropPlanIds: Array.isArray(body.dropPlanIds) ? body.dropPlanIds.filter((x: unknown) => typeof x === "string") : [],
+    maxMoves: Number.isInteger(body.maxMoves) && body.maxMoves >= 0 ? body.maxMoves : undefined,
+    preferIndoor: body.preferIndoor === true,
+  };
+  const r = await computeReplan(ctx.sc, ctx.tripId, ctx.userId, { day: typeof body.day === "string" ? body.day : null, constraints, now });
+  if (!r.ok) { refuseBuild(res, r as any); return; }
+  const { day, diff } = r;
+
+  const created: { entryIndex: number; proposalId: string | null; duplicate: boolean; reason: string | null }[] = [];
+  let proposalsSkipped: string | null = null;
+  if (body.createProposals === true) {
+    if (!(await isFlagEnabled(ctx.sc, "trip_kernel_enabled"))) proposalsSkipped = "trip_kernel_enabled is false";
+    else {
+      for (const e of diff.proposals) {
+        const idx = diff.entries.indexOf(e);
+        const cmd = await executeTripCommand(ctx.sc, {
+          commandId: randomUUID(), tripId: ctx.tripId, actorUserId: ctx.userId, actorRole: "user",
+          idempotencyKey: `replan:${day}:${e.op}:${e.planId ?? e.experienceId ?? idx}:${e.to?.startsAt ?? ""}`, type: "CREATE_PROPOSAL",
+          payload: {
+            proposal_type: `replan_${e.op}`, decision_rule: e.impact?.governance.suggestedDecisionRule ?? "host", expires_at: `${day}T23:59:59.000Z`,
+            payload_json: { op: e.op, planId: e.planId, title: e.title, from: e.from, to: e.to, reason: e.reason, detail: e.detail, experienceId: e.experienceId, bookingSideEffects: e.impact?.bookingSideEffects ?? null, source: "replan" },
+          },
+          clientObservedAt: now.toISOString(),
+        });
+        created.push({ entryIndex: idx, proposalId: cmd.ok ? String((cmd.result as any)?.id ?? cmd.eventId) : null, duplicate: cmd.ok ? cmd.duplicate : false, reason: cmd.ok ? null : cmd.reason });
+      }
+    }
+  }
+  res.json({ tripId: ctx.tripId, sourceTripVersion: r.sourceTripVersion, unread: r.unread, diff, proposals: { created, skipped: proposalsSkipped } });
+}));
+
+// §14.3: the smart meeting point. Positions come through the crew map (every §10 rule first); candidates are the crew's saved ideas and the day's plans with a public point.
+router.post("/trips/:tripId/meeting-point", asyncHandler(async (req, res) => {
+  const ctx = await memberContext(req, res); if (!ctx) return;
+  const body = (req.body ?? {}) as any;
+  const r = await computeMeetingPoint(ctx.sc, ctx.tripId, ctx.userId, {
+    participantIds: Array.isArray(body.participantIds) ? body.participantIds.filter((x: unknown) => typeof x === "string") : undefined,
+    candidateIds: Array.isArray(body.candidateIds) ? body.candidateIds.filter((x: unknown) => typeof x === "string") : undefined,
+  });
+  if (!r.ok) { refuseBuild(res, r as any); return; }
+  res.json({ tripId: ctx.tripId, sourceTripVersion: r.sourceTripVersion, meetingPoint: r.result, candidatesConsidered: r.candidatesConsidered });
+}));
+
+// §17.3: the rescue entry point. Declares the disruption through the kernel (§17.2's switch) when the kernel is on; returns the plan either way.
+router.post("/trips/:tripId/rescue", asyncHandler(async (req, res) => {
+  const ctx = await memberContext(req, res); if (!ctx) return;
+  const body = (req.body ?? {}) as any;
+  const problem = typeof body.problem === "string" ? body.problem : "";
+  if (!(RESCUE_PROBLEMS as readonly string[]).includes(problem)) { sendError(res, "invalid_payload", `problem must be one of ${RESCUE_PROBLEMS.join(", ")}`); return; }
+  const now = new Date();
+  const loaded = await loadImpactState(ctx.sc, ctx.tripId, { now });
+  if (!loaded.ok) { refuseBuild(res, loaded as any); return; }
+  const st = loaded.state;
+  const next = st.commitments.map((c) => ({ c, at: Date.parse(c.requiredArrivalAt ?? c.startsAt ?? "") })).filter((x) => Number.isFinite(x.at) && x.at > now.getTime()).sort((a, b) => a.at - b.at)[0] ?? null;
+  const lodging = st.reservations.find((r) => /hotel|lodging|stay|accommodation|hostel|apartment/i.test(`${r.type ?? ""} ${r.title ?? ""}`)) ?? null;
+  const transport = st.transport.filter((t) => t.state !== "completed").sort((a, b) => (a.plannedDepartureAt ?? "").localeCompare(b.plannedDepartureAt ?? ""))[0] ?? null;
+  const { data: tripRow } = await ctx.sc.from("trips").select("destination_country").eq("id", ctx.tripId).maybeSingle();
+  const plan = planRescue(problem as RescueProblem, {
+    now: now.getTime(), destinationCountry: (tripRow as any)?.destination_country ?? null, homeCountry: null, emergencyNumber: null,
+    nextCommitment: next ? { id: next.c.id, type: next.c.type, arriveBy: new Date(next.at).toISOString() } : null,
+    lodging: lodging ? { id: lodging.id, title: lodging.title, confirmationRef: null } : null,
+    transport: transport ? { id: transport.id, mode: transport.mode, providerRef: null, fallbackId: null } : null,
+    crewWithPosition: [], safeReturnAvailable: true,
+  });
+  let declared: { ok: boolean; disruptionId: string | null; duplicate: boolean; reason: string | null; skipped: string | null } = { ok: false, disruptionId: null, duplicate: false, reason: null, skipped: null };
+  if (!(await isFlagEnabled(ctx.sc, "trip_kernel_enabled"))) declared.skipped = "trip_kernel_enabled is false";
+  else {
+    const r = await executeTripCommand(ctx.sc, {
+      commandId: randomUUID(), tripId: ctx.tripId, actorUserId: ctx.userId, actorRole: "user",
+      idempotencyKey: `rescue:${problem}:${now.toISOString().slice(0, 13)}`, type: "DECLARE_DISRUPTION",
+      payload: { kind: plan.declare.kind, severity: plan.declare.severity, note: plan.declare.note, affected: [next?.c.id, lodging?.id, transport?.id].filter(Boolean) },
+      clientObservedAt: now.toISOString(),
+    });
+    declared = r.ok ? { ok: true, disruptionId: String((r.result as any)?.id ?? ""), duplicate: r.duplicate, reason: null, skipped: null } : { ok: false, disruptionId: null, duplicate: false, reason: r.reason, skipped: null };
+  }
+  res.status(201).json({ tripId: ctx.tripId, plan, declared });
 }));
 
 // ── POST /trips/:tripId/notifications/acted — §21.1 notification_actionability_rate

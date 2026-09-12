@@ -86,6 +86,15 @@ export interface ReadinessSummary {
   unmeasuredCategories: ReadinessCategory[];
   /** FULL list of critical items — never truncated (critical-visibility rule). */
   criticalItems: ReadinessItem[];
+  /** §8.3 "by upcoming day": critical unresolved items grouped by their due date, soonest first; undated last. */
+  byDay: { date: string | null; critical: number; actionNeeded: number; itemIds: string[] }[];
+  /**
+   * §8.3 "by upcoming stage": the same items grouped by the 2760 stage whose
+   * interval contains the due date. Null when the deployment cannot read
+   * trip_stages (the operational-projections gate is off) — not [] — so
+   * "no stages" and "not read" stay different answers.
+   */
+  byStage: { stageId: string; sequence: number | null; startsAt: string | null; endsAt: string | null; critical: number; actionNeeded: number; itemIds: string[] }[] | null;
   /** category → worst status among its items ("ready" when a category has none). */
   categories: Record<ReadinessCategory, ReadinessStatus>;
   items: ReadinessItem[];
@@ -249,10 +258,31 @@ const STATUS_RANK: Record<ReadinessStatus, number> = {
   action_needed: 3,
 };
 
+export interface ReadinessStage { id: string; sequence: number | null; startsAt: string | null; endsAt: string | null }
+
+/** §8.3: group the unresolved items by due date and, when stages are known, by stage. */
+export function groupReadinessByTime(items: ReadinessItem[], stages: ReadinessStage[] | null): Pick<ReadinessSummary, "byDay" | "byStage"> {
+  const open = items.filter((i) => i.status === "action_needed" || i.status === "incomplete");
+  const days = new Map<string | null, ReadinessItem[]>();
+  for (const i of open) { const d = i.dueAt ? i.dueAt.slice(0, 10) : null; const l = days.get(d) ?? []; l.push(i); days.set(d, l); }
+  const byDay = [...days.entries()].sort((a, b) => (a[0] === null ? 1 : b[0] === null ? -1 : a[0].localeCompare(b[0])))
+    .map(([date, l]) => ({ date, critical: l.filter((i) => i.severity === "critical").length, actionNeeded: l.filter((i) => i.status === "action_needed").length, itemIds: l.map((i) => i.id ?? i.dedupeKey) }));
+  let byStage: ReadinessSummary["byStage"] = null;
+  if (stages) {
+    byStage = [...stages].sort((a, b) => (a.sequence ?? 0) - (b.sequence ?? 0)).map((st) => {
+      const s0 = st.startsAt ? Date.parse(st.startsAt) : NaN; const e0 = st.endsAt ? Date.parse(st.endsAt) : NaN;
+      const l = open.filter((i) => { const d = i.dueAt ? Date.parse(i.dueAt) : NaN; return Number.isFinite(d) && Number.isFinite(s0) && Number.isFinite(e0) && d >= s0 && d < e0; });
+      return { stageId: st.id, sequence: st.sequence, startsAt: st.startsAt, endsAt: st.endsAt, critical: l.filter((i) => i.severity === "critical").length, actionNeeded: l.filter((i) => i.status === "action_needed").length, itemIds: l.map((i) => i.id ?? i.dedupeKey) };
+    });
+  }
+  return { byDay, byStage };
+}
+
 export function summarizeReadiness(
   items: ReadinessItem[],
   computedAt: string,
   previousScore: number | null = null,
+  stages: ReadinessStage[] | null = null,
 ): ReadinessSummary {
   const categories = {} as Record<ReadinessCategory, ReadinessStatus>;
   for (const c of READINESS_CATEGORIES) categories[c] = "ready";
@@ -284,7 +314,8 @@ export function summarizeReadiness(
   // score, always and untruncated — a high score must never bury a critical.
   const criticalItems = items.filter((i) => i.severity === "critical");
 
-  return { computedAt, score, previousScore, counts, unmeasuredCategories, criticalItems, categories, items };
+  const { byDay, byStage } = groupReadinessByTime(items, stages);
+  return { computedAt, score, previousScore, counts, unmeasuredCategories, criticalItems, byDay, byStage, categories, items };
 }
 
 // ---------------------------------------------------------------------------
@@ -309,7 +340,12 @@ function toNumberOrNull(v: any): number | null {
  * Compute, persist and summarize readiness for one trip.
  * Throws an Error with `.code === "not_found"` when the trip does not exist.
  */
-export async function computeReadiness(sc: any, tripId: string): Promise<ReadinessSummary> {
+/**
+ * `opts.stages`: the 2760 stages, read BY THE CALLER under the
+ * operational-projections gate (this module imports nothing and reads no
+ * gate-owned table). Omitted or null → byStage is null: "not read".
+ */
+export async function computeReadiness(sc: any, tripId: string, opts: { stages?: ReadinessStage[] | null } = {}): Promise<ReadinessSummary> {
   const nowMs = Date.now();
   const computedAt = new Date(nowMs).toISOString();
 
@@ -760,5 +796,5 @@ export async function computeReadiness(sc: any, tripId: string): Promise<Readine
     }
   }
 
-  return summarizeReadiness(items, computedAt);
+  return summarizeReadiness(items, computedAt, null, opts.stages ?? null);
 }
