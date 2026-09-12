@@ -40,6 +40,17 @@ export type TelegraphEventType =
    * consumer that wanted one would be asking for the thing the delete removed.
    */
   | "message.deleted"
+  /**
+   * Telegraph §13.2 `message.unsent`. census-telegraph T181: "Absent. PR #472
+   * adds no event either — its diff against `lib/telegraphEvents.ts` is empty."
+   *
+   * Distinct from `message.deleted` and the distinction is the product's claim:
+   * an unsend asserts the message never reached a mind, and §7.4 refuses it
+   * once any eligible recipient has seen it. A client that collapsed the two
+   * into one "gone" state would render a retraction as a tombstone and lose the
+   * only difference that matters to the person who sent it.
+   */
+  | "message.unsent"
   | "message.translated"
   /**
    * Telegraph §13.2 `member.joined`. census-telegraph T185: "Not in the union;

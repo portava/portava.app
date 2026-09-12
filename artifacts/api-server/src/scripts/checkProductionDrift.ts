@@ -344,6 +344,62 @@ export const KNOWN_PRODUCTION_GAPS: Record<string, Gap> = {
       "database and verified to leave migration 2400's visible_from_at intact. " +
       "RLS is enabled with zero policies, so no non-service role can read it.",
   },
+
+  // ── Telegraph §12's four side tables, migration 2811, as one block ─────────
+  // They are one decision — stop putting structure in messages.body and in
+  // nullable columns on messages — and they share 2810's flag, deliberately:
+  // two switches for one capability is how a half-on state gets created by
+  // accident. Every one ships with RLS on and a SELECT-only policy keyed on
+  // ACTIVE thread membership, with a POSTCONDITION that fails if a non-SELECT
+  // policy ever appears, so a client cannot write any of them directly.
+  //
+  // NONE HAS A WRITER TODAY, and census-trips' own rule — "a table nothing
+  // writes satisfies nothing" — is why census-telegraph T142/T143/T144/T147
+  // move only to BUILT-BUT-WRONG on the strength of this migration. The one
+  // partial exception is message_reactions, which POST /api/telegraph/commands
+  // writes when the kernel flag is on; the flag is seeded FALSE and no database
+  // has the table, so "partial" here means "the code exists", not "rows exist".
+  //
+  // DDL and re-application were EXECUTED on a throwaway PostgreSQL 16 carrying
+  // the baseline plus the chain from 2093.
+  message_edits: {
+    classification: "unapplied",
+    note:
+      "Migration 2811 (Telegraph §12 message_edits). Applied to no database. §12 says " +
+      "'versioned text edits WHERE RETAINED' and previous_body is nullable for exactly " +
+      "that reason — retention is a policy choice this schema declines to make. No writer: " +
+      "the edit route still overwrites messages.body in place.",
+  },
+  message_reactions: {
+    classification: "unapplied",
+    note:
+      "Migration 2811 (Telegraph §12 message_reactions). Applied to no database. Its " +
+      "consumer PREDATES it: a telegraph.reaction notification template ('reacted to your " +
+      "message') has existed with no table, no route and no UI. The 16-character cap on " +
+      "emoji is a control rather than formatting — a reaction that could hold a sentence " +
+      "would be a message bypassing the send path's block guard, rate limit and §22 scam " +
+      "detection. Written by POST /api/telegraph/commands behind 2810's flag, which is " +
+      "seeded FALSE.",
+  },
+  message_attachments: {
+    classification: "unapplied",
+    note:
+      "Migration 2811 (Telegraph §12/§16.1 message_attachments). Applied to no database. " +
+      "Replaces the four nullable media columns on public.messages, which §12.1 names as " +
+      "the anti-pattern and which cap a message at one attachment of two kinds. References " +
+      "public.media_assets with ON DELETE RESTRICT so an asset deletion cannot silently " +
+      "erase the fact that a message carried one. No writer: messages.media_url is still " +
+      "the live path.",
+  },
+  conversation_action_refs: {
+    classification: "unapplied",
+    note:
+      "Migration 2811 (Telegraph §12 conversation_action_refs). Applied to no database. " +
+      "The explicit reference table §12.1 asks for, carrying payload_version and revoked_at " +
+      "— the property a string inside messages.body cannot have, and the one census T46 " +
+      "says is missing when a source object is deleted and the shared card lives on. No " +
+      "writer.",
+  },
 };
 
 /**

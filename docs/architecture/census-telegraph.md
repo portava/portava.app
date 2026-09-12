@@ -1607,4 +1607,100 @@ indexers and analytics all read; and any reader that names a kernel column
 outside `kernelColumns`, which on a database without 2810 is a 42703 on every
 message query rather than a missing feature.
 
-Headline after §11 in this worktree (last statement wins): C=122 W=175 N=131 X=0
+
+---
+
+### 11.7 §12's four side tables, and §13.1's one typed door
+
+§11.6 built the envelope and the outbox. This section is the rest of §12's
+table list and the endpoint that issues the two commands §13.1 names and this
+repository had never offered.
+
+**The four tables (migration 2811).** `message_edits`
+(`migrations/2811_telegraph_message_side_tables.sql:92`), `message_reactions`
+(`:115`), `message_attachments` (`:137`) and `conversation_action_refs`
+(`:167`). They are one migration because they are one decision — stop putting
+structure in `messages.body` and in nullable columns on `messages`, which is
+what §12.1 forbids in as many words — and because a command route that writes
+one of them should not wait for a separate migration per table.
+
+Three details are worth stating because they are decisions rather than shapes.
+`message_edits.previous_body` is NULLABLE: §12 says "versioned text edits WHERE
+RETAINED", which is the spec declining to decide retention, so a deployment that
+keeps only the FACT of an edit writes NULL and still gets a correct version
+count. `message_reactions.emoji` is capped at 16 characters by a CHECK, and that
+is a control and not a formatting preference — a reaction that could hold a
+sentence would be a message that bypasses the send path's block guard, its rate
+limit and §22's scam detection. `conversation_action_refs` carries `revoked_at`,
+which is the property a string inside a JSON body cannot have and the one T46
+says is missing when a source object is deleted and the shared card lives on.
+
+All four have RLS enabled with a SELECT-only policy keyed on ACTIVE thread
+membership, and a POSTCONDITION that raises if a non-SELECT policy ever appears
+(`:289`) — so "writes go through the service role, which means through a route,
+which means through the authorization a route applies" is enforced by the
+migration rather than asserted by its header.
+
+**The typed door (§13.1).**
+`domain/telegraph/commands/telegraphCommands.ts:35` is §13.1's eighteen commands
+verbatim. `:78` is the set `POST /api/telegraph/commands`
+(`server/telegraph/commandRoute.ts:70`) may issue — and it is deliberately
+small: only commands with NO legacy writer. `SEND_MESSAGE` is refused here not
+because it is unimplemented but because it IS implemented, with a block guard,
+an E2EE gate, a rate limit, an off-app detector and a translation pipeline
+attached; issuing it through a generic bus would route around all five. `:97`
+names where each refused command actually lives, so the 409 says "go there"
+instead of "unknown command", and `:121` names the two §13.1 commands nothing
+implements, so a 501 can say that rather than pretending they are typos. A test
+asserts every one of the eighteen is in exactly one of the three categories,
+so a command in none of them is a failing test rather than a silence.
+
+`UNSEND_MESSAGE` (`server/telegraph/commandRoute.ts:192`) enforces §7.4's rule
+rather than merely offering the verb: once any eligible recipient has read past
+the message it is REFUSED (`:233`). The seen state is read from
+`message_thread_members.last_read_at`, which is thread-level, so the check is
+CONSERVATIVE — a member who read later is treated as having seen it even if they
+never looked at that message. That refuses some unsends that would have been
+legitimate; the other direction would permit one that was not, and only one of
+those two mistakes is recoverable. An unreadable roster refuses too: "we could
+not check whether anyone saw it" is not "nobody saw it".
+
+One gate for the whole endpoint (`:121`): every command here needs schema no
+database has, so the flag is read once and the answer is `feature_disabled`
+rather than a PostgREST 42703 a client cannot render. And a body that names an
+actor is REFUSED rather than ignored — silently overriding it would let a caller
+believe they had acted as someone else.
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| T142 | N | **W** | §12 `message_edits`. The table exists (`migrations/2811_telegraph_message_side_tables.sql:92`) with a version number, a UNIQUE `(message_id, version)` and a nullable `previous_body` for §12's "where retained". W: no database has it and the edit route still overwrites `messages.body` in place. |
+| T143 | N | **W** | §12 `message_reactions` (`:115`). The primary key makes a repeat idempotent; the 16-character CHECK stops the column becoming a second message body. W: no database has it, and the `telegraph.reaction` notification template that has existed with no table still has none. |
+| T144 | N | **W** | §12 `message_attachments` (`:137`), pointing at `public.media_assets` with ON DELETE RESTRICT (§16.1's "MessageAttachment → MediaAsset"), with a `kind` that admits audio and file and an `ordinal` that makes the plural case representable. W: no database has it, and `messages.media_url` is still the live path. |
+| T147 | N | **W** | §12 `conversation_action_refs` (`:167`), with `payload_version` and `revoked_at`. W: no database has it and nothing writes it. |
+| T158 | N | **W** | §12.1 "structured payload types use versioned schemas and explicit reference tables". Both halves now have a representation: `payload_version` on the reference table (`:167`) and `event_version` on the outbox (§11.6). W: no database has either, and every card payload on the live path is still an unversioned JSON string in `body`. |
+| T161 | N | **W** | §13.1 `UNSEND_MESSAGE`. A real command with §7.4's rule enforced (`server/telegraph/commandRoute.ts:192`, refusal at `:233`), publishing `message.unsent` and retaining the row as a tombstone. W: it needs `messages.unsent_at` (2810), no database has it, and the endpoint answers `feature_disabled` everywhere today. |
+| T163 | N | **W** | §13.1 `ADD_REACTION` (`server/telegraph/commandRoute.ts:271`), with `REMOVE_REACTION` alongside it (`:306`) because a reaction a person cannot take back is a message they cannot unsend. W: needs `message_reactions` (2811), which no database has. |
+| T181 | N | **W** | §13.2 `message.unsent`. In the union (`lib/telegraphEvents.ts:53`) and published by the unsend command, deliberately distinct from `message.deleted` — an unsend asserts the message never reached a mind, and a client that collapsed the two would render a retraction as a tombstone. W: nothing can issue the command on any database today. |
+| T166 | W | **W** | §13.1 `CREATE_DECISION`. Unchanged in substance and re-derived: it is still only the meetup shape, and the command endpoint now says so out loud — `LEGACY_PATH_COMMANDS` (`domain/telegraph/commands/telegraphCommands.ts:97`) points a caller at `/telegraph-chat/create-meetup` rather than leaving them to discover that a general decision command does not exist. |
+
+**Rows looked at that did not move:** T168 and T169 stay N, and are now
+*named* as unimplemented (`domain/telegraph/commands/telegraphCommands.ts:121`)
+so the endpoint answers 501 rather than 400 — a clearer refusal is not a built
+capability. T159, T160, T162, T164, T165, T167, T171-T176 stay C: every one has
+a real route and the command endpoint refuses them precisely so those routes
+stay the only door.
+
+**The ceiling for §11.7.** Every row here is W and none can be more:
+**no database has 2811**, the four tables are on the drift ratchet
+(`scripts/checkProductionDrift.ts:365`, `:373`, `:384`, `:394`) with the reason
+recorded per table, and the command endpoint is gated on 2810's flag, which is
+seeded FALSE everywhere. The DDL and its re-application were EXECUTED on a
+throwaway PostgreSQL 16 carrying the baseline plus the chain; the rollback is
+written and states what it destroys and under what precondition it is safe.
+P24 — what would turn these claims red: a non-SELECT RLS policy added to any of
+the four (the migration's own postcondition catches it); `SEND_MESSAGE` or any
+other legacy command added to `ISSUABLE_COMMANDS`, which would put a
+guard-free door next to a guarded one; and any relaxation of the unsend's seen
+check, which would let the product make a retraction claim it cannot honour.
+
+Headline after §11 in this worktree (last statement wins): C=122 W=182 N=124 X=0
