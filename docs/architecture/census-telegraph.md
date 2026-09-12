@@ -1867,6 +1867,19 @@ claim: only meetups are decisions today. A Trip card, a booking change and a
 plan dependency are all things a person must answer, and none of them has an
 object that records whether they did.
 
+**A correction to this section's own commit message (8175f1186).** It said two
+cases in `src/test/messaging.test.ts` ("POST /api/threads/:threadId/media —
+Finding 14: E2EE plaintext-media bypass") were PRE-EXISTING failures, measured
+against the base commit's own `routes/messaging.ts`. They are not failures at
+all. Both were run without the env prefix `npm test` supplies
+(`SUPABASE_URL=http://127.0.0.1:9`), and the fixture builds its media URL from
+that variable — so the route rejected the URL as not-an-app-media-URL and
+answered 400 where the test expected the E2EE guard's 422. Re-run WITH the
+prefix, the file is 22/22 green. The base-commit comparison did reproduce the
+red, which is exactly why it was convincing: both runs shared the same missing
+variable. Measuring twice is not measuring correctly if the second measurement
+inherits the first one's mistake.
+
 
 ---
 
