@@ -31,6 +31,8 @@ import { messageSafetySignals } from '../domain/telegraph/policies/travelScamSig
 import { emitSafetyReported } from '../lib/telegraphEvents.js';
 // Telegraph §22 — the send step's adaptive rate limit (T279's missing half).
 import { checkSendRateLimit } from '../domain/telegraph/policies/sendRateLimit.js';
+// Telegraph §19 — "12 unread · 1 needs action". The second half.
+import { resolveNeedsAction } from '../domain/telegraph/policies/needsAction.js';
 // Telegraph §22 — "stranger media ... until accepted": the server decides who
 // is a stranger; the client renders the shield.
 import { resolveSenderConnectedness } from '../domain/telegraph/policies/senderConnectedness.js';
@@ -1758,6 +1760,18 @@ router.get('/me/threads', async (req, res) => {
     }
   }
 
+  // Telegraph §19's inbox line is "12 unread · 1 needs action". The unread half
+  // is below; this is the other half, and it is deliberately NOT derived from
+  // messages: it counts meetups in these threads that are waiting on an answer
+  // from the caller (a pending RSVP, or a time poll they have not voted in).
+  // A failed read comes back `degraded`, and the field is then OMITTED rather
+  // than sent as 0 — see the header of needsAction.ts for why zero is the one
+  // answer that must never be guessed here.
+  const needsAction = await resolveNeedsAction(sc, { viewerId: user.id, threadIds });
+  if (needsAction.degraded) {
+    req.log.warn({ userId: user.id }, 'me/threads: needs-action inputs unreadable — omitting the count rather than reporting zero');
+  }
+
   const threads = (threadsRes.data ?? []).map((t: any) => {
     const lm = lastMsgByThread[t.id];
     const mem = membershipMap[t.id] ?? {};
@@ -1811,6 +1825,10 @@ router.get('/me/threads', async (req, res) => {
       otherMembers: membersByThread[t.id] ?? [],
       lastMessagePreview,
       unreadCount,
+      // undefined (omitted from JSON) means "not known", which is a different
+      // statement from 0 and must stay different on the wire.
+      needsActionCount: needsAction.degraded ? undefined : (needsAction.byThread.get(t.id)?.count ?? 0),
+      needsActionReasons: needsAction.degraded ? undefined : (needsAction.byThread.get(t.id)?.reasons ?? []),
       tripCity,
       isAiLastMessage,
       bookingId: bookingIdByThread[t.id] ?? null,

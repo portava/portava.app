@@ -90,6 +90,18 @@ export interface ThreadSummary {
     subtype?: string | null;
   } | null;
   unreadCount?: number;
+  /**
+   * Telegraph §19's second half: how many meetups in this thread are waiting on
+   * an answer from the viewer (a pending RSVP, or a time poll they have not
+   * voted in). Server: artifacts/api-server/src/domain/telegraph/policies/needsAction.ts.
+   *
+   * ABSENT IS NOT ZERO. The server OMITS this field when the inputs could not
+   * be read, precisely so that "we do not know" cannot be rendered as "nothing
+   * to do". Render the badge only on `> 0`; render nothing on `undefined`.
+   */
+  needsActionCount?: number;
+  /** Which kinds of answer are outstanding. Empty when nothing is. */
+  needsActionReasons?: Array<'rsvp_pending' | 'time_vote_pending'>;
   tripCity?: string | null;
   isAiLastMessage?: boolean;
   /**

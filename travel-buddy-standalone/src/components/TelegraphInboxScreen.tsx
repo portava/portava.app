@@ -190,6 +190,11 @@ function ThreadRow({ item, userId }: { item: ThreadSummary; userId: string | nul
   const lastAt = lmp?.createdAt;
   const isMuted = !!item.mutedAt;
   const unread = item.unreadCount ?? 0;
+  // The server OMITS this field when its inputs were unreadable, and sends a
+  // real 0 when it measured nothing outstanding. Both render NOTHING here — the
+  // badge appears only above zero, so the inbox never prints a reassurance
+  // ("0 needs action") that nobody verified.
+  const needsAction = typeof item.needsActionCount === 'number' ? item.needsActionCount : 0;
   const isAi = item.isAiLastMessage ?? (lmp?.msgType === 'ai_recommendation');
 
   return (
@@ -213,6 +218,14 @@ function ThreadRow({ item, userId }: { item: ThreadSummary; userId: string | nul
             {lastAt ? <Text style={s.time}>{timeAgo(lastAt)}</Text> : null}
           </View>
         </View>
+
+        {needsAction > 0 ? (
+          <View style={s.needsActionTag}>
+            <Text style={s.needsActionText}>
+              {needsAction === 1 ? '1 needs action' : `${needsAction} need action`}
+            </Text>
+          </View>
+        ) : null}
 
         {previewText ? (
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
@@ -1088,6 +1101,19 @@ const s = StyleSheet.create({
     paddingHorizontal: 4,
   },
   unreadText: { fontSize: 10, fontWeight: '700', color: color.onInk },
+
+  // §19's "needs action" is deliberately NOT the unread colour: an unread
+  // message is something to read, and this is something to answer. Same row,
+  // different claim.
+  needsActionTag: {
+    alignSelf: 'flex-start',
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: color.signal,
+  },
+  needsActionText: { fontSize: 10, fontWeight: '700', color: color.signal },
 
   preview: { ...t.small, color: color.mute, flex: 1 },
   previewBold: { color: color.ink, fontWeight: '600' },

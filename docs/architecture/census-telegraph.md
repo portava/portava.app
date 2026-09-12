@@ -1796,4 +1796,73 @@ catches it); a band added with a window that does not increase down the ladder
 decide: whether P1 deserves a delivery override at all, and whether P5 should be
 shed server-side under load rather than merely suppressed for longer.
 
-Headline after §11 in this worktree (last statement wins): C=122 W=183 N=123 X=0
+
+---
+
+### 11.9 §19's other half of the inbox line: "· 1 needs action"
+
+T260 recorded the shape of the gap precisely: unread "is real and carefully
+built … **'Needs action' has no representation** — nothing distinguishes a
+message from an unresolved decision." Re-read against the tree and still exactly
+true: every field `GET /me/threads` returned was about MESSAGES.
+
+**What is allowed to count.** "Needs action" is not "unread, but louder". It is
+a claim that the product is WAITING ON THIS PERSON, and the only honest source
+for that is a stored object recording an answer they have not given. Two exist
+in this repository, both from migration 0013: a `meetup_invites` row still at
+`status = 'pending'` (the column's CHECK lists exactly
+pending/going/maybe/declined/cancelled and defaults to pending, so "has not
+answered" is a fact rather than an inference), and an unconfirmed
+`meetup_time_options` row the caller has no `meetup_time_votes` row for. A
+meetup reaches a conversation through `meetups.chat_thread_id`
+(`migrations/0013_availability_meetups.sql:160`), which is the only link between
+a decision and a thread, so it is the only join
+`domain/telegraph/policies/needsAction.ts:80` makes.
+
+Nothing else is counted, and the refusals are the design. Not an unanswered
+question in prose — deciding that "so are we going?" needs an answer is a guess,
+and a badge built on a guess teaches people to ignore the badge. Not a viewer
+with no invite row: absence of a row is absence of a question, and counting it
+would put a badge on a thread where they have nothing to answer. Not a cancelled
+meetup, which is waiting on nobody.
+
+**One meetup is one action** (`:168`). A poll with five evenings plus an
+unanswered RSVP is one thing to go and deal with; a count that multiplied would
+be the same badge inflation the row exists to avoid. `reasons` carries the kind
+without moving the number.
+
+**An unknown count is not zero.** supabase-js resolves on a database error, so
+an unreadable `meetup_invites` returns the same `null` an empty one does.
+Reporting `0` would hide a decision the traveller has to make. So a failed read
+sets `degraded`, the map is emptied rather than partially filled — a partial map
+reads as "these threads need nothing" — and the route OMITS the field
+(`routes/messaging.ts:1830`) instead of sending a number. The client renders the
+badge only above zero (`components/TelegraphInboxScreen.tsx:222`), so absent and
+zero both render nothing and neither prints a reassurance nobody verified.
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| T260 | W | **C** | §19's inbox line. The unread half was already real; the other half now exists end to end and is measured end to end: `domain/telegraph/policies/needsAction.ts:80` computes it from pending RSVPs and unvoted time options, `routes/messaging.ts:1770` calls it inside `GET /me/threads` and `:1830` puts `needsActionCount` + `needsActionReasons` on every row, and `components/TelegraphInboxScreen.tsx:222` renders "1 needs action" / "N need action". `telegraphNeedsAction.test.ts` drives the REAL Express route, not just the policy, so "wired" is a measured fact. C rather than W because it needs no migration and no flag — every table it reads is from migration 0013 and has had live writers for the whole life of the meetups feature. |
+
+**Rows looked at that did not move.** T261 stays N. An acknowledgement
+primitive distinct from Seen needs a row per (message, actor, acknowledged_at)
+that this schema does not have anywhere, and the nearest thing —
+`safe_return_contacts.acknowledged_at` — is a different object about a different
+promise. Deriving it from `last_read_at` would be precisely the conflation §19
+forbids: thread-level read position cannot say that a person accepted a change,
+only that their eyes passed over the screen.
+
+**The ceiling for §11.9.** BUILT ON BRANCH, NOT MERGED. Like §11.8 this needs no
+migration and no flag, so it is live the day it merges — which is why the
+failure direction was chosen deliberately rather than by default. P24 — what
+would turn it red: the client defaulting an absent count to a rendered zero (the
+component test's absent and zero cases catch it); the badge fired at `>= 0`
+(same); the count multiplied per option rather than per meetup (the policy
+test); a non-invitee counted (the policy test); and any read here losing its
+`.error` check, which `checkUncheckedSupabaseReads` would catch but which would
+also turn four policy tests red first. What this does NOT cover, and no test can
+claim: only meetups are decisions today. A Trip card, a booking change and a
+plan dependency are all things a person must answer, and none of them has an
+object that records whether they did.
+
+Headline after §11 in this worktree (last statement wins): C=123 W=182 N=123 X=0
