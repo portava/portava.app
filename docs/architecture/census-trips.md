@@ -24,10 +24,10 @@ preserved in §36.1 as the record of that measurement.
 | --- | --- |
 | **Denominator (testable requirements)** | **451** |
 | BUILT-AND-CORRECT | **313** |
-| BUILT-BUT-WRONG | **121** |
-| NOT-BUILT | **16** |
+| BUILT-BUT-WRONG | **122** |
+| NOT-BUILT | **15** |
 | CANNOT-VERIFY | **1** |
-| **CONSTRUCTED%** = (C+W)/451 | **434 / 451 = 96.2 %** |
+| **CONSTRUCTED%** = (C+W)/451 | **435 / 451 = 96.5 %** |
 | **CORRECT%** (raw) = C/451 | **313 / 451 = 69.4 %** |
 
 > **RESTATED 2026-09-11 (§38): 89 → 87 CORRECT, 127 → 129 WRONG.** §38 re-derived
@@ -326,6 +326,16 @@ preserved in §36.1 as the record of that measurement.
 > (TR439, W → C) — every import, registry path and citation rewritten by one
 > move map, line anchors preserved by construction. No migration, no flag: a
 > layout has no deployment cap.
+
+> **RESTATED 2026-09-12 (§62): 313 CORRECT unchanged, 121 → 122 WRONG, 16 → 15
+> NOT-BUILT. CONSTRUCTED 96.2 % → 96.5 %, CORRECT 69.4 % unchanged.** §62
+> gives the trip a route chain that is a projection of its own plan (§14.2)
+> and, under the gate, makes a route plan that names a trip a view over that
+> plan — TR437 N → W, not C, because `route_plans` keeps its own optimizer and
+> checkpoint state and the gate is seeded FALSE everywhere. On the way it
+> found and fixed the Compass sanitizer dropping every camelCase `…lAt` time
+> (`requiredArrivalAt` had never reached the conversation from
+> `get_commitments`; TR206 re-read, C on the wire now). No migration.
 | **CORRECT% (spec-attributable)** | **WITHDRAWN — not measured. See §36.4** |
 | CANNOT-VERIFY share | **1 / 451 = 0.2 %** |
 
@@ -3540,7 +3550,7 @@ carried a freshness (TR368). No metric measured read-model lag (TR394).
   (`:275#featureEnabled`). The map projection's own response
   now spreads the envelope too (`server/trips/readRoutes/tripMapProjection.ts:460#liveEnvelope`).
   `/plan`, `/plan/map`, `/crew/map`, `/map-projection` keep their shapes.
-- **Consumers.** `compass/CompassTools.ts:643#toolGetCurrentTrip`
+- **Consumers.** `compass/CompassTools.ts:659#toolGetCurrentTrip`
   builds the context projection (`:521#buildTripCompassProjection`)
   and consumes it through `acceptTripProjection` (`:525#acceptTripProjection`);
   a refused or unreadable projection is SAID to be so (the old read handed the
@@ -3661,13 +3671,13 @@ never FEASIBLE).
   at detection by kind (`:162#temporal_conflict_total`;
   `domain/trips/services/tripMetrics.ts:64#incrementTripMetric`).
 - `GET /trips/:tripId/freedom-windows`
-  (`server/trips/readRoutes/tripProjections.ts:229#freedom-windows`) — §12.1's
+  (`server/trips/readRoutes/tripProjections.ts:230#freedom-windows`) — §12.1's
   `getFreedomWindows(tripId)` as a read; accepted crew; refusals by reason.
   `/timeline` now carries `conflicts` and each day's `conflictIds`
   (`:156#detectPlanOverlaps`, `:159#conflictIds`),
   so a renderer that only reads days still sees the mark.
 - **Compass consumes the engine.** `get_freedom_windows`
-  (`compass/CompassTools.ts:186#get_freedom_windows`, implemented
+  (`compass/CompassTools.ts:187#get_freedom_windows`, implemented
   at `:801#toolGetFreedomWindows`, dispatched at
   `:1343#get_freedom_windows`) returns the same object the route
   serves, through `acceptTripProjection`, and with `at` returns the window
@@ -3804,7 +3814,7 @@ AT_RISK, MOVED absent. TR194: no START_PLAN. TR396: no metric.
   opt-in rule, and today's plan; every read refused when it fails, because a
   health computed over "no risks" is HEALTHY by construction. Behind the
   §40.3 gate (`:59#tripOperationalProjectionsGate`).
-- `GET /trips/:tripId/health` (`server/trips/readRoutes/tripProjections.ts:259#health`),
+- `GET /trips/:tripId/health` (`server/trips/readRoutes/tripProjections.ts:280#health`),
   accepted crew, under the envelope.
 - **§3.3 AT_RISK, derived.** The timeline projection marks plan items in a
   temporal conflict as at risk (`:162#atRiskPlanIds`) and
@@ -3879,10 +3889,10 @@ nothing to get.
   test drives it with a stateful fake
   (`src/test/tripTodayProjection.test.ts:105#LIVE`) and a
   mutation that stops handing the version over went red.
-- `GET /trips/:tripId/today` (`server/trips/readRoutes/tripProjections.ts:279#today`);
+- `GET /trips/:tripId/today` (`server/trips/readRoutes/tripProjections.ts:300#today`);
   one refusal mapping for the three gated builders
   (`:202#refuseBuild`). Compass `get_today_state`
-  (`compass/CompassTools.ts:202#get_today_state`,
+  (`compass/CompassTools.ts:218#get_today_state`,
   `:840#toolGetTodayState`, dispatched at
   `:1344#get_today_state`) consumes the same object through
   the §19.1 rule — §12.1's `getTodayState(tripId)`. Thirteen tools now.
@@ -4038,7 +4048,7 @@ to explain and no route.
   calls it AFTER the transition (`routes/trips-expansion.ts:738#runTripCloseout`),
   so a failed step cannot un-complete a trip, and the response carries the
   closeout rather than implying it. `GET /trips/:tripId/closeout`
-  (`server/trips/readRoutes/tripProjections.ts:651#closeout`) is the same plan as a
+  (`server/trips/readRoutes/tripProjections.ts:672#closeout`) is the same plan as a
   dry run.
 - `domain/trips/services/TripDecisionLedger.ts` — §21.2's `TripDecision`, every
   field (`:56#TripDecision`), versioned engines
@@ -4050,8 +4060,8 @@ to explain and no route.
   `TripTodayProjection.ts:353#recordTripDecision`) naming ids,
   versions and counts — never a coordinate or a name — and carries its
   `decisionId`. `GET /trips/:tripId/decisions/:decisionId/explain`
-  (`server/trips/readRoutes/tripProjections.ts:626#explain`) and Compass
-  `explain_trip_decision` (`compass/CompassTools.ts:367#explain_trip_decision`,
+  (`server/trips/readRoutes/tripProjections.ts:647#explain`) and Compass
+  `explain_trip_decision` (`compass/CompassTools.ts:383#explain_trip_decision`,
   `:889#toolExplainTripDecision`, dispatched at
   `:1371#explain_trip_decision`; fourteen tools now) answer
   a crew member for their own trip; another trip's decision is answered as
@@ -4408,8 +4418,8 @@ the merge, the apply, Batch C and two flags.
   file sees a coordinate (`domain/trips/projections/TripPulseProjection.ts:5#through the crew map`).
   A source that cannot be read is UNREAD, not empty; context that cannot be
   read refuses. Served at `GET /trips/:id/pulse`
-  (`server/trips/readRoutes/tripProjections.ts:299#/trips/:tripId/pulse`), to Compass as
-  `get_live_conditions` (`compass/CompassTools.ts:228#name: "get_live_conditions"`), and
+  (`server/trips/readRoutes/tripProjections.ts:320#/trips/:tripId/pulse`), to Compass as
+  `get_live_conditions` (`compass/CompassTools.ts:244#name: "get_live_conditions"`), and
   into Today's `pulseSignals` layer, which was `no_source` since §40.3
   (`domain/trips/projections/TripTodayProjection.ts:220#pulseSignals = okLayer`). Ledgered as
   `pulse_projection`.
@@ -4444,20 +4454,20 @@ the merge, the apply, Batch C and two flags.
   serves `attention`; Today and the pulse carry it.
 - **§21.1** — `notification_actionability_rate`: sent is counted at dispatch,
   acted at `POST /trips/:id/notifications/acted`
-  (`server/trips/readRoutes/tripProjections.ts:577#/trips/:tripId/notifications/acted`), and
+  (`server/trips/readRoutes/tripProjections.ts:598#/trips/:tripId/notifications/acted`), and
   `readNotificationActionability` (`domain/trips/policies/tripPush.ts:147#export function readNotificationActionability`)
   divides per kind, null over zero. `trip_event_replay_mismatch_total`:
   `verifyTripReplay` (`domain/trips/replay/tripReplayVerify.ts:35#export async function verifyTripReplay`)
   calls 2773's `trip_snapshot_verify_replay` and increments on `equal = false`,
   reached from `POST /trips/:id/replay/verify`
-  (`server/trips/readRoutes/tripProjections.ts:603#/trips/:tripId/replay/verify`).
+  (`server/trips/readRoutes/tripProjections.ts:624#/trips/:tripId/replay/verify`).
 - **Appendix B** — every §7.4 consistency finding now carries `reasonCode`
   from `SPATIAL_REASON_CODES` (`domain/trips/invariants/TripSpatialConsistency.ts:90#export const SPATIAL_REASON_CODES`),
   stamped by the check functions themselves, so the feasibility route's
   `consistency.findings` emit `TRIP_SPATIAL_*` (TR444 has held N since §38).
-- **§12.1** — `get_commitments` (`compass/CompassTools.ts:241#name: "get_commitments"`)
+- **§12.1** — `get_commitments` (`compass/CompassTools.ts:257#name: "get_commitments"`)
   under the gate that owns `trip_commitments`, and `get_saved_ideas`
-  (`compass/CompassTools.ts:254#name: "get_saved_ideas"`) with names wrapped as user
+  (`compass/CompassTools.ts:270#name: "get_saved_ideas"`) with names wrapped as user
   content.
 
 **Seen red.** 262 tests over the touched suites, 0 skipped, after: the
@@ -4582,9 +4592,9 @@ production baseline through the chain: 39 database tests, 0 skipped.
   AT_RISK / SAFETY_EVENT the executable list is served empty with the
   suppression named (`domain/trips/projections/TripOpportunityProjection.ts:294#suppressed`).
   Served at `GET /trips/:id/opportunities`
-  (`server/trips/readRoutes/tripProjections.ts:378#/trips/:tripId/opportunities"`), to Compass as
+  (`server/trips/readRoutes/tripProjections.ts:399#/trips/:tripId/opportunities"`), to Compass as
   `get_opportunities` — §11.3's "Where next?"
-  (`compass/CompassTools.ts:267#name: "get_opportunities"`) — as Today's
+  (`compass/CompassTools.ts:283#name: "get_opportunities"`) — as Today's
   `opportunities` layer, `no_source` since §40.3
   (`domain/trips/projections/TripTodayProjection.ts:239#opportunities = okLayer`), and as the map's
   `liveOpportunities` layer, `no_source` since §40.4
@@ -4603,7 +4613,7 @@ production baseline through the chain: 39 database tests, 0 skipped.
   (`db/rollback/2026-09-12-2786-trip-kernel-opportunity-events-rollback.sql`),
   rehearsed apply → rollback → apply.
 - **Accepted and completed** — `POST /trips/:id/opportunities/:experienceId/accept`
-  (`server/trips/readRoutes/tripProjections.ts:396#/trips/:tripId/opportunities/:experienceId/accept`) writes
+  (`server/trips/readRoutes/tripProjections.ts:417#/trips/:tripId/opportunities/:experienceId/accept`) writes
   the plan the only way a plan is written: ADD_PLAN through the kernel with
   `source_type 'opportunity'`, keyed by the experience so a double tap is
   one plan; a non-executable experience is refused with its verdict and
@@ -4755,13 +4765,13 @@ route writes goes through the kernel as a command that already exists
   touches. The state is one read under the gate
   (`domain/trips/services/TripImpactState.ts:16#loadImpactState`); the route is
   `POST /trips/:tripId/proposals/preview`
-  (`server/trips/readRoutes/tripProjections.ts:467#/trips/:tripId/proposals/preview`).
+  (`server/trips/readRoutes/tripProjections.ts:488#/trips/:tripId/proposals/preview`).
 - **§12.1 simulate** — `domain/trips/services/TripReplan.ts:195#simulateChange`
   returns FEASIBLE / INFEASIBLE / UNKNOWN with the conflicts named and the
   freedom window as it would be after; judged, never written
   (`POST /trips/:tripId/simulate`,
-  `server/trips/readRoutes/tripProjections.ts:478#/trips/:tripId/simulate`; Compass
-  `simulate_plan`, `compass/CompassTools.ts:1165#toolSimulatePlan`).
+  `server/trips/readRoutes/tripProjections.ts:499#/trips/:tripId/simulate`; Compass
+  `simulate_plan`, `compass/CompassTools.ts:1214#toolSimulatePlan`).
 - **§11.3 replan today, §12.1 createProposal** — `domain/trips/services/TripReplan.ts:107#replanDay`
   produces the candidate diff: keep / move / cancel / add
   (`domain/trips/services/TripReplan.ts:32#REPLAN_OPS`), each entry with its reason
@@ -4773,14 +4783,14 @@ route writes goes through the kernel as a command that already exists
   Shared mutations are the diff's `proposals`; nothing is written.
   `domain/trips/services/TripReplanService.ts:23#computeReplan` feeds it from the
   trip (pulse, freedom, compiler). `POST /trips/:tripId/replan`
-  (`server/trips/readRoutes/tripProjections.ts:493#/trips/:tripId/replan`) turns each proposal
+  (`server/trips/readRoutes/tripProjections.ts:514#/trips/:tripId/replan`) turns each proposal
   into `CREATE_PROPOSAL` only when the caller asks and the kernel is on —
   `proposal_type: replan_<op>`, the suggested decision rule, an idempotency
   key from the day, the op, the plan and the target time, `source: "replan"`
   on the payload — and says `trip_kernel_enabled is false` by name when it
-  is not. Compass `replan_day` (`compass/CompassTools.ts:1222#toolReplanDay`)
+  is not. Compass `replan_day` (`compass/CompassTools.ts:1271#toolReplanDay`)
   carries the same diff and names `create_proposal`
-  (`compass/CompassTools.ts:1188#toolCreateProposal`) for the shared
+  (`compass/CompassTools.ts:1237#toolCreateProposal`) for the shared
   mutations; that tool goes through `CREATE_PROPOSAL` with
   `source: "compass"` and is refused by name without the kernel — TR210's
   unpersisted proposal object is gone.
@@ -4792,7 +4802,7 @@ route writes goes through the kernel as a command that already exists
   UNCERTAIN experiences (`domain/trips/services/TripValueOfInformation.ts:67#unknownsFromExperiences`):
   one that could beat the best executable is worth a question, one that
   could not is not. `get_opportunities` carries the answer as
-  `questionsWorthAsking` (`compass/CompassTools.ts:1158#questionsWorthAsking:`).
+  `questionsWorthAsking` (`compass/CompassTools.ts:1207#questionsWorthAsking:`).
 - **§14.3 the meeting point** — `domain/trips/services/TripMeetingPoint.ts:94#findMeetingPoint`:
   least group burden, each journey weighted by the mode's reliability; the
   six constraints applied by name — next commitments, accessibility, party
@@ -4806,8 +4816,8 @@ route writes goes through the kernel as a command that already exists
   unplaced by name; candidates are the crew's saved ideas and the day's
   plans with a public point (`domain/trips/services/TripReplanService.ts:49#computeMeetingPoint`).
   `POST /trips/:tripId/meeting-point`
-  (`server/trips/readRoutes/tripProjections.ts:531#/trips/:tripId/meeting-point`); Compass
-  `find_meeting_point` (`compass/CompassTools.ts:1239#toolFindMeetingPoint`).
+  (`server/trips/readRoutes/tripProjections.ts:552#/trips/:tripId/meeting-point`); Compass
+  `find_meeting_point` (`compass/CompassTools.ts:1288#toolFindMeetingPoint`).
 - **§17.3 rescue** — `domain/trips/services/TripRescue.ts:66#planRescue` over the
   seven typed problems (`domain/trips/services/TripRescue.ts:18#RESCUE_PROBLEMS`):
   each plan declares a disruption at a severity, orders its steps by who
@@ -4816,10 +4826,10 @@ route writes goes through the kernel as a command that already exists
   (`domain/trips/services/TripRescue.ts:21#ESCALATION_TARGETS`) — or to the crew,
   with why and when, and says what Compass may and must not do; a safe
   return is proposed where the problem is a person. `POST /trips/:tripId/rescue`
-  (`server/trips/readRoutes/tripProjections.ts:543#/trips/:tripId/rescue`) returns the plan
+  (`server/trips/readRoutes/tripProjections.ts:564#/trips/:tripId/rescue`) returns the plan
   (201) and declares the disruption through `DECLARE_DISRUPTION` — §17.2's
   switch — when the kernel is on, skipped by name when not; an unknown
-  problem is 400. Compass `get_rescue_plan` (`compass/CompassTools.ts:1208#toolGetRescuePlan`)
+  problem is 400. Compass `get_rescue_plan` (`compass/CompassTools.ts:1257#toolGetRescuePlan`)
   is read-only.
 - **§23, two scenarios as tests** — `src/test/tripScenarios.test.ts:26#TR420`:
   a 75-minute ETA shift fires `tight_arrival`, names the downstream dinner
@@ -4993,7 +5003,7 @@ re-derives and cites rather than argues.
 - **Five rows the tree had already earned.** TR189: Today has carried
   `pulseSignals` since §42 (`domain/trips/projections/TripTodayProjection.ts:120#pulseSignals:`).
   TR375: `POST /trips/:tripId/simulate` was registered in §44
-  (`server/trips/readRoutes/tripProjections.ts:478#/trips/:tripId/simulate`). TR393:
+  (`server/trips/readRoutes/tripProjections.ts:499#/trips/:tripId/simulate`). TR393:
   `trip_command_rejected_total` by reason has existed in the kernel client
   and been asserted three times (`domain/trips/commands/tripKernel.ts:496#readTripCommandRejectedTotal`,
   `src/test/tripKernel.test.ts:110#counter`). TR379 and TR75: 2520's map
@@ -5287,8 +5297,8 @@ mutations are named with the rows.
   orders a day's items by the instant, whatever zone each was typed in.
   The route reads the stages under the operational gate as /readiness does,
   refuses when they are unreadable, applies both, and says which zone rule
-  it used (`server/trips/readRoutes/tripProjections.ts:193#withStageLocalTimes(rows.map`;
-  `server/trips/readRoutes/tripProjections.ts:142#stageZoneReading`). `test/tripTimelineStageLocalTime.test.ts:25#Asia/Tokyo`:
+  it used (`server/trips/readRoutes/tripProjections.ts:194#withStageLocalTimes(rows.map`;
+  `server/trips/readRoutes/tripProjections.ts:143#stageZoneReading`). `test/tripTimelineStageLocalTime.test.ts:25#Asia/Tokyo`:
   a Lisbon item at 08:00Z reads 09:00, a Tokyo item at 23:30Z reads 08:30
   the next day, the boundary instant belongs to the later stage, and two
   items typed in two zones sort by when they happen. `tripProjections.test.ts`
@@ -5653,7 +5663,7 @@ called half-proved (TR418, TR419). No migration.
   ladder; the Today suite reads `idle` on the base fixture. Nothing here
   turns sensing on: a client with location off has nothing to sample.
 - **§12.1 `getCrewState(tripId)` (TR204)** — Compass had `who_is_around`, a
-  Circle-scoped presence tool, and nothing trip-scoped. `compass/CompassTools.ts:1293#toolGetCrewState(`
+  Circle-scoped presence tool, and nothing trip-scoped. `compass/CompassTools.ts:1342#toolGetCrewState(`
   reads the crew map (`getCrewMap`, which decides §6.1's presence rules per
   member) for the current or a named trip the user is an accepted member
   of, and hands the conversation each member's status label, area,
@@ -5829,7 +5839,7 @@ transport segment and estimated nothing (TR287).
   with 2795 applied it expects the refusal by name; without it, the §35
   defect it was written to pin.
 - **§11.3 "I am bored" (TR197)** — `GET /trips/:tripId/bored`
-  (`server/trips/readRoutes/tripProjections.ts:326#router.get("/trips/:tripId/bored"`): the
+  (`server/trips/readRoutes/tripProjections.ts:347#router.get("/trips/:tripId/bored"`): the
   §7.3 window containing now, its minutes left and the deadline that ends
   it, and the §13 candidates the opportunity projection compiled for that
   window — executable, uncertain, and how many were not — in one answer,
@@ -6429,7 +6439,7 @@ code changes in this section.
   (`travel-buddy-standalone/src/features/map/cache/mapCache.ts:472#rehydrate(`).
   The points of an event's map are cached; the map is not. W.
 - **TR133 holds W, at two of four.** Compass's `get_freedom_windows`
-  (`compass/CompassTools.ts:1807#case "get_freedom_windows":`) consumes the
+  (`compass/CompassTools.ts:1866#case "get_freedom_windows":`) consumes the
   engine, and so do Saved Ideas: the opportunity projection compiles the
   crew's saved places against each window rather than computing free time
   of its own (`domain/trips/projections/TripOpportunityProjection.ts:227#from("trip_saved_places")`).
@@ -6499,10 +6509,10 @@ rows stay W with the reason narrowed to the gate alone.
   reads the switch through the real health projection under the §19.1 rule
   and never throws. Compass's `search_places` and `search_events` resolve the
   named trip or the user's current one
-  (`compass/CompassTools.ts:741#async function resolveTripAttention(`) and
+  (`compass/CompassTools.ts:757#async function resolveTripAttention(`) and
   filter their ranked candidates
-  (`compass/CompassTools.ts:799#const held = applyAttentionSuppression(candidates, attention, (p: any) => [p.category, p.primary_category]);`,
-  `compass/CompassTools.ts:874#const held = applyAttentionSuppression(candidates, attention, (e: any) => [e.category]);`);
+  (`compass/CompassTools.ts:815#const held = applyAttentionSuppression(candidates, attention, (p: any) => [p.category, p.primary_category]);`,
+  `compass/CompassTools.ts:890#const held = applyAttentionSuppression(candidates, attention, (e: any) => [e.category]);`);
   the result carries `attention` (consulted, mode, suppressed, reason,
   withheld) and both tool declarations name `tripId`. The trip brief —
   `GET /compass/recommendations?surface=trip&tripId=` — consults the same
@@ -6738,3 +6748,114 @@ the guards pin the layout against a file reappearing outside it. What
 would turn the two C rows red is a new trip module written outside the
 directories — a regression a `check:trip-layout` guard could hold, and
 does not yet.
+
+## 62. One itinerary system: the trip's route chain projected from its own plan, and a route plan on a trip made a view over it
+
+**Read against the branch `claude/sweet-fermat-fmx7up`.** §25 says new
+capabilities integrate by consuming Trip Context, issuing Trip Commands,
+emitting typed events and projecting outcomes — *"not by adding another
+isolated itinerary feature"* — and TR437 has held N since the first read
+because the tree contains the counter-example: `route_plans` /
+`route_stops` / `route_legs` (0058), a second itinerary with its own stop
+ordering, its own optimizer and its own checkpoint state, attached to a
+trip through a nullable `trip_id` and reading nothing the trip knows. §62
+does two things about it, neither a migration. It gives the trip a route
+chain that IS the trip's plan — §14.2's object, computed from the plan
+items and never stored — and, under the operational gate, it makes a route
+plan that names a trip a view over that plan rather than a list of places
+of its own. It does not remove the table, its optimizer or its checkpoint
+state, which is why TR437 moves to W and not to C.
+
+### 62.1 What was built, and where
+
+- **The route chain as a projection.**
+  `domain/trips/projections/TripRouteChainProjection.ts:108#export async function buildTripRouteChainProjection(`
+  reads the trip's placed plan items (a start time and a point), orders
+  them, and computes between each adjacent pair what §14.2 says a chain
+  carries: the departure the previous item implies (its end, else its
+  start), the travel term — the same straight-line LOWER BOUND and the same
+  departure-time assumption the freedom projection uses (§40.3, §60), never
+  a number of its own — the arrival at the bound and under the assumption,
+  the crew as party size, and, where 2782's transport segment matches the
+  hop by label or planned departure, its cost, currency, fallback reference
+  and a reliability estimated with every factor named (§53). The segments
+  are read SOFTLY: where the deployment has no such table the chain exists
+  with those three null and `segments.status: "unread"` saying why
+  (`domain/trips/projections/TripRouteChainProjection.ts:147#if (segErr) segments = { status: "unread"`).
+  Plan items without a time or a point are returned as `unplaced` with the
+  reason, never dropped. Every read is a §21.2 decision of a new type
+  (`domain/trips/services/TripDecisionLedger.ts:63#"route_chain"`) whose
+  assumptions say the chain is the plan and no stop exists that is not a
+  plan item. Served at `GET /trips/:tripId/route-chain` under the gate
+  (`server/trips/readRoutes/tripProjections.ts:252#router.get("/trips/:tripId/route-chain"`)
+  and to Compass as `get_route_chain`
+  (`compass/CompassTools.ts:1069#export async function toolGetRouteChain(`).
+- **A route plan on a trip is a view over the plan.** Under the gate,
+  `POST /route-plans` with a `tripId` refuses any stop that is not one of
+  that trip's plan items — `409`, reason `TRIP_IDENTITY_STOP_NOT_IN_PLAN`
+  (`routes/routePlan.ts:118#TRIP_IDENTITY_STOP_NOT_IN_PLAN`,
+  `domain/trips/contracts/tripReasonCodes.ts:110#"TRIP_IDENTITY_STOP_NOT_IN_PLAN"`) —
+  so the route optimizer orders the trip's own places and cannot introduce
+  a second set. Where the gate is closed (every deployment today) a route
+  plan is created as before; the refusal is the gate's product change, like
+  every other in §40–§61.
+- **Tests, on the real builder, the real app and the real route** —
+  `test/tripRouteChainProjection.test.ts:57#describe("the route chain is the trip's plan, in order, with what §14.2 says a chain carries"`:
+  the health fixture's Paris trip with four plan items — two placed, one
+  without a time, one without a point — gives two stops in start order (not
+  row order), one hop leaving at A's end with a bound, an expected term at
+  or above it, the Paris band, party size two, the segment's cost and an
+  estimated reliability, the two unplaced by reason, and a `route_chain`
+  decision; no segment → nulls; segments unreadable → `unread` with the
+  reason and the chain still served; the gate closed and an unreadable
+  plan refuse. Through the app: a member reads the chain, a non-member is
+  refused with `TRIP_AUTH_NOT_CREW`, the gate closed answers
+  `feature_disabled`; the Compass tool hands the hops over and refuses a
+  non-member. `POST /route-plans`: a discovery stop and a plan-item id not on
+  the trip are refused with the reason; plan-item stops reach the insert;
+  the gate closed refuses nothing.
+- **A finding on the way, fixed at its source.** The Compass tool's result
+  sanitizer strips every coordinate-shaped key with a case-insensitive rule
+  whose `Lat$` clause also matched any camelCase `…At` time whose word ends
+  in "l": `expectedArrivalAt` never reached the conversation from
+  `get_route_chain`, and — read back through the same rule — `requiredArrivalAt`
+  had never reached it from `get_commitments` (TR206, C since §41) or
+  `estimatedArrivalAt` from anywhere. The rule now carves out exactly that
+  class (`compass/CompassStructuredContext.ts:92#const CAMEL_AT_TIMESTAMP_RE`,
+  `compass/CompassStructuredContext.ts:95#export function isCoordinateKey(`);
+  `lat`, `LAT`, `exactLat`, `arrivalLat`, `center_lng`, `placeLatitude`
+  still go, pinned in
+  `test/compass-structured-context.test.ts:265#requiredArrivalAt, expectedArrivalAt) is a time, not a coordinate`
+  (red before the carve-out, green after) and on the wire in
+  `test/tripRouteChainProjection.test.ts:125#the sanitizer keeps a camelCase`
+  (red with the carve-out removed by mutation, green restored). No column in
+  any migration ends in a lowercase-run `lat`/`lng` without an underscore,
+  which is the only shape the carve-out could ever spare.
+
+### 62.2 Row moves
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| TR437 §25 no second itinerary system | N | **W** | The trip's route chain is now a projection of its own plan, and a route plan on a trip must consume that plan under the gate. W, not C: `route_plans` / `route_stops` / `route_legs` keep their own optimizer and checkpoint state, a route plan not attached to a trip is untouched, and the gate is seeded FALSE (2778) on every deployment, so today a trip route plan may still carry any stop. |
+| TR206 §12.1 `getCommitments(tripId)` | C | **C** | Re-read, and the C stated since §41 was not true on the wire: the tool built `requiredArrivalAt` and the sanitizer removed it before the conversation saw it, so every commitment read as having no required arrival. Fixed at the sanitizer (above), proven red-then-green through `executeCompassTool`; C again, now with the object read rather than the sentence about it. |
+| TR266 §14.2 route chains carry expected departure / arrival | C | **C** | Re-read with truer evidence: `route_stops.planned_arrival_time` still carries it for the table, and the projection carries `departAt`, `arrivalAtBound` and `expectedArrivalAt` per hop — computed from the plan, not entered. |
+
+**Rows looked at that did not move:** TR267–TR271 (W — the projection
+now carries the assumption, cost, party size, reliability and fallback
+reference beside 2782's segment, which no database has), TR265 (C — the
+optimizer is untouched), TR128 / TR412 (N — no routed provider; the chain's
+`travel.routed` is false on every hop and says so).
+
+### 62.3 The ceiling
+
+No migration, no flag of its own; everything here sits behind
+`trip_operational_projections_enabled`. What would turn TR437 red once it
+is on (P24): a stop written to `route_stops` for a trip route plan by a
+path that is not `POST /route-plans` — the accept, complete and PATCH
+routes edit stops that exist but create none, checked here by reading them,
+and nothing pins that yet; a segment matched to the wrong hop where two
+hops share labels, which the match-by-label rule permits and the
+match-by-departure rule does not resolve. What would move it to C: the
+table's optimizer and checkpoint state folded into the kernel's plan
+family, which is a migration and a product decision this section does not
+take.

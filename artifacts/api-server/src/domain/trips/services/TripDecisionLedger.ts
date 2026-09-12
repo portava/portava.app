@@ -60,7 +60,7 @@ export const TRIP_ENGINE_VERSIONS = {
 } as const;
 export type TripEngineName = keyof typeof TRIP_ENGINE_VERSIONS;
 
-export const TRIP_DECISION_TYPES = ["freedom_windows", "trip_health", "today_projection", "pulse_projection", "opportunity_portfolio", "opportunity_projection"] as const;
+export const TRIP_DECISION_TYPES = ["freedom_windows", "trip_health", "today_projection", "pulse_projection", "opportunity_portfolio", "opportunity_projection", "route_chain"] as const;
 export type TripDecisionType = (typeof TRIP_DECISION_TYPES)[number];
 
 export interface TripDecision {

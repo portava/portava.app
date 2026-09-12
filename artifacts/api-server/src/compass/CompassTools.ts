@@ -23,6 +23,7 @@ import { stripCoordinateFields, wrapUgc, buildStructuredCompassContext } from ".
 import { isAcceptedTripMember, canEditPlan } from "../lib/http.js";
 import { buildTripCompassProjection } from "../domain/trips/projections/TripCompassProjection.js";
 import { buildTripFreedomProjection } from "../domain/trips/projections/TripFreedomProjection.js";
+import { buildTripRouteChainProjection } from "../domain/trips/projections/TripRouteChainProjection.js";
 import { buildTripPulseProjection } from "../domain/trips/projections/TripPulseProjection.js";
 import { buildTripOpportunityProjection } from "../domain/trips/projections/TripOpportunityProjection.js";
 import { loadImpactState } from "../domain/trips/services/TripImpactState.js";
@@ -191,6 +192,21 @@ export const COMPASS_TOOL_DEFINITIONS = [
         properties: {
           tripId: { type: "string", description: "A specific trip's id (optional). The user must be an accepted member." },
           at:     { type: "string", description: "An ISO instant (optional); the window containing it is returned as `current`." },
+        },
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
+      name: "get_route_chain",
+      description:
+        "Get the trip's route chain — its placed plan items in order with the travel term between them (a straight-line lower bound and a departure-time assumption), expected arrival, party size, and the transport segment's cost and reliability where one exists (§14.2). Use this instead of building a route from the plan yourself; nothing here is a route plan.",
+      parameters: {
+        type: "object",
+        properties: {
+          tripId: { type: "string", description: "A specific trip's id (optional). The user must be an accepted member." },
         },
         additionalProperties: false,
       },
@@ -1049,6 +1065,39 @@ export async function toolGetFreedomWindows(sc: SupabaseClient, userId: string, 
  * §12.1 getTodayState(tripId) — Compass CONSUMES the §11.1 Today projection,
  * the same object GET /trips/:id/today serves, through the §19.1 rule.
  */
+/** §12.1 / §14.2 getRouteChain(tripId) — the trip's route chain, projected from its own plan (census-trips §62). */
+export async function toolGetRouteChain(sc: SupabaseClient, userId: string, args: Record<string, unknown>): Promise<unknown> {
+  const tripId = typeof args.tripId === "string" && args.tripId.length > 0 ? args.tripId : null;
+  let id: string | null = tripId;
+  if (id) {
+    if (!(await isAcceptedTripMember(sc, id, userId))) return { chain: null, info: "The user is not a member of that trip." };
+  } else {
+    const current: any = await toolGetCurrentTrip(sc, userId);
+    id = current?.trip?.id ?? null;
+    if (!id) return { chain: null, info: "No active or upcoming trip." };
+  }
+  const built = await buildTripRouteChainProjection(sc, id);
+  if (!built.ok) return { chain: null, info: built.reason === "FEATURE_DISABLED" ? `The route chain is not enabled: ${built.message}` : `Route chain unavailable (${built.reason}): ${built.message}` };
+  const decision = acceptTripProjection(built.projection, { acceptedSchemaVersion: TRIP_PROJECTION_SCHEMA_VERSION, metric: "TripRouteChainProjection" });
+  if (!decision.accepted) return { chain: null, info: `Route chain rejected (${decision.reason}): ${decision.message}` };
+  const p = built.projection;
+  return {
+    chain: {
+      tripId: p.tripId, decisionId: p.decisionId, partySize: p.partySize,
+      stops: p.stops.map((s) => ({ planItemId: s.planItemId, title: s.title ? wrapUgc(String(s.title)) : null, startsAt: s.startsAt, endsAt: s.endsAt })),
+      hops: p.hops.map((h) => ({
+        from: h.fromPlanItemId, to: h.toPlanItemId, departAt: h.departAt,
+        boundMinutes: h.travel.boundMinutes, expectedMinutes: h.travel.expectedMinutes, unknownReason: h.travel.unknownReason,
+        band: h.travel.assumption?.band ?? null, arrivalAtBound: h.arrivalAtBound, expectedArrivalAt: h.expectedArrivalAt,
+        partySize: h.partySize,
+        segment: h.segment ? { mode: h.segment.mode, costMinor: h.segment.costMinor, currency: h.segment.currency, reliability: h.segment.reliability.value, fallbackOf: h.segment.fallbackOf } : null,
+      })),
+      unplaced: p.unplaced, segments: p.segments, disclosure: p.disclosure, reading: p.reading,
+    },
+    projection: { generatedAt: p.generatedAt, sourceTripVersion: p.sourceTripVersion, freshness: p.freshness },
+  };
+}
+
 /** §12.1 getLiveConditions(tripId) → the §16 Trip Pulse projection, accepted per §19.1. */
 export async function toolGetLiveConditions(sc: SupabaseClient, userId: string, args: Record<string, unknown>): Promise<unknown> {
   const tripId = typeof args.tripId === "string" && args.tripId.length > 0 ? args.tripId : null;
@@ -1815,6 +1864,7 @@ export async function executeCompassTool(
       case "get_circle_activity":  raw = await toolGetCircleActivity(sc, profile, userId); break;
       case "check_trip_conflicts": raw = await toolCheckTripConflicts(sc, userId, args); break;
       case "get_freedom_windows":  raw = await toolGetFreedomWindows(sc, userId, args); break;
+      case "get_route_chain":      raw = await toolGetRouteChain(sc, userId, args); break;
       case "get_today_state":      raw = await toolGetTodayState(sc, userId, args); break;
       case "get_crew_state":       raw = await toolGetCrewState(sc, userId, args); break;
       case "get_live_conditions":  raw = await toolGetLiveConditions(sc, userId, args); break;

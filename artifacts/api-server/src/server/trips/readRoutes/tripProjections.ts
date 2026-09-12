@@ -63,6 +63,7 @@ import { buildTripTimeline, withStageLocalTimes, orderByInstant, type TimelineSt
 import { projectTripSafety, type SafetySessionRow } from "../../../domain/trips/projections/TripSafetyProjection.js";
 import { buildTripCompassProjection } from "../../../domain/trips/projections/TripCompassProjection.js";
 import { buildTripFreedomProjection } from "../../../domain/trips/projections/TripFreedomProjection.js";
+import { buildTripRouteChainProjection } from "../../../domain/trips/projections/TripRouteChainProjection.js";
 import { buildTripHealthProjection } from "../../../domain/trips/projections/TripHealthProjection.js";
 import { buildTripPulseProjection } from "../../../domain/trips/projections/TripPulseProjection.js";
 import { buildTripOpportunityProjection } from "../../../domain/trips/projections/TripOpportunityProjection.js";
@@ -242,6 +243,26 @@ router.get("/trips/:tripId/freedom-windows", asyncHandler(async (req, res) => {
   if (!membership) { sendTripRefusal(res, "not_member", "TRIP_AUTH_NOT_CREW", "You must be an accepted trip member to view freedom windows"); return; }
 
   const built = await buildTripFreedomProjection(sc, tripId);
+  if (!built.ok) { refuseBuild(res, built); return; }
+  res.json(built.projection);
+}));
+
+// §14.2 / §25 (census-trips §62, TR437): the trip's route chain, projected from
+// its own plan — not read from route_plans. Under the operational gate.
+router.get("/trips/:tripId/route-chain", asyncHandler(async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const { tripId } = req.params;
+  if (!UUID_RE.test(tripId)) { sendError(res, "invalid_payload", "Invalid trip id"); return; }
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const membership = await requireTripMember(sc, tripId, user.id);
+  if (!membership) { sendTripRefusal(res, "not_member", "TRIP_AUTH_NOT_CREW", "You must be an accepted trip member to view the route chain"); return; }
+
+  const built = await buildTripRouteChainProjection(sc, tripId);
   if (!built.ok) { refuseBuild(res, built); return; }
   res.json(built.projection);
 }));

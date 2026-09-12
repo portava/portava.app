@@ -107,6 +107,7 @@ export const TRIP_REASON_CODES = [
   // ── TRIP_IDENTITY_* ────────────────────────────────────────────────────────
   "TRIP_IDENTITY_ALREADY_EXISTS",     // 2450
   "TRIP_IDENTITY_UNRESOLVED_PLACE",   // a place id that resolves to no row
+  "TRIP_IDENTITY_STOP_NOT_IN_PLAN",   // §25 (§62): a route plan on a trip may only carry the trip's own plan items
   // ── TRIP_OFFLINE_* ─────────────────────────────────────────────────────────
   "TRIP_OFFLINE_REVALIDATION_REQUIRED",// §18.2 sensitive mutation after reconnect
   "TRIP_OFFLINE_QUEUE_REJECTED",
