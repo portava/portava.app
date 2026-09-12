@@ -101,13 +101,13 @@ Paths are relative to `artifacts/api-server/` unless prefixed `travel-buddy-stan
 | Measure | Value |
 |---|---|
 | **Denominator — testable requirements** | **127** |
-| BUILT-AND-CORRECT | **77** |
+| BUILT-AND-CORRECT | **80** |
 | BUILT-BUT-WRONG | **36** |
-| NOT-BUILT | **13** |
+| NOT-BUILT | **10** |
 | CANNOT-VERIFY | **1** |
-| **CONSTRUCTED%** = (C+W)/127 | **113 / 127 = 89.0 %** |
-| **CORRECT%** (raw) = C/127 | **77 / 127 = 60.6 %** |
-| **CORRECT% (spec-attributable)** | **12 of the 77 — 9.4 %** |
+| **CONSTRUCTED%** = (C+W)/127 | **116 / 127 = 91.3 %** |
+| **CORRECT%** (raw) = C/127 | **80 / 127 = 63.0 %** |
+| **CORRECT% (spec-attributable)** | **15 of the 80 — 11.8 %** |
 
 > **RESTATED 2026-09-12 (§1): 65 → 77 CORRECT, 39 → 36 WRONG, 22 → 13
 > NOT-BUILT. CONSTRUCTED 81.9 % → 89.0 %, CORRECT 51.2 % → 60.6 %.** §1 is the
@@ -126,6 +126,17 @@ Paths are relative to `artifacts/api-server/` unless prefixed `travel-buddy-stan
 > enabled or production-realised: production still holds no sensing table
 > and zero rows in every intel table.
 
+> **RESTATED 2026-09-12 (§2): 77 → 80 CORRECT, 13 → 10 NOT-BUILT. CONSTRUCTED
+> 89.0 % → 91.3 %, CORRECT 60.6 % → 63.0 %.** §2 is the first section that
+> BUILDS rather than re-reads: §10's decision (GO NOW · GO SOON · WAIT · STAY
+> · SWITCH · SKIP · RETURN), the switching cost of the current experience and
+> §11's peak interception, as a pure engine over the one live read path and a
+> route behind `compass_decision_enabled` (2800, seeded FALSE). Three N rows
+> into C, S79 re-derived and held; twelve mutations and one database
+> rehearsal red then green. Same caveat: built on a branch, not merged, the
+> flag the owner's, and nothing to decide on in production while every intel
+> table holds zero rows.
+
 **I disagree with commit `0597a245`'s CONSTRUCTED 56.4 % / CORRECT 32.1 %.** I land materially
 higher on both — roughly +25 points constructed and +19 points correct. I agree exactly with its
 attribution finding: **zero** implemented items are attributable to this specification.
@@ -136,7 +147,7 @@ its own:
 | Sub-score | Denominator | CONSTRUCTED | CORRECT |
 |---|---|---|---|
 | **Sensing input + inference core** (§3, §4, and the Vibe/Experience/Forecast/Opportunity/Session engines: S17–S38, S42–S46, S51–S54) | 31 | 87.1 % (was 64.5 %) | **35.5 %** (was 22.6 %) |
-| Everything else (invariants, reuse directives, surface integration) | 96 | 89.6 % (was 87.5 %) | 68.8 % (was 60.4 %) |
+| Everything else (invariants, reuse directives, surface integration) | 96 | 92.7 % (was 87.5 %) | 71.9 % (was 60.4 %) |
 
 The high headline is a property of the specification, not a compliment to the tree. This spec is
 titled *UPGRADE, DO NOT REBUILD*; §19 says outright *"Do Not Blindly Materialize"*; and a large
@@ -213,7 +224,7 @@ Most of §2 and §20 are prohibitions. The rule applied here, uniformly:
 Six BUILT-AND-CORRECT verdicts are **vacuous or partly vacuous** (the guard is real but the path
 it guards is empty): S89, S90, S91, S105, S22, and — since §1 — S9. They are flagged `⌀` in the
 table or in §1.3. A reader who rejects vacuous satisfaction should subtract them: CORRECT% becomes
-**71 of 127 = 55.9 %** (60 of 127 = 47.2 % before §1).
+**74 of 127 = 58.3 %** (60 of 127 = 47.2 % before §1).
 
 ---
 
@@ -1002,3 +1013,157 @@ live today (the Wall's truth class and coverage) or are seeded FALSE in every
 database (2350's three flags, 2361's one) — and every intel table in
 production still holds zero rows, so the Map's fold serves nothing there
 whatever its flag says. **Realised in production: 0.0 %**, unchanged.
+
+## 2. The decision Compass emits, the cost of leaving, and the window a traveller can still reach
+
+**Read against the branch `claude/sensing-lane`, 2026-09-12, by the Sensing
+lane.** Three N rows whose gap was a whole thing: §10's decision — *GO NOW ·
+GO SOON · WAIT · STAY · SWITCH · SKIP · RETURN* — which Compass never emitted
+(S78), the switching cost a current experience introduces so Compass does
+not keep telling a traveller to abandon a good one (S80), and §11's peak
+interception — can the user reach the experience before its useful window
+decays (S86). One migration, 2800, seeds a flag FALSE; no table, no column,
+no write path. The engine is pure and consumes the ONE live read path every
+surface already uses; the route sits in its own file so `routes/compass*.ts`
+and `src/compass/**` are untouched. Every rule went red under a mutation
+before its commit; the mutations are listed in §2.3.
+
+### 2.1 What was built, and where
+
+- **§10 the decision (S78)** — `lib/compassDecision.ts:83#COMPASS_DECISIONS`
+  is the spec's seven words verbatim, and `lib/compassDecision.ts:356#decideCompass(`
+  runs the rules in the order the spec's precedence implies: safety outranks
+  opportunity — a Live-qualified `unsafe_density` is SKIP for every viewer,
+  whatever the intent, ETA or current experience
+  (`lib/compassDecision.ts:379#safety_outranks_opportunity`); already at the
+  candidate is STAY; without a READING the engine cannot say GO — a reading
+  is a claim Compass's own rule Live-qualifies
+  (`compass/CompassLiveConstraints.ts:268#isLiveConstraintEligible(`) AND the
+  Wall's §5.1 derivation classes as an observation
+  (`lib/compassDecision.ts:245#isReading(`), so a sponsored "busy" is
+  `inferred` and a materially conflicting one `conflicting` and neither backs
+  GO (§2 promotional claim ≠ observed reality); a read the gates refused is
+  WAIT with `live_intelligence_unavailable`, nothing served is WAIT with
+  `no_live_evidence`, live-but-not-observational evidence is WAIT with
+  `evidence_not_observational` — three different facts, three reasons
+  (`lib/compassDecision.ts:386#live_intelligence_unavailable`); an emerging,
+  building candidate is GO SOON, labelled below the live floor; a refused
+  walk-in is SKIP and a queue past the tolerance is WAIT; a candidate at the
+  intent floor is SKIP; then interception, RETURN, the switching cost, and GO
+  NOW. Every decision carries its grounding — the §5.1 block composed
+  weakest-on-every-axis over the claims it rests on
+  (`lib/compassDecision.ts:236#truthOf(`; `lib/experienceTruth.ts:159#composeTruth(`) — and a sentence built from templates
+  over the claim values with the truth class always in it, a vibe only as
+  "reported as", and no template with a behaviour verb, so the engine cannot
+  produce "everyone is dancing" (`lib/compassDecision.ts:445#summariseDecision(`;
+  `test/compassDecision.test.ts:305#everyone`). Experience value is
+  intent-relative — quiet, social, high energy — and UNKNOWN with no intent:
+  the engine does not read busy as good (`lib/compassDecision.ts:314#experienceValue(`;
+  `test/compassDecision.test.ts:152#intent-relative`). The route
+  `GET /api/compass/decision` (`routes/compassDecision.ts:68#router.get(`)
+  reads the flag fail-closed (`routes/compassDecision.ts:78#compass_decision_enabled`),
+  the place for a walking ETA when the client sends none
+  (`routes/compassDecision.ts:106#haversineKm(q.lat,`), asks the Live gates
+  whether it may look (`routes/compassDecision.ts:112#liveLabelsServable(sc)`),
+  reads the candidate and the current experience through
+  `readLiveClaimEnvelopes`, and answers the decision with its reasons,
+  grounding, interception and switching-cost report; it writes nothing and
+  computes no truth of its own. Registered at the tail of `routes/index.ts:330#compassDecisionRouter`, so no line the other censuses cite in that file moved.
+  2800 seeds the flag FALSE and refuses to commit a TRUE row
+  (`migrations/2800_compass_decision_flag.sql:34#INSERT`;
+  `migrations/2800_compass_decision_flag.sql:47#reads`); the rollback refuses
+  over a TRUE row (`db/rollback/2026-09-12-2800-compass-decision-flag-rollback.sql:23#DELETE`)
+  and was rehearsed apply → rollback → apply on the lane's replica. The route
+  suite drives the real handler over the fake PostgREST double: flag absent
+  (production's state), false and unreadable all answer `feature_disabled`
+  and read no place and no claim (`test/compassDecisionRoute.test.ts:93#ABSENT`);
+  unauthenticated, malformed and unknown place refused; GO NOW with
+  corroborated grounding and the interception margin
+  (`test/compassDecisionRoute.test.ts:116#GO`); SKIP on `unsafe_density`;
+  STAY under the switching cost with the current experience read through the
+  same seam; WAIT with `live_intelligence_unavailable` when the pilot is
+  closed and `no_live_evidence` when the gates are open and nothing is served
+  — production's state, where every intel table holds zero rows
+  (`test/compassDecisionRoute.test.ts:152#CLOSED`;
+  `test/compassDecisionRoute.test.ts:160#NOTHING`). Nothing person-shaped is
+  on the wire: no contributor, coordinate or count.
+- **§10 the switching cost (S80)** — `lib/compassDecision.ts:94#SWITCHING_COST`
+  is the cost (0.25 of the 0..1 value, a documented tunable; the SHAPE is the
+  requirement); with a current experience whose value is known the candidate
+  must beat it by more than the cost to be SWITCH, else STAY
+  (`lib/compassDecision.ts:410#better_by_more_than_switching_cost`); with a
+  current experience whose value is UNKNOWN — no intent, or no reading where
+  the traveller is — the engine has no basis to tell them to leave and says
+  STAY for that reason, inventing neither a cost nor a preference
+  (`lib/compassDecision.ts:408#current_value_unknown`); dwell is revealed
+  preference and can only raise a KNOWN current value, bounded
+  (`lib/compassDecision.ts:327#currentExperienceValue(`), so an hour at a
+  moderate place turns a SWITCH into a STAY
+  (`test/compassDecision.test.ts:228#dwell`), and creates no value
+  (`test/compassDecision.test.ts:237#creates`). The report says whether the
+  cost was applied and both values.
+- **§11 peak interception (S86)** — `lib/compassDecision.ts:337#interceptPeak(`:
+  arrival = now + ETA against the EARLIEST horizon of the claims that
+  qualified — min(`validUntil`, `observedAt` + the family's TTL), the rule
+  Compass's arrival forecast already uses
+  (`compass/CompassLiveConstraints.ts:505#forecastArrival(`) — reachable when
+  arrival precedes it, with the margin in minutes either way; arrival after
+  the horizon is WAIT with `window_may_decay_before_arrival` and the sentence
+  says by how much (`lib/compassDecision.ts:400#window_may_decay_before_arrival`);
+  an unknown ETA is an unknown interception, stated, never assumed reachable
+  (`test/compassDecision.test.ts:190#unknown`;
+  `test/compassDecision.test.ts:179#EARLIEST`). The route derives the ETA at
+  walking speed from the viewer's position when the client sends none, and a
+  viewer fifteen kilometres away is told to wait
+  (`test/compassDecisionRoute.test.ts:132#walking`).
+
+### 2.2 Row moves
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| S78 Compass emits a decision: GO NOW · GO SOON · WAIT · STAY · SWITCH · SKIP · RETURN | N | **C** | The seven-word vocabulary verbatim, a pure engine whose rules run safety-first over the one live read path with a reading defined as Live-qualified AND observational, served on `GET /api/compass/decision` behind 2800's FALSE flag with its grounding; route-tested through the real handler; mutations B2-M1 to B2-M4 and B2-M10 to B2-M12 red. |
+| S80 Current Experience value introduces switching cost | N | **C** | A cost the candidate must beat, applied only when the current value is KNOWN and intent-relative — never busy = good — with dwell raising a known value and creating none; STAY with the reason when the value is unknown; B2-M7, B2-M8, B2-M9 red. |
+| S86 Peak interception: can the user reach the experience before its useful window decays? | N | **C** | Arrival against the earliest qualifying horizon, the margin either way, WAIT when the window would decay first, unknown when the ETA is; the route derives a walking ETA when none is sent; B2-M5, B2-M6 red. |
+| S79 Compass must ground natural-language claims in structured truth | W | **W** | The decision surface's language is grounded by construction — templates over claim values with the truth class in every sentence and no behaviour verb, so it cannot say "everyone is dancing" (B2-M11 red) — and the conversational `/compass/ask` and Telegraph model paths are still constrained only by shape sanitizers. One surface of two. |
+
+**Held, with the reason.** **S66** stays W with a narrower gap: the Map
+strips promotion near a notice (§1), Compass's ranking excludes a Live
+`unsafe_density` subject, and now its decision is SKIP on one — Discovery's
+ranker still reads no safety state. **S72** stays W: the intent modes the
+decision accepts (quiet, social, high energy, explore) are the engine's, and
+`compass/CompassIntentModeEngine.ts` is another unit's file with its own
+vocabulary; the shared-intelligence half of the row is not built here.
+**S81** and **S82** hold C: Home still answers "what matters right now" and
+this route is the first place Compass answers "what should I do about it"
+with a decision rather than a ranked list. **S83** stays W: a
+`TripWorldContext` belongs to the Trips lane's files and this lane does not
+enter them. **S85** stays W: the Layover engine still reads no live seam.
+
+### 2.3 The mutations, in one place
+
+| # | row(s) | file | what was changed | red | green |
+| --- | --- | --- | --- | ---: | ---: |
+| B2-M1 | S78 | `lib/compassDecision.ts` | safety no longer outranks | 2 | 0 |
+| B2-M2 | S78 | `lib/compassDecision.ts` | no live evidence answered GO NOW | 4 | 0 |
+| B2-M3 | S78 | `lib/compassDecision.ts` | a sponsored claim counted as a reading | 3 | 0 |
+| B2-M4 | S78 | `lib/compassDecision.ts` | "could not look" collapsed into "saw nothing" | 2 | 0 |
+| B2-M5 | S86 | `lib/compassDecision.ts` | interception never fails | 4 | 0 |
+| B2-M6 | S86 | `lib/compassDecision.ts` | the horizon taken as the latest, not the earliest | 1 | 0 |
+| B2-M7 | S80 | `lib/compassDecision.ts` | the switching cost set to zero | 1 | 0 |
+| B2-M8 | S80 | `lib/compassDecision.ts` | dwell ignored | 1 | 0 |
+| B2-M9 | S80 | `lib/compassDecision.ts` | an unknown current value defaulted to 0.5 | 2 | 0 |
+| B2-M10 | S78 | `lib/compassDecision.ts` | busy read as good with no intent | 2 | 0 |
+| B2-M11 | S78, S79 | `lib/compassDecision.ts` | a vibe described whether or not Live-qualified | 2 | 0 |
+| B2-M12 | S78 | `routes/compassDecision.ts` | the flag read ignored | 3 | 0 |
+| DB-3 | S78 | replica | 2800 applied, rolled back (row gone), applied (FALSE) | — | — |
+
+### 2.4 The ceiling
+
+Nothing here is deployed, enabled or production-realised. 2800 exists on
+the lane's replica and nowhere else; `compass_decision_enabled` is seeded
+FALSE and is the owner's to turn on — it opens a new user-facing surface.
+Behind it the Live gates still decide what is served, and in production
+every intel table holds zero rows and `intel_live_promoted_scopes` is empty,
+so the route there answers WAIT with `no_live_evidence` for every place: a
+decision engine with nothing to decide on, and honest about it. No client
+calls the route. **Realised in production: 0.0 %**, unchanged.
