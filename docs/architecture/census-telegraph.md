@@ -22,14 +22,32 @@ Backend paths are relative to `artifacts/api-server/src/` unless prefixed
 | **Denominator (testable requirements) — v1.1** | **451** |
 | — of which shared with v1 | 378 |
 | — of which v1.1-only (§30A Addendum + §31) | 73 |
-| BUILT-AND-CORRECT | **98** |
-| BUILT-BUT-WRONG | **172** |
-| NOT-BUILT | **178** |
+| BUILT-AND-CORRECT | **124** |
+| BUILT-BUT-WRONG | **171** |
+| NOT-BUILT | **134** |
 | CANNOT-VERIFY | **3** |
-| **CONSTRUCTED%** = (98+172)/451 | **59.9 %** |
-| **CORRECT%** (raw) = 98/451 | **21.7 %** |
+| **CONSTRUCTED%** = (124+171)/451 | **65.4 %** |
+| **CORRECT%** (raw) = 124/451 | **27.5 %** |
 | **CORRECT% (spec-attributable)** = 0/451 | **0.0 %** |
 | CANNOT-VERIFY share | 3 / 451 = 0.7 % |
+
+> **RESTATED 2026-09-12 BY THE INTEGRATOR, from the rows and not by addition:
+> 98 → 124 CORRECT, 172 → 171 WRONG, 178 → 134 NOT-BUILT. CONSTRUCTED
+> 59.9 % → 65.4 %, CORRECT 21.7 % → 27.5 %.** §12 is the first section appended
+> to this census since it was written: §23's domain package with a boundary
+> guard, §24's projection ratchet, §25.1's Phase 0 inventory, §26's RLS and
+> authorization matrix executed, §27's certification plan run, §28's
+> observability, and §30A.17/§30A.18's replay simulator — 117 tests across five
+> suites and five new guards in `check:all`, every one of them shown red first
+> under a deliberate, reverted mutation. These four numbers are
+> `check:census-integrity`'s count of the rows below, not the old headline plus
+> §12's moves.
+>
+> **The v1 / v1.1-only split table beneath this one is NOT restated** and still
+> reads 86 / 12 / 135 / 37 / 154 / 24. §12 did not attribute its moves to the
+> two versions, so splitting 124 across them would be an invention. Read the
+> split as describing the census before §12; the four numbers above describe it
+> now.
 
 Scored against **v1 alone** and against the **v1.1-only** addendum separately:
 
@@ -1108,3 +1126,543 @@ anywhere — a repo-wide grep for `§` over `git diff main...pr/460` returns
 nothing — despite hardening behaviour §7.4, §21 and §27.3 all require. It is
 good work done for the codebase, not for this document, which is the same
 pattern §4 describes for the tree as a whole.
+
+---
+
+## 12. The certification lane — §26, §27, and what executing them found
+
+Written by the Telegraph lane holding §23–§31 and Appendix A, in a worktree off
+`014a25d5`. Sections §1–§11 and §12–§22 were held by other agents in their own
+worktrees at the same time; nothing below depends on their work landing, and
+every row that WOULD depend on it says so.
+
+### 12.1 What was built, and where
+
+**The spec's §26 matrix and §27 plan existed only as prose. They are now data a
+checker reads, and three suites that execute them.**
+
+The census's §5 found the whole of §27 absent — "No monotonicity property test
+exists. `test/accessControl.test.ts` and `test/rlsPrivacy.test.ts` are case
+tests over fixed fixtures" — and §26 satisfied incidentally by route checks
+written for other reasons. That reading was right, and it points at the shape of
+the gap: a certification plan that lives in a document cannot go red. So the
+thirty-five entries of §26 and §27 are declared as TypeScript under a new
+`domain/telegraph/` package, driven by three node:test suites against the
+real handlers, and policed by a checker wired into `check:all`.
+
+**The declarations.** `domain/telegraph/contracts/certification.ts:46`
+defines the four-status vocabulary the whole lane turns on, and the choice of
+four rather than two is the point: `enforced` means *true on every deployment of
+this tree*, `flag_gated` means *built and not running*, `divergent` means *the
+tree does something else*, and `vacuous` means *the case cannot arise*. Nothing
+can be rounded up. The entries themselves:
+
+- §26's ten cases, `domain/telegraph/invariants/rlsAuthorizationMatrix.ts:32`
+  (RLS-01) through `:194` (RLS-10).
+- §27.1's seven properties,
+  `domain/telegraph/invariants/propertyInvariants.ts:27` through `:148`.
+- §27.2's twelve fixtures,
+  `domain/telegraph/invariants/adversarialFixtures.ts:22` through `:218`.
+- §27.3's six live-DB contracts,
+  `domain/telegraph/invariants/liveDbContracts.ts:25` through `:122`.
+
+**The suites.** `test/telegraphRlsAuthorizationMatrix.test.ts:182`–`:593`
+(38 cases), `test/telegraphPropertyInvariants.test.ts:161`–`:584` (19),
+`test/telegraphAdversarialFixtures.test.ts:155`–`:561` (27). Every assertion
+lands on an output of real code: the real `messagingRouter`, the real
+`canMessage`, the real `buildCrewCard`, the real `isBlockedBetween`, the real
+`requireSafeReturnRecipient`, the real event bus, the real `syncTripChatMembers`.
+What is replaced is PostgREST, by
+`test/telegraphCertificationHarness.ts:157` — and it is replaced rather than
+mocked away for a specific reason stated at `:36`: supabase-js RESOLVES on a
+database error, and that is the shape that turns a dropped `.error` into
+fail-open authorization, so a fake that threw instead would make those bugs
+untestable.
+
+**The guard.** `scripts/checkTelegraphCertification.ts:14` states its five
+rules; the fifth is the one that matters — the count of entries that are NOT
+`enforced` is pinned per family in
+`scripts/TELEGRAPH_CERTIFICATION_BASELINE.json:11` and may only shrink. A
+future change cannot make a red case green by reclassifying it. Wired at
+`scripts/run-all-checks.sh:390` and declared in
+`scripts/guardRegistry.ts:808-821`, with an inspection proof so a pass says how
+much it looked at.
+
+**The share-authorization gate.** §26's private-Memory case and §29's Memory
+prohibition were *unguarded absences* — "no Memory share path exists, so the
+case cannot arise and nothing guards it". That is a guarantee which lasts until
+the fifth producer, and four already exist.
+`domain/telegraph/policies/shareAuthorizationPolicy.ts:122` is now a
+total, fail-closed decision function: an unrecognised object family is refused,
+a private source without a derivative grant is refused, a grant issued by a
+different domain is refused (§29's no-semantic-ID-substitution, applied to
+authorization), an unparseable expiry is refused rather than read as "never
+expires", and a "derivative" that names the private source's own id is refused
+because it is the source wearing a grant. What travels is the derivative id.
+
+`scripts/checkTelegraphShareProducers.ts:15` makes it unavoidable: every
+`msg_type`/`subtype` literal in both trees must be declared, orphan declarations
+fail, and — the rule with teeth — a producer whose `sourceDomain` is
+private-by-default may ONLY be declared `PRIVATE_SOURCE`
+(`domain/telegraph/policies/shareAuthorizationPolicy.ts:468`). The registration rule alone would have been
+satisfiable by declaring a Memory card `PUBLIC`; this closes that route for
+exactly the domains the case is about. It does not close it for a private domain
+nobody has named yet, and the checker says so on every run rather than implying
+otherwise.
+
+### 12.2 Four things executing the plan found that reading it did not
+
+**1. Revoking a live location share can WIDEN what a viewer sees.** Found by the
+§27.1 precision property, not by inspection. A live share overrides the member's
+passive default *in both directions* — `domain/trips/services/tripCrewLocation.ts:246` honours it
+even over a `hidden` default, deliberately — so a member whose standing default
+is `neighborhood` who starts a `city_only` share discloses LESS while it runs,
+and ending it moves the label from a city back to a district. Recorded with the
+exact input at `test/telegraphPropertyInvariants.test.ts:331`. It is not a
+§27.1 violation: the wider label is one the member separately authorized. It is
+recorded because it is counter-intuitive in the direction that matters — "I
+stopped sharing" makes the label more precise — and any UI that says *sharing
+stopped* while showing a narrower area than before would be telling the truth
+about the grant and the opposite of the truth about the disclosure.
+
+**2. `messages.subtype` carries a highlight's ID.** `routes/highlights.ts:1395`
+writes `subtype: id` — an identifier into the discriminator column a renderer
+dispatches on. It can never match a renderer case, and it puts a
+highlights-domain id into a messaging-domain vocabulary field, which is the
+shape §29's *"No semantic ID substitution across domains"* forbids. Nothing is
+visibly broken, because `msg_type: "highlight_reply"` is the real discriminator
+there — which is why it has survived. Declared at
+`domain/telegraph/policies/shareAuthorizationPolicy.ts:352` so it is a
+decision rather than an accident.
+
+**3. `POST /threads/:threadId/messages` accepts any `subtype` the client sends.**
+`routes/messaging.ts:2042` takes it straight from the request body; the only
+vocabulary constraint anywhere on that handler is that `msgType` collapses to
+`system` or `text` (`:2039`). A client can stamp any discriminator it likes onto
+a message. It cannot forge the payload's authorization — every card's data comes
+from the same client-authored body — so this is a rendering-shape hole rather
+than an access-control one, but it is exactly the seam §30A.10's capability
+registry exists to close. Recorded at `domain/telegraph/policies/shareAuthorizationPolicy.ts:319`.
+
+**4. Two of the six §27.3 lanes are not in `check:all`, and both are still
+reached.** `check:enum-literals` runs as its own static `ci.yml` step —
+deliberately, "needs no database and cannot be starved"
+(`.github/workflows/ci.yml:215`) — and `check:migration-ledger` appears in
+`live-db.yml` only inside a comment, its real reach being `certifyMigrations.ts`,
+which spawns it as a ledger gate (`scripts/guardRegistry.ts:263-269`). The
+first version of the §27.3 assertion checked `run-all-checks.sh` alone and went
+red on both. It now asks the question `guardRegistry.ts` asks — is this checker
+reached by anything — which is the right question and was not the obvious one.
+
+### 12.3 Every green here was seen red first
+
+Twelve deliberate mutations, each reverted immediately, each moving a suite from
+all-pass to one-fail. The three worth recording are the ones that found a test
+wrong rather than the tree:
+
+- **The roster-refusal proof corrected the test.** Removing the block guard's
+  roster-error refusal from `routes/messaging.ts:2078` left the matrix suite
+  GREEN, because failing `message_thread_members` outright denies at the
+  caller's own membership check and the roster guard is never reached. The
+  harness grew per-table operation counting
+  (`test/telegraphCertificationHarness.ts:39`) so the failure lands on the
+  second read. Only then did the mutation go red.
+- **The translation-invalidation proof found two call sites.** Deleting the
+  wrong `markTranslationsPending` left the fixture green; so did asserting on the
+  row's final state, because the edit route fires the re-translation without
+  awaiting it and the regeneration rewrites the row. The assertion now measures
+  the invalidation WRITE (`test/telegraphAdversarialFixtures.test.ts:376`).
+- **The mid-send fixture first failed for the wrong reason.** Removing the
+  sender before the handler's own membership check produced a 403 that proved
+  only that the check works. It now mutates the roster on the second read, after
+  that check has passed (`test/telegraphAdversarialFixtures.test.ts:411`).
+
+And one that corrected the fake rather than the test: the first run of the
+request-flooding fixture reported an unbounded flood the real database does not
+have, because the fake applied no column default, `message_requests.status` came
+back undefined, and the route's one-request-per-pair short-circuit could never
+fire. `columnDefaults` (`test/telegraphCertificationHarness.ts:57`) exists
+for that reason.
+
+### 12.4 Row moves — §26 and §27
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| T311 | C | C | Unchanged verdict, executed evidence. RLS-01 is driven at `test/telegraphRlsAuthorizationMatrix.test.ts:182`: a non-member's read is refused AND the `messages` table is never reached, and an unreadable membership table also denies. Declared `enforced` at `domain/telegraph/invariants/rlsAuthorizationMatrix.ts:32`. |
+| T312 | C | C | RLS-02, `test/telegraphRlsAuthorizationMatrix.test.ts:201`. The departed member is denied the entire thread for read and for send; the route re-checks `left_at` on the returned row as well as filtering on it, so the gate is doubled — measured, removing only the filter left the property green. |
+| T313 | W | W | **Still W, and the reason changed completely.** The bound now EXISTS: migration `migrations/2400_telegraph_history_bound.sql` adds `message_thread_members.visible_from_at` and the flag `telegraph_history_bound_enabled`, and `services/groupChatHistoryBound.ts` is applied at `routes/messaging.ts:1841` and `:1848`. RLS-03 proves both halves at `test/telegraphRlsAuthorizationMatrix.test.ts:222`: with the flag on the pre-membership message is withheld and the bound is applied IN the query so pagination cannot walk past it; with the flag as seeded — FALSE — the whole back history is returned. **Ceiling: no database has 2400 and the flag is seeded off.** BUILT ON BRANCH IS NOT DEPLOYED; this row cannot move from inside the tree. |
+| T314 | W | **C** | The fail-open is closed in the tree. `routes/messaging.ts:2078-2082` now REFUSES the send when the roster read fails ("cannot determine whether this is a blocked 1:1 thread") instead of inferring an empty roster and skipping the guard. RLS-04 drives five configurations at `test/telegraphRlsAuthorizationMatrix.test.ts:261` — recipient-blocked, sender-blocked, mutual (the two-row state that used to make the guard raise), blocks-table unreadable, roster unreadable — and all five deny. Shown red by deleting that refusal. |
+| T315 | C | C | RLS-05, `test/telegraphRlsAuthorizationMatrix.test.ts:309`. Expiry, status and recipient identity are each refused by `services/safeReturn/SafeReturnPrivacyGuard.ts:142-157` before the handler runs, and exact coordinates cannot leave the API at all — `stripGPS` (`:23`) is proved to delete `latitude`/`longitude` at depth. Two independent artifacts, so neither is a single point of failure. |
+| T316 | C | C | RLS-06, `test/telegraphRlsAuthorizationMatrix.test.ts:377`, driving the real predicate `services/passport/OpenToPlansService.ts:168` over the cross-product of five visibility policies, both sources and five viewer relationships: a private window is invisible to every non-self viewer, an INFERRED window is invisible whatever visibility it carries, and an expired one is invisible even to an admitted viewer. |
+| T317 | N `∅` | **C** | The unguarded absence is now a refusal. `domain/telegraph/policies/shareAuthorizationPolicy.ts:122` refuses a private source with no derivative grant, a grant from the wrong domain, a grant for the wrong scope, an expired or unparseable-expiry grant, and a "derivative" that names the source's own id — six refusal branches, exercised at `test/telegraphRlsAuthorizationMatrix.test.ts:425`. `scripts/checkTelegraphShareProducers.ts` makes it unavoidable, and its private-by-default rule (`domain/telegraph/policies/shareAuthorizationPolicy.ts:468`) closes the misdeclaration route for exactly the domains this case names. NO producer is `PRIVATE_SOURCE` today — the gate is the guarantee, not a live path, and the row says so. |
+| T318 | N | N | Unmoved, and now mechanically so. The authorization half answers (`test/telegraphRlsAuthorizationMatrix.test.ts:483`) and there is no *current safe share projection* for it to authorize: no producer resolves a source object's present state. An empty audience is also refused, so the positive case cannot be satisfied vacuously. |
+| T319 | W | W | RLS-09, `test/telegraphRlsAuthorizationMatrix.test.ts:510`, drives both halves: BEFORE `syncTripChatMembers` runs, a removed trip member still reads the thread (200 — the divergence, asserted); AFTER the real sync runs, read and send both deny and the row carries `left_at`. **Ceiling: the trip-membership write and the thread-membership write are not one transaction, and the sync is invoked fire-and-forget from Trips-owned routes.** Closing it is a Trips change, not a Telegraph one. |
+| T320 | W | W | RLS-10, `test/telegraphRlsAuthorizationMatrix.test.ts:544`. The one action that re-derives is correct across the whole status vocabulary (`lib/calls/callGatewayAdapter.ts:73`): cancelled and refunded are refused, disputed and completed-with-both-parties stay callable. The divergence is asserted against the component: `travel-buddy-standalone/src/components/rentabuddy/BookingMilestoneMessage.tsx` contains no `fetch` and no effect, so its buttons outlive the booking state they were rendered from. **Ceiling: §30A.10's action capability registry (T410).** |
+| T321 | N | **C** | P-01 exists and is a property, not a case: `test/telegraphPropertyInvariants.test.ts:161` runs the real `canMessage` over 576 enumerated relationship states and every single-signal weakening of each — 3,000+ comparisons — on the lattice denied < requires_request < allowed (`domain/telegraph/policies/disclosureLattices.ts:33`). Shown red by inverting the circle override in `lib/messagingPermissions.ts:333` so it granted on absence. |
+| T322 | N | **C** | P-02, `test/telegraphPropertyInvariants.test.ts:291`, over the real `buildCrewCard` (`domain/trips/services/tripCrewLocation.ts:158`) — the resolver that ships, not `presence/domain`, which the census correctly noted nothing uses. Six precision-decreasing transforms over 160 enumerated inputs, measured on what LEAVES the function (`disclosedPrecision`, `domain/telegraph/policies/disclosureLattices.ts:64`). Shown red by making `resolveExactCoords` ignore hotel blur. It also produced finding 1 above. |
+| T323 | N | **C** | P-03, `test/telegraphPropertyInvariants.test.ts:413`. No sequence column exists, so the property is expressed over what a sequence would have ordered — the set of ids the real route returns — and every membership weakening must yield a SUBSET. Shown red by removing BOTH departed-member gates from `routes/messaging.ts` (removing one was not enough, which is itself worth knowing). |
+| T324 | W | **C** | P-04, `test/telegraphPropertyInvariants.test.ts:463`, quantifies over the FAILURE states as well as the healthy ones: block present, blocks table unreadable, roster read unreadable. All deny, none writes a canonical row, and a control proves an unblocked send still succeeds so the property is not vacuously true. Shown red by flipping `lib/blockGuard.ts:38` to fail open. |
+| T325 | W | **C** | P-05, `test/telegraphPropertyInvariants.test.ts:518`. Expressed as a property over 50 window states and both sides of the boundary, including the instant the expiry names, with no sweep having run — which is the distinction that matters, and `2260:38-42` states it. Thread expiry has no referent and the test asserts that structurally rather than passing over it. |
+| T326 | N | N | Unmoved. There is no unsend operation to quantify over. The suite now asserts that absence STRUCTURALLY at `test/telegraphPropertyInvariants.test.ts:584`, so it goes red the moment an unsend route or an `unsent_at` reference lands — shown red by adding a stub unsend route. PR #472 is still unmerged and CI-only. |
+| T327 | N | N | Same absence, same structural assertion. Recorded with it: the receipt an unsend would race — `last_read_at` — DOES exist and is what #472 reuses rather than inventing a competing sequence. |
+| T328 | W | **C** | F-01 exists and drives three separate facts (`test/telegraphAdversarialFixtures.test.ts:155`): flooding ONE recipient is bounded to a single delivered request by the route's pending/accepted short-circuit, which also refuses outright when that table is unreadable rather than delivering a second unsolicited request; flooding TWELVE recipients is unbounded; and in-thread sends are unbounded (25 accepted). The behavioural gap stays at T279, where it belongs; this row asks whether the fixture exists, and it does. |
+| T329 | N | **C** | F-02, `test/telegraphAdversarialFixtures.test.ts:209`. Three retries — healthy, blocks-unreadable, roster-unreadable — all refused, nothing written. The fixture also asserts what makes the scenario real: the stale device's belief is CORRECT, because blocking does not close an existing thread, so the per-send re-check is the only thing standing between them. |
+| T330 | N | **C** | F-03, `test/telegraphAdversarialFixtures.test.ts:244`, posts the same `clientId` twice through the real route and proves TWO canonical rows. The mechanism gap (no idempotency) stays at T231 and the metric at T347; the fixture exists and measures it. |
+| T331 | N | **C** | F-04, `test/telegraphAdversarialFixtures.test.ts:265`, over the real bus: per-subscriber delivery order is the publish order, one throwing subscriber cannot silence the others, and the swallow is COUNTED (`lib/telegraphEvents.ts:279-285`). Shown red by removing that try/catch. |
+| T332 | N | **C** | F-05, `test/telegraphAdversarialFixtures.test.ts:309`. An availability window and a safe-return live share both cross their expiry with no writer, no sweep and no owner device — the condition under which a sweep-based design leaks — and both are refused on the read. |
+| T333 | W | **C** | F-06, `test/telegraphAdversarialFixtures.test.ts:350`, driven as the race the census said was missing: in-flight translations of the previous body are left in place, the edit goes through the real route, and the invalidation WRITE is asserted. Shown red by deleting `markTranslationsPending` from the edit handler — after two earlier mutations that did not go red and corrected the assertion instead. |
+| T334 | N | **C** | F-07, `test/telegraphAdversarialFixtures.test.ts:409`, makes the window deterministic by removing the sender's membership between the handler's own check and the insert. The send COMPLETES: membership is checked once and the insert is not conditioned on it. Asserted as today's outcome with the requirement quoted; closing it is a conditional insert, not a test change. |
+| T335 | N | **C** | F-08, `test/telegraphAdversarialFixtures.test.ts:456`, runs the real `syncTripChatMembers` against a trip the member has been removed from and proves read and send both deny afterwards, with nothing written on the way out — and that a second reconciliation converges rather than re-stamping the departure. Shown red by short-circuiting the departure reconciliation. |
+| T336 | W | **C** | F-09, `test/telegraphAdversarialFixtures.test.ts:493`, walks the booking status vocabulary through the real eligibility function and asserts the card's blindness against the real component. |
+| T337 | N | **C** | F-10, `test/telegraphAdversarialFixtures.test.ts:515`. The safe answer to a conflicting thread is not a correct summary but a refusal to act on one, and that is what is asserted: `requires_confirmation: true` is a LITERAL type in `routes/telegraphCommands.ts:57`, so an unconfirmable action is unrepresentable; the confirm path re-verifies trip membership at execution (`:412`) and refuses a command the caller does not own (`:398`); and no canonical trip write happens before confirmation. |
+| T338 | N | N | Unmoved — there is no unsend, so there is no race to run. The absence is asserted structurally at `test/telegraphAdversarialFixtures.test.ts:546`. #472 implements exactly this race in the database, with `FOR UPDATE` locks on every eligible recipient's receipt row, and is unmerged. |
+| T339 | N | **C** | F-12, `test/telegraphAdversarialFixtures.test.ts:561`, asserts against both real card components that neither performs a fetch, neither has an effect, and the payload carries a `sourceId` with no capability vocabulary beside it. Structural rather than timing-dependent, which is what the defect actually is. |
+| T340 | C | C | LDB-01. Unchanged, and now tied to a test that fails if the lane is renamed: `test/telegraphRlsAuthorizationMatrix.test.ts:593` asserts every named script exists and is REACHED — by `check:all`, a workflow, or a declared delegation. |
+| T341 | C | C | LDB-02. Same, and see finding 4: this lane is not in `check:all` and is still reached, as its own static CI step. |
+| T342 | C | C | LDB-03. Same. |
+| T343 | C | C | LDB-04. Same; reached through `certifyMigrations.ts`'s ledger gate rather than directly. |
+| T344 | W | W | **Still W, and smaller than it was.** Of the four dropped-error reads the census named, one is FIXED (the block-guard roster read now refuses) and two resolve to a 403 rather than an empty inbox — a refusal is not a plausible empty state. What remains is genuinely this defect: the per-viewer translation read (`routes/messaging.ts:1887`), and the trip, booking and circle context reads in the inbox projection (`:1724`, `:1740`, `:1355`), each of which renders an untranslated message or a thread with no trip context when the table is unreadable. Measured and asserted at `test/telegraphRlsAuthorizationMatrix.test.ts:620` so the count cannot silently reach zero without the contract being reclassified. **Ceiling: the fix is in `routes/messaging.ts`, which §12–§22's lane holds concurrently; this lane measured it rather than editing a contested file.** |
+| T345 | C | C | LDB-06. Unchanged. |
+
+### 12.5 The ceiling on this section
+
+Four things bound these rows, and none of them is a test that has not been
+written:
+
+1. **T313 needs a migration no database has and a flag seeded off.** 2400 exists
+   and is proved on both sides of its flag. MERGED IS NOT DEPLOYED; DEPLOYED IS
+   NOT FLAG ENABLED.
+2. **T319 needs a transaction that spans Trips and Telegraph.** The gate is
+   right; the propagation is fire-and-forget from routes this lane does not own.
+3. **T320, T339 and T411 need the §30A.10 action capability registry** — the
+   cards must be given their buttons at render time by something that can
+   re-authorize them. That is a build, not a fix.
+4. **T326, T327 and T338 need PR #472 to merge.** Until then the absence is
+   asserted structurally, which is the strongest thing this tree can say about
+   an operation it does not have.
+
+T344 is bounded differently: its remaining instances are in a file another lane
+holds this week. The measurement is in place and shrink-only; the edit is not
+this lane's to make.
+
+### 12.6 §28 and §30A.17 — Telegraph is measured, in-process, for the first time
+
+The census's finding was exact and it was worse than absent: "No metric is
+emitted for messaging and no target constant exists… Telegraph has no telemetry
+sink at all. Nothing in §28 or §30A.17 has anywhere to land." One level under
+that, the realtime bus ALREADY counted everything it swallowed —
+`lib/telegraphEvents.ts:80-102` declares nine counters for exactly that purpose,
+including the one that loses an event for every member of a thread at once — and
+**nothing read them but a test**. An operator asking "is realtime degraded?" had
+no way to look.
+
+**The registry.** `domain/telegraph/services/telegraphObservability.ts:46` holds
+§28's nine metrics (`:49`–`:201`) and §30A.17's eight SLOs (`:221`–`:333`), each
+with the spec's own requirement wording, a target, a severity and a status. The
+target is a union
+(`domain/telegraph/contracts/observability.ts:58`) because the spec's nine
+targets are not the same kind of statement: "0 under the idempotency contract" is
+a count, "high availability" is a ratio, "bounded" is a latency, and "primary
+product outcome metric" names no number at all. `unbounded` is therefore a
+first-class target carrying the spec's own words — inventing a threshold would
+produce confident alerts about a line nobody drew.
+
+**The recorder's privacy property is a type, not a convention.**
+`domain/telegraph/services/telegraphObservability.ts:384` takes a metric key, an outcome and an optional
+duration, and there is **no parameter a message body, a handle or a location
+could travel in**. §30A.17's "do not indiscriminately copy private message text
+into analytics" is satisfied by making the violation unrepresentable rather than
+by a rule somebody has to follow. An undeclared key is ignored at runtime rather
+than accumulated under a catch-all, and
+`scripts/checkTelegraphSlos.ts:131` fails on a typo'd key statically, which is
+the only place it can be caught.
+
+**The emitters are real call sites, not a test harness.**
+`middlewares/telegraphObservability.ts:126` is mounted at `app.ts:182`, BEFORE
+the router, so it times what the user waits for rather than what the handler
+does. It classifies by method and path shape (`:61`) — which means a new
+Telegraph command surface is measured the day it is added, instead of on the day
+somebody remembers. The second emitter is the block guard
+(`lib/blockGuard.ts:46`).
+
+**What counts as a failure is the whole design.**
+`middlewares/telegraphObservability.ts:119`: a 2xx is ok, a 5xx or a
+`degraded_unavailable` is a violation, and **a 403 is neither**. Counting a guard
+doing its job as an availability failure would make every hardening change look
+like an outage and every outage look like hardening — the metric would move for
+the wrong reason in both directions. Refusals are recorded in their own column so
+the denominator stays honest. This is the assertion that was shown red first, by
+making `outcomeFor` return a violation for everything non-2xx.
+
+**The diagnostics surface.** `routes/telegraphDiagnostics.ts:64` — admin-gated
+through the shared guard, purpose-scoped (`:62`: an `X-Admin-Access-Reason` of
+under ten characters is refused, because a field that accepts "debug" is a field
+and not a scope), audit-logged (`:85`), and it exposes **no conversation id, no
+user id and no message body**, which the suite asserts by searching the served
+payload for each. It also reports its own `processUptimeMs` and a
+`counterScope` line saying what its numbers are worth, so a reader can tell a
+quiet hour from a restart and cannot mistake an in-process counter for a
+pipeline.
+
+### 12.7 §24 — the projections, and a count the census got wrong
+
+`domain/telegraph/projections/projectionRegistry.ts:43` declares the six §24
+projections with what each is and is not, and `:138` declares every direct client
+read of a raw messaging table — §24's closing rule, "mobile clients consume
+server-built projections instead of independently joining raw tables".
+
+**The census recorded two bypasses. There are six.** Re-derived by enumeration
+rather than by reading the conversation screen top to bottom, and
+`scripts/checkTelegraphSlos.ts:213` re-derives them on every run so the number
+cannot grow: four reads of `message_thread_members` in
+`travel-buddy-standalone/app/messages/[id].tsx` (the other party's
+`last_read_at`, a member count, the accepted-member permission gate, and the
+group roster with every member's `last_read_at`), one of `message_threads` for
+the E2EE flag, and one more of `message_thread_members` in
+`travel-buddy-standalone/src/components/GroupChatScreen.tsx` that the census did
+not count at all. All six are the same defect — a receipt or capability
+projection the server does not build, so the client joins the raw table to build
+it — and one of them recomputes an authorization decision.
+
+### 12.8 Row moves — §24, §28 and §30A.17
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| T289 | W | W | Unchanged and now declared: PRJ-01 at `domain/telegraph/projections/projectionRegistry.ts:44`. The list half is a real server-built projection; the Now band and the nearby summary have no source. **Ceiling: T8 and T292.** |
+| T290 | W | W | PRJ-02, `domain/telegraph/projections/projectionRegistry.ts:57`. The renderable half gained the §14.3 history bound since the census; it still carries no permissions block, which is the half §24 names explicitly. **Ceiling: §14.1's ConversationCapabilities (T207), which is §12–§22's lane.** |
+| T291 | N | N | PRJ-03. Unchanged, and now under a shrink-only ratchet: `absentProjections` is pinned at 4 in `scripts/TELEGRAPH_OBSERVABILITY_BASELINE.json:9`, so a projection cannot quietly stop existing. |
+| T292 | N | N | PRJ-04, same. |
+| T293 | N | N | PRJ-05, same. |
+| T294 | N | N | PRJ-06, same. The drawer is dead-coded behind a literal `false`, which is worse than absent for a reader because the affordance looks built. |
+| T295 | W | W | **Same verdict, corrected magnitude: six bypasses, not two.** Declared at `domain/telegraph/projections/projectionRegistry.ts:138` and re-derived on every run by `scripts/checkTelegraphSlos.ts:213`, which also fails on an UNDECLARED one — so a new client-side join of a messaging table cannot be added silently, which is the way this rule decays. **Ceiling: removing them needs the missing permissions block (PRJ-02) and a server-built receipt projection; the edits are in client files §1–§11's and §12–§22's lanes hold.** |
+| T346 | N | **C** | The metric exists, has a target, and is recorded on every deployment of this tree. SLO-01 (`domain/telegraph/services/telegraphObservability.ts:49`) is a 0.99 success ratio over every Telegraph command surface, emitted by `middlewares/telegraphObservability.ts:126` mounted at `app.ts:182`. The "safety/coordination prioritized" half is the severity ladder, and it is enforced as an ORDERING between rows by `scripts/checkTelegraphSlos.ts:161` rather than trusted as a label. **The counters are in-process and reset on restart; there is no durable sink and no alerting, and the surface says so on every read.** |
+| T347 | N | **W** | The target exists (SLO-02, `domain/telegraph/services/telegraphObservability.ts:69`, count ≤ 0) and something real detects violations: the middleware remembers accepted `(threadId, clientId)` pairs and counts a second acceptance, which is exactly the case that happens — an offline client retrying a send that did land. F-03 proves two canonical rows are created. **Ceiling: bounded by one process's memory, so it is a floor on the true number and never a ceiling. The exact version needs the idempotency key the send path does not have (T231).** |
+| T348 | N | **W** | Declared with its target (SLO-03, `:89`) and structurally unmeasurable: there is no unsend operation to violate it. Recorded rather than left out so that when unsend lands the target already exists. A zero produced by absence is not a measurement and is not counted as one. **Ceiling: PR #472, unmerged and CI-only.** |
+| T349 | W | W | Unchanged. The guarantee is enforced and proved (RLS-05), and NOTHING COUNTS IT, so a regression would be silent — which SLO-04 (`:107`) now says out loud instead of leaving implicit. **Ceiling: the emitter belongs in `services/safeReturn/SafeReturnPrivacyGuard.ts`, which this lane does not hold.** |
+| T350 | W | **C** | Both halves closed. The fail-open the census recorded is gone from the tree and P-04 quantifies over the failure states to prove it; and the guard is now instrumented at `lib/blockGuard.ts:46`. What is counted is deliberate: a refusal is `ok`, because the target is "blocked direct deliveries = 0" and a refusal IS zero deliveries; an unreadable blocks table is an `unknown` for that metric and a VIOLATION of the block-enforcement SLO, because the denial was made without knowledge — which is the rate at which enforcement runs blind, and the shape a leak would start as. |
+| T351 | N | **W** | SLO-06 (`:146`) has a target and an emitter. What is measured is the two existing projections' BUILD latency, because they cache nothing and their staleness is zero by construction — the quantity that would start to matter the moment either is materialised. **Ceiling: "alert on material stale shared context" has no referent at all; there is no shared context (T21), and four of six projections do not exist.** |
+| T352 | C | C | Unchanged verdict, and it stopped being unmeasured. SLO-07 (`:164`) folds the bus's own counters rather than re-counting them — subscriber failures, cross-instance broadcast failures and events dropped because a thread's audience could not be resolved — and the diagnostics route is the first thing in the repository that reads them. The guarantee itself stays architectural: the row is committed and the 201 returned before any publish. |
+| T353 | N | N | Unchanged. Revocation does not exist, so the latency is undefined rather than large. SLO-08 (`:184`) carries the spec's own intent wording instead of an invented number. |
+| T354 | N | **W** | SLO-09 (`:201`) is emitted, and it is labelled a PROXY in its own declaration: what is counted is a human confirming a proposed action through `/telegraph/commands/:id/confirm-action` — the one place a conversation becomes a canonical write — and **a confirmed typed command is not a real-world outcome**. Whether anybody then met is not in this system. Recorded so it cannot be quoted as the north-star metric. |
+| T432 | N | **W** | §30A.17's ten measurements: four are now real (delivery latency, failed sends, seen convergence, and coordination success as a proxy); six are not (unsend outcomes, media processing, plan conversion, Nearby→conversation, conversation→plan, completed real-world outcomes), and four of those six have no referent in the tree at all. |
+| T433 | C | C | Unchanged, and now structural rather than behavioural: the recorder's signature (`domain/telegraph/services/telegraphObservability.ts:384`) has no parameter private text could travel in, and the diagnostics payload is asserted to contain no body, no conversation id and no user id. |
+| T434 | N | **C** | All eight SLOs §30A.17 names are defined with targets — message acceptance, realtime delivery, offline recovery, seen convergence, block enforcement, location revocation, media availability, projection freshness (`:221`–`:333`) — and the clause's closing sentence is enforced: `scripts/checkTelegraphSlos.ts:161` refuses a delivery or product SLO with a budget tighter than the tightest safety/privacy one. Definition is what this row asks for; five of the eight are also measured, and the other three say exactly why not. |
+| T435 | W | W | The moderation half already existed and is guarded. The delivery/projection half now exists: `routes/telegraphDiagnostics.ts:64`, admin-gated, purpose-scoped, audit-logged, and carrying no private content by construction. **Ceiling: the audit is a structured LOG LINE, not a durable row. `admin_access_log` constrains `record_type` to five values, none of which is this, so a durable audit would need either a migration no database has or mislabelling a diagnostics read as a profile read — and saying something untrue in an audit trail is worse than saying it in a log.** |
+
+### 12.9 §23's package, §25.1's inventory, and §30A.18's replay simulator
+
+**The domain package now exists and is enforced.** §23 names eight
+subdirectories; `src/domain/telegraph/` has all eight and every one of them is
+populated by something this lane built and something outside the package
+imports. `scripts/checkTelegraphPackageBoundaries.ts:61` lists the eight and
+fails on an empty one — an empty directory is a promise of a boundary, not a
+boundary — and `:117` fails on a module nobody outside the package imports,
+which is the same defect `check:guard-reachability` catches for checkers, one
+level further in.
+
+The rule that matters is `:139`. §23's sentence — *"Trips, Buddy, Safety,
+Memories, Discovery and Compass remain integrations. Telegraph does not embed
+their canonical business logic"* — is mechanised as an import discipline: the
+domain package may not import another domain's service, and it may not import a
+route at all. Three delegations are allowed and each carries the reason it is
+allowed (`:78`); the §14.3 window predicate is on that list because
+re-implementing it inside a simulator would fork an authorization rule, which is
+worse than an import.
+
+**§25.1's Phase 0 inventory is a generated artifact.** The census was exact:
+*"The capability to do it exists as standing CI lanes (T297); the deliverable
+does not."* `scripts/generateTelegraphInventory.ts:48` writes
+`docs/architecture/telegraph-phase0-inventory.md`, and
+`scripts/generateTelegraphInventory.ts:324` re-derives it and diffs, so the report exists AND cannot rot. It covers all nine things §25.1
+enumerates — schema, migrations, RLS, server routes, client reads, realtime
+subscriptions, push flow, media upload, translation paths and enum literals —
+and it carries no `file:line` citations on purpose: a generated line number is
+invalidated by any edit above it in a file this report does not own, and
+`check:doc-citations` would then go red for a reason nobody caused.
+
+Three things the inventory surfaced that no row had recorded: fourteen route
+files touch a messaging table (not the one or two a reader would guess), the
+realtime event vocabulary is twenty-five types of which ELEVEN are calls, and
+`saved_messages` is dispositioned under RLS and read by a server route that no
+client screen calls. (Both of those numbers were wrong in the first commit of
+this section and are corrected here; §12.14 says what they were and why the
+second one mattered.)
+
+**§30A.18's replay simulator.** `domain/telegraph/replay/replaySimulator.ts:171`
+applies the ten operations that clause names — `domain/telegraph/commands/replayCommands.ts:22`
+holds the vocabulary, in the spec's order — and emits an event log
+(`domain/telegraph/events/replayEvents.ts:22`). The suite runs **every one of the 720 orderings**
+of a six-operation set, twice over, and checks three invariants in the final
+state plus determinism plus rebuildability. Exhaustive rather than sampled on
+purpose: a sampled permutation space makes a failure unreproducible, which is
+the one property a certification harness cannot afford to lose.
+
+It is a model of the transport, and it says so. Every decision a shipped
+function already makes is delegated to that function: the §14.3 window predicate
+at `:156`, and the real fail-closed block guard at `:108`, driven through a
+blocks-shaped client so the real `.select().or().limit()` chain and the real
+error branch are exercised. UNSEND is modelled from the SPEC, because this tree
+has no unsend, and the result labels it `modelled` so a green replay cannot be
+read as evidence that unsend works here.
+
+### 12.10 What the replay found
+
+**An event that omits a fact is a projection that cannot be rebuilt.** The
+rebuildability property failed on 120 of 720 permutations because
+`message.created` did not carry whether the send had media attached: the replay
+knew, the log did not, and the fold produced a message whose media status was
+unreconstructable. The fix is one field on the event
+(`domain/telegraph/contracts/replay.ts:90`), and the finding is the general one —
+§29's "rebuildable from canonical state + events" is a constraint on what the
+EVENTS carry, not only on what the projections do, and it is invisible until
+something actually folds a log.
+
+The second finding is smaller and the same shape: the first blocks-client in the
+simulator resolved at `.or()` rather than at the end of the chain, so the real
+guard's `.limit(1)` was never reached and every permutation reported "not
+blocked". A model that fails to reach the real guard proves the opposite of what
+it claims, which is why the chain in `:108` mirrors the real call order exactly.
+
+### 12.11 Row moves — §23, §25, §29, §30-DoD, §30A.15/§30A.18, Appendix A
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| T285 | N | **C** | `src/domain/telegraph/` exists with all eight subdirectories §23 names, every one populated, every module imported from outside the package, and the layout enforced by `scripts/checkTelegraphPackageBoundaries.ts:61` in `check:all`. Fourteen modules: the certification contracts and registries, the share policy and disclosure lattices, the observability registry, the projection registry, and the replay command/event/simulator triple. |
+| T286 | W | W | Unchanged. `src/features/telegraph/{home,conversation,…}` is a CLIENT layout and this lane holds none of those files; the components are still flat in `travel-buddy-standalone/src/components/`. Deliberately NOT enforced by the boundary checker: a checker demanding a directory nobody intends to create would be permanently red, and a permanently-red check is one `\|\| true` away from being no check at all. |
+| T287 | W | W | Unchanged. Two of eight exist as files rather than a package; the repository's routes are flat under `src/routes/`, so `server/telegraph/{commandRoutes,readRoutes,…}` describes a split it does not use. Recorded rather than enforced, for the same reason as T286. |
+| T288 | C | C | Unchanged verdict, and it stopped resting on structure alone. The Primary Invariant is now mechanically enforced for the domain package: `scripts/checkTelegraphPackageBoundaries.ts:139` refuses an import of another domain's service, with three named delegations that each carry their reason. Shown red by importing `services/groupChatSync` into the simulator. |
+| T296 | N | **C** | The T0 deliverable exists: `docs/architecture/telegraph-phase0-inventory.md`, generated by `scripts/generateTelegraphInventory.ts:48` and re-derived-and-diffed by `check:telegraph-inventory` in `check:all`. All nine of §25.1's subjects are covered. Shown red by editing one line of the committed report, which the checker named by line number. |
+| T302 | W | W | Unchanged count, one item improved: Phase 1's "member visibility bounds" now EXIST (migration 2400 plus `services/groupChatHistoryBound.ts`), flag-gated off. Still no outbox and no policy service. **Ceiling: the same flag and migration as T313.** |
+| T436 | N | **C** | The replay simulator exists, permutes all ten named operations, and verifies deterministic final state: `domain/telegraph/replay/replaySimulator.ts:171`, driven over 720 orderings at `test/telegraphReplaySimulator.test.ts:129`. It also checks the three invariants that make the permutation worth running — a removed member reads nothing afterwards, an unsend never succeeds after an eligible recipient's receipt, and a derived translation never completes for an unsent message — and asserts the property is non-vacuous in both directions (some orderings allow the unsend, some refuse it). |
+| T437 | N | **C** | §30A.18's property list is §27.1's, and all five of the ones it names are built and executed: permission monotonicity (P-01), precision monotonicity (P-02), removed participants (P-03), block (P-04) and temporary-scope expiry (P-05), at `test/telegraphPropertyInvariants.test.ts:161`–`:518`. The census's observation — that the tree's one genuine property test of this family guarded a module nothing uses — is no longer true of Telegraph. |
+| T438 | W | W | Unchanged. The live-DB half is fully built and now test-covered (LDB-01…LDB-06, `test/telegraphRlsAuthorizationMatrix.test.ts:593`). The second half — "schema/permission failures must never be swallowed into plausible empty inboxes" — is still open in the messaging tree, measured and shrink-only at `:620`. **Ceiling: the same file another lane holds, as T344.** |
+| T358 | N `∅` | **C** | The same artifact that moved T317: `domain/telegraph/policies/shareAuthorizationPolicy.ts:122` refuses a private-source share without a derivative grant, and `scripts/checkTelegraphShareProducers.ts` makes the refusal unavoidable — a producer whose source domain is private-by-default may ONLY be declared PRIVATE_SOURCE. The invariant is constructed rather than merely unviolated, which is the census's own standard for a prohibition. |
+| T369 | W | W | Unchanged verdict, and the missing half is now demonstrated rather than asserted. The census's reason was "there are NO EVENTS to rebuild from"; the simulator has an event log and `domain/telegraph/events/replayEvents.ts:65` folds it back to the state the commands produced, over all 720 permutations. That proves the PROPERTY holds for a model. **Ceiling: the real tree still emits no durable event log — the realtime bus is in-memory and lossy by design — so nothing in production is rebuildable from events, and the model says so rather than implying otherwise.** |
+| T428 | W | W | Same as T369, from §30A.15's side. The two projections that exist are stronger than rebuildable (nothing is cached); the four that do not exist cannot be. |
+| T375 | W | W | Unchanged, with two of the five now genuinely done rather than incidentally: RLS negative tests are a declared, executed ten-case matrix, and block cascade is proved as a property over the failure states. Membership history is flag-gated (T313); revocation and source-object authorization do not exist (T46, T318). |
+| T378 | C | C | Unchanged, and reinforced by this lane's own choices: no `telegraph_*` table was created, no migration was written at all, and the one new artifact that could have been a table — the observability sink — was deliberately built in-process instead, because a table no database has would have made every §28 row depend on a deployment rather than on the tree. |
+| T441 | C | C | Unchanged verdict, now enforced rather than observed: the boundary checker refuses the import that would make it false. |
+
+### 12.12 The ceiling on §12, in one place
+
+Nothing in this section is bounded by a test that has not been written. What
+bounds it:
+
+1. **A migration no database has, and a flag seeded off** — T313, T302, and the
+   history-window half of T362 and T444. MERGED IS NOT DEPLOYED; DEPLOYED IS NOT
+   FLAG ENABLED.
+2. **PR #472, unmerged and applied to `portava-ci` only** — T326, T327, T338,
+   T348. The absences are asserted structurally so they go red the day it lands.
+3. **Work in files other lanes hold this week** — T344 and T438 (the messaging
+   tree's remaining dropped-error reads), T295 (six client-side joins), T290
+   (§14.1's capability block). Each is measured and shrink-only here; the edit
+   is not this lane's to make.
+4. **Features that do not exist and are not this lane's sections** — the Shared
+   Context Rail, Nearby, coordination sessions, the content drawer, revocation.
+   T291–T294, T318, T353, T372 and T376 are bounded by those, not by
+   instrumentation.
+5. **An owner decision** — a durable telemetry sink and alerting. Twelve of
+   seventeen SLOs are unmeasured or proxied, seven of them because the thing to
+   measure does not exist and five because they are honest proxies. The counters
+   that do exist are in-process and reset on restart, and every surface that
+   reports them says so.
+
+
+### 12.13 §30A rows the tree moved under the census, re-derived
+
+The census was measured at `ebe72b34`; this worktree is off `014a25d5`. Four
+§30A rows have new evidence that is not a change this lane made, and one
+statement in §4 is now out of date. Recorded here because a census that is
+right about the tree it measured and silent about the tree that exists is a
+document people quote wrongly.
+
+**§4's attribution claim has an exception it did not have.** §4 says PR #472 "is
+the first and only artifact in the repository built *for* this specification",
+and at `ebe72b34` that was true. It is not true at HEAD:
+`migrations/2400_telegraph_history_bound.sql:6-14` opens by citing §14.3, §26,
+§29, §30A.4 and §30A.20 by number and quoting each, and it reasons explicitly
+about Appendix A's reuse rule in choosing a timestamp over a sequence
+(`migrations/2400_telegraph_history_bound.sql:49-56`). It is merged into this tree and is not a hypothetical. The
+spec-attributable count is a §4 number and this section does not restate it; what
+it records is that the artifact §4 says does not exist now does.
+
+**§30A.4 and §30A.20 gained a substrate and a flag.** `migrations/2400_telegraph_history_bound.sql:141` adds
+`message_thread_members.visible_from_at`, database-authoritative via a BEFORE
+trigger, and the migration says why a dedicated column rather than `joined_at`:
+`services/groupChatSync.ts` upserts every accepted member with `joined_at: now`
+on EVERY sync, so a bound keyed on `joined_at` would hide a long-standing
+member's own history the next time anyone joined (`migrations/2400_telegraph_history_bound.sql:34-42`). That is a real
+finding about the tree, not a design preference, and it is the kind of thing a
+census reading the read path alone would not see.
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| T389 | W | W | **Four of six, not three.** `baseline:7496-7504` carries `joined_at`, `left_at` and `role`; migration 2400 adds the `visible_from_sequence` analogue as `visible_from_at`, expressed in `created_at` coordinates because this schema has no sequence on `messages` and Appendix A's rule says reuse the established convention (`migrations/2400_telegraph_history_bound.sql:49-56`). Still absent: `removed_at` — a removal is indistinguishable from a departure — and `visible_until_sequence`. **Ceiling: 2400 is applied to no database.** |
+| T390 | W | W | The first clause is now IMPLEMENTED and OFF: new members do not gain pre-membership history while `telegraph_history_bound_enabled` is true, proved on both sides of the flag by RLS-03. The second clause — adding a third person to a direct conversation creates a new group — is still vacuous, because no add-to-DM operation exists. **Ceiling: the flag is seeded FALSE and no database has the column.** |
+| T391 | W | W | Unchanged. `role` is still CHECK `member\|admin` — two of the five roles §30A.4 names — and no capability-based authorization keys off it for invitations, removals, pins, announcements or group settings. 2400 did not touch it. |
+| T444 | W | W | Same substrate as T390, from §30A.20's side, and 2400 cites this clause by number. The window is enforced in the QUERY (`routes/messaging.ts:1861`) rather than filtered after the fact, so pagination cannot walk past it — which is the difference between a bound and a display rule. **Ceiling: the flag is seeded FALSE.** |
+| T409 | N | **W** | Was "No registry and no contract; each producer hand-rolls a payload." One of §30A.10's six dimensions now has both. `domain/telegraph/policies/shareAuthorizationPolicy.ts:205` is a registry of every shareable message type with its object family and source domain, and `:113` is the AUTHORIZATION contract those families resolve against, made unavoidable by `scripts/checkTelegraphShareProducers.ts`. The other five dimensions — preview, current state, actions, search behaviour, revocation — have nothing, which is why this is one sixth and not more. |
+| T429 | N | N | Unchanged, and now precisely bounded. There are no versioned structured-message schemas; what exists is a registry of eighteen unversioned literals plus ten sites that COMPUTE a message type, one of which takes the discriminator straight from the client's request body (`domain/telegraph/policies/shareAuthorizationPolicy.ts:319`). A versioned schema is exactly what would close that, so the registry's finding and this row's absence are the same fact seen twice. |
+
+**The external-preview prohibitions were left unguarded, deliberately.** T404,
+T405 and T446 are unguarded absences — there are no link previews and no GIF
+provider — and the obvious ratchet is a rule that no message-rendering component
+may make a network call. This lane considered it and did not build it, because
+that rule would also forbid the FIX for T339 and T411: a share card that
+re-fetched its source object to re-authorize a stale action is exactly what those
+rows are waiting for, and a guard that made it fail CI would freeze a live
+divergence in place to close a vacuous one. The rule that would work has to tell
+"fetches our own API to re-authorize" from "fetches a sender-controlled URL", and
+that distinction cannot be drawn until the controlled server-side preview service
+§30A.8 asks for exists. Recorded as a decision so the next reader does not spend
+the afternoon rediscovering it.
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| T404 | N `∅` | N `∅` | Unchanged, and now with the reason a ratchet was not added: the guard that would close it would forbid the fix for T339 and T411. There are still no link previews; a URL renders as plain text. |
+| T405 | N `∅` | N `∅` | Unchanged. No GIF provider exists, so there is no isolation boundary to enforce. |
+| T446 | N `∅` | N `∅` | Unchanged, same reason as T404 — this is §30A.20's restatement of it. |
+
+**The rest of §30A was not re-derived and its verdicts stand as §6 recorded
+them.** Forty-odd rows in §30A.1, §30A.2, §30A.3, §30A.5, §30A.6, §30A.7,
+§30A.9, §30A.11, §30A.12, §30A.13, §30A.14 and §30A.19 turn on features that do
+not exist in this tree — a canonical relationship model, a reachable-people
+projection, announcements and acknowledgement, a device registry with proximity
+and background-location capability, forwarding provenance, transport scale
+classes, a Context Kernel. This lane did not build any of them and did not
+re-read them deeply enough to restate a verdict; saying nothing is the honest
+option, because a restated verdict is a claim about the tree and citing one from
+memory is the thing this census exists not to do.
+
+### 12.14 Two corrections to §12.9, and one to §8
+
+§12.9 as first committed said the inventory surfaced "twenty-five event types of
+which twelve are calls" and that "`saved_messages` is dispositioned under RLS
+while having no reader in application code". The first was a miscount — eleven of
+the twenty-five are `call.*` — and the second was **wrong**, in the direction
+that matters. Both sentences are corrected in place rather than left standing
+with an erratum, and the correction is recorded here rather than made silently,
+because a document that edits its own prose without saying so is the failure this
+census exists to make harder.
+
+`GET /api/me/saved-messages` exists at `routes/messaging.ts:3118` and reads
+`saved_messages`, re-authorizing at read: it excludes saves in threads the caller
+has left and messages that have been deleted, and a failed read is a 500 rather
+than an empty list. So §8's third deployment fact — "`saved_messages` is written
+and never read" — is out of date at HEAD **on the server**.
+
+It is still true where it counts. A repository-wide search of the client for that
+route or any `savedMessages` call site returns nothing: no screen fetches it. The
+Save affordance on both client surfaces therefore still does nothing a user can
+observe, which is what §8's fact was actually about. The reader is built, nothing
+reads the reader, and the honest statement is that sentence rather than either
+half of it. T119 is §7/§10's row and this lane does not restate it; the fact it
+rests on has moved and this says how.
+
+Headline after §12 in this worktree (last statement wins): C=124 W=171 N=134 X=0
+
+Computed by `pnpm -s check:census-integrity`, which parses 429 verdict rows of the
+451-row denominator and takes the LAST statement for each id. The 22 it cannot read
+are prose-counted requirements, and its X column reads 0 because §7's three
+CANNOT-VERIFY rows are stated in prose rather than in a verdict table — they are
+still three, and §7 is still where they are recorded.

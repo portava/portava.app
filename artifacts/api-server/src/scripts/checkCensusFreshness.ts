@@ -864,6 +864,39 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/routes/admin.ts",
     "artifacts/api-server/src/lib/mediaAccess.ts",
     "artifacts/api-server/src/test/mediaAccess.test.ts",
+    // WIDENED 2026-09-12: the certification lane (census-telegraph §12) built a
+    // Telegraph domain package, its five guards, their baselines and their
+    // executable invariants, and cited all of them. Watching the package by
+    // prefix means a later edit to any lattice, policy, contract or projection
+    // registry ages this census, which is the point.
+    "artifacts/api-server/src/domain/telegraph/",
+    "artifacts/api-server/src/middlewares/telegraphObservability.ts",
+    "artifacts/api-server/src/routes/telegraphDiagnostics.ts",
+    "artifacts/api-server/src/routes/telegraphLiveReferences.ts",
+    "artifacts/api-server/src/routes/highlights.ts",
+    "artifacts/api-server/src/app.ts",
+    "artifacts/api-server/src/migrations/2400_telegraph_history_bound.sql",
+    "artifacts/api-server/src/migrations/2402_telegraph_membership_rls_recursion.sql",
+    "artifacts/api-server/src/services/groupChatHistoryBound.ts",
+    "artifacts/api-server/src/services/safeReturn/SafeReturnPrivacyGuard.ts",
+    "artifacts/api-server/src/services/passport/OpenToPlansService.ts",
+    "artifacts/api-server/src/domain/trips/services/tripCrewLocation.ts",
+    "artifacts/api-server/src/test/telegraphAdversarialFixtures.test.ts",
+    "artifacts/api-server/src/test/telegraphRlsAuthorizationMatrix.test.ts",
+    "artifacts/api-server/src/test/telegraphPropertyInvariants.test.ts",
+    "artifacts/api-server/src/test/telegraphCertificationHarness.ts",
+    "artifacts/api-server/src/test/telegraphReplaySimulator.test.ts",
+    // The two monotone ledgers. These are data, not machinery: the count of
+    // entries this tree does NOT satisfy lives in them, so an edit to either is
+    // exactly the kind of change that should age the verdicts that cite them.
+    "artifacts/api-server/src/scripts/TELEGRAPH_CERTIFICATION_BASELINE.json",
+    "artifacts/api-server/src/scripts/TELEGRAPH_OBSERVABILITY_BASELINE.json",
+    "docs/architecture/telegraph-phase0-inventory.md",
+    // STILL NOT WATCHED, deliberately: src/scripts/check*.ts, guardRegistry.ts,
+    // generateTelegraphInventory.ts, rlsDispositions.ts, the two workflow YAMLs,
+    // and the other censuses this one cross-references. Those are machinery and
+    // neighbours this census NAMES; none of them is a Telegraph behaviour it
+    // GRADES, and the same exclusion is already in force for Sensing and Media.
   ],
   // census-map.md, census-sensing.md, census-compass.md and
   // census-input-intelligence.md — declared 2026-09-11 on the same basis as

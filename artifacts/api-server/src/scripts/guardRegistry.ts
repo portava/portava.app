@@ -805,4 +805,100 @@ export const GUARDS: readonly GuardEntry[] = [
       seams: ["UNCHECKED_READS_SRC_ROOT", "UNCHECKED_READS_ALLOWLIST"],
     },
   },
+  {
+    checker: "src/scripts/checkTelegraphCertification.ts",
+    responsibility:
+      "Telegraph's §26/§27 certification plan stays complete, cited, executed, and " +
+      "monotone — the set of certification entries this tree does NOT satisfy can only shrink.",
+    // A certification plan that lives only in a spec cannot go red, which is the
+    // same defect this registry exists for, one level out. The ten §26 matrix
+    // cases, seven §27.1 properties, twelve §27.2 fixtures and six §27.3
+    // contracts are declared as data under src/domain/telegraph/invariants/ and
+    // driven by three suites; this verifies that every entry is named by its
+    // suite, that every cited artifact exists, that every named lane is a real
+    // package script, and that the unenforced count never grows. It deliberately
+    // does NOT judge whether a status is correct — that is what the suites do.
+    reach: { kind: "check-all", script: "check:telegraph-certification" },
+    inspects: {
+      countPattern: "(\\d+) certification entries inspected across",
+      unit: "certification entries inspected",
+    },
+  },
+  {
+    checker: "src/scripts/checkTelegraphShareProducers.ts",
+    responsibility:
+      "Every Telegraph message type literal is classified, and a private-by-default " +
+      "domain cannot be declared out of the share authorization policy.",
+    // Telegraph has no share contract: four producers hand-roll their own payload
+    // and nothing asks whether the object behind the card may be shared at all.
+    // The census scored that area as an UNGUARDED ABSENCE — a guarantee that
+    // lasts until the fifth producer. This makes the classification unavoidable,
+    // and its second rule is the one with teeth: a producer whose sourceDomain is
+    // private-by-default may only be PRIVATE_SOURCE, which requires a derivative
+    // grant. It also declares the dynamic sites a literal scan cannot see, the
+    // same admission checkWriterlessReads makes about dynamic .from(expr).
+    reach: { kind: "check-all", script: "check:telegraph-share-producers" },
+    inspects: {
+      countPattern: "(\\d+) file\\(s\\) scanned across",
+      unit: "source files scanned for message type literals",
+    },
+  },
+  {
+    checker: "src/scripts/checkTelegraphSlos.ts",
+    responsibility:
+      "Telegraph's §28 metrics and §30A.17 SLOs have targets, real emitters and a " +
+      "safety-strictest ordering, and §24's client-side joins of raw messaging tables only shrink.",
+    // The census measured the starting point: "No metric is emitted for messaging
+    // and no target constant exists… Telegraph has no telemetry sink at all." And
+    // one level worse than absent — the realtime bus ALREADY counted everything it
+    // swallowed and nothing read those counters but a test, so a realtime outage
+    // was a number nobody could reach. This checks that every declared metric has
+    // something recording it, that no emitter records a key no SLO declares (the
+    // recorder ignores unknown keys at runtime by design, so this is the only
+    // place a typo can be caught), and that §30A.17's closing sentence holds as an
+    // ORDERING between rows rather than as a label anyone can write.
+    reach: { kind: "check-all", script: "check:telegraph-slos" },
+    inspects: {
+      countPattern: "(\\d+) SLOs inspected across",
+      unit: "SLO declarations inspected",
+    },
+  },
+  {
+    checker: "src/scripts/generateTelegraphInventory.ts",
+    responsibility:
+      "Telegraph's §25.1 Phase 0 inventory exists as a committed artifact and cannot go " +
+      "stale — the report is regenerated from the tree and diffed against what is committed.",
+    // Named generate*, not check*, because writing the report is its primary
+    // job and --check is the gate over it. The census's observation was exact:
+    // "the CAPABILITY to do it exists as standing CI lanes (T297); the
+    // deliverable does not." A hand-written inventory would have been the
+    // deliverable for one day; this is the deliverable and the thing that keeps
+    // it true. It emits no file:line citations on purpose — a generated line
+    // number is invalidated by any edit above it in a file this report does not
+    // own, and check:doc-citations would then go red for a reason nobody caused.
+    reach: { kind: "check-all", script: "check:telegraph-inventory" },
+    inspects: {
+      countPattern: "(\\d+) inventory lines re-derived",
+      unit: "inventory lines re-derived and compared",
+    },
+  },
+  {
+    checker: "src/scripts/checkTelegraphPackageBoundaries.ts",
+    responsibility:
+      "Telegraph's §23 domain package is populated, reached from outside itself, and " +
+      "contains no other domain's business logic.",
+    // The defect it prevents is the one that makes an architecture document
+    // worthless: the folders exist, three of eight have a file in them, nothing
+    // outside imports any of it, and a reader concludes the boundary is real
+    // because the directories are there. Rule 3 is §23's own sentence
+    // mechanised — Telegraph may CALL an integration and may not CONTAIN one —
+    // with three named delegations allowed, each carrying the reason it is
+    // allowed (re-implementing the §14.3 window predicate would fork an
+    // authorization rule, which is worse than importing it).
+    reach: { kind: "check-all", script: "check:telegraph-package-boundaries" },
+    inspects: {
+      countPattern: "(\\d+) domain modules inspected across",
+      unit: "Telegraph domain modules inspected",
+    },
+  },
 ];
