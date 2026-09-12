@@ -1142,6 +1142,31 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/test/discoveryLiveRank.test.ts",
     "artifacts/api-server/src/test/discoveryLiveRankRoute.test.ts",
     "artifacts/api-server/src/test/layoverLiveIntersection.test.ts",
+    // WIDENED 2026-09-12 (census-sensing §6): §5's Crowd and Forecast objects,
+    // §18.1's context kernel and §6's opportunity stage — the files §6 grades
+    // S40, S45, S46, S55, S56 and S110 on.
+    "artifacts/api-server/src/lib/crowdState.ts",
+    "artifacts/api-server/src/lib/forecastState.ts",
+    "artifacts/api-server/src/lib/contextKernel.ts",
+    "artifacts/api-server/src/lib/contextKernelRead.ts",
+    "artifacts/api-server/src/lib/opportunityEngine.ts",
+    "artifacts/api-server/src/routes/opportunities.ts",
+    "artifacts/api-server/src/migrations/2840_opportunity_engine_flag.sql",
+    "db/rollback/2026-09-12-2840-opportunity-engine-flag-rollback.sql",
+    "artifacts/api-server/src/test/crowdForecastState.test.ts",
+    "artifacts/api-server/src/test/opportunityEngine.test.ts",
+    "artifacts/api-server/src/test/opportunitiesRoute.test.ts",
+    // WIDENED 2026-09-12 (census-sensing §6.5): §5.4's ExperienceSession
+    // bridge — the files §6.6 grades S54 on, plus the canonical spine whose
+    // one new allow-listed payload key the bridge rides.
+    "artifacts/api-server/src/lib/experienceSession.ts",
+    "artifacts/api-server/src/lib/experienceSessionStore.ts",
+    "artifacts/api-server/src/lib/canonicalEvents.ts",
+    "artifacts/api-server/src/routes/experienceSessions.ts",
+    "artifacts/api-server/src/migrations/2841_experience_session_flag.sql",
+    "db/rollback/2026-09-12-2841-experience-session-flag-rollback.sql",
+    "artifacts/api-server/src/test/experienceSession.test.ts",
+    "artifacts/api-server/src/test/experienceSessionsRoute.test.ts",
   ],
   "census-compass.md": [
     "artifacts/api-server/src/compass/",

@@ -347,5 +347,17 @@ router.use(telegraphLiveReferencesRouter);
 // requireAdmin; routes/admin.ts is untouched. At the tail for the same reason.
 import adminSafetyCandidatesRouter from "./adminSafetyCandidates.js";
 router.use(adminSafetyCandidatesRouter);
+// ── Sensing §6: CONTEXT KERNEL → OPPORTUNITY ENGINE → surface projections ────
+// Its own file behind opportunity_engine_enabled (2840, seeded FALSE); no
+// existing surface's route is touched and every legacy candidate builder keeps
+// working. At the tail for the same reason.
+import opportunitiesRouter from "./opportunities.js";
+router.use(opportunitiesRouter);
+// ── Sensing §5.4: the ExperienceSession bridge, over canonical_events ────────
+// Its own file behind experience_session_enabled (2841, seeded FALSE); no
+// table and no verb are added and routes/intel.ts is untouched. At the tail
+// for the same reason.
+import experienceSessionsRouter from "./experienceSessions.js";
+router.use(experienceSessionsRouter);
 
 export default router;
