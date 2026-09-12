@@ -311,7 +311,20 @@ export async function buildTripTodayProjection(
   const crewSize = memberRows.filter((m) => m.status == null || m.status === "accepted").length || 1;
   const riskTriggers = evaluateRiskTriggers({
     now: nowMs,
-    commitments: ((commitments ?? []) as any[]).map((c) => ({ id: String(c.id), type: String(c.type ?? ""), startsAt: c.starts_at ?? null, requiredArrivalAt: c.required_arrival_at ?? null, estimatedArrivalAt: c.estimated_arrival_at ?? null, checkInDeadlineAt: c.check_in_deadline_at ?? null })),
+    // §8.4 (TR146): the arrival estimate is the freedom projection's per-hop
+    // estimate (previous departure + travel + prep) and a lodging's desk
+    // deadline is its required arrival — the two inputs the late-check-in
+    // trigger had no producer for. A commitment with no hop keeps null: no
+    // estimate is not "on time".
+    commitments: ((commitments ?? []) as any[]).map((c) => {
+      const est = freedom.arrivalEstimates.find((a) => a.commitmentId === String(c.id));
+      const type = String(c.type ?? "");
+      return {
+        id: String(c.id), type, startsAt: c.starts_at ?? null, requiredArrivalAt: c.required_arrival_at ?? null,
+        estimatedArrivalAt: est?.estimatedArrivalAt ?? null,
+        checkInDeadlineAt: type === "lodging" ? (c.required_arrival_at ?? null) : null,
+      };
+    }),
     plans: ((items ?? []) as any[]).map((p) => ({ id: String(p.id), title: p.title ?? null, startsAt: p.starts_at ?? null, endsAt: p.ends_at ?? null, weatherSensitive: looksWeatherSensitive(p.title, p.category === "activity" ? p.location_name : null), partySize: null })),
     transport: ((segRows ?? []) as any[]).map((t) => ({ id: String(t.id), mode: String(t.mode ?? ""), state: String(t.state ?? ""), plannedDepartureAt: t.planned_departure_at ?? null, partySize: typeof t.party_size === "number" ? t.party_size : null, capacity: null })),
     signals: pulseSignals.status === "ok" ? pulseSignals.items : [],

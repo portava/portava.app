@@ -71,6 +71,25 @@ describe("§11.1 buildTripTodayProjection — composed, not re-derived", () => {
     assert.equal(p.sourceTripVersion, 9); assert.equal(p.freshness, "live");
     assert.deepEqual(p.derivedFrom, { healthSourceTripVersion: 9, freedomSourceTripVersion: 9 });
   });
+  it("§8.4 late check-in (TR146) has a producer: a lodging's desk deadline is its required arrival and the arrival estimate is the freedom hop's", async () => {
+    // A departs 10:00 at ORIGIN; the hotel B is ~10 km north (base()) and its
+    // desk closes at 10:10 — no mode makes that. The estimate comes from the
+    // freedom projection's hop (departure + travel + prep), not a stored column.
+    const tables = withStages(base());
+    tables.trip_commitments[1] = { ...tables.trip_commitments[1], type: "lodging", required_arrival_at: T("10:10") };
+    const r = await buildTripTodayProjection(makeClient(tables) as any, TRIP_ID, OWNER_ID, { now: new Date(T("09:00")) });
+    assert.ok(r.ok, JSON.stringify(r));
+    const late = r.projection.riskTriggers.find((t) => t.kind === "late_check_in")!;
+    assert.equal(late.fired, true, JSON.stringify(late));
+    assert.deepEqual(late.affectedIds, ["B"]);
+    assert.match(late.evidence, /exceeds the desk policy by \d+ min/);
+    assert.ok((late.magnitude ?? 0) > 0 && (late.magnitude ?? 0) < 30, "minutes over the desk, from the straight-line hop");
+    // The same commitment as an event, not a lodging: no desk deadline, nothing to fire.
+    tables.trip_commitments[1] = { ...tables.trip_commitments[1], type: "event" };
+    const r2 = await buildTripTodayProjection(makeClient(tables) as any, TRIP_ID, OWNER_ID, { now: new Date(T("09:00")) });
+    assert.ok(r2.ok);
+    assert.equal(r2.projection.riskTriggers.find((t) => t.kind === "late_check_in")!.fired, false);
+  });
   it("a conflict becomes an unresolvedAction and AT_RISK health; an unplaced commitment becomes a place_commitment action", async () => {
     const tables = withStages(base());
     tables.trip_commitments = [...tables.trip_commitments, { id: "C", trip_id: TRIP_ID, type: "other", starts_at: null, required_arrival_at: null, place_id: null, lateness_tolerance: null, prep_duration: null, flexibility: "flexible" }];

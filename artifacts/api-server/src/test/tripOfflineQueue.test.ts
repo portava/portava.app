@@ -61,7 +61,7 @@ describe("TR349 / TR451 — replay, revalidate, reject", () => {
   it("a cutover-gated plan write is rejected and told which door; an unknown type is rejected", () => {
     const gated = classifyQueuedOperation(op({ type: "COMPLETE_ACTIVITY" }), ctx);
     assert.equal(gated.decision, "reject"); assert.equal(gated.reasonCode, "TRIP_OFFLINE_QUEUE_REJECTED"); assert.match(gated.detail, /its own route/);
-    const unknown = classifyQueuedOperation(op({ type: "SAVE_IDEA" }), ctx);
+    const unknown = classifyQueuedOperation(op({ type: "TELEPORT" }), ctx);
     assert.equal(unknown.decision, "reject"); assert.match(unknown.detail, /not a command this endpoint issues/);
   });
   it("a clientOccurredAt the server cannot believe is rejected: the future, or past the horizon", () => {
@@ -78,6 +78,15 @@ describe("TR349 / TR451 — replay, revalidate, reject", () => {
     const tie = op({ operationId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb1", clientOccurredAt: new Date(NOW - 1000).toISOString() });
     assert.deepEqual(orderQueuedOperations([later, earlier, tie]).map((o) => o.operationId.slice(-1)), ["2", "1", "3"]);
     assert.deepEqual(classifyQueuedOperations([later, earlier], ctx).map((c) => c.operation.operationId.slice(-1)), ["2", "3"]);
+  });
+  it("§18.3 (TR350): SAVE_IDEA / UNSAVE_IDEA replay as SET operations, by identity; a malformed one is rejected", () => {
+    const save = classifyQueuedOperation(op({ type: "SAVE_IDEA", payload: { placeId: "fsq:1", placeName: "Cafe" } }), ctx);
+    assert.equal(save.decision, "replay"); assert.equal(save.via, "set"); assert.match(save.detail, /idempotent by construction/);
+    const unsave = classifyQueuedOperation(op({ type: "UNSAVE_IDEA", payload: { placeId: "fsq:1" } }), ctx);
+    assert.equal(unsave.decision, "replay"); assert.equal(unsave.via, "set");
+    const bad = classifyQueuedOperation(op({ type: "SAVE_IDEA", payload: { placeName: "no id" } }), ctx);
+    assert.equal(bad.decision, "reject"); assert.equal(bad.reasonCode, "TRIP_OFFLINE_QUEUE_REJECTED");
+    assert.equal(classifyQueuedOperation(op(), ctx).via, "kernel", "a kernel command replays through the kernel");
   });
   it("both reason codes are Appendix B's TRIP_OFFLINE_* family", () => {
     for (const c of ["TRIP_OFFLINE_REVALIDATION_REQUIRED", "TRIP_OFFLINE_QUEUE_REJECTED", "TRIP_OFFLINE_BUNDLE_STALE"]) assert.ok((TRIP_REASON_CODES as readonly string[]).includes(c), c);

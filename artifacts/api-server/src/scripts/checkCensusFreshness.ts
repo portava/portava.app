@@ -166,6 +166,10 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/test/tripOfflineBundle.test.ts",
     "artifacts/api-server/src/test/tripOfflineRoute.test.ts",
     "artifacts/api-server/src/test/db/tripOfflineReplay.db.test.ts",
+    // §49: the presence write (newest observation) and its suite.
+    "artifacts/api-server/src/services/trips/TripFreedomProjection.ts",
+    "artifacts/api-server/src/services/trips/TripTodayProjection.ts",
+    "artifacts/api-server/src/test/tripPresenceNewestObservation.test.ts",
     "artifacts/api-server/src/test/tripCloseout.test.ts",
     "artifacts/api-server/src/lib/tripCrewLocation.ts",
     "artifacts/api-server/src/migrations/2760_trip_stages.sql",

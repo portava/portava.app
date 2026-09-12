@@ -68,12 +68,33 @@ export const OFFLINE_SAFE_TYPES: readonly string[] = [
   "VOTE_ON_PROPOSAL",
 ] as const;
 
+/**
+ * §18.3 "saved ideas / reactions merge as set operations with idempotency"
+ * (census-trips TR350): "save idea" is not a kernel command — trip_saved_places
+ * is a set keyed (trip_id, user_id, place_id) — so the queue replays it as a
+ * SET operation: SAVE_IDEA is union, UNSAVE_IDEA is difference, and applying
+ * either twice yields the same set. The route performs them directly and
+ * says whether the element was already present / already absent.
+ */
+export const SET_OPERATION_TYPES: readonly string[] = ["SAVE_IDEA", "UNSAVE_IDEA"] as const;
+export const SaveIdeaPayloadSchema = z.object({
+  placeId: z.string().min(1).max(300),
+  placeName: z.string().min(1).max(300),
+  placeType: z.string().max(100).optional(),
+  lat: z.number().nullable().optional(),
+  lng: z.number().nullable().optional(),
+  notes: z.string().max(500).optional(),
+}).strict();
+export const UnsaveIdeaPayloadSchema = z.object({ placeId: z.string().min(1).max(300) }).strict();
+
 export const QUEUE_DECISIONS = ["replay", "revalidate", "reject"] as const;
 export type QueueDecision = (typeof QUEUE_DECISIONS)[number];
 
 export interface QueueClassification {
   operation: QueuedTripOperation;
   decision: QueueDecision;
+  /** How a replay is performed: through the kernel, or as a §18.3 set operation. */
+  via: "kernel" | "set" | null;
   reasonCode: "TRIP_OFFLINE_REVALIDATION_REQUIRED" | "TRIP_OFFLINE_QUEUE_REJECTED" | null;
   detail: string;
 }
@@ -89,21 +110,26 @@ export interface QueueContext {
 }
 
 export function classifyQueuedOperation(op: QueuedTripOperation, ctx: QueueContext): QueueClassification {
-  const reject = (detail: string): QueueClassification => ({ operation: op, decision: "reject", reasonCode: "TRIP_OFFLINE_QUEUE_REJECTED", detail });
+  const reject = (detail: string): QueueClassification => ({ operation: op, decision: "reject", via: null, reasonCode: "TRIP_OFFLINE_QUEUE_REJECTED", detail });
   const occurred = Date.parse(op.clientOccurredAt);
   if (!Number.isFinite(occurred)) return reject("clientOccurredAt is not a datetime");
   if (occurred > ctx.now + QUEUE_FUTURE_SKEW_MS) return reject(`clientOccurredAt ${op.clientOccurredAt} is in the future`);
   if (ctx.now - occurred > QUEUE_HORIZON_MS) return reject(`clientOccurredAt ${op.clientOccurredAt} is older than the ${QUEUE_HORIZON_MS / 86_400_000}-day queue horizon; look at the trip again`);
+  if (SET_OPERATION_TYPES.includes(op.type)) {
+    const parsed = (op.type === "SAVE_IDEA" ? SaveIdeaPayloadSchema : UnsaveIdeaPayloadSchema).safeParse(op.payload);
+    if (!parsed.success) return reject(`${op.type}: ${parsed.error.issues[0]?.message ?? "malformed payload"}`);
+    return { operation: op, decision: "replay", via: "set", reasonCode: null, detail: `${op.type} is a §18.3 set operation; applied by identity (trip, member, place) — idempotent by construction` };
+  }
   if (ctx.gated.has(op.type)) return reject(`${op.type} has a legacy writer and a flag-gated cutover; it is issued by its own route, not replayed from a queue`);
   if (!ctx.issuable.has(op.type)) return reject(`${op.type} is not a command this endpoint issues`);
   if (OFFLINE_SAFE_TYPES.includes(op.type)) {
-    return { operation: op, decision: "replay", reasonCode: null, detail: `${op.type} is offline-safe (§18.2); replayed with its own idempotency key${op.expectedTripVersion != null ? ` at expected version ${op.expectedTripVersion}` : ""}` };
+    return { operation: op, decision: "replay", via: "kernel", reasonCode: null, detail: `${op.type} is offline-safe (§18.2); replayed with its own idempotency key${op.expectedTripVersion != null ? ` at expected version ${op.expectedTripVersion}` : ""}` };
   }
   if (op.expectedTripVersion === ctx.currentTripVersion) {
-    return { operation: op, decision: "replay", reasonCode: null, detail: `${op.type} is sensitive and was revalidated against the current version ${ctx.currentTripVersion}` };
+    return { operation: op, decision: "replay", via: "kernel", reasonCode: null, detail: `${op.type} is sensitive and was revalidated against the current version ${ctx.currentTripVersion}` };
   }
   return {
-    operation: op, decision: "revalidate", reasonCode: "TRIP_OFFLINE_REVALIDATION_REQUIRED",
+    operation: op, decision: "revalidate", via: null, reasonCode: "TRIP_OFFLINE_REVALIDATION_REQUIRED",
     detail: `${op.type} is a sensitive or high-conflict mutation (§18.2); the trip is at version ${ctx.currentTripVersion}${op.expectedTripVersion == null ? " and the operation names none" : ` and the operation expected ${op.expectedTripVersion}`} — look at the trip again and resend with expectedTripVersion ${ctx.currentTripVersion}`,
   };
 }

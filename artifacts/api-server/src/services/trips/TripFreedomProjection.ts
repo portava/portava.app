@@ -57,6 +57,22 @@ export interface TripFreedomProjection extends TripProjectionEnvelope {
   provider: { id: string; routed: boolean };
   disclosure: string;
   reading: string;
+  /**
+   * §8.4 (census-trips TR146): when the traveller is estimated to ARRIVE at
+   * each placed commitment — the previous commitment's departure plus the
+   * hop's travel term and this commitment's prep — so the late-check-in
+   * trigger has a producer. Null travel (no coordinates, no provider) is a
+   * null estimate, never "on time". A lower bound like everything here.
+   */
+  arrivalEstimates: ArrivalEstimate[];
+}
+
+export interface ArrivalEstimate {
+  commitmentId: string;
+  /** ISO, or null when the hop could not be estimated. */
+  estimatedArrivalAt: string | null;
+  travelMinutes: number | null;
+  departFrom: string;
 }
 
 export const FREEDOM_READING =
@@ -151,6 +167,7 @@ export async function buildTripFreedomProjection(
     .filter((c) => (c.requiredArrivalAt ?? c.startsAt) !== null)
     .sort((a, b) => (a.requiredArrivalAt ?? a.startsAt)!.getTime() - (b.requiredArrivalAt ?? b.startsAt)!.getTime());
   const hops: HopTravel[] = [];
+  const arrivalEstimates: ArrivalEstimate[] = [];
   for (let i = 1; i < placed.length; i += 1) {
     const prev = placed[i - 1]!; const next = placed[i]!;
     const departFrom = prev.endsAt ?? prev.startsAt ?? prev.requiredArrivalAt!;
@@ -159,6 +176,12 @@ export async function buildTripFreedomProjection(
       prepMinutes: next.prepMinutes, latenessToleranceMinutes: next.latenessToleranceMinutes,
     }, now);
     hops.push({ travelMinutes: r.travelMinutes, confidence: r.confidence, routed: r.routed, unknownReason: r.unknownReason });
+    arrivalEstimates.push({
+      commitmentId: next.id,
+      estimatedArrivalAt: r.travelMinutes === null ? null : new Date(departFrom.getTime() + (r.travelMinutes + next.prepMinutes) * 60_000).toISOString(),
+      travelMinutes: r.travelMinutes,
+      departFrom: departFrom.toISOString(),
+    });
   }
 
   const result = computeFreedomWindows({
@@ -217,6 +240,7 @@ export async function buildTripFreedomProjection(
       provider: { id: PROVIDER.id, routed: PROVIDER.routed },
       disclosure: FEASIBILITY_UNVERIFIED_DISCLOSURE,
       reading: FREEDOM_READING,
+      arrivalEstimates,
     },
   };
 }

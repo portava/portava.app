@@ -64,14 +64,20 @@ function makeClient(opts: { kernelOn?: boolean; version?: number } = {}) {
     from(table: string) {
       const filters: Array<(r: Row) => boolean> = [];
       const rowsNow = () => (db[table] ?? []).filter((r) => filters.every((f) => f(r)));
+      let pendingDelete = false;
       const chain: any = {
         select: () => chain, order: () => chain, limit: () => chain, gte: () => chain, gt: () => chain, not: () => chain, or: () => chain,
+        insert: (row: Row) => { (db[table] ??= []).push({ id: `${table}-${(db[table]!.length + 1)}`, ...row }); return { then: (f: any, r: any) => Promise.resolve({ data: null, error: null }).then(f, r) }; },
+        delete: () => { pendingDelete = true; return chain; },
         eq: (c: string, val: any) => { filters.push((r) => r[c] === val); return chain; },
         in: (c: string, vals: any[]) => { filters.push((r) => vals.includes(r[c])); return chain; },
         is: (c: string, val: any) => { filters.push((r) => (r[c] ?? null) === val); return chain; },
         maybeSingle: async () => ({ data: rowsNow()[0] ?? null, error: null }),
         single: async () => ({ data: rowsNow()[0] ?? null, error: null }),
-        then: (onF: any, onR: any) => Promise.resolve({ data: rowsNow(), error: null }).then(onF, onR),
+        then: (onF: any, onR: any) => {
+          if (pendingDelete) { const gone = rowsNow(); db[table] = (db[table] ?? []).filter((r) => !gone.includes(r)); return Promise.resolve({ data: null, error: null }).then(onF, onR); }
+          return Promise.resolve({ data: rowsNow(), error: null }).then(onF, onR);
+        },
       };
       return chain;
     },
@@ -177,6 +183,20 @@ describe("§18 offline — the server's half", () => {
     assert.equal(r.status, 200);
     assert.equal(r.body.results[0].ok, false); assert.equal(r.body.results[0].reasonCode, "TRIP_KERNEL_UNAVAILABLE");
     assert.equal(r.body.counts.refused, 1);
+  });
+  it("POST operations (§18.3, TR350): SAVE_IDEA / UNSAVE_IDEA are set operations — union then no-op, difference then no-op; trips.version does not move", async () => {
+    const c = install(makeClient({ version: 7 }));
+    const save = (n: number) => join(n, { type: "SAVE_IDEA", payload: { placeId: "fsq:cafe", placeName: "Cafe Majestic", lat: 41.15, lng: -8.61 }, idempotencyKey: `save-${n}` });
+    const r = await call("POST", `/trips/${TRIP_ID}/operations`, "member-token", { operations: [save(1), save(2), join(3, { type: "UNSAVE_IDEA", payload: { placeId: "fsq:cafe" }, idempotencyKey: "unsave-3" }), join(4, { type: "UNSAVE_IDEA", payload: { placeId: "fsq:cafe" }, idempotencyKey: "unsave-4" })] });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.deepEqual(r.body.results.map((x: any) => [x.via, x.ok, x.set]), [["set", true, "added"], ["set", true, "already_present"], ["set", true, "removed"], ["set", true, "already_absent"]]);
+    assert.equal((c.db.trip_saved_places ?? []).length, 0, "the set is empty again");
+    assert.deepEqual(c.kernel, [], "no kernel command for a bookmark");
+    assert.equal(r.body.currentVersion, 7, "the aggregate version did not move");
+    assert.equal(r.body.counts.setOperations, 4);
+    const again = await call("POST", `/trips/${TRIP_ID}/operations`, "member-token", { operations: [save(5)] });
+    assert.equal(again.body.results[0].set, "added");
+    assert.equal(c.db.trip_saved_places![0]!.user_id, MEMBER_ID, "saved as the token's member");
   });
   it("POST operations: the bundle carried back is verified and dated — current, version-behind (TRIP_OFFLINE_BUNDLE_STALE), and edited (not a bundle)", async () => {
     const c = install(makeClient({ version: 7 }));

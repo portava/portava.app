@@ -167,6 +167,14 @@ router.post("/trips/:tripId/operations", asyncHandler(async (req, res) => {
       results.push({ operationId: op.operationId, type: op.type, decision: c.decision, ok: false, reasonCode: c.reasonCode, detail: c.detail, currentVersion: version });
       continue;
     }
+    if (c.via === "set") {
+      // §18.3 saved ideas: a set operation by identity, not a kernel command
+      // (trips.version does not move for a bookmark). Union / difference,
+      // idempotent by construction; the answer says whether anything changed.
+      const r = await applySetOperation(sc, tripId, user.id, op.type, op.payload);
+      results.push({ operationId: op.operationId, type: op.type, decision: "replay", via: "set", ok: r.ok, set: r.ok ? r.effect : null, reasonCode: r.ok ? null : "TRIP_OFFLINE_QUEUE_REJECTED", detail: r.detail, currentVersion: version });
+      continue;
+    }
     if (!kernelOn) {
       results.push({ operationId: op.operationId, type: op.type, decision: "replay", ok: false, reasonCode: "TRIP_KERNEL_UNAVAILABLE", detail: `${TRIP_KERNEL_FLAG} is off: the queue is held and nothing was applied`, currentVersion: version });
       continue;
@@ -195,6 +203,7 @@ router.post("/trips/:tripId/operations", asyncHandler(async (req, res) => {
     currentVersion: version,
     counts: {
       replayed: results.filter((r) => r.decision === "replay" && r.ok === true).length,
+      setOperations: results.filter((r) => r.via === "set").length,
       duplicates: results.filter((r) => r.duplicate === true).length,
       conflicted: results.filter((r) => r.reasonCode === "TRIP_VERSION_CONFLICT").length,
       revalidate: results.filter((r) => r.decision === "revalidate").length,
@@ -206,5 +215,33 @@ router.post("/trips/:tripId/operations", asyncHandler(async (req, res) => {
     reading: "§18.3: replayed with each operation's own idempotency key and expected version — a duplicate returns its receipt, a stale edit is a conflict, never an overwrite; sensitive mutations wait for revalidation against the current version",
   });
 }));
+
+/** §18.3 set operations on trip_saved_places: union for SAVE_IDEA, difference for UNSAVE_IDEA, by (trip, member, place). */
+async function applySetOperation(
+  sc: any, tripId: string, userId: string, type: string, payload: Record<string, unknown>,
+): Promise<{ ok: true; effect: "added" | "already_present" | "removed" | "already_absent"; detail: string } | { ok: false; detail: string }> {
+  const placeId = String(payload.placeId ?? "");
+  const { data: existing, error: readErr } = await sc
+    .from("trip_saved_places").select("id").eq("trip_id", tripId).eq("user_id", userId).eq("place_id", placeId).maybeSingle();
+  if (readErr) return { ok: false, detail: `the saved set could not be read: ${readErr.message}` };
+  if (type === "SAVE_IDEA") {
+    if (existing) return { ok: true, effect: "already_present", detail: "already in the set: nothing to add" };
+    const { error } = await sc.from("trip_saved_places").insert({
+      trip_id: tripId, user_id: userId, place_id: placeId, place_name: String(payload.placeName ?? ""), place_type: (payload.placeType as string | undefined) ?? null,
+      lat: (payload.lat as number | null | undefined) ?? null, lng: (payload.lng as number | null | undefined) ?? null, notes: (payload.notes as string | undefined) ?? null,
+    });
+    if (error) {
+      // A concurrent add of the same element is the same element: the unique
+      // key (trip_id, user_id, place_id) refused it, and the set is as asked.
+      if (String(error.code ?? "") === "23505") return { ok: true, effect: "already_present", detail: "added concurrently: in the set" };
+      return { ok: false, detail: `the save could not be written: ${error.message}` };
+    }
+    return { ok: true, effect: "added", detail: "added to the set" };
+  }
+  if (!existing) return { ok: true, effect: "already_absent", detail: "not in the set: nothing to remove" };
+  const { error } = await sc.from("trip_saved_places").delete().eq("id", (existing as { id: string }).id).eq("trip_id", tripId).eq("user_id", userId);
+  if (error) return { ok: false, detail: `the unsave could not be written: ${error.message}` };
+  return { ok: true, effect: "removed", detail: "removed from the set" };
+}
 
 export default router;

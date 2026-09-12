@@ -138,7 +138,7 @@ below, reviewed as such, one at a time.
 | `src/services/trips/TripCloseoutService.ts` | executeTripCommand | `DISSOLVE_SUBGROUP`, `UPDATE_DECISION_TASK`, `UPDATE_RISK` |
 | `src/services/trips/TripOpportunityProjection.ts` | executeTripCommand | `RECORD_OPPORTUNITY_CHANGE` |
 
-### Direct write paths around the kernel — 77
+### Direct write paths around the kernel — 79
 
 | file | table | verb |
 | --- | --- | --- |
@@ -167,6 +167,8 @@ below, reviewed as such, one at a time.
 | `src/routes/telegraphChat.ts` | `trip_plan_items` | insert |
 | `src/routes/tripCrewLocation.ts` | `trip_crew_location_events` | insert |
 | `src/routes/tripFeasibility.ts` | `trip_transport_policies` | upsert |
+| `src/routes/tripOffline.ts` | `trip_saved_places` | insert |
+| `src/routes/tripOffline.ts` | `trip_saved_places` | delete |
 | `src/routes/tripReadiness.ts` | `trip_readiness_snapshots` | upsert |
 | `src/routes/tripReadiness.ts` | `trip_readiness_snapshots` | delete |
 | `src/routes/tripReservations.ts` | `trip_reservations` | insert |
@@ -220,7 +222,7 @@ below, reviewed as such, one at a time.
 | `src/services/trips/TripCloseoutService.ts` | `trip_decisions` | update |
 | `src/services/trips/TripDecisionLedger.ts` | `trip_decisions` | insert |
 
-### Routes under /trips — 153 (66 reads; writes: 5 kernel, 36 direct, 21 both, 25 neither)
+### Routes under /trips — 153 (66 reads; writes: 4 kernel, 36 direct, 22 both, 25 neither)
 
 | method | path | file | writes through |
 | --- | --- | --- | --- |
@@ -323,7 +325,7 @@ below, reviewed as such, one at a time.
 | PATCH | `/trips/:tripId/notes/:noteId` | `src/routes/trips-expansion.ts` | direct |
 | POST | `/trips/:tripId/notifications/acted` | `src/routes/tripProjections.ts` | none |
 | GET | `/trips/:tripId/offline-bundle` | `src/routes/tripOffline.ts` | read |
-| POST | `/trips/:tripId/operations` | `src/routes/tripOffline.ts` | kernel |
+| POST | `/trips/:tripId/operations` | `src/routes/tripOffline.ts` | both |
 | GET | `/trips/:tripId/opportunities` | `src/routes/tripProjections.ts` | read |
 | POST | `/trips/:tripId/opportunities/:experienceId/accept` | `src/routes/tripProjections.ts` | kernel |
 | GET | `/trips/:tripId/plan` | `src/routes/trips.ts` | read |

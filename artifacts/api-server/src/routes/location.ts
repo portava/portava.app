@@ -34,6 +34,17 @@ function isValidLat(v: unknown): v is number {
 function isValidLng(v: unknown): v is number {
   return typeof v === "number" && isFinite(v) && v >= -180 && v <= 180;
 }
+/** A client-stated observation instant: ISO, not in the future beyond clock skew, else null (server time applies). */
+const OBSERVED_AT_FUTURE_SKEW_MS = 5 * 60 * 1000;
+export function observedAtOf(v: unknown, nowIso: string): string | null {
+  if (typeof v !== "string") return null;
+  const ms = Date.parse(v);
+  if (!Number.isFinite(ms)) return null;
+  const now = Date.parse(nowIso);
+  if (ms > now + OBSERVED_AT_FUTURE_SKEW_MS) return null;
+  return new Date(ms).toISOString();
+}
+
 function sanitizeText(v: unknown, maxLen = 128): string | null {
   if (typeof v !== "string") return null;
   return v.trim().slice(0, maxLen) || null;
@@ -136,7 +147,38 @@ router.post("/me/location-state", async (req, res) => {
 
   if (permissionStatus) patch.permission_status = permissionStatus;
   if (source) patch.source = source;
-  if (lat != null) { patch.lat = lat; patch.lng = lng; patch.accuracy_meters = accuracyMeters; patch.last_known_at = now; }
+  // Trips spec §18.3 — presence is "the newest valid observation with
+  // expiry/confidence; never simple last-write-wins across stale devices"
+  // (census-trips TR351). A client that says WHEN it observed the fix
+  // (`coords.observedAt`) gets that instant as `last_known_at`, and a fix
+  // older than the one already stored is NOT written over it: a phone that
+  // was offline for an hour and replays its last fix on reconnect must not
+  // move the traveller back in time. The rest of the patch (permission,
+  // place, manual city) still applies. A client that sends no observedAt is
+  // the legacy shape: the server's receipt time, exactly as before.
+  let staleObservation: { observedAt: string; storedLastKnownAt: string } | null = null;
+  if (lat != null) {
+    const observedAt = observedAtOf(body.coords?.observedAt, now);
+    if (observedAt !== null) {
+      const { data: current, error: currentErr } = await sc
+        .from("user_location_state")
+        .select("last_known_at")
+        .eq("user_id", user.id)
+        .maybeSingle();
+      if (currentErr) {
+        req.log.error({ err: currentErr }, "location-state: current observation unreadable — refusing the write rather than overwriting blind");
+        sendError(res, "db_error", currentErr.message);
+        return;
+      }
+      const stored = typeof current?.last_known_at === "string" ? Date.parse(current.last_known_at) : NaN;
+      if (Number.isFinite(stored) && Date.parse(observedAt) < stored) {
+        staleObservation = { observedAt, storedLastKnownAt: current!.last_known_at as string };
+      }
+    }
+    if (!staleObservation) {
+      patch.lat = lat; patch.lng = lng; patch.accuracy_meters = accuracyMeters; patch.last_known_at = observedAt ?? now;
+    }
+  }
   if (city !== undefined) patch.city = city;
   if (district !== undefined) patch.district = district;
   if (country !== undefined) patch.country = country;
@@ -180,7 +222,21 @@ router.post("/me/location-state", async (req, res) => {
     });
   }
 
-  res.status(200).json({ ok: true });
+  if (staleObservation) {
+    // 200, not an error: the request was understood and the rest of it was
+    // applied. The observation itself was older than the one held, so it was
+    // not written, and the client is told with Appendix B's reason.
+    res.status(200).json({
+      ok: true,
+      observation: "stale_ignored",
+      reasonCode: "TRIP_PRESENCE_STALE",
+      observedAt: staleObservation.observedAt,
+      storedLastKnownAt: staleObservation.storedLastKnownAt,
+      detail: "an observation older than the stored one is not written over it (§18.3: newest valid observation, never last-write-wins across stale devices)",
+    });
+    return;
+  }
+  res.status(200).json({ ok: true, observation: lat != null ? "written" : "no_fix" });
 });
 
 // ── POST /api/location/reverse-geocode ───────────────────────────────────────

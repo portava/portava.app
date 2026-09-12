@@ -23,12 +23,12 @@ preserved in §36.1 as the record of that measurement.
 | Measure | Value |
 | --- | --- |
 | **Denominator (testable requirements)** | **451** |
-| BUILT-AND-CORRECT | **271** |
-| BUILT-BUT-WRONG | **155** |
+| BUILT-AND-CORRECT | **275** |
+| BUILT-BUT-WRONG | **151** |
 | NOT-BUILT | **24** |
 | CANNOT-VERIFY | **1** |
 | **CONSTRUCTED%** = (C+W)/451 | **426 / 451 = 94.5 %** |
-| **CORRECT%** (raw) = C/451 | **271 / 451 = 60.1 %** |
+| **CORRECT%** (raw) = C/451 | **275 / 451 = 61.0 %** |
 
 > **RESTATED 2026-09-11 (§38): 89 → 87 CORRECT, 127 → 129 WRONG.** §38 re-derived
 > 39 of the C rows against the code and **two did not hold**, both for the same
@@ -195,6 +195,16 @@ preserved in §36.1 as the record of that measurement.
 > §22.4 duplicate and the §23 offline member executed on the real kernel
 > (TR417 holds C on a second proof, TR421 W). Three N → C, two N → W. No
 > migration; the ceiling is §41.3's, unchanged.
+
+> **RESTATED 2026-09-12 (§49): 271 → 275 CORRECT, 155 → 151 WRONG,
+> 24 NOT-BUILT unchanged. CONSTRUCTED 94.5 % unchanged, CORRECT 60.1 % → 61.0 %.**
+> §49 made presence the newest valid observation (a stale device's fix is
+> not written over a fresher one, `TRIP_PRESENCE_STALE`; TR351), replayed
+> saved ideas from the reconnect queue as idempotent set operations
+> (TR350), gave the late-check-in trigger its two inputs from the freedom
+> projection's arrival estimates and a lodging's required arrival (TR146),
+> and re-derived the §7.4 place-identity check that §40.3 had built
+> (TR135). Four W → C. No migration; the ceiling is §41.3's, unchanged.
 | **CORRECT% (spec-attributable)** | **WITHDRAWN — not measured. See §36.4** |
 | CANNOT-VERIFY share | **1 / 451 = 0.2 %** |
 
@@ -3521,7 +3531,7 @@ never FEASIBLE).
   `overridden: false` typed as the literal (`:132#TemporalConflict`)
   because no override path exists. `detectPlanOverlaps`
   (`:371#detectPlanOverlaps`) is §7.2 on the plan itself.
-- `services/trips/TripFreedomProjection.ts:87#buildTripFreedomProjection` —
+- `services/trips/TripFreedomProjection.ts:103#buildTripFreedomProjection` —
   the reads (trips, commitments, places, members — each REFUSED when it fails;
   a window over "no commitments" is the whole trip), the hop travel terms from
   the feasibility engine (`:151#checkFeasibility`, the same provider
@@ -3582,7 +3592,7 @@ definition `:31#TRIP_OPERATIONAL_PROJECTIONS`, gate
 `lib/capability/registry.ts:160#TRIP_OPERATIONAL_PROJECTIONS`), seeded
 FALSE by `2778_trip_operational_projections_flag.sql`. The gate is a pure
 helper in the ratchet's sense, so the builders that call it first
-(`services/trips/TripFreedomProjection.ts:96#tripOperationalProjectionsGate`)
+(`services/trips/TripFreedomProjection.ts:112#tripOperationalProjectionsGate`)
 are gate boundaries and their schema belongs to this flag, OFF everywhere;
 the ratchet now reports it LATENT, which is what it is. Off, the routes answer
 `feature_disabled` and Compass says "not enabled"; an UNVERIFIABLE probe is
@@ -3746,7 +3756,7 @@ nothing to get.
   reads makes a sub-projection AHEAD and the Today projection is refused
   `TRIP_PROJECTION_VERSION_AHEAD` rather than assembled from two states. The
   test drives it with a stateful fake
-  (`src/test/tripTodayProjection.test.ts:84#LIVE`) and a
+  (`src/test/tripTodayProjection.test.ts:103#LIVE`) and a
   mutation that stops handing the version over went red.
 - `GET /trips/:tripId/today` (`routes/tripProjections.ts:279#today`);
   one refusal mapping for the three gated builders
@@ -3914,9 +3924,9 @@ to explain and no route.
   (`:43#TRIP_ENGINE_VERSIONS`), `recordTripDecision`
   (`:81#recordTripDecision`) and `explainTripDecision`
   (`:114#explainTripDecision`) — sentences from the record. Every
-  §40.3–§40.5 build records one (`services/trips/TripFreedomProjection.ts:178#recordTripDecision`,
+  §40.3–§40.5 build records one (`services/trips/TripFreedomProjection.ts:201#recordTripDecision`,
   `TripHealthProjection.ts:173#recordTripDecision`,
-  `TripTodayProjection.ts:335#recordTripDecision`) naming ids,
+  `TripTodayProjection.ts:348#recordTripDecision`) naming ids,
   versions and counts — never a coordinate or a name — and carries its
   `decisionId`. `GET /trips/:tripId/decisions/:decisionId/explain`
   (`routes/tripProjections.ts:569#explain`) and Compass
@@ -4137,7 +4147,7 @@ order: 217 files, 35 database tests, 0 skipped.
   `MARK_COMMITMENT_AT_RISK` → `trip.commitment_at_risk` (`:196#commitment_at_risk`),
   `OPEN_FREE_WINDOW` → `trip.free_window_created` (`:221#free_window_created`).
   `lib/tripDerivedEvents.ts:49#recordDerivedEvents` issues them from
-  `TripFreedomProjection` (`services/trips/TripFreedomProjection.ts:175#recordDerivedEvents`)
+  `TripFreedomProjection` (`services/trips/TripFreedomProjection.ts:198#recordDerivedEvents`)
   with the fact's identity as the idempotency key
   (`lib/tripDerivedEvents.ts:42#freeWindowKey`), so a re-read is a duplicate
   at the receipt and the aggregate does not churn — tested on the real kernel
@@ -4609,7 +4619,7 @@ route writes goes through the kernel as a command that already exists
   on a weather-bound plan; late check-in is an arrival estimate past the
   desk's deadline; crew transport mismatch is the party over the vehicle's
   seats (`services/trips/TripRiskTriggers.ts:94#DEFAULT_VEHICLE_CAPACITY`).
-  On Today as `riskTriggers` (`services/trips/TripTodayProjection.ts:371#riskTriggers,`),
+  On Today as `riskTriggers` (`services/trips/TripTodayProjection.ts:384#riskTriggers,`),
   reading 2782's segments under the same gate for the party-size row.
 - **§9.4 the impact preview, §15.3 the booking side effects** —
   `services/trips/TripImpactPreview.ts:119#previewImpact` over a typed
@@ -5256,7 +5266,7 @@ the mechanism; the offline path is what asks them the §18.3 questions.
   plan and reservations (no `raw_text`), and its commitments under the
   operational gate, and refuses (503) rather than issue an unsigned bundle
   when no secret is configured. `test/tripOfflineBundle.test.ts:85#version_behind`
-  and `test/tripOfflineRoute.test.ts:128#unsigned` pin the contents, the
+  and `test/tripOfflineRoute.test.ts:134#unsigned` pin the contents, the
   round trip, the tamper case and the refusal. Mutation: any signature
   verifies (2 red).
 - **§18.1 stale is visible (TR342)** — `services/trips/TripOfflineBundle.ts:122#bundleStaleness(`:
@@ -5266,9 +5276,9 @@ the mechanism; the offline path is what asks them the §18.3 questions.
   the bundle a client carries back. On the wire; no screen renders it.
 - **§18.2 the contract and the rule (TR343, TR349, TR451)** —
   `services/trips/TripOfflineQueue.ts:45#QueuedTripOperationSchema` is the
-  spec's seven fields, strict; `services/trips/TripOfflineQueue.ts:91#classifyQueuedOperation(`
+  spec's seven fields, strict; `services/trips/TripOfflineQueue.ts:112#classifyQueuedOperation(`
   decides one of three things for each operation, in the order the
-  traveller acted (`services/trips/TripOfflineQueue.ts:112#orderQueuedOperations<T`):
+  traveller acted (`services/trips/TripOfflineQueue.ts:138#orderQueuedOperations<T`):
   *replay* for the offline-safe list (`services/trips/TripOfflineQueue.ts:64#OFFLINE_SAFE_TYPES`
   — join/leave plan, attendance, presence, start/skip a plan, a vote, each
   in the kernel's vocabulary and each issuable), with its own idempotency
@@ -5285,7 +5295,7 @@ the mechanism; the offline path is what asks them the §18.3 questions.
   when the kernel flag is off, and answers the whole queue — counts of
   replayed, duplicates, conflicts, revalidate, rejected, refused — so one
   refusal hides nothing. `test/tripOfflineQueue.test.ts:67#horizon` pins the
-  rule; `test/tripOfflineRoute.test.ts:151#TRIP_OFFLINE_REVALIDATION_REQUIRED`
+  rule; `test/tripOfflineRoute.test.ts:157#TRIP_OFFLINE_REVALIDATION_REQUIRED`
   drives the app: the order, the duplicate's receipt, the held sensitive
   operation that never reaches the kernel, the conflict that overwrites
   nothing, the rejected types, the flag off, the bundle current / behind /
@@ -5333,3 +5343,98 @@ kernel, which is off in every database but the local replica until the
 owner's Batch C and the flag. The signing secret is an environment value
 the owner sets; without it no bundle is issued. Nothing here is deployed,
 enabled or production-realised.
+
+## 49. Newest observation, set operations on reconnect, a producer for late check-in, and a check that had been running all along
+
+**Read against the branch `claude/sweet-fermat-fmx7up`.** Four W rows whose
+gap was small and specific: a presence write that let a stale device
+overwrite a fresher fix (§18.3), a saved-ideas merge that had set storage
+and no set operations (§18.3), a risk trigger with no producer for its two
+inputs (§8.4), and a §7.4 check graded before it existed. No migration:
+every change is server code on baseline tables, and each rule went red
+under a mutation before its commit.
+
+### 49.1 What was built, and where
+
+- **§18.3 presence: the newest valid observation (TR351)** — `POST /me/location-state`
+  stamped every fix with the server's receipt time, so a phone that had
+  been offline and replayed its last fix on reconnect moved the traveller
+  back in time — last-write-wins across stale devices, the thing the row
+  names. A client may now say WHEN it observed the fix
+  (`coords.observedAt`; `routes/location.ts:39#observedAtOf(v:` refuses the
+  far future); that instant becomes `last_known_at`, and a fix observed
+  before the one already stored is not written over it
+  (`routes/location.ts:159#staleObservation`): the rest of the request
+  (permission, place, manual city) still applies, and the client is told —
+  200, `observation: "stale_ignored"`, `TRIP_PRESENCE_STALE`, both instants
+  named. A client that sends no `observedAt` is the legacy shape and gets
+  the receipt time exactly as before. Expiry and confidence were already
+  §10's (TR160, TR162). `test/tripPresenceNewestObservation.test.ts:69#stale_ignored`
+  drives the app both ways and pins the skew rule. Mutation: the guard
+  never firing (1 red).
+- **§18.3 saved ideas as set operations, idempotent (TR350)** —
+  `trip_saved_places` is a set keyed (trip, member, place) and the
+  interactive route refuses a duplicate; what §18.3 asks for is the MERGE
+  on reconnect. §48's queue now carries `SAVE_IDEA` / `UNSAVE_IDEA` as set
+  operations (`services/trips/TripOfflineQueue.ts:79#SET_OPERATION_TYPES`;
+  their payloads are strict, `services/trips/TripOfflineQueue.ts:80#SaveIdeaPayloadSchema`),
+  and the replay route applies them by identity — union then no-op,
+  difference then no-op — answering `added` / `already_present` /
+  `removed` / `already_absent` and moving no aggregate version, because a
+  bookmark is not trip state (`routes/tripOffline.ts:174#applySetOperation(`).
+  A concurrent add of the same element is the same element: the unique key
+  refuses it and the answer is `already_present`. `test/tripOfflineRoute.test.ts:192#already_present`
+  replays save, save, unsave, unsave and reads the set empty with the
+  kernel untouched; `test/tripOfflineQueue.test.ts:82#UNSAVE_IDEA` pins the
+  classification and the malformed case. Mutation: an add that never
+  notices the element is present (1 red).
+- **§8.4 late check-in has a producer (TR146)** — the trigger was built in
+  §44 and Today fed it two columns no table carries. The freedom projection
+  now reports, per placed commitment, when the traveller is estimated to
+  arrive — the previous commitment's departure plus the hop's travel term
+  and this commitment's prep, a lower bound like every travel term here,
+  null when the hop could not be estimated (`services/trips/TripFreedomProjection.ts:179#arrivalEstimates.push(`);
+  Today takes that as `estimatedArrivalAt` and a lodging's required arrival
+  as its desk deadline (`services/trips/TripTodayProjection.ts:325#checkInDeadlineAt:`).
+  `test/tripTodayProjection.test.ts:82#late_check_in`: a hotel whose desk
+  closes ten minutes after the traveller leaves the previous commitment,
+  ten kilometres away, fires with the minutes over the desk; the same
+  commitment as an event does not. Mutation: the desk deadline dropped
+  (1 red).
+- **§7.4 the place-identity check, re-derived (TR135)** — the row's reason
+  predates §40.3: "there is no check that runs, reports or blocks". There
+  is. `services/trips/TripSpatialConsistency.ts:276#checkPlaceIdentity(`
+  finds two plan items that share a location NAME and disagree on the
+  canonical place id (`SAME_NAME_DIFFERENT_PLACE`, `TRIP_SPATIAL_PLACE_IDENTITY`
+  on the wire), the feasibility route runs it on `trip_plan_items` — a
+  baseline table — and folds it into the §7.4 report
+  (`routes/tripFeasibility.ts:410#checkSpatialConsistency(planRows`), and
+  `test/tripSpatialConsistency.test.ts:201#SAME_NAME_DIFFERENT_PLACE` pins
+  the finding, the non-finding and the fold. No code changed for this row;
+  the census did.
+
+### 49.2 Row moves
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| TR135 §7.4 Place-identity check (external booking and hidden gem sharing a name but not identity) | W | **C** | `checkPlaceIdentity` runs in the feasibility route over `trip_plan_items`, reports `SAME_NAME_DIFFERENT_PLACE` with its Appendix B code and folds to INCONSISTENT; the row's "no check that runs" was §29's reading. |
+| TR146 §8.4 Risk: late check-in → contact property / alternate entry plan | W | **C** | The trigger's two inputs have producers: the freedom projection's per-hop arrival estimate and a lodging's required arrival as its desk deadline; fires on Today with the minutes over. |
+| TR350 §18.3 Saved ideas / reactions merge as set operations with idempotency | W | **C** | `SAVE_IDEA` / `UNSAVE_IDEA` replay from the reconnect queue as union / difference by identity, idempotent by construction, answering what changed; the interactive route's set storage and duplicate refusal stand. |
+| TR351 §18.3 Presence: newest valid observation with expiry/confidence; never simple last-write-wins across stale devices | W | **C** | A fix observed before the stored one is not written over it (`TRIP_PRESENCE_STALE`, both instants named); expiry and confidence were §10's already; the legacy shape is unchanged. |
+
+**Held, with the reason.** TR136 stays W: the stage-locality check runs on
+`trip_stages`, which no database but the local replica has (2760). TR342
+stays W: the bundle and the pulse say stale on the wire; no screen says it.
+TR352 and TR354 stay W: the version and the If-Match conflict are real and
+the kernel path is off everywhere (§41.3). TR344–TR348 stay N as the group
+they are recorded as: four of the five offline-safe operations now replay
+— join/leave plan and presence through the kernel, save idea as a set
+operation, low-risk edits through the kernel — and no client queues any.
+
+### 49.3 The ceiling, unchanged
+
+No migration. The presence guard and the set operations run on baseline
+tables in every deployment the moment this merges and deploys; the
+arrival estimates ride the freedom projection, which reads 2761's
+commitments under the operational gate. Nothing here is deployed, enabled
+or production-realised.
