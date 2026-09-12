@@ -62,6 +62,7 @@ import { liveEnvelope, readTripVersion } from "../../../domain/trips/contracts/T
 import { buildTripTimeline, withStageLocalTimes, orderByInstant, type TimelineStage } from "../../../domain/trips/projections/TripTimelineProjection.js";
 import { projectTripSafety, type SafetySessionRow } from "../../../domain/trips/projections/TripSafetyProjection.js";
 import { buildTripCompassProjection } from "../../../domain/trips/projections/TripCompassProjection.js";
+import { buildTripTelegraphProjection, TELEGRAPH_PARTICIPANT_CAP } from "../../../domain/trips/projections/TripTelegraphProjection.js";
 import { buildTripFreedomProjection } from "../../../domain/trips/projections/TripFreedomProjection.js";
 import { buildTripRouteChainProjection } from "../../../domain/trips/projections/TripRouteChainProjection.js";
 import { buildTripHealthProjection } from "../../../domain/trips/projections/TripHealthProjection.js";
@@ -762,6 +763,43 @@ router.get("/trips/:tripId/context", asyncHandler(async (req, res) => {
   const built = await buildTripCompassProjection(sc, tripId);
   if (!built.ok) {
     if (built.reason === "TRIP_NOT_FOUND") { sendError(res, "not_found", built.message); return; }
+    sendTripRefusal(res, "degraded_unavailable", "TRIP_PROJECTION_UNAVAILABLE", built.message);
+    return;
+  }
+  res.json(built.projection);
+}));
+
+// ── GET /trips/:tripId/telegraph-context ─────────────────────────────────────
+//
+// §1 / §19.1 (census-trips TR5): the trip context a CONVERSATION consumes.
+// `?with=<uuid>,<uuid>` names the people in the thread; the projection returns
+// the intersection with the crew and counts the rest without naming them.
+//
+// NOT behind the operational gate. The trip, its crew and its plan are tables
+// every deployment has; only the §17.2 term is gated, and it is read softly.
+router.get("/trips/:tripId/telegraph-context", asyncHandler(async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const { tripId } = req.params;
+  if (!UUID_RE.test(tripId)) { sendError(res, "invalid_payload", "Invalid trip id"); return; }
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const withParam = typeof req.query.with === "string" ? req.query.with : "";
+  const named = withParam.split(",").map((x: string) => x.trim()).filter((x: string) => x.length > 0);
+  const bad = named.find((x: string) => !UUID_RE.test(x));
+  if (bad) { sendError(res, "invalid_payload", `\`with\` must be a comma-separated list of user ids; \`${bad}\` is not one`); return; }
+  if (named.length > TELEGRAPH_PARTICIPANT_CAP) {
+    sendError(res, "invalid_payload", `\`with\` names ${named.length} people; the cap is ${TELEGRAPH_PARTICIPANT_CAP}`);
+    return;
+  }
+
+  const built = await buildTripTelegraphProjection(sc, tripId, user.id, named);
+  if (!built.ok) {
+    if (built.reason === "TRIP_NOT_FOUND") { sendError(res, "not_found", built.message); return; }
+    if (built.reason === "TRIP_AUTH_NOT_CREW") { sendTripRefusal(res, "not_member", "TRIP_AUTH_NOT_CREW", built.message); return; }
     sendTripRefusal(res, "degraded_unavailable", "TRIP_PROJECTION_UNAVAILABLE", built.message);
     return;
   }

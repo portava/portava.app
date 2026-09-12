@@ -366,6 +366,16 @@ preserved in §36.1 as the record of that measurement.
 > client's phase vocabulary was not the server's — two values it never emits,
 > three it does missing — and is now one list. TR38–TR45 stay W with one
 > reason left where they had two: the gate.
+
+> **RESTATED 2026-09-12 (§66): no bucket moves — 316 / 131 / 3 / 1 stands.**
+> TR5's evidence was two versions stale: it said one typed projection existed
+> and pointed the wrong way, when six of the seven consumers TR5 names have had
+> one since §40–§54. §66 builds the seventh, `TripTelegraphProjection`, served
+> at `GET /trips/:tripId/telegraph-context` and — unusually here — NOT behind
+> the operational gate: the trip, crew and plan are tables every database has,
+> and the one gated term (§17.2's mode) degrades to `unread` instead of
+> refusing. TR5 stays W for a true reason now: the projection is served but not
+> yet consumed, and the consumer is one edit in a file another lane holds.
 | **CORRECT% (spec-attributable)** | **WITHDRAWN — not measured. See §36.4** |
 | CANNOT-VERIFY share | **1 / 451 = 0.2 %** |
 
@@ -3701,7 +3711,7 @@ never FEASIBLE).
   at detection by kind (`:162#temporal_conflict_total`;
   `domain/trips/services/tripMetrics.ts:64#incrementTripMetric`).
 - `GET /trips/:tripId/freedom-windows`
-  (`server/trips/readRoutes/tripProjections.ts:230#freedom-windows`) — §12.1's
+  (`server/trips/readRoutes/tripProjections.ts:231#freedom-windows`) — §12.1's
   `getFreedomWindows(tripId)` as a read; accepted crew; refusals by reason.
   `/timeline` now carries `conflicts` and each day's `conflictIds`
   (`:156#detectPlanOverlaps`, `:159#conflictIds`),
@@ -3844,7 +3854,7 @@ AT_RISK, MOVED absent. TR194: no START_PLAN. TR396: no metric.
   opt-in rule, and today's plan; every read refused when it fails, because a
   health computed over "no risks" is HEALTHY by construction. Behind the
   §40.3 gate (`:59#tripOperationalProjectionsGate`).
-- `GET /trips/:tripId/health` (`server/trips/readRoutes/tripProjections.ts:280#health`),
+- `GET /trips/:tripId/health` (`server/trips/readRoutes/tripProjections.ts:281#health`),
   accepted crew, under the envelope.
 - **§3.3 AT_RISK, derived.** The timeline projection marks plan items in a
   temporal conflict as at risk (`:162#atRiskPlanIds`) and
@@ -3919,7 +3929,7 @@ nothing to get.
   test drives it with a stateful fake
   (`src/test/tripTodayProjection.test.ts:105#LIVE`) and a
   mutation that stops handing the version over went red.
-- `GET /trips/:tripId/today` (`server/trips/readRoutes/tripProjections.ts:300#today`);
+- `GET /trips/:tripId/today` (`server/trips/readRoutes/tripProjections.ts:301#today`);
   one refusal mapping for the three gated builders
   (`:202#refuseBuild`). Compass `get_today_state`
   (`compass/CompassTools.ts:218#get_today_state`,
@@ -4078,7 +4088,7 @@ to explain and no route.
   calls it AFTER the transition (`routes/trips-expansion.ts:738#runTripCloseout`),
   so a failed step cannot un-complete a trip, and the response carries the
   closeout rather than implying it. `GET /trips/:tripId/closeout`
-  (`server/trips/readRoutes/tripProjections.ts:672#closeout`) is the same plan as a
+  (`server/trips/readRoutes/tripProjections.ts:673#closeout`) is the same plan as a
   dry run.
 - `domain/trips/services/TripDecisionLedger.ts` — §21.2's `TripDecision`, every
   field (`:56#TripDecision`), versioned engines
@@ -4090,7 +4100,7 @@ to explain and no route.
   `TripTodayProjection.ts:353#recordTripDecision`) naming ids,
   versions and counts — never a coordinate or a name — and carries its
   `decisionId`. `GET /trips/:tripId/decisions/:decisionId/explain`
-  (`server/trips/readRoutes/tripProjections.ts:647#explain`) and Compass
+  (`server/trips/readRoutes/tripProjections.ts:648#explain`) and Compass
   `explain_trip_decision` (`compass/CompassTools.ts:383#explain_trip_decision`,
   `:889#toolExplainTripDecision`, dispatched at
   `:1371#explain_trip_decision`; fourteen tools now) answer
@@ -4448,7 +4458,7 @@ the merge, the apply, Batch C and two flags.
   file sees a coordinate (`domain/trips/projections/TripPulseProjection.ts:5#through the crew map`).
   A source that cannot be read is UNREAD, not empty; context that cannot be
   read refuses. Served at `GET /trips/:id/pulse`
-  (`server/trips/readRoutes/tripProjections.ts:320#/trips/:tripId/pulse`), to Compass as
+  (`server/trips/readRoutes/tripProjections.ts:321#/trips/:tripId/pulse`), to Compass as
   `get_live_conditions` (`compass/CompassTools.ts:244#name: "get_live_conditions"`), and
   into Today's `pulseSignals` layer, which was `no_source` since §40.3
   (`domain/trips/projections/TripTodayProjection.ts:220#pulseSignals = okLayer`). Ledgered as
@@ -4484,13 +4494,13 @@ the merge, the apply, Batch C and two flags.
   serves `attention`; Today and the pulse carry it.
 - **§21.1** — `notification_actionability_rate`: sent is counted at dispatch,
   acted at `POST /trips/:id/notifications/acted`
-  (`server/trips/readRoutes/tripProjections.ts:598#/trips/:tripId/notifications/acted`), and
+  (`server/trips/readRoutes/tripProjections.ts:599#/trips/:tripId/notifications/acted`), and
   `readNotificationActionability` (`domain/trips/policies/tripPush.ts:147#export function readNotificationActionability`)
   divides per kind, null over zero. `trip_event_replay_mismatch_total`:
   `verifyTripReplay` (`domain/trips/replay/tripReplayVerify.ts:35#export async function verifyTripReplay`)
   calls 2773's `trip_snapshot_verify_replay` and increments on `equal = false`,
   reached from `POST /trips/:id/replay/verify`
-  (`server/trips/readRoutes/tripProjections.ts:624#/trips/:tripId/replay/verify`).
+  (`server/trips/readRoutes/tripProjections.ts:625#/trips/:tripId/replay/verify`).
 - **Appendix B** — every §7.4 consistency finding now carries `reasonCode`
   from `SPATIAL_REASON_CODES` (`domain/trips/invariants/TripSpatialConsistency.ts:90#export const SPATIAL_REASON_CODES`),
   stamped by the check functions themselves, so the feasibility route's
@@ -4622,7 +4632,7 @@ production baseline through the chain: 39 database tests, 0 skipped.
   AT_RISK / SAFETY_EVENT the executable list is served empty with the
   suppression named (`domain/trips/projections/TripOpportunityProjection.ts:294#suppressed`).
   Served at `GET /trips/:id/opportunities`
-  (`server/trips/readRoutes/tripProjections.ts:399#/trips/:tripId/opportunities"`), to Compass as
+  (`server/trips/readRoutes/tripProjections.ts:400#/trips/:tripId/opportunities"`), to Compass as
   `get_opportunities` — §11.3's "Where next?"
   (`compass/CompassTools.ts:283#name: "get_opportunities"`) — as Today's
   `opportunities` layer, `no_source` since §40.3
@@ -4643,7 +4653,7 @@ production baseline through the chain: 39 database tests, 0 skipped.
   (`db/rollback/2026-09-12-2786-trip-kernel-opportunity-events-rollback.sql`),
   rehearsed apply → rollback → apply.
 - **Accepted and completed** — `POST /trips/:id/opportunities/:experienceId/accept`
-  (`server/trips/readRoutes/tripProjections.ts:417#/trips/:tripId/opportunities/:experienceId/accept`) writes
+  (`server/trips/readRoutes/tripProjections.ts:418#/trips/:tripId/opportunities/:experienceId/accept`) writes
   the plan the only way a plan is written: ADD_PLAN through the kernel with
   `source_type 'opportunity'`, keyed by the experience so a double tap is
   one plan; a non-executable experience is refused with its verdict and
@@ -4795,12 +4805,12 @@ route writes goes through the kernel as a command that already exists
   touches. The state is one read under the gate
   (`domain/trips/services/TripImpactState.ts:16#loadImpactState`); the route is
   `POST /trips/:tripId/proposals/preview`
-  (`server/trips/readRoutes/tripProjections.ts:488#/trips/:tripId/proposals/preview`).
+  (`server/trips/readRoutes/tripProjections.ts:489#/trips/:tripId/proposals/preview`).
 - **§12.1 simulate** — `domain/trips/services/TripReplan.ts:195#simulateChange`
   returns FEASIBLE / INFEASIBLE / UNKNOWN with the conflicts named and the
   freedom window as it would be after; judged, never written
   (`POST /trips/:tripId/simulate`,
-  `server/trips/readRoutes/tripProjections.ts:499#/trips/:tripId/simulate`; Compass
+  `server/trips/readRoutes/tripProjections.ts:500#/trips/:tripId/simulate`; Compass
   `simulate_plan`, `compass/CompassTools.ts:1214#toolSimulatePlan`).
 - **§11.3 replan today, §12.1 createProposal** — `domain/trips/services/TripReplan.ts:107#replanDay`
   produces the candidate diff: keep / move / cancel / add
@@ -4813,7 +4823,7 @@ route writes goes through the kernel as a command that already exists
   Shared mutations are the diff's `proposals`; nothing is written.
   `domain/trips/services/TripReplanService.ts:23#computeReplan` feeds it from the
   trip (pulse, freedom, compiler). `POST /trips/:tripId/replan`
-  (`server/trips/readRoutes/tripProjections.ts:514#/trips/:tripId/replan`) turns each proposal
+  (`server/trips/readRoutes/tripProjections.ts:515#/trips/:tripId/replan`) turns each proposal
   into `CREATE_PROPOSAL` only when the caller asks and the kernel is on —
   `proposal_type: replan_<op>`, the suggested decision rule, an idempotency
   key from the day, the op, the plan and the target time, `source: "replan"`
@@ -4846,7 +4856,7 @@ route writes goes through the kernel as a command that already exists
   unplaced by name; candidates are the crew's saved ideas and the day's
   plans with a public point (`domain/trips/services/TripReplanService.ts:49#computeMeetingPoint`).
   `POST /trips/:tripId/meeting-point`
-  (`server/trips/readRoutes/tripProjections.ts:552#/trips/:tripId/meeting-point`); Compass
+  (`server/trips/readRoutes/tripProjections.ts:553#/trips/:tripId/meeting-point`); Compass
   `find_meeting_point` (`compass/CompassTools.ts:1288#toolFindMeetingPoint`).
 - **§17.3 rescue** — `domain/trips/services/TripRescue.ts:66#planRescue` over the
   seven typed problems (`domain/trips/services/TripRescue.ts:18#RESCUE_PROBLEMS`):
@@ -4856,7 +4866,7 @@ route writes goes through the kernel as a command that already exists
   (`domain/trips/services/TripRescue.ts:21#ESCALATION_TARGETS`) — or to the crew,
   with why and when, and says what Compass may and must not do; a safe
   return is proposed where the problem is a person. `POST /trips/:tripId/rescue`
-  (`server/trips/readRoutes/tripProjections.ts:564#/trips/:tripId/rescue`) returns the plan
+  (`server/trips/readRoutes/tripProjections.ts:565#/trips/:tripId/rescue`) returns the plan
   (201) and declares the disruption through `DECLARE_DISRUPTION` — §17.2's
   switch — when the kernel is on, skipped by name when not; an unknown
   problem is 400. Compass `get_rescue_plan` (`compass/CompassTools.ts:1257#toolGetRescuePlan`)
@@ -5033,7 +5043,7 @@ re-derives and cites rather than argues.
 - **Five rows the tree had already earned.** TR189: Today has carried
   `pulseSignals` since §42 (`domain/trips/projections/TripTodayProjection.ts:120#pulseSignals:`).
   TR375: `POST /trips/:tripId/simulate` was registered in §44
-  (`server/trips/readRoutes/tripProjections.ts:499#/trips/:tripId/simulate`). TR393:
+  (`server/trips/readRoutes/tripProjections.ts:500#/trips/:tripId/simulate`). TR393:
   `trip_command_rejected_total` by reason has existed in the kernel client
   and been asserted three times (`domain/trips/commands/tripKernel.ts:496#readTripCommandRejectedTotal`,
   `src/test/tripKernel.test.ts:110#counter`). TR379 and TR75: 2520's map
@@ -5327,8 +5337,8 @@ mutations are named with the rows.
   orders a day's items by the instant, whatever zone each was typed in.
   The route reads the stages under the operational gate as /readiness does,
   refuses when they are unreadable, applies both, and says which zone rule
-  it used (`server/trips/readRoutes/tripProjections.ts:194#withStageLocalTimes(rows.map`;
-  `server/trips/readRoutes/tripProjections.ts:143#stageZoneReading`). `test/tripTimelineStageLocalTime.test.ts:25#Asia/Tokyo`:
+  it used (`server/trips/readRoutes/tripProjections.ts:195#withStageLocalTimes(rows.map`;
+  `server/trips/readRoutes/tripProjections.ts:144#stageZoneReading`). `test/tripTimelineStageLocalTime.test.ts:25#Asia/Tokyo`:
   a Lisbon item at 08:00Z reads 09:00, a Tokyo item at 23:30Z reads 08:30
   the next day, the boundary instant belongs to the later stage, and two
   items typed in two zones sort by when they happen. `tripProjections.test.ts`
@@ -5869,7 +5879,7 @@ transport segment and estimated nothing (TR287).
   with 2795 applied it expects the refusal by name; without it, the §35
   defect it was written to pin.
 - **§11.3 "I am bored" (TR197)** — `GET /trips/:tripId/bored`
-  (`server/trips/readRoutes/tripProjections.ts:347#router.get("/trips/:tripId/bored"`): the
+  (`server/trips/readRoutes/tripProjections.ts:348#router.get("/trips/:tripId/bored"`): the
   §7.3 window containing now, its minutes left and the deadline that ends
   it, and the §13 candidates the opportunity projection compiled for that
   window — executable, uncertain, and how many were not — in one answer,
@@ -6817,7 +6827,7 @@ state, which is why TR437 moves to W and not to C.
   (`domain/trips/services/TripDecisionLedger.ts:63#"route_chain"`) whose
   assumptions say the chain is the plan and no stop exists that is not a
   plan item. Served at `GET /trips/:tripId/route-chain` under the gate
-  (`server/trips/readRoutes/tripProjections.ts:252#router.get("/trips/:tripId/route-chain"`)
+  (`server/trips/readRoutes/tripProjections.ts:253#router.get("/trips/:tripId/route-chain"`)
   and to Compass as `get_route_chain`
   (`compass/CompassTools.ts:1069#export async function toolGetRouteChain(`).
 - **A route plan on a trip is a view over the plan.** Under the gate,
@@ -7175,3 +7185,89 @@ phase's order until Today is refreshed — the projection is per request and
 nothing pushes. And NIGHTLIFE leads with the crew, which is itself behind
 `trip_crew_map_enabled`: with that flag off the phase leads with a section that
 renders nothing, and falls through to the ideas.
+
+## 66. The seventh consumer: a trip context a conversation can read from an object
+
+**Read against the branch `claude/sweet-fermat-fmx7up`.** TR5 says Trips owns
+context distribution — *"stable typed projections for Compass, Map, Telegraph,
+Discovery, Safety, Passport, Memory"* — and has read **W** since the first
+census on the evidence that *"exactly one typed projection exists and it points
+the wrong way."* That sentence is now two versions out of date: §40 through §54
+built six of the seven. The seventh, Telegraph's, did not exist, and nothing in
+the census said so plainly. §66 builds it and restates the row on what is
+actually missing.
+
+### 66.1 What was built, and where
+
+- **Six of the seven already existed.** `TripCompassProjection` (§40.6,
+  TR360), `TripMapProjection` (TR358), `tripDiscoveryProjection` (TR133),
+  `TripSafetyProjection` (TR361), `TripPassportProjection` and
+  `TripMemoryProjection` (§54, TR362/TR363). The seventh consumer — a
+  conversation — had none, and `routes/telegraphChat.ts` reads `trip_members`
+  itself to decide whether a suggestion may be promoted to a plan.
+- **`TripTelegraphProjection`**
+  (`domain/trips/projections/TripTelegraphProjection.ts:114#export async function buildTripTelegraphProjection(`)
+  carries what a thread needs and nothing else: the trip, the people **in this
+  conversation** who are on it, what is running now and what is next, and
+  §17.2's mode. The participant list is the INTERSECTION of the caller's named
+  people with the crew — people the caller did not name are never returned, and
+  named people who are not on the trip are **counted, not named back**
+  (`domain/trips/projections/TripTelegraphProjection.ts:154#const nonParticipantCount`).
+  It carries no coordinate, no presence and no freshness class, pinned by a test
+  that greps the serialised projection for all six.
+- **It is usable on every deployment, which is the point.** The trip, the crew
+  and the plan are tables every database has. Only §17.2's mode comes from the
+  operational batch, and it is read SOFTLY — `unread` with the reason rather
+  than a refusal
+  (`domain/trips/projections/TripTelegraphProjection.ts:188#: unread(reading.info ?? reading.detail`),
+  so a conversation on a database without 2761/2778 still gets a trip. A
+  projection that refused everything because one gated table is absent would
+  have been dead code until the owner deploys.
+- **What it refuses.** An unreadable crew is a REFUSAL, not a soft read: the
+  crew is how the viewer is checked, and answering without it would answer
+  without checking who is asking. An unreadable plan refuses too, rather than
+  reporting an empty day. A viewer who is not an accepted member gets
+  `TRIP_AUTH_NOT_CREW`.
+- **Served, not consumed — and the row says so.**
+  `GET /trips/:tripId/telegraph-context?with=<ids>`
+  (`server/trips/readRoutes/tripProjections.ts:780#router.get("/trips/:tripId/telegraph-context"`)
+  is registered and crew-gated, and `?with=` refuses a malformed id and a list
+  over the cap. No Telegraph file is touched by this section: three lanes hold
+  those files concurrently, and `routes/telegraphChat.ts` still reads
+  `trip_members` directly. That is the whole of what keeps TR5 at W now.
+- **Tests** (`test/tripTelegraphProjection.test.ts:52#TR5 — the trip context a conversation may consume`):
+  the shape on the health fixture; nobody named yielding nobody; the six
+  forbidden keys absent; the gate closed still yielding a trip with the mode
+  `unread`; the gate open putting the mode on the wire; the non-member and the
+  blind-crew refusals; an unreadable plan refusing; a missing trip not found;
+  and the route serving a member, refusing a stranger, and rejecting a bad or
+  oversized `?with=`. Seen red first under two mutations — the stranger count
+  forced to zero, and a closed gate faked as `NORMAL` — each turning exactly
+  one case red.
+
+### 66.2 Row moves
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| TR5 §1 Trips owns context distribution (typed projections for Compass, Map, Telegraph, Discovery, Safety, Passport, Memory) | W | **W** | **The stated evidence was two versions stale.** It read *"exactly one typed projection exists and it points the wrong way"*; six of the seven have existed since §40–§54, and §66 builds the seventh. W, and now for a reason that is true: the projection is SERVED but not yet CONSUMED — `routes/telegraphChat.ts` still reads `trip_members` itself, and three Telegraph lanes hold that file while this is written. One consumer switch stands between this row and C, and it needs no migration and no flag. |
+
+**Rows looked at that did not move:** TR358–TR363 (all C — the six that
+already existed, unchanged here), TR360 (C — Compass consumes its projection
+in-process, which is the shape this one is waiting for), TR319 (W — §17.2's
+switch is what this projection carries softly, and it rides the gate).
+
+### 66.3 The ceiling
+
+No migration, no flag, no dependency, and — unusually for this branch — **no
+deployment cap on the projection itself**: it is built from tables every
+database has, and the one gated term degrades instead of refusing. What stands
+between TR5 and C is a single edit in a file another lane holds.
+
+What would turn this red once that edit lands (P24): `?with=` is the caller's
+claim about who is in the thread, and this projection trusts it to decide whom
+to name — a caller that names a user id it should not know already knows it, so
+nothing leaks, but the participant list is only as true as the conversation
+membership the caller passed, and nothing here checks that against the thread.
+And `currentPlan` prefers an `in_progress` status over the clock, so a plan
+left in progress after its window closes keeps reading as current — the same
+staleness §11.1 carries on Today, and it is not fixed here.
