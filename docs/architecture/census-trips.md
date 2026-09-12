@@ -23,12 +23,12 @@ preserved in §36.1 as the record of that measurement.
 | Measure | Value |
 | --- | --- |
 | **Denominator (testable requirements)** | **451** |
-| BUILT-AND-CORRECT | **268** |
-| BUILT-BUT-WRONG | **153** |
-| NOT-BUILT | **29** |
+| BUILT-AND-CORRECT | **271** |
+| BUILT-BUT-WRONG | **155** |
+| NOT-BUILT | **24** |
 | CANNOT-VERIFY | **1** |
-| **CONSTRUCTED%** = (C+W)/451 | **421 / 451 = 93.3 %** |
-| **CORRECT%** (raw) = C/451 | **268 / 451 = 59.4 %** |
+| **CONSTRUCTED%** = (C+W)/451 | **426 / 451 = 94.5 %** |
+| **CORRECT%** (raw) = C/451 | **271 / 451 = 60.1 %** |
 
 > **RESTATED 2026-09-11 (§38): 89 → 87 CORRECT, 127 → 129 WRONG.** §38 re-derived
 > 39 of the C rows against the code and **two did not hold**, both for the same
@@ -185,6 +185,16 @@ preserved in §36.1 as the record of that measurement.
 > 2792's flag (TR403), and stage local time with instant order on the
 > timeline from 2760's zones (TR424). Two N → C, two W → C. Four
 > migrations, two flags seeded FALSE; the ceiling is §41.3's, unchanged.
+
+> **RESTATED 2026-09-12 (§48): 268 → 271 CORRECT, 153 → 155 WRONG,
+> 29 → 24 NOT-BUILT. CONSTRUCTED 93.3 % → 94.5 %, CORRECT 59.4 % → 60.1 %.**
+> §48 built the server's half of §18: the signed, versioned offline bundle
+> and its staleness rule (TR334 W — no client stores it), the
+> QueuedTripOperation contract and the replay / revalidate / reject rule
+> behind `POST /trips/:tripId/operations` (TR343, TR349, TR451), and the
+> §22.4 duplicate and the §23 offline member executed on the real kernel
+> (TR417 holds C on a second proof, TR421 W). Three N → C, two N → W. No
+> migration; the ceiling is §41.3's, unchanged.
 | **CORRECT% (spec-attributable)** | **WITHDRAWN — not measured. See §36.4** |
 | CANNOT-VERIFY share | **1 / 451 = 0.2 %** |
 
@@ -3391,7 +3401,7 @@ carried a freshness (TR368). No metric measured read-model lag (TR394).
   `serveMapProjection`, `routes/tripMapProjection.ts:80#serveMapProjection`,
   so the two paths cannot serve two projections), `/crew` (`:261#crew`),
   `/context` (`:303#context`), `/safety` (`:327#safety`);
-  registered at `routes/index.ts:159#tripProjectionsRouter`. Every
+  registered at `routes/index.ts:161#tripProjectionsRouter`. Every
   response spreads the envelope; every failed read that a projection IS is
   refused with `TRIP_PROJECTION_UNAVAILABLE` on the wire
   (`:108#TRIP_PROJECTION_UNAVAILABLE`), and a flag-off crew
@@ -5215,4 +5225,111 @@ surface, the sweep deletes evidence past its policy — and the transport
 policy's read and write run behind `trip_operational_projections_enabled`
 with 2793 in that capability's schema. Stage local time renders with the
 trip's own zone alone until that gate is on. Nothing here is deployed,
+enabled or production-realised.
+
+## 48. Offline: the bundle, the queue, and what a reconnecting member is allowed to do
+
+**Read against the branch `claude/sweet-fermat-fmx7up`.** §18 had nothing:
+no bundle, no queue, no reconnect path, three `TRIP_OFFLINE_*` codes
+declared and never emitted, and the §23 "offline member for 6h" scenario
+untestable because there was nothing to test. This section builds the
+SERVER'S half of §18 — the bundle a client would store, the contract a
+client's queue would carry, and the replay a reconnecting client would
+get — and says plainly that no client stores or queues anything yet
+(Cluster 13). No migration: the kernel's receipts (2420) and versions are
+the mechanism; the offline path is what asks them the §18.3 questions.
+
+### 48.1 What was built, and where
+
+- **§18.1 the signed, versioned bundle (TR334)** — `services/trips/TripOfflineBundle.ts:145#buildOfflineBundle(`
+  assembles next commitments (in deadline order, past ones dropped), the
+  active plan (in progress, else the next confirmed), the plans, the
+  critical addresses (reservations, commitments, upcoming plans) and the
+  certified context, stamped `sourceTripVersion` (§18.4) and `expiresAt`;
+  what it does not carry — the selected route, meeting points, map tiles —
+  is a named empty field, not an omission. `services/trips/TripOfflineBundle.ts:102#signOfflineBundle(`
+  signs the canonical bytes with HMAC-SHA256 under
+  `TRIP_OFFLINE_BUNDLE_SECRET` (SESSION_SECRET as the tree's usual
+  fallback, no default); `services/trips/TripOfflineBundle.ts:108#verifyOfflineBundle(`
+  is constant-time and false for anything edited. `GET /trips/:tripId/offline-bundle`
+  (`routes/tripOffline.ts:60#offline-bundle",`) reads the trip's version, its
+  plan and reservations (no `raw_text`), and its commitments under the
+  operational gate, and refuses (503) rather than issue an unsigned bundle
+  when no secret is configured. `test/tripOfflineBundle.test.ts:85#version_behind`
+  and `test/tripOfflineRoute.test.ts:128#unsigned` pin the contents, the
+  round trip, the tamper case and the refusal. Mutation: any signature
+  verifies (2 red).
+- **§18.1 stale is visible (TR342)** — `services/trips/TripOfflineBundle.ts:122#bundleStaleness(`:
+  past `expiresAt`, or read at a version the trip has moved past,
+  `TRIP_OFFLINE_BUNDLE_STALE` says which, and a stale bundle is still the
+  last certified context, not the current one. The replay endpoint dates
+  the bundle a client carries back. On the wire; no screen renders it.
+- **§18.2 the contract and the rule (TR343, TR349, TR451)** —
+  `services/trips/TripOfflineQueue.ts:45#QueuedTripOperationSchema` is the
+  spec's seven fields, strict; `services/trips/TripOfflineQueue.ts:91#classifyQueuedOperation(`
+  decides one of three things for each operation, in the order the
+  traveller acted (`services/trips/TripOfflineQueue.ts:112#orderQueuedOperations<T`):
+  *replay* for the offline-safe list (`services/trips/TripOfflineQueue.ts:64#OFFLINE_SAFE_TYPES`
+  — join/leave plan, attendance, presence, start/skip a plan, a vote, each
+  in the kernel's vocabulary and each issuable), with its own idempotency
+  key and expected version; *revalidate* for a sensitive or high-conflict
+  type the client has not checked against the current version —
+  `TRIP_OFFLINE_REVALIDATION_REQUIRED`, with the version to use — and
+  replay once it has; *reject* for a type the kernel does not have or a
+  cutover-gated plan write with its own route, or a `clientOccurredAt` in
+  the future or past the seven-day horizon — `TRIP_OFFLINE_QUEUE_REJECTED`,
+  with why. `POST /trips/:tripId/operations` (`routes/tripOffline.ts:118#operations",`)
+  reads the canonical version first and refuses the whole queue when it
+  cannot, replays through `executeTripCommand` with the operation id as the
+  correlation, holds everything with `TRIP_KERNEL_UNAVAILABLE` per operation
+  when the kernel flag is off, and answers the whole queue — counts of
+  replayed, duplicates, conflicts, revalidate, rejected, refused — so one
+  refusal hides nothing. `test/tripOfflineQueue.test.ts:67#horizon` pins the
+  rule; `test/tripOfflineRoute.test.ts:151#TRIP_OFFLINE_REVALIDATION_REQUIRED`
+  drives the app: the order, the duplicate's receipt, the held sensitive
+  operation that never reaches the kernel, the conflict that overwrites
+  nothing, the rejected types, the flag off, the bundle current / behind /
+  edited. Mutations: a sensitive operation replaying unrevalidated (2 red),
+  the order dropped (2 red), the flag ignored (1 red).
+- **§22.4 the duplicate, and §23's offline member, on the real kernel (TR417, TR421)** —
+  `test/db/tripOfflineReplay.db.test.ts:47#TR417`: a member's queued
+  JOIN_PLAN replayed twice with its key is one transition — the version
+  moves once, one event exists, one attendance row, `duplicate: true` with
+  the first receipt's version the second time. Then the owner moves the
+  trip on while the member is away: the member's SET_PLAN_ATTENDANCE queued
+  against the old version is `TRIP_VERSION_CONFLICT`, the attendance row is
+  what it was and the version did not move; revalidated against the
+  current version, the same edit lands. That is §18.3's "never simple
+  last-write-wins" and §18.4's "server aggregate version is canonical",
+  executed rather than described.
+
+### 48.2 Row moves
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| TR334 A signed/versioned offline bundle | N | **W** | The server issues one — signed, versioned at the trip's version, dated, verifiable, refused unsigned; the mobile client stores nothing yet (Cluster 13). |
+| TR343 The `QueuedTripOperation` contract | N | **C** | §18.2's seven fields as a strict schema on the wire, enforced by the replay endpoint; a client naming the actor is refused. |
+| TR349 Sensitive or high-conflict mutations may require revalidation after reconnect | N | **C** | A sensitive operation not checked against the current version is held with `TRIP_OFFLINE_REVALIDATION_REQUIRED` and the version to use, and never reaches the kernel; checked, it replays. |
+| TR417 §22.4 A duplicate command with the same idempotency key cannot produce a duplicate state transition | C | **C** | **Holds**, on a second proof: §39 moved it on `tripKernelLive.test.ts`; now a queued JOIN_PLAN replayed twice with its key is one version, one event, one row, `duplicate: true` on the database, and the same through the replay route. |
+| TR421 Offline member for 6h — queue/reconnect, stale presence, no destructive last-write-wins | N | **W** | Queue/reconnect and no-LWW executed on the real kernel and through the route; stale presence is §10's freshness on the wire (TR342 W) and no client renders it or queues anything. |
+| TR451 `TRIP_OFFLINE_*` | N | **C** | All three emitted: `_REVALIDATION_REQUIRED` and `_QUEUE_REJECTED` by the queue rule, `_BUNDLE_STALE` by the staleness rule, each through the replay endpoint. |
+
+**Held, with the reason.** TR335–TR341 and TR344–TR348 stay N as the
+groups they are recorded as: four of the seven bundle contents (next
+commitments, active plan, critical addresses, certified context) and three
+of the five offline-safe operations (join/leave plan, presence, the
+low-risk edits) are now on the wire, but the rows say what the CLIENT
+caches and queues, and it caches and queues nothing; the group verdicts
+are not split here. TR342 stays W for the same reason. TR350 stays W: a
+saved idea is not a kernel command and the replay says so. TR354 stays W:
+the version is canonical and enforced, and the kernel path is off
+everywhere (§41.3).
+
+### 48.3 The ceiling, unchanged
+
+No migration. The bundle route reads baseline tables and, under the
+operational gate, 2761's commitments; the replay route issues through the
+kernel, which is off in every database but the local replica until the
+owner's Batch C and the flag. The signing secret is an environment value
+the owner sets; without it no bundle is issued. Nothing here is deployed,
 enabled or production-realised.
