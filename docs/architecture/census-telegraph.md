@@ -1703,4 +1703,97 @@ other legacy command added to `ISSUABLE_COMMANDS`, which would put a
 guard-free door next to a guarded one; and any relaxation of the unsend's seen
 check, which would let the product make a retraction claim it cannot honour.
 
-Headline after §11 in this worktree (last statement wins): C=122 W=182 N=124 X=0
+
+---
+
+### 11.8 §19's bands, turned from six labels into one order
+
+T255 said it exactly: `important` "carries **no delivery difference** from
+`normal` — only `urgent` changes behaviour. It is a label, not a priority." It
+was worse than that when re-read. `telegraph.message` — §19's P2 — is
+`defaultPriority: 'important'` too (`NotificationTemplateService.ts:217`), so
+the one label the coordination band used was shared with the band below it and
+could not have distinguished them even in principle.
+
+**What a band is allowed to change.** Not delivery. `NotificationPreferenceService`
+draws the override line at `urgent` + `admin` deliberately — "important priority
+alone does NOT bypass user preferences" — and a meetup moving is not a reason to
+wake someone at 3am; a second override would make the first meaningless. What a
+band legitimately changes is **how long one notification suppresses the next**,
+and that number lived in exactly one place: a flat
+`DEFAULT_DEDUP_WINDOW_MS = 30 minutes` for everything. Which meant a second
+safety alert was a duplicate of the first, and "the meetup moved to 8" followed
+by "the meetup moved to the other bar" was one notification.
+
+`domain/telegraph/policies/attentionLadder.ts:88` is §19's table as an order:
+P0 never suppressed, P1 60s, P2 5min (the number `telegraph.message` already
+used), P3 15min, P5 1h, and P4 `null` because §19 says it is not persisted at
+all. `NotificationDeduplicationService.ts:114` reads it for the general rule and
+`:78` for message coalescing, so the constant and the band cannot drift apart.
+`dedupeWindowFor` (`:232`) has three answers and the difference is load-bearing:
+`undefined` is "the ladder does not claim this event — keep the 30-minute
+default", `0` is "P0, never suppress", `null` is "not persisted". Collapsing
+`undefined` into `0` would have made every unclaimed event in the product
+unsuppressable.
+
+**Every name in the band map was read off the template file, and the first draft
+was wrong.** It named `meetup.time_changed`, `meetup.location_changed` and
+`trip.plan_changed`; none exist in this repository — the real "a meetup moved"
+event is `circle.meeting_point_updated` (`NotificationTemplateService.ts:974`).
+A band keyed on a name nothing can emit is a policy that silently does nothing,
+so the test asserts per key that a template exists, and that assertion was RED
+against that draft. The map claims only what it can justify: `admin.*` and
+`rent_buddy.*` are absent though they carry `urgent`, and `compass.sense.*` is
+absent though a circle plan change is coordination-shaped, because it belongs to
+the Sensing surface and its own cadence rules govern it. Unclaimed is the safe
+answer.
+
+**P4 stopped being an absence and became a refusal.** T258 is C because there is
+no typing template anywhere — but "nobody has written one" is not enforcement.
+`typing.started` / `typing.stopped`, the two names the event bus actually uses
+(`lib/telegraphEvents.ts:65`), are now P4 (`attentionLadder.ts:208`);
+`check()` answers `ephemeral_not_persisted` for them before any read (`:69`),
+and the test asserts a P4 event has NO template, so adding one is a failing test
+rather than a push.
+
+**The digest half.** `NotificationDigestService` already refused `urgent` and
+`important` rows — but that is a PRIORITY filter, and §19's bands are not
+priorities. `trip.crew_message` is `normal` and in a digest category, so it
+could be pushed when it happened and summarised again the next morning.
+`isDigestible` is now consulted per event type alongside the priority filter
+(`NotificationDigestService.ts:183`, with `event_type` added to the select at
+`:158` — a column this file already names at `alreadyDigestedForDay`), and
+`undefined` keeps the row, so nothing that used to be digested stops being
+digested by accident.
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| T255 | W | **W** | §19 P1 Coordination. No longer a label: `circle.meeting_point_updated`, `trip.departure_reminder` and `safe_return.cleared` are P1 (`domain/telegraph/policies/attentionLadder.ts:164`) with a 60-second suppression window (`:98`) against P2's five minutes and the flat default's thirty, read by the real dedupe path at `services/notifications/NotificationDeduplicationService.ts:114`. Still W, and the ceiling is an OWNER DECISION: §19 says "immediate/high priority", and whether a coordination event may override quiet hours or a push-off preference is a product call I deliberately did not make — `NotificationPreferenceService` reserves that for `urgent` + `admin`, and a second override would void the first. |
+| T257 | N | **W** | §19 P3 Media. The batching behaviour now exists — P3 is a real band with a 15-minute window and `digestible: true` (`attentionLadder.ts:116`) — and `telegraph.media_ready` is mapped to it (`:199`). W and not C because **nothing emits it**: it is named in `DECLARED_NOT_EMITTED` (`:251`) and the test asserts no template exists for it, because the server does not observe how long an upload took or whether the app was backgrounded, and inventing that signal would be worse than not having it. |
+| T258 | C | **C** | §19 P4 Ephemeral. Re-derived and strengthened rather than moved: the row was C on the grounds that no typing template exists, which is an absence. `typing.started`/`typing.stopped` are now declared P4 (`attentionLadder.ts:208`) and `NotificationDeduplicationService.check()` refuses them with `ephemeral_not_persisted` before any read (`:69`), so the guarantee is enforced rather than merely unviolated. |
+| T259 | W | **W** | §19 P5 AI. The degrade-first half now has a server-side expression: P5 carries the longest suppression window of any persisted band (1 hour, `attentionLadder.ts:138`) and is the only other digestible band. Still W: this is *suppression* ordering, not *load shedding*. The client-side ladder built in §11.5 (`hooks/useDataSaver.ts`) sheds AI first on the device; there is still no server-side shed under load, which is what T259's second half asks for and what an owner would have to decide to build. |
+
+**Rows looked at that did not move.** T254 stays C and is now also *protected*:
+the ladder's test asserts every P0 event's template is `urgent`, so a P0 event
+that quietly became `important` would be a failing test rather than a safety
+alert that stopped overriding quiet hours. T256 stays C — P2's five-minute
+coalescing window is unchanged in value, and now comes from the band rather than
+from a private constant that could drift from it. One correction to that row
+while it was open: it records `telegraph.message` as `defaultPriority:'normal'`,
+and the template says `important` (`NotificationTemplateService.ts:217`). The
+verdict is unaffected — that is exactly why the label was worthless — but the
+evidence sentence was measured against an older tree.
+
+**The ceiling for §11.8.** This is BUILT ON BRANCH and NOT MERGED. Nothing here
+needs a migration or a flag — it is a behaviour change to a service that already
+runs — which means it is the one piece of §19 that would take effect on the day
+it merged, and that cuts both ways: a mistake in `EVENT_BAND` is live on merge.
+What would turn it red (P24): a P0 event added whose template is not `urgent`
+(the test catches it); a typing template added (the test catches it); an event
+type in `EVENT_BAND` that no longer has a template after a rename (the test
+catches it); a band added with a window that does not increase down the ladder
+(the monotonicity test catches it). What no test catches, and what an owner must
+decide: whether P1 deserves a delivery override at all, and whether P5 should be
+shed server-side under load rather than merely suppressed for longer.
+
+Headline after §11 in this worktree (last statement wins): C=122 W=183 N=123 X=0
