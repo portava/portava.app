@@ -20,6 +20,9 @@
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js';
+// Telegraph §13.2 `member.joined` — census T185 measured both sync paths as
+// silent to open clients.
+import { publishToThread } from './telegraphEvents.js';
 
 export async function syncTripChatMembers(
   tripId: string,
@@ -99,6 +102,14 @@ export async function syncTripChatMembers(
   );
 
   // 4. Upsert accepted members (restore if they had left_at set).
+  //
+  // Telegraph §13.2 `member.joined` (census T185): this loop already KNOWS who
+  // is new — `currentById` is the roster as it was before any write — so the
+  // event is emitted exactly where the newcomer is created, and only for a row
+  // whose insert SUCCEEDED. There are two sync implementations in this tree
+  // (this one and `services/groupChatSync.ts`, reached from different routes),
+  // and both emit, because an event that fires on one of two paths is worse
+  // than one that fires on neither: a client would learn to trust it.
   for (const { user_id, role } of accepted) {
     const existing = currentById.get(user_id);
     if (!existing) {
@@ -113,6 +124,10 @@ export async function syncTripChatMembers(
         console.error(`syncTripChatMembers: member insert failed for trip ${tripId}: ${insErr.message}`);
         return null;
       }
+      void publishToThread(sc, threadId, {
+        type: 'member.joined',
+        payload: { userId: user_id, source: 'trip_sync', tripId, joinedAt: now },
+      });
     } else if (existing.role !== role) {
       // Only restore (clear left_at) when the trip role actually changed.
       // A member whose role is unchanged but who has left_at set chose to leave
@@ -238,6 +253,11 @@ export async function syncCircleChatMembers(
         console.error(`syncCircleChatMembers: member insert failed for circle ${circleOwnerId}: ${insErr.message}`);
         return null;
       }
+      // Telegraph §13.2 `member.joined` — see the trip branch above.
+      void publishToThread(sc, threadId, {
+        type: 'member.joined',
+        payload: { userId: user_id, source: 'circle_sync', circleOwnerId, joinedAt: now },
+      });
     } else if (ex.left_at !== null || ex.role !== role) {
       const { error: updErr } = await sc
         .from('message_thread_members')

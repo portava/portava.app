@@ -282,6 +282,29 @@ export interface DynamicShareProducer {
 
 export const TELEGRAPH_DYNAMIC_SHARE_PRODUCERS: readonly DynamicShareProducer[] = [
   {
+    file: "artifacts/api-server/src/services/telegraphReportEvidence.ts",
+    expression:
+      "msg_type: (msg as any).msg_type ?? null | subtype: (msg as any).subtype ?? null | " +
+      "subtype: m.subtype ?? null",
+    family: "OPERATIONAL",
+    sourceDomain: "moderation",
+    produces: [],
+    writesMessages: false,
+    note:
+      "DECLARED BY THE INTEGRATOR when the §12–§22 lane met this guard. This site " +
+      "does not PRODUCE a message type: it COPIES one off a message that already " +
+      "exists, into telegraph_report_evidence, so a moderator can still see what " +
+      "was reported after the sender deletes it (§22). It reads `messages` and " +
+      "writes only the evidence table — writesMessages is false, and `produces` is " +
+      "empty because the set is not this site's to bound: it is whatever the " +
+      "reported message already carried, which is exactly the eighteen literals " +
+      "and nine computed values this registry declares elsewhere. Recorded rather " +
+      "than filtered out, because a scanner cannot tell a copier from a producer " +
+      "and a registry that quietly dropped the ones someone judged harmless would " +
+      "be guessing. OPERATIONAL / moderation because an evidence row is a " +
+      "restricted internal artifact and is never projected into a conversation.",
+  },
+  {
     file: "artifacts/api-server/src/lib/liveReferenceMessages.ts",
     expression: "msg_type: LIVE_REFERENCE_MSG_TYPE | subtype: LIVE_REFERENCE_MSG_SUBTYPE",
     family: "PUBLIC",

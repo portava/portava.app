@@ -196,7 +196,8 @@ describe("GET /api/intel/opportunities", () => {
 
   it("ON: the WORLD block carries the Crowd state and the Forecast — and the forecast is PREDICTED and below the Live floor", async () => {
     const r = await get(world([ON]), `subjectIds=${PLACE_ID}&horizonMinutes=90`);
-    const w = r.body.contexts.world[0];
+    const w = r.body.contexts?.world?.[0];
+    assert.ok(w, "the world block is served");
     assert.equal(w.subjectId, PLACE_ID);
     assert.equal(w.crowd.density, "busy");
     assert.equal(w.crowd.momentum, "building");
@@ -214,7 +215,8 @@ describe("GET /api/intel/opportunities", () => {
 
   it("ON: a subject with no trajectory gets a NAMED forecast refusal, never a flat forecast", async () => {
     const r = await get(world([ON], { intel_state_snapshots: [snapshot(PLACE_ID)] }), `subjectIds=${PLACE_ID}`);
-    const w = r.body.contexts.world[0];
+    const w = r.body.contexts?.world?.[0];
+    assert.ok(w, "the world block is served");
     assert.equal(w.crowd.density, "busy");
     assert.equal(w.forecast, null);
     assert.equal(w.forecastRefusal, "no_trajectory_evidence");
@@ -225,7 +227,8 @@ describe("GET /api/intel/opportunities", () => {
       world([ON], { intel_state_snapshots: [snapshot(PLACE_ID, { value: { level: "unsafe_density" } })] }),
       `subjectIds=${PLACE_ID}`,
     );
-    const w = r.body.contexts.world[0];
+    const w = r.body.contexts?.world?.[0];
+    assert.ok(w, "the world block is served");
     assert.equal(w.crowd.density, null);
     assert.deepEqual(w.crowd.refusals, ["unsafe_density_is_a_safety_claim"]);
     assert.equal(w.forecastRefusal, "safety_level_not_forecastable");

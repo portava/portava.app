@@ -26,6 +26,8 @@ import {
 } from '../services/messageTranslation';
 import { nameVisibilitySet } from '../lib/publicIdentity';
 import { asyncHandler } from '../lib/asyncHandler';
+// Telegraph §13.2 message.deleted — census T182 measured the delete as silent.
+import { publishToThread } from '../lib/telegraphEvents';
 
 const router = Router();
 
@@ -378,6 +380,21 @@ router.delete('/messages/:messageId', asyncHandler(async (req, res) => {
   }
 
   res.status(200).json({ id: messageId, deleted: true });
+
+  // Telegraph §13.2 `message.deleted`. Published AFTER the 201/200, like every
+  // other Telegraph event, so realtime can never fail a write — the bus
+  // swallows and counts its own failures and the client's poll self-heals.
+  // census T182 measured the absence: without this, a delete reached other
+  // clients only on their next poll, so a message the sender had just retracted
+  // stayed on everyone else's screen for the length of a polling interval.
+  //
+  // The payload carries the ID and not the body, because there is no body left:
+  // the row above redacted it in place. A consumer wanting the old text is
+  // asking for exactly the thing the delete removed.
+  void publishToThread(sc, m.thread_id, {
+    type: 'message.deleted',
+    payload: { messageId, deletedAt: now, senderId: user.id },
+  }, { excludeUserId: user.id });
 }));
 
 // ── POST /api/trips/:tripId/chat/sync — owner-only repair endpoint ────────────

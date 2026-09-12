@@ -15,7 +15,7 @@ import { useBlockedIds } from '../context/BlockedIdsContext.tsx';
 import { HighlightRing } from './HighlightRing.tsx';
 import { HighlightViewer } from './HighlightViewer.tsx';
 import { useHighlightRingState } from '../hooks/useHighlightRingState.ts';
-import { color, space, radius, type as t, avatar } from '../theme/tokens.ts';
+import { color, space, radius, type as t, typography, avatar } from '../theme/tokens.ts';
 import { TG, TG_AVATAR } from '../theme/telegraphTokens.ts';
 import { TelegraphAvatar, TelegraphRow } from './telegraph/TelegraphPrimitives.tsx';
 import { KeyboardSafeScrollView } from './ui/KeyboardSafeView.tsx';
@@ -24,8 +24,13 @@ import { useScreenTiming } from '../hooks/useScreenTiming.ts';
 import type { ThreadSummary, MessageRequest } from '../services/messaging.ts';
 import { circleCardInboxPreview } from './CircleStatusCardMessage.logic';
 import { primaryIdentityText, secondaryIdentityText } from '../lib/displayIdentity.ts';
+import { originLabel } from '../features/telegraph/lib/requestOriginLabel.ts';
 import { UserIdentityLink } from './interaction/UserIdentityLink.tsx';
 import { errorCopy } from '../lib/errorCopy.ts';
+// Telegraph §21 — object-aware, authorization-scoped message search. A
+// different question from this screen's own thread filter; see the row that
+// opens it.
+import { TelegraphSearchScreen } from '../features/telegraph/components/TelegraphSearchScreen.tsx';
 
 type FilterKey = 'all' | 'direct' | 'trips' | 'circles' | 'unread' | 'requests';
 
@@ -186,6 +191,11 @@ function ThreadRow({ item, userId }: { item: ThreadSummary; userId: string | nul
   const lastAt = lmp?.createdAt;
   const isMuted = !!item.mutedAt;
   const unread = item.unreadCount ?? 0;
+  // The server OMITS this field when its inputs were unreadable, and sends a
+  // real 0 when it measured nothing outstanding. Both render NOTHING here — the
+  // badge appears only above zero, so the inbox never prints a reassurance
+  // ("0 needs action") that nobody verified.
+  const needsAction = typeof item.needsActionCount === 'number' ? item.needsActionCount : 0;
   const isAi = item.isAiLastMessage ?? (lmp?.msgType === 'ai_recommendation');
 
   return (
@@ -209,6 +219,14 @@ function ThreadRow({ item, userId }: { item: ThreadSummary; userId: string | nul
             {lastAt ? <Text style={s.time}>{timeAgo(lastAt)}</Text> : null}
           </View>
         </View>
+
+        {needsAction > 0 ? (
+          <View style={s.needsActionTag}>
+            <Text style={s.needsActionText}>
+              {needsAction === 1 ? '1 needs action' : `${needsAction} need action`}
+            </Text>
+          </View>
+        ) : null}
 
         {previewText ? (
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
@@ -338,6 +356,8 @@ export function TelegraphInboxScreen({ topInset = 0 }: Props) {
   } = useIncomingMessageRequests();
 
   const [search, setSearch] = useState('');
+  /** Telegraph §21 — the server-backed message search, opened from the row below. */
+  const [messageSearchOpen, setMessageSearchOpen] = useState(false);
   const [filter, setFilter] = useState<FilterKey>('all');
   const [blockedIds, setBlockedIds] = useState<Set<string>>(new Set());
   const { blockerIds } = useBlockedIds();
@@ -437,6 +457,46 @@ export function TelegraphInboxScreen({ topInset = 0 }: Props) {
               returnKeyType="search"
             />
           </View>
+
+          {/*
+            Telegraph §21. The box above filters the conversations already
+            loaded on this device — that is what census T272 measured, and it
+            is still the right behaviour for "find that thread". Searching the
+            MESSAGES inside them is a different question with a different
+            authorization story, so it is a different surface, and the handoff
+            carries what the person already typed.
+          */}
+          {search.trim().length >= 2 && (
+            <Pressable
+              testID="telegraph-open-message-search"
+              accessibilityRole="button"
+              accessibilityLabel={`Search messages for ${search.trim()}`}
+              style={s.messageSearchRow}
+              onPress={() => setMessageSearchOpen(true)}
+            >
+              <Search size={14} color={color.signal} />
+              <Text style={s.messageSearchText} numberOfLines={1}>
+                {`Search messages for “${search.trim()}”`}
+              </Text>
+            </Pressable>
+          )}
+
+          <Modal
+            visible={messageSearchOpen}
+            animationType="slide"
+            onRequestClose={() => setMessageSearchOpen(false)}
+          >
+            <View style={s.messageSearchModal}>
+              <TelegraphSearchScreen
+                initialQuery={search.trim()}
+                onClose={() => setMessageSearchOpen(false)}
+                onOpenMessage={(hit) => {
+                  setMessageSearchOpen(false);
+                  router.push(`/messages/${hit.conversationId}`);
+                }}
+              />
+            </View>
+          </Modal>
 
           <ScrollView
             horizontal
@@ -645,6 +705,10 @@ function RequestCard({
   }
 
   const { sender, previewText, createdAt } = request;
+  // §22: why this person is reaching out. `originLabel` decides whether the
+  // product states it or attributes it — a stranger who wants to be trusted
+  // asserts "Trip", so an unverified claim must read as a claim.
+  const origin = originLabel(request.origin);
   const senderName = primaryIdentityText({ name: sender?.name, handle: sender?.handle });
   const senderHandleSub = secondaryIdentityText({ name: sender?.name, handle: sender?.handle });
   const initial = (senderName.replace(/^@/, '')[0] ?? '?').toUpperCase();
@@ -678,6 +742,15 @@ function RequestCard({
         </UserIdentityLink>
         <Text style={rc.time}>{timeAgo(createdAt)}</Text>
       </View>
+
+      {/* §22 contextual origin — stated when verified, attributed when not */}
+      {origin ? (
+        <View style={origin.verified ? rc.originVerified : rc.originClaimed}>
+          <Text style={origin.verified ? rc.originVerifiedText : rc.originClaimedText}>
+            {origin.text}
+          </Text>
+        </View>
+      ) : null}
 
       {/* City / language metadata */}
       {(sender?.city || sender?.language) ? (
@@ -817,6 +890,29 @@ const rc = StyleSheet.create({
   handle: { ...t.small, color: color.mute, fontSize: 12, marginTop: 1 },
   time: { ...t.small, color: color.faint, fontSize: 11 },
   metaRow: { flexDirection: 'row', gap: 6, flexWrap: 'wrap' },
+  // §22: two different claims, two different weights. The verified one is
+  // solid because it is a fact the server checked; the claimed one is outlined
+  // and muted because it is somebody's word.
+  originVerified: {
+    alignSelf: 'flex-start',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 999,
+    backgroundColor: color.signal,
+    marginTop: 8,
+  },
+  originVerifiedText: { fontSize: 11, fontWeight: '700', color: color.onInk },
+  originClaimed: {
+    alignSelf: 'flex-start',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: color.haze,
+    marginTop: 8,
+  },
+  originClaimedText: { fontSize: 11, fontWeight: '600', color: color.mute },
+
   metaChip: {
     fontSize: 11,
     fontWeight: '600',
@@ -961,6 +1057,16 @@ const s = StyleSheet.create({
     height: 40,
   },
   searchIcon: { marginRight: space.sm },
+  messageSearchRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.sm,
+    marginHorizontal: space.xl,
+    marginBottom: space.sm,
+    paddingVertical: space.sm,
+  },
+  messageSearchText: { ...(typography.caption as object), color: color.signal, flexShrink: 1 },
+  messageSearchModal: { flex: 1, backgroundColor: color.paper },
   searchInput: {
     flex: 1,
     height: 40,
@@ -1032,6 +1138,19 @@ const s = StyleSheet.create({
     paddingHorizontal: 4,
   },
   unreadText: { fontSize: 10, fontWeight: '700', color: color.onInk },
+
+  // §19's "needs action" is deliberately NOT the unread colour: an unread
+  // message is something to read, and this is something to answer. Same row,
+  // different claim.
+  needsActionTag: {
+    alignSelf: 'flex-start',
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: color.signal,
+  },
+  needsActionText: { fontSize: 10, fontWeight: '700', color: color.signal },
 
   preview: { ...t.small, color: color.mute, flex: 1 },
   previewBold: { color: color.ink, fontWeight: '600' },

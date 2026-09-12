@@ -32,7 +32,7 @@ are files, tables, routes, event types and literals, each re-derived on every ru
 
 ### 2. Migrations that touch a messaging table
 
-26 of 523 migration files reference at least one messaging table.
+30 of 527 migration files reference at least one messaging table.
 
 - `src/migrations/0011_message_type.sql`
 - `src/migrations/0016_thread_reads.sql`
@@ -60,6 +60,10 @@ are files, tables, routes, event types and literals, each re-derived on every ru
 - `src/migrations/2402_telegraph_membership_rls_recursion.sql`
 - `src/migrations/2460_meetup_invites_self_invite_latent_disclosure.sql`
 - `src/migrations/2802_telegraph_live_references_flag.sql`
+- `src/migrations/2810_telegraph_message_kernel.sql`
+- `src/migrations/2811_telegraph_message_side_tables.sql`
+- `src/migrations/2812_telegraph_report_evidence.sql`
+- `src/migrations/2813_telegraph_request_origin.sql`
 
 ### 3. Server routes that read or write a messaging table
 
@@ -98,33 +102,15 @@ Transport: server-sent events. Endpoints in `src/routes/telegraphStream.ts`: `GE
 Bus: `src/lib/telegraphEvents.ts`, in-memory, lossy by design, with a cross-instance
 hook in `src/lib/telegraphBroadcast.ts`.
 
-25 event types:
+7 event types:
 
-- `access.revoked`
-- `call.accepted`
-- `call.canceled`
-- `call.declined`
-- `call.ended`
-- `call.group_ended`
-- `call.group_started`
-- `call.incoming`
-- `call.missed`
-- `call.removed_from_room`
-- `call.role_changed`
-- `call.room_updated`
-- `member.left`
+- `gone`
 - `message.created`
+- `message.deleted`
 - `message.translated`
+- `message.unsent`
 - `message.updated`
-- `read.updated`
-- `reconnect`
-- `request.accepted`
-- `request.created`
-- `request.declined`
 - `thread.updated`
-- `typing.started`
-- `typing.stopped`
-- `user.blocked`
 
 ### 6. Push and notification flow
 
@@ -161,11 +147,12 @@ Processing and EXIF policy: `src/lib/mediaProcessing.ts`. Access: `src/lib/media
 
 `subtype` (static literals): `call_ended`, `call_started`, `compass_card`, `discovery_card`, `e2ee_welcome`, `event_context_card`, `hidden_gem`, `meetup`, `meetup_cancelled`, `meetup_confirmed`, `post_card`
 
-11 site(s) COMPUTE a message type rather than writing a literal, so no
+12 site(s) COMPUTE a message type rather than writing a literal, so no
 fixed enumeration of `subtype` is complete. They are declared in
 `src/domain/telegraph/policies/shareAuthorizationPolicy.ts` and re-derived by
 `check:telegraph-share-producers`:
 
+- `artifacts/api-server/src/services/telegraphReportEvidence.ts` — `` msg_type: (msg as any).msg_type ?? null | subtype: (msg as any).subtype ?? null | subtype: m.subtype ?? null `` (parser / passthrough, writes no message)
 - `artifacts/api-server/src/lib/liveReferenceMessages.ts` — `` msg_type: LIVE_REFERENCE_MSG_TYPE | subtype: LIVE_REFERENCE_MSG_SUBTYPE ``
 - `artifacts/api-server/src/lib/calls/callStoreAdapter.ts` — `` subtype: `call_${session.status}` ``
 - `artifacts/api-server/src/routes/messaging.ts` — `` subtype: req.body?.subtype (any string the client sends) ``

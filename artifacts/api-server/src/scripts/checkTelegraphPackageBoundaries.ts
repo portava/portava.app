@@ -82,6 +82,18 @@ const ALLOWED_SERVICE_IMPORTS: Record<string, string> = {
     "the §7 availability visibility predicate, pure and shipped",
   "services/safeReturn/SafeReturnPrivacyGuard":
     "the expiry gate and coordinate strip, cited by the §26 matrix",
+  // ADDED BY THE INTEGRATOR when the §12–§22 lane met this guard. The direction
+  // matters: §23 forbids Telegraph EMBEDDING another domain's business logic,
+  // and calling Trust's canonical decider is the opposite of embedding it —
+  // census-trust A17 grades surfaces on whether they consume Trust through its
+  // canonical read INSTEAD OF rebuilding it, and this is that read. The
+  // capability policy needs one bit (is this viewer restricted, and was the
+  // answer readable); re-deriving it from trust_profiles here would fork an
+  // authorization rule across two domains, which is the failure this guard
+  // exists to prevent, not the one it would be catching.
+  "services/trust/TrustRestrictionService":
+    "the §15 viewer-restriction decider, shipped and canonical — re-implementing it " +
+    "would fork an authorization rule and put Telegraph in breach of census-trust A17",
 };
 
 function walk(dir: string, out: string[] = []): string[] {

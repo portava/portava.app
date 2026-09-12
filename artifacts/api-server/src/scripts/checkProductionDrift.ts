@@ -340,6 +340,108 @@ export const KNOWN_PRODUCTION_GAPS: Record<string, Gap> = {
       "committed. Under Option B the file is never run at all, so applying it " +
       "would TAKE the decision.",
   },
+
+  // Telegraph, migration 2810.
+  telegraph_outbox: {
+    classification: "unapplied",
+    note:
+      "Migration 2810 (Telegraph §13.3 conversation_outbox). Applied to NO database " +
+      "— not production and not portava-ci — and declared here the moment the file " +
+      "entered the tree rather than after somebody noticed it. Two reasons it waits, " +
+      "and neither is 'not got round to it': (1) NOTHING DRAINS IT. The table takes " +
+      "one row per message lifecycle transition and no consumer reads them, so " +
+      "applying it and turning its flag on would grow a table nobody empties — which " +
+      "is why the trigger that writes it is gated on telegraph_message_kernel_enabled " +
+      "and that flag is seeded FALSE. (2) The rest of 2810 adds columns to " +
+      "public.messages, the hottest table in the product, and the sequence it " +
+      "introduces is only meaningful after a per-conversation backfill an operator " +
+      "runs deliberately. DDL and behaviour were EXECUTED on a throwaway PostgreSQL " +
+      "16 carrying the baseline plus the chain from 2093 (209 applied, 6 " +
+      "known-unreplayable, 0 unexpected), and the rollback was executed on the same " +
+      "database and verified to leave migration 2400's visible_from_at intact. " +
+      "RLS is enabled with zero policies, so no non-service role can read it.",
+  },
+
+  // ── Telegraph §12's four side tables, migration 2811, as one block ─────────
+  // They are one decision — stop putting structure in messages.body and in
+  // nullable columns on messages — and they share 2810's flag, deliberately:
+  // two switches for one capability is how a half-on state gets created by
+  // accident. Every one ships with RLS on and a SELECT-only policy keyed on
+  // ACTIVE thread membership, with a POSTCONDITION that fails if a non-SELECT
+  // policy ever appears, so a client cannot write any of them directly.
+  //
+  // NONE HAS A WRITER TODAY, and census-trips' own rule — "a table nothing
+  // writes satisfies nothing" — is why census-telegraph T142/T143/T144/T147
+  // move only to BUILT-BUT-WRONG on the strength of this migration. The one
+  // partial exception is message_reactions, which POST /api/telegraph/commands
+  // writes when the kernel flag is on; the flag is seeded FALSE and no database
+  // has the table, so "partial" here means "the code exists", not "rows exist".
+  //
+  // DDL and re-application were EXECUTED on a throwaway PostgreSQL 16 carrying
+  // the baseline plus the chain from 2093.
+  message_edits: {
+    classification: "unapplied",
+    note:
+      "Migration 2811 (Telegraph §12 message_edits). Applied to no database. §12 says " +
+      "'versioned text edits WHERE RETAINED' and previous_body is nullable for exactly " +
+      "that reason — retention is a policy choice this schema declines to make. No writer: " +
+      "the edit route still overwrites messages.body in place.",
+  },
+  message_reactions: {
+    classification: "unapplied",
+    note:
+      "Migration 2811 (Telegraph §12 message_reactions). Applied to no database. Its " +
+      "consumer PREDATES it: a telegraph.reaction notification template ('reacted to your " +
+      "message') has existed with no table, no route and no UI. The 16-character cap on " +
+      "emoji is a control rather than formatting — a reaction that could hold a sentence " +
+      "would be a message bypassing the send path's block guard, rate limit and §22 scam " +
+      "detection. Written by POST /api/telegraph/commands behind 2810's flag, which is " +
+      "seeded FALSE.",
+  },
+  message_attachments: {
+    classification: "unapplied",
+    note:
+      "Migration 2811 (Telegraph §12/§16.1 message_attachments). Applied to no database. " +
+      "Replaces the four nullable media columns on public.messages, which §12.1 names as " +
+      "the anti-pattern and which cap a message at one attachment of two kinds. References " +
+      "public.media_assets with ON DELETE RESTRICT so an asset deletion cannot silently " +
+      "erase the fact that a message carried one. No writer: messages.media_url is still " +
+      "the live path.",
+  },
+  conversation_action_refs: {
+    classification: "unapplied",
+    note:
+      "Migration 2811 (Telegraph §12 conversation_action_refs). Applied to no database. " +
+      "The explicit reference table §12.1 asks for, carrying payload_version and revoked_at " +
+      "— the property a string inside messages.body cannot have, and the one census T46 " +
+      "says is missing when a source object is deleted and the shared card lives on. No " +
+      "writer.",
+  },
+
+  // ── Telegraph §22 restricted moderation storage (migration 2812) ───────────
+  // The one table in this lane whose ABSENCE is a live harm rather than a
+  // missing feature: census T284 measured that a reported message deleted by
+  // its sender is destroyed, because deletion blanks messages.body in place and
+  // nothing copied it first. The snapshot is taken at REPORT time by
+  // services/telegraphReportEvidence.ts, behind its own flag.
+  //
+  // DDL and re-application were EXECUTED on a throwaway PostgreSQL 16 carrying
+  // the baseline plus the chain from 2093.
+  telegraph_report_evidence: {
+    classification: "unapplied",
+    note:
+      "Migration 2812 (Telegraph §22 evidence). Applied to no database. RLS is ENABLED " +
+      "with FORCE and NO POLICY AT ALL, so only the service role can read it — a " +
+      "membership-keyed policy would hand the reported party their own evidence file — " +
+      "and a postcondition RAISES if any policy is ever added. Deliberately has no foreign " +
+      "key to public.messages, so a deletion cannot cascade the evidence away; its one FK " +
+      "is to public.reports ON DELETE CASCADE, because evidence is retained to serve a " +
+      "report. Written by POST /api/messages/:id/report and POST /api/threads/:id/report " +
+      "behind telegraph_report_evidence_enabled, which is seeded FALSE. retention_until is " +
+      "NULL and nothing purges: a deletion schedule for moderation evidence is an owner " +
+      "decision, and a job running on a number this migration invented would be worse than " +
+      "no job.",
+  },
 };
 
 /**

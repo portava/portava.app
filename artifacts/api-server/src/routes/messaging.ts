@@ -24,6 +24,25 @@
 
 import { Router } from 'express';
 import { isBlockedBetween } from '../lib/blockGuard.js';
+// Telegraph §22 — the six travel-scam families and link reputation, computed
+// for the recipient at read time. Pure; no I/O, no clock.
+import { messageSafetySignals } from '../domain/telegraph/policies/travelScamSignals.js';
+// Telegraph §13.2 safety.reported — reporter-only, audience decided once.
+import { emitSafetyReported } from '../lib/telegraphEvents.js';
+// Telegraph §22 — the send step's adaptive rate limit (T279's missing half).
+import { checkSendRateLimit } from '../domain/telegraph/policies/sendRateLimit.js';
+// Telegraph §19 — "12 unread · 1 needs action". The second half.
+import { resolveNeedsAction } from '../domain/telegraph/policies/needsAction.js';
+// Telegraph §22 — restricted moderation storage for reported content.
+import { captureMessageEvidence, captureThreadEvidence } from '../services/telegraphReportEvidence.js';
+// Telegraph §22 — why a stranger is reaching out, and whether we can prove it.
+import {
+  parseOriginClaim, resolveRequestOrigin, requestOriginEnabled,
+  originInsertColumns, originSelect, originForWire,
+} from '../domain/telegraph/policies/requestOrigin.js';
+// Telegraph §22 — "stranger media ... until accepted": the server decides who
+// is a stranger; the client renders the shield.
+import { resolveSenderConnectedness } from '../domain/telegraph/policies/senderConnectedness.js';
 import { z } from 'zod';
 import { requireUser, sendError } from '../lib/http';
 import { canMessage } from '../lib/messagingPermissions';
@@ -667,9 +686,31 @@ router.post('/users/:userId/message-request', async (req, res) => {
     ? req.body.previewText.slice(0, 280)
     : null;
 
+  // Telegraph §22: record WHY this person is reaching out, and record separately
+  // whether the server established it. The sender asserts the origin; a sender
+  // who wants to look safe asserts "Trip". Only `trip` can be checked today
+  // (both parties accepted members), and everything else is stored as a claim.
+  //
+  // The flag gates the COLUMNS, not just the feature: 2813 is on no database,
+  // and PostgREST answers an unknown column with 42703 and fails the whole
+  // insert — which would lose the message request, not just its origin.
+  const originOn = await requestOriginEnabled(sc);
+  const resolvedOrigin = originOn
+    ? await resolveRequestOrigin(sc, {
+        senderId: user.id,
+        recipientId,
+        claim: parseOriginClaim(req.body),
+      })
+    : null;
+
   const { data: newReq, error } = await sc
     .from('message_requests')
-    .insert({ sender_id: user.id, recipient_id: recipientId, preview_text: previewText })
+    .insert({
+      sender_id: user.id,
+      recipient_id: recipientId,
+      preview_text: previewText,
+      ...originInsertColumns(resolvedOrigin, originOn),
+    })
     .select('id')
     .single();
 
@@ -700,9 +741,13 @@ router.get('/me/message-requests', async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, 'server_not_configured', 'Service client not ready'); return; }
 
+  // §22's origin, under the same flag as the write. No-op while OFF: the select
+  // list is then exactly the one that ran before 2813.
+  const originOn = await requestOriginEnabled(sc);
+
   const { data, error } = await sc
     .from('message_requests')
-    .select('id, sender_id, preview_text, created_at')
+    .select(originSelect('id, sender_id, preview_text, created_at', originOn))
     .eq('recipient_id', user.id)
     .eq('status', 'pending')
     .order('created_at', { ascending: false });
@@ -736,6 +781,12 @@ router.get('/me/message-requests', async (req, res) => {
       requestId: r.id,
       previewText: r.preview_text ?? null,
       createdAt: r.created_at,
+      // §22's origin. `verified` travels to the client because the client has
+      // to render two different sentences — "they are in your trip crew" and
+      // "they say they found you nearby" — and flattening it here would move
+      // the decision somewhere with less information. null while the flag is
+      // off, which the client renders as it always did: nothing.
+      origin: originForWire(r, originOn),
       sender: p
         ? {
             id: p.id,
@@ -1748,6 +1799,18 @@ router.get('/me/threads', async (req, res) => {
     }
   }
 
+  // Telegraph §19's inbox line is "12 unread · 1 needs action". The unread half
+  // is below; this is the other half, and it is deliberately NOT derived from
+  // messages: it counts meetups in these threads that are waiting on an answer
+  // from the caller (a pending RSVP, or a time poll they have not voted in).
+  // A failed read comes back `degraded`, and the field is then OMITTED rather
+  // than sent as 0 — see the header of needsAction.ts for why zero is the one
+  // answer that must never be guessed here.
+  const needsAction = await resolveNeedsAction(sc, { viewerId: user.id, threadIds });
+  if (needsAction.degraded) {
+    req.log.warn({ userId: user.id }, 'me/threads: needs-action inputs unreadable — omitting the count rather than reporting zero');
+  }
+
   const threads = (threadsRes.data ?? []).map((t: any) => {
     const lm = lastMsgByThread[t.id];
     const mem = membershipMap[t.id] ?? {};
@@ -1801,6 +1864,10 @@ router.get('/me/threads', async (req, res) => {
       otherMembers: membersByThread[t.id] ?? [],
       lastMessagePreview,
       unreadCount,
+      // undefined (omitted from JSON) means "not known", which is a different
+      // statement from 0 and must stay different on the wire.
+      needsActionCount: needsAction.degraded ? undefined : (needsAction.byThread.get(t.id)?.count ?? 0),
+      needsActionReasons: needsAction.degraded ? undefined : (needsAction.byThread.get(t.id)?.reasons ?? []),
       tripCity,
       isAiLastMessage,
       bookingId: bookingIdByThread[t.id] ?? null,
@@ -1848,6 +1915,20 @@ router.get('/threads/:threadId/messages', async (req, res) => {
 
   const sc = getServiceClient();
   if (!sc) { sendError(res, 'server_not_configured', 'Service client not ready'); return; }
+
+  // Telegraph §22 stranger-media input: a trip or circle roster is itself the
+  // acceptance, so the thread's own type decides whether the social graph has
+  // to be consulted at all. An unreadable thread row leaves `thread_type`
+  // undefined, which the resolver reads as 'direct' — the side that shields.
+  const { data: threadMetaForShield, error: threadMetaShieldErr } = await sc
+    .from('message_threads')
+    .select('thread_type')
+    .eq('id', threadId)
+    .maybeSingle();
+  if (threadMetaShieldErr) {
+    req.log.warn({ err: threadMetaShieldErr, threadId },
+      'thread type unreadable — stranger-media shielding will treat this thread as direct');
+  }
 
   let query = sc
     .from('messages')
@@ -1902,6 +1983,19 @@ router.get('/threads/:threadId/messages', async (req, res) => {
   const msgSpansMap = nonDeletedMsgItems.length > 0
     ? await enrichSpans(sc, 'message', nonDeletedMsgItems, user.id)
     : {};
+
+  // Telegraph §22 — "Stranger media can be blurred / no autoplay until
+  // accepted." Resolved ONCE for the page over the distinct non-self senders
+  // (the answer is the same for every message from the same person), and
+  // fail-closed: an unreadable relationship table shields everyone rather than
+  // silently switching the control off. The thread's own type is passed in
+  // because a trip or circle roster IS the acceptance.
+  const senderConnectedness = await resolveSenderConnectedness(
+    sc,
+    user.id,
+    rows.map((r: any) => String(r.sender_id)),
+    String((threadMetaForShield as any)?.thread_type ?? 'direct'),
+  );
 
   // Fetch reply_to_id values and quoted context.
   // Wrapped in try/catch: silently skipped if migration 0057 is not yet applied.
@@ -2001,6 +2095,23 @@ router.get('/threads/:threadId/messages', async (req, res) => {
       mediaType: (m as any).media_type ?? null,
       mediaThumbnailUrl: (m as any).media_thumbnail_url ?? null,
       mediaDurationSeconds: (m as any).media_duration_seconds ?? null,
+      // Telegraph §22 — travel scam signals and link reputation, for the
+      // RECIPIENT only. A sender who could see their own signals would tune
+      // their wording against the detector; a recipient gets the second
+      // opinion a scam depends on them not having. Nothing is blocked and
+      // nothing is hidden: the annotation is advisory, and deleted messages
+      // carry no body to scan.
+      ...(!isDeleted && m.sender_id !== user.id
+        ? (() => {
+            const sig = messageSafetySignals(m.body as string | null);
+            return sig ? { safetySignals: sig } : {};
+          })()
+        : {}),
+      // Telegraph §22 — the stranger-media shield. The client renders this; it
+      // does not decide it. `true` for the caller's own messages, because a
+      // person is not a stranger to themselves.
+      senderConnected: m.sender_id === user.id || senderConnectedness.connected.has(m.sender_id as string),
+      senderConnectednessDegraded: senderConnectedness.degraded,
     };
   });
 
@@ -2053,6 +2164,26 @@ router.post('/threads/:threadId/messages', async (req, res) => {
 
   if (!membership) { sendError(res, 'forbidden', 'Not a member of this thread'); return; }
   if ((membership as any).left_at !== null) { sendError(res, 'forbidden', 'You no longer have access to this thread'); return; }
+
+  // Telegraph §22 — the send step's adaptive rate limit. census T279: "Message
+  // sending has no rate limit at all." It is placed AFTER membership so a
+  // non-member cannot spend a member's bucket, and BEFORE every other read so
+  // a burst costs one cached tier lookup rather than the whole send pipeline.
+  // The tier falls to the strictest on an unreadable input, which is a pause
+  // and never a block — see the module header for why that direction is safe.
+  {
+    const limiterSc = getServiceClient() ?? client;
+    const decision = await checkSendRateLimit(limiterSc, user.id);
+    if (!decision.allowed) {
+      req.log.warn(
+        { userId: user.id, threadId, tier: decision.tier, limit: decision.limit, reasons: decision.reasons },
+        'telegraph send rate limit reached',
+      );
+      res.setHeader('Retry-After', String(Math.ceil(decision.retryAfterMs / 1000)));
+      sendError(res, 'rate_limited', 'You are sending messages very quickly. Please wait a moment.');
+      return;
+    }
+  }
 
   // Block guard for 1:1 threads. Blocking (blocks.ts) tears down follow/friend
   // edges and pending message-requests but never closes an EXISTING thread, so
@@ -3065,7 +3196,7 @@ router.post('/threads/:threadId/report', async (req, res) => {
   const reason = typeof req.body?.reason === 'string' ? req.body.reason.trim().slice(0, 200) : '';
   if (!reason) { sendError(res, 'invalid_payload', 'reason is required'); return; }
 
-  const { error } = await sc
+  const { data: filedThreadReport, error } = await sc
     .from('reports')
     .insert({
       reporter_id: user.id,
@@ -3074,7 +3205,9 @@ router.post('/threads/:threadId/report', async (req, res) => {
       reason_code: 'other',
       reason_detail: reason,
       severity: 'normal',
-    });
+    })
+    .select('id')
+    .maybeSingle();
 
   if (error) {
     req.log.warn({ err: error }, 'thread report insert failed');
@@ -3082,10 +3215,43 @@ router.post('/threads/:threadId/report', async (req, res) => {
     return;
   }
 
+  // Telegraph §22: snapshot the reported conversation into restricted
+  // moderation storage BEFORE responding, because the content can be deleted
+  // the moment the reported party notices. T284 measured what happens without
+  // this: deletion blanks `messages.body` in place, so reported content is
+  // destroyed rather than restricted.
+  //
+  // Awaited, but never fatal: a person who has just reported harassment must
+  // not be told "could not file report" because a snapshot table was slow. The
+  // report is already written; evidence improves it and does not gate it.
+  try {
+    await captureThreadEvidence(sc, {
+      reportId: (filedThreadReport as any)?.id ?? null,
+      threadId,
+      log: req.log,
+    });
+  } catch (err) {
+    req.log.error({ err, threadId }, 'report evidence: thread capture threw — the report stands without content');
+  }
+
   // Compass: reporter's cache should no longer surface content from this thread
   await invalidateCompassCache(sc, user.id, "thread_report");
 
   res.status(201).json({ ok: true });
+
+  // Telegraph §13.2 `safety.reported`, to the REPORTER ONLY. census T194:
+  // "Not in the union; reports write a row and emit nothing."
+  //
+  // Not published to the thread, and that is the point. Telling the reported
+  // party is the fastest way to get a reporter hurt; telling a group turns a
+  // safety action into a public accusation. The reporter gets it because a
+  // report whose only feedback is a toast that has already gone is a report
+  // people file twice. The payload carries no target identity.
+  emitSafetyReported(user.id, {
+    reportId: (filedThreadReport as any)?.id ?? null,
+    targetType: 'thread',
+    filedAt: new Date().toISOString(),
+  });
 });
 
 // ── Saved messages ─────────────────────────────────────────────────────────────
@@ -3264,7 +3430,7 @@ router.post('/messages/:messageId/report', async (req, res) => {
   const reason = typeof req.body?.reason === 'string' ? req.body.reason.trim().slice(0, 200) : '';
   if (!reason) { sendError(res, 'invalid_payload', 'reason is required'); return; }
 
-  const { error } = await sc
+  const { data: filedMessageReport, error } = await sc
     .from('reports')
     .insert({
       reporter_id: user.id,
@@ -3273,7 +3439,9 @@ router.post('/messages/:messageId/report', async (req, res) => {
       reason_code: 'other',
       reason_detail: reason,
       severity: 'normal',
-    });
+    })
+    .select('id')
+    .maybeSingle();
 
   if (error) {
     req.log.warn({ err: error }, 'message report insert failed');
@@ -3281,10 +3449,30 @@ router.post('/messages/:messageId/report', async (req, res) => {
     return;
   }
 
+  // Telegraph §22 — see the thread-report handler above for why this is awaited
+  // before the response and why it can never fail the report.
+  try {
+    await captureMessageEvidence(sc, {
+      reportId: (filedMessageReport as any)?.id ?? null,
+      messageId,
+      log: req.log,
+    });
+  } catch (err) {
+    req.log.error({ err, messageId }, 'report evidence: message capture threw — the report stands without content');
+  }
+
   // Compass: reporter's cache should no longer surface content from this message author
   await invalidateCompassCache(sc, user.id, "message_report");
 
   res.status(201).json({ ok: true });
+
+  // Telegraph §13.2 `safety.reported` — reporter only. See the thread-report
+  // handler above for why the audience is one person.
+  emitSafetyReported(user.id, {
+    reportId: (filedMessageReport as any)?.id ?? null,
+    targetType: 'message',
+    filedAt: new Date().toISOString(),
+  });
 });
 
 export default router;

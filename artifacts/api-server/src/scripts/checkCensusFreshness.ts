@@ -892,6 +892,32 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/scripts/TELEGRAPH_CERTIFICATION_BASELINE.json",
     "artifacts/api-server/src/scripts/TELEGRAPH_OBSERVABILITY_BASELINE.json",
     "docs/architecture/telegraph-phase0-inventory.md",
+    // WIDENED AGAIN 2026-09-12: the §12–§22 lane (census-telegraph §11) added a
+    // Compass tool module, four server/telegraph routes, the message kernel and
+    // report-evidence services, four migrations with their rollbacks, and a
+    // client feature tree. Watched by prefix where a tree exists, so a later
+    // edit anywhere in it ages this census.
+    "artifacts/api-server/src/compass/TelegraphConversationTools.ts",
+    "artifacts/api-server/src/server/telegraph/",
+    "artifacts/api-server/src/services/telegraphMessageKernel.ts",
+    "artifacts/api-server/src/services/telegraphReportEvidence.ts",
+    "artifacts/api-server/src/services/notifications/NotificationDigestService.ts",
+    "artifacts/api-server/src/lib/chatSync.ts",
+    "artifacts/api-server/src/lib/circleAccessGuard.ts",
+    "artifacts/api-server/src/routes/friends.ts",
+    "artifacts/api-server/src/compass/CompassNotificationEngine.ts",
+    "artifacts/api-server/src/compass/CompassProfileService.ts",
+    "artifacts/api-server/src/compass/CompassFallbackFeedBuilder.ts",
+    "artifacts/api-server/src/services/wall/WallProjectionService.ts",
+    "artifacts/api-server/src/services/ranking/CreatorActivityScoreService.ts",
+    "artifacts/api-server/src/migrations/2810_telegraph_message_kernel.sql",
+    "artifacts/api-server/src/migrations/2811_telegraph_message_side_tables.sql",
+    "artifacts/api-server/src/migrations/2812_telegraph_report_evidence.sql",
+    "artifacts/api-server/src/migrations/2813_telegraph_request_origin.sql",
+    "db/rollback/2026-09-12-2810-telegraph-message-kernel-rollback.sql",
+    "artifacts/api-server/src/test/telegraphConversationCapabilities.test.ts",
+    "artifacts/api-server/src/test/telegraphNeedsAction.test.ts",
+    "travel-buddy-standalone/src/features/telegraph/",
     // STILL NOT WATCHED, deliberately: src/scripts/check*.ts, guardRegistry.ts,
     // generateTelegraphInventory.ts, rlsDispositions.ts, the two workflow YAMLs,
     // and the other censuses this one cross-references. Those are machinery and
