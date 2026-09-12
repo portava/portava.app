@@ -17,10 +17,32 @@ being collapsed into one number.** The standing rule this repository works under
 | state | Trips | evidence |
 | --- | --- | --- |
 | **IMPLEMENTED** | 250 of 451 requirements are BUILT (**88 C + 162 W**) — **55.4 % constructed** | §36 recount, 451/451 rows parsed; §38 and §39 re-derived 78 of them |
-| **TESTED** | **17,707 / 17,707** api-server tests pass, 0 fail, 0 skipped, 0 cancelled. Trips-specific: the kernel live suite **12/12** against portava-ci | full `npm test`; `tripKernelLive.test.ts` in `live-db.yml` |
+| **TESTED** | **17,737 / 17,738** api-server tests pass, **0 fail, 0 skipped, 1 CANCELLED** — see below. Trips-specific: the kernel live suite **12/12** against portava-ci | full `npm test`; `tripKernelLive.test.ts` in `live-db.yml` |
 | **MERGED** | `014a25d5` on `main` (PR #481). **PR #482 is open and DRAFT** — none of this session's work is merged | `git merge-base --is-ancestor 014a25d5 origin/main` |
 | **DEPLOYED** | **portava-ci only.** Production has received **nothing** from Batch C | `apply-migrations`: 109 proven applied on `hwokxgbmezheskbzskfr` |
 | **CERTIFIED** | **NO.** `certify:migrations` fails at stage 1 on `main` | run `34430889373`, `check:migration-ledger` |
+
+### The one cancelled suite, named rather than rounded away
+
+`compass-sense-scheduler.test.ts` (7 tests) ends the full run as
+`failureType: 'cancelledByParent'` — *"Promise resolution is still pending but
+the event loop has already resolved"*. **0 fail is not 7/7**, and this workflow's
+own job names say so: *"skipped or cancelled is not a pass"*. So it is recorded
+here rather than absorbed into a round number.
+
+What is established about it:
+
+- It passes **7/7 run alone**.
+- **This session's changes cannot have caused it.** The only edit that could
+  affect scheduling is one test file added to `package.json`'s `test` list, at
+  index **772**; this suite sits at index **112**, so its position and both its
+  neighbours are byte-for-byte what they were.
+- It is a runner-teardown artifact in a suite that installs timers, not an
+  assertion failure. No assertion in it failed.
+
+It is **not** claimed to be fixed, and it is not claimed to be someone else's
+problem. It is claimed to be reproducible-as-passing in isolation and unrelated
+to this work, with the evidence for both stated above.
 
 ### Why CERTIFIED is red, and why it is not this work's doing
 
