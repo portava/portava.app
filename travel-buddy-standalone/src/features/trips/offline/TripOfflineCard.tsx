@@ -96,6 +96,20 @@ export function TripOfflineCard({
           ) : (
             <Text style={s.detail}>Refresh once while online to keep the plan, the addresses and the meeting points with you.</Text>
           )}
+          {stored && c ? (
+            <Text style={s.detail} testID="trip-offline-route">
+              {c.selectedRoute
+                ? `Route: ${c.selectedRoute.stops.length} stop(s), ${c.selectedRoute.hops.length} hop(s) with travel times${c.selectedRoute.unplaced.length > 0 ? `; ${c.selectedRoute.unplaced.length} item(s) without a time or a place` : ''}.`
+                : `No route offline — ${stored.signed.bundle.notCarried?.selectedRoute ?? 'not carried'}.`}
+            </Text>
+          ) : null}
+          {stored && c ? (
+            <Text style={s.detail} testID="trip-offline-windows">
+              {c.certifiedContext.freeWindows
+                ? `Free windows: ${c.certifiedContext.freeWindows.length} read at version ${c.certifiedContext.sourceTripVersion}, ${c.certifiedContext.freeWindows.filter((w) => w.certified).length} certified.`
+                : `No free windows offline — ${c.certifiedContext.windowsReading}.`}
+            </Text>
+          ) : null}
           {staleness?.stale ? <Text style={[s.detail, { color: color.warn }]} testID="trip-offline-stale">{staleness.detail}</Text> : null}
         </View>
       </View>

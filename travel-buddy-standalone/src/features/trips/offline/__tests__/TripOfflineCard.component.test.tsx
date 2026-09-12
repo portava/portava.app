@@ -20,8 +20,14 @@ function signed(over: Partial<SignedBundle['bundle']> = {}): SignedBundle {
   return {
     bundle: {
       bundleSchemaVersion: 1, tripId: TRIP_ID, sourceTripVersion: 7, generatedAt: '2026-09-13T10:00:00.000Z', expiresAt: '2026-09-14T10:00:00.000Z',
-      contents: { nextCommitments: [], activePlan: null, plans: [{ id: 'p1', title: 'Louvre', status: 'confirmed', dayDate: '2026-09-13', startsAt: null, endsAt: null, locationName: null }], meetingPoints: [], criticalAddresses: [{ kind: 'reservation', id: 'r1', title: 'Hotel', address: '1 rue X', at: null }], certifiedContext: { sourceTripVersion: 7, certifiedAt: '2026-09-13T10:00:00.000Z', reading: 'x' } },
-      notCarried: {}, ...over,
+      contents: {
+        nextCommitments: [], activePlan: null,
+        plans: [{ id: 'p1', title: 'Louvre', status: 'confirmed', dayDate: '2026-09-13', startsAt: null, endsAt: null, locationName: null }],
+        meetingPoints: [], criticalAddresses: [{ kind: 'reservation', id: 'r1', title: 'Hotel', address: '1 rue X', at: null }],
+        selectedRoute: null,
+        certifiedContext: { sourceTripVersion: 7, certifiedAt: '2026-09-13T10:00:00.000Z', reading: 'x', freeWindows: null, windowsDecisionId: null, windowsReading: 'trip_operational_projections_enabled is off: not read for this bundle' },
+      },
+      notCarried: { selectedRoute: 'trip_operational_projections_enabled is off: not read for this bundle' }, ...over,
     },
     signature: 'a'.repeat(64), algorithm: 'hmac-sha256',
   };
@@ -51,6 +57,42 @@ describe('TripOfflineCard', () => {
     await waitFor(() => expect(getByText('Offline copy ready')).toBeTruthy());
     expect(getByText(/Read at version 8/)).toBeTruthy();
   });
+  it('says what the offline copy carries of the route and the free windows, and says plainly when it carries neither', async () => {
+    const bare = await render(<TripOfflineCard tripId={TRIP_ID} now={() => NOW} {...seams({ stored: stored() })} />);
+    await bare.findByTestId('trip-offline-card');
+    expect(bare.getByTestId('trip-offline-route').props.children).toMatch(/No route offline/);
+    expect(bare.getByTestId('trip-offline-route').props.children).toMatch(/is off/);
+    expect(bare.getByTestId('trip-offline-windows').props.children).toMatch(/No free windows offline/);
+    expect(bare.getByTestId('trip-offline-windows').props.children).toMatch(/is off/);
+
+    const carried = stored({
+      contents: {
+        ...signed().bundle.contents,
+        selectedRoute: {
+          decisionId: 'd1', partySize: 2, disclosure: 'straight-line bound',
+          stops: [
+            { planItemId: 'p1', title: 'Louvre', startsAt: null, endsAt: null, locationName: null },
+            { planItemId: 'p2', title: 'Seine', startsAt: null, endsAt: null, locationName: null },
+          ],
+          hops: [{ from: 'p1', to: 'p2', departAt: '2026-09-13T11:00:00.000Z', boundMinutes: 18, expectedMinutes: 24, unknownReason: null, arrivalAtBound: null, expectedArrivalAt: null, band: 'SHOULDER' }],
+          unplaced: [{ planItemId: 'p3', reason: 'NO_TIME' }],
+        },
+        certifiedContext: {
+          sourceTripVersion: 7, certifiedAt: '2026-09-13T10:00:00.000Z', reading: 'x',
+          freeWindows: [{ id: 'w1', beginsAt: 'a', endsAt: 'b', durationMinutes: 90, certified: false, confidence: 'MEDIUM', participants: [], afterCommitmentId: null, beforeCommitmentId: null, reservedMinutes: null }],
+          windowsDecisionId: 'd2', windowsReading: 'not routed',
+        },
+      },
+    });
+    const full = await render(<TripOfflineCard tripId={TRIP_ID} now={() => NOW} {...seams({ stored: carried })} />);
+    await full.findByTestId('trip-offline-card');
+    expect(full.getByTestId('trip-offline-route').props.children).toMatch(/2 stop\(s\)/);
+    expect(full.getByTestId('trip-offline-route').props.children).toMatch(/1 hop\(s\)/);
+    expect(full.getByTestId('trip-offline-route').props.children).toMatch(/1 item\(s\) without a time or a place/);
+    expect(full.getByTestId('trip-offline-windows').props.children).toMatch(/1 read at version 7/);
+    expect(full.getByTestId('trip-offline-windows').props.children).toMatch(/0 certified/);
+  });
+
   it('a stale copy is drawn as stale, in the server\'s words, and is still shown', async () => {
     const s = seams({ stored: stored() });
     const { findByTestId, getByText } = await render(<TripOfflineCard tripId={TRIP_ID} currentTripVersion={9} now={() => NOW} {...s} />);

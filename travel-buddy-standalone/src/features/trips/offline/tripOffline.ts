@@ -37,7 +37,20 @@ export interface BundleContents {
   plans: { id: string; title: string; status: string; dayDate: string | null; startsAt: string | null; endsAt: string | null; locationName: string | null }[];
   meetingPoints: { id: string; label: string; lat: number; lng: number; meetAt: string | null; purpose: string; myArrivalState: string | null }[];
   criticalAddresses: { kind: string; id: string; title: string; address: string; at: string | null }[];
-  certifiedContext: { sourceTripVersion: number; certifiedAt: string; reading: string };
+  /** §18.1's "selected route": §62's route chain, the trip's own plan in order. Null when the server could not read it, and `notCarried.selectedRoute` says why. */
+  selectedRoute: {
+    decisionId: string; partySize: number; disclosure: string;
+    stops: { planItemId: string; title: string | null; startsAt: string | null; endsAt: string | null; locationName: string | null }[];
+    hops: { from: string; to: string; departAt: string; boundMinutes: number | null; expectedMinutes: number | null; unknownReason: string | null; arrivalAtBound: string | null; expectedArrivalAt: string | null; band: string | null }[];
+    unplaced: { planItemId: string; reason: string }[];
+  } | null;
+  /** §18.1's "most recent certified context": the §7.3 windows as the engine last read them, with the decision they were read as. */
+  certifiedContext: {
+    sourceTripVersion: number; certifiedAt: string; reading: string;
+    freeWindows: { id: string; beginsAt: string; endsAt: string; durationMinutes: number; certified: boolean; confidence: string; participants: string[]; afterCommitmentId: string | null; beforeCommitmentId: string | null; reservedMinutes: number | null }[] | null;
+    windowsDecisionId: string | null;
+    windowsReading: string;
+  };
 }
 export interface TripOfflineBundle {
   bundleSchemaVersion: number;
