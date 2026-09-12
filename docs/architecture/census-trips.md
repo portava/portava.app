@@ -23,12 +23,12 @@ preserved in §36.1 as the record of that measurement.
 | Measure | Value |
 | --- | --- |
 | **Denominator (testable requirements)** | **451** |
-| BUILT-AND-CORRECT | **117** |
-| BUILT-BUT-WRONG | **145** |
-| NOT-BUILT | **188** |
+| BUILT-AND-CORRECT | **138** |
+| BUILT-BUT-WRONG | **152** |
+| NOT-BUILT | **160** |
 | CANNOT-VERIFY | **1** |
-| **CONSTRUCTED%** = (C+W)/451 | **262 / 451 = 58.1 %** |
-| **CORRECT%** (raw) = C/451 | **117 / 451 = 25.9 %** |
+| **CONSTRUCTED%** = (C+W)/451 | **290 / 451 = 64.3 %** |
+| **CORRECT%** (raw) = C/451 | **138 / 451 = 30.6 %** |
 
 > **RESTATED 2026-09-11 (§38): 89 → 87 CORRECT, 127 → 129 WRONG.** §38 re-derived
 > 39 of the C rows against the code and **two did not hold**, both for the same
@@ -78,6 +78,24 @@ preserved in §36.1 as the record of that measurement.
 > live consumer yet hands it a canonical version), `/today` held N because its
 > engine does not exist. Same caveat: built on a branch, not merged, not
 > deployed.
+
+> **RESTATED 2026-09-12 (§40.3): 117 → 121 CORRECT, 145 → 150 WRONG, 188 → 179
+> NOT-BUILT. CONSTRUCTED 58.1 % → 60.1 %, CORRECT 25.9 % → 26.8 %.** §40.3 built
+> the §7.3 Temporal Freedom Engine (windows as lower bounds on free time,
+> conflicts returned beside them, Compass consuming them) and, in writing
+> §22.4's property test, found that the straight-line travel adapter was not a
+> lower bound under two kilometres — fixed, with the feasibility engine's one
+> claim now true at every distance. Same caveat.
+
+> **RESTATED 2026-09-12 (§40.4–§40.5): 121 → 138 CORRECT, 150 → 152 WRONG,
+> 179 → 160 NOT-BUILT. CONSTRUCTED 60.1 % → 64.3 %, CORRECT 26.8 % → 30.6 %.**
+> §40.4 derived the §3.2 phase and §17.1 health (never stored) and the §3.3
+> AT_RISK state; §40.5 composed the §11.1 Today projection from them, opened
+> `/today` and `/health`, gave Compass `get_today_state`, and checked §22.4
+> live. All three sit behind `trip_operational_projections_enabled`, seeded
+> FALSE, because `check:flag-schema-prerequisites` caught Compass reaching a
+> table production lacks — the class that guard exists for. Same caveat, and
+> a new one: that flag stays FALSE on production until 2420/2760–2762 land.
 | **CORRECT% (spec-attributable)** | **WITHDRAWN — not measured. See §36.4** |
 | CANNOT-VERIFY share | **1 / 451 = 0.2 %** |
 
@@ -3260,8 +3278,8 @@ carried a freshness (TR368). No metric measured read-model lag (TR394).
   are declared (`:56#TRIP_PROJECTION_FRESHNESS`); **two are emitted**
   (`live`, `unattributable`); `cached` and `stale` have no producer (§19.4,
   TR379) and the file says so.
-- `lib/tripMetrics.ts` — the in-process registry (`:48#observeTripMetric`,
-  `:62#readTripMetric`). The kernel's `trip_command_rejected_total`
+- `lib/tripMetrics.ts` — the in-process registry (`:50#observeTripMetric`,
+  `:69#readTripMetric`). The kernel's `trip_command_rejected_total`
   predates it and keeps its own counter; nothing in the kernel moved.
 - `services/trips/TripTimelineProjection.ts:83#buildTripTimeline` —
   PURE; one day per calendar date of the trip, empty or not, then out-of-range
@@ -3280,25 +3298,25 @@ carried a freshness (TR368). No metric measured read-model lag (TR394).
   a three-valued `planItems` layer (`ok` / `unread`, reusing §14.1's `Layer`),
   and `planItemsTruncated` said rather than guessed (cap + 1 rows are read).
 - `routes/tripProjections.ts` — §19.2's paths: `/timeline`
-  (`:73#timeline`), `/map` (`:154#map` — calls
+  (`:85#timeline`), `/map` (`:253#map` — calls
   `serveMapProjection`, `routes/tripMapProjection.ts:78#serveMapProjection`,
-  so the two paths cannot serve two projections), `/crew` (`:162#crew`),
-  `/context` (`:204#context`), `/safety` (`:228#safety`);
+  so the two paths cannot serve two projections), `/crew` (`:261#crew`),
+  `/context` (`:303#context`), `/safety` (`:327#safety`);
   registered at `routes/index.ts:159#tripProjectionsRouter`. Every
   response spreads the envelope; every failed read that a projection IS is
   refused with `TRIP_PROJECTION_UNAVAILABLE` on the wire
-  (`:96#TRIP_PROJECTION_UNAVAILABLE`), and a flag-off crew
+  (`:108#TRIP_PROJECTION_UNAVAILABLE`), and a flag-off crew
   projection is served visibly degraded with `freshness: "unattributable"`
-  (`:176#featureEnabled`). The map projection's own response
+  (`:275#featureEnabled`). The map projection's own response
   now spreads the envelope too (`routes/tripMapProjection.ts:352#liveEnvelope`).
   `/plan`, `/plan/map`, `/crew/map`, `/map-projection` keep their shapes.
-- **Consumers.** `compass/CompassTools.ts:428#toolGetCurrentTrip`
-  builds the context projection (`:490#buildTripCompassProjection`)
-  and consumes it through `acceptTripProjection` (`:494#acceptTripProjection`);
+- **Consumers.** `compass/CompassTools.ts:459#toolGetCurrentTrip`
+  builds the context projection (`:521#buildTripCompassProjection`)
+  and consumes it through `acceptTripProjection` (`:525#acceptTripProjection`);
   a refused or unreadable projection is SAID to be so (the old read handed the
   model an empty plan when the table could not be read). The tool now takes an
-  optional `tripId` (`:85#tripId`), gated by
-  `isAcceptedTripMember` (`:433#isAcceptedTripMember`) — §12.1's
+  optional `tripId` (`:87#tripId`), gated by
+  `isAcceptedTripMember` (`:464#isAcceptedTripMember`) — §12.1's
   `getTripContext(tripId)`. `lib/discoveryTripProjectionConsumer.ts:294#acceptTripProjection`
   decides through the same function and reports its refusals by reason. On the
   client, `travel-buddy-standalone/src/services/tripProjectionEnvelope.ts:40#acceptProjection`
@@ -3369,3 +3387,323 @@ TR203 `getTodayProjection` (N, with TR370), TR379 (no projection workers, N).
 Seventeen rows into C (thirteen from W, four from N), one N→W, one held.
 Nothing here is deployed; `trip_kernel_enabled` is still seeded FALSE, and so
 is `trip_crew_map_enabled`.
+
+### 40.3 §7.3 Temporal Freedom Engine and §7.2 conflict detection
+
+**What was measured.** TR131: `grep -rli "FreedomWindow"` over the tree →
+nothing. TR132: no gap computation; `trip_plan_items.category` admits
+`'free_time'` as a label a person types. TR129/TR130: nothing detects a
+conflict, so an impossible pair renders as an ordinary day list. TR133: four
+consumers, four independent derivations of "free time" — Compass's
+`check_trip_conflicts` re-derives overlap from `day_date` per call. TR395: no
+metric. TR412: vacuous. What existed was the §7.2 invariant per hop
+(`services/trips/TripFeasibilityEngine.ts`, W since §39 for the reason its
+header states: no routing provider, so a lower bound can prove INFEASIBLE and
+never FEASIBLE).
+
+**What was built.**
+
+- `services/trips/TripFreedomEngine.ts` — PURE. §7.3's `FreedomWindow`, every
+  field (`:102#FreedomWindow`): `beginsAt` is when the previous
+  commitment releases the traveller — its end when known, else its start, and
+  never before the latest moment they were allowed to arrive at it
+  (`:195#leaveAt`); `endsAt` is when they must LEAVE to make the
+  next: deadline + tolerance − travel − prep, against the feasibility engine's
+  lower-bound travel term. An unknown travel term is NOT zero: the window ends
+  at the deadline less prep, carries `TRAVEL_UNKNOWN`, is graded INSUFFICIENT.
+  Six named hard constraints (`:77#HARD_CONSTRAINT_KINDS`).
+  `certified` (`:230#certified`) is HIGH with no unknown term
+  — computed, and never true today. `computeFreedomWindows`
+  (`:213#computeFreedomWindows`) emits `before_first`, `between`
+  and `after_last` windows and, where `endsAt ≤ beginsAt`, a
+  `TRIP_TEMPORAL_CONFLICT` instead: `OVERLAP` (`:278`) when the
+  next deadline falls before release, `NO_TIME_TO_TRAVEL` (`:307`)
+  when travel + prep eat the gap — each with the shortfall in minutes, and
+  `overridden: false` typed as the literal (`:132#TemporalConflict`)
+  because no override path exists. `detectPlanOverlaps`
+  (`:371#detectPlanOverlaps`) is §7.2 on the plan itself.
+- `services/trips/TripFreedomProjection.ts:81#buildTripFreedomProjection` —
+  the reads (trips, commitments, places, members — each REFUSED when it fails;
+  a window over "no commitments" is the whole trip), the hop travel terms from
+  the feasibility engine (`:151#checkFeasibility`, the same provider
+  as `/feasibility`, so a verdict and a window cannot disagree about a hop),
+  the engine, the §19.1 envelope, and `temporal_conflict_total` incremented
+  at detection by kind (`:162#temporal_conflict_total`;
+  `lib/tripMetrics.ts:64#incrementTripMetric`).
+- `GET /trips/:tripId/freedom-windows`
+  (`routes/tripProjections.ts:183#freedom-windows`) — §12.1's
+  `getFreedomWindows(tripId)` as a read; accepted crew; refusals by reason.
+  `/timeline` now carries `conflicts` and each day's `conflictIds`
+  (`:156#detectPlanOverlaps`, `:159#conflictIds`),
+  so a renderer that only reads days still sees the mark.
+- **Compass consumes the engine.** `get_freedom_windows`
+  (`compass/CompassTools.ts:169#get_freedom_windows`, implemented
+  at `:801#toolGetFreedomWindows`, dispatched at
+  `:1343#get_freedom_windows`) returns the same object the route
+  serves, through `acceptTripProjection`, and with `at` returns the window
+  containing that instant — §11.3's "I am bored" input, without touching a
+  commitment. Twelve tools now; the header says so.
+- **A defect the property test found, and its fix.** §22.4's property
+  ("an earlier hard commitment cannot increase the preceding certified free
+  window") was written as a seeded 60-itinerary test over the REAL provider
+  (`src/test/tripFreedomEngine.test.ts:215#seeded`). It went red on
+  round 46 — and the cause was not the engine. `straightLineTravelTimeProvider`
+  chose WALK for any hop under 2 km and DRIVE above it, routeOptimizer's
+  planning heuristic; a 1.9 km hop came back as 26 minutes on foot when a taxi
+  covers it in 7. For every hop under two kilometres the term was NOT a lower
+  bound, so the feasibility engine's one claim — "a straight-line INFEASIBLE
+  is a real verdict" — was false there, and a 2001 m drive being "faster" than
+  a 2000 m walk is what let free time grow. The adapter now takes the MINIMUM
+  over its modes when none is requested (`services/trips/TravelTimeProvider.ts:162#Math.min`;
+  header `:126#FASTEST`), which is monotone and subadditive — the
+  two properties a bound needs — pinned by two new provider tests
+  (`src/test/tripFeasibilityEngine.test.ts:261#FASTEST`,
+  `:276#subadditive`). An explicitly requested mode is honoured as
+  before. The property then holds for every conflict-free insertion, and the
+  test says why a conflicted one is excluded: §7.2 marks it, and the invariant
+  is about consistent timelines.
+- **Tests.** `src/test/tripFreedomEngine.test.ts` (15: the arithmetic, both
+  conflict kinds, the trip's ends, ordering, the plan rule, the property),
+  `src/test/tripFreedomWindows.test.ts` (9: the route's envelope, travel term
+  and refusals; Compass consuming with `at`; the timeline's marked day; both
+  metrics). Four mutations went red before commit: a window beginning before
+  the latest allowed arrival, unknown travel read as zero, the provider's old
+  walk rule, and windows served over unreadable commitments.
+
+**Found by a guard after the commit was written, and fixed before it was
+made.** `check:flag-schema-prerequisites` reported the class it exists for:
+COMPASS_ENABLED is ON in production and Compass's new `get_freedom_windows`
+reached `trip_commitments`, a table production lacks (2761 is not
+production-applied). The projections that need kernel-era schema — §7.3
+windows, and §40.4/§40.5's health and today — now consult a capability of
+their own FIRST: `trip_operational_projections_enabled`
+(`lib/tripOperationalProjections.ts:29#TRIP_OPERATIONAL_PROJECTIONS_FLAG`,
+definition `:31#TRIP_OPERATIONAL_PROJECTIONS`, gate
+`:72#tripOperationalProjectionsGate`, registered at
+`lib/capability/registry.ts:160#TRIP_OPERATIONAL_PROJECTIONS`), seeded
+FALSE by `2778_trip_operational_projections_flag.sql`. The gate is a pure
+helper in the ratchet's sense, so the builders that call it first
+(`services/trips/TripFreedomProjection.ts:90#tripOperationalProjectionsGate`)
+are gate boundaries and their schema belongs to this flag, OFF everywhere;
+the ratchet now reports it LATENT, which is what it is. Off, the routes answer
+`feature_disabled` and Compass says "not enabled"; an UNVERIFIABLE probe is
+`TRIP_PROJECTION_UNAVAILABLE`, retryable, not "disabled"
+(`:101#refusalForGate`) — a distinction a mutation test holds.
+The migration seeds one row and nothing else; it is not applied anywhere
+until CI runs it, and it is not production-applied by this document.
+
+**What is NOT built.** No override path: §7.2's "only when explicitly
+overridden" needs a command that records the override, and `overridden` is
+always false until it exists. Discovery, Saved Ideas and Buddy matching still
+do not consume windows (Compass does). `trip_commitments` has no end column,
+so every window after a commitment begins at its START and says so
+(`PREVIOUS_END_UNKNOWN`) — a lower bound on free time, not the free time.
+No window is certified: no routed provider (TR128's reason, unchanged). The
+client still renders `/plan` rather than `/timeline`, so the marked day
+reaches the wire and not yet the screen.
+
+#### Row moves
+
+| id | was | now | why |
+|---|---|---|---|
+| TR131 `FreedomWindow` contract | N | **C** | All seven fields, computed, served, consumed, tested. |
+| TR132 Trips queries a Temporal Freedom Engine for gaps between commitments | N | **C** | `buildTripFreedomProjection` behind `/freedom-windows` and the Compass tool; the gap computation is the engine, not a label. |
+| TR205 `getFreedomWindows(tripId)` | N | **C** | The route and the Compass tool, by §12.1's name, through the §19.1 rule. |
+| TR395 `temporal_conflict_total` | N | **C** | Incremented at detection, by kind, in both places conflicts are detected; read back in both suites. |
+| TR129 confirmed timelines may contain known conflicts only when explicitly overridden and visibly marked | N | **W** | Detected and marked (`TRIP_TEMPORAL_CONFLICT`, shortfall, `overridden: false`). No override path — the "only when explicitly overridden" half has nothing to record an override in. |
+| TR130 a conflict is not silently rendered as a normal itinerary | N | **W** | The timeline projection names the conflict and marks its day; the shipped client still renders `/plan`. Wire, not screen. |
+| TR133 Discovery, Compass, Saved Ideas and Buddy matching consume these windows rather than independently calculating free time | N | **W** | One of four: Compass's `get_freedom_windows` consumes the engine. `check_trip_conflicts` (cross-trip date overlap) is a different question and stays. |
+| TR197 §11.3 "I am bored" → short FreedomWindow + candidates without changing commitments | N | **W** | The window half: `get_freedom_windows` with `at` returns the window containing now, touching nothing. The candidate half is Discovery's and is not wired to it. |
+| TR412 §22.4 an earlier hard commitment cannot increase the preceding certified free window | N | **W** | Holds for every window the engine emits on a consistent timeline, tested over 60 seeded itineraries with the real provider — and the test is what found the provider defect. W, not C: no window is certified without a routed provider, so the property is proven on uncertified windows and vacuous on certified ones. |
+| TR128 core invariant | W | **W** | **Holds W, and the reason is now true.** The header's "a straight-line INFEASIBLE is a real verdict" was false under two kilometres until this pass; it is true at every distance now. Still W: FEASIBLE is still unprovable. |
+
+**Rows looked at that did not move:** TR134 (§7.4 feasibility check, W —
+same provider fix applies, same reason for W), TR184 (`freeWindows[]` on the
+Today projection — §40.5's), TR226 (`+ freedom window` on an experience
+compiler that does not exist — N holds), TR122–TR127 (the commitment
+contract, unchanged).
+
+#### The count after §40.3
+
+| | C | W | N | X | CONSTRUCTED | CORRECT |
+| --- | --- | --- | --- | --- | --- | --- |
+| after §40.2 | 117 | 145 | 188 | 1 | 262 / 451 = 58.1 % | 117 / 451 = 25.9 % |
+| **after §40.3** | **121** | **150** | **179** | 1 | **271 / 451 = 60.1 %** | **121 / 451 = 26.8 %** |
+
+Four rows into C, five N→W, one held W with its reason corrected. Nothing here
+is deployed.
+
+### 40.4 §3.2 operational phase, §17.1 trip health, §3.3 AT_RISK derived
+
+**What was measured.** TR38–TR45: "There is no phase concept at all: no
+column, no enum, no derivation, no UI switch." TR314: readiness is "a
+four-value health-shaped summary — of PREPARATION, not of the journey, with
+no DISRUPTED state and no runtime input." TR317: nothing changes what a
+surface shows by trip state. TR46: four plan states of nine; IN_PROGRESS,
+AT_RISK, MOVED absent. TR194: no START_PLAN. TR396: no metric.
+
+**What was built.**
+
+- `services/trips/TripOperationalPhase.ts` — PURE. The eight phases
+  (`:44#OPERATIONAL_PHASES`) with §3.2's second column verbatim as
+  `primaryFocus` (`:50#PRIMARY_FOCUS`), and `deriveOperationalPhase`
+  (`:126#deriveOperationalPhase`): first clause wins, in the order
+  disruption → the trip's edges → what the traveller is doing (TRANSIT past a
+  window's leave-by; ACTIVE_PLAN for an item under way, an explicit
+  `in_progress` honoured when the kernel has one) → the clock (NIGHTLIFE needs
+  a reason: an active Safe Return or a nightlife-category plan today; else
+  REST in rest hours) → FREE_TIME. Every answer carries the clause and the
+  evidence. Outside the trip's dates the phase is null: a trip that has not
+  started is not in FREE_TIME. The clock is the trip's zone
+  (`:114#localClock`). §3.1's rule is kept: derived from facts,
+  never stored.
+- `services/trips/TripHealth.ts` — PURE. §17.1's ladder
+  (`:38#TRIP_HEALTH_LEVELS`), a closed reason vocabulary
+  (`:41#HEALTH_REASON_CODES`), and `deriveTripHealth`
+  (`:82#deriveTripHealth`): health is the WORST concrete reason —
+  a realised risk or a NEEDS_HELP member → DISRUPTED; a temporal conflict, a
+  high/high open risk or an infeasible hop → AT_RISK; an elevated risk or an
+  unjudgeable hop → ATTENTION — and every reason stays in `reasons[]`, because
+  §17.1's second sentence is the design. Readiness is NOT an input, on
+  purpose. `surfacePriority` (`:122#surfacePriority`) is §17.2's
+  logistics / affected commitments / recovery order, present only at AT_RISK
+  or worse.
+- `services/trips/TripHealthProjection.ts:51#buildTripHealthProjection` —
+  one builder for both, from the §7.3 projection (conflicts, windows, hop
+  verdicts), the risk register, Safe Return with the safety projection's own
+  opt-in rule, and today's plan; every read refused when it fails, because a
+  health computed over "no risks" is HEALTHY by construction. Behind the
+  §40.3 gate (`:59#tripOperationalProjectionsGate`).
+- `GET /trips/:tripId/health` (`routes/tripProjections.ts:213#health`),
+  accepted crew, under the envelope.
+- **§3.3 AT_RISK, derived.** The timeline projection marks plan items in a
+  temporal conflict as at risk (`:162#atRiskPlanIds`) and
+  `plan_at_risk_total` counts them (`:163#plan_at_risk_total`)
+  — a state computed from facts (§3.1) rather than a column the UI writes.
+- **Tests.** `src/test/tripOperationalPhase.test.ts:27#clause`
+  (13: every clause and its order, the zone, the health ladder),
+  `src/test/tripHealthProjection.test.ts:66#buildTripHealthProjection`
+  (8: the builder's reads, refusals, opt-in, the gate). Two mutations went
+  red: disruption no longer first; a realised risk graded AT_RISK.
+
+**What is NOT built.** IN_PROGRESS and START_PLAN (TR46, TR194): a kernel
+migration (a new command branch in `trip_kernel_execute`, a status the
+plan-state check admits) that this environment cannot execute — no database,
+no docker daemon — and that this document will not call built on a text
+test alone. Stated, deferred, not disguised as the derived AT_RISK. MOVED,
+likewise. The UI switch §3.2 describes: `primaryFocus` is served; no client
+reads it yet. Readiness stays behind its own flag and out of health.
+
+#### Row moves
+
+| id | was | now | why |
+|---|---|---|---|
+| TR38–TR45 §3.2 active operational phase, each with its own primary UI/behaviour | N ×8 | **W ×8** | All eight DERIVED and served with §3.2's primary focus per phase, on `/health` and (§40.5) `/today`, tested clause by clause. W and not C: the row is derivation AND UI switch, and no screen switches on it yet. |
+| TR46 plan state machine, nine states | W | **W** | **Holds, and moves by one state:** AT_RISK is now derived and served (never stored — §3.1). IN_PROGRESS and MOVED still absent; four stored states of nine, one derived. |
+| TR194 START_PLAN → IN_PROGRESS | N | **N** | **Holds.** Needs a kernel migration this environment cannot run. Stated above. |
+| TR314 trip health HEALTHY → ATTENTION → AT_RISK → DISRUPTED | W | **C** | A summary of the JOURNEY over concrete reasons (conflicts, the register, Safe Return, feasibility), with DISRUPTED and runtime input; the reasons never replaced by the word; served and consumed (§40.5). |
+| TR317 AT_RISK priority: logistics / affected commitments / recovery | N | **W** | `surfacePriority` served at AT_RISK or worse; no surface applies it yet. |
+| TR396 `plan_at_risk_total` | N | **C** | Recorded per at-risk plan where AT_RISK is derived; read back in the test. |
+
+#### The count after §40.4
+
+| | C | W | N | X | CONSTRUCTED | CORRECT |
+| --- | --- | --- | --- | --- | --- | --- |
+| after §40.3 | 121 | 150 | 179 | 1 | 271 / 451 = 60.1 % | 121 / 451 = 26.8 % |
+| **after §40.4** | **123** | **158** | **169** | 1 | **281 / 451 = 62.3 %** | **123 / 451 = 27.3 %** |
+
+Two rows into C, nine N→W, two held. Nothing here is deployed;
+`trip_operational_projections_enabled` is seeded FALSE.
+
+### 40.5 §11.1 TripTodayProjection and `GET /trips/:id/today`
+
+**What was measured.** TR180: no `TripTodayProjection`, no `/today`. TR181–
+TR183: `nowState`, `currentPlan`, `nextCommitment` derived on the CLIENT from
+the plan list — "the shape §11.1 exists to replace". TR184, TR187, TR189–
+TR192: no windows, no risks, no pulse, no envelope. TR193: the client answers
+three of §11.2's five questions in a different order. TR203, TR356, TR370:
+nothing to get.
+
+**What was built.**
+
+- `services/trips/TripTodayProjection.ts` — every §11.1 field
+  (`:91#TripTodayProjection`), COMPOSED from §40.2–§40.4's
+  projections rather than re-derived: `nowState` and `risks[]` from
+  TripHealthProjection, `freeWindows[]` from TripFreedomProjection,
+  `nextCommitment` with its LEAVE-BY from the window that ends at it,
+  `crewSummary` from the roster and — when its flag is on — the crew map,
+  in its own gate-boundary helper (`:129#readCrewSummary`).
+  `unresolvedActions[]` is derived from what the projection already knows
+  (`:253#unresolvedActions`): conflicts, NEEDS_HELP, realised or
+  high risks, unplaced commitments. `opportunities[]` and `pulseSignals[]`
+  have no producer and are `no_source` layers, stated
+  (`:279#no_source`). `answers` names, in §11.2's order, the
+  field that answers each question (`:115#TODAY_ANSWERS`).
+- **§22.4 checked LIVE.** `buildTripTodayProjection`
+  (`:155#buildTripTodayProjection`) reads `trips.version` FIRST
+  (`:167#canonical`) and accepts each sub-projection through
+  `acceptTripProjection` with it as the canonical version
+  (`:180#acceptTripProjection`): a command landing between the
+  reads makes a sub-projection AHEAD and the Today projection is refused
+  `TRIP_PROJECTION_VERSION_AHEAD` rather than assembled from two states. The
+  test drives it with a stateful fake
+  (`src/test/tripTodayProjection.test.ts:82#LIVE`) and a
+  mutation that stops handing the version over went red.
+- `GET /trips/:tripId/today` (`routes/tripProjections.ts:233#today`);
+  one refusal mapping for the three gated builders
+  (`:202#refuseBuild`). Compass `get_today_state`
+  (`compass/CompassTools.ts:185#get_today_state`,
+  `:840#toolGetTodayState`, dispatched at
+  `:1344#get_today_state`) consumes the same object through
+  the §19.1 rule — §12.1's `getTodayState(tripId)`. Thirteen tools now.
+- **Tests.** `src/test/tripTodayProjection.test.ts` (16: every field,
+  §11.2's order, actions from conflicts, the live §22.4 refusal, the crew
+  summary's nulls, the gate, both routes, Compass, and
+  `:170#AT_RISK` for §40.4's derived state);
+  `src/test/tripFreedomWindows.test.ts:172#feature_disabled`
+  for the flag off.
+
+**What is NOT built.** Nothing produces opportunities or pulse signals; the
+projection says so rather than serving `[]`. The Today SURFACE (TR193) is
+still the client's own: the server answers the five questions in order and
+the shipped screen does not read it yet. Readiness's next-best-action list
+stays on its flag-gated endpoint and is not merged into `unresolvedActions`.
+
+#### Row moves
+
+| id | was | now | why |
+|---|---|---|---|
+| TR180 the `TripTodayProjection` contract | N | **C** | Every field, composed, served at `/today`, consumed by Compass, tested. |
+| TR181 `nowState` | W | **C** | The §3.2 phase with its clause, on the server; consumable by Compass (it is). |
+| TR182 `currentPlan` | W | **C** | The item under way now, from the same clause that set ACTIVE_PLAN. |
+| TR183 `nextCommitment` | W | **C** | Over COMMITMENTS (TR15 is closed since 2761), with `arriveBy` and `mustLeaveBy` from the §7.3 window. |
+| TR184 `freeWindows[]` | N | **C** | The §7.3 windows still open now. |
+| TR185 `crewSummary` | W | **C** | On the projection: roster counts always; presence counts when the crew map's flag is on, and NULL — not zero — when it is off or unavailable, with the reason. |
+| TR186 `opportunities[]` | W | **W** | **Holds.** `no_source`, stated. Compass's trip brief still exists elsewhere and is still not this field. |
+| TR187 `risks[]` | N | **C** | The register's open and realised rows, beside the §17.1 reasons. |
+| TR188 `unresolvedActions[]` | W | **C** | Derived on the projection from conflicts, safety, risks and unplaced commitments. The readiness list is a different subsystem and is said to be. |
+| TR189 `pulseSignals[]` | N | **N** | **Holds.** No Trip Pulse; `no_source`, stated. |
+| TR190 `generatedAt` | N | **C** | Envelope. |
+| TR191 `sourceTripVersion` | N | **C** | Envelope — read first, and the canonical version the sub-projections are checked against. |
+| TR192 `freshness` | N | **C** | Envelope. |
+| TR193 §11.2 the Today surface answers, in order, the five questions | W | **W** | **Holds.** The projection answers them in order and names the field for each; the surface is still the client's own and does not read it. |
+| TR203 `getTodayState(tripId)` | N | **C** | `get_today_state`, through the §19.1 rule. |
+| TR356 `TripTodayProjection` | N | **C** | As TR180. |
+| TR370 `GET /trips/:id/today` | N | **C** | Registered, gated (accepted crew; `trip_operational_projections_enabled`), tested. |
+| TR416 §22.4 `sourceTripVersion` may never exceed the canonical version | W | **C** | *"No live consumer supplies a canonical version yet."* One does: the Today builder, and the refusal is tested against a fake that moves the version between reads. |
+
+**Rows looked at that did not move:** TR197 (W since §40.3; `get_today_state`
+does not add candidates), TR205 (C), TR226 (N), TR379 (no projection worker —
+every projection here is generated in the request that serves it).
+
+#### The count after §40.5
+
+| | C | W | N | X | CONSTRUCTED | CORRECT |
+| --- | --- | --- | --- | --- | --- | --- |
+| after §40.4 | 123 | 158 | 169 | 1 | 281 / 451 = 62.3 % | 123 / 451 = 27.3 % |
+| **after §40.5** | **138** | **152** | **160** | 1 | **290 / 451 = 64.3 %** | **138 / 451 = 30.6 %** |
+
+Fifteen rows into C (nine from N, six from W), three held. Nothing here is
+deployed; every projection in §40.3–§40.5 is behind a flag seeded FALSE, and
+that flag must stay FALSE on production until 2420, 2760, 2761 and 2762 are
+applied there — an owner action this document does not take.

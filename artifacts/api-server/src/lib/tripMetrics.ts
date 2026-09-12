@@ -6,6 +6,8 @@
  * lib/tripKernel.ts keeps `trip_command_rejected_total` by reason as a private
  * counter with a reader. The second §21.1 metric this codebase records,
  * `projection_lag_seconds` ("Read-model freshness"), needed the same thing —
+ * and `temporal_conflict_total` (§7.2 conflicts, recorded where they are
+ * detected) is the third —
  * and a second private counter would have been a second registry. This is the
  * one place a trip metric is written and read; the kernel's counter predates
  * it and is left where it is, with its own reader, so the kernel stays
@@ -56,6 +58,11 @@ export function observeTripMetric(name: string, labels: TripMetricLabels, value:
   } else {
     byLabel.set(key, { labels: { ...labels }, count: 1, sum: value, max: value, last: value });
   }
+}
+
+/** A counter: one observation of 1. `count` is the total. */
+export function incrementTripMetric(name: string, labels: TripMetricLabels): void {
+  observeTripMetric(name, labels, 1);
 }
 
 /** Every series recorded under `name`, copied. Empty when nothing was recorded. */

@@ -31,6 +31,7 @@
  */
 import { SCHEMA_PROBE_SENTINEL_ID, type CapabilityDefinition } from "./schemaRequirement.js";
 import { DISCOVERY_TRIP_PROJECTION } from "../discoveryTripProjectionConsumer.js";
+import { TRIP_OPERATIONAL_PROJECTIONS } from "../tripOperationalProjections.js";
 
 /** The `media_assets` columns migration 2250 adds. Nothing before it does. */
 export const MEDIA_CANONICAL_ASSET_COLUMNS = [
@@ -152,6 +153,11 @@ export const CAPABILITIES: Readonly<Record<string, CapabilityDefinition>> = Obje
   // assembler, which is the module that reads this feature's storage from
   // outside the feature.
   [LOCATE_FRIENDS_CREW_PRESENCE.flag]: LOCATE_FRIENDS_CREW_PRESENCE,
+  // Registered because lib/tripOperationalProjections.ts reads the flag by
+  // name (the gate every operational projection builder calls first), so
+  // scanFlagReads resolves it. The consumers are the three builders; the
+  // routes and Compass tools reach the schema only through them.
+  [TRIP_OPERATIONAL_PROJECTIONS.flag]: TRIP_OPERATIONAL_PROJECTIONS,
   // NOT registered here, deliberately: MAP_TRIP_PROJECTION_CAPABILITY
   // (lib/mapProjectionTripContract.ts). resolveCapability takes the definition
   // directly, so the Map reader is fully guarded either way.

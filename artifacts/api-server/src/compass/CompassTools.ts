@@ -1,7 +1,7 @@
 /**
  * CompassTools — Phase 4 native function calling for the Compass assistant.
  *
- * Eleven tools the model may call on demand (the OpenAI schemas in TOOL_DEFINITIONS
+ * Thirteen tools the model may call on demand (the OpenAI schemas in TOOL_DEFINITIONS
  * below are the authoritative list). Hard rules (master-roadmap.md):
  *   - Candidate generation is strictly separated from AI explanation: tools
  *     produce candidates from real DB data; the model interprets, ranks,
@@ -22,6 +22,8 @@ import type { CompassItem, CompassProfile } from "./types.js";
 import { stripCoordinateFields, wrapUgc, buildStructuredCompassContext } from "./CompassStructuredContext.js";
 import { isAcceptedTripMember, canEditPlan } from "../lib/http.js";
 import { buildTripCompassProjection } from "../services/trips/TripCompassProjection.js";
+import { buildTripFreedomProjection } from "../services/trips/TripFreedomProjection.js";
+import { buildTripTodayProjection } from "../services/trips/TripTodayProjection.js";
 import { acceptTripProjection, TRIP_PROJECTION_SCHEMA_VERSION } from "../services/trips/TripProjectionEnvelope.js";
 import { buildCompassContext, defaultSignals } from "./CompassContextEngine.js";
 import { runPipeline } from "./CompassPipeline.js";
@@ -157,6 +159,35 @@ export const COMPASS_TOOL_DEFINITIONS = [
           endDate:   { type: "string", description: "Range end, YYYY-MM-DD" },
         },
         required: ["startDate"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
+      name: "get_freedom_windows",
+      description:
+        "Get the free-time windows between the commitments of the user's current trip (or a named trip), from the Temporal Freedom Engine. Each window says when it begins, when the traveller must leave to make the next commitment, and how confident that is. Also returns any temporal conflicts. Use this instead of estimating free time from plan items. Pass `at` (ISO instant) to also get the window containing that moment.",
+      parameters: {
+        type: "object",
+        properties: {
+          tripId: { type: "string", description: "A specific trip's id (optional). The user must be an accepted member." },
+          at:     { type: "string", description: "An ISO instant (optional); the window containing it is returned as `current`." },
+        },
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
+      name: "get_today_state",
+      description:
+        "Get the Today projection of the user's current trip (or a named trip): the operational phase now, the current plan, the next commitment with its leave-by time, the free windows still open, the crew summary, health with its reasons, risks and unresolved actions. Answers, in order: what is happening now, what is next, who is with me, what can I do, what needs action.",
+      parameters: {
+        type: "object",
+        properties: { tripId: { type: "string", description: "A specific trip's id (optional). The user must be an accepted member." } },
         additionalProperties: false,
       },
     },
@@ -758,6 +789,87 @@ async function toolCheckTripConflicts(
     : { conflicts: [], info: "No overlapping trips in that date range." };
 }
 
+/**
+ * §12.1 getFreedomWindows(tripId) — Compass CONSUMES the §7.3 engine's windows
+ * (census-trips TR133: it used to re-derive "free time" from plan items per
+ * call). The trip is the named one or the user's current one; the windows are
+ * the same object GET /trips/:id/freedom-windows serves, through the same
+ * §19.1 consumer rule. §11.3 "I am bored": `at` picks the window containing
+ * that moment, so a short window can be handed back without touching any
+ * commitment.
+ */
+export async function toolGetFreedomWindows(sc: SupabaseClient, userId: string, args: Record<string, unknown>): Promise<unknown> {
+  const tripId = typeof args.tripId === "string" && args.tripId.length > 0 ? args.tripId : null;
+  let trip: any = null;
+  if (tripId) {
+    if (!(await isAcceptedTripMember(sc, tripId, userId))) return { windows: [], info: "The user is not a member of that trip." };
+    trip = { id: tripId };
+  } else {
+    const current: any = await toolGetCurrentTrip(sc, userId);
+    trip = current?.trip ?? null;
+    if (!trip) return { windows: [], info: "No active or upcoming trip." };
+  }
+  const built = await buildTripFreedomProjection(sc, trip.id);
+  if (!built.ok) return { windows: [], info: built.reason === "FEATURE_DISABLED" ? `Freedom windows are not enabled: ${built.message}` : `Freedom windows unavailable: ${built.message}` };
+  const decision = acceptTripProjection(built.projection, { acceptedSchemaVersion: TRIP_PROJECTION_SCHEMA_VERSION, metric: "TripFreedomProjection" });
+  if (!decision.accepted) return { windows: [], info: `Freedom windows rejected (${decision.reason}): ${decision.message}` };
+  const p = built.projection;
+  const atMs = typeof args.at === "string" ? Date.parse(args.at) : Number.NaN;
+  const current = Number.isFinite(atMs)
+    ? p.windows.find((w) => Date.parse(w.beginsAt) <= atMs && atMs < Date.parse(w.endsAt)) ?? null
+    : null;
+  const brief = (w: typeof p.windows[number]) => ({
+    id: w.id, position: w.position, beginsAt: w.beginsAt, endsAt: w.endsAt, durationMinutes: w.durationMinutes,
+    confidence: w.confidence, certified: w.certified, hardConstraints: w.hardConstraints.map((h) => h.kind),
+    afterCommitmentId: w.afterCommitmentId, beforeCommitmentId: w.beforeCommitmentId,
+  });
+  return {
+    tripId: p.tripId,
+    windows: p.windows.map(brief),
+    current: current ? brief(current) : null,
+    conflicts: p.conflicts.map((c) => ({ kind: c.kind, commitmentIds: c.commitmentIds, shortfallMinutes: c.shortfallMinutes, detail: c.detail })),
+    disclosure: p.disclosure,
+    projection: { generatedAt: p.generatedAt, sourceTripVersion: p.sourceTripVersion, freshness: p.freshness },
+  };
+}
+
+/**
+ * §12.1 getTodayState(tripId) — Compass CONSUMES the §11.1 Today projection,
+ * the same object GET /trips/:id/today serves, through the §19.1 rule.
+ */
+export async function toolGetTodayState(sc: SupabaseClient, userId: string, args: Record<string, unknown>): Promise<unknown> {
+  const tripId = typeof args.tripId === "string" && args.tripId.length > 0 ? args.tripId : null;
+  let id: string | null = tripId;
+  if (id) {
+    if (!(await isAcceptedTripMember(sc, id, userId))) return { today: null, info: "The user is not a member of that trip." };
+  } else {
+    const current: any = await toolGetCurrentTrip(sc, userId);
+    id = current?.trip?.id ?? null;
+    if (!id) return { today: null, info: "No active or upcoming trip." };
+  }
+  const built = await buildTripTodayProjection(sc, id, userId);
+  if (!built.ok) return { today: null, info: built.reason === "FEATURE_DISABLED" ? `Today is not enabled: ${built.message}` : `Today unavailable (${built.reason}): ${built.message}` };
+  const decision = acceptTripProjection(built.projection, { acceptedSchemaVersion: TRIP_PROJECTION_SCHEMA_VERSION, metric: "TripTodayProjection" });
+  if (!decision.accepted) return { today: null, info: `Today rejected (${decision.reason}): ${decision.message}` };
+  const p = built.projection;
+  return {
+    today: {
+      tripId: p.tripId,
+      nowState: { phase: p.nowState.phase, reason: p.nowState.reason, primaryFocus: p.nowState.primaryFocus },
+      currentPlan: p.currentPlan ? { ...p.currentPlan, title: wrapUgc(String(p.currentPlan.title ?? "")) } : null,
+      nextCommitment: p.nextCommitment,
+      freeWindows: p.freeWindows.map((w) => ({ id: w.id, beginsAt: w.beginsAt, endsAt: w.endsAt, durationMinutes: w.durationMinutes, confidence: w.confidence })),
+      crewSummary: p.crewSummary,
+      health: p.health,
+      healthReasons: p.healthReasons.map((r) => ({ code: r.code, level: r.level, detail: r.detail })),
+      risks: p.risks,
+      unresolvedActions: p.unresolvedActions,
+      answers: p.answers,
+    },
+    projection: { generatedAt: p.generatedAt, sourceTripVersion: p.sourceTripVersion, freshness: p.freshness },
+  };
+}
+
 async function toolAddToTrip(
   sc: SupabaseClient,
   userId: string,
@@ -1228,6 +1340,8 @@ export async function executeCompassTool(
       case "get_place_details":    raw = await toolGetPlaceDetails(sc, args); break;
       case "get_circle_activity":  raw = await toolGetCircleActivity(sc, profile, userId); break;
       case "check_trip_conflicts": raw = await toolCheckTripConflicts(sc, userId, args); break;
+      case "get_freedom_windows":  raw = await toolGetFreedomWindows(sc, userId, args); break;
+      case "get_today_state":      raw = await toolGetTodayState(sc, userId, args); break;
       case "add_to_trip":          raw = await toolAddToTrip(sc, userId, args); break;
       // Phase 9 social tools re-resolve blocked/muted users PER CALL so a
       // mid-conversation block takes effect immediately (the profile snapshot

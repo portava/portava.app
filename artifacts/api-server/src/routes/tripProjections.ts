@@ -6,6 +6,13 @@
  *   GET /trips/:id/crew       TripCrewProjection       (§10 cards + envelope)
  *   GET /trips/:id/context    TripCompassProjection    (§19.1; Compass consumes the same object)
  *   GET /trips/:id/safety     TripSafetyProjection     (§17.4)
+ *   GET /trips/:id/freedom-windows  §7.3 windows + §7.2 conflicts (§12.1 getFreedomWindows)
+ *   GET /trips/:id/health     TripHealthProjection     (§17.1 health + §3.2 phase)
+ *   GET /trips/:id/today      TripTodayProjection      (§11.1)
+ *
+ * The last three need kernel-era schema and sit behind
+ * `trip_operational_projections_enabled` (lib/tripOperationalProjections.ts),
+ * seeded FALSE: off, they answer `feature_disabled`.
  *
  * `/today` is §11.1's and is not here: its inputs (the Temporal Freedom
  * Engine, §7.3) do not exist yet, and a `/today` that returned the plan under
@@ -53,6 +60,11 @@ import { liveEnvelope, readTripVersion } from "../services/trips/TripProjectionE
 import { buildTripTimeline } from "../services/trips/TripTimelineProjection.js";
 import { projectTripSafety, type SafetySessionRow } from "../services/trips/TripSafetyProjection.js";
 import { buildTripCompassProjection } from "../services/trips/TripCompassProjection.js";
+import { buildTripFreedomProjection } from "../services/trips/TripFreedomProjection.js";
+import { buildTripHealthProjection } from "../services/trips/TripHealthProjection.js";
+import { buildTripTodayProjection } from "../services/trips/TripTodayProjection.js";
+import { detectPlanOverlaps } from "../services/trips/TripFreedomEngine.js";
+import { incrementTripMetric } from "../lib/tripMetrics.js";
 import { getCrewMap, CrewMapUnavailableError } from "../services/tripCrew/TripCrewLocationService.js";
 
 const router = Router();
@@ -138,6 +150,18 @@ router.get("/trips/:tripId/timeline", asyncHandler(async (req, res) => {
   const items = rows.map((row) => toCamel(row, { warnings: warnMap.get(row.id) ?? [] }));
   const timeline = buildTripTimeline(items, { tripStartDate, tripEndDate });
 
+  // §7.2: a conflict is not silently rendered as a normal itinerary. Plan
+  // items that overlap on a day are returned as conflicts AND named on their
+  // day, so a renderer that only reads days still sees the mark.
+  const conflicts = detectPlanOverlaps(items.map((i) => ({ id: i.id, dayDate: i.dayDate, startsAt: i.startsAt, endsAt: i.endsAt })));
+  for (const c of conflicts) incrementTripMetric("temporal_conflict_total", { kind: c.kind });
+  const conflicted = new Set(conflicts.flatMap((c) => c.planIds));
+  const days = timeline.days.map((d) => ({ ...d, conflictIds: d.items.map((i) => i.id).filter((id) => conflicted.has(id)) }));
+  // §3.3 AT_RISK, DERIVED rather than stored (§3.1: lifecycle is computed from
+  // facts): a plan in a conflict is at risk. §21.1 plan_at_risk_total counts it.
+  const atRiskPlanIds = [...conflicted];
+  for (const id of atRiskPlanIds) incrementTripMetric("plan_at_risk_total", { plan: id });
+
   res.json({
     ...liveEnvelope(sourceTripVersion),
     tripId,
@@ -145,8 +169,83 @@ router.get("/trips/:tripId/timeline", asyncHandler(async (req, res) => {
     tripEndDate,
     canEdit: editAllowed === true,
     itemCount: rows.length,
-    ...timeline,
+    days,
+    undated: timeline.undated,
+    tripDayCount: timeline.tripDayCount,
+    conflicts,
+    atRiskPlanIds,
+    atRiskReading: "§3.3 AT_RISK is derived, not stored: a plan item in a temporal conflict. No IN_PROGRESS / MOVED state exists (TR46).",
   });
+}));
+
+// ── GET /trips/:tripId/freedom-windows — §7.3, §12.1 getFreedomWindows ───────
+
+router.get("/trips/:tripId/freedom-windows", asyncHandler(async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const { tripId } = req.params;
+  if (!UUID_RE.test(tripId)) { sendError(res, "invalid_payload", "Invalid trip id"); return; }
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const membership = await requireTripMember(sc, tripId, user.id);
+  if (!membership) { sendTripRefusal(res, "not_member", "TRIP_AUTH_NOT_CREW", "You must be an accepted trip member to view freedom windows"); return; }
+
+  const built = await buildTripFreedomProjection(sc, tripId);
+  if (!built.ok) { refuseBuild(res, built); return; }
+  res.json(built.projection);
+}));
+
+/** One mapping for the three gated builders' refusals. */
+function refuseBuild(res: Parameters<typeof sendError>[0], built: { reason: string; message: string }): void {
+  if (built.reason === "TRIP_NOT_FOUND") { sendError(res, "not_found", built.message); return; }
+  if (built.reason === "FEATURE_DISABLED") { sendError(res, "feature_disabled", built.message); return; }
+  if (built.reason === "TRIP_PROJECTION_VERSION_AHEAD" || built.reason === "TRIP_PROJECTION_STALE" || built.reason === "TRIP_PROJECTION_SCHEMA_MISMATCH") {
+    sendTripRefusal(res, "degraded_unavailable", built.reason, built.message); return;
+  }
+  sendTripRefusal(res, "degraded_unavailable", "TRIP_PROJECTION_UNAVAILABLE", built.message);
+}
+
+// ── GET /trips/:tripId/health — §17.1 health, §3.2 phase ──────────────────────
+
+router.get("/trips/:tripId/health", asyncHandler(async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const { tripId } = req.params;
+  if (!UUID_RE.test(tripId)) { sendError(res, "invalid_payload", "Invalid trip id"); return; }
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const membership = await requireTripMember(sc, tripId, user.id);
+  if (!membership) { sendTripRefusal(res, "not_member", "TRIP_AUTH_NOT_CREW", "You must be an accepted trip member to view trip health"); return; }
+
+  const built = await buildTripHealthProjection(sc, tripId, user.id);
+  if (!built.ok) { refuseBuild(res, built); return; }
+  res.json(built.projection);
+}));
+
+// ── GET /trips/:tripId/today — §11.1 ──────────────────────────────────────────
+
+router.get("/trips/:tripId/today", asyncHandler(async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const { tripId } = req.params;
+  if (!UUID_RE.test(tripId)) { sendError(res, "invalid_payload", "Invalid trip id"); return; }
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const membership = await requireTripMember(sc, tripId, user.id);
+  if (!membership) { sendTripRefusal(res, "not_member", "TRIP_AUTH_NOT_CREW", "You must be an accepted trip member to view the Today projection"); return; }
+
+  const built = await buildTripTodayProjection(sc, tripId, user.id);
+  if (!built.ok) { refuseBuild(res, built); return; }
+  res.json(built.projection);
 }));
 
 // ── GET /trips/:tripId/map — §19.2's path for the §14.1 projection ───────────

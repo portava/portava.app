@@ -277,6 +277,16 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "travel-buddy-standalone/src/services/tripProjectionEnvelope.ts",
     "travel-buddy-standalone/src/services/tripMapProjection.ts",
     "travel-buddy-standalone/src/services/__tests__/tripProjectionEnvelope.test.ts",
+    // §40.3: the Temporal Freedom Engine's suites (the engine itself is under services/trips/).
+    "artifacts/api-server/src/test/tripFreedomEngine.test.ts",
+    "artifacts/api-server/src/test/tripFreedomWindows.test.ts",
+    // §40.4-§40.5: phase, health, today (under services/trips/), their gate, its
+    // flag seed, and their suites.
+    "artifacts/api-server/src/lib/tripOperationalProjections.ts",
+    "artifacts/api-server/src/migrations/2778_trip_operational_projections_flag.sql",
+    "artifacts/api-server/src/test/tripOperationalPhase.test.ts",
+    "artifacts/api-server/src/test/tripHealthProjection.test.ts",
+    "artifacts/api-server/src/test/tripTodayProjection.test.ts",
   ],
   "census-layover.md": [
     "artifacts/api-server/src/services/airport/",
