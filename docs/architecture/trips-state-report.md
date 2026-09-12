@@ -16,7 +16,7 @@ being collapsed into one number.** The standing rule this repository works under
 
 | state | Trips | evidence |
 | --- | --- | --- |
-| **IMPLEMENTED** | 250 of 451 requirements are BUILT (**88 C + 162 W**) — **55.4 % constructed** | §36 recount, 451/451 rows parsed; §38 and §39 re-derived 78 of them |
+| **IMPLEMENTED** | 301 of 451 requirements are BUILT (**145 C + 156 W**) — **66.7 % constructed** — ON THE BRANCH `claude/sweet-fermat-fmx7up`, not on `main` | §36 recount, 451/451 rows parsed; §38 and §39 re-derived 78 of them; §40.1–§40.7 BUILT 57 rows into C and 31 N→W, each with file, line, test and a mutation that went red |
 | **TESTED** | **17,737 / 17,738** api-server tests pass, **0 fail, 0 skipped, 1 CANCELLED** — see below. Trips-specific: the kernel live suite **12/12** against portava-ci | full `npm test`; `tripKernelLive.test.ts` in `live-db.yml` |
 | **MERGED** | `014a25d5` on `main` (PR #481). **PR #482 is open and DRAFT** — none of this session's work is merged | `git merge-base --is-ancestor 014a25d5 origin/main` |
 | **DEPLOYED** | **portava-ci only.** Production has received **nothing** from Batch C | `apply-migrations`: 109 proven applied on `hwokxgbmezheskbzskfr` |
@@ -74,7 +74,7 @@ merge. Merging is part of the test here.
 
 ## What "IMPLEMENTED" does and does not mean
 
-The 55.4 % is a **document measuring itself**. `check:census-integrity` states
+The 66.7 % is a **document measuring itself**. `check:census-integrity` states
 its own limit: it verifies a census agrees with itself, not that it agrees with
 the code. Until 2026-09-11 nothing had ever read census-trips against the
 implementation.
@@ -153,10 +153,29 @@ per-census floors that ratchet.
 
 ## The one number, stated with its caveats attached
 
-**Trips: 55.4 % constructed, 19.5 % correct, of 451 requirements.**
+**Trips: 66.7 % constructed, 32.2 % correct, of 451 requirements — on the branch.**
+
+> RESTATED 2026-09-12 after census-trips §40.1–§40.7 (from 55.4 % / 19.5 % at
+> §39). §40 is the first section that BUILDS rather than re-reads: §6.1 policy
+> functions and Appendix B reason codes on the wire; the §19.1 envelope on every
+> projection and §19.2's `/timeline` `/map` `/crew` `/context` (+ `/safety`);
+> the §7.3 Temporal Freedom Engine with §7.2 conflicts; the §3.2 phase, §17.1
+> health and derived AT_RISK; the §11.1 Today projection checking §22.4 live;
+> §10.1/§10.2 presence source/confidence/freshness with the stale-render guard
+> counted; §20.2's presence stop on completion with §20.3's questions; and an
+> in-process §21.2 decision ledger. Every kernel-era read projection sits behind
+> `trip_operational_projections_enabled`, seeded FALSE, because
+> `check:flag-schema-prerequisites` caught Compass reaching a table production
+> lacks. Two defects in graded code were found by the new tests and fixed:
+> the straight-line travel adapter was not a lower bound under 2 km (TR128's
+> soundness claim was false there), and Safe Return sessions could be attached
+> to any trip. Not built, and said so: START_PLAN/IN_PROGRESS, subgroups and a
+> `trip_decisions` table — each a migration this environment cannot execute.
 
 - Both are **floors** derived from a document that has only just begun to be read
-  against the code.
+  against the code — and, since §40, from code that exists on ONE BRANCH, unmerged,
+  behind flags seeded FALSE: BUILT is not MERGED, MERGED is not DEPLOYED, DEPLOYED
+  is not ENABLED.
 - **44 of 89** C rows have been independently re-derived, and **two of them failed**
   (TR51, TR200). The other 407 requirements have not been re-derived at all.
 - Nothing is production-deployed. Nothing is certified.

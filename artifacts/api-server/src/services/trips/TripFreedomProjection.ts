@@ -32,6 +32,7 @@ import { resolvePlaces, intervalToMinutes, FEASIBILITY_UNVERIFIED_DISCLOSURE } f
 import { checkFeasibility } from "./TripFeasibilityEngine.js";
 import { straightLineTravelTimeProvider, type GeoPoint } from "./TravelTimeProvider.js";
 import { liveEnvelope, type TripProjectionEnvelope } from "./TripProjectionEnvelope.js";
+import { recordTripDecision, TRIP_ENGINE_VERSIONS } from "./TripDecisionLedger.js";
 import {
   computeFreedomWindows, type EngineCommitment, type FreedomWindow, type HopTravel, type TemporalConflict,
 } from "./TripFreedomEngine.js";
@@ -41,6 +42,8 @@ const PROVIDER = straightLineTravelTimeProvider;
 
 export interface TripFreedomProjection extends TripProjectionEnvelope {
   tripId: string;
+  /** §21.2: the ledger record this projection was computed as; explain it at GET /trips/:id/decisions/:decisionId/explain. */
+  decisionId: string;
   windows: FreedomWindow[];
   conflicts: TemporalConflict[];
   commitmentCount: number;
@@ -161,11 +164,37 @@ export async function buildTripFreedomProjection(
   });
   for (const c of result.conflicts) incrementTripMetric("temporal_conflict_total", { kind: c.kind });
 
+  // §21.2: ids, versions and counts — never a coordinate or a name.
+  const decision = recordTripDecision({
+    tripId, type: "freedom_windows",
+    inputs: {
+      sourceTripVersion: envelope.sourceTripVersion,
+      commitmentIds: placed.map((c) => c.id),
+      hopTravelMinutes: hops.map((h) => h.travelMinutes),
+      unresolvedPlaceIds: places.unresolved,
+      participants: participants.size,
+      tripDates: { start: t.start_date ?? null, end: t.end_date ?? null },
+    },
+    sources: ["trips", "trip_commitments", "places", "trip_members"],
+    assumptions: [
+      "a commitment has no end column (2761); a window begins at the commitment's start, never before its latest allowed arrival",
+      `travel term is ${PROVIDER.id}'s fastest-mode straight-line LOWER BOUND at the feasibility percentile; no window is certified`,
+    ],
+    constraints: [...new Set(result.windows.flatMap((w) => w.hardConstraints.map((h) => h.kind)))],
+    result: { windows: result.windows.length, conflicts: result.conflicts.map((c) => c.kind), unplaced: result.unplacedCommitmentIds.length },
+    confidence: result.windows.reduce<"HIGH" | "MEDIUM" | "LOW" | "INSUFFICIENT">((worst, w) => {
+      const order = ["INSUFFICIENT", "LOW", "MEDIUM", "HIGH"]; return order.indexOf(w.confidence) < order.indexOf(worst) ? w.confidence : worst;
+    }, "HIGH"),
+    engineVersions: { TripFreedomEngine: TRIP_ENGINE_VERSIONS.TripFreedomEngine, TripFeasibilityEngine: TRIP_ENGINE_VERSIONS.TripFeasibilityEngine, TravelTimeProvider: TRIP_ENGINE_VERSIONS.TravelTimeProvider },
+    calculatedAt: envelope.generatedAt, sourceTripVersion: envelope.sourceTripVersion,
+  });
+
   return {
     ok: true,
     projection: {
       ...envelope,
       tripId,
+      decisionId: decision.decisionId,
       windows: result.windows,
       conflicts: result.conflicts,
       commitmentCount: commitments.length,

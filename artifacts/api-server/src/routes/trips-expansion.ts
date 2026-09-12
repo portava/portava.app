@@ -11,6 +11,7 @@ import { isBlockedBetween } from "../lib/blockGuard.js";
 import { z } from "zod";
 import crypto from "node:crypto";
 import { getServiceClient } from "../lib/supabase.js";
+import { runTripCloseout } from "../services/trips/TripCloseoutService.js";
 import { logger } from "../lib/logger.js";
 import {
   requireUser,
@@ -676,7 +677,7 @@ router.post("/trips/:tripId/complete", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured"); return; }
 
-  const { data: trip, error: tripErr } = await sc.from("trips").select("owner_id, status").eq("id", tripId).maybeSingle();
+  const { data: trip, error: tripErr } = await sc.from("trips").select("owner_id, status, timezone").eq("id", tripId).maybeSingle();
   if (tripErr) throw readUnavailable("trips", tripErr);
   if (!trip) { sendError(res, "not_found", "Trip not found"); return; }
   if ((trip as any).owner_id !== user.id) { sendError(res, "forbidden", "Only the owner can complete a trip"); return; }
@@ -724,7 +725,10 @@ router.post("/trips/:tripId/complete", async (req, res) => {
     if ((completeRows ?? []).length === 0) { sendError(res, "not_found", "Trip not found"); return; }
   }
   await logActivity(sc, tripId, user.id, "trip_completed");
-  res.json({ status: "completed", tripId });
+  // §20.2: the closeout, AFTER the transition, so a failed step cannot
+  // un-complete the trip and every step is reported rather than implied.
+  const closeout = await runTripCloseout(sc, tripId, { timezone: (trip as any).timezone ?? null });
+  res.json({ status: "completed", tripId, closeout });
 });
 
 // POST /api/trips/:tripId/archive

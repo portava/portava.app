@@ -165,7 +165,7 @@ export async function getCrewMap(
   //     privacy-guard to conditionally expose when live-share is active.
   const locationRes = await db
     .from("user_location_state")
-    .select("user_id, city, district, country, updated_at, lat, lng")
+    .select("user_id, city, district, country, updated_at, last_known_at, lat, lng, source, accuracy_meters")
     .in("user_id", allUserIds);
   // REFUSE. This IS the map. An unreadable location table produced a full crew
   // map on which every member had no location — indistinguishable from a crew
@@ -290,6 +290,13 @@ export async function getCrewMap(
         district: loc.district ?? null,
         country: loc.country ?? null,
         updatedAt: loc.updated_at ?? null,
+        // §10.1/§10.2 (census-trips §40.6): the position's own clock, the
+        // client's source word and the reported accuracy, so the card can
+        // carry observed_at / source / confidence and judge freshness on the
+        // right clock.
+        lastKnownAt: loc.last_known_at ?? null,
+        source: loc.source ?? null,
+        accuracyMeters: typeof loc.accuracy_meters === "number" ? loc.accuracy_meters : null,
         // lat/lng are forwarded; buildCrewCard only uses them when live-share is active
         lat: loc.lat ?? null,
         lng: loc.lng ?? null,

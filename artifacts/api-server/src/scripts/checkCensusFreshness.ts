@@ -287,6 +287,12 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/test/tripOperationalPhase.test.ts",
     "artifacts/api-server/src/test/tripHealthProjection.test.ts",
     "artifacts/api-server/src/test/tripTodayProjection.test.ts",
+    // §40.6-§40.7: presence freshness, the closeout, the decision ledger, the
+    // crew-map service that forwards the presence columns, and their suites.
+    "artifacts/api-server/src/lib/tripPresenceFreshness.ts",
+    "artifacts/api-server/src/services/tripCrew/TripCrewLocationService.ts",
+    "artifacts/api-server/src/test/tripPresenceFreshnessClass.test.ts",
+    "artifacts/api-server/src/test/tripCloseout.test.ts",
   ],
   "census-layover.md": [
     "artifacts/api-server/src/services/airport/",

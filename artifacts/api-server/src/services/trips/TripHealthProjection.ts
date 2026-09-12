@@ -25,11 +25,14 @@ import { buildTripFreedomProjection, type TripFreedomProjection } from "./TripFr
 import { operationalState, type SafetySessionRow } from "./TripSafetyProjection.js";
 import { deriveTripHealth, surfacePriority, type TripHealth, type RiskForHealth } from "./TripHealth.js";
 import { deriveOperationalPhase, localClock, type PhaseDecision, type PhasePlanItem } from "./TripOperationalPhase.js";
+import { recordTripDecision, TRIP_ENGINE_VERSIONS } from "./TripDecisionLedger.js";
 
 const log = logger.child({ mod: "tripHealthProjection" });
 
 export interface TripHealthProjection extends TripProjectionEnvelope, TripHealth {
   tripId: string;
+  /** §21.2 ledger record; explain at GET /trips/:id/decisions/:decisionId/explain. */
+  decisionId: string;
   /** §17.2 AT_RISK priority, or [] when health is better than AT_RISK. */
   surfacePriority: readonly string[];
   phase: PhaseDecision;
@@ -148,12 +151,29 @@ export async function buildTripHealthProjection(
     planItems, windows: f.windows, disrupted: health.health === "DISRUPTED", safeReturnActive: viewerSafeReturnActive,
   });
 
+  const decision = recordTripDecision({
+    tripId, type: "trip_health",
+    inputs: {
+      sourceTripVersion: envelope.sourceTripVersion, freedomDecisionId: f.decisionId,
+      riskIds: riskRows.map((r) => r.id), needsHelpMembers: needsHelp.length, hops, planItems: planItems.length,
+      localClock: { date: phase.evidence.localDate, hour: phase.evidence.localHour, timezone: t.timezone ?? "UTC" },
+    },
+    sources: ["trips", "trip_risks", "safe_return_sessions", "trip_crew_location_preferences", "trip_plan_items", "TripFreedomProjection"],
+    assumptions: ["health is the worst concrete reason; readiness is not an input", "the phase's first matching clause wins, in the documented order"],
+    constraints: health.reasons.map((r) => r.code),
+    result: { health: health.health, reasons: health.reasons.length, phase: phase.phase, phaseReason: phase.reason },
+    confidence: "N/A",
+    engineVersions: { TripHealth: TRIP_ENGINE_VERSIONS.TripHealth, TripOperationalPhase: TRIP_ENGINE_VERSIONS.TripOperationalPhase },
+    calculatedAt: envelope.generatedAt, sourceTripVersion: envelope.sourceTripVersion,
+  });
+
   return {
     ok: true,
     projection: {
       ...envelope,
       ...health,
       tripId,
+      decisionId: decision.decisionId,
       surfacePriority: surfacePriority(health.health),
       phase,
       tripStatus,

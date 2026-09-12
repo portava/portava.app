@@ -1,7 +1,7 @@
 /**
  * CompassTools — Phase 4 native function calling for the Compass assistant.
  *
- * Thirteen tools the model may call on demand (the OpenAI schemas in TOOL_DEFINITIONS
+ * Fourteen tools the model may call on demand (the OpenAI schemas in TOOL_DEFINITIONS
  * below are the authoritative list). Hard rules (master-roadmap.md):
  *   - Candidate generation is strictly separated from AI explanation: tools
  *     produce candidates from real DB data; the model interprets, ranks,
@@ -24,6 +24,7 @@ import { isAcceptedTripMember, canEditPlan } from "../lib/http.js";
 import { buildTripCompassProjection } from "../services/trips/TripCompassProjection.js";
 import { buildTripFreedomProjection } from "../services/trips/TripFreedomProjection.js";
 import { buildTripTodayProjection } from "../services/trips/TripTodayProjection.js";
+import { explainTripDecision } from "../services/trips/TripDecisionLedger.js";
 import { acceptTripProjection, TRIP_PROJECTION_SCHEMA_VERSION } from "../services/trips/TripProjectionEnvelope.js";
 import { buildCompassContext, defaultSignals } from "./CompassContextEngine.js";
 import { runPipeline } from "./CompassPipeline.js";
@@ -188,6 +189,20 @@ export const COMPASS_TOOL_DEFINITIONS = [
       parameters: {
         type: "object",
         properties: { tripId: { type: "string", description: "A specific trip's id (optional). The user must be an accepted member." } },
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
+      name: "explain_trip_decision",
+      description:
+        "Explain a trip decision by its decisionId (returned on freedom-window, health and today results as `decisionId`): what was read, what was assumed, what constrained it, the result and the engine versions. Decisions are retained in-process only; an unknown id is answered as not retained.",
+      parameters: {
+        type: "object",
+        properties: { tripId: { type: "string", description: "The trip the decision belongs to." }, decisionId: { type: "string", description: "The decision id." } },
+        required: ["tripId", "decisionId"],
         additionalProperties: false,
       },
     },
@@ -870,6 +885,17 @@ export async function toolGetTodayState(sc: SupabaseClient, userId: string, args
   };
 }
 
+/** §12.1 explainTripDecision(decisionId) — §21.2's ledger, in sentences, crew only. */
+export async function toolExplainTripDecision(sc: SupabaseClient, userId: string, args: Record<string, unknown>): Promise<unknown> {
+  const tripId = typeof args.tripId === "string" ? args.tripId : "";
+  const decisionId = typeof args.decisionId === "string" ? args.decisionId : "";
+  if (!tripId || !decisionId) return { explanation: null, info: "tripId and decisionId are required." };
+  if (!(await isAcceptedTripMember(sc, tripId, userId))) return { explanation: null, info: "The user is not a member of that trip." };
+  const e = explainTripDecision(decisionId);
+  if (!e || e.decision.tripId !== tripId) return { explanation: null, info: `Decision ${decisionId} is not retained (in-process ledger; not persisted).` };
+  return { explanation: e.explanation, type: e.type, calculatedAt: e.calculatedAt, sourceTripVersion: e.sourceTripVersion, engineVersions: e.engineVersions, retention: e.retention };
+}
+
 async function toolAddToTrip(
   sc: SupabaseClient,
   userId: string,
@@ -1342,6 +1368,7 @@ export async function executeCompassTool(
       case "check_trip_conflicts": raw = await toolCheckTripConflicts(sc, userId, args); break;
       case "get_freedom_windows":  raw = await toolGetFreedomWindows(sc, userId, args); break;
       case "get_today_state":      raw = await toolGetTodayState(sc, userId, args); break;
+      case "explain_trip_decision": raw = await toolExplainTripDecision(sc, userId, args); break;
       case "add_to_trip":          raw = await toolAddToTrip(sc, userId, args); break;
       // Phase 9 social tools re-resolve blocked/muted users PER CALL so a
       // mid-conversation block takes effect immediately (the profile snapshot

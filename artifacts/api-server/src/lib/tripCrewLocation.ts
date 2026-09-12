@@ -20,6 +20,8 @@
 
 import { freshnessBucket } from "./mapTravelers.js";
 import { canSeePresence } from "./tripPresencePolicy.js";
+import { classifyPresence, type PresenceFreshnessClass, type PresenceConfidence } from "./tripPresenceFreshness.js";
+import { incrementTripMetric } from "./tripMetrics.js";
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 export type CrewStatusLabel =
@@ -51,7 +53,14 @@ export interface RawMemberLocation {
     city: string | null;
     district: string | null;
     country: string | null;
+    /** The ROW's clock (`updated_at`): moves on any patch, a hand-picked city included. */
     updatedAt: string | null;
+    /** The POSITION's clock (`last_known_at`): moves only with a coordinate. §10.2 is judged on this when present. */
+    lastKnownAt?: string | null;
+    /** `user_location_state.source` — the client's own word for how it got the fix. §10.1 `source`. */
+    source?: string | null;
+    /** `user_location_state.accuracy_meters`. §10.1 `confidence`, banded by lib/tripPresenceFreshness.ts. */
+    accuracyMeters?: number | null;
     /** Exact coordinates — only populated when caller has active live-share access */
     lat?: number | null;
     lng?: number | null;
@@ -120,6 +129,16 @@ export interface CrewMemberCard {
    * server's half of that, rendering it is the client's.
    */
   freshness: CrewFreshness | null;
+  // ── §10.1 / §10.2, by the spec's names (census-trips §40.6) ──────────────
+  /** §10.2 LIVE | RECENT | LAST_KNOWN | OFFLINE, judged on the position's own clock. */
+  freshnessClass: PresenceFreshnessClass;
+  /** §10.1 observed_at: the instant the class is about — `last_known_at` when the row has one, else `updated_at`. */
+  observedAt: string | null;
+  observedAtSource: "last_known_at" | "updated_at" | null;
+  /** §10.1 source: the client's own word for how it got the fix; null when it said nothing. */
+  source: string | null;
+  /** §10.1 confidence: the device's accuracy, banded. Independent of freshness on purpose. */
+  confidence: PresenceConfidence;
 }
 
 // ── TripCrewPrivacyGuard ──────────────────────────────────────────────────────
@@ -142,12 +161,25 @@ export function buildCrewCard(
   // current." freshnessBucket returns null past 60 minutes; for Trips that is
   // "stale" (kept, labelled), not "drop". A missing timestamp stays null: we
   // do not know the age, so we cannot assert currency.
-  const freshness: CrewFreshness | null = raw.locationState?.updatedAt
-    ? (freshnessBucket(raw.locationState.updatedAt, now) ?? "stale")
+  //
+  // §40.6: judged on the POSITION's clock. `updated_at` moves on any patch (a
+  // hand-picked city this morning); `last_known_at` moves only with a
+  // coordinate; judging currency on the former called a week-old point LIVE.
+  // The legacy bucket stays on the card under its old name, computed on the
+  // same instant the class is.
+  const presence = classifyPresence({
+    lastKnownAt: raw.locationState?.lastKnownAt ?? null,
+    updatedAt: raw.locationState?.updatedAt ?? null,
+    expiresAt: null,
+    source: raw.locationState?.source ?? null,
+    accuracyMeters: raw.locationState?.accuracyMeters ?? null,
+  }, now);
+  const freshness: CrewFreshness | null = presence.observedAt
+    ? (freshnessBucket(presence.observedAt, now) ?? "stale")
     : null;
   // "Current" means a position we can positively vouch for as live or recent.
   // Anything else — stale, or unknown age — must not be drawn as current.
-  const positionIsCurrent = freshness === "live" || freshness === "recent";
+  const positionIsCurrent = presence.drawableAsCurrent;
 
   const base = {
     userId: raw.userId,
@@ -161,6 +193,11 @@ export function buildCrewCard(
     ghostMode: false,
     updatedAt: raw.locationState?.updatedAt ?? null,
     freshness,
+    freshnessClass: presence.freshnessClass,
+    observedAt: presence.observedAt,
+    observedAtSource: presence.observedAtSource,
+    source: presence.source,
+    confidence: presence.confidence,
   };
 
   // §6.1 canSeePresence decides the FORK — ghost, live-share, hidden default —
@@ -215,6 +252,13 @@ export function buildCrewCard(
     // above, not assumed — what is stale is the position, and those are
     // different facts.
     const exactCoords = positionIsCurrent ? resolveExactCoords(raw) : null;
+    // §21.1 stale_presence_render_attempt_total: an active GRANT over a
+    // LAST_KNOWN or expired position is exactly the case §10.2 forbids
+    // drawing as current. Counted where it is refused, so the regression the
+    // metric exists for is measurable (census-trips TR399).
+    if (!positionIsCurrent && presence.observedAt !== null && resolveExactCoords(raw) !== null) {
+      incrementTripMetric("stale_presence_render_attempt_total", { reason: "live_share_grant_over_last_known_position" });
+    }
 
     return {
       ...base,

@@ -57,6 +57,7 @@ import { noSource, type Layer } from "./TripMapProjection.js";
 import type { FreedomWindow } from "./TripFreedomEngine.js";
 import type { PhaseDecision } from "./TripOperationalPhase.js";
 import type { HealthReason, TripHealthLevel } from "./TripHealth.js";
+import { recordTripDecision, TRIP_ENGINE_VERSIONS } from "./TripDecisionLedger.js";
 
 const log = logger.child({ mod: "tripTodayProjection" });
 
@@ -90,6 +91,8 @@ export interface TodayUnresolvedAction {
 
 export interface TripTodayProjection extends TripProjectionEnvelope {
   tripId: string;
+  /** §21.2 ledger record; explain at GET /trips/:id/decisions/:decisionId/explain. */
+  decisionId: string;
   stageId: string | null;
   stageReading: string;
   nowState: PhaseDecision;
@@ -262,11 +265,30 @@ export async function buildTripTodayProjection(
     unresolvedActions.push({ kind: "place_commitment", subjectIds: [id], detail: `commitment ${id} has no start or arrival time and is not on the timeline`, severity: "normal" });
   }
 
+  const envelope = liveEnvelope(canonicalVersion, now);
+  const decision = recordTripDecision({
+    tripId, type: "today_projection",
+    inputs: {
+      canonicalVersion, healthDecisionId: health.decisionId, freedomDecisionId: freedom.decisionId,
+      stageId: stage ? String(stage.id) : null, activePlanId: health.phase.evidence.activePlanId,
+      nextCommitmentId: nextCommitment?.id ?? null, openWindows: freedom.windows.filter((w) => Date.parse(w.endsAt) > nowMs).length,
+      crew: { total: crewSummary.total, featureEnabled: crewSummary.featureEnabled },
+    },
+    sources: ["trips", "TripHealthProjection", "TripFreedomProjection", "trip_stages", "trip_plan_items", "trip_commitments", "trip_members", "trip_risks"],
+    assumptions: ["composed from the health and freedom projections accepted against trips.version read first (§22.4)"],
+    constraints: [`accepted sub-projections at version ${canonicalVersion ?? "unknown"}`],
+    result: { phase: health.phase.phase, health: health.health, unresolvedActions: unresolvedActions.length, freeWindows: freedom.windows.length },
+    confidence: "N/A",
+    engineVersions: { TripTodayProjection: TRIP_ENGINE_VERSIONS.TripTodayProjection },
+    calculatedAt: envelope.generatedAt, sourceTripVersion: canonicalVersion,
+  });
+
   return {
     ok: true,
     projection: {
-      ...liveEnvelope(canonicalVersion, now),
+      ...envelope,
       tripId,
+      decisionId: decision.decisionId,
       stageId: stage ? String(stage.id) : null,
       stageReading,
       nowState: health.phase,

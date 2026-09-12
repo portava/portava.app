@@ -9,6 +9,8 @@
  *   GET /trips/:id/freedom-windows  §7.3 windows + §7.2 conflicts (§12.1 getFreedomWindows)
  *   GET /trips/:id/health     TripHealthProjection     (§17.1 health + §3.2 phase)
  *   GET /trips/:id/today      TripTodayProjection      (§11.1)
+ *   GET /trips/:id/decisions/:decisionId/explain   §21.2 ledger, §12.1 explainTripDecision
+ *   GET /trips/:id/closeout   §20.2 steps + §20.3 questions for a completed trip
  *
  * The last three need kernel-era schema and sit behind
  * `trip_operational_projections_enabled` (lib/tripOperationalProjections.ts),
@@ -63,6 +65,8 @@ import { buildTripCompassProjection } from "../services/trips/TripCompassProject
 import { buildTripFreedomProjection } from "../services/trips/TripFreedomProjection.js";
 import { buildTripHealthProjection } from "../services/trips/TripHealthProjection.js";
 import { buildTripTodayProjection } from "../services/trips/TripTodayProjection.js";
+import { explainTripDecision, DECISION_RETENTION } from "../services/trips/TripDecisionLedger.js";
+import { runTripCloseout } from "../services/trips/TripCloseoutService.js";
 import { detectPlanOverlaps } from "../services/trips/TripFreedomEngine.js";
 import { incrementTripMetric } from "../lib/tripMetrics.js";
 import { getCrewMap, CrewMapUnavailableError } from "../services/tripCrew/TripCrewLocationService.js";
@@ -246,6 +250,56 @@ router.get("/trips/:tripId/today", asyncHandler(async (req, res) => {
   const built = await buildTripTodayProjection(sc, tripId, user.id);
   if (!built.ok) { refuseBuild(res, built); return; }
   res.json(built.projection);
+}));
+
+// ── GET /trips/:tripId/decisions/:decisionId/explain — §21.2, §12.1 ───────────
+
+router.get("/trips/:tripId/decisions/:decisionId/explain", asyncHandler(async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const { tripId, decisionId } = req.params;
+  if (!UUID_RE.test(tripId)) { sendError(res, "invalid_payload", "Invalid trip id"); return; }
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const membership = await requireTripMember(sc, tripId, user.id);
+  if (!membership) { sendTripRefusal(res, "not_member", "TRIP_AUTH_NOT_CREW", "You must be an accepted trip member to explain a decision"); return; }
+
+  const explained = explainTripDecision(decisionId);
+  // A decision for another trip is not this crew's to read, and is answered
+  // exactly as one that was never retained: nothing about it leaks.
+  if (!explained || explained.decision.tripId !== tripId) {
+    sendError(res, "not_found", `Decision ${decisionId} is not retained. ${DECISION_RETENTION}`);
+    return;
+  }
+  res.json(explained);
+}));
+
+// ── GET /trips/:tripId/closeout — §20.2 / §20.3 ───────────────────────────────
+
+router.get("/trips/:tripId/closeout", asyncHandler(async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const { tripId } = req.params;
+  if (!UUID_RE.test(tripId)) { sendError(res, "invalid_payload", "Invalid trip id"); return; }
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const membership = await requireTripMember(sc, tripId, user.id);
+  if (!membership) { sendTripRefusal(res, "not_member", "TRIP_AUTH_NOT_CREW", "You must be an accepted trip member to view the closeout"); return; }
+
+  // The closeout PLAN for a trip, read-only: what POST /complete would do,
+  // and — after completion — the §20.3 questions still open. Nothing is
+  // stopped here; only POST /complete performs a step.
+  const { data: trip, error: tripErr } = await sc.from("trips").select("status, timezone").eq("id", tripId).maybeSingle();
+  if (tripErr) { sendTripRefusal(res, "degraded_unavailable", "TRIP_PROJECTION_UNAVAILABLE", "The trip could not be read"); return; }
+  if (!trip) { sendError(res, "not_found", "Trip not found"); return; }
+  const report = await runTripCloseout(sc, tripId, { timezone: (trip as any).timezone ?? null, dryRun: true });
+  res.json({ tripId, tripStatus: (trip as any).status ?? null, ...report });
 }));
 
 // ── GET /trips/:tripId/map — §19.2's path for the §14.1 projection ───────────
