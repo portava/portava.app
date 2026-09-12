@@ -121,6 +121,8 @@ export interface CrewMemberCard {
   liveShareActive: boolean;
   liveShareExpiresAt: string | null;
   ghostMode: boolean;
+  /** Appendix B: why this member's presence is withheld — the §6.1 canSeePresence refusal, on the wire; null when it is shown. */
+  presenceReason: "TRIP_PRESENCE_GHOST" | "TRIP_PRESENCE_HIDDEN" | null;
   updatedAt: string | null;
   /**
    * How current this member's position is. null when there is no position
@@ -191,6 +193,7 @@ export function buildCrewCard(
     liveShareActive: false,
     liveShareExpiresAt: null as string | null,
     ghostMode: false,
+    presenceReason: null as "TRIP_PRESENCE_GHOST" | "TRIP_PRESENCE_HIDDEN" | null,
     updatedAt: raw.locationState?.updatedAt ?? null,
     freshness,
     freshnessClass: presence.freshnessClass,
@@ -212,7 +215,7 @@ export function buildCrewCard(
 
   // Ghost mode — member is invisible
   if (!decision.allowed && decision.reason === "TRIP_PRESENCE_GHOST") {
-    return { ...base, ghostMode: true, statusLabel: "location_hidden", areaLabel: null, exactCoords: null };
+    return { ...base, ghostMode: true, presenceReason: "TRIP_PRESENCE_GHOST", statusLabel: "location_hidden", areaLabel: null, exactCoords: null };
   }
 
   // TIME-BOXED MEANS THE BOX IS CHECKED HERE. This module's header promises
@@ -276,7 +279,7 @@ export function buildCrewCard(
   // already said so (TRIP_PRESENCE_HIDDEN); this is the card for that answer.
   const visibility = raw.prefs?.defaultVisibility ?? "hidden";
   if (!decision.allowed) {
-    return { ...base, statusLabel: "not_shared", areaLabel: null, exactCoords: null };
+    return { ...base, presenceReason: decision.reason, statusLabel: "not_shared", areaLabel: null, exactCoords: null };
   }
 
   // Safe Return takes visual priority (but only if the member opts in)

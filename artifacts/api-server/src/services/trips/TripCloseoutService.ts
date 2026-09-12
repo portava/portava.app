@@ -63,11 +63,16 @@ export async function runTripCloseout(sc: any, tripId: string, opts: { now?: Dat
   let pendingDecisionTaskIds: string[] | null = null;
   let activeSubgroupIds: string[] | null = null;
   let storedDecisionIds: string[] | null = null;
+  let openRiskIds: string[] | null = null;
   const gate = await tripOperationalProjectionsGate(sc);
   if (gate.enabled) {
     const { data: tasks, error: tErr } = await sc.from("trip_decision_tasks").select("id").eq("trip_id", tripId).eq("status", "pending");
     if (tErr) { unread.push("trip_decision_tasks"); log.warn({ err: tErr.message, tripId }, "closeout: decision tasks unreadable"); }
     else pendingDecisionTaskIds = ((tasks ?? []) as any[]).map((t) => String(t.id));
+    // §5.3: risks are operational; an open one expires with the trip (§20.2).
+    const { data: risks, error: rErr } = await sc.from("trip_risks").select("id").eq("trip_id", tripId).eq("status", "open");
+    if (rErr) { unread.push("trip_risks"); log.warn({ err: rErr.message, tripId }, "closeout: risks unreadable"); }
+    else openRiskIds = ((risks ?? []) as any[]).map((r) => String(r.id));
     // §9.2 / §20.2 (2780): temporary subgroups dissolve at completion.
     const { data: groups, error: gErr } = await sc.from("trip_subgroups").select("id").eq("trip_id", tripId).eq("state", "active");
     if (gErr) { unread.push("trip_subgroups"); log.warn({ err: gErr.message, tripId }, "closeout: subgroups unreadable"); }
@@ -79,7 +84,7 @@ export async function runTripCloseout(sc: any, tripId: string, opts: { now?: Dat
   }
 
   const plan = planCloseout({
-    activeLiveShareIds, planItems, pendingDecisionTaskIds, activeSubgroupIds, storedDecisionIds,
+    activeLiveShareIds, planItems, pendingDecisionTaskIds, activeSubgroupIds, storedDecisionIds, openRiskIds,
     tripEndDate: null, today: localClock(now, opts.timezone ?? null).date,
   });
 
@@ -138,11 +143,12 @@ export async function runTripCloseout(sc: any, tripId: string, opts: { now?: Dat
         steps.push({ step: step.step, status: "failed", ids: step.ids, detail: "no actor to issue UPDATE_DECISION_TASK as" });
         continue;
       }
+      const riskIds = step.riskIds ?? [];
       if (!(await isFlagEnabled(sc, "trip_kernel_enabled"))) {
-        steps.push({ step: step.step, status: "deferred", detail: `${step.ids.length} pending task(s) remain (${step.ids.join(", ")}): UPDATE_DECISION_TASK is a kernel command and trip_kernel_enabled is false` });
+        steps.push({ step: step.step, status: "deferred", detail: `${step.ids.length} pending task(s) remain (${step.ids.join(", ")})${riskIds.length > 0 ? ` and ${riskIds.length} open risk(s) (${riskIds.join(", ")})` : ""}: UPDATE_DECISION_TASK / UPDATE_RISK are kernel commands and trip_kernel_enabled is false` });
         continue;
       }
-      const expired: string[] = []; const failures: string[] = [];
+      const expired: string[] = []; const closedRisks: string[] = []; const failures: string[] = [];
       for (const id of step.ids) {
         const r = await executeTripCommand(sc, {
           commandId: randomUUID(), tripId, actorUserId: opts.actorUserId, idempotencyKey: `closeout:task:${id}`,
@@ -150,9 +156,16 @@ export async function runTripCloseout(sc: any, tripId: string, opts: { now?: Dat
         });
         if (r.ok) expired.push(id); else failures.push(`${id}: ${r.reason}`);
       }
+      for (const id of riskIds) {
+        const r = await executeTripCommand(sc, {
+          commandId: randomUUID(), tripId, actorUserId: opts.actorUserId, idempotencyKey: `closeout:risk:${id}`,
+          type: "UPDATE_RISK", payload: { risk_id: id, patch: { status: "closed" } },
+        });
+        if (r.ok) closedRisks.push(id); else failures.push(`${id}: ${r.reason}`);
+      }
       steps.push(failures.length === 0
-        ? { step: step.step, status: "performed", ids: expired, detail: `${expired.length} pending decision task(s) expired at completion (§8.2, §20.2)` }
-        : { step: step.step, status: "failed", ids: expired, detail: `${expired.length} expired, ${failures.length} refused: ${failures.join("; ")}` });
+        ? { step: step.step, status: "performed", ids: [...expired, ...closedRisks], detail: `${expired.length} pending decision task(s) expired and ${closedRisks.length} open risk(s) closed at completion (§5.3, §8.2, §20.2)` }
+        : { step: step.step, status: "failed", ids: [...expired, ...closedRisks], detail: `${expired.length} expired, ${closedRisks.length} closed, ${failures.length} refused: ${failures.join("; ")}` });
       continue;
     }
     if (step.step === "archive_rebuildable_projections" && step.status === "actionable") {

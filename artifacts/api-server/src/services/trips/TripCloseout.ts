@@ -47,7 +47,7 @@ export const CLOSEOUT_STEPS = [
 export type CloseoutStep = (typeof CLOSEOUT_STEPS)[number];
 
 export type CloseoutStepPlan =
-  | { step: CloseoutStep; status: "actionable"; ids: string[]; detail: string }
+  | { step: CloseoutStep; status: "actionable"; ids: string[]; riskIds?: string[]; detail: string }
   | { step: CloseoutStep; status: "not_applicable"; detail: string }
   | { step: CloseoutStep; status: "deferred"; detail: string };
 
@@ -58,6 +58,8 @@ export interface CloseoutInputs {
   planItems: readonly { id: string; title: string | null; status: string | null; dayDate: string | null; locationName: string | null }[];
   /** Pending decision tasks, when the deployment can read them (null = could not, or not enabled). */
   pendingDecisionTaskIds: readonly string[] | null;
+  /** Open risks (trip_risks.status = open), when the deployment can read them (null / omitted = could not, or not enabled). §5.3: operational, they expire with the trip. */
+  openRiskIds?: readonly string[] | null;
   /** Active temporary subgroups (trip_subgroups, 2780), when the deployment can read them (null = could not, or not enabled). */
   activeSubgroupIds?: readonly string[] | null;
   /** §21.2 ledger rows (trip_decisions, 2781) still within retention, when the deployment can read them (null / omitted = could not, or not enabled). */
@@ -102,9 +104,15 @@ export function planCloseout(inputs: CloseoutInputs): { steps: CloseoutStepPlan[
       : { step: "reconcile_uncertain_plan_outcomes", status: "not_applicable", detail: "every dated plan is already done or cancelled" },
     inputs.pendingDecisionTaskIds === null
       ? { step: "close_operational_decision_tasks", status: "deferred", detail: "trip_decision_tasks is kernel-era schema behind trip_operational_projections_enabled; not read" }
-      : inputs.pendingDecisionTaskIds.length > 0
-        ? { step: "close_operational_decision_tasks", status: "actionable", ids: [...inputs.pendingDecisionTaskIds], detail: `${inputs.pendingDecisionTaskIds.length} pending decision task(s) expire at completion — UPDATE_DECISION_TASK through the kernel` }
-        : { step: "close_operational_decision_tasks", status: "not_applicable", detail: "no pending decision task" },
+      : inputs.pendingDecisionTaskIds.length > 0 || (inputs.openRiskIds?.length ?? 0) > 0
+        ? {
+          step: "close_operational_decision_tasks", status: "actionable", ids: [...inputs.pendingDecisionTaskIds],
+          ...((inputs.openRiskIds?.length ?? 0) > 0 ? { riskIds: [...(inputs.openRiskIds ?? [])] } : {}),
+          detail: (inputs.openRiskIds?.length ?? 0) > 0
+            ? `${inputs.pendingDecisionTaskIds.length} pending decision task(s) and ${inputs.openRiskIds!.length} open risk(s) expire at completion — UPDATE_DECISION_TASK / UPDATE_RISK through the kernel`
+            : `${inputs.pendingDecisionTaskIds.length} pending decision task(s) expire at completion — UPDATE_DECISION_TASK through the kernel`,
+        }
+        : { step: "close_operational_decision_tasks", status: "not_applicable", detail: "no pending decision task or open risk" },
     { step: "preserve_decision_evidence", status: "not_applicable", detail: "trip_activity_log keeps completion evidence by default (no retention policy exists — census-trips TR100/TR387); the decision ledger is in-process (§21.2, §40.6)" },
     { step: "project_passport_memory_candidates", status: "not_applicable", detail: "Passport stamps are awarded by the completion path already (awardTripCompletionStamps); no Memory candidate producer exists" },
     inputs.storedDecisionIds == null

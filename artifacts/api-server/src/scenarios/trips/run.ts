@@ -64,6 +64,7 @@ export interface ScenarioDecisions {
   impact: null | {
     change: { kind: string; targetId: string | null; startsAt: string | null };
     feasibility: string;
+    reasonCode: string | null;
     conflicts: ConflictRecord[];
     changesConfirmedPlan: boolean;
     affectedReservations: string[];
@@ -142,7 +143,7 @@ export function runTripScenario(s: TripScenario): ScenarioDecisions {
     const se = v.impact.bookingSideEffects;
     return {
       change: { kind: change.kind, targetId: change.targetId, startsAt: change.startsAt ?? null },
-      feasibility: v.feasibility, conflicts: v.conflicts.map(conflictRecord), changesConfirmedPlan: v.impact.changesConfirmedPlan,
+      feasibility: v.feasibility, reasonCode: v.reasonCode, conflicts: v.conflicts.map(conflictRecord), changesConfirmedPlan: v.impact.changesConfirmedPlan,
       affectedReservations: v.impact.affectedReservations.map((x) => x.id), affectedTransport: v.impact.affectedTransport.map((x) => x.id),
       affectedParticipants: [...v.impact.affectedParticipants], bookingsAtRisk: se.bookingsAtRisk.map((b) => b.reservationId),
       cancellationDeadline: se.cancellationDeadline, potentialCostMinor: se.potentialCostMinor, requiresUserConfirmation: se.requiresUserConfirmation,

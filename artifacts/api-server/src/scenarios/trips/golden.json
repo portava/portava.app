@@ -135,6 +135,7 @@
             "suggestedDecisionRule": "anyone"
           },
           "potentialCostMinor": 0,
+          "reasonCode": null,
           "requiresUserConfirmation": false,
           "windowAfter": {
             "durationMinutesAfter": 465,
@@ -280,6 +281,7 @@
             "suggestedDecisionRule": "majority"
           },
           "potentialCostMinor": 0,
+          "reasonCode": null,
           "requiresUserConfirmation": false,
           "windowAfter": null
         }
@@ -557,6 +559,7 @@
             "suggestedDecisionRule": "unanimous"
           },
           "potentialCostMinor": 4000,
+          "reasonCode": null,
           "requiresUserConfirmation": true,
           "windowAfter": null
         }
@@ -807,6 +810,7 @@
             "suggestedDecisionRule": "majority"
           },
           "potentialCostMinor": 0,
+          "reasonCode": "TRIP_TEMPORAL_INFEASIBLE",
           "requiresUserConfirmation": false,
           "windowAfter": null
         }
@@ -971,6 +975,7 @@
             "suggestedDecisionRule": "unanimous"
           },
           "potentialCostMinor": 12000,
+          "reasonCode": null,
           "requiresUserConfirmation": true,
           "windowAfter": null
         }
@@ -1315,6 +1320,7 @@
             "suggestedDecisionRule": "unanimous"
           },
           "potentialCostMinor": 9000,
+          "reasonCode": null,
           "requiresUserConfirmation": true,
           "windowAfter": null
         },
@@ -1348,6 +1354,7 @@
             "suggestedDecisionRule": "unanimous"
           },
           "potentialCostMinor": 9000,
+          "reasonCode": null,
           "requiresUserConfirmation": true,
           "windowAfter": null
         },
@@ -1381,6 +1388,7 @@
             "suggestedDecisionRule": "unanimous"
           },
           "potentialCostMinor": 9000,
+          "reasonCode": null,
           "requiresUserConfirmation": true,
           "windowAfter": null
         }
@@ -1597,6 +1605,6 @@
       "urgency": []
     }
   ],
-  "head": "005b71f02",
-  "note": "Initial record: the eight synthetic scenarios as the engines decide them on the branch at census-trips §45."
+  "head": "d2540a057",
+  "note": "§46: the simulation verdict carries its Appendix B reason code (TRIP_TEMPORAL_INFEASIBLE / TRIP_TEMPORAL_UNKNOWN / null) — one new leaf per simulated change, no verdict moved."
 }

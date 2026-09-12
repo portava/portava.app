@@ -220,7 +220,7 @@ export async function serveMapProjection(req: Request<{ tripId: string }>, res: 
           continue;
         }
         if (!INACTIVE_PLAN_STATUSES.has(String(r.status ?? ""))) {
-          active.push({ ...base, kind: "plan", meta: { category: r.category, status: r.status } });
+          active.push({ ...base, kind: "plan", meta: { category: r.category, status: r.status, inProgress: String(r.status ?? "") === "in_progress" } });
         }
       }
       activePlans = ok(active); privateAnchors = ok(anchors); meetupPoints = ok(meetups);
@@ -463,7 +463,7 @@ export async function serveMapProjection(req: Request<{ tripId: string }>, res: 
     census: layerCensus(projection),
     /** TR46: there is no IN_PROGRESS status, so "active" means not removed and
      *  not cancelled. Said in the response rather than assumed by the reader. */
-    activePlanReading: "not removed and not cancelled; TR46 — no IN_PROGRESS status exists",
+    activePlanReading: "in_progress plans are active (2779's START_PLAN); the rest are scheduled — not removed and not cancelled; each point says which in meta.inProgress",
     /** §14.1 safety / logistics: which half of the layer was assembled, and why the other was not. */
     safetyLogisticsReading,
   });

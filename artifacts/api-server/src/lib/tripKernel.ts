@@ -402,6 +402,8 @@ export type TripKernelReason =
   // 2785 disruptions (Appendix B TRIP_DISRUPTION_* family).
   | "TRIP_DISRUPTION_NOT_FOUND"
   | "TRIP_DISRUPTION_NOT_ACTIVE"
+  // §4.1 "validates sensitive-domain boundaries": a payload key from another domain.
+  | "TRIP_COMMAND_SENSITIVE_DOMAIN"
   | "TRIP_KERNEL_UNAVAILABLE";
 
 export type TripKernelResult =
@@ -594,6 +596,28 @@ export function planCommandTypeForPatch(patch: {
  * Stated rather than hidden, because "validated in TS" would otherwise read as
  * a stronger claim than it is.
  */
+/**
+ * §4.1 sensitive-domain boundary: the payload keys a trip command must not
+ * carry, by name. Travel documents, health and payment instruments have their
+ * own domains; a trip plan, proposal or note is not where they live. Matched
+ * against every key at every depth, so a proposal's free-form payload_json is
+ * held to the same line as a top-level field.
+ */
+export const SENSITIVE_DOMAIN_KEY = /^(passport(_?(number|no|id))?|document_number|national_id|id_number|ssn|tax_id|health|medical|diagnosis|allerg(y|ies)|medication|blood_type|card_number|cvv|cvc|iban|account_number)$/i;
+const SENSITIVE_SCAN_DEPTH = 6;
+
+/** The first sensitive-domain key found in `value`, or null. */
+export function sensitiveDomainKey(value: unknown, depth = 0): string | null {
+  if (!value || typeof value !== "object" || depth > SENSITIVE_SCAN_DEPTH) return null;
+  if (Array.isArray(value)) { for (const v of value) { const k = sensitiveDomainKey(v, depth + 1); if (k) return k; } return null; }
+  for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+    if (SENSITIVE_DOMAIN_KEY.test(k)) return k;
+    const nested = sensitiveDomainKey(v, depth + 1);
+    if (nested) return nested;
+  }
+  return null;
+}
+
 function invertedPlanInterval(cmd: TripCommand): { starts: string; ends: string } | null {
   const p = (cmd.payload ?? {}) as Record<string, unknown>;
   const src = cmd.type === "ADD_PLAN" ? p : ((p.patch as Record<string, unknown> | undefined) ?? {});
@@ -623,6 +647,24 @@ export async function executeTripCommand(sc: any, cmd: TripCommand): Promise<Tri
   // and every kernel change replaces that 700-line function in full, so it
   // should ride along with the next migration that replaces it for its own
   // reasons. Recorded in census-trips TR54.
+  // §4.1 "the command service validates sensitive-domain boundaries". A trip
+  // command carries trip state. A key that names a travel document number, a
+  // health fact or a payment instrument belongs to another domain — documents,
+  // safety, payments — each with its own routes and gates; here it is refused
+  // BY NAME before the kernel sees it, rather than persisted into a plan's or a
+  // proposal's payload_json where nothing would ever look for it again.
+  // census-trips TR56: the boundary is a check now, not an accident of routing.
+  const crossing = sensitiveDomainKey(cmd.payload);
+  if (crossing) {
+    countRejection("TRIP_COMMAND_SENSITIVE_DOMAIN");
+    return {
+      ok: false,
+      reason: "TRIP_COMMAND_SENSITIVE_DOMAIN",
+      detail: `payload key "${crossing}" belongs to a sensitive domain a trip command must not carry`,
+      contractVersion: null,
+    };
+  }
+
   const inverted = invertedPlanInterval(cmd);
   if (inverted) {
     countRejection("TRIP_TEMPORAL_RANGE_INVERTED");

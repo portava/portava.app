@@ -182,6 +182,8 @@ export interface SimulationVerdict {
   change: ReplanEntry["op"] | "move_commitment";
   /** §7: the schedule the proposal implies. */
   feasibility: "FEASIBLE" | "INFEASIBLE" | "UNKNOWN";
+  /** Appendix B: TRIP_TEMPORAL_INFEASIBLE when a conflict refuses the change, TRIP_TEMPORAL_UNKNOWN when it could not be judged, null when feasible. */
+  reasonCode: "TRIP_TEMPORAL_INFEASIBLE" | "TRIP_TEMPORAL_UNKNOWN" | null;
   conflicts: TemporalConflict[];
   impact: ImpactPreview;
   /** What the freedom window would become, if a window bounds the change. */
@@ -206,5 +208,5 @@ export function simulateChange(change: Parameters<typeof previewImpact>[0], stat
     windowAfter ? `window ${windowAfter.id} would keep ${windowAfter.durationMinutesAfter} of ${windowAfter.durationMinutesBefore} minutes` : "the change sits in no free window",
     ...impact.bookingSideEffects.explanation,
   ];
-  return { change: change.kind === "move_commitment" ? "move_commitment" : change.kind === "cancel_plan" || change.kind === "remove_plan" ? "cancel" : change.kind === "add_plan" ? "add" : "move", feasibility, conflicts, impact, windowAfter, explanation };
+  return { change: change.kind === "move_commitment" ? "move_commitment" : change.kind === "cancel_plan" || change.kind === "remove_plan" ? "cancel" : change.kind === "add_plan" ? "add" : "move", feasibility, reasonCode: feasibility === "INFEASIBLE" ? "TRIP_TEMPORAL_INFEASIBLE" : feasibility === "UNKNOWN" ? "TRIP_TEMPORAL_UNKNOWN" : null, conflicts, impact, windowAfter, explanation };
 }

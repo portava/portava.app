@@ -133,7 +133,7 @@ below, reviewed as such, one at a time.
 | `src/routes/trips.ts` | executeTripCommand | `ACCEPT_INVITE`, `ADD_PLAN`, `CREATE_TRIP`, `DECLINE_INVITE`, `INVITE_PARTICIPANT`, `REMOVE_PARTICIPANT`, `REMOVE_PLAN`, `REORDER_PLAN`, `UPDATE_TRIP` |
 | `src/services/appeals/resolveAppeal.ts` | executeTripCommand | `UPDATE_TRIP` |
 | `src/services/hiddenGems/HiddenGemService.ts` | executeTripCommand | `ADD_PLAN` |
-| `src/services/trips/TripCloseoutService.ts` | executeTripCommand | `DISSOLVE_SUBGROUP`, `UPDATE_DECISION_TASK` |
+| `src/services/trips/TripCloseoutService.ts` | executeTripCommand | `DISSOLVE_SUBGROUP`, `UPDATE_DECISION_TASK`, `UPDATE_RISK` |
 | `src/services/trips/TripOpportunityProjection.ts` | executeTripCommand | `RECORD_OPPORTUNITY_CHANGE` |
 
 ### Direct write paths around the kernel — 76

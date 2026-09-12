@@ -91,11 +91,12 @@ describe("runTripCloseout — performs the one step it can, reports the rest", (
     const tables = {
       trip_crew_location_sessions: [], trip_plan_items: [], trip_subgroups: [],
       trip_decision_tasks: [{ id: "t1", trip_id: TRIP_ID, status: "pending" }, { id: "t2", trip_id: TRIP_ID, status: "done" }],
+      trip_risks: [{ id: "r1", trip_id: TRIP_ID, status: "open" }, { id: "r2", trip_id: TRIP_ID, status: "mitigated" }],
       trip_decisions: [{ decision_id: "d1", trip_id: TRIP_ID, retain_until: "2026-12-01T00:00:00Z" }, { decision_id: "d0", trip_id: TRIP_ID, retain_until: "2026-09-01T00:00:00Z" }, { decision_id: "dx", trip_id: "other", retain_until: "2026-12-01T00:00:00Z" }],
       feature_flags: [{ flag: "trip_operational_projections_enabled", enabled: true }],
     };
     const r = await runTripCloseout(fake(tables) as any, TRIP_ID, { now: NOW, actorUserId: OWNER_ID });
-    assert.equal(r.steps[3]!.status, "deferred"); assert.match(r.steps[3]!.detail, /t1.*trip_kernel_enabled is false/);
+    assert.equal(r.steps[3]!.status, "deferred"); assert.match(r.steps[3]!.detail, /t1.*open risk\(s\) \(r1\).*trip_kernel_enabled is false/);
     assert.equal(r.steps[6]!.status, "performed"); assert.deepEqual((r.steps[6] as any).ids, ["d1"], "only the row still within retention");
     assert.equal(tables.trip_decisions[0]!.retain_until, NOW.toISOString()); assert.equal(tables.trip_decisions[2]!.retain_until, "2026-12-01T00:00:00Z", "another trip's ledger is untouched");
     const calls: Row[] = [];
@@ -103,8 +104,9 @@ describe("runTripCloseout — performs the one step it can, reports the rest", (
     const k: any = fake(on);
     k.rpc = async (fn: string, args: Row) => { if (fn !== "trip_kernel_execute") return { data: null, error: null }; calls.push(args.p_command); return { data: { ok: true, duplicate: false, version: 3, event_id: 1, sequence: 1, result: { id: args.p_command.payload.task_id }, contract_version: 2 }, error: null }; };
     const r2 = await runTripCloseout(k, TRIP_ID, { now: NOW, actorUserId: OWNER_ID });
-    assert.equal(r2.steps[3]!.status, "performed", JSON.stringify(r2.steps[3])); assert.deepEqual((r2.steps[3] as any).ids, ["t1"]);
-    assert.equal(calls.length, 1); assert.equal(calls[0].type, "UPDATE_DECISION_TASK"); assert.deepEqual(calls[0].payload, { task_id: "t1", patch: { status: "expired" } }); assert.equal(calls[0].idempotency_key, "closeout:task:t1");
+    assert.equal(r2.steps[3]!.status, "performed", JSON.stringify(r2.steps[3])); assert.deepEqual((r2.steps[3] as any).ids, ["t1", "r1"]);
+    assert.equal(calls.length, 2); assert.equal(calls[0].type, "UPDATE_DECISION_TASK"); assert.deepEqual(calls[0].payload, { task_id: "t1", patch: { status: "expired" } }); assert.equal(calls[0].idempotency_key, "closeout:task:t1");
+    assert.equal(calls[1].type, "UPDATE_RISK"); assert.deepEqual(calls[1].payload, { risk_id: "r1", patch: { status: "closed" } }); assert.equal(calls[1].idempotency_key, "closeout:risk:r1");
     assert.equal(r2.steps[6]!.status, "not_applicable");
   });
   it("a read that fails is a failed step, never a silent skip", async () => {

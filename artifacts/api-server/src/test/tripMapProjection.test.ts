@@ -405,7 +405,7 @@ describe("§14.1 — points, coordinates and authorization", () => {
   it("says which reading of 'active' it used, rather than leaving it implied", async () => {
     install({});
     const r = await get();
-    assert.match(r.body.activePlanReading, /no IN_PROGRESS status exists/);
+    assert.match(r.body.activePlanReading, /in_progress plans are active/);
   });
 
   it("a non-member is refused, not given a projection", async () => {
