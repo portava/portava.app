@@ -311,6 +311,16 @@ run_check "check:media-objects" pnpm run check:media-objects
 # coverage, and a SHRINK-ONLY ratchet on the entries this tree does not satisfy.
 # It does not judge whether a status is right — the suites do that, and a status
 # is a claim about what they prove.
+# check:telegraph-package-boundaries — §23's domain package exists, every one of its
+# eight subdirectories has something in it, every module is imported from OUTSIDE
+# the package, and nothing in it imports another domain's service. That last rule is
+# §23's own sentence mechanised — "Trips, Buddy, Safety, Memories, Discovery and
+# Compass remain integrations; Telegraph does not embed their canonical business
+# logic" — with three named delegations allowed, each carrying its reason. The
+# failure it prevents is the one that makes architecture documents worthless: the
+# folders exist, three of eight have a file, nothing imports any of it, and a reader
+# concludes the boundary is real because the directories are there.
+run_check "check:telegraph-package-boundaries" pnpm run check:telegraph-package-boundaries
 run_check "check:telegraph-certification" pnpm run check:telegraph-certification
 # check:telegraph-share-producers — every msg_type/subtype literal in either tree
 # is classified in the Telegraph share registry, orphan declarations are removed,
@@ -333,6 +343,14 @@ run_check "check:telegraph-share-producers" pnpm run check:telegraph-share-produ
 # table. That last one is the rule that decays silently: one convenient PostgREST
 # call from a new screen and nothing notices.
 run_check "check:telegraph-slos" pnpm run check:telegraph-slos
+# check:telegraph-inventory — §25.1's mandatory Phase 0 inventory, regenerated and
+# diffed. The census scored it NOT-BUILT with the right observation: "the CAPABILITY
+# to do it exists as standing CI lanes; the deliverable does not." It is a generated
+# document rather than a written one because an inventory written by hand is stale
+# the next day, and a stale inventory is worse than none — it is a document people
+# quote. This fails when the committed report stops matching the tree, so the
+# artifact both exists and cannot rot.
+run_check "check:telegraph-inventory" pnpm run check:telegraph-inventory
 
 run_gate  "check:rank-events-surfaces" pnpm run check:rank-events-surfaces
 

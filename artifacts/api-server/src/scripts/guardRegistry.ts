@@ -711,4 +711,42 @@ export const GUARDS: readonly GuardEntry[] = [
       unit: "SLO declarations inspected",
     },
   },
+  {
+    checker: "src/scripts/generateTelegraphInventory.ts",
+    responsibility:
+      "Telegraph's §25.1 Phase 0 inventory exists as a committed artifact and cannot go " +
+      "stale — the report is regenerated from the tree and diffed against what is committed.",
+    // Named generate*, not check*, because writing the report is its primary
+    // job and --check is the gate over it. The census's observation was exact:
+    // "the CAPABILITY to do it exists as standing CI lanes (T297); the
+    // deliverable does not." A hand-written inventory would have been the
+    // deliverable for one day; this is the deliverable and the thing that keeps
+    // it true. It emits no file:line citations on purpose — a generated line
+    // number is invalidated by any edit above it in a file this report does not
+    // own, and check:doc-citations would then go red for a reason nobody caused.
+    reach: { kind: "check-all", script: "check:telegraph-inventory" },
+    inspects: {
+      countPattern: "(\\d+) inventory lines re-derived",
+      unit: "inventory lines re-derived and compared",
+    },
+  },
+  {
+    checker: "src/scripts/checkTelegraphPackageBoundaries.ts",
+    responsibility:
+      "Telegraph's §23 domain package is populated, reached from outside itself, and " +
+      "contains no other domain's business logic.",
+    // The defect it prevents is the one that makes an architecture document
+    // worthless: the folders exist, three of eight have a file in them, nothing
+    // outside imports any of it, and a reader concludes the boundary is real
+    // because the directories are there. Rule 3 is §23's own sentence
+    // mechanised — Telegraph may CALL an integration and may not CONTAIN one —
+    // with three named delegations allowed, each carrying the reason it is
+    // allowed (re-implementing the §14.3 window predicate would fork an
+    // authorization rule, which is worse than importing it).
+    reach: { kind: "check-all", script: "check:telegraph-package-boundaries" },
+    inspects: {
+      countPattern: "(\\d+) domain modules inspected across",
+      unit: "Telegraph domain modules inspected",
+    },
+  },
 ];

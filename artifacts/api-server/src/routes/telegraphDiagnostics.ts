@@ -46,6 +46,8 @@
 
 import { Router, type IRouter } from "express";
 
+import { asyncHandler } from "../lib/asyncHandler.js";
+
 import { requireAdmin } from "../lib/requireAdmin.js";
 import { accessReason } from "../lib/adminAudit.js";
 import { logger as rootLogger } from "../lib/logger.js";
@@ -61,7 +63,7 @@ const router: IRouter = Router();
 /** Minimum length for a stated purpose. Short enough to be usable, long enough to be a sentence. */
 const MIN_PURPOSE_LENGTH = 10;
 
-router.get("/telegraph/diagnostics", async (req, res) => {
+router.get("/telegraph/diagnostics", asyncHandler(async (req, res) => {
   const ctx = await requireAdmin(req, res);
   if (!ctx) return; // requireAdmin has already sent 401/403
 
@@ -109,6 +111,6 @@ router.get("/telegraph/diagnostics", async (req, res) => {
       censusRow: p.censusRow,
     })),
   });
-});
+}));
 
 export default router;
