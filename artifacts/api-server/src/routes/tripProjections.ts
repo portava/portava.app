@@ -669,7 +669,7 @@ router.get("/trips/:tripId/closeout", asyncHandler(async (req, res) => {
   const { data: trip, error: tripErr } = await sc.from("trips").select("status, timezone").eq("id", tripId).maybeSingle();
   if (tripErr) { sendTripRefusal(res, "degraded_unavailable", "TRIP_PROJECTION_UNAVAILABLE", "The trip could not be read"); return; }
   if (!trip) { sendError(res, "not_found", "Trip not found"); return; }
-  const report = await runTripCloseout(sc, tripId, { timezone: (trip as any).timezone ?? null, dryRun: true });
+  const report = await runTripCloseout(sc, tripId, { timezone: (trip as any).timezone ?? null, dryRun: true, viewerUserId: user.id });
   res.json({ tripId, tripStatus: (trip as any).status ?? null, ...report });
 }));
 

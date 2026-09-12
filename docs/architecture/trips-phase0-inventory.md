@@ -112,7 +112,7 @@ below, reviewed as such, one at a time.
 
 `ACCEPT_INVITE` · `ACCEPT_PROPOSAL` · `ADD_COMMITMENT` · `ADD_DECISION_TASK` · `ADD_GOAL` · `ADD_LEG` · `ADD_PARTICIPANT` · `ADD_PLAN` · `ADD_RISK` · `ADD_STAGE` · `ADD_TRANSPORT_SEGMENT` · `ADMIN_HIDE_TRIP` · `ARCHIVE_TRIP` · `CANCEL_PLAN` · `CANCEL_TRIP` · `CLEAR_COMMITMENT_RISK` · `CLEAR_PRESENCE` · `CLOSE_MEETING_CHECKPOINT` · `COMPLETE_ACTIVITY` · `COMPLETE_STAGE` · `COMPLETE_TRIP` · `CONFIRM_PLAN` · `CREATE_MEETING_CHECKPOINT` · `CREATE_PROPOSAL` · `CREATE_SUBGROUP` · `CREATE_TRIP` · `DECLARE_DISRUPTION` · `DECLINE_INVITE` · `DISSOLVE_SUBGROUP` · `INVITE_PARTICIPANT` · `JOIN_PLAN` · `JOIN_SUBGROUP` · `JOIN_VIA_LINK` · `LEAVE_PLAN` · `LEAVE_SUBGROUP` · `LINK_PLAN_ROUTE_STOP` · `MARK_COMMITMENT_AT_RISK` · `MOVE_PLAN` · `OPEN_FREE_WINDOW` · `RECORD_OPPORTUNITY_CHANGE` · `RECORD_OUTCOME` · `REJECT_PROPOSAL` · `REMOVE_COMMITMENT` · `REMOVE_DECISION_TASK` · `REMOVE_GOAL` · `REMOVE_LEG` · `REMOVE_PARTICIPANT` · `REMOVE_PLAN` · `REMOVE_RISK` · `REMOVE_STAGE` · `REMOVE_TRANSPORT_SEGMENT` · `REORDER_PLAN` · `RESOLVE_DISRUPTION` · `SET_MEETING_ARRIVAL` · `SET_PARTICIPANT_ROLE` · `SET_PLAN_ATTENDANCE` · `SET_PRESENCE` · `SET_TRANSPORT_STATE` · `SET_TRIP_COVER` · `SKIP_PLAN` · `START_PLAN` · `START_STAGE` · `UPDATE_COMMITMENT` · `UPDATE_DECISION_TASK` · `UPDATE_GOAL` · `UPDATE_LEG` · `UPDATE_PLAN` · `UPDATE_RISK` · `UPDATE_STAGE` · `UPDATE_TRANSPORT_SEGMENT` · `UPDATE_TRIP` · `VOTE_ON_PROPOSAL`
 
-### Kernel issuers — 25 site file(s)
+### Kernel issuers — 26 site file(s)
 
 | file | via | command types issued in that file |
 | --- | --- | --- |
@@ -132,13 +132,14 @@ below, reviewed as such, one at a time.
 | `src/routes/tripCommands.ts` | executeTripCommand | (dynamic) |
 | `src/routes/tripMeetingCheckpoints.ts` | executeTripCommand | `CLOSE_MEETING_CHECKPOINT`, `SET_MEETING_ARRIVAL` |
 | `src/routes/tripOffline.ts` | executeTripCommand | (dynamic) |
+| `src/routes/tripPostTrip.ts` | executeTripCommand | `RECORD_OUTCOME` |
 | `src/routes/tripProjections.ts` | executeTripCommand | `ADD_PLAN`, `CREATE_PROPOSAL`, `DECLARE_DISRUPTION` |
 | `src/routes/tripReservations.ts` | executeTripCommand | `ADD_PLAN` |
 | `src/routes/trips-expansion.ts` | executeTripCommand | `ARCHIVE_TRIP`, `CANCEL_TRIP`, `COMPLETE_TRIP`, `JOIN_VIA_LINK`, `UPDATE_TRIP` |
 | `src/routes/trips.ts` | executeTripCommand | `ACCEPT_INVITE`, `ADD_PLAN`, `CREATE_TRIP`, `DECLINE_INVITE`, `INVITE_PARTICIPANT`, `REMOVE_PARTICIPANT`, `REMOVE_PLAN`, `REORDER_PLAN`, `UPDATE_TRIP` |
 | `src/services/appeals/resolveAppeal.ts` | executeTripCommand | `UPDATE_TRIP` |
 | `src/services/hiddenGems/HiddenGemService.ts` | executeTripCommand | `ADD_PLAN` |
-| `src/services/trips/TripCloseoutService.ts` | executeTripCommand | `DISSOLVE_SUBGROUP`, `UPDATE_DECISION_TASK`, `UPDATE_RISK` |
+| `src/services/trips/TripCloseoutService.ts` | executeTripCommand | `DISSOLVE_SUBGROUP`, `RECORD_OUTCOME`, `UPDATE_DECISION_TASK`, `UPDATE_RISK` |
 | `src/services/trips/TripMeetingCheckpoints.ts` | executeTripCommand | `CREATE_MEETING_CHECKPOINT` |
 | `src/services/trips/TripOpportunityProjection.ts` | executeTripCommand | `RECORD_OPPORTUNITY_CHANGE` |
 
@@ -226,7 +227,7 @@ below, reviewed as such, one at a time.
 | `src/services/trips/TripCloseoutService.ts` | `trip_decisions` | update |
 | `src/services/trips/TripDecisionLedger.ts` | `trip_decisions` | insert |
 
-### Routes under /trips — 158 (68 reads; writes: 6 kernel, 36 direct, 22 both, 26 neither)
+### Routes under /trips — 161 (70 reads; writes: 7 kernel, 36 direct, 22 both, 26 neither)
 
 | method | path | file | writes through |
 | --- | --- | --- | --- |
@@ -259,6 +260,7 @@ below, reviewed as such, one at a time.
 | DELETE | `/trips/:tripId/checklists/:checklistId/items/:itemId` | `src/routes/trips-expansion.ts` | direct |
 | PATCH | `/trips/:tripId/checklists/:checklistId/items/:itemId` | `src/routes/trips-expansion.ts` | direct |
 | GET | `/trips/:tripId/closeout` | `src/routes/tripProjections.ts` | read |
+| POST | `/trips/:tripId/closeout/answers` | `src/routes/tripPostTrip.ts` | kernel |
 | POST | `/trips/:tripId/commands` | `src/routes/tripCommands.ts` | kernel |
 | POST | `/trips/:tripId/complete` | `src/routes/trips-expansion.ts` | both |
 | GET | `/trips/:tripId/context` | `src/routes/tripProjections.ts` | read |
@@ -324,6 +326,7 @@ below, reviewed as such, one at a time.
 | GET | `/trips/:tripId/members/:userId/passport` | `src/routes/trips.ts` | read |
 | GET | `/trips/:tripId/memory` | `src/routes/memories.ts` | read |
 | POST | `/trips/:tripId/memory` | `src/routes/memories.ts` | none |
+| GET | `/trips/:tripId/memory-candidates` | `src/routes/tripPostTrip.ts` | read |
 | GET | `/trips/:tripId/nearby-places` | `src/routes/trips-expansion.ts` | read |
 | POST | `/trips/:tripId/neighborhood-match` | `src/routes/neighborhoods.ts` | none |
 | GET | `/trips/:tripId/next-best-action` | `src/routes/tripReadiness.ts` | read |
@@ -336,6 +339,7 @@ below, reviewed as such, one at a time.
 | POST | `/trips/:tripId/operations` | `src/routes/tripOffline.ts` | both |
 | GET | `/trips/:tripId/opportunities` | `src/routes/tripProjections.ts` | read |
 | POST | `/trips/:tripId/opportunities/:experienceId/accept` | `src/routes/tripProjections.ts` | kernel |
+| GET | `/trips/:tripId/passport-projection` | `src/routes/tripPostTrip.ts` | read |
 | GET | `/trips/:tripId/plan` | `src/routes/trips.ts` | read |
 | GET | `/trips/:tripId/plan-permission` | `src/routes/trips.ts` | read |
 | POST | `/trips/:tripId/plan/items` | `src/routes/trips.ts` | both |
@@ -389,9 +393,9 @@ below, reviewed as such, one at a time.
 | GET | `/trips/past` | `src/routes/trips-expansion.ts` | read |
 | GET | `/trips/upcoming` | `src/routes/trips-expansion.ts` | read |
 
-### Trip service and library modules — 64
+### Trip service and library modules — 65
 
-`src/lib/tripBudgetIntel.ts` · `src/lib/tripCounts.ts` · `src/lib/tripCrewLiveShareScheduler.ts` · `src/lib/tripCrewLocation.ts` · `src/lib/tripDerivedEvents.ts` · `src/lib/tripDiscoveryProjection.ts` · `src/lib/tripKernel.ts` · `src/lib/tripMembership.ts` · `src/lib/tripMetrics.ts` · `src/lib/tripOperationalProjections.ts` · `src/lib/tripOpportunityMetrics.ts` · `src/lib/tripPolicy.ts` · `src/lib/tripPresenceFreshness.ts` · `src/lib/tripPresencePolicy.ts` · `src/lib/tripPush.ts` · `src/lib/tripReadiness.ts` · `src/lib/tripReasonCodes.ts` · `src/lib/tripReminderScheduler.ts` · `src/lib/tripReplayVerify.ts` · `src/lib/tripReservationHistory.ts` · `src/lib/tripRetentionScheduler.ts` · `src/lib/tripSensingPolicy.ts` · `src/lib/tripStatus.ts` · `src/lib/tripTransportReliability.ts` · `src/services/tripCrew/TripCrewLiveShareService.ts` · `src/services/tripCrew/TripCrewLocationService.ts` · `src/services/trips/TravelTimeProvider.ts` · `src/services/trips/TripAttentionPolicy.ts` · `src/services/trips/TripCloseout.ts` · `src/services/trips/TripCloseoutService.ts` · `src/services/trips/TripCompassProjection.ts` · `src/services/trips/TripDecisionEngine.ts` · `src/services/trips/TripDecisionLedger.ts` · `src/services/trips/TripDecisionUrgency.ts` · `src/services/trips/TripExperienceCompiler.ts` · `src/services/trips/TripFeasibilityEngine.ts` · `src/services/trips/TripFreedomEngine.ts` · `src/services/trips/TripFreedomProjection.ts` · `src/services/trips/TripHealth.ts` · `src/services/trips/TripHealthProjection.ts` · `src/services/trips/TripImpactPreview.ts` · `src/services/trips/TripImpactState.ts` · `src/services/trips/TripMapProjection.ts` · `src/services/trips/TripMeetingCheckpoints.ts` · `src/services/trips/TripMeetingPoint.ts` · `src/services/trips/TripOfflineBundle.ts` · `src/services/trips/TripOfflineQueue.ts` · `src/services/trips/TripOperationalPhase.ts` · `src/services/trips/TripOpportunityEngine.ts` · `src/services/trips/TripOpportunityProjection.ts` · `src/services/trips/TripProjectionEnvelope.ts` · `src/services/trips/TripPulseCrewPresence.ts` · `src/services/trips/TripPulseProjection.ts` · `src/services/trips/TripReplan.ts` · `src/services/trips/TripReplanService.ts` · `src/services/trips/TripRescue.ts` · `src/services/trips/TripRiskTriggers.ts` · `src/services/trips/TripSafetyProjection.ts` · `src/services/trips/TripSignals.ts` · `src/services/trips/TripSpatialConsistency.ts` · `src/services/trips/TripTimelineProjection.ts` · `src/services/trips/TripTodayProjection.ts` · `src/services/trips/TripTransportPolicy.ts` · `src/services/trips/TripValueOfInformation.ts`
+`src/lib/tripBudgetIntel.ts` · `src/lib/tripCounts.ts` · `src/lib/tripCrewLiveShareScheduler.ts` · `src/lib/tripCrewLocation.ts` · `src/lib/tripDerivedEvents.ts` · `src/lib/tripDiscoveryProjection.ts` · `src/lib/tripKernel.ts` · `src/lib/tripMembership.ts` · `src/lib/tripMetrics.ts` · `src/lib/tripOperationalProjections.ts` · `src/lib/tripOpportunityMetrics.ts` · `src/lib/tripPolicy.ts` · `src/lib/tripPresenceFreshness.ts` · `src/lib/tripPresencePolicy.ts` · `src/lib/tripPush.ts` · `src/lib/tripReadiness.ts` · `src/lib/tripReasonCodes.ts` · `src/lib/tripReminderScheduler.ts` · `src/lib/tripReplayVerify.ts` · `src/lib/tripReservationHistory.ts` · `src/lib/tripRetentionScheduler.ts` · `src/lib/tripSensingPolicy.ts` · `src/lib/tripStatus.ts` · `src/lib/tripTransportReliability.ts` · `src/services/tripCrew/TripCrewLiveShareService.ts` · `src/services/tripCrew/TripCrewLocationService.ts` · `src/services/trips/TravelTimeProvider.ts` · `src/services/trips/TripAttentionPolicy.ts` · `src/services/trips/TripCloseout.ts` · `src/services/trips/TripCloseoutService.ts` · `src/services/trips/TripCompassProjection.ts` · `src/services/trips/TripDecisionEngine.ts` · `src/services/trips/TripDecisionLedger.ts` · `src/services/trips/TripDecisionUrgency.ts` · `src/services/trips/TripExperienceCompiler.ts` · `src/services/trips/TripFeasibilityEngine.ts` · `src/services/trips/TripFreedomEngine.ts` · `src/services/trips/TripFreedomProjection.ts` · `src/services/trips/TripHealth.ts` · `src/services/trips/TripHealthProjection.ts` · `src/services/trips/TripImpactPreview.ts` · `src/services/trips/TripImpactState.ts` · `src/services/trips/TripMapProjection.ts` · `src/services/trips/TripMeetingCheckpoints.ts` · `src/services/trips/TripMeetingPoint.ts` · `src/services/trips/TripOfflineBundle.ts` · `src/services/trips/TripOfflineQueue.ts` · `src/services/trips/TripOperationalPhase.ts` · `src/services/trips/TripOpportunityEngine.ts` · `src/services/trips/TripOpportunityProjection.ts` · `src/services/trips/TripPostTripProjections.ts` · `src/services/trips/TripProjectionEnvelope.ts` · `src/services/trips/TripPulseCrewPresence.ts` · `src/services/trips/TripPulseProjection.ts` · `src/services/trips/TripReplan.ts` · `src/services/trips/TripReplanService.ts` · `src/services/trips/TripRescue.ts` · `src/services/trips/TripRiskTriggers.ts` · `src/services/trips/TripSafetyProjection.ts` · `src/services/trips/TripSignals.ts` · `src/services/trips/TripSpatialConsistency.ts` · `src/services/trips/TripTimelineProjection.ts` · `src/services/trips/TripTodayProjection.ts` · `src/services/trips/TripTransportPolicy.ts` · `src/services/trips/TripValueOfInformation.ts`
 
 _Limits: a write through `.from(variable)` is invisible to this scan (as to check:write-path-columns); a kernel migration is one named 2420 or `trip_kernel`, and its writes are the literal `INSERT INTO | UPDATE | DELETE FROM public.<table>`._
 

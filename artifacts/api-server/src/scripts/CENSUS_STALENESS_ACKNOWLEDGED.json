@@ -178,7 +178,13 @@
         "artifacts/api-server/src/test/db/tripKernelWriteGuards.db.test.ts",
         "artifacts/api-server/src/test/tripKernelLive.test.ts",
         "artifacts/api-server/src/test/tripPulseProjection.test.ts",
-        "artifacts/api-server/src/scripts/frozenDirCheck.ts"
+        "artifacts/api-server/src/scripts/frozenDirCheck.ts",
+        "artifacts/api-server/src/services/trips/TripPostTripProjections.ts",
+        "artifacts/api-server/src/routes/tripPostTrip.ts",
+        "artifacts/api-server/src/routes/index.ts",
+        "artifacts/api-server/src/test/tripPostTripProjections.test.ts",
+        "artifacts/api-server/src/test/tripPostTripRoutes.test.ts",
+        "artifacts/api-server/src/test/db/tripCloseoutOutcomes.db.test.ts"
       ]
     },
     {

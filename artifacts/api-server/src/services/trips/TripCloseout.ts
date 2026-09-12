@@ -64,6 +64,22 @@ export interface CloseoutInputs {
   activeSubgroupIds?: readonly string[] | null;
   /** §21.2 ledger rows (trip_decisions, 2781) still within retention, when the deployment can read them (null / omitted = could not, or not enabled). */
   storedDecisionIds?: readonly string[] | null;
+  /**
+   * §20.2 "project Passport/Memory candidates" (TripPostTripProjections.ts):
+   * what the two projections found for the viewer, and the done plans with no
+   * trip_outcomes row — the ones the closeout records. null / omitted = not
+   * computed (no viewer, or the trip could not be read).
+   */
+  postTrip?: {
+    memoryCandidates: number;
+    unrecordedDonePlanIds: readonly string[];
+    passportCountries: number;
+    passportCities: number;
+    /** null = user_stamps not read. */
+    stamps: number | null;
+    /** false = trip_outcomes (2763) was not read: the operational gate is off, or the read failed. */
+    outcomesRead: boolean;
+  } | null;
   /** The trip's last day, YYYY-MM-DD. */
   tripEndDate: string | null;
   /** Local date at closeout, YYYY-MM-DD. */
@@ -86,6 +102,21 @@ export function reconciliationQuestions(inputs: Pick<CloseoutInputs, "planItems"
     out.push({ planId: p.id, question: `Did you make it to ${what}?`, answers: ["completed", "skipped"] });
   }
   return out;
+}
+
+function postTripStep(p: CloseoutInputs["postTrip"]): CloseoutStepPlan {
+  const step = "project_passport_memory_candidates" as const;
+  if (p === undefined || p === null) {
+    return { step, status: "deferred", detail: "the post-trip projections were not computed for a viewer (TripPostTripProjections.ts); no candidate is offered and no outcome is recorded" };
+  }
+  const projected = `${p.memoryCandidates} Memory candidate(s) and the Passport row (${p.passportCountries} country/ies, ${p.passportCities} city/ies${p.stamps === null ? ", stamps not read" : `, ${p.stamps} stamp(s)`}) projected per request — GET /trips/:id/memory-candidates and /passport-projection`;
+  if (!p.outcomesRead) {
+    return { step, status: "deferred", detail: `${projected}; trip_outcomes (2763) is kernel-era schema behind trip_operational_projections_enabled and was not read, so no durable outcome can be recorded` };
+  }
+  if (p.unrecordedDonePlanIds.length > 0) {
+    return { step, status: "actionable", ids: [...p.unrecordedDonePlanIds], detail: `${projected}; ${p.unrecordedDonePlanIds.length} done plan(s) have no durable outcome — RECORD_OUTCOME { completed } through the kernel, keyed by the closeout (§20.1)` };
+  }
+  return { step, status: "not_applicable", detail: `${projected}; every done plan already has its outcome row` };
 }
 
 export function planCloseout(inputs: CloseoutInputs): { steps: CloseoutStepPlan[]; questions: ReconciliationQuestion[] } {
@@ -114,7 +145,7 @@ export function planCloseout(inputs: CloseoutInputs): { steps: CloseoutStepPlan[
         }
         : { step: "close_operational_decision_tasks", status: "not_applicable", detail: "no pending decision task or open risk" },
     { step: "preserve_decision_evidence", status: "not_applicable", detail: "trip_activity_log keeps completion evidence by default (no retention policy exists — census-trips TR100/TR387); the decision ledger is in-process (§21.2, §40.6)" },
-    { step: "project_passport_memory_candidates", status: "not_applicable", detail: "Passport stamps are awarded by the completion path already (awardTripCompletionStamps); no Memory candidate producer exists" },
+    postTripStep(inputs.postTrip),
     inputs.storedDecisionIds == null
       ? { step: "archive_rebuildable_projections", status: "deferred", detail: "trip_decisions (2781, the §21.2 ledger) is kernel-era schema behind trip_operational_projections_enabled; not read" }
       : inputs.storedDecisionIds.length > 0

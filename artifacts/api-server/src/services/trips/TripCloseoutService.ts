@@ -24,7 +24,8 @@ import { randomUUID } from "node:crypto";
 import { isFlagEnabled } from "../../lib/featureFlags.js";
 import { executeTripCommand } from "../../lib/tripKernel.js";
 import { localClock } from "./TripOperationalPhase.js";
-import { planCloseout, type CloseoutStepPlan, type ReconciliationQuestion } from "./TripCloseout.js";
+import { planCloseout, type CloseoutInputs, type CloseoutStepPlan, type ReconciliationQuestion } from "./TripCloseout.js";
+import { buildTripMemoryProjection, buildTripPassportProjection, readPostTripInputs, type PostTripInputs } from "./TripPostTripProjections.js";
 
 const log = logger.child({ mod: "tripCloseout" });
 
@@ -38,7 +39,7 @@ export interface TripCloseoutReport {
   unread: string[];
 }
 
-export async function runTripCloseout(sc: any, tripId: string, opts: { now?: Date; timezone?: string | null; dryRun?: boolean; actorUserId?: string | null } = {}): Promise<TripCloseoutReport> {
+export async function runTripCloseout(sc: any, tripId: string, opts: { now?: Date; timezone?: string | null; dryRun?: boolean; actorUserId?: string | null; viewerUserId?: string | null } = {}): Promise<TripCloseoutReport> {
   const now = opts.now ?? new Date();
   const unread: string[] = [];
 
@@ -83,8 +84,31 @@ export async function runTripCloseout(sc: any, tripId: string, opts: { now?: Dat
     else storedDecisionIds = ((decisions ?? []) as any[]).filter((d) => { const t = Date.parse(String(d.retain_until ?? "")); return !Number.isFinite(t) || t > now.getTime(); }).map((d) => String(d.decision_id));
   }
 
+  // §20.2 "project Passport/Memory candidates": both projections are built for
+  // the viewer — the actor completing, or the member reading the plan — and
+  // the done plans with no trip_outcomes row are what the step records.
+  let postTrip: CloseoutInputs["postTrip"] = null;
+  let postTripInputs: PostTripInputs | null = null;
+  const viewer = opts.viewerUserId ?? opts.actorUserId ?? null;
+  if (viewer) {
+    // A read that throws is a read that failed: the trip IS completed either
+    // way, and the step reports "not computed" rather than the route failing.
+    const read = await readPostTripInputs(sc, tripId, viewer, { now }).catch((err: unknown) => ({ ok: false as const, reason: "TRIP_PROJECTION_UNAVAILABLE" as const, message: err instanceof Error ? err.message : String(err) }));
+    if (!read.ok) { unread.push("post_trip"); log.warn({ reason: read.reason, detail: read.message, tripId }, "closeout: post-trip inputs unreadable"); }
+    else {
+      postTripInputs = read.inputs;
+      const memory = buildTripMemoryProjection(read.inputs);
+      const passport = buildTripPassportProjection(read.inputs);
+      postTrip = {
+        memoryCandidates: memory.candidates.length, unrecordedDonePlanIds: memory.unrecordedDonePlanIds,
+        passportCountries: passport.countries.length, passportCities: passport.cities.length,
+        stamps: passport.stamps === null ? null : passport.stamps.length, outcomesRead: read.inputs.outcomes !== null,
+      };
+    }
+  }
+
   const plan = planCloseout({
-    activeLiveShareIds, planItems, pendingDecisionTaskIds, activeSubgroupIds, storedDecisionIds, openRiskIds,
+    activeLiveShareIds, planItems, pendingDecisionTaskIds, activeSubgroupIds, storedDecisionIds, openRiskIds, postTrip,
     tripEndDate: null, today: localClock(now, opts.timezone ?? null).date,
   });
 
@@ -186,6 +210,38 @@ export async function runTripCloseout(sc: any, tripId: string, opts: { now?: Dat
         const ids = ((archived ?? []) as any[]).map((d) => String(d.decision_id));
         steps.push({ step: step.step, status: "performed", ids, detail: `${ids.length} stored decision(s) archived: retention ended at completion (§20.2, §21.2)` });
       }
+      continue;
+    }
+    if (step.step === "project_passport_memory_candidates" && step.status === "actionable") {
+      if (opts.dryRun) { steps.push(step); continue; }
+      // RECORD_OUTCOME is a kernel command (2763): one `completed` outcome per
+      // done plan that has none — §20.1, durable memory is built from
+      // outcomes. Keyed by the closeout, so a repeated completion is a
+      // duplicate receipt and not a second row; behind trip_kernel_enabled
+      // like every kernel write.
+      if (!opts.actorUserId) {
+        steps.push({ step: step.step, status: "failed", ids: step.ids, detail: "no actor to issue RECORD_OUTCOME as" });
+        continue;
+      }
+      if (!(await isFlagEnabled(sc, "trip_kernel_enabled"))) {
+        steps.push({ step: step.step, status: "deferred", detail: `${step.ids.length} done plan(s) without a durable outcome remain (${step.ids.join(", ")}): RECORD_OUTCOME is a kernel command and trip_kernel_enabled is false` });
+        continue;
+      }
+      const recorded: string[] = []; const failures: string[] = [];
+      const byId = new Map((postTripInputs?.planItems ?? []).map((p) => [p.id, p] as const));
+      for (const id of step.ids) {
+        const p = byId.get(id);
+        const occurredAt = p?.endsAt ?? p?.startsAt ?? (p?.dayDate ? `${p.dayDate}T23:59:59.000Z` : now.toISOString());
+        const r = await executeTripCommand(sc, {
+          commandId: randomUUID(), tripId, actorUserId: opts.actorUserId, idempotencyKey: `closeout:outcome:${id}`,
+          type: "RECORD_OUTCOME",
+          payload: { outcome_type: "completed", plan_id: id, occurred_at: occurredAt, evidence_json: { source: "closeout", plan_status: "done", title: p?.locationName ?? p?.title ?? null } },
+        });
+        if (r.ok) recorded.push(id); else failures.push(`${id}: ${r.reason}`);
+      }
+      steps.push(failures.length === 0
+        ? { step: step.step, status: "performed", ids: recorded, detail: `${recorded.length} durable outcome(s) recorded for done plans at completion (§20.1, §20.2); Memory and Passport candidates are projected per request` }
+        : { step: step.step, status: "failed", ids: recorded, detail: `${recorded.length} recorded, ${failures.length} refused: ${failures.join("; ")}` });
       continue;
     }
     if (step.step === "reconcile_uncertain_plan_outcomes" && iErr) {

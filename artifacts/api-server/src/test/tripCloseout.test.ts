@@ -41,11 +41,22 @@ describe("§20.2 the seven steps, planned in order and each said to be actionabl
     assert.equal(a.steps[6]!.status, "deferred", "the ledger was not read: deferred, by name");
     assert.match(a.steps[6]!.detail, /trip_decisions/);
     assert.equal(a.questions.length, 1);
-    const b = planCloseout({ activeLiveShareIds: [], planItems: [item("a", { status: "done" })], pendingDecisionTaskIds: [], storedDecisionIds: [], tripEndDate: null, today: "2026-09-15" });
+    const b = planCloseout({ activeLiveShareIds: [], planItems: [item("a", { status: "done" })], pendingDecisionTaskIds: [], storedDecisionIds: [], postTrip: { memoryCandidates: 1, unrecordedDonePlanIds: [], passportCountries: 1, passportCities: 1, stamps: 0, outcomesRead: true }, tripEndDate: null, today: "2026-09-15" });
     assert.equal(b.steps[0]!.status, "not_applicable"); assert.equal(b.steps[2]!.status, "not_applicable"); assert.equal(b.steps[3]!.status, "not_applicable");
     assert.ok(b.steps.slice(4).every((s) => s.status === "not_applicable"), "the last three have nothing to act on in this system, and say what would");
     const c = planCloseout({ activeLiveShareIds: [], planItems: [], pendingDecisionTaskIds: [], storedDecisionIds: ["d1", "d2"], tripEndDate: null, today: "2026-09-15" });
     assert.deepEqual(c.steps[6], { step: "archive_rebuildable_projections", status: "actionable", ids: ["d1", "d2"], detail: "2 stored decision(s) in the §21.2 ledger: retention ends at completion; every other operational projection is generated per request" });
+  });
+  it("§20.2 project Passport/Memory candidates (TR388): actionable for the done plans with no outcome row, deferred by name when outcomes were not read or no viewer was projected for, not applicable when every done plan is recorded", () => {
+    const at = (postTrip: any) => planCloseout({ activeLiveShareIds: [], planItems: [], pendingDecisionTaskIds: [], storedDecisionIds: [], postTrip, tripEndDate: null, today: "2026-09-15" }).steps[5]!;
+    const a = at({ memoryCandidates: 3, unrecordedDonePlanIds: ["p1", "p2"], passportCountries: 1, passportCities: 2, stamps: 1, outcomesRead: true });
+    assert.equal(a.status, "actionable"); assert.deepEqual((a as any).ids, ["p1", "p2"]);
+    assert.match(a.detail, /3 Memory candidate\(s\) and the Passport row \(1 country\/ies, 2 city\/ies, 1 stamp\(s\)\)/); assert.match(a.detail, /RECORD_OUTCOME \{ completed \}/);
+    const d = at({ memoryCandidates: 1, unrecordedDonePlanIds: [], passportCountries: 1, passportCities: 1, stamps: null, outcomesRead: false });
+    assert.equal(d.status, "deferred"); assert.match(d.detail, /trip_outcomes \(2763\).*trip_operational_projections_enabled/); assert.match(d.detail, /stamps not read/);
+    assert.equal(at(null).status, "deferred"); assert.match(at(undefined).detail, /not computed for a viewer/);
+    const n = at({ memoryCandidates: 0, unrecordedDonePlanIds: [], passportCountries: 1, passportCities: 1, stamps: 0, outcomesRead: true });
+    assert.equal(n.status, "not_applicable"); assert.match(n.detail, /every done plan already has its outcome row/);
   });
 });
 
@@ -108,6 +119,35 @@ describe("runTripCloseout — performs the one step it can, reports the rest", (
     assert.equal(calls.length, 2); assert.equal(calls[0].type, "UPDATE_DECISION_TASK"); assert.deepEqual(calls[0].payload, { task_id: "t1", patch: { status: "expired" } }); assert.equal(calls[0].idempotency_key, "closeout:task:t1");
     assert.equal(calls[1].type, "UPDATE_RISK"); assert.deepEqual(calls[1].payload, { risk_id: "r1", patch: { status: "closed" } }); assert.equal(calls[1].idempotency_key, "closeout:risk:r1");
     assert.equal(r2.steps[6]!.status, "not_applicable");
+  });
+  it("§20.2 project Passport/Memory candidates, performed: one RECORD_OUTCOME { completed } per done plan with no outcome row, keyed by the closeout; deferred by the kernel flag's name; the projections are read for the viewer", async () => {
+    const tables: Record<string, Row[]> = {
+      trips: [{ id: TRIP_ID, owner_id: OWNER_ID, title: "Paris", status: "completed", destination_city: "Paris", destination_country: "France", start_date: "2026-09-12", end_date: "2026-09-14" }],
+      trip_members: [{ trip_id: TRIP_ID, user_id: OWNER_ID, role: "owner", status: "accepted" }],
+      trip_crew_location_sessions: [], trip_subgroups: [], trip_decision_tasks: [], trip_risks: [], trip_decisions: [], memories: [], user_stamps: [], trip_meeting_checkpoints: [],
+      trip_plan_items: [
+        { id: "p1", trip_id: TRIP_ID, title: "Louvre", status: "done", day_date: "2026-09-13", starts_at: "2026-09-13T09:00:00Z", ends_at: "2026-09-13T12:00:00Z", location_name: "Louvre", removed_at: null },
+        { id: "p2", trip_id: TRIP_ID, title: "Picnic", status: "done", day_date: "2026-09-13", location_name: null, removed_at: null },
+        { id: "p3", trip_id: TRIP_ID, title: "Maybe", status: "tentative", day_date: "2026-09-13", location_name: null, removed_at: null },
+      ],
+      trip_outcomes: [{ id: "o1", trip_id: TRIP_ID, plan_id: "p2", outcome_type: "completed", occurred_at: "2026-09-13T15:00:00Z", created_at: "2026-09-13T15:00:00Z", evidence_json: {} }],
+      feature_flags: [{ flag: "trip_operational_projections_enabled", enabled: true }],
+    };
+    const off = await runTripCloseout(fake(tables) as any, TRIP_ID, { now: NOW, actorUserId: OWNER_ID });
+    assert.equal(off.steps[5]!.status, "deferred", JSON.stringify(off.steps[5])); assert.match(off.steps[5]!.detail, /p1.*RECORD_OUTCOME is a kernel command and trip_kernel_enabled is false/);
+    const dry = await runTripCloseout(fake(tables) as any, TRIP_ID, { now: NOW, dryRun: true, viewerUserId: OWNER_ID });
+    assert.equal(dry.steps[5]!.status, "actionable"); assert.deepEqual((dry.steps[5] as any).ids, ["p1"], "p2 has its outcome row; p3 is uncertain and belongs to the questions");
+    assert.match(dry.steps[5]!.detail, /2 Memory candidate\(s\) and the Passport row \(1 country\/ies, 1 city\/ies, 0 stamp\(s\)\)/);
+    assert.deepEqual(dry.questions.map((q) => q.planId), ["p3"]);
+    const calls: Row[] = [];
+    const k: any = fake({ ...tables, feature_flags: [...tables.feature_flags, { flag: "trip_kernel_enabled", enabled: true }] });
+    k.rpc = async (fn: string, args: Row) => { if (fn !== "trip_kernel_execute") return { data: null, error: null }; calls.push(args.p_command); return { data: { ok: true, duplicate: false, version: 4, event_id: 2, sequence: 2, result: { id: "o2" }, contract_version: 2 }, error: null }; };
+    const on = await runTripCloseout(k, TRIP_ID, { now: NOW, actorUserId: OWNER_ID });
+    assert.equal(on.steps[5]!.status, "performed", JSON.stringify(on.steps[5])); assert.deepEqual((on.steps[5] as any).ids, ["p1"]);
+    assert.equal(calls.length, 1); assert.equal(calls[0].type, "RECORD_OUTCOME"); assert.equal(calls[0].idempotency_key, "closeout:outcome:p1");
+    assert.deepEqual(calls[0].payload, { outcome_type: "completed", plan_id: "p1", occurred_at: "2026-09-13T12:00:00Z", evidence_json: { source: "closeout", plan_status: "done", title: "Louvre" } });
+    const nobody = await runTripCloseout(fake(tables) as any, TRIP_ID, { now: NOW });
+    assert.equal(nobody.steps[5]!.status, "deferred"); assert.match(nobody.steps[5]!.detail, /not computed for a viewer/);
   });
   it("a read that fails is a failed step, never a silent skip", async () => {
     const r = await runTripCloseout(fake({ trip_plan_items: [], feature_flags: [] }, ["trip_crew_location_sessions"]) as any, TRIP_ID, { now: NOW });

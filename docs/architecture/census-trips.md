@@ -23,12 +23,12 @@ preserved in §36.1 as the record of that measurement.
 | Measure | Value |
 | --- | --- |
 | **Denominator (testable requirements)** | **451** |
-| BUILT-AND-CORRECT | **290** |
-| BUILT-BUT-WRONG | **136** |
+| BUILT-AND-CORRECT | **297** |
+| BUILT-BUT-WRONG | **129** |
 | NOT-BUILT | **24** |
 | CANNOT-VERIFY | **1** |
 | **CONSTRUCTED%** = (C+W)/451 | **426 / 451 = 94.5 %** |
-| **CORRECT%** (raw) = C/451 | **290 / 451 = 64.3 %** |
+| **CORRECT%** (raw) = C/451 | **297 / 451 = 65.9 %** |
 
 > **RESTATED 2026-09-11 (§38): 89 → 87 CORRECT, 127 → 129 WRONG.** §38 re-derived
 > 39 of the C rows against the code and **two did not hold**, both for the same
@@ -246,6 +246,18 @@ preserved in §36.1 as the record of that measurement.
 > the segment's state and §16's signals, served on the Pulse (TR287). Four
 > W → C. One migration, applied / rolled back / re-applied on the replica;
 > the ceiling is §41.3's, now 2779–2795.
+
+> **RESTATED 2026-09-12 (§54): 290 → 297 CORRECT, 136 → 129 WRONG,
+> 24 NOT-BUILT unchanged. CONSTRUCTED 94.5 % unchanged, CORRECT 64.3 % → 65.9 %.**
+> §54 built §20's post-trip in one batch and no migration: the trip
+> projected INTO Memory as candidates built from outcomes, checkpoints, crew
+> and stamps, each carrying Memory's own write and marked realized once it
+> was taken (TR362); the trip's Passport row read back from what the award
+> engine wrote (TR363); the §20.3 answer recorded as `RECORD_OUTCOME`
+> through the kernel (TR385); the closeout step that projects the candidates
+> and writes one outcome per done plan, keyed (TR388, TR428); seven durable
+> channels with a basis (TR382); TR384 re-derived by TR386's standard. Seven
+> W → C. The ceiling is §41.3's, unchanged.
 | **CORRECT% (spec-attributable)** | **WITHDRAWN — not measured. See §36.4** |
 | CANNOT-VERIFY share | **1 / 451 = 0.2 %** |
 
@@ -3452,7 +3464,7 @@ carried a freshness (TR368). No metric measured read-model lag (TR394).
   `serveMapProjection`, `routes/tripMapProjection.ts:80#serveMapProjection`,
   so the two paths cannot serve two projections), `/crew` (`:261#crew`),
   `/context` (`:303#context`), `/safety` (`:327#safety`);
-  registered at `routes/index.ts:163#tripProjectionsRouter`. Every
+  registered at `routes/index.ts:165#tripProjectionsRouter`. Every
   response spreads the envelope; every failed read that a projection IS is
   refused with `TRIP_PROJECTION_UNAVAILABLE` on the wire
   (`:108#TRIP_PROJECTION_UNAVAILABLE`), and a flag-off crew
@@ -3951,7 +3963,7 @@ to explain and no route.
   §20.3's questions (`:74#reconciliationQuestions`): one per
   dated plan not already done or cancelled, in the spec's own words, with the
   two `trip_outcomes` answers it admits.
-- `services/trips/TripCloseoutService.ts:41#runTripCloseout` reads
+- `services/trips/TripCloseoutService.ts:42#runTripCloseout` reads
   the inputs, performs the ONE step this deployment can perform — stopping the
   trip's temporary presence with the live-share service's own update shape
   (`:79#stopped`) — and reports every step. `POST /trips/:tripId/complete`
@@ -4141,8 +4153,8 @@ order: 217 files, 35 database tests, 0 skipped.
   creator's or a host's and stops those shares; a named member who is not
   crew is `TRIP_SUBGROUP_MEMBER_NOT_CREW` (`:220#TRIP_SUBGROUP_MEMBER_NOT_CREW`).
   The §20.2 closeout issues the dissolution as the completing user, keyed
-  `closeout:dissolve:<id>` (`services/trips/TripCloseoutService.ts:128#DISSOLVE_SUBGROUP`,
-  `services/trips/TripCloseout.ts:98#dissolve_temporary_crews`).
+  `closeout:dissolve:<id>` (`services/trips/TripCloseoutService.ts:152#DISSOLVE_SUBGROUP`,
+  `services/trips/TripCloseout.ts:129#dissolve_temporary_crews`).
 - **2781** (`migrations/2781_trip_decisions_ledger.sql`) — `trip_decisions`
   (`:47#trip_decisions`) with §5.3's retention as a column (`:61#retain_until`,
   90 days) and a prune function (`:80#trip_decisions_prune`); inputs refuse a
@@ -4898,13 +4910,13 @@ re-derives and cites rather than argues.
   actionable when pending tasks exist and the service issues
   `UPDATE_DECISION_TASK { status: expired }` per task through the kernel,
   keyed by the closeout, deferred by the flag's name when the kernel is off
-  (`services/trips/TripCloseout.ts:113#expire`,
-  `services/trips/TripCloseoutService.ts:143#UPDATE_DECISION_TASK`);
+  (`services/trips/TripCloseout.ts:144#expire`,
+  `services/trips/TripCloseoutService.ts:167#UPDATE_DECISION_TASK`);
   `archive_rebuildable_projections` reads the §21.2 ledger's rows still
   within retention and ends their retention at completion
-  (`services/trips/TripCloseout.ts:116#retention`,
-  `services/trips/TripCloseoutService.ts:81#retain_until`); both tested with
-  the kernel off and on (`src/test/tripCloseout.test.ts:108#closeout:task:t1`).
+  (`services/trips/TripCloseout.ts:147#retention`,
+  `services/trips/TripCloseoutService.ts:82#retain_until`); both tested with
+  the kernel off and on (`src/test/tripCloseout.test.ts:119#closeout:task:t1`).
 - **§23 concurrent host edits, on the database** — `src/test/db/tripConcurrentEdits.db.test.ts:54#TRIP_VERSION_CONFLICT`:
   device B moves the dinner at version *v*; device A's move at the same *v*
   is `TRIP_VERSION_CONFLICT`, appends nothing, and B's move stands; A's
@@ -5036,11 +5048,11 @@ with every database suite green; no new flag, no new table.
   (`src/test/db/tripActivityLogRetention.db.test.ts:54#trip_activity_log_prune`).
 - **§5.3 the operational class, the last third** — decision tasks expire
   at closeout since §45; open risks close with them now:
-  `services/trips/TripCloseoutService.ts:148#UPDATE_RISK` issues
+  `services/trips/TripCloseoutService.ts:172#UPDATE_RISK` issues
   `UPDATE_RISK { status: closed }` per open risk, keyed by the closeout,
   behind the kernel flag and deferred by its name, and the planner names
   both counts (`services/trips/TripCloseout.ts:50#riskIds`;
-  `src/test/tripCloseout.test.ts:109#closeout:risk:r1`). Readiness has had a
+  `src/test/tripCloseout.test.ts:120#closeout:risk:r1`). Readiness has had a
   staleness rule since 0170; the class is policy-controlled end to end.
 - **§4.2 the two events the census graded on the wrong path** —
   `trip.participant_joined` and `trip.trip_completed` were W because
@@ -5794,3 +5806,97 @@ this branch merges, CI applies it, and the owner's Batch C carries it to
 production. The bored route sits behind the operational gate; the
 reliability estimate rides the Pulse behind the same gate. Nothing here is
 deployed, enabled or production-realised.
+
+## 54. The trip after the trip: outcomes that outlive their plans, the answer that is recorded, and two projections that point the right way
+
+**Read against the branch `claude/sweet-fermat-fmx7up`.** §20 in one batch,
+no migration. §39 built the closeout's seven steps and left "project
+Passport/Memory candidates" as a sentence saying no producer existed
+(TR388); §20.3's question was asked on the completion response and could
+not be answered anywhere (TR385, TR428); the two projections the spec names
+existed and pointed the other way — Memory → trip recap, Passport → trips
+card (TR362, TR363); and of §20's seven durable-outcome channels one
+existed, the stamps (TR382).
+
+### 54.1 What was built, and where
+
+- **Trip → Memory, as candidates** (`artifacts/api-server/src/services/trips/TripPostTripProjections.ts:168#export function buildTripMemoryProjection(`).
+  `TripMemoryProjection` now projects the trip INTO Memory: one candidate per
+  meaningful outcome — a place visited (a done plan anchored to a place), an
+  activity completed (a done plan without one), a regroup the crew met at
+  (a 2794 checkpoint closed `met`, naming who arrived), the people
+  intentionally associated (the accepted crew, never the viewer), and the
+  stamps the trip earned. A plan's newest `trip_outcomes` row is the crew's
+  last word and wins over its status (`artifacts/api-server/src/services/trips/TripPostTripProjections.ts:126#export function latestOutcomeByPlan(`);
+  a done plan with no row at all is named in `unrecordedDonePlanIds`, which
+  is what the closeout records. Each memory-shaped candidate carries the
+  `memoryDraft` `POST /memories` takes — approving a story element IS
+  creating the memory, through Memory's own write path, never a second one
+  here — and is `realized` with the memory id and its media count once one
+  of the viewer's memories of this trip answers it (same place, or same day
+  and title), so nothing is offered twice. Served at
+  `artifacts/api-server/src/routes/tripPostTrip.ts:71#router.get("/trips/:tripId/memory-candidates"`
+  under the §19.1 envelope, for accepted crew. The registry's
+  `TripMemoryProjection` (`trip.recap`, Memory → trip) is untouched: the two
+  directions now both exist.
+- **Trip → Passport** (`artifacts/api-server/src/services/trips/TripPostTripProjections.ts:247#export function buildTripPassportProjection(`):
+  what this trip contributed — the countries and cities it touched
+  (destination and the stamps' own), the stamps awarded with
+  `source_type = "trips"` for this trip, named through `stamp_definitions`,
+  and whether completion is recorded. Nothing writes the Passport; the award
+  engine already does, and this is the row it reads back
+  (`artifacts/api-server/src/routes/tripPostTrip.ts:74#router.get("/trips/:tripId/passport-projection"`).
+- **What was not read is said** (`artifacts/api-server/src/services/trips/TripPostTripProjections.ts:279#export async function readPostTripInputs(`):
+  2763's outcomes and 2794's checkpoints are read only under the
+  operational gate and named in `unread` otherwise; a failed optional read
+  (memories, memory items, stamps) is named too and its input is null, so
+  no candidate is invented for what was not read and nothing is marked
+  realized on a read that did not happen.
+- **§20.3 answered, and recorded** (`artifacts/api-server/src/routes/tripPostTrip.ts:77#router.post("/trips/:tripId/closeout/answers"`):
+  `POST /trips/:tripId/closeout/answers { planId, answer: completed | skipped }`
+  is `RECORD_OUTCOME` through the kernel — the plan checked to be this
+  trip's first, since 2763's `plan_id` carries no foreign key — with the
+  spec's own question as evidence, keyed by plan and answer so the same
+  answer twice is a duplicate receipt and a different answer is a new row.
+  Refused by name (503 `TRIP_KERNEL_UNAVAILABLE`) without the kernel.
+- **The closeout step, real** (`artifacts/api-server/src/services/trips/TripCloseout.ts:107#function postTripStep(`
+  and `artifacts/api-server/src/services/trips/TripCloseoutService.ts:236#closeout:outcome:`):
+  `project_passport_memory_candidates` is planned from both projections for
+  the viewer — ACTIONABLE for the done plans with no outcome row, DEFERRED by
+  name when 2763 was not read or no viewer was projected for, NOT APPLICABLE
+  when every done plan is recorded — and performed on `POST /complete` as
+  one `RECORD_OUTCOME { completed }` per such plan, keyed
+  `closeout:outcome:<planId>`, deferred by the kernel flag's name like every
+  kernel write in the closeout. `GET /closeout` plans it for the member
+  reading it. A post-trip read that fails, or throws, is a deferred step and
+  a named unread, never a failed completion.
+- **On the replica** (`artifacts/api-server/src/test/db/tripCloseoutOutcomes.db.test.ts:39#duplicate receipt`):
+  the closeout's outcome is recorded once (the same key again is a
+  duplicate receipt, one row); a correcting answer is a second row, never an
+  edit, and the newest row is the last word; `REMOVE_PLAN` leaves both rows
+  with `plan_id` intact — the outcome outlives the plan it happened in.
+  `trip.outcome_recorded` is the event.
+
+### 54.2 Row moves
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| TR362 `TripMemoryProjection` | W | **C** | Trip → Memory now exists: candidates from outcomes, checkpoints, crew and stamps, each with the draft Memory's own write takes and marked realized once it has been taken. The registry's Memory → trip recap is the other direction, and both exist. |
+| TR363 `TripPassportProjection` | W | **C** | Trip → Passport now exists: countries, cities, this trip's stamps and completion, read back from what the award engine wrote. The consumer's trips card is the other direction, and both exist. |
+| TR382 durable post-trip projections are based on meaningful outcomes | W | **C** | Places visited and activities completed are `trip_outcomes` rows (the closeout writes one per done plan; an answer writes one); people intentionally associated are the accepted crew; stamps and their milestones are `user_stamps` for this trip; media is the memory items of the trip's memories, counted; a user-approved story element is a candidate turned into a memory through Memory's write, recognised as realized. Seven of seven have a durable basis; none is a fabrication. |
+| TR384 …dissolve temporary crews where appropriate | W | **C** | Re-derived by TR386's standard, which graded the same shape C in §45: `DISSOLVE_SUBGROUP` per active subgroup at closeout, keyed, behind the kernel flag and deferred by its name. The two rows are now graded alike. |
+| TR385 …reconcile uncertain plan outcomes | W | **C** | The uncertain set is asked in the spec's words and the answer is recorded: `RECORD_OUTCOME` through the kernel, keyed, evidenced with the question; refused by name without the kernel. |
+| TR388 …project Passport/Memory candidates | W | **C** | A producer exists: the step is planned from both projections, performed as the outcome rows they are built from, and the candidates are served per request. |
+| TR428 trip closeout (presence expiry, crew closure, outcome reconciliation, Memory/Passport candidates) | W | **C** | Four of four: presence stopped (§39), subgroups dissolved (TR384), outcomes reconciled and recorded (TR385), candidates projected (TR388) — each performed or deferred by name, and reported on the completion response. |
+
+**Held, with the reason.** TR390 stays W: the smallest question set is
+asked and now answerable, and no screen asks it (Cluster 13). TR100's
+retention (§46) and TR387 are unchanged. TR318, TR334's client half and
+every deployment-capped row hold for §41.3's reason.
+
+### 54.3 The ceiling, unchanged
+
+No migration. The one write is 2763's `RECORD_OUTCOME`, behind
+`trip_kernel_enabled`; the reads of 2763 and 2794 sit behind the
+operational gate. Nothing here is deployed, enabled or production-realised;
+the ceiling is §41.3's, 2779–2795.
