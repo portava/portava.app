@@ -321,6 +321,18 @@ run_check "check:telegraph-certification" pnpm run check:telegraph-certification
 # cannot see to be declared, which is how the unvalidated client-supplied
 # `subtype` on POST /threads/:id/messages got written down.
 run_check "check:telegraph-share-producers" pnpm run check:telegraph-share-producers
+# check:telegraph-slos — Telegraph's §28 metric table and §30A.17 SLOs, plus §24's
+# projection rule. Before this there was nothing: no metric emitted for messaging,
+# no target constant, and — one level worse than absent — the realtime bus already
+# counted everything it swallowed while NOTHING read those counters except a test,
+# so a realtime outage was a number nobody could reach. Six rules: completeness,
+# every target a number or the spec's own words, emitters that really name their
+# metric, no emission of an undeclared key, safety/privacy strictest ENFORCED AS AN
+# ORDERING between rows rather than as a label, and three shrink-only ratchets —
+# unmeasured SLOs, absent projections, and client-side joins of a raw messaging
+# table. That last one is the rule that decays silently: one convenient PostgREST
+# call from a new screen and nothing notices.
+run_check "check:telegraph-slos" pnpm run check:telegraph-slos
 
 run_gate  "check:rank-events-surfaces" pnpm run check:rank-events-surfaces
 

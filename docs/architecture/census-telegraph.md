@@ -1324,3 +1324,107 @@ written:
 T344 is bounded differently: its remaining instances are in a file another lane
 holds this week. The measurement is in place and shrink-only; the edit is not
 this lane's to make.
+
+### 12.6 §28 and §30A.17 — Telegraph is measured, in-process, for the first time
+
+The census's finding was exact and it was worse than absent: "No metric is
+emitted for messaging and no target constant exists… Telegraph has no telemetry
+sink at all. Nothing in §28 or §30A.17 has anywhere to land." One level under
+that, the realtime bus ALREADY counted everything it swallowed —
+`lib/telegraphEvents.ts:80-102` declares nine counters for exactly that purpose,
+including the one that loses an event for every member of a thread at once — and
+**nothing read them but a test**. An operator asking "is realtime degraded?" had
+no way to look.
+
+**The registry.** `domain/telegraph/services/telegraphObservability.ts:46` holds
+§28's nine metrics (`:49`–`:201`) and §30A.17's eight SLOs (`:221`–`:333`), each
+with the spec's own requirement wording, a target, a severity and a status. The
+target is a union
+(`domain/telegraph/contracts/observability.ts:58`) because the spec's nine
+targets are not the same kind of statement: "0 under the idempotency contract" is
+a count, "high availability" is a ratio, "bounded" is a latency, and "primary
+product outcome metric" names no number at all. `unbounded` is therefore a
+first-class target carrying the spec's own words — inventing a threshold would
+produce confident alerts about a line nobody drew.
+
+**The recorder's privacy property is a type, not a convention.**
+`domain/telegraph/services/telegraphObservability.ts:384` takes a metric key, an outcome and an optional
+duration, and there is **no parameter a message body, a handle or a location
+could travel in**. §30A.17's "do not indiscriminately copy private message text
+into analytics" is satisfied by making the violation unrepresentable rather than
+by a rule somebody has to follow. An undeclared key is ignored at runtime rather
+than accumulated under a catch-all, and
+`scripts/checkTelegraphSlos.ts:131` fails on a typo'd key statically, which is
+the only place it can be caught.
+
+**The emitters are real call sites, not a test harness.**
+`middlewares/telegraphObservability.ts:126` is mounted at `app.ts:182`, BEFORE
+the router, so it times what the user waits for rather than what the handler
+does. It classifies by method and path shape (`:61`) — which means a new
+Telegraph command surface is measured the day it is added, instead of on the day
+somebody remembers. The second emitter is the block guard
+(`lib/blockGuard.ts:46`).
+
+**What counts as a failure is the whole design.**
+`middlewares/telegraphObservability.ts:119`: a 2xx is ok, a 5xx or a
+`degraded_unavailable` is a violation, and **a 403 is neither**. Counting a guard
+doing its job as an availability failure would make every hardening change look
+like an outage and every outage look like hardening — the metric would move for
+the wrong reason in both directions. Refusals are recorded in their own column so
+the denominator stays honest. This is the assertion that was shown red first, by
+making `outcomeFor` return a violation for everything non-2xx.
+
+**The diagnostics surface.** `routes/telegraphDiagnostics.ts:64` — admin-gated
+through the shared guard, purpose-scoped (`:62`: an `X-Admin-Access-Reason` of
+under ten characters is refused, because a field that accepts "debug" is a field
+and not a scope), audit-logged (`:85`), and it exposes **no conversation id, no
+user id and no message body**, which the suite asserts by searching the served
+payload for each. It also reports its own `processUptimeMs` and a
+`counterScope` line saying what its numbers are worth, so a reader can tell a
+quiet hour from a restart and cannot mistake an in-process counter for a
+pipeline.
+
+### 12.7 §24 — the projections, and a count the census got wrong
+
+`domain/telegraph/projections/projectionRegistry.ts:43` declares the six §24
+projections with what each is and is not, and `:138` declares every direct client
+read of a raw messaging table — §24's closing rule, "mobile clients consume
+server-built projections instead of independently joining raw tables".
+
+**The census recorded two bypasses. There are six.** Re-derived by enumeration
+rather than by reading the conversation screen top to bottom, and
+`scripts/checkTelegraphSlos.ts:213` re-derives them on every run so the number
+cannot grow: four reads of `message_thread_members` in
+`travel-buddy-standalone/app/messages/[id].tsx` (the other party's
+`last_read_at`, a member count, the accepted-member permission gate, and the
+group roster with every member's `last_read_at`), one of `message_threads` for
+the E2EE flag, and one more of `message_thread_members` in
+`travel-buddy-standalone/src/components/GroupChatScreen.tsx` that the census did
+not count at all. All six are the same defect — a receipt or capability
+projection the server does not build, so the client joins the raw table to build
+it — and one of them recomputes an authorization decision.
+
+### 12.8 Row moves — §24, §28 and §30A.17
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| T289 | W | W | Unchanged and now declared: PRJ-01 at `domain/telegraph/projections/projectionRegistry.ts:44`. The list half is a real server-built projection; the Now band and the nearby summary have no source. **Ceiling: T8 and T292.** |
+| T290 | W | W | PRJ-02, `domain/telegraph/projections/projectionRegistry.ts:57`. The renderable half gained the §14.3 history bound since the census; it still carries no permissions block, which is the half §24 names explicitly. **Ceiling: §14.1's ConversationCapabilities (T207), which is §12–§22's lane.** |
+| T291 | N | N | PRJ-03. Unchanged, and now under a shrink-only ratchet: `absentProjections` is pinned at 4 in `scripts/TELEGRAPH_OBSERVABILITY_BASELINE.json:9`, so a projection cannot quietly stop existing. |
+| T292 | N | N | PRJ-04, same. |
+| T293 | N | N | PRJ-05, same. |
+| T294 | N | N | PRJ-06, same. The drawer is dead-coded behind a literal `false`, which is worse than absent for a reader because the affordance looks built. |
+| T295 | W | W | **Same verdict, corrected magnitude: six bypasses, not two.** Declared at `domain/telegraph/projections/projectionRegistry.ts:138` and re-derived on every run by `scripts/checkTelegraphSlos.ts:213`, which also fails on an UNDECLARED one — so a new client-side join of a messaging table cannot be added silently, which is the way this rule decays. **Ceiling: removing them needs the missing permissions block (PRJ-02) and a server-built receipt projection; the edits are in client files §1–§11's and §12–§22's lanes hold.** |
+| T346 | N | **C** | The metric exists, has a target, and is recorded on every deployment of this tree. SLO-01 (`domain/telegraph/services/telegraphObservability.ts:49`) is a 0.99 success ratio over every Telegraph command surface, emitted by `middlewares/telegraphObservability.ts:126` mounted at `app.ts:182`. The "safety/coordination prioritized" half is the severity ladder, and it is enforced as an ORDERING between rows by `scripts/checkTelegraphSlos.ts:161` rather than trusted as a label. **The counters are in-process and reset on restart; there is no durable sink and no alerting, and the surface says so on every read.** |
+| T347 | N | **W** | The target exists (SLO-02, `domain/telegraph/services/telegraphObservability.ts:69`, count ≤ 0) and something real detects violations: the middleware remembers accepted `(threadId, clientId)` pairs and counts a second acceptance, which is exactly the case that happens — an offline client retrying a send that did land. F-03 proves two canonical rows are created. **Ceiling: bounded by one process's memory, so it is a floor on the true number and never a ceiling. The exact version needs the idempotency key the send path does not have (T231).** |
+| T348 | N | **W** | Declared with its target (SLO-03, `:89`) and structurally unmeasurable: there is no unsend operation to violate it. Recorded rather than left out so that when unsend lands the target already exists. A zero produced by absence is not a measurement and is not counted as one. **Ceiling: PR #472, unmerged and CI-only.** |
+| T349 | W | W | Unchanged. The guarantee is enforced and proved (RLS-05), and NOTHING COUNTS IT, so a regression would be silent — which SLO-04 (`:107`) now says out loud instead of leaving implicit. **Ceiling: the emitter belongs in `services/safeReturn/SafeReturnPrivacyGuard.ts`, which this lane does not hold.** |
+| T350 | W | **C** | Both halves closed. The fail-open the census recorded is gone from the tree and P-04 quantifies over the failure states to prove it; and the guard is now instrumented at `lib/blockGuard.ts:46`. What is counted is deliberate: a refusal is `ok`, because the target is "blocked direct deliveries = 0" and a refusal IS zero deliveries; an unreadable blocks table is an `unknown` for that metric and a VIOLATION of the block-enforcement SLO, because the denial was made without knowledge — which is the rate at which enforcement runs blind, and the shape a leak would start as. |
+| T351 | N | **W** | SLO-06 (`:146`) has a target and an emitter. What is measured is the two existing projections' BUILD latency, because they cache nothing and their staleness is zero by construction — the quantity that would start to matter the moment either is materialised. **Ceiling: "alert on material stale shared context" has no referent at all; there is no shared context (T21), and four of six projections do not exist.** |
+| T352 | C | C | Unchanged verdict, and it stopped being unmeasured. SLO-07 (`:164`) folds the bus's own counters rather than re-counting them — subscriber failures, cross-instance broadcast failures and events dropped because a thread's audience could not be resolved — and the diagnostics route is the first thing in the repository that reads them. The guarantee itself stays architectural: the row is committed and the 201 returned before any publish. |
+| T353 | N | N | Unchanged. Revocation does not exist, so the latency is undefined rather than large. SLO-08 (`:184`) carries the spec's own intent wording instead of an invented number. |
+| T354 | N | **W** | SLO-09 (`:201`) is emitted, and it is labelled a PROXY in its own declaration: what is counted is a human confirming a proposed action through `/telegraph/commands/:id/confirm-action` — the one place a conversation becomes a canonical write — and **a confirmed typed command is not a real-world outcome**. Whether anybody then met is not in this system. Recorded so it cannot be quoted as the north-star metric. |
+| T432 | N | **W** | §30A.17's ten measurements: four are now real (delivery latency, failed sends, seen convergence, and coordination success as a proxy); six are not (unsend outcomes, media processing, plan conversion, Nearby→conversation, conversation→plan, completed real-world outcomes), and four of those six have no referent in the tree at all. |
+| T433 | C | C | Unchanged, and now structural rather than behavioural: the recorder's signature (`domain/telegraph/services/telegraphObservability.ts:384`) has no parameter private text could travel in, and the diagnostics payload is asserted to contain no body, no conversation id and no user id. |
+| T434 | N | **C** | All eight SLOs §30A.17 names are defined with targets — message acceptance, realtime delivery, offline recovery, seen convergence, block enforcement, location revocation, media availability, projection freshness (`:221`–`:333`) — and the clause's closing sentence is enforced: `scripts/checkTelegraphSlos.ts:161` refuses a delivery or product SLO with a budget tighter than the tightest safety/privacy one. Definition is what this row asks for; five of the eight are also measured, and the other three say exactly why not. |
+| T435 | W | W | The moderation half already existed and is guarded. The delivery/projection half now exists: `routes/telegraphDiagnostics.ts:64`, admin-gated, purpose-scoped, audit-logged, and carrying no private content by construction. **Ceiling: the audit is a structured LOG LINE, not a durable row. `admin_access_log` constrains `record_type` to five values, none of which is this, so a durable audit would need either a migration no database has or mislabelling a diagnostics read as a profile read — and saying something untrue in an audit trail is worse than saying it in a log.** |

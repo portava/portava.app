@@ -154,7 +154,7 @@ Three properties of the envelope are load-bearing:
   for.
 - **The global handler used to emit a DIFFERENT shape** — `{ error: { code, message } }`, a
   nested object where every route returns a flat string, so a client reading `body.error` as a
-  code got an object for any unhandled throw. **CLOSED.** The global handler no longer emits a different shape. It moved out of `app.ts` into `lib/errorEnvelope.ts:42#globalErrorHandler` — so the one response writer in the system that is not `sendError` can be tested against the real function instead of the hand-copied replica that could not fail when the original changed — and it now emits the same FLAT `{ error: "<code>", message }` every route emits (`app.ts:225#globalErrorHandler` registers it last). Decided in the direction of the 4159 `sendError` call sites, not the one handler.
+  code got an object for any unhandled throw. **CLOSED.** The global handler no longer emits a different shape. It moved out of `app.ts` into `lib/errorEnvelope.ts:42#globalErrorHandler` — so the one response writer in the system that is not `sendError` can be tested against the real function instead of the hand-copied replica that could not fail when the original changed — and it now emits the same FLAT `{ error: "<code>", message }` every route emits (`app.ts:241#globalErrorHandler` registers it last). Decided in the direction of the 4159 `sendError` call sites, not the one handler.
 
 ### The defect class: supabase-js RESOLVES, it does not throw
 

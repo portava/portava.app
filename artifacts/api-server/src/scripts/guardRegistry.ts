@@ -691,4 +691,24 @@ export const GUARDS: readonly GuardEntry[] = [
       unit: "source files scanned for message type literals",
     },
   },
+  {
+    checker: "src/scripts/checkTelegraphSlos.ts",
+    responsibility:
+      "Telegraph's §28 metrics and §30A.17 SLOs have targets, real emitters and a " +
+      "safety-strictest ordering, and §24's client-side joins of raw messaging tables only shrink.",
+    // The census measured the starting point: "No metric is emitted for messaging
+    // and no target constant exists… Telegraph has no telemetry sink at all." And
+    // one level worse than absent — the realtime bus ALREADY counted everything it
+    // swallowed and nothing read those counters but a test, so a realtime outage
+    // was a number nobody could reach. This checks that every declared metric has
+    // something recording it, that no emitter records a key no SLO declares (the
+    // recorder ignores unknown keys at runtime by design, so this is the only
+    // place a typo can be caught), and that §30A.17's closing sentence holds as an
+    // ORDERING between rows rather than as a label anyone can write.
+    reach: { kind: "check-all", script: "check:telegraph-slos" },
+    inspects: {
+      countPattern: "(\\d+) SLOs inspected across",
+      unit: "SLO declarations inspected",
+    },
+  },
 ];
