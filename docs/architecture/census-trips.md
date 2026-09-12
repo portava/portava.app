@@ -23,12 +23,12 @@ preserved in §36.1 as the record of that measurement.
 | Measure | Value |
 | --- | --- |
 | **Denominator (testable requirements)** | **451** |
-| BUILT-AND-CORRECT | **87** |
-| BUILT-BUT-WRONG | **159** |
-| NOT-BUILT | **204** |
+| BUILT-AND-CORRECT | **88** |
+| BUILT-BUT-WRONG | **162** |
+| NOT-BUILT | **200** |
 | CANNOT-VERIFY | **1** |
-| **CONSTRUCTED%** = (C+W)/451 | **246 / 451 = 54.5 %** |
-| **CORRECT%** (raw) = C/451 | **87 / 451 = 19.3 %** |
+| **CONSTRUCTED%** = (C+W)/451 | **250 / 451 = 55.4 %** |
+| **CORRECT%** (raw) = C/451 | **88 / 451 = 19.5 %** |
 
 > **RESTATED 2026-09-11 (§38): 89 → 87 CORRECT, 127 → 129 WRONG.** §38 re-derived
 > 39 of the C rows against the code and **two did not hold**, both for the same
@@ -43,25 +43,30 @@ preserved in §36.1 as the record of that measurement.
 > or §38 has moved, and both moved DOWN — the direction a re-derivation has to be
 > able to go if it means anything.
 
-> **RESTATED AGAIN 2026-09-11 (§39): 234 → 204 NOT-BUILT, 129 → 159 WRONG,
-> CONSTRUCTED 47.9 % → 54.5 %.** §39 re-derived N rows for the first time and
-> **thirty are falsified by code on merged `main`** — all thirty by the same
-> squash merge (`42aeac38e`, #476) whose commit this document declares as its
-> `head_commit`. §29.4 re-graded fifteen rows at that commit and stopped; the
-> rest were never revisited. **CORRECT does not move**: every one of the thirty
-> is built and none is shown to work, so all thirty land in WRONG.
+> **RESTATED AGAIN 2026-09-11 (§39): 234 → 200 NOT-BUILT, 129 → 162 WRONG,
+> 87 → 88 CORRECT. CONSTRUCTED 47.9 % → 55.4 %, CORRECT 19.3 % → 19.5 %.** §39
+> re-derived N rows for the first time and **thirty-four are falsified by code on
+> merged `main`** — all thirty-four by the same squash merge (`42aeac38e`, #476)
+> whose commit this document declares as its `head_commit`. §29.4 re-graded
+> fifteen rows at that commit and stopped; the rest were never revisited.
 >
-> §38's two verdicts moved DOWN and these thirty move UP. Until §39, every pass
-> this document had run could only travel downward, because only C rows had ever
-> been re-read.
+> Thirty-three of the thirty-four are built and **not shown to work**, so they
+> land in WRONG. **One, TR417, is proven live and moves into CORRECT** — the
+> first row any pass has moved into that bucket, on this document's own TR49/TR57
+> precedent and with the same caveat: `trip_kernel_enabled` is seeded FALSE, so
+> the guarantee is proven in portava-ci and protects nothing in production. §39.7.
+>
+> §38's two verdicts moved DOWN and these thirty-four move UP. Until §39, every
+> pass this document had run could only travel downward, because only C rows had
+> ever been re-read.
 | **CORRECT% (spec-attributable)** | **WITHDRAWN — not measured. See §36.4** |
 | CANNOT-VERIFY share | **1 / 451 = 0.2 %** |
 
-> **19.3 % is a CEILING on nothing and a FLOOR on nothing — it is the document
+> **19.5 % is a CEILING on nothing and a FLOOR on nothing — it is the document
 > counted, not the code read.** `check:census-integrity` checks that this document
 > agrees with itself, and says in its own output that it does not check any verdict
 > against the code. §37, §38 and §39 have now read parts of it against the code —
-> 44 of the C rows and 30 of the N rows — and every pass that looked moved
+> 44 of the C rows and 34 of the N rows — and every pass that looked moved
 > something. §36.5 lists what remains open. Read §36, §38 and §39 before quoting
 > either percentage.
 >
@@ -2817,17 +2822,21 @@ all. 129 W and 234 N rows stand entirely on earlier passes. A W row asserting
 something is broken could have been fixed since without anyone noticing —
 **that is the cheaper error**, but it is still an error."*
 
-It is not the cheaper error. **Thirty of the 234 N rows are falsified by code on
-merged `main`**, and every one of them is falsified by the *same merge* whose
-commit this document declares as its `head_commit`.
+It is not the cheaper error. **Thirty-four of the 234 N rows are falsified by
+code on merged `main`**, and every one of them is falsified by the *same merge*
+whose commit this document declares as its `head_commit`. Thirty were found by
+two mechanical routes (§39.2); the last four by a third route run after §39.6
+had already said the pass was over (§39.7).
 
 | | C | W | N | X | CONSTRUCTED | CORRECT |
 | --- | --- | --- | --- | --- | --- | --- |
 | after §38 | 87 | 129 | 234 | 1 | 216 / 451 = **47.9 %** | 87 / 451 = **19.3 %** |
-| after §39 | 87 | **159** | **204** | 1 | **246 / 451 = 54.5 %** | 87 / 451 = **19.3 %** |
+| after §39 routes 1–2 | 87 | **159** | **204** | 1 | **246 / 451 = 54.5 %** | 87 / 451 = **19.3 %** |
+| **after §39 route 3** | **88** | **162** | **200** | 1 | **250 / 451 = 55.4 %** | **88 / 451 = 19.5 %** |
 
-**CORRECT does not move. CONSTRUCTED moves up 6.6 points.** §38's two verdicts
-moved DOWN; these thirty move UP. A re-derivation that can only travel in one
+**CONSTRUCTED moves up 7.5 points and CORRECT up 0.2.** §38's two verdicts
+moved DOWN; these thirty-four move UP — thirty-three into WRONG and **one, TR417,
+into CORRECT, the first row any pass has moved into that bucket** (§39.7). A re-derivation that can only travel in one
 direction is not a measurement, and until this pass every pass this document had
 run could only travel down, because **only C rows had ever been re-read**.
 
@@ -2985,3 +2994,62 @@ stopped being true, and the next reader trusts the reason.
 4. **CORRECT% did not move and nothing here argues it should.** Thirty rows
    moved from "not built" to "built and wrong". Not one of them was shown to
    work, and `trip_kernel_enabled` is still FALSE.
+
+### 39.7 A third route, run after §39.6 was written — and it moves CORRECT
+
+§39.6 item 1 said 204 N rows were never looked at. A third mechanical route was
+run against them before this section was pushed, and it found four more. **The
+paragraph above is left standing rather than edited**, because "I stopped
+looking and then looked again and found more" is the honest shape of this and
+editing it away would hide the rate.
+
+**Route 3 — the row claims an endpoint is not registered.** Ten N rows say
+"Not registered" or name an absent endpoint. `routes/index.ts` registers five
+trip routers added by the same merge (`:153-158`), and their paths are a
+five-line grep.
+
+| id | was | now | why |
+|---|---|---|---|
+| TR374 `commands` | N | **W** | *"Not registered, and no command exists to post (TR49)."* `router.post("/trips/:tripId/commands")` at `routes/tripCommands.ts:119`, registered at `routes/index.ts:158`, behind `requireUser`, refusing a body that names its own actor. The second clause was already contradicted inside this document: **TR49 has been C since §26**, and it is the envelope this endpoint posts. |
+| TR377 `snapshots` | N | **W** | *"Not registered; no snapshots, no versions."* `router.get("/trips/:tripId/snapshots/:version")` at `routes/tripCommands.ts:252`, accepting `latest` or a non-negative integer. Snapshots are `trip_snapshots` (`2763:108`) and versions are `trips.version` (`2420:96`). All three clauses false. |
+| TR435 `§24 Phase 1 ratchet` | N | **W** | *"No ratchet, no enumeration, no reduction."* All three, in one file that names §24 Phase 1 in its first line: `scripts/tripKernelWriterBaseline.ts` enumerates **47 direct writes in 18 files**, `checkTripKernelWriters.ts` fails on a file not listed or a count that grows, and it is in `check:all`. The reduction is recorded in the baseline's own header: **8 ungated → 1**. W not C for that last one, and because the flag is off, so every legacy path is still live. |
+| **TR417** `§22.4 idempotency` | N | **C** | *"No idempotency key anywhere in the trip domain."* `trip_command_receipts` (`2420:139`) is `PRIMARY KEY (trip_id, idempotency_key)` and its own COMMENT states the requirement verbatim: *"A second command with the same key returns this row and performs no transition (Trips spec §22.4)."* |
+
+#### TR417 is the first row any pass has moved INTO correct, and the reason is a live test, not a schema read
+
+`tripKernelLive.test.ts:325-342` runs against portava-ci and asserts the load-bearing
+half, which a shape test cannot reach: replaying `JOIN_PLAN`'s key returns
+`duplicate: true` **at the original version** — *"`duplicate: true` with a new
+version would mean the command ran again and the receipt was written afterwards"* —
+and a second read proves `trip_plan_participants` still holds exactly one row.
+That is the requirement's own words: a duplicate command cannot produce a
+duplicate state transition.
+
+**C is this document's own precedent, not a new standard.** §26 moved **TR49**
+(the `TripCommand` envelope) and **TR57** (canonical state and event in one
+transaction) to C with the flag in the same position. TR417 is TR57's sibling:
+a kernel behaviour, proven live, on merged code.
+
+**What C does NOT say here**, since §29.5's chain still applies to everything
+after MERGED: `trip_kernel_enabled` is seeded **FALSE**, so in production no
+command is issued and the guarantee protects nothing there. It is proven in
+portava-ci. A reader quoting 19.5 % must carry that sentence with it.
+
+#### The count after all three routes
+
+| | C | W | N | X | CONSTRUCTED | CORRECT |
+| --- | --- | --- | --- | --- | --- | --- |
+| after §38 | 87 | 129 | 234 | 1 | 216 / 451 = **47.9 %** | 87 / 451 = **19.3 %** |
+| after §39 routes 1–2 | 87 | 159 | 204 | 1 | 246 / 451 = **54.5 %** | 87 / 451 = **19.3 %** |
+| **after §39 route 3** | **88** | **162** | **200** | 1 | **250 / 451 = 55.4 %** | **88 / 451 = 19.5 %** |
+
+**Thirty-four N rows falsified, by three routes, in one pass over one census.**
+Six N rows were checked and **held** and are named beside them (TR24, TR61/62/65/66,
+TR286/287, TR369, TR370, TR375, TR376, TR401, TR213, TR131, TR180, TR18, TR211,
+TR212, TR252/253, TR334), because an unmoved row that was actually looked at is a
+different claim from one that was not.
+
+**Route 3 also has a false-lead rate and it is not zero.** Six of its ten
+candidates held: `/context`, `/today`, `/simulate` and `/decisions/:id/explain`
+are genuinely not among the registered paths, and the two projection rows it
+surfaced were about services, not routes.

@@ -188,15 +188,30 @@ actually counts today; the `ed168ed7` column they replace was **44.4 % / 66.7 %*
 | compass | 90 | 47 | 18 | 15 | 0 | 10 | 52.2 % | 72.2 % |
 | sensing | 127 | 65 | 39 | 22 | 1 | 0 | 51.2 % | 81.9 % |
 | telegraph | 451 | 98 | 172 | 157 | 3 | 21 | 21.7 % | 59.9 % |
-| trips | 451 | 89 | 127 | 234 | 1 | 0 | 19.7 % | 47.9 % |
+| trips | 451 | 88 | 162 | 200 | 1 | 0 | 19.5 % | 55.4 % |
 | layover | 296 | 28 | 120 | 148 | 0 | 0 | 9.5 % | 50.0 % |
 | highlights-memories | 266 | 13 | 65 | 59 | 2 | 127 | 4.9 % | 29.3 % |
-| **ALL** | **3,290** | **1,500** | **754** | **806** | **27** | **203** | **45.6 %** | **68.5 %** |
+| **ALL** | **3,290** | **1,499** | **789** | **772** | **27** | **203** | **45.6 %** | **69.5 %** |
 
 `C` BUILT-AND-CORRECT · `W` BUILT-BUT-WRONG · `N` NOT-BUILT · `X` CANNOT-VERIFY.
 
-**45.6 % correct / 68.5 % constructed, both still floors.** The movement from 44.4 % / 66.7 %
-is **not** work landing — **no verdict in any census was edited.** It is 166 rows that were
+**45.6 % correct / 69.5 % constructed, both still floors.**
+
+> **UPDATED 2026-09-11 (later the same day).** The trips row now reads 88/162/200
+> rather than 89/127/234, and the corpus 45.6 % / 69.5 % rather than 45.6 % / 68.5 %
+> — the corpus CORRECT figure is unchanged to one decimal and the CONSTRUCTED one
+> is not, which is the shape of what moved.
+>
+> **This time verdicts WERE edited**, which the paragraph below says the earlier
+> movement was not: census-trips §38 moved TR51 and TR200 C→W against the code, and
+> §39 moved thirty-four N rows — thirty-three to W and TR417 to **C** — all
+> thirty-four falsified by the single squash merge (`42aeac38e`, #476) that census
+> declares as its `head_commit`. **Only census-trips has had a verdict re-derived.**
+> The other twelve rows in this table are still the document counting itself,
+> exactly as below.
+
+The original movement from 44.4 % / 66.7 %
+was **not** work landing — **no verdict in any census was edited.** It is 166 rows that were
 always written and never counted: ranges (`| TR38–TR45 | … | **N** ×8 |`), compound ids, and
 the labelled id cells (`` | TR78 `trip_stages` | ``) that every "Row moves" and "Row
 corrections" table uses. The `X` column is new to this table because `?` had never been in
@@ -516,3 +531,68 @@ basename that resolves to more than one file has not been resolved** —
   behaviour changed under a stable name.
 - **The other twelve censuses have had no citation pass at all**, and 5,900 of the corpus's
   6,213 citations remain range-only.
+
+---
+
+## 10. Addendum — §38 and §39, and what they leave
+
+§9 named the next cheapest large win and §37 took it. Two passes have gone
+further, and the second one is the reason this section exists.
+
+| pass | what it re-derived | what moved |
+| --- | --- | --- |
+| **§38** | 44 of the 89 **C** rows, against the code | TR51 and TR200 C→W. **Down.** |
+| **§39** | 34 of the 234 **N** rows, against the code | thirty-three N→W and one N→**C**. **Up 7.5 points of CONSTRUCTED, 0.2 of CORRECT.** |
+
+**The finding that matters is not either set of rows. It is that until §39 every
+pass this corpus had run could only travel in one direction.** §37 and §38 read C
+rows. A C row is falsified by the thing being broken. An **N** row is falsified by
+the thing being **built** — which is the normal outcome of working on the product
+— so N rows rot by default, silently, and in the direction that makes the
+architecture look worse than it is. Nobody had ever looked.
+
+Trips is now **88 C / 162 W / 200 N / 1 X — 55.4 % constructed, 19.5 % correct.**
+Thirty-three of the thirty-four are built and not shown to work. The thirty-fourth,
+**TR417 (§22.4 idempotency), is proven live** — `tripKernelLive.test.ts:325-342`
+replays a command key and gets `duplicate: true` at the ORIGINAL version with no
+second row written — and is the first verdict any pass has moved INTO correct.
+`trip_kernel_enabled` is still seeded FALSE, so that proof is portava-ci's, not
+production's.
+
+### The three things a next session should take from it
+
+1. **The other twelve censuses have had no N-row pass at all.** 776 N rows across
+   the corpus stand on whenever they were last written. Trips' thirty were all
+   falsified by **one squash merge** — the same one the census declares as its
+   `head_commit` — so the question to ask each census is not "is this row old"
+   but **"what landed since, and which of these rows did it build?"**
+2. **Three mechanical routes find them, and none is a verdict.** (a) Source files
+   that cite a census row id: 65 in Trips, 16 of them scored N, 10 real. (b) N rows
+   naming a backticked identifier in the absence position: 46 in Trips, 12 with
+   hits. (c) N rows claiming an endpoint is "Not registered": 10 in Trips, 4 real,
+   checked against `routes/index.ts`. All three are reasons to open a file. §38's
+   TR353 rule holds — a count is evidence for opening a file, never a substitute for
+   opening it — and four of §39's twelve Route-2 candidates were other domains
+   entirely.
+3. **`check:census-row-move-labels` is new and it found the structural cause.**
+   census-trips §29.4 restated its moved rows as `` | TR90 `trip_outcomes` | ``,
+   and from TR89 on the ids ran one ahead of the objects. Every count uses the id,
+   so TR91 was never moved and kept "Does not exist." while
+   `CREATE TABLE public.trip_outcomes` sat on `main`. The mislabelling had already
+   propagated into the code — migration 2768 comments
+   `RECORD_OUTCOME -> trip_outcomes (TR90)`. **Run that check against any census
+   before trusting its "Row moves" section.**
+
+### What is NOT done
+
+- **200 N rows and all 162 W rows in Trips are still un-re-derived**, and 45 of the
+  88 C rows. §39 looked where three greps pointed and nowhere else — and the third
+  route ran *after* §39.6 had already declared the pass finished, which is why §39.6
+  is left standing unedited beside §39.7. "I stopped looking, then looked again and
+  found four more" is the rate, and editing it away would hide it.
+- **`census-passport.md` still declares no `head_commit`**, deliberately and with a
+  stated argument in its own header. That is its lane's call; `checkCensusFreshness.ts`
+  records the refusal rather than overriding it. Twelve of thirteen are checkable.
+- **Nothing here is merged.** PR #482 is draft on purpose, and the `certify:migrations`
+  blocker on `main` is unchanged and is not this work's doing. **Do not clear it by
+  deleting ledger rows 2311/2320/2325** — that erases the only evidence of the problem.

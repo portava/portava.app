@@ -16,7 +16,7 @@ being collapsed into one number.** The standing rule this repository works under
 
 | state | Trips | evidence |
 | --- | --- | --- |
-| **IMPLEMENTED** | 216 of 451 requirements are BUILT (**87 C + 129 W**) — **47.9 % constructed** | §36 recount, 451/451 rows parsed, no verdict edited |
+| **IMPLEMENTED** | 250 of 451 requirements are BUILT (**88 C + 162 W**) — **55.4 % constructed** | §36 recount, 451/451 rows parsed; §38 and §39 re-derived 78 of them |
 | **TESTED** | **17,707 / 17,707** api-server tests pass, 0 fail, 0 skipped, 0 cancelled. Trips-specific: the kernel live suite **12/12** against portava-ci | full `npm test`; `tripKernelLive.test.ts` in `live-db.yml` |
 | **MERGED** | `014a25d5` on `main` (PR #481). **PR #482 is open and DRAFT** — none of this session's work is merged | `git merge-base --is-ancestor 014a25d5 origin/main` |
 | **DEPLOYED** | **portava-ci only.** Production has received **nothing** from Batch C | `apply-migrations`: 109 proven applied on `hwokxgbmezheskbzskfr` |
@@ -46,7 +46,7 @@ merge. Merging is part of the test here.
 
 ## What "IMPLEMENTED" does and does not mean
 
-The 47.9 % is a **document measuring itself**. `check:census-integrity` states
+The 55.4 % is a **document measuring itself**. `check:census-integrity` states
 its own limit: it verifies a census agrees with itself, not that it agrees with
 the code. Until 2026-09-11 nothing had ever read census-trips against the
 implementation.
@@ -56,7 +56,10 @@ Two passes have now started closing that:
 | pass | what it established | what it explicitly did not |
 | --- | --- | --- |
 | **§37** | 338 citations resolved; **37 had rotted**, all of them still *in range*, so `check:doc-citations` had been green on them the whole time | did not re-derive a single verdict |
-| **§38** | **44 of 89 C rows re-derived. 42 held; TR51 and TR200 did not** | 45 C rows, and **all 129 W and 234 N rows**, stand on earlier passes |
+| **§38** | **44 of 89 C rows re-derived. 42 held; TR51 and TR200 did not** | 45 C rows, and **all 129 W and 234 N rows**, stood on earlier passes |
+| **§39** | **34 of 234 N rows falsified by code on merged `main`** — all thirty-four by the same squash merge (`42aeac38e`, #476) this census declares as its `head_commit` | 200 N rows, and **all 162 W rows**, stand on earlier passes |
+
+**§39 moves CONSTRUCTED UP 7.5 points and CORRECT up 0.2.** §29.4 re-graded fifteen rows at that merge and stopped; the §3.1 domain types, the §7.1 contracts, the §4 command and event rows and the §19 projection envelope were never revisited. Thirty-three of the thirty-four are built and not shown to work — `trip_kernel_enabled` is seeded FALSE — so they land in WRONG. **One, TR417 (§22.4 idempotency), is proven live by `tripKernelLive.test.ts:325-342` and moves into CORRECT — the first row any pass has moved into that bucket**, on the document's own TR49/TR57 precedent, and proven in portava-ci rather than production. §38's two verdicts moved DOWN and these thirty-four move UP: **until §39 every pass this document had run could only travel downward, because only C rows had ever been re-read.** The structural finding is §39.3 — §29.4's labelled ids ran one ahead of the objects from TR89 on, so TR91 `trip_outcomes` was never moved and kept "Does not exist." while its `CREATE TABLE` sat on `main`. `check:census-row-move-labels` now fails on that shape.
 
 **Two verdicts moved, both DOWN, both for the same reason** — a universal claim nobody had counted. **TR51**: *every* trip write parses a zod schema first — 8 of 53 do not. **TR200**: trip events pass an attention policy — 10 trip push sites never reach the router that applies one. CONSTRUCTED is unchanged at 47.9 % (both are still built, now graded wrong); CORRECT falls 19.7 % → **19.3 %**. Nothing in either pass raises a number.
 
@@ -112,7 +115,7 @@ per-census floors that ratchet.
 | Batch C production deploy | **OWNER — manual by design** | DEPLOYED. `manual-production-migration-runbook.md` line 313 |
 | PR #482 is draft | owner | MERGED. Deliberately left draft |
 | `TRIP_KERNEL_CREATE_TRIP_UNGUARDED_INSERT` | Trips | a malformed command reports a transient outage. **Pinned in the live suite as current behaviour** — fixing it turns that test red on purpose |
-| 45 C rows + 129 W + 234 N not re-derived | Trips | the honest ceiling on any claim that Trips is verified |
+| 45 C rows + 162 W + 200 N not re-derived | Trips | the honest ceiling on any claim that Trips is verified |
 | 7 trip write endpoints still read `req.body` with no schema | Trips | TR51 returns to C when `check:trip-write-validation`'s list reaches zero |
 | `z.url()` accepts `javascript:` on `coverUrl` | Trips | needs fixing on `PatchTripSchema` and `CreateTripSchema` together; pinned as current behaviour |
 | **10 trip pushes skip per-user preferences, categories and quiet hours** | notifications owner | a user inside quiet hours still receives them. Re-plumbing risks the double-delivery the code names |
@@ -122,7 +125,7 @@ per-census floors that ratchet.
 
 ## The one number, stated with its caveats attached
 
-**Trips: 47.9 % constructed, 19.3 % correct, of 451 requirements.**
+**Trips: 55.4 % constructed, 19.5 % correct, of 451 requirements.**
 
 - Both are **floors** derived from a document that has only just begun to be read
   against the code.
