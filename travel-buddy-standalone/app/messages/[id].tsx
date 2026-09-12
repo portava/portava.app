@@ -26,7 +26,7 @@ import {
   ArrowLeft, Zap, Send, Users, Globe, Check, CalendarClock, ArrowRight,
   CheckCircle, MoreVertical, Info, VolumeX, Languages, Paperclip, Compass,
   Bot, Reply, Copy, Trash2, Flag, CheckCheck, AlertCircle, Search, BookmarkPlus,
-  RefreshCw, Clock, ChevronDown, X, Phone, Video, Lock,
+  RefreshCw, Clock, ChevronDown, X, Phone, Video, Lock, Sparkles,
 } from 'lucide-react-native';
 import { resolveCircleCardNav } from '../../src/lib/circleCardNavigation.ts';
 import { useCallState, useCallActions } from '../../src/context/CallContext';
@@ -57,6 +57,8 @@ import { PortavaObjectMessage } from '../../src/features/telegraph/sharing/Porta
 import { TypedMessageRenderer, rendersTypedKind } from '../../src/features/telegraph/kinds/TypedMessageRenderer.tsx';
 import { CoordinationPanel } from '../../src/features/telegraph/coordination/CoordinationPanel.tsx';
 import { ContentDrawerSheet } from '../../src/features/telegraph/drawer/ContentDrawerSheet.tsx';
+import { RecapSheet } from '../../src/features/telegraph/memory/RecapSheet.tsx';
+import { useThreadRecap } from '../../src/features/telegraph/memory/useThreadRecap.ts';
 import { ComposerPlusMenu } from '../../src/features/telegraph/composer/ComposerPlusMenu.tsx';
 import { TypedComposePrompt, type TypedComposeKind } from '../../src/features/telegraph/composer/TypedComposePrompt.tsx';
 import { sendTypedMessage, type SendableKind } from '../../src/features/telegraph/kinds/kindsApi.ts';
@@ -1438,6 +1440,14 @@ export default function TelegraphThread() {
   const [railCollapsed, setRailCollapsed] = useState(false);
   // Telegraph §6.4: the content drawer. Its entry point used to be dead code.
   const [showContentDrawer, setShowContentDrawer] = useState(false);
+  /**
+   * Telegraph §10.3 — the end-of-night recap. `useThreadRecap` performs the
+   * READ; the affordance below appears only when the server found a COMPLETED
+   * plan, so a thread with no confirmed session never gets offered a recap of
+   * a night that did not happen.
+   */
+  const [showRecap, setShowRecap] = useState(false);
+  const threadRecap = useThreadRecap(id ?? null);
   // Telegraph §6.1: the composer's + menu, and the two typed-compose sheets.
   const [showPlusMenu, setShowPlusMenu] = useState(false);
   const [typedCompose, setTypedCompose] = useState<TypedComposeKind | null>(null);
@@ -1734,6 +1744,21 @@ export default function TelegraphThread() {
                 entry point was dead code — a Pressable behind a literal
                 `false` whose onPress was an Alert saying "coming soon" —
                 until the drawer route and this sheet existed. */}
+            {/* Telegraph §10.3 — only when a plan in this thread actually
+                finished. `threadRecap.available` is the server's answer, not a
+                guess from the clock. */}
+            {threadRecap.available ? (
+              <Pressable
+                hitSlop={8}
+                style={styles.headerIconBtn}
+                accessibilityRole="button"
+                accessibilityLabel="Look back on this night"
+                testID="telegraph-open-recap"
+                onPress={() => setShowRecap(true)}
+              >
+                <Sparkles size={18} color={color.mute} />
+              </Pressable>
+            ) : null}
             <Pressable
               hitSlop={8}
               style={styles.headerIconBtn}
@@ -2149,6 +2174,30 @@ export default function TelegraphThread() {
         visible={showContentDrawer}
         threadId={id ?? ''}
         onClose={() => setShowContentDrawer(false)}
+      />
+
+      {/* §10.3: the recap is a READ that already happened. `initialRecap`
+          hands the sheet what `useThreadRecap` read, so opening it creates
+          nothing and re-reads nothing. Every button in it is an offer. */}
+      <RecapSheet
+        visible={showRecap}
+        threadId={id ?? ''}
+        onClose={() => setShowRecap(false)}
+        initialRecap={threadRecap.response}
+        onCurate={(action) => {
+          if (action === 'DONE') return;
+          // Each of §10.3's other three actions needs a surface this lane did
+          // not build. Saying so is the point: the recap already promised it
+          // wrote nothing, and a button that silently did nothing would be a
+          // quieter lie than this one.
+          const what =
+            action === 'CREATE_MEMORY'
+              ? 'Building a Memory from a whole night needs a curation screen that does not exist yet. You can still save any single message to your Memory drafts from the message itself.'
+              : action === 'SHARE_PHOTOS'
+                ? 'Sharing this night\u2019s photos in one go is not built yet.'
+                : 'Following the people you met from here is not built yet.';
+          Alert.alert('Nothing was saved', what);
+        }}
       />
 
       <View style={[styles.compose, { paddingBottom: Math.max(insets.bottom, 8) }]}>

@@ -1109,7 +1109,7 @@ pattern §4 describes for the tree as a whole.
 
 ---
 
-## 10. §3, §5 and §11 built: the Shared Context Rail, the share contract, and the end of the frozen card
+## 10. §3, §5, §6, §8, §9, §10 and §11 built: the Shared Context Rail, the share contract, the typed kinds, the coordination surface, the recap, and the end of the frozen card
 
 **Read against the branch `worktree-agent-adcce5a16df432ba7`, whose base is
 `014a25d56`.** §3 was the largest all-NOT-BUILT block in this census: nine rows,
@@ -1202,7 +1202,7 @@ depends on DDL no database has would stay W however good the code was.
   (`routes/telegraphSharedContext.ts:223#/threads/:threadId/conversation-header`)
   is §2.2's other two thirds. Both are mounted:
   `routes/index.ts:22#telegraphSharedContextRouter` imports and
-  `routes/index.ts:172#telegraphSharedContextRouter` uses.
+  `routes/index.ts:173#telegraphSharedContextRouter` uses.
   A failed membership read is a 500 and a failed RESOLVER read sets
   `incomplete: true` rather than returning an empty rail — "we could not tell"
   and "you share nothing with this person" are different statements and the
@@ -1216,7 +1216,7 @@ depends on DDL no database has would stay W however good the code was.
   and `SharedContextRail.tsx` renders them. The rail is MOUNTED on both
   conversation surfaces, which is what "at the top of each conversation" means
   in a tree that has two of them:
-  `travel-buddy-standalone/app/messages/[id].tsx:1873#SharedContextRail` (direct
+  `travel-buddy-standalone/app/messages/[id].tsx:1898#SharedContextRail` (direct
   and booking threads) and
   `travel-buddy-standalone/src/components/GroupChatScreen.tsx:799#SharedContextRail`
   (trip and circle threads).
@@ -1252,7 +1252,7 @@ depends on DDL no database has would stay W however good the code was.
 
 | id | was | now | why |
 | --- | --- | --- | --- |
-| T13 | N | **C** | **Rail at the top of each conversation showing mutually relevant objects** — The component exists and is mounted on BOTH conversation surfaces — `travel-buddy-standalone/app/messages/[id].tsx:1873#SharedContextRail` and `travel-buddy-standalone/src/components/GroupChatScreen.tsx:799#SharedContextRail` — between the header and the message list, fed by a mounted route (`routes/index.ts:172#telegraphSharedContextRouter`). What would turn this red (P24): a third conversation surface appearing without it; nothing pins that. |
+| T13 | N | **C** | **Rail at the top of each conversation showing mutually relevant objects** — The component exists and is mounted on BOTH conversation surfaces — `travel-buddy-standalone/app/messages/[id].tsx:1898#SharedContextRail` and `travel-buddy-standalone/src/components/GroupChatScreen.tsx:799#SharedContextRail` — between the header and the message list, fed by a mounted route (`routes/index.ts:173#telegraphSharedContextRouter`). What would turn this red (P24): a third conversation surface appearing without it; nothing pins that. |
 | T14 | N | **C** | **Eligibility: created by me, joined/saved/attended by them** — `relationshipFor` reads the source object's own owner column and returns `CREATED_BY_ME_JOINED_BY_THEM` when the viewer created it and a conversation counterpart joined (`services/telegraph/sharedContext.ts:344#resolveSharedTrips`, `:405#resolveSharedMeetups`, `:467#resolveSharedEvents`). Asserted against a trip Alice owns and Bob joined, `test/telegraphSharedContext.test.ts:498`. |
 | T15 | N | **C** | **Eligibility: created by them, joined/saved/attended by me** — Same resolver, the other branch — asserted against a meetup Bob created and Alice accepted, `test/telegraphSharedContext.test.ts:498`. |
 | T16 | N | **C** | **Eligibility: both members of the same Trip, Plan, Crew, Event or booking** — Four resolvers, four canonical membership tables: `trip_members` (the crew table — a trip's crew IS `trip_members`; `circle_memberships` is a personal address book, not a shared crew, and is deliberately not read), `meetup_invites` (Plan), `event_attendees` (Event), `rent_buddy_bookings` (booking). `services/telegraph/sharedContext.ts:521#resolveSharedBookings` is the booking one. |
@@ -1265,7 +1265,7 @@ depends on DDL no database has would stay W however good the code was.
 | T128 | N | **C** | **Rail behaviour: active plan → expanded NOW card at top** — Server decides the mode (`services/telegraph/sharedContext.ts:717#railModeFor`) so client and server cannot disagree; the client renders the first NOW item expanded (`railBehavior.component.test.ts:80`, `SharedContextRail.component.test.tsx:83`). |
 | T129 | N | **C** | **Rail behaviour: upcoming only → compact horizontal cards** — `railModeFor` returns COMPACT_UPCOMING when `now` is empty and `upcoming` is not; rendered as a horizontal card row (`railBehavior.component.test.ts:87`). |
 | T130 | N | **C** | **Rail behaviour: none → collapsed summary ("3 shared plans · 1 past trip")** — `collapsedSummary` (`services/telegraph/sharedContext.ts:725#collapsedSummary`) renders the spec's example string exactly, and the rail collapses to it (`railBehavior.component.test.ts:94`). |
-| T131 | N | **C** | **Rail behaviour: user scrolls down → rail collapses, messages get priority** — `shouldCollapseOnScroll` (`travel-buddy-standalone/src/features/telegraph/sharedContext/railBehavior.ts:29#shouldCollapseOnScroll`) is driven by the conversation's own scroll handler (`travel-buddy-standalone/app/messages/[id].tsx:1898#setRailCollapsed`) and collapses the rail to one line (`railBehavior.component.test.ts:66`, `SharedContextRail.component.test.tsx:148`). |
+| T131 | N | **C** | **Rail behaviour: user scrolls down → rail collapses, messages get priority** — `shouldCollapseOnScroll` (`travel-buddy-standalone/src/features/telegraph/sharedContext/railBehavior.ts:29#shouldCollapseOnScroll`) is driven by the conversation's own scroll handler (`travel-buddy-standalone/app/messages/[id].tsx:1923#setRailCollapsed`) and collapses the rail to one line (`railBehavior.component.test.ts:66`, `SharedContextRail.component.test.tsx:148`). |
 | T132 | N | **C** | **Rail behaviour: critical plan change → temporary promoted change card until acknowledged** — `detectCriticalChanges` (`travel-buddy-standalone/src/features/telegraph/sharedContext/railBehavior.ts:66#detectCriticalChanges`) diffs the seen projection against the fetched one for a cancellation or a moved start; the card is promoted above the scroll rule and disappears only on acknowledgement, per change (`railBehavior.component.test.ts:172`). The acknowledgement primitive T132's old evidence said did not exist is this. |
 | T134 | W | **C** | **Reduced-motion behaviour for media, GIFs and animations** — The wrong gate is no longer the only gate: `travel-buddy-standalone/src/components/MessageEntrance.tsx:55#useReducedMotionSetting` consults the OS setting and returns the static View, proved both ways in `travel-buddy-standalone/src/features/telegraph/__tests__/MessageEntrance.reducedMotion.component.test.tsx:53`. Scoped honestly: GIFs and inline video are still N/? rows of their own (T52, T61, T64) — this row is the animation half, which is what Telegraph actually animates today. |
 | T4 | N | **W** | **Pillar **Together** — every conversation can expose shared Trips, plans, events, places, Memories, history** — Five of six now: Trips, plans (meetups), events, places (both-saved `WANT_TO_DO`) and history (`past[]`) all reach the conversation through the rail. **Memories do not** — no resolver reads `memories`, and §10's Memory Note rows (T117–T122) are still N. |
@@ -1389,7 +1389,7 @@ and it was being violated on every thread that had ever carried a card.
   not a way to launder a reference to something you were never authorized to
   see. `POST /threads/:threadId/share-projections`
   (`routes/telegraphShare.ts:190#/threads/:threadId/share-projections`) is the
-  batch resolve. Both mounted at `routes/index.ts:173#telegraphShareRouter`.
+  batch resolve. Both mounted at `routes/index.ts:174#telegraphShareRouter`.
 - **The client half, including the cards that were already wrong.**
   `travel-buddy-standalone/src/features/telegraph/sharing/useShareRevocation.ts:50#useShareRevocation`
   is a THREE-state hook — available / unavailable / unknown — and the third
@@ -1405,7 +1405,7 @@ and it was being violated on every thread that had ever carried a card.
   snapshot; `PortavaObjectMessage`
   (`travel-buddy-standalone/src/features/telegraph/sharing/PortavaObjectMessage.tsx:28#PortavaObjectMessage`)
   is the new kind, dispatched on both conversation surfaces
-  (`travel-buddy-standalone/app/messages/[id].tsx:743#PortavaObjectMessage`,
+  (`travel-buddy-standalone/app/messages/[id].tsx:745#PortavaObjectMessage`,
   `travel-buddy-standalone/src/components/GroupChatScreen.tsx:831#PortavaObjectMessage`).
 
 ### 10.6 §5 row moves
@@ -1535,16 +1535,16 @@ asset is not a kind.
   block guard, E2EE refusal — and the §5 share route and the §6.2 typed-kind
   route both call it. A second write endpoint that skipped one of them would be
   a weaker door into the same table.
-- **The routes are mounted** at `routes/index.ts:174#telegraphKindsRouter`.
+- **The routes are mounted** at `routes/index.ts:175#telegraphKindsRouter`.
 - **The client.** `TypedMessageRenderer`
   (`travel-buddy-standalone/src/features/telegraph/kinds/TypedMessageRenderer.tsx:55#TypedMessageRenderer`)
   renders all seven, dispatched from the conversation at
-  `travel-buddy-standalone/app/messages/[id].tsx:730#rendersTypedKind`. The
+  `travel-buddy-standalone/app/messages/[id].tsx:732#rendersTypedKind`. The
   content drawer replaces the dead code at
-  `travel-buddy-standalone/app/messages/[id].tsx:1742#telegraph-open-content-drawer`
+  `travel-buddy-standalone/app/messages/[id].tsx:1767#telegraph-open-content-drawer`
   and is `travel-buddy-standalone/src/features/telegraph/drawer/ContentDrawerSheet.tsx:52#ContentDrawerSheet`.
   The composer's `+` button opens §6.1's menu
-  (`travel-buddy-standalone/app/messages/[id].tsx:2158#setShowPlusMenu`).
+  (`travel-buddy-standalone/app/messages/[id].tsx:2148#setShowPlusMenu`).
 
 ### 10.10 §6 row moves
 
@@ -1559,7 +1559,7 @@ asset is not a kind.
 | T52 | N | **C** | **Message kind GIF** — a distinct kind with its own payload (url, still frame, provider, alt text) and its own renderer, separate from IMAGE/VIDEO. No provider is configured to pick one FROM, which is T64's row and the composer entry's stated reason, not this one's: the kind exists, validates, sends, stores and renders. |
 | T64 | N | **W** | **GIFs are distinct lightweight looping content with data-saver / accessibility controls** — the CONTROLS are built: `isGifAnimated` (`travel-buddy-standalone/src/features/telegraph/kinds/TypedMessageRenderer.tsx:33#isGifAnimated`) is a pure rule — animate only when neither reduced motion nor data saver is on — and the still frame carries the reason in words. It stays W because `dataSaver` is a prop with no app-level setting behind it yet, and because no provider exists to obtain a GIF from. |
 | T60 | W | **C** | **Message kind SAFETY** — SAFETY is now a message KIND, not only a thread affordance: four classes (`check_in`, `heads_up`, `need_help`, `all_clear`), each landing in `subtype`, rendered with the class as a WORD and the §11.1 attention colour reserved for it (`travel-buddy-standalone/src/features/telegraph/__tests__/kinds.component.test.tsx:98`). |
-| T66 | N | **C** | **Content drawer: MEDIA / PLACES / PORTAVA / VOICE / GIFS / LINKS / FILES** — the seven tabs exist with counts, served by `GET /threads/:id/drawer` (`routes/telegraphKinds.ts:262`) and rendered by `travel-buddy-standalone/src/features/telegraph/drawer/ContentDrawerSheet.tsx:52#ContentDrawerSheet`. The dead-coded entry point is now a real control (`travel-buddy-standalone/app/messages/[id].tsx:1742#telegraph-open-content-drawer`). |
+| T66 | N | **C** | **Content drawer: MEDIA / PLACES / PORTAVA / VOICE / GIFS / LINKS / FILES** — the seven tabs exist with counts, served by `GET /threads/:id/drawer` (`routes/telegraphKinds.ts:262`) and rendered by `travel-buddy-standalone/src/features/telegraph/drawer/ContentDrawerSheet.tsx:52#ContentDrawerSheet`. The dead-coded entry point is now a real control (`travel-buddy-standalone/app/messages/[id].tsx:1767#telegraph-open-content-drawer`). |
 | T67 | N `∅` | **C** | **The drawer is a structured index, not a second storage copy** — no longer an unguarded absence. The drawer exists and stores nothing: it classifies `messages` rows in memory (`services/telegraph/messageKinds.ts:253#drawerTabFor`), every id it returns is a `messages.id` that already existed, and the route writes nothing and declares `indexOnly: true` in its own response. |
 | T68 | N | **C** | **Object-aware search respects current authorization and unsent/deleted state** — `GET /threads/:id/search` (`routes/telegraphKinds.ts:327`) is member-gated, §14.3-bounded and tombstone-excluding, and matches on a typed object's HUMAN fields rather than on raw JSON (`services/telegraph/messageKinds.ts:308#searchableTextOf`). A deleted message is not findable by its exact text (`test/telegraphKinds.test.ts:531`). |
 | T47 | W | **W** | **Composer stays visually calm; rich actions live behind a `+` menu** — the menu now names all EIGHT of §6.1's entries instead of two (`travel-buddy-standalone/src/features/telegraph/composer/composerMenu.ts:48#COMPOSER_ENTRIES`), and an entry that cannot complete states its reason INLINE rather than being hidden. Five of eight are operable (Camera, Photos, Video, Location, Memory Note); GIF has no provider, Voice has no audio asset type, and Portava has no in-composer object picker. Two of eight became five of eight — better, not done. |
@@ -1695,10 +1695,10 @@ easy to get wrong become testable without a database.
   (`routes/telegraphCoordination.ts:212`) returns the derived state, the legal
   next states, the latest declared status per member, the arrival counts and
   the three projections, and inherits §14.3's history bound. Mounted at
-  `routes/index.ts:175#telegraphCoordinationRouter`.
+  `routes/index.ts:176#telegraphCoordinationRouter`.
 - **The client panel** is §2.2's "OPTIONAL COORDINATION PANEL", between the
   rail and the stream
-  (`travel-buddy-standalone/app/messages/[id].tsx:1878#CoordinationPanel`,
+  (`travel-buddy-standalone/app/messages/[id].tsx:1903#CoordinationPanel`,
   `travel-buddy-standalone/src/features/telegraph/coordination/CoordinationPanel.tsx:43#CoordinationPanel`).
   §9's per-state affordances are data
   (`travel-buddy-standalone/src/features/telegraph/coordination/coordinationApi.ts:159#STATE_AFFORDANCES`)
@@ -1775,5 +1775,176 @@ What is NOT claimed:
   unexpressed.
 - **Branch, not deployment.**
 
-Headline after §10 in this worktree (last statement wins): C=148 W=165 N=117 X=0
-— `pnpm -s check:census-integrity`, which parses 430 of the 451 requirements (21 are counted in prose it cannot read, and the 3 CANNOT-VERIFY rows are among them, which is why it reports X=0 where §1 states 3).
+### 10.17 §10 — Memory Notes, one-at-a-time save, and a recap that admits it wrote nothing
+
+§10 is three requirements and **two prohibitions**, and the census scored the
+prohibitions `∅` — "unguarded absence": nothing converted conversations into
+Memories because nothing converted anything at all. An absence is not a
+guarantee. A guarantee is an artifact that REFUSES the violation, so both are
+now refusals with a test each.
+
+The positive half of §10 was also genuinely broken rather than merely missing.
+T119 said a user "may explicitly save a message … as a private Memory draft",
+and the app had a Save button that wrote a `saved_messages` row **nothing ever
+read**, in a table that is not `memories`. It was a button that did nothing, not
+a draft.
+
+Server
+  services/telegraph/memoryNotes.ts  §10.1's `MemoryNoteShare` field for field,
+                                     the graph-leak refusal, the draft row, and
+                                     §10.3's recap derivation.
+  routes/telegraphMemory.ts          POST /me/memory-drafts and
+                                     GET /threads/:id/recap. Mounted.
+
+**§10.1's prohibition, as a refusal.** `MEMORY_GRAPH_FIELDS` is the list of
+names a canonical Memory graph would travel under — `memoryId`, `memoryIds`,
+`memoryGraph`, `collectionId`, `ownerMemories` and their snake_case twins — and
+`assertNoMemoryGraphLeak` REFUSES a payload carrying any of them. It does not
+strip them. Stripping would make the sender believe the field was sent; refusing
+tells them it cannot be. The `MemoryNoteShare` type has no field that could hold
+one, so the check is a second line, not the only one.
+
+**§10.2's prohibition, as a refusal.** The draft route's body schema takes
+`messageId` — singular — and before the schema even runs, a body carrying
+`threadId`, `messageIds`, `conversationId` or `all` is refused **by name**, with
+§10.2 quoted in the message. The absence of a bulk path is therefore visible to
+a caller, not only to a reader of the code. The client module matches: it
+exports `saveMessageAsMemoryDraft(messageId)` and no list or thread form for a
+screen to reach for.
+
+**A draft that is actually a draft.** `memoryDraftRow` writes
+`visibility: "only_me"` and `state: "draft"` as LITERALS, not as defaults a
+caller can override, into `memories` — the canonical table — so the draft is
+readable back by its owner through the route that already exists
+(`routes/memories.ts:1858` applies `state = published` only when the viewer is
+NOT the owner). The save is also recorded in `saved_messages`, so the old
+affordance and the new draft agree instead of disagreeing.
+
+**Re-authorization at promotion.** A save is not a permanent grant. The message
+is re-read at promotion time and refused when the caller is no longer an active
+member of the thread, when the message is deleted, or when it falls outside the
+caller's §14.3 window — the same three rules the saved-messages read applies.
+
+**§10.3, and the sentence that is the design.** "It is an invitation to curate,
+not automatic historical truth" is enforced three ways, not asserted once:
+
+- The recap's window is **the plan's own start/end**, not "the last few hours of
+  chat". A sliding window would assert a session nobody agreed happened, which
+  is exactly the automatic historical truth §10.3 refuses. A thread with no
+  COMPLETED plan gets `reason: "no_completed_plan"` and **no recap at all**.
+- "People" are the plan's **confirmed participants**, not everyone who typed.
+- The endpoint says `wrote: "nothing"` in its own payload, and the sheet renders
+  it. The four curate actions are OFFERS; `DONE` is a full-weight button, not a
+  dismissal X, because declining to curate is one of the four outcomes.
+
+Client
+  features/telegraph/memory/   the recap sheet, the single-message save action,
+                              and the availability hook that decides whether the
+                              recap affordance appears at all.
+
+The recap entry point is gated on the server's answer. §9's coordination panel
+is gone by COMPLETE (COMPLETE is not a coordinating state), so the recap needed
+its own affordance — and a button that is always there would itself be the app
+asserting a night nobody confirmed. `useThreadRecap` performs the §10.3 READ and
+the header button appears only when a completed plan came back.
+
+### 10.18 §10 row moves
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| T117 | N | **C** | **`MemoryNoteShare` contract** — the type carries §10.1's eight fields and nothing else (`services/telegraph/memoryNotes.ts:46#export interface MemoryNoteShare`), validated by a schema (`services/telegraph/memoryNotes.ts:57#MemoryNoteShareSchema`) that the MEMORY_NOTE kind already routes through (T54). |
+| T118 | N `∅` | **C** | **Shareable without exposing the sender's canonical private Memory graph** — no longer an unguarded absence. `MEMORY_GRAPH_FIELDS` names every way a graph reference would travel (`services/telegraph/memoryNotes.ts:76#MEMORY_GRAPH_FIELDS`) and `assertNoMemoryGraphLeak` REFUSES rather than strips (`services/telegraph/memoryNotes.ts:90#assertNoMemoryGraphLeak`), with `parseMemoryNoteShare` checking the leak BEFORE the schema (`services/telegraph/memoryNotes.ts:105#parseMemoryNoteShare`). |
+| T119 | W | **C** | **Explicitly save a message, voice note, place share or media item as a private Memory draft** — the hole is closed. `memoryDraftRow` writes `visibility: "only_me"` and `state: "draft"` as literals into `memories` (`services/telegraph/memoryNotes.ts:144#export function memoryDraftRow`), `POST /me/memory-drafts` re-authorizes and inserts exactly one row (`routes/telegraphMemory.ts:62#/me/memory-drafts`), the owner reads it back through the route that already existed (`routes/memories.ts:1858#state", "published`), and the client action is one press per item (`travel-buddy-standalone/src/features/telegraph/memory/SaveToMemoryAction.tsx:43#export function SaveToMemoryAction`). |
+| T120 | N `∅` | **C** | **Telegraph never automatically converts whole conversations into Memories** — now a refusal, not a vacancy. A body naming a thread or a list is rejected by name with §10.2 quoted (`routes/telegraphMemory.ts:71#for (const forbidden of`), the accepted key is singular, and the client API exports no list or thread form (`travel-buddy-standalone/src/features/telegraph/memory/memoryApi.ts:104#export async function saveMessageAsMemoryDraft`). |
+| T121 | N | **C** | **End-of-night recap surface** — `GET /threads/:id/recap` (`routes/telegraphMemory.ts:178#/threads/:threadId/recap`) over `buildRecap` (`services/telegraph/memoryNotes.ts:242#export function buildRecap`), rendered with §10.3's four actions and its headline (`travel-buddy-standalone/src/features/telegraph/memory/RecapSheet.tsx:46#export function RecapSheet`), reachable from the thread header (`travel-buddy-standalone/app/messages/[id].tsx:1756#telegraph-open-recap`). |
+| T122 | N `∅` | **C** | **Derived from confirmed session context — an invitation to curate, not automatic historical truth** — the window is the plan's own and a thread with no completed plan gets none (`routes/telegraphMemory.ts:238#no_completed_plan`), people are the plan's confirmed participants (`services/telegraph/memoryNotes.ts:242#export function buildRecap`), and the endpoint states that it created nothing (`routes/telegraphMemory.ts:291#wrote: "nothing"`). |
+| T7 | W | **C** | **Pillar Remember — completed outcomes explicitly become Memories or recaps without ingesting whole private chats** — the prohibition half already held; the positive half now does too. An explicit save produces a real private `memories` draft (T119) and a completed plan produces a recap (T121), while the whole-conversation path is refused by name (T120). |
+| T108 | N | **W** | **Complete UI: closeout, media grouping, explicit Memory/recap options** — two of three. Media grouping is the MEDIA_ALBUM kind (`services/telegraph/messageKinds.ts:124#MEDIA_ALBUM`) and the explicit Memory/recap options exist (T119, T121). There is still **no closeout surface**: at COMPLETE the coordination panel simply disappears rather than becoming one. |
+
+### 10.19 The §10 tests, and how each was shown red
+
+`artifacts/api-server/src/test/telegraphMemory.test.ts` — 24 tests, green.
+Four mutations, each reverted, each measured:
+
+| mutation | result |
+| --- | --- |
+| `assertNoMemoryGraphLeak` returning ok for everything | pass 22 / fail 2 |
+| the forbidden-key loop removed from the draft route | pass 23 / fail 1 |
+| `memoryDraftRow` writing `state: "published"` | pass 22 / fail 2 |
+| `buildRecap` dropping the plan-window filter | pass 22 / fail 2 |
+
+`travel-buddy-standalone/.../recapSheet.component.test.tsx` — 10 tests, green.
+
+| mutation | result |
+| --- | --- |
+| `RECAP_CURATE_ACTIONS` trimmed to two | 1 failed / 9 passed |
+| the no-plan branch disabled AND an empty recap rendered in its place | 1 failed / 9 passed |
+
+`travel-buddy-standalone/.../saveToMemory.component.test.tsx` — 8 tests, green.
+
+| mutation | result |
+| --- | --- |
+| the "private" label hard-coded instead of read back from the response | 1 failed / 7 passed |
+| a `useEffect` added that saves on mount | 5 failed / 3 passed |
+
+The last number is the one worth keeping: an automatic conversion is not a
+subtle regression in that file, it breaks five of eight. The two recap
+mutations each had to defeat two guards to land and still cost only one test
+apiece — that redundancy is real and is recorded in each test header rather
+than rounded up.
+
+One test deliberately does NOT go through the component's injected seam: "the
+request the real module builds carries ONE messageId and no thread" calls the
+exported `saveMessageAsMemoryDraft` with `fetch` stubbed and asserts the wire
+body is exactly `{"messageId":"m1"}`. An earlier version of that test asserted
+the function's `.length` was 1; it was wrong (TypeScript optional parameters
+still count toward arity) and, more importantly, it asserted a sentence about
+the function instead of what the function sends.
+
+### 10.20 The §10 ceiling
+
+No migration. Every §10 row lands on `memories` and `messages` as they already
+exist, which is why six rows reach C rather than being capped at W.
+
+What is NOT claimed:
+
+- **The recap's three other curate actions dead-end.** `CREATE_MEMORY`,
+  `SHARE_PHOTOS` and `FOLLOW_PEOPLE_YOU_MET` are offered because §10.3 names
+  them, and pressing one says plainly that nothing was saved and why. Building a
+  Memory from a whole night needs a curation screen this lane did not build; a
+  button that silently did nothing would be a quieter lie than the one that
+  says so.
+- **T108 is W, not C.** There is no closeout surface.
+- **VOICE is still not a message kind.** §10.2 names "voice note" among the
+  saveable things; a voice message cannot exist on this tree, because
+  `messages.media_type` carries `CHECK (media_type IN ('image','video'))` and
+  widening it is a migration no database has. The draft route classifies a
+  `voice` message if one ever arrives, which is preparation, not the feature.
+- **The rail still has no Memories resolver** (T4 stays W). §10 gave Telegraph
+  Memory Notes and drafts; it did not give the Shared Context Rail a
+  `resolveSharedMemories`.
+- **T268 (§20) is not moved here.** Its four parts are now all built — safe
+  share derivatives, Memory Notes, explicit Save, recap — but §20 belongs to
+  another lane in this worktree and a row is moved by its owner, not by whoever
+  happens to make it true.
+- **Branch, not deployment.** Nothing in §10 is merged, deployed, or reachable
+  by any traveler.
+
+**One guard is red on this branch, and this section caused it.** Mounting
+`telegraphMemoryRouter` added two lines near the top of
+`artifacts/api-server/src/routes/index.ts`, which shifted every mount below it
+by two. `docs/architecture/sensing-surface-inventory.md:285` cites
+`routes/index.ts:295,297,298,299,302,304#router.use` — six absolute line numbers
+whose anchor is the generic string `router.use` — and line 295 is now a comment,
+so `pnpm -s check:doc-citations` reports one broken anchor. The citation was
+surviving the four earlier Telegraph mounts only because an eight-line shift
+happened to land on other `router.use` lines; it is brittle by construction and
+any insertion above it will break it again. The fix is mechanical —
+`295,297,298,299,302,304` becomes `297,299,300,301,304,306` — and it is NOT
+applied here, because that file belongs to the Sensing lane and a row (or a
+line) is corrected by its owner. Measured, not assumed: restoring
+`routes/index.ts` to HEAD makes that anchor resolve again and breaks only this
+census's own citations.
+
+Headline after §10 in this worktree (last statement wins): C=155 W=164 N=114 X=0
+— `pnpm -s check:census-integrity`, which parses 433 of the 451 requirements (18 are counted in prose it cannot read, and the 3 CANNOT-VERIFY rows are among them, which is why it reports X=0 where §1 states 3).

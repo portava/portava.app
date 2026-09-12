@@ -66,3 +66,18 @@ export {
   type CoordinationState,
   type ThreadCoordinationView,
 } from './coordination/coordinationApi.ts';
+export { RecapSheet } from './memory/RecapSheet.tsx';
+export { useThreadRecap, type ThreadRecapState } from './memory/useThreadRecap.ts';
+export { SaveToMemoryAction } from './memory/SaveToMemoryAction.tsx';
+export {
+  fetchRecap,
+  saveMessageAsMemoryDraft,
+  recapHeadline,
+  curateActionLabel,
+  RECAP_CURATE_ACTIONS,
+  type RecapCounts,
+  type RecapCurateAction,
+  type RecapResponse,
+  type SessionRecap,
+  type MemoryDraft,
+} from './memory/memoryApi.ts';
