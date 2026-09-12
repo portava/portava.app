@@ -81,6 +81,12 @@ export const SERVER_DIRS = [
   resolve(API_ROOT, "src/services"),
   resolve(API_ROOT, "src/lib"),
   resolve(API_ROOT, "src/compass"),
+  // census-trips §61 moved the Trips kernel, its services and its projections
+  // to src/domain/trips/ and the routers to src/server/trips/. Their writes
+  // attribute tables (trip_crew_location_preferences, trip_readiness_items)
+  // that would otherwise read as written by nothing; their reads are judged.
+  resolve(API_ROOT, "src/domain"),
+  resolve(API_ROOT, "src/server"),
 ];
 /** Additional places a WRITE may live. Reads here are not judged. */
 export const WRITER_ONLY_DIRS = [

@@ -225,6 +225,11 @@ const SKIP_TABLES = new Set<string>([
 //
 // Burn this list down — every entry is a hole in the check.
 const UNRESOLVED_ALLOWLIST = new Map<string, number>([
+  // census-trips §61 moved src/lib/tripReadiness.ts (never scanned here) to
+  // src/domain/trips/services/ (scanned since §61): the trip_readiness_items
+  // upsert at its line ~893 builds `rows` by map, so the payload is a name,
+  // not a literal. One site, unchanged by the move.
+  ["src/domain/trips/services/tripReadiness.ts|upsert|payload not statically resolvable", 1],
   // ── Dynamic table names (adminGeocode — runtime table dispatch) ───────────
   ["src/routes/adminGeocode.ts|select|dynamic table name", 2],
   ["src/routes/adminGeocode.ts|update|dynamic table name", 2],
