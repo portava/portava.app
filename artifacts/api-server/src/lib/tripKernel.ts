@@ -201,6 +201,12 @@ export type TripSubgroupCommandType =
   | "LEAVE_SUBGROUP"
   | "DISSOLVE_SUBGROUP";
 
+/** §10.4 / §11.3 meeting checkpoints (2794). Capability: crew; CLOSE additionally creator-or-host; SET_MEETING_ARRIVAL is the participant's own. */
+export type TripMeetingCommandType =
+  | "CREATE_MEETING_CHECKPOINT"
+  | "SET_MEETING_ARRIVAL"
+  | "CLOSE_MEETING_CHECKPOINT";
+
 /** §15.1 transport segments (2782). Capability: crew. */
 export type TripTransportCommandType =
   | "ADD_TRANSPORT_SEGMENT"
@@ -261,10 +267,11 @@ export type TripCommandType =
   | TripAdminCommandType
   | TripSystemCommandType
   | TripSubgroupCommandType
+  | TripMeetingCommandType
   | TripTransportCommandType
   | TripDisruptionCommandType;
 
-export type TripCommandFamily = "plan" | "trip" | "participant" | "admin" | "system" | "subgroup" | "transport" | "disruption" | "opportunity";
+export type TripCommandFamily = "plan" | "trip" | "participant" | "admin" | "system" | "subgroup" | "meeting" | "transport" | "disruption" | "opportunity";
 
 /** Which family a command type belongs to, and therefore which actor_role it needs. */
 export function tripCommandFamily(type: TripCommandType): TripCommandFamily {
@@ -280,6 +287,8 @@ export function tripCommandFamily(type: TripCommandType): TripCommandFamily {
       return "system";
     case "CREATE_SUBGROUP": case "JOIN_SUBGROUP": case "LEAVE_SUBGROUP": case "DISSOLVE_SUBGROUP":
       return "subgroup";
+    case "CREATE_MEETING_CHECKPOINT": case "SET_MEETING_ARRIVAL": case "CLOSE_MEETING_CHECKPOINT":
+      return "meeting";
     case "ADD_TRANSPORT_SEGMENT": case "UPDATE_TRANSPORT_SEGMENT": case "SET_TRANSPORT_STATE": case "REMOVE_TRANSPORT_SEGMENT":
       return "transport";
     case "DECLARE_DISRUPTION": case "RESOLVE_DISRUPTION":
@@ -394,6 +403,11 @@ export type TripKernelReason =
   // Distinct from TRIP_AUTH_NOT_CREW for the same reason as TRIP_ASSIGNEE_NOT_CREW:
   // the actor is crew; the person they NAMED is not.
   | "TRIP_SUBGROUP_MEMBER_NOT_CREW"
+  // 2794 meeting checkpoints (§10.4, §11.3).
+  | "TRIP_MEETING_NOT_FOUND"
+  | "TRIP_MEETING_NOT_PARTICIPANT"
+  | "TRIP_MEETING_PARTICIPANT_NOT_CREW"
+  | "TRIP_MEETING_INVALID_TRANSITION"
   // 2782 transport segments.
   | "TRIP_TRANSPORT_NOT_FOUND"
   | "TRIP_TRANSPORT_INVALID_TRANSITION"

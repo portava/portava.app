@@ -279,6 +279,34 @@ const KNOWN: Record<string, Known> = {
   },
 
   // ── Unguarded: ON in production, the code runs and fails ────────────────────
+  //
+  // Trips §52 (2794). Neither flag is in lib/capability/registry.ts, so the
+  // taxonomy here says "unguarded"; the RUNTIME guard is not the registry but
+  // tripOperationalProjectionsGate (lib/tripOperationalProjections.ts), whose
+  // schema probe names trip_subgroups / trip_subgroup_members (2780): the
+  // subgroup branch of POST /me/safe-return/sessions refuses feature_disabled
+  // before either table is read, and SafeReturnNotificationService reads
+  // trip_subgroup_members only for a session whose subgroup_id is set — a
+  // column 2794 adds and production's insert never carries. A solo or
+  // full-crew Safe Return on production runs exactly the pre-2794 code.
+  safe_return_enabled: {
+    classification: "unguarded",
+    objects: [
+      "trip_subgroup_members", "trip_subgroup_members.left_at", "trip_subgroup_members.subgroup_id", "trip_subgroup_members.user_id",
+      "trip_subgroups", "trip_subgroups.id", "trip_subgroups.state", "trip_subgroups.trip_id",
+    ],
+    note:
+      "§17.4 subgroup execution context (2794, census-trips §52 TR329). The subgroup branch runs only behind " +
+      "tripOperationalProjectionsGate, whose probe covers 2780's tables; production (flag FALSE, tables absent) never enters it. " +
+      "Remove once 2780/2794 are applied to production (owner's Batch C).",
+  },
+  safe_return_trusted_circle_alerts_enabled: {
+    classification: "unguarded",
+    objects: ["trip_subgroup_members", "trip_subgroup_members.left_at", "trip_subgroup_members.subgroup_id", "trip_subgroup_members.user_id"],
+    note:
+      "§17.4 (2794): notifyTripCrew alerts a subgroup's current members when the session carries subgroup_id, a column 2794 adds; " +
+      "on production no session carries it and the crew read is trip_members as before. Remove once 2780/2794 are applied there.",
+  },
 };
 
 // ── Declared-by-a-migration ──────────────────────────────────────────────────

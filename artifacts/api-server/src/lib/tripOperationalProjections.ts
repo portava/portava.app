@@ -40,6 +40,7 @@ export const TRIP_OPERATIONAL_PROJECTIONS: CapabilityDefinition = {
     "2781_trip_decisions_ledger.sql (trip_decisions)",
     "2784_trip_reservation_history.sql (trip_reservations.version/cancelled_at, trip_reservation_events)",
     "2785_trip_disruptions_and_derived_events.sql (trip_disruptions, trip_commitments.at_risk_*)",
+    "2794_trip_meeting_checkpoints.sql (trip_meeting_checkpoints, trip_meeting_checkpoint_participants, safe_return_sessions.subgroup_id)",
   ],
   requires: {
     tables: {
@@ -50,6 +51,9 @@ export const TRIP_OPERATIONAL_PROJECTIONS: CapabilityDefinition = {
       // 2780 — read by the closeout (dissolve step) and the crew map (subgroup-scoped live shares).
       trip_subgroups: { columns: ["id", "trip_id", "state"] },
       trip_subgroup_members: { columns: ["subgroup_id", "user_id", "left_at"] },
+      // 2794 — §10.4 meeting checkpoints; read by health, Today, the map and the offline bundle.
+      trip_meeting_checkpoints: { columns: ["id", "trip_id", "subgroup_id", "label", "lat", "lng", "meet_at", "purpose", "status"] },
+      trip_meeting_checkpoint_participants: { columns: ["checkpoint_id", "user_id", "arrival_state", "arrived_at"] },
       trip_crew_location_sessions: { columns: ["id", "trip_id", "status", "subgroup_id"] },
       // 2781 — the persisted decision ledger.
       trip_decisions: { columns: ["decision_id", "trip_id", "decision_type", "calculated_at", "retain_until"] },

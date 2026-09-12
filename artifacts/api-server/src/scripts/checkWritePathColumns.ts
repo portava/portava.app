@@ -152,6 +152,13 @@ const ALLOWLIST = new Set<string>([
   "trip_reservations.cancelled_at",
   "trip_crew_location_sessions.subgroup_id",
   //
+  // safe_return_sessions.subgroup_id (2794) — Trips §52: a Safe Return attached
+  // to a subgroup execution context (§17.4). Written by SafeReturnService.
+  // createSession only when the caller names a subgroup, which the route
+  // verifies against trip_subgroups (2780, itself pending apply). Remove once
+  // 2794 is applied to the live schema.
+  "safe_return_sessions.subgroup_id",
+  //
   // Trips §43 (2783 — goal scope): trip_goals.scope / .weight are read by
   // TripOpportunityProjection (goals served by an experience) under
   // trip_operational_projections_enabled. Absent from portava-ci until this
@@ -194,6 +201,12 @@ const SKIP_TABLES = new Set<string>([
   // reaches main. Remove once 2793 is applied to the live schema.
   "trip_transport_policies",
   "trip_transport_segments",
+  // Trips §52, 2794 — meeting checkpoints, written only by the kernel; read by
+  // routes/tripMeetingCheckpoints, health, the map and the offline bundle under
+  // trip_operational_projections_enabled. Absent from portava-ci until this
+  // branch reaches main. Remove once 2794 is applied to the live schema.
+  "trip_meeting_checkpoints",
+  "trip_meeting_checkpoint_participants",
 ]);
 
 // ── Unresolvable-site allowlist ───────────────────────────────────────────────

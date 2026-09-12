@@ -226,6 +226,29 @@ export async function serveMapProjection(req: Request<{ tripId: string }>, res: 
       activePlans = ok(active); privateAnchors = ok(anchors); meetupPoints = ok(meetups);
     }
   }
+  // 2794 / §10.4: an agreed meeting checkpoint is a meetup point in its own
+  // right, not a label on a plan item (TR262). Read under the operational gate,
+  // whose probe covers the table; off, the layer is what it was.
+  if (meetupPoints.status === "ok" && (await tripOperationalProjectionsGate(sc)).enabled) {
+    const { data: cps, error: cpErr } = await sc
+      .from("trip_meeting_checkpoints")
+      .select("id, label, lat, lng, meet_at, purpose, status, subgroup_id")
+      .eq("trip_id", tripId)
+      .eq("status", "open");
+    if (cpErr) {
+      log.warn({ err: cpErr.message, tripId }, "map projection: meeting checkpoints unread");
+      meetupPoints = unread("trip_meeting_checkpoints could not be read");
+    } else {
+      const points: MapPoint[] = [];
+      for (const r of ((cps ?? []) as any[])) {
+        const c = coordsOf(r.lat, r.lng);
+        if (!c) continue;
+        points.push({ id: String(r.id), kind: "meeting_checkpoint", lat: c.lat, lng: c.lng, label: r.label ?? null,
+          meta: { purpose: r.purpose, meetAt: r.meet_at ?? null, subgroupId: r.subgroup_id ?? null, status: r.status } });
+      }
+      meetupPoints = ok([...meetupPoints.items, ...points]);
+    }
+  }
 
   // ── confirmed commitments (§14.1) ────────────────────────────────────────
   // trip_commitments.place_id denotes public.places.id, as routes/

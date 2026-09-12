@@ -23,12 +23,12 @@ preserved in §36.1 as the record of that measurement.
 | Measure | Value |
 | --- | --- |
 | **Denominator (testable requirements)** | **451** |
-| BUILT-AND-CORRECT | **282** |
-| BUILT-BUT-WRONG | **144** |
+| BUILT-AND-CORRECT | **286** |
+| BUILT-BUT-WRONG | **140** |
 | NOT-BUILT | **24** |
 | CANNOT-VERIFY | **1** |
 | **CONSTRUCTED%** = (C+W)/451 | **426 / 451 = 94.5 %** |
-| **CORRECT%** (raw) = C/451 | **282 / 451 = 62.5 %** |
+| **CORRECT%** (raw) = C/451 | **286 / 451 = 63.4 %** |
 
 > **RESTATED 2026-09-11 (§38): 89 → 87 CORRECT, 127 → 129 WRONG.** §38 re-derived
 > 39 of the C rows against the code and **two did not hold**, both for the same
@@ -224,6 +224,17 @@ preserved in §36.1 as the record of that measurement.
 > §44 built what they name — "Where next?" (TR195), §12.4's determinism
 > (TR223) and the two §23 scenarios (TR418, TR419). Six W → C. No
 > migration, no flag; the ceiling is §41.3's, unchanged.
+
+> **RESTATED 2026-09-12 (§52): 282 → 286 CORRECT, 144 → 140 WRONG,
+> 24 NOT-BUILT unchanged. CONSTRUCTED 94.5 % unchanged, CORRECT 62.5 % → 63.4 %.**
+> §52 built 2794 — §10.4 meeting checkpoints with participants and arrival
+> state, the kernel's meeting family, `safe_return_sessions.subgroup_id` —
+> and on it §11.3's regroup (`POST /trips/:tripId/regroup`, §14.3's
+> computation attached, `REGROUP_OPEN` → `SAFETY_EVENT` until met or closed;
+> TR198), the map's checkpoint points and the bundle's meeting points
+> (TR262), and §17.4's subgroup context for Safe Return (TR329, TR177).
+> Four W → C. One migration, applied / rolled back / re-applied on the
+> replica; the ceiling is §41.3's, now 2779–2794.
 | **CORRECT% (spec-attributable)** | **WITHDRAWN — not measured. See §36.4** |
 | CANNOT-VERIFY share | **1 / 451 = 0.2 %** |
 
@@ -475,12 +486,12 @@ Nothing in this section exists. The evidence is one grep, run over
 
 | id | Requirement | V | Evidence |
 | --- | --- | --- | --- |
-| TR49 | The `TripCommand` envelope (commandId, tripId, actorUserId, expectedTripVersion, idempotencyKey, type, payload, clientObservedAt) | **C** | **Moved N→C in the §26 recensus.** The row said "No type, no table, no route." All three exist: the envelope is `lib/tripKernel.ts:257#TripCommand` (commandId, tripId, actorUserId, expectedTripVersion, idempotencyKey, type, payload), the receipt table is `migrations/2420_trip_kernel_foundation.sql:139#trip_command_receipts`, and the route is the `trip_kernel_execute` RPC that `lib/tripKernel.ts:635#executeTripCommand` calls. |
+| TR49 | The `TripCommand` envelope (commandId, tripId, actorUserId, expectedTripVersion, idempotencyKey, type, payload, clientObservedAt) | **C** | **Moved N→C in the §26 recensus.** The row said "No type, no table, no route." All three exist: the envelope is `lib/tripKernel.ts:263#TripCommand` (commandId, tripId, actorUserId, expectedTripVersion, idempotencyKey, type, payload), the receipt table is `migrations/2420_trip_kernel_foundation.sql:139#trip_command_receipts`, and the route is the `trip_kernel_execute` RPC that `lib/tripKernel.ts:649#executeTripCommand` calls. |
 | TR50 | A typed command vocabulary (ADD_PLAN, MOVE_PLAN, CONFIRM_PLAN, CANCEL_PLAN, JOIN_PLAN, LEAVE_PLAN, CREATE_SUBGROUP, SET_PRESENCE, CREATE_PROPOSAL, ACCEPT_PROPOSAL, COMPLETE_ACTIVITY) | **N** | None of the eleven exists as a command. Four have a *route* that does something adjacent (`POST /trips/:id/plan/items`, `PATCH …/items/:itemId`, `POST /trips/:id/complete`); seven have no analogue at all. |
 | TR51 | Command service validates schema | **W** | **MOVED C → W, 2026-09-11 (§38) — the first verdict this census has moved on a re-derivation.** The row read C on the sentence *"every trip write parses a zod schema first"*, which is its testable half. Counted across the three files it cites: **53 write endpoints, 8 reading `req.body` with no schema at all** — `POST /trips` (the primary create), `/invite`, `/members`, `/join-request`, `/invite-link` and the three checklist writes. 45 of 53 do validate, so the capability is built and used and this is BUILT-BUT-WRONG, not NOT-BUILT; the word *every* had never been counted. `POST /trips` is now closed by `CreateTripSchema` (`routes/trips.ts:791#CreateTripSchema`), mirroring `PatchTripSchema` field for field so it cannot reject what PATCH already accepts, and the remaining seven are held shrink-only by `check:trip-write-validation`. **What the gap costs is TYPE validation, not authorization** — `requireUser` runs first and `check:route-auth-gate` guards that independently — so a malformed payload became a 500 from the database where a 400 belongs. Returns to C when the list reaches zero. |
 | TR52 | …validates actor capability | **C** | `lib/http.ts:554#canEditPlan` `canEditPlan` and `:614#canEditPlanItem` `canEditPlanItem` are called before every plan mutation (`routes/trips.ts:1713,1809,1925#canEditPlan`), and membership is checked through the shared `lib/tripMembership.ts:45#isAcceptedTripMember` `isAcceptedTripMember`. |
 | TR53 | …validates aggregate version | **C** | **Moved N→C.** The row said "No version exists." `trips.version` is added by `2420_trip_kernel_foundation.sql:96#version` and the kernel refuses a mismatch: `2590_trip_kernel_add_plan_attachment_columns.sql:365#TRIP_VERSION_CONFLICT` returns the current and expected versions so a caller can refetch and retry (§18.3 "explicit conflict"). |
-| TR54 | …validates temporal/spatial consistency | **W** | **Moved N→W 2026-09-08, and the W is the honest half.** The row said the write "accepts any `starts_at`/`ends_at` pair, including one that overlaps a confirmed item or precedes its predecessor." ORDERING is now checked: the kernel already refused an inverted range on the TRIP (`2590:...#TRIP_TEMPORAL_RANGE_INVERTED`, on create and on update, comparing the MERGED value), and the plan-item half is now enforced by `migrations/2750_trip_plan_item_interval_ordered.sql` (a CHECK, NOT VALID, rehearsed on portava-ci — an UPDATE into an inverted range is refused) plus the typed refusal at `lib/tripKernel.ts:635#executeTripCommand`. **OVERLAP is still unchecked** — an item may still be written across a confirmed item's interval, because that is the §7 consistency engine (TR128, TR134) and needs a route provider this tree does not have. Ordering built, overlap not. **Also recorded here rather than lost:** the plan-item check lives at the kernel's entry point rather than inside `trip_kernel_execute`, because every kernel change replaces that 700-line function in full; it should ride along with the next migration that replaces it for its own reasons. |
+| TR54 | …validates temporal/spatial consistency | **W** | **Moved N→W 2026-09-08, and the W is the honest half.** The row said the write "accepts any `starts_at`/`ends_at` pair, including one that overlaps a confirmed item or precedes its predecessor." ORDERING is now checked: the kernel already refused an inverted range on the TRIP (`2590:...#TRIP_TEMPORAL_RANGE_INVERTED`, on create and on update, comparing the MERGED value), and the plan-item half is now enforced by `migrations/2750_trip_plan_item_interval_ordered.sql` (a CHECK, NOT VALID, rehearsed on portava-ci — an UPDATE into an inverted range is refused) plus the typed refusal at `lib/tripKernel.ts:649#executeTripCommand`. **OVERLAP is still unchecked** — an item may still be written across a confirmed item's interval, because that is the §7 consistency engine (TR128, TR134) and needs a route provider this tree does not have. Ordering built, overlap not. **Also recorded here rather than lost:** the plan-item check lives at the kernel's entry point rather than inside `trip_kernel_execute`, because every kernel change replaces that 700-line function in full; it should ride along with the next migration that replaces it for its own reasons. |
 | TR55 | …validates dependent commitments | **N** | No commitments exist (TR15). |
 | TR56 | …validates sensitive-domain boundaries | **W** | Partially, by construction rather than by a validator: `trip_documents` and crew location have their own routes with their own gates (`routes/tripCrewLocation.ts:170-174`), so a plan write cannot touch them. There is no boundary *check* — there is simply no shared write path that could cross one. |
 | TR57 | Successful commands write canonical state plus an immutable domain event in the same transaction where feasible | **C** | **Moved N→C.** The row said "No event is written by any trip mutation." One plpgsql function does both writes in one transaction: `2590_trip_kernel_add_plan_attachment_columns.sql:798#version` bumps `trips.version` and `:804#trip_events` appends the event, with the outbox row at `:818#trip_outbox`. `logActivity` — the thing the row measured — is no longer the nearest artifact. |
@@ -3430,13 +3441,13 @@ carried a freshness (TR368). No metric measured read-model lag (TR394).
   `serveMapProjection`, `routes/tripMapProjection.ts:80#serveMapProjection`,
   so the two paths cannot serve two projections), `/crew` (`:261#crew`),
   `/context` (`:303#context`), `/safety` (`:327#safety`);
-  registered at `routes/index.ts:161#tripProjectionsRouter`. Every
+  registered at `routes/index.ts:163#tripProjectionsRouter`. Every
   response spreads the envelope; every failed read that a projection IS is
   refused with `TRIP_PROJECTION_UNAVAILABLE` on the wire
   (`:108#TRIP_PROJECTION_UNAVAILABLE`), and a flag-off crew
   projection is served visibly degraded with `freshness: "unattributable"`
   (`:275#featureEnabled`). The map projection's own response
-  now spreads the envelope too (`routes/tripMapProjection.ts:433#liveEnvelope`).
+  now spreads the envelope too (`routes/tripMapProjection.ts:456#liveEnvelope`).
   `/plan`, `/plan/map`, `/crew/map`, `/map-projection` keep their shapes.
 - **Consumers.** `compass/CompassTools.ts:639#toolGetCurrentTrip`
   builds the context projection (`:521#buildTripCompassProjection`)
@@ -3944,8 +3955,8 @@ to explain and no route.
   (`:81#recordTripDecision`) and `explainTripDecision`
   (`:114#explainTripDecision`) — sentences from the record. Every
   §40.3–§40.5 build records one (`services/trips/TripFreedomProjection.ts:201#recordTripDecision`,
-  `TripHealthProjection.ts:173#recordTripDecision`,
-  `TripTodayProjection.ts:351#recordTripDecision`) naming ids,
+  `TripHealthProjection.ts:204#recordTripDecision`,
+  `TripTodayProjection.ts:353#recordTripDecision`) naming ids,
   versions and counts — never a coordinate or a name — and carries its
   `decisionId`. `GET /trips/:tripId/decisions/:decisionId/explain`
   (`routes/tripProjections.ts:569#explain`) and Compass
@@ -4180,7 +4191,7 @@ order: 217 files, 35 database tests, 0 skipped.
   endpoint issues the seventeen new types (`routes/tripCommands.ts:86#START_PLAN`)
   and the client's mirror list matches (`src/services/tripCommands.ts:58#START_PLAN`).
   One operational gate for the whole 2760–2785 batch, on purpose
-  (`lib/tripOperationalProjections.ts:51#trip_subgroups`): the registry is
+  (`lib/tripOperationalProjections.ts:52#trip_subgroups`): the registry is
   keyed by flag, the batch ships together, and a database with half of it is
   one the flag must refuse. `check:flag-schema-prerequisites`: 0 unguarded.
 
@@ -4331,7 +4342,7 @@ the merge, the apply, Batch C and two flags.
   behaviour: `trip_archived` and `review_prompt` are SURFACE now
   (`services/trips/TripAttentionPolicy.ts:157#Informational; the trip's own surfaces carry it`).
 - **§17.2** — `deriveTripHealth` takes the 2785 register
-  (`services/trips/TripHealth.ts:65#export interface DisruptionForHealth`): an active
+  (`services/trips/TripHealth.ts:68#export interface DisruptionForHealth`): an active
   critical disruption is DISRUPTED, major AT_RISK, minor ATTENTION, each a
   `TRIP_DISRUPTION_ACTIVE` reason. `prioritySwitch`
   (`services/trips/TripHealth.ts:180#export function prioritySwitch`) is the spec's three
@@ -4486,7 +4497,7 @@ production baseline through the chain: 39 database tests, 0 skipped.
   `opportunities` layer, `no_source` since §40.3
   (`services/trips/TripTodayProjection.ts:239#opportunities = okLayer`), and as the map's
   `liveOpportunities` layer, `no_source` since §40.4
-  (`routes/tripMapProjection.ts:349#§14.1 live opportunities`).
+  (`routes/tripMapProjection.ts:372#§14.1 live opportunities`).
 - **2786 `RECORD_OPPORTUNITY_CHANGE` → `trip.opportunities_changed`** —
   `src/migrations/2786_trip_kernel_opportunity_events.sql:63#WHEN 'RECORD_OPPORTUNITY_CHANGE' THEN`: an
   engine-capability command whose payload is the §13.3 contract, refused as
@@ -4540,7 +4551,7 @@ production baseline through the chain: 39 database tests, 0 skipped.
   (`db/rollback/2026-09-12-2779-trip-kernel-plan-lifecycle-and-temporal-guard-rollback.sql`),
   rehearsed on a copy of the replica with 2780–2786 present. `TRIP_EVENT_TYPES`
   now names every event `trip_kernel_execute` assigns — fourteen from
-  2779–2786 were missing (`lib/tripKernel.ts:470#plan lifecycle, subgroup, transport, disruption, derived and opportunity`).
+  2779–2786 were missing (`lib/tripKernel.ts:484#plan lifecycle, subgroup, transport, disruption, derived and opportunity`).
 
 **Seen red.** The compiler suite (12) failed on a 90-minute window that
 left 33 minutes for a far candidate — the compiler was right and the test
@@ -4638,7 +4649,7 @@ route writes goes through the kernel as a command that already exists
   on a weather-bound plan; late check-in is an arrival estimate past the
   desk's deadline; crew transport mismatch is the party over the vehicle's
   seats (`services/trips/TripRiskTriggers.ts:94#DEFAULT_VEHICLE_CAPACITY`).
-  On Today as `riskTriggers` (`services/trips/TripTodayProjection.ts:387#riskTriggers,`),
+  On Today as `riskTriggers` (`services/trips/TripTodayProjection.ts:389#riskTriggers,`),
   reading 2782's segments under the same gate for the party-size row.
 - **§9.4 the impact preview, §15.3 the booking side effects** —
   `services/trips/TripImpactPreview.ts:119#previewImpact` over a typed
@@ -4866,10 +4877,10 @@ re-derives and cites rather than argues.
   when they opted to notify the crew, placed at the plan each guards (a
   private anchor's plan yields no point, §14.4), plus 2782's transport
   segment endpoints through `public.places` under the gate that owns that
-  table (`routes/tripMapProjection.ts:373#safe_return_sessions`,
-  `routes/tripMapProjection.ts:419#transport_endpoint`); a layer is one status,
+  table (`routes/tripMapProjection.ts:396#safe_return_sessions`,
+  `routes/tripMapProjection.ts:442#transport_endpoint`); a layer is one status,
   so `safetyLogisticsReading` on the response says which half was assembled
-  (`routes/tripMapProjection.ts:370#safetyLogisticsReading`;
+  (`routes/tripMapProjection.ts:393#safetyLogisticsReading`;
   `src/test/tripMapProjection.test.ts:460#guards,`). One layer has no producer
   now: crew presence summaries.
 - **§20.2 the two deferred steps** — `close_operational_decision_tasks` is
@@ -4893,7 +4904,7 @@ re-derives and cites rather than argues.
   TR375: `POST /trips/:tripId/simulate` was registered in §44
   (`routes/tripProjections.ts:421#/trips/:tripId/simulate`). TR393:
   `trip_command_rejected_total` by reason has existed in the kernel client
-  and been asserted three times (`lib/tripKernel.ts:482#readTripCommandRejectedTotal`,
+  and been asserted three times (`lib/tripKernel.ts:496#readTripCommandRejectedTotal`,
   `src/test/tripKernel.test.ts:110#counter`). TR379 and TR75: 2520's map
   projection worker consumes the outbox, idempotent by event id through
   `trip_map_projection_applied` and retried by `attempts`
@@ -4963,7 +4974,7 @@ counting exactly one direct dispatch in the router itself
 (`src/scripts/checkTripPushPolicy.ts:75#routerCalls`). **`check:write-path-columns`**
 named 2782 and 2785's tables and 2783's `trip_goals.scope` / `weight` as
 absent from the CI schema — true until merge, ledgered where 2780/2781/2784
-already were (`src/scripts/checkWritePathColumns.ts:196#trip_transport_segments`) —
+already were (`src/scripts/checkWritePathColumns.ts:203#trip_transport_segments`) —
 and one read it could not see: the pulse's seven context reads took a table
 *name*, and now take a built query
 (`services/trips/TripPulseProjection.ts:151#PromiseLike`). Making them
@@ -5054,7 +5065,7 @@ with every database suite green; no new flag, no new table.
   their own routes — and is a check now: a payload key that names a travel
   document number, a health fact or a payment instrument, at any depth, is
   refused by name before the kernel is called and counted
-  (`lib/tripKernel.ts:610#sensitiveDomainKey`,
+  (`lib/tripKernel.ts:624#sensitiveDomainKey`,
   `src/test/tripKernelSensitiveDomain.test.ts:47#TRIP_COMMAND_SENSITIVE_DOMAIN`).
 - **§14.1 "active" means in progress now** — 2779 gave plans
   `in_progress`; the map's active-plans layer says which points are
@@ -5270,16 +5281,16 @@ the mechanism; the offline path is what asks them the §18.3 questions.
 
 ### 48.1 What was built, and where
 
-- **§18.1 the signed, versioned bundle (TR334)** — `services/trips/TripOfflineBundle.ts:145#buildOfflineBundle(`
+- **§18.1 the signed, versioned bundle (TR334)** — `services/trips/TripOfflineBundle.ts:159#buildOfflineBundle(`
   assembles next commitments (in deadline order, past ones dropped), the
   active plan (in progress, else the next confirmed), the plans, the
   critical addresses (reservations, commitments, upcoming plans) and the
   certified context, stamped `sourceTripVersion` (§18.4) and `expiresAt`;
   what it does not carry — the selected route, meeting points, map tiles —
-  is a named empty field, not an omission. `services/trips/TripOfflineBundle.ts:102#signOfflineBundle(`
+  is a named empty field, not an omission. `services/trips/TripOfflineBundle.ts:103#signOfflineBundle(`
   signs the canonical bytes with HMAC-SHA256 under
   `TRIP_OFFLINE_BUNDLE_SECRET` (SESSION_SECRET as the tree's usual
-  fallback, no default); `services/trips/TripOfflineBundle.ts:108#verifyOfflineBundle(`
+  fallback, no default); `services/trips/TripOfflineBundle.ts:109#verifyOfflineBundle(`
   is constant-time and false for anything edited. `GET /trips/:tripId/offline-bundle`
   (`routes/tripOffline.ts:60#offline-bundle",`) reads the trip's version, its
   plan and reservations (no `raw_text`), and its commitments under the
@@ -5288,7 +5299,7 @@ the mechanism; the offline path is what asks them the §18.3 questions.
   and `test/tripOfflineRoute.test.ts:134#unsigned` pin the contents, the
   round trip, the tamper case and the refusal. Mutation: any signature
   verifies (2 red).
-- **§18.1 stale is visible (TR342)** — `services/trips/TripOfflineBundle.ts:122#bundleStaleness(`:
+- **§18.1 stale is visible (TR342)** — `services/trips/TripOfflineBundle.ts:123#bundleStaleness(`:
   past `expiresAt`, or read at a version the trip has moved past,
   `TRIP_OFFLINE_BUNDLE_STALE` says which, and a stale bundle is still the
   last certified context, not the current one. The replay endpoint dates
@@ -5307,7 +5318,7 @@ the mechanism; the offline path is what asks them the §18.3 questions.
   replay once it has; *reject* for a type the kernel does not have or a
   cutover-gated plan write with its own route, or a `clientOccurredAt` in
   the future or past the seven-day horizon — `TRIP_OFFLINE_QUEUE_REJECTED`,
-  with why. `POST /trips/:tripId/operations` (`routes/tripOffline.ts:118#operations",`)
+  with why. `POST /trips/:tripId/operations` (`routes/tripOffline.ts:136#operations",`)
   reads the canonical version first and refuses the whole queue when it
   cannot, replays through `executeTripCommand` with the operation id as the
   correlation, holds everything with `TRIP_KERNEL_UNAVAILABLE` per operation
@@ -5400,7 +5411,7 @@ under a mutation before its commit.
   and the replay route applies them by identity — union then no-op,
   difference then no-op — answering `added` / `already_present` /
   `removed` / `already_absent` and moving no aggregate version, because a
-  bookmark is not trip state (`routes/tripOffline.ts:174#applySetOperation(`).
+  bookmark is not trip state (`routes/tripOffline.ts:192#applySetOperation(`).
   A concurrent add of the same element is the same element: the unique key
   refuses it and the answer is `already_present`. `test/tripOfflineRoute.test.ts:192#already_present`
   replays save, save, unsave, unsave and reads the set empty with the
@@ -5588,3 +5599,108 @@ No migration, no flag. The sensing policy rides the Today projection,
 behind the operational gate like the rest of Today; the Compass crew tool
 runs behind `trip_crew_map_enabled`, seeded FALSE in production. Nothing
 here is deployed, enabled or production-realised.
+
+## 52. Meeting checkpoints, the regroup that switches priority, and Safe Return on a subgroup
+
+**Read against the branch `claude/sweet-fermat-fmx7up`.** Four W rows,
+one migration. §10.4's meeting checkpoint existed as two labels (TR177);
+§11.3's "Return / regroup" was a Safe Return that switched nothing (TR198);
+the map's meetup layer was a label on an ordinary plan item (TR262); and
+Safe Return attached to a trip and a plan but never to a subgroup (TR329).
+2794 builds the table the four share, the kernel family that writes it,
+and the column §17.4 needed.
+
+### 52.1 What was built, and where
+
+- **2794 — `trip_meeting_checkpoints`, `trip_meeting_checkpoint_participants`,
+  `safe_return_sessions.subgroup_id`, and the kernel's `meeting` family**
+  (`migrations/2794_trip_meeting_checkpoints.sql:76#CREATE TABLE public.trip_meeting_checkpoints`).
+  A checkpoint is a place the crew or a subgroup agreed to meet — coordinates,
+  a label, an optional meet-by, why (`regroup | planned | safety`), the
+  §14.3 explanation it was chosen with, and a status (`open | met |
+  cancelled`); each expected participant carries an arrival state
+  (`pending | en_route | arrived | late | no_show`) and the instant they
+  arrived, with a CHECK that `arrived` and `arrived_at` agree. The kernel
+  gains `CREATE_MEETING_CHECKPOINT` (every participant must be accepted
+  crew — `TRIP_MEETING_PARTICIPANT_NOT_CREW`; a subgroup checkpoint names an
+  active subgroup the actor is in; the whole crew or the subgroup's current
+  members by default), `SET_MEETING_ARRIVAL` (a participant's own state
+  only — `TRIP_MEETING_NOT_PARTICIPANT`) and `CLOSE_MEETING_CHECKPOINT`
+  (creator or host; only from `open` — `TRIP_MEETING_INVALID_TRANSITION`),
+  spliced by 2764's method with the same anchor counts 2780 used, three
+  events (`trip.meeting_checkpoint_created` / `_arrival_set` /
+  `_checkpoint_closed`), RLS crew SELECT only, no client writer. Applied,
+  rolled back (`../../db/rollback/2026-09-12-2794-trip-meeting-checkpoints-rollback.sql:51#regexp_replace`)
+  and re-applied on the local replica; `test/db/tripMeetingCheckpoints.db.test.ts:67#TRIP_MEETING_NOT_PARTICIPANT`
+  executes all three commands, their refusals, the subgroup default and the
+  Safe Return column's CHECK on the real kernel — and went red when the
+  participant check was cut out of the branch.
+- **§11.3 "Return / regroup" (TR198)** — `services/trips/TripMeetingCheckpoints.ts:134#export async function regroup(`
+  computes §14.3's meeting point (`computeMeetingPoint`, which now also
+  returns the candidates it considered), takes the recommended option, or
+  the alternative the caller picked, or a point the crew already agreed on,
+  and issues `CREATE_MEETING_CHECKPOINT` with the whole computation —
+  chosen-by, alternatives, refusals, the unplaced and why — as the
+  checkpoint's `explanation`; nothing recommendable and no point given is
+  `TRIP_MEETING_NO_CANDIDATE` with the alternatives and the unplaced, and
+  nothing reaches the kernel. `POST /trips/:tripId/regroup`
+  (`routes/tripMeetingCheckpoints.ts:88#router.post("/trips/:tripId/regroup"`)
+  serves it behind the operational gate and the kernel flag, with `GET
+  /trips/:tripId/meeting-checkpoints` and the arrival and close commands
+  beside it. **The switch.** An open regroup or safety checkpoint with
+  someone still expected is a `REGROUP_OPEN` health reason
+  (`services/trips/TripHealth.ts:47#"REGROUP_OPEN"`), which §17.2's switch
+  reads as `SAFETY_EVENT` — location coordination — so Today's `attention`
+  suppresses discovery, its `unresolvedActions` carries a `regroup` action
+  naming who has not arrived, and §51's sensing goes to the safety rate;
+  when everyone has arrived or the checkpoint is closed the reason is not
+  derived and the switch is `NORMAL` again. The route says so in words
+  (`prioritySwitch`) rather than writing a priority anywhere.
+  `test/tripHealthProjection.test.ts:138#REGROUP_OPEN → SAFETY_EVENT` and
+  `test/tripTodayProjection.test.ts:219#kind === "regroup"` pin the flip and
+  the flip back; `test/tripMeetingCheckpointsRoute.test.ts:82#chosenBy` pins
+  the route.
+- **The map's meetup layer (TR262)** — `routes/tripMapProjection.ts:246#kind: "meeting_checkpoint"`:
+  an open checkpoint is a `meeting_checkpoint` point in the `meetupPoints`
+  layer in its own right, read under the operational gate (whose probe now
+  names 2794's tables), beside the plan-item label the layer already had.
+  The offline bundle carries the open checkpoints with the viewer's own
+  arrival state (`services/trips/TripOfflineBundle.ts:70#BundleMeetingPoint`),
+  so §18.1's "meeting points" is no longer an empty array with an excuse.
+- **§17.4 Safe Return on a subgroup (TR329)** — `safe_return_sessions.subgroup_id`
+  (CHECK: needs a trip); `POST /me/safe-return/sessions` accepts
+  `subgroupId` and verifies, under the operational gate, that it names an
+  active subgroup of that trip the caller is currently in
+  (`routes/safeReturn.ts:312#parsed.data.subgroupId`); the crew alert goes to
+  that subgroup's current members rather than the whole crew
+  (`services/safeReturn/SafeReturnNotificationService.ts:396#trip_subgroup_members`).
+  The column is written only when named, so a database without 2794 still
+  starts a solo or full-crew session; `check:flag-schema-prerequisites`
+  ledgers the two Safe Return flags' new reads with the runtime guard that
+  keeps production out of them.
+
+### 52.2 Row moves
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| TR177 §10.4 Meeting checkpoints | W | **C** | A crew meeting checkpoint with participants and arrival state — a table, a kernel family, three routes and a bundle slot — executed on the real kernel; the two labels the row named are what a checkpoint no longer is. |
+| TR198 §11.3 "Return / regroup" → creates a route/meeting operation and switches context priority | W | **C** | `POST /trips/:tripId/regroup` creates the meeting operation through the kernel with §14.3's computation attached, and the open checkpoint derives `REGROUP_OPEN` → `SAFETY_EVENT` on health, Today and sensing until it is met or closed. |
+| TR262 meetup points | W | **C** | The layer carries agreed checkpoints as `meeting_checkpoint` points, not only the `category = 'meeting_point'` label. |
+| TR329 §17.4 Safe Return attaches to solo, subgroup or full-crew execution contexts | W | **C** | Three of three: `subgroup_id` on the session, verified membership at create, and the crew alert scoped to the subgroup's current members. |
+
+**Held, with the reason.** TR318 stays W: the server half is now whole — a
+Safe Return in NEEDS_HELP, an active disruption or an open regroup all
+put Today under `SAFETY_EVENT` with discovery suppressed — but the row's
+complaint is the screen (`app/safety-history.tsx` is a separate
+destination and no trip screen re-prioritises), which is Cluster 13's.
+TR116, TR153, TR407 and TR408 stay W for §51's reasons; TR435 for §41.3's
+flag.
+
+### 52.3 The ceiling, moved by one migration
+
+2794 joins 2779–2793 in §41.3's ceiling: no database but the local replica
+has it until this branch merges, CI applies it, and the owner's Batch C
+carries it to production; every reader is behind
+`trip_operational_projections_enabled` (FALSE everywhere) and every writer
+behind `trip_kernel_enabled`. Nothing here is deployed, enabled or
+production-realised.

@@ -115,7 +115,8 @@ describe("§17.1 health is the worst concrete reason, and never a word alone", (
   it("closed and mitigated risks are not reasons; the code vocabulary is closed", () => {
     const h = deriveTripHealth({ conflicts: [], risks: [{ id: "r", likelihood: "high", impact: "high", status: "mitigated" }, { id: "s", likelihood: "high", impact: "high", status: "closed" }], needsHelpMemberIds: [], hops: { infeasible: 0, unknown: 0 } });
     assert.equal(h.health, "HEALTHY");
-    assert.equal(HEALTH_REASON_CODES.length, 8);
+    assert.equal(HEALTH_REASON_CODES.length, 9);
+    assert.ok(HEALTH_REASON_CODES.includes("REGROUP_OPEN"), "§11.3 (2794): an open regroup checkpoint is a health reason");
     assert.ok(HEALTH_REASON_CODES.includes("TRIP_DISRUPTION_ACTIVE"), "§17.2 (2785): an active disruption is a health reason");
   });
 });

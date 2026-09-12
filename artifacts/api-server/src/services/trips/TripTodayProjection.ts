@@ -89,7 +89,7 @@ export interface TodayCrewSummary {
   detail: string | null;
 }
 export interface TodayRisk { id: string; likelihood: string; impact: string; status: string }
-export const UNRESOLVED_ACTION_KINDS = ["resolve_conflict", "check_on_member", "place_commitment", "review_risk"] as const;
+export const UNRESOLVED_ACTION_KINDS = ["resolve_conflict", "check_on_member", "place_commitment", "review_risk", "regroup"] as const;
 export interface TodayUnresolvedAction {
   kind: (typeof UNRESOLVED_ACTION_KINDS)[number];
   subjectIds: string[];
@@ -341,6 +341,8 @@ export async function buildTripTodayProjection(
   }
   for (const r of health.reasons) {
     if (r.code === "SAFETY_NEEDS_HELP") unresolvedActions.push({ kind: "check_on_member", subjectIds: r.subjectIds, detail: r.detail, severity: "critical" });
+    // §11.3 (2794): an open regroup with someone still expected is the crew's to close — the switch stays flipped until it is.
+    if (r.code === "REGROUP_OPEN") unresolvedActions.push({ kind: "regroup", subjectIds: r.subjectIds, detail: r.detail, severity: r.level === "AT_RISK" ? "critical" : "normal" });
     if (r.code === "TRIP_RISK_REALISED" || r.code === "TRIP_RISK_OPEN_HIGH") unresolvedActions.push({ kind: "review_risk", subjectIds: r.subjectIds, detail: r.detail, severity: r.code === "TRIP_RISK_REALISED" ? "critical" : "normal" });
   }
   for (const id of freedom.unplacedCommitmentIds) {

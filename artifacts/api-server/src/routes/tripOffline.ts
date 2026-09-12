@@ -48,7 +48,7 @@ import {
 } from "../services/trips/TripOfflineQueue.js";
 import {
   buildOfflineBundle, bundleSigningSecret, bundleStaleness, signOfflineBundle, verifyOfflineBundle,
-  type BundleCommitment, type BundlePlan, type TripOfflineBundle,
+  type BundleCommitment, type BundleMeetingPoint, type BundlePlan, type TripOfflineBundle,
 } from "../services/trips/TripOfflineBundle.js";
 
 const router = Router();
@@ -101,10 +101,28 @@ router.get("/trips/:tripId/offline-bundle", asyncHandler(async (req, res) => {
   const reservations = ((resRows ?? []) as any[]).filter((r) => r.status !== "cancelled" && r.status !== "dismissed")
     .map((r) => ({ id: String(r.id), title: String(r.title ?? ""), locationName: r.location_name ?? null, startsAt: r.starts_at ?? null }));
 
-  const bundle = buildOfflineBundle({ tripId, sourceTripVersion: version, commitments, plans, reservations }, Date.now());
+  // 2794 / §18.1: open meeting checkpoints ride the bundle when the gate is on.
+  const meetingPoints = await readOpenMeetingPointsForBundle(sc, tripId, user.id);
+  const bundle = buildOfflineBundle({ tripId, sourceTripVersion: version, commitments, plans, reservations, meetingPoints }, Date.now());
   const signed = signOfflineBundle(bundle, secret);
   res.json({ ...signed, readings: { commitments: commitmentsReading, staleness: bundleStaleness(bundle, Date.now(), version).detail } });
 }));
+
+async function readOpenMeetingPointsForBundle(sc: any, tripId: string, userId: string): Promise<BundleMeetingPoint[]> {
+  if (!(await tripOperationalProjectionsGate(sc)).enabled) return [];
+  const { data: rows, error } = await sc.from("trip_meeting_checkpoints").select("id, label, lat, lng, meet_at, purpose").eq("trip_id", tripId).eq("status", "open");
+  if (error) { log.warn({ err: error.message, tripId }, "offline bundle: trip_meeting_checkpoints unreadable — carrying none"); return []; }
+  const ids = ((rows ?? []) as any[]).map((r) => String(r.id));
+  const mine = new Map<string, string>();
+  if (ids.length > 0) {
+    const { data: parts } = await sc.from("trip_meeting_checkpoint_participants").select("checkpoint_id, arrival_state").in("checkpoint_id", ids).eq("user_id", userId);
+    for (const p of ((parts ?? []) as any[])) mine.set(String(p.checkpoint_id), String(p.arrival_state));
+  }
+  return ((rows ?? []) as any[]).map((r) => ({
+    id: String(r.id), label: String(r.label ?? ""), lat: Number(r.lat), lng: Number(r.lng), meetAt: r.meet_at ?? null,
+    purpose: (r.purpose ?? "regroup") as BundleMeetingPoint["purpose"], myArrivalState: mine.get(String(r.id)) ?? null,
+  }));
+}
 
 // ── POST /trips/:tripId/operations ──────────────────────────────────────────
 const ReplaySchema = z.object({

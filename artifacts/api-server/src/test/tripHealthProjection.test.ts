@@ -133,3 +133,45 @@ describe("buildTripHealthProjection — health and phase from the same reads", (
     }
   });
 });
+
+describe("§11.3 regroup flips the priority switch while the checkpoint is open (2794, TR198)", () => {
+  it("an open regroup with someone still expected is REGROUP_OPEN → SAFETY_EVENT (location coordination); met, it is not", async () => {
+    const tables = base();
+    tables.trip_meeting_checkpoints = [{ id: "cp1", trip_id: TRIP_ID, label: "Fountain", purpose: "regroup", status: "open" }];
+    tables.trip_meeting_checkpoint_participants = [
+      { checkpoint_id: "cp1", user_id: OWNER_ID, arrival_state: "arrived" },
+      { checkpoint_id: "cp1", user_id: MEMBER_ID, arrival_state: "en_route" },
+    ];
+    let r = await buildTripHealthProjection(makeClient(tables) as any, TRIP_ID, OWNER_ID, { now: NOW });
+    assert.ok(r.ok);
+    const reason = r.projection.reasons.find((x) => x.code === "REGROUP_OPEN")!;
+    assert.ok(reason, "REGROUP_OPEN is a reason");
+    assert.equal(reason.level, "ATTENTION");
+    assert.deepEqual(reason.subjectIds, [MEMBER_ID], "the one not yet arrived");
+    assert.match(reason.detail, /1 of 2 not yet arrived/);
+    assert.equal(r.projection.attention.mode, "SAFETY_EVENT", "§17.2: location coordination");
+    assert.equal(r.projection.attention.suppression.discovery, true);
+
+    tables.trip_meeting_checkpoint_participants[1]!.arrival_state = "arrived";
+    r = await buildTripHealthProjection(makeClient(tables) as any, TRIP_ID, OWNER_ID, { now: NOW });
+    assert.ok(r.ok);
+    assert.equal(r.projection.reasons.some((x) => x.code === "REGROUP_OPEN"), false, "everyone arrived: nothing to coordinate");
+    assert.equal(r.projection.attention.mode, "NORMAL");
+
+    tables.trip_meeting_checkpoint_participants[1]!.arrival_state = "pending";
+    tables.trip_meeting_checkpoints[0]!.purpose = "safety";
+    r = await buildTripHealthProjection(makeClient(tables) as any, TRIP_ID, OWNER_ID, { now: NOW });
+    assert.ok(r.ok);
+    assert.equal(r.projection.reasons.find((x) => x.code === "REGROUP_OPEN")!.level, "AT_RISK", "a safety checkpoint weighs more");
+
+    tables.trip_meeting_checkpoints[0]!.purpose = "planned";
+    r = await buildTripHealthProjection(makeClient(tables) as any, TRIP_ID, OWNER_ID, { now: NOW });
+    assert.ok(r.ok);
+    assert.equal(r.projection.reasons.some((x) => x.code === "REGROUP_OPEN"), false, "a planned meetup is not a coordination event");
+  });
+  it("unreadable checkpoints refuse the projection rather than reporting a calm trip", async () => {
+    const r = await buildTripHealthProjection(makeClient(base(), ["trip_meeting_checkpoints"]) as any, TRIP_ID, OWNER_ID, { now: NOW });
+    assert.equal(r.ok, false);
+    if (!r.ok) assert.equal(r.reason, "TRIP_PROJECTION_UNAVAILABLE");
+  });
+});

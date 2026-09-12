@@ -23,7 +23,7 @@ import { tripOperationalProjectionsGate, refusalForGate } from "../../lib/tripOp
 import { liveEnvelope, type TripProjectionEnvelope } from "./TripProjectionEnvelope.js";
 import { buildTripFreedomProjection, type TripFreedomProjection } from "./TripFreedomProjection.js";
 import { operationalState, type SafetySessionRow } from "./TripSafetyProjection.js";
-import { deriveTripHealth, surfacePriority, prioritySwitch, type PrioritySwitch, type DisruptionForHealth, type TripHealth, type RiskForHealth } from "./TripHealth.js";
+import { deriveTripHealth, surfacePriority, prioritySwitch, type PrioritySwitch, type DisruptionForHealth, type TripHealth, type RiskForHealth, type RegroupForHealth } from "./TripHealth.js";
 import { deriveOperationalPhase, localClock, type PhaseDecision, type PhasePlanItem } from "./TripOperationalPhase.js";
 import { recordTripDecision, persistTripDecision, TRIP_ENGINE_VERSIONS } from "./TripDecisionLedger.js";
 
@@ -140,6 +140,37 @@ export async function buildTripHealthProjection(
     id: String(d.id), kind: String(d.kind), severity: String(d.severity), state: String(d.state),
   }));
 
+  // §11.3 / §10.4 (2794): open regroup and safety checkpoints, with who is still expected.
+  const { data: cpRows, error: cpErr } = await sc
+    .from("trip_meeting_checkpoints")
+    .select("id, label, purpose, status")
+    .eq("trip_id", tripId)
+    .eq("status", "open");
+  if (cpErr) {
+    log.warn({ err: cpErr.message, tripId }, "health: trip_meeting_checkpoints unreadable — refusing");
+    return { ok: false, reason: "TRIP_PROJECTION_UNAVAILABLE", message: "The meeting checkpoints could not be read" };
+  }
+  const openRegroups: RegroupForHealth[] = [];
+  if (((cpRows ?? []) as any[]).length > 0) {
+    const ids = ((cpRows ?? []) as any[]).map((c) => String(c.id));
+    const { data: partRows, error: pErr } = await sc
+      .from("trip_meeting_checkpoint_participants")
+      .select("checkpoint_id, user_id, arrival_state")
+      .in("checkpoint_id", ids);
+    if (pErr) {
+      log.warn({ err: pErr.message, tripId }, "health: trip_meeting_checkpoint_participants unreadable — refusing");
+      return { ok: false, reason: "TRIP_PROJECTION_UNAVAILABLE", message: "The checkpoint participants could not be read" };
+    }
+    for (const c of ((cpRows ?? []) as any[])) {
+      const parts = ((partRows ?? []) as any[]).filter((p) => String(p.checkpoint_id) === String(c.id));
+      openRegroups.push({
+        id: String(c.id), label: String(c.label ?? ""), purpose: (c.purpose ?? "regroup") as RegroupForHealth["purpose"],
+        pendingIds: parts.filter((p) => p.arrival_state === "pending" || p.arrival_state === "en_route" || p.arrival_state === "late").map((p) => String(p.user_id)),
+        expected: parts.length,
+      });
+    }
+  }
+
   const { data: items, error: iErr } = await sc
     .from("trip_plan_items")
     .select("id, category, status, starts_at, ends_at, day_date")
@@ -162,7 +193,7 @@ export async function buildTripHealthProjection(
     unknown: f.windows.filter((w) => w.position === "between" && w.hardConstraints.some((h) => h.kind === "TRAVEL_UNKNOWN")).length,
   };
   const riskRows = ((risks ?? []) as RiskForHealth[]);
-  const health = deriveTripHealth({ conflicts: f.conflicts, risks: riskRows, disruptions, needsHelpMemberIds: needsHelp, hops });
+  const health = deriveTripHealth({ conflicts: f.conflicts, risks: riskRows, disruptions, needsHelpMemberIds: needsHelp, hops, openRegroups });
   const attention = prioritySwitch(health);
 
   const phase = deriveOperationalPhase({
@@ -177,7 +208,7 @@ export async function buildTripHealthProjection(
       riskIds: riskRows.map((r) => r.id), disruptionIds: disruptions.map((d) => d.id), needsHelpMembers: needsHelp.length, hops, planItems: planItems.length,
       localClock: { date: phase.evidence.localDate, hour: phase.evidence.localHour, timezone: t.timezone ?? "UTC" },
     },
-    sources: ["trips", "trip_risks", "trip_disruptions", "safe_return_sessions", "trip_crew_location_preferences", "trip_plan_items", "TripFreedomProjection"],
+    sources: ["trips", "trip_risks", "trip_disruptions", "safe_return_sessions", "trip_crew_location_preferences", "trip_plan_items", "trip_meeting_checkpoints", "TripFreedomProjection"],
     assumptions: ["health is the worst concrete reason; readiness is not an input", "the phase's first matching clause wins, in the documented order"],
     constraints: health.reasons.map((r) => r.code),
     result: { health: health.health, reasons: health.reasons.length, phase: phase.phase, phaseReason: phase.reason, mode: attention.mode, suppressed: attention.suppression.discovery },

@@ -144,6 +144,10 @@ export const TRIP_KERNEL_EXTENSION_CODES = [
   // and object-identity refusals, like the ones above: not Appendix B families.
   "TRIP_STAGE_INVALID_TRANSITION",
   "TRIP_SUBGROUP_NOT_FOUND", "TRIP_SUBGROUP_NOT_MEMBER", "TRIP_SUBGROUP_MEMBER_NOT_CREW",
+  // 2794 meeting checkpoints (§10.4 / §11.3), emitted by the kernel.
+  "TRIP_MEETING_NOT_FOUND", "TRIP_MEETING_NOT_PARTICIPANT", "TRIP_MEETING_PARTICIPANT_NOT_CREW", "TRIP_MEETING_INVALID_TRANSITION",
+  // §11.3 regroup: §14.3 recommended nothing the crew could meet at (routes/tripMeetingCheckpoints).
+  "TRIP_MEETING_NO_CANDIDATE",
   "TRIP_TRANSPORT_NOT_FOUND", "TRIP_TRANSPORT_INVALID_TRANSITION",
   // §22.2 replay verification could not run at all (lib/tripReplayVerify.ts:
   // the rpc errored). Distinct from the two snapshot refusals above, which

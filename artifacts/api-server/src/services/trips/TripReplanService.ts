@@ -43,7 +43,7 @@ export async function computeReplan(sc: any, tripId: string, userId: string, opt
 }
 
 export type MeetingPointComputation =
-  | { ok: true; result: MeetingPointResult; candidatesConsidered: number; sourceTripVersion: number | null }
+  | { ok: true; result: MeetingPointResult; candidatesConsidered: number; candidates: MeetingCandidate[]; sourceTripVersion: number | null }
   | { ok: false; reason: string; message: string };
 
 export async function computeMeetingPoint(sc: any, tripId: string, userId: string, opts: { participantIds?: string[]; candidateIds?: string[]; now?: Date } = {}): Promise<MeetingPointComputation> {
@@ -76,5 +76,5 @@ export async function computeMeetingPoint(sc: any, tripId: string, userId: strin
     participants: wanted.map((id) => ({ userId: id, point: positions.get(id) ?? null, positionReason: positions.get(id) ? null : positionReason, nextCommitment: nextFor(id) })),
     candidates: chosen, partySize: wanted.length, travel: (a, b) => straightLineEstimator.minutes(a, b),
   });
-  return { ok: true, result, candidatesConsidered: chosen.length, sourceTripVersion: loaded.sourceTripVersion };
+  return { ok: true, result, candidatesConsidered: chosen.length, candidates: chosen, sourceTripVersion: loaded.sourceTripVersion };
 }

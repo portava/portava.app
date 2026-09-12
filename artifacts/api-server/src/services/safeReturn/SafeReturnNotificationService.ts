@@ -389,12 +389,21 @@ export async function notifyTripCrew(
     // `error` bound and checked, for the same reason as notifyHost: `!members`
     // was true both for "this trip has no other crew" and for "trip_members
     // could not be read", and only the first is a reason to alert nobody.
-    const { data: members, error: membersErr } = await db
-      .from("trip_members")
-      .select("user_id")
-      .eq("trip_id", session.tripId)
-      .in("role", ["owner", "member"])
-      .neq("user_id", session.userId);
+    // §17.4 (2794): a Safe Return attached to a subgroup execution context
+    // alerts that subgroup's CURRENT members, not the whole crew.
+    const { data: members, error: membersErr } = session.subgroupId
+      ? await db
+          .from("trip_subgroup_members")
+          .select("user_id")
+          .eq("subgroup_id", session.subgroupId)
+          .is("left_at", null)
+          .neq("user_id", session.userId)
+      : await db
+          .from("trip_members")
+          .select("user_id")
+          .eq("trip_id", session.tripId)
+          .in("role", ["owner", "member"])
+          .neq("user_id", session.userId);
 
     if (membersErr) {
       logger.error(

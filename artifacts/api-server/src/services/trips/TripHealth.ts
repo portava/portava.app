@@ -42,6 +42,9 @@ export const HEALTH_REASON_CODES = [
   "TRIP_RISK_REALISED", "SAFETY_NEEDS_HELP", "TRIP_DISRUPTION_ACTIVE",
   "TRIP_TEMPORAL_CONFLICT", "TRIP_RISK_OPEN_HIGH", "FEASIBILITY_INFEASIBLE",
   "TRIP_RISK_OPEN_ELEVATED", "FEASIBILITY_UNKNOWN",
+  // §11.3 "Return / regroup" (2794): an open regroup checkpoint with someone
+  // still expected is location coordination — §17.2's SAFETY_EVENT priority.
+  "REGROUP_OPEN",
 ] as const;
 export type HealthReasonCode = (typeof HEALTH_REASON_CODES)[number];
 
@@ -70,6 +73,15 @@ export interface DisruptionForHealth {
   state: string;
 }
 
+export interface RegroupForHealth {
+  id: string;
+  label: string;
+  purpose: "regroup" | "planned" | "safety";
+  /** Participants not yet arrived (pending, en_route, late). */
+  pendingIds: readonly string[];
+  expected: number;
+}
+
 export interface HealthInputs {
   conflicts: readonly TemporalConflict[];
   risks: readonly RiskForHealth[];
@@ -77,6 +89,8 @@ export interface HealthInputs {
   disruptions?: readonly DisruptionForHealth[];
   /** Crew members whose §17.4 state is NEEDS_HELP (visible to this viewer). */
   needsHelpMemberIds: readonly string[];
+  /** §11.3 / §10.4 (2794): open regroup or safety checkpoints. Omitted = not read; [] = read and none. */
+  openRegroups?: readonly RegroupForHealth[];
   /** Feasibility hops by verdict, from the same computation that produced the conflicts. */
   hops: { infeasible: number; unknown: number };
 }
@@ -112,6 +126,13 @@ export function deriveTripHealth(inputs: HealthInputs): TripHealth {
   }
   for (const id of inputs.needsHelpMemberIds) {
     reasons.push({ code: "SAFETY_NEEDS_HELP", level: "DISRUPTED", subjectIds: [id], detail: "a crew member's Safe Return is in NEEDS_HELP" });
+  }
+  for (const g of inputs.openRegroups ?? []) {
+    if (g.purpose === "planned" || g.pendingIds.length === 0) continue;
+    reasons.push({
+      code: "REGROUP_OPEN", level: g.purpose === "safety" ? "AT_RISK" : "ATTENTION", subjectIds: [...g.pendingIds],
+      detail: `${g.purpose} checkpoint "${g.label}" is open: ${g.pendingIds.length} of ${g.expected} not yet arrived (§11.3)`,
+    });
   }
   for (const c of inputs.conflicts) {
     reasons.push({ code: "TRIP_TEMPORAL_CONFLICT", level: "AT_RISK", subjectIds: [...c.commitmentIds, ...c.planIds], detail: `${c.kind}: ${c.detail}` });
@@ -162,7 +183,7 @@ export const PRIORITY_BY_MODE: Readonly<Record<PriorityMode, readonly string[]>>
   SAFETY_EVENT: ["safety", "official_help", "location_coordination"],
 };
 
-export const SAFETY_REASON_CODES: readonly HealthReasonCode[] = ["SAFETY_NEEDS_HELP"];
+export const SAFETY_REASON_CODES: readonly HealthReasonCode[] = ["SAFETY_NEEDS_HELP", "REGROUP_OPEN"];
 
 export interface PrioritySwitch {
   mode: PriorityMode;

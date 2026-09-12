@@ -154,6 +154,13 @@ const ALLOWLIST = new Set<string>([
   "trip_members.permissions_version",       // 2783 — bumped on role change
   "trip_reservations.version",              // 2784 — If-Match row version
   "trip_reservations.cancelled_at",         // 2784 — DELETE = cancel, not erase
+  "safe_return_sessions.subgroup_id",       // 2794 — §17.4 Safe Return on a subgroup (Trips §52)
+  // Trips §46 / §47 retention columns, read only by the retention sweep
+  // (lib/tripRetentionScheduler.ts, behind trip_retention_sweep_enabled FALSE)
+  // and by the RPCs 2789 / 2791 define; absent from portava-ci until this
+  // branch reaches main. Remove each once its apply is certified.
+  "trip_activity_log.retain_until",          // 2789 — §21.3 activity-log retention (Trips §46)
+  "trip_reservations.raw_text_retain_until", // 2791 — §21.3 raw_text retention deadline (Trips §47)
   "trip_commitments.at_risk_reason",        // 2785 — §7.2 derived at-risk state
   "trip_commitments.at_risk_at",            // 2785
   "trip_commitments.at_risk_shortfall_minutes", // 2785

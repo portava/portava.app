@@ -203,3 +203,25 @@ describe("§3.3 AT_RISK is derived on the timeline and counted (TR396)", () => {
     assert.deepEqual(readTripMetric("plan_at_risk_total").map((s) => [s.labels.plan, s.count]).sort(), [["a", 1], ["b", 1]]);
   });
 });
+
+describe("§11.3 regroup on Today (2794, TR198)", () => {
+  it("an open regroup is an unresolved action of kind regroup, the switch is SAFETY_EVENT and sensing is at the safety rate", async () => {
+    const tables = base();
+    tables.trip_meeting_checkpoints = [{ id: "cp1", trip_id: TRIP_ID, label: "Fountain", purpose: "regroup", status: "open" }];
+    tables.trip_meeting_checkpoint_participants = [
+      { checkpoint_id: "cp1", user_id: OWNER_ID, arrival_state: "arrived" },
+      { checkpoint_id: "cp1", user_id: MEMBER_ID, arrival_state: "pending" },
+    ];
+    install(tables);
+    const r = await get("today");
+    assert.equal(r.status, 200);
+    const p = r.body;
+    const action = p.unresolvedActions.find((a: any) => a.kind === "regroup");
+    assert.ok(action, "a regroup action");
+    assert.deepEqual(action.subjectIds, [MEMBER_ID]);
+    assert.equal(action.severity, "normal");
+    assert.equal(p.attention.mode, "SAFETY_EVENT");
+    assert.equal(p.sensing.level, "safety");
+    assert.ok(p.sensing.reasons.includes("SAFETY_EVENT_MODE"));
+  });
+});

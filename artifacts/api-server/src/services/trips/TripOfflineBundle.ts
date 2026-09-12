@@ -66,7 +66,8 @@ export interface TripOfflineBundle {
     activePlan: BundlePlan | null;
     plans: BundlePlan[];
     selectedRoute: null;
-    meetingPoints: never[];
+    /** §10.4 / §18.1 (2794): the open meeting checkpoints, so a crew can still regroup offline. */
+    meetingPoints: BundleMeetingPoint[];
     criticalAddresses: BundleAddress[];
     certifiedContext: { sourceTripVersion: number; certifiedAt: string; reading: string };
   };
@@ -140,6 +141,19 @@ export interface BundleInputs {
   commitments: readonly BundleCommitment[];
   plans: readonly BundlePlan[];
   reservations: ReadonlyArray<{ id: string; title: string; locationName: string | null; startsAt: string | null }>;
+  /** 2794: open meeting checkpoints, read under the operational gate; omitted when the gate is off. */
+  meetingPoints?: readonly BundleMeetingPoint[];
+}
+
+export interface BundleMeetingPoint {
+  id: string;
+  label: string;
+  lat: number;
+  lng: number;
+  meetAt: string | null;
+  purpose: "regroup" | "planned" | "safety";
+  /** The viewer's own arrival state at this checkpoint, when they are expected. */
+  myArrivalState: string | null;
 }
 
 export function buildOfflineBundle(input: BundleInputs, now: number, ttlMs: number = OFFLINE_BUNDLE_TTL_MS): TripOfflineBundle {
@@ -171,13 +185,15 @@ export function buildOfflineBundle(input: BundleInputs, now: number, ttlMs: numb
       activePlan: inProgress ?? nextConfirmed,
       plans,
       selectedRoute: null,
-      meetingPoints: [],
+      meetingPoints: [...(input.meetingPoints ?? [])],
       criticalAddresses,
       certifiedContext: { sourceTripVersion: input.sourceTripVersion, certifiedAt: nowIso, reading: `read at trip version ${input.sourceTripVersion} on ${nowIso}; stale after ${new Date(now + ttlMs).toISOString()} or once the trip moves past that version` },
     },
     notCarried: {
       selectedRoute: "route chains are route_plans, a separate system (TR437); not in the bundle",
-      meetingPoints: "§14.3 computes meeting points on demand; none are stored",
+      meetingPoints: (input.meetingPoints ?? []).length > 0
+        ? "carried: the open meeting checkpoints (2794); §14.3 candidates not yet agreed are computed on demand and are not"
+        : "no open meeting checkpoint (2794); §14.3 computes candidates on demand and none is stored until the crew agrees one",
       mapTiles: "a client permission the server does not hold",
     },
   };
