@@ -55,6 +55,7 @@ import * as Haptics from 'expo-haptics';
 import * as Clipboard from 'expo-clipboard';
 import { MessageEntrance, useMessageEntranceGate } from './MessageEntrance.tsx';
 import { SharedContextRail } from '../features/telegraph/index.ts';
+import { PortavaObjectMessage } from '../features/telegraph/sharing/PortavaObjectMessage.tsx';
 import { UserIdentityLink } from './interaction/UserIdentityLink.tsx';
 import { localDateKey, localTodayKey } from '../utils/localDate.ts';
 
@@ -819,6 +820,23 @@ export function GroupChatScreen({ type, id, title, memberLabel }: Props) {
           }
           const m = item.data;
           const mine = m.senderId === userId;
+          // Telegraph §6.2 PORTAVA_OBJECT — a typed REFERENCE, resolved for
+          // this viewer at render (§5.2) and degraded when revoked (§5.3).
+          if (m.msgType === 'portava_object') {
+            return (
+              <MessageEntrance
+                animate={shouldAnimateMessage(m.clientId ?? m.id, m.createdAt)}
+                style={[styles.bubbleRow, mine && styles.bubbleRowMine]}
+              >
+                <PortavaObjectMessage
+                  body={m.body ?? null}
+                  mine={mine}
+                  threadId={thread?.id ?? null}
+                  messageId={m.id}
+                />
+              </MessageEntrance>
+            );
+          }
           // System-event messages render as centred pill labels
           if (m.msgType === 'system') {
             return (

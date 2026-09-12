@@ -53,6 +53,7 @@ import { DiscoveryCardMessage } from '../../src/components/DiscoveryCardMessage'
 import { PostCardMessage } from '../../src/components/PostCardMessage';
 import { ThreadSafetySheet } from '../../src/components/ThreadSafetySheet';
 import { SharedContextRail, shouldCollapseOnScroll } from '../../src/features/telegraph/index.ts';
+import { PortavaObjectMessage } from '../../src/features/telegraph/sharing/PortavaObjectMessage.tsx';
 import { TelegraphRecommendationCard } from '../../src/components/TelegraphRecommendationCard';
 import type { TelegraphSuggestion, MeetupPrefill } from '../../src/services/telegraphChat';
 import { blockUser } from '../../src/services/blocks';
@@ -650,6 +651,7 @@ function MessageBubble({
   currentUserId,
   isCircleMember,
   onCircleCardPress,
+  threadId,
 }: {
   item: Message;
   mine: boolean;
@@ -670,6 +672,8 @@ function MessageBubble({
   currentUserId?: string;
   isCircleMember?: boolean | null;
   onCircleCardPress?: () => void;
+  /** Telegraph §5.3: the thread a shared card is being rendered in. */
+  threadId?: string | null;
 }) {
   const [pickerPayload, setPickerPayload] = useState<AddToTripPayload | null>(null);
   const [showOriginal, setShowOriginal] = useState(defaultShowOriginal || !autoTranslate);
@@ -715,20 +719,35 @@ function MessageBubble({
     );
   }
 
-  // Discovery card
-  if (item.msgType === 'system' && item.subtype === 'discovery_card') {
+  // Telegraph §6.2 PORTAVA_OBJECT — a typed REFERENCE, resolved for this
+  // viewer at render (§5.2 layer three) and degraded when revoked (§5.3).
+  if (item.msgType === 'portava_object') {
     return (
       <Pressable onLongPress={onLongPress} delayLongPress={300}>
-        <DiscoveryCardMessage body={item.body ?? ''} mine={mine} />
+        <PortavaObjectMessage
+          body={item.body ?? null}
+          mine={mine}
+          threadId={threadId ?? null}
+          messageId={item.id}
+        />
       </Pressable>
     );
   }
 
-  // Shared post card — sent from a post's ShareSheet
+  // Discovery card — §5.3: threadId makes the snapshot revocable.
+  if (item.msgType === 'system' && item.subtype === 'discovery_card') {
+    return (
+      <Pressable onLongPress={onLongPress} delayLongPress={300}>
+        <DiscoveryCardMessage body={item.body ?? ''} mine={mine} threadId={threadId ?? null} messageId={item.id} />
+      </Pressable>
+    );
+  }
+
+  // Shared post card — sent from a post's ShareSheet. §5.3 as above.
   if (item.msgType === 'system' && item.subtype === 'post_card') {
     return (
       <Pressable onLongPress={onLongPress} delayLongPress={300}>
-        <PostCardMessage body={item.body ?? ''} mine={mine} />
+        <PostCardMessage body={item.body ?? ''} mine={mine} threadId={threadId ?? null} messageId={item.id} />
       </Pressable>
     );
   }
@@ -1919,6 +1938,7 @@ export default function TelegraphThread() {
               <MessageBubble
                 item={m}
                 mine={mine}
+                threadId={id ?? null}
                 groupStart={item.groupStart}
                 groupEnd={item.groupEnd}
                 autoTranslate={autoTranslate}

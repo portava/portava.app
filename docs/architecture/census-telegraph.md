@@ -1109,7 +1109,7 @@ pattern §4 describes for the tree as a whole.
 
 ---
 
-## 10. §3 built, and §11.2's rail behaviours with it — the Shared Context Rail, end to end
+## 10. §3, §5 and §11 built: the Shared Context Rail, the share contract, and the end of the frozen card
 
 **Read against the branch `worktree-agent-adcce5a16df432ba7`, whose base is
 `014a25d56`.** §3 was the largest all-NOT-BUILT block in this census: nine rows,
@@ -1202,7 +1202,7 @@ depends on DDL no database has would stay W however good the code was.
   (`routes/telegraphSharedContext.ts:223#/threads/:threadId/conversation-header`)
   is §2.2's other two thirds. Both are mounted:
   `routes/index.ts:22#telegraphSharedContextRouter` imports and
-  `routes/index.ts:169#telegraphSharedContextRouter` uses.
+  `routes/index.ts:170#telegraphSharedContextRouter` uses.
   A failed membership read is a 500 and a failed RESOLVER read sets
   `incomplete: true` rather than returning an empty rail — "we could not tell"
   and "you share nothing with this person" are different statements and the
@@ -1216,9 +1216,9 @@ depends on DDL no database has would stay W however good the code was.
   and `SharedContextRail.tsx` renders them. The rail is MOUNTED on both
   conversation surfaces, which is what "at the top of each conversation" means
   in a tree that has two of them:
-  `travel-buddy-standalone/app/messages/[id].tsx:1825#SharedContextRail` (direct
+  `travel-buddy-standalone/app/messages/[id].tsx:1844#SharedContextRail` (direct
   and booking threads) and
-  `travel-buddy-standalone/src/components/GroupChatScreen.tsx:798#SharedContextRail`
+  `travel-buddy-standalone/src/components/GroupChatScreen.tsx:799#SharedContextRail`
   (trip and circle threads).
 - **§11.2 row 5, the part that is easy to get wrong.** A critical change
   (a plan cancelled, a start time moved) is promoted until acknowledged, and
@@ -1252,7 +1252,7 @@ depends on DDL no database has would stay W however good the code was.
 
 | id | was | now | why |
 | --- | --- | --- | --- |
-| T13 | N | **C** | **Rail at the top of each conversation showing mutually relevant objects** — The component exists and is mounted on BOTH conversation surfaces — `travel-buddy-standalone/app/messages/[id].tsx:1825#SharedContextRail` and `travel-buddy-standalone/src/components/GroupChatScreen.tsx:798#SharedContextRail` — between the header and the message list, fed by a mounted route (`routes/index.ts:169#telegraphSharedContextRouter`). What would turn this red (P24): a third conversation surface appearing without it; nothing pins that. |
+| T13 | N | **C** | **Rail at the top of each conversation showing mutually relevant objects** — The component exists and is mounted on BOTH conversation surfaces — `travel-buddy-standalone/app/messages/[id].tsx:1844#SharedContextRail` and `travel-buddy-standalone/src/components/GroupChatScreen.tsx:799#SharedContextRail` — between the header and the message list, fed by a mounted route (`routes/index.ts:170#telegraphSharedContextRouter`). What would turn this red (P24): a third conversation surface appearing without it; nothing pins that. |
 | T14 | N | **C** | **Eligibility: created by me, joined/saved/attended by them** — `relationshipFor` reads the source object's own owner column and returns `CREATED_BY_ME_JOINED_BY_THEM` when the viewer created it and a conversation counterpart joined (`services/telegraph/sharedContext.ts:344#resolveSharedTrips`, `:405#resolveSharedMeetups`, `:467#resolveSharedEvents`). Asserted against a trip Alice owns and Bob joined, `test/telegraphSharedContext.test.ts:498`. |
 | T15 | N | **C** | **Eligibility: created by them, joined/saved/attended by me** — Same resolver, the other branch — asserted against a meetup Bob created and Alice accepted, `test/telegraphSharedContext.test.ts:498`. |
 | T16 | N | **C** | **Eligibility: both members of the same Trip, Plan, Crew, Event or booking** — Four resolvers, four canonical membership tables: `trip_members` (the crew table — a trip's crew IS `trip_members`; `circle_memberships` is a personal address book, not a shared crew, and is deliberately not read), `meetup_invites` (Plan), `event_attendees` (Event), `rent_buddy_bookings` (booking). `services/telegraph/sharedContext.ts:521#resolveSharedBookings` is the booking one. |
@@ -1265,7 +1265,7 @@ depends on DDL no database has would stay W however good the code was.
 | T128 | N | **C** | **Rail behaviour: active plan → expanded NOW card at top** — Server decides the mode (`services/telegraph/sharedContext.ts:717#railModeFor`) so client and server cannot disagree; the client renders the first NOW item expanded (`railBehavior.component.test.ts:80`, `SharedContextRail.component.test.tsx:83`). |
 | T129 | N | **C** | **Rail behaviour: upcoming only → compact horizontal cards** — `railModeFor` returns COMPACT_UPCOMING when `now` is empty and `upcoming` is not; rendered as a horizontal card row (`railBehavior.component.test.ts:87`). |
 | T130 | N | **C** | **Rail behaviour: none → collapsed summary ("3 shared plans · 1 past trip")** — `collapsedSummary` (`services/telegraph/sharedContext.ts:725#collapsedSummary`) renders the spec's example string exactly, and the rail collapses to it (`railBehavior.component.test.ts:94`). |
-| T131 | N | **C** | **Rail behaviour: user scrolls down → rail collapses, messages get priority** — `shouldCollapseOnScroll` (`travel-buddy-standalone/src/features/telegraph/sharedContext/railBehavior.ts:29#shouldCollapseOnScroll`) is driven by the conversation's own scroll handler (`travel-buddy-standalone/app/messages/[id].tsx:1845#setRailCollapsed`) and collapses the rail to one line (`railBehavior.component.test.ts:66`, `SharedContextRail.component.test.tsx:148`). |
+| T131 | N | **C** | **Rail behaviour: user scrolls down → rail collapses, messages get priority** — `shouldCollapseOnScroll` (`travel-buddy-standalone/src/features/telegraph/sharedContext/railBehavior.ts:29#shouldCollapseOnScroll`) is driven by the conversation's own scroll handler (`travel-buddy-standalone/app/messages/[id].tsx:1864#setRailCollapsed`) and collapses the rail to one line (`railBehavior.component.test.ts:66`, `SharedContextRail.component.test.tsx:148`). |
 | T132 | N | **C** | **Rail behaviour: critical plan change → temporary promoted change card until acknowledged** — `detectCriticalChanges` (`travel-buddy-standalone/src/features/telegraph/sharedContext/railBehavior.ts:66#detectCriticalChanges`) diffs the seen projection against the fetched one for a cancellation or a moved start; the card is promoted above the scroll rule and disappears only on acknowledgement, per change (`railBehavior.component.test.ts:172`). The acknowledgement primitive T132's old evidence said did not exist is this. |
 | T134 | W | **C** | **Reduced-motion behaviour for media, GIFs and animations** — The wrong gate is no longer the only gate: `travel-buddy-standalone/src/components/MessageEntrance.tsx:55#useReducedMotionSetting` consults the OS setting and returns the static View, proved both ways in `travel-buddy-standalone/src/features/telegraph/__tests__/MessageEntrance.reducedMotion.component.test.tsx:53`. Scoped honestly: GIFs and inline video are still N/? rows of their own (T52, T61, T64) — this row is the animation half, which is what Telegraph actually animates today. |
 | T4 | N | **W** | **Pillar **Together** — every conversation can expose shared Trips, plans, events, places, Memories, history** — Five of six now: Trips, plans (meetups), events, places (both-saved `WANT_TO_DO`) and history (`past[]`) all reach the conversation through the rail. **Memories do not** — no resolver reads `memories`, and §10's Memory Note rows (T117–T122) are still N. |
@@ -1331,5 +1331,147 @@ Telegraph file ages it. Adding both is an owner decision — it would immediatel
 mark this census stale for every lane currently writing into it — and is left
 open here rather than taken unilaterally.
 
-Headline after §10 in this worktree (last statement wins): C=114 W=172 N=143 X=0
+### 10.5 §5 Universal Portava Sharing — the contract, and the end of the frozen snapshot
+
+§5 scored one C out of twelve, and the row that mattered most was T46, the only
+verdict in this census phrased as **"Violated, not merely absent"**: a shared
+card was the JSON the sender serialised at send time, rendered forever, with no
+refetch and no authorization call. A place made private, or a post deleted,
+after sharing still rendered in full inside the thread. That is §5.3's exact
+prohibition — *"Telegraph is never a backdoor into revoked source content"* —
+and it was being violated on every thread that had ever carried a card.
+
+- **§5.1's interface exists, verbatim, and is instantiated per family.**
+  `TelegraphShareable`
+  (`services/telegraph/shareables.ts:79#TelegraphShareable`) declares
+  `getSharePreview` / `getCurrentState` / `getAvailableActions` /
+  `getDeepLink`, and `shareableFor`
+  (`services/telegraph/shareables.ts:527#shareableFor`) returns one for any of
+  fifteen object types across §5's five families —
+  `services/telegraph/shareables.ts:517#SHAREABLE_OBJECT_TYPES`. A family with
+  no loader returns `null`, and the resolver answers `not_found` rather than
+  inventing a card: an unknown family must not silently become a live
+  reference.
+- **§5.2's third layer is the whole point, and it is computed per read.**
+  `resolveShareProjections`
+  (`services/telegraph/shareables.ts:598#resolveShareProjections`) takes a
+  batch of references and a VIEWER and returns, for each, either a projection
+  built from the live source row or an explicit unavailable state with a
+  reason. An unavailable reference carries `projection: null`, `actions: []`
+  and nothing else — the title, the image and the blurb do not survive
+  revocation. The loaders never even construct a projection for an object they
+  are refusing, so the backdoor is closed twice; `test/telegraphShare.test.ts:323`
+  measures that redundancy (opening it takes two mutations, not one).
+- **Every loader fails CLOSED.** supabase-js resolves on a database error, so
+  an unchecked read turns "we could not tell" into "no such row" — and on this
+  path the permissive reading is the dangerous one. All nine reads bind and
+  read `error`, and an unreadable source degrades with reason `unknown`
+  (`test/telegraphShare.test.ts:401`, four tables).
+- **Memory visibility is refused rather than approximated.** `loadMemory`
+  (`services/telegraph/shareables.ts:404#loadMemory`) grants `public`, an
+  explicit `allowed_user_ids` entry, or ownership, and degrades
+  `friends_only` / `trip_crew` / `circle_only` to `private`. Guessing at a
+  relationship read owned by the Memories surface is exactly the backdoor §5.3
+  forbids, so the ladder stops where this module's knowledge stops
+  (`test/telegraphShare.test.ts:362`).
+- **The envelope is a REFERENCE.** `PortavaObjectBody`
+  (`services/telegraph/shareables.ts:676#PortavaObjectBody`) carries five
+  fields — kind, objectType, objectId, the sender's caption, and a version —
+  and nothing from the object. `buildPortavaObjectBody` (`:687#buildPortavaObjectBody`)
+  is the only constructor and `parsePortavaObjectBody` (`:702#parsePortavaObjectBody`)
+  refuses a future version rather than half-reading it.
+- **Two routes, mounted.** `POST /threads/:threadId/share`
+  (`routes/telegraphShare.ts:146#/threads/:threadId/share`) applies the SAME
+  four gates the ordinary send path applies — kill switch, active membership,
+  1:1 block guard, E2EE refusal
+  (`routes/telegraphShare.ts:84#guardThreadWrite`) — and then resolves the
+  object FOR THE SENDER and refuses when the sender cannot open it. Sharing is
+  not a way to launder a reference to something you were never authorized to
+  see. `POST /threads/:threadId/share-projections`
+  (`routes/telegraphShare.ts:256#/threads/:threadId/share-projections`) is the
+  batch resolve. Both mounted at `routes/index.ts:171#telegraphShareRouter`.
+- **The client half, including the cards that were already wrong.**
+  `travel-buddy-standalone/src/features/telegraph/sharing/useShareRevocation.ts:50#useShareRevocation`
+  is a THREE-state hook — available / unavailable / unknown — and the third
+  state is load-bearing: no thread id, an unmappable legacy `sourceType`, or a
+  failed resolve all mean "could not tell", and a card in that state renders
+  exactly as it did before §5 existed. Collapsing `unknown` into `available` is
+  the backdoor; collapsing it into `unavailable` blanks every card on a network
+  blip. `DiscoveryCardMessage`
+  (`travel-buddy-standalone/src/components/DiscoveryCardMessage.tsx:93#revocation.state`)
+  and `PostCardMessage`
+  (`travel-buddy-standalone/src/components/PostCardMessage.tsx:85#revocation.state`)
+  now take an optional `threadId` and render a revoked notice instead of the
+  snapshot; `PortavaObjectMessage`
+  (`travel-buddy-standalone/src/features/telegraph/sharing/PortavaObjectMessage.tsx:28#PortavaObjectMessage`)
+  is the new kind, dispatched on both conversation surfaces
+  (`travel-buddy-standalone/app/messages/[id].tsx:727#PortavaObjectMessage`,
+  `travel-buddy-standalone/src/components/GroupChatScreen.tsx:831#PortavaObjectMessage`).
+
+### 10.6 §5 row moves
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| T41 | N | **C** | **`TelegraphShareable` interface — `getSharePreview` / `getCurrentState` / `getAvailableActions` / `getDeepLink`** — all four methods exist under those names (`services/telegraph/shareables.ts:79#TelegraphShareable`) and are implemented for fifteen object types (`:527#shareableFor`), asserted family by family at `test/telegraphShare.test.ts:252`. |
+| T44 | N | **C** | **Four-layer model: Share projection — what the recipient is *currently* authorized to see** — the layer exists and is computed per (viewer, object) on every read (`services/telegraph/shareables.ts:598#resolveShareProjections`); the card is no longer whatever the sender serialised. |
+| T46 | W | **C** | **Revocation: a deleted/private/unauthorized source degrades to unavailable; never a backdoor into revoked content** — the violation is closed on both ends. Server: an unavailable reference carries `projection: null` and `actions: []`, proved by the assertion that the deleted post's own words do not appear anywhere in the serialised response (`test/telegraphShare.test.ts:323`). Client: the two cards that WERE frozen snapshots now re-resolve and degrade (`travel-buddy-standalone/src/features/telegraph/__tests__/shareRevocation.component.test.tsx:134`, `:165`). |
+| T43 | W | **C** | **Four-layer model: Source object** — a reference is now a RESOLVED reference, not a payload field: the envelope carries only `(objectType, objectId)` (`services/telegraph/shareables.ts:676#PortavaObjectBody`) and the renderer dereferences it through the registry. The census's objection — "a payload field, not a resolved reference … nothing dereferences it at render" — is answered by `travel-buddy-standalone/src/features/telegraph/sharing/PortavaObjectMessage.tsx:28#PortavaObjectMessage`. |
+| T55 | W | **C** | **Message kind PORTAVA_OBJECT** — it is now a typed kind, not `system` plus a bespoke subtype: the route writes `msg_type='portava_object'` (`routes/telegraphShare.ts:146#/threads/:threadId/share`), `messages.msg_type` carries no CHECK so this needs no migration (`baseline/20260819_baseline_structure.sql:7565`), and both conversation surfaces dispatch it. |
+| T35 | W | **W** | **One consistent share contract for all eligible Portava content** — the contract now EXISTS and fifteen types implement it, which is the half that was missing. It stays W because the four legacy producers the census named still write their own bespoke JSON (`discovery_card`, `post_card`, `compass_card`, `circle_status_card`): the new cards are revocable, but they are revocable by MAPPING the old payload, not by the old producers having moved to the contract. One contract plus four legacy shapes is not yet one shape. |
+| T36 | W | **W** | **Object family Social — profile, post, Highlight, public Memory derivative, Memory Note, Stamp** — profile, post and Memory are now shareable through the contract (`services/telegraph/shareables.ts:517#SHAREABLE_OBJECT_TYPES`). Highlight and Stamp have no loader and `STAMP` is not in the registry, so three of six. |
+| T37 | N | **W** | **Object family Travel — Trip, Trip stage, plan, event, route, reservation-safe derivative, layover plan** — was "none of the seven is shareable into a thread"; four now are (TRIP, TRIP_STAGE, PLAN/MEETUP, EVENT), each with its own authorization read. Route, reservation-safe derivative and layover plan have no loader. |
+| T38 | W | **W** | **Object family Places — place, Hidden Gem, map pin, neighborhood, meetup point** — place, gem, map pin and meetup point resolve through the contract; NEIGHBORHOOD is in the vocabulary and deliberately has no loader, so `shareableFor` returns null for it rather than pretending (`test/telegraphShare.test.ts:294`). Four of five. |
+| T39 | W | **W** | **Object family Services — Buddy profile/service, eligible booking card, Visa Buddy operational card** — the booking card now resolves with its two-party authorization (`services/telegraph/shareables.ts:527#shareableFor`), and BUDDY_SERVICE maps to the same loader. There is no Visa Buddy card and no standalone Buddy profile share. |
+| T3 | W | **W** | **Pillar Share — any eligible Portava object moves through a safe permission-aware share projection** — the "permission-aware share projection" half is now real and is exactly what §5.2 asked for. It stays W on "any eligible object": four object families are covered and Media (§5's fifth family — photo, video, voice, GIF, file) is not a shareable type at all; it travels as message media, which is a different mechanism. |
+
+### 10.7 The §5 tests, and how each was shown red
+
+`test/telegraphShare.test.ts` — 34 tests, node:test, the real registry and the
+real router over an in-memory PostgREST-shaped fake. Four mutations, each
+observed red and reverted:
+
+| mutation | result |
+| --- | --- |
+| `loadPost` ignores `deleted_at` / `status` | pass 31 / fail 3 |
+| a projection BUILT for the deleted row AND carried on the unavailable branch | pass 32 / fail 2 — carrying it alone stays green, because a loader never builds one for an object it refuses; that redundancy is deliberate and this is how it was measured |
+| all nine `if (error)` guards disabled | pass 30 / fail 4 |
+| the sender-side `getCurrentState` check dropped from `POST /share` | pass 33 / fail 1 |
+
+`travel-buddy-standalone/src/features/telegraph/__tests__/shareRevocation.component.test.tsx`
+— 11 tests against the REAL card components and the REAL hook, with only the
+network call stubbed. Shown red by disabling `DiscoveryCardMessage`'s revoked
+branch (its pre-§5 behaviour, 1 failed / 10 passed) and by making a failed
+resolve read as `unavailable` (1 failed / 10 passed). Both restored: 11/11.
+
+### 10.8 The §5 ceiling
+
+No migration: `messages.msg_type` has no CHECK constraint, so the
+PORTAVA_OBJECT kind needs no DDL, and every table the loaders read is in
+`baseline/20260907_production_tables.txt`. That is why T41, T43, T44, T46 and
+T55 reach C rather than W.
+
+What is NOT claimed:
+
+- **The old producers have not moved.** `DiscoveryShareSheet`, the post
+  ShareSheet, the Compass tray and `routes/circle.ts` still write their own
+  JSON shapes. Their cards are now revocable because the client MAPS
+  `sourceType` into the §5 vocabulary
+  (`travel-buddy-standalone/src/features/telegraph/sharing/shareApi.ts:148#legacySourceTypeToObjectType`),
+  and a `sourceType` outside that map — `for_you`, `compass_card` — stays in
+  the `unknown` state and renders as before. T35 stays W for exactly this.
+- **Nothing sends a PORTAVA_OBJECT yet from the UI.** The route is mounted and
+  the renderer is wired on both surfaces, but no share sheet calls
+  `shareObjectIntoThread`
+  (`travel-buddy-standalone/src/features/telegraph/sharing/shareApi.ts:101#shareObjectIntoThread`).
+  A traveler will SEE a correctly-degrading card; they cannot yet CREATE one
+  without the API. That is why T36–T39 stay W rather than moving on coverage
+  alone.
+- **Media is not a shareable family.** §5's fifth family is carried by
+  `messages.media_*`, whose CHECK is `('image','video')`
+  (`baseline/20260819_baseline_structure.sql:7573`) — voice, GIF and file need
+  DDL, and those rows (T40, T52, T53) are untouched here.
+- **Branch, not deployment.** Built on a branch is not merged; merged is not
+  deployed.
+
+Headline after §10 in this worktree (last statement wins): C=119 W=170 N=140 X=0
 — `pnpm -s check:census-integrity`, which parses 429 of the 451 requirements (22 are counted in prose it cannot read, and the 3 CANNOT-VERIFY rows are among them, which is why it reports X=0 where §1 states 3).
