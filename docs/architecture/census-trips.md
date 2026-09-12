@@ -24,10 +24,10 @@ preserved in §36.1 as the record of that measurement.
 | --- | --- |
 | **Denominator (testable requirements)** | **451** |
 | BUILT-AND-CORRECT | **311** |
-| BUILT-BUT-WRONG | **116** |
-| NOT-BUILT | **23** |
+| BUILT-BUT-WRONG | **121** |
+| NOT-BUILT | **18** |
 | CANNOT-VERIFY | **1** |
-| **CONSTRUCTED%** = (C+W)/451 | **427 / 451 = 94.7 %** |
+| **CONSTRUCTED%** = (C+W)/451 | **432 / 451 = 95.8 %** |
 | **CORRECT%** (raw) = C/451 | **311 / 451 = 69.0 %** |
 
 > **RESTATED 2026-09-11 (§38): 89 → 87 CORRECT, 127 → 129 WRONG.** §38 re-derived
@@ -298,6 +298,13 @@ preserved in §36.1 as the record of that measurement.
 > both screens, with no percentage and no trend (TR142). Two W → C, one N → C.
 > No migration; the crew layer's ceiling is `trip_crew_map_enabled`'s
 > production value.
+
+> **RESTATED 2026-09-12 (§59): 311 CORRECT unchanged, 116 → 121 WRONG,
+> 23 → 18 NOT-BUILT. CONSTRUCTED 94.7 % → 95.8 %, CORRECT 69.0 % unchanged.**
+> §59 builds nothing: four rows re-read against 2782's transport segment —
+> cost, party size, reliability, fallback references (TR268–TR271), graded N
+> before the object that carries them existed — and one against §48's stored
+> bundle (TR174) move N → W; TR267, TR133 and TR440 hold with truer evidence.
 | **CORRECT% (spec-attributable)** | **WITHDRAWN — not measured. See §36.4** |
 | CANNOT-VERIFY share | **1 / 451 = 0.2 %** |
 
@@ -6357,3 +6364,84 @@ the switch here), TR439 (W — `crew/` has a file of its own now,
 `trip_crew_map_enabled` is in production and seeded FALSE (`0041:63`):
 the flag's value is the crew layer's ceiling, as it is the crew map's.
 Readiness sits behind `trip_readiness_enabled`. Nothing here is deployed.
+
+## 59. Five rows re-read against what §41 and §48 built — nothing new is built here
+
+**Read against the branch `claude/sweet-fermat-fmx7up`.** TR268–TR271 were
+graded N in the first read against `route_legs` — *"No cost on a route
+leg"*, *"Absent"* — and §41's 2782 then built §15.1's `TransportSegment`
+with exactly the four attributes the rows name. TR283 (the contract) moved
+N → W in §41; these four, which describe its fields, did not: the census
+graded the object and forgot the rows about its columns. TR174 was graded N
+(*"No offline map cache (see §18.1)"*) before §48 built the bundle and §57
+stored it. TR133 and TR440 are re-read with truer evidence and hold. No
+code changes in this section.
+
+### 59.1 What was re-read, and where
+
+- **TR268 cost, TR269 party size, TR270 reliability, TR271 fallback
+  references.** `trip_transport_segments` (2782) carries `cost_minor`
+  (`src/migrations/2782_trip_transport_segments.sql:60#cost_minor`),
+  `party_size` (`src/migrations/2782_trip_transport_segments.sql:58#party_size           integer`),
+  `reliability` (`src/migrations/2782_trip_transport_segments.sql:59#reliability          numeric`)
+  and `fallback_of` (`src/migrations/2782_trip_transport_segments.sql:63#fallback_of          uuid`);
+  since §53 the reliability is estimated from a mode baseline, the segment's
+  state and §16's signals, every factor named
+  (`lib/tripTransportReliability.ts:52#export function estimateTransportReliability(`),
+  and served on the Pulse (TR287, C). `route_legs` — the second itinerary
+  system, TR437 — still carry none of the four, which is why these rows are
+  W and not C even before the deployment cap; and no database has 2782.
+- **TR267 future-time traffic / transit assumptions holds N**, with truer
+  evidence: the travel-time query carries `departAt`
+  (`services/trips/TravelTimeProvider.ts:51#departAt: Date;`) — *"a routed
+  provider needs it; the straight-line one ignores it, and says so rather
+  than pretending"*. The contract admits the dependence; nothing computes
+  it (TR128, TR412).
+- **TR174 cached event maps.** The offline bundle carries the trip's plans
+  with their points and the open meeting checkpoints
+  (`services/trips/TripOfflineBundle.ts:188#meetingPoints: [...(input.meetingPoints`),
+  the client keeps it byte for byte
+  (`travel-buddy-standalone/src/features/trips/offline/tripOffline.ts:124#export async function storeBundle(`),
+  and the tiles are named as not carried — *"a client permission the server
+  does not hold"* (`services/trips/TripOfflineBundle.ts:197#mapTiles: "a client permission`).
+  The Map's own cache keeps its objects with a freshness that only decays
+  (`travel-buddy-standalone/src/features/map/cache/mapCache.ts:472#rehydrate(`).
+  The points of an event's map are cached; the map is not. W.
+- **TR133 holds W, at two of four.** Compass's `get_freedom_windows`
+  (`compass/CompassTools.ts:1785#case "get_freedom_windows":`) consumes the
+  engine, and so do Saved Ideas: the opportunity projection compiles the
+  crew's saved places against each window rather than computing free time
+  of its own (`services/trips/TripOpportunityProjection.ts:227#from("trip_saved_places")`).
+  Discovery and Buddy matching still compute nothing from the windows.
+- **TR440 holds W, with the pieces named.** The command route exists
+  (`routes/tripCommands.ts:140#router.post("/trips/:tripId/commands"`); the
+  read routes are substantial; the outbox consumer and the projection
+  writer are one worker
+  (`lib/mapTripProjectionWorker.ts:124#export function startTripMapProjectionScheduler(`),
+  started beside the reminder, live-share and retention schedulers
+  (`src/index.ts:163#startTripMapProjectionScheduler();`); the reservation
+  extractor is the one integration adapter
+  (`routes/tripReservations.ts:157#extractReservations(text)`). What §24
+  names exists piece by piece; the `server/trips/` layout, with an outbox
+  worker distinct from the projection workers, does not — the same shape as
+  TR439 on the client.
+
+### 59.2 Row moves
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| TR268 §14.2 route chains carry cost | N | **W** | On the transport segment (2782, `cost_minor`); not on a route leg. No database has 2782. |
+| TR269 §14.2 route chains carry party size | N | **W** | `party_size` on the segment, stated by the caller (TR150, TR286). No database has 2782. |
+| TR270 §14.2 route chains carry reliability | N | **W** | `reliability` on the segment, estimated with its factors named (§53). No database has 2782. |
+| TR271 §14.2 route chains carry fallback route references | N | **W** | `fallback_of` on the segment; `route_plans` carries no alternative. No database has 2782. |
+| TR174 §10.4 Cached event maps | N | **W** | The bundle carries the points and the client keeps them; the tiles are named as not carried. |
+
+**Rows looked at that did not move:** TR267 (N — the query carries the
+departure time and nothing consumes it), TR133 (W, two of four), TR440 (W),
+TR283 (W), TR287 (C), TR437 (N).
+
+### 59.3 The ceiling
+
+No code changed. Four of the five moves rest on 2782, which no database
+has; the fifth on §48's bundle, issued only where its secret is set.
+Nothing here is deployed.
