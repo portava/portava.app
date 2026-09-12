@@ -15,7 +15,7 @@ import { useBlockedIds } from '../context/BlockedIdsContext.tsx';
 import { HighlightRing } from './HighlightRing.tsx';
 import { HighlightViewer } from './HighlightViewer.tsx';
 import { useHighlightRingState } from '../hooks/useHighlightRingState.ts';
-import { color, space, radius, type as t, avatar } from '../theme/tokens.ts';
+import { color, space, radius, type as t, typography, avatar } from '../theme/tokens.ts';
 import { TG, TG_AVATAR } from '../theme/telegraphTokens.ts';
 import { TelegraphAvatar, TelegraphRow } from './telegraph/TelegraphPrimitives.tsx';
 import { KeyboardSafeScrollView } from './ui/KeyboardSafeView.tsx';
@@ -26,6 +26,10 @@ import { circleCardInboxPreview } from './CircleStatusCardMessage.logic';
 import { primaryIdentityText, secondaryIdentityText } from '../lib/displayIdentity.ts';
 import { UserIdentityLink } from './interaction/UserIdentityLink.tsx';
 import { errorCopy } from '../lib/errorCopy.ts';
+// Telegraph §21 — object-aware, authorization-scoped message search. A
+// different question from this screen's own thread filter; see the row that
+// opens it.
+import { TelegraphSearchScreen } from '../features/telegraph/components/TelegraphSearchScreen.tsx';
 
 type FilterKey = 'all' | 'direct' | 'trips' | 'circles' | 'unread' | 'requests';
 
@@ -338,6 +342,8 @@ export function TelegraphInboxScreen({ topInset = 0 }: Props) {
   } = useIncomingMessageRequests();
 
   const [search, setSearch] = useState('');
+  /** Telegraph §21 — the server-backed message search, opened from the row below. */
+  const [messageSearchOpen, setMessageSearchOpen] = useState(false);
   const [filter, setFilter] = useState<FilterKey>('all');
   const [blockedIds, setBlockedIds] = useState<Set<string>>(new Set());
   const { blockerIds } = useBlockedIds();
@@ -437,6 +443,46 @@ export function TelegraphInboxScreen({ topInset = 0 }: Props) {
               returnKeyType="search"
             />
           </View>
+
+          {/*
+            Telegraph §21. The box above filters the conversations already
+            loaded on this device — that is what census T272 measured, and it
+            is still the right behaviour for "find that thread". Searching the
+            MESSAGES inside them is a different question with a different
+            authorization story, so it is a different surface, and the handoff
+            carries what the person already typed.
+          */}
+          {search.trim().length >= 2 && (
+            <Pressable
+              testID="telegraph-open-message-search"
+              accessibilityRole="button"
+              accessibilityLabel={`Search messages for ${search.trim()}`}
+              style={s.messageSearchRow}
+              onPress={() => setMessageSearchOpen(true)}
+            >
+              <Search size={14} color={color.signal} />
+              <Text style={s.messageSearchText} numberOfLines={1}>
+                {`Search messages for “${search.trim()}”`}
+              </Text>
+            </Pressable>
+          )}
+
+          <Modal
+            visible={messageSearchOpen}
+            animationType="slide"
+            onRequestClose={() => setMessageSearchOpen(false)}
+          >
+            <View style={s.messageSearchModal}>
+              <TelegraphSearchScreen
+                initialQuery={search.trim()}
+                onClose={() => setMessageSearchOpen(false)}
+                onOpenMessage={(hit) => {
+                  setMessageSearchOpen(false);
+                  router.push(`/messages/${hit.conversationId}`);
+                }}
+              />
+            </View>
+          </Modal>
 
           <ScrollView
             horizontal
@@ -961,6 +1007,16 @@ const s = StyleSheet.create({
     height: 40,
   },
   searchIcon: { marginRight: space.sm },
+  messageSearchRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.sm,
+    marginHorizontal: space.xl,
+    marginBottom: space.sm,
+    paddingVertical: space.sm,
+  },
+  messageSearchText: { ...(typography.caption as object), color: color.signal, flexShrink: 1 },
+  messageSearchModal: { flex: 1, backgroundColor: color.paper },
   searchInput: {
     flex: 1,
     height: 40,

@@ -1389,4 +1389,97 @@ the §22 detectors are PATTERNS, so an attacker who reads this file can write
 around them — which is the honest limit of any lexical detector and the reason
 the signals annotate rather than block.
 
-Headline after §11 in this worktree (last statement wins): C=116 W=170 N=142 X=0
+
+---
+
+### 11.5 The traveller sees it: §22's two surfaces, §21's screen, §16.2's data saver
+
+§11.4 left T282 at W for one stated reason — "no client surface renders
+`safetySignals` yet, so a traveller does not see the warning" — and T280 at N
+because the shield is a client control. This batch is the client half, in
+`travel-buddy-standalone/src/features/telegraph/`, the feature layout
+`src/features/wall/` and `src/features/trips/` established.
+
+**§22 travel scam signals, on screen.**
+`src/features/telegraph/components/MessageSafetyBanner.tsx:87` renders the
+server's `safetySignals` under the message it belongs to. The copy names the
+pattern and gives one line of advice a person can act on; it does NOT repeat the
+matched phrase, because quoting a scammer's own words as a headline reads as the
+app endorsing them, and the test asserts the match string never renders. It is
+dismissible per message and per mount — an undismissable warning is one people
+learn to scroll past, and a persisted dismissal would let one accidental tap
+silence a warning somebody would want back on a second read.
+
+**§22 stranger media: covered, not blurred.** `StrangerMediaShield.tsx:57` does
+not mount its children until the person taps Show, and the test asserts the
+child is absent rather than merely hidden. That is the whole control and the
+reason a blur would not be one: a blur has already fetched the bytes and
+decoded them, and a video poster frame IS the first frame. The decision is the
+server's — `domain/telegraph/policies/senderConnectedness.ts:66` resolves it
+once per page over the distinct non-self senders, treats a trip or circle roster
+as the acceptance itself (`:75`), and fails CLOSED: if either relationship read
+errors, EVERY sender on the page reads unconnected (`:121`), because rescuing a
+partial answer from the half that succeeded would shield an arbitrary subset.
+The read path attaches it at `routes/messaging.ts:2054`, and the thread renders
+it at `app/messages/[id].tsx:1893`.
+
+One ceiling is written into the client type rather than left implicit
+(`src/services/messaging.ts` `senderConnected`): an ABSENT field is a server
+older than this client and is NOT treated as "stranger", because shielding every
+photo in every thread because the server is old would make the control look
+broken rather than absent. Only an explicit `false` shields.
+
+**§21 on screen.** `TelegraphSearchScreen.tsx:57` prints §21's five bucket
+counts before any result, because "there is one PLAN about sky36" is usually the
+answer. It keeps three empty states distinct — "type more", "nothing matched"
+and "we could not search everywhere" — and the third is the one that matters: a
+degraded search rendered as no-results tells a person their own message does not
+exist. It also explains a §14.3 window when one applied, so a member added to a
+trip chat last week does not conclude the search is broken. It is reachable from
+the inbox: the existing box still filters loaded threads (which is the right
+behaviour for "find that thread", and is what T272 measured), and a row appears
+at two characters offering the different question
+(`src/components/TelegraphInboxScreen.tsx:457`), carrying what was already
+typed.
+
+**§16.2 / §17.4 data saver, and the ladder.**
+`src/features/telegraph/hooks/useDataSaver.ts:47` is §17.4's order as a list —
+ai, typing, reactions, mediaPreview, media, then text and safety — and
+`:80` refuses to shed the last two at any level, which is §17.4's actual
+sentence expressed as a line of code a future "aggressive" level would have to
+delete. Two consumers, chosen to match the ladder's own order: the AI tray is
+not rendered and therefore not fetched when `mayLoad('ai')` is false
+(`app/messages/[id].tsx:2039`), and media is withheld behind the same cover the
+stranger shield uses, with different copy, when `mayLoad('mediaPreview')` is
+false (`:1901`). The control a person can reach is
+`DataSaverRow.tsx:33`, placed in the thread's own settings sheet
+(`src/components/TranslationSettingsSheet.tsx:106`) rather than six taps away —
+that sheet is where somebody is when they notice media eating their data.
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| T280 | N | **C** | §22 stranger media. `StrangerMediaShield.tsx:57` does not mount the media until the person asks; the server decides who is a stranger (`domain/telegraph/policies/senderConnectedness.ts:66`, fail-closed at `:121`) and the thread renders that decision (`app/messages/[id].tsx:1893`). The original row's "renders and autoplays unconditionally" is no longer true of any path: a shielded video's poster is not rendered either. |
+| T282 | W | **C** | §22 travel scam signals, end to end. All six families detected server-side (`domain/telegraph/policies/travelScamSignals.ts:48`, `:167`), attached to the recipient's read (`routes/messaging.ts:2054` area), and now rendered (`MessageSafetyBanner.tsx:87`) with advice and a report action. §11.4 held this at W precisely for the missing client half; that half is here. |
+| T227 | N | **C** | §16.2 data saver. A real setting (`useDataSaver.ts:98`), a reachable control (`DataSaverRow.tsx:33` in `TranslationSettingsSheet.tsx:106`), and two consumers that actually withhold — AI (`app/messages/[id].tsx:2039`) and media (`:1901`). Text, status and safety are never shed, by construction (`useDataSaver.ts:80`). |
+| T239 | N | **W** | §17.4 low-bandwidth degradation. The LADDER exists and is ordered exactly as §17.4 lists it (`useDataSaver.ts:47`), and text and safety are unshed-able. W and not C for the half the row also names: there is still **no bandwidth SIGNAL**. The ladder is driven by a person's explicit setting, not by a measured connection, so nothing degrades automatically when the network gets bad. |
+| T272 | C | **C** | Re-stated, not re-derived: §11.2 moved this on the server routes; the client surface (`TelegraphSearchScreen.tsx:57`, reachable at `TelegraphInboxScreen.tsx:457`) is now built too, so the row is C on both halves rather than on one. |
+
+**Rows looked at that did not move:** T223 stays N — resumable upload is a
+transport change, not a surface. T225 stays N — no audio kind exists to generate
+a waveform from. T221/T222/T224 stay W — message media still writes
+`media_url` onto the row rather than a `MediaAsset`, which is a migration. T258
+stays C.
+
+**The ceiling for §11.5.** No migration and no flag. Three things bound it: the
+branch is not merged; `senderConnected` is absent on any server older than this
+branch and the control is OFF there by design (stated in the client type, not
+only here); and T239 needs a bandwidth measurement this repository does not
+have — the ladder is ready for one and nothing produces it, which is why the row
+is W and not C. P24 — what would turn the green claims red: a media component
+that renders a poster or prefetches a URI OUTSIDE the shield (the shield guards
+mounting, not fetching done by a sibling); a future data-saver level that sheds
+`text` (the never-shed test is the only thing stopping it); and any client that
+starts computing `senderConnected` locally, which would move an abuse decision
+to the permissive side of a network failure.
+
+Headline after §11 in this worktree (last statement wins): C=119 W=170 N=139 X=0

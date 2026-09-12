@@ -71,6 +71,12 @@ import { checkCircleMembership } from '../../src/services/circle';
 import { sendMessage, sendMediaMessage } from '../../src/services/messaging';
 import { useMessageMediaPicker } from '../../src/hooks/useMessageMediaPicker';
 import { MessageMediaBubble } from '../../src/components/MessageMediaBubble';
+// Telegraph §22 — the two traveller-facing abuse controls. Both render what
+// the server decided; neither decides anything locally.
+import { MessageSafetyBanner } from '../../src/features/telegraph/components/MessageSafetyBanner';
+import { StrangerMediaShield } from '../../src/features/telegraph/components/StrangerMediaShield';
+// Telegraph §16.2 / §17.4 — data-saver and the degradation ladder.
+import { useDataSaver } from '../../src/features/telegraph/hooks/useDataSaver';
 import * as Haptics from 'expo-haptics';
 import { usePlainBottomInset } from '../../src/hooks/useBottomInset';
 import * as Clipboard from 'expo-clipboard';
@@ -1084,6 +1090,9 @@ export default function TelegraphThread() {
   const listRef = useRef<FlatList>(null);
   const shouldAnimateMessage = useMessageEntranceGate();
   const mediaPicker = useMessageMediaPicker();
+  // Telegraph §16.2 / §17.4 — the degradation ladder. Consulted here for
+  // media; the AI tray consults it for `ai`.
+  const dataSaver = useDataSaver();
   const [showMediaPickerSheet, setShowMediaPickerSheet] = useState(false);
 
   function handleBlockPress() {
@@ -1873,19 +1882,38 @@ export default function TelegraphThread() {
                 animate={shouldAnimateMessage(m.clientId ?? m.id, m.createdAt)}
                 style={[styles.bubbleRow, mine && styles.bubbleRowMine]}
               >
-                <MessageMediaBubble
-                  mediaType={(m.mediaType as 'image' | 'video') ?? 'image'}
-                  mediaUrl={m.mediaUrl}
-                  thumbnailUrl={m.mediaThumbnailUrl}
-                  durationSeconds={m.mediaDurationSeconds}
-                  mine={mine}
-                  senderName={!mine && isGroupThread ? m.senderName : null}
-                  createdAt={m.createdAt}
-                  uploadState={m.uploadState ?? null}
-                  uploadProgress={m.uploadProgress ?? 0}
-                  onCancel={m.uploadState === 'uploading' ? () => mediaPicker.cancel() : undefined}
-                  onRetry={m.uploadState === 'failed' ? () => mediaPicker.retry() : undefined}
-                />
+                {/*
+                  Telegraph §22: media from someone the viewer has not
+                  connected with is COVERED, not blurred — the shield does not
+                  mount its children, so the bytes are never fetched. The
+                  server decides (`senderConnected`); an explicit `false` is
+                  the only thing that shields, so an older server that does not
+                  send the field behaves exactly as before.
+                */}
+                <StrangerMediaShield
+                  messageId={m.id}
+                  mediaKind={(m.mediaType as 'image' | 'video') ?? 'image'}
+                  senderConnected={mine || m.senderConnected !== false}
+                  degraded={m.senderConnectednessDegraded === true}
+                  // §16.2 / §17.4: the same cover, a different reason. A
+                  // message the viewer is uploading is never withheld from
+                  // them — they chose to send it.
+                  dataSaverOn={!mine && !m.uploadState && !dataSaver.mayLoad('mediaPreview')}
+                >
+                  <MessageMediaBubble
+                    mediaType={(m.mediaType as 'image' | 'video') ?? 'image'}
+                    mediaUrl={m.mediaUrl}
+                    thumbnailUrl={m.mediaThumbnailUrl}
+                    durationSeconds={m.mediaDurationSeconds}
+                    mine={mine}
+                    senderName={!mine && isGroupThread ? m.senderName : null}
+                    createdAt={m.createdAt}
+                    uploadState={m.uploadState ?? null}
+                    uploadProgress={m.uploadProgress ?? 0}
+                    onCancel={m.uploadState === 'uploading' ? () => mediaPicker.cancel() : undefined}
+                    onRetry={m.uploadState === 'failed' ? () => mediaPicker.retry() : undefined}
+                  />
+                </StrangerMediaShield>
               </MessageEntrance>
             );
           }
@@ -1929,6 +1957,17 @@ export default function TelegraphThread() {
                 currentUserId={userId ?? undefined}
                 isCircleMember={isCircleMember}
                 onCircleCardPress={m.msgType === 'circle_status_card' ? onCircleCardPress : undefined}
+              />
+              {/*
+                Telegraph §22: the traveller-facing half of the travel-scam
+                signals. The field is present only on messages the viewer did
+                NOT send and only when something fired, so the common case is
+                one null check and no render.
+              */}
+              <MessageSafetyBanner
+                messageId={m.id}
+                signals={m.safetySignals ?? null}
+                onReport={() => { setActionMsg(m); setActionMsgMine(false); }}
               />
             </MessageEntrance>
           );
@@ -1989,8 +2028,15 @@ export default function TelegraphThread() {
         </View>
       )}
 
-      {/* Telegraph suggestion tray — above the composer */}
-      {id && !hideAiSuggestions && (
+      {/*
+        Telegraph suggestion tray — above the composer.
+        §17.4 puts AI FIRST on the degradation ladder ("deprioritize typing,
+        reactions, media preview and AI before text or safety coordination"), so
+        the tray is the first thing data-saver withholds. It is not disabled —
+        the person's own hide-AI preference is still the other condition — it is
+        simply not fetched, which is where the bytes are.
+      */}
+      {id && !hideAiSuggestions && dataSaver.mayLoad('ai') && (
         <TelegraphSuggestionTray
           threadId={id}
           lastSentMessage={lastSentMessage}

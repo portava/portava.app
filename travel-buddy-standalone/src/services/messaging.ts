@@ -179,6 +179,31 @@ export interface Message {
   uploadState?: 'uploading' | 'failed' | null;
   /** 0–1 upload progress fraction (local only). */
   uploadProgress?: number;
+  /**
+   * Telegraph §22 travel scam signals, computed server-side for the RECIPIENT
+   * and absent on the caller's own messages and on clean ones. The client
+   * RENDERS this; it never computes it — the detector must not be tunable by
+   * the person it watches.
+   */
+  safetySignals?: import('../features/telegraph/types/index.ts').MessageSafetySignals | null;
+  /**
+   * Telegraph §22 "stranger media ... until accepted". The server decides
+   * (`domain/telegraph/policies/senderConnectedness.ts`) and fails CLOSED
+   * there: an unreadable relationship table reports every sender as
+   * unconnected.
+   *
+   * ABSENT vs FALSE, and why they are not the same here. `false` is a server
+   * that looked and says "you have not connected with this person" — shield.
+   * `undefined` is a server that does not implement the control at all (an
+   * older deployment than this client), and shielding every photo in every
+   * thread because the server is old would be a worse failure than not
+   * shielding: the control would look broken rather than absent. So call sites
+   * shield on an explicit `false` and the ceiling is recorded rather than
+   * hidden — on a server without this field the control is OFF.
+   */
+  senderConnected?: boolean;
+  /** True when the relationship could not be established at all. */
+  senderConnectednessDegraded?: boolean;
 }
 
 export type MsgErrorKind =

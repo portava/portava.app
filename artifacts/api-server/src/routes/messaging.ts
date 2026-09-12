@@ -29,6 +29,9 @@ import { isBlockedBetween } from '../lib/blockGuard.js';
 import { messageSafetySignals } from '../domain/telegraph/policies/travelScamSignals.js';
 // Telegraph §22 — the send step's adaptive rate limit (T279's missing half).
 import { checkSendRateLimit } from '../domain/telegraph/policies/sendRateLimit.js';
+// Telegraph §22 — "stranger media ... until accepted": the server decides who
+// is a stranger; the client renders the shield.
+import { resolveSenderConnectedness } from '../domain/telegraph/policies/senderConnectedness.js';
 import { z } from 'zod';
 import { requireUser, sendError } from '../lib/http';
 import { canMessage } from '../lib/messagingPermissions';
@@ -1854,6 +1857,20 @@ router.get('/threads/:threadId/messages', async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, 'server_not_configured', 'Service client not ready'); return; }
 
+  // Telegraph §22 stranger-media input: a trip or circle roster is itself the
+  // acceptance, so the thread's own type decides whether the social graph has
+  // to be consulted at all. An unreadable thread row leaves `thread_type`
+  // undefined, which the resolver reads as 'direct' — the side that shields.
+  const { data: threadMetaForShield, error: threadMetaShieldErr } = await sc
+    .from('message_threads')
+    .select('thread_type')
+    .eq('id', threadId)
+    .maybeSingle();
+  if (threadMetaShieldErr) {
+    req.log.warn({ err: threadMetaShieldErr, threadId },
+      'thread type unreadable — stranger-media shielding will treat this thread as direct');
+  }
+
   let query = sc
     .from('messages')
     .select(`id, thread_id, sender_id, body, deleted_at, created_at, edited_at, original_language, msg_type, subtype, media_url, media_type, media_thumbnail_url, media_duration_seconds, profile:profiles!messages_sender_id_fkey(${PROFILE_PUBLIC})`)
@@ -1907,6 +1924,19 @@ router.get('/threads/:threadId/messages', async (req, res) => {
   const msgSpansMap = nonDeletedMsgItems.length > 0
     ? await enrichSpans(sc, 'message', nonDeletedMsgItems, user.id)
     : {};
+
+  // Telegraph §22 — "Stranger media can be blurred / no autoplay until
+  // accepted." Resolved ONCE for the page over the distinct non-self senders
+  // (the answer is the same for every message from the same person), and
+  // fail-closed: an unreadable relationship table shields everyone rather than
+  // silently switching the control off. The thread's own type is passed in
+  // because a trip or circle roster IS the acceptance.
+  const senderConnectedness = await resolveSenderConnectedness(
+    sc,
+    user.id,
+    rows.map((r: any) => String(r.sender_id)),
+    String((threadMetaForShield as any)?.thread_type ?? 'direct'),
+  );
 
   // Fetch reply_to_id values and quoted context.
   // Wrapped in try/catch: silently skipped if migration 0057 is not yet applied.
@@ -2018,6 +2048,11 @@ router.get('/threads/:threadId/messages', async (req, res) => {
             return sig ? { safetySignals: sig } : {};
           })()
         : {}),
+      // Telegraph §22 — the stranger-media shield. The client renders this; it
+      // does not decide it. `true` for the caller's own messages, because a
+      // person is not a stranger to themselves.
+      senderConnected: m.sender_id === user.id || senderConnectedness.connected.has(m.sender_id as string),
+      senderConnectednessDegraded: senderConnectedness.degraded,
     };
   });
 
