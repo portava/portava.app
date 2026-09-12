@@ -59,8 +59,8 @@ import { CoordinationPanel } from '../../src/features/telegraph/coordination/Coo
 import { ContentDrawerSheet } from '../../src/features/telegraph/drawer/ContentDrawerSheet.tsx';
 import { RecapSheet } from '../../src/features/telegraph/memory/RecapSheet.tsx';
 import { useThreadRecap } from '../../src/features/telegraph/memory/useThreadRecap.ts';
-import { saveMessageAsMemoryDraft } from '../../src/features/telegraph/memory/memoryApi.ts';
-import { unsendMessage } from '../../src/features/telegraph/lifecycle/lifecycleApi.ts';
+import { saveMessageAsMemoryDraft, draftSavedMessage } from '../../src/features/telegraph/memory/memoryApi.ts';
+import { unsendMessage, deriveReceiptState, deriveSeenBy } from '../../src/features/telegraph/lifecycle/lifecycleApi.ts';
 import { headerSubtitle } from '../../src/features/telegraph/header/headerAxes.ts';
 import { useConversationHeader } from '../../src/features/telegraph/header/useConversationHeader.ts';
 import { ComposerPlusMenu } from '../../src/features/telegraph/composer/ComposerPlusMenu.tsx';
@@ -226,13 +226,8 @@ function LongPressActionSheet({
               setBusy(null);
               onClose();
               if (r.ok) {
-                const d = r.data.draft;
-                Alert.alert(
-                  'Saved to Memory',
-                  d.state === 'draft' && d.visibility === 'only_me'
-                    ? 'Saved to your private Memory drafts. Only you can see it.'
-                    : `Saved as a ${d.state} Memory, visible to ${d.visibility}.`,
-                );
+                // Read back from the server, not asserted here.
+                Alert.alert('Saved to Memory', draftSavedMessage(r.data.draft));
               } else {
                 Alert.alert('Not saved', r.message ?? 'We could not save that. Nothing was created.');
               }
@@ -715,6 +710,7 @@ function MessageBubble({
   isGroupThread,
   onLongPress,
   receiptState,
+  receiptSeenBy,
   readerAvatars,
   dismissedAiMsgIds,
   onDismissAiCard,
@@ -734,7 +730,9 @@ function MessageBubble({
   defaultShowOriginal: boolean;
   isGroupThread: boolean;
   onLongPress?: () => void;
-  receiptState?: 'sent' | 'delivered' | 'read' | null;
+  receiptState?: 'sent' | 'read' | null;
+  /** §7.3's "Seen by N" for a group. Null renders the plain "Seen". */
+  receiptSeenBy?: number | null;
   /** Up to 3 avatar URIs of group members who've read past this message. */
   readerAvatars?: string[];
   dismissedAiMsgIds?: Set<string>;
@@ -1033,15 +1031,13 @@ function MessageBubble({
       {/* Read receipt — shown on every confirmed own message */}
       {mine && receiptState && deliveryStatus !== 'sending' && deliveryStatus !== 'failed' && (
         <View style={styles.receiptRow}>
+          {/* §7.3: Sent or Seen. There is no DELIVERED to report. */}
           {receiptState === 'read' ? (
             <>
               <CheckCheck size={11} color={color.signal} />
-              <Text style={styles.receiptSent}>Read</Text>
-            </>
-          ) : receiptState === 'delivered' ? (
-            <>
-              <CheckCheck size={11} color={color.mute} />
-              <Text style={[styles.receiptSent, { color: color.mute }]}>Delivered</Text>
+              <Text style={styles.receiptSent}>
+                {receiptSeenBy && receiptSeenBy > 1 ? `Seen by ${receiptSeenBy}` : 'Seen'}
+              </Text>
             </>
           ) : (
             <>
@@ -1531,21 +1527,43 @@ export default function TelegraphThread() {
     }).start();
   }, [hasInput, sendAnim]);
 
-  // Per-message receipt state.
-  // DM: cross-checks the other party's last_read_at — 'read' > 'delivered' > 'sent'.
-  // Group: always 'delivered' for confirmed messages; readerAvatarsForMsg shows WHO read.
-  const receiptForMsg = useCallback((msg: Message): 'sent' | 'delivered' | 'read' | null => {
-    if (isDirect && dmOtherLastRead) {
-      return new Date(dmOtherLastRead) >= new Date(msg.createdAt) ? 'read' : 'delivered';
-    }
-    const ageSecs = (Date.now() - new Date(msg.createdAt).getTime()) / 1000;
-    return ageSecs > 3 ? 'delivered' : 'sent';
-  }, [isDirect, dmOtherLastRead]);
 
   // Group-thread member reads — fetched once per thread to drive reader avatar chips.
   const [groupMemberReads, setGroupMemberReads] = useState<
     { userId: string; lastReadAt: string | null; avatarUrl: string | null }[]
   >([]);
+  /**
+   * Telegraph §7.3 — the per-message receipt, derived from measured reads.
+   *
+   * THIS USED TO FABRICATE "DELIVERED". The group branch was
+   * `ageSecs > 3 ? 'delivered' : 'sent'` — a double tick shown because three
+   * seconds had elapsed — and the direct branch returned 'delivered' whenever
+   * the other party's last_read_at was older than the message. Nothing on this
+   * deployment produces a delivery signal of any kind: there is no per-device
+   * acknowledgement and no `lastDeliveredSequence` column, which is exactly why
+   * `services/telegraph/unsend.ts` returns `delivered: null` with a reason
+   * instead of a boolean. A tick that says "Delivered" on a timer is a claim
+   * about the recipient's device that nobody measured.
+   *
+   * So DELIVERED is gone from this surface. What remains is what the server can
+   * actually see: SEEN, when a recipient's `last_read_at` has passed the
+   * message, and SENT otherwise — §7.4's own predicate, and the same one the
+   * unsend window uses.
+   */
+  const receiptForMsg = useCallback((msg: Message): 'sent' | 'read' | null => {
+    return deriveReceiptState(
+      isDirect
+        ? { createdAt: msg.createdAt, otherLastReadAt: dmOtherLastRead }
+        : { createdAt: msg.createdAt, memberReads: groupMemberReads },
+    );
+  }, [isDirect, dmOtherLastRead, groupMemberReads]);
+
+  /** §7.3's "Seen by N" for a group; null for a direct chat, which says "Seen". */
+  const seenByForMsg = useCallback((msg: Message): number | null => {
+    if (isDirect) return null;
+    return deriveSeenBy(msg.createdAt, groupMemberReads);
+  }, [isDirect, groupMemberReads]);
+
 
   useEffect(() => {
     if (isDirect || !id) { setGroupMemberReads([]); return; }
@@ -2090,6 +2108,7 @@ export default function TelegraphThread() {
                   setActionMsgMine(mine);
                 }}
                 receiptState={mine ? receiptForMsg(m) : null}
+                receiptSeenBy={mine ? seenByForMsg(m) : null}
                 readerAvatars={mine ? readerAvatarsForMsg(m) : undefined}
                 dismissedAiMsgIds={dismissedAiMsgIds}
                 onDismissAiCard={(msgId) => setDismissedAiMsgIds((prev) => new Set([...prev, msgId]))}

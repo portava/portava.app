@@ -22,7 +22,13 @@
  *
  * No Modal here, so this file is free of TESTING.md Rule 6.
  *
- * SHOWN RED before commit (11 pass green), each mutation reverted:
+ * The last describe block is about a DELETION. Both chat screens computed the
+ * receipt inline and both fabricated "Delivered" — `ageSecs > 3 ? 'delivered' :
+ * 'sent'`, a double tick shown because three seconds had elapsed, for a state
+ * §7.1 names and this tree cannot produce. The rule now lives in one place,
+ * has no 'delivered' branch, and is asserted here.
+ *
+ * SHOWN RED before commit (18 pass green), each mutation reverted:
  *   • `canOfferUnsend` returning true whenever a receipt exists
  *       -> 1 failed / 10 passed ("hides Unsend once a recipient has seen it")
  *   • `receiptLabel` collapsed to a single `Seen by N` shape
@@ -32,6 +38,13 @@
  *     all-zero receipt — i.e. "assume Sent"
  *       -> 1 failed / 10 passed ("renders nothing until a receipt has actually
  *          been read")
+ *   • `deriveReceiptState` restored to the FABRICATED rule verbatim —
+ *     `ageSecs > 3 ? 'delivered' : 'sent'`, plus 'delivered' for an unread
+ *     group message
+ *       -> 4 failed / 14 passed ("has no 'delivered' outcome at all", "an
+ *          unread direct message is SENT however old it is", "no group member
+ *          reading it leaves it SENT", "an unparseable timestamp is SENT,
+ *          never SEEN")
  */
 import React from 'react';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react-native';
@@ -45,6 +58,8 @@ jest.mock('../../../services/apiToken.ts', () => ({ freshToken: async () => 'tes
 import { MessageReceiptRow } from '../lifecycle/MessageReceiptRow.tsx';
 import {
   canOfferUnsend,
+  deriveReceiptState,
+  deriveSeenBy,
   receiptLabel,
   unsendMessage,
   type MessageReceipt,
@@ -177,5 +192,69 @@ describe('§7 — the request the real module builds', () => {
       (global as any).fetch = realFetch;
       delete process.env.EXPO_PUBLIC_API_BASE_URL;
     }
+  });
+});
+
+describe('§7.1/§7.3 — DELIVERED was fabricated, and is gone', () => {
+  const CREATED = '2026-05-01T20:00:00.000Z';
+  const BEFORE = '2026-05-01T19:59:00.000Z';
+  const AFTER = '2026-05-01T20:01:00.000Z';
+
+  it('has no "delivered" outcome at all', () => {
+    // Both chat screens used to return 'delivered' after three seconds. The
+    // return type no longer contains it, and neither does any branch.
+    const outcomes = new Set([
+      deriveReceiptState({ createdAt: CREATED, otherLastReadAt: null }),
+      deriveReceiptState({ createdAt: CREATED, otherLastReadAt: BEFORE }),
+      deriveReceiptState({ createdAt: CREATED, otherLastReadAt: AFTER }),
+      deriveReceiptState({ createdAt: CREATED, memberReads: [{ userId: 'a', lastReadAt: null }] }),
+      deriveReceiptState({ createdAt: CREATED, memberReads: [{ userId: 'a', lastReadAt: AFTER }] }),
+    ]);
+    expect([...outcomes].sort()).toEqual(['read', 'sent']);
+  });
+
+  it('an unread direct message is SENT however old it is', () => {
+    // The fabricated version returned 'delivered' for exactly this case.
+    expect(deriveReceiptState({ createdAt: CREATED, otherLastReadAt: BEFORE })).toBe('sent');
+    expect(deriveReceiptState({ createdAt: '2020-01-01T00:00:00.000Z', otherLastReadAt: null })).toBe('sent');
+  });
+
+  it('a direct message read past is SEEN', () => {
+    expect(deriveReceiptState({ createdAt: CREATED, otherLastReadAt: AFTER })).toBe('read');
+    expect(deriveReceiptState({ createdAt: CREATED, otherLastReadAt: CREATED })).toBe('read');
+  });
+
+  it('ONE group member reading it makes it SEEN', () => {
+    const reads = [
+      { userId: 'a', lastReadAt: BEFORE },
+      { userId: 'b', lastReadAt: AFTER },
+      { userId: 'c', lastReadAt: null },
+    ];
+    expect(deriveReceiptState({ createdAt: CREATED, memberReads: reads })).toBe('read');
+  });
+
+  it('no group member reading it leaves it SENT', () => {
+    const reads = [
+      { userId: 'a', lastReadAt: BEFORE },
+      { userId: 'b', lastReadAt: null },
+    ];
+    expect(deriveReceiptState({ createdAt: CREATED, memberReads: reads })).toBe('sent');
+  });
+
+  it('counts "Seen by N" from measured reads, and returns null for none', () => {
+    const reads = [
+      { userId: 'a', lastReadAt: AFTER },
+      { userId: 'b', lastReadAt: AFTER },
+      { userId: 'c', lastReadAt: BEFORE },
+    ];
+    expect(deriveSeenBy(CREATED, reads)).toBe(2);
+    // Not 0 — a receipt that reports an absence reads as an accusation.
+    expect(deriveSeenBy(CREATED, [{ userId: 'a', lastReadAt: BEFORE }])).toBeNull();
+    expect(deriveSeenBy(CREATED, [])).toBeNull();
+  });
+
+  it('an unparseable timestamp is SENT, never SEEN', () => {
+    expect(deriveReceiptState({ createdAt: 'not a date', otherLastReadAt: AFTER })).toBe('sent');
+    expect(deriveReceiptState({ createdAt: CREATED, otherLastReadAt: 'not a date' })).toBe('sent');
   });
 });

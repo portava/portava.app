@@ -68,12 +68,12 @@ export {
 } from './coordination/coordinationApi.ts';
 export { RecapSheet } from './memory/RecapSheet.tsx';
 export { useThreadRecap, type ThreadRecapState } from './memory/useThreadRecap.ts';
-export { SaveToMemoryAction } from './memory/SaveToMemoryAction.tsx';
 export {
   fetchRecap,
   saveMessageAsMemoryDraft,
   recapHeadline,
   curateActionLabel,
+  draftSavedMessage,
   RECAP_CURATE_ACTIONS,
   type RecapCounts,
   type RecapCurateAction,
@@ -87,6 +87,9 @@ export {
   unsendMessage,
   receiptLabel,
   canOfferUnsend,
+  deriveReceiptState,
+  deriveSeenBy,
+  type MemberRead,
   type MessageReceipt,
   type ReceiptsResponse,
   type ReceiptStatus,

@@ -139,6 +139,22 @@ export function recapHeadline(counts: RecapCounts): string {
   return parts.join(' · ');
 }
 
+/**
+ * What to tell a user after a save, read back from what the SERVER returned.
+ *
+ * §10.2 promises a PRIVATE draft. This function does not assert that promise —
+ * it reports the `state` and `visibility` the server actually wrote, so a
+ * deployment that ever returned a published or visible Memory would be
+ * described as such rather than as "saved privately". Asserting the promise
+ * would make the confirmation a wish; reading it back makes it evidence.
+ */
+export function draftSavedMessage(draft: MemoryDraft): string {
+  if (draft.state === 'draft' && draft.visibility === 'only_me') {
+    return 'Saved to your private Memory drafts. Only you can see it.';
+  }
+  return `Saved as a ${draft.state} Memory, visible to ${draft.visibility}.`;
+}
+
 /** §10.3's four buttons, in the spec's order, with the spec's labels. */
 export function curateActionLabel(action: RecapCurateAction): string {
   switch (action) {
