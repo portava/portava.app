@@ -1462,9 +1462,11 @@ invalidated by any edit above it in a file this report does not own, and
 
 Three things the inventory surfaced that no row had recorded: fourteen route
 files touch a messaging table (not the one or two a reader would guess), the
-realtime event vocabulary is twenty-five types of which twelve are calls, and
-`saved_messages` is dispositioned under RLS while having no reader in
-application code.
+realtime event vocabulary is twenty-five types of which ELEVEN are calls, and
+`saved_messages` is dispositioned under RLS and read by a server route that no
+client screen calls. (Both of those numbers were wrong in the first commit of
+this section and are corrected here; §12.14 says what they were and why the
+second one mattered.)
 
 **§30A.18's replay simulator.** `domain/telegraph/replay/replaySimulator.ts:171`
 applies the ten operations that clause names — `domain/telegraph/commands/replayCommands.ts:22`
@@ -1545,7 +1547,99 @@ bounds it:
    that do exist are in-process and reset on restart, and every surface that
    reports them says so.
 
-Headline after §12 in this worktree (last statement wins): C=124 W=170 N=135 X=0
+
+### 12.13 §30A rows the tree moved under the census, re-derived
+
+The census was measured at `ebe72b34`; this worktree is off `014a25d5`. Four
+§30A rows have new evidence that is not a change this lane made, and one
+statement in §4 is now out of date. Recorded here because a census that is
+right about the tree it measured and silent about the tree that exists is a
+document people quote wrongly.
+
+**§4's attribution claim has an exception it did not have.** §4 says PR #472 "is
+the first and only artifact in the repository built *for* this specification",
+and at `ebe72b34` that was true. It is not true at HEAD:
+`migrations/2400_telegraph_history_bound.sql:6-14` opens by citing §14.3, §26,
+§29, §30A.4 and §30A.20 by number and quoting each, and it reasons explicitly
+about Appendix A's reuse rule in choosing a timestamp over a sequence
+(`migrations/2400_telegraph_history_bound.sql:49-56`). It is merged into this tree and is not a hypothetical. The
+spec-attributable count is a §4 number and this section does not restate it; what
+it records is that the artifact §4 says does not exist now does.
+
+**§30A.4 and §30A.20 gained a substrate and a flag.** `migrations/2400_telegraph_history_bound.sql:141` adds
+`message_thread_members.visible_from_at`, database-authoritative via a BEFORE
+trigger, and the migration says why a dedicated column rather than `joined_at`:
+`services/groupChatSync.ts` upserts every accepted member with `joined_at: now`
+on EVERY sync, so a bound keyed on `joined_at` would hide a long-standing
+member's own history the next time anyone joined (`migrations/2400_telegraph_history_bound.sql:34-42`). That is a real
+finding about the tree, not a design preference, and it is the kind of thing a
+census reading the read path alone would not see.
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| T389 | W | W | **Four of six, not three.** `baseline:7496-7504` carries `joined_at`, `left_at` and `role`; migration 2400 adds the `visible_from_sequence` analogue as `visible_from_at`, expressed in `created_at` coordinates because this schema has no sequence on `messages` and Appendix A's rule says reuse the established convention (`migrations/2400_telegraph_history_bound.sql:49-56`). Still absent: `removed_at` — a removal is indistinguishable from a departure — and `visible_until_sequence`. **Ceiling: 2400 is applied to no database.** |
+| T390 | W | W | The first clause is now IMPLEMENTED and OFF: new members do not gain pre-membership history while `telegraph_history_bound_enabled` is true, proved on both sides of the flag by RLS-03. The second clause — adding a third person to a direct conversation creates a new group — is still vacuous, because no add-to-DM operation exists. **Ceiling: the flag is seeded FALSE and no database has the column.** |
+| T391 | W | W | Unchanged. `role` is still CHECK `member\|admin` — two of the five roles §30A.4 names — and no capability-based authorization keys off it for invitations, removals, pins, announcements or group settings. 2400 did not touch it. |
+| T444 | W | W | Same substrate as T390, from §30A.20's side, and 2400 cites this clause by number. The window is enforced in the QUERY (`routes/messaging.ts:1861`) rather than filtered after the fact, so pagination cannot walk past it — which is the difference between a bound and a display rule. **Ceiling: the flag is seeded FALSE.** |
+| T409 | N | **W** | Was "No registry and no contract; each producer hand-rolls a payload." One of §30A.10's six dimensions now has both. `domain/telegraph/policies/shareAuthorizationPolicy.ts:205` is a registry of every shareable message type with its object family and source domain, and `:113` is the AUTHORIZATION contract those families resolve against, made unavoidable by `scripts/checkTelegraphShareProducers.ts`. The other five dimensions — preview, current state, actions, search behaviour, revocation — have nothing, which is why this is one sixth and not more. |
+| T429 | N | N | Unchanged, and now precisely bounded. There are no versioned structured-message schemas; what exists is a registry of eighteen unversioned literals plus ten sites that COMPUTE a message type, one of which takes the discriminator straight from the client's request body (`domain/telegraph/policies/shareAuthorizationPolicy.ts:297`). A versioned schema is exactly what would close that, so the registry's finding and this row's absence are the same fact seen twice. |
+
+**The external-preview prohibitions were left unguarded, deliberately.** T404,
+T405 and T446 are unguarded absences — there are no link previews and no GIF
+provider — and the obvious ratchet is a rule that no message-rendering component
+may make a network call. This lane considered it and did not build it, because
+that rule would also forbid the FIX for T339 and T411: a share card that
+re-fetched its source object to re-authorize a stale action is exactly what those
+rows are waiting for, and a guard that made it fail CI would freeze a live
+divergence in place to close a vacuous one. The rule that would work has to tell
+"fetches our own API to re-authorize" from "fetches a sender-controlled URL", and
+that distinction cannot be drawn until the controlled server-side preview service
+§30A.8 asks for exists. Recorded as a decision so the next reader does not spend
+the afternoon rediscovering it.
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| T404 | N `∅` | N `∅` | Unchanged, and now with the reason a ratchet was not added: the guard that would close it would forbid the fix for T339 and T411. There are still no link previews; a URL renders as plain text. |
+| T405 | N `∅` | N `∅` | Unchanged. No GIF provider exists, so there is no isolation boundary to enforce. |
+| T446 | N `∅` | N `∅` | Unchanged, same reason as T404 — this is §30A.20's restatement of it. |
+
+**The rest of §30A was not re-derived and its verdicts stand as §6 recorded
+them.** Forty-odd rows in §30A.1, §30A.2, §30A.3, §30A.5, §30A.6, §30A.7,
+§30A.9, §30A.11, §30A.12, §30A.13, §30A.14 and §30A.19 turn on features that do
+not exist in this tree — a canonical relationship model, a reachable-people
+projection, announcements and acknowledgement, a device registry with proximity
+and background-location capability, forwarding provenance, transport scale
+classes, a Context Kernel. This lane did not build any of them and did not
+re-read them deeply enough to restate a verdict; saying nothing is the honest
+option, because a restated verdict is a claim about the tree and citing one from
+memory is the thing this census exists not to do.
+
+### 12.14 Two corrections to §12.9, and one to §8
+
+§12.9 as first committed said the inventory surfaced "twenty-five event types of
+which twelve are calls" and that "`saved_messages` is dispositioned under RLS
+while having no reader in application code". The first was a miscount — eleven of
+the twenty-five are `call.*` — and the second was **wrong**, in the direction
+that matters. Both sentences are corrected in place rather than left standing
+with an erratum, and the correction is recorded here rather than made silently,
+because a document that edits its own prose without saying so is the failure this
+census exists to make harder.
+
+`GET /api/me/saved-messages` exists at `routes/messaging.ts:3118` and reads
+`saved_messages`, re-authorizing at read: it excludes saves in threads the caller
+has left and messages that have been deleted, and a failed read is a 500 rather
+than an empty list. So §8's third deployment fact — "`saved_messages` is written
+and never read" — is out of date at HEAD **on the server**.
+
+It is still true where it counts. A repository-wide search of the client for that
+route or any `savedMessages` call site returns nothing: no screen fetches it. The
+Save affordance on both client surfaces therefore still does nothing a user can
+observe, which is what §8's fact was actually about. The reader is built, nothing
+reads the reader, and the honest statement is that sentence rather than either
+half of it. T119 is §7/§10's row and this lane does not restate it; the fact it
+rests on has moved and this says how.
+
+Headline after §12 in this worktree (last statement wins): C=124 W=171 N=134 X=0
 
 Computed by `pnpm -s check:census-integrity`, which parses 429 verdict rows of the
 451-row denominator and takes the LAST statement for each id. The 22 it cannot read
