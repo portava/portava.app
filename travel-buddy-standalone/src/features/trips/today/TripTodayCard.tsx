@@ -30,19 +30,24 @@ interface Props {
   tripId: string;
   /** Test seam — the real fetcher by default. */
   load?: typeof fetchTripToday;
+  /** The §17.2 mode after each read (null when Today could not be read), so the screen can mount §17.3's rescue entry under it. */
+  onAttention?: (mode: string | null) => void;
 }
 
-export function TripTodayCard({ tripId, load = fetchTripToday }: Props) {
+export function TripTodayCard({ tripId, load = fetchTripToday, onAttention }: Props) {
   const [read, setRead] = useState<TodayRead | undefined>(undefined);
 
   const run = useCallback(async () => {
     setRead(undefined);
     try {
-      setRead(await load(tripId));
+      const r = await load(tripId);
+      setRead(r);
+      onAttention?.(r.state === 'ok' ? r.today.attention.mode : null);
     } catch (e: any) {
       setRead({ state: 'unavailable', detail: String(e?.message ?? 'unexpected error') });
+      onAttention?.(null);
     }
-  }, [tripId, load]);
+  }, [tripId, load, onAttention]);
 
   useEffect(() => { void run(); }, [run]);
 

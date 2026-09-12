@@ -210,7 +210,16 @@
         "travel-buddy-standalone/src/features/trips/today/__tests__/tripToday.test.ts",
         "travel-buddy-standalone/src/features/trips/today/index.ts",
         "travel-buddy-standalone/src/features/trips/today/tripToday.ts",
-        "artifacts/api-server/src/test/db/telegraphLiveReferences.db.test.ts"
+        "artifacts/api-server/src/test/db/telegraphLiveReferences.db.test.ts",
+        "travel-buddy-standalone/src/features/trips/disruption/TripRescueEntry.tsx",
+        "travel-buddy-standalone/src/features/trips/disruption/__tests__/TripRescueEntry.component.test.tsx",
+        "travel-buddy-standalone/src/features/trips/disruption/__tests__/tripRescue.test.ts",
+        "travel-buddy-standalone/src/features/trips/disruption/tripRescue.ts",
+        "travel-buddy-standalone/src/features/trips/offline/TripOfflineCard.tsx",
+        "travel-buddy-standalone/src/features/trips/offline/__tests__/TripOfflineCard.component.test.tsx",
+        "travel-buddy-standalone/src/features/trips/offline/__tests__/tripOffline.test.ts",
+        "travel-buddy-standalone/src/features/trips/offline/index.ts",
+        "travel-buddy-standalone/src/features/trips/offline/tripOffline.ts"
       ]
     },
     {

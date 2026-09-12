@@ -23,12 +23,12 @@ preserved in §36.1 as the record of that measurement.
 | Measure | Value |
 | --- | --- |
 | **Denominator (testable requirements)** | **451** |
-| BUILT-AND-CORRECT | **303** |
-| BUILT-BUT-WRONG | **123** |
+| BUILT-AND-CORRECT | **308** |
+| BUILT-BUT-WRONG | **118** |
 | NOT-BUILT | **24** |
 | CANNOT-VERIFY | **1** |
 | **CONSTRUCTED%** = (C+W)/451 | **426 / 451 = 94.5 %** |
-| **CORRECT%** (raw) = C/451 | **303 / 451 = 67.2 %** |
+| **CORRECT%** (raw) = C/451 | **308 / 451 = 68.3 %** |
 
 > **RESTATED 2026-09-11 (§38): 89 → 87 CORRECT, 127 → 129 WRONG.** §38 re-derived
 > 39 of the C rows against the code and **two did not hold**, both for the same
@@ -277,6 +277,16 @@ preserved in §36.1 as the record of that measurement.
 > questions asked by a screen and recorded through the kernel (TR390), all
 > under `src/features/trips/` (TR439, stronger). Four W → C. No server
 > change; the ceiling is §41.3's.
+
+> **RESTATED 2026-09-12 (§57): 303 → 308 CORRECT, 123 → 118 WRONG,
+> 24 NOT-BUILT unchanged. CONSTRUCTED 94.5 % unchanged, CORRECT 67.2 % → 68.3 %.**
+> §57 is Cluster 13's second batch: the signed bundle kept as issued and
+> judged by the server's staleness rule (TR334), the queue replayed on
+> reconnect with the server's per-operation decision applied and a conflict
+> never overwritten (TR421), offline behaviour tested (TR432), §18.1's
+> freshness re-read on the crew card (TR342), and §17.3's rescue entry under
+> §17.2's switch (TR318). Five W → C. No server change; the ceiling is
+> §41.3's.
 | **CORRECT% (spec-attributable)** | **WITHDRAWN — not measured. See §36.4** |
 | CANNOT-VERIFY share | **1 / 451 = 0.2 %** |
 
@@ -6038,7 +6048,7 @@ is `app/trip/[id].tsx`. No server change, no migration.
   reaches `react-native` through `expo-secure-store`, which node:test cannot
   load (`scripts/run-node-tests.mjs`'s KNOWN_BROKEN records that shape and
   every service test that imports it directly is on the list).
-- **§11 Today on screen** (`travel-buddy-standalone/src/features/trips/today/TripTodayCard.tsx:35#export function TripTodayCard(`,
+- **§11 Today on screen** (`travel-buddy-standalone/src/features/trips/today/TripTodayCard.tsx:37#export function TripTodayCard(`,
   reading `travel-buddy-standalone/src/features/trips/today/tripToday.ts:82#export async function fetchTripToday(`):
   `GET /trips/:tripId/today` under §19.1's envelope — a stale or
   foreign-schema projection is refused with Appendix B's reason and
@@ -6104,3 +6114,90 @@ The cards read routes that exist behind `trip_operational_projections_enabled`
 (seeded FALSE) and post through the kernel (`trip_kernel_enabled`, FALSE);
 on today's deployment every one of them renders `off` or "Not recorded",
 and says which. Nothing here is deployed.
+
+## 57. The offline copy kept, the queue replayed, and help asked for under the switch
+
+**Read against the branch `claude/sweet-fermat-fmx7up`.** Cluster 13's
+second batch, in `travel-buddy-standalone`. §48 built §18's server half and
+graded its client half W in three rows — *"the mobile client stores nothing
+yet"* (TR334), *"no client renders it or queues anything"* (TR421),
+*"offline behaviour has nothing to test"* (TR432); §44 built §17.3's rescue
+and TR318 was held W because *"no trip screen re-prioritises during an
+active Safe Return"*; TR342 was held W because *"the surface does not
+render"* §10's freshness. No server change, no migration.
+
+### 57.1 What was built, and where
+
+- **The bundle, kept as issued** (`travel-buddy-standalone/src/features/trips/offline/tripOffline.ts:124#export async function storeBundle(`):
+  `GET /trips/:tripId/offline-bundle`'s signed bundle is stored byte for
+  byte — signature and all — under a versioned key, and never re-signed or
+  edited, because the server checks that signature on replay. The client's
+  judgement of it is the server's own rule mirrored
+  (`travel-buddy-standalone/src/features/trips/offline/tripOffline.ts:61#export function bundleStaleness(`):
+  expired, or behind the trip's current version, is STALE, said in those
+  words and still shown — §18.1's last certified context, never drawn as
+  current. Storage is an injectable key-value store (AsyncStorage in the
+  app, memory under test).
+- **The queue, §18.3's and not a retry loop** (`travel-buddy-standalone/src/features/trips/offline/tripOffline.ts:177#export async function enqueueOperation(`):
+  an operation is queued with its own idempotency key, the stored bundle's
+  version as `expectedTripVersion`, its client instant, and a bound the
+  server also enforces (50; refused, not truncated). On reconnect
+  (`travel-buddy-standalone/src/features/trips/offline/tripOffline.ts:226#export async function replayQueue(`)
+  the queue goes to `POST /trips/:tripId/operations` with the stored bundle,
+  and the server's per-operation decision is applied, pure and pinned
+  (`travel-buddy-standalone/src/features/trips/offline/tripOffline.ts:209#export function applyReplayResults(`):
+  replayed and duplicate leave as done; rejected leaves with the reason; a
+  version conflict is settled as a conflict — never an overwrite, never
+  retried on the client's own authority; one the server asks to revalidate
+  stays, marked, until the traveller confirms it against the current
+  version; one refused because the kernel is off stays, unmarked, for a
+  later reconnect. A failed replay drops nothing.
+- **On screen** (`travel-buddy-standalone/src/features/trips/offline/TripOfflineCard.tsx:36#export function TripOfflineCard(`):
+  what is kept (version, expiry, plans, commitments, addresses, meeting
+  points), whether it is stale in the server's words, what is queued and in
+  which state, the confirmation for a revalidate-marked change when the
+  screen knows the current version, and the replay's counts.
+- **§17.3 under §17.2's switch** (`travel-buddy-standalone/src/features/trips/disruption/TripRescueEntry.tsx:26#export function TripRescueEntry(`):
+  the Today card reports the switch's mode to the screen and, when it is not
+  NORMAL, the rescue entry mounts beneath it: the problem named in the
+  server's vocabulary (`travel-buddy-standalone/src/features/trips/disruption/tripRescue.ts:14#export const RESCUE_PROBLEMS`),
+  the plan rendered as given — steps, who does each, where to escalate and
+  when — and whether the disruption was declared in the server's words:
+  with the kernel off, "not declared", never a claim
+  (`travel-buddy-standalone/src/features/trips/disruption/tripRescue.ts:73#export function declaredLine(`).
+- **Read, not built: presence freshness on the crew card.** TR342 was
+  graded W in §40.6 and never re-read against `TripCrewPresenceCard.tsx`,
+  which since §40.6 renders every row with the server's freshness label
+  (`travel-buddy-standalone/src/components/trip/TripCrewPresenceCard.tsx:118#freshnessLabel(entry)`),
+  draws a row the server calls not current in the muted style without
+  hiding it, and renders a failed read as a refusal to say anything rather
+  than an empty crew. Both halves of §18.1's sentence — stale visible, live
+  unavailable visible — are on that screen.
+- **Pinned.** Two node suites
+  (`travel-buddy-standalone/src/features/trips/offline/__tests__/tripOffline.test.ts:95#applyReplayResults: replayed and duplicate leave as done`)
+  and two jest component suites; four mutations seen red: a version
+  conflict settled as if replayed, the queue unbounded, the rescue entry
+  rendering under NORMAL, a stale copy drawn as ready.
+
+### 57.2 Row moves
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| TR334 A signed/versioned offline bundle | W | **C** | The server issues it and the client keeps it as issued, judges it by the server's own staleness rule, and shows a stale copy as stale. |
+| TR421 Offline member for 6h — queue/reconnect, stale presence, no destructive last-write-wins | W | **C** | The client queues, replays on reconnect with the server's decisions applied, settles a conflict as a conflict and never overwrites; stale presence is rendered as stale on the crew card. |
+| TR432 §23.1 Mobile tests cover state-driven UI and degraded/offline behaviour | W | **C** | Offline behaviour has tests now: the bundle kept and judged, the queue's contract and the replay's decisions, a failed replay dropping nothing, the card's stale and queued states. |
+| TR342 §18.1 stale / live-unavailable must be visible | W | **C** | Re-read: the crew card renders the server's freshness label on every row, mutes a stale row without hiding it, and says when the read failed; the Today card refuses a stale projection and says so. |
+| TR318 SAFETY_EVENT priority: safety / official help / location coordination | W | **C** | The Today card puts the switch's priority list first when the mode is not NORMAL, discovery is withheld on the server's word, and the rescue entry under it offers the server's plan and escalation. |
+
+**Held, with the reason.** TR166 stays N: freshness is exposed on the
+crew card's rows, not on a map marker, and the map's pins were not re-read
+here. TR319 holds W: the Today card withholds discovery; the Pulse and
+Discovery surfaces have not been read against the switch. TR439 holds W
+(facades).
+
+### 57.3 The ceiling, unchanged
+
+The bundle is issued only where `TRIP_OFFLINE_BUNDLE_SECRET` is set and
+the replay and the rescue post through the kernel behind
+`trip_kernel_enabled` (FALSE); on today's deployment the card says "not
+issued here" and the entry says "not declared". Nothing here is deployed.

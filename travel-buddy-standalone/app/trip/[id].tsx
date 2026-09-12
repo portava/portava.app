@@ -37,6 +37,8 @@ import { TripMapLayersCard } from '../../src/components/trip/TripMapLayersCard';
 import { TripTodayCard } from '../../src/features/trips/today/TripTodayCard.tsx';
 import { TripTimelineConflictsCard } from '../../src/features/trips/timeline/TripTimelineConflictsCard.tsx';
 import { TripCloseoutCard } from '../../src/features/trips/closeout/TripCloseoutCard.tsx';
+import { TripOfflineCard } from '../../src/features/trips/offline/TripOfflineCard.tsx';
+import { TripRescueEntry } from '../../src/features/trips/disruption/TripRescueEntry.tsx';
 import { BeforeYouGoSection } from '../../src/components/trip/BeforeYouGoSection';
 import { TripFsqPlacesSection } from '../../src/components/trip/TripFsqPlacesSection';
 import { TripDestinationInfoCard } from '../../src/components/trip/TripDestinationInfoCard';
@@ -75,6 +77,8 @@ function TripDetailScreen() {
   const navBarScrollHandler = useNavBarScrollHandler();
   const bottomInset = usePlainBottomInset();
   const live = configured && isAuthed;
+  // §17.2's mode as the Today card last read it; §17.3's entry mounts under it when not NORMAL.
+  const [attentionMode, setAttentionMode] = useState<string | null>(null);
   const { data: realTrip, loading, error: tripError, reload: reloadTrip } = useTrip(live ? id : undefined);
   // Next best action (Trip Brain wave) — fail-soft null when the server flag
   // is off or the request fails, so TodayNextUp keeps its empty state.
@@ -552,7 +556,19 @@ function TripDetailScreen() {
             switch obeyed (a banner first, discovery withheld when the server
             says so) and §10.3's sampling interval stated. An unreadable Today
             renders as unavailable, never as a quiet day. */}
-        {live && trip.id ? <TripTodayCard tripId={trip.id} /> : null}
+        {live && trip.id ? <TripTodayCard tripId={trip.id} onAttention={setAttentionMode} /> : null}
+
+        {/* ── §17.3 rescue — only under a non-NORMAL switch ───────────────
+            The traveller names the problem in the server's vocabulary and gets
+            the server's plan; whether the disruption was declared is the
+            server's word (with the kernel off it says "not declared"). */}
+        {live && trip.id ? <TripRescueEntry tripId={trip.id} attentionMode={attentionMode} /> : null}
+
+        {/* ── §18 offline copy and queue ─────────────────────────────────
+            The signed bundle kept as issued, its age and version judged by the
+            server's own rule and shown stale as stale; queued changes replayed
+            on reconnect with the server's per-operation decision applied. */}
+        {live && trip.id ? <TripOfflineCard tripId={trip.id} /> : null}
 
         {/* ── §7.3 conflicts on the timeline ───────────────────────────────
             A day that carries a temporal conflict is named above the plan,
