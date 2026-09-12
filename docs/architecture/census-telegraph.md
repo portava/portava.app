@@ -1106,3 +1106,174 @@ anywhere — a repo-wide grep for `§` over `git diff main...pr/460` returns
 nothing — despite hardening behaviour §7.4, §21 and §27.3 all require. It is
 good work done for the codebase, not for this document, which is the same
 pattern §4 describes for the tree as a whole.
+
+---
+
+## 11. The conversation kernel: §14's capability model made an object, §21's search made a route
+
+**Read against the branch `worktree-agent-adfca8d798639981f`.** This section is
+written by the Telegraph lane that owns §12–§22. It is appended rather than
+edited in: §1's headline table is left exactly as the original pass wrote it,
+and the worktree tally is stated once at the end of this section, computed by
+`pnpm -s check:census-integrity`.
+
+The original pass found §14's capability model absent and §21's search absent —
+not weak, absent: *"no capability flag exists"* (T199), *"There is no
+conversation search of any kind"* (T272). Both findings were re-read against the
+tree before anything was written, and both were still true. What follows is what
+was built, where, and what still bounds it.
+
+### 11.1 What was built, and where
+
+**§14.1 — the ten capabilities are now one object, derived from the eight
+inputs the spec names.** The spec's type is copied verbatim into
+`domain/telegraph/contracts/conversationCapabilities.ts:55#  canSendMessage: boolean;`
+and its ten names are a closed list, so a capability that stops being answered
+is a failing test rather than a review comment. The eight inputs §14.1 names —
+membership, block state, Trip/Crew membership, booking state, age/policy,
+location scope, safety state, conversation type — are a closed set at
+`domain/telegraph/contracts/conversationCapabilities.ts:83#export const CAPABILITY_INPUTS = [`
+and the resolver reads each of them under a labelled heading and records that it
+did: `domain/telegraph/policies/conversationCapabilityPolicy.ts:116`,
+`:132`, `:152`, `:180`, `:185`, `:198`, `:216`, `:229`. "Derived from the eight
+inputs" is therefore a checkable claim — `inputsRead` is asserted against
+`CAPABILITY_INPUTS` in
+`test/telegraphConversationCapabilities.test.ts` — and not a comment.
+
+Each capability carries the REASON it is false, from one declared vocabulary
+(`domain/telegraph/contracts/telegraphReasonCodes.ts`), because the original
+pass's complaint was never that the booleans were wrong — it was that eight
+different enforcement points each refused differently and none of them said
+why. The derivations that can be both true and false read real state:
+`canCreatePlan` refuses a trip thread to a non-crew viewer through
+`isAcceptedTripMember`, the same helper `routes/telegraphCommands.ts:410` calls
+at execution, so the projection cannot disagree with the gate
+(`domain/telegraph/policies/conversationCapabilityPolicy.ts:275`);
+`canViewPreMembershipHistory` reads the live §14.3 bound through the same
+`visibleFromOf` the message reader uses
+(`domain/telegraph/policies/conversationCapabilityPolicy.ts:308`), so with
+`telegraph_history_bound_enabled` OFF the membership query does not even NAME
+`visible_from_at` and a database without migration 2400 is never asked for it;
+`canShareExactLocation` names WHICH wall stopped it — no active grant, or a
+grant whose precision class is below EXACT
+(`domain/telegraph/policies/conversationCapabilityPolicy.ts:282-283`).
+
+**The block is not told.** `TELEGRAPH_AUTH_BLOCKED` is a true reason that would
+reveal the block to the person it was made about, so the policy returns it
+honestly and the route redacts it on the wire
+(`server/telegraph/capabilityRoute.ts:81`), turning it into the
+`TELEGRAPH_AUTH_NOT_MEMBER` a stranger already gets. The endpoint answers 200
+for every refusal (`server/telegraph/capabilityRoute.ts:91`) for the same
+reason: a 403 would make it a thread-existence oracle.
+
+**A degraded capability set is a floor, never an answer.** The resolver marks
+`degraded` when any input read failed, and the one route that ENFORCES a
+capability refuses retryably on `degraded` even when the boolean came out true
+(`server/telegraph/readReceiptsRoute.ts:72`). That branch is not decoration: the
+test caught the route granting on a degraded read before it existed.
+
+**§14.1 `canSeeGroupReadReceipts` now has something to gate.**
+`message_thread_members.last_read_at` has been written since migration 0016 and
+read by exactly one consumer — the caller's own unread count
+(`routes/messaging.ts:1213`). `GET /threads/:threadId/read-receipts`
+(`server/telegraph/readReceiptsRoute.ts:52`) returns every active member's read
+position for a group thread, refuses a direct thread because the capability is
+false there, and CLAMPS another member's position to the caller's own §14.3
+floor rather than omitting it (`server/telegraph/readReceiptsRoute.ts:115`) —
+omission would itself be the signal.
+
+**§21 — search exists, is object-aware, and filters access BEFORE retrieval.**
+`services/telegraphSearch.ts` computes the authorized conversation set first
+(`services/telegraphSearch.ts:101`) and queries only that set; a membership read
+that FAILS returns an empty scope and the caller returns an empty degraded
+result (`services/telegraphSearch.ts:119`) — there is no path in the file that
+reaches `messages` unscoped, and the test proves it by inspecting every filter
+the query builder received, not by inspecting the rows that came back. The
+§14.3 window is applied IN the query (`services/telegraphSearch.ts:164`) with
+bounded threads queried separately, because dropping out-of-window rows in
+JavaScript is exactly the post-filtering §21 forbids and silently shrinks a
+bounded user's page through `limit`. Deleted rows are excluded in the query
+(`services/telegraphSearch.ts:160`), not skipped in the render.
+
+The five buckets are §21's, in §21's order
+(`domain/telegraph/contracts/conversationSearch.ts:41`), and the classifier
+sends an unrecognised card subtype to MESSAGES rather than to nowhere
+(`domain/telegraph/contracts/conversationSearch.ts:137`). "Object titles and
+safe metadata" is an ALLOWLIST of field names
+(`domain/telegraph/contracts/conversationSearch.ts:80`): a card that gains a
+`lat` tomorrow is not indexed by accident, an unparseable card body indexes to
+the empty string rather than to raw JSON, and a match that exists only in a
+non-allowlisted field is not a hit — because surfacing it would let a searcher
+confirm a value they are not allowed to read. Three routes are mounted:
+`server/telegraph/searchRoute.ts:47` (global), `:70` (one conversation) and
+`:97` — §21's "Ask this conversation", which returns structured plans and
+places in a SEPARATE field from prose rather than merely sorting them higher.
+
+### 11.2 Row moves
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| T199 | W | **C** | §14.1 capability `canCreatePlan` — The capability is modelled and derived server-side, and the operation it names exists. `domain/telegraph/policies/conversationCapabilityPolicy.ts:275` refuses a trip thread to a non-crew viewer through `isAcceptedTripMember` — the same helper `routes/telegraphCommands.ts:410` calls at execution — and grants otherwise. The original row's complaint ("the enforcement is real; the capability is not modelled") is answered without moving the enforcement. |
+| T200 | W | **W** | §14.1 capability `canShareExactLocation` — Now modelled and derived from the location-scope input, and it names which wall stopped it (`conversationCapabilityPolicy.ts:282-283`). Holds W for the reason the original row gave and this work confirms: `trip_crew_location_sessions.visibility_level` tops out at `nearby`, which is APPROXIMATE, so the capability is structurally always false. A conversation still cannot grant exact location because no store can express it. |
+| T201 | N | **W** | §14.1 capability `canInvite` — Modelled and derived, with the §14.3-grounded reason: a DM answers `TELEGRAPH_POLICY_DM_INVITE_FORMS_NEW_GROUP`, a trip or circle thread answers `TELEGRAPH_POLICY_MEMBERSHIP_DERIVED` (`conversationCapabilityPolicy.ts:288`). W and not C: there is still no add-participant operation on any thread, so the capability is permanently false and `CAPABILITY_ENFORCEMENT_SITES` records `null` for it (`domain/telegraph/contracts/conversationCapabilities.ts:109`). |
+| T202 | N | **W** | §14.1 capability `canRequestPayment` — Modelled; §20's prohibition is now stated as a capability rather than left as an absence (`conversationCapabilityPolicy.ts:293`). W for the same reason as T201 — there is no payment request to gate, so the capability cannot be exercised in either direction. |
+| T203 | W | **C** | §14.1 capability `canCreateBooking` — Derived from the booking-state and conversation-type inputs: a thread that already owns a booking refuses a second one from inside itself, a group thread refuses because a booking is pairwise, a healthy DM grants (`conversationCapabilityPolicy.ts:297-300`). The Rent-a-Buddy gates remain the enforcement site and are named as such (`conversationCapabilities.ts:111`). |
+| T204 | N | **W** | §14.1 capability `canBroadcast` — Modelled and permanently false with `TELEGRAPH_POLICY_NO_BROADCAST` (`conversationCapabilityPolicy.ts:303`). No broadcast primitive exists; the capability now says so instead of being silent. |
+| T205 | W | **C** | §14.1 capability `canViewPreMembershipHistory` — Modelled and derived from the LIVE bound, through the same `visibleFromOf` the message reader uses (`conversationCapabilityPolicy.ts:308`). The original row said "not modelled — and the rule it would express is violated"; the violation half was closed on this tree by migration 2400 before this pass (see T211 below), and the model half is closed here. |
+| T206 | N | **C** | §14.1 capability `canSeeGroupReadReceipts` — Modelled (`conversationCapabilityPolicy.ts:314-316`) AND given something to gate: `GET /threads/:threadId/read-receipts` (`server/telegraph/readReceiptsRoute.ts:52`) returns per-member read positions for a group thread and refuses a direct one, clamping another member's position to the caller's own §14.3 floor (`:115`). |
+| T207 | W | **C** | §14.1 capabilities derived server-side from the named inputs — All eight inputs are read under labelled headings and recorded in `inputsRead` (`conversationCapabilityPolicy.ts:116`, `:132`, `:152`, `:180`, `:185`, `:198`, `:216`, `:229`), and the test asserts the recorded set against the declared one. Nothing is taken from a client: the route derives everything from the verified user id and the service-role reads. |
+| T211 | W | **W** | §14.3 new members do not automatically receive pre-membership history — **Re-derived, not re-measured by this pass's work.** The original verdict ("Violated") is STALE: migration `2400_telegraph_history_bound.sql` and `services/groupChatHistoryBound.ts:57` reached this tree in commit `42aeac38e`, and `routes/messaging.ts:1861` now applies the bound in the query. It holds W and not C for the reason the migration's own header gives: the bound is read only while `telegraph_history_bound_enabled` is TRUE, and no database has that flag on. |
+| T272 | N | **C** | §21 Telegraph search is object-aware and authorization-scoped — Three routes (`server/telegraph/searchRoute.ts:47`, `:70`, `:97`) over one service that computes the authorized set first (`services/telegraphSearch.ts:101`) and classifies every hit into a bucket (`domain/telegraph/contracts/conversationSearch.ts:137`). No migration, no flag: it reads columns that exist on every deployment. |
+| T273 | N | **C** | §21 multi-type results MESSAGES / PLACES / MEDIA / PLANS / MEMORIES — The five buckets in §21's order (`domain/telegraph/contracts/conversationSearch.ts:41`), always all five keys in `counts` so "0 PLACES" is expressible, with the subtype→bucket map read off the repository's actual writers. |
+| T274 | N | **W** | §21 index message text, permitted transcripts, object titles and safe metadata — Three of four. Message text, object titles and safe metadata are indexed through an allowlist (`domain/telegraph/contracts/conversationSearch.ts:80`, `:158`). **Transcripts are not**, because there are none — §18.2's voice pipeline does not exist (T243) and `lib/mediaPipeline.ts` admits no audio type. |
+| T275 | N `∅` | **C** | §21 private indexes filter access BEFORE retrieval, not after — No longer an unguarded absence. `services/telegraphSearch.ts:101` resolves the authorized scope first and `:119` returns an EMPTY scope on a failed membership read, so a degraded read cannot fall through to an unscoped query; the test asserts zero `messages` queries in that case, and asserts a `thread_id` scope on every query in the healthy case. |
+| T277 | N | **C** | §21 "Ask this conversation" prefers structured plans/decisions/actions — `GET /threads/:threadId/ask` (`server/telegraph/searchRoute.ts:97`) returns `structured` and `prose` as separate fields over the same authorized scope, so a caller answers from the structured set and falls back rather than inferring from prose that happened to rank well. |
+
+**Rows looked at that did not move:** T197, T198, T208, T209 (all C already, and
+re-read: nothing in this section moves an enforcement point). T210 stays N — the
+live bound is a TIMESTAMP (`visible_from_at`), not `visibleFromSequence` /
+`visibleUntilSequence`, and no sequence column exists. T212 stays N `∅` — no
+add-participant operation exists to guard. T276 stays W — deleted rows are now
+excluded in the search query (`services/telegraphSearch.ts:160`), which is
+stronger evidence than the original row had, but the `unsent` half has no column
+to exclude and revoked source objects still survive inside frozen cards (T46).
+
+### 11.3 The ceiling
+
+**No migration, and that is the point of this batch.** Everything above reads
+columns that exist on every deployment, so the rows that moved to C are true on
+every deployment of this tree — the standard §3 sets. Three ceilings bound what
+is here:
+
+1. **Built on a branch is not merged.** This section is written in the worktree
+   `worktree-agent-adfca8d798639981f`. Nothing here is on `main`, nothing is
+   deployed, and no C row above should be read as "in production".
+2. **`telegraph_history_bound_enabled` is off everywhere.** T205's capability is
+   correct and T211's bound is real, and on every live database the bound is
+   NULL-equivalent because the flag gating it has never been turned on. T205 is
+   C because the CAPABILITY is derived correctly in both flag states (the test
+   asserts both); T211 stays W because the RULE it states is only enforced in
+   the ON state, which no database is in.
+3. **Four capabilities are modelled and permanently false.**
+   `canShareExactLocation`, `canInvite`, `canRequestPayment` and `canBroadcast`
+   are W, not C, and the reason is recorded in the code itself:
+   `CAPABILITY_ENFORCEMENT_SITES` (`domain/telegraph/contracts/conversationCapabilities.ts:104`)
+   carries `null` for the three that gate nothing, so a reader can tell a
+   modelled capability from a built one without trusting this paragraph.
+
+**P24 — what would turn these green claims red.** (a) Anything that makes the
+capability object an authorization GATE rather than a projection: today the send
+path, the call routes and the command route each re-derive their own answer, and
+if one of them started reading `capabilities.canX` instead, §14.1's last
+sentence would be violated from the server side and this section's C rows would
+be wrong. (b) A new card subtype whose body puts a coordinate in an
+allowlisted field name — the search allowlist is by NAME, not by value, so
+`title: "21.0287, 105.8542"` would be indexed; the allowlist stops fields, not
+liars. (c) A second membership read added to the search path that does not go
+through `authorizedConversationScope` — the "before retrieval" guarantee is a
+property of there being exactly one scope resolver, and a second one is how it
+would drift. (d) `MAX_BOUNDED_QUERIES` being hit silently: it is reported as
+`degraded` today (`services/telegraphSearch.ts:184`), and a change that dropped
+that would turn a truncated search into a confident empty one.
+
+Headline after §11 in this worktree (last statement wins): C=107 W=172 N=149 X=0
