@@ -37,6 +37,7 @@
  * PURE. Every input is a parameter, including the coordinates and the clock,
  * so the whole thing is testable without a database.
  */
+import type { TripReasonCode } from "../../lib/tripReasonCodes.js";
 
 export const CONSISTENCY_VERDICTS = ["CONSISTENT", "UNCHECKABLE", "INCONSISTENT"] as const;
 export type ConsistencyVerdict = (typeof CONSISTENCY_VERDICTS)[number];
@@ -73,15 +74,40 @@ export const CONSISTENCY_REASONS = [
 ] as const;
 export type ConsistencyReason = (typeof CONSISTENCY_REASONS)[number];
 
+/**
+ * Appendix B: the TRIP_SPATIAL_* (and, for the two undecidable-in-time
+ * reasons, TRIP_TEMPORAL_UNKNOWN) reason code each finding carries on the
+ * wire — census-trips TR444. Every finding is stamped from this table by the
+ * check functions, so a consumer never sees a spatial finding without its
+ * family code.
+ */
+export const SPATIAL_REASON_CODES: Readonly<Record<ConsistencyReason, TripReasonCode>> = {
+  PLAN_OUTSIDE_STAGE_INTERVAL: "TRIP_SPATIAL_STAGE_LOCALITY",
+  PLAN_FAR_FROM_STAGE_ANCHOR: "TRIP_SPATIAL_STAGE_LOCALITY",
+  SAME_NAME_DIFFERENT_PLACE: "TRIP_SPATIAL_PLACE_IDENTITY",
+  STAGE_HAS_NO_INTERVAL: "TRIP_TEMPORAL_UNKNOWN",
+  PLAN_HAS_NO_TIME: "TRIP_TEMPORAL_UNKNOWN",
+  NO_COORDINATES: "TRIP_SPATIAL_NO_COORDINATES",
+  STAGE_NOT_FOUND: "TRIP_SPATIAL_STAGE_LOCALITY",
+  NO_TRANSPORT_MODE_POLICY: "TRIP_SPATIAL_ROUTE_UNAVAILABLE",
+};
+
 export interface ConsistencyFinding {
   check: ConsistencyCheck;
   verdict: ConsistencyVerdict;
   reason: ConsistencyReason;
+  /** The Appendix B code for `reason` — SPATIAL_REASON_CODES[reason]. */
+  reasonCode: TripReasonCode;
   /** The plan item(s) this concerns. Two for PLACE_IDENTITY. */
   planIds: string[];
   stageId: string | null;
   /** Human-facing, and never phrased as reassurance for an UNCHECKABLE. */
   detail: string;
+}
+
+type RawFinding = Omit<ConsistencyFinding, "reasonCode">;
+function stampReasonCode(f: RawFinding): ConsistencyFinding {
+  return { ...f, reasonCode: SPATIAL_REASON_CODES[f.reason] };
 }
 
 export interface GeoPoint { lat: number; lng: number }
@@ -157,7 +183,7 @@ export function checkStageLocality(
   stages: StageForConsistency[],
 ): ConsistencyFinding[] {
   const byId = new Map(stages.map((s) => [s.id, s]));
-  const out: ConsistencyFinding[] = [];
+  const out: RawFinding[] = [];
 
   for (const p of plans) {
     if (p.stageId === null) continue;   // not attached: nothing to be outside of
@@ -224,7 +250,7 @@ export function checkStageLocality(
     }
   }
 
-  return out;
+  return out.map(stampReasonCode);
 }
 
 /**
@@ -241,7 +267,7 @@ export function checkStageLocality(
  * the first as a collision would bury the second in noise. It is UNCHECKABLE.
  */
 export function checkPlaceIdentity(plans: PlanForConsistency[]): ConsistencyFinding[] {
-  const out: ConsistencyFinding[] = [];
+  const out: RawFinding[] = [];
   const byName = new Map<string, PlanForConsistency[]>();
 
   for (const p of plans) {
@@ -274,7 +300,7 @@ export function checkPlaceIdentity(plans: PlanForConsistency[]): ConsistencyFind
     }
   }
 
-  return out;
+  return out.map(stampReasonCode);
 }
 
 /**
@@ -284,11 +310,11 @@ export function checkPlaceIdentity(plans: PlanForConsistency[]): ConsistencyFind
  * saying nothing about the fourth reads as a clean bill of health on all four.
  */
 export function checkRouteAvailability(): ConsistencyFinding[] {
-  return [{
+  return [stampReasonCode({
     check: "ROUTE_AVAILABILITY", verdict: "UNCHECKABLE", reason: "NO_TRANSPORT_MODE_POLICY",
     planIds: [], stageId: null,
     detail: "Nothing in this system records which transport modes a trip will or will not use, so no plan can be checked against one.",
-  }];
+  })];
 }
 
 /** All of §7.4 except travel feasibility, which is TripFeasibilityEngine. */

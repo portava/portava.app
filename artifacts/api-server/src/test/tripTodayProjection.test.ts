@@ -48,7 +48,7 @@ function install(tables: Record<string, Row[]>, errorOn: string[] = []) {
 beforeEach(async () => { if (!server) await start(); _resetTripMetrics(); });
 
 describe("§11.1 buildTripTodayProjection — composed, not re-derived", () => {
-  it("carries every §11.1 field, answers §11.2's questions in order, and says which two fields have no producer", async () => {
+  it("carries every §11.1 field, answers §11.2's questions in order, and says which field has no producer", async () => {
     const r = await buildTripTodayProjection(makeClient(withStages(base())) as any, TRIP_ID, OWNER_ID, { now: NOW });
     assert.ok(r.ok, JSON.stringify(r));
     const p = r.projection;
@@ -61,7 +61,9 @@ describe("§11.1 buildTripTodayProjection — composed, not re-derived", () => {
     assert.ok(p.nextCommitment && p.nextCommitment.id === "B" && p.nextCommitment.mustLeaveBy !== null && p.nextCommitment.windowId === "fw:A:B");
     assert.ok(p.freeWindows.every((w) => Date.parse(w.endsAt) > NOW.getTime()));
     assert.equal(p.crewSummary.total, 2); assert.equal(p.crewSummary.featureEnabled, false); assert.equal(p.crewSummary.liveSharing, null, "not read is null, not zero");
-    assert.equal(p.opportunities.status, "no_source"); assert.equal(p.pulseSignals.status, "no_source");
+    assert.equal(p.opportunities.status, "no_source");
+    assert.equal(p.pulseSignals.status, "ok", "§16: the Trip Pulse projection now produces this layer");
+    assert.equal(p.attention.mode, "NORMAL"); assert.equal(p.attention.suppression.discovery, false);
     assert.deepEqual(p.risks, []); assert.deepEqual(p.unresolvedActions, []);
     assert.equal(p.health, "HEALTHY");
     assert.deepEqual(Object.keys(p.answers), ["now", "next", "who", "canDo", "changed"], "§11.2's order");
@@ -160,8 +162,9 @@ describe("Compass get_today_state consumes the Today projection (TR203)", () => 
     assert.equal(out.projection.sourceTripVersion, 9);
     // Resolving the current trip consumes the Compass projection too; Today's
     // own composition consumes Health and Freedom; then Today itself.
+    // §16: Today also composes the Trip Pulse projection now.
     assert.deepEqual(readTripMetric("projection_lag_seconds").map((s) => s.labels.projection).sort(),
-      ["TripCompassProjection", "TripFreedomProjection", "TripHealthProjection", "TripTodayProjection"]);
+      ["TripCompassProjection", "TripFreedomProjection", "TripHealthProjection", "TripPulseProjection", "TripTodayProjection"]);
     const stranger: any = await toolGetTodayState(c as any, OTHER_ID, { tripId: TRIP_ID });
     assert.equal(stranger.today, null);
   });

@@ -47,13 +47,16 @@ export const TRIP_ENGINE_VERSIONS = {
   TravelTimeProvider: "straight-line/fastest-mode.2026-09-12",
   TripFeasibilityEngine: "2026-09-09.1",
   TripFreedomEngine: "2026-09-12.1",
-  TripHealth: "2026-09-12.1",
+  TripHealth: "2026-09-12.2",
   TripOperationalPhase: "2026-09-12.1",
-  TripTodayProjection: "2026-09-12.1",
+  TripTodayProjection: "2026-09-12.2",
+  TripSignals: "2026-09-12.1",
+  TripAttentionPolicy: "2026-09-12.1",
+  TripPulseProjection: "2026-09-12.1",
 } as const;
 export type TripEngineName = keyof typeof TRIP_ENGINE_VERSIONS;
 
-export const TRIP_DECISION_TYPES = ["freedom_windows", "trip_health", "today_projection"] as const;
+export const TRIP_DECISION_TYPES = ["freedom_windows", "trip_health", "today_projection", "pulse_projection"] as const;
 export type TripDecisionType = (typeof TRIP_DECISION_TYPES)[number];
 
 export interface TripDecision {

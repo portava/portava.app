@@ -27,7 +27,7 @@
  */
 import { logger as rootLogger } from "./logger.js";
 import { getServiceClient } from "./supabase.js";
-import { sendPushWithRetry } from "./pushWithRetry.js";
+import { sendTripPush } from "./tripPush.js";
 
 const logger = rootLogger.child({ job: "TripReminderScheduler" });
 
@@ -136,7 +136,7 @@ async function sendReminderForTrip(
   // Genuinely nobody to push to — a real answer from a readable table.
   if (recipients.length === 0) return true;
 
-  await sendPushWithRetry(sc as any, recipients, {
+  await sendTripPush(sc as any, recipients, {
     title: "Your trip starts tomorrow! 🌍",
     body:  `${trip.title ?? "Your upcoming trip"} starts in about 24 hours. Have a great trip!`,
     data:  { type: "trip_24h_reminder", tripId },

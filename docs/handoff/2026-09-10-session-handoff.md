@@ -188,7 +188,7 @@ actually counts today; the `ed168ed7` column they replace was **44.4 % / 66.7 %*
 | compass | 90 | 47 | 18 | 15 | 0 | 10 | 52.2 % | 72.2 % |
 | sensing | 127 | 65 | 39 | 22 | 1 | 0 | 51.2 % | 81.9 % |
 | telegraph | 451 | 98 | 172 | 157 | 3 | 21 | 21.7 % | 59.9 % |
-| trips | 451 | 88 → **148** (§40–§41, branch) | 162 → **180** | 200 → **122** | 1 | 0 | 19.5 % → **32.8 %** | 55.4 % → **72.7 %** |
+| trips | 451 | 88 → **170** (§40–§42, branch) | 162 → **176** | 200 → **104** | 1 | 0 | 19.5 % → **37.7 %** | 55.4 % → **76.7 %** |
 | layover | 296 | 28 | 120 | 148 | 0 | 0 | 9.5 % | 50.0 % |
 | highlights-memories | 266 | 13 | 65 | 59 | 2 | 127 | 4.9 % | 29.3 % |
 | **ALL** | **3,290** | **1,499** | **789** | **772** | **27** | **203** | **45.6 %** | **69.5 %** |
@@ -552,8 +552,8 @@ the thing being **built** — which is the normal outcome of working on the prod
 architecture look worse than it is. Nobody had ever looked.
 
 Trips was **88 C / 162 W / 200 N / 1 X — 55.4 % constructed, 19.5 % correct** at §39;
-after census-trips §40.1–§40.7 on `claude/sweet-fermat-fmx7up` (not merged) it is
-**148 C / 180 W / 122 N / 1 X — 72.7 % constructed, 32.8 % correct**, every moved row
+after census-trips §40.1–§42 on `claude/sweet-fermat-fmx7up` (not merged) it is
+**170 C / 176 W / 104 N / 1 X — 76.7 % constructed, 37.7 % correct**, every moved row
 graded on a file, a line, a test and a mutation that went red, and every kernel-era
 projection behind `trip_operational_projections_enabled` seeded FALSE.
 Thirty-three of the thirty-four are built and not shown to work. The thirty-fourth,

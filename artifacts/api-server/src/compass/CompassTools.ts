@@ -23,6 +23,8 @@ import { stripCoordinateFields, wrapUgc, buildStructuredCompassContext } from ".
 import { isAcceptedTripMember, canEditPlan } from "../lib/http.js";
 import { buildTripCompassProjection } from "../services/trips/TripCompassProjection.js";
 import { buildTripFreedomProjection } from "../services/trips/TripFreedomProjection.js";
+import { buildTripPulseProjection } from "../services/trips/TripPulseProjection.js";
+import { tripOperationalProjectionsGate } from "../lib/tripOperationalProjections.js";
 import { buildTripTodayProjection } from "../services/trips/TripTodayProjection.js";
 import { explainTripDecisionFrom } from "../services/trips/TripDecisionLedger.js";
 import { acceptTripProjection, TRIP_PROJECTION_SCHEMA_VERSION } from "../services/trips/TripProjectionEnvelope.js";
@@ -186,6 +188,45 @@ export const COMPASS_TOOL_DEFINITIONS = [
       name: "get_today_state",
       description:
         "Get the Today projection of the user's current trip (or a named trip): the operational phase now, the current plan, the next commitment with its leave-by time, the free windows still open, the crew summary, health with its reasons, risks and unresolved actions. Answers, in order: what is happening now, what is next, who is with me, what can I do, what needs action.",
+      parameters: {
+        type: "object",
+        properties: { tripId: { type: "string", description: "A specific trip's id (optional). The user must be an accepted member." } },
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
+      name: "get_live_conditions",
+      description:
+        "Get the Trip Pulse of the user's current trip (or a named trip): live world signals — crowd rising at a saved venue, rain arriving on a weather-sensitive plan, taxi demand, a delayed event, a crew member nearby — each with its confidence, source class, freshness and any contradicting sources, filtered through the trip's stage, location, goals, saved ideas, commitments, crew and attention state. Signals dropped by that filter are listed with the reason. Under AT_RISK or a safety event, discovery signals are suppressed and the response says so.",
+      parameters: {
+        type: "object",
+        properties: { tripId: { type: "string", description: "A specific trip's id (optional). The user must be an accepted member." } },
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
+      name: "get_commitments",
+      description:
+        "Get the hard commitments of the user's current trip (or a named trip): flights, check-ins, reservations and events with a required arrival time, each with its flexibility and confidence. These are the constraints the freedom windows are computed between; Compass may not move them — a change is a proposal through the command path.",
+      parameters: {
+        type: "object",
+        properties: { tripId: { type: "string", description: "A specific trip's id (optional). The user must be an accepted member." } },
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function" as const,
+    function: {
+      name: "get_saved_ideas",
+      description:
+        "Get the places the crew has saved to the user's current trip (or a named trip) as ideas — the candidates 'where next' and a free window are filled from. Names are user content.",
       parameters: {
         type: "object",
         properties: { tripId: { type: "string", description: "A specific trip's id (optional). The user must be an accepted member." } },
@@ -852,6 +893,94 @@ export async function toolGetFreedomWindows(sc: SupabaseClient, userId: string, 
  * §12.1 getTodayState(tripId) — Compass CONSUMES the §11.1 Today projection,
  * the same object GET /trips/:id/today serves, through the §19.1 rule.
  */
+/** §12.1 getLiveConditions(tripId) → the §16 Trip Pulse projection, accepted per §19.1. */
+export async function toolGetLiveConditions(sc: SupabaseClient, userId: string, args: Record<string, unknown>): Promise<unknown> {
+  const tripId = typeof args.tripId === "string" && args.tripId.length > 0 ? args.tripId : null;
+  let id: string | null = tripId;
+  if (id) {
+    if (!(await isAcceptedTripMember(sc, id, userId))) return { pulse: null, info: "The user is not a member of that trip." };
+  } else {
+    const current: any = await toolGetCurrentTrip(sc, userId);
+    id = current?.trip?.id ?? null;
+    if (!id) return { pulse: null, info: "No active or upcoming trip." };
+  }
+  const built = await buildTripPulseProjection(sc, id, userId);
+  if (!built.ok) return { pulse: null, info: built.reason === "FEATURE_DISABLED" ? `Trip Pulse is not enabled: ${built.message}` : `Trip Pulse unavailable (${built.reason}): ${built.message}` };
+  const decision = acceptTripProjection(built.projection, { acceptedSchemaVersion: TRIP_PROJECTION_SCHEMA_VERSION, metric: "TripPulseProjection" });
+  if (!decision.accepted) return { pulse: null, info: `Trip Pulse rejected (${decision.reason}): ${decision.message}` };
+  const p = built.projection;
+  return {
+    pulse: {
+      tripId: p.tripId,
+      decisionId: p.decisionId,
+      attention: { mode: p.attention.mode, suppression: p.attention.suppression },
+      signals: p.signals.map((sg) => ({
+        kind: sg.kind, subjectId: sg.subjectId, interpretation: sg.interpretation,
+        estimate: { value: sg.estimate.value, confidence: sg.estimate.confidence, sourceClass: sg.estimate.sourceClass, observedAt: sg.estimate.observedAt, expiresAt: sg.estimate.expiresAt, fallbackUsed: sg.estimate.fallbackUsed, contradictorySources: sg.estimate.contradictorySources.length },
+        effects: sg.effects.map((e) => ({ kind: e.kind, subjectIds: e.subjectIds, detail: wrapUgc(e.detail) })),
+        relevance: sg.relevance,
+      })),
+      dropped: p.dropped.map((d) => ({ kind: d.kind, reason: d.reason })),
+      sources: p.sources,
+      reading: p.reading,
+    },
+    projection: { generatedAt: p.generatedAt, sourceTripVersion: p.sourceTripVersion, freshness: p.freshness },
+  };
+}
+
+async function resolveMemberTrip(sc: SupabaseClient, userId: string, args: Record<string, unknown>): Promise<{ id: string } | { info: string }> {
+  const tripId = typeof args.tripId === "string" && args.tripId.length > 0 ? args.tripId : null;
+  if (tripId) {
+    if (!(await isAcceptedTripMember(sc, tripId, userId))) return { info: "The user is not a member of that trip." };
+    return { id: tripId };
+  }
+  const current: any = await toolGetCurrentTrip(sc, userId);
+  const id = current?.trip?.id ?? null;
+  return id ? { id } : { info: "No active or upcoming trip." };
+}
+
+/** §12.1 getCommitments(tripId) — trip_commitments (2761), under the operational-projections gate that owns that table. */
+export async function toolGetCommitments(sc: SupabaseClient, userId: string, args: Record<string, unknown>): Promise<unknown> {
+  const t = await resolveMemberTrip(sc, userId, args);
+  if ("info" in t) return { commitments: null, info: t.info };
+  const gate = await tripOperationalProjectionsGate(sc);
+  if (!gate.enabled) return { commitments: null, info: `Commitments are not enabled: ${gate.reason}` };
+  const { data, error } = await sc
+    .from("trip_commitments")
+    .select("id, stage_id, type, starts_at, required_arrival_at, place_id, lateness_tolerance, prep_duration, flexibility, confidence")
+    .eq("trip_id", t.id);
+  if (error) return { commitments: null, info: `Commitments unavailable: ${error.message}` };
+  const rows = ((data ?? []) as any[]).sort((a, b) => String(a.required_arrival_at ?? a.starts_at ?? "").localeCompare(String(b.required_arrival_at ?? b.starts_at ?? "")));
+  return {
+    commitments: rows.map((c) => ({
+      id: c.id, stageId: c.stage_id ?? null, type: c.type, startsAt: c.starts_at ?? null, requiredArrivalAt: c.required_arrival_at ?? null, placeId: c.place_id ?? null,
+      latenessTolerance: c.lateness_tolerance ?? null, prepDuration: c.prep_duration ?? null, flexibility: c.flexibility ?? null, confidence: c.confidence ?? null,
+    })),
+    count: rows.length,
+    info: rows.length === 0 ? "The trip has no hard commitments." : null,
+  };
+}
+
+/** §12.1 getSavedIdeas(tripId) — trip_saved_places, names wrapped as user content. */
+export async function toolGetSavedIdeas(sc: SupabaseClient, userId: string, args: Record<string, unknown>): Promise<unknown> {
+  const t = await resolveMemberTrip(sc, userId, args);
+  if ("info" in t) return { savedIdeas: null, info: t.info };
+  const { data, error } = await sc
+    .from("trip_saved_places")
+    .select("id, user_id, place_id, place_name, place_type, notes, saved_at")
+    .eq("trip_id", t.id);
+  if (error) return { savedIdeas: null, info: `Saved ideas unavailable: ${error.message}` };
+  const rows = ((data ?? []) as any[]).sort((a, b) => String(b.saved_at ?? "").localeCompare(String(a.saved_at ?? "")));
+  return {
+    savedIdeas: rows.map((s) => ({
+      id: s.id, placeId: s.place_id ?? null, name: wrapUgc(String(s.place_name ?? "")), placeType: s.place_type ?? null,
+      notes: s.notes ? wrapUgc(String(s.notes)) : null, savedBy: s.user_id === userId ? "you" : "a crew member", savedAt: s.saved_at ?? null,
+    })),
+    count: rows.length,
+    info: rows.length === 0 ? "Nothing has been saved to this trip yet." : null,
+  };
+}
+
 export async function toolGetTodayState(sc: SupabaseClient, userId: string, args: Record<string, unknown>): Promise<unknown> {
   const tripId = typeof args.tripId === "string" && args.tripId.length > 0 ? args.tripId : null;
   let id: string | null = tripId;
@@ -1368,6 +1497,9 @@ export async function executeCompassTool(
       case "check_trip_conflicts": raw = await toolCheckTripConflicts(sc, userId, args); break;
       case "get_freedom_windows":  raw = await toolGetFreedomWindows(sc, userId, args); break;
       case "get_today_state":      raw = await toolGetTodayState(sc, userId, args); break;
+      case "get_live_conditions":  raw = await toolGetLiveConditions(sc, userId, args); break;
+      case "get_commitments":      raw = await toolGetCommitments(sc, userId, args); break;
+      case "get_saved_ideas":      raw = await toolGetSavedIdeas(sc, userId, args); break;
       case "explain_trip_decision": raw = await toolExplainTripDecision(sc, userId, args); break;
       case "add_to_trip":          raw = await toolAddToTrip(sc, userId, args); break;
       // Phase 9 social tools re-resolve blocked/muted users PER CALL so a

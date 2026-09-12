@@ -23,12 +23,12 @@ preserved in §36.1 as the record of that measurement.
 | Measure | Value |
 | --- | --- |
 | **Denominator (testable requirements)** | **451** |
-| BUILT-AND-CORRECT | **148** |
-| BUILT-BUT-WRONG | **180** |
-| NOT-BUILT | **122** |
+| BUILT-AND-CORRECT | **170** |
+| BUILT-BUT-WRONG | **176** |
+| NOT-BUILT | **104** |
 | CANNOT-VERIFY | **1** |
-| **CONSTRUCTED%** = (C+W)/451 | **328 / 451 = 72.7 %** |
-| **CORRECT%** (raw) = C/451 | **148 / 451 = 32.8 %** |
+| **CONSTRUCTED%** = (C+W)/451 | **346 / 451 = 76.7 %** |
+| **CORRECT%** (raw) = C/451 | **170 / 451 = 37.7 %** |
 
 > **RESTATED 2026-09-11 (§38): 89 → 87 CORRECT, 127 → 129 WRONG.** §38 re-derived
 > 39 of the C rows against the code and **two did not hold**, both for the same
@@ -118,6 +118,17 @@ preserved in §36.1 as the record of that measurement.
 > disruptions and the four §4.2 events that had "zero occurrences". Twenty-four
 > N → W and none to C, for one reason stated thirty-one times in §41.3: no
 > database has these migrations. Same caveat; the two flags stay FALSE.
+
+> **RESTATED 2026-09-12 (§42): 148 → 170 CORRECT, 180 → 176 WRONG,
+> 122 → 104 NOT-BUILT. CONSTRUCTED 72.7 % → 76.7 %, CORRECT 32.8 % → 37.7 %.**
+> §42 built §16.2's `SignalEstimate` with its contradiction rule enforced by
+> construction, §16.1's Trip Pulse as a projection over the trip's own places
+> with three named sources, §11.4's five-level attention model with every
+> trip push routed through it, §17.2's priority switch fed by 2785's
+> disruption register, two more §21.1 metrics and three §12.1 tools. Twenty-two
+> rows to C, one N → W (TR319: the suppression is derived and applied to
+> signals and pushes, not yet to the Compass brief). No migration; the
+> ceiling is §41.3's, unchanged.
 | **CORRECT% (spec-attributable)** | **WITHDRAWN — not measured. See §36.4** |
 | CANNOT-VERIFY share | **1 / 451 = 0.2 %** |
 
@@ -3332,7 +3343,7 @@ carried a freshness (TR368). No metric measured read-model lag (TR394).
   (`:275#featureEnabled`). The map projection's own response
   now spreads the envelope too (`routes/tripMapProjection.ts:352#liveEnvelope`).
   `/plan`, `/plan/map`, `/crew/map`, `/map-projection` keep their shapes.
-- **Consumers.** `compass/CompassTools.ts:474#toolGetCurrentTrip`
+- **Consumers.** `compass/CompassTools.ts:515#toolGetCurrentTrip`
   builds the context projection (`:521#buildTripCompassProjection`)
   and consumes it through `acceptTripProjection` (`:525#acceptTripProjection`);
   a refused or unreadable projection is SAID to be so (the old read handed the
@@ -3453,13 +3464,13 @@ never FEASIBLE).
   at detection by kind (`:162#temporal_conflict_total`;
   `lib/tripMetrics.ts:64#incrementTripMetric`).
 - `GET /trips/:tripId/freedom-windows`
-  (`routes/tripProjections.ts:187#freedom-windows`) — §12.1's
+  (`routes/tripProjections.ts:190#freedom-windows`) — §12.1's
   `getFreedomWindows(tripId)` as a read; accepted crew; refusals by reason.
   `/timeline` now carries `conflicts` and each day's `conflictIds`
   (`:156#detectPlanOverlaps`, `:159#conflictIds`),
   so a renderer that only reads days still sees the mark.
 - **Compass consumes the engine.** `get_freedom_windows`
-  (`compass/CompassTools.ts:170#get_freedom_windows`, implemented
+  (`compass/CompassTools.ts:172#get_freedom_windows`, implemented
   at `:801#toolGetFreedomWindows`, dispatched at
   `:1343#get_freedom_windows`) returns the same object the route
   serves, through `acceptTripProjection`, and with `at` returns the window
@@ -3590,13 +3601,13 @@ AT_RISK, MOVED absent. TR194: no START_PLAN. TR396: no metric.
   purpose. `surfacePriority` (`:122#surfacePriority`) is §17.2's
   logistics / affected commitments / recovery order, present only at AT_RISK
   or worse.
-- `services/trips/TripHealthProjection.ts:54#buildTripHealthProjection` —
+- `services/trips/TripHealthProjection.ts:56#buildTripHealthProjection` —
   one builder for both, from the §7.3 projection (conflicts, windows, hop
   verdicts), the risk register, Safe Return with the safety projection's own
   opt-in rule, and today's plan; every read refused when it fails, because a
   health computed over "no risks" is HEALTHY by construction. Behind the
   §40.3 gate (`:59#tripOperationalProjectionsGate`).
-- `GET /trips/:tripId/health` (`routes/tripProjections.ts:217#health`),
+- `GET /trips/:tripId/health` (`routes/tripProjections.ts:220#health`),
   accepted crew, under the envelope.
 - **§3.3 AT_RISK, derived.** The timeline projection marks plan items in a
   temporal conflict as at risk (`:162#atRiskPlanIds`) and
@@ -3669,12 +3680,12 @@ nothing to get.
   reads makes a sub-projection AHEAD and the Today projection is refused
   `TRIP_PROJECTION_VERSION_AHEAD` rather than assembled from two states. The
   test drives it with a stateful fake
-  (`src/test/tripTodayProjection.test.ts:82#LIVE`) and a
+  (`src/test/tripTodayProjection.test.ts:84#LIVE`) and a
   mutation that stops handing the version over went red.
-- `GET /trips/:tripId/today` (`routes/tripProjections.ts:237#today`);
+- `GET /trips/:tripId/today` (`routes/tripProjections.ts:240#today`);
   one refusal mapping for the three gated builders
   (`:202#refuseBuild`). Compass `get_today_state`
-  (`compass/CompassTools.ts:186#get_today_state`,
+  (`compass/CompassTools.ts:188#get_today_state`,
   `:840#toolGetTodayState`, dispatched at
   `:1344#get_today_state`) consumes the same object through
   the §19.1 rule — §12.1's `getTodayState(tripId)`. Thirteen tools now.
@@ -3830,7 +3841,7 @@ to explain and no route.
   calls it AFTER the transition (`routes/trips-expansion.ts:730#runTripCloseout`),
   so a failed step cannot un-complete a trip, and the response carries the
   closeout rather than implying it. `GET /trips/:tripId/closeout`
-  (`routes/tripProjections.ts:282#closeout`) is the same plan as a
+  (`routes/tripProjections.ts:354#closeout`) is the same plan as a
   dry run.
 - `services/trips/TripDecisionLedger.ts` — §21.2's `TripDecision`, every
   field (`:56#TripDecision`), versioned engines
@@ -3838,12 +3849,12 @@ to explain and no route.
   (`:81#recordTripDecision`) and `explainTripDecision`
   (`:114#explainTripDecision`) — sentences from the record. Every
   §40.3–§40.5 build records one (`services/trips/TripFreedomProjection.ts:178#recordTripDecision`,
-  `TripHealthProjection.ts:154#recordTripDecision`,
-  `TripTodayProjection.ts:269#recordTripDecision`) naming ids,
+  `TripHealthProjection.ts:173#recordTripDecision`,
+  `TripTodayProjection.ts:291#recordTripDecision`) naming ids,
   versions and counts — never a coordinate or a name — and carries its
   `decisionId`. `GET /trips/:tripId/decisions/:decisionId/explain`
-  (`routes/tripProjections.ts:257#explain`) and Compass
-  `explain_trip_decision` (`compass/CompassTools.ts:199#explain_trip_decision`,
+  (`routes/tripProjections.ts:329#explain`) and Compass
+  `explain_trip_decision` (`compass/CompassTools.ts:240#explain_trip_decision`,
   `:889#toolExplainTripDecision`, dispatched at
   `:1371#explain_trip_decision`; fourteen tools now) answer
   a crew member for their own trip; another trip's decision is answered as
@@ -3855,7 +3866,7 @@ to explain and no route.
   reporting "performed" without stopping; serving another trip's decision.
 
 **What is NOT built, and said.** The ledger is IN-PROCESS — a ring of
-`TRIP_DECISION_RING` (`services/trips/TripDecisionLedger.ts:77#TRIP_DECISION_RING`)
+`TRIP_DECISION_RING` (`services/trips/TripDecisionLedger.ts:80#TRIP_DECISION_RING`)
 records, not a `trip_decisions` table, because that table is a migration
 this environment cannot execute; a decision from another process is "not
 retained", never recomputed and passed off. Of §20.2's seven steps, one is
@@ -4020,7 +4031,7 @@ order: 217 files, 35 database tests, 0 skipped.
   90 days) and a prune function (`:80#trip_decisions_prune`); inputs refuse a
   coordinate by CHECK (`:65#trip_decisions_inputs_minimised`). The ledger
   persists under the operational gate
-  (`services/trips/TripDecisionLedger.ts:125#persistTripDecision`) and explains
+  (`services/trips/TripDecisionLedger.ts:128#persistTripDecision`) and explains
   from the table when the ring has forgotten (`:144#readTripDecisionFrom`).
 - **2782** (`migrations/2782_trip_transport_segments.sql`) — §15.1's object
   (`:43#trip_transport_segments`): mode, planned and actual pairs, party size
@@ -4146,3 +4157,160 @@ decides otherwise. Thirty-one rows in §41.2 carry that cap and nothing else
 TR139, TR148, TR149, TR151, TR154, TR194, TR283, TR284, TR286, TR287, TR297,
 TR298, TR352, TR354, TR384, TR387, TR401, TR402, TR448); §29.5's kernel-era
 rows carry it too. Their next verdict is not this document's to give.
+
+## 42. World intelligence through the trip, and the events that may cost attention
+
+**Read against the branch `claude/sweet-fermat-fmx7up`.** §41 left every §16
+row at N, §11.4 at W, and four §21.1 metrics standing; this section builds the
+signal contract (§16.2), the Trip Pulse projection (§16.1), the attention
+model (§11.4), the disruption priority switch (§17.2), two more §21.1 metrics
+and three §12.1 tools, and moves twenty-three rows on the same rule as §40:
+BUILT is a `file:line` that was opened; CORRECT is a test that was seen red
+before it was seen green. Nothing here needs a migration: every table these
+read is in 2760–2785 or older, so the ceiling (§41.3) is unchanged — it is
+the merge, the apply, Batch C and two flags.
+
+### 42.1 What was built, and where
+
+- **§16.2 `SignalEstimate`** — `services/trips/TripSignals.ts:44#export interface SignalEstimate`:
+  the seven fields plus `support`. `estimateFromObservations`
+  (`services/trips/TripSignals.ts:107#export function estimateFromObservations`) picks the
+  best-SUPPORTED value, breaks ties by source-class rank
+  (`services/trips/TripSignals.ts:77#export const SOURCE_CLASS_RANK`) then by the
+  serialised value — never by input order — lists every disagreeing observation
+  in `contradictorySources` and multiplies confidence by the agreeing share. It
+  has no notion of a recommendation, which is how "must not silently select
+  whichever source makes a recommendation easier" is enforced rather than
+  promised. `fallbackUsed` is true for a pattern or prediction source
+  (`services/trips/TripSignals.ts:89#export const FALLBACK_SOURCE_CLASSES`) or a
+  source that said so. `src/test/tripSignals.test.ts:73#shuffle-invariant` shuffles the
+  inputs and asserts the same estimate.
+- **§16.1 the five signals** — `SIGNAL_INTERPRETATIONS`
+  (`services/trips/TripSignals.ts:185#export const SIGNAL_INTERPRETATIONS`) is the spec's
+  table, verbatim. `interpretSignal`
+  (`services/trips/TripSignals.ts:312#export function interpretSignal`) keeps a signal only
+  when it touches something the trip holds — a saved idea or plan at that
+  place, a weather-sensitive plan on that date, a taxi-like segment or a
+  commitment within six hours, a commitment or plan at that event, a crew
+  member — and returns typed effects (`services/trips/TripSignals.ts:194#export const SIGNAL_EFFECT_KINDS`)
+  and the context axes it passed on (`services/trips/TripSignals.ts:211#export const PULSE_RELEVANCE`).
+  Attention state is the seventh axis: SAFETY_EVENT drops every signal and
+  AT_RISK the discovery ones, each with `TRIP_DISRUPTION_SUPPRESSED`
+  (`services/trips/TripSignals.ts:319#TRIP_DISRUPTION_SUPPRESSED: a safety event`). Friend
+  nearby is dropped unless BOTH parties share
+  (`services/trips/TripSignals.ts:399#TRIP_PRIVACY_SCOPE`).
+- **The projection** — `services/trips/TripPulseProjection.ts:118#export async function buildTripPulseProjection`:
+  version first, health accepted against it, the trip context read (stage,
+  saved ideas, plans, commitments, transport segments, goals, crew), then three
+  sources reported BY NAME with a status (`services/trips/TripPulseProjection.ts:55#export const PULSE_SOURCES`):
+  `intel_state_snapshots` for the saved places' `crowd.level` /
+  `crowd.trajectory` / `event.status` / `transit.condition`
+  (`services/trips/TripPulseProjection.ts:95#export const PULSE_CLAIM_TYPES`); `weather_cache`
+  READ, never fetched (`services/trips/TripPulseProjection.ts:295#Read, not fetched`);
+  crew presence through the crew map, which applies every §10 rule before this
+  file sees a coordinate (`services/trips/TripPulseProjection.ts:196#through the crew map`).
+  A source that cannot be read is UNREAD, not empty; context that cannot be
+  read refuses. Served at `GET /trips/:id/pulse`
+  (`routes/tripProjections.ts:260#/trips/:tripId/pulse`), to Compass as
+  `get_live_conditions` (`compass/CompassTools.ts:201#name: "get_live_conditions"`), and
+  into Today's `pulseSignals` layer, which was `no_source` since §40.3
+  (`services/trips/TripTodayProjection.ts:210#pulseSignals = okLayer`). Ledgered as
+  `pulse_projection`.
+- **§11.4 the attention model** — `services/trips/TripAttentionPolicy.ts:27#export const ATTENTION_LEVELS`
+  is the spec's five, read as a COST ladder, and `decideAttention`
+  (`services/trips/TripAttentionPolicy.ts:85#export function decideAttention`) is the
+  policy: safety is always INTERRUPT; a safety-event mode makes everything
+  else PASSIVE and AT_RISK makes the discovery kinds PASSIVE; significance
+  sets the base; an onlooker's event is a SURFACE; an actionable deadline
+  raises it (2 h → NOTIFY, 30 min → INTERRUPT); the hourly budget
+  (`services/trips/TripAttentionPolicy.ts:74#export const NOTIFY_BUDGET_PER_HOUR`) and quiet
+  hours turn a NOTIFY into a SURFACE and say so. Every trip push kind has a
+  profile (`services/trips/TripAttentionPolicy.ts:145#export const TRIP_PUSH_EVENT_PROFILES`).
+- **The ten sites §38 found** — now call `sendTripPush`
+  (`lib/tripPush.ts:92#export async function sendTripPush`), which refuses a kind with no
+  profile, decides per recipient, pushes only at NOTIFY / INTERRUPT through
+  the unchanged `sendPushWithRetry`, and counts every decision under
+  `trip_notification_attention_total` {kind, level}.
+  `src/test/tripAttentionPolicy.test.ts:81#a trip push bypasses the attention policy` reads
+  the three files and fails on any remaining direct call. Two pushes changed
+  behaviour: `trip_archived` and `review_prompt` are SURFACE now
+  (`services/trips/TripAttentionPolicy.ts:157#Informational; the trip's own surfaces carry it`).
+- **§17.2** — `deriveTripHealth` takes the 2785 register
+  (`services/trips/TripHealth.ts:65#export interface DisruptionForHealth`): an active
+  critical disruption is DISRUPTED, major AT_RISK, minor ATTENTION, each a
+  `TRIP_DISRUPTION_ACTIVE` reason. `prioritySwitch`
+  (`services/trips/TripHealth.ts:180#export function prioritySwitch`) is the spec's three
+  modes with their orders (`services/trips/TripHealth.ts:159#export const PRIORITY_BY_MODE`)
+  and the suppression, carrying `TRIP_DISRUPTION_SUPPRESSED`. The health
+  projection reads the register and refuses without it
+  (`services/trips/TripHealthProjection.ts:136#trip_disruptions unreadable — refusing`) and
+  serves `attention`; Today and the pulse carry it.
+- **§21.1** — `notification_actionability_rate`: sent is counted at dispatch,
+  acted at `POST /trips/:id/notifications/acted`
+  (`routes/tripProjections.ts:280#/trips/:tripId/notifications/acted`), and
+  `readNotificationActionability` (`lib/tripPush.ts:147#export function readNotificationActionability`)
+  divides per kind, null over zero. `trip_event_replay_mismatch_total`:
+  `verifyTripReplay` (`lib/tripReplayVerify.ts:35#export async function verifyTripReplay`)
+  calls 2773's `trip_snapshot_verify_replay` and increments on `equal = false`,
+  reached from `POST /trips/:id/replay/verify`
+  (`routes/tripProjections.ts:306#/trips/:tripId/replay/verify`).
+- **Appendix B** — every §7.4 consistency finding now carries `reasonCode`
+  from `SPATIAL_REASON_CODES` (`services/trips/TripSpatialConsistency.ts:84#export const SPATIAL_REASON_CODES`),
+  stamped by the check functions themselves, so the feasibility route's
+  `consistency.findings` emit `TRIP_SPATIAL_*` (TR444 has held N since §38).
+- **§12.1** — `get_commitments` (`compass/CompassTools.ts:214#name: "get_commitments"`)
+  under the gate that owns `trip_commitments`, and `get_saved_ideas`
+  (`compass/CompassTools.ts:227#name: "get_saved_ideas"`) with names wrapped as user
+  content.
+
+**Seen red.** 262 tests over the touched suites, 0 skipped, after: the
+signal suite (15) with the shuffle and the one-sided-share cases; the policy
+suite (12) with the budget crossing and the bypass detector, which was seen to
+fail against a file still calling `sendPushWithRetry`; the projection suite
+(20) with an unread source, a refused context and a disagreeing pair of
+zones; the replay suite (12) with a counted mismatch. `typecheck:tests`
+ratchet unchanged (864 across 116); `check:schema-references`,
+`check:writerless-reads`, `check:enum-literals`, `check:doc-citations`,
+`check:flag-schema-prerequisites` (16 read sites, 0 unguarded) green.
+
+### 42.2 Row moves
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| TR199 `IGNORE \| PASSIVE \| SURFACE \| NOTIFY \| INTERRUPT` | W | **C** | `ATTENTION_LEVELS` is the spec's five as a cost ladder; `decideAttention` maps significance, party, deadline, budget, quiet hours and §17.2 mode to one level with reason codes. Twelve tests, budget and quiet hours among them. |
+| TR200 §11.4 Trip events must pass an attention policy | W | **C** | The ten sites call `sendTripPush`; a kind with no profile is refused; only NOTIFY / INTERRUPT push; a test fails on any `sendPushWithRetry(` left in those files. |
+| TR206 `getCommitments(tripId)` | N | **C** | `get_commitments`, under the gate that owns 2761's table. |
+| TR207 `getSavedIdeas(tripId)` | N | **C** | `get_saved_ideas` over `trip_saved_places`, names as UGC. |
+| TR208 `getLiveConditions(tripId)` | N | **C** | `get_live_conditions` → the pulse projection through the §19.1 rule; a stranger gets nothing. |
+| TR299 Trip Pulse is not a generic city feed; it projects world intelligence through the active Trip context | N | **C** | `PulseContext` carries all seven axes; every kept signal names the axes it passed on, every dropped one its reason; the projection looks up only places the trip holds. |
+| TR300 Signal: crowd rising | N | **C** | `crowd.level` / `crowd.trajectory` snapshots for saved places → `saved_idea_better_now` + `queue_risk_later`; interpretation is the spec's sentence. |
+| TR301 Signal: rain arriving | N | **C** | `weather_cache` read → `plan_invalidated` for weather-sensitive plans that day + `fallback_opportunity` naming the indoor saved ideas. |
+| TR302 Signal: taxi demand high | N | **C** | `transit.condition` → `transport_uncertainty` on taxi-like 2782 segments and commitments within six hours. |
+| TR303 Signal: event delayed | N | **C** | `event.status` → `free_window_may_appear` + `downstream_conflict` on the later commitments. |
+| TR304 Signal: friend nearby → meetup opportunity subject to both parties' privacy/presence | W | **C** | From the crew map, so every §10 rule applies first; surfaced only when BOTH share, the one-sided case dropped with `TRIP_PRIVACY_SCOPE`. |
+| TR305 The `SignalEstimate` contract | N | **C** | `SignalEstimate<T>`: the seven fields plus `support`. |
+| TR306 `value` + `confidence` | N | **C** | Best-supported value; confidence = best agreeing source × agreeing share, never raised by disagreement. |
+| TR307 `sourceClass` | N | **C** | intel's `SourceClass`, ranked for tie-breaks only. |
+| TR308 `observedAt` + `expiresAt` | W | **C** | Latest agreeing observation, earliest agreeing expiry; an expired observation is inadmissible, an expired estimate is dropped. |
+| TR309 `fallbackUsed` | N | **C** | True for a pattern or prediction source, or a source that said so. |
+| TR310 `contradictorySources[]` | N | **C** | Every disagreeing observation, with class, value, time and confidence. |
+| TR311 Contradictory sources increase uncertainty; the system must not silently select | N | **C** | Support, then rank, then lexical value; shuffle-invariant by test; the function has no recommendation to make easier. |
+| TR319 Commercial recommendations and entertainment discovery are suppressed when a severe operational or safety state requires attention | N | **W** | `prioritySwitch` derives it with `TRIP_DISRUPTION_SUPPRESSED`; the pulse drops discovery signals and the policy holds discovery pushes under it. The Compass brief (`TripPage.tsx:16`) and `search_places` / `search_events` do not consult it yet. |
+| TR398 `notification_actionability_rate` | N | **C** | sent at dispatch / acted at `POST …/notifications/acted`, per kind, null over zero. No client calls the acted side yet (Cluster 13), so the rate reads truthfully low, not absent. |
+| TR400 `trip_event_replay_mismatch_total` | N | **C** | Incremented by `verifyTripReplay` on `equal = false`; the kernel's own refusals are not mismatches; reached from `POST …/replay/verify`. |
+| TR444 `TRIP_SPATIAL_*` | N | **C** | Every consistency finding carries `reasonCode` from `SPATIAL_REASON_CODES`; served in the feasibility route's `consistency.findings`. |
+| TR448 `TRIP_DISRUPTION_*` | W | **C** | `_ACTIVE` from the register in `deriveTripHealth`, `_SUPPRESSED` from `prioritySwitch` and the pulse, `_NOT_FOUND` / `_NOT_ACTIVE` from the kernel — all four declared codes emit. |
+
+**Held, with the reason.** TR317 and TR318 stay W: the switch now exists for
+all three modes with the spec's orders, and no client surface applies them
+(Cluster 13). TR396 / TR394 / TR395 / TR399 were C already; TR393 and TR397
+are §41's and §13.3's respectively.
+
+### 42.3 The ceiling, unchanged
+
+Every row above reads a table 2760–2785 created, behind
+`trip_operational_projections_enabled`, or pushes through a policy that runs
+wherever the routes run. The projection rows carry §41.3's cap verbatim — no
+database has the batch, the flag is FALSE in both — and the attention rows
+carry none: `sendTripPush` is live the moment this branch is deployed. The
+only rows whose next verdict is a client's to give are TR319, TR317 and TR318.

@@ -64,6 +64,11 @@ import { projectTripSafety, type SafetySessionRow } from "../services/trips/Trip
 import { buildTripCompassProjection } from "../services/trips/TripCompassProjection.js";
 import { buildTripFreedomProjection } from "../services/trips/TripFreedomProjection.js";
 import { buildTripHealthProjection } from "../services/trips/TripHealthProjection.js";
+import { buildTripPulseProjection } from "../services/trips/TripPulseProjection.js";
+import { recordNotificationActed } from "../lib/tripPush.js";
+import { verifyTripReplay } from "../lib/tripReplayVerify.js";
+import { tripOperationalProjectionsGate } from "../lib/tripOperationalProjections.js";
+import { TRIP_PUSH_EVENT_PROFILES } from "../services/trips/TripAttentionPolicy.js";
 import { buildTripTodayProjection } from "../services/trips/TripTodayProjection.js";
 import { explainTripDecisionFrom, DECISION_RETENTION } from "../services/trips/TripDecisionLedger.js";
 import { runTripCloseout } from "../services/trips/TripCloseoutService.js";
@@ -250,6 +255,75 @@ router.get("/trips/:tripId/today", asyncHandler(async (req, res) => {
   const built = await buildTripTodayProjection(sc, tripId, user.id);
   if (!built.ok) { refuseBuild(res, built); return; }
   res.json(built.projection);
+}));
+
+// ── GET /trips/:tripId/pulse — §16 Trip Pulse ────────────────────────────────
+
+router.get("/trips/:tripId/pulse", asyncHandler(async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const { tripId } = req.params;
+  if (!UUID_RE.test(tripId)) { sendError(res, "invalid_payload", "Invalid trip id"); return; }
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const membership = await requireTripMember(sc, tripId, user.id);
+  if (!membership) { sendTripRefusal(res, "not_member", "TRIP_AUTH_NOT_CREW", "You must be an accepted trip member to view the Trip Pulse"); return; }
+
+  const built = await buildTripPulseProjection(sc, tripId, user.id);
+  if (!built.ok) { refuseBuild(res, built); return; }
+  res.json(built.projection);
+}));
+
+// ── POST /trips/:tripId/notifications/acted — §21.1 notification_actionability_rate
+//
+// The acted side of the rate: the client calls this when the viewer opens a
+// trip push (`data.type`). The sent side is recorded by lib/tripPush.ts at
+// dispatch. Only kinds the attention policy knows are counted, so the rate
+// cannot be inflated with a made-up kind.
+
+router.post("/trips/:tripId/notifications/acted", asyncHandler(async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const { tripId } = req.params;
+  if (!UUID_RE.test(tripId)) { sendError(res, "invalid_payload", "Invalid trip id"); return; }
+  const kind = typeof (req.body as any)?.type === "string" ? String((req.body as any).type) : null;
+  if (!kind || !(kind in TRIP_PUSH_EVENT_PROFILES)) { sendError(res, "invalid_payload", "type must name a known trip push kind"); return; }
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const membership = await requireTripMember(sc, tripId, user.id);
+  if (!membership) { sendTripRefusal(res, "not_member", "TRIP_AUTH_NOT_CREW", "You must be an accepted trip member"); return; }
+
+  recordNotificationActed(kind, user.id);
+  res.status(204).end();
+}));
+
+// ── POST /trips/:tripId/replay/verify — §22.2 / §21.1 trip_event_replay_mismatch_total
+
+router.post("/trips/:tripId/replay/verify", asyncHandler(async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const { tripId } = req.params;
+  if (!UUID_RE.test(tripId)) { sendError(res, "invalid_payload", "Invalid trip id"); return; }
+  const atVersion = Number((req.body as any)?.atVersion);
+  if (!Number.isInteger(atVersion) || atVersion < 0) { sendError(res, "invalid_payload", "atVersion must be a non-negative integer"); return; }
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const membership = await requireTripMember(sc, tripId, user.id);
+  if (!membership) { sendTripRefusal(res, "not_member", "TRIP_AUTH_NOT_CREW", "You must be an accepted trip member"); return; }
+  const gate = await tripOperationalProjectionsGate(sc);
+  if (!gate.enabled) { sendError(res, "feature_disabled", `Replay verification is not enabled: ${gate.reason}`); return; }
+
+  const v = await verifyTripReplay(sc, tripId, atVersion);
+  res.status(v.reason === "TRIP_REPLAY_UNAVAILABLE" ? 503 : 200).json(v);
 }));
 
 // ── GET /trips/:tripId/decisions/:decisionId/explain — §21.2, §12.1 ───────────

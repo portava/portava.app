@@ -16,6 +16,12 @@ import assert from "node:assert/strict";
 import { _setTestFetch } from "../lib/push.js";
 import { _setTestServiceClient } from "../lib/supabase.js";
 import { runOnce, clearReminderDedup, _setTestNow, STALE_CLAIM_MS } from "../lib/tripReminderScheduler.js";
+import { _resetTripPushBudget } from "../lib/tripPush.js";
+
+// §11.4: every reminder now passes the attention policy, whose NOTIFY budget is
+// per recipient per hour, in process. These cases re-deliver to the same owner
+// many times; the budget is the policy's own test's business, not this one's.
+afterEach(() => _resetTripPushBudget());
 
 const OWNER_ID  = "cc000000-0001-0001-0001-000000000001";
 const MEMBER_ID = "cc000000-0002-0002-0002-000000000002";

@@ -22,7 +22,7 @@ import {
 } from "../lib/http.js";
 import { canViewTrip, canManageJoinRequests } from "../lib/tripPolicy.js";
 import { sendTripRefusal } from "../lib/tripReasonCodes.js";
-import { sendPushWithRetry } from "../lib/pushWithRetry.js";
+import { sendTripPush } from "../lib/tripPush.js";
 import { nameVisibilitySet, sanitizeIdentity, nameVisibleFor, presentedName } from "../lib/publicIdentity.js";
 import { truncateDisplayName } from "../lib/displayName.js";
 import {
@@ -653,7 +653,7 @@ router.post("/trips/:tripId/cancel", async (req, res) => {
         }
       }
       if (recipients.length > 0) {
-        await sendPushWithRetry(sc2, recipients, {
+        await sendTripPush(sc2, recipients, {
           title: "Trip cancelled",
           body:  `${(tripRow as any)?.title ?? "A trip"} has been cancelled`,
           data:  { type: "trip_cancelled", tripId },
@@ -809,7 +809,7 @@ router.post("/trips/:tripId/archive", async (req, res) => {
         }
       }
       if (recipients.length > 0) {
-        await sendPushWithRetry(sc2, recipients, {
+        await sendTripPush(sc2, recipients, {
           title: "Trip archived",
           body:  `${(tripRow as any)?.title ?? "A trip"} has been archived`,
           data:  { type: "trip_archived", tripId },
@@ -994,7 +994,7 @@ router.post("/trips/:tripId/join-request", async (req, res) => {
       const requesterName = truncateDisplayName(requesterNameAllowed
         ? ((requesterRow as any)?.display_name ?? ((requesterRow as any)?.handle ? `@${(requesterRow as any).handle}` : "Someone"))
         : ((requesterRow as any)?.handle ? `@${(requesterRow as any).handle}` : "Someone"));
-      await sendPushWithRetry(sc2, { userId: ownerId, tokens: [(ownerRow as any)?.expo_push_token] }, {
+      await sendTripPush(sc2, { userId: ownerId, tokens: [(ownerRow as any)?.expo_push_token] }, {
         title: "New join request",
         body:  `${requesterName} wants to join ${(tripRow as any)?.title ?? "your trip"}`,
         data:  { type: "trip_join_request_received", tripId },
@@ -1107,7 +1107,7 @@ router.post("/trips/:tripId/join-requests/:requestId/approve", async (req, res) 
         sc2.from("trips").select("title").eq("id", tripId).maybeSingle(),
         sc2.from("profiles").select("expo_push_token").eq("id", requestedUserId).maybeSingle(),
       ]);
-      await sendPushWithRetry(sc2, { userId: requestedUserId, tokens: [(requesterRow as any)?.expo_push_token] }, {
+      await sendTripPush(sc2, { userId: requestedUserId, tokens: [(requesterRow as any)?.expo_push_token] }, {
         title: "Join request approved!",
         // Privacy: do not expose the trip name on the lock screen.
         // Full details load after the user opens the app with their session.
@@ -1116,7 +1116,7 @@ router.post("/trips/:tripId/join-requests/:requestId/approve", async (req, res) 
       });
       // In-app notification: store with generic text — no trip name in params.
       // notifRouter.route() is intentionally NOT called here; push was already
-      // sent above via sendPushWithRetry to avoid double-delivery.
+      // sent above via sendTripPush to avoid double-delivery.
       const { NotificationService } = await import("../services/notifications/NotificationService.js");
       const notifSvc = new NotificationService(sc2);
       await notifSvc.create({
@@ -1191,7 +1191,7 @@ router.post("/trips/:tripId/join-requests/:requestId/decline", async (req, res) 
         sc2.from("trips").select("title").eq("id", tripId).maybeSingle(),
         sc2.from("profiles").select("expo_push_token").eq("id", declinedUserId).maybeSingle(),
       ]);
-      await sendPushWithRetry(sc2, { userId: declinedUserId, tokens: [(requesterRow as any)?.expo_push_token] }, {
+      await sendTripPush(sc2, { userId: declinedUserId, tokens: [(requesterRow as any)?.expo_push_token] }, {
         title: "Join request update",
         // Privacy: do not expose the trip name on the lock screen.
         body:  "Your trip access request was not approved.",
@@ -1199,7 +1199,7 @@ router.post("/trips/:tripId/join-requests/:requestId/decline", async (req, res) 
       });
       // In-app notification: store with generic text — no trip name in params.
       // notifRouter.route() is intentionally NOT called here; push was already
-      // sent above via sendPushWithRetry to avoid double-delivery.
+      // sent above via sendTripPush to avoid double-delivery.
       const { NotificationService } = await import("../services/notifications/NotificationService.js");
       const notifSvc = new NotificationService(sc2);
       await notifSvc.create({

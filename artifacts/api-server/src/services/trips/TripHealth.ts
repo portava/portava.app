@@ -39,7 +39,7 @@ export const TRIP_HEALTH_LEVELS = ["HEALTHY", "ATTENTION", "AT_RISK", "DISRUPTED
 export type TripHealthLevel = (typeof TRIP_HEALTH_LEVELS)[number];
 
 export const HEALTH_REASON_CODES = [
-  "TRIP_RISK_REALISED", "SAFETY_NEEDS_HELP",
+  "TRIP_RISK_REALISED", "SAFETY_NEEDS_HELP", "TRIP_DISRUPTION_ACTIVE",
   "TRIP_TEMPORAL_CONFLICT", "TRIP_RISK_OPEN_HIGH", "FEASIBILITY_INFEASIBLE",
   "TRIP_RISK_OPEN_ELEVATED", "FEASIBILITY_UNKNOWN",
 ] as const;
@@ -61,9 +61,20 @@ export interface RiskForHealth {
   status: string;
 }
 
+/** A row of trip_disruptions (2785, §17.2). Only `state = 'active'` rows count. */
+export interface DisruptionForHealth {
+  id: string;
+  kind: string;
+  /** 'minor' | 'major' | 'critical' — the 2785 CHECK. */
+  severity: string;
+  state: string;
+}
+
 export interface HealthInputs {
   conflicts: readonly TemporalConflict[];
   risks: readonly RiskForHealth[];
+  /** §17.2: the disruption register. Omitted = not read (the pre-2785 callers); [] = read and empty. */
+  disruptions?: readonly DisruptionForHealth[];
   /** Crew members whose §17.4 state is NEEDS_HELP (visible to this viewer). */
   needsHelpMemberIds: readonly string[];
   /** Feasibility hops by verdict, from the same computation that produced the conflicts. */
@@ -94,6 +105,11 @@ export function deriveTripHealth(inputs: HealthInputs): TripHealth {
       }
     }
   }
+  for (const d of inputs.disruptions ?? []) {
+    if (d.state !== "active") continue;
+    const level: HealthReason["level"] = d.severity === "critical" ? "DISRUPTED" : d.severity === "major" ? "AT_RISK" : "ATTENTION";
+    reasons.push({ code: "TRIP_DISRUPTION_ACTIVE", level, subjectIds: [d.id], detail: `active ${d.severity} ${d.kind} disruption ${d.id}` });
+  }
   for (const id of inputs.needsHelpMemberIds) {
     reasons.push({ code: "SAFETY_NEEDS_HELP", level: "DISRUPTED", subjectIds: [id], detail: "a crew member's Safe Return is in NEEDS_HELP" });
   }
@@ -121,4 +137,61 @@ export function deriveTripHealth(inputs: HealthInputs): TripHealth {
  */
 export function surfacePriority(health: TripHealthLevel): readonly string[] {
   return RANK[health] >= RANK.AT_RISK ? ["logistics", "affected_commitments", "recovery"] : [];
+}
+
+// ── §17.2 Disruption priority switch ─────────────────────────────────────────
+//
+//   NORMAL:        discovery / execution / social
+//   AT_RISK:       logistics / affected commitments / recovery
+//   SAFETY_EVENT:  safety / official help / location coordination
+//
+// "Commercial recommendations and entertainment discovery are suppressed when
+// a severe operational or safety state requires the user's attention."
+// (census-trips TR319). The switch is a function of the health that was
+// already derived: SAFETY_EVENT when any reason is a safety one, AT_RISK when
+// health is AT_RISK or worse, NORMAL otherwise. The suppression it returns is
+// the reason code the suppressed surfaces carry — TRIP_DISRUPTION_SUPPRESSED,
+// declared in lib/tripReasonCodes.ts since §38 and emitted from here.
+
+export const PRIORITY_MODES = ["NORMAL", "AT_RISK", "SAFETY_EVENT"] as const;
+export type PriorityMode = (typeof PRIORITY_MODES)[number];
+
+export const PRIORITY_BY_MODE: Readonly<Record<PriorityMode, readonly string[]>> = {
+  NORMAL: ["discovery", "execution", "social"],
+  AT_RISK: ["logistics", "affected_commitments", "recovery"],
+  SAFETY_EVENT: ["safety", "official_help", "location_coordination"],
+};
+
+export const SAFETY_REASON_CODES: readonly HealthReasonCode[] = ["SAFETY_NEEDS_HELP"];
+
+export interface PrioritySwitch {
+  mode: PriorityMode;
+  priority: readonly string[];
+  suppression: {
+    /** Commercial recommendations (sponsored, affiliate, booking upsell). */
+    commercial: boolean;
+    /** Entertainment discovery (opportunities, nightlife, "where next"). */
+    discovery: boolean;
+    reason: "TRIP_DISRUPTION_SUPPRESSED" | null;
+    detail: string | null;
+  };
+}
+
+export function prioritySwitch(health: Pick<TripHealth, "health" | "reasons">): PrioritySwitch {
+  const safety = health.reasons.some((r) => SAFETY_REASON_CODES.includes(r.code)
+    || (r.code === "TRIP_DISRUPTION_ACTIVE" && /safety|health/.test(r.detail)));
+  const mode: PriorityMode = safety ? "SAFETY_EVENT" : RANK[health.health] >= RANK.AT_RISK ? "AT_RISK" : "NORMAL";
+  const suppressed = mode !== "NORMAL";
+  return {
+    mode,
+    priority: PRIORITY_BY_MODE[mode],
+    suppression: {
+      commercial: suppressed,
+      discovery: suppressed,
+      reason: suppressed ? "TRIP_DISRUPTION_SUPPRESSED" : null,
+      detail: suppressed
+        ? `${mode === "SAFETY_EVENT" ? "a safety event" : `the trip is ${health.health}`}: commercial recommendations and entertainment discovery are suppressed (§17.2)`
+        : null,
+    },
+  };
 }

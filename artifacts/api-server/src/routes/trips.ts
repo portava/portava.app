@@ -20,7 +20,7 @@ import { sendTripRefusal } from "../lib/tripReasonCodes.js";
 import { toCamel } from "./plan.js";
 import { syncTripChatMembers } from "../lib/chatSync.js";
 import { getRestrictionState } from "../services/trust/TrustRestrictionService.js";
-import { sendPushWithRetry } from "../lib/pushWithRetry.js";
+import { sendTripPush } from "../lib/tripPush.js";
 import { awardStamp, type StampLogger } from "../services/passport/StampAwardEngine.js";
 import { buildConsumerProjection } from "../services/passport/PassportConsumerProjections.js";
 import { nameVisibilitySet, sanitizeIdentity, nameVisibleFor } from "../lib/publicIdentity";
@@ -1011,7 +1011,7 @@ router.patch("/trips/:tripId", async (req, res) => {
           );
           // Route through NotificationService so the privacy guard + dedup run.
           // notifRouter.route() is intentionally NOT called here; push is sent
-          // below via sendPushWithRetry to avoid double-delivery.
+          // below via sendTripPush to avoid double-delivery.
           const { NotificationService } = await import("../services/notifications/NotificationService.js");
           const notifSvc = new NotificationService(sc);
           await Promise.allSettled(
@@ -1040,7 +1040,7 @@ router.patch("/trips/:tripId", async (req, res) => {
           }
           const recipients = [...tokensByUser.entries()].map(([userId, tokens]) => ({ userId, tokens }));
           if (recipients.length > 0) {
-            await sendPushWithRetry(sc, recipients, {
+            await sendTripPush(sc, recipients, {
               title: "How was the trip?",
               body: `Leave a review for "${tripTitle}" — your feedback helps the community.`,
               data: { type: "review_prompt", entityType: "trip", entityId: tripId, entityName: tripTitle },
@@ -1244,7 +1244,7 @@ router.post("/trips/:tripId/invite", async (req, res) => {
       const inviterName = truncateDisplayName(inviterNameAllowed
         ? ((inviterRow as any)?.display_name ?? ((inviterRow as any)?.handle ? `@${(inviterRow as any).handle}` : "Someone"))
         : ((inviterRow as any)?.handle ? `@${(inviterRow as any).handle}` : "Someone"));
-      await sendPushWithRetry(sc2, { userId, tokens: [(inviteeRow as any)?.expo_push_token] }, {
+      await sendTripPush(sc2, { userId, tokens: [(inviteeRow as any)?.expo_push_token] }, {
         title: "Trip invitation",
         // Privacy: do not include the trip name or destination in the push body —
         // the invitee has not accepted yet and the content may be private.
@@ -1254,7 +1254,7 @@ router.post("/trips/:tripId/invite", async (req, res) => {
       });
       // In-app notification: store with generic text — no trip name in params.
       // notifRouter.route() is intentionally NOT called here; push was already
-      // sent above via sendPushWithRetry to avoid double-delivery.
+      // sent above via sendTripPush to avoid double-delivery.
       const { NotificationService } = await import("../services/notifications/NotificationService.js");
       const notifSvc = new NotificationService(sc2);
       await notifSvc.create({
@@ -1375,7 +1375,7 @@ router.post("/trips/:tripId/accept-invite", async (req, res) => {
       const acceptorName = truncateDisplayName(acceptorNameAllowed
         ? ((acceptorRow as any)?.display_name ?? ((acceptorRow as any)?.handle ? `@${(acceptorRow as any).handle}` : "Someone"))
         : ((acceptorRow as any)?.handle ? `@${(acceptorRow as any).handle}` : "Someone"));
-      await sendPushWithRetry(sc2, { userId: (tripRow as any).owner_id as string, tokens: [(ownerRow as any)?.expo_push_token] }, {
+      await sendTripPush(sc2, { userId: (tripRow as any).owner_id as string, tokens: [(ownerRow as any)?.expo_push_token] }, {
         title: (tripRow as any).title ?? "Your trip",
         body: `${acceptorName} joined your trip!`,
         data: { type: "trip_invite_accepted", tripId },
@@ -1449,7 +1449,7 @@ router.post("/trips/:tripId/decline-invite", async (req, res) => {
       const declinerName = truncateDisplayName(declinerNameAllowed
         ? ((declinerRow as any)?.display_name ?? ((declinerRow as any)?.handle ? `@${(declinerRow as any).handle}` : "Someone"))
         : ((declinerRow as any)?.handle ? `@${(declinerRow as any).handle}` : "Someone"));
-      await sendPushWithRetry(sc2, { userId: ownerId, tokens: [(ownerRow as any)?.expo_push_token] }, {
+      await sendTripPush(sc2, { userId: ownerId, tokens: [(ownerRow as any)?.expo_push_token] }, {
         title: "Invite declined",
         body:  `${declinerName} declined your invitation to ${(tripRow as any)?.title ?? "your trip"}`,
         data:  { type: "trip_invite_declined", tripId },

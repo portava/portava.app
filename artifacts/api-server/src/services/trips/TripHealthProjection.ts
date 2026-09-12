@@ -23,13 +23,15 @@ import { tripOperationalProjectionsGate, refusalForGate } from "../../lib/tripOp
 import { liveEnvelope, type TripProjectionEnvelope } from "./TripProjectionEnvelope.js";
 import { buildTripFreedomProjection, type TripFreedomProjection } from "./TripFreedomProjection.js";
 import { operationalState, type SafetySessionRow } from "./TripSafetyProjection.js";
-import { deriveTripHealth, surfacePriority, type TripHealth, type RiskForHealth } from "./TripHealth.js";
+import { deriveTripHealth, surfacePriority, prioritySwitch, type PrioritySwitch, type DisruptionForHealth, type TripHealth, type RiskForHealth } from "./TripHealth.js";
 import { deriveOperationalPhase, localClock, type PhaseDecision, type PhasePlanItem } from "./TripOperationalPhase.js";
 import { recordTripDecision, persistTripDecision, TRIP_ENGINE_VERSIONS } from "./TripDecisionLedger.js";
 
 const log = logger.child({ mod: "tripHealthProjection" });
 
 export interface TripHealthProjection extends TripProjectionEnvelope, TripHealth {
+  /** §17.2 — the priority switch and what it suppresses, derived from `health` and `reasons`. */
+  attention: PrioritySwitch;
   tripId: string;
   /** §21.2 ledger record; explain at GET /trips/:id/decisions/:decisionId/explain. */
   decisionId: string;
@@ -38,7 +40,7 @@ export interface TripHealthProjection extends TripProjectionEnvelope, TripHealth
   phase: PhaseDecision;
   tripStatus: string;
   /** How many conflicts / open risks / NEEDS_HELP members were looked at, so an empty reasons list is a count of zero, not an absence of looking. */
-  counted: { conflicts: number; openRisks: number; needsHelp: number; hops: { infeasible: number; unknown: number } };
+  counted: { conflicts: number; openRisks: number; activeDisruptions: number; needsHelp: number; hops: { infeasible: number; unknown: number } };
   /** The §7.3 projection this was derived from, by version, so the two cannot be quoted against each other. */
   derivedFrom: { freedomSourceTripVersion: number | null };
   reading: string;
@@ -122,6 +124,22 @@ export async function buildTripHealthProjection(
     if (state === "NEEDS_HELP" && visible) needsHelp.push(s.user_id);
   }
 
+  // §17.2 (2785): the disruption register. Under the gate the table exists;
+  // an unreadable register is refused like every other input, because a
+  // health that silently omits an active disruption is the wrong health.
+  const { data: disruptionRows, error: dErr } = await sc
+    .from("trip_disruptions")
+    .select("id, kind, severity, state")
+    .eq("trip_id", tripId)
+    .eq("state", "active");
+  if (dErr) {
+    log.warn({ err: dErr.message, tripId }, "health: trip_disruptions unreadable — refusing");
+    return { ok: false, reason: "TRIP_PROJECTION_UNAVAILABLE", message: "The disruption register could not be read" };
+  }
+  const disruptions: DisruptionForHealth[] = ((disruptionRows ?? []) as any[]).map((d) => ({
+    id: String(d.id), kind: String(d.kind), severity: String(d.severity), state: String(d.state),
+  }));
+
   const { data: items, error: iErr } = await sc
     .from("trip_plan_items")
     .select("id, category, status, starts_at, ends_at, day_date")
@@ -144,7 +162,8 @@ export async function buildTripHealthProjection(
     unknown: f.windows.filter((w) => w.position === "between" && w.hardConstraints.some((h) => h.kind === "TRAVEL_UNKNOWN")).length,
   };
   const riskRows = ((risks ?? []) as RiskForHealth[]);
-  const health = deriveTripHealth({ conflicts: f.conflicts, risks: riskRows, needsHelpMemberIds: needsHelp, hops });
+  const health = deriveTripHealth({ conflicts: f.conflicts, risks: riskRows, disruptions, needsHelpMemberIds: needsHelp, hops });
+  const attention = prioritySwitch(health);
 
   const phase = deriveOperationalPhase({
     now, timezone: t.timezone ?? null, tripStartDate: t.start_date ?? null, tripEndDate: t.end_date ?? null, tripStatus,
@@ -155,13 +174,13 @@ export async function buildTripHealthProjection(
     tripId, type: "trip_health",
     inputs: {
       sourceTripVersion: envelope.sourceTripVersion, freedomDecisionId: f.decisionId,
-      riskIds: riskRows.map((r) => r.id), needsHelpMembers: needsHelp.length, hops, planItems: planItems.length,
+      riskIds: riskRows.map((r) => r.id), disruptionIds: disruptions.map((d) => d.id), needsHelpMembers: needsHelp.length, hops, planItems: planItems.length,
       localClock: { date: phase.evidence.localDate, hour: phase.evidence.localHour, timezone: t.timezone ?? "UTC" },
     },
-    sources: ["trips", "trip_risks", "safe_return_sessions", "trip_crew_location_preferences", "trip_plan_items", "TripFreedomProjection"],
+    sources: ["trips", "trip_risks", "trip_disruptions", "safe_return_sessions", "trip_crew_location_preferences", "trip_plan_items", "TripFreedomProjection"],
     assumptions: ["health is the worst concrete reason; readiness is not an input", "the phase's first matching clause wins, in the documented order"],
     constraints: health.reasons.map((r) => r.code),
-    result: { health: health.health, reasons: health.reasons.length, phase: phase.phase, phaseReason: phase.reason },
+    result: { health: health.health, reasons: health.reasons.length, phase: phase.phase, phaseReason: phase.reason, mode: attention.mode, suppressed: attention.suppression.discovery },
     confidence: "N/A",
     engineVersions: { TripHealth: TRIP_ENGINE_VERSIONS.TripHealth, TripOperationalPhase: TRIP_ENGINE_VERSIONS.TripOperationalPhase },
     calculatedAt: envelope.generatedAt, sourceTripVersion: envelope.sourceTripVersion,
@@ -177,9 +196,10 @@ export async function buildTripHealthProjection(
       tripId,
       decisionId: decision.decisionId,
       surfacePriority: surfacePriority(health.health),
+      attention,
       phase,
       tripStatus,
-      counted: { conflicts: f.conflicts.length, openRisks: riskRows.filter((r) => r.status === "open").length, needsHelp: needsHelp.length, hops },
+      counted: { conflicts: f.conflicts.length, openRisks: riskRows.filter((r) => r.status === "open").length, activeDisruptions: disruptions.length, needsHelp: needsHelp.length, hops },
       derivedFrom: { freedomSourceTripVersion: f.sourceTripVersion },
       reading: HEALTH_READING,
     },

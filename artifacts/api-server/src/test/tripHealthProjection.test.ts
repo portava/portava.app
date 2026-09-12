@@ -72,7 +72,7 @@ describe("buildTripHealthProjection — health and phase from the same reads", (
     assert.equal(p.health, "HEALTHY"); assert.deepEqual(p.reasons, []); assert.deepEqual([...p.surfacePriority], []);
     assert.equal(p.phase.phase, "FREE_TIME"); assert.equal(p.phase.evidence.windowId, "fw:A:B");
     assert.equal(p.tripStatus, "active");
-    assert.deepEqual(p.counted, { conflicts: 0, openRisks: 0, needsHelp: 0, hops: { infeasible: 0, unknown: 0 } });
+    assert.deepEqual(p.counted, { conflicts: 0, openRisks: 0, activeDisruptions: 0, needsHelp: 0, hops: { infeasible: 0, unknown: 0 } });
     assert.equal(p.derivedFrom.freedomSourceTripVersion, 9);
   });
   it("a conflict makes it AT_RISK with the priority order; a NEEDS_HELP member makes it DISRUPTED and the phase DISRUPTED", async () => {
