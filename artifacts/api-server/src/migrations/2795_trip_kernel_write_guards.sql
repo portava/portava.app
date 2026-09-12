@@ -115,8 +115,13 @@ $mv$            -- 2795 / §7.2 (TR54): nor may it overlap another CONFIRMED or 
   d := replace(d, E'        IF v_overridden THEN\n          v_result := v_result || jsonb_build_object(''temporal_conflict'',\n            jsonb_build_object(''commitment_id'', v_conflict_id, ''overridden'', true, ''reason'', ''TRIP_TEMPORAL_CONFLICT''));\n        END IF;',
 $rs$        IF v_overridden THEN
           v_result := v_result || jsonb_build_object('temporal_conflict',
-            jsonb_build_object('commitment_id', v_conflict_id, 'plan_id', v_overlap_id, 'overridden', true, 'reason', 'TRIP_TEMPORAL_CONFLICT'));
+            jsonb_strip_nulls(jsonb_build_object('commitment_id', v_conflict_id, 'plan_id', v_overlap_id, 'overridden', true, 'reason', 'TRIP_TEMPORAL_CONFLICT')));
         END IF;$rs$);
+  -- jsonb_strip_nulls: `plan_id` is on the result only when the override named
+  -- a plan. A commitment override keeps 2779's recorded shape exactly
+  -- ({commitment_id, overridden, reason}) — src/test/db/tripPlanLifecycle.db.test.ts
+  -- pins it, and a `plan_id: null` beside it was the one thing this migration
+  -- changed for a caller that never asked about plans.
 
   -- 3. ADD_PLAN: the same rule before the INSERT (after 2780's subgroup block)
   n := (length(d) - length(replace(d, E'        INSERT INTO public.trip_plan_items (\n          trip_id, creator_id, title, category, status, source_type, source_id,', ''))) / length(E'        INSERT INTO public.trip_plan_items (\n          trip_id, creator_id, title, category, status, source_type, source_id,');
@@ -164,7 +169,7 @@ $ap$        -- 2795 / §7.2 (TR54): a new plan may not overlap a CONFIRMED or IN
 
   -- This migration adds no command branch and must remove none either, and it
   -- touches no family: both counts are pinned to what 2794 left (66 branches,
-  -- 41 family assignments) and to the base's own counts, so an anchor that
+  -- 44 family assignments) and to the base's own counts, so an anchor that
   -- matched somewhere unintended is refused here rather than applied.
   branches_after := (length(d) - length(replace(d, E'\n      WHEN ''', ''))) / length(E'\n      WHEN ''');
   IF branches_after <> branches_before THEN
@@ -173,7 +178,12 @@ $ap$        -- 2795 / §7.2 (TR54): a new plan may not overlap a CONFIRMED or IN
   IF branches_after <> 66 THEN RAISE EXCEPTION '2795: expected 66 command branches after a no-branch migration, found %', branches_after; END IF;
   n := (length(d) - length(replace(d, 'v_family     := ''', ''))) / length('v_family     := ''');
   IF n <> family_before THEN RAISE EXCEPTION '2795: the transform changed the family assignments % -> %', family_before, n; END IF;
-  IF n <> 41 THEN RAISE EXCEPTION '2795: expected 41 family assignments after 2794, found %', n; END IF;
+  -- 44, not 41: 2779 as amended in §43 (a63d5bf5b) declares five families where
+  -- its first cut declared two. A replica that applied 2779 before that
+  -- amendment reports 41 and is STALE — the same chain replayed from the
+  -- baseline (scripts/local-db/up.sh, as CI's throwaway job does) reports 44.
+  -- The pin is to the chain, never to whichever replica happened to be at hand.
+  IF n <> 44 THEN RAISE EXCEPTION '2795: expected 44 family assignments after 2794, found %', n; END IF;
   IF length(d) <= before_len THEN RAISE EXCEPTION '2795: the definition did not grow'; END IF;
 END
 $tx$;

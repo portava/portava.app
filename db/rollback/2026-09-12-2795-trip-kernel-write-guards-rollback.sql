@@ -34,7 +34,7 @@ BEGIN
 
   -- 2. MOVE/UPDATE: the overlap block before 2779's conflict check
   d := regexp_replace(d, $a$            -- 2795 / §7\.2 \(TR54\): nor may it overlap.*?\n            IF v_conflict_id IS NOT NULL THEN$a$, $a$            IF v_conflict_id IS NOT NULL THEN$a$, '');
-  d := replace(d, E'jsonb_build_object(''commitment_id'', v_conflict_id, ''plan_id'', v_overlap_id, ''overridden'', true, ''reason'', ''TRIP_TEMPORAL_CONFLICT'')',
+  d := replace(d, E'jsonb_strip_nulls(jsonb_build_object(''commitment_id'', v_conflict_id, ''plan_id'', v_overlap_id, ''overridden'', true, ''reason'', ''TRIP_TEMPORAL_CONFLICT''))',
                   E'jsonb_build_object(''commitment_id'', v_conflict_id, ''overridden'', true, ''reason'', ''TRIP_TEMPORAL_CONFLICT'')');
 
   -- 3. ADD_PLAN: the block before the INSERT
@@ -70,7 +70,8 @@ BEGIN
   n := (length(d) - length(replace(d, E'\n      WHEN ''', ''))) / length(E'\n      WHEN ''');
   IF n <> 66 THEN RAISE EXCEPTION 'rollback 2795: expected 66 command branches, found % — the excision overran', n; END IF;
   n := (length(d) - length(replace(d, 'v_family     := ''', ''))) / length('v_family     := ''');
-  IF n <> 41 THEN RAISE EXCEPTION 'rollback 2795: expected 41 family assignments, found % — the excision overran', n; END IF;
+  -- 44 on the canonical chain (2779 as amended in §43 declares five families); a replica that applied the first cut of 2779 reports 41 and is stale, not a different chain.
+  IF n <> 44 THEN RAISE EXCEPTION 'rollback 2795: expected 44 family assignments, found % — the excision overran', n; END IF;
 END
 $post$;
 
