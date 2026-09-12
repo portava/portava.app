@@ -85,6 +85,40 @@ describe('TripTodayCard', () => {
     expect(note.props.children).toMatch(/arrived/);
   });
 
+  it('§3.2: the phase block leads with what the phase is for, and the five answers still follow in §11.2\'s order', async () => {
+    const { findByTestId, getByTestId, queryByTestId } = await render(
+      <TripTodayCard tripId={TRIP_ID} load={loader({ state: 'ok', today: today({ currentPlan: PLAN, nowState: { phase: 'ACTIVE_PLAN', reason: 'a plan is running', primaryFocus: 'Current activity, participants, next constraint, leave-by time if relevant.' } }), lagSeconds: 1 })} {...navSeams()} />,
+    );
+    await findByTestId('trip-today-phase');
+    expect(getByTestId('trip-today-phase-name').props.children).toBe('ACTIVE PLAN');
+    expect(getByTestId('trip-today-phase-focus').props.children).toMatch(/leave-by time/);
+    expect(getByTestId('trip-today-phase-plan')).toBeTruthy();
+    expect(getByTestId('trip-today-phase-commitment')).toBeTruthy();
+    expect(queryByTestId('trip-today-phase-windows')).toBeNull();
+    // §11.2's five answers are untouched by the phase.
+    expect(getByTestId('trip-today-answer-0-now')).toBeTruthy();
+    expect(getByTestId('trip-today-answer-4-changed')).toBeTruthy();
+  });
+
+  it('§3.2: REST withholds the ideas and says so, instead of looking like a day with none', async () => {
+    const { findByTestId, getByTestId, queryByTestId } = await render(
+      <TripTodayCard tripId={TRIP_ID} load={loader({ state: 'ok', today: today({ nowState: { phase: 'REST', reason: 'resting', primaryFocus: null } }), lagSeconds: 1 })} {...navSeams()} />,
+    );
+    await findByTestId('trip-today-phase');
+    expect(getByTestId('trip-today-phase-name').props.children).toBe('REST');
+    expect(queryByTestId('trip-today-phase-opportunities')).toBeNull();
+    const withheld = getByTestId('trip-today-phase-withheld-opportunities');
+    expect(withheld.props.children.join('')).toMatch(/low-value interruptions/);
+  });
+
+  it('§3.2: a phase the server did not send renders no phase block at all', async () => {
+    const { findByTestId, queryByTestId } = await render(
+      <TripTodayCard tripId={TRIP_ID} load={loader({ state: 'ok', today: today({ nowState: { phase: 'LEAVE_BY_WINDOW' as any, reason: 'r', primaryFocus: null } }), lagSeconds: 1 })} {...navSeams()} />,
+    );
+    await findByTestId('trip-today-card');
+    expect(queryByTestId('trip-today-phase')).toBeNull();
+  });
+
   it('an unavailable read says so and denies being a quiet day', async () => {
     const { findByTestId, getByText } = await render(
       <TripTodayCard tripId={TRIP_ID} load={loader({ state: 'unavailable', detail: 'the projection declares itself stale', reason: 'TRIP_PROJECTION_STALE' })} />,

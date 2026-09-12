@@ -26,6 +26,7 @@ import {
   fetchTripToday, todayHeadline, todayAnswers, attentionBanner, sensingLine, type TodayRead,
 } from './tripToday.ts';
 import { startNavigation, resolveNavigationReturn } from '../crew/tripNavigationHandoff.ts';
+import { phaseView } from './tripPhase.ts';
 
 interface Props {
   tripId: string;
@@ -130,6 +131,30 @@ export function TripTodayCard({ tripId, load = fetchTripToday, onAttention, star
           <Text style={s.detail}>{today.nowState.reason}</Text>
         </View>
       </View>
+      {(() => {
+        // §3.2: the phase decides what this card LEADS with, and in two phases
+        // what it withholds. The five answers below are unchanged and still in
+        // §11.2's order — a phase reorders the lead, it does not replace them.
+        const pv = phaseView(today);
+        if (!pv.phase) return null;
+        return (
+          <View style={s.phase} testID="trip-today-phase">
+            <Text style={s.phaseTitle} testID="trip-today-phase-name">{pv.phase.replace(/_/g, ' ')}</Text>
+            {pv.focus ? <Text style={s.detail} testID="trip-today-phase-focus">{pv.focus}</Text> : null}
+            {pv.sections.map((sec) => (
+              <View key={sec.key} style={s.answerRow} testID={`trip-today-phase-${sec.key}`}>
+                <Text style={s.question}>{sec.label}</Text>
+                <Text style={s.answer}>{sec.detail}</Text>
+              </View>
+            ))}
+            {pv.withheld.map((w) => (
+              <Text key={w.key} style={s.detail} testID={`trip-today-phase-withheld-${w.key}`}>
+                {w.key} withheld — {w.reason}
+              </Text>
+            ))}
+          </View>
+        );
+      })()}
       <View style={s.answers}>
         {answers.map((a, i) => (
           <View key={a.key} style={s.answerRow} testID={`trip-today-answer-${i}-${a.key}`}>
@@ -161,6 +186,8 @@ export function TripTodayCard({ tripId, load = fetchTripToday, onAttention, star
 }
 
 const s = StyleSheet.create({
+  phase: { marginTop: space.sm, paddingTop: space.sm, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: color.haze },
+  phaseTitle: { ...t.stamp, color: color.signal, fontWeight: '700', letterSpacing: 0.5 },
   navButton: { flexDirection: 'row', alignItems: 'center', gap: space.xs, marginTop: space.sm },
   navText: { ...t.stamp, color: color.signal, fontWeight: '600' },
   wrap: {

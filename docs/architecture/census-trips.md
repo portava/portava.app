@@ -357,6 +357,15 @@ preserved in §36.1 as the record of that measurement.
 > read, reachable from Today. TR169 N → W, held there by `trip_kernel_enabled`.
 > The three NOT-BUILT rows left are map tiles, Bluetooth proximity and relay
 > metadata, each waiting on something this tree does not have. No migration.
+
+> **RESTATED 2026-09-12 (§65): no bucket moves — 316 / 131 / 3 / 1 stands.**
+> §65 is the screen switch §40.4 said these eight rows were missing: the phase
+> decides what Today leads with, REST and DISRUPTED withhold and say what they
+> withheld, and §17.2's switch outranks the phase (the existing SAFETY_EVENT
+> test caught the first version offering a museum during a safety event). The
+> client's phase vocabulary was not the server's — two values it never emits,
+> three it does missing — and is now one list. TR38–TR45 stay W with one
+> reason left where they had two: the gate.
 | **CORRECT% (spec-attributable)** | **WITHDRAWN — not measured. See §36.4** |
 | CANNOT-VERIFY share | **1 / 451 = 0.2 %** |
 
@@ -6118,20 +6127,20 @@ is `app/trip/[id].tsx`. No server change, no migration.
   reaches `react-native` through `expo-secure-store`, which node:test cannot
   load (`scripts/run-node-tests.mjs`'s KNOWN_BROKEN records that shape and
   every service test that imports it directly is on the list).
-- **§11 Today on screen** (`travel-buddy-standalone/src/features/trips/today/TripTodayCard.tsx:41#export function TripTodayCard(`,
-  reading `travel-buddy-standalone/src/features/trips/today/tripToday.ts:82#export async function fetchTripToday(`):
+- **§11 Today on screen** (`travel-buddy-standalone/src/features/trips/today/TripTodayCard.tsx:42#export function TripTodayCard(`,
+  reading `travel-buddy-standalone/src/features/trips/today/tripToday.ts:93#export async function fetchTripToday(`):
   `GET /trips/:tripId/today` under §19.1's envelope — a stale or
   foreign-schema projection is refused with Appendix B's reason and
   rendered as unavailable, never as a quiet day. The card answers §11.2's
   five questions in the spec's order — where am I now, what is next, who is
   around, what can I do, what changed — each from the field the projection
-  names (`travel-buddy-standalone/src/features/trips/today/tripToday.ts:131#export function todayAnswers(`),
+  names (`travel-buddy-standalone/src/features/trips/today/tripToday.ts:142#export function todayAnswers(`),
   with the phase as the headline, the unresolved actions, and §10.3's
   sampling interval stated in the server's words. When §17.2's switch is
   not NORMAL the banner comes first with the server's priority list, and
   discovery is not offered while `suppression.discovery` is true — "what
   can I do" is the server's suppression sentence
-  (`travel-buddy-standalone/src/features/trips/today/tripToday.ts:164#export function attentionBanner(`).
+  (`travel-buddy-standalone/src/features/trips/today/tripToday.ts:175#export function attentionBanner(`).
   Mounted on the trip screen for a signed-in member.
 - **§7.3 conflicts on screen** (`travel-buddy-standalone/src/features/trips/timeline/TripTimelineConflictsCard.tsx:24#export function TripTimelineConflictsCard(`):
   the timeline projection's `conflicts` and `days[].conflictIds`, read for
@@ -7034,8 +7043,8 @@ reason. §64 gives it a producer.
   card offers "Navigate to …" for a running plan that names a place, and
   resolves a pending journey every time it is opened — which is the only
   return event this path has
-  (`travel-buddy-standalone/src/features/trips/today/TripTodayCard.tsx:151#testID="trip-today-navigate"`,
-  `travel-buddy-standalone/src/features/trips/today/TripTodayCard.tsx:66#const r = await resolveNav(tripId);`).
+  (`travel-buddy-standalone/src/features/trips/today/TripTodayCard.tsx:176#testID="trip-today-navigate"`,
+  `travel-buddy-standalone/src/features/trips/today/TripTodayCard.tsx:67#const r = await resolveNav(tripId);`).
   A failure of the callback never takes Today down: it is a courtesy, and the
   five questions are the card's job.
 - **The write is a kernel command like every other.** The presence write goes
@@ -7083,3 +7092,86 @@ a name the maps provider resolves elsewhere sends the traveller to the wrong
 place; the coordinate path avoids it, and Today's projection does not carry
 coordinates for the current plan yet, so on that screen the name is all there
 is.
+
+## 65. The screen switches on the phase — §3.2's second column, rendered
+
+**Read against the branch `claude/sweet-fermat-fmx7up`.** §3.2 is a
+two-column table: eight phases, and for each one a *primary UI / behaviour*.
+§40.4 built the first column — the phase is derived from the trip and served
+on `/health` and `/today` with §3.2's second column carried verbatim — and the
+eight rows have read **W** ever since for one stated reason, written in §40.4
+itself: *"the row is derivation AND UI switch, and no screen switches on it
+yet."* §65 is the switch. It also found that the client's phase vocabulary was
+not the server's.
+
+### 65.1 What was built, and where
+
+- **The vocabulary was wrong on the client, and that is the finding.**
+  `tripToday.ts` declared seven phases: `FREE_TIME | ACTIVE_PLAN | TRANSIT |
+  LEAVE_BY_WINDOW | DISRUPTED | AT_RISK | REST`. Two of those —
+  `LEAVE_BY_WINDOW` and `AT_RISK` — are values
+  `domain/trips/services/TripOperationalPhase.ts:44#export const OPERATIONAL_PHASES`
+  has never emitted, and three it does emit — `ARRIVAL_DAY`, `NIGHTLIFE`,
+  `DEPARTURE_DAY` — were absent. A type describing a vocabulary the producer
+  does not use cannot catch a mistake. There is now one list
+  (`travel-buddy-standalone/src/features/trips/today/tripPhase.ts:46#export const OPERATIONAL_PHASES`),
+  and `tripToday.ts` re-exports it.
+- **Each phase leads with its own thing.**
+  `travel-buddy-standalone/src/features/trips/today/tripPhase.ts:183#export function phaseView(`
+  turns the phase into an ORDER over sections the card already read from the
+  projection — never new content. ARRIVAL_DAY and DEPARTURE_DAY lead with what
+  must be sorted out; FREE_TIME with the windows, then the ideas; ACTIVE_PLAN
+  with the plan and the next constraint; TRANSIT with the destination and the
+  group; NIGHTLIFE with the crew, because crew state and safe return are what
+  §3.2 names. A section with nothing in it is not rendered, and a phase the
+  server did not send renders no block at all — §11.2's five answers are the
+  order that holds when the phase is not known.
+- **REST and DISRUPTED withhold, and say so.** §3.2 asks REST to *"suppress
+  low-value interruptions"* and DISRUPTED to be *"recovery-first ...
+  entertainment/commercial surfaces are deprioritized"*. Both do, and the card
+  prints what it withheld and why
+  (`travel-buddy-standalone/src/features/trips/today/TripTodayCard.tsx:151#trip-today-phase-withheld-`) —
+  a card that quietly drops content and a card with nothing to show look
+  identical, and only one of them is honest.
+- **§17.2 outranks §3.2, and the test is what found it.** The first version let
+  FREE_TIME and NIGHTLIFE lead with opportunities while the server's attention
+  switch had `suppression.discovery` set; the existing SAFETY_EVENT screen test
+  went red, offering a museum during an open safety event. A phase decides
+  order; the switch decides whether a surface may appear at all, and it wins —
+  in the server's own words
+  (`travel-buddy-standalone/src/features/trips/today/tripPhase.ts:192#suppressed.set('opportunities', t.attention.suppression.detail`).
+- **Tests.** Sixteen on the module
+  (`travel-buddy-standalone/src/features/trips/today/__tests__/tripPhase.test.ts:34#§3.2 — the vocabulary is the server`):
+  the eight are the server's eight and the two invented values are refused;
+  every phase carries the column and a lead order that never both leads with
+  and suppresses the same thing; each phase's order; REST and DISRUPTED naming
+  what they withheld; a suppressed section with nothing in it not reported as
+  withheld; the switch overriding every phase that would have led with ideas.
+  Three through the screen
+  (`travel-buddy-standalone/src/features/trips/today/__tests__/TripTodayCard.component.test.tsx:88#the phase block leads with what the phase is for`).
+  Seen red first under two separate mutations — the switch check removed, and
+  REST's suppression list emptied — each turning exactly one case red.
+
+### 65.2 Row moves
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| TR38–TR45 §3.2 the eight phases, each with its own primary UI/behaviour | W ×8 | **W ×8** | **The stated reason is gone.** §40.4 held these at W because *"no screen switches on it yet"*; a screen switches on it now — the order, the two suppressions, and the reason printed for each withholding. They stay W for a different and smaller reason, the only one left: `/today` rides `trip_operational_projections_enabled`, seeded FALSE by 2778, so no deployment has a phase to switch on. Nothing else stands between these rows and C. |
+
+**Rows looked at that did not move:** TR317 (C — the §17.2 priority list is
+still the first thing the card shows, and §65 makes the switch outrank the
+phase rather than the reverse), TR193 (C — the five answers are unchanged and
+still in §11.2's order below the phase block), TR314 (C — health is what
+DISRUPTED and REST lead with), TR172 (C — the sensing line still closes the
+card).
+
+### 65.3 The ceiling
+
+No migration, no new flag, no server change. One reason stands between these
+eight rows and C, and it is the gate. What would turn the switch red once it
+is on (P24): a phase that changes while the card is mounted is only re-read on
+the next fetch, so a traveller who starts moving mid-session keeps the previous
+phase's order until Today is refreshed — the projection is per request and
+nothing pushes. And NIGHTLIFE leads with the crew, which is itself behind
+`trip_crew_map_enabled`: with that flag off the phase leads with a section that
+renders nothing, and falls through to the ideas.

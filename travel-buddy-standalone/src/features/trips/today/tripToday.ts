@@ -26,7 +26,18 @@
 import { isConfigured, apiBase, bearerToken } from '../shared/auth.ts';
 import { acceptProjection, type TripProjectionEnvelope } from '../../../services/tripProjectionEnvelope.ts';
 
-export type OperationalPhase = 'FREE_TIME' | 'ACTIVE_PLAN' | 'TRANSIT' | 'LEAVE_BY_WINDOW' | 'DISRUPTED' | 'AT_RISK' | 'REST';
+/**
+ * §3.2's eight phases, re-exported from `tripPhase.ts` so there is ONE list.
+ *
+ * This type used to read `FREE_TIME | ACTIVE_PLAN | TRANSIT | LEAVE_BY_WINDOW
+ * | DISRUPTED | AT_RISK | REST`: two values the server has never emitted
+ * (LEAVE_BY_WINDOW, AT_RISK) and three it does emit missing (ARRIVAL_DAY,
+ * NIGHTLIFE, DEPARTURE_DAY). A vocabulary the producer does not use cannot
+ * catch a mistake, so the list now comes from the one place that matches
+ * `domain/trips/services/TripOperationalPhase.ts`.
+ */
+import type { OperationalPhase } from './tripPhase.ts';
+export type { OperationalPhase };
 export type PriorityMode = 'NORMAL' | 'AT_RISK_MODE' | 'SAFETY_EVENT';
 export type HealthLevel = 'HEALTHY' | 'ATTENTION' | 'AT_RISK' | 'CRITICAL';
 
