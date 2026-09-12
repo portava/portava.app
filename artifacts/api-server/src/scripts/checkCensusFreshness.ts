@@ -1095,6 +1095,18 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "db/rollback/2026-09-12-2800-compass-decision-flag-rollback.sql",
     "artifacts/api-server/src/test/compassDecision.test.ts",
     "artifacts/api-server/src/test/compassDecisionRoute.test.ts",
+    // WIDENED 2026-09-12 (census-sensing §3): the §9 moments and the §15 engine.
+    "artifacts/api-server/src/lib/liveEnvelopeTruth.ts",
+    "artifacts/api-server/src/lib/wallMoments.ts",
+    "artifacts/api-server/src/lib/attentionEngine.ts",
+    "artifacts/api-server/src/lib/wallMomentRead.ts",
+    "artifacts/api-server/src/routes/wallMoments.ts",
+    "artifacts/api-server/src/migrations/2801_wall_moments_flag.sql",
+    "db/rollback/2026-09-12-2801-wall-moments-flag-rollback.sql",
+    "artifacts/api-server/src/test/wallMoments.test.ts",
+    "artifacts/api-server/src/test/attentionEngine.test.ts",
+    "artifacts/api-server/src/test/wallMomentsRoute.test.ts",
+    "artifacts/api-server/src/services/notifications/NotificationPreferenceService.ts",
   ],
   "census-compass.md": [
     "artifacts/api-server/src/compass/",

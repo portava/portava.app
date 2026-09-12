@@ -332,5 +332,10 @@ router.use(wallTelemetryRouter);
 // census-trips.md and sensing-surface-inventory.md cite this file by line.
 import compassDecisionRouter from "./compassDecision.js";
 router.use(compassDecisionRouter);
+// ── Sensing §9 / §15: the Wall's moments, routed through the Attention Engine ─
+// Its own file behind wall_enabled AND wall_moments_enabled (2801, seeded
+// FALSE); routes/wall.ts is untouched. At the tail for the same reason.
+import wallMomentsRouter from "./wallMoments.js";
+router.use(wallMomentsRouter);
 
 export default router;

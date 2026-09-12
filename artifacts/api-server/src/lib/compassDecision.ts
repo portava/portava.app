@@ -71,11 +71,8 @@
  *
  * PURE. No I/O, no clock of its own (`nowMs` is injected), no identity.
  */
-import { MIN_BAND_FOR_LIVE_STATE, type ConfidenceBand } from "./intelContracts.js";
-import { deriveFreshness } from "./mapObjects.js";
-import { composeTruth, type TruthMetadata } from "./experienceTruth.js";
-import { coverageFromBucket, deriveWallTruthClass } from "./wallProjection.js";
-import { truthClassMayRenderAsObservation } from "./truthClass.js";
+import type { TruthMetadata } from "./experienceTruth.js";
+import { envelopeIsObservational, truthOfEnvelope, truthOfEnvelopes } from "./liveEnvelopeTruth.js";
 import type { LiveClaimEnvelope } from "./liveClaimRead.js";
 import { isEmergingInfluenceEligible, isLiveConstraintEligible } from "../compass/CompassLiveConstraints.js";
 
@@ -214,37 +211,21 @@ function firstReading(readings: readonly LiveClaimEnvelope[], types: ReadonlySet
   return readings.find((e) => types.has(e.claimType));
 }
 
-/** One envelope's §5.1 block, through the Wall's derivation. */
-export function truthOfEnvelope(e: LiveClaimEnvelope, nowMs: number): TruthMetadata {
-  const freshness = deriveFreshness(e.observedAt, e.validUntil, nowMs);
-  const coverage = coverageFromBucket(e.sourceCountBucket);
-  return {
-    truthClass: deriveWallTruthClass({
-      sourceClass: e.sourceClass,
-      conflictState: e.conflictState ?? null,
-      freshness: freshness === "historical" ? "stale" : freshness,
-      coverage,
-    }),
-    confidence: e.band as ConfidenceBand,
-    freshness,
-    coverage,
-    provenance: [e.sourceClass],
-  };
-}
-
-/** Weakest-on-every-axis truth over the envelopes a decision may use. */
+/** Weakest-on-every-axis truth over the envelopes a decision may use (lib/liveEnvelopeTruth). */
 export function truthOf(envelopes: readonly LiveClaimEnvelope[], nowMs: number): TruthMetadata {
-  return composeTruth(envelopes.map((e) => truthOfEnvelope(e, nowMs)));
+  return truthOfEnvelopes(envelopes, nowMs);
 }
 
 /**
  * A READING: Live-qualified by Compass's own rule AND an observation by the
- * Wall's §5.1 derivation. A sponsored "busy" is Live-qualified and `inferred`;
- * it is not a reading and cannot back GO.
+ * Wall's §5.1 derivation (lib/liveEnvelopeTruth). A sponsored "busy" is
+ * Live-qualified and `inferred`; it is not a reading and cannot back GO.
  */
 export function isReading(e: LiveClaimEnvelope, nowMs: number): boolean {
-  return isLiveConstraintEligible(e, nowMs) && truthClassMayRenderAsObservation(truthOfEnvelope(e, nowMs).truthClass);
+  return isLiveConstraintEligible(e, nowMs) && envelopeIsObservational(e, nowMs);
 }
+
+export { truthOfEnvelope };
 
 /** Summarise one subject's envelopes. Only Live-qualified claims populate the fields. */
 export function summariseLiveState(
