@@ -2168,3 +2168,176 @@ count lives here where "last statement wins" can read it):
 | CANNOT-VERIFY | **1** |
 
 Headline after §6 in this worktree (last statement wins): C=93 W=29 N=4 X=1
+
+### 6.5 A second pass — the bridge from an opportunity to an outcome
+
+§5.4 draws one more arrow after the stage §6.1 built:
+
+>   WORLD STATE → OPPORTUNITY → ACTION → **EXPERIENCE SESSION** → OUTCOME →
+>   MEMORY / CALIBRATION (when permitted)
+
+and one constraint on it: *"It is not a raw tracking history."* S54 read
+*"No such object. `CompassLiveEngine.ts` is a plan-timing companion session;
+`LayoverSessionService` is layover-scoped. Neither bridges a world opportunity
+to an outcome."* This pass builds it, and the interesting part is what it
+did **not** build.
+
+- **§19 says inspect before materialising, and this is what that found** —
+  `lib/experienceSession.ts:10#§19 SAYS INSPECT` records the mapping: the
+  OUTCOME already has a canonical owner, because migration 2130 declined the
+  Intelligence Gathering spec's `intel_outcomes` table *"in favour of
+  canonical_events"* and `lib/intelOutcomes.ts` is that ruling in code; and
+  the ACTION spine already exists, with a payload sanitiser that strips raw
+  GPS at every depth. So this bridge adds **no table, no column, no index and
+  no verb**. A session is TWO ROWS on the existing spine — an opening
+  `direction` event and the outcome's own existing verb — and its state is the
+  FOLD over them (`lib/experienceSession.ts:300#export function foldSession(`;
+  `test/experienceSession.test.ts:152#the fold takes the CLOSE`). The only
+  platform change is one new allow-listed payload key beside `intel`, so the
+  I4a/I4b outcome contract stays exact
+  (`lib/canonicalEvents.ts:122#"experience_session",`;
+  `test/experienceSession.test.ts:164#ALLOW-LISTED`). Migration 2841 seeds a
+  flag and states the same reasoning in SQL
+  (`migrations/2841_experience_session_flag.sql:41#PRECONDITION FAILED: public.canonical_events`).
+- **The bridge itself** — `lib/experienceSession.ts:190#export function openExperienceSession(`
+  opens a session against an OPPORTUNITY (lib/opportunityEngine's own four
+  kinds, §6.1), carrying the subject, the claim refs the opportunity rested on
+  and a bounded window; a kind outside that vocabulary is refused as
+  `no_opportunity_reference`, because a session with no opportunity is not a
+  bridge (`test/experienceSession.test.ts:69#NOT a bridge`; B7-M3 red).
+  `lib/experienceSession.ts:254#export function closeExperienceSession(`
+  closes it with a RESULT from the existing outcome vocabulary and OPTIONAL
+  feedback on the existing 1..5 scale, and the closing event carries the
+  outcome's OWN existing verb — so a closed session is, to every existing
+  reader, one of the outcome events that already exist
+  (`test/experienceSession.test.ts:113#OWN existing verb`; B7-M4 red, 3 cases).
+- **Why it is not a tracking history, structurally** — five separate
+  mechanisms, none of them a rule someone has to remember.
+  ONE SUBJECT: the envelope has a single `subject_id` and every trail-shaped
+  key — path, route, trail, waypoints, visits, previous/next subject, track,
+  and the coordinate names — is refused at any depth, at build time and again
+  on the wire (`lib/experienceSession.ts:105#export const SESSION_FORBIDDEN_KEYS`;
+  `lib/experienceSession.ts:127#export function sessionForbiddenKeys(`;
+  `routes/experienceSessions.ts:139#const trail = sessionForbiddenKeys`;
+  `test/experienceSession.test.ts:83#cannot be given a trail`; B7-M5 red).
+  ONE OPEN SESSION: a second while one is open is refused, so sessions cannot
+  accumulate into a parallel trail
+  (`routes/experienceSessions.ts:117#already_open`;
+  `test/experienceSessionsRoute.test.ts:147#a SECOND session`; B7-M9 red).
+  NO HISTORY READ: the store exports exactly three functions — the open
+  session, one session by id, and an append — and the suite asserts that set
+  (`test/experienceSession.test.ts:188#no list, no history`).
+  A BOUNDED LOOK-BACK: the one read cannot see further back than a session can
+  live, so no query here could answer "where has this person been"
+  (`lib/experienceSessionStore.ts:71#const since = new Date(nowMs`; B7-M12 red).
+  A BOUNDED LIFE: `expires_at` is mandatory and at most twelve hours, and an
+  unbounded one is refused rather than clamped
+  (`lib/experienceSession.ts:63#export const MAX_SESSION_HOURS`; B7-M6 red).
+- **Closing is terminal, and an expired window cannot be closed with an
+  outcome** — a closed session cannot be closed again (B7-M2 red), and a
+  session whose window has passed is refused `expired` rather than accepting a
+  late outcome: an outcome reported after the window is not evidence about that
+  window, and feeding it to the calibration report would be a lie
+  (`test/experienceSession.test.ts:141#an EXPIRED session`;
+  `test/experienceSessionsRoute.test.ts:220#an EXPIRED session`; B7-M1 red).
+  The state itself is folded, never a stored status somebody could set
+  (`lib/experienceSession.ts:228#export function sessionState(`).
+- **A failed read is a refusal, never "you have no session"** —
+  `lib/experienceSessionStore.ts:80#read_failed` returns a named refusal, and
+  the route will not open a second session on the strength of a read that
+  failed; a refused WRITE is reported rather than logged and swallowed, which
+  is why this module does not use the spine's fire-and-forget `recordEvent`
+  (`lib/experienceSessionStore.ts:15#WHY NOT recordEvent`;
+  `test/experienceSessionsRoute.test.ts:199#a FAILED read`;
+  `test/experienceSessionsRoute.test.ts:211#a refused WRITE`; B7-M7, B7-M8 red).
+- **Reached, and keyed on the caller** — three routes behind
+  `experience_session_enabled` (2841, seeded FALSE), read fail-closed: with the
+  flag absent — production's state — all three answer `feature_disabled` and
+  neither read nor write, asserted by counting the rows the double stored
+  (`routes/experienceSessions.ts:76#experience_session_enabled`;
+  `test/experienceSessionsRoute.test.ts:100#the flag ABSENT`; B7-M10 red).
+  Every read and write is keyed on the caller's own id, so another person's
+  session simply does not resolve
+  (`test/experienceSessionsRoute.test.ts:187#does not resolve`; B7-M11 red).
+- **2841 executed (DB-8)** — on the lane's local replica: applied (FALSE),
+  rolled back with `db/rollback/2026-09-12-2841-experience-session-flag-rollback.sql`,
+  re-applied (FALSE); and over a row an operator had set TRUE **both** files
+  refused — the migration raised its postcondition and the rollback refused to
+  delete a surface someone had enabled
+  (`migrations/2841_experience_session_flag.sql:58#RAISE EXCEPTION`). Never on
+  portava-ci, never on production.
+
+### 6.6 Row moves (second pass)
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| S54 `ExperienceSession` bridges opportunity → action → outcome | N | **C** | The object exists and bridges §6.1's opportunity kinds to the existing outcome vocabulary, adding no table and no verb — two rows on the canonical spine and a fold over them — and it is not a tracking history by five separate mechanisms: one subject with every trail-shaped key refused at any depth, one open session per viewer, a store with no history read, a look-back bounded by one session lifetime, and a bounded life (B7-M1 to B7-M12 red); reached from three routes behind 2841's FALSE flag, route-tested including the OFF arms that write nothing. |
+
+**Held, with the reason.** **S113** (`ExperienceOutcome`: result / calibration
+/ optional feedback) stays **W**, with the gap now narrower and exactly
+locatable: the result and the optional feedback are real — a close carries an
+outcome from the existing vocabulary and an optional 1..5 rating, on the
+outcome's own verb — and there is now an ExperienceSession for an outcome to
+close, which is what the row said was missing. The calibration half is
+unchanged: `lib/intelCalibrationScheduler.ts:80#payload->intel` counts only
+events carrying the exact `payload.intel` envelope, which requires a served
+snapshot id and claim id pairing that a session's claim refs do not carry, and
+`intel_attributions` (2277) is still absent from production. A session close is
+therefore visible to a reader of the session, not to the calibration report.
+**S92** and **S112** stay W: a session is not a Memory and this pass added no
+lineage stage; `lib/sensingRevocationLineage.ts` is unchanged, and canonical
+events are covered by the account-deletion path that already owns that table —
+which the rollback file states rather than quietly relying on. **S56**, **S46**
+and **S55** hold C from §6.1: the session consumes the opportunity kinds and
+adds no second stage. **S1** holds C, and this pass is a test of it: the
+obvious way to build a session was a table, and §19's instruction to map onto
+canonical owners first is why there is not one.
+
+### 6.7 The mutations, second pass
+
+| # | row(s) | file | what was changed | red | green |
+| --- | --- | --- | --- | ---: | ---: |
+| B7-M1 | S54 | `lib/experienceSession.ts` | an expired session closed with an outcome | 2 | 0 |
+| B7-M2 | S54 | `lib/experienceSession.ts` | closing no longer terminal | 2 | 0 |
+| B7-M3 | S54 | `lib/experienceSession.ts` | a session opened with no opportunity kind | 1 | 0 |
+| B7-M4 | S54 | `lib/experienceSession.ts` | the close written under the opening verb | 3 | 0 |
+| B7-M5 | S54 | `lib/experienceSession.ts` | a trail-shaped envelope accepted by the guard | 1 | 0 |
+| B7-M6 | S54 | `lib/experienceSession.ts` | the twelve-hour bound dropped | 1 | 0 |
+| B7-M7 | S54 | `lib/experienceSessionStore.ts` | a failed read answered as "no session" | 1 | 0 |
+| B7-M8 | S54 | `lib/experienceSessionStore.ts` | a refused write swallowed | 1 | 0 |
+| B7-M9 | S54 | `routes/experienceSessions.ts` | a second session opened while one is open | 1 | 0 |
+| B7-M10 | S54 | `routes/experienceSessions.ts` | the flag read ignored | 2 | 0 |
+| B7-M11 | S54 | `lib/experienceSessionStore.ts` | the actor filter dropped from the read | 1 | 0 |
+| B7-M12 | S54 | `lib/experienceSessionStore.ts` | the look-back window unbounded | 1 | 0 |
+| DB-8 | S54 | replica | 2841 applied (FALSE), rolled back, re-applied (FALSE); over a TRUE row the migration AND the rollback both refused | — | — |
+
+### 6.8 The ceiling, second pass
+
+Nothing here is deployed, enabled or production-realised. 2841 exists on the
+lane's local replica and nowhere else; `experience_session_enabled` is seeded
+FALSE and is the owner's, and it opens a surface that WRITES canonical events
+for a person — the first write surface this lane has built, which is why both
+the migration and its rollback refuse to act over a TRUE row. No client calls
+any of the three routes, and no surface offers the action that would open a
+session: the opportunity stage that would feed it is itself behind 2840's FALSE
+flag. The loop the spec draws therefore stops one arrow short of where it
+points: OPPORTUNITY → ACTION → SESSION → OUTCOME is built and closes, and
+OUTCOME → CALIBRATION does not carry from here, because the calibration report
+counts only the `payload.intel` envelope and `intel_attributions` is not in
+production (S113, held W above). And the same floor holds as everywhere else in
+this census: in production every intel table holds zero rows, so there is no
+opportunity to act on in the first place. **Realised in production: 0.0 %**,
+unchanged.
+
+**The headline, restated from the rows after the second pass** (the
+`## Headline` table at the top of this document is still left as §5 wrote it,
+for the reason §6.4 gives):
+
+| Bucket | Count |
+|---|---|
+| BUILT-AND-CORRECT | **94** |
+| BUILT-BUT-WRONG | **29** |
+| NOT-BUILT | **3** |
+| CANNOT-VERIFY | **1** |
+
+Headline after §6 in this worktree (last statement wins): C=94 W=29 N=3 X=1

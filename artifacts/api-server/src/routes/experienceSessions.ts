@@ -1,0 +1,193 @@
+/**
+ * Sensing §5.4 — the ExperienceSession bridge, reachable:
+ *
+ *   GET  /api/intel/experience-sessions/open      the viewer's open session
+ *   POST /api/intel/experience-sessions           ACTION on an opportunity → open
+ *   POST /api/intel/experience-sessions/:id/close OUTCOME → closed
+ *
+ * The engine is lib/experienceSession (pure) and the spine is
+ * lib/experienceSessionStore over `canonical_events` — no new table, no new
+ * verb, and the outcome lands as the same canonical outcome event
+ * lib/intelOutcomes already defines, which is what lib/intelCalibrationScheduler
+ * reads back. The route computes no world truth and stores no location.
+ *
+ * ── WHAT IT REFUSES, AND WHY THE REFUSALS ARE NAMED ──────────────────────────
+ * A session with no opportunity kind is not a bridge (`no_opportunity_reference`).
+ * A second session while one is open is refused (`already_open`) — one open
+ * session per viewer is what keeps this from becoming a trail. A close after
+ * the window is refused (`expired`): an outcome reported after the window is
+ * not evidence about that window, and feeding it to a calibration report would
+ * be a lie. A close of a closed session is refused (`already_closed`): closing
+ * is terminal. And a read that FAILED is a refusal, never "you have no open
+ * session" — opening a second session on the strength of a failed read is the
+ * §20 confusion this exists to prevent.
+ *
+ * Gated by `experience_session_enabled` (migration 2841, seeded FALSE), read
+ * fail-closed: absent / false / unreadable ⇒ feature_disabled, and nothing is
+ * read or written.
+ *
+ * Security: requireUser, and every read and write is keyed on the caller's own
+ * id — a session id belonging to someone else simply does not resolve.
+ */
+import { Router } from "express";
+import { z } from "zod";
+import { randomUUID } from "node:crypto";
+import { asyncHandler } from "../lib/asyncHandler.js";
+import { requireUser, sendError } from "../lib/http.js";
+import { getServiceClient } from "../lib/supabase.js";
+import { isFlagEnabled } from "../lib/featureFlags.js";
+import { INTEL_OUTCOMES, EXPERIENCE_RATING_MAX, EXPERIENCE_RATING_MIN } from "../lib/intelOutcomes.js";
+import { OPPORTUNITY_KINDS } from "../lib/opportunityEngine.js";
+import {
+  MAX_SESSION_HOURS,
+  closeExperienceSession,
+  openExperienceSession,
+  sessionForbiddenKeys,
+} from "../lib/experienceSession.js";
+import { appendSessionEvent, readOpenSession, readSessionById } from "../lib/experienceSessionStore.js";
+
+const router = Router();
+
+/** Literal name so check-flag-polarity resolves the read. `*_enabled` ⇒ capability, fail-closed. */
+export const EXPERIENCE_SESSION_FLAG = "experience_session_enabled";
+
+const uuid = z.string().uuid();
+const openSchema = z.object({
+  subjectId: uuid,
+  opportunityKind: z.enum(OPPORTUNITY_KINDS),
+  claimRefs: z.array(z.string().min(1).max(200)).max(20).optional(),
+  hours: z.number().min(0.25).max(MAX_SESSION_HOURS).optional(),
+  surface: z.string().min(1).max(40).optional(),
+});
+const closeSchema = z.object({
+  outcome: z.enum(INTEL_OUTCOMES),
+  experienceRating: z.number().int().min(EXPERIENCE_RATING_MIN).max(EXPERIENCE_RATING_MAX).optional(),
+  surface: z.string().min(1).max(40).optional(),
+});
+
+async function gate(req: any, res: any): Promise<{ sc: any; userId: string } | null> {
+  const auth = await requireUser(req, res);
+  if (!auth) return null;
+  const sc = getServiceClient();
+  if (!sc) {
+    sendError(res, "server_not_configured", "Service client unavailable");
+    return null;
+  }
+  if (!(await isFlagEnabled(sc, "experience_session_enabled"))) {
+    sendError(res, "feature_disabled", "Experience sessions are not enabled");
+    return null;
+  }
+  return { sc, userId: auth.user.id };
+}
+
+router.get(
+  "/intel/experience-sessions/open",
+  asyncHandler(async (req, res) => {
+    const g = await gate(req, res);
+    if (!g) return;
+    const now = Date.now();
+    const { open, refusal } = await readOpenSession(g.sc, g.userId, now);
+    if (refusal) {
+      res.json({ ok: true, session: null, state: null, refusal });
+      return;
+    }
+    res.json({ ok: true, session: open?.envelope ?? null, state: open?.state ?? null, refusal: null });
+  }),
+);
+
+router.post(
+  "/intel/experience-sessions",
+  asyncHandler(async (req, res) => {
+    const g = await gate(req, res);
+    if (!g) return;
+    const parsed = openSchema.safeParse(req.body);
+    if (!parsed.success) {
+      sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid body");
+      return;
+    }
+    const now = Date.now();
+
+    // One open session per viewer. A read that FAILED is not "no session".
+    const existing = await readOpenSession(g.sc, g.userId, now);
+    if (existing.refusal) {
+      res.status(409).json({ ok: false, refusal: existing.refusal });
+      return;
+    }
+    if (existing.open) {
+      res.status(409).json({ ok: false, refusal: "already_open", session: existing.open.envelope });
+      return;
+    }
+
+    const built = openExperienceSession(
+      g.userId,
+      {
+        sessionId: randomUUID(),
+        subjectId: parsed.data.subjectId,
+        opportunityKind: parsed.data.opportunityKind,
+        claimRefs: parsed.data.claimRefs ?? [],
+        hours: parsed.data.hours,
+        surface: parsed.data.surface,
+      },
+      now,
+    );
+    if (!built.ok) {
+      res.status(422).json({ ok: false, refusal: built.refusal });
+      return;
+    }
+    // §5.4 "not a raw tracking history", enforced on what is about to be
+    // written rather than asserted in a comment.
+    const trail = sessionForbiddenKeys(built.event.payload ?? {});
+    if (trail.length > 0) {
+      req.log?.error?.({ keys: trail }, "experience session payload was trail-shaped");
+      sendError(res, "db_error", "Session refused");
+      return;
+    }
+    const write = await appendSessionEvent(g.sc, built.event);
+    if (!write.ok) {
+      res.status(500).json({ ok: false, refusal: write.refusal });
+      return;
+    }
+    res.status(201).json({ ok: true, session: built.envelope, state: "open" });
+  }),
+);
+
+router.post(
+  "/intel/experience-sessions/:sessionId/close",
+  asyncHandler(async (req, res) => {
+    const g = await gate(req, res);
+    if (!g) return;
+    const id = uuid.safeParse(req.params.sessionId);
+    if (!id.success) {
+      sendError(res, "invalid_payload", "Invalid session id");
+      return;
+    }
+    const parsed = closeSchema.safeParse(req.body);
+    if (!parsed.success) {
+      sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid body");
+      return;
+    }
+    const now = Date.now();
+    const found = await readSessionById(g.sc, g.userId, id.data, now);
+    if (found.refusal) {
+      res.status(409).json({ ok: false, refusal: found.refusal });
+      return;
+    }
+    if (!found.session) {
+      sendError(res, "not_found", "No such session");
+      return;
+    }
+    const built = closeExperienceSession(found.session.envelope, g.userId, parsed.data, now);
+    if (!built.ok) {
+      res.status(409).json({ ok: false, refusal: built.refusal, state: found.session.state });
+      return;
+    }
+    const write = await appendSessionEvent(g.sc, built.event);
+    if (!write.ok) {
+      res.status(500).json({ ok: false, refusal: write.refusal });
+      return;
+    }
+    res.json({ ok: true, session: built.envelope, state: "closed", verb: built.event.verb });
+  }),
+);
+
+export default router;

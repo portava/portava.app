@@ -1139,6 +1139,17 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/test/crowdForecastState.test.ts",
     "artifacts/api-server/src/test/opportunityEngine.test.ts",
     "artifacts/api-server/src/test/opportunitiesRoute.test.ts",
+    // WIDENED 2026-09-12 (census-sensing §6.5): §5.4's ExperienceSession
+    // bridge — the files §6.6 grades S54 on, plus the canonical spine whose
+    // one new allow-listed payload key the bridge rides.
+    "artifacts/api-server/src/lib/experienceSession.ts",
+    "artifacts/api-server/src/lib/experienceSessionStore.ts",
+    "artifacts/api-server/src/lib/canonicalEvents.ts",
+    "artifacts/api-server/src/routes/experienceSessions.ts",
+    "artifacts/api-server/src/migrations/2841_experience_session_flag.sql",
+    "db/rollback/2026-09-12-2841-experience-session-flag-rollback.sql",
+    "artifacts/api-server/src/test/experienceSession.test.ts",
+    "artifacts/api-server/src/test/experienceSessionsRoute.test.ts",
   ],
   "census-compass.md": [
     "artifacts/api-server/src/compass/",
