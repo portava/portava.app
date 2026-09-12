@@ -23,12 +23,12 @@ preserved in §36.1 as the record of that measurement.
 | Measure | Value |
 | --- | --- |
 | **Denominator (testable requirements)** | **451** |
-| BUILT-AND-CORRECT | **297** |
-| BUILT-BUT-WRONG | **129** |
+| BUILT-AND-CORRECT | **299** |
+| BUILT-BUT-WRONG | **127** |
 | NOT-BUILT | **24** |
 | CANNOT-VERIFY | **1** |
 | **CONSTRUCTED%** = (C+W)/451 | **426 / 451 = 94.5 %** |
-| **CORRECT%** (raw) = C/451 | **297 / 451 = 65.9 %** |
+| **CORRECT%** (raw) = C/451 | **299 / 451 = 66.3 %** |
 
 > **RESTATED 2026-09-11 (§38): 89 → 87 CORRECT, 127 → 129 WRONG.** §38 re-derived
 > 39 of the C rows against the code and **two did not hold**, both for the same
@@ -258,6 +258,16 @@ preserved in §36.1 as the record of that measurement.
 > and writes one outcome per done plan, keyed (TR388, TR428); seven durable
 > channels with a basis (TR382); TR384 re-derived by TR386's standard. Seven
 > W → C. The ceiling is §41.3's, unchanged.
+
+> **RESTATED 2026-09-12 (§55): 297 → 299 CORRECT, 129 → 127 WRONG,
+> 24 NOT-BUILT unchanged. CONSTRUCTED 94.5 % unchanged, CORRECT 65.9 % → 66.3 %.**
+> §55 held the plan-item PATCH's flag-off twin to §3.3 — the arrow out of a
+> terminal state refused with the kernel path's own reason, every write
+> audited as `plan_item_updated`, an `Idempotency-Key` replayed from the
+> audit — so no path copies a client's status into the column unchecked
+> (TR47, TR48 W → C); TR378 and TR50 re-read against the kernel paths that
+> exist (22 of 60 write endpoints command-backed behind the flag; eleven of
+> eleven commands) and held W with true reasons. No migration, no flag.
 | **CORRECT% (spec-attributable)** | **WITHDRAWN — not measured. See §36.4** |
 | CANNOT-VERIFY share | **1 / 451 = 0.2 %** |
 
@@ -509,12 +519,12 @@ Nothing in this section exists. The evidence is one grep, run over
 
 | id | Requirement | V | Evidence |
 | --- | --- | --- | --- |
-| TR49 | The `TripCommand` envelope (commandId, tripId, actorUserId, expectedTripVersion, idempotencyKey, type, payload, clientObservedAt) | **C** | **Moved N→C in the §26 recensus.** The row said "No type, no table, no route." All three exist: the envelope is `lib/tripKernel.ts:263#TripCommand` (commandId, tripId, actorUserId, expectedTripVersion, idempotencyKey, type, payload), the receipt table is `migrations/2420_trip_kernel_foundation.sql:139#trip_command_receipts`, and the route is the `trip_kernel_execute` RPC that `lib/tripKernel.ts:649#executeTripCommand` calls. |
+| TR49 | The `TripCommand` envelope (commandId, tripId, actorUserId, expectedTripVersion, idempotencyKey, type, payload, clientObservedAt) | **C** | **Moved N→C in the §26 recensus.** The row said "No type, no table, no route." All three exist: the envelope is `lib/tripKernel.ts:263#TripCommand` (commandId, tripId, actorUserId, expectedTripVersion, idempotencyKey, type, payload), the receipt table is `migrations/2420_trip_kernel_foundation.sql:139#trip_command_receipts`, and the route is the `trip_kernel_execute` RPC that `lib/tripKernel.ts:667#executeTripCommand` calls. |
 | TR50 | A typed command vocabulary (ADD_PLAN, MOVE_PLAN, CONFIRM_PLAN, CANCEL_PLAN, JOIN_PLAN, LEAVE_PLAN, CREATE_SUBGROUP, SET_PRESENCE, CREATE_PROPOSAL, ACCEPT_PROPOSAL, COMPLETE_ACTIVITY) | **N** | None of the eleven exists as a command. Four have a *route* that does something adjacent (`POST /trips/:id/plan/items`, `PATCH …/items/:itemId`, `POST /trips/:id/complete`); seven have no analogue at all. |
-| TR51 | Command service validates schema | **W** | **MOVED C → W, 2026-09-11 (§38) — the first verdict this census has moved on a re-derivation.** The row read C on the sentence *"every trip write parses a zod schema first"*, which is its testable half. Counted across the three files it cites: **53 write endpoints, 8 reading `req.body` with no schema at all** — `POST /trips` (the primary create), `/invite`, `/members`, `/join-request`, `/invite-link` and the three checklist writes. 45 of 53 do validate, so the capability is built and used and this is BUILT-BUT-WRONG, not NOT-BUILT; the word *every* had never been counted. `POST /trips` is now closed by `CreateTripSchema` (`routes/trips.ts:791#CreateTripSchema`), mirroring `PatchTripSchema` field for field so it cannot reject what PATCH already accepts, and the remaining seven are held shrink-only by `check:trip-write-validation`. **What the gap costs is TYPE validation, not authorization** — `requireUser` runs first and `check:route-auth-gate` guards that independently — so a malformed payload became a 500 from the database where a 400 belongs. Returns to C when the list reaches zero. |
-| TR52 | …validates actor capability | **C** | `lib/http.ts:554#canEditPlan` `canEditPlan` and `:614#canEditPlanItem` `canEditPlanItem` are called before every plan mutation (`routes/trips.ts:1713,1809,1925#canEditPlan`), and membership is checked through the shared `lib/tripMembership.ts:45#isAcceptedTripMember` `isAcceptedTripMember`. |
+| TR51 | Command service validates schema | **W** | **MOVED C → W, 2026-09-11 (§38) — the first verdict this census has moved on a re-derivation.** The row read C on the sentence *"every trip write parses a zod schema first"*, which is its testable half. Counted across the three files it cites: **53 write endpoints, 8 reading `req.body` with no schema at all** — `POST /trips` (the primary create), `/invite`, `/members`, `/join-request`, `/invite-link` and the three checklist writes. 45 of 53 do validate, so the capability is built and used and this is BUILT-BUT-WRONG, not NOT-BUILT; the word *every* had never been counted. `POST /trips` is now closed by `CreateTripSchema` (`routes/trips.ts:794#CreateTripSchema`), mirroring `PatchTripSchema` field for field so it cannot reject what PATCH already accepts, and the remaining seven are held shrink-only by `check:trip-write-validation`. **What the gap costs is TYPE validation, not authorization** — `requireUser` runs first and `check:route-auth-gate` guards that independently — so a malformed payload became a 500 from the database where a 400 belongs. Returns to C when the list reaches zero. |
+| TR52 | …validates actor capability | **C** | `lib/http.ts:554#canEditPlan` `canEditPlan` and `:614#canEditPlanItem` `canEditPlanItem` are called before every plan mutation (`routes/trips.ts:1716,1812,1928#canEditPlan`), and membership is checked through the shared `lib/tripMembership.ts:45#isAcceptedTripMember` `isAcceptedTripMember`. |
 | TR53 | …validates aggregate version | **C** | **Moved N→C.** The row said "No version exists." `trips.version` is added by `2420_trip_kernel_foundation.sql:96#version` and the kernel refuses a mismatch: `2590_trip_kernel_add_plan_attachment_columns.sql:365#TRIP_VERSION_CONFLICT` returns the current and expected versions so a caller can refetch and retry (§18.3 "explicit conflict"). |
-| TR54 | …validates temporal/spatial consistency | **W** | **Moved N→W 2026-09-08, and the W is the honest half.** The row said the write "accepts any `starts_at`/`ends_at` pair, including one that overlaps a confirmed item or precedes its predecessor." ORDERING is now checked: the kernel already refused an inverted range on the TRIP (`2590:...#TRIP_TEMPORAL_RANGE_INVERTED`, on create and on update, comparing the MERGED value), and the plan-item half is now enforced by `migrations/2750_trip_plan_item_interval_ordered.sql` (a CHECK, NOT VALID, rehearsed on portava-ci — an UPDATE into an inverted range is refused) plus the typed refusal at `lib/tripKernel.ts:649#executeTripCommand`. **OVERLAP is still unchecked** — an item may still be written across a confirmed item's interval, because that is the §7 consistency engine (TR128, TR134) and needs a route provider this tree does not have. Ordering built, overlap not. **Also recorded here rather than lost:** the plan-item check lives at the kernel's entry point rather than inside `trip_kernel_execute`, because every kernel change replaces that 700-line function in full; it should ride along with the next migration that replaces it for its own reasons. |
+| TR54 | …validates temporal/spatial consistency | **W** | **Moved N→W 2026-09-08, and the W is the honest half.** The row said the write "accepts any `starts_at`/`ends_at` pair, including one that overlaps a confirmed item or precedes its predecessor." ORDERING is now checked: the kernel already refused an inverted range on the TRIP (`2590:...#TRIP_TEMPORAL_RANGE_INVERTED`, on create and on update, comparing the MERGED value), and the plan-item half is now enforced by `migrations/2750_trip_plan_item_interval_ordered.sql` (a CHECK, NOT VALID, rehearsed on portava-ci — an UPDATE into an inverted range is refused) plus the typed refusal at `lib/tripKernel.ts:667#executeTripCommand`. **OVERLAP is still unchecked** — an item may still be written across a confirmed item's interval, because that is the §7 consistency engine (TR128, TR134) and needs a route provider this tree does not have. Ordering built, overlap not. **Also recorded here rather than lost:** the plan-item check lives at the kernel's entry point rather than inside `trip_kernel_execute`, because every kernel change replaces that 700-line function in full; it should ride along with the next migration that replaces it for its own reasons. |
 | TR55 | …validates dependent commitments | **N** | No commitments exist (TR15). |
 | TR56 | …validates sensitive-domain boundaries | **W** | Partially, by construction rather than by a validator: `trip_documents` and crew location have their own routes with their own gates (`routes/tripCrewLocation.ts:170-174`), so a plan write cannot touch them. There is no boundary *check* — there is simply no shared write path that could cross one. |
 | TR57 | Successful commands write canonical state plus an immutable domain event in the same transaction where feasible | **C** | **Moved N→C.** The row said "No event is written by any trip mutation." One plpgsql function does both writes in one transaction: `2590_trip_kernel_add_plan_attachment_columns.sql:798#version` bumps `trips.version` and `:804#trip_events` appends the event, with the outbox row at `:818#trip_outbox`. `logActivity` — the thing the row measured — is no longer the nearest artifact. |
@@ -586,8 +596,8 @@ because there is no stage.*
 | TR103 | `canViewTrip(actor, trip)` | **W** | The behaviour exists and the function does not: `routes/trips-expansion.ts:2572` `GET /trips/:tripId` resolves visibility inline and `src/test/tripPrivacy.test.ts:7-15` proves the outcomes (non-member → preview, accepted member → full, removed member → preview on the next request, private non-member → locked sentinel). A tested inline gate, not a policy function. |
 | TR104 | `canInviteParticipant(actor, trip)` | **W** | Inline at `routes/trips.ts:927` and `routes/trips-expansion.ts:891`; no named policy. |
 | TR105 | `canEditTrip(actor, trip)` | **W** | Inline owner checks at `routes/trips.ts:684` and `routes/trips-expansion.ts:350`; no named policy. |
-| TR106 | `canCreatePlan(actor, trip)` | **C** | `lib/http.ts:554#canEditPlan` `canEditPlan`, called before the create at `routes/trips.ts:1713#canEditPlan`. |
-| TR107 | `canModifyPlan(actor, plan)` | **C** | `lib/http.ts:614#canEditPlanItem` `canEditPlanItem`, called at `routes/trips.ts:1929,1999#canEditPlanItem`. |
+| TR106 | `canCreatePlan(actor, trip)` | **C** | `lib/http.ts:554#canEditPlan` `canEditPlan`, called before the create at `routes/trips.ts:1716#canEditPlan`. |
+| TR107 | `canModifyPlan(actor, plan)` | **C** | `lib/http.ts:614#canEditPlanItem` `canEditPlanItem`, called at `routes/trips.ts:1932,2038#canEditPlanItem`. |
 | TR108 | `canManageBooking(actor, trip)` | **W** | `routes/tripReservations.ts` has `requireReservationMember` plus a stricter delete rule at `:426-429` (*"creator or trip OWNER only"*) — real authorization, expressed as a route-local helper rather than a policy function. |
 | TR109 | `canSeePresence(actor, subject, trip)` | **W** | The decision is made inside `lib/tripCrewLocation.ts:104` `buildCrewCard` per member, honouring ghost mode, default visibility and safe-return opt-in. It is a card builder, not a predicate, so no caller can *ask* the question — and `routes/tripCrewLocation.ts:170-174` admits **invited-but-not-accepted** members (`getMemberRoleAny`) to the crew map. |
 | TR110 | `canSeePreciseLocation(actor, subject, trip)` | **C** | `lib/tripCrewLocation.ts:320#resolveExactCoords` `resolveExactCoords`, gated on a grant this module now checks for expiry itself (`:238#grantIsActive`) — exact coordinates require an **active live-share grant** *and* hotel-blur off *and* populated coordinates; ghost mode short-circuits first (`:217-218#TRIP_PRESENCE_GHOST`). Three independent conditions, all fail-closed, and membership alone never suffices. |
@@ -941,7 +951,7 @@ PHOTO, EXPLORE, PLAY, LEARN, NIGHTLIFE, TRANSIT) appear nowhere as a vocabulary.
 | TR411 | Safety/authorization invariants block merge regardless of product experiment | **C** | This one is met, and by the platform's strongest machinery: ~40 `src/scripts/check*.ts` ratchets run in CI, including `checkAuthorizationContract.ts`, `checkSilentSupabaseWrites.ts`, `checkLocationPurposes.ts`, `checkDataRights.ts`, `rlsDispositions.ts` (which carries `trip_activity_log` at `:458` and `trip_area_preferences` at `:459`) and `checkWriterlessReads.ts`. A trip change that weakened an authorization contract would fail the build. |
 | TR412 | §22.4 An earlier hard commitment cannot increase the preceding certified free window | **N** | Vacuous and unguarded: no commitments, no windows, no invariant test. |
 | TR413 | §22.4 A closed-before-arrival activity cannot remain executable | **N** | No opening hours as a constraint (TR230), no executability concept. |
-| TR414 | §22.4 A removed participant cannot receive future precise trip presence through that Trip | **C** | Proven, and it is the only §22.4 invariant with a test: removal deletes the `trip_members` row (`routes/trips.ts:2182#members/:userId` `DELETE /trips/:tripId/members/:userId`), `routes/tripCrewLocation.ts:170-174` refuses a non-member with `not_member`, and `src/test/tripPrivacy.test.ts:11` asserts *"A removed member immediately receives the preview on the next request."* Caveat recorded at TR109: the same gate admits *invited* members, so the invariant holds for removal and is looser than it should be for admission. |
+| TR414 | §22.4 A removed participant cannot receive future precise trip presence through that Trip | **C** | Proven, and it is the only §22.4 invariant with a test: removal deletes the `trip_members` row (`routes/trips.ts:2221#members/:userId` `DELETE /trips/:tripId/members/:userId`), `routes/tripCrewLocation.ts:170-174` refuses a non-member with `not_member`, and `src/test/tripPrivacy.test.ts:11` asserts *"A removed member immediately receives the preview on the next request."* Caveat recorded at TR109: the same gate admits *invited* members, so the invariant holds for removal and is looser than it should be for admission. |
 | TR415 | §22.4 An unknown place identity cannot be silently treated as a canonical place match | **C** | `0010_trip_plan.sql:14-15` types the source (`'manual'` default), `lib/placeIdBridge.ts` is the only sanctioned crossing, and `scripts/checkSchemaReferences.ts` is the ratchet. An unresolved place stays typed as manual. |
 | TR416 | §22.4 A projection's `sourceTripVersion` may never exceed the canonical aggregate version | **N** | Neither side of the comparison exists (TR12, TR365). |
 | TR417 | §22.4 A duplicate command with the same idempotency key cannot produce a duplicate state transition | **N** | No idempotency key anywhere in the trip domain. The nearest artifact is a route-level short-circuit — `routes/trips-expansion.ts:508` returns `{ status: "completed", idempotent: true }` when a trip is already completed — a per-endpoint guard, not the invariant. |
@@ -4544,7 +4554,7 @@ production baseline through the chain: 39 database tests, 0 skipped.
   `opportunity_accepted_total` at that route,
   `opportunity_completed_total` where COMPLETE_ACTIVITY succeeds on an
   opportunity-sourced plan (`lib/tripOpportunityMetrics.ts:18#export function recordOpportunityCompletion`)
-  — on the plan PATCH cutover (`routes/trips.ts:1966#recordOpportunityCompletion(planCommandTypeForPatch(patch)`)
+  — on the plan PATCH cutover (`routes/trips.ts:1969#recordOpportunityCompletion(planCommandTypeForPatch(patch)`)
   and the Compass autopilot, the two places that issue it.
 - **2787 — the fold names every event** — `src/migrations/2787_trip_snapshot_fold_vocabulary.sql:53#WHEN t IN ('trip.stage_started','trip.stage_completed') THEN`:
   2773's `trip_snapshot_fold` met the eighteen event types 2779–2786 added
@@ -4888,7 +4898,7 @@ re-derives and cites rather than argues.
   it is in the document in the same commit
   (`src/test/tripWritePathInventory.test.ts:60#drift`).
 - **§4.1 TR51, the last seven** — `/invite` and `/members`
-  (`routes/trips.ts:1151#InviteMemberSchema`, `routes/trips.ts:1152#AddMemberSchema`),
+  (`routes/trips.ts:1154#InviteMemberSchema`, `routes/trips.ts:1155#AddMemberSchema`),
   `/join-request`, `/invite-link` and the three checklist writes
   (`routes/trips-expansion.ts:920#InviteLinkSchema`,
   `routes/trips-expansion.ts:922#ChecklistItemPatchSchema`) parse a zod schema
@@ -5088,7 +5098,7 @@ with every database suite green; no new flag, no new table.
   their own routes — and is a check now: a payload key that names a travel
   document number, a health fact or a payment instrument, at any depth, is
   refused by name before the kernel is called and counted
-  (`lib/tripKernel.ts:624#sensitiveDomainKey`,
+  (`lib/tripKernel.ts:642#sensitiveDomainKey`,
   `src/test/tripKernelSensitiveDomain.test.ts:47#TRIP_COMMAND_SENSITIVE_DOMAIN`).
 - **§14.1 "active" means in progress now** — 2779 gave plans
   `in_progress`; the map's active-plans layer says which points are
@@ -5536,7 +5546,7 @@ reason beside the message it always had.
   private rows (`routes/trips-expansion.ts:2289#canSeePrivateContributions(sc,`);
   the budget gate asks `tripRoleOf` (`routes/tripBudgetIntel.ts:76#tripRoleOf(sc,`);
   the plan-editability filter and the owner-skip on an invite notification
-  use the pure helpers (`routes/trips.ts:1528#planEditPermits(trip,`). Every
+  use the pure helpers (`routes/trips.ts:1531#planEditPermits(trip,`). Every
   refusal keeps the message it had and adds `reason`.
 - **The ratchet, at zero** — `scripts/checkTripPolicyCallsites.ts:75#"src/routes/trips-expansion.ts": 0,`:
   the baseline is zero for all three files and the check counts callers of
@@ -5900,3 +5910,94 @@ No migration. The one write is 2763's `RECORD_OUTCOME`, behind
 `trip_kernel_enabled`; the reads of 2763 and 2794 sit behind the
 operational gate. Nothing here is deployed, enabled or production-realised;
 the ceiling is §41.3's, 2779–2795.
+
+## 55. The flag-off twin held to §3.3, and two rows re-read against the kernel paths that exist
+
+**Read against the branch `claude/sweet-fermat-fmx7up`.** No migration, no
+flag. TR47 and TR48 were last graded in §27 against `routes/trips.ts` as it
+then was: *"the client's chosen status string is copied into the column
+with no transition validation: `done → tentative`, `cancelled → confirmed`,
+any pair is accepted"* and *"audit and idempotency are absent"*. Since then
+the PATCH acquired a kernel path — `planCommandTypeForPatch` chooses
+CONFIRM_PLAN / CANCEL_PLAN / COMPLETE_ACTIVITY / MOVE_PLAN / UPDATE_PLAN,
+the kernel refuses the arrow out of a terminal state, receipts give
+idempotency and the event gives audit — and a flag-off twin that still did
+exactly what §27 described. The twin is the path every deployment runs
+today, since `trip_kernel_enabled` is seeded FALSE, so §55 holds it to the
+same rule rather than waiting for the flag.
+
+### 55.1 What was built, and where
+
+- **§3.3's arrows, in the twin** (`artifacts/api-server/src/lib/tripKernel.ts:569#export function planStatusTransitionRefused(`
+  and `artifacts/api-server/src/routes/trips.ts:1982#const refused = planStatusTransitionRefused(`):
+  the kernel's rule — no status change out of `done`, `cancelled` or
+  `skipped` — as one pure function, asked by the flag-off PATCH before it
+  writes. The refusal is the kernel path's own: 409, `invalid_state_transition`,
+  `TRIP_PLAN_INVALID_TRANSITION`, `from`, `to`. The same status again is not a
+  transition. `canEditPlanItem` now reports the item's status with its
+  permission (`artifacts/api-server/src/lib/http.ts:593#status: string | null `}),
+  so the twin pays no second read. The kernel is still never called on this
+  path: `tripKernel.test.ts`'s flag-off pin, which until now asserted that
+  `done → tentative` was accepted *"exactly as before"*, asserts the refusal
+  and the unchanged `rpcCalls`, `trips.version`, `trip_events`.
+- **The audit row** (`artifacts/api-server/src/lib/tripActivityLog.ts:19#export async function logTripActivity(`):
+  every write the twin makes leaves `plan_item_updated` in
+  `trip_activity_log` — the item, the changed column names, the arrow
+  (`status_from`, `status_to`) and the key it carried. Column names, never
+  values: a body carrying `lat` / `lng` audits as the keys `lat` and `lng`,
+  which is what 2789's `trip_activity_log_metadata_minimised` CHECK admits.
+  A failed insert is logged and the response stands; the write it records
+  has already happened.
+- **The keyed replay** (`artifacts/api-server/src/lib/tripActivityLog.ts:42#export async function findTripActivityByKey(`):
+  a PATCH carrying an `Idempotency-Key` the audit already holds for that
+  item is answered with the row as it stands and writes nothing — the
+  twin's idempotency, from the audit it keeps rather than from the receipts
+  it does not have. An empty header is no key; a key held for another item
+  does not replay this one; a log that cannot be read replays nothing (the
+  write happens, once more, rather than being guessed away).
+- **Pinned** (`artifacts/api-server/src/test/tripPlan.test.ts:912#the plan-item PATCH's flag-off twin is held to §3.3`):
+  the three arrows refused with the exact body and nothing written; the
+  audit row's fields and their order; the replay answering with the first
+  body, the second never written, a fresh key writing again. Four mutations
+  seen red: the rule never refusing, the twin not auditing, a key never
+  replaying, the permission check hiding the status.
+
+### 55.2 Two rows re-read against the kernel paths
+
+TR378 was graded in §27 with *"roughly half"* of 97 endpoints as direct CRUD
+and `routes/trips.ts:1520-1533` as *"the canonical example"*. Read today,
+that example is the PATCH above: a kernel path first, a twin annotated
+`trip-kernel:legacy-path` second. Twenty-two of the sixty write endpoints
+in the seven trip route files carry that annotation and issue a typed
+command when the flag is on (fourteen in `trips.ts`, seven in
+`trips-expansion.ts`, one in `tripReservations.ts` — `check:trip-kernel-writers`
+counts them and refuses a new unannotated writer). The other thirty-eight
+(notes, documents, saved places, checklists, reminders, budget, members,
+destinations) are direct writes by the design of their programmes and are
+not in the aggregate's canonical tables. TR378 stays W — a typed-command
+write surface is not the same as a write surface with typed commands behind
+a flag — and its reason is now the count, not a shape that no longer exists.
+TR50: `CREATE_SUBGROUP` exists since 2780 (§41), so all eleven of §4.1's
+example commands are in the kernel's union; the row stays W for the reason
+every 2780 row does — no database has it.
+
+### 55.3 Row moves
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| TR47 State transitions must be commands with authorization, validation, audit and idempotency | W | **C** | With the kernel on, the PATCH is a command with a receipt and an event. With it off — every deployment today — the twin authorizes (`canEditPlan`, `canEditPlanItem`), validates (the schema and now §3.3's arrows), audits (`plan_item_updated`) and replays a key. The kernel's receipt is the stronger idempotency and the flag decides which; neither path is missing any of the four. |
+| TR48 UI must not directly update plan status columns | W | **C** | No path copies a client's status into the column unchecked: the kernel path issues the transition's command and the twin refuses the arrow the kernel would refuse, with the kernel's own reason. `done → tentative` is 409 on both. |
+| TR378 §19.3 write endpoints issue typed commands, not broad direct CRUD | W | **W** | Re-read: 22 of 60 trip write endpoints issue a typed command behind the flag, annotated and counted; 38 are direct writes outside the aggregate's canonical tables. The census no longer cites a shape that is not there. |
+| TR50 command vocabulary | W | **W** | Eleven of eleven now (`CREATE_SUBGROUP`, 2780); W because no database has 2780. |
+
+**Held, with the reason.** TR435's ratchet is unchanged at 1 ungated
+direct write; the twin's audit insert is to `trip_activity_log`, not a
+canonical table, and `check:trip-kernel-writers` still reports no new
+writer. TR440 holds: the command route exists (`routes/tripCommands.ts`)
+and the outbox worker and projection workers of §24's layout do not.
+
+### 55.4 The ceiling, unchanged
+
+Nothing here needs a migration or a flag; it is the flag-off path itself,
+which is why it is graded on what every deployment runs. Nothing here is
+deployed.

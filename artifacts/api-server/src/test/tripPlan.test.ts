@@ -65,6 +65,8 @@ interface State {
   trip_plan_items: Item[];
   meetups:         Meetup[];
   places:          Place[];
+  /** The flag-off twin's audit rows (§55). */
+  trip_activity_log?: any[];
 }
 
 function baseState(): State {
@@ -122,6 +124,7 @@ function makeFakeClient(state: State) {
       then(onF: any, onR: any) {
         if (_op === "update")  return resolveUpdate().then(onF, onR);
         if (_op === "delete")  return resolveDelete().then(onF, onR);
+        if (_op === "insert" && _insertRow) return resolveInsertAwaited().then(onF, onR);
         return resolveList().then(onF, onR);
       },
     };
@@ -180,6 +183,13 @@ function makeFakeClient(state: State) {
 
     async function resolveList() {
       return { data: matchedRows(), error: null };
+    }
+
+    /** An insert awaited without .select().single() — the audit-row shape. */
+    async function resolveInsertAwaited() {
+      if (!(table in state)) (state as any)[table] = [];
+      (state as any)[table].push({ id: `row-${(state as any)[table].length + 1}`, created_at: new Date().toISOString(), ..._insertRow });
+      return { data: null, error: null };
     }
 
     async function resolveUpdate() {
@@ -893,6 +903,83 @@ describe("Invited member blocked from plan mutations", () => {
     const { port, close } = await startServer(s);
     const r = await post(port, `/api/trips/${TRIP_ID}/plan/items/${ITEM_ID_1}/reorder`, INVITED_TOK, { sortOrder: 999 });
     assert.equal(r.status, 403, "invited member must not be able to reorder plan items");
+    await close();
+  });
+});
+
+// ── §3.3 in the flag-off twin — census-trips §55 (TR47, TR48) ─────────────────
+
+describe("the plan-item PATCH's flag-off twin is held to §3.3: refused arrows, an audit row, a keyed replay", () => {
+  async function patchWith(port: number, path: string, token: string, body: unknown, headers: Record<string, string> = {}) {
+    const res = await fetch(`http://127.0.0.1:${port}${path}`, {
+      method: "PATCH", headers: { "Content-Type": "application/json", connection: "close", Authorization: `Bearer ${token}`, ...headers },
+      body: JSON.stringify(body),
+    });
+    const parsed = (await res.json().catch(() => null)) as { title?: string; reason?: string; from?: string; to?: string } | null;
+    return { status: res.status, body: parsed };
+  }
+  function stateWithItem(status: string): State {
+    const s = stateWithMembers({ [ALICE_ID]: "owner", [BOB_ID]: "member" });
+    s.trip_activity_log = [];
+    s.trip_plan_items.push({
+      id: ITEM_ID_1, trip_id: TRIP_ID, creator_id: BOB_ID,
+      title: "Museum", category: "activity", status,
+      source_type: "manual", source_id: null, day_date: "2026-07-10",
+      starts_at: null, ends_at: null, location_name: null, notes: null,
+      sort_order: 0, visibility: "members", removed_at: null,
+      created_at: "2026-06-01T00:00:00Z", updated_at: "2026-06-01T00:00:00Z",
+    });
+    return s;
+  }
+
+  it("an arrow out of done, cancelled or skipped is refused with the kernel path's reason and shape, and nothing is written (TR48)", async () => {
+    for (const from of ["done", "cancelled", "skipped"]) {
+      const s = stateWithItem(from);
+      const { port, close } = await startServer(s);
+      const r = await patch(port, `/api/trips/${TRIP_ID}/plan/items/${ITEM_ID_1}`, "alice-tok", { status: "tentative" });
+      assert.equal(r.status, 409, `${from} -> tentative must be refused`);
+      assert.deepEqual(r.body, { error: "invalid_state_transition", message: `A ${from} plan item cannot become tentative`, reason: "TRIP_PLAN_INVALID_TRANSITION", from, to: "tentative" });
+      assert.equal(s.trip_plan_items[0]!.status, from, "the column is untouched");
+      assert.equal(s.trip_activity_log!.length, 0, "a refusal leaves no audit row");
+      // The same status again is not a transition and is not refused (the
+      // route's schema does not accept `skipped` as an input — it is the
+      // kernel's SKIP_PLAN — so that one is renamed without a status).
+      const same = await patch(port, `/api/trips/${TRIP_ID}/plan/items/${ITEM_ID_1}`, "alice-tok", from === "skipped" ? { title: "Museum, renamed" } : { status: from, title: "Museum, renamed" });
+      assert.equal(same.status, 200, JSON.stringify(same.body));
+      assert.equal(s.trip_activity_log!.length, 1, "the allowed write is audited");
+      await close();
+    }
+  });
+
+  it("an allowed write is audited as plan_item_updated with the changed keys and the arrow, no coordinates (2789)", async () => {
+    const s = stateWithItem("tentative");
+    const { port, close } = await startServer(s);
+    const r = await patch(port, `/api/trips/${TRIP_ID}/plan/items/${ITEM_ID_1}`, "bob-tok", { status: "confirmed", notes: "book ahead", lat: 10.3, lng: 123.9 });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(s.trip_activity_log!.length, 1);
+    const row = s.trip_activity_log![0]!;
+    assert.equal(row.trip_id, TRIP_ID); assert.equal(row.actor_id, BOB_ID); assert.equal(row.event_type, "plan_item_updated");
+    assert.deepEqual(row.metadata, { item_id: ITEM_ID_1, changed_keys: ["status", "lat", "lng", "notes"], status_from: "tentative", status_to: "confirmed", idempotency_key: null }, "the column names in the route's own order");
+    assert.ok(!("lat" in row.metadata) && !("lng" in row.metadata), "the audit names the keys, never the coordinates");
+    await close();
+  });
+
+  it("a request carrying an Idempotency-Key the audit already holds for the item is answered with the row as it stands, nothing written twice (TR47)", async () => {
+    const s = stateWithItem("tentative");
+    const { port, close } = await startServer(s);
+    const first = await patchWith(port, `/api/trips/${TRIP_ID}/plan/items/${ITEM_ID_1}`, "alice-tok", { title: "First" }, { "Idempotency-Key": "k-1" });
+    assert.equal(first.status, 200); assert.equal(first.body?.title, "First");
+    assert.equal(s.trip_activity_log![0]!.metadata.idempotency_key, "k-1");
+    const replay = await patchWith(port, `/api/trips/${TRIP_ID}/plan/items/${ITEM_ID_1}`, "alice-tok", { title: "Second" }, { "Idempotency-Key": "k-1" });
+    assert.equal(replay.status, 200);
+    assert.equal(replay.body?.title, "First", "the replay answers with the row as it stands");
+    assert.equal(s.trip_plan_items[0]!.title, "First", "the second body was not written");
+    assert.equal(s.trip_activity_log!.length, 1, "no second audit row");
+    const fresh = await patchWith(port, `/api/trips/${TRIP_ID}/plan/items/${ITEM_ID_1}`, "alice-tok", { title: "Third" }, { "Idempotency-Key": "k-2" });
+    assert.equal(fresh.body?.title, "Third"); assert.equal(s.trip_activity_log!.length, 2);
+    // A key that belongs to another item's write does not replay this one.
+    const bad = await patchWith(port, `/api/trips/${TRIP_ID}/plan/items/${ITEM_ID_1}`, "alice-tok", { title: "x" }, { "Idempotency-Key": "" });
+    assert.equal(bad.status, 200, "an empty header is no key at all");
     await close();
   });
 });

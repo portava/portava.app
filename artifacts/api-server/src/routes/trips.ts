@@ -8,6 +8,8 @@ import {
   sendKernelRejection,
   setTripVersionHeader,
   planCommandTypeForPatch,
+  planStatusTransitionRefused,
+  IDEMPOTENCY_KEY_HEADER,
 } from "../lib/tripKernel.js";
 import { computeTripStatus } from "../lib/tripStatus.js";
 import { z } from "zod";
@@ -18,6 +20,7 @@ import { requireUser, isAcceptedTripMember, requireTripMember, sendError, canEdi
 import { canEditTrip, canInviteParticipant, isTripOwner, planEditPermits } from "../lib/tripPolicy.js";
 import { sendTripRefusal } from "../lib/tripReasonCodes.js";
 import { toCamel } from "./plan.js";
+import { logTripActivity, findTripActivityByKey } from "../lib/tripActivityLog.js";
 import { syncTripChatMembers } from "../lib/chatSync.js";
 import { getRestrictionState } from "../services/trust/TrustRestrictionService.js";
 import { sendTripPush } from "../lib/tripPush.js";
@@ -1969,6 +1972,34 @@ router.patch("/trips/:tripId/plan/items/:itemId", async (req, res) => {
     return;
   }
 
+  // §3.3 holds in the flag-off twin too (census-trips TR47, TR48): an arrow
+  // out of a terminal state is refused with the kernel path's own reason and
+  // shape; a request carrying an Idempotency-Key the audit already holds for
+  // this item is answered with the row as it stands, nothing written twice;
+  // and the write it does make is audited as `plan_item_updated`. What the
+  // twin cannot give is the kernel's receipt and event — that is what the
+  // flag is for.
+  const refused = planStatusTransitionRefused(auth.status, patch.status);
+  if (refused) {
+    res.status(409).json({
+      error: "invalid_state_transition",
+      message: `A ${refused.from} plan item cannot become ${refused.to}`,
+      reason: "TRIP_PLAN_INVALID_TRANSITION", from: refused.from, to: refused.to,
+    });
+    return;
+  }
+  const legacyEnv = readCommandEnvelope(req);
+  if (!legacyEnv.ok) { sendError(res, "invalid_payload", legacyEnv.message); return; }
+  const suppliedKey = req.get(IDEMPOTENCY_KEY_HEADER) ? legacyEnv.idempotencyKey : null;
+  if (suppliedKey) {
+    const seen = await findTripActivityByKey(client, tripId, "plan_item_updated", suppliedKey);
+    if (seen && (seen.metadata as any)?.item_id === itemId) {
+      const { data: current, error: curErr } = await client.from("trip_plan_items").select("*").eq("id", itemId).maybeSingle();
+      if (curErr) { sendError(res, "db_error", curErr.message); return; }
+      if (current) { res.json(toCamel(current)); return; }
+    }
+  }
+
   // trip-kernel:legacy-path — flag-off twin of the plan-item command above.
   const { data: updated, error } = await client
     .from("trip_plan_items")
@@ -1978,6 +2009,14 @@ router.patch("/trips/:tripId/plan/items/:itemId", async (req, res) => {
     .single();
 
   if (error) { req.log.error({ err: error }, "update plan item"); sendError(res, "db_error", error.message); return; }
+
+  await logTripActivity(client, tripId, user.id, "plan_item_updated", {
+    item_id: itemId,
+    changed_keys: Object.keys(dbPatch).filter((k) => k !== "updated_at"),
+    status_from: auth.status ?? null,
+    status_to: patch.status ?? null,
+    idempotency_key: suppliedKey,
+  });
 
   res.json(toCamel(updated));
 });

@@ -590,7 +590,7 @@ export async function canEditPlan(
 
 /** Discriminated union returned by canEditPlanItem. */
 export type CanEditPlanItemResult =
-  | { permitted: true;  role: "owner" | "member"; creatorId: string }
+  | { permitted: true;  role: "owner" | "member"; creatorId: string; /** The item's current status, so a flag-off write can hold §3.3's arrows (TR48). */ status: string | null }
   | { permitted: false; code: ApiErrorCode; message: string };
 
 /**
@@ -625,7 +625,7 @@ export async function canEditPlanItem(
   // Refuse instead, the same way requireTripMember does: 503, retryable.
   const { data: item, error: itemErr } = await client
     .from("trip_plan_items")
-    .select("creator_id")
+    .select("creator_id, status")
     .eq("id", itemId)
     .eq("trip_id", tripId)
     .is("removed_at", null)
@@ -642,17 +642,18 @@ export async function canEditPlanItem(
 
   const role = membership.role as "owner" | "member";
   const creatorId = (item as { creator_id: string }).creator_id;
+  const status = (item as { status?: string | null }).status ?? null;
 
   if (ownerOnly) {
     if (role !== "owner") {
       return { permitted: false, code: "forbidden", message: "Only the trip owner can reorder plan items" };
     }
-    return { permitted: true, role, creatorId };
+    return { permitted: true, role, creatorId, status };
   }
 
   if (role !== "owner" && creatorId !== userId) {
     return { permitted: false, code: "forbidden", message: "You can only edit your own plan items" };
   }
 
-  return { permitted: true, role, creatorId };
+  return { permitted: true, role, creatorId, status };
 }

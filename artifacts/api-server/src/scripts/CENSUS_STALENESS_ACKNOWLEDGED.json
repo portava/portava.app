@@ -185,7 +185,10 @@
         "artifacts/api-server/src/test/tripPostTripProjections.test.ts",
         "artifacts/api-server/src/test/tripPostTripRoutes.test.ts",
         "artifacts/api-server/src/test/db/tripCloseoutOutcomes.db.test.ts",
-        "artifacts/api-server/src/test/db/sensingAnonStore.db.test.ts"
+        "artifacts/api-server/src/test/db/sensingAnonStore.db.test.ts",
+        "artifacts/api-server/src/lib/tripActivityLog.ts",
+        "artifacts/api-server/src/test/tripPlan.test.ts",
+        "artifacts/api-server/src/test/tripKernel.test.ts"
       ]
     },
     {

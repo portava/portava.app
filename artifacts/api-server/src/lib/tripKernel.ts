@@ -557,6 +557,24 @@ export function setTripVersionHeader(res: Response, version: number): void {
   res.setHeader(TRIP_VERSION_RESPONSE_HEADER, String(version));
 }
 
+// ── §3.3's arrows, for the flag-off twin ─────────────────────────────────────
+// The kernel refuses a status change out of `done`, `cancelled` or `skipped`
+// (TRIP_PLAN_INVALID_TRANSITION: "§3.3 draws no arrow out of COMPLETED or
+// CANCELLED"). A legacy write that copied the client's status into the column
+// accepted every pair (census-trips TR48); the twin now asks this first, so
+// no path — kernel or not — lets a finished plan become tentative again.
+export const PLAN_TERMINAL_STATUSES = ["done", "cancelled", "skipped"] as const;
+
+/** The refused arrow, or null when the patch carries no status or the change is allowed. */
+export function planStatusTransitionRefused(
+  from: string | null | undefined,
+  to: string | null | undefined,
+): { from: string; to: string } | null {
+  if (to === undefined || to === null || !from) return null;
+  if (to !== from && (PLAN_TERMINAL_STATUSES as readonly string[]).includes(from)) return { from, to };
+  return null;
+}
+
 // ── Plan-status command mapping (§3.3) ───────────────────────────────────────
 // A PATCH body carrying `status` is a state transition and gets the spec's
 // command name for that transition; a body moving the item in time is
