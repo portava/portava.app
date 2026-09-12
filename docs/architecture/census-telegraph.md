@@ -1683,10 +1683,12 @@ believe they had acted as someone else.
 | T181 | N | **W** | §13.2 `message.unsent`. In the union (`lib/telegraphEvents.ts:53`) and published by the unsend command, deliberately distinct from `message.deleted` — an unsend asserts the message never reached a mind, and a client that collapsed the two would render a retraction as a tombstone. W: nothing can issue the command on any database today. |
 | T166 | W | **W** | §13.1 `CREATE_DECISION`. Unchanged in substance and re-derived: it is still only the meetup shape, and the command endpoint now says so out loud — `LEGACY_PATH_COMMANDS` (`domain/telegraph/commands/telegraphCommands.ts:97`) points a caller at `/telegraph-chat/create-meetup` rather than leaving them to discover that a general decision command does not exist. |
 
-**Rows looked at that did not move:** T168 and T169 stay N, and are now
-*named* as unimplemented (`domain/telegraph/commands/telegraphCommands.ts:121`)
-so the endpoint answers 501 rather than 400 — a clearer refusal is not a built
-capability. T159, T160, T162, T164, T165, T167, T171-T176 stay C: every one has
+**Rows looked at that did not move:** T168 stays N and T169 stays W — §11.7
+first said both were N, which was wrong about T169: §1 records it as
+BUILT-BUT-WRONG ("approximated by circle check-in … not a conversation command"),
+and re-reading that row is what caught it. Both are now *named* as unimplemented
+commands (`domain/telegraph/commands/telegraphCommands.ts:121`) so the endpoint
+answers 501 rather than 400 — a clearer refusal is not a built capability. T159, T160, T162, T164, T165, T167, T171-T176 stay C: every one has
 a real route and the command endpoint refuses them precisely so those routes
 stay the only door.
 
