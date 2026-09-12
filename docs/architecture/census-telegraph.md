@@ -1946,4 +1946,68 @@ collapsing `unreadable` into `already_deleted`, which would tell a moderator
 that nothing existed when the truth is that nobody could look. All four were run
 as deliberate mutations and five of twenty-nine assertions went red.
 
-Headline after §11 in this worktree (last statement wins): C=123 W=183 N=122 X=0
+
+---
+
+### 11.11 §22's request origin, and the word "say"
+
+T278: "`message_requests` has no origin column at all — only `preview_text`. A
+recipient cannot be told why a stranger is reaching out." Re-read and still
+true: the insert wrote sender, recipient and preview text and nothing else.
+
+The harm is a safety harm rather than a convenience one. "Someone you have never
+met wants to message you" and "someone in the trip crew you joined yesterday
+wants to message you" call for different answers, and the recipient was getting
+the first sentence for both.
+
+**Three columns, and the third is the one that matters.** Migration 2813 adds
+`origin_type` (§22's six as a CHECK, not free text — an origin a recipient reads
+as a reason must come from a closed set or it is a second `preview_text` a
+stranger can write anything into), `origin_id`, and `origin_verified`, which
+defaults FALSE (`migrations/2813_telegraph_request_origin.sql:73`).
+
+Without the third column this feature would be a liability rather than a
+control. **The sender asserts the origin, and a sender who wants to be trusted
+asserts "Trip."** Storing that indistinguishably from a verified one would have
+the product tell a recipient something it does not know, at the exact moment
+they are deciding whether to let a stranger talk to them. So verification is a
+separate fact the server establishes, and it can establish exactly one of the
+six: `trip`, when BOTH parties are accepted members
+(`domain/telegraph/policies/requestOrigin.ts:58`, `:116`). A trip only the
+sender is in does not verify — that case is the attack, and it has its own test.
+An unreadable roster resolves to unverified, because "we could not prove it" and
+"it is not true" are the same answer for the only thing this value decides.
+
+**The grammar carries the epistemics.** A verified origin is STATED ("In your
+trip crew"); an unverified one is ATTRIBUTED ("They say you share a trip")
+(`features/telegraph/lib/requestOriginLabel.ts:60`). Not a badge colour: a
+colour does not survive a screenshot, a description aloud, or a person in a
+hurry, and the sentence does. An origin whose type claims verification but has
+no verified wording falls back to the CLAIM wording — understating is the safe
+direction the day a second origin becomes verifiable and that table has not been
+updated.
+
+**Nothing is backfilled and nothing is invented.** Existing requests read NULL,
+which the client renders as it always did: nothing. An "unknown origin" label on
+every historical request would make each of them look suspicious, and inventing
+`profile` for rows nobody measured would put a specific claim on them.
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| T278 | N | **W** | §22 request origin. All six of §22's origins exist as a closed vocabulary shared by the migration's CHECK and the policy (`domain/telegraph/policies/requestOrigin.ts:54`), the request path records one (`routes/messaging.ts:699`), the list path returns it under the same flag (`:750`, `:789`), and the recipient reads a different SENTENCE for a verified origin than for a claimed one (`features/telegraph/lib/requestOriginLabel.ts:60`). W and not C for two stated reasons: **no database has 2813** and the flag is seeded FALSE, so every live request still carries no origin; and only ONE of the six can ever be verified here — `nearby` and `bump` are unverifiable in principle (proximity at request time is not retained, and reconstructing it would be a location read §15 does not authorize for this purpose), `event` and `buddy` would need another lane's tables, and `profile` is unverifiable and uninteresting. Five of six being claims is the honest state and the wording says so on every one of them. |
+
+**The ceiling for §11.11.** BUILT ON BRANCH, NOT MERGED, and no database has
+2813. The DDL, both CHECK refusals (a free-text origin; verification with no
+claim attached), the rollback and the re-application were EXECUTED on the same
+throwaway PostgreSQL 16, and the constraint names were read out of the error
+messages rather than assumed. P24 — what would turn this red: verifying a trip
+on the sender alone (the test that exists for exactly that attack); a failed
+membership read resolving to verified; the select list naming the columns while
+the flag is off, which would 42703 the whole message-request list on every
+database that lacks 2813; and the client printing the verified wording for a
+claim. All four were run as deliberate mutations. One thing NO test covers and
+this section states rather than hides: the `catch` in `resolveRequestOrigin` is
+currently unreachable, because `isAcceptedTripMember` has its own try/catch —
+mutating it to `verified: true` turned nothing red, and the file now says so.
+
+Headline after §11 in this worktree (last statement wins): C=123 W=184 N=121 X=0

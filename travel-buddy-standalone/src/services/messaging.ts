@@ -52,6 +52,22 @@ export interface MessageRequest {
   requestId: string;
   previewText: string | null;
   createdAt: string;
+  /**
+   * Telegraph §22 contextual origin — why this person is reaching out.
+   *
+   * `verified` means the SERVER established it (today only `trip`, and only
+   * when both parties are accepted members). Everything else is the sender's
+   * own assertion and must be rendered as one: see
+   * src/features/telegraph/lib/requestOriginLabel.ts.
+   *
+   * null until migration 2813 is applied AND its flag is on, which is the state
+   * of every deployment today.
+   */
+  origin?: {
+    type: 'event' | 'trip' | 'nearby' | 'bump' | 'buddy' | 'profile';
+    id: string | null;
+    verified: boolean;
+  } | null;
   sender: {
     id: string;
     handle: string;

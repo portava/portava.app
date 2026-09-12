@@ -24,6 +24,7 @@ import { useScreenTiming } from '../hooks/useScreenTiming.ts';
 import type { ThreadSummary, MessageRequest } from '../services/messaging.ts';
 import { circleCardInboxPreview } from './CircleStatusCardMessage.logic';
 import { primaryIdentityText, secondaryIdentityText } from '../lib/displayIdentity.ts';
+import { originLabel } from '../features/telegraph/lib/requestOriginLabel.ts';
 import { UserIdentityLink } from './interaction/UserIdentityLink.tsx';
 import { errorCopy } from '../lib/errorCopy.ts';
 // Telegraph §21 — object-aware, authorization-scoped message search. A
@@ -704,6 +705,10 @@ function RequestCard({
   }
 
   const { sender, previewText, createdAt } = request;
+  // §22: why this person is reaching out. `originLabel` decides whether the
+  // product states it or attributes it — a stranger who wants to be trusted
+  // asserts "Trip", so an unverified claim must read as a claim.
+  const origin = originLabel(request.origin);
   const senderName = primaryIdentityText({ name: sender?.name, handle: sender?.handle });
   const senderHandleSub = secondaryIdentityText({ name: sender?.name, handle: sender?.handle });
   const initial = (senderName.replace(/^@/, '')[0] ?? '?').toUpperCase();
@@ -737,6 +742,15 @@ function RequestCard({
         </UserIdentityLink>
         <Text style={rc.time}>{timeAgo(createdAt)}</Text>
       </View>
+
+      {/* §22 contextual origin — stated when verified, attributed when not */}
+      {origin ? (
+        <View style={origin.verified ? rc.originVerified : rc.originClaimed}>
+          <Text style={origin.verified ? rc.originVerifiedText : rc.originClaimedText}>
+            {origin.text}
+          </Text>
+        </View>
+      ) : null}
 
       {/* City / language metadata */}
       {(sender?.city || sender?.language) ? (
@@ -876,6 +890,29 @@ const rc = StyleSheet.create({
   handle: { ...t.small, color: color.mute, fontSize: 12, marginTop: 1 },
   time: { ...t.small, color: color.faint, fontSize: 11 },
   metaRow: { flexDirection: 'row', gap: 6, flexWrap: 'wrap' },
+  // §22: two different claims, two different weights. The verified one is
+  // solid because it is a fact the server checked; the claimed one is outlined
+  // and muted because it is somebody's word.
+  originVerified: {
+    alignSelf: 'flex-start',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 999,
+    backgroundColor: color.signal,
+    marginTop: 8,
+  },
+  originVerifiedText: { fontSize: 11, fontWeight: '700', color: color.onInk },
+  originClaimed: {
+    alignSelf: 'flex-start',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: color.haze,
+    marginTop: 8,
+  },
+  originClaimedText: { fontSize: 11, fontWeight: '600', color: color.mute },
+
   metaChip: {
     fontSize: 11,
     fontWeight: '600',

@@ -35,6 +35,11 @@ import { checkSendRateLimit } from '../domain/telegraph/policies/sendRateLimit.j
 import { resolveNeedsAction } from '../domain/telegraph/policies/needsAction.js';
 // Telegraph §22 — restricted moderation storage for reported content.
 import { captureMessageEvidence, captureThreadEvidence } from '../services/telegraphReportEvidence.js';
+// Telegraph §22 — why a stranger is reaching out, and whether we can prove it.
+import {
+  parseOriginClaim, resolveRequestOrigin, requestOriginEnabled,
+  originInsertColumns, originSelect, originForWire,
+} from '../domain/telegraph/policies/requestOrigin.js';
 // Telegraph §22 — "stranger media ... until accepted": the server decides who
 // is a stranger; the client renders the shield.
 import { resolveSenderConnectedness } from '../domain/telegraph/policies/senderConnectedness.js';
@@ -681,9 +686,31 @@ router.post('/users/:userId/message-request', async (req, res) => {
     ? req.body.previewText.slice(0, 280)
     : null;
 
+  // Telegraph §22: record WHY this person is reaching out, and record separately
+  // whether the server established it. The sender asserts the origin; a sender
+  // who wants to look safe asserts "Trip". Only `trip` can be checked today
+  // (both parties accepted members), and everything else is stored as a claim.
+  //
+  // The flag gates the COLUMNS, not just the feature: 2813 is on no database,
+  // and PostgREST answers an unknown column with 42703 and fails the whole
+  // insert — which would lose the message request, not just its origin.
+  const originOn = await requestOriginEnabled(sc);
+  const resolvedOrigin = originOn
+    ? await resolveRequestOrigin(sc, {
+        senderId: user.id,
+        recipientId,
+        claim: parseOriginClaim(req.body),
+      })
+    : null;
+
   const { data: newReq, error } = await sc
     .from('message_requests')
-    .insert({ sender_id: user.id, recipient_id: recipientId, preview_text: previewText })
+    .insert({
+      sender_id: user.id,
+      recipient_id: recipientId,
+      preview_text: previewText,
+      ...originInsertColumns(resolvedOrigin, originOn),
+    })
     .select('id')
     .single();
 
@@ -714,9 +741,13 @@ router.get('/me/message-requests', async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, 'server_not_configured', 'Service client not ready'); return; }
 
+  // §22's origin, under the same flag as the write. No-op while OFF: the select
+  // list is then exactly the one that ran before 2813.
+  const originOn = await requestOriginEnabled(sc);
+
   const { data, error } = await sc
     .from('message_requests')
-    .select('id, sender_id, preview_text, created_at')
+    .select(originSelect('id, sender_id, preview_text, created_at', originOn))
     .eq('recipient_id', user.id)
     .eq('status', 'pending')
     .order('created_at', { ascending: false });
@@ -750,6 +781,12 @@ router.get('/me/message-requests', async (req, res) => {
       requestId: r.id,
       previewText: r.preview_text ?? null,
       createdAt: r.created_at,
+      // §22's origin. `verified` travels to the client because the client has
+      // to render two different sentences — "they are in your trip crew" and
+      // "they say they found you nearby" — and flattening it here would move
+      // the decision somewhere with less information. null while the flag is
+      // off, which the client renders as it always did: nothing.
+      origin: originForWire(r, originOn),
       sender: p
         ? {
             id: p.id,
