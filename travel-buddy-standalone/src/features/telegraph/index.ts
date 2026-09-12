@@ -93,3 +93,5 @@ export {
   type UnsendRefusal,
   type UnsendSuccess,
 } from './lifecycle/lifecycleApi.ts';
+export { headerAxes, headerSubtitle, availabilityLabel, type HeaderAxis } from './header/headerAxes.ts';
+export { useConversationHeader, type ConversationHeaderState } from './header/useConversationHeader.ts';

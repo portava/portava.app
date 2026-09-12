@@ -1109,7 +1109,7 @@ pattern §4 describes for the tree as a whole.
 
 ---
 
-## 10. §3, §5, §6, §7, §8, §9, §10 and §11 built: the Shared Context Rail, the share contract, the typed kinds, unsend-before-seen, the coordination surface, the recap, and the end of the frozen card
+## 10. §2, §3, §5, §6, §7, §8, §9, §10 and §11 built: the Shared Context Rail, the share contract, the typed kinds, unsend-before-seen, the coordination surface, the recap, and the end of the frozen card
 
 **Read against the branch `worktree-agent-adcce5a16df432ba7`, whose base is
 `014a25d56`.** §3 was the largest all-NOT-BUILT block in this census: nine rows,
@@ -1216,7 +1216,7 @@ depends on DDL no database has would stay W however good the code was.
   and `SharedContextRail.tsx` renders them. The rail is MOUNTED on both
   conversation surfaces, which is what "at the top of each conversation" means
   in a tree that has two of them:
-  `travel-buddy-standalone/app/messages/[id].tsx:1961#SharedContextRail` (direct
+  `travel-buddy-standalone/app/messages/[id].tsx:1979#SharedContextRail` (direct
   and booking threads) and
   `travel-buddy-standalone/src/components/GroupChatScreen.tsx:799#SharedContextRail`
   (trip and circle threads).
@@ -1252,7 +1252,7 @@ depends on DDL no database has would stay W however good the code was.
 
 | id | was | now | why |
 | --- | --- | --- | --- |
-| T13 | N | **C** | **Rail at the top of each conversation showing mutually relevant objects** — The component exists and is mounted on BOTH conversation surfaces — `travel-buddy-standalone/app/messages/[id].tsx:1961#SharedContextRail` and `travel-buddy-standalone/src/components/GroupChatScreen.tsx:799#SharedContextRail` — between the header and the message list, fed by a mounted route (`routes/index.ts:174#telegraphSharedContextRouter`). What would turn this red (P24): a third conversation surface appearing without it; nothing pins that. |
+| T13 | N | **C** | **Rail at the top of each conversation showing mutually relevant objects** — The component exists and is mounted on BOTH conversation surfaces — `travel-buddy-standalone/app/messages/[id].tsx:1979#SharedContextRail` and `travel-buddy-standalone/src/components/GroupChatScreen.tsx:799#SharedContextRail` — between the header and the message list, fed by a mounted route (`routes/index.ts:174#telegraphSharedContextRouter`). What would turn this red (P24): a third conversation surface appearing without it; nothing pins that. |
 | T14 | N | **C** | **Eligibility: created by me, joined/saved/attended by them** — `relationshipFor` reads the source object's own owner column and returns `CREATED_BY_ME_JOINED_BY_THEM` when the viewer created it and a conversation counterpart joined (`services/telegraph/sharedContext.ts:344#resolveSharedTrips`, `:405#resolveSharedMeetups`, `:467#resolveSharedEvents`). Asserted against a trip Alice owns and Bob joined, `test/telegraphSharedContext.test.ts:498`. |
 | T15 | N | **C** | **Eligibility: created by them, joined/saved/attended by me** — Same resolver, the other branch — asserted against a meetup Bob created and Alice accepted, `test/telegraphSharedContext.test.ts:498`. |
 | T16 | N | **C** | **Eligibility: both members of the same Trip, Plan, Crew, Event or booking** — Four resolvers, four canonical membership tables: `trip_members` (the crew table — a trip's crew IS `trip_members`; `circle_memberships` is a personal address book, not a shared crew, and is deliberately not read), `meetup_invites` (Plan), `event_attendees` (Event), `rent_buddy_bookings` (booking). `services/telegraph/sharedContext.ts:521#resolveSharedBookings` is the booking one. |
@@ -1265,7 +1265,7 @@ depends on DDL no database has would stay W however good the code was.
 | T128 | N | **C** | **Rail behaviour: active plan → expanded NOW card at top** — Server decides the mode (`services/telegraph/sharedContext.ts:717#railModeFor`) so client and server cannot disagree; the client renders the first NOW item expanded (`railBehavior.component.test.ts:80`, `SharedContextRail.component.test.tsx:83`). |
 | T129 | N | **C** | **Rail behaviour: upcoming only → compact horizontal cards** — `railModeFor` returns COMPACT_UPCOMING when `now` is empty and `upcoming` is not; rendered as a horizontal card row (`railBehavior.component.test.ts:87`). |
 | T130 | N | **C** | **Rail behaviour: none → collapsed summary ("3 shared plans · 1 past trip")** — `collapsedSummary` (`services/telegraph/sharedContext.ts:725#collapsedSummary`) renders the spec's example string exactly, and the rail collapses to it (`railBehavior.component.test.ts:94`). |
-| T131 | N | **C** | **Rail behaviour: user scrolls down → rail collapses, messages get priority** — `shouldCollapseOnScroll` (`travel-buddy-standalone/src/features/telegraph/sharedContext/railBehavior.ts:29#shouldCollapseOnScroll`) is driven by the conversation's own scroll handler (`travel-buddy-standalone/app/messages/[id].tsx:1986#setRailCollapsed`) and collapses the rail to one line (`railBehavior.component.test.ts:66`, `SharedContextRail.component.test.tsx:148`). |
+| T131 | N | **C** | **Rail behaviour: user scrolls down → rail collapses, messages get priority** — `shouldCollapseOnScroll` (`travel-buddy-standalone/src/features/telegraph/sharedContext/railBehavior.ts:29#shouldCollapseOnScroll`) is driven by the conversation's own scroll handler (`travel-buddy-standalone/app/messages/[id].tsx:2004#setRailCollapsed`) and collapses the rail to one line (`railBehavior.component.test.ts:66`, `SharedContextRail.component.test.tsx:148`). |
 | T132 | N | **C** | **Rail behaviour: critical plan change → temporary promoted change card until acknowledged** — `detectCriticalChanges` (`travel-buddy-standalone/src/features/telegraph/sharedContext/railBehavior.ts:66#detectCriticalChanges`) diffs the seen projection against the fetched one for a cancellation or a moved start; the card is promoted above the scroll rule and disappears only on acknowledgement, per change (`railBehavior.component.test.ts:172`). The acknowledgement primitive T132's old evidence said did not exist is this. |
 | T134 | W | **C** | **Reduced-motion behaviour for media, GIFs and animations** — The wrong gate is no longer the only gate: `travel-buddy-standalone/src/components/MessageEntrance.tsx:55#useReducedMotionSetting` consults the OS setting and returns the static View, proved both ways in `travel-buddy-standalone/src/features/telegraph/__tests__/MessageEntrance.reducedMotion.component.test.tsx:53`. Scoped honestly: GIFs and inline video are still N/? rows of their own (T52, T61, T64) — this row is the animation half, which is what Telegraph actually animates today. |
 | T4 | N | **W** | **Pillar **Together** — every conversation can expose shared Trips, plans, events, places, Memories, history** — Five of six now: Trips, plans (meetups), events, places (both-saved `WANT_TO_DO`) and history (`past[]`) all reach the conversation through the rail. **Memories do not** — no resolver reads `memories`, and §10's Memory Note rows (T117–T122) are still N. |
@@ -1405,7 +1405,7 @@ and it was being violated on every thread that had ever carried a card.
   snapshot; `PortavaObjectMessage`
   (`travel-buddy-standalone/src/features/telegraph/sharing/PortavaObjectMessage.tsx:28#PortavaObjectMessage`)
   is the new kind, dispatched on both conversation surfaces
-  (`travel-buddy-standalone/app/messages/[id].tsx:808#PortavaObjectMessage`,
+  (`travel-buddy-standalone/app/messages/[id].tsx:810#PortavaObjectMessage`,
   `travel-buddy-standalone/src/components/GroupChatScreen.tsx:831#PortavaObjectMessage`).
 
 ### 10.6 §5 row moves
@@ -1539,12 +1539,12 @@ asset is not a kind.
 - **The client.** `TypedMessageRenderer`
   (`travel-buddy-standalone/src/features/telegraph/kinds/TypedMessageRenderer.tsx:55#TypedMessageRenderer`)
   renders all seven, dispatched from the conversation at
-  `travel-buddy-standalone/app/messages/[id].tsx:795#rendersTypedKind`. The
+  `travel-buddy-standalone/app/messages/[id].tsx:797#rendersTypedKind`. The
   content drawer replaces the dead code at
-  `travel-buddy-standalone/app/messages/[id].tsx:1830#telegraph-open-content-drawer`
+  `travel-buddy-standalone/app/messages/[id].tsx:1848#telegraph-open-content-drawer`
   and is `travel-buddy-standalone/src/features/telegraph/drawer/ContentDrawerSheet.tsx:52#ContentDrawerSheet`.
   The composer's `+` button opens §6.1's menu
-  (`travel-buddy-standalone/app/messages/[id].tsx:2209#setShowPlusMenu`).
+  (`travel-buddy-standalone/app/messages/[id].tsx:2227#setShowPlusMenu`).
 
 ### 10.10 §6 row moves
 
@@ -1559,7 +1559,7 @@ asset is not a kind.
 | T52 | N | **C** | **Message kind GIF** — a distinct kind with its own payload (url, still frame, provider, alt text) and its own renderer, separate from IMAGE/VIDEO. No provider is configured to pick one FROM, which is T64's row and the composer entry's stated reason, not this one's: the kind exists, validates, sends, stores and renders. |
 | T64 | N | **W** | **GIFs are distinct lightweight looping content with data-saver / accessibility controls** — the CONTROLS are built: `isGifAnimated` (`travel-buddy-standalone/src/features/telegraph/kinds/TypedMessageRenderer.tsx:33#isGifAnimated`) is a pure rule — animate only when neither reduced motion nor data saver is on — and the still frame carries the reason in words. It stays W because `dataSaver` is a prop with no app-level setting behind it yet, and because no provider exists to obtain a GIF from. |
 | T60 | W | **C** | **Message kind SAFETY** — SAFETY is now a message KIND, not only a thread affordance: four classes (`check_in`, `heads_up`, `need_help`, `all_clear`), each landing in `subtype`, rendered with the class as a WORD and the §11.1 attention colour reserved for it (`travel-buddy-standalone/src/features/telegraph/__tests__/kinds.component.test.tsx:98`). |
-| T66 | N | **C** | **Content drawer: MEDIA / PLACES / PORTAVA / VOICE / GIFS / LINKS / FILES** — the seven tabs exist with counts, served by `GET /threads/:id/drawer` (`routes/telegraphKinds.ts:262`) and rendered by `travel-buddy-standalone/src/features/telegraph/drawer/ContentDrawerSheet.tsx:52#ContentDrawerSheet`. The dead-coded entry point is now a real control (`travel-buddy-standalone/app/messages/[id].tsx:1830#telegraph-open-content-drawer`). |
+| T66 | N | **C** | **Content drawer: MEDIA / PLACES / PORTAVA / VOICE / GIFS / LINKS / FILES** — the seven tabs exist with counts, served by `GET /threads/:id/drawer` (`routes/telegraphKinds.ts:262`) and rendered by `travel-buddy-standalone/src/features/telegraph/drawer/ContentDrawerSheet.tsx:52#ContentDrawerSheet`. The dead-coded entry point is now a real control (`travel-buddy-standalone/app/messages/[id].tsx:1848#telegraph-open-content-drawer`). |
 | T67 | N `∅` | **C** | **The drawer is a structured index, not a second storage copy** — no longer an unguarded absence. The drawer exists and stores nothing: it classifies `messages` rows in memory (`services/telegraph/messageKinds.ts:253#drawerTabFor`), every id it returns is a `messages.id` that already existed, and the route writes nothing and declares `indexOnly: true` in its own response. |
 | T68 | N | **C** | **Object-aware search respects current authorization and unsent/deleted state** — `GET /threads/:id/search` (`routes/telegraphKinds.ts:327`) is member-gated, §14.3-bounded and tombstone-excluding, and matches on a typed object's HUMAN fields rather than on raw JSON (`services/telegraph/messageKinds.ts:308#searchableTextOf`). A deleted message is not findable by its exact text (`test/telegraphKinds.test.ts:531`). |
 | T47 | W | **W** | **Composer stays visually calm; rich actions live behind a `+` menu** — the menu now names all EIGHT of §6.1's entries instead of two (`travel-buddy-standalone/src/features/telegraph/composer/composerMenu.ts:48#COMPOSER_ENTRIES`), and an entry that cannot complete states its reason INLINE rather than being hidden. Five of eight are operable (Camera, Photos, Video, Location, Memory Note); GIF has no provider, Voice has no audio asset type, and Portava has no in-composer object picker. Two of eight became five of eight — better, not done. |
@@ -1698,7 +1698,7 @@ easy to get wrong become testable without a database.
   `routes/index.ts:177#telegraphCoordinationRouter`.
 - **The client panel** is §2.2's "OPTIONAL COORDINATION PANEL", between the
   rail and the stream
-  (`travel-buddy-standalone/app/messages/[id].tsx:1966#CoordinationPanel`,
+  (`travel-buddy-standalone/app/messages/[id].tsx:1984#CoordinationPanel`,
   `travel-buddy-standalone/src/features/telegraph/coordination/CoordinationPanel.tsx:43#CoordinationPanel`).
   §9's per-state affordances are data
   (`travel-buddy-standalone/src/features/telegraph/coordination/coordinationApi.ts:159#STATE_AFFORDANCES`)
@@ -1856,7 +1856,7 @@ the header button appears only when a completed plan came back.
 | T118 | N `∅` | **C** | **Shareable without exposing the sender's canonical private Memory graph** — no longer an unguarded absence. `MEMORY_GRAPH_FIELDS` names every way a graph reference would travel (`services/telegraph/memoryNotes.ts:76#MEMORY_GRAPH_FIELDS`) and `assertNoMemoryGraphLeak` REFUSES rather than strips (`services/telegraph/memoryNotes.ts:90#assertNoMemoryGraphLeak`), with `parseMemoryNoteShare` checking the leak BEFORE the schema (`services/telegraph/memoryNotes.ts:105#parseMemoryNoteShare`). |
 | T119 | W | **C** | **Explicitly save a message, voice note, place share or media item as a private Memory draft** — the hole is closed. `memoryDraftRow` writes `visibility: "only_me"` and `state: "draft"` as literals into `memories` (`services/telegraph/memoryNotes.ts:144#export function memoryDraftRow`), `POST /me/memory-drafts` re-authorizes and inserts exactly one row (`routes/telegraphMemory.ts:62#/me/memory-drafts`), the owner reads it back through the route that already existed (`routes/memories.ts:1858#state", "published`), and the client action is one press per item (`travel-buddy-standalone/src/features/telegraph/memory/SaveToMemoryAction.tsx:43#export function SaveToMemoryAction`). |
 | T120 | N `∅` | **C** | **Telegraph never automatically converts whole conversations into Memories** — now a refusal, not a vacancy. A body naming a thread or a list is rejected by name with §10.2 quoted (`routes/telegraphMemory.ts:71#for (const forbidden of`), the accepted key is singular, and the client API exports no list or thread form (`travel-buddy-standalone/src/features/telegraph/memory/memoryApi.ts:104#export async function saveMessageAsMemoryDraft`). |
-| T121 | N | **C** | **End-of-night recap surface** — `GET /threads/:id/recap` (`routes/telegraphMemory.ts:178#/threads/:threadId/recap`) over `buildRecap` (`services/telegraph/memoryNotes.ts:242#export function buildRecap`), rendered with §10.3's four actions and its headline (`travel-buddy-standalone/src/features/telegraph/memory/RecapSheet.tsx:46#export function RecapSheet`), reachable from the thread header (`travel-buddy-standalone/app/messages/[id].tsx:1819#telegraph-open-recap`). |
+| T121 | N | **C** | **End-of-night recap surface** — `GET /threads/:id/recap` (`routes/telegraphMemory.ts:178#/threads/:threadId/recap`) over `buildRecap` (`services/telegraph/memoryNotes.ts:242#export function buildRecap`), rendered with §10.3's four actions and its headline (`travel-buddy-standalone/src/features/telegraph/memory/RecapSheet.tsx:46#export function RecapSheet`), reachable from the thread header (`travel-buddy-standalone/app/messages/[id].tsx:1837#telegraph-open-recap`). |
 | T122 | N `∅` | **C** | **Derived from confirmed session context — an invitation to curate, not automatic historical truth** — the window is the plan's own and a thread with no completed plan gets none (`routes/telegraphMemory.ts:238#no_completed_plan`), people are the plan's confirmed participants (`services/telegraph/memoryNotes.ts:242#export function buildRecap`), and the endpoint states that it created nothing (`routes/telegraphMemory.ts:291#wrote: "nothing"`). |
 | T7 | W | **C** | **Pillar Remember — completed outcomes explicitly become Memories or recaps without ingesting whole private chats** — the prohibition half already held; the positive half now does too. An explicit save produces a real private `memories` draft (T119) and a completed plan produces a recap (T121), while the whole-conversation path is refused by name (T120). |
 | T108 | N | **W** | **Complete UI: closeout, media grouping, explicit Memory/recap options** — two of three. Media grouping is the MEDIA_ALBUM kind (`services/telegraph/messageKinds.ts:124#MEDIA_ALBUM`) and the explicit Memory/recap options exist (T119, T121). There is still **no closeout surface**: at COMPLETE the coordination panel simply disappears rather than becoming one. |
@@ -2098,5 +2098,84 @@ What is NOT claimed:
   available rather than buried.
 - **Branch, not deployment.**
 
-Headline after §10 in this worktree (last statement wins): C=157 W=166 N=110 X=0
+### 10.25 §2.2 — the header axis that was a constant
+
+T9 asks for "user/crew name · availability · safe presence". The server half
+landed in §10.1 (`GET /threads/:id/conversation-header` serves both, each behind
+its own consent path) and nothing consumed it. What the header rendered instead
+was this:
+
+    const directSubtitle = dmProfile?.city
+      ? `${dmProfile.city} · Active recently`
+      : 'Active recently';
+
+`'Active recently'` was a CONSTANT. It appeared for a person last seen a year
+ago exactly as for one typing at that moment, and nothing anywhere measured it.
+That is worth naming precisely because it is the cheapest possible way to break
+§4's hard rule — "AVAILABLE ≠ ONLINE ≠ NEARBY ≠ SHARING LOCATION. Never collapse
+these states into one permission" — since it asserted one of those states for
+everybody, for free, with no permission at all.
+
+Client
+  features/telegraph/header/   the two consent-gated axes, and the rule that an
+                               axis with nothing to say says NOTHING.
+
+The rule is the whole design. `headerSubtitle` returns `null` — not an empty
+string, not an em dash, not a fallback — when neither axis speaks, and the
+screen renders the name alone. Three consequences, each tested:
+
+- **A withheld read and an empty one look identical.** A failed fetch, a
+  participant behind `open_to_plans_windows_enabled` (seeded OFF), and a person
+  who genuinely has no availability all produce the same header. Distinguishing
+  them would leak that someone HAS presence the viewer may not see.
+- **"Not open to plans" is an answer, not a label.** A person who is not open is
+  simply not described.
+- **Stale presence is not presence.** `circle_presence.is_stale` exists because
+  the row outlives the knowledge; rendering a stale venue as current is how
+  "safe presence" becomes a location claim nobody made.
+
+The city stays, because a city is a measured fact. What was removed was the
+presence claim attached to it.
+
+The header reads ONCE per thread open and does not poll. §4.3 forbids repeated
+refreshes becoming a movement-tracking side channel and safe presence carries a
+coarse venue label, so a polling header would turn opening a chat into a
+movement trace. That is a client-side property, not a guarantee — the server has
+no refresh budget — which is why T26 stays N `∅` rather than being claimed here.
+
+### 10.26 §2.2 row moves
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| T9 | W | **C** | **Conversation header: user/crew name · availability · safe presence** — all three. The server serves the two consent-gated axes (§10.1), `useConversationHeader` reads them once (`travel-buddy-standalone/src/features/telegraph/header/useConversationHeader.ts:32#export function useConversationHeader`), `headerAxes` renders only what has something to say (`travel-buddy-standalone/src/features/telegraph/header/headerAxes.ts:73#export function headerAxes`), and the screen consumes it in place of the hard-coded `'Active recently'` (`travel-buddy-standalone/app/messages/[id].tsx:1721#headerSubtitle(telegraphHeader.other`). |
+
+### 10.27 The §2.2 test, and how it was shown red
+
+`travel-buddy-standalone/.../headerAxes.component.test.ts` — 13 tests, green.
+
+| mutation | result |
+| --- | --- |
+| `headerSubtitle` falling back to `'Active recently'` — the deleted line, put back | 5 failed / 8 passed |
+| the `!p.stale` guard dropped | 2 failed / 11 passed |
+
+The first mutation is the regression this change exists to prevent, restored
+verbatim, and it costs five of thirteen. That is the number worth keeping: a
+fabricated presence claim is not a subtle regression in this file.
+
+### 10.28 The §2.2 ceiling
+
+- **Availability is dark on every deployment.** `open_to_plans_windows_enabled`
+  is seeded OFF, so the availability axis renders nothing on this tree no matter
+  what a window says. T9 is C because the header correctly shows the axis when
+  the server discloses it and correctly shows nothing when it does not — but a
+  traveller on a deployment as it stands today will see safe presence at most.
+- **Safe presence only exists inside a trip context.** The header's presence
+  axis is served only where `canViewCirclePresenceBatch` allows it and the
+  thread has a canonical trip; a direct conversation with no shared trip shows
+  the name and the city.
+- **T8 is untouched.** The inbox still has no status, NOW or UPCOMING band.
+- **T26 is not claimed.** Reading once is a client habit, not a server budget.
+- **Branch, not deployment.**
+
+Headline after §10 in this worktree (last statement wins): C=158 W=165 N=110 X=0
 — `pnpm -s check:census-integrity`, which parses 433 of the 451 requirements (18 are counted in prose it cannot read, and the 3 CANNOT-VERIFY rows are among them, which is why it reports X=0 where §1 states 3).

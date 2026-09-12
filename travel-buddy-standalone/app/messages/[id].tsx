@@ -61,6 +61,8 @@ import { RecapSheet } from '../../src/features/telegraph/memory/RecapSheet.tsx';
 import { useThreadRecap } from '../../src/features/telegraph/memory/useThreadRecap.ts';
 import { saveMessageAsMemoryDraft } from '../../src/features/telegraph/memory/memoryApi.ts';
 import { unsendMessage } from '../../src/features/telegraph/lifecycle/lifecycleApi.ts';
+import { headerSubtitle } from '../../src/features/telegraph/header/headerAxes.ts';
+import { useConversationHeader } from '../../src/features/telegraph/header/useConversationHeader.ts';
 import { ComposerPlusMenu } from '../../src/features/telegraph/composer/ComposerPlusMenu.tsx';
 import { TypedComposePrompt, type TypedComposeKind } from '../../src/features/telegraph/composer/TypedComposePrompt.tsx';
 import { sendTypedMessage, type SendableKind } from '../../src/features/telegraph/kinds/kindsApi.ts';
@@ -1511,6 +1513,8 @@ export default function TelegraphThread() {
    */
   const [showRecap, setShowRecap] = useState(false);
   const threadRecap = useThreadRecap(id ?? null);
+  /** §2.2's availability + safe presence axes for the header. One read. */
+  const telegraphHeader = useConversationHeader(id ?? null);
   // Telegraph §6.1: the composer's + menu, and the two typed-compose sheets.
   const [showPlusMenu, setShowPlusMenu] = useState(false);
   const [typedCompose, setTypedCompose] = useState<TypedComposeKind | null>(null);
@@ -1703,8 +1707,18 @@ export default function TelegraphThread() {
     const displayName = isDirect
       ? (dmProfile?.name ?? headerTitle)
       : headerTitle;
-    // Direct: show "City · Last active" subtitle
-    const directSubtitle = dmProfile?.city ? `${dmProfile.city} · Active recently` : 'Active recently';
+    // Telegraph §2.2 — "user/crew name · availability · safe presence".
+    //
+    // This line used to read `dmProfile?.city ? `${city} · Active recently` :
+    // 'Active recently'`. "Active recently" was a constant: it appeared for a
+    // person last seen a year ago exactly as for one typing at that moment, and
+    // nothing anywhere measured it. §4's hard rule is that AVAILABLE, ONLINE,
+    // NEARBY and SHARING LOCATION are separate states that must never be
+    // collapsed — asserting one of them for free is the cheapest way to break
+    // it. The city is a real fact and stays; the presence claim is now the
+    // server's two consent-gated axes, and says nothing when they say nothing.
+    const directSubtitle =
+      headerSubtitle(telegraphHeader.other, dmProfile?.city ? [dmProfile.city] : []);
     const subtitle = threadType === 'trip'
       ? (memberCount !== null ? `${memberCount} members` : 'Trip Chat')
       : threadType === 'circle'
@@ -1795,7 +1809,11 @@ export default function TelegraphThread() {
                 <Text style={styles.headerTag}>Telegraph</Text>
               </>
             ) : (
-              <Text style={styles.headerTag} numberOfLines={1}>{subtitle}</Text>
+              subtitle ? (
+                <Text style={styles.headerTag} numberOfLines={1} testID="telegraph-header-subtitle">
+                  {subtitle}
+                </Text>
+              ) : null
             )}
           </View>
         </Pressable>
