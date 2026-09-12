@@ -4394,7 +4394,7 @@ production baseline through the chain: 39 database tests, 0 skipped.
   ledgered as `opportunity_portfolio` and diffed against the last one
   (`services/trips/TripOpportunityProjection.ts:140#async function readPreviousPortfolio`). Under
   AT_RISK / SAFETY_EVENT the executable list is served empty with the
-  suppression named (`services/trips/TripOpportunityProjection.ts:295#§17.2: under AT_RISK`).
+  suppression named (`services/trips/TripOpportunityProjection.ts:295#suppressed`).
   Served at `GET /trips/:id/opportunities`
   (`routes/tripProjections.ts:285#/trips/:tripId/opportunities"`), to Compass as
   `get_opportunities` — §11.3's "Where next?"
