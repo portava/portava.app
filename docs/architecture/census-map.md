@@ -1005,3 +1005,46 @@ verdict that would move is a future one about §19.4 projection lag, and it
 cannot be scored until `2520` and `2610` are applied and both flags
 (`trip_map_projection_worker_enabled`, then `map_trip_projection_read_enabled`)
 are on — **in that order**, or the reader serves a stale or empty layer.
+
+## 10. Addendum (2026-09-12) — the crew's permitted temporary precise position reaches the Trip Map
+
+Section 4 graded M76 (Crew) C on the reading that `source.crew` stays empty
+"because it would require coordinates the §23 rung did not grant", and M175
+C on the projection's ceiling. census-trips §58 (TR166, TR281) changed the
+input those rows were read against, in `travel-buddy-standalone`; this
+addendum re-reads the two rows. **No verdict moves; two evidence lines are
+restated.**
+
+### What was there
+
+`tripMapSources.ts` said in its header that the server "declined precision
+here" and left `source.crew` empty. It never had: the crew map has issued
+`exactCoords` on a card under an active live-share grant since Trips §40.6,
+and this client's `CrewMemberCard` type did not carry the field, so the
+coordinate was dropped at the type. `crewAreas` — the coarse labels — was
+right, and stays.
+
+### What is there now
+
+`travel-buddy-standalone/src/features/map/trip/tripMapSources.ts:133#export function composeCrewPositions(`
+takes a pin only from a card that is not hidden, whose live share to THIS
+viewer is active, that carries finite `exactCoords`, and whose
+`freshnessClass` is LIVE / RECENT — the server's verdict, checked again — and
+gives it `precise_temporary`, §23's "permitted temporary precise", which
+`tripToMapObjects` can only tighten. The friend / crew marker
+(`travel-buddy-standalone/src/components/map/EntityMarkers.tsx:331#function pinFreshnessTreatment(`)
+now exposes the object's freshness in its ring (solid live, recent, dimmed
+and dashed for stale / unknown) and in an accessibility label its
+`Pressable` never had, in the §7 freshness column's own words.
+
+### What this moves, and what it does not
+
+| row | was | now | why |
+| --- | --- | --- | --- |
+| M76 Crew | C | **C** | Evidence restated: crew is coarse area labels for everyone shown, and a `precise_temporary` pin only where the owning system issued a permitted coordinate over a current position. Nothing is invented from a label; the §23 rung is what the pin carries. |
+| M175 Trip Crew → approximate, or permitted temporary precise | C | **C** | Unchanged: the ceiling still narrows and never widens; a trip crew pin arrives at the rung the row names. |
+
+M33 (the Place marker) and M213 (the components) are untouched by the
+marker change. `head_commit` stays `42aeac38`: this addendum restates two
+rows' evidence, it does not re-measure the census. The staleness ledger
+names the four files against this section.
