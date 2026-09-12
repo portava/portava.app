@@ -186,7 +186,9 @@ export const SRC_ROOT = process.env.UNCHECKED_READS_SRC_ROOT ? resolve(process.e
  * over. src/test and src/scripts are never walked (listSourceFiles skips
  * *.test.ts; scripts are not on this list).
  */
-export const SCOPE_DIRS = ["routes", "services", "lib", "middlewares", "security", "presence", "compass"];
+// §61 (census-trips): the Trips domain and server trees are in scope — the files that
+// moved there from services/ and lib/ carried their ledgered read sites with them.
+export const SCOPE_DIRS = ["routes", "services", "lib", "middlewares", "security", "presence", "compass", "domain", "server"];
 
 /** A ROW here means DENY. Empty means allow, so a dropped error is fail-open. */
 export const EXCLUSION_TABLES = new Set([
