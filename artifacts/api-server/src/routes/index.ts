@@ -337,5 +337,10 @@ router.use(compassDecisionRouter);
 // FALSE); routes/wall.ts is untouched. At the tail for the same reason.
 import wallMomentsRouter from "./wallMoments.js";
 router.use(wallMomentsRouter);
+// ── Sensing §12: canonical live references in Telegraph ───────────────────────
+// Its own file behind telegraph_live_references_enabled (2802, seeded FALSE);
+// routes/telegraph*.ts are untouched. At the tail for the same reason.
+import telegraphLiveReferencesRouter from "./telegraphLiveReferences.js";
+router.use(telegraphLiveReferencesRouter);
 
 export default router;

@@ -1107,6 +1107,15 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/test/attentionEngine.test.ts",
     "artifacts/api-server/src/test/wallMomentsRoute.test.ts",
     "artifacts/api-server/src/services/notifications/NotificationPreferenceService.ts",
+    // WIDENED 2026-09-12 (census-sensing §4): §12's canonical live references.
+    "artifacts/api-server/src/lib/liveReference.ts",
+    "artifacts/api-server/src/lib/liveReferenceMessages.ts",
+    "artifacts/api-server/src/routes/telegraphLiveReferences.ts",
+    "artifacts/api-server/src/migrations/2802_telegraph_live_references_flag.sql",
+    "db/rollback/2026-09-12-2802-telegraph-live-references-flag-rollback.sql",
+    "artifacts/api-server/src/test/liveReference.test.ts",
+    "artifacts/api-server/src/test/telegraphLiveReferencesRoute.test.ts",
+    "artifacts/api-server/src/test/db/telegraphLiveReferences.db.test.ts",
   ],
   "census-compass.md": [
     "artifacts/api-server/src/compass/",
