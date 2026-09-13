@@ -92,7 +92,16 @@ because it bears directly on a percentage:
 > restored package above is the population they were always owed.
 
 The same hole exists twice more, and by a simpler mechanism — nothing overwrote anything, the
-documents were simply never used as a denominator:
+documents were simply never used as a denominator.
+
+**What the two bullets below measure, stated precisely, because the loose version overstates.**
+They measure how many rows name the document as their source: zero, in both cases. That is not
+the same as how many of its obligations are *uncovered*. A census that built its denominator from
+other specs' demands can already carry a row that satisfies a roadmap phase under a different
+source — the Sensing rows in `census-compass.md` §2.1 are exactly that shape. Establishing real
+coverage therefore requires checking semantic overlap row by row, which is the regrade, not this
+document. Until that is done the honest statement is *"no row cites it"*, and every requirement
+below is a **candidate** addition rather than a known one:
 
 - `docs/compass/master-roadmap.md` has been in this repository throughout. `census-compass.md`
   names it **once**, at `:57`, in a descriptive table of "what Compass is". **None** of its
@@ -103,13 +112,17 @@ documents were simply never used as a denominator:
   `V-0`…`V-7` are entirely outside that census's 52 rows — which is the context in which its
   headline reads CORRECT 96.2 %.
 
-Correcting these three denominators is the work this delivery authorises, and it moves the
-percentages **down**. That direction is the expected one: a denominator that grows because the
-requirements it was always owed have been restored is a denominator becoming honest, not a
-regression. Per the owner's framing document, the existing rows are preserved and mapped rather
-than replaced — `Portava_Architecture_Upgrades_v2_START_HERE.md` is explicit that the shorter
-upgrade checklist must not become the new denominator, and that additions, splits and genuine
-duplicates are each to be recorded.
+Correcting these three denominators is the work this delivery authorises. **Which way the
+percentages then move is not known, and this document does not predict it.** A larger denominator
+pulls a percentage down only if the requirements entering it grade worse than the ones already
+there; restored requirements that turn out to be built pull it up. Both bounds are live until the
+rows are graded against code, and an earlier draft of this file asserted the downward direction
+as though it were established. It was not, and the assertion is withdrawn rather than softened.
+
+Per the owner's framing document, the existing rows are preserved and mapped rather than replaced
+— `Portava_Architecture_Upgrades_v2_START_HERE.md` is explicit that the shorter upgrade checklist
+must not become the new denominator, and that additions, splits and genuine duplicates are each to
+be recorded.
 
 ## 4. What this document does not claim
 
