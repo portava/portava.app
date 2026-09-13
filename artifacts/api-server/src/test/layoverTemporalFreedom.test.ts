@@ -401,8 +401,8 @@ describe("§7 / developer rule 14 — the generalised engine stays airport-free"
   it("the adapter is what the safety engine asks — computeWindow does not re-derive the window", () => {
     const src = read("../services/airport/LayoverSafetyEngine.ts");
     assert.ok(
-      src.includes("buildLayoverFreedomWindow(freedomCtx)"),
-      "computeWindow must obtain its window from the §7 adapter",
+      src.includes("TemporalFreedomService.buildFreedomWindow(freedomCtx)"),
+      "computeWindow must obtain its window through the §18 TemporalFreedomService",
     );
     assert.ok(
       !/const\s+earliestOutMs\s*=\s*arrivalMs\s*\+/.test(src),

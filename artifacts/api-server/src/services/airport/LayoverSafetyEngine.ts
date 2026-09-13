@@ -24,9 +24,12 @@ import {
 // Spec §7. The usable window is no longer derived here by hand: it is the
 // generalised Temporal Freedom Engine's answer, asked through the layover
 // ADAPTER. See LayoverTemporalFreedom's header for why the adapter takes plain
-// numbers — that is what keeps this dependency one-directional.
+// numbers — that is what keeps this dependency one-directional. The §18 SERVICE
+// is the seam rather than the bare function beside it: `TemporalFreedomService`
+// is what the spec lists, and a production path that reached past it would
+// leave the named interface with no caller outside its own test.
 import {
-  buildFreedomWindow as buildLayoverFreedomWindow,
+  TemporalFreedomService,
   earliestLandsideMs,
   type LayoverFreedomContext,
 } from "./LayoverTemporalFreedom.js";
@@ -978,7 +981,7 @@ export function computeWindow(
     airportPlaceId: airport.iataCode ?? null,
     confidence: airport.verified ? "MEDIUM" : "LOW",
   };
-  const freedom = buildLayoverFreedomWindow(freedomCtx);
+  const freedom = TemporalFreedomService.buildFreedomWindow(freedomCtx);
   const earliestOutMs = earliestLandsideMs(freedomCtx);
   // Usable window from the later of "now" and "earliest landside". When the
   // engine returns no window there is none to clip, and the answer is 0 — which
