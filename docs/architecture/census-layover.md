@@ -2519,9 +2519,10 @@ chat their text is not in), and L293 (the `/safety` probe's fabricated
 L77 and left the other four standing.**
 
 **(c) GATED — 19.** L1, L5, L6, L14, L20, L33, L44, L97, L128, L147, L175, L176,
-L191, L197, L206, L207, L238, L240, L263. Thirteen of the nineteen wait on
+L191, L197, L206, L207, L238, L240, L263. **Fifteen** of the nineteen wait on
 **2700** (no certified snapshot storage) or **2860** (no observation or event
-storage); the rest wait on `layover_safe_return_status_enabled`,
+storage); the other four — L33, L97, L128, L147 — wait on
+`layover_safe_return_status_enabled`,
 `layover_stable_recommendation_ids_enabled` or `layover_presence_ladder_enabled`
 being FALSE. **A lane that may not apply a migration or flip a flag cannot move
 any of these, and pretending otherwise is how a census gets a correction
