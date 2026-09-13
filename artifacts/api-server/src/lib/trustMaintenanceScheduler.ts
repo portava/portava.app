@@ -53,6 +53,7 @@ import { expireOldCaps } from "../services/trust/TrustCapService.js";
 import { expireOldRestrictions } from "../services/trust/TrustRestrictionService.js";
 import { runGamingDetectionScan, type GamingScanInputs } from "../services/trust/TrustGamingDetectionService.js";
 import { isTrustEnabled } from "../services/trust/TrustEventService.js";
+import { purgeExpiredVerificationRecords } from "../services/identityVerification/retention.js";
 
 const logger = rootLogger.child({ service: "TrustMaintenanceScheduler" });
 
@@ -412,6 +413,15 @@ export interface TrustMaintenanceResult {
   gamingVacuous: boolean;
   truncated: boolean;
   /**
+   * `failed` / `expired` identity-verification rows purged past the 90-day
+   * retention window (verified-foundation plan V-7). `null` when the purge
+   * could not run — which is NOT the same as zero, and is why it is nullable.
+   *
+   * Counted on every pass, including one the trust flag skipped: see the
+   * purge's position in runTrustMaintenance.
+   */
+  verificationRecordsPurged: number | null;
+  /**
    * pending_review events that reached an admin queue only because this pass
    * repaired them. Non-zero means the original queue insert was lost.
    */
@@ -576,6 +586,7 @@ export async function runTrustMaintenance(client?: any): Promise<TrustMaintenanc
     ok: true, capsExpired: 0, restrictionsExpired: 0, probationCleared: 0,
     usersRecalculated: 0, recalcFailures: 0, gamingFlagged: 0,
     eventsSeen: null, gamingInputs: null, gamingVacuous: false, truncated: false,
+    verificationRecordsPurged: null,
     reviewsRepaired: 0, reviewsStuck: null, reviewsScanTruncated: false,
   };
 
@@ -584,9 +595,43 @@ export async function runTrustMaintenance(client?: any): Promise<TrustMaintenanc
     return { ...empty, ok: false, skipped: true, skipReason: "no_service_client" };
   }
 
+  // ── 0. RETENTION, BEFORE THE FLAG GATE, AND THAT POSITION IS THE POINT ────
+  //
+  // verified-foundation plan V-7: "Retention job: purge failed/expired
+  // verification rows older than 90 days." There was no such job — nothing in
+  // the repository read `identity_verifications` with a date bound.
+  //
+  // It runs HERE, above `isTrustEnabled`, because `trust_engine_enabled`
+  // governs SCORING and this is a data-protection obligation. Putting the purge
+  // below the gate would make a retention promise switchable by a scoring
+  // feature flag, and the framing document is explicit that consent, presence,
+  // identity and retention policies must never be equated across subsystems.
+  // Turning the trust engine off must stop scores moving; it must not quietly
+  // start retaining failed government-ID checks forever.
+  //
+  // It reuses this scheduler rather than adding a second one (UPGRADE, DO NOT
+  // REBUILD): the process, the 6-hour cadence and the service client already
+  // exist here. Non-fatal — a purge that cannot run must not take the scoring
+  // pass down with it — but never silent: `purgeExpiredVerificationRecords`
+  // throws on a database error precisely so this WARN exists, and `null`
+  // records "did not run", which is not zero.
+  let verificationRecordsPurged: number | null = null;
+  try {
+    const r = await purgeExpiredVerificationRecords(db);
+    verificationRecordsPurged = r.purged;
+    if (r.purged && r.purged > 0) {
+      logger.info(
+        { purged: r.purged, cutoff: r.cutoff },
+        "identity-verification retention: purged failed/expired rows past the 90-day window",
+      );
+    }
+  } catch (err) {
+    logger.warn({ err }, "identity-verification retention purge failed (non-fatal, NOT zero)");
+  }
+
   // Fail closed, exactly as recordTrustEvent does.
   if (!await isTrustEnabled(db)) {
-    return { ...empty, skipped: true, skipReason: "flag_off" };
+    return { ...empty, verificationRecordsPurged, skipped: true, skipReason: "flag_off" };
   }
 
   const now = Date.now();
@@ -695,6 +740,7 @@ export async function runTrustMaintenance(client?: any): Promise<TrustMaintenanc
     recalcFailures,
     gamingFlagged,
     eventsSeen,
+    verificationRecordsPurged,
     reviewsRepaired,
     reviewsStuck,
     reviewsScanTruncated,
