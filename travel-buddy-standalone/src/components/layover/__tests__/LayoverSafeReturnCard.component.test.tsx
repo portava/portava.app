@@ -134,6 +134,24 @@ function overviewFixture(opts: { certifiedAt?: string; staleAfter?: string } = {
       },
       tier: 'half_day', tierLabel: 'Half day', tierBlurb: 'Plenty of time.',
       overnight: false, returnState: 'RETURN_SOON', engineVersion: '2026.09.02-3',
+      // §7. Added when LayoverSafetyEngine began publishing the Temporal
+      // Freedom Engine's window on the wire. Not invented: the values are the
+      // ones this fixture's own numbers force. `beginsAt` is earliestOutTime
+      // (landing + the 40-minute exit delay), `endsAt` is HARD_RETURN, the span
+      // between them is usableMinutes, and `reservedMinutes` is the 95-minute
+      // return buffer the breakdown above totals. `certified` is false because
+      // no routed travel-time provider is configured anywhere — the engine's
+      // own comment says it can never be true here. `shortfallMinutes` is null
+      // exactly when a window exists, which is the producer's rule:
+      // `freedom.window ? null : (freedom.conflict?.shortfallMinutes ?? null)`.
+      freedomWindow: {
+        beginsAt: '2026-09-08T08:40:00.000Z',
+        endsAt: HARD_RETURN,
+        durationMinutes: 345,
+        reservedMinutes: 95,
+        certified: false,
+      },
+      shortfallMinutes: null,
     },
     advice: {
       verdict: 'tight', reasons: ['Tight but doable'], unknowns: ['No measured route'],
@@ -191,7 +209,7 @@ function overviewFixture(opts: { certifiedAt?: string; staleAfter?: string } = {
       departureLocal: '23:00', departureDay: '2026-09-08',
       boardingLocal: null, hardReturnLocal: '20:40',
     },
-  } as LayoverOverview;
+  };
 }
 
 /** The real 200 body: AbortResult spread + statusCapability. */
