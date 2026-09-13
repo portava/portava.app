@@ -713,6 +713,15 @@
       "files": [
         "artifacts/api-server/src/compass/CompassTools.ts"
       ]
+    },
+    {
+      "census": "census-highlights-memories.md",
+      "since": "1ff810e2",
+      "acknowledgedAt": "2026-09-13",
+      "reason": "CROSS-LANE STALENESS FROM INTEGRATION. This census was re-measured at 1ff810e2 by its own lane; the integrator then resolved a conflict in src/compass/CompassTools.ts between this lane and the Compass + Discovery lane.\n\nTHE TWO LANES DISAGREED ABOUT A DESIGN QUESTION AND THE INTEGRATION PICKED ONE. This lane deleted the tool count from the file header, arguing that a count beside the array it counts goes stale on the next append \u2014 and its own append of eight Memory accessors is the fourth proof of that. The Compass lane instead made the number answerable: a constant pinned to COMPASS_TOOL_DEFINITIONS.length and to the header's own number word, with a test asserting both. The integration kept the checkable one, on the ground that deleting a claim removes the rot and the fact together while pinning it keeps the fact and makes the rot fail a test.\n\nWHAT THAT COST THIS CENSUS, MEASURED: diffing src/compass/CompassTools.ts from 1ff810e2 to HEAD and filtering comment lines leaves EXACTLY ONE code line \u2014 `export const COMPASS_TOOL_COUNT_IN_HEADER = 41`. Nothing else in the file changed: not COMPASS_TOOL_DEFINITIONS, not the eight MEMORY_COMPASS_TOOL_* imports this lane added, not the dispatch branch, not the prompt block. Every row in section C that grades a Memory accessor grades code this diff does not touch, and an exported constant no Memory row reads cannot move one.\n\nThe header prose also changed, from this lane's no-count wording to the pinned wording \u2014 a comment, and this census grades no comment.",
+      "files": [
+        "artifacts/api-server/src/compass/CompassTools.ts"
+      ]
     }
   ],
   "retired": [
