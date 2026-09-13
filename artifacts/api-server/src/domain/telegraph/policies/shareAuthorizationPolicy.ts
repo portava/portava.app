@@ -244,6 +244,8 @@ export const TELEGRAPH_SHARE_PRODUCERS: readonly ShareProducerDeclaration[] = [
     note: "Crew-call receipt written by the call store adapter on room teardown." },
   { literal: "e2ee_welcome", column: "subtype", family: "OPERATIONAL", sourceDomain: null, authorizedBy: null,
     note: "The MLS-style Welcome blob for an end-to-end-encrypted thread. Carries key material, never a source object — and the server cannot read it, which is the point." },
+  { literal: "layover_suggestion", column: "subtype", family: "OPERATIONAL", sourceDomain: null, authorizedBy: null,
+    note: "census-layover L271. The label on a plain-text message the TRAVELLER composed — \"On a layover in X with about Nh to spare — any quick tips?\" — posted by POST /airport/sessions/:id/telegraph into the linked trip's own thread. OPERATIONAL rather than AUDIENCE_SCOPED because the family names the SOURCE's disclosure state and this message HAS no source object: it carries the sender's own sentence and no canonical id, so there is nothing a grant could scope and nothing a revocation could reach. The audience question it might seem to raise is answered one layer up and not by this registry — the route resolves a threadId only for an ACCEPTED member of the trip, so the message can only land in a conversation the sender is already in." },
 ];
 
 /**
@@ -281,6 +283,28 @@ export interface DynamicShareProducer {
 }
 
 export const TELEGRAPH_DYNAMIC_SHARE_PRODUCERS: readonly DynamicShareProducer[] = [
+  {
+    file: "artifacts/api-server/src/lib/threadMessage.ts",
+    expression: "subtype: params.subtype ?? null",
+    family: "OPERATIONAL",
+    sourceDomain: null,
+    produces: ["layover_suggestion"],
+    writesMessages: true,
+    note:
+      "DECLARED WHEN THE GUARD CAUGHT IT, which is the guard working: the L271 " +
+      "fix added a second plain-text write path and the subtype travels as a " +
+      "parameter, so a literal scan cannot see it. The caller set is the whole " +
+      "argument — `postPlainThreadMessage` has exactly one caller today, the " +
+      "layover Telegraph route, passing the single literal above; `grep -c " +
+      "postPlainThreadMessage` over src/ is the check to re-run before trusting " +
+      "this `produces` list. OPERATIONAL because the helper writes " +
+      "`msg_type: \"text\"` with a body and no canonical object id, and it " +
+      "REFUSES an end-to-end-encrypted thread outright rather than downgrading " +
+      "it — so it cannot become a path that puts private content anywhere this " +
+      "policy would have had an opinion about. A caller that wants to share a " +
+      "canonical object must not reach for this helper: it does not authorize, " +
+      "and its own header says so.",
+  },
   {
     file: "artifacts/api-server/src/routes/telegraphShare.ts",
     expression: "msg_type: msgTypeOf(\"PORTAVA_OBJECT\") | subtype: objectType.toLowerCase() | subtype: m.subtype",

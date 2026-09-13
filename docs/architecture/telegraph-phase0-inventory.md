@@ -151,13 +151,14 @@ Processing and EXIF policy: `src/lib/mediaProcessing.ts`. Access: `src/lib/media
 
 `msg_type`: `booking_card`, `card`, `circle_status_card`, `highlight_reply`, `media`, `system`, `text`
 
-`subtype` (static literals): `call_ended`, `call_started`, `compass_card`, `discovery_card`, `e2ee_welcome`, `event_context_card`, `hidden_gem`, `meetup`, `meetup_cancelled`, `meetup_confirmed`, `post_card`
+`subtype` (static literals): `call_ended`, `call_started`, `compass_card`, `discovery_card`, `e2ee_welcome`, `event_context_card`, `hidden_gem`, `layover_suggestion`, `meetup`, `meetup_cancelled`, `meetup_confirmed`, `post_card`
 
-17 site(s) COMPUTE a message type rather than writing a literal, so no
+18 site(s) COMPUTE a message type rather than writing a literal, so no
 fixed enumeration of `subtype` is complete. They are declared in
 `src/domain/telegraph/policies/shareAuthorizationPolicy.ts` and re-derived by
 `check:telegraph-share-producers`:
 
+- `artifacts/api-server/src/lib/threadMessage.ts` — `` subtype: params.subtype ?? null ``
 - `artifacts/api-server/src/routes/telegraphShare.ts` — `` msg_type: msgTypeOf("PORTAVA_OBJECT") | subtype: objectType.toLowerCase() | subtype: m.subtype ``
 - `artifacts/api-server/src/routes/telegraphKinds.ts` — `` subtype: (row.subtype as string) ?? null | msg_type: validated.msgType | subtype: validated.subtype | subtype: m.subtype ``
 - `artifacts/api-server/src/services/telegraph/messageKinds.ts` — `` subtype: subtypeFor(kind, parsed.data) `` (parser / passthrough, writes no message)
