@@ -6129,3 +6129,146 @@ ran: `npx tsc --noEmit` (clean), `bash scripts/run-all-checks.sh`, `npm run -s c
 named in §19.3. **`check:test-registration` is RED on this branch by instruction**: the new suite
 is deliberately not registered in `artifacts/api-server/package.json`, which this lane may not
 edit, and is listed for the integration owner to register.
+
+---
+
+## 20. The three files §19 could not reach — and the E2EE gate that an outage opened
+
+*Integration owner, 2026-09-13, on the merge of `lane-telegraph-arch` into `claude/sweet-fermat-fmx7up`.
+§19.4 closed with an explicit ceiling: "those three files are not this lane's, and a row is closed
+by whoever can close all of it." They are this lane's. This section is the rest of it.*
+
+### 20.1 The finding I re-derived before accepting it
+
+§19.4 reported a fail-open on the end-to-end-encryption invariant. That is the kind of claim a
+lane does not get taken on trust, so it was re-read from the file rather than from the report.
+It is exactly as reported.
+
+`routes/telegraphChat.ts` refuses to post a poll into an E2EE thread, because a poll body is JSON
+plaintext and the route has no encryption path. Its own comment names the invariant it serves
+(*"Never write server-readable plaintext into an end-to-end encrypted thread"*). It then read the
+flag with the error discarded — `const { data: threadMeta } = await client…` — and **supabase-js
+resolves on a database error rather than throwing**. An unreadable `message_threads` therefore
+yields `{ data: null, error }`, the discarded error is invisible, `null?.is_e2ee === true`
+evaluates `false`, and the plaintext poll body is written into a thread that may be
+end-to-end encrypted. The one gate that exists to prevent that outcome opens.
+
+This was never an open design question, and that is what makes it a defect rather than a choice.
+`routes/messaging.ts` makes the **identical decision** on the media path, binds the error, and
+answers `degraded_unavailable`; its comment states the same reasoning in almost the same words —
+an unreadable flag *"read as `is_e2ee: false` and let a plaintext media message through the one
+gate that exists to stop it."* Two files, one decision, two answers. This section settles it the
+way the already-correct one does.
+
+### 20.2 Six sites closed in `routes/telegraphChat.ts`
+
+| Site | An outage used to mean | Now |
+|---|---|---|
+| the E2EE flag on start-poll | `is_e2ee: false` — **plaintext admitted to an encrypted thread** | `degraded_unavailable`, nothing written |
+| `GET …/telegraph/suggestions` | `{ suggestions: [] }` — "you have none" | `degraded_unavailable` |
+| the suggestion read on add-to-plan | `not_found` — "no such suggestion" | `degraded_unavailable` |
+| the suggestion read on create-meetup | `not_found` | `degraded_unavailable` |
+| the suggestion read on start-poll | `not_found` | `degraded_unavailable` |
+| the preference read on dismiss | the event was silently skipped | logged at `error`; the dismiss still succeeds |
+
+The dismiss is deliberately **not** refused. That preference event is best-effort by construction —
+the insert below it warns rather than failing — so turning a cosmetic outage into a failed dismiss
+would be a worse answer than the defect. It has no test case, and the reason is recorded rather
+than left as an apparent omission: the harness cannot fail one operation on a table without
+failing the `UPDATE` beside it, and a case that cannot isolate its subject asserts nothing.
+
+### 20.3 Red first, then two mutations
+
+`src/test/telegraphChatOutageHonesty.test.ts`, 12 cases, 5 outage and 7 CONTROL.
+
+- **RED**, with `routes/telegraphChat.ts` restored byte-for-byte to `6d4327d66`: **7 passed,
+  5 failed**, and the five failures are exactly the five outage cases. The seven controls pass,
+  correctly — they describe behaviour the healthy tree already had.
+- **GREEN**, with the fixes: **12 / 0**. The file was then `cmp`-verified byte-identical to the
+  fixed copy, so the green run is against the shipped file and not a third state.
+- **Mutation — the E2EE guard made unconditional** (`if (true || threadMetaErr)`): 3 failed, and
+  they are the two E2EE controls plus start-poll's `not_found` control. That is the right three:
+  it proves the controls are load-bearing, not decorative.
+- **Mutation — the suggestions-list guard neutralised** (`if (false && suggestionsErr)`): exactly
+  1 failed, its own case. The guards are individually scoped rather than jointly covered.
+
+The E2EE outage case asserts on the **store**, not only on the status: no `messages` row may be
+inserted. A 503 returned after the plaintext had already been written would satisfy a status
+assertion and violate the invariant, so the assertion is placed where the invariant is.
+
+### 20.4 An error of mine, recorded because it is this document's own recurring class
+
+The first application of these guards put the start-poll guard **inside the create-meetup
+handler**. The cause: there are two `.select("id, title")` occurrences in the file, the insertion
+searched for the first one and then for the next `if (!suggestion)` after it, and landed in the
+wrong route. It typechecked, because `suggestionErr` is in scope in both handlers; it made
+create-meetup check its error twice and start-poll check it not at all.
+
+That is the same class as repointing a citation by offset instead of by exact original text —
+the defect §16.6 and §19 have each had to correct. It was caught only because the test was
+written first and start-poll's outage case stayed red at `not_found`. Had the test been written
+after the fix, or had the two handlers happened to behave alike, a guard absent from the handler
+it was written for would have shipped under a green run.
+
+### 20.5 The remaining sites, enumerated and classified independently
+
+§19.4 counted fourteen sites of this class across the three files. All fourteen were re-enumerated
+here directly from the tree, not from §19's list, and the count agrees: `routes/telegraph.ts` 5,
+`routes/telegraphChat.ts` 8, `routes/telegraphStream.ts` 1. Six of `telegraphChat.ts`'s eight are
+closed in §20.2. The remaining **eight** were each opened and classified:
+
+| Site | Class | What an outage produces |
+|---|---|---|
+| `telegraph.ts` feature-flag read | fail-closed | flag falsy → no location context; inside an explicit `catch { /* non-fatal */ }` |
+| `telegraph.ts` followed-hashtags read | enrichment | fewer personalisation inputs; no claim is made to the user |
+| `telegraph.ts` hashtag-metadata read | **fail-closed, traced** | a slug absent from the map produces **no span at all** (`if (meta)`), so it renders as plain text — it is *not* rendered as an unblocked hashtag |
+| `telegraph.ts` profile/`tag_permission` read | fail-closed | no handle resolves, so no mention is emitted |
+| `telegraph.ts` follow-edge read | fail-closed | the follow sets are empty, so permission checks deny |
+| `telegraphStream.ts` membership read | fail-closed | `forbidden` |
+| `telegraphChat.ts` `verifyThreadMember` | fail-closed | `forbidden` |
+| `telegraphChat.ts` trip-membership read | fail-closed | `forbidden` |
+
+The hashtag-metadata read was traced rather than classified by inspection, because `is_blocked`
+travels through it and an empty map could plausibly have meant "nothing is blocked". It does not.
+
+### 20.6 Two rows move, and the exact thing that would falsify the move
+
+| id | Was | Now | Evidence |
+|---|---|---|---|
+| T344 | W | **C** | §19's statement named its own blocker precisely: fourteen uncounted sites in three files, "of which `routes/telegraphChat.ts:146#res.status(200).json({ suggestions: suggestions ?? [] });` is a plausible empty context and three more are confident 404s". That plausible empty context and those three 404s are closed in §20.2, with the red measurement in §20.3. The messaging-tree half was re-derived and bound in §19.5. The eight sites that remain are enumerated and classified in §20.5 and not one of them produces a plausible empty context. |
+| T363 | W | **C** | Same evidence. T363's wording — "plausible empty **state**" — was §19's closer fit for `{ suggestions: [] }`, and `{ suggestions: [] }` is the thing that no longer happens on an unread. |
+| | | | |
+
+**What would turn these red.** One of the eight sites in §20.5 turning out to be a plausible empty
+state rather than a refusal or an absent enrichment. Three of them answer `forbidden` from a read
+that never happened, and by this row's own established rule — stated at its §18-era statement,
+*"a refusal is not a plausible empty state"* — a 403 does not count against it. If that rule is
+rejected, these two moves are rejected with it, and §20.7 is the row that should then be opened
+rather than these two reverted.
+
+### 20.7 A different defect, named rather than folded in
+
+Three sites answer `forbidden` — *"Not a thread member"*, *"You are not an accepted member of that
+trip"* — from a membership read that never happened. That is safe: it denies rather than admits.
+It is also false: the server does not know whether the caller is a member, and says it does. It is
+**not** the T344/T363 defect (nothing plausible and empty is presented as truth) and it is not
+folded into those rows to make them look larger or smaller. It needs a decision this section does
+not take, because it is a contract change on three live routes: an outage on an authorization read
+should arguably answer `degraded_unavailable` rather than `forbidden`, and the client's retry
+behaviour differs between the two — `degraded_unavailable` is the only code in `lib/http.ts`
+RETRYABLE_CODES, so the change makes these calls retry where today they do not.
+
+### 20.8 Checks
+
+Both new suites are registered in `artifacts/api-server/package.json` — the lane could not, it is
+the integration owner's file. `check:test-registration` is consequently **green** (1,149
+registered), where §19 left it deliberately red.
+
+`npx tsc --noEmit` clean. 191/191 across the new suite plus every file that imports the edited
+route (`telegraphChat.test.ts`, `telegraphChatSuggestionsPrivacy.test.ts`, `accessControl.test.ts`,
+`failOpenServiceReads.test.ts`, `tripKernel.test.ts`, and §19's own new suite).
+
+**Not claimed:** a full-suite pass. The first run exited 0 but its log ended mid-test with no
+summary block and only 256 top-level assertions against 1,138 registered files — an exit code
+without a summary is inconclusive, and inconclusive is not a pass. It is being re-run; this
+section does not rest on it, and no row above rests on it either.

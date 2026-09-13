@@ -131,7 +131,7 @@ router.get("/threads/:threadId/telegraph/suggestions", async (req, res) => {
   }
 
   // Return current active (non-expired, non-dismissed) suggestions for this user+thread
-  const { data: suggestions } = await client
+  const { data: suggestions, error: suggestionsErr } = await client
     .from("telegraph_chat_suggestions")
     .select(
       "id, intent_type, title, reason, category, action_type, location_context, time_context, created_at, expires_at",
@@ -143,6 +143,13 @@ router.get("/threads/:threadId/telegraph/suggestions", async (req, res) => {
     .order("created_at", { ascending: false })
     .limit(2);
 
+  if (suggestionsErr) {
+    chatLogger.error({ err: suggestionsErr, threadId, userId: user.id },
+      "telegraph suggestions read failed — refusing rather than answering that there are none");
+    sendError(res, "degraded_unavailable",
+      "We could not load Telegraph suggestions right now. Please try again shortly.");
+    return;
+  }
   res.status(200).json({ suggestions: suggestions ?? [] });
 });
 
@@ -167,14 +174,21 @@ router.post(
       return;
     }
 
-    // Fetch suggestion data before updating so we can write the preference event
-    const { data: suggestion } = await client
+    // Fetch suggestion data before updating so we can write the preference event.
+    // The event is best-effort (see the warn below), so a failed READ does not
+    // refuse the dismiss — but it must not be indistinguishable from "there was
+    // no such suggestion", which is what discarding the error made it.
+    const { data: suggestion, error: suggestionErr } = await client
       .from("telegraph_chat_suggestions")
       .select("category, intent_type")
       .eq("id", suggestionId)
       .eq("user_id", user.id)
       .eq("thread_id", threadId)
       .maybeSingle();
+    if (suggestionErr) {
+      chatLogger.error({ err: suggestionErr, suggestionId, threadId },
+        "dismiss preference read failed — no preference event will be written, and that is a failure, not an absent suggestion");
+    }
 
     const { error } = await client
       .from("telegraph_chat_suggestions")
@@ -254,12 +268,19 @@ router.post(
     }
 
     // Load suggestion for title/context
-    const { data: suggestion } = await client
+    const { data: suggestion, error: suggestionErr } = await client
       .from("telegraph_chat_suggestions")
       .select("id, title, location_context, time_context")
       .eq("id", suggestionId)
       .eq("user_id", user.id)
       .maybeSingle();
+    if (suggestionErr) {
+      chatLogger.error({ err: suggestionErr, suggestionId, threadId },
+        "suggestion read failed on the add-to-trip path — refusing rather than reporting the suggestion as nonexistent");
+      sendError(res, "degraded_unavailable",
+        "We could not open that suggestion right now. Please try again shortly.");
+      return;
+    }
     if (!suggestion) {
       sendError(res, "not_found", "Suggestion not found");
       return;
@@ -356,12 +377,19 @@ router.post(
       return;
     }
 
-    const { data: suggestion } = await client
+    const { data: suggestion, error: suggestionErr } = await client
       .from("telegraph_chat_suggestions")
       .select("id, title, location_context, time_context, trip_id, circle_id")
       .eq("id", suggestionId)
       .eq("user_id", user.id)
       .maybeSingle();
+    if (suggestionErr) {
+      chatLogger.error({ err: suggestionErr, suggestionId, threadId },
+        "suggestion read failed on the meetup prefill path — refusing rather than reporting the suggestion as nonexistent");
+      sendError(res, "degraded_unavailable",
+        "We could not open that suggestion right now. Please try again shortly.");
+      return;
+    }
     if (!suggestion) {
       sendError(res, "not_found", "Suggestion not found");
       return;
@@ -421,11 +449,21 @@ router.post(
     // A direct thread can be e2ee and telegraph suggestions surface in DMs, so a
     // poll body (JSON plaintext) would violate the E2EE invariant (audit MSG-3).
     // Mirror the messaging media/text handlers' e2ee_thread refusal.
-    const { data: threadMeta } = await client
+    const { data: threadMeta, error: threadMetaErr } = await client
       .from("message_threads")
       .select("is_e2ee")
       .eq("id", threadId)
       .maybeSingle();
+    if (threadMetaErr) {
+      // An unreadable flag read as `is_e2ee: false` and let a plaintext poll
+      // body through the one gate that exists to stop it. Same refusal as
+      // routes/messaging.ts on the media path, which binds this identical read.
+      chatLogger.error({ err: threadMetaErr, threadId },
+        "thread E2EE flag read failed on the poll path — refusing rather than admitting plaintext into an E2EE thread");
+      sendError(res, "degraded_unavailable",
+        "We could not verify this conversation right now. Please try again shortly.");
+      return;
+    }
     if ((threadMeta as any)?.is_e2ee === true) {
       sendError(res, "e2ee_thread", "Polls are not supported on end-to-end encrypted threads");
       return;
@@ -439,12 +477,19 @@ router.post(
 
     const { options, question } = parsed.data;
 
-    const { data: suggestion } = await client
+    const { data: suggestion, error: suggestionErr } = await client
       .from("telegraph_chat_suggestions")
       .select("id, title")
       .eq("id", suggestionId)
       .eq("user_id", user.id)
       .maybeSingle();
+    if (suggestionErr) {
+      chatLogger.error({ err: suggestionErr, suggestionId, threadId },
+        "suggestion read failed on the poll path — refusing rather than reporting the suggestion as nonexistent");
+      sendError(res, "degraded_unavailable",
+        "We could not open that suggestion right now. Please try again shortly.");
+      return;
+    }
     if (!suggestion) {
       sendError(res, "not_found", "Suggestion not found");
       return;
