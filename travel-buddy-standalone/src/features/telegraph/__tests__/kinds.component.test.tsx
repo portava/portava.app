@@ -18,6 +18,8 @@
  *     test RED.
  */
 import React from 'react';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { render, screen, fireEvent } from '@testing-library/react-native';
 
 // NOTE: intentional stub — kindsApi reaches lib/supabase, which builds a client
@@ -81,11 +83,81 @@ describe('§6.2 typed renderers', () => {
     expect(onPress).toHaveBeenCalledWith('MEET_HERE', expect.objectContaining({ action: 'MEET_HERE' }));
   });
 
-  it('ANNOUNCEMENT offers acknowledgement when it asks for one', async () => {
+  it('ANNOUNCEMENT offers acknowledgement when it asks for one AND the surface can write it', async () => {
+    // This test used to render WITHOUT onAcknowledge and assert the button was
+    // there. It passed for months over a button that did nothing: the only
+    // mount in the app, app/messages/[id].tsx, passed no handler, so pressing
+    // "Got it" was a no-op. Asserting an affordance EXISTS is not asserting it
+    // WORKS, and this is what that gap looked like.
+    const onAcknowledge = jest.fn();
     await render(
-      <TypedMessageRenderer msgType="announcement" body={env('ANNOUNCEMENT', { title: 'Leaving at eight', requiresAcknowledgement: true })} mine={false} />,
+      <TypedMessageRenderer
+        msgType="announcement"
+        body={env('ANNOUNCEMENT', { title: 'Leaving at eight', requiresAcknowledgement: true })}
+        mine={false}
+        onAcknowledge={onAcknowledge}
+      />,
     );
-    expect(screen.getByTestId('telegraph-kind-announcement-ack')).toBeTruthy();
+    fireEvent.press(screen.getByTestId('telegraph-kind-announcement-ack'));
+    expect(onAcknowledge).toHaveBeenCalledWith(
+      expect.objectContaining({ title: 'Leaving at eight', requiresAcknowledgement: true }),
+    );
+  });
+
+  it('ACTION draws NO confirm control when the surface cannot confirm, and says why', async () => {
+    // The same defect as the announcement's: `onPressAction` is optional and
+    // the conversation screen passes none, so "Confirm" was inert on every
+    // ACTION message. Unlike the announcement, this one is NOT fixed by
+    // wiring a handler — an ACTION typed message carries no command id for
+    // /telegraph/commands/:id/confirm-action — so the honest move is to stop
+    // drawing a button that cannot do anything.
+    await render(
+      <TypedMessageRenderer
+        msgType="action"
+        body={env('ACTION', { action: 'MEET_HERE', title: 'Meet at the bridge', requiresConfirmation: true })}
+        mine={false}
+      />,
+    );
+    expect(screen.queryByTestId('telegraph-kind-action-confirm')).toBeNull();
+    expect(screen.getByTestId('telegraph-kind-action-unconfirmable')).toBeTruthy();
+  });
+
+  it('ANNOUNCEMENT draws NO button when the surface cannot acknowledge, and says why', async () => {
+    await render(
+      <TypedMessageRenderer
+        msgType="announcement"
+        body={env('ANNOUNCEMENT', { title: 'Leaving at eight', requiresAcknowledgement: true })}
+        mine={false}
+      />,
+    );
+    expect(screen.queryByTestId('telegraph-kind-announcement-ack')).toBeNull();
+    expect(screen.getByTestId('telegraph-kind-announcement-ack-unavailable')).toBeTruthy();
+  });
+
+  it('ANNOUNCEMENT becomes a statement once this viewer has acknowledged', async () => {
+    await render(
+      <TypedMessageRenderer
+        msgType="announcement"
+        body={env('ANNOUNCEMENT', { title: 'Leaving at eight', requiresAcknowledgement: true })}
+        mine={false}
+        acknowledged
+        onAcknowledge={jest.fn()}
+      />,
+    );
+    expect(screen.queryByTestId('telegraph-kind-announcement-ack')).toBeNull();
+    expect(screen.getByTestId('telegraph-kind-announcement-acked')).toBeTruthy();
+  });
+
+  it('the conversation screen actually passes a handler — the mount, not just the prop', () => {
+    // §19. The renderer can only be as alive as its mount. Asserted against the
+    // file because there is no way to render app/messages/[id].tsx here, and a
+    // prop nobody passes is exactly the defect this closes.
+    const src = readFileSync(
+      join(__dirname, '..', '..', '..', '..', 'app', 'messages', '[id].tsx'),
+      'utf8',
+    );
+    expect(src).toContain('onAcknowledge={');
+    expect(src).toContain('useAnnouncementAcknowledgement');
   });
 
   it('ANNOUNCEMENT offers none when it does not', async () => {

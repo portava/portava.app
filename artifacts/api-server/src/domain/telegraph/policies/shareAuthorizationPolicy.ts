@@ -359,7 +359,7 @@ export const TELEGRAPH_DYNAMIC_SHARE_PRODUCERS: readonly DynamicShareProducer[] 
     sourceDomain: null,
     produces: [
       "coordination", "decision", "vote", "rendezvous", "commitment",
-      "commitment_response", "action_proposal",
+      "commitment_response", "action_proposal", "acknowledgement",
     ],
     writesMessages: true,
     note:

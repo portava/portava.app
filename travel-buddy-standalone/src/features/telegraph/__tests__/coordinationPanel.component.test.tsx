@@ -30,7 +30,7 @@
  *   All restored: 12/12.
  */
 import React from 'react';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react-native';
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react-native';
 
 // NOTE: intentional stub — coordinationApi reaches lib/supabase, which builds a
 // client at import time and fails outside an Expo runtime. The panel's own
@@ -45,7 +45,15 @@ jest.mock('../coordination/coordinationApi.ts', () => {
   };
 });
 
+// NOTE: intentional stub — kindsApi reaches lib/supabase, which builds a client
+// at import time and fails outside an Expo runtime. The panel's own composer
+// logic is the real one; only the network call is replaced.
+jest.mock('../kinds/kindsApi.ts', () => ({
+  sendTypedMessage: jest.fn(async () => ({ ok: true, data: { id: 'a1' } })),
+}));
+
 import { CoordinationPanel } from '../coordination/CoordinationPanel.tsx';
+import { sendTypedMessage } from '../kinds/kindsApi.ts';
 import {
   fetchCoordination,
   postQuickState,
@@ -58,6 +66,7 @@ import {
 const mockedFetch = fetchCoordination as jest.MockedFunction<typeof fetchCoordination>;
 const mockedQuick = postQuickState as jest.MockedFunction<typeof postQuickState>;
 const mockedVote = postVote as jest.MockedFunction<typeof postVote>;
+const mockedSendTyped = sendTypedMessage as jest.MockedFunction<typeof sendTypedMessage>;
 
 function response(over: Partial<CoordinationResponse['coordination']> = {}): CoordinationResponse {
   return {
@@ -244,5 +253,80 @@ describe('the panel and the network', () => {
     expect(screen.getByTestId('telegraph-coordination-rendezvous')).toBeTruthy();
     expect(screen.getByText('Dragon bridge — second lamp')).toBeTruthy();
     expect(screen.getByText('Fallback: the corner cafe')).toBeTruthy();
+  });
+});
+
+describe('§30A.5 — the announcement, given a producer', () => {
+  async function openComposer() {
+    await render(<CoordinationPanel threadId="t1" initialResponse={response()} />);
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('telegraph-announcement-open'));
+    });
+  }
+
+  it('posts an ANNOUNCEMENT that asks to be acknowledged', async () => {
+    // Before this control existed the ANNOUNCEMENT kind had a schema, a route,
+    // a renderer, an acknowledgement projection — and NO WAY TO SEND ONE from
+    // the app. §6.1's composer menu is the spec's eight entries and this is not
+    // one of them, so the whole chain was reachable only by calling the API by
+    // hand. A verdict over a path nothing reaches is vacuous; this is the path.
+    mockedSendTyped.mockClear();
+    await openComposer();
+    await act(async () => {
+      fireEvent.changeText(screen.getByTestId('telegraph-announcement-title'), 'Leaving at eight');
+    });
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('telegraph-announcement-send'));
+    });
+    await waitFor(() =>
+      expect(mockedSendTyped).toHaveBeenCalledWith('t1', 'ANNOUNCEMENT', {
+        title: 'Leaving at eight',
+        requiresAcknowledgement: true,
+      }),
+    );
+  });
+
+  it('the confirmation request is a choice, not a default nobody can turn off', async () => {
+    mockedSendTyped.mockClear();
+    await openComposer();
+    await act(async () => {
+      fireEvent.changeText(screen.getByTestId('telegraph-announcement-title'), 'FYI');
+    });
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('telegraph-announcement-ack-toggle'));
+    });
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('telegraph-announcement-send'));
+    });
+    await waitFor(() =>
+      expect(mockedSendTyped).toHaveBeenCalledWith('t1', 'ANNOUNCEMENT', {
+        title: 'FYI',
+        requiresAcknowledgement: false,
+      }),
+    );
+  });
+
+  it('an empty notice is refused here rather than posted and refused there', async () => {
+    mockedSendTyped.mockClear();
+    await openComposer();
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('telegraph-announcement-send'));
+    });
+    expect(screen.getByTestId('telegraph-announcement-error')).toBeTruthy();
+    expect(mockedSendTyped).not.toHaveBeenCalled();
+  });
+
+  it('a refused post keeps the text and says why — it does not silently vanish', async () => {
+    mockedSendTyped.mockClear();
+    mockedSendTyped.mockResolvedValueOnce({ ok: false, error: 'forbidden', message: 'Not a member' } as any);
+    await openComposer();
+    await act(async () => {
+      fireEvent.changeText(screen.getByTestId('telegraph-announcement-title'), 'Leaving at eight');
+    });
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('telegraph-announcement-send'));
+    });
+    await waitFor(() => expect(screen.getByText('Not a member')).toBeTruthy());
+    expect(screen.getByTestId('telegraph-announcement-title').props.value).toBe('Leaving at eight');
   });
 });

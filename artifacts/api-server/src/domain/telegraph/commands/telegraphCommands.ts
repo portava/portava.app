@@ -109,6 +109,14 @@ export const LEGACY_PATH_COMMANDS: Readonly<Record<string, string>> = {
   BLOCK_USER: "POST /api/users/:userId/block",
   MUTE_THREAD: "POST /api/threads/:threadId/mute",
   REPORT_MESSAGE: "POST /api/messages/:messageId/report",
+  // §9.1's seven quick states ARE this command, on the coordination route.
+  // This entry used to sit in UNIMPLEMENTED_COMMANDS below, saying "the §9.1
+  // vocabulary does not exist" — which stopped being true when §9's
+  // coordination surface landed (COORDINATION_QUICK_STATES, the COORDINATION
+  // message kind, the panel). A refusal that tells a caller a thing does not
+  // exist when it does is worse than no refusal: it sends them away from the
+  // route that would have worked.
+  SET_COORDINATION_STATUS: "POST /api/threads/:threadId/coordination with kind COORDINATION",
 };
 
 /**
@@ -119,8 +127,7 @@ export const LEGACY_PATH_COMMANDS: Readonly<Record<string, string>> = {
  * different actions.
  */
 export const UNIMPLEMENTED_COMMANDS: readonly string[] = [
-  "CREATE_COORDINATION_SESSION",  // §9 — no coordination session exists (census T85/T168)
-  "SET_COORDINATION_STATUS",      // §9.1 vocabulary does not exist (census T169)
+  "CREATE_COORDINATION_SESSION",  // §9 — no coordination session ENTITY exists (census T85/T168)
 ];
 
 /** One command, as the wire carries it. */

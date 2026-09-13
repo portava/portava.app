@@ -19,7 +19,7 @@
  * the time they said it, and the two are never in the same row.
  */
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { space, radius, type as t } from '../../../theme/tokens.ts';
 import { useTelegraphPalette, type TelegraphPalette } from '../theme/telegraphTheme.ts';
 import {
@@ -32,6 +32,7 @@ import {
   type CoordinationResponse,
   type QuickState,
 } from './coordinationApi.ts';
+import { sendTypedMessage } from '../kinds/kindsApi.ts';
 
 export interface CoordinationPanelProps {
   threadId: string;
@@ -46,6 +47,11 @@ export function CoordinationPanel({ threadId, initialResponse = null, onChanged 
   const [data, setData] = useState<CoordinationResponse | null>(initialResponse);
   const [loading, setLoading] = useState(initialResponse === null);
   const [failed, setFailed] = useState(false);
+  // §30A.5 / §19 — composing a crew-wide notice.
+  const [noticeOpen, setNoticeOpen] = useState(false);
+  const [noticeTitle, setNoticeTitle] = useState('');
+  const [noticeNeedsAck, setNoticeNeedsAck] = useState(true);
+  const [noticeError, setNoticeError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -85,6 +91,37 @@ export function CoordinationPanel({ threadId, initialResponse = null, onChanged 
     },
     [threadId, onChanged, load, initialResponse],
   );
+
+  /**
+   * §30A.5's ANNOUNCEMENT, given a producer.
+   *
+   * The kind, its schema, its renderer and (since §19's acknowledgement) its
+   * write-back all existed before this control did — and NOTHING IN THE APP
+   * COULD SEND ONE. §6.1's composer menu is the spec's eight entries and
+   * ANNOUNCEMENT is not among them, so the whole chain was reachable only by
+   * calling the API by hand. A crew-wide notice belongs where the crew is
+   * coordinating, which is this panel.
+   */
+  const postNotice = useCallback(async () => {
+    const title = noticeTitle.trim();
+    if (title.length === 0) {
+      setNoticeError('A notice needs something to say.');
+      return;
+    }
+    const r = await sendTypedMessage(threadId, 'ANNOUNCEMENT', {
+      title,
+      requiresAcknowledgement: noticeNeedsAck,
+    });
+    if (!r.ok) {
+      setNoticeError(r.message ?? r.error);
+      return;
+    }
+    setNoticeError(null);
+    setNoticeTitle('');
+    setNoticeOpen(false);
+    onChanged?.();
+    if (initialResponse === null) void load();
+  }, [threadId, noticeTitle, noticeNeedsAck, onChanged, load, initialResponse]);
 
   if (loading && !data) {
     return (
@@ -162,6 +199,64 @@ export function CoordinationPanel({ threadId, initialResponse = null, onChanged 
           ))}
         </View>
       ) : null}
+
+      {/*
+        §30A.5 — the announcement composer. It sits under the declared statuses
+        because a notice is an operational change, not a status, and §19 keeps
+        acknowledgement distinct from Seen.
+      */}
+      <View testID="telegraph-announcement-composer">
+        {noticeOpen ? (
+          <View>
+            <TextInput
+              testID="telegraph-announcement-title"
+              accessibilityLabel="Announcement"
+              placeholder="Tell the crew something"
+              placeholderTextColor={palette.mute}
+              value={noticeTitle}
+              onChangeText={setNoticeTitle}
+              style={styles.noticeInput}
+              maxLength={200}
+            />
+            <Pressable
+              testID="telegraph-announcement-ack-toggle"
+              accessibilityRole="switch"
+              accessibilityState={{ checked: noticeNeedsAck }}
+              accessibilityLabel="Ask people to confirm they saw it"
+              onPress={() => setNoticeNeedsAck((v) => !v)}
+              style={styles.chip}
+            >
+              <Text style={styles.chipText}>
+                {noticeNeedsAck ? 'Asking for confirmation' : 'No confirmation asked'}
+              </Text>
+            </Pressable>
+            <Pressable
+              testID="telegraph-announcement-send"
+              accessibilityRole="button"
+              accessibilityLabel="Post announcement"
+              onPress={() => void postNotice()}
+              style={styles.chip}
+            >
+              <Text style={styles.chipText}>Post</Text>
+            </Pressable>
+            {noticeError ? (
+              <Text style={styles.meta} testID="telegraph-announcement-error">
+                {noticeError}
+              </Text>
+            ) : null}
+          </View>
+        ) : (
+          <Pressable
+            testID="telegraph-announcement-open"
+            accessibilityRole="button"
+            accessibilityLabel="Post an announcement"
+            onPress={() => setNoticeOpen(true)}
+            style={styles.chip}
+          >
+            <Text style={styles.chipText}>Post an announcement</Text>
+          </Pressable>
+        )}
+      </View>
 
       {c.rendezvous.length > 0 ? (
         <View testID="telegraph-coordination-rendezvous">
@@ -246,6 +341,15 @@ function makeStyles(p: TelegraphPalette) {
     chipText: { ...t.small, color: p.recvText },
     chipTextAttention: { color: p.attentionOn, fontWeight: '700' },
     decision: { gap: 4 },
+    noticeInput: {
+      ...t.small,
+      color: p.recvText,
+      backgroundColor: p.chipFill,
+      borderRadius: radius.md,
+      paddingHorizontal: space.md,
+      paddingVertical: 8,
+      marginBottom: 6,
+    },
   });
 }
 

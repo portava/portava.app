@@ -41,15 +41,18 @@ import {
   leaveByFor,
   legalNextStates,
   parseCoordinationEnvelope,
+  projectAcknowledgements,
   projectCommitment,
   projectDecision,
   threadIsCoordinating,
   validateCoordinationMessage,
+  type AnnouncementInputMessage,
   type ConversationCommitment,
   type ConversationDecision,
   type CoordinatedPlan,
   type ThreadCoordination,
 } from "../services/telegraph/coordination.js";
+import { parseKindEnvelope } from "../services/telegraph/messageKinds.js";
 import {
   historyBoundEnabled,
   membershipSelect,
@@ -93,6 +96,35 @@ async function memberWindow(
   return { ok: true, visibleFrom: visibleFromOf(data as any, boundOn) };
 }
 
+/**
+ * A `messages` row read back as a §6.2 ANNOUNCEMENT, or null.
+ *
+ * Null for every reason a caller must not be able to tell apart: no row, a row
+ * in another thread (the query already binds `thread_id`, and this is the
+ * second guard), a tombstone, a message that is not an announcement, an
+ * envelope that does not parse, or a row outside this member's §14.3 window.
+ * They all answer 404, because "that message exists but you cannot see it" is
+ * itself a disclosure.
+ */
+function readAnnouncementRow(
+  row: any,
+  visibleFrom: string | null,
+): AnnouncementInputMessage | null {
+  if (!row) return null;
+  if (row.deleted_at != null) return null;
+  if (!withinWindow(row.created_at, visibleFrom)) return null;
+  const env = parseKindEnvelope(row.msg_type, row.body);
+  if (!env || env.kind !== "ANNOUNCEMENT") return null;
+  const payload = env.payload as { title?: unknown; requiresAcknowledgement?: unknown };
+  return {
+    id: String(row.id),
+    sender_id: String(row.sender_id),
+    created_at: String(row.created_at),
+    title: typeof payload.title === "string" ? payload.title : "",
+    requiresAcknowledgement: payload.requiresAcknowledgement === true,
+  };
+}
+
 // ── POST /api/threads/:threadId/coordination ─────────────────────────────────
 
 router.post(
@@ -123,6 +155,47 @@ router.post(
     if (!guard.ok) {
       sendError(res, guard.code, guard.message);
       return;
+    }
+
+    // §19: an ACKNOWLEDGEMENT must name an ANNOUNCEMENT this member can
+    // actually see, in THIS thread, that ASKED to be acknowledged. Without
+    // this check the kind would be a free-text pointer: a client could
+    // acknowledge a message id from another conversation, or manufacture an
+    // acknowledgement of a notice nobody was asked to acknowledge, and the
+    // projection would faithfully report it.
+    if (validated.kind === "ACKNOWLEDGEMENT") {
+      const targetId = String((validated.envelope as any).payload.announcementMessageId);
+      const gate = await memberWindow(client, threadId, user.id);
+      if (!gate.ok) {
+        sendError(res, gate.code, gate.message);
+        return;
+      }
+      const { data: target, error: targetErr } = await client
+        .from("messages")
+        .select("id, thread_id, sender_id, created_at, deleted_at, msg_type, body")
+        .eq("id", targetId)
+        .eq("thread_id", threadId)
+        .maybeSingle();
+      if (targetErr) {
+        log.error({ threadId, targetId, message: targetErr.message }, "announcement read failed");
+        sendError(res, "db_error", "Could not read the announcement");
+        return;
+      }
+      const announcement = readAnnouncementRow(target, gate.visibleFrom);
+      if (!announcement) {
+        sendError(res, "not_found", "No such announcement in this conversation");
+        return;
+      }
+      if (!announcement.requiresAcknowledgement) {
+        sendError(
+          res,
+          "invalid_payload",
+          "That announcement did not ask to be acknowledged. Acknowledgement is for operational " +
+            "changes that need a person to confirm they saw them (§19); a notice that did not ask " +
+            "for one is answered by reading it.",
+        );
+        return;
+      }
     }
 
     const now = new Date().toISOString();
@@ -335,6 +408,108 @@ router.get(
        * the plan's timeline. The two never merge.
        */
       stateProvenance: "DERIVED_FROM_PLAN_TIMELINE",
+      scanned: rows.length,
+    });
+  }),
+);
+
+// ── GET /api/threads/:threadId/announcements ─────────────────────────────────
+
+/**
+ * §19's acknowledgement state, per announcement in this thread.
+ *
+ * WHY IT IS A SEPARATE ROUTE from the coordination view: an announcement is a
+ * §6.2 message kind, not a §8/§9 object, and folding it into
+ * `ThreadCoordination` would say a thread with an unacknowledged notice is
+ * "coordinating", which it is not.
+ *
+ * `outstanding` is computed from the thread's ACTIVE roster, read here rather
+ * than inferred, and it is NULL when that read fails — a degraded roster must
+ * not render as "everybody has acknowledged".
+ */
+router.get(
+  "/threads/:threadId/announcements",
+  asyncHandler(async (req: any, res: any) => {
+    const auth = await requireUser(req, res);
+    if (!auth) return;
+    const { client, user } = auth;
+    const { threadId } = req.params;
+
+    if (!UUID.test(threadId)) {
+      sendError(res, "invalid_payload", "Invalid threadId");
+      return;
+    }
+
+    const gate = await memberWindow(client, threadId, user.id);
+    if (!gate.ok) {
+      sendError(res, gate.code, gate.message);
+      return;
+    }
+
+    let q = client
+      .from("messages")
+      .select(COORD_COLUMNS)
+      .eq("thread_id", threadId)
+      .is("deleted_at", null)
+      .order("created_at", { ascending: false })
+      .limit(COORDINATION_SCAN_LIMIT);
+    if (gate.visibleFrom) q = q.gte("created_at", gate.visibleFrom);
+
+    const { data, error } = await q;
+    if (error) {
+      log.error({ threadId, message: error.message }, "announcement read failed");
+      sendError(res, "db_error", "Could not read this conversation's announcements");
+      return;
+    }
+
+    const rows = ((data as any[]) ?? []).filter((r) => withinWindow(r.created_at, gate.visibleFrom));
+
+    const announcements: AnnouncementInputMessage[] = [];
+    const acknowledgements: Array<{ id: string; sender_id: string; created_at: string; payload: unknown }> = [];
+    for (const r of rows) {
+      const ann = readAnnouncementRow(r, gate.visibleFrom);
+      if (ann) {
+        announcements.push(ann);
+        continue;
+      }
+      const env = parseCoordinationEnvelope(r.msg_type, r.body);
+      if (env && env.kind === "ACKNOWLEDGEMENT") {
+        acknowledgements.push({
+          id: r.id as string,
+          sender_id: r.sender_id as string,
+          created_at: r.created_at as string,
+          payload: env.payload,
+        });
+      }
+    }
+
+    // The roster. A failed read leaves it undefined so `outstanding` is null.
+    let memberIds: string[] | undefined;
+    const { data: members, error: memberErr } = await client
+      .from("message_thread_members")
+      .select("user_id, left_at")
+      .eq("thread_id", threadId)
+      .is("left_at", null);
+    if (memberErr) {
+      log.warn({ threadId, message: memberErr.message }, "roster read failed; outstanding omitted");
+    } else {
+      memberIds = ((members as any[]) ?? []).map((m) => String(m.user_id));
+    }
+
+    res.status(200).json({
+      threadId,
+      announcements: projectAcknowledgements(
+        [...announcements].sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at)),
+        acknowledgements,
+        memberIds,
+      ),
+      /**
+       * §19, stated in the response: an acknowledgement is something a person
+       * PRESSED. `message_thread_members.last_read_at` is not read on this
+       * path and cannot become one.
+       */
+      derivedFrom: "ACKNOWLEDGEMENT_MESSAGES_ONLY",
+      rosterKnown: memberIds !== undefined,
       scanned: rows.length,
     });
   }),

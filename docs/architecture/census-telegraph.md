@@ -1248,7 +1248,7 @@ depends on DDL no database has would stay W however good the code was.
   and `SharedContextRail.tsx` renders them. The rail is MOUNTED on both
   conversation surfaces, which is what "at the top of each conversation" means
   in a tree that has two of them:
-  `travel-buddy-standalone/app/messages/[id].tsx:2056#SharedContextRail` (direct
+  `travel-buddy-standalone/app/messages/[id].tsx:2085#SharedContextRail` (direct
   and booking threads) and
   `travel-buddy-standalone/src/components/GroupChatScreen.tsx:815#SharedContextRail`
   (trip and circle threads).
@@ -1284,7 +1284,7 @@ depends on DDL no database has would stay W however good the code was.
 
 | id | was | now | why |
 | --- | --- | --- | --- |
-| T13 | N | **C** | **Rail at the top of each conversation showing mutually relevant objects** — The component exists and is mounted on BOTH conversation surfaces — `travel-buddy-standalone/app/messages/[id].tsx:2056#SharedContextRail` and `travel-buddy-standalone/src/components/GroupChatScreen.tsx:815#SharedContextRail` — between the header and the message list, fed by a mounted route (`routes/index.ts:187#telegraphSharedContextRouter`). What would turn this red (P24): a third conversation surface appearing without it; nothing pins that. |
+| T13 | N | **C** | **Rail at the top of each conversation showing mutually relevant objects** — The component exists and is mounted on BOTH conversation surfaces — `travel-buddy-standalone/app/messages/[id].tsx:2085#SharedContextRail` and `travel-buddy-standalone/src/components/GroupChatScreen.tsx:815#SharedContextRail` — between the header and the message list, fed by a mounted route (`routes/index.ts:187#telegraphSharedContextRouter`). What would turn this red (P24): a third conversation surface appearing without it; nothing pins that. |
 | T14 | N | **C** | **Eligibility: created by me, joined/saved/attended by them** — `relationshipFor` reads the source object's own owner column and returns `CREATED_BY_ME_JOINED_BY_THEM` when the viewer created it and a conversation counterpart joined (`services/telegraph/sharedContext.ts:344#resolveSharedTrips`, `:405#resolveSharedMeetups`, `:467#resolveSharedEvents`). Asserted against a trip Alice owns and Bob joined, `test/telegraphSharedContext.test.ts:498`. |
 | T15 | N | **C** | **Eligibility: created by them, joined/saved/attended by me** — Same resolver, the other branch — asserted against a meetup Bob created and Alice accepted, `test/telegraphSharedContext.test.ts:498`. |
 | T16 | N | **C** | **Eligibility: both members of the same Trip, Plan, Crew, Event or booking** — Four resolvers, four canonical membership tables: `trip_members` (the crew table — a trip's crew IS `trip_members`; `circle_memberships` is a personal address book, not a shared crew, and is deliberately not read), `meetup_invites` (Plan), `event_attendees` (Event), `rent_buddy_bookings` (booking). `services/telegraph/sharedContext.ts:521#resolveSharedBookings` is the booking one. |
@@ -1297,7 +1297,7 @@ depends on DDL no database has would stay W however good the code was.
 | T128 | N | **C** | **Rail behaviour: active plan → expanded NOW card at top** — Server decides the mode (`services/telegraph/sharedContext.ts:717#railModeFor`) so client and server cannot disagree; the client renders the first NOW item expanded (`railBehavior.component.test.ts:80`, `SharedContextRail.component.test.tsx:83`). |
 | T129 | N | **C** | **Rail behaviour: upcoming only → compact horizontal cards** — `railModeFor` returns COMPACT_UPCOMING when `now` is empty and `upcoming` is not; rendered as a horizontal card row (`railBehavior.component.test.ts:87`). |
 | T130 | N | **C** | **Rail behaviour: none → collapsed summary ("3 shared plans · 1 past trip")** — `collapsedSummary` (`services/telegraph/sharedContext.ts:725#collapsedSummary`) renders the spec's example string exactly, and the rail collapses to it (`railBehavior.component.test.ts:94`). |
-| T131 | N | **C** | **Rail behaviour: user scrolls down → rail collapses, messages get priority** — `shouldCollapseOnScroll` (`travel-buddy-standalone/src/features/telegraph/sharedContext/railBehavior.ts:29#shouldCollapseOnScroll`) is driven by the conversation's own scroll handler (`travel-buddy-standalone/app/messages/[id].tsx:2081#setRailCollapsed`) and collapses the rail to one line (`railBehavior.component.test.ts:66`, `SharedContextRail.component.test.tsx:148`). |
+| T131 | N | **C** | **Rail behaviour: user scrolls down → rail collapses, messages get priority** — `shouldCollapseOnScroll` (`travel-buddy-standalone/src/features/telegraph/sharedContext/railBehavior.ts:29#shouldCollapseOnScroll`) is driven by the conversation's own scroll handler (`travel-buddy-standalone/app/messages/[id].tsx:2110#setRailCollapsed`) and collapses the rail to one line (`railBehavior.component.test.ts:66`, `SharedContextRail.component.test.tsx:148`). |
 | T132 | N | **C** | **Rail behaviour: critical plan change → temporary promoted change card until acknowledged** — `detectCriticalChanges` (`travel-buddy-standalone/src/features/telegraph/sharedContext/railBehavior.ts:66#detectCriticalChanges`) diffs the seen projection against the fetched one for a cancellation or a moved start; the card is promoted above the scroll rule and disappears only on acknowledgement, per change (`railBehavior.component.test.ts:172`). The acknowledgement primitive T132's old evidence said did not exist is this. |
 | T134 | W | **C** | **Reduced-motion behaviour for media, GIFs and animations** — The wrong gate is no longer the only gate: `travel-buddy-standalone/src/components/MessageEntrance.tsx:55#useReducedMotionSetting` consults the OS setting and returns the static View, proved both ways in `travel-buddy-standalone/src/features/telegraph/__tests__/MessageEntrance.reducedMotion.component.test.tsx:53`. Scoped honestly: GIFs and inline video are still N/? rows of their own (T52, T61, T64) — this row is the animation half, which is what Telegraph actually animates today. |
 | T4 | N | **W** | **Pillar **Together** — every conversation can expose shared Trips, plans, events, places, Memories, history** — Five of six now: Trips, plans (meetups), events, places (both-saved `WANT_TO_DO`) and history (`past[]`) all reach the conversation through the rail. **Memories do not** — no resolver reads `memories`, and §10's Memory Note rows (T117–T122) are still N. |
@@ -1437,7 +1437,7 @@ and it was being violated on every thread that had ever carried a card.
   snapshot; `PortavaObjectMessage`
   (`travel-buddy-standalone/src/features/telegraph/sharing/PortavaObjectMessage.tsx:28#PortavaObjectMessage`)
   is the new kind, dispatched on both conversation surfaces
-  (`travel-buddy-standalone/app/messages/[id].tsx:839#PortavaObjectMessage`,
+  (`travel-buddy-standalone/app/messages/[id].tsx:868#PortavaObjectMessage`,
   `travel-buddy-standalone/src/components/GroupChatScreen.tsx:847#PortavaObjectMessage`).
 
 ### 10.6 §5 row moves
@@ -1569,29 +1569,29 @@ asset is not a kind.
   a weaker door into the same table.
 - **The routes are mounted** at `routes/index.ts:189#telegraphKindsRouter`.
 - **The client.** `TypedMessageRenderer`
-  (`travel-buddy-standalone/src/features/telegraph/kinds/TypedMessageRenderer.tsx:55#TypedMessageRenderer`)
+  (`travel-buddy-standalone/src/features/telegraph/kinds/TypedMessageRenderer.tsx:65#TypedMessageRenderer`)
   renders all seven, dispatched from the conversation at
-  `travel-buddy-standalone/app/messages/[id].tsx:826#rendersTypedKind`. The
+  `travel-buddy-standalone/app/messages/[id].tsx:843#rendersTypedKind`. The
   content drawer replaces the dead code at
-  `travel-buddy-standalone/app/messages/[id].tsx:1925#telegraph-open-content-drawer`
+  `travel-buddy-standalone/app/messages/[id].tsx:1954#telegraph-open-content-drawer`
   and is `travel-buddy-standalone/src/features/telegraph/drawer/ContentDrawerSheet.tsx:52#ContentDrawerSheet`.
   The composer's `+` button opens §6.1's menu
-  (`travel-buddy-standalone/app/messages/[id].tsx:2343#setShowPlusMenu`).
+  (`travel-buddy-standalone/app/messages/[id].tsx:2372#setShowPlusMenu`).
 
 ### 10.10 §6 row moves
 
 | id | was | now | why |
 | --- | --- | --- | --- |
-| T51 | N | **C** | **Message kind MEDIA_ALBUM** — a validated kind with at least two independent asset references in one message (`services/telegraph/messageKinds.ts:181#validateKindMessage`), sent, stored and rendered (`travel-buddy-standalone/src/features/telegraph/kinds/TypedMessageRenderer.tsx:55#TypedMessageRenderer`). One asset is refused — that is an IMAGE or a VIDEO, not an album (`test/telegraphKinds.test.ts:302`). |
+| T51 | N | **C** | **Message kind MEDIA_ALBUM** — a validated kind with at least two independent asset references in one message (`services/telegraph/messageKinds.ts:181#validateKindMessage`), sent, stored and rendered (`travel-buddy-standalone/src/features/telegraph/kinds/TypedMessageRenderer.tsx:65#TypedMessageRenderer`). One asset is refused — that is an IMAGE or a VIDEO, not an album (`test/telegraphKinds.test.ts:302`). |
 | T65 | N | **C** | **Mixed-media albums: one reply target and one seen lifecycle, independent asset references** — true by construction: an album is ONE `messages` row, so it has exactly one `reply_to_id` and one position in the single thread-level receipt, and its assets are separate entries in the payload. Rendered as one bubble with N cells (`travel-buddy-standalone/src/features/telegraph/__tests__/kinds.component.test.tsx:106`). |
-| T56 | N | **C** | **Message kind LOCATION** — a kind with a precision ladder whose default is COARSE (§4.3), a subtype that records which precision the sender chose, and a renderer that shows the precision in words (`travel-buddy-standalone/src/features/telegraph/kinds/TypedMessageRenderer.tsx:55#TypedMessageRenderer`). |
+| T56 | N | **C** | **Message kind LOCATION** — a kind with a precision ladder whose default is COARSE (§4.3), a subtype that records which precision the sender chose, and a renderer that shows the precision in words (`travel-buddy-standalone/src/features/telegraph/kinds/TypedMessageRenderer.tsx:65#TypedMessageRenderer`). |
 | T57 | N | **C** | **Message kind ACTION** — actions are no longer inferred from card subtypes: `ACTION` is a kind carrying a §8.1 action name and a `requiresConfirmation` literal `true`, rendered as a proposal with a Confirm control (`travel-buddy-standalone/src/features/telegraph/__tests__/kinds.component.test.tsx:70`). |
 | T58 | N | **C** | **Message kind ANNOUNCEMENT** — a kind with a title, an optional body and an optional acknowledgement requirement, rendered with the acknowledge control only when it asks for one. |
 | T54 | N | **C** | **Message kind MEMORY_NOTE** — the kind exists and carries §10.1's `MemoryNoteShare` field set (`services/telegraph/messageKinds.ts:181#validateKindMessage`), with an authoring sheet (`travel-buddy-standalone/src/features/telegraph/__tests__/typedComposeMemoryNote.component.test.tsx:41`). What is NOT claimed is T117's contract row — see below. |
 | T52 | N | **C** | **Message kind GIF** — a distinct kind with its own payload (url, still frame, provider, alt text) and its own renderer, separate from IMAGE/VIDEO. No provider is configured to pick one FROM, which is T64's row and the composer entry's stated reason, not this one's: the kind exists, validates, sends, stores and renders. |
 | T64 | N | **W** | **GIFs are distinct lightweight looping content with data-saver / accessibility controls** — the CONTROLS are built: `isGifAnimated` (`travel-buddy-standalone/src/features/telegraph/kinds/TypedMessageRenderer.tsx:33#isGifAnimated`) is a pure rule — animate only when neither reduced motion nor data saver is on — and the still frame carries the reason in words. It stays W because `dataSaver` is a prop with no app-level setting behind it yet, and because no provider exists to obtain a GIF from. |
 | T60 | W | **C** | **Message kind SAFETY** — SAFETY is now a message KIND, not only a thread affordance: four classes (`check_in`, `heads_up`, `need_help`, `all_clear`), each landing in `subtype`, rendered with the class as a WORD and the §11.1 attention colour reserved for it (`travel-buddy-standalone/src/features/telegraph/__tests__/kinds.component.test.tsx:98`). |
-| T66 | N | **C** | **Content drawer: MEDIA / PLACES / PORTAVA / VOICE / GIFS / LINKS / FILES** — the seven tabs exist with counts, served by `GET /threads/:id/drawer` (`routes/telegraphKinds.ts:262`) and rendered by `travel-buddy-standalone/src/features/telegraph/drawer/ContentDrawerSheet.tsx:52#ContentDrawerSheet`. The dead-coded entry point is now a real control (`travel-buddy-standalone/app/messages/[id].tsx:1925#telegraph-open-content-drawer`). |
+| T66 | N | **C** | **Content drawer: MEDIA / PLACES / PORTAVA / VOICE / GIFS / LINKS / FILES** — the seven tabs exist with counts, served by `GET /threads/:id/drawer` (`routes/telegraphKinds.ts:262`) and rendered by `travel-buddy-standalone/src/features/telegraph/drawer/ContentDrawerSheet.tsx:52#ContentDrawerSheet`. The dead-coded entry point is now a real control (`travel-buddy-standalone/app/messages/[id].tsx:1954#telegraph-open-content-drawer`). |
 | T67 | N `∅` | **C** | **The drawer is a structured index, not a second storage copy** — no longer an unguarded absence. The drawer exists and stores nothing: it classifies `messages` rows in memory (`services/telegraph/messageKinds.ts:253#drawerTabFor`), every id it returns is a `messages.id` that already existed, and the route writes nothing and declares `indexOnly: true` in its own response. |
 | T68 | N | **C** | **Object-aware search respects current authorization and unsent/deleted state** — `GET /threads/:id/search` (`routes/telegraphKinds.ts:327`) is member-gated, §14.3-bounded and tombstone-excluding, and matches on a typed object's HUMAN fields rather than on raw JSON (`services/telegraph/messageKinds.ts:308#searchableTextOf`). A deleted message is not findable by its exact text (`test/telegraphKinds.test.ts:531`). |
 | T47 | W | **W** | **Composer stays visually calm; rich actions live behind a `+` menu** — the menu now names all EIGHT of §6.1's entries instead of two (`travel-buddy-standalone/src/features/telegraph/composer/composerMenu.ts:48#COMPOSER_ENTRIES`), and an entry that cannot complete states its reason INLINE rather than being hidden. Five of eight are operable (Camera, Photos, Video, Location, Memory Note); GIF has no provider, Voice has no audio asset type, and Portava has no in-composer object picker. Two of eight became five of eight — better, not done. |
@@ -1711,7 +1711,7 @@ easy to get wrong become testable without a database.
   is deliberately no coordinate field, and a caller that sends `lat`/`lng` has
   them dropped (`test/telegraphCoordination.test.ts:562`).
 - **§8.1's actions: seven carried here, seven named as owned elsewhere.**
-  `COORDINATION_ACTIONS` (`services/telegraph/coordination.ts:440#COORDINATION_ACTIONS`)
+  `COORDINATION_ACTIONS` (`services/telegraph/coordination.ts:570#COORDINATION_ACTIONS`)
   is MEET_HERE, SHARE_ROUTE, SHARE_AVAILABILITY, SHARE_LOCATION, SPLIT_RIDE,
   RETURN_TO_GROUP and DO_THIS_NOW. An action owned by a canonical surface is
   REFUSED here with where it lives (`test/telegraphCoordination.test.ts:525`),
@@ -1730,10 +1730,10 @@ easy to get wrong become testable without a database.
   `routes/index.ts:190#telegraphCoordinationRouter`.
 - **The client panel** is §2.2's "OPTIONAL COORDINATION PANEL", between the
   rail and the stream
-  (`travel-buddy-standalone/app/messages/[id].tsx:2061#CoordinationPanel`,
-  `travel-buddy-standalone/src/features/telegraph/coordination/CoordinationPanel.tsx:43#CoordinationPanel`).
+  (`travel-buddy-standalone/app/messages/[id].tsx:2090#CoordinationPanel`,
+  `travel-buddy-standalone/src/features/telegraph/coordination/CoordinationPanel.tsx:44#CoordinationPanel`).
   §9's per-state affordances are data
-  (`travel-buddy-standalone/src/features/telegraph/coordination/coordinationApi.ts:159#STATE_AFFORDANCES`)
+  (`travel-buddy-standalone/src/features/telegraph/coordination/coordinationApi.ts:210#STATE_AFFORDANCES`)
   so the Assembling row offers on-my-way / running-late / arrived /
   can't-make-it / start-without-me and the Returning row offers heading-back.
 
@@ -1750,7 +1750,7 @@ easy to get wrong become testable without a database.
 | T114 | W | **C** | **Quick state HEADING_BACK** — named, declared and rendered, instead of being approximated by a `leaving` check-in and a Safe Return session start. It is the Returning row's first affordance. |
 | T83 | W | **C** | **`ConversationDecision` — question, options, voters, resolution rule, deadline, final result** — all six, for any free-form question, not only "when shall we meet" (`services/telegraph/coordination.ts:243#projectDecision`). The three rules a naive tally gets wrong are each asserted (`test/telegraphCoordination.test.ts:388`, `:399`, `:411`). |
 | T86 | W | **C** | **`Rendezvous` — checkpoint, landmark, time window, fallback point, proximity state** — five of five (`services/telegraph/coordination.ts:166#RendezvousPayload`), postable by any thread member rather than only a circle host. |
-| T91 | W | **C** | **Action `MEET_HERE`** — a participant can now say "meet here" from the conversation: MEET_HERE is a coordination action (`services/telegraph/coordination.ts:440#COORDINATION_ACTIONS`) and RENDEZVOUS carries the point itself. It is no longer a circle-host-only operation with a card as a side effect. |
+| T91 | W | **C** | **Action `MEET_HERE`** — a participant can now say "meet here" from the conversation: MEET_HERE is a coordination action (`services/telegraph/coordination.ts:570#COORDINATION_ACTIONS`) and RENDEZVOUS carries the point itself. It is no longer a circle-host-only operation with a card as a side effect. |
 | T93 | N | **C** | **Action `SHARE_ROUTE`** — carried as a coordination action proposal into the thread. What it is NOT: a link into the map's route builder — the route travels as the proposal's own detail, not as a `route_plans` reference. |
 | T95 | N | **C** | **Action `SHARE_AVAILABILITY`** — the action exists and reaches the thread. Its CEILING is §8.5's: `open_to_plans_windows_enabled` is seeded OFF, so on every deployment of this tree a traveler has no windows to share. The action is built; the data behind it is dark. |
 | T96 | W | **C** | **Action `SHARE_LOCATION`** — it is a Telegraph action now, and the composer has a location entry (§6.1) whose message carries an explicit precision (§6.2 LOCATION, coarse by default). The separate trip-crew and Safe-Return live-share surfaces are unchanged and unrelated. |
@@ -1886,9 +1886,9 @@ the header button appears only when a completed plan came back.
 | --- | --- | --- | --- |
 | T117 | N | **C** | **`MemoryNoteShare` contract** — the type carries §10.1's eight fields and nothing else (`services/telegraph/memoryNotes.ts:46#export interface MemoryNoteShare`), validated by a schema (`services/telegraph/memoryNotes.ts:57#MemoryNoteShareSchema`) that the MEMORY_NOTE kind already routes through (T54). |
 | T118 | N `∅` | **C** | **Shareable without exposing the sender's canonical private Memory graph** — no longer an unguarded absence. `MEMORY_GRAPH_FIELDS` names every way a graph reference would travel (`services/telegraph/memoryNotes.ts:76#MEMORY_GRAPH_FIELDS`) and `assertNoMemoryGraphLeak` REFUSES rather than strips (`services/telegraph/memoryNotes.ts:90#assertNoMemoryGraphLeak`), with `parseMemoryNoteShare` checking the leak BEFORE the schema (`services/telegraph/memoryNotes.ts:105#parseMemoryNoteShare`). |
-| T119 | W | **C** | **Explicitly save a message, voice note, place share or media item as a private Memory draft** — the hole is closed. `memoryDraftRow` writes `visibility: "only_me"` and `state: "draft"` as literals into `memories` (`services/telegraph/memoryNotes.ts:144#export function memoryDraftRow`), `POST /me/memory-drafts` re-authorizes and inserts exactly one row (`routes/telegraphMemory.ts:62#/me/memory-drafts`), the owner reads it back through the route that already existed (`routes/memories.ts:1858#state", "published`), and the client action is one press per item, on the long-press sheet (`travel-buddy-standalone/app/messages/[id].tsx:250#draftSavedMessage(r.data.draft)`) — see §10.29, which deleted the unmounted component this row first cited. |
+| T119 | W | **C** | **Explicitly save a message, voice note, place share or media item as a private Memory draft** — the hole is closed. `memoryDraftRow` writes `visibility: "only_me"` and `state: "draft"` as literals into `memories` (`services/telegraph/memoryNotes.ts:144#export function memoryDraftRow`), `POST /me/memory-drafts` re-authorizes and inserts exactly one row (`routes/telegraphMemory.ts:62#/me/memory-drafts`), the owner reads it back through the route that already existed (`routes/memories.ts:1858#state", "published`), and the client action is one press per item, on the long-press sheet (`travel-buddy-standalone/app/messages/[id].tsx:252#draftSavedMessage(r.data.draft)`) — see §10.29, which deleted the unmounted component this row first cited. |
 | T120 | N `∅` | **C** | **Telegraph never automatically converts whole conversations into Memories** — now a refusal, not a vacancy. A body naming a thread or a list is rejected by name with §10.2 quoted (`routes/telegraphMemory.ts:71#for (const forbidden of`), the accepted key is singular, and the client API exports no list or thread form (`travel-buddy-standalone/src/features/telegraph/memory/memoryApi.ts:104#export async function saveMessageAsMemoryDraft`). |
-| T121 | N | **C** | **End-of-night recap surface** — `GET /threads/:id/recap` (`routes/telegraphMemory.ts:178#/threads/:threadId/recap`) over `buildRecap` (`services/telegraph/memoryNotes.ts:242#export function buildRecap`), rendered with §10.3's four actions and its headline (`travel-buddy-standalone/src/features/telegraph/memory/RecapSheet.tsx:46#export function RecapSheet`), reachable from the thread header (`travel-buddy-standalone/app/messages/[id].tsx:1914#telegraph-open-recap`). |
+| T121 | N | **C** | **End-of-night recap surface** — `GET /threads/:id/recap` (`routes/telegraphMemory.ts:178#/threads/:threadId/recap`) over `buildRecap` (`services/telegraph/memoryNotes.ts:242#export function buildRecap`), rendered with §10.3's four actions and its headline (`travel-buddy-standalone/src/features/telegraph/memory/RecapSheet.tsx:46#export function RecapSheet`), reachable from the thread header (`travel-buddy-standalone/app/messages/[id].tsx:1943#telegraph-open-recap`). |
 | T122 | N `∅` | **C** | **Derived from confirmed session context — an invitation to curate, not automatic historical truth** — the window is the plan's own and a thread with no completed plan gets none (`routes/telegraphMemory.ts:238#no_completed_plan`), people are the plan's confirmed participants (`services/telegraph/memoryNotes.ts:242#export function buildRecap`), and the endpoint states that it created nothing (`routes/telegraphMemory.ts:291#wrote: "nothing"`). |
 | T7 | W | **C** | **Pillar Remember — completed outcomes explicitly become Memories or recaps without ingesting whole private chats** — the prohibition half already held; the positive half now does too. An explicit save produces a real private `memories` draft (T119) and a completed plan produces a recap (T121), while the whole-conversation path is refused by name (T120). |
 | T108 | N | **W** | **Complete UI: closeout, media grouping, explicit Memory/recap options** — two of three. Media grouping is the MEDIA_ALBUM kind (`services/telegraph/messageKinds.ts:124#MEDIA_ALBUM`) and the explicit Memory/recap options exist (T119, T121). There is still **no closeout surface**: at COMPLETE the coordination panel simply disappears rather than becoming one. |
@@ -2190,7 +2190,7 @@ no refresh budget — which is why T26 stays N `∅` rather than being claimed h
 
 | id | was | now | why |
 | --- | --- | --- | --- |
-| T9 | W | **C** | **Conversation header: user/crew name · availability · safe presence** — all three. The server serves the two consent-gated axes (§10.1), `useConversationHeader` reads them once (`travel-buddy-standalone/src/features/telegraph/header/useConversationHeader.ts:32#export function useConversationHeader`), `headerAxes` renders only what has something to say (`travel-buddy-standalone/src/features/telegraph/header/headerAxes.ts:73#export function headerAxes`), and the screen consumes it in place of the hard-coded `'Active recently'` (`travel-buddy-standalone/app/messages/[id].tsx:1798#headerSubtitle(telegraphHeader.other`). |
+| T9 | W | **C** | **Conversation header: user/crew name · availability · safe presence** — all three. The server serves the two consent-gated axes (§10.1), `useConversationHeader` reads them once (`travel-buddy-standalone/src/features/telegraph/header/useConversationHeader.ts:32#export function useConversationHeader`), `headerAxes` renders only what has something to say (`travel-buddy-standalone/src/features/telegraph/header/headerAxes.ts:73#export function headerAxes`), and the screen consumes it in place of the hard-coded `'Active recently'` (`travel-buddy-standalone/app/messages/[id].tsx:1827#headerSubtitle(telegraphHeader.other`). |
 
 ### 10.27 The §2.2 test, and how it was shown red
 
@@ -2268,7 +2268,7 @@ never reports an absence.
 
 | id | was | now | why |
 | --- | --- | --- | --- |
-| T73 | W | **W** | **Direct: Sent/Delivered/Seen. Groups: "Seen by N"** — unchanged verdict, corrected evidence. §10.22 cited a label function; the derivation is now MOUNTED on both chat surfaces (`travel-buddy-standalone/src/features/telegraph/lifecycle/lifecycleApi.ts:159#export function deriveReceiptState`, used at `travel-buddy-standalone/app/messages/[id].tsx:1591#deriveReceiptState` and `travel-buddy-standalone/src/components/GroupChatScreen.tsx:579#deriveReceiptState`), with "Seen by N" derived for groups (`travel-buddy-standalone/src/features/telegraph/lifecycle/lifecycleApi.ts:184#export function deriveSeenBy`). Still W, and now for a cleaner reason: two of three, because **DELIVERED cannot be reported and is no longer claimed**. |
+| T73 | W | **W** | **Direct: Sent/Delivered/Seen. Groups: "Seen by N"** — unchanged verdict, corrected evidence. §10.22 cited a label function; the derivation is now MOUNTED on both chat surfaces (`travel-buddy-standalone/src/features/telegraph/lifecycle/lifecycleApi.ts:159#export function deriveReceiptState`, used at `travel-buddy-standalone/app/messages/[id].tsx:1620#deriveReceiptState` and `travel-buddy-standalone/src/components/GroupChatScreen.tsx:579#deriveReceiptState`), with "Seen by N" derived for groups (`travel-buddy-standalone/src/features/telegraph/lifecycle/lifecycleApi.ts:184#export function deriveSeenBy`). Still W, and now for a cleaner reason: two of three, because **DELIVERED cannot be reported and is no longer claimed**. |
 
 **T69 is re-derived and stays W, but its evidence changes.** The census said
 "Two of six states … no DELIVERED concept anywhere". That was true of the
@@ -2346,7 +2346,7 @@ exported functions is what found `fetchReceipts`.
 
 | id | was | now | why |
 | --- | --- | --- | --- |
-| T75 | C | **C** | **A sender may unsend only while no eligible recipient has seen the message** — verdict unchanged, and now the client half of §10.22's evidence is true. `canOfferUnsend` (`travel-buddy-standalone/src/features/telegraph/lifecycle/lifecycleApi.ts:201#export function canOfferUnsend`) gates the long-press Unsend row (`travel-buddy-standalone/app/messages/[id].tsx:267#canOfferUnsend(receipt)`); until this section it gated nothing, and the sheet offered Unsend on every own message. The row was C on the server's enforcement, which was and is real — but the sentence about the client was wrong and is corrected here rather than left standing. |
+| T75 | C | **C** | **A sender may unsend only while no eligible recipient has seen the message** — verdict unchanged, and now the client half of §10.22's evidence is true. `canOfferUnsend` (`travel-buddy-standalone/src/features/telegraph/lifecycle/lifecycleApi.ts:201#export function canOfferUnsend`) gates the long-press Unsend row (`travel-buddy-standalone/app/messages/[id].tsx:269#canOfferUnsend(receipt)`); until this section it gated nothing, and the sheet offered Unsend on every own message. The row was C on the server's enforcement, which was and is real — but the sentence about the client was wrong and is corrected here rather than left standing. |
 
 No verdict changes. Both entries in §10.29–§10.33 are corrections to this
 worktree's own work.
@@ -3868,3 +3868,517 @@ Computed by `pnpm -s check:census-integrity`, which parses 429 verdict rows of t
 are prose-counted requirements, and its X column reads 0 because §7's three
 CANNOT-VERIFY rows are stated in prose rather than in a verdict table — they are
 still three, and §7 is still where they are recorded.
+
+---
+
+## 13. Whose 176 is it — the deployment-capped / branch-fixable split, and two dead affordances the split found
+
+`head_commit: 3eaf2436f` — the base this section measured. Every verdict below
+was read against that tree; the code this section adds sits on branch
+`worktree-agent-a0248dfa10b57c1df`, which is not merged, not deployed and not
+flag enabled.
+
+Sections 10, 11 and 12 moved 176 requirements into BUILT-BUT-WRONG and left them
+as one undifferentiated pile. A reader looking at "176 wrong" cannot tell the row
+that needs one `psql` command from the row that needs a quarter, and the two lead
+to opposite decisions. This section splits all 176, builds what the split says is
+buildable, and reports what building it found.
+
+### 13.1 The test, stated before the answer
+
+Four groups, one mechanical question each. Every one of the 176 is in exactly one.
+
+| group | the question | whose it is |
+| --- | --- | --- |
+| **OWNER** | Would applying the named migration and enabling the named flag, **with no code change at all**, make this row true? | The owner's. A branch cannot move it. |
+| **BOTH** | Does it need an owner deploy **and** a branch change? | Both. Deploying alone does not close it — worth knowing before anyone schedules one. |
+| BRANCH | Can code in this tree close it with **no new storage and no flag**? | Ours. A missing consumer, a wrong rule, an absent loader, a client that does not re-derive. |
+| NEITHER | Is the remaining gap something **nobody has written** — an absent subsystem, or storage that exists in no migration? | Neither. Not a release, and not a week's work either. |
+
+**The tie-break, stated because it decides about thirty rows.** Most rows name
+several gaps. A row takes the HARDEST gate still standing once the others are
+met, in the order NEITHER > BOTH > OWNER/BRANCH. So T2 is NEITHER even though its
+reactions and unsend halves are cleanly owner-capped: deploying 2810 and 2811 and
+flipping both flags still leaves T2 wrong, because its voice half needs an audio
+MIME type that exists in no migration. The rule is deliberately conservative in
+that direction — the failure this split exists to prevent is telling an owner
+that a deploy will move a row it will not move.
+
+**What this is not.** It is not a claim that a NEITHER row matters less, and it
+is not a work estimate. It answers one question: *who can move this?*
+
+### 13.2 The answer
+
+| group | rows | share of the 176 |
+| --- | --- | --- |
+| **OWNER** — a deploy and/or a flag, no code | **24** | 13.6 % |
+| **BOTH** — a deploy AND a branch change | **12** | 6.8 % |
+| BRANCH — pure code, no storage, no flag | **51** | 29.0 % |
+| NEITHER — nobody has written the thing it needs | **89** | 50.6 % |
+
+Three readings, because each answers a different question:
+
+- **36 of the 176 cannot reach C without the owner** (OWNER + BOTH) — 20 % of the
+  pile. §1 says "a large part of the 176 W is capped there". That sentence is not
+  wrong, but it is vaguer than the evidence now permits, and a reader can take it
+  to mean most of the pile. It is one row in five.
+- **24 are the owner's ALONE.** For those the entire remaining work is applying a
+  migration and an `UPDATE feature_flags`. Nineteen of the twenty-four are gated
+  on 2810 or 2811.
+- **51 are ours today** — no migration, no flag, no new table. That is the most
+  actionable number in this document and nothing before this section states it.
+
+And the number that should be uncomfortable: **89 rows — more than half the
+BUILT-BUT-WRONG pile — are blocked on something that exists in neither tree.**
+Thirty-eight of the eighty-nine trace to five absent subsystems, by a first-match
+keyword pass over the third column of §13.4 (the ids are listed so the pass can
+be checked rather than trusted):
+
+| absent thing | rows | ids |
+| --- | --- | --- |
+| Nearby / proximity / stranger discovery | 18 | T5, T8, T22, T23, T30, T33, T219, T289, T309, T351, T368, T373, T383, T419, T420, T421, T440, T451 |
+| voice and its derivatives | 9 | T2, T40, T45, T47, T274, T304, T308, T371, T422 |
+| per-recipient delivery receipts | 5 | T69, T70, T73, T179, T234 |
+| a coordination session ENTITY | 4 | T85, T307, T374, T395 |
+| a durable telemetry sink or audit row | 2 | T347, T435 |
+| everything else | 51 | — |
+
+No deploy touches any of the five.
+
+### 13.3 The artifacts that do the capping
+
+Every OWNER and BOTH row traces to one of six artifacts, and all six are in the
+tree and in no database. The lists below are exhaustive over the 36.
+
+| artifact | flag, as seeded | rows it caps |
+| --- | --- | --- |
+| `artifacts/api-server/src/migrations/2810_telegraph_message_kernel.sql:420#telegraph_message_kernel_enabled` | FALSE | T72, T78, T139, T141, T154, T156, T161, T181, T195, T196, T210, T228, T230, T231, T232, T276, T302, T348, T369 |
+| `artifacts/api-server/src/migrations/2811_telegraph_message_side_tables.sql:92#CREATE TABLE IF NOT EXISTS public.message_edits` — gated by 2810's flag | — | T80, T142, T143, T144, T147, T158, T163, T221, T385 |
+| `artifacts/api-server/src/migrations/2812_telegraph_report_evidence.sql:160#telegraph_report_evidence_enabled` | FALSE | T283, T284 |
+| `artifacts/api-server/src/migrations/2400_telegraph_history_bound.sql` + `telegraph_history_bound_enabled` | FALSE | T211, T313, T362, T390, T444 |
+| `artifacts/api-server/src/migrations/2260_availability_windows.sql` + `open_to_plans_windows_enabled` | OFF | T28 |
+| `artifacts/api-server/src/migrations/2813_telegraph_request_origin.sql:132#telegraph_request_origin_enabled` | FALSE | none — see below |
+
+2813 caps a row that is nevertheless NEITHER, and that is the clearest argument
+for the conservative tie-break. Applying 2813 and enabling its flag gives every
+message request a stored origin — and T278 still does not go C, because five of
+its six origins are unverifiable in principle and no deploy changes that. An
+owner who read "capped by 2813" would schedule a release and get nothing.
+
+### 13.4 The split, row by row
+
+Ordered by group, then by id. The third column says what stands between the row
+and C — not what the row is; the row's own text upstream says that.
+
+| id | group | what actually stands between this row and C |
+| --- | --- | --- |
+| T28 | **OWNER** | Telegraph reads availability and re-evaluates expiry; `open_to_plans_windows_enabled` is seeded OFF by 2260. |
+| T72 | **OWNER** | 2810/2811 add the delivered/seen sequence pair (restated at T139). This row cites a baseline line number that predates them. |
+| T78 | **OWNER** | `messages.sequence` is 2810's, assigned by trigger on insert; a tombstone then keeps it without further code. |
+| T139 | **OWNER** | 2810/2811 columns; no database has them. |
+| T141 | **OWNER** | 2810's messages envelope; no database has it. |
+| T143 | **OWNER** | 2811's `message_reactions`; no database has it. |
+| T156 | **OWNER** | 2810's Message contract fields; no database has them. |
+| T161 | **OWNER** | 2810's `messages.unsent_at` and its flag; the command is written and refuses with `feature_disabled`. |
+| T163 | **OWNER** | 2811's `message_reactions`; the ADD/REMOVE commands are written. |
+| T181 | **OWNER** | `message.unsent` can only be issued on a database that has 2810. |
+| T195 | **OWNER** | The same-transaction trigger is 2810's; no database has it. |
+| T210 | **OWNER** | 2810's visible-from/until sequence columns; no database has them. |
+| T211 | **OWNER** | 2400 and `telegraph_history_bound_enabled`, seeded FALSE. |
+| T230 | **OWNER** | 2810's offline command columns; no database has them. |
+| T232 | **OWNER** | Needs `messages.sequence` (2810); the tombstone half is already right. |
+| T276 | **OWNER** | `telegraph_message_kernel_enabled` gates the UNSENT predicate. Evidence correction: the frozen-card half is closed (T46 is C). |
+| T283 | **OWNER** | 2812 and `telegraph_report_evidence_enabled`, seeded FALSE. Retention is a second owner decision. |
+| T284 | **OWNER** | The same table and the same flag. |
+| T302 | **OWNER** | The same 2400 migration and flag as T313, plus 2810's outbox. |
+| T313 | **OWNER** | 2400 plus `telegraph_history_bound_enabled`. The row already says this row cannot move from inside the tree. |
+| T348 | **OWNER** | The unsend operation is written and capped by 2810's flag; once on, the counter measures it (bounded by the same absent sink as every other SLO). |
+| T362 | **OWNER** | The group case is 2400's flag (T211); the DM case is vacuous because no add-to-DM operation exists. |
+| T390 | **OWNER** | The flag and the column; the add-to-DM clause is vacuous because no such operation exists. |
+| T444 | **OWNER** | `telegraph_history_bound_enabled`, seeded FALSE. |
+| T80 | **BOTH** | `message_edits` is 2811 (owner) AND the edit route overwrites `body` in place (branch). |
+| T142 | **BOTH** | 2811's `message_edits` (owner) AND the edit route still overwrites in place (branch). |
+| T144 | **BOTH** | 2811's `message_attachments` (owner) AND `messages.media_url` is still the live write path (branch). |
+| T147 | **BOTH** | 2811's `conversation_action_refs` (owner) AND nothing writes it (branch). |
+| T154 | **BOTH** | 2810's outbox (owner) AND nothing drains it (branch). |
+| T158 | **BOTH** | `payload_version` / `event_version` are capped; the live card path is still unversioned JSON (branch). |
+| T196 | **BOTH** | The dedupe key is capped (owner) AND the idempotent consumer does not exist (branch). |
+| T221 | **BOTH** | Registering the upload in `media_assets` is branch work; pointing a message at it needs 2811's `message_attachments`. |
+| T228 | **BOTH** | 2810's sequence (owner) AND every shipped reader still orders by `created_at` (branch). |
+| T231 | **BOTH** | The partial unique index is capped AND `routes/messaging.ts` does not send an idempotency key. |
+| T369 | **BOTH** | 2810's outbox is the durable log (owner) AND nothing drains it into one (branch). |
+| T385 | **BOTH** | Version history is T80's: 2811's table plus the route change. |
+| T3 | BRANCH | MEDIA is the one §5 family with no shareable loader. `media_assets` exists; the loader does not. |
+| T4 | BRANCH | The rail has no `memories` resolver. OWNER DECISION on private-by-default before it is written. |
+| T6 | BRANCH | Navigation handoff is a client action over place data that already resolves. |
+| T11 | BRANCH | Separating unresolved actions into a layer is client composition over kinds that exist. |
+| T12 | BRANCH | The coordination surface is a panel; making it a thread mode that quiets the stream is client work. |
+| T31 | BRANCH | `lib/protectedLocations.ts` exists, is fail-closed, and NOTHING IN TELEGRAPH CALLS IT. A missing consumer, nothing else. |
+| T35 | BRANCH | Four legacy producers still write bespoke JSON. Moving them onto the contract is pure code. |
+| T36 | BRANCH | Highlight and Stamp loaders. Both domains exist; neither has a `shareableFor` arm. |
+| T37 | BRANCH | Route, reservation-safe derivative and layover-plan loaders. |
+| T38 | BRANCH | NEIGHBORHOOD has no loader by choice; giving it one is a loader. |
+| T39 | BRANCH | Visa Buddy card and a standalone Buddy-profile share are loaders. |
+| T79 | BRANCH | `routes/messaging.ts` returns media_url/thumbnail/type/duration on a deleted message. Four lines, and a live asset leak. |
+| T104 | BRANCH | Route display and in-thread availability-conflict detection over data that already resolves. |
+| T106 | BRANCH | A next-step surface is client work over the coordination projection. |
+| T108 | BRANCH | A closeout surface at COMPLETE is client work. |
+| T123 | BRANCH | "Adoption is the remaining work, not construction" — the dark palette and hook exist; three surfaces still import the static `TG`. |
+| T124 | BRANCH | Accent usage inside components that already have the resolver. |
+| T157 | BRANCH | A versioned payload envelope inside `body` is pure code — §6.2's kinds already do exactly that with `envelopeVersion`. |
+| T166 | BRANCH | §8's DECISION/VOTE kinds now exist on the coordination route; exposing CREATE_DECISION as a §13.1 command is wiring, not a store. |
+| T169 | BRANCH | §9.1's seven quick states, the COORDINATION kind and the route all exist. Fixed in part this pass: the command endpoint no longer claims nothing implements it. |
+| T170 | BRANCH | SHARE_LOCATION exists as a coordination ACTION_PROPOSAL and outside Telegraph; a Telegraph-owned command is wiring. |
+| T201 | BRANCH | An add-participant operation is code over `message_thread_members`; nothing storage-shaped is missing. |
+| T218 | BRANCH | Every affordance exists; nothing reorders them. Promotion under safety mode is client layout. |
+| T220 | BRANCH | Eight modules outside the shared helpers query `blocks` with their own pairwise logic. Consolidation is code — in files several lanes hold. |
+| T262 | BRANCH | TRIP is now shareable (T37), so "no shared Trip card" is stale; today/next context and Trip Kernel commands are wiring over Trips' own surfaces. |
+| T264 | BRANCH | Attendance, live status and timing-change surfaces over an events domain that exists. |
+| T265 | BRANCH | "Meet here" from a card is an action. The live-intelligence half is no longer blocked: T46 is C and both cards re-resolve. |
+| T268 | BRANCH | Evidence correction: T119 and T121 are C, so "one of four, and it is broken" is stale. Safe-share derivatives are the remaining half and they are loaders. |
+| T271 | BRANCH | A contextual shared map in a thread and a route share are surfaces over data that exists. |
+| T290 | BRANCH | Evidence correction: §14.1's capabilities are C (T207), so a permissions block on the projection is composition of things that exist. |
+| T295 | BRANCH | Six client-side joins of messaging tables. Client files, several lanes. |
+| T319 | BRANCH | Making the trip-membership write and the thread-membership write one transaction is code — in Trips-owned routes. |
+| T320 | BRANCH | `BookingMilestoneMessage.tsx` contains no fetch and no effect; re-deriving is client work. |
+| T344 | BRANCH | Four dropped-error reads in `routes/messaging.ts`. A contested file, not an absent capability. |
+| T349 | BRANCH | The emitter belongs in `services/safeReturn/SafeReturnPrivacyGuard.ts` — another lane's file, not an absent capability. |
+| T359 | BRANCH | Evidence correction: "Violated at the card" is CLOSED — both named cards re-resolve per viewer through `useShareRevocation`. What remains is the four legacy producers (T35). |
+| T363 | BRANCH | The four dropped-error reads, as T344. |
+| T379 | BRANCH | A canonical `TelegraphRelationship` folding four existing resolvers. Pure code over tables that exist. |
+| T381 | BRANCH | Evidence correction: "the input to ConversationPolicy half has no referent (T207)" is stale — T207 is C. Wiring the relationship term into it is code. |
+| T388 | BRANCH | Evidence correction: search (T272) and the drawer (T66) are C. What remains is media surviving deletion — T79's four lines. |
+| T396 | BRANCH | Evidence correction: six ordered bands DO exist (`ATTENTION_BANDS`) and drive real suppression windows — but they are §19's ladder, not §30A.6's. OWNER DECISION: the spec states two different six-level ladders and they disagree at P3/P4/P5. |
+| T397 | BRANCH | A causal-event identity shared across categories is pure code in the dedupe service. |
+| T409 | BRANCH | Evidence correction: preview, current state, actions, search behaviour and revocation ALL exist now for object types (T41, T46, T272). Joining them to the message-type registry is composition. |
+| T410 | BRANCH | An action registry and a compensate hook are pure code over the existing orchestration. |
+| T411 | BRANCH | Evidence correction: the card no longer authorizes a revoked action — it degrades. What remains is deriving the ACTION ROW from current capabilities, which is client code. |
+| T413 | BRANCH | Evidence correction: the card re-resolves availability. What remains is rendering `resolved.projection` rather than the sender's snapshot — client code. |
+| T423 | BRANCH | RTL layout and locale-sensitive formatting are pure client code. No storage, no flag. |
+| T430 | BRANCH | A safe generic fallback that does not print raw JSON is client code over the existing two fallbacks. |
+| T438 | BRANCH | The messaging tree's remaining dropped-error reads, as T344. |
+| T445 | BRANCH | Evidence correction: the frozen card no longer outlives the source's authorization (T46 is C). What remains is the four legacy producers and the share projection's action set. |
+| T448 | BRANCH | Evidence correction: the card is re-resolved for availability. Rendering current operational state rather than the snapshot is client code. |
+| T2 | NEITHER | Voice: no audio MIME anywhere and no migration widens `messages.media_type`. Reactions and unsend inside this row ARE owner-capped (2810/2811); voice is not. |
+| T5 | NEITHER | No proximity layer exists in either tree. |
+| T8 | NEITHER | §2.1's available-nearby band needs Nearby, which has no referent. |
+| T22 | NEITHER | NEARBY has no referent, so the four-way separation cannot become four-way. |
+| T23 | NEITHER | `audiencePolicyId` / `proximityVisibility` / `geographyScope` need columns on Passport's table that no migration adds. |
+| T27 | NEITHER | No ETA concept exists to gate. |
+| T30 | NEITHER | The proximity half is vacuous; there are no proximity surfaces to remove anybody from. |
+| T32 | NEITHER | Who's Around as a surface needs an open-plan and event source that does not exist. |
+| T33 | NEITHER | Discoverable strangers has no implementation to separate from. |
+| T40 | NEITHER | Voice, GIF and file media kinds need MIME and storage widening that exists in no migration. |
+| T45 | NEITHER | Transcript, preview, caption and embedding layers do not exist anywhere. |
+| T47 | NEITHER | Two of the three inoperable entries (GIF provider, voice asset type) do not exist; the Portava object picker alone is BRANCH. |
+| T64 | NEITHER | No GIF provider exists to obtain a GIF from. The data-saver half is BRANCH: `hooks/useDataSaver.ts` already holds the app-level setting the renderer takes as a bare prop. |
+| T69 | NEITHER | DELIVERED needs per-recipient storage that no migration writes. |
+| T70 | NEITHER | Message-level seen needs per-message receipts that do not exist. |
+| T73 | NEITHER | DELIVERED cannot be reported at all, so two of three is the ceiling. |
+| T77 | NEITHER | A transactional lock needs a SECURITY DEFINER function that no migration in this tree writes. |
+| T84 | NEITHER | A cross-thread queryable commitment store needs a table nobody has written. |
+| T85 | NEITHER | A session ENTITY needs a table nobody has written — the row says so itself. |
+| T107 | NEITHER | Shared transport does not exist in either tree. |
+| T138 | NEITHER | Policy id and version columns are in no migration. |
+| T140 | NEITHER | 2813 caps the provenance half; the INTENT half has no column in any migration. |
+| T146 | NEITHER | A queryable decision STORE needs a table. (Evidence correction: the analogue is no longer the meetup triple — §8's DECISION/VOTE projection is.) |
+| T148 | NEITHER | `availability_signals` as Telegraph's own contract needs storage. (Evidence correction: "Telegraph never reads it" is stale — T28 shows it now does.) |
+| T149 | NEITHER | No `purpose` column on any location-share table in any migration. |
+| T151 | NEITHER | Conversation-scoped presence needs a store that does not exist. |
+| T153 | NEITHER | `message_reports` / `thread_reports` are hash-frozen orphans; no branch change makes them the writer. |
+| T179 | NEITHER | A per-message seen fact needs per-message receipts that do not exist. |
+| T200 | NEITHER | No store can express exact location, so the capability is structurally false. |
+| T202 | NEITHER | §20 forbids payment requests in Telegraph; the capability is permanently false BY DESIGN. An owner product decision, not a build. |
+| T204 | NEITHER | No broadcast primitive exists and §14.1 records the refusal deliberately. |
+| T214 | NEITHER | `purpose` and the LIVE/RECENT/LAST_KNOWN/EXPIRED vocabulary need columns nobody has written. |
+| T215 | NEITHER | Same: nothing binds a grant to a purpose because no share row carries one. |
+| T217 | NEITHER | A conversation-level safety mode does not exist in either tree. |
+| T219 | NEITHER | Nearby and Bump have no referent, so three of eight cannot be enforced. |
+| T222 | NEITHER | A streamable rendition does not exist for any surface. |
+| T224 | NEITHER | Adaptive renditions do not exist for any surface. |
+| T234 | NEITHER | Delivery has no state to converge. |
+| T239 | NEITHER | No bandwidth SIGNAL exists; the ladder is driven by a person's setting. |
+| T240 | NEITHER | `providerVersion` and `confidence` need columns nobody has written. |
+| T242 | NEITHER | There is no confidence value to threshold on (T240). |
+| T255 | NEITHER | The remaining question is what §19's "immediate/high priority" should mean in delivery — an owner product decision, not a deploy and not code. |
+| T257 | NEITHER | The server does not observe upload duration or app state, and inventing the signal would be worse than the gap. |
+| T259 | NEITHER | Server-side load shedding does not exist anywhere in the tree. |
+| T263 | NEITHER | Plan dependencies do not exist as a concept. |
+| T267 | NEITHER | Meeting tools (T248) and catch-up do not exist. |
+| T274 | NEITHER | Transcripts need a voice pipeline that does not exist. |
+| T278 | NEITHER | 2813 caps the storage half, but five of the six origins are unverifiable in principle — the row says so and no deploy changes it. |
+| T281 | NEITHER | No reputation feed exists and there is no file kind to scan. |
+| T286 | NEITHER | A client directory layout nobody intends to create; deliberately unenforced. |
+| T287 | NEITHER | A server package split this repository does not use; deliberately unenforced. |
+| T289 | NEITHER | The Now band and the nearby summary have no source. |
+| T303 | NEITHER | Delivery (T69) binds; seen, unsend and idempotency are capped or absent behind it. |
+| T304 | NEITHER | Evidence correction: the contract (T41), the drawer (T66) and object-aware search (T272) are ALL C — three of the four named blockers are gone. Rich media's voice half still binds. |
+| T307 | NEITHER | Coordination sessions need a table. |
+| T308 | NEITHER | The voice transcript binds. Evidence correction: thread tools now exist (`compass/TelegraphConversationTools.ts`). |
+| T309 | NEITHER | Captions and advanced proximity have no referent. |
+| T347 | NEITHER | A true count needs a durable telemetry sink; Telegraph has none, deployed or undeployed. |
+| T351 | NEITHER | Four of six projections do not exist, and their inputs (Nearby, receipts) do not either. |
+| T354 | NEITHER | Whether anybody actually met is not in this system and cannot be put there by a deploy. |
+| T356 | NEITHER | Purpose is not bound to a share row and no migration binds it. |
+| T368 | NEITHER | Nearby and Bump have no referent. |
+| T370 | NEITHER | Delivery (T69) binds; reactions and unsend behind it are owner-capped. |
+| T371 | NEITHER | Voice binds. Evidence correction: Memory Note now renders (T119/T121 are C). |
+| T373 | NEITHER | There is no Nearby, so "only eligible users appear" stays vacuous. |
+| T374 | NEITHER | Coordination sessions (T85) bind. |
+| T375 | NEITHER | Source-object authorization (T318) binds and is itself unresolved; membership history is separately owner-capped. |
+| T383 | NEITHER | Reachability as a concept needs Nearby. The client-recompute half alone is BRANCH (T295). |
+| T386 | NEITHER | Five of the seven operations need storage or features that exist nowhere. |
+| T389 | NEITHER | 2400 caps `visible_from_at`, but `removed_at` is in no migration at all. |
+| T391 | NEITHER | Five roles need a CHECK change that no migration makes. |
+| T395 | NEITHER | A COORDINATION notification cause needs coordination sessions. |
+| T398 | NEITHER | ALL / MENTIONS / IMPORTANT / temporary mute need per-thread policy storage. |
+| T399 | NEITHER | Six of the seven `TelegraphDevice` fields need columns nobody has written. |
+| T401 | NEITHER | Device-scoped location and push, and credential rotation, need storage that does not exist. |
+| T402 | NEITHER | Quarantine and security scanning do not exist in any form. |
+| T412 | NEITHER | The domain event is owner-capped (T195) and the projection update does not exist (T291-T294). |
+| T418 | NEITHER | Burst (T279), duplicate-message (T231) and malicious-link (T281) signals have no source. |
+| T419 | NEITHER | Per-user send limiting (T279) does not exist and the Nearby clause is vacuous. |
+| T420 | NEITHER | Four of five proximity defenses have no referent in Telegraph. |
+| T421 | NEITHER | Nearby and Invisible have no referent. |
+| T422 | NEITHER | Captions and waveform alternatives need voice. Reduced motion alone is BRANCH — the Wall already proves the platform supports it. |
+| T426 | NEITHER | The media storage tiers (T222) do not exist. |
+| T428 | NEITHER | The four absent projections cannot be rebuildable. |
+| T432 | NEITHER | Six of the ten measurements have no referent and four of those exist nowhere in the tree. |
+| T435 | NEITHER | A durable audit row needs either a migration nobody has written or a mislabelled `record_type`. |
+| T440 | NEITHER | World context needs Nearby/proximity; conversation context needs the reachability model. |
+| T443 | NEITHER | Proximity does not exist as a capability. |
+| T451 | NEITHER | The Context Kernel (T439) needs proximity, and the outcome loop needs real-world outcomes nothing can observe. |
+
+### 13.5 What the split found: two affordances that were drawn and inert
+
+Reading the 51 NOT-BUILT rows against the tree turned up something the split was
+not looking for. §11 shipped §6.2's ANNOUNCEMENT kind — a zod payload with
+`requiresAcknowledgement`, a route, a subtype, a renderer, drawer and search
+classification, and tests — and §5's row for it, T58, was moved to **C** on the
+strength of a renderer that draws an acknowledge control "only when it asks for
+one".
+
+The control called an `onAcknowledge` prop. **No mount in the application passed
+one.** The single surface that renders typed kinds, the conversation screen,
+passed `msgType`, `body` and `mine` and nothing else. Pressing "Got it" did
+nothing, on every announcement, on every deployment. The same is true of the
+ACTION kind's "Confirm" button, which called an `onPressAction` that no mount
+passed either.
+
+The existing component test asserted the acknowledge button EXISTED. It never
+asserted it did anything, and it passed for as long as the button was dead. That
+is the shape of a worthless test, and it is recorded here rather than quietly
+replaced.
+
+Two further facts, found while fixing it:
+
+1. **Nothing in the app could send an ANNOUNCEMENT.** §6.1's composer menu is the
+   spec's eight entries (`travel-buddy-standalone/src/features/telegraph/composer/composerMenu.ts:48#export const COMPOSER_ENTRIES`)
+   and ANNOUNCEMENT is not among them, correctly — §6.1 does not list it. So the
+   whole kind was reachable only by calling the API by hand. T58's C was
+   VACUOUS on both halves: no producer, and a dead consumer.
+2. **The §13.1 command endpoint was telling callers a lie.**
+   `SET_COORDINATION_STATUS` sat in `UNIMPLEMENTED_COMMANDS` with the comment
+   "§9.1 vocabulary does not exist (census T169)", so the endpoint answered 501
+   *"nothing in this repository implements it"* — while §9's coordination surface,
+   the seven `COORDINATION_QUICK_STATES`, the COORDINATION message kind and
+   `POST /threads/:id/coordination` were implementing exactly it. A refusal wrong
+   in that direction sends a caller away from the route that would have worked.
+
+### 13.6 What was built
+
+**§19's acknowledgement, as a projection over the thread's own messages.** No
+migration, no flag, no new table — it uses `public.messages`, which every
+deployment has. That is deliberate: 2810–2813 are the demonstration of what a
+side table costs, and Appendix A's rule is that a spec's schema name is an
+architectural name, not permission to create a table when a canonical structure
+exists. §8's commitments and decisions are already carried this way.
+
+| piece | where |
+| --- | --- |
+| The payload | `artifacts/api-server/src/services/telegraph/coordination.ts:451#export const AcknowledgementPayload` |
+| The eighth coordination kind | `artifacts/api-server/src/services/telegraph/coordination.ts:610#ACKNOWLEDGEMENT` |
+| The projection | `artifacts/api-server/src/services/telegraph/coordination.ts:503#export function projectAcknowledgements` |
+| The write, and its four refusals | `artifacts/api-server/src/routes/telegraphCoordination.ts:193#did not ask to be acknowledged` |
+| The announcement reader (one answer for every reason a caller must not distinguish) | `artifacts/api-server/src/routes/telegraphCoordination.ts:109#function readAnnouncementRow` |
+| The read | `artifacts/api-server/src/routes/telegraphCoordination.ts:431#/threads/:threadId/announcements` |
+| The client hook, one fetch per thread | `travel-buddy-standalone/src/features/telegraph/kinds/useAnnouncementAcknowledgement.ts:70#export function useAnnouncementAcknowledgement` |
+| The API call | `travel-buddy-standalone/src/features/telegraph/coordination/coordinationApi.ts:195#export async function acknowledgeAnnouncement` |
+| The mount that was missing | `travel-buddy-standalone/app/messages/[id].tsx:793#useAnnouncementAcknowledgement({` |
+| The producer — an announcement composer on the coordination panel | `travel-buddy-standalone/src/features/telegraph/coordination/CoordinationPanel.tsx:250#telegraph-announcement-open` |
+| The renderer refusing to draw a button it cannot honour | `travel-buddy-standalone/src/features/telegraph/kinds/TypedMessageRenderer.tsx:164#telegraph-kind-announcement-ack-unavailable` |
+| The same, for ACTION's Confirm | `travel-buddy-standalone/src/features/telegraph/kinds/TypedMessageRenderer.tsx:129#telegraph-kind-action-unconfirmable` |
+| `SET_COORDINATION_STATUS` pointed at the route that implements it | `artifacts/api-server/src/domain/telegraph/commands/telegraphCommands.ts:119#SET_COORDINATION_STATUS:` |
+
+**The rules that make it §19 rather than a second read receipt**, each asserted:
+
+- The FIRST acknowledgement by a person wins. Pressing twice does not move the
+  timestamp.
+- `outstanding` is **null**, never `[]`, when the roster could not be read or when
+  the announcement did not ask to be acknowledged. An empty list reads as
+  "everybody has acknowledged", which is the one answer this must not invent.
+- The announcer is not outstanding on their own announcement.
+- An acknowledgement naming a message in another conversation, a tombstone, a
+  message that is not an announcement, or one outside this member's §14.3 window
+  all answer 404 — the same answer, because "that message exists but you cannot
+  see it" is itself a disclosure.
+- **It cannot become Seen.** `projectAcknowledgements` takes announcements,
+  acknowledgement MESSAGES and a roster; there is no parameter a read receipt
+  could arrive through, and the module names no receipt column. The test asserts
+  the arity AND scans the module's code (comments stripped) for `last_read_at`
+  (`artifacts/api-server/src/test/telegraphCoordination.test.ts:803#is STRUCTURALLY unable to derive an acknowledgement from a read receipt`),
+  so a later "helpful" change that fills the gap from the read receipt goes red.
+
+### 13.7 The mutations, and what went red
+
+Thirteen. Each applied, run, reverted, and the file compared byte-for-byte
+against its backup with `filecmp` — every one restored identical.
+
+| # | mutation | result |
+| --- | --- | --- |
+| M1 | the route drops the `requiresAcknowledgement` refusal | 58 pass / 1 fail — "refuses an announcement that did not ask to be acknowledged" |
+| M2 | the projection keeps the LAST acknowledgement, not the first | 58 / 1 — "the FIRST acknowledgement by a person wins" |
+| M3 | **STAYED GREEN.** The `known.has(target)` filter deleted | 59 / 0 |
+| M3b | the projection falls back to SOME bucket when this announcement has none | 58 / 1 — "an acknowledgement naming a message this projection never saw is DROPPED" |
+| M4 | the announcer counts as outstanding on their own announcement | 55 / 4 |
+| M5 | the target read stops binding `thread_id` | 58 / 1 — "refuses an announcement in ANOTHER conversation" |
+| M6 | an unknown roster reports an empty `outstanding` list | 56 / 3 |
+| C1 | the conversation screen stops passing a handler — *the state before this pass* | 14 / 1 — "the conversation screen actually passes a handler" |
+| C2 | the button is drawn even when no handler exists — *the old renderer* | 14 / 1 — "ANNOUNCEMENT draws NO button when the surface cannot acknowledge" |
+| C3 | the notice always asks for confirmation, whatever the sender chose | 15 / 1 |
+| C4 | an empty notice is posted instead of refused | 15 / 1 |
+| C5 | a refused post clears the text the sender typed | 15 / 1 |
+| C6 | `SET_COORDINATION_STATUS` goes back to "nothing implements it" | 19 / 2 |
+| C7 | the ACTION confirm button is drawn again with no handler | 15 / 1 |
+
+**M3 is the one worth reading.** The projection had a `known.has(target)` filter
+that dropped an acknowledgement naming a message the projection had not seen.
+Deleting it left every test green — the filter was **decoration**, because the
+output is keyed by the announcements passed in and never by what an
+acknowledgement claims to answer, so an unknown-target bucket can never be read.
+A guard with no observable effect is not defence in depth, it is something a
+later reader will trust. It was deleted, and M3b is the mutation that does
+matter: making the lookup fall back to another announcement's bucket goes red.
+
+### 13.8 Corrections to earlier sections — rows whose stated blocker no longer exists
+
+Sections are append-only, so these are stated here rather than edited above.
+Each was read against the tree at `3eaf2436f`, not inferred from another row.
+
+| row | what its evidence says | what the tree says |
+| --- | --- | --- |
+| T359, T411, T413, T445, T448 | "Violated at the card" — shared cards are frozen JSON, no refetch, no authorization call | **Closed.** Both named cards re-resolve per viewer on mount through `travel-buddy-standalone/src/features/telegraph/sharing/useShareRevocation.ts:50#export function useShareRevocation` and render a revoked notice instead of the snapshot. T46 was moved to C in §10.5 for exactly this; the five rows that cite the old violation were written before it and were never restated. All five stay W — each has a second half open — but not for the reason they give. |
+| T304 | "No contract (T41), no drawer (T66), no search (T272)" | All three are **C**. Three of the four named blockers are gone; the row is 3-of-4, not 1-of-4. It stays W and NEITHER on rich media's voice half. |
+| T388 | "there is no search (T272) or drawer (T66) to remove from" | Both exist. What remains is media surviving deletion, which is T79's four lines. |
+| T148, T28 | "Telegraph never reads it (T28)" | Telegraph reads availability now (T28's own §10 restatement). T148 stays W for a different reason: `availability_signals` as Telegraph's own contract needs storage. |
+| T146 | "The meetup triple is the analogue; there is no general decision store" | The analogue is now §8's DECISION/VOTE projection on the coordination route. Still W: a projection over one thread is not a queryable store, exactly as T84 says. |
+| T169 | "not a conversation command and not the §9.1 vocabulary" | §9.1's seven states, the COORDINATION kind and the route all exist. Fixed in part by this pass: `SET_COORDINATION_STATUS` now names the route instead of claiming nothing implements it. Stays W — it is a legacy-path command, not a §13.1 command bus command, the same state as T166. |
+| T396 | "Four levels, not six" | Six ordered bands DO exist (`artifacts/api-server/src/domain/telegraph/policies/attentionLadder.ts:63#export const ATTENTION_BANDS`) and drive real per-band suppression windows. It stays W for a reason the row does not give, and that reason is an owner decision — see §13.11. |
+| T58 | moved to **C** in §11 as a kind "rendered with the acknowledge control only when it asks for one" | The control was inert and the kind had no producer. Both are closed by this pass, so T58's C is no longer vacuous. Had this pass not built them, T58 belonged at W. |
+| T72 | cites a baseline line for "no delivered counterpart" | 2810/2811 add the pair; T139 restates the same substrate. Classified OWNER on that basis, not on the stale citation. |
+
+### 13.9 Row moves
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| T261 | N | **C** | §19 acknowledgement, distinct from passive Seen, on every deployment — no migration and no flag. A person presses "Got it" on an announcement that asked for one; the fact is a message, and `projectAcknowledgements` answers who has and who is outstanding. The separation from Seen is asserted structurally, not described. Reachability, stated because a C over an unreachable path is worthless: the producer is the coordination panel, which renders only while the thread is coordinating or has an open decision or commitment. |
+| T392 | N | **C** | §30A.5's ANNOUNCEMENT message type. The type existed end to end before this pass except that nothing could send one and its acknowledge control was inert; both are now closed and both are asserted by a test that goes red if either regresses. |
+
+Two rows, and that is the honest yield of a pass whose main product is the split
+above. Nothing else in the 51 moved: **44 of the 51 need storage or a subsystem
+nobody has written**, and the remaining five (T291–T294's projections, T318) are
+bounded by inputs — the missing permissions block, a receipt projection, Nearby —
+that this lane does not hold.
+
+### 13.10 The restated headline
+
+> **RESTATED 2026-09-13 BY THE §13 LANE, from the merged rows and not by
+> addition: C 209 → 211, W 176 → 176, N 51 → 49, X 3. CONSTRUCTED
+> (211+176)/451 = 85.8 %, CORRECT 211/451 = 46.8 %.** Two NOT-BUILT rows moved to
+> BUILT-AND-CORRECT (T261, T392); no row moved into or out of BUILT-BUT-WRONG.
+> The 12 requirements this census counts in prose rather than in a verdict table
+> are unchanged and are still not machine-checkable, so 439 of the 451 are.
+>
+> **The 176 BUILT-BUT-WRONG, split for the first time: 24 are the OWNER'S ALONE
+> — a migration and a flag, no code. 12 need an owner deploy AND a branch change.
+> 51 are a branch's to fix today, with no new storage and no flag. 89 are blocked
+> on something that exists in neither tree.** So 36 of the 176 sit behind the
+> owner's release, 51 sit behind this repository, and 89 sit behind work nobody
+> has started. Row-by-row assignment is §13.4.
+>
+> **What this number is not.** It is still a BRANCH census, and this section's
+> own two moves are on an unmerged worktree branch. MERGED IS NOT DEPLOYED;
+> DEPLOYED IS NOT FLAG ENABLED. Migrations 2810–2813 exist in no database, every
+> flag they add is seeded FALSE, and on every live deployment today reported
+> content is still destroyed when its author deletes it. Nothing here is 100 %
+> and nothing here is production-realised.
+
+### 13.11 Owner decisions surfaced, not taken
+
+1. **The object-share route spans `memories`, a private-by-default domain.** It is
+   declared PRIVATE_SOURCE in
+   `artifacts/api-server/src/domain/telegraph/policies/shareAuthorizationPolicy.ts:283#TELEGRAPH_DYNAMIC_SHARE_PRODUCERS`
+   with a note that it does NOT call `authorizeTelegraphShare`; its real gate is
+   the per-object loader refusing a memory the viewer cannot already see. Wiring
+   the policy in would refuse EVERY memory share, because no derivative grant
+   exists anywhere in the tree. Left as it is. T4's BRANCH classification depends
+   on this: a `memories` resolver for the rail is a few hours of code and it is
+   not ours to decide it should exist.
+2. **`check:telegraph-package-boundaries` permits a Telegraph policy to import
+   Trust's `TrustRestrictionService`**, because consuming Trust's canonical decider
+   is what census-trust A17 asks for. Left exactly as it is.
+3. **NEW: the spec states two different six-level attention ladders and they
+   disagree.** §19's is P0 Safety / P1 Coordination / P2 Message / P3 Media /
+   P4 Ephemeral / P5 AI. §30A.6's is P0 SAFETY / P1 ACTIVE_COORDINATION /
+   P2 DIRECT_OR_MENTION / P3 PLAN_OR_TRIP / P4 NORMAL_GROUP / P5
+   REACTION_OR_PASSIVE. They agree at P0–P2 and disagree at P3, P4 and P5. §11.8
+   built §19's, correctly and with real suppression windows behind it — which is
+   why T396 (§30A.6's row) stays W with six bands sitting in the tree. Making one
+   ladder satisfy both would require deciding which the product means, and that
+   is not a census's call. T396 is classified BRANCH on the assumption that the
+   answer is "reconcile them"; if the answer is "they are two ladders for two
+   purposes", T396 is a documentation fix and not a build at all.
+4. **The retention schedule for `telegraph_report_evidence`** — `retention_until`
+   is NULL and nothing purges, deliberately. Restated here because it is one of
+   the two things standing between T283/T284 and a deployment, and the other one
+   is the migration.
+
+### 13.12 The ceiling on §13
+
+What is NOT reachable from this section, and why:
+
+1. **The 24 OWNER rows and the deploy half of the 12 BOTH rows.** Not reachable
+   from any branch, by construction. That is the point of naming them.
+2. **The full test suite did not run to completion for this section.** It was
+   started and cut off at forty minutes by the machine's own contention; the
+   integrator runs it once per lane. What DID run: every test file this section
+   changed, individually and green (`telegraphCoordination.test.ts` 59/59,
+   `telegraphCommandRoute.test.ts` 21/21, the client component suite 509 suites /
+   3074 tests / 0 failed / 0 skipped), plus `typecheck`, `typecheck:tests` at its
+   864/116 baseline, root eslint at 0 errors, `check:doc-citations` clean,
+   `check:telegraph-share-producers`, `check:telegraph-inventory` (regenerated),
+   `check:telegraph-slos`, `check:telegraph-certification`,
+   `check:telegraph-package-boundaries` and `check:guard-reachability`. **A green
+   partial run is not a green run and this section does not claim one.**
+3. **The acknowledgement is not live.** `useAnnouncementAcknowledgement` does not
+   subscribe: somebody else's acknowledgement appears on the next fetch, not on
+   the SSE event. That is a refresh delay, not a wrong answer, and it is stated
+   in the hook itself rather than left to be discovered.
+4. **The announcement producer is narrow.** An announcement can be composed only
+   from the coordination panel, which appears only while a thread is coordinating
+   or has an open decision or commitment. §6.1's composer menu is the spec's
+   eight entries and adding a ninth would be inventing one. A thread that is not
+   coordinating still cannot post a notice, and T392's C is a claim about the
+   TYPE, not about ubiquitous reach.
+5. **The ACTION kind's Confirm control is still not wired, and this pass did not
+   wire it.** A typed ACTION message carries no command id, so there is nothing
+   for `/telegraph/commands/:id/confirm-action` to execute. The button now says
+   "Confirmation is not available on this screen" instead of doing nothing
+   silently. That is smaller than a fix and larger than nothing, and T11 stays W.
+6. **The split itself is a judgement, not a measurement.** `check:census-integrity`
+   verifies that the document agrees with itself; nothing verifies that a row
+   marked OWNER really would go C on a deploy. The tie-break makes the errors
+   land in the safe direction — a row that could have been OWNER shows as NEITHER,
+   never the reverse — but there is no test for it, and the first person to apply
+   2810 to a real database will find out how good it is.
+
