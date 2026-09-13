@@ -216,7 +216,7 @@ export const COVERED = [
 // all 13 by re-reading the anchor at the cited line, and the 106 UNANCHORED
 // citations into the same three files moved silently and are still wrong. The
 // ceiling below did NOT fall this pass; §12.4 says why.
-export const MIN_ANCHORED_CITATIONS = 1705;
+export const MIN_ANCHORED_CITATIONS = 1931;
 
 // ---------------------------------------------------------------------------
 // THE FULL-ANCHOR PASS, and why it is a SECOND pass rather than a wider ANCHOR
@@ -253,7 +253,7 @@ export const MIN_ANCHORED_CITATIONS = 1705;
 // wrote is backticked with the path spelled out, after ten of them were first
 // written as bare `:NNN#anchor` continuations with a space in the anchor — the
 // shape §11.2 taught this file to refuse, and the refusal caught all ten.
-export const MIN_FULL_ANCHOR_CITATIONS = 1574;
+export const MIN_FULL_ANCHOR_CITATIONS = 1777;
 
 // ---------------------------------------------------------------------------
 // THE CEILING, and why a floor on the good form was not enough
