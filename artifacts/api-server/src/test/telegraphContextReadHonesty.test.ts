@@ -360,6 +360,39 @@ describe("GET /threads/:id/messages — an unreadable quote is not an absent quo
     assert.ok(!("replyToSenderName" in reply));
   });
 
+  it("a THROWN reply-context read is not a thread with no replies either", async () => {
+    // The block's outer `catch` was written for one legitimate case — migration
+    // 0057 not applied — and swallowed every other in the same silence. A
+    // rejected promise (a transport error rather than a PostgREST one) took
+    // that path and produced the same "nothing here is a reply" payload.
+    //
+    // Added because a mutation that restored the bare `catch {}` left the suite
+    // GREEN: no fixture reached the catch at all, so the branch was defended by
+    // nothing. This client throws where the fake resolves.
+    const base = makeFakeClient(seed());
+    let messagesReads = 0;
+    const throwing: any = {
+      ...base,
+      from(table: string) {
+        if (table === "messages") {
+          messagesReads += 1;
+          if (messagesReads >= 2) {
+            return new Proxy({}, { get: () => () => { throw new Error("connection reset"); } });
+          }
+        }
+        return base.from(table);
+      },
+    };
+    _setTestClient(throwing, true);
+
+    const r = await call(messagingHarness.base, "GET", `/threads/${THREAD}/messages`, ALICE);
+    assert.equal(r.status, 200);
+    for (const m of r.body.messages) {
+      assert.equal(m.replyContext, "unavailable");
+      assert.ok(!("replyToId" in m));
+    }
+  });
+
   it("an unreadable LINKAGE does not report every message as quoting nothing", async () => {
     const probe = use(seed());
     await call(messagingHarness.base, "GET", `/threads/${THREAD}/messages`, ALICE);

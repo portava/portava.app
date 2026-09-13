@@ -122,7 +122,29 @@ describe("the whole tree — no write nulls a NOT NULL column", () => {
       "user_preference_events.recommendation_id is NOT NULL — mute-category silently wrote nothing");
     assert.doesNotMatch(read("lib/preferenceEvent.ts"), /recommendation_id:.*\?\?\s*null/,
       "the shared helper's `?? null` dropped every event from a caller that omitted the id");
-    assert.doesNotMatch(read("routes/groupChat.ts"), /body:\s*null/,
+    // `body:` has to be the PROPERTY, not the tail of a longer one.
+    //
+    // MEASURED 2026-09-13: the bare `/body:\s*null/` fired on
+    // `translated_body: null` — a key in the synthesised message_translations
+    // row that census-telegraph §17.4 added to this file, so that an unreadable
+    // `message_translations` reports §18's `failed` instead of inventing a
+    // monolingual thread. That row is not a write at all; it never leaves
+    // memory. A guard that fails on a DIFFERENT column, in a payload that is
+    // not a payload, is not a stricter guard — it is a wrong one, and the
+    // cheapest way for a lane to "fix" it would have been to rename a column
+    // reference to dodge the regex.
+    //
+    // The two assertions above it are the controls, and they are what keeps the
+    // narrowing honest: the pattern must still catch the exact defect this
+    // check exists for (`.update({ deleted_at: now, body: null })`, which
+    // raised 23502 and made deleting your own group-chat message return
+    // db_error) while ignoring a column whose name merely ends in `body`.
+    const NULLED_BODY = /(?<![\w$])body:\s*null/;
+    assert.match("    .update({ deleted_at: now, body: null })", NULLED_BODY,
+      "the narrowed pattern must still catch the defect it was written for");
+    assert.doesNotMatch("        translated_body: null,", NULLED_BODY,
+      "and must not fire on a different column that happens to end in `body`");
+    assert.doesNotMatch(read("routes/groupChat.ts"), NULLED_BODY,
       "messages.body is NOT NULL — nulling it made message deletion return db_error");
   });
 });

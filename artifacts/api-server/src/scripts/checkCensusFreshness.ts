@@ -1110,6 +1110,16 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/routes/index.ts",
     "artifacts/api-server/src/test/telegraphSharedContext.test.ts",
     "artifacts/api-server/src/test/telegraphShare.test.ts",
+    // WIDENED A FOURTH TIME 2026-09-13 by the §17 lane. `publicIdentity.ts` now
+    // holds `actorHandleFrom`, the interpreter a mention notification's identity
+    // claim goes through (§17.2), and the three suites below are the proof for
+    // §17's roster-eviction, context-honesty and T349 work — including the row
+    // move. A census that cites a proof and does not watch it cannot notice the
+    // proof being deleted.
+    "artifacts/api-server/src/lib/publicIdentity.ts",
+    "artifacts/api-server/src/test/telegraphRosterReadEviction.test.ts",
+    "artifacts/api-server/src/test/telegraphContextReadHonesty.test.ts",
+    "artifacts/api-server/src/test/telegraphExpiredLocationMeasured.test.ts",
     "artifacts/api-server/src/test/telegraphKinds.test.ts",
     "artifacts/api-server/src/test/telegraphCoordination.test.ts",
     "artifacts/api-server/src/test/telegraphMemory.test.ts",

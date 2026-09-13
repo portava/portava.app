@@ -111,16 +111,23 @@ export const TELEGRAPH_SLOS: readonly TelegraphSlo[] = [
     requirement: "expired precise-location leakage = 0",
     target: { kind: "count", max: 0 },
     severity: "privacy",
-    status: "unmeasurable",
-    emitters: [],
+    status: "measured",
+    emitters: ["src/services/safeReturn/SafeReturnPrivacyGuard.ts"],
     note:
-      "The guarantee is genuinely enforced — two independent artifacts, an expiry " +
-      "gate before the handler and a coordinate strip on the way out, both proved " +
-      "by RLS-05 — and NOTHING COUNTS IT, so a regression would be silent. The " +
-      "emitter belongs in services/safeReturn/SafeReturnPrivacyGuard.ts, which " +
-      "this lane does not hold. Recorded as unmeasurable rather than credited to " +
-      "the enforcement, because 'it cannot happen' and 'we would notice if it " +
-      "did' are different claims and only the first is true today.",
+      "The guarantee is enforced by two independent artifacts — an expiry gate " +
+      "before the handler and a coordinate strip on the way out, both proved by " +
+      "RLS-05 — and it is now COUNTED at the gate, which is what it was missing. " +
+      "What is counted follows the block guard's shape, because the question is " +
+      "the same: not 'did a leak happen' (a counter cannot prove a negative) but " +
+      "'is the gate running, and running with knowledge'. An expired or stopped " +
+      "share refused is ok; a share the table could not be READ for is unknown, " +
+      "which is the rate at which this privacy gate is failing closed; and a live " +
+      "share ADMITTED with no expires_at at all is a violation. That last arm is " +
+      "reachable and is a finding: safe_return_live_shares.expires_at is NULLABLE " +
+      "and the gate's test is `if (s.expires_at && …)`, so an active share with no " +
+      "expiry is served indefinitely. §30A.20 requires the expiry; the column does " +
+      "not enforce it, and until this emitter nothing anywhere said so. Making it " +
+      "NOT NULL is a migration and no lane has written one.",
   },
   {
     id: "SLO-05",

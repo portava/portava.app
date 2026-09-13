@@ -168,6 +168,32 @@ describe("lib/chatSync trip sync — an unreadable trip_members is not an empty 
     );
   });
 
+  it("an unreadable THREAD roster refuses rather than re-inserting the whole crew", async () => {
+    // Step 3's read, not step 2's. Dropped, it fails in both directions at
+    // once: the thread looks empty, so step 4 INSERTS a second membership row
+    // for every accepted member, and step 5 removes nobody. Added because a
+    // mutation that deleted this refusal left the suite green — the guard was
+    // real and nothing proved it.
+    const inserted: Record<string, any[]> = {};
+    const updated: Record<string, any[]> = {};
+    const sc = makeFailClosedClient({
+      rows: tripRows(),
+      failOn: (c: FakeReadContext) =>
+        c.table === "message_thread_members" ? { message: "roster unavailable", code: "57P01" } : null,
+      inserted,
+      updated,
+    });
+
+    assert.equal(await syncTripV1(TRIP, sc), null);
+    assert.deepEqual(
+      inserted["message_thread_members"] ?? [],
+      [],
+      "an unreadable thread roster read as 'nobody is in this thread' and the " +
+        "upsert loop re-added every accepted member",
+    );
+    assert.deepEqual(evictions(updated), []);
+  });
+
   it("CONTROL — why the eviction is permanent: an unchanged role never clears left_at", async () => {
     // Not a proof of the fix. It pins the property that makes the defect above
     // unrecoverable, so nobody later "simplifies" the failure case away on the
@@ -227,6 +253,25 @@ describe("lib/chatSync circle sync — an unreadable circle_memberships is not a
       "every member but the owner would otherwise be evicted from the circle chat",
     );
     assert.equal(result, null);
+  });
+
+  it("an unreadable THREAD roster refuses rather than re-inserting the whole circle", async () => {
+    // The circle mirror of the trip case above, pinned separately for the same
+    // reason §15.4 pinned the circle branches separately: the two branches are
+    // the same code against a different discriminator and were fixed one at a
+    // time, so a test that covers only one leaves the other defended by nothing.
+    const inserted: Record<string, any[]> = {};
+    const updated: Record<string, any[]> = {};
+    const sc = makeFailClosedClient({
+      rows: circleRows(),
+      failOn: (c: FakeReadContext) =>
+        c.table === "message_thread_members" ? { message: "roster unavailable", code: "57P01" } : null,
+      inserted,
+      updated,
+    });
+    assert.equal(await syncCircleV1(OWNER, sc), null);
+    assert.deepEqual(inserted["message_thread_members"] ?? [], []);
+    assert.deepEqual(evictions(updated), []);
   });
 });
 
@@ -307,6 +352,28 @@ describe("services/groupChatSync — the same two reads, the same rule", () => {
       "an unreadable roster removed nobody and said nothing — a member the trip " +
         "removed keeps thread access",
     );
+    assert.deepEqual(evictions(updated), []);
+  });
+
+  it("and the circle branch's removal read is bound too", async () => {
+    let reads = 0;
+    const updated: Record<string, any[]> = {};
+    const sc = makeFailClosedClient({
+      rows: circleRows({
+        message_thread_members: [
+          { thread_id: THREAD, user_id: OWNER, role: "owner", left_at: null },
+          { thread_id: THREAD, user_id: CREW_A, role: "member", left_at: null },
+          { thread_id: THREAD, user_id: DEPARTED, role: "member", left_at: null },
+        ],
+      }),
+      failOn: (c: FakeReadContext) => {
+        if (c.table !== "message_thread_members") return null;
+        reads += 1;
+        return reads >= 2 ? { message: "roster unavailable", code: "57P01" } : null;
+      },
+      updated,
+    });
+    await assert.rejects(() => syncCircleV2(sc, OWNER), /message_thread_members/);
     assert.deepEqual(evictions(updated), []);
   });
 });

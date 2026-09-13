@@ -1,11 +1,11 @@
 {
   "//": "Shrink-only ratchets for src/scripts/checkTelegraphSlos.ts.",
-  "//unmeasuredSlos": "Telegraph §28 / §30A.17 SLOs whose status is not 'measured'. Twelve of seventeen. Seven are unmeasurable because the thing to be measured does not exist or its emitter belongs to a lane that does not hold it (unsend-after-seen, expired precise-location leakage, share-revocation latency, a client-acknowledged realtime arrival, an offline recovery operation, a location-revocation job, a runtime media-availability signal). Five are partially_measured proxies whose gap is stated in their note. Each is declared WITH a target so that building the missing half does not also require remembering to define one.",
+  "//unmeasuredSlos": "Telegraph §28 / §30A.17 SLOs whose status is not 'measured'. Eleven of seventeen, LOWERED FROM TWELVE on 2026-09-13 when SLO-04 gained its emitter (census T349, \u00a717): `services/safeReturn/SafeReturnPrivacyGuard.ts` now counts every expiry-gate decision, so expired precise-location leakage is no longer the one privacy SLO that nothing observed. Six are unmeasurable because the thing to be measured does not exist or its emitter belongs to a lane that does not hold it (unsend-after-seen, share-revocation latency, a client-acknowledged realtime arrival, an offline recovery operation, a location-revocation job, a runtime media-availability signal). Five are partially_measured proxies whose gap is stated in their note. Each is declared WITH a target so that building the missing half does not also require remembering to define one.",
   "//absentProjections": "Of §24's six projections, four do not exist: SharedContext, NearbyAvailable, Coordination and the ConversationContentIndex. The two that exist are partial.",
   "//clientBypassSites": "Direct client reads of a raw messaging table — §24's closing rule, 'mobile clients consume server-built projections instead of independently joining raw tables'. Six sites: four reads of message_thread_members and one of message_threads in app/messages/[id].tsx, and one of message_thread_members in src/components/GroupChatScreen.tsx. The census recorded two; this is the enumerated count. The number may only fall.",
   "//recorded": "2026-09-12, by src/scripts/checkTelegraphSlos.ts on its first run.",
   "counts": {
-    "unmeasuredSlos": 12,
+    "unmeasuredSlos": 11,
     "absentProjections": 4,
     "clientBypassSites": 6
   }

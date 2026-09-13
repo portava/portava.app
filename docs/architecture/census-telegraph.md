@@ -4425,7 +4425,7 @@ to the content.
 
 | piece | where |
 | --- | --- |
-| The four lines | `artifacts/api-server/src/routes/messaging.ts:2259#mediaUrl: isDeleted ? null : ((m as any).media_url ?? null),` |
+| The four lines | `artifacts/api-server/src/routes/messaging.ts:2303#mediaUrl: isDeleted ? null : ((m as any).media_url ?? null),` |
 | The assertion that does not depend on knowing the field names | `artifacts/api-server/src/test/telegraphDeletedMediaRedaction.test.ts:201#it("the deleted asset appears NOWHERE in the serialized response", async () => {` |
 
 `mediaType` goes with the other three deliberately. "This was a video" is a fact
@@ -4885,7 +4885,7 @@ four move to NEITHER (50 → 46). NEITHER becomes 93. The four groups still sum 
 | T37 | W | **C** | §5's Travel family: Trip, Trip stage, plan, event, route, reservation-safe derivative, layover plan. Was four of seven. `ROUTE` had a vocabulary entry and no loader; RESERVATION and LAYOVER_PLAN had no name at all, though `trip_reservations` and `layover_sessions` are both in the production inventory — the gap was in the vocabulary, not the database. The reservation loader is the one that carries a rule beyond "does this viewer see it": SAFE means the projection carries no confirmation reference, no pasted email and no extraction, asserted by scanning the whole serialized reference rather than named fields. Seven of seven. |
 | T38 | W | **C** | §5's Places family: place, Hidden Gem, map pin, neighborhood, meetup point. Was four of five; NEIGHBORHOOD "deliberately has no loader ... rather than pretending". What §11 refused to pretend about was an authorization model, and `neighborhood_areas` has none to get wrong: it is derived public reference data with no owner and no visibility column. It now resolves, carrying its `confidence` as status so a low-confidence grid cell and a high-confidence OSM polygon are not the same claim. Five of five. **The citation this row carries, `test/telegraphShare.test.ts:295`, still resolves and its `it(...)` is unchanged — but the assertion inside it was FALSIFIED by this pass and now names `VISA_CARD`, which is the family that is in the vocabulary with no loader today.** |
 | T3 | W | **C** | Pillar **Share** — "any eligible Portava object moves through a safe permission-aware share projection". The projection half was already right; the row stayed W because "Media (§5's fifth family) is not a shareable type at all". It is now: `MEDIA` is in the vocabulary and resolves through `media_assets` with the same contract as the other twenty-one types. All five families have loaders and all twenty-two types answer preview, current state, actions, deep link, search behaviour and revocation. **Stated so nobody over-reads this C: `media_assets.media_type` admits `image` and `video` only, so §6.2's voice, GIF and file kinds remain unshareable — they have no row shape in any migration, which is T40 and is NEITHER. "Any eligible object" is satisfied because an object that cannot be stored is not an eligible object; it is not satisfied in the sense that Telegraph can carry a voice note.** |
-| T290 | W | **C** | §24 `ConversationProjection` — "renderable ordered thread WITH CURRENT PERMISSIONS". §12's restatement left exactly one gap: "it still carries no permissions block, which is the half §24 names explicitly". `GET /threads/:threadId/messages` now answers one (`artifacts/api-server/src/routes/messaging.ts:2314#permissions:`), carrying §14.1's ten capabilities, their per-capability reasons, which of the eight inputs were read, and `degraded` when one of them could not be. The block is ASKED of `resolveConversationCapabilities` (`artifacts/api-server/src/routes/messaging.ts:2306#const resolvedCapabilities = await resolveConversationCapabilities(sc, {`) rather than re-derived, and the test compares it field-by-field against that resolver run directly on the same fixture (`artifacts/api-server/src/test/telegraphProjectionPermissions.test.ts:213#it("the projection's block EQUALS resolveConversationCapabilities on the same fixture", async () => {`) — a second implementation of §14.1 would pass a "has ten keys" test and fail that one, which is the failure mode being guarded. It gates nothing: `CAPABILITY_ENFORCEMENT_SITES` still names where each refusal happens. `PRJ-02`'s note is corrected in the same pass (`artifacts/api-server/src/domain/telegraph/projections/projectionRegistry.ts:58#id: "PRJ-02",`), which had said the block "does not exist" — stale since T207 went C. **Why this is C and not W on history bounding: T290's requirement is the projection; the §14.3 bound is T211's, is flag-gated, and §12's own restatement recorded it as gained. PRJ-02 stays `partial` for that reason and this row does not.** |
+| T290 | W | **C** | §24 `ConversationProjection` — "renderable ordered thread WITH CURRENT PERMISSIONS". §12's restatement left exactly one gap: "it still carries no permissions block, which is the half §24 names explicitly". `GET /threads/:threadId/messages` now answers one (`artifacts/api-server/src/routes/messaging.ts:2358#permissions:`), carrying §14.1's ten capabilities, their per-capability reasons, which of the eight inputs were read, and `degraded` when one of them could not be. The block is ASKED of `resolveConversationCapabilities` (`artifacts/api-server/src/routes/messaging.ts:2350#const resolvedCapabilities = await resolveConversationCapabilities(sc, {`) rather than re-derived, and the test compares it field-by-field against that resolver run directly on the same fixture (`artifacts/api-server/src/test/telegraphProjectionPermissions.test.ts:213#it("the projection's block EQUALS resolveConversationCapabilities on the same fixture", async () => {`) — a second implementation of §14.1 would pass a "has ten keys" test and fail that one, which is the failure mode being guarded. It gates nothing: `CAPABILITY_ENFORCEMENT_SITES` still names where each refusal happens. `PRJ-02`'s note is corrected in the same pass (`artifacts/api-server/src/domain/telegraph/projections/projectionRegistry.ts:58#id: "PRJ-02",`), which had said the block "does not exist" — stale since T207 went C. **Why this is C and not W on history bounding: T290's requirement is the projection; the §14.3 bound is T211's, is flag-gated, and §12's own restatement recorded it as gained. PRJ-02 stays `partial` for that reason and this row does not.** |
 
 ### 15.7 The restated headline
 
@@ -4937,7 +4937,7 @@ Named so the next lane does not re-derive them.
      `senderLanguage` defaults to `'en'` on a dropped error at four call sites,
      and the value flows into `translateMessageForThread`, which writes
      `messages.language_detection_source = 'sender_preference'`
-     (`artifacts/api-server/src/services/messageTranslation.ts:268#detectionSource = 'sender_preference';`
+     (`artifacts/api-server/src/services/messageTranslation.ts:300#detectionSource = 'sender_preference';`
      — THE ONE CITATION IN THIS DOCUMENT WHOSE ANCHOR TEXT HAD TO CHANGE, and
      §16 says why: the line this paragraph originally named,
      `detectionSource = senderPreferredLanguage ? 'sender_preference' : 'default';`,
@@ -4951,13 +4951,17 @@ Named so the next lane does not re-derive them.
      `routes/groupChat.ts:328` is a fifth instance of the same line.
    - **An unreadable `profiles` becomes a confident 404.** "Circle owner not
      found" is produced by a read whose error was discarded
-     (`artifacts/api-server/src/routes/messaging.ts:3309#const { data: ownerProfile, error: ownerProfileErr } = await sc`
+     (`artifacts/api-server/src/routes/messaging.ts:3391#const { data: ownerProfile, error: ownerProfileErr } = await sc`
      — the SECOND citation in this document whose anchor text had to change,
      for the same reason as the one above: the read named here was the defect,
      and the line now binds the error it used to drop. §16.6.)
    - **A mention notification names "@someone"** when the tagger's profile read
      fails — indistinguishable from a tagger who has no handle
-     (`artifacts/api-server/src/routes/messaging.ts:2714#const { data: taggerProfile } = await sc`).
+     (`artifacts/api-server/src/routes/messaging.ts:2781#const { data: taggerProfile, error: taggerProfileErr } = await sc`
+     — the THIRD citation in this document whose anchor text had to change, for
+     the same reason as the two above: the read named here WAS the defect, and
+     the line now binds the error it used to drop and asks `actorHandleFrom`
+     what the read established. §17.2.)
    - **The quoted reply context still degrades silently ON THE WIRE.** Both
      reads now log (§14), but a reply whose quote could not be read and a
      message that quoted nothing are the same JSON.
@@ -5151,11 +5155,15 @@ closed two of them: the five language call sites plus the pipeline that consumed
 them, and the confident 404. `GET /circles/:id/chat` now refuses retryably when
 the owner's profile CANNOT BE READ and still returns 404 when the owner is
 genuinely absent
-(`artifacts/api-server/src/routes/messaging.ts:3309#const { data: ownerProfile, error: ownerProfileErr } = await sc`).
+(`artifacts/api-server/src/routes/messaging.ts:3391#const { data: ownerProfile, error: ownerProfileErr } = await sc`).
 Consequences that remain open in the same file:
 
 - a mention notification that names `@someone`
-  (`artifacts/api-server/src/routes/messaging.ts:2714#const { data: taggerProfile } = await sc`),
+  (`artifacts/api-server/src/routes/messaging.ts:2781#const { data: taggerProfile, error: taggerProfileErr } = await sc`
+  — anchor repointed by §17 for the reason §15.8 gives about its own two: the
+  read named here was the defect and no longer exists in that form. CLOSED by
+  §17.2; the sentence above is left as written because it was true of the tree
+  on the day it was written),
 - quoted-reply context degrading silently ON THE WIRE,
 - and the remainder of the 31 that §15.2 did not individually read.
 
@@ -5181,7 +5189,9 @@ open and is named here rather than discovered later: step 3 of
 `translateMessageForThread` reads the RECIPIENTS' profiles with the same dropped
 error, so an unreadable `profiles` silently gives every recipient
 `preferredLanguage: 'en'`
-(`artifacts/api-server/src/services/messageTranslation.ts:294#const { data: profiles } = await sc`).
+(`artifacts/api-server/src/services/messageTranslation.ts:338#const { data: profiles, error: profilesErr } = await sc`
+— the FOURTH repointed anchor, same reason; CLOSED by §17.3, which also shows
+the sentence below is too kind to the defect).
 That is a degraded translation rather than a false stored claim — it writes
 `status: 'skipped'`, which is true of what happened — so it is a smaller defect
 than the one fixed here, but it is the same shape and it is not fixed.
@@ -5244,3 +5254,442 @@ are red on another lane's in-flight work — `routes/airport.ts`,
 failing citation is into census-layover and census-sensing; none is into a file
 this section edited, and the UNANCHORED ratchet is back at exactly its ceiling
 of 6443, which was verified after every change.
+
+## 17. §15.2's remaining bullets, executed — an unreadable roster that evicted a whole trip chat, and the one privacy SLO nothing was counting
+
+`head_commit: 6d4fd1a06` — the base this section measured and built on. Every
+verdict below was read against that tree; the code this section adds sits on
+branch `worktree-agent-a05ec1e308f716798`, which is not merged, not deployed and
+not flag enabled.
+
+§16 closed two of §15.2's five named consequences and deliberately moved no
+verdict. This section takes the three that were left — the mention notification,
+the quoted reply context on the wire, and "the remainder of the 31 that §15.2 did
+not individually read" — plus the consequence §16.4 found inside its own file and
+named rather than fixed. Reading the remainder found something none of the four
+prior lanes had: **the worst instance of this defect in the tree is not a read
+that returns an empty answer. It is a read that returns an empty answer and then
+WRITES.**
+
+### 17.1 The finding: an unreadable `trip_members` evicted the entire crew, permanently
+
+`lib/chatSync.ts` reconciles a group thread's membership against the domain
+roster that owns it. Step 2 read that roster with the error dropped; step 5 sets
+`left_at = now()` for every thread member not in the accepted set. supabase-js
+RESOLVES on a database error, so an unreadable `trip_members` arrived as
+`data: null`, `?? []` made it "this trip has NO accepted members", and step 5
+removed **every member of the trip chat, the owner included**.
+
+This is a different shape from everything §14, §15 and §16 fixed. Those were
+reads whose failure produced a plausible answer. This is a read whose failure
+produced a plausible answer **and then drove a destructive write** against rows
+the failed read said nothing about.
+
+**And the trip case does not heal.** Step 4 clears `left_at` only when the
+member's trip ROLE CHANGED, deliberately and under a comment that says so:
+*"A member whose role is unchanged but who has left_at set chose to leave the
+chat themselves — do NOT force-rejoin them on every sync."* So after a transient
+blip every subsequent HEALTHY sync reads an evicted crew and leaves it evicted,
+and each member is answered 403 "Not a member of this thread" on a conversation
+they never left. The circle branch of the same file DOES restore, so it recovers
+on the next sync; the trip branch does not. Neither should have been reachable.
+
+**It is a live path, not a legacy twin.** `lib/chatSync.ts` is reached from the
+trip-chat and circle-chat handlers
+(`artifacts/api-server/src/routes/groupChat.ts:208#const threadId = await syncTripChatMembers(tripId, sc);`),
+from trip creation and every trip-membership change
+(`artifacts/api-server/src/routes/trips.ts:1372#syncTripChatMembers(tripId, client).catch((e) => req.log?.error({ err: e }, "syncTripChatMembers failed"));`),
+and from circle invite-accepted and circle-member-removed
+(`artifacts/api-server/src/routes/friends.ts:889#syncCircleChatMembers((inv as any).owner_id, sc).catch((e) => req.log.error({ err: e }, "syncCircleChatMembers failed"));`).
+
+`services/groupChatSync.ts` — the second implementation, reached from
+`routes/messaging.ts` — had the same dropped read and escaped the eviction BY
+ACCIDENT: `if (acceptedIds.size === 0) return threadId;` sits between the read
+and the removal loop. That is not a guard. It cannot tell "this trip has no
+accepted members" from "the table is unreadable", and it answers both by handing
+the caller a thread id, which asserts a reconciled roster. Its circle branch has
+no such accident — the owner is always in the set, so the set is never empty —
+and an unreadable `circle_memberships` there evicted every other member.
+
+| piece | where |
+| --- | --- |
+| The trip roster read, now a refusal | `artifacts/api-server/src/lib/chatSync.ts:110#if (acceptedErr) {` |
+| The circle roster read, now a refusal | `artifacts/api-server/src/lib/chatSync.ts:271#if (memberErr) {` |
+| The second implementation's roster read, now a throw | `artifacts/api-server/src/services/groupChatSync.ts:129#if (tripMembersErr) {` |
+| Its removal read, which failed in the OTHER direction — unreadable meant remove nobody, so a member the trip removed kept thread access | `artifacts/api-server/src/services/groupChatSync.ts:198#if (activeMembersErr) {` |
+| The whole thing, both files, both discriminators, with a CONTROL beside every failure case | `artifacts/api-server/src/test/telegraphRosterReadEviction.test.ts:127#it("CONTROL: a healthy sync evicts the member the trip really removed, and nobody else", async () => {` |
+
+The CONTROLs are not decoration: a "fix" that simply stopped removing anybody
+would pass every assertion about eviction and silently break the feature the
+file exists for.
+
+### 17.2 The mention notification — why §16.4 was right to refuse it, and what made it answerable
+
+§16.4 left this one alone with its reason written down: the read used
+`.single()`, which errors when NO ROW MATCHES as well as when the table is
+unreadable, so binding the error would have made a tagger with no profile row
+indistinguishable from a `profiles` outage — the same conflation moved one step
+along. That is exactly right, and it is why the fix is not a bound error.
+
+`.maybeSingle()` separates the two, and one interpreter decides what the read
+established
+(`artifacts/api-server/src/lib/publicIdentity.ts:83#export function actorHandleFrom(`),
+the same shape `senderLanguageFrom` took in §16 and for the same reason. Its
+three worlds are asserted one at a time
+(`artifacts/api-server/src/test/telegraphContextReadHonesty.test.ts:210#describe("actorHandleFrom — 'we could not read who' is not 'they have no handle'", () => {`).
+
+§16.4 also said the remaining half was "a product question this lane has no
+evidence to answer". Executing it found the question smaller than that, and the
+evidence in the tree. The template renders
+`@${taggerHandle ?? 'someone'} mentioned you`, so passing nothing would have
+printed `@someone` anyway — the identical claim, made by the template instead of
+the route. `'someone'` is TRUE of a tagger who has no handle and FALSE of a
+`profiles` outage, where the tagger may well have one and nobody read it. So the
+unreadable arm supplies its own title, which **names nobody** and asserts only
+what is in evidence: a mention happened, in a message. That is the answer §14
+gave for `tripCity` and §16 gave for language provenance — say the true thing,
+and say nothing else.
+
+What is NOT taken, and is left open on purpose: whether the product wants that
+case to look different to the user, or to carry a retry.
+`metadata: { taggerHandleUnreadable: true }` is persisted either way — `metadata`
+is a stored column, `params` only feeds the template and is not stored — so that
+decision can later be made from data rather than from memory.
+
+### 17.3 The recipients' language preferences — §16.4's own footnote, and why it was too kind to the defect
+
+§16.4 named this read and characterised it as *"a degraded translation rather
+than a false stored claim — it writes `status: 'skipped'`, which is true of what
+happened"*. Executing it shows the characterisation is wrong, and the reason is
+the column beside the status.
+
+With the error dropped, an unreadable `profiles` gave every recipient the map's
+default, `preferredLanguage: 'en'`. When the source language is also `'en'` —
+the common case — the same-language arm writes `status: 'skipped'` with
+`target_language: 'en'`, and **that row is a durable, queryable assertion that
+this recipient reads English and needed no translation.** Not one byte about that
+recipient was read. It is the same false claim §16 removed from the sender's end,
+written at the recipient's end by the same mechanism.
+
+The honest row is `status: 'failed'` with
+`error_message: 'recipient_preferences_unreadable'` and
+`target_language: 'und'` — ISO 639-2's "undetermined", which this tree already
+writes for exactly this situation
+(`artifacts/api-server/src/routes/messaging.ts:2110#target_language: 'und',`).
+**What a user sees does not change**: `buildDisplayFields` renders `failed` as
+the untouched original with no banner, which is what `skipped` rendered too. What
+changes is the claim.
+
+Step 1 of the same function is the same shape with a worse ending, and §16.4 did
+not name it: an unreadable `message_thread_members` yielded zero recipients and
+the pipeline returned having written nothing and said nothing — byte-identical to
+a thread the sender is alone in. There is no honest row to write instead
+(without the roster there are no recipient ids to key one by), so what the
+failure is owed is a loud, and the pipeline's own "never throws" contract makes
+that a log at error level
+(`artifacts/api-server/src/services/messageTranslation.ts:266#if (membersErr) {`).
+
+### 17.4 The quoted reply context, and the group chat's translation read
+
+§14 made both reply reads LOG and §14.6 recorded the limit of that in the same
+breath: *"a reply whose quote could not be read is still indistinguishable on the
+wire from a message that quoted nothing."* The log is for us; the payload is what
+the client acts on.
+
+Two degradations, kept apart because they degrade different claims. An unreadable
+`reply_to_id` means nothing is known about WHICH messages are replies, so
+`replyToId` may not be reported at all. Unreadable quoted bodies mean the linkage
+is known and the quote is not. In both cases the affected fields are now OMITTED
+and replaced by `replyContext: 'unavailable'`
+(`artifacts/api-server/src/routes/messaging.ts:2283#...(replyLinkageUnreadable`).
+Omission rather than `null` is §14's own line for `tripCity`, and here it carries
+real weight: a `null` quote is a TRUE state — the quoted message is deleted, or
+sits outside this member's §14.3 history window — and must stay distinguishable
+from a read that failed. The marker is absent in the normal case, the posture §14
+took with `previewTranslationStatus`, because a marker that is always present
+says nothing.
+
+The block's outer `catch` was written for one legitimate case (migration 0057 not
+applied) and swallowed every other in the same silence; it now logs and sets the
+same flag.
+
+Separately: §14 fixed the per-viewer translation read in `routes/messaging.ts` so
+an unreadable `message_translations` reports §18's own word, `failed`, instead of
+inventing a monolingual thread. **The same query in the other reader was not
+fixed with it** — `routes/groupChat.ts`, reached by both group-chat endpoints. It
+is now (`artifacts/api-server/src/routes/groupChat.ts:97#if (tErr) {`).
+
+### 17.5 T349 — the one privacy SLO that nothing was counting
+
+§13.4 classified T349 as BRANCH with its blocker named exactly: *"The emitter
+belongs in `services/safeReturn/SafeReturnPrivacyGuard.ts` — another lane's file,
+not an absent capability."* §12 recorded the same as a ceiling it could not pass.
+This lane holds that file.
+
+What is counted follows `lib/blockGuard.ts`, which SLO-05 and SLO-14 already
+share, because the question is the same: not "did a leak happen" — a counter
+cannot prove a negative and is not asked to — but "is the gate running, and is it
+running with knowledge".
+
+| outcome | what it records |
+| --- | --- |
+| `ok` | the expiry gate RAN and concluded: an expired or stopped share refused, or a live share admitted inside a window that bounds it |
+| `unknown` | the share row could not be READ, so expiry was never evaluated — the rate at which this privacy gate is failing closed |
+| `violation` | the gate ADMITTED a live-location share it cannot bound in time |
+
+**The violation arm is reachable, and that is a second finding.**
+`safe_return_live_shares.expires_at` is NULLABLE
+(`artifacts/api-server/baseline/20260819_baseline_structure.sql:9747#expires_at timestamp with time zone,`)
+and the gate's test is `if (s.expires_at && …)`, so an active share with no
+`expires_at` is admitted every time, forever. §30A.20 and T356 require a location
+share to carry an expiry; this table does not enforce one, and until this emitter
+nothing anywhere said so. The counter does not change that behaviour — silently
+revoking live shares production may be relying on is not a measurement lane's
+call, and making the column `NOT NULL` is a migration no lane has written. It
+makes the state visible, which is what T349 asks for.
+
+A non-recipient refusal is deliberately NOT counted: recipient identity is
+authorization, not expiry, and folding it in would inflate a privacy metric with
+events that say nothing about location lifetime — the count would then look
+healthiest on the traffic that never reached the expiry test at all.
+
+| piece | where |
+| --- | --- |
+| The emitter's unreadable arm | `artifacts/api-server/src/services/safeReturn/SafeReturnPrivacyGuard.ts:153#recordTelegraphMetric("expired_precise_location_leakage", "unknown");` |
+| The unbounded-share violation | `artifacts/api-server/src/services/safeReturn/SafeReturnPrivacyGuard.ts:207#recordTelegraphMetric("expired_precise_location_leakage", "violation");` |
+| SLO-04, now `measured`, naming its emitter | `artifacts/api-server/src/domain/telegraph/services/telegraphObservability.ts:114#status: "measured",` |
+| The suite, driven through the real middleware | `artifacts/api-server/src/test/telegraphExpiredLocationMeasured.test.ts:124#describe("T349 — the expiry gate is counted, not merely enforced", () => {` |
+| The shrink-only ratchet, lowered in the same commit | `artifacts/api-server/src/scripts/TELEGRAPH_OBSERVABILITY_BASELINE.json:8#unmeasuredSlos` |
+
+`check:telegraph-slos` refused the improvement until the baseline moved —
+*"unmeasured SLOs: 11, baseline 12. Something IMPROVED — lower the baseline in
+the same commit so the gain cannot be given back silently"* — which is the guard
+working, and is recorded because a reader should know the number was not chosen.
+
+### 17.6 The mutations, and the four that stayed green
+
+Twenty-six. Each applied, run, reverted, and every touched file compared
+byte-for-byte with `cmp` against a pre-mutation copy — every one restored
+identical. M1-M18 run the two suites of §17.1-§17.4 together; N1-N7 run the
+T349 suite. **The M-series numbers are all against the FINAL 29-case suite**:
+M1-M14 were first run against the 25 cases that existed when they were written
+and were re-run unchanged after M15-M18 forced four more cases to be added, so
+the column is one consistent denominator rather than a mixture. Nothing was
+re-run to improve a number; the re-run was to make them comparable.
+
+| # | mutation | result |
+| --- | --- | --- |
+| M1 | the trip roster refusal in `lib/chatSync.ts` deleted | 28 / 1 — three `left_at` writes, the whole crew |
+| M2 | the circle roster refusal in `lib/chatSync.ts` deleted | 28 / 1 |
+| M3 | `groupChatSync`'s trip roster refusal deleted (back to the accidental `size === 0` shield) | 28 / 1 |
+| M4 | `groupChatSync`'s active-member refusal deleted | 28 / 1 |
+| M5 | `groupChatSync`'s circle roster refusal deleted | 28 / 1 |
+| M6 | the recipient-preference `failed` row folded back into the normal path | 28 / 1 |
+| M7 | `und` replaced by the server default `'en'` | 28 / 1 |
+| M8 | the pipeline's thread-roster refusal deleted | 28 / 1 |
+| M9 | the reply-context payload reverted to the always-null shape | 26 / 3 |
+| M10 | only the QUOTE arm collapsed | 28 / 1 |
+| M11 | only the LINKAGE arm collapsed | 27 / 2 |
+| M12 | the mention fix reverted to `.single()` + `resolveHandle` | 28 / 1 |
+| M13 | `actorHandleFrom` stops distinguishing a failed read | 27 / 2 |
+| M14 | the group-chat translation degradation disabled | 28 / 1 |
+| M15 | `lib/chatSync.ts`'s trip THREAD-roster refusal deleted | **STAYED GREEN** on the 25-case suite, 25 / 0 — then 28 / 1 |
+| M16 | the reply-context outer `catch` reverted to bare `catch {}` | **STAYED GREEN** on the 25-case suite, 25 / 0 — then 28 / 1 |
+| M17 | `lib/chatSync.ts`'s circle THREAD-roster refusal deleted | **STAYED GREEN** on the 27-case suite, 27 / 0 — then 28 / 1 |
+| M18 | `groupChatSync`'s circle active-member refusal deleted | **STAYED GREEN** on the 27-case suite, 27 / 0 — then 28 / 1 |
+| M19 | the original `body: null` put BACK into the group-chat delete handler, to prove the narrowed NOT NULL guard still catches it | 9 / 2 |
+| N1 | the whole T349 emitter removed | 3 / 5 |
+| N2 | the violation arm folded into `ok` | 7 / 1 |
+| N3 | the unreadable arm folded into `ok` | 7 / 1 |
+| N4 | the expired-refusal count deleted | 7 / 1 |
+| N5 | SLO-04 reverted to `unmeasurable` while the emitter stays | 7 / 1 |
+| N6 | the stopped-share count deleted | 7 / 1 |
+| N7 | the metric key typo'd (`…leakages`) | 7 / 1 |
+
+**Four stayed green, and that is the part worth reading.** M15, M16, M17 and M18
+mutate guards this section WROTE, all four of them real — an unreadable thread
+roster makes the upsert loop re-insert every accepted member; a THROWN
+reply-context read reports a thread with no replies at all — and all four were
+defended by nothing, because no fixture reached them. This is §14's B2 again and
+it is now three sections in a row: *nothing counts as defence until a mutation of
+it has been watched to fail.* Four cases were added — a client that THROWS rather
+than resolving, for the `catch`, and the thread-roster read failed on its own in
+both files and both discriminators — and all four mutations were re-run and went
+red, which is the second number in each row. Both numbers are kept rather than
+the green being quietly overwritten, because a mutation table that shows only
+successes is the thing this table exists to distrust.
+
+M9 and M11 are worth one line each, because their numbers rose when the suite
+grew and that is a property of the fix rather than of the count. Reverting the
+reply payload to the always-null shape (M9) fails THREE cases — the unreadable
+quote, the unreadable linkage and the THROWN read — because all three converge on
+the same wire contract; collapsing only the linkage arm (M11) fails two, and only
+the quote arm (M10) fails one. Three mutations of one construct, three different
+red sets: that is what tells a reader which line carries which rule.
+
+**M19, added after the full suite found what the two suites above could not.**
+`test/notNullWrites.test.ts` asserts that `routes/groupChat.ts` never nulls
+`messages.body` — a real fix, a real NOT NULL column, and a check whose pattern
+was `/body:\s*null/`. §17.4's synthesised translation row carries a
+`translated_body: null` key, which that pattern matched, and the guard failed on
+a column it is not about in a payload that never reaches a database. The cheap
+way out would have been to rename a reference to dodge the regex. Instead the
+pattern is narrowed to the PROPERTY (`/(?<![\w$])body:\s*null/`) and pinned by
+two controls in the same test — it must still match
+`.update({ deleted_at: now, body: null })` and must not match
+`translated_body: null` — and then M19 put the original defect BACK into the
+delete handler and watched two assertions go red (9 / 2), before restoring
+`routes/groupChat.ts` byte-identical. A narrowed guard that has not been shown
+to still catch its defect is a deleted guard with extra steps.
+
+N7 deserves a note for the opposite reason. A typo'd metric key is IGNORED at
+runtime by design — the recorder drops unknown keys rather than accumulating them
+under a catch-all — so the only things that can catch it are a static check and a
+test that reads the counter back. Both do.
+
+### 17.7 Row moves
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| T349 | W | **C** | §28 "expired precise-location leakage = 0". The row's own evidence names one gap and one only: *"The guarantee is genuinely enforced (T216, T315) — but nothing measures it, so a regression would be silent."* Both halves now hold. Enforcement is unchanged and still proved by RLS-05 — two independent artifacts, an expiry gate before the handler and a coordinate strip on the way out — and the gate is now instrumented at four points, with what is counted chosen so the number means something: a refusal is `ok` because the target is zero leakage and a refusal IS zero; an unreadable share table is `unknown` because the denial was made without evaluating expiry; and a share admitted with NO expiry is a `violation`, because that is an unbounded live location — a state this schema permits and nothing had ever reported. Shown red before green (N1: 3 pass / 5 fail) and every arm mutated separately. **Stated so nobody over-reads this C: the counter is in-process and resets on restart, and there is no durable sink and no alerting — `check:telegraph-slos` says so in its own output. T349 asks that the guarantee be measured, not that a dashboard exist; T432 and T354 are the rows that ask for the sink and they remain N.** |
+
+**T344 and T363 do NOT move**, and §17.8 is the list rather than the excuse.
+
+### 17.8 What was read against the code and NOT closed
+
+1. **T344 and T363 stay W, and the reason has changed shape.** §16.4 said a row
+   that is W because a class is unfinished does not become C when one member is
+   finished. That still holds, and the class is now enumerated rather than
+   sampled. Every read spelled `const { data: x } = await` in
+   `routes/messaging.ts` was opened and read — 24 code sites, plus the one that
+   lives inside §14.3's own prose. The 24 fall into three groups and the counts
+   are exact. **Eleven are refusals** — nine 403s on a membership read, plus the
+   E2EE precondition and the translate-retry precondition — and the census's own
+   rule is that a refusal is not a plausible empty state. **Three are neither**:
+   the prior-preference read that decides whether a language change triggers a
+   retranslate sweep, the status re-read inside an already-failing accept, and
+   the preview-message insert whose failure merely skips a translation. **Ten are
+   a different defect**: an unreadable table
+   becomes a confident `not_found`, which is a POSITIVE false claim that the
+   object does not exist. That is the class §16 closed exactly one instance of —
+   the circle owner — and §15.2 named as a bullet. The remaining ten, and two
+   more in the group-chat reader, are named here so the next lane starts from a
+   list rather than a grep:
+
+   | read | what an outage becomes |
+   | --- | --- |
+   | `artifacts/api-server/src/routes/messaging.ts:593#const { data: profile } = await client.from('profiles').select('id').eq('id', recipientId).maybeSingle();` | "User not found" |
+   | `artifacts/api-server/src/routes/messaging.ts:845#const { data: mr } = await sc` | "Message request not found" (accept) |
+   | `artifacts/api-server/src/routes/messaging.ts:1084#const { data: mr } = await sc` | the same, on decline |
+   | `artifacts/api-server/src/routes/messaging.ts:1171#const { data: mr } = await sc` | the same, on cancel |
+   | `artifacts/api-server/src/routes/messaging.ts:1615#const { data: member } = await sc` | "Thread not found" |
+   | `artifacts/api-server/src/routes/messaging.ts:1623#const { data: thread } = await sc` | the same, one read later |
+   | `artifacts/api-server/src/routes/messaging.ts:3112#const { data: msgRow } = await sc` | "Message not found" (translate retry) |
+   | `artifacts/api-server/src/routes/messaging.ts:3225#const { data: msgRow } = await sc` | the same, on edit |
+   | `artifacts/api-server/src/routes/messaging.ts:3321#const { data: trip } = await sc` | "Trip not found" |
+   | `artifacts/api-server/src/routes/messaging.ts:3714#const { data: msgRow } = await sc` | "Message not found in this thread" (save) |
+   | `artifacts/api-server/src/routes/groupChat.ts:312#const { data: msgRow } = await sc` | "Message not found" (edit) |
+   | `artifacts/api-server/src/routes/groupChat.ts:381#const { data: msgRow } = await sc` | the same, on delete |
+
+   **They were not fixed here and the reason is scope, not difficulty**: each is
+   four lines, and doing twelve credibly means twelve behavioural cases against
+   twelve routes, which is a section of its own.
+
+2. **The class is larger than `routes/messaging.ts`, which no prior section
+   said.** Counted after this section's fixes: `routes/groupChat.ts` 7,
+   `services/tagging/TaggingService.ts` 11, `services/telegraphChatSuggestions.ts`
+   2, `lib/chatSync.ts` 2, `services/groupChatSync.ts` 2. Most are fail-closed and
+   correct — `telegraphChatSuggestions` denies every context it cannot verify, and
+   `TaggingService` tags nobody when it cannot read the block set. Two groups are
+   not, and are named so they are not lost: the group-chat readers report an
+   unreadable `message_threads` as `title: 'Trip Chat'`, `status: 'active'`
+   (`artifacts/api-server/src/routes/groupChat.ts:213#const { data: threadRow } = await sc`),
+   so a closed or archived thread reads as active; and both sync
+   implementations write a DURABLE generic title onto a newly created thread when
+   `trips` is unreadable
+   (`artifacts/api-server/src/lib/chatSync.ts:58#const { data: trip } = await sc`,
+   `artifacts/api-server/src/services/groupChatSync.ts:45#const { data: trip } = await sc`).
+
+3. **`safe_return_live_shares.expires_at` should be `NOT NULL` and this lane did
+   not make it so.** §17.5 measures the hole; closing it is a migration, and a
+   migration in the repo is not a migration applied. It also needs a decision
+   about rows that already carry a null expiry, which is an owner's call.
+
+4. **§13's 51 BRANCH rows, re-derived rather than inherited.** Of the 51: nine are
+   now C (four from §14 — T79, T388, T430, T438; five from §15 — T3, T36, T37,
+   T38, T290), one moved to BOTH (T31, §14.5), four moved to NEITHER (T4, T201,
+   T218, T396, §15.5), and T349 is the tenth to reach C, here. **Twelve of the
+   remaining thirty-six were re-read against the code this pass and every one is
+   still open**: T31 (nothing in Telegraph calls `applyProtection`; the only other
+   importer of that module takes `haversineMeters` and nothing else), T35 (all
+   four legacy producers still write bespoke JSON — `circle_status_card` at
+   `artifacts/api-server/src/routes/circle.ts:365#msg_type:  "circle_status_card",`,
+   plus `discovery_card`, `post_card` and `compass_card` on the client), T123
+   (eleven client modules still import the static tokens), T157 (`envelopeVersion`
+   exists for §6.2's kinds and for coordination and for nothing else), T220, T295,
+   T320 (`BookingMilestoneMessage.tsx` still contains no `fetch` and no
+   `useEffect`), T344, T363, T379 (`TelegraphRelationship` appears nowhere in the
+   tree), T397, T423 (`I18nManager` and `isRTL` appear nowhere in the client).
+   T295's six client-side joins are not re-derived by hand here because a guard
+   already measures them and its number is the one this pass read:
+   `check:telegraph-slos` reports "6 client bypass site(s) across 3 file/table
+   pair(s)" on this tree, which is T295's claim exactly, shrink-only, and still
+   six.
+   **One understatement corrected: §13.4 calls T220 "eight modules outside the
+   shared helpers". Counted today, THIRTY non-test files query `blocks`
+   directly, twenty-seven of them outside the three shared helpers
+   (`lib/blockGuard.ts`, `lib/blocks.ts`, `lib/exclusionSet.ts`)** — more than
+   three times the figure a reader sizing the work from §13.4 would take. That
+   is a correction to the size, not to the classification: the row stays W and
+   stays BRANCH.
+
+### 17.9 The restated headline
+
+`pnpm -s check:census-integrity` recomputes the per-census counts from the tables
+rather than from any prose, and after this section telegraph reads:
+
+```
+census                        rows     C     W     N    X   denom  unreconciled
+telegraph                      439   221   166    49    3     451  12 counted where this tool cannot read
+```
+
+> **RESTATED 2026-09-13 BY THE §17 LANE, from the merged row and not by
+> addition: C 220 → 221, W 167 → 166, N 49, X 3. CONSTRUCTED (221+166)/451 =
+> 85.8 %, CORRECT 221/451 = 49.0 %.** One BUILT-BUT-WRONG row moved to
+> BUILT-AND-CORRECT (T349); no row moved into BUILT-BUT-WRONG and no row moved
+> out of NOT-BUILT. The gap between CONSTRUCTED and CORRECT narrows from 37.0
+> points to 36.8.
+>
+> **The 176 split restated: OWNER 24, BOTH 13, BRANCH 46, NEITHER 93** —
+> unchanged from §15.7, because this section moved no row between groups. Of the
+> 46 BRANCH rows, ten are now C and thirty-six are not.
+>
+> **What this number is not.** It is still a BRANCH census and this section's one
+> move is on an unmerged branch. MERGED IS NOT DEPLOYED; DEPLOYED IS NOT FLAG
+> ENABLED. Nothing here required a migration or a flag, so it is true on every
+> deployment the moment this branch merges. **The four defects this section fixed
+> moved no verdict at all, and that is the correct outcome twice over: three
+> belong to a class that is still unfinished, and the fourth — the roster
+> eviction — is a defect no row in this census had ever named.** A census that
+> could only record work by moving a number would have no way to say that.
+
+**The full suite: 20,165 tests, 3 failed, 0 skipped.** One was this section's
+and is fixed — the narrowed NOT NULL guard of M19, green in isolation and red
+again under M19. The other TWO are `test/tripOpportunityProjection.test.ts`
+cases 1 and 3, and they are NOT this lane's: swapping all eight source files
+this branch changed back to their `6d4fd1a06` content and re-running the file
+reproduces both failures exactly (16 / 2), after which the eight were restored
+and compared byte-identical. The file's own comment says why it is fragile —
+*"the route runs on the real clock"* — and the failure is
+`fw.executable[0]` being undefined, i.e. a free window that the wall clock has
+moved out from under. Recorded rather than left as an unexplained red, and
+recorded as somebody else's rather than claimed as a pass.
+
+Bookkeeping, stated because it is easy to do silently: `lib/publicIdentity.ts`
+and the three new test files were added to `CENSUS_SCOPE` for this census, and
+the telegraph acknowledgement entry was EXTENDED — not replaced, and not joined
+by a second entry, which `check:census-freshness` reads past. Eight displaced
+citations were repointed by exact original line text across census-compass,
+census-trips and this document, and two anchors were rewritten because the line
+they named WAS the defect and no longer exists — the third and fourth times this
+document has had to do that, for the third and fourth time for the same reason.
