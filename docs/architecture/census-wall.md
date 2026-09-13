@@ -706,3 +706,114 @@ found: 7 citations pointing past the end of a shrunken file, which the range hal
 already caught, and many more that were IN RANGE AND WRONG, which only an anchor
 can catch. The recensus then invalidated four of its own repaired citations by
 editing the files it cited, in the same pass, and the anchors caught that too.
+
+---
+
+## §7 — The correctness pass, 2026-09-13: the one W did not move, and here is the honest reason
+
+*Re-measured at `3ca68cb06`. **No verdict in this census changed and no Wall file was edited.** What
+follows is the account of why, and of what the eight CANNOT-VERIFY rows actually are — which on this
+census is worth more than the W, because there are eight of them against one.*
+
+### 7.1 W166 is not a defect. It is a brand decision nobody has made.
+
+W166 asks that *"Portava purple is an interaction/accent colour, not a background wash"* (spec `:279`).
+Re-executed at this commit:
+
+- **There is no purple in the tree.** `grep -rniE 'purple' travel-buddy-standalone/src/theme/` returns
+  nothing. The Wall's accents are `travel-buddy-standalone/src/theme/tokens.ts:12#signal: '#FF4D2E', // vermilion — primary action + live pulse only`
+  and `travel-buddy-standalone/src/theme/tokens.ts:14#deep: '#0A3D4A', // teal-ink — destination accents`,
+  inside a palette whose own header declares the direction —
+  `travel-buddy-standalone/src/theme/tokens.ts:3#Editorial / passport visual direction. One bold device (the stamp),`.
+- **The structural half of the rule HOLDS, and was re-executed rather than asserted.** A grep for the
+  accent tokens used as a `backgroundColor` across the Wall's own components
+  (`components/objects/`, `ContextThreadView.tsx`, `WallFeed.tsx`, `LiveForYouStrip.tsx`) returns
+  nothing: no card is washed in the accent. Whatever colour the accent is, it is used as an accent.
+
+So the row is one clause with two halves, and the tree satisfies the half that is about
+CONSTRUCTION and contradicts the half that is about BRAND. **Moving it to `C` would require either
+repainting every Wall surface purple — a user-visible change to a design direction the tokens file
+states in its first line and every other surface shares — or re-reading the requirement until it
+passes, which is the one thing a census must never do.** Neither is an engineering decision, so
+neither was taken.
+
+**This is the same decision as `census-passport.md` D-DESIGN**, where §27's dark-navy-and-purple
+specification meets a white-paper-and-red-seal palette and costs **five** rows (P13, P128, P129,
+P132, P133). Across the two censuses one unmade brand call holds **six** requirements wrong. It is a
+portfolio decision, and it is cheaper to make once than to keep re-measuring.
+
+| # | Decision | Why it is the owner's |
+|---|---|---|
+| D-WALL-COLOUR | Amend the §35 clause to name the shipped accent, or repaint the accent to the specified purple. Until one happens W166 is permanently W and `census-passport.md`'s five design rows are permanently W. | It changes either a specification or every screen. Engineering can state the divergence — which it now has, on both sides — but cannot resolve it. |
+
+### 7.2 The eight CANNOT-VERIFY rows are three different things, and only one is a hole
+
+`?` reads as one bucket and is not. Re-executed at this commit, the eight split cleanly:
+
+| kind | rows | what would close it |
+|---|---|---|
+| **Not this census's requirement** | W71 | Nothing here. The Wall delegates to the shared gateway; whether that gateway implements voice input is a Global Input Intelligence question, graded there. The `?` is a SCOPE statement and is correct as written. |
+| **A judgement with no decidable predicate** | W159 · W167 · W168 | "Generous" whitespace, "excessive" badges, and whether a user understands the Wall without knowing the architecture. No amount of code makes these decidable; they need a designer and users. Recording them as `?` is the honest answer and always will be. |
+| **Measurable, but not from here** | W146 · W149 · W170 · W173 | Four rows that a machine CAN answer, with a tool this pass did not have. |
+
+**The last four are the only ones worth anyone's time**, and they are not equal:
+
+| id | what it needs | how far away it is |
+|---|---|---|
+| W170 (video controls remain screen-reader accessible) | **ONE TEST RUN.** See §7.3 — the code and the test both already exist. | Closest. |
+| W146 (first server page < 500 ms backend) | A benchmark against real Postgres. `artifacts/api-server/src/test/wallPerformance.test.ts:208#function corpusClient()` bounds read count and slope against an in-memory fake, which is the right thing to pin in CI and cannot produce a wall-clock number. | Needs the DB harness. |
+| W149 (60 fps scroll) | A device or an instrumented emulator. | Needs hardware. |
+| W173 (postcard typography stays readable) | A rendered screen and a real screen reader. | Needs hardware + a human. |
+
+### 7.3 W170 is one test run from `C`, and the run is the blocker — not the code
+
+§6 moved W174 from `?` to `C` on a specific argument: *"the `?` was correct about the PROPERTY and
+wrong about the reach — focus order is a runtime property of the RN accessibility tree, and
+@testing-library/react-native renders that tree, so it is testable without a device."*
+
+**The identical argument applies to W170, and the evidence is already in the tree.** The transport
+controls this row says "belong to `SharedVideoPlayer` and their screen-reader behaviour needs a
+device" declare both halves of what a screen reader reads:
+
+- `travel-buddy-standalone/src/components/ui/SharedVideoPlayer.tsx:162#<Pressable style={StyleSheet.absoluteFill} onPress={togglePlay} accessibilityRole="button" accessibilityLabel={isPlaying ? 'Pause video' : 'Play video'} />`
+- `travel-buddy-standalone/src/components/ui/SharedVideoPlayer.tsx:178#accessibilityLabel={isMuted ? 'Unmute' : 'Mute'}`
+
+and the component test that exercises them reaches them **by those labels**, so removing one fails
+it rather than silently changing what a screen reader would announce:
+`travel-buddy-standalone/src/components/ui/__tests__/SharedVideoPlayer.component.test.tsx:83#const tapZone = screen.getByLabelText('Play video');`
+and `travel-buddy-standalone/src/components/ui/__tests__/SharedVideoPlayer.component.test.tsx:95#const muteBtn = screen.getByLabelText('Unmute');`.
+
+**The row did not move, and the reason is this pass, not the Wall.** `travel-buddy-standalone` is
+outside the pnpm workspace (`pnpm-workspace.yaml` lists `artifacts/*`, `lib/*`, `packages/*`,
+`scripts`), its `node_modules` is absent in this worktree, and `jest --preset jest-expo` cannot
+resolve. Installing an Expo/React-Native toolchain to run one file was ruled out. **This pass moves
+no row on a claim it did not execute**, so W170 stays `?` with a much smaller remainder: the declared
+accessibility tree is already pinned, and what still genuinely needs a device is how a REAL screen
+reader traverses it — which is precisely the residue W174 kept while moving to `C`.
+
+Whoever runs `pnpm --filter travel-buddy-standalone test:component` next should move this row, and
+should keep the device caveat when they do.
+
+### 7.4 What this pass did NOT find
+
+It found **no stale evidence** in the Wall rows it re-executed (W71, W146, W149, W159, W166, W167,
+W168, W170, W173 — the nine non-`C` rows, and all nine still say what the tree says). That is a
+better result than either compass or discovery returned in the same pass and it should be read
+carefully: **only nine of 205 rows were re-opened here.** The other 196 `C` rows rest on the §6
+recensus and on `check:doc-citations`, which proves a cited line exists, not that the sentence about
+it is still true. The Wall's citations are anchored, which makes that proof stronger than most of the
+corpus — and still not the same proof.
+
+### 7.5 Headline — unchanged, and that is the finding
+
+> **Wall, at `3ca68cb06`: 205 requirements · 196 BUILT-AND-CORRECT · 1 BUILT-BUT-WRONG · 0 NOT-BUILT ·
+> 8 CANNOT-VERIFY → CONSTRUCTED 197 / 205 = 96.1 % · CORRECT 196 / 205 = 95.6 %.** The
+> CONSTRUCTED-to-CORRECT gap is **0.5 points** and it is held by a colour name. The gap that actually
+> limits this census is the CANNOT-VERIFY share — **3.9 %, eight rows against one wrong one** — and
+> §7.2 says which four of the eight a machine could answer and which four never will.
+
+| BUILT-AND-CORRECT | **196** |
+|---|---|
+| BUILT-BUT-WRONG | **1** |
+| NOT-BUILT | **0** |
+| CANNOT-VERIFY | **8** |

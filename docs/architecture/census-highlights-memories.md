@@ -425,7 +425,7 @@ Memory search of any kind, and no embedding of any kind anywhere in the repo (th
 |---|---|---|---|---|
 | H115–H122 | `getMemory`, `searchMemories`, `getSharedMemories`, `getPlaceHistory`, `getTripMemories`, `getMemoryEvidence`, `createMemoryDraft`, `suggestMemoryCorrection` | NB ×8 | `compass/CompassTools.ts:109-484` defines 11 tools: `get_user_profile`, `get_current_trip`, `search_places`, `search_events`, `get_place_details`, `get_circle_activity`, `check_trip_conflicts`, `add_to_trip`, `get_whos_around`, `get_travel_compatibility`, `get_group_recommendation`. **None** is memory-facing | |
 | H123–H128 | LLM boundary: may summarize supported evidence · may propose merge/split/correction · may ask a minimal clarifying question · may not invent states/participants/identity/attendance/outcomes · may not bypass privacy policy · may not use stale history as current truth | NB ×6 | No memory-facing LLM path exists to constrain; no boundary is encoded. (`2221_compass_ai_writing_default_off.sql` is the adjacent posture, for Compass prose generally) | |
-| H129 | Compass must not mutate canonical Memory facts through prose | **BAC** | The tool set at `compass/CompassTools.ts:109` contains no Memory mutation; the only write-shaped tool is `add_to_trip` (`compass/CompassTools.ts:421`). `routes/compass.ts:2226` `forgetMemory` writes `compass_memories` (a chat store), not `memories` | — |
+| H129 | Compass must not mutate canonical Memory facts through prose | **BAC** | The tool set at `compass/CompassTools.ts:109` contains no Memory mutation; the only write-shaped tool is `add_to_trip` (`compass/CompassTools.ts:421`). `routes/compass.ts:2268` `forgetMemory` writes `compass_memories` (a chat store), not `memories` | — |
 
 ### §17 Command bus and domain events (33)
 
@@ -1512,7 +1512,7 @@ row, and the wording each one supports was re-read at the new line before it was
 | the tool array (§16 rows) | `CompassTools.ts:62-210` | `CompassTools.ts:94-468` | The array's real extent on the merged tree. |
 | H129's tool set | `CompassTools.ts:62` | `CompassTools.ts:94` | Same. |
 | H129's write-shaped tool | `:158` | `CompassTools.ts:406` | Bare `:158` also named no file; now fully qualified. |
-| H129's `forgetMemory` | `routes/compass.ts:2150` | `routes/compass.ts:2226` | +76 lines above it; the call is unchanged. |
+| H129's `forgetMemory` | `routes/compass.ts:2192` | `routes/compass.ts:2268` | +76 lines above it; the call is unchanged. |
 | H4's GPS city stamp | `routes/location.ts:334-374` | `routes/location.ts:392-432` | +58 lines above it; the block is unchanged. |
 | the `passport_memories_enabled` gate | `routes/location.ts:357` | `routes/location.ts:419` | The mechanical +58 lands on `});`, which is what `:357` had been pointing at too. A sentence about a flag read should not point at a closing paren, so this one goes to the line that names the flag. |
 | H4's check-in stamp | `routes/geofence.ts:634-676` | `routes/geofence.ts:809-861` | **Not the merge's doing — this was wrong before it.** `geofence.ts` is byte-identical between `254e1876` and the merged tree, and `:634-676` names the plan-geofence *reveal* handler, not the check-in stamp. The block H4 actually grades — the flag, `createStamp` at `verificationLevel: checkin`, then `createSuggestedMemory` — is `:809-861`. Found by re-reading a neighbour of a citation the merge did move; H4 stays **BAC** because the code it describes is exactly what is at the corrected lines. |

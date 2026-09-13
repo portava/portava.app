@@ -704,3 +704,125 @@ the heal of a partial failure emits once. Proven award → event →
 `src/test/trustEventCoverage.test.ts` no longer lists `stamp_verified` as
 unproduced. No migration is required, and the flag is already on, so this is
 live on deploy.
+
+---
+
+## 12. The correctness pass, 2026-09-13 — P169 closed, and a third of what remains is one brand decision
+
+*Re-measured at `3ca68cb06`. **This section does NOT declare a `head_commit`, and §3's refusal
+stands** — see §12.5 for exactly how many rows were executed here and why fifteen is not a hundred
+and sixty-nine.*
+
+### 12.1 The 15 BUILT-BUT-WRONG rows, grouped by WHY they are wrong
+
+Grouped before anything was built. The question asked of each row: *what exactly stands between this
+row and `C`?*
+
+| group | rows | which |
+|---|---|---|
+| **(a) logic wrong in code this pass owns** | **4** | P169 · P75 · P77 · P126 |
+| **(b) logic right, nothing reaches it** | **0** | — |
+| **(c) capped by a flag seeded FALSE or an unapplied migration** | **1** | P61 |
+| **(d) needs something nobody has written or decided** | **10** | P13 · P42 · P45 · P50 · P128 · P129 · P132 · P133 · P154 · P159 |
+
+**FIVE OF THE FIFTEEN ARE ONE UNMADE BRAND DECISION.** P13, P128, P129, P132 and P133 all say the
+same thing in different words: §27 specifies *dark navy/black surfaces, purple as the identity
+accent, blue/teal for availability, and a circular portrait overlapping a travel hero*, and the tree
+ships a deliberate, internally consistent opposite —
+`travel-buddy-standalone/src/theme/passportTokens.ts:2#Passport palette — clean white/cream paper, black ink, red seal.`,
+with `paper: '#FFFFFF'`, `ink: '#1C1C1A'`, `seal: '#D32F2F'` and **no purple, navy or teal token at
+all** (`grep -i purple` over that file returns nothing). This is not five defects. It is one product
+call nobody has made, counted five times because the spec listed it five times, and it is worth
+**3.0 points of this census's correctness figure**. Recorded as owner decision D-DESIGN in §12.4.
+`census-wall.md` W166 is the same divergence on the other surface, which makes it a portfolio
+decision rather than a Passport one.
+
+**Two more are one owner decision about a WORD.** P45 and P50 both turn on whether the neutral 50 a
+missing `trust_profiles` row produces may keep being labelled "Established"
+(`artifacts/api-server/src/services/passport/PassportProjectionService.ts:1075#return Number.isFinite(v) ? v : 50;`)
+and whether the confidence band may keep being derived from travel volume
+(`artifacts/api-server/src/services/passport/PassportProjectionService.ts:1127#const evidence = stats.stamps + stats.trips * 2 + (verified ? 3 : 0);`)
+now that `evidence_weight` / `evidence_count` reach the projection. P154 is P45 again under a phase
+number. **Three rows, one decision, 1.8 more points.**
+
+So of the 8.9-point gap this census carried into the pass, **4.8 points sit behind two product
+decisions and no engineering at all.**
+
+### 12.2 Row moves
+
+| id | was | now | why |
+|---|---|---|---|
+| P169 | W | **C** | **Built, and the row specified it.** P169's own text: *"What actually remains is not four unadopted consumers — it is two BULK LIST endpoints … Extending the batch projection with a viewer-relationship input is the remaining work, and it is one job, not two."* That job is `artifacts/api-server/src/services/passport/PassportConsumerProjections.ts:1146#export async function buildListIdentityProjections`, whose viewer input is `artifacts/api-server/src/services/passport/PassportConsumerProjections.ts:1102#export interface ListViewerRelationships`. Both lists adopted it: the Discovery search list at `artifacts/api-server/src/routes/discoverySearch.ts:628#const identity = await buildListIdentityProjections(sc, nameSafe as any[], {` and the Compass traveler suggestions at `artifacts/api-server/src/routes/compass.ts:3702#const travIdentity = await buildListIdentityProjections(`. Pinned by `artifacts/api-server/src/test/passportListIdentityProjection.test.ts:1#/**` — 14 cases in three blocks, the third of which asserts that NEITHER route still resolves a display name or applies the picture opt-out itself. Also closes census-discovery A15 and the server half of census-compass CP-02. |
+
+### 12.3 The divergence P169 closed was not cosmetic
+
+P169 said both lists *"still build identity inline"*. They did not build the same thing.
+`routes/discoverySearch.ts` already resolved the name through `lib/publicIdentity`'s choke point.
+`routes/compass.ts` wrote `display_name ?? name ?? username` **inline, without trimming** — a fourth
+copy of a rule with three, and the one that disagreed. A subject whose `display_name` is whitespace
+therefore rendered as a **blank title** in the Compass traveler list, with nothing on the row to say
+whose it was, while the map pin, the search row and the person card all fell through to the handle.
+
+`presentedName`'s own docblock had already recorded this failure mode once —
+*"One rule, three implementations, and this was the one that disagreed"* — about a different surface,
+a different pass, the same defect. **That is the argument for a shared projection over a shared
+comment**, and it is why P169 is `C` on a build rather than on a rename.
+
+What was deliberately NOT unified, because unifying it would be taking a product decision under
+cover of a refactor: the fallback label (Discovery falls back to the handle, Compass to the
+username) and what else a locked row suppresses (Compass blanks city and username whether or not the
+viewer follows; Discovery keeps them once followed). Those differ on purpose. The projection owns
+the four facts that were the same and, in one case, wrong.
+
+### 12.4 Owner decisions this pass surfaced rather than took
+
+| # | Decision | Why it is the owner's | Worth |
+|---|---|---|---|
+| D-DESIGN | §27's palette (dark navy surfaces, purple identity accent, blue/teal availability, portrait over a hero) versus the shipped "passport paper" direction (white/cream, black ink, red seal, gold premium, document card with a spine). Either the spec is amended or five rows stay wrong forever. | Changing it repaints every Passport surface and contradicts a design direction the tokens file states in its first line. `census-wall.md` W166 is the same call on the Wall's vermilion. | P13, P128, P129, P132, P133 — **3.0 points** |
+| D-WORD | Whether a substituted neutral 50 may keep the word "Established", and whether the confidence band may stay travel-derived now that `evidence_weight`/`evidence_count` reach the projection. | It changes the label a real person is shown, on evidence that does not exist for 56 of 58 accounts. census-trust A6 is why the evidence does not exist. | P45, P50, P154 — **1.8 points** |
+| D-STAMP | Whether the stamp vocabulary gains `place` and `contributor` (P61). It needs a migration widening the CHECK that 2309 set. | Vocabulary is a product decision and a schema change; this pass was forbidden migrations. | P61 — 0.6 points |
+
+### 12.5 The `head_commit` refusal STANDS, and here is the number that decides it
+
+§3 refuses to declare a `head_commit` on the argument that doing so would report FRESH about 165 rows
+nobody re-read, *"a worse lie than CANNOT BE CHECKED"*. **This pass executed fifteen rows** — every
+one of the fifteen BUILT-BUT-WRONG rows, by opening the file its evidence names and running the grep
+or reading the lines:
+
+> P13, P42, P45, P50, P61, P75, P77, P126, P128, P129, P132, P133, P154, P159, P169.
+
+Fifteen of 169 is **8.9 %**. Declaring on that would be the same lie with a smaller subject, so the
+refusal is not overturned. **What this pass CAN report, which is new:** of the fifteen executed, one
+verdict moved (P169) and **one more had false evidence and kept its verdict** — P42's *"nothing
+consumes it"* is now wrong, and §12.6 says how. A 1-in-15 evidence-rot rate is not a basis for
+extrapolating to the other 154; it is a reason not to declare.
+
+### 12.6 A reason that expired on a row that did not move
+
+| requirement | verdict | the reason that expired |
+|---|---|---|
+| P42 (Compass and Discovery weight explicit intent above generic interests) | W | ***"Nothing consumes it"* is FALSE.** Compass's `get_travel_compatibility` reads both travellers' explicit windows at the caller's permitted visibility and applies `explicitIntentBoost` — `census-compass.md` CP-01 establishes it and pins it with `test/compass-social.test.ts` D2, and `census-compass.md` §5 lists this row by name as a claim it measured false on 2026-09-07. This census did not pick that up. **The verdict holds for a different reason, which the row should have said:** the demand side is one of *four* surfaces — Compass's compatibility tool consumes it, Compass's traveler recommendation list does not (CP-01's own W), and neither Discovery path does (census-discovery A18, on the explicit ranker hold census-discovery A01 quotes from `docs/discovery/ROADMAP.md`). One of four is still not "Compass and Discovery". |
+
+### 12.7 What was NOT built, and why
+
+- **P75 (events + recommendations in the Featured Journey), P77 (three missing Memory views) and
+  P126 (three missing My World levels) are genuine (a) rows and were not built.** They are product
+  surface — new joins, new screens, new navigation — not corrections to wrong logic, and each is a
+  multi-day build that this pass would have had to design rather than repair. Calling them (a) is the
+  honest grade; leaving them is the honest outcome.
+- **No migration was written and no flag was flipped**, which is what keeps P61 in (c).
+- **No production read was made**, so every deployment fact in §3 remains a 2026-09-07 measurement.
+
+### 12.8 Restated headline
+
+> **Passport, at `3ca68cb06` (measured, NOT declared): 169 requirements · 153 BUILT-AND-CORRECT ·
+> 14 BUILT-BUT-WRONG · 1 NOT-BUILT · 1 CANNOT-VERIFY → CONSTRUCTED 167 / 169 = 98.8 % ·
+> CORRECT 153 / 169 = 90.5 %.** The gap between them is **8.3 points**, and **4.8 of those points are
+> two product decisions** — a palette and a word — with no engineering behind them at all. One row
+> moved, on a build the row itself specified.
+
+| BUILT-AND-CORRECT | **153** |
+|---|---|
+| BUILT-BUT-WRONG | **14** |
+| NOT-BUILT | **1** |
+| CANNOT-VERIFY | **1** |
