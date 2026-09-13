@@ -105,6 +105,33 @@ export interface LayoverWindow {
    */
   returnState: LayoverReturnState;
   engineVersion: string;
+  /**
+   * §7 — the generalised Temporal Freedom Engine's window for this layover's
+   * two commitments (the inbound flight and the outbound flight). `null` when
+   * there is none, which is the case `shortfallMinutes` explains.
+   *
+   * Typed narrowly on purpose: the server sends the engine's whole
+   * `FreedomWindow` and this declares only the members a screen reads. The rest
+   * are on the wire and unread, which is a fact about this client rather than
+   * about the server.
+   */
+  freedomWindow: {
+    beginsAt: string;
+    endsAt: string;
+    durationMinutes: number;
+    /** Minutes reserved off the end for the return buffer. */
+    reservedMinutes: number | null;
+    /** Never true while no routed travel-time provider is configured. */
+    certified: boolean;
+  } | null;
+  /**
+   * §7.2 — how many minutes short the traveller is when there is NO window at
+   * all: the required buffer (and, for a layover with no gap, the cutoff
+   * itself) leaves nothing between landing and heading back. `null` whenever a
+   * window exists. Before this the traveller saw `usableMinutes: 0` and the
+   * number they were short by existed nowhere.
+   */
+  shortfallMinutes: number | null;
 }
 
 export interface LeaveAdvice {

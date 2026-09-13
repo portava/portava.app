@@ -72,6 +72,21 @@ export function CanILeaveCard({ advice, window: win, airport, airportIntelligenc
         <Text key={r} style={styles.reason}>·  {r}</Text>
       ))}
 
+      {/*
+        §7.2 — "a conflict is not silently rendered as a normal itinerary".
+        There is no window at all: the required buffer leaves nothing between
+        landing and heading back. `usableMinutes: 0` said that; it did not say
+        BY HOW MUCH, and the number the traveller is short by is the one fact
+        that tells them whether a later flight would fix it. Rendered only when
+        the server states it, never derived here.
+      */}
+      {typeof win.shortfallMinutes === 'number' && win.shortfallMinutes > 0 && (
+        <Text style={styles.shortfall} testID="layover-window-shortfall">
+          This layover is about {fmtDur(win.shortfallMinutes)} too short to leave and return —
+          your required buffer runs past the moment you'd be out of the terminal.
+        </Text>
+      )}
+
       {/* Numbers */}
       <View style={styles.numbersRow}>
         <View style={styles.numBox}>
@@ -148,6 +163,7 @@ const styles = StyleSheet.create({
   verdictPill:{ alignSelf: 'flex-start', borderRadius: 999, paddingHorizontal: space.md, paddingVertical: 6 },
   verdictText:{ ...t.bodyStrong },
   reason:     { ...t.small, color: color.mute },
+  shortfall:  { ...t.small, color: color.signalDim, fontWeight: '600' },
 
   numbersRow: { flexDirection: 'row', gap: space.sm, marginTop: space.sm },
   numBox:     { flex: 1, backgroundColor: color.paper, borderRadius: radius.md, padding: space.md, alignItems: 'center', gap: 4 },

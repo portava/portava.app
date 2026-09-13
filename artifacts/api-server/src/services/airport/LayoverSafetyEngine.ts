@@ -21,6 +21,19 @@ import {
   statedTravelMin as statedLegMin,
   statedDurationMin as statedDwellMin,
 } from "./LayoverPlanFit.js";
+// Spec §7. The usable window is no longer derived here by hand: it is the
+// generalised Temporal Freedom Engine's answer, asked through the layover
+// ADAPTER. See LayoverTemporalFreedom's header for why the adapter takes plain
+// numbers — that is what keeps this dependency one-directional.
+import {
+  buildFreedomWindow as buildLayoverFreedomWindow,
+  earliestLandsideMs,
+  type LayoverFreedomContext,
+} from "./LayoverTemporalFreedom.js";
+import type {
+  FreedomWindow,
+  TemporalConflict,
+} from "../../domain/trips/invariants/TripFreedomEngine.js";
 
 export type SafetyRating =
   | "safe"
@@ -429,7 +442,17 @@ export type EngineAirport = Pick<AirportProfile,
   | "timezone" | "verified"
   | "domesticBufferMin" | "internationalBufferMin"
   | "immigrationExtraMin" | "checkedBagsExtraMin" | "trafficExtraMin"
->;
+> & {
+  /**
+   * OPTIONAL, and read by NO arithmetic in this file — which is why it is added
+   * as an optional member rather than to the `Pick` above, where every entry is
+   * a term in a buffer. It names the place the two §7 commitments sit at, so
+   * the freedom window says WHICH airport it is about instead of `null`. A
+   * caller that does not hold it (there is none today — both `AirportProfile`
+   * and `FeasibilityAirport` carry it) loses the label and nothing else.
+   */
+  iataCode?: string;
+};
 export type EngineSession = Pick<LayoverSession,
   | "arrivalTime" | "departureTime" | "boardingTime"
   | "flightType" | "immigrationRequired" | "checkedBags" | "wantsToLeave"
@@ -831,6 +854,31 @@ export interface LayoverWindow {
   returnState: LayoverReturnState;
   /** Rules version that produced every number above. */
   engineVersion: string;
+  /**
+   * Spec §7 `FreedomWindow`, as the GENERALISED Temporal Freedom Engine
+   * computed it for this layover's two commitments — the artifact every number
+   * above is the layover-shaped projection of.
+   *
+   * `null` when there is no window, which is the case `temporalConflict`
+   * explains. It is not a second computation: `freedomWindow.endsAt` is
+   * `hardReturnTime` to the millisecond and `usableMinutes` is that window
+   * clipped to `nowMs`, both swept in the adapter's test.
+   */
+  freedomWindow: FreedomWindow | null;
+  /**
+   * §7.2 — "a conflict is not silently rendered as a normal itinerary". Present
+   * exactly when `freedomWindow` is null: the buffer (and, for a layover with
+   * no gap at all, the cutoff itself) leaves no window, and this says by how
+   * many minutes. Before this the traveller got `usableMinutes: 0` and the
+   * shortfall existed nowhere.
+   */
+  temporalConflict: TemporalConflict | null;
+  /**
+   * The conflict's `shortfallMinutes`, lifted out so a client can read one
+   * number without knowing the engine's conflict vocabulary. `null` whenever
+   * there IS a window — an existing window is never short.
+   */
+  shortfallMinutes: number | null;
 }
 
 /**
@@ -903,10 +951,43 @@ export function computeWindow(
   const exitDelayMin  = estimateExitDelay(session);
 
   const hardReturnMs   = hardReturnTime.getTime();
-  const earliestOutMs  = arrivalMs + exitDelayMin * 60000;
-  // Usable window from the later of "now" and "earliest landside".
+
+  // ── §7: THE WINDOW IS THE GENERALISED ENGINE'S, NOT A THIRD COPY ──────────
+  //
+  // `arrival + exitDelay` and `hardReturn − windowStart` were spelled out here
+  // by hand. They are the two ends of a FreedomWindow between two commitments,
+  // which is exactly what `domain/trips/invariants/TripFreedomEngine.ts`
+  // computes and what spec §7 says this surface should be the first ADAPTER of.
+  // The adapter translates; nothing airport-shaped crosses into the engine.
+  //
+  // `confidence` mirrors `bufferEstimates`'s own `rowConf` (a verified airport
+  // is MEDIUM, every other is LOW) rather than inventing a second rule. It can
+  // never be HIGH here, which is why `freedomWindow.certified` is always false.
+  const freedomCtx: LayoverFreedomContext = {
+    arrivalMs,
+    departureMs: new Date(session.departureTime).getTime(),
+    cutoffMs,
+    exitDelayMin,
+    returnBufferMin: breakdownBase.totalBuffer,
+    // The two commitments are the SAME place, so the hop between them is 0 by
+    // identity and no coordinate is needed to know that. `computeWindow` reads
+    // no coordinate at all, and saying `point: null` is what makes the engine
+    // report that honestly (a `NO_ORIGIN` constraint) instead of this file
+    // asserting a location the arithmetic never opened.
+    airportPoint: null,
+    airportPlaceId: airport.iataCode ?? null,
+    confidence: airport.verified ? "MEDIUM" : "LOW",
+  };
+  const freedom = buildLayoverFreedomWindow(freedomCtx);
+  const earliestOutMs = earliestLandsideMs(freedomCtx);
+  // Usable window from the later of "now" and "earliest landside". When the
+  // engine returns no window there is none to clip, and the answer is 0 — which
+  // is precisely what `Math.max(0, …)` produced before, so no number moves.
+  const windowEndMs    = freedom.window ? Date.parse(freedom.window.endsAt) : hardReturnMs;
   const windowStartMs  = Math.max(nowMs, earliestOutMs);
-  const usableMinutes  = Math.max(0, Math.round((hardReturnMs - windowStartMs) / 60000));
+  const usableMinutes  = freedom.window
+    ? Math.max(0, Math.round((windowEndMs - windowStartMs) / 60000))
+    : 0;
 
   // Overnight: window crosses into a different airport-local calendar day and
   // is long enough that sleep is part of the plan.
@@ -937,6 +1018,9 @@ export function computeWindow(
     overnight,
     returnState: computeReturnState(hardReturnMs, breakdownBase, nowMs),
     engineVersion: LAYOVER_ENGINE_VERSION,
+    freedomWindow: freedom.window,
+    temporalConflict: freedom.conflict,
+    shortfallMinutes: freedom.window ? null : (freedom.conflict?.shortfallMinutes ?? null),
   };
 }
 
