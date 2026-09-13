@@ -666,7 +666,9 @@ router.get("/memories", async (req, res) => {
   const visibleRaw = rows.filter((m, i) => feedChecks[i] && !blockedSet.has(m.owner_id as string));
 
   // Location protection (fail-closed): the stricter of the Hidden-Gem ceiling
-  // and the owner's §10 precision rung, applied before enrichment/serialization.
+  // and the owner's §10 precision rung. It is applied INSIDE `enrichMemories`
+  // now — see that function's header for why it moved — so this handler states
+  // the ceiling and not the mechanism.
   //
   // `|| useProjection` closes a flag-COMBINATION hazard. The derivative always
   // returns `location_precision` (it cannot exist without migration 2338), so a
@@ -675,10 +677,13 @@ router.get("/memories", async (req, res) => {
   // it — a privacy regression produced by a configuration nobody intended.
   // Neither flag may widen disclosure; only narrow it.
   const clampPrecision = precisionEnabled || useProjection;
-  const memoryGemCtx = await loadMemoryGemContext(sc, visibleRaw);
-  const visible = visibleRaw.map((m) => protectMemoryRow(m, memoryGemCtx, user.id, clampPrecision));
+  // Kept as an alias rather than folded away: `visible` is read below for the
+  // saved-collection lookup and the cursor, and both read only `id` and
+  // `created_at`, which no coarsening touches. The coarsened rows are the ones
+  // `enrichMemories` serializes.
+  const visible = visibleRaw;
 
-  const enriched = await enrichMemories(sc, visible, user.id);
+  const enriched = await enrichMemories(sc, visible, user.id, clampPrecision);
 
   // Batch-fetch saved state for the viewer across these memories
   const memoryIds = visible.map((m: any) => m.id as string);
@@ -949,18 +954,84 @@ router.patch("/memories/:id", async (req, res) => {
       select: precisionEnabled ? MEMORY_SELECT_WITH_PRECISION : MEMORY_SELECT,
     },
     legacy: async () => {
-      const { data, error } = await sc
+      // §19 "Concurrent edits should resolve at command/field level, not blind
+      // row last-write-wins", and the §5 guard above is what makes it urgent.
+      //
+      // THE WRITE RE-ASSERTS THE VALUE THE GUARD WAS JUDGED ON. Before this,
+      // `guardLifecycle` decided on `existing.state` and the UPDATE filtered on
+      // `id` and `owner_id` only — so a row that became TERMINAL between the
+      // read and the write took the transition anyway. That is not theoretical:
+      // `DELETE /memories/:id` sets `state='deleted'` and is an ordinary
+      // authenticated route the same owner can call from a second device, so
+      // "publish on the phone, delete on the laptop" republished a deleted
+      // Memory past a guard that had already refused exactly that arrow. The
+      // same window is what would let a racing owner edit overwrite a
+      // moderator's `state='removed'`, which is the case
+      // `assertLifecycleTransition`'s own comment exists to prevent.
+      //
+      // PINNED TO `state` AND NOTHING ELSE, WHICH IS THE FIELD-LEVEL HALF OF
+      // §19's sentence. A precondition on the whole row (an `updated_at`
+      // compare-and-swap) would refuse a caption edit racing a title edit —
+      // two commands that are not in competition — and §19 asks for the
+      // opposite. So a concurrent edit to any other field still merges, and a
+      // concurrent edit to THIS field is the one that conflicts.
+      //
+      // No client contract changes: the precondition is the server's own read,
+      // not a header the caller must learn to send. Census owner decision D-C1
+      // (should a client be REQUIRED to state its base?) is untouched and still
+      // open — two concurrent edits of the same non-lifecycle field still
+      // resolve by last-write-wins, because for those the server has no base.
+      let write = sc
         .from("memories")
         .update(patch)
         .eq("id", id)
-        .eq("owner_id", user.id)
-        .select((precisionEnabled ? MEMORY_SELECT_WITH_PRECISION : MEMORY_SELECT) as any)
-        .single();
+        .eq("owner_id", user.id);
+      write = existing.state == null
+        ? (write as any).is("state", null)
+        : (write as any).eq("state", existing.state);
+      // `.select()` WITHOUT `.single()`: zero matched rows must be an empty
+      // array this code can inspect, not PGRST116 — "nobody changed anything"
+      // and "somebody changed it first" are different answers and only one of
+      // them is an error.
+      const { data, error } = await write
+        .select((precisionEnabled ? MEMORY_SELECT_WITH_PRECISION : MEMORY_SELECT) as any);
       if (error) {
         req.log.error({ err: error }, "memories: patch failed");
         return { ok: false, http: { code: "db_error", message: error.message } };
       }
-      return { ok: true, body: data };
+      const written = (data ?? []) as any[];
+      if (written.length === 0) {
+        // Say WHY. A zero-row update on a precondition is almost always a
+        // conflict, but "almost always" is how a database outage gets reported
+        // to a user as somebody else's edit, so the row is re-read and the
+        // three outcomes are answered separately.
+        const { data: current, error: reErr } = await sc
+          .from("memories")
+          .select("id, state")
+          .eq("id", id)
+          .eq("owner_id", user.id)
+          .maybeSingle();
+        if (reErr) {
+          req.log.error({ err: reErr, memoryId: id }, "memories: patch matched zero rows and the re-read failed");
+          return { ok: false, http: { code: "db_error", message: "The memory could not be updated. Please try again.", exposeDetail: true } };
+        }
+        if (!current) {
+          return { ok: false, http: { code: "not_found", message: "Memory not found" } };
+        }
+        req.log.warn(
+          { memoryId: id, expectedState: existing.state, actualState: (current as any).state },
+          "memories: patch refused — the Memory changed while the command was being judged",
+        );
+        return {
+          ok: false,
+          http: {
+            code: "conflict",
+            message: "This Memory changed while you were editing it. Reload it and try again.",
+            exposeDetail: true,
+          },
+        };
+      }
+      return { ok: true, body: written[0] };
     },
   });
 
@@ -1787,7 +1858,14 @@ router.get("/users/:userId/memories", async (req, res) => {
     visible = rows.filter((_, i) => permChecks[i]);
   }
 
-  const enriched = await enrichMemories(sc, visible, user.id);
+  // Location protection is applied by `enrichMemories`, which is the single
+  // serialization point every LIST response on this surface goes through. Before
+  // 2026-09-13 this handler was the one of four reads that did not perform it at
+  // all, so a Memory sitting on a protected Hidden Gem was served COARSE from
+  // `GET /memories` and EXACT from here — the same row, the same viewer, two
+  // disclosures decided by which handler was reached. The fix is where it is so
+  // that a fifth list read cannot repeat it by omission.
+  const enriched = await enrichMemories(sc, visible, user.id, precisionEnabled);
 
   res.json({
     memories: enriched,
@@ -1855,8 +1933,33 @@ function mapItem(r: any) {
   };
 }
 
-async function enrichMemories(sc: any, rows: any[], viewerId: string) {
+/**
+ * Serialize a LIST of Memory rows for one viewer.
+ *
+ * THE LOCATION PROTECTION LIVES HERE, AND THAT IS THE POINT. It used to be the
+ * caller's job: `GET /memories` ran `protectMemoryRow` over its page before
+ * handing it over, `GET /users/:userId/memories` did not, and nothing about the
+ * call site said the second one owed anything. The result was live — a Memory
+ * whose coordinates sit on a `protected` Hidden Gem (a DEPLOYED table, not a
+ * pending migration) was coarsened to the city grid by the discovery feed and
+ * served at its exact point by the profile listing, to the same viewer.
+ *
+ * Moving it inside the one list serializer makes the guarantee structural: a
+ * future list read cannot omit it without also omitting the serializer, and
+ * it cannot be applied TWICE by accident either — coarsening is a grid snap,
+ * not an idempotent clamp, so a doubly-protected row would move again.
+ *
+ * `precisionEnabled` is the §10 rung's schema-presence gate, passed by the
+ * caller because only the caller knows whether the row it read carries the
+ * column (see MEMORY_SELECT_WITH_PRECISION and the feed's flag-combination
+ * note). The Hidden-Gem ceiling is NOT gated on anything: it is independent,
+ * fail-closed, and it is the half that was leaking.
+ */
+async function enrichMemories(sc: any, rows: any[], viewerId: string, precisionEnabled: boolean) {
   if (rows.length === 0) return [];
+
+  const gemCtx = await loadMemoryGemContext(sc, rows);
+  const safeRows = rows.map((m) => protectMemoryRow(m, gemCtx, viewerId, precisionEnabled));
 
   const ids = rows.map((m) => m.id as string);
   const ownerIds = [...new Set(rows.map((m) => m.owner_id as string))];
@@ -1891,7 +1994,7 @@ async function enrichMemories(sc: any, rows: any[], viewerId: string) {
     ownerMap[r.id] = { id: r.id, name: nameAllowed ? r.name : null, handle: r.handle, avatarUrl: r.avatar_url ?? null };
   }
 
-  return rows.map((m) => ({
+  return safeRows.map((m) => ({
     ...mapMemory(m, viewerId),
     likeCount: likeCounts[m.id] ?? 0,
     likedByMe: likedByMeSet.has(m.id),

@@ -362,10 +362,25 @@ export type ProjectionPolicyRead =
  * looks policy-free, and §10 is unenforced with no trace.
  */
 export async function readProjectionPolicies(
-  sc: SupabaseClient | any,
+  sc: SupabaseClient | any | null,
   highlightIds: readonly string[],
 ): Promise<ProjectionPolicyRead> {
   if (highlightIds.length === 0) return { state: "ready", byHighlightId: new Map() };
+
+  // NO CLIENT IS `unreadable`, NOT `absent`, and the difference is the whole
+  // posture of this function. `absent` means "this deployment has no such
+  // control, so there is nothing to be inside" and leaves locations unclamped;
+  // a missing service client means "there IS a control and we cannot see it",
+  // which is the state `unreadable` exists for. Deciding it here rather than at
+  // each call site is what stops the third caller from picking the other one:
+  // §10 is a policy on the DATA, so the answer cannot depend on which handler
+  // asked.
+  if (sc == null) {
+    return {
+      state: "unreadable",
+      reason: `${PROJECTION_POLICY_TABLE} could not be read: no service client is configured`,
+    };
+  }
 
   const availability = await probeHighlightObject(sc, PROJECTION_POLICY_TABLE, PROJECTION_POLICY_COLUMNS);
   if (availability.state !== "ready") return availability;
