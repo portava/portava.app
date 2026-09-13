@@ -396,7 +396,7 @@ commit.** Rows not restated keep the verdict the body left them with.
 
 | Field | Value |
 | --- | --- |
-| `head_commit` | `3ca68cb06` — RE-DECLARED 2026-09-13 by §5, replacing `42aeac38`. §5 re-executed **all six** of the rows this census could not previously be parsed on (A3, A8, C5, C13, C17, C27) and both remaining BUILT-BUT-WRONG rows at this commit, and edited no Trust source file. It does **not** certify the other 44 `C` rows. The previous declaration read: `42aeac38` — RE-DECLARED 2026-09-09 from `7bca4b0d0e19d29ea0a96982f74b35d26402fa52`, the working-tree commit that addendum was measured at. The move is a measurement, not a judgement: `git diff --name-only 7bca4b0d 42aeac38` over this census's 15 scoped paths returns **0 files**, so all 52 verdicts are exactly as true at one as at the other. It was necessary because `7bca4b0d` is PRE-SQUASH — this repository squash-merges, so it is an ancestor of nothing, is on no remote branch, and `check:census-freshness` could resolve it only on the clone that wrote it (`CENSUS_HEAD_COMMITS_UNREACHABLE_IN_CI`). `42aeac38` is #476's squash, where this document's content reached `main`. |
+| `head_commit` | `f9d0b9a07` — RE-DECLARED 2026-09-13 by **§13**, which built phase V-7 (TV-7a, TV-7b) and moved both rows to `C`; §12's citations into `routes/verification.ts` and `routes/admin.ts` are unaffected. The previous declaration read: `983cfaf75` — RE-DECLARED 2026-09-13 by **§12**, replacing `3ca68cb06`. §12 re-measured the whole census against the verified-foundation plan and the v2 upgrade, corrected the denominator from 52 to 93, re-executed nine of the fifty `C` rows and both `W` rows, and repaired four rows in `routes/verification.ts` and `routes/admin.ts` — so the declaration moves to the commit those repairs landed in, and every §12 citation into those two files is post-repair. The 52 original verdicts are unchanged; see §12.8 for what was re-executed and §12.2 for the arithmetic. The previous declaration read: `3ca68cb06` — RE-DECLARED 2026-09-13 by §5, replacing `42aeac38`. §5 re-executed **all six** of the rows this census could not previously be parsed on (A3, A8, C5, C13, C17, C27) and both remaining BUILT-BUT-WRONG rows at this commit, and edited no Trust source file. It does **not** certify the other 44 `C` rows. The previous declaration read: `42aeac38` — RE-DECLARED 2026-09-09 from `7bca4b0d0e19d29ea0a96982f74b35d26402fa52`, the working-tree commit that addendum was measured at. The move is a measurement, not a judgement: `git diff --name-only 7bca4b0d 42aeac38` over this census's 15 scoped paths returns **0 files**, so all 52 verdicts are exactly as true at one as at the other. It was necessary because `7bca4b0d` is PRE-SQUASH — this repository squash-merges, so it is an ancestor of nothing, is on no remote branch, and `check:census-freshness` could resolve it only on the clone that wrote it (`CENSUS_HEAD_COMMITS_UNREACHABLE_IN_CI`). `42aeac38` is #476's squash, where this document's content reached `main`. |
 | `generated_at` | 2026-09-08 |
 | **Denominator (testable requirements)** | **52** |
 | Scanned | `services/trust/` (8 services), `lib/trustScore.ts`, `lib/trustMaintenanceScheduler.ts`, `routes/trust-admin.ts`, plus every file the eight open rows named: `routes/events.ts`, `routes/pulse.ts`, `routes/rentABuddyMarketplace.ts`, `routes/admin.ts`, `routes/trips.ts`, `routes/tripCrewLocation.ts`, `compass/*`, `services/ranking/CreatorActivityScoreService.ts`, `services/passport/*`, `services/hiddenGems/*` |
@@ -617,3 +617,340 @@ locks score"* — so the tree asserted the misreading in two places and contradi
 it in none. Both now say what the code does, and point at D-OVERRIDE.
 
 **No verdict moves.** C22 was W and stays W, for the reason it already gave.
+
+---
+
+## 12. The denominator excluded the Trust spec — 2026-09-13, `b7f137a4d`
+
+*Measured in the worktree `claude/trust-arch-lane`, branched from `b7f137a4d` on
+`claude/sweet-fermat-fmx7up`. Production (`ajrurzioarfkagpuxfnb`) was read with read-only
+queries only: no migration applied anywhere, no flag flipped, no provider enabled, no backfill
+run. Code work committed at `8d6ccdf05` and `983cfaf75`; every verdict below was derived by
+opening the file at this commit, and the two `C` rows this pass BUILT cite the red-before and
+green-after measurement.*
+
+### 12.1 §1's opening sentence is false, and it is why this census read 96.2 %
+
+§1 opens: *"There is no Trust spec, so no single document states what Trust must do."*
+The Summary table says the same in one word: **Spec — None.**
+
+`docs/trust/verified-foundation-plan.md` has been in this repository throughout. It is titled
+*Portava Verified Foundation — Phased Plan*; it states five privacy invariants as
+*"non-negotiable, encoded in schema + adapter types"*; and it specifies eight phases, `V-0`
+through `V-7`, covering identity-verification routes, the client flow, report/block completion,
+the moderation queue, Safety Center, age gating, provider go-live and GDPR retention. Its
+companion `docs/trust/verified-foundation-README.md` maps every drop-in file to its destination.
+This census mentions neither document **zero times** across 619 lines.
+
+It is not a complete Trust *scoring* specification, and
+`docs/specs/Portava_Trust_Architecture_Upgrade_v2.md` says so in its first paragraph: *"That
+baseline covers verification and moderation; it is not a complete specification of the Trust
+scoring model."* That is the correct, narrow reading. The incorrect reading — the one this
+census made — is that Trust therefore has no spec at all, and that its denominator could be
+built entirely from other surfaces' inbound clauses plus Trust's own code comments.
+
+**The consequence is arithmetic, not rhetorical.** 96.2 % was computed over 52 requirements
+that contained **no** verification obligation, **no** moderation-queue obligation, **no**
+reporting obligation, **no** age-gating obligation and **no** retention obligation — and the
+two rows it could not close were both outside engineering's reach (a deployment and a word).
+A denominator that excludes a surface's own specification cannot be wrong about that surface;
+it can only be silent. The corrected sentence is:
+
+> **Trust has a spec for verification, moderation, reporting and safety surfaces —
+> `docs/trust/verified-foundation-plan.md` — and does NOT have one for scoring. The scoring gap
+> is real and is itemised in §12.7. The verification/moderation gap was never a gap in the
+> subject; it was a gap in the reading.**
+
+`cross-cutting-obligations.md`'s claim that Trust has "neither a spec nor a census" is
+half-wrong in the same way and should be corrected where it is stated, not only here.
+
+### 12.2 Corrected denominator
+
+| | Before | After |
+|---|---|---|
+| Denominator | 52 | **93** |
+| BUILT-AND-CORRECT | 50 | **69** |
+| BUILT-BUT-WRONG | 2 | **15** |
+| NOT-BUILT | 0 | **8** |
+| CANNOT-VERIFY | 0 | **1** |
+| CONSTRUCTED % `(C+W)/n` | 100.0 % | **90.3 %** (84/93) |
+| CORRECT % `C/n` | 96.2 % | **74.2 %** (69/93) |
+
+**The 52 are preserved, not replaced.** Every one keeps its id and its verdict; §12.8 records
+the nine that were re-executed at this commit and the two caveats that measurement corrected.
+41 rows are added: 35 from the verified-foundation plan (5 privacy invariants + 30 rows over
+its 29 phase bullets, one bullet split) and 6 from `Portava_Trust_Architecture_Upgrade_v2.md`.
+The other six TRV2 requirements are duplicates of ground already counted and add nothing —
+§12.6 states the decision and the reason for all twelve, one line each.
+
+Verdict grammar is this document's own: `C` BUILT-AND-CORRECT · `W` BUILT-BUT-WRONG ·
+`NB` NOT-BUILT · `CV` CANNOT-VERIFY. **A parent requirement with several mandatory criteria
+cannot be `C` unless every criterion passes**; the failing criterion is named in the cell.
+Paths are relative to `artifacts/api-server/src/` unless they begin `travel-buddy-standalone/`,
+`db/` or `docs/`.
+
+### 12.3 The five privacy invariants — `TV-P1`…`TV-P5`
+
+The plan calls these *"non-negotiable, encoded in schema + adapter types"*. Two of the five are
+held by the schema; three are not.
+
+| # | Invariant | Verdict | Evidence at `b7f137a4d` |
+|---|---|---|---|
+| TV-P1 | Portava never stores raw government-ID images, document numbers, or selfies — opaque provider references only | **C** | `identity_verifications` carries exactly `id, user_id, provider, provider_session_id, provider_verification_ref, status, failure_reason, is_over_18, selfie_match, document_country, verified_at, expires_at, created_at, updated_at` — read from production 2026-09-13 and identical to `db/migrations/0161_identity_verification.sql:15-46`. No image, document-number or selfie column exists. `VerificationResult` declares no such field (`services/identityVerification/types.ts:58-69`) and `persistResult` writes only that patch (`routes/verification.ts:115-132`). **Caveat, recorded rather than waived: nothing ENFORCES this.** No guard rejects a future adapter that adds a column; the invariant is held by the current shape, not by a mechanism. |
+| TV-P2 | Portava never stores date of birth — age gating stores a derived `is_over_18` boolean only | **W** | Inverted in practice. `profiles.date_of_birth` and `rent_buddy_profiles.date_of_birth` both exist in production, and **7 of 58 profiles hold a DOB** (read-only count, 2026-09-13). `lib/travelerVerification.ts:17-22` states the age signal IS `profiles.date_of_birth` "with NO `dob_verified` gate", reads it at `:66`, and names five other gates that read it alone (`profile.ts`, `events.ts`, `meetups.ts`, `requests.ts`, `discovery.ts`). `routes/profile.ts:584` writes it. `travel-buddy-standalone/src/components/AgeGate.tsx:37-47` computes age from the DOB string client-side. Meanwhile `is_over_18` is written once (`routes/verification.ts:118`) and read by **no gate anywhere** — the only other references are the status route's SELECT list and tests. The stored value is the DOB and the dead column is the derived boolean, which is the exact reverse of the invariant. Owner decision **D-DOB** (§12.7). |
+| TV-P3 | Verification rows deletable per-user for GDPR erasure without destroying moderation audit history (reports/actions use SET NULL) | **W** | Three of four criteria hold. Verification rows delete per user: `services/accountDeletion/AccountDeletionService.ts:970-973`. **Reports** use SET NULL on all three user columns — `moderation_reports_reporter_id_fkey`, `_resolver_id_fkey`, `_subject_user_id_fkey`, each `ON DELETE SET NULL` (production, 2026-09-13; staged by `migrations/2135_deletion_blocking_fks.sql:129-140`). **ACTIONS do not.** `moderation_actions_target_user_id_fkey` is `ON DELETE CASCADE`, so erasing the subject destroys every enforcement record about them — the opposite of "without destroying moderation audit history" — and `moderation_actions_performed_by_fkey` is plain NO ACTION, which BLOCKS erasing a moderator rather than nulling them. `migrations/2138_profiles_fk_convergence_prep.sql:103` lists `('moderation_actions','performed_by','SETNULL')` as intended; production has not converged. Owner decision **D-MODACTION-FK**. |
+| TV-P4 | The mock provider is refused in production by the factory | **C** | `services/identityVerification/providers.ts:105-111` throws `IDENTITY_PROVIDER=mock is not allowed in production` when `NODE_ENV === 'production'`, before returning the adapter. `services/identityVerification/readiness.ts:87-95` reports the same fact without throwing, for callers that need to ask rather than act. Re-executed as an assertion at this commit: `test/verificationWebhookProviderUnavailable.test.ts` test 1 is a premise test that the factory really does throw, so the three tests below it cannot pass vacuously. |
+| TV-P5 | Webhooks are signature-verified in every real adapter; an unverified webhook throws, never silently accepts | **W** | Two criteria; one now passes, one is not written. **Signature verification: absent.** There is no real adapter — `providers.ts:45-61` (Stripe) and `:80-96` (Persona) throw "not configured" from every method including `handleWebhook`, so no signature is ever checked. The contract is declared (`types.ts:87-92`, "MUST throw on signature failure") and the route honours a throw with 400 (`routes/verification.ts:296-309`), but the verifying code does not exist. Grading this vacuously true because "every real adapter" quantifies over an empty set would be weakening the requirement; V-6 lists "webhook signature verification" as outstanding agent work and TV-6b carries it. **"Never silently accepts": BUILT THIS PASS.** `webhookHandler` answered **200** when the factory threw, under the comment "provider not configured; treat as irrelevant" — and that throw is the NORMAL production behaviour of the default `IDENTITY_PROVIDER=mock`, i.e. TV-P4's own mechanism. So the rule keeping the mock out of production was also making the public webhook endpoint accept every real event, write nothing, log nothing and tell the provider it was handled. Now 503 with the error bound and logged (`routes/verification.ts:271-297`), matching the persist branch below it; 400 deliberately not reused, because that means "your signature failed" and would send an operator to the wrong system. RED 2 pass/3 fail → GREEN 5/5 (`test/verificationWebhookProviderUnavailable.test.ts`), with a control proving an event the adapter deliberately ignores is still answered 200. |
+
+### 12.4 Phases V-0 … V-7 — `TV-0a`…`TV-7c`
+
+**V-0 is marked `[x]` DONE with five checked boxes. The framing document is explicit that "a
+historical 'done' label is a claim to verify, not evidence of current completion", so each box
+was opened.** Three of the five are true, one is partly true, and one names a file that does
+not exist anywhere in this repository.
+
+| # | Obligation | Verdict | Evidence at `b7f137a4d` |
+|---|---|---|---|
+| TV-0a | `[x]` Schema: `identity_verifications`, `moderation_reports`, `moderation_actions`, profile `verification_level` + `verified_at` (`0161_identity_verification.sql`) | **W** | All four objects exist in production — but not from that file, and one of them has the wrong shape. `db/migrations/0161_identity_verification.sql` is a drop-in that was **never added to the applied migration set**: `migrations/` holds 528 files and not one mentions `identity_verifications`. The table reached production through `baseline/20260819_baseline_structure.sql:6788`; `moderation_reports` through `migrations/0176_moderation_reports.sql:15-29`, whose own header records that the UI wave shipped the route with no migration; `moderation_actions` from a pre-baseline root. **And `moderation_actions` is not the table 0161 describes.** Production columns are `id, target_user_id, action_type, reason, performed_by, created_at, metadata` — **no `report_id`** and **no `expires_at`** (read 2026-09-13). 0161 declares both. So V-4's "suspend with expiry" and the report→action link are not expressible in the live columns; `lib/moderationAudit.ts:35-37` records the workaround in its own comment ("the only place the content item and the originating report can be recorded; there are no columns for either"). Owner decision **D-MODACTION-SHAPE**. The profile field also landed with a CHECK constraint that rejects the values the service writes — TV-1c. |
+| TV-0b | `[x]` Provider adapter interface + normalized status model (`types.ts`) | **C** | `services/identityVerification/types.ts:17-102`: `VerificationProviderName`, `NormalizedVerificationStatus` (7 values, matching the live CHECK on `identity_verifications.status`), `NormalizedFailureReason` (6), `IdentityVerificationProvider` with all four methods, `toVerificationLevel` at `:105-110`. Re-exported for in-package use at `services/identityVerification/index.ts:6-17`. |
+| TV-0c | `[x]` Working mock provider with forced-failure test hints (`mockProvider.ts`) | **C** | `services/identityVerification/mockProvider.ts:90-142` implements all four methods; the four hints (`approve`, `fail_document`, `fail_selfie`, `fail_underage`) resolve to the correct normalized failure reasons at `:52-87`. Exercised end to end, not merely present: `test/verification.test.ts` drives create → webhook → status against it. |
+| TV-0d | `[x]` Stripe/Persona stubs + env-driven factory (the prod-guard criterion is counted once, at TV-P4) | **C** | `providers.ts:45-61` and `:80-96` are stubs with the full integration mapped in comments (`:28-44`, `:66-79`); `getIdentityProvider:102-117` selects on `IDENTITY_PROVIDER` and rejects an unknown name. "Stub" here means every method throws, which is what TV-P5 and TV-6b grade; as a *stub + factory* the box is true. |
+| TV-0e | `[x]` `VerifiedBadge` component (teal = ID verified, gold = ID + selfie) | **NB** | **No such file exists anywhere in the repository.** A case-insensitive search for `VerifiedBadge` returns four hits, all of them inside the two plan documents themselves (`docs/trust/verified-foundation-README.md:15,27`; `docs/trust/verified-foundation-plan.md:31,58`). `travel-buddy-standalone/src/components/` holds `FeaturedBadge.tsx`, `OfficialBadge.tsx`, `PassportVerificationStamp.tsx`, `StampOverlayBadge.tsx` and `VerificationLevelsRail.tsx`; none of them reads `profiles.verification_level`. A `[x]` DONE box that was never true in this tree. |
+| TV-1a | `POST /api/verification/session` — auth required; creates the provider session for the caller; upserts the row in `created` status; returns `redirectUrl` | **W** | Four criteria, three pass. Auth required ✓ `routes/verification.ts:157-159` (`requireUser` first). Creates the caller's session ✓ `:212-217` (`userId: user.id`). Returns `redirectUrl` ✓ `:277-281`, and the 23505 branch returns the existing active session rather than a raw DB error `:244-270`. **Status ✗:** the insert writes `status: "pending"` (`:229`), not `created`. Both are legal values of the live CHECK and no consumer behaves differently (`travel-buddy-standalone/app/profile/verification.tsx:44` treats `created`/`pending`/`processing` alike), so the effect is nil — but the stated criterion is `created` and it is not met, and a parent row cannot be `C` on three of four. |
+| TV-1b | `POST /api/verification/webhook` — raw-body route; passes to `provider.handleWebhook`; on a normalized result, updates the row | **C** | Raw body ✓ — mounted in `app.ts:129` with `express.raw` BEFORE the global JSON parser (`routes/verification.ts:264`), and deliberately not re-registered on the router (`:316-318`). Passes the headers and raw body to the adapter ✓ `:296-302`. Updates the row on a normalized result ✓ `persistResult:128-132`, with the lookup-by-session error bound and rethrown at `:105` so an unreadable table cannot masquerade as an unknown session. Irrelevant events are acknowledged, not persisted ✓ `:311-314`. |
+| TV-1c | …and, when `verified`, sets `profiles.verification_level` via `toVerificationLevel()` and `verified_at` *(SPLIT out of V-1's webhook bullet: separately testable, separately load-bearing, and separately broken)* | **W** | The code is right and **the database rejects it.** Measured read-only on production 2026-09-13: `profiles_verification_level_check` is `CHECK ((verification_level = ANY (ARRAY['none','basic_verified','trusted_traveler','host_verified','buddy_verified'])))`. `toVerificationLevel` returns `'id_verified'` or `'id_selfie_verified'` (`types.ts:105-110`), and `applyVerifiedProfile` writes exactly that (`routes/verification.ts:68-75`). Every successful verification is a 23514. The handler binds the error and throws, `webhookHandler` returns 5xx so the provider retries — **and the retry writes the same rejected value**. No user can reach a non-`none` level, which is the column `lib/travelerVerification.ts:85-88` reads as the ID signal and `routes/rentABuddyRollout.ts` gates bookings on. Open as audit **H5** since 2026-08-30 (`docs/handoff/2026-08-30-session-handoff.md:117`, proved on CI there), invisible to every existing test because they all use an injected fake with no schema knowledge (`test/verification.test.ts:280` asserts `id_verified` round-trips through a double that would accept any string). **Staged this pass, not applied:** `migrations/2870_profiles_verification_level_identity_vocabulary.sql` widens the CHECK additively, with `db/rollback/2026-09-13-2870-profiles-verification-level-identity-vocabulary-rollback.sql` that REFUSES to run while any identity level exists. Stays `W` because the migration is applied to no database — grading it `C` on a staged file would be the "merged is not deployed" error this census made its name on. |
+| TV-1d | `GET /api/verification/status` — the caller's current verification row (poll fallback) | **C** | `routes/verification.ts:353-406`. Both reads bind `error`: the row read refuses at `:369-373`, and the profile read refuses at `:392-396` rather than letting `?? "none"` convert an unreadable `profiles` into "you are not verified" — a false statement the caller cannot act on, in a signal that gates bookings. Pinned by `test/verificationStatusUnreadableProfile.test.ts`. |
+| TV-1e | Rate limits: max 3 session creations per user per 24 h | **C** | `routes/verification.ts:32-33` (`VERIFICATION_SESSION_LIMIT = 3`, 24 h window), enforced first in the handler at `:161-169` with a `Retry-After` header and an explicit retry timestamp. Covered by `test/verification.test.ts`. |
+| TV-1f | Trust Score hook: on transition to `verified`, emit the existing trust event the platform uses | **C** | **Built correct this pass.** The event is the declared one (`services/trust/TrustEventService.ts:815`, `IDENTITY_VERIFIED` → respect_safety +10) and is emitted at `routes/verification.ts:96-101`. It was emitted **without a `sourceId`**, and `TrustEventService.isDuplicate:242` opens `if (!sourceId) return "new"` — so the emitter had no idempotency key and every call was a first call. Provider webhooks are at-least-once by construction and this handler returns 5xx on a persist failure *on purpose* so they retry, so the one path built to be re-entered was the one path with no key: each redelivery charged another +10 until the daily cap absorbed it. V-1 defines the hook per TRANSITION, not per delivery. Now keyed on the provider session id with `sourceType` carried alongside (the dedup read filters on both). RED 1 pass/2 fail → GREEN 3/3 (`test/verificationTrustIdempotency.test.ts`); reverting the two added lines returns it to 1/2. Whether +10 is the right magnitude is scoring policy and is already parked at §5 item 5 — this row does not claim it. |
+| TV-1g | Tests: mock-provider end-to-end, forced failures map to correct reasons, rate limit | **C** | `test/verification.test.ts` (create → webhook approve → profile level set; the four forced-failure hints; the rate limit), `test/verificationWritesIssued.test.ts` (writes are ISSUED, not merely constructed), `test/verificationStatusUnreadableProfile.test.ts`. 48/48 at this commit before this pass; 59/59 after, with the three files added. **Caveat recorded, because it is the reason TV-1c survived a year of green suites: every one of these runs against an injected fake client with no schema knowledge, so none of them can see a CHECK constraint.** `test/verificationLevelVocabulary.test.ts` is the answer to that class and is new this pass. |
+| TV-2a | Entry points: Passport profile ("Get verified"), Rent-a-Buddy gate | **W** | Passport ✓ — `travel-buddy-standalone/src/components/passport/PassportOwnerMenuSheet.tsx:207` and `app/explore-portava.tsx:139` both route to `/profile/verification`, registered at `src/navigation/portavaRoutes.ts:352`. **Rent-a-Buddy gate ✗** — no screen under `app/(rent-a-buddy)/` routes to verification. The server-side gate exists (`routes/rentABuddyRollout.ts` refuses an MVP-mode booking without ID verification) but a user it refuses is given no route to satisfy it; `app/(rent-a-buddy)/index.tsx:37` only describes verification in FAQ copy. |
+| TV-2b | Screens: intro (what/why/**what we never store**) → provider hand-off → pending → success / failure with retry | **W** | Hand-off ✓ `app/profile/verification.tsx:96-112` (`Linking.openURL(redirectUrl)` with a fallback alert). Pending ✓ `:88-94` (4 s poll while the row is in an active status). Success/failure with retry ✓ `:241-269`. **"What we never store" ✗** — the intro section is `WHAT YOU GET` (`:221-238`): a verified badge, a higher trust score, access to verified-only features. There is no privacy disclosure on the screen at all. That clause is the user-facing half of TV-P1/TV-P2 and it is the one the plan wrote in bold-by-parenthesis; a verification flow that never says what is not kept is asking for a government ID on an unstated basis. |
+| TV-2c | Render `VerifiedBadge` beside names in profile header, traveler cards, Rent-a-Buddy listings, reviews, event attendee lists — inside `UserIdentityLink` | **NB** | Six criteria, zero met, and they cannot be met: the component does not exist (TV-0e). `travel-buddy-standalone/src/components/interaction/UserIdentityLink.tsx` contains no occurrence of `verification` or `verified` — the wrapper the plan names as the placement is unaware of the concept. No traveler card, listing, review or attendee list renders a verification badge. |
+| TV-2d | Failure UX: clear reason ("document couldn't be read", "selfie didn't match") + retry path; `underage` routes to an age-policy screen and does NOT allow retry spam | **W** | A reason is shown, so something is built — but it is the raw enum with underscores replaced (`app/profile/verification.tsx:202-206`: `row.failureReason.replace(/_/g,' ')` renders "document invalid", "selfie mismatch", "underage"), not the human copy the plan specifies. **`underage` is not special-cased at all**: `isFailed` at `:124` is true for every failure regardless of reason, so the `GET VERIFIED` CTA re-renders at `:241` and an underage user is invited to retry immediately — the retry spam the clause exists to prevent. No age-policy screen exists. |
+| TV-3a | Report entry points: profile overflow, post/comment overflow, Telegraph thread menu, event page, buddy listing, review | **C** | All six, each opening the unified `ReportSheet`: profile `app/u/[username].tsx`; post `app/post/[id].tsx`; comment `src/components/CommentsSheet.tsx`; Telegraph thread `src/components/ThreadSafetySheet.tsx:38,258` (DM threads, via `canUseReportSheet` at `:145`); event `app/event/[id].tsx`; buddy listing `app/(rent-a-buddy)/buddy/[id].tsx`; review `src/components/ReviewsSection.tsx:313-321`, which passes `subjectType="review"` and the author id. Server-side, `review` resolves to an owner at `lib/contentOwner.ts:112`. |
+| TV-3b | Report sheet: category picker matching `moderation_reports.category`, optional details, confirmation; writes via a server route so the server can attach `subject_user_id` | **C** | `src/components/ReportSheet.tsx:2-10` is a 3-step report+block sheet; the category union at `src/services/moderation.ts:30-38` is exactly the eight values of the live CHECK (`migrations/0176_moderation_reports.sql:23-25`); details are optional (`routes/moderation.ts:50`); step 3 is the confirmation. The write goes through `POST /api/moderation/report`, and `subject_user_id` is derived server-side at `routes/moderation.ts:161-162` via the shared resolver — never client-supplied (the schema at `:46-55` has no field for it). |
+| TV-3c | Block flow already exists platform-wide — each report entry point also offers Block, reusing the existing block service | **C** | The block is inside the same sheet every entry point mounts, so the coverage is structural rather than six separate wirings: `src/components/ReportSheet.tsx:6` ("Step 3: Confirmation + optional 'Also block' CTA"), `:26` imports `blockUser`/`unblockUser` from the existing `services/blocks.ts`, `:78-79` reads `BlockedIdsContext` so an already-blocked subject shows "Unblock", `:138-157` performs it. Gated on `subjectUserId` being known (`:9`), which is correct: a place report has no user to block. |
+| TV-3d | Reporter sees "we received it"; no visibility into outcomes beyond a generic notification if actioned *(SPLIT: the reporter-facing direction; A7/C20 keep the do-not-expose-to-others direction)* | **C** | Both directions of the acknowledgement return the same string and nothing else: `routes/moderation.ts:139-141` (duplicate collapse) and `:247-250` (new report) answer `{ reportId, message: "Thanks — our team will review this." }`. `GET /moderation/reports/mine:265-272` selects `id, subject_type, category, status, created_at` — no `resolver_id`, no `resolver_note`, no `subject_user_id`, so the reporter learns that a report exists and its coarse state and nothing about the adjudication or the subject. |
+| TV-4a | Admin-only queue: list open reports, filter by category/status, view subject content snapshot, act (warn / remove content / suspend with expiry / ban / dismiss), every action writing `moderation_actions` | **W** | Five criteria, one and a half pass. **List ✓** `routes/admin.ts:2050-2112`, `requireAdmin` first at `:2051`, with a client at `travel-buddy-standalone/app/admin/content-reports.tsx`. **Filter ✗ (half)** — the route filters `subject_type` and `status` (`:2071-2076`); there is **no category filter**, which is the axis the plan names and the axis a moderator triages on. **Subject content snapshot ✗** — only `place` reports are enriched, with name and address (`:2084-2109`); a reported post, comment, message, event, review or buddy listing arrives as a bare UUID. **Act ✗** — no route acts on a `moderation_reports` row at all: `POST /admin/reports/:id/resolve` and `/dismiss` operate on the separate legacy `reports` table, and nothing updates `moderation_reports.status`, so the queue can only grow. **Every action writing `moderation_actions` ✓ at user level, ✗ as specified** — `/admin/users/:userId/{warn,restrict,suspend,ban,restore}` each call `logModerationAction` (`routes/admin.ts:1630,1659,1681,…`), but they are reached from a user, not from a report, and the row cannot name the report because the column does not exist (TV-0a). "Suspend with expiry" is likewise unrecordable: `routes/admin.ts:1675` accepts `expires_at` and stores it in `user_account_states`, while `moderation_actions` has no `expires_at` at all. |
+| TV-4b | Suspension enforcement middleware on auth: suspended users get a read-only state with an appeal contact; banned users are signed out | **W** | Three criteria, one passes. **Middleware on auth ✓** — `lib/http.ts:369-378`, inside `requireUser`, so it covers every authenticated route, and `:352-364` refuses outright when `account_status` is unreadable rather than serving an unchecked request. **Read-only state with an appeal contact ✗** — a suspended user gets a blanket 403 `"Your account is temporarily suspended"` on every authenticated request: not read-only, and naming no appeal contact, although `routes/appeals.ts` and `travel-buddy-standalone/app/appeals.tsx` both exist and nothing points at them from here. **Banned users signed out ✗** — also a 403 (`:374-376`); `src/components/AccountStatusGate.tsx` has branches for `deactivated` and pending deletion and none for suspended or banned, so the client has no state to render either. Owner decision **D-SUSPENSION-UX**. |
+| TV-4c | `verification_revoked` action clears `profiles.verification_level` | **C** | **Built this pass.** `POST /admin/users/:userId/unverify` is the platform's revoke action and cleared `verified`, `verification_status` and `verified_at` — the exact inverse of what `/verify` sets, which is why it looked complete. A fourth column carries the same claim and is written by a different path: `profiles.verification_level` has exactly ONE writer in the server (`routes/verification.ts:71`), and `lib/travelerVerification.ts:85-88` reads it as a **sufficient** id-verified signal, ORed with the other two rather than ANDed. Clearing two of three disjuncts revoked nothing: an admin unverifying a user after a disputed document left them passing every gate that calls `loadTravelerIdentity`, including the Rent-a-Buddy MVP booking gate. And nothing else could clear it — the single writer only ever sets a verified level — so no code path in the product could take ID-verified standing away. Now cleared at `routes/admin.ts:1601-1607`. RED 5 tests/3 pass/2 fail → GREEN 5/5 (`test/adminUnverifyRevokesIdLevel.test.ts`); reverting the single added field returns it to 3/2. The test asserts the OUTCOME — it applies the patch the route actually sent and asks `travelerIdentityFromProfile` — plus a premise test, an audit assertion and a control. Reversing derived TRUST effects is deliberately not done here: that is **D-REVERSAL** and is `TRV2-10`'s CANNOT-VERIFY. |
+| TV-5a | Safety Center screen: links to Safe Return, SOS, verification status, blocked-users list, community guidelines, report history | **W** | Four of six. The hub exists at `travel-buddy-standalone/app/profile/edit/safety.tsx` ("Safety & Verification"): verification status ✓ `:72-80` (read-only cards from `getMyProfile`), blocked-users ✓ `:102-104`, report history ✓ `:126-128` → `/profile/edit/reports`, Safe Return ✓ `:143-145` (linked to Location & Availability rather than duplicated). **SOS ✗** and **community guidelines ✗** — neither appears on the screen, and a repository-wide search for a community-guidelines surface returns none. |
+| TV-5b | Age gating: 18+ features (nightlife-tagged events, Rent a Buddy) check `is_over_18` from the latest verified row; unverified users see a "verify to access" gate, not silent hiding | **NB** | `is_over_18` is written at `routes/verification.ts:118` and read by **no gate**. Every age gate in the product reads `profiles.date_of_birth` instead — `lib/travelerVerification.ts:66`, `routes/meetups.ts:648,721`, `routes/requests.ts:442,472`, `routes/profile.ts:430`, `services/media/MediaProjectionService.ts:108-112`, `routes/mediaFeed.ts:1325-1329` — which is TV-P2's violation seen from the consumer side. No nightlife-tagged-event gate exists at all, and there is no "verify to access" surface: `AgeGate.tsx` asks for a birthdate, which is the opposite mechanism. |
+| TV-6a | **OWNER:** choose Stripe Identity or Persona; create the account; obtain API keys; configure the webhook endpoint + signing secret; set Replit Secrets (`IDENTITY_PROVIDER`, provider keys, `IDENTITY_WEBHOOK_SECRET`) | **NB** (OWNER-BLOCKED) | Not started and not startable by a lane. `services/identityVerification/readiness.ts:47` declares `IMPLEMENTED_PROVIDERS = new Set(["mock"])`; `:50-53` names the env vars that would have to exist (`STRIPE_IDENTITY_SECRET_KEY`, `PERSONA_API_KEY`). **Exactly what is needed, so the owner can act without reading code:** (1) a decision between Stripe Identity and Persona; (2) an account with that vendor; (3) the API key(s) — `STRIPE_IDENTITY_SECRET_KEY`, or `PERSONA_API_KEY` + `PERSONA_TEMPLATE_ID`; (4) a webhook endpoint registered at `POST https://<api-host>/api/verification/webhook`; (5) the signing secret from that registration, as `IDENTITY_WEBHOOK_SECRET`; (6) all of it in Replit Secrets, plus `IDENTITY_PROVIDER` set to the chosen name **in staging first**. Costs ~$1.50–3.00 per attempt at both vendors (plan, "Cost checkpoints"). Owner decision **D-PROVIDER**. |
+| TV-6b | **AGENT:** implement the chosen adapter per the mapped TODOs; sandbox-mode end-to-end test; then flip `IDENTITY_PROVIDER` staging → production *(the signature-verification criterion is counted once, at TV-P5)* | **NB** | Nothing implemented: both adapters throw from every method (`providers.ts:45-61`, `:80-96`). Genuinely blocked on TV-6a for the account-dependent half, and **that is not a reason this row is untouched** — the integration is mapped line by line in the file (`:28-44` Stripe, `:66-79` Persona) and the normalization notes are written, so the remaining agent work is real and specified. It was not done here because implementing an adapter that cannot be sandbox-tested would produce exactly the mock-counted-as-complete this census forbids: `readiness.ts:40-46` states the rule in the file itself — a provider joins `IMPLEMENTED_PROVIDERS` when its adapter stops throwing, and *"leaving a stub out of this set is what keeps the Rent-a-Buddy booking gate closed."* |
+| TV-7a | Account-deletion flow calls `provider.requestProviderDeletion()` **then** deletes the user's `identity_verifications` rows | **W** | Two criteria; the second passes and the first does not. Deletion ✓ `services/accountDeletion/AccountDeletionService.ts:970-973` (`delete().eq("user_id", userId)`, as a named, checked step). **`requestProviderDeletion` ✗** — declared at `types.ts:101`, implemented as a no-op by the mock (`mockProvider.ts:139-141`), mapped for both real vendors in comments (`providers.ts:39` `verificationSessions.redact`, `:76` `POST /inquiries/:id/redact`), and **called from nowhere**: a repository-wide search returns only the declaration, the two stubs, the mock and the comments. So erasure deletes Portava's opaque reference and leaves the provider's copy of the government ID in place — the one direction of GDPR erasure that is not Portava's to keep. The ordering the plan specifies ("then") is also lost: once the row is deleted, `provider_verification_ref` is gone and the deletion can no longer be requested. |
+| TV-7b | Retention job: purge failed/expired verification rows older than 90 days | **NB** | No such job exists. `lib/trustMaintenanceScheduler.ts` runs four steps (decay refresh, cap expiry, probation, gaming scan) and names no verification table; no scheduler, cron or script anywhere reads `identity_verifications` with a date bound. `expires_at` is written (`routes/verification.ts:232`) and never acted on. Nothing is over-retained today only because the table holds 0 rows in production. |
+| TV-7c | Document the data flow in the privacy policy surface | **NB** | There is no privacy policy surface in the client to document it in: a search of `travel-buddy-standalone/app` and `src` for a privacy-policy screen, route or link returns nothing, and `app/settings/index.tsx` mentions neither identity verification nor a government-ID check. The disclosure is absent from the verification screen too (TV-2b). |
+
+### 12.5 Sensing §16 — checked before counting, as instructed
+
+`census-sensing`'s SX-47 and SX-48 are already counted here as **A18** and **A19**, and §1
+excluded SX-46 as a Safety-surface obligation "whose pipeline ends in `safetyNoticeProducer`,
+not the trust engine". Both A18 and A19 were re-executed at this commit (§12.8) and neither
+moves. TRV2-01 and TRV2-02 are therefore duplicates and add nothing; TRV2-03 re-states SX-46
+with a Trust-side evidence bar ("no suspension or reputation penalty") and is admitted as the
+one addition from that ground, cross-listed so the corpus does not count it twice.
+
+### 12.6 TRV2-01 … TRV2-12 — every mapping decision, with its reason
+
+Checked against **all 52 existing rows for semantic overlap**, not merely for a missing
+citation. Six are duplicates that add nothing to the denominator; four are splits that add only
+their genuinely new clause; two are additions.
+
+| ID | Decision | Existing row(s) it maps onto | Reason |
+|---|---|---|---|
+| TRV2-01 | **DUPLICATE** | **A19** (Sensing §16:183, SX-48) | Same obligation, stricter wording. A19 already states "do not score a user as trustworthy because passive movement looks normal"; TRV2-01 adds "and anonymous contribution", which A18's scoped-trust separation and `lib/intelScopedTrustApply.ts:141-151` already cover. Re-graded against TRV2's bar ("sensor/aggregate fixtures generate zero person Trust effects"): A19 holds — the only movement-derived person-trust events are negative (`TrustEventService.ts:440-446`, −8/−4/−1) and the positive location events require an explicit geofenced action. **Adds nothing.** |
+| TRV2-02 | **DUPLICATE** | **A18** (SX-47) | Verbatim the same requirement. Re-executed: `lib/intelScopedTrust.ts` keeps a separate store and `lib/intelScopedTrustApply.ts:147-151` bridges only a named signal subset with its own deltas, so no shared-intelligence API can substitute a person score for evidence confidence. **Adds nothing.** |
+| TRV2-03 | **ADDITION** | — (SX-46 was explicitly EXCLUDED by §1) | §1 excluded SX-46 as a Safety-surface obligation; TRV2 restates it with a Trust-side bar that §1's reason does not answer ("crowd spike alone causes no **suspension or reputation penalty**"). C6 and C23 forbid auto-penalty for their own inputs, not for world anomalies. **New row, graded below.** |
+| TRV2-04 | **DUPLICATE** | **TV-0b, TV-0d, TV-1a, TV-1b, TV-1c, TV-1f, TV-P5, TV-0e, TV-2c** | Every clause of its chain — "session→signed webhook→authorized transition→profile→badge works; duplicates and invalid signatures cannot create additional effects" — lands on a row added in §12.4. Re-graded against its stricter bar rather than added: the chain does NOT work end to end (TV-1c: the profile transition is rejected by the live constraint; TV-0e/TV-2c: there is no badge), duplicates are now inert (TV-1f, fixed this pass), invalid signatures are unverifiable (TV-P5). **Adds nothing.** |
+| TRV2-05 | **SPLIT** → +1 | duplicates **TV-P1** (no raw IDs/document numbers/selfies), **TV-P2** (no DOB), **TV-P4** (mock refused in production) | Three of its four clauses are the invariants verbatim. The fourth — "no raw IDs, document numbers, selfies or dates of birth enter Portava storage **or logs**" — is about a different medium, is separately checkable, and no existing row grades it. **New row for the logs clause only.** |
+| TRV2-06 | **DUPLICATE** | **C1** (dedup), **C3** (severity → pending_review), **C5** (review queue), **C7** (counterparty explicit), **C21** (admin audit), **TV-1f** (duplicate delivery), **TV-4a** (action attribution) | "Disputed/unconfirmed reports cannot be treated as upheld" is C3+C5; "duplicate deliveries or crashes do not double-charge" is C1 and TV-1f; "admin action is not misattributed" is C21 and TV-4a's audit criterion. Each re-graded; the only movement is TV-1f, which this pass fixed. **Adds nothing.** |
+| TRV2-07 | **DUPLICATE** | **A10** (replayable), **C11** (failed read ≠ missing profile), **C16** (degraded reads labelled), **C17** (expiry scheduled), **C25** (scheduler wiring demonstrated) | "Crash/retry/replay produces the approved result; failed reads do not become clean reputation or fabricated denial; scheduler wiring is demonstrated" is a restatement of those five, which §10 already moved to `C` with production evidence for C25. **Adds nothing.** |
+| TRV2-08 | **SPLIT** → +1 | duplicates **A12** (hosting, messaging), **A13** (private_plan_access, location_plan_join), **A7** and **C20** (privacy-safe summaries) | A12/A13 name the four seams that enforce; A7/C20 hold the privacy half. The clause "**Compass, Discovery, social and booking paths** enforce applicable existing policy" names four consuming surfaces no existing row grades, and A17 covers only the READ seam, not enforcement. **New row for those consuming actions only.** |
+| TRV2-09 | **SPLIT** → +1 | duplicates **C26** (unauthorized caller cannot act), **C21** (actor, reason and subject recorded) | Both halves are already `C` and were re-executed (§12.8). "**Concurrency does not lose active restrictions**" is a third clause no row grades. **New row for concurrency only.** |
+| TRV2-10 | **SPLIT** → +1 | duplicates **TV-4c** (revocation reaches eligibility), **TV-7a** (provider deletion requested), **C14** (cap lifted when the finding is reversed), **TV-P3** (deletion lineage) | Four clauses are rows above. The fifth — "derived effects follow **the defined reversal/retention policy**" — depends on a policy the v2 document states does not exist. **New row, and it is this census's one CANNOT-VERIFY.** |
+| TRV2-11 | **ADDITION** | — (A6 measures emission, not fabrication) | "No historical stamp, inferred visit or passive contribution becomes a new award absent an explicitly approved backfill policy; test fixtures stay isolated" is a constraint on how requirements may be closed. A6 measures whether evidence reaches the ledger; nothing grades whether it was manufactured. **New row.** |
+| TRV2-12 | **DUPLICATE** | **A18** (source reliability is not a person's badge), **TV-0e** and **TV-2c** (the badge), **A9** (non-stigmatizing copy); "unknown reputation is not silently 'established'" is **census-passport P45**, which §2.B counts there and not here | Re-graded rather than added. One finding it surfaces belongs to TV-2c and is recorded there: `travel-buddy-standalone/app/profile/edit/safety.tsx:34-39` maps `verificationLevel` over `none / basic_verified / trusted_traveler / host_verified / buddy_verified`, while `app/profile/verification.tsx:22-26` maps the same field over `none / id_verified / id_selfie_verified`. The two client screens disagree about the vocabulary of one column, so whichever the server writes, one of them renders a blank label. **Adds nothing.** |
+
+**The four split rows and two additions:**
+
+| # | Requirement | Verdict | Evidence at `b7f137a4d` |
+|---|---|---|---|
+| TRV2-03 | Anomalies create only policy-eligible safety candidates, not automatic canonical danger; no suspension or reputation penalty from a crowd spike | **C** | The pipeline ends in a review queue, not an assertion. `routes/adminSafetyCandidates.ts:1-25`: each candidate "is FILED as a `moderation_reports` row — subject_type `place`, category `safety_concern`, no reporter", and the header states what it does not do — *"It asserts nothing: no snapshot is written, no notice is projected."* `lib/safetyCandidateStore.ts:7-14` records that the queue is the platform's existing review and that the service client writes it. Gated fail-closed on `intel_safety_candidates_enabled` (migration 2803, seeded FALSE) and by `requireAdmin`. No person-trust write exists on that path: `recordTrustEvent` is not imported by either file. Cross-listed with census-sensing, whose lane owns the producer. |
+| TRV2-05 | No raw IDs, document numbers, selfies or dates of birth enter Portava **logs** | **C** | Every log statement on the verification path binds only the error object and, at most, a user id: `routes/verification.ts:211, 227, 265, 280, 401, 424`, plus the 503 refusal added this pass at `:290`. The raw webhook body is never logged — `webhookHandler` passes it to the adapter and discards it (`:283-302`). No `result`, `patch` or document field is ever a log argument. **One caveat recorded:** `:281` returns `insertError.message` to the caller, and a Postgres error can echo a rejected VALUE; for this table that is a status or a level string, never document data — but it is the one place a future column could leak through. |
+| TRV2-08 | Restrictions are applied at the actual consuming actions — Compass, Discovery, social and booking paths | **NB** | `getRestrictionState` has exactly five non-Trust callers, and none of them is any of the four: `services/interactionPermissions.ts:354` (messaging), `lib/calls/callGatewayAdapter.ts:265` (calls), `routes/trips.ts` (hosting), `routes/tripCrewLocation.ts` (crew live-share), and `services/passport/PassportProjectionService.ts:1962`, which is a PROJECTION for display, not a gate. `src/compass/` and `routes/discovery*.ts` contain no call at all. The booking path enforces a different mechanism entirely — `rent_buddy_city_restrictions` and `rent_buddy_user_limits` (`routes/rentABuddy.ts:1574, 612-618`) — which is city/category and rate policy, not trust restriction. A user restricted by an admin can still be recommended, discovered and booked. Owner decision **D-RESTRICTION-REACH**. |
+| TRV2-09 | Concurrency does not lose active restrictions | **C** | There is no read-modify-write anywhere on the restriction tables, which is the shape that loses updates. `TrustRestrictionService` applies with a bare `insert` (`:111-118`) and lifts with a single statement scoped to unlifted rows — `.update({lifted_at, lifted_by}).eq("user_id").eq("restriction_type").is("lifted_at", null)` (`:156-159`) — so two concurrent lifts are idempotent and a lift cannot clear a row it did not match. Enforcement reads the timestamps directly rather than a cached flag (`lib/stateMachines/registry.ts:931-934`), so no stale copy can outlive a write. **Named rather than hidden:** a lift issued concurrently with an apply of the same type can clear the row the apply just inserted. That is last-writer-wins between two admins acting on the same subject at the same instant, which is the intended admin semantics, not a lost update — and `trust_restrictions` has held 0 rows for the life of production (read 2026-09-13). |
+| TRV2-10 | Derived effects of revocation, appeal and account deletion follow **the defined** reversal/retention policy | **CV** | **Correctness is not determinable, because the policy does not exist.** `Portava_Trust_Architecture_Upgrade_v2.md` says so itself: *"Also request unresolved public labels/brand decisions, provider choice and credentials, and retention/reversal policy. The verified-foundation plan's retention values apply to the stated verification records, not automatically to all Trust evidence."* The mechanisms exist and disagree about what should happen: `TrustCapService.liftCapsBySourceEvents:110-128` reverses caps when a moderation finding is reversed (C14), `routes/admin.ts:1601-1607` now clears the verification level (TV-4c), `AccountDeletionService.ts:970-973` deletes verification rows — and **nothing defines whether a revoked verification should also reverse the `identity_verified` trust award**, whether an upheld appeal reverses the charge it answers, or how long derived evidence survives a subject's erasure. Grading this `C` would promote whatever the code does today into approved specification, which the v2 document forbids by name. **Exact decision needed: D-REVERSAL (§12.7).** |
+| TRV2-11 | No historical stamp, inferred visit or passive contribution becomes a new award absent an explicitly approved backfill policy; test fixtures stay isolated | **C** | No backfill writes trust: the six `src/scripts/backfill*.ts` files contain no reference to `trust_events` or `recordTrustEvent`. No award was manufactured by this pass — the only trust-affecting change is TV-1f, which **removes** awards (it adds a dedup key), and it was measured by counting inserts, not by writing rows. Fixtures are isolated: every test above runs against an injected double (`test/helpers/failClosedSupabase.ts`, `_setTestServiceClient`) against `SUPABASE_URL=http://127.0.0.1:9`, and production carries 5 trust events with the newest dated 2026-08-16 — unchanged by this pass (read-only, 2026-09-13). Migration 2870 was staged and applied to nothing. |
+
+### 12.7 CANNOT-VERIFY, and the owner decisions — stated as decisions, not made
+
+**The CANNOT-VERIFY list is exactly one row.** The missing scoring policy does not reach the
+privacy, authorization, idempotency, wiring and Sensing-separation requirements, and those were
+all graded normally above.
+
+| Row | Why it cannot be verified | The exact decision needed |
+|---|---|---|
+| **TRV2-10** | Its correctness is defined by "the **defined** reversal/retention policy", and no approved document defines one. Three mechanisms exist and none of them agrees with the others about scope. | **D-REVERSAL.** For each of (a) admin revocation of a verification, (b) an upheld appeal, (c) account deletion: does the derived trust effect reverse, decay, or persist? If it reverses, by a counter-event or by deletion of the original? And for how long does derived evidence about an erased subject survive — the plan's 90-day verification-record value, or something else? The v2 document states the plan's retention values "apply to the stated verification records, not automatically to all Trust evidence", so answering for verification rows does not answer for `trust_events`. |
+
+**New owner decisions from this pass.** Each blocks a specific row and none was taken here.
+
+| id | Decision | Blocks |
+|---|---|---|
+| **D-2870-APPLY** | Apply `2870_profiles_verification_level_identity_vocabulary.sql` to production? It widens one CHECK additively, moves no row, and changes nothing a user sees. Until it is applied, **no user can ever become ID-verified**: the write is a 23514 and the provider retries forever. Recommended; applied nowhere by this lane. | TV-1c |
+| **D-LEVEL-VOCAB** | Two vocabularies share `profiles.verification_level`: platform standing (`basic_verified` / `trusted_traveler` / `host_verified` / `buddy_verified`, granted by `routes/admin.ts`) and ID-check outcome (`id_verified` / `id_selfie_verified`, written by `routes/verification.ts`). Merge, rank, or split into separate columns? Two client screens already disagree about which set exists. Mapping one onto the other would have closed TV-1c without a migration, and was deliberately not done. | TV-1c, TV-2c, TRV2-12 |
+| **D-DOB** | Privacy invariant 2 says Portava never stores a date of birth; production stores one for 7 of 58 profiles and **every** age gate reads it while `is_over_18` is read by none. Honour the invariant (migrate the gates onto the derived boolean, then drop the column) or amend it? This is a privacy commitment, so the amendment is not a lane's to write. | TV-P2, TV-5b |
+| **D-MODACTION-SHAPE** | Production `moderation_actions` has no `report_id` and no `expires_at`, so a report cannot be linked to the action that answered it and a time-boxed suspension cannot be recorded there. Add the columns, or ratify the `metadata` jsonb convention as the contract? | TV-0a, TV-4a |
+| **D-MODACTION-FK** | `moderation_actions.target_user_id` is `ON DELETE CASCADE` — erasing a subject destroys the enforcement record about them — and `performed_by` is NO ACTION, which blocks erasing a moderator. Invariant 3 says SET NULL and `2138:103` planned it. Converge, or amend the invariant? | TV-P3 |
+| **D-SUSPENSION-UX** | The plan specifies a read-only state with an appeal contact for suspended users and sign-out for banned ones; the server returns a blanket 403 for both and the client has no screen for either. Build as specified, or ratify the 403? | TV-4b |
+| **D-RESTRICTION-REACH** | Which Compass, Discovery, social and booking actions must enforce trust restrictions? Today **none** do; a restricted user is still recommended, discovered and bookable. This is a product scope decision, not a wiring task. | TRV2-08 |
+| **D-BADGE** | The verified badge does not exist in any form. The plan specifies teal = ID verified, gold = ID + selfie, on six surfaces. The v2 document lists "public labels/brand decisions" as unresolved, so the wording and colours are owner-owned. | TV-0e, TV-2c |
+| **D-PROVIDER** | Stripe Identity or Persona, with the account, keys, webhook endpoint, signing secret and Replit Secrets. The six concrete steps are written out in TV-6a so no code reading is needed. | TV-6a, TV-6b |
+
+**Two of §5's decisions are RESOLVED, and this census did not know it.** §5 items 1 and 2 ask
+whether to apply migrations 2370 and 2371 to production and record "not done". Both were
+applied on **2026-09-08** (`supabase_migrations.schema_migrations`: `20260908005407
+2370_trust_tables_privileges`, `20260908005514 2371_trust_profiles_evidence`). Measured
+read-only 2026-09-13: **zero** privileges to `anon` or `authenticated` on any of the seven
+trust tables, and `trust_profiles.evidence_weight` / `evidence_count` both present. A8's
+standing caveat — *"Production: not applied — owner decision"*, restated in §5.1 as *"applied
+to CI, NOT to production"* — is stale and is corrected here. **D-OVERRIDE is untouched:** §11
+pinned it, C22 stays `W`, and nothing in this pass re-opens it.
+
+### 12.8 The existing 52 — re-audited, and what moved
+
+Nine of the fifty `C` rows were re-executed at this commit by opening the object, not the
+sentence about it. **No verdict moves.** Two carry corrections to their evidence.
+
+| id | Re-executed | Result |
+|---|---|---|
+| A6 | production read-only, 2026-09-13 | **Stays `W`, and the remainder is unchanged in every particular.** `trust_events` still holds **5** rows, newest **2026-08-16**; `stamp_verified` count **0**; `identity_verified` count **0**. The emitters are on `main` and have still not reached the production runtime. New this pass: `identity_verified` joins the list of declared-and-unfired types, for a reason that is now named — no identity verification can complete in production at all (TV-1c). |
+| A8 | production grants, 2026-09-13 | **Stays `C`, caveat CORRECTED.** Its cell says production was not migrated; migration 2370 was applied 2026-09-08 and the seven trust tables now grant nothing to `anon` or `authenticated`. The `C` is no longer a statement about a migration file — it is a statement about production. |
+| A3 | `TrustScoreService`, production columns | **Stays `C`, caveat ADDED.** `measureEvidence` and the two-column persist are present, and 2371 put `evidence_weight`/`evidence_count` in production on 2026-09-08 — but **0 of 2 profiles carry a value**, because no recalculation has run since the columns landed. The measure exists in code and in schema and has never been written in production. Not a code gap; recorded so it is not mistaken for one. |
+| A17 | `pnpm check:trust-table-ownership` | **Stays `C`.** *"900 source file(s) scanned; 21 read(s) inside services/trust; 3 file(s) owned elsewhere with a written reason; 0 violation(s)"*, exit 0. |
+| A18 | `lib/intelScopedTrustApply.ts:141-151` | **Stays `C`.** `bridgeEventFor` still bridges only a named signal subset into person trust, with its own deltas; scoped trust remains a separate store. |
+| A19 | `TrustEventService.ts:440-446` | **Stays `C`.** The movement-derived deltas are still −8 / −4 / −1 and there is still no positive one; the positive location events require an explicit geofenced action. |
+| C26 | every handler in `routes/trust-admin.ts` | **Stays `C`.** 13 routes at `:107, 147, 168, 257, 278, 305, 338, 366, 399, 421, 442, 459, 556`; `requireAdmin` is the first statement in all 13, checked line by line rather than by counting occurrences. `check:route-auth-gate` exit 0. |
+| C30 | `grep` + `index.ts:80-86` | **Stays `C`, COUNT CORRECTED.** The cell says "the 19 unguarded `void recordTrustEvent(...)` sites"; there are now **22**. The `unhandledRejection` backstop still covers all of them, so the requirement holds and the number in the cell does not. |
+| C32 | `pnpm check:trust-event-vocabulary` | **Stays `C`.** *"50 declared type(s); 36 emitted; 26 emitter site(s) with literal fields compared, 14 computed; 0 divergent, 0 undeclared, 14 unemitted with a written reason"*, exit 0. |
+| C1 | `TrustEventService.ts:234-262` | **Stays `C`, CAVEAT SHARPENED.** The dedup mechanism is correct and fails closed on a read error. What it cannot do is defend itself against a caller that passes no `sourceId`: `:242` returns `"new"` immediately, so an emitter without a key bypasses the window by omission and still receives `{ ok: true }`. That is what TV-1f was. C1 is not downgraded — the contract is about the mechanism, and the mechanism is right — but **no guard covers dedup keys**: `check:trust-event-vocabulary`'s own NOTE says it does not cover non-literal arguments, and it compares types and deltas, never sources. |
+| C22 | — | **Stays `W`.** D-OVERRIDE, pinned by §11. Not re-opened. |
+
+### 12.9 What this pass built, and the proof
+
+All in Trust-, verification- and moderation-owned files. No flag added or flipped, no provider
+enabled, no migration applied to any database, no backfill run.
+
+| Row | Repair | Files (`file:line`) | Test | RED → GREEN |
+|---|---|---|---|---|
+| TV-1f | `identity_verified` had no idempotency key, so every provider redelivery charged another +10 | `routes/verification.ts:36-42, 77-101` | `test/verificationTrustIdempotency.test.ts` | **RED 3 tests / 1 pass / 2 fail** → **GREEN 3/3**. M3 (revert the two added lines, file restored and diffed): back to **1/2**. |
+| TV-1c | the level the service writes is rejected by the live CHECK — migration STAGED, guard added | `migrations/2870_profiles_verification_level_identity_vocabulary.sql`; `db/rollback/2026-09-13-2870-profiles-verification-level-identity-vocabulary-rollback.sql` | `test/verificationLevelVocabulary.test.ts` | **RED 3 / 2 / 1** with the 23514 diagnosis → **GREEN 3/3**. M2 (drop `id_selfie_verified` from the real ADD CONSTRAINT): **2/1**. Row stays `W` — staged is not applied. |
+| TV-P5 | the webhook answered 200 when the provider factory refused, discarding every delivery | `routes/verification.ts:271-297` | `test/verificationWebhookProviderUnavailable.test.ts` | **RED 5 / 2 / 3** → **GREEN 5/5**, premise and control green throughout. |
+| TV-4c | `unverify` left the one column the booking gate reads | `routes/admin.ts:1571-1607` | `test/adminUnverifyRevokesIdLevel.test.ts` | **RED 5 / 3 / 2** → **GREEN 5/5**. M4 (revert the single added field): back to **3/2**. |
+
+**One mutation stayed GREEN and it found a hole in my own guard, which is reported rather than
+buried.** M1 deleted `'buddy_verified'` from 2870's real `ADD CONSTRAINT` and
+`verificationLevelVocabulary.test.ts` passed 3/3. The parser matched the constraint NAME and
+then the next `ARRAY[...]`, and that name recurs four more times after the definition — twice
+inside a `-- REVERSIBLE BY` comment that quotes the *narrowed* five-value array verbatim, and
+once in the postcondition's own `c.conname = '…'` lookup, which is followed by a `FOREACH v IN
+ARRAY ARRAY[…]` listing all seven. "Last match" was therefore reading the file's assertion
+*about itself* instead of the DDL — a guard that agreed with the thing it was checking. Fixed
+by anchoring on `CONSTRAINT <name> … CHECK` with `--` comments stripped first (the reasoning is
+written into the test at `verificationLevelVocabulary.test.ts`, so the next reader does not
+repeat it). **M1 re-run after the fix: RED 2/1.** M2 was then run against the corrected parser
+and also goes red, so both directions of drift are covered.
+
+Every mutation was applied to a copy-backed file, the suite run under `timeout`, the file
+restored, and the restore verified with `diff -q` (all reported "restored").
+
+**Gates.** `tsc -p tsconfig.json --noEmit` exit 0. `check:migration-prefixes`,
+`check:trust-table-ownership`, `check:trust-event-vocabulary`, `check:route-auth-gate`,
+`check:enum-literals` all exit 0. Verification and moderation suites **59/59** (48/48 across
+four files before this pass; 59/59 across seven after). Trust suites — `trust.test.ts`,
+`trust-integration.test.ts`, `trustCensusRepairs`, `trustEmitterWiring`, `trustEventCoverage`,
+`trustRestrictionEnforcement`, `trustStampVerified`, `trustChainEndToEnd` — **188/188**. Admin
+moderation suites 45/45 runnable; `profileVerificationSelfWriteBoundary.test.ts` refuses to run
+here because it is a live-DB test and `KNOWN_PROD_PROJECT_REF` is unset — environmental, and
+unchanged by this pass.
+
+**`check:test-registration` is RED by construction and that is not a finding.** `package.json`
+is reserved to the integration owner. Four files must be appended to the END of its `test`
+script:
+
+```
+src/test/verificationTrustIdempotency.test.ts src/test/verificationLevelVocabulary.test.ts src/test/verificationWebhookProviderUnavailable.test.ts src/test/adminUnverifyRevokesIdLevel.test.ts
+```
+
+### 12.10 Headline
+
+> **Trust, at `b7f137a4d`: 93 requirements · 69 BUILT-AND-CORRECT · 15 BUILT-BUT-WRONG ·
+> 8 NOT-BUILT · 1 CANNOT-VERIFY → CONSTRUCTED 84 / 93 = 90.3 % · CORRECT 69 / 93 = 74.2 %.**
+>
+> Before this pass, over a denominator that excluded the surface's own specification:
+> 52 requirements · 50 / 2 / 0 / 0 → CONSTRUCTED 100.0 % · CORRECT 96.2 %.
+>
+> **CONSTRUCTED −9.7 points. CORRECT −22.0 points.** Not one of the original 52 verdicts
+> changed. The entire movement is 41 rows that were always in scope and had never been read.
+
+| BUILT-AND-CORRECT | **69** |
+|---|---|
+| BUILT-BUT-WRONG | **15** |
+| NOT-BUILT | **8** |
+| CANNOT-VERIFY | **1** |
+
+*This is the current headline of this document. The 52-row headline in the Summary table at
+the top and in §5.3 is superseded by it under LAST-STATEMENT-WINS, and is left in place
+because this file is append-only — it is the BEFORE column of §12.2, not a competing claim.*
+
+The gap is no longer "one deployment and one word". It is a verification flow whose success
+path the database rejects, a badge that does not exist, an age gate that reads the column the
+privacy invariant forbids and ignores the one it mandates, a moderation queue that can only
+grow, a provider that has never been chosen, and a retention job that was never written — plus
+one genuine CANNOT-VERIFY where a policy has to be decided before correctness even has a
+meaning.
+
+---
+
+## 13. V-7 built — two rows move, 2026-09-13, `f9d0b9a07`
+
+*Same 93-row denominator, same counting rule. Two rows move; nothing else is restated. No
+production read, no migration applied, no flag flipped.*
+
+### 13.1 Verdict changes
+
+| id | Was | Now | Evidence at `f9d0b9a07` |
+|---|---|---|---|
+| TV-7a | W | **C** | Both criteria now hold, in the order the plan states. `services/identityVerification/providerErasure.ts:62-110` reads the user's `provider_verification_ref`s and asks the configured provider to redact each; `services/accountDeletion/AccountDeletionService.ts:969-1000` runs it as the named step `request_provider_verification_deletion` **before** `delete_identity_verifications`. The ordering is the requirement, not a nicety — after the delete, `provider_verification_ref` is gone and the vendor's copy of the document is unredactable by anyone, permanently — so it is asserted as an ordering (`test/verificationProviderErasure.test.ts`, the `idxRead < idxDelete` assertion) rather than as two independent calls. A provider that cannot be reached does **not** block the erasure: the step records a failure with the refs in its message, which may be the only surviving record of what still needs redacting, and a warning carries them out. An unreadable `identity_verifications` is a different failure in kind and throws, because supabase-js resolves on a read error and an unbound one makes a table that could not be read look exactly like a user who never verified. **RED 6 tests / 5 pass / 1 fail → GREEN 6/6**; M5 (step removed) **5/1**, M6 (step moved after the delete) **5/1**. |
+| TV-7b | NB | **C** | `services/identityVerification/retention.ts:57-78` deletes `failed` / `expired` rows whose `updated_at` predates a 90-day cutoff, counting what it removed via a chained `.select("id")` rather than assuming; `lib/trustMaintenanceScheduler.ts:616-640` runs it every pass. Two choices carry the row and each has a dangerous opposite. **The status filter is positive** — exactly the two statuses the plan names. Not `canceled`, which the plan does not mention and which this does not decide for it; and not `verified`, which is not stale data but the standing evidence `lib/travelerVerification.ts` and `routes/rentABuddyRollout.ts` gate in-person introductions on. A negative filter would also sweep in any status added later, so the test asserts the SET (M8 adds `verified` and two tests go red). **It runs above the `trust_engine_enabled` gate** — that flag governs scoring, and below the gate a data-protection promise would be switchable by a scoring feature flag; turning the trust engine off must stop scores moving, not quietly start retaining failed government-ID checks forever (M7 moves it below and the flag-off test goes red). Reuses the existing 6-hourly scheduler rather than adding a second one. Non-fatal but never silent: the purge throws on a database error so the WARN exists, and `verificationRecordsPurged` is `number | null` because "did not run" is not zero. **RED 7 / 5 / 2 → GREEN 7/7.** |
+
+### 13.2 Rows that did NOT move, and why
+
+The remaining eight `NB` and `CV` rows are each blocked on a decision, not on effort, and §12.7
+names the decision for every one. **TV-5b** (age gating on `is_over_18`) was not built although
+it is small, because building it decides **D-DOB**: the gate would have to stop reading
+`profiles.date_of_birth`, which seven live profiles carry and six routes read. **TV-0e / TV-2c**
+(the badge) need **D-BADGE**, whose wording and colours the v2 document lists as unresolved.
+**TRV2-08** needs **D-RESTRICTION-REACH**, a product scope decision about which Compass,
+Discovery and booking actions enforce restrictions. **TV-6b** needs **D-PROVIDER**. **TV-1c**
+stays `W` until **D-2870-APPLY**: the migration exists and is applied to no database, and a `C`
+on a staged file is the "merged is not deployed" error this census is named for.
+
+### 13.3 Restated headline
+
+> **Trust, at `f9d0b9a07`: 93 requirements · 71 BUILT-AND-CORRECT · 14 BUILT-BUT-WRONG ·
+> 7 NOT-BUILT · 1 CANNOT-VERIFY → CONSTRUCTED 85 / 93 = 91.4 % · CORRECT 71 / 93 = 76.3 %.**
+>
+> Against the pre-pass figure of 52 requirements · 50 / 2 / 0 / 0 → CONSTRUCTED 100.0 % ·
+> CORRECT 96.2 %: **CONSTRUCTED −8.6 points, CORRECT −19.9 points.** Six rows were built this
+> pass, each red-before and green-after with its mutations logged; not one of the original 52
+> verdicts moved in either direction.
+
+| BUILT-AND-CORRECT | **71** |
+|---|---|
+| BUILT-BUT-WRONG | **14** |
+| NOT-BUILT | **7** |
+| CANNOT-VERIFY | **1** |
+
+*This supersedes §12.10 under LAST-STATEMENT-WINS. §12.10 is the state before V-7 was built and
+is left in place because this file is append-only.*

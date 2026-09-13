@@ -1599,8 +1599,44 @@ router.post("/admin/users/:userId/unverify", async (req, res) => {
   const auditR = await logModerationAction(sc, userId, adminUserId, "unverify", (req.body as any)?.reason ?? null);
   if (!auditR.ok) { sendError(res, "db_error", `Audit write failed: ${auditR.error}`, { exposeDetail: true }); return; }
 
+  // ── verification_level IS PART OF THE REVOCATION, NOT A DUPLICATE OF IT ────
+  // This patch used to clear only `verified` / `verification_status` /
+  // `verified_at` — the exact inverse of what /verify sets, which is why it
+  // looked complete. It is not, because a FOURTH column carries the same claim
+  // and is written by a different path.
+  //
+  // `profiles.verification_level` has exactly one writer in this server,
+  // routes/verification.ts#applyVerifiedProfile (the provider ID-check success
+  // path), and lib/travelerVerification.ts:85-88 reads it as a SUFFICIENT
+  // id-verified signal — ORed with the other two, not ANDed:
+  //
+  //     verification_level !== 'none' || verification_status === 'verified'
+  //                                   || Boolean(id_verified_at)
+  //
+  // So clearing two of three disjuncts revoked nothing. An admin unverifying a
+  // user after a fraudulent or disputed document left them passing every gate
+  // that calls loadTravelerIdentity, including routes/rentABuddyRollout.ts's
+  // MVP-mode booking gate — and Rent-a-Buddy pairs strangers in person.
+  //
+  // Nothing else could clear it either: the one writer only ever sets a
+  // VERIFIED level, so before this line there was no code path in the product
+  // that could take an ID-verified standing away. This is the plan's V-4
+  // `verification_revoked` effect ("clears profiles.verification_level"),
+  // placed on the action that already means revoke rather than added as a
+  // second, competing one.
+  //
+  // 'none' is the column's schema default and its pre-verification value, so
+  // this restores rather than invents a state. What it deliberately does NOT do
+  // is reverse derived trust effects: that is the unresolved reversal/retention
+  // policy (census-trust.md §12.7, D-REVERSAL), and taking it here would be
+  // deciding it.
   const { error } = await sc.from("profiles")
-    .update({ verified: false, verification_status: "unverified", verified_at: null })
+    .update({
+      verified: false,
+      verification_status: "unverified",
+      verified_at: null,
+      verification_level: "none",
+    })
     .eq("id", userId);
 
   if (error) { sendError(res, "db_error", error.message); return; }

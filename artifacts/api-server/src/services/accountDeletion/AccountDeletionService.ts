@@ -128,6 +128,7 @@
 import { logger as rootLogger } from "../../lib/logger.js";
 import { resolveStoragePath } from "../../lib/storagePath.js";
 import { ownerFromPath } from "../../lib/mediaAccess.js";
+import { requestProviderDeletionForUser } from "../identityVerification/providerErasure.js";
 
 const logger = rootLogger.child({ service: "AccountDeletionService" });
 
@@ -965,6 +966,41 @@ export async function executeAccountDeletion(
     must(await sc.from("messages").delete().eq("sender_id", userId), "delete messages");
   });
   if (!msgOk) warnings.push("message ciphertext may remain");
+
+  // ── Provider erasure FIRST, then our rows. The order is the requirement ────
+  //
+  // verified-foundation-plan.md V-7: "Account-deletion flow calls
+  // `provider.requestProviderDeletion()` THEN deletes the user's
+  // `identity_verifications` rows."
+  //
+  // `provider_verification_ref` is the only handle anyone has on the provider's
+  // copy of the government-ID check. The delete below destroys it, so after
+  // that line the images at Stripe or Persona are unredactable — by us and by
+  // the user, permanently. Until now this step did not exist at all:
+  // `requestProviderDeletion` was declared, stubbed, mapped for both vendors in
+  // comments, and called from nowhere, so erasure removed our opaque reference
+  // and left the document with the vendor.
+  //
+  // A provider that is down does NOT block the erasure. The user's right to
+  // have Portava's copy deleted does not depend on a third party being up, and
+  // refusing would keep their data here indefinitely for a reason that is not
+  // theirs. But it is not swallowed either: the step records the failure with
+  // the refs in its message — which may be the only surviving record of what
+  // still needs redacting once the rows below are gone — and the warning
+  // carries them to the caller.
+  let providerErasureRefs: string[] = [];
+  const provErasureOk = await step(steps, "request_provider_verification_deletion", async () => {
+    const r = await requestProviderDeletionForUser(sc, userId);
+    providerErasureRefs = r.refs;
+    return r.requested;
+  });
+  if (!provErasureOk) {
+    warnings.push(
+      providerErasureRefs.length > 0
+        ? `provider copy of identity verification may remain; redact by hand: ${providerErasureRefs.join(", ")}`
+        : "provider copy of identity verification may remain (references unavailable — see the step error)",
+    );
+  }
 
   // Verification rows: provider reference, over-18 flag, document country.
   const verOk = await step(steps, "delete_identity_verifications", async () => {

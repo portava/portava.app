@@ -32,6 +32,15 @@ export const router = Router();
 const VERIFICATION_SESSION_LIMIT = 3;
 const VERIFICATION_SESSION_WINDOW_MS = 24 * 60 * 60 * 1_000; // 24 h
 
+/**
+ * `trust_events.source_type` for the identity-verification award.
+ *
+ * Deliberately NOT exported: `src/test/verificationTrustIdempotency.test.ts`
+ * asserts the literal instead, so a rename here has to be made in two places
+ * and cannot silently carry the test along with it.
+ */
+const TRUST_SOURCE_TYPE = "identity_verification";
+
 // ── Schema ────────────────────────────────────────────────────────────────────
 const TEST_HINTS = ["approve", "fail_document", "fail_selfie", "fail_underage"] as const;
 
@@ -70,9 +79,32 @@ async function applyVerifiedProfile(
   // and its presence guard that used to sit here are gone: the property is
   // statically typed and always defined, and the old guard silently skipped the
   // trust award for as long as it was left in place after the event shipped.
+  //
+  // ── THE DEDUP KEY IS NOT OPTIONAL ON THIS PATH ────────────────────────────
+  // `TrustEventService.isDuplicate` opens with `if (!sourceId) return "new"`, so
+  // an emitter that passes no source has no idempotency key: every call is a
+  // first call, and the 24 h dedup window the census grades as C1 is bypassed by
+  // omission rather than by failure. This emitter used to do exactly that.
+  //
+  // Provider webhooks are at-least-once BY DESIGN, and this route's own handler
+  // returns 5xx on a persist failure specifically so the provider retries (audit
+  // H5) — so the one path here built to be re-entered was the one path with no
+  // key, and every redelivery of the same session charged another +10
+  // respect_safety until the daily earning cap absorbed it. V-1 defines the hook
+  // per TRANSITION to `verified`, not per delivery.
+  //
+  // The provider session id is the right key: it is the identity of the
+  // verification attempt, it is stable across redeliveries of the same event,
+  // and it is what `identity_verifications.provider_session_id` is keyed on, so
+  // the ledger row and the verification row name the same thing. `sourceType`
+  // must travel with it — the dedup read filters on BOTH, so a session id left
+  // under the default "system" source would look keyed and still never match the
+  // row it wrote.
   await recordTrustEvent(client, {
     userId,
     eventType: "identity_verified",
+    sourceType: TRUST_SOURCE_TYPE,
+    sourceId: result.providerSessionId,
     ...TRUST_EVENT_TYPES.IDENTITY_VERIFIED,
   }).catch(() => {/* fire-and-forget — never block the webhook response */});
 }
@@ -273,8 +305,38 @@ export const webhookHandler = async (req: any, res: any) => {
   let provider;
   try {
     provider = getIdentityProvider();
-  } catch {
-    res.sendStatus(200); // provider not configured; treat as irrelevant
+  } catch (err: any) {
+    // ── "NOT CONFIGURED" IS NOT "IRRELEVANT" ─────────────────────────────────
+    // This branch used to discard the error unbound and answer 200 under the
+    // comment "provider not configured; treat as irrelevant". 200 is not
+    // irrelevant to a provider: Stripe Identity and Persona both read a 2xx as
+    // FINAL DELIVERY and stop retrying.
+    //
+    // And this is not an exotic branch. `getIdentityProvider()` throwing is the
+    // NORMAL behaviour of a production deployment on the default
+    // IDENTITY_PROVIDER=mock — it is the mechanism that satisfies the plan's
+    // privacy invariant 4 ("the mock provider is refused in production").
+    // So the invariant that keeps the mock out of production was, through this
+    // branch, also the thing that made the public webhook endpoint accept every
+    // real event, write nothing, log nothing, and report success. Invariant 5
+    // says an unverified webhook must "never silently accept"; that is a
+    // statement about the RESPONSE, and this was the silent acceptance.
+    //
+    // 5xx, for the same reason the persist failure below returns 5xx (audit
+    // H5): the event is valid and unread, the fault is on this side, and the
+    // provider should retry or dead-letter rather than have this server destroy
+    // it. 400 is NOT used — that is reserved for a signature that actually
+    // failed, and reporting a local misconfiguration as the caller's bad
+    // signature sends the operator looking in the wrong system.
+    //
+    // The response body stays empty: the factory's message names env vars and
+    // provider configuration, and this endpoint is reachable by anyone.
+    req.log?.error?.(
+      { err },
+      "verification webhook: identity provider unavailable — refusing with 503 so the provider " +
+        "retries; answering 200 here silently destroyed every delivered KYC result",
+    );
+    res.sendStatus(503);
     return;
   }
 
