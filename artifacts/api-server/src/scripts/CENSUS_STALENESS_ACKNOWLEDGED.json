@@ -716,15 +716,6 @@
       ]
     },
     {
-      "census": "census-layover.md",
-      "since": "fa14590e5",
-      "acknowledgedAt": "2026-09-13",
-      "reason": "CROSS-LANE STALENESS FROM INTEGRATION. census-layover was re-measured FRESH at fa14590e by its own lane; the Compass + Discovery lane then merged into the same branch and touched one file layover counts.\n\nsrc/compass/CompassTools.ts \u2014 the ENTIRE non-comment change is one added line: `export const COMPASS_TOOL_COUNT_IN_HEADER = 33;`. Verified by diffing 3eaf2436f..820b60638 over that file and filtering comment lines: exactly one code line is added and none is removed or changed. COMPASS_TOOL_DEFINITIONS itself is untouched \u2014 the array's every mention in the diff is inside a comment. No tool was added, removed, renamed or re-signatured, so no behaviour a Layover row could grade has changed. The rest of the diff corrects a header sentence that said 'Fourteen tools' while thirty-three were declared, and pins that number to a test so the sentence cannot rot a fourth time.",
-      "files": [
-        "artifacts/api-server/src/compass/CompassTools.ts"
-      ]
-    },
-    {
       "census": "census-highlights-memories.md",
       "since": "1ff810e2",
       "acknowledgedAt": "2026-09-13",
@@ -735,6 +726,17 @@
     }
   ],
   "retired": [
+    {
+      "census": "census-layover.md",
+      "since": "fa14590e5",
+      "acknowledgedAt": "2026-09-13",
+      "reason": "CROSS-LANE STALENESS FROM INTEGRATION. census-layover was re-measured FRESH at fa14590e by its own lane; the Compass + Discovery lane then merged into the same branch and touched one file layover counts.\n\nsrc/compass/CompassTools.ts \u2014 the ENTIRE non-comment change is one added line: `export const COMPASS_TOOL_COUNT_IN_HEADER = 33;`. Verified by diffing 3eaf2436f..820b60638 over that file and filtering comment lines: exactly one code line is added and none is removed or changed. COMPASS_TOOL_DEFINITIONS itself is untouched \u2014 the array's every mention in the diff is inside a comment. No tool was added, removed, renamed or re-signatured, so no behaviour a Layover row could grade has changed. The rest of the diff corrects a header sentence that said 'Fourteen tools' while thirty-three were declared, and pins that number to a test so the sentence cannot rot a fourth time.",
+      "files": [
+        "artifacts/api-server/src/compass/CompassTools.ts"
+      ],
+      "retiredAt": "2026-09-13",
+      "retiredWhy": "SPENT BY A RE-MEASUREMENT. \u00a713 of census-layover.md re-measured the document at b9bdcfc3 and re-declared head_commit to it, so the diff this entry excused (fa14590e5..HEAD) is no longer the diff check:census-freshness computes. The argument is unchanged and still true \u2014 the whole non-comment change to src/compass/CompassTools.ts between those commits was one added line, `export const COMPASS_TOOL_COUNT_IN_HEADER = 33;` \u2014 and CompassTools.ts is inside the range b9bdcfc3 covers, so the claim is now carried by the re-measurement rather than by an excuse. Retired rather than deleted, per this file's own rule, so the reasoning survives the entry."
+    },
     {
       "census": "census-highlights-memories.md",
       "since": "cdfff5995c92f7adfb3ae7880496bc94002717e9",
