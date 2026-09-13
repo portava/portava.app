@@ -412,6 +412,26 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     // the three fabricated numbers are gone and that `assess` fails closed
     // without them. The floor is NOT raised with it.
     "artifacts/api-server/src/test/layoverUnmeasuredJourney.test.ts",
+    // WIDENED 2026-09-13 (§17), the same argument a fourth time. All four of
+    // §17.5's row moves rest entirely on assertions in these three files — the
+    // airport-maturity disclosure (L9, L250), the elected completion stamp
+    // (L19, L162) — and the third is the evidence that §16.8's item 4 is
+    // closed. A census that cites a test as evidence while not watching it
+    // cannot notice the test changing under the verdict. The two CLIENT suites
+    // this pass added need no entry: `travel-buddy-standalone/app/layover/` and
+    // `travel-buddy-standalone/src/components/layover/` are already scoped as
+    // directories below. The floor is NOT raised with any of them — the
+    // widening only keeps the existing 96 % from falling when the new citations
+    // land.
+    "artifacts/api-server/src/test/layoverAirportIntelligence.test.ts",
+    "artifacts/api-server/src/test/layoverCompletionStamp.test.ts",
+    "artifacts/api-server/src/test/layoverReplanCandidateLegs.test.ts",
+    // ALSO WIDENED 2026-09-13 (§17), and it is an old gap rather than this
+    // pass's: §16 added `lib/layoverLiveIntersection.ts` to this scope because
+    // this census GRADES it, and left its test outside — so the module could be
+    // watched while the assertions that say what it does could change unseen.
+    // The census cites the test by name. Same argument, same floor, not raised.
+    "artifacts/api-server/src/test/layoverLiveIntersection.test.ts",
     // WIDENED 2026-09-13 (§16). Two files this census now GRADES and did not
     // watch. `layoverLiveIntersection.ts` carries §11's friction into the cards
     // L293 changed — a live queue may lengthen a stated duration and may not
