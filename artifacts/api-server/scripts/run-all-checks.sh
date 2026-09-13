@@ -157,6 +157,16 @@ run_check "check:security-definer-oracles" pnpm run check:security-definer-oracl
 # counted in prose where no tool can read them — so it is visible how much of
 # each headline rests on something checkable.
 run_check "check:census-integrity" pnpm run check:census-integrity
+# check:memory-certification — the Highlights/Memories spec's section 25 asks
+# for named, replayable certification fixtures, nine hard invariant tests and
+# nine property/chaos scenarios. This runs all thirty against the real memory
+# engines and prints, per requirement, whether the property HELD, was VIOLATED,
+# or has NO SURFACE in this repository to be true of. NO_SURFACE and PARTIAL do
+# not fail the run: they are findings about missing product, and failing on them
+# would make "delete the scenario" the cheapest route to green. It found one
+# real defect on its first run (dedupeEvidence's survivor depended on delivery
+# order) and that fix is in src/services/memoryProjections/evidence.ts.
+run_check "check:memory-certification" pnpm run check:memory-certification
 # check:census-freshness — a census that has gone stale must not be quotable as
 # current truth. Two of them sat at numbers measured hundreds of commits earlier
 # and were read as present-tense fact; re-measured, one moved up and one moved

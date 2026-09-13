@@ -328,6 +328,28 @@ export function normalizeEvidence(raw: RawSignal, now: Date): NormalizeResult {
  * Keeps the highest-precedence record per fingerprint (section 4 truth
  * precedence), breaking ties on confidence and then on source_id so the result
  * is stable under input reordering - a replay requirement (section 7, 25).
+ *
+ * ── THE TIE-BREAK USED TO BE INCOMPLETE, AND THE DUPLICATE-UPLOAD CASE HIT IT ─
+ *
+ * `fingerprint` buckets the observation time to the MINUTE, deliberately, so
+ * that "the same claim re-delivered with a slightly different capture
+ * timestamp is one claim, not two". The consequence is that two records can
+ * share a fingerprint AND a source_id AND a precedence AND a confidence, and
+ * differ only in `observed_at` - which is exactly what a re-delivered upload
+ * looks like. Sorting by (fingerprint, source_id) leaves those two in ARRIVAL
+ * order, `better` is false for an equal record, so the survivor was whichever
+ * one the caller happened to pass first, and the survivor's `observed_at` is
+ * what section 7 draws episode boundaries from.
+ *
+ * MEASURED by the section 25 certification suite (`DUPLICATE_UPLOAD`, census
+ * H245) before this line existed: the same two deliveries in the two possible
+ * orders produced different surviving records. The existing order-independence
+ * test could not see it because its two records differ in PRECEDENCE, where the
+ * tie-break never runs.
+ *
+ * The pre-sort is therefore a TOTAL order over the fields that distinguish two
+ * records at equal precedence. Records identical in all of them are
+ * interchangeable, so order-independence holds trivially for them.
  */
 export function dedupeEvidence(
   records: readonly NormalizedEvidence[],
@@ -335,7 +357,16 @@ export function dedupeEvidence(
   const best = new Map<string, NormalizedEvidence>();
   const dropped: Array<{ fingerprint: string; source_id: string; superseded_by: string }> = [];
   const ordered = [...records].sort(
-    (a, b) => a.fingerprint.localeCompare(b.fingerprint) || a.source_id.localeCompare(b.source_id),
+    (a, b) =>
+      a.fingerprint.localeCompare(b.fingerprint) ||
+      a.source_id.localeCompare(b.source_id) ||
+      // Earliest observation of a claim wins a tie: the first sighting is the
+      // one the person's timeline should be drawn from, and a re-delivery is
+      // not new information about when something happened.
+      a.observed_at.localeCompare(b.observed_at) ||
+      b.confidence - a.confidence ||
+      a.truth_level.localeCompare(b.truth_level) ||
+      stableStringify(a.assertion_json).localeCompare(stableStringify(b.assertion_json)),
   );
   for (const rec of ordered) {
     const current = best.get(rec.fingerprint);
