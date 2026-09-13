@@ -82,6 +82,12 @@ are files, tables, routes, event types and literals, each re-derived on every ru
 | `src/routes/messaging.ts` | 31 | message_requests, message_thread_members, message_threads, message_translations, messages, saved_messages |
 | `src/routes/rentABuddy.ts` | 116 | message_thread_members, message_threads, messages |
 | `src/routes/telegraphChat.ts` | 7 | message_thread_members, message_threads, messages |
+| `src/routes/telegraphCoordination.ts` | 3 | message_thread_members, message_threads, messages |
+| `src/routes/telegraphKinds.ts` | 4 | message_thread_members, message_threads, messages |
+| `src/routes/telegraphLifecycle.ts` | 2 | message_thread_members, messages |
+| `src/routes/telegraphMemory.ts` | 2 | message_thread_members, messages, saved_messages |
+| `src/routes/telegraphShare.ts` | 2 | message_thread_members, message_threads, messages |
+| `src/routes/telegraphSharedContext.ts` | 2 | message_thread_members, message_threads |
 | `src/routes/telegraphStream.ts` | 2 | message_thread_members |
 
 ### 4. Direct client reads of a messaging table (§24's closing rule)
@@ -147,11 +153,16 @@ Processing and EXIF policy: `src/lib/mediaProcessing.ts`. Access: `src/lib/media
 
 `subtype` (static literals): `call_ended`, `call_started`, `compass_card`, `discovery_card`, `e2ee_welcome`, `event_context_card`, `hidden_gem`, `meetup`, `meetup_cancelled`, `meetup_confirmed`, `post_card`
 
-12 site(s) COMPUTE a message type rather than writing a literal, so no
+17 site(s) COMPUTE a message type rather than writing a literal, so no
 fixed enumeration of `subtype` is complete. They are declared in
 `src/domain/telegraph/policies/shareAuthorizationPolicy.ts` and re-derived by
 `check:telegraph-share-producers`:
 
+- `artifacts/api-server/src/routes/telegraphShare.ts` — `` msg_type: msgTypeOf("PORTAVA_OBJECT") | subtype: objectType.toLowerCase() | subtype: m.subtype ``
+- `artifacts/api-server/src/routes/telegraphKinds.ts` — `` subtype: (row.subtype as string) ?? null | msg_type: validated.msgType | subtype: validated.subtype | subtype: m.subtype ``
+- `artifacts/api-server/src/services/telegraph/messageKinds.ts` — `` subtype: subtypeFor(kind, parsed.data) `` (parser / passthrough, writes no message)
+- `artifacts/api-server/src/routes/telegraphCoordination.ts` — `` msg_type: validated.msgType | subtype: validated.subtype | subtype: m.subtype ``
+- `artifacts/api-server/src/services/telegraph/coordination.ts` — `` subtype: coordinationSubtype(kind, data) `` (parser / passthrough, writes no message)
 - `artifacts/api-server/src/services/telegraphReportEvidence.ts` — `` msg_type: (msg as any).msg_type ?? null | subtype: (msg as any).subtype ?? null | subtype: m.subtype ?? null `` (parser / passthrough, writes no message)
 - `artifacts/api-server/src/lib/liveReferenceMessages.ts` — `` msg_type: LIVE_REFERENCE_MSG_TYPE | subtype: LIVE_REFERENCE_MSG_SUBTYPE ``
 - `artifacts/api-server/src/lib/calls/callStoreAdapter.ts` — `` subtype: `call_${session.status}` ``

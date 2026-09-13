@@ -3582,7 +3582,7 @@ carried a freshness (TR368). No metric measured read-model lag (TR394).
   `serveMapProjection`, `server/trips/readRoutes/tripMapProjection.ts:81#serveMapProjection`,
   so the two paths cannot serve two projections), `/crew` (`:261#crew`),
   `/context` (`:303#context`), `/safety` (`:327#safety`);
-  registered at `routes/index.ts:170#tripProjectionsRouter`. Every
+  registered at `routes/index.ts:176#tripProjectionsRouter`. Every
   response spreads the envelope; every failed read that a projection IS is
   refused with `TRIP_PROJECTION_UNAVAILABLE` on the wire
   (`:108#TRIP_PROJECTION_UNAVAILABLE`), and a flag-off crew

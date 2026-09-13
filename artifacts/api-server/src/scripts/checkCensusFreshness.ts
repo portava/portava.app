@@ -918,6 +918,24 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/test/telegraphConversationCapabilities.test.ts",
     "artifacts/api-server/src/test/telegraphNeedsAction.test.ts",
     "travel-buddy-standalone/src/features/telegraph/",
+    // WIDENED A THIRD TIME 2026-09-12: the §1–§11 lane (census-telegraph §10)
+    // added the Shared Context Rail, the share contract, the typed kinds, the
+    // coordination surface, unsend, memory notes and the lifecycle routes.
+    "artifacts/api-server/src/services/telegraph/",
+    "artifacts/api-server/src/routes/telegraphShare.ts",
+    "artifacts/api-server/src/routes/telegraphKinds.ts",
+    "artifacts/api-server/src/routes/telegraphCoordination.ts",
+    "artifacts/api-server/src/routes/telegraphLifecycle.ts",
+    "artifacts/api-server/src/routes/telegraphMemory.ts",
+    "artifacts/api-server/src/routes/memories.ts",
+    "artifacts/api-server/src/routes/index.ts",
+    "artifacts/api-server/src/test/telegraphSharedContext.test.ts",
+    "artifacts/api-server/src/test/telegraphShare.test.ts",
+    "artifacts/api-server/src/test/telegraphKinds.test.ts",
+    "artifacts/api-server/src/test/telegraphCoordination.test.ts",
+    "artifacts/api-server/src/test/telegraphMemory.test.ts",
+    "artifacts/api-server/src/test/telegraphLifecycle.test.ts",
+    "travel-buddy-standalone/app/messages/",
     // STILL NOT WATCHED, deliberately: src/scripts/check*.ts, guardRegistry.ts,
     // generateTelegraphInventory.ts, rlsDispositions.ts, the two workflow YAMLs,
     // and the other censuses this one cross-references. Those are machinery and

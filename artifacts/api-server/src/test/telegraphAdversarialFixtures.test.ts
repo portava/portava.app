@@ -47,6 +47,8 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 import { _setTestClient } from "../lib/http.js";
+import { _resetRateLimit } from "../lib/rateLimit.js";
+import { SEND_LIMITS, _clearSendTierCache } from "../domain/telegraph/policies/sendRateLimit.js";
 import messagingRouter from "../routes/messaging.js";
 import { syncTripChatMembers } from "../services/groupChatSync.js";
 import {
@@ -132,6 +134,17 @@ before(async () => { harness = await startRouter(messagingRouter); });
 after(async () => { await harness.close(); });
 
 function use(store: Record<string, any[]>, opts?: Parameters<typeof makeFakeClient>[1]): FakeClient {
+  // THE SEND LIMITER IS PROCESS-WIDE STATE AND MUST BE RESET HERE.
+  // The §12–§22 lane gave the send path the rate limit §22 asks for, and its
+  // bucket lives in a module-level Map keyed by user, not in the fake client.
+  // Without this reset the twenty-first send in the FILE gets 429 no matter
+  // which fixture issued it, and four fixtures below started failing for a
+  // reason that had nothing to do with what they measure — F-02's blocked
+  // retry came back 429 instead of 403, which is still a refusal but proves
+  // nothing about the block guard. A fixture that cannot tell "refused because
+  // blocked" from "refused because throttled" is not measuring anything.
+  _resetRateLimit();
+  _clearSendTierCache();
   const c = makeFakeClient(store, opts);
   _setTestClient(c, true);
   return c;
@@ -194,13 +207,40 @@ describe("F-01 — stranger spam and request flooding", () => {
     assert.ok(r.status >= 400, "unknown existing-request state must not deliver another one");
   });
 
-  it("in-thread sends are unlimited — the same absence, on the delivery path", async () => {
+  it("in-thread sends are NO LONGER unlimited: the absence this fixture recorded is closed", async () => {
+    // REWRITTEN BY THE INTEGRATOR, and the rewrite is the point of the file's
+    // own contract: "closing the gap turns this suite red rather than leaving a
+    // passing test that describes a system nobody has any more." It went red on
+    // exactly that. When this fixture was written, census T279 measured the two
+    // halves of §22's rate limits separately and found the SEND half missing —
+    // routes/messaging.ts contained no checkRateLimit call, so the case asserted
+    // twenty-five accepted sends and named the absence. The §12–§22 lane then
+    // built domain/telegraph/policies/sendRateLimit.ts and wired it into the
+    // send path, so the absence is gone and asserting it would now be a lie.
+    // What is asserted instead is the new behaviour, at the boundary: the
+    // strictest tier's limit is honoured exactly, not approximately.
+    const limit = SEND_LIMITS.stranger;
     const c = use(baseStore());
-    for (let i = 0; i < 25; i++) {
+    const statuses: number[] = [];
+    for (let i = 0; i < limit + 5; i++) {
       const r = await call(harness.base, "POST", `/threads/${DM}/messages`, A, { body: `m${i}` });
-      assert.equal(r.status, 201, `send ${i}`);
+      statuses.push(r.status);
     }
-    assert.equal(c._store.messages.length, 25, "no per-user send limit exists (census T279)");
+    assert.deepEqual(
+      statuses.slice(0, limit),
+      Array.from({ length: limit }, () => 201),
+      `the first ${limit} sends are accepted — the limit bounds a burst, it is not a block`,
+    );
+    assert.deepEqual(
+      statuses.slice(limit),
+      Array.from({ length: 5 }, () => 429),
+      "and every send past the tier's limit is refused with 429, not silently dropped",
+    );
+    assert.equal(
+      c._store.messages.length,
+      limit,
+      "the refusal is a REFUSAL: no row is written for a send past the limit",
+    );
   });
 });
 

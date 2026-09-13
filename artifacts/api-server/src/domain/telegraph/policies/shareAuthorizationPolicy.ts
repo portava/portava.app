@@ -282,6 +282,109 @@ export interface DynamicShareProducer {
 
 export const TELEGRAPH_DYNAMIC_SHARE_PRODUCERS: readonly DynamicShareProducer[] = [
   {
+    file: "artifacts/api-server/src/routes/telegraphShare.ts",
+    expression: "msg_type: msgTypeOf(\"PORTAVA_OBJECT\") | subtype: objectType.toLowerCase() | subtype: m.subtype",
+    family: "PRIVATE_SOURCE",
+    sourceDomain: null,
+    produces: [
+      "post", "trip", "trip_stage", "event", "meetup", "plan", "place", "map_pin",
+      "meetup_point", "hidden_gem", "memory", "memory_note", "profile", "booking",
+      "buddy_service",
+    ],
+    writesMessages: true,
+    note:
+      "DECLARED BY THE INTEGRATOR when the §1–§11 lane met this guard, and " +
+      "classified PRIVATE_SOURCE because two of its fifteen object types — MEMORY " +
+      "and MEMORY_NOTE — name `memories`, which IS in PRIVATE_BY_DEFAULT_DOMAINS. " +
+      "sourceDomain is null because one producer spans fifteen domains and picking " +
+      "one would be a fiction. WHAT THE ROUTE ACTUALLY DOES, stated because it is " +
+      "not what this family's name promises: it does NOT call " +
+      "authorizeTelegraphShare. Its gate is the per-object loader in " +
+      "services/telegraph/shareables.ts, which refuses a memory the viewer cannot " +
+      "already see — not owner, not public, not in allowed_user_ids returns " +
+      "UNAVAILABLE(\"private\") and no message is written — and the body it persists " +
+      "is a REFERENCE plus a title/city/timestamp projection, never the object's " +
+      "content. So no private content crosses today. WHAT IS MISSING, and this is " +
+      "the finding: rules 3 and 4 of check:telegraph-share-producers (the " +
+      "private-domain family rule and the authorizedBy policy requirement) run over " +
+      "TELEGRAPH_SHARE_PRODUCERS only and do NOT reach this list, so nothing " +
+      "enforces the classification above. Routing this route through the policy " +
+      "would refuse every memory share outright — no derivative grant exists " +
+      "anywhere in this tree — which is a product decision, not an integration " +
+      "fix, and it is left to the owner rather than taken here.",
+  },
+  {
+    file: "artifacts/api-server/src/routes/telegraphKinds.ts",
+    expression:
+      "subtype: (row.subtype as string) ?? null | msg_type: validated.msgType | " +
+      "subtype: validated.subtype | subtype: m.subtype",
+    family: "AUDIENCE_SCOPED",
+    sourceDomain: null,
+    produces: [
+      "media_album", "gif", "location", "action", "announcement", "safety", "memory_note",
+    ],
+    writesMessages: true,
+    note:
+      "DECLARED BY THE INTEGRATOR. The §6.2 typed-kind route. msg_type is " +
+      "msgTypeOf(kind), the lowercase of one of the seven SENDABLE_ENVELOPE_KINDS, " +
+      "so the set is bounded by that constant and listed above. The subtype is " +
+      "computed by subtypeFor() from the validated payload and is bounded only by " +
+      "the payload schemas — SAFETY takes payload.kind, LOCATION its precision, " +
+      "ACTION and GIF a lowercased action or provider — which is why a literal " +
+      "scan cannot see it. AUDIENCE_SCOPED, not PRIVATE_SOURCE: every payload here " +
+      "is AUTHORED IN THE MESSAGE by the sender and validated by a zod schema; " +
+      "none is loaded out of another domain's store. MEMORY_NOTE is the one to " +
+      "watch and it is the sender's own note, written as state draft / visibility " +
+      "only_me, with assertNoMemoryGraphLeak refusing rather than stripping.",
+  },
+  {
+    file: "artifacts/api-server/src/services/telegraph/messageKinds.ts",
+    expression: "subtype: subtypeFor(kind, parsed.data)",
+    family: "AUDIENCE_SCOPED",
+    sourceDomain: null,
+    produces: [],
+    writesMessages: false,
+    note:
+      "DECLARED BY THE INTEGRATOR. This is the VALIDATOR the route above calls, " +
+      "not a writer: validateKindMessage returns { msgType, subtype } and touches " +
+      "no table. writesMessages false. `produces` is empty rather than guessed " +
+      "because subtypeFor's range is the union of four payload fields, and the two " +
+      "that are free strings (SAFETY's kind, LOCATION's precision) are bounded by " +
+      "their zod schemas, not by this file.",
+  },
+  {
+    file: "artifacts/api-server/src/routes/telegraphCoordination.ts",
+    expression: "msg_type: validated.msgType | subtype: validated.subtype | subtype: m.subtype",
+    family: "OPERATIONAL",
+    sourceDomain: null,
+    produces: [
+      "coordination", "decision", "vote", "rendezvous", "commitment",
+      "commitment_response", "action_proposal",
+    ],
+    writesMessages: true,
+    note:
+      "DECLARED BY THE INTEGRATOR. The §9 coordination route. msg_type is the " +
+      "lowercase of one of the seven COORDINATION_KINDS, listed above. " +
+      "OPERATIONAL because a coordination message carries no source object at all " +
+      "— it carries a state the sender is asserting about themselves (on my way, " +
+      "arrived, running late) or a decision the thread is taking together. There " +
+      "is nothing to disclose that the thread does not already own.",
+  },
+  {
+    file: "artifacts/api-server/src/services/telegraph/coordination.ts",
+    expression: "subtype: coordinationSubtype(kind, data)",
+    family: "OPERATIONAL",
+    sourceDomain: null,
+    produces: [],
+    writesMessages: false,
+    note:
+      "DECLARED BY THE INTEGRATOR. The validator behind the route above; returns a " +
+      "shape and writes nothing. `produces` is empty because coordinationSubtype " +
+      "lowercases a value from the payload — one of COORDINATION_QUICK_STATES for " +
+      "COORDINATION, or the action / response / resolutionRule fields — and those " +
+      "sets live in vocabulary.ts, not here.",
+  },
+  {
     file: "artifacts/api-server/src/services/telegraphReportEvidence.ts",
     expression:
       "msg_type: (msg as any).msg_type ?? null | subtype: (msg as any).subtype ?? null | " +
