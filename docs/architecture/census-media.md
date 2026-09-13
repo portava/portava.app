@@ -437,7 +437,7 @@ testable structure by §3 and §4.1. Narrative.
 | MD65 | OBSERVATION | **W** | Media never becomes an observation. `mediaEvidenceLink` produces a *link* row; `:1-13` states it *"never writes `intel_observations`/`intel_claims`/`intel_state_snapshots`"*. The stage is deliberately not wired, which is right for safety and wrong against §9. |
 | MD66 | CLAIM SYSTEM | **W** | The claim system exists (`lib/intelProjection`, `2130_intel_storage.sql`) and has no media input by construction (MD65). |
 | MD67 | LIVE INTELLIGENCE | **C** | `lib/liveClaimRead.readLiveClaimEnvelopes`, consumed at `MediaProjectionService.ts:379`; fail-closed to `[]`. |
-| MD68 | MEDIA / DISCOVERY / MAP / COMPASS outputs | **C** | `routes/mediaWorld.ts` (media), `MediaProjectionService.ts:916` map clusters, `compass/CompassMediaContext.ts:98` consumed at `routes/compass.ts:1527#const mediaCtx = await buildCompassMediaContext(sc, mediaViewer, mediaId, Date.now());`. |
+| MD68 | MEDIA / DISCOVERY / MAP / COMPASS outputs | **C** | `routes/mediaWorld.ts` (media), `MediaProjectionService.ts:916` map clusters, `compass/CompassMediaContext.ts:232` consumed at `routes/compass.ts:1534#const mediaCtx = await buildCompassMediaContext(sc, mediaViewer, mediaId, Date.now());`. |
 
 ### §10 IntelligenceEligibility
 
@@ -484,7 +484,7 @@ testable structure by §3 and §4.1. Narrative.
 | id | Requirement | V | Evidence |
 | --- | --- | --- | --- |
 | MD94 | Go There / Show on Map / Directions | **W** | `MediaActionResolver.ts:378-384` emits `show_on_map`, targeting `/api/media/places/:placeId` — a projection, deliberately coordinate-free. There is **no directions action**: no `directions` id in the resolver's thirteen (`:332,340,348,358,378,385,396,413,421,436,458,479,495`), and `directions_tap` exists only as a telemetry name (`routes/mediaAnalyticsBatch.ts:41`) with no emitter. "Go There" and "Directions" are unbuilt; "Show on Map" is built and correct. |
-| MD95 | Ask Compass | **C** | `MediaActionResolver.ts:19-20` (Compass-gated) → `compass/CompassMediaContext.ts:98` `buildCompassMediaContext`, consumed at `routes/compass.ts:1527#const mediaCtx = await buildCompassMediaContext(sc, mediaViewer, mediaId, Date.now());`. |
+| MD95 | Ask Compass | **C** | `MediaActionResolver.ts:19-20` (Compass-gated) → `compass/CompassMediaContext.ts:232` `buildCompassMediaContext`, consumed at `routes/compass.ts:1534#const mediaCtx = await buildCompassMediaContext(sc, mediaViewer, mediaId, Date.now());`. |
 | MD96 | Save Place | **C** | Resolved to the existing saved-places endpoint and served at `routes/mediaActions.ts:43,82`. |
 | MD97 | Add to Trip | **C** | `MediaActionResolver.ts:16-18` — offered only when `canEditPlan` passes, which is the exact gate the trip-plan-item endpoint enforces, so the rail can never grant access the endpoint would deny. |
 | MD98 | Create Plan | **C** | Same resolver, Compass-gated (`:19-20`). |
@@ -572,7 +572,7 @@ testable structure by §3 and §4.1. Narrative.
 | MD173 | §23.1 action: Save Route | **N** | Route plans exist (`route_plans`, `routes/routePlan.ts`) and no media action reaches them. |
 | MD174 | §23.1 action: Add to Trip (on an experience) | **C** | `MediaActionResolver.ts:16-18` — the same `canEditPlan`-gated trip-plan-item action, offered on experience-bound media. |
 | MD175 | §23.1 action: Remix | **N** | No remix concept anywhere in the tree. |
-| MD176 | §23.1 action: Ask Compass (on an experience) | **C** | `CompassMediaContext.ts:98` carries the experience's entity refs into the Compass ask. |
+| MD176 | §23.1 action: Ask Compass (on an experience) | **C** | `CompassMediaContext.ts:232` carries the experience's entity refs into the Compass ask. |
 
 ### §24 Ranking
 
@@ -685,11 +685,11 @@ here. (MD238's rank reads `hidden_gem_contributions`, absent from production —
 
 | id | Requirement | V | Evidence |
 | --- | --- | --- | --- |
-| MD242 | The `CompassMediaContext` contract | **C** | `compass/CompassMediaContext.ts:98` `buildCompassMediaContext`, wired into the real ask path at `routes/compass.ts:1527#const mediaCtx = await buildCompassMediaContext(sc, mediaViewer, mediaId, Date.now());`. |
-| MD243 | `entityRefs` — coarse, opaque, viewer-permitted | **C** | `CompassMediaContext.ts:26-33` — refs come from `resolveMediaEntities`, which runs the location/gem choke point, so a hidden venue, a gem-ceilinged place, and a protected gem's **name** are all withheld before anything is rendered into the prompt. |
-| MD244 | `viewerContext` | **C** | `CompassMediaContext.ts:49-54` — `viewerCountry` and `subjectCity` only, *"never a coordinate"*. |
+| MD242 | The `CompassMediaContext` contract | **C** | `compass/CompassMediaContext.ts:232` `buildCompassMediaContext`, wired into the real ask path at `routes/compass.ts:1534#const mediaCtx = await buildCompassMediaContext(sc, mediaViewer, mediaId, Date.now());`. |
+| MD243 | `entityRefs` — coarse, opaque, viewer-permitted | **C** | `CompassMediaContext.ts:26-53` — refs come from `resolveMediaEntities`, which runs the location/gem choke point, so a hidden venue, a gem-ceilinged place, and a protected gem's **name** are all withheld before anything is rendered into the prompt. |
+| MD244 | `viewerContext` | **C** | `CompassMediaContext.ts:69-74` — `viewerCountry` and `subjectCity` only, *"never a coordinate"*. |
 | MD245 | `permittedIntelligenceRefs` | **C** | `CompassMediaContext.ts:19-25` — filtered **twice**: the intel comes only from the gated fail-closed live-claim read, then is filtered to refs whose place the viewer is eligible to see. |
-| MD246 | Question: "Is this worth going to now?" | **C** | `CompassMediaContext.ts:9-12` names it as the driving case; the context lines are appended to the ask at `routes/compass.ts:1527#const mediaCtx = await buildCompassMediaContext(sc, mediaViewer, mediaId, Date.now());`. |
+| MD246 | Question: "Is this worth going to now?" | **C** | `CompassMediaContext.ts:9-12` names it as the driving case; the context lines are appended to the ask at `routes/compass.ts:1534#const mediaCtx = await buildCompassMediaContext(sc, mediaViewer, mediaId, Date.now());`. |
 | MD247 | Question: "Find somewhere like this." | **C** | Same; `find_similar` action at `MediaActionResolver.ts:396`. |
 | MD248 | Question: "Is this still busy?" | **C** | Answerable from `permittedIntelligenceRefs` (gated live claims); returns nothing rather than guessing when live is off. |
 | MD249 | Question: "Where is this?" | **C** | `entityRefs` carry the coarse place label subject to the owner's tier and any gem ceiling. |
@@ -1713,12 +1713,12 @@ and which this section does not pre-empt.
 Three changes, all server-side, none behind a new flag, none needing a migration.
 
 1. **The §7 neighborhood label has a producer.**
-   `artifacts/api-server/src/services/media/MediaProjectionService.ts:323#export async function loadPlaceNeighborhoods(`
+   `artifacts/api-server/src/services/media/MediaProjectionService.ts:338#export async function loadPlaceNeighborhoods(`
    batches one `places` read over the page's distinct `canonical_place_id`s —
    the same column `buildPlaceProjection` already reads for a place header, so
    Media does not open a second neighborhood source (§48: Places owns place
    identity) — and
-   `artifacts/api-server/src/services/media/MediaProjectionService.ts:433#const [ctx, neighborhoods] = await Promise.all([`
+   `artifacts/api-server/src/services/media/MediaProjectionService.ts:448#const [ctx, neighborhoods] = await Promise.all([`
    runs it alongside the gem context. The label is handed to the choke point as
    an **input**, never written onto the projection, so `coarsenMediaLocation`
    still decides: a gem-ceilinged or privacy-coarsened item names no
@@ -1727,9 +1727,9 @@ Three changes, all server-side, none behind a new flag, none needing a migration
    than left to look like an oversight — losing the gem context would WIDEN
    disclosure, losing this one only removes a label.
 2. **The §30 Tagged bucket reads the table that was there all along.**
-   `artifacts/api-server/src/services/media/MediaProjectionService.ts:902#export async function loadTaggedPostIds(`
+   `artifacts/api-server/src/services/media/MediaProjectionService.ts:1106#export async function loadTaggedPostIds(`
    reads `tags` for `status='approved'`, `source_type='post'`, and
-   `artifacts/api-server/src/services/media/MediaProjectionService.ts:949#export async function loadTaggedMedia(`
+   `artifacts/api-server/src/services/media/MediaProjectionService.ts:1153#export async function loadTaggedMedia(`
    puts those ids through `loadEligibleCandidates` and
    `projectCandidatesProtected` — **being tagged is not consent to see the
    post**, so the blocks / mutes / suspension / visibility / moderation gate,
@@ -1990,3 +1990,327 @@ could fix — is exactly the group this pass did not touch.** Every repair in
 §11.4 repairs a row this pass itself demoted an hour earlier. The argument in
 §11.6 for leaving the eleven alone is, I believe, correct; it is also the
 argument that made the pass's own work the only work it did.
+
+## 12. Group (a) opened — two of the eleven built, one filed under the wrong blocker
+
+Measured at `d9ab209d7`. §1–§11 stand as written; last statement wins for the
+ids in §12.7. `head_commit` is **not** moved: this section re-reads a queue, not
+450 rows.
+
+### 12.1 What this section was asked for, and what it found first
+
+§11.12 named its own least flattering fact: *"group (a) — the eleven W rows this
+branch could fix — is exactly the group this pass did not touch."* This section
+took those eleven as its queue. Before building anything it re-executed the
+§11.6 argument for each, and the first result is about the queue rather than the
+code:
+
+> **One of the eleven is not in group (a), and one of the nineteen in group (c)
+> is not in group (c).** §11.6's own sentence moves MD43 into (c) on the ground
+> that *"production does not have the column."* Production has the column. §12.5.
+
+Second, and smaller: **§11.2's partition covers 73 rows and the W column is 76.**
+MD209, MD387 and MD393 were demoted in §11.3 and never placed in a group — they
+belong to (d), (d) and (d) respectively on §11.6's own arguments (no
+comment-create endpoint; a client navigation with no server touchpoint; both).
+Nothing follows from this for a verdict; it is stated so the next pass does not
+read "(a)+(b)+(c)+(d) = the W column" and come up three short.
+
+### 12.2 MD216 — the People lens was two of four, and is now four
+
+The row: *"The People lens prioritises followed users, Trip Crew, Shared Moment
+participants and relevant creators … Trip Crew and Shared Moment participants
+are not: no `trip_members` or shared-moment read in the builder. Two of four."*
+
+§11.6 declined it on the ground that *"adding trip crew makes it three of four,
+which this census still grades W."* That argument is correct about a partial
+build and says nothing about a complete one. Both populations were buildable
+together, with no migration, no flag and no new table: `trip_members` and
+`shared_moment_memberships` are both in the committed production baseline
+(`artifacts/api-server/baseline/20260907_production_tables.txt`), and both
+already have readers inside the Media lane itself
+(`` `artifacts/api-server/src/services/media/MediaExperienceResolver.ts:190#.from("trip_members")` ``).
+
+**Why the two populations were not merely missing but unreachable.** The lens
+loaded `feedType: "following"` alone, and that feed type's per-item visibility
+gate refuses any author the viewer does not follow —
+`` `artifacts/api-server/src/lib/mediaEligibility.ts:381#if (authorId !== viewerCtx.viewerUserId && !viewerCtx.followedCreatorIds.has(authorId)) {` ``.
+A Trip Crew member was therefore structurally absent from this lens no matter
+what they posted. Meanwhile the client's own copy named both populations to the
+user — *"Perspectives from people you follow, your Trip Crew, and Shared Moments
+will appear here"*
+(`` `travel-buddy-standalone/src/features/media/screens/MediaPeopleScreen.tsx:45#message="Perspectives from people you follow, your Trip Crew, and Shared Moments will appear here."` ``)
+— so the lens was advertising two populations the server could not supply.
+
+**Built.** `` `artifacts/api-server/src/services/media/MediaProjectionService.ts:742#export async function loadPeopleAffinities(` ``
+resolves both populations in two hops each, where the FIRST hop is the viewer's
+own accepted membership — an invitation the viewer never accepted yields nobody,
+and an invitation somebody else never accepted does not make them crew. The lens
+then runs TWO lanes
+(`` `artifacts/api-server/src/services/media/MediaProjectionService.ts:837#export async function buildPeopleProjection(` ``):
+the follow lane unchanged, and an affinity lane that is `feedType: "for_you"`
+NARROWED to the crew and Shared Moment ids by a new composing filter
+(`` `artifacts/api-server/src/services/media/MediaProjectionService.ts:200#if (filter.authorIds && filter.authorIds.length > 0) {` ``).
+
+**The bound is stated rather than hidden**, on the precedent §11.4 set for the
+Tagged bucket: the affinity lane is PUBLIC-ONLY, so a crew member's `trip_only`
+or `private` post is withheld rather than guessed at. Admitting it would need a
+per-item membership proof this lane does not carry, and inventing one inside the
+choke point is the failure this census exists to catch.
+
+§27's declared order is the priority order, and it beats the perspective count:
+a contributor who qualifies under more than one population is counted ONCE, at
+the earliest-declared one. `relation` is carried to the client
+(`` `travel-buddy-standalone/src/features/media/types/peopleLens.ts:21#export type PeopleLensRelation = 'followed' | 'trip_crew' | 'shared_moment';` ``)
+and shown on the section header, so the population is visible and not merely
+ordered.
+
+**Three values, not four, and the reason is the row's own.** MD216 credits the
+follow graph with *"followed users and creators"*; a "relevant creator" has no
+second source, so a fourth enum value would be a vocabulary entry standing in
+for a build.
+
+### 12.3 MD147 — Independent Sources was `contributorCount` under a second name
+
+The row: *"the count is displayed nowhere and computed nowhere in the media
+path … The independence machinery exists (`lib/intelIndependence.ts`) but
+nothing in Media calls it."*
+
+Executed, it was worse than "computed nowhere": the field existed, was served on
+every `PerspectiveSummary`, and its entire implementation was
+`independentSourceCount: contributors.size` under a comment calling it *"a
+coarser, honest proxy"*. Three accounts posting ONE photograph read as three
+independent sources — the exact consensus inflation `intelIndependence`'s own
+header cites §11 anti-manipulation and AT-04 to refuse.
+
+**§11.6's argument for leaving it is half wrong, and the wrong half is the
+load-bearing one.** It says the independence detectors need *"shared evidence
+media, common source and synchronised timing — none of which a media projection
+carries: no group key, no asset hash, no source ref."* Two of those three are
+false:
+
+- **Asset key.** `IndependenceObservation.mediaRefs` is documented as *"asset
+  keys / content hashes of media evidence"*
+  (`` `artifacts/api-server/src/lib/intelIndependence.ts:66#/** Asset keys / content hashes of media evidence attached to this observation. */` ``).
+  The served media URL **is** the asset key: two posts resolving to one stored
+  file are one source. The projection has carried it all along.
+- **Group key.** `posts.trip_id` is a party token and is already selected by
+  `MEDIA_PROJECTION_POST_COLUMNS`. It must never be written onto a projection —
+  the projection is a privacy whitelist and trip membership is not on it — but
+  it can be handed to the aggregator as an input.
+- **Common source** is the half that IS right, and it is *inapplicable* rather
+  than missing: no media perspective is ever produced by an official feed or a
+  partner API, so there is no reference for a photograph to carry.
+
+**Built.**
+`` `artifacts/api-server/src/services/media/MediaPerspectiveService.ts:120#function countIndependentSources(` ``
+clusters the perspectives; the party token reaches it as a side channel built
+from the candidate rows
+(`` `artifacts/api-server/src/services/media/MediaProjectionService.ts:613#function partyTokensByPostId(` ``)
+and is asserted never to leave the server on the projection.
+
+**The sync detector is made INERT on purpose, and that is the decision worth
+recording.** `valueKey` is the perspective's own id, which cannot collide, so
+the synchronised-behaviour rule can never fire. A photograph asserts no value:
+two strangers shooting the same bar seconds apart are two witnesses, and mapping
+that detector onto `placeId` would destroy honest corroboration rather than
+catch coordination. Mutation M24 does exactly that and reddens four cases,
+including two that were green before this pass — which is the evidence that the
+inertness is a choice and not an omission.
+
+### 12.4 Mutations
+
+Ten. Each applied, run, and reverted, with the file's SHA-256 recomputed after
+the revert and compared to the pre-mutation digest. Suites:
+`` `artifacts/api-server/src/test/mediaPeopleLensPopulations.test.ts:182#describe("MD216 — loadPeopleAffinities resolves the two missing §27 populations", () => {` ``
+(13 cases) and
+`` `artifacts/api-server/src/test/mediaIndependentSources.test.ts:85#describe("MD147 — independent sources are CLUSTERED, not counted as contributors", () => {` ``
+(14 cases), both registered at the END of `artifacts/api-server/package.json`.
+
+| Mutation | What it did | What went red |
+| --- | --- | --- |
+| M16 | force the affinity lane's id set empty | 4 of 13 — both populations and the ordering |
+| M17 | drop the accepted-status check on the second membership hop | `an UNACCEPTED membership admits nobody — on either table` |
+| M18 | sort the lens by perspective count only | `orders the populations as §27 names them` |
+| M19a | delete the QUERY-level `for_you` visibility restriction | **nothing** — the per-item gate still refused |
+| M19b | delete the query-level restriction AND the per-item `for_you` gate | `THE BOUND: a crew member's trip_only and private posts are withheld` |
+| M20 | remove the followed-id pre-filter AND the post-id dedupe | `a person who is BOTH followed and crew is counted ONCE` |
+| M21 | restore `independentSourceCount: contributors.size` | 5 of 14 |
+| M22 | empty `mediaRefs` — drop the shared-evidence-media signal | 3 of 14, incl. the AT-04 three-copy case |
+| M23 | stop passing the party token from the place projection | `two authors of one trip … → 1 independent source` |
+| M24 | map the sync detector onto `placeId` instead of the perspective id | 4 of 14, incl. two that assert honest corroboration SURVIVES |
+
+**M19a is reported because it stayed green.** It is the honest half of the pair:
+the public-only bound does not rest on the one line the test appears to be
+about, it is defended twice, and only removing BOTH layers reddens the case. A
+mutation that fails to redden is evidence about the assertion, and suppressing
+it would make the other nine look stronger than they are.
+
+**What would leave these green and worthless.** Both suites drive the builders
+directly, so neither would notice a ROUTE that stopped calling them — the same
+P24 gap §9.6 opened and §11.5 restated, still open. The MD147 cases assert on
+`buildPerspectiveSummary`, which is reached from `buildPlaceProjection` alone;
+no other builder computes a perspective summary, so there is no second caller
+for them to be silent about.
+
+### 12.5 CORRECTION to §11.6 — MD43 is not capped by migration 2250
+
+§11.6 places MD43 in group (c) with an argument stated as fact:
+*"`media_attachments.visibility_override` has one writer, on the flag-gated
+canonical path, and **production does not have the column** — migration 2250 is
+unapplied there. A reader for it would be a read of a column that does not
+exist."*
+
+**Production has the column, and 2250 is not what creates it.** The column is
+created inline by `0191_media_assets.sql`'s `CREATE TABLE`
+(`` `artifacts/api-server/src/migrations/0191_media_assets.sql:52#visibility_override TEXT,` ``),
+`media_attachments` is in the production table list
+(`artifacts/api-server/baseline/20260907_production_tables.txt`), and the
+production structure dump carries the column on that table
+(`artifacts/api-server/baseline/20260819_baseline_structure.sql:7227`). 2250 adds
+it only conditionally, for a database whose 0191 predates it. The successor
+migration says so in its own words: *"§6.1 media_attachments columns (assert
+present; 0191 created them)"*
+(`` `artifacts/api-server/src/migrations/2470_media_asset_canonical_columns_flag_agnostic.sql:186#-- ── 4. §6.1 media_attachments columns (assert present; 0191 created them) ─────` ``).
+
+**The verdict does not move and the real blocker is different in kind.** MD43
+stays **W**. Its own row text is right — *"nothing reads it"* — and the reason no
+reader exists is not an absent column but an absent CALLER: the only module that
+could consult the override is
+`` `artifacts/api-server/src/lib/media/mediaCanonicalRead.ts:199#export async function attachCanonicalMedia(` ``,
+which selects `entity_id, position, is_cover` and the asset, never
+`visibility_override`, and which that same file records as *"called from
+nowhere, and that is a real gap"*. `media_attachments` is also empty in both
+databases. So MD43 is a **(d)** row — work nobody has commissioned — not a (c)
+row waiting on a deploy. **It was not built here**, because a reader wired into a
+function with no caller, over a table with no rows, would move a letter without
+moving the product, and that is §9.4's vacuous C.
+
+### 12.6 Migration 2250, re-established at HEAD — it is not the thing nine rows wait on
+
+§11.11 closes on *"a decision about migration 2250, which production does not
+have and which nine W rows are waiting on."* Re-executed:
+
+- **2250 cannot be applied to production as written, and not for a reason
+  anybody has to decide.** Its final postcondition raises if
+  `media_canonical_enabled` is TRUE
+  (`` `artifacts/api-server/src/migrations/2250_media_asset_canonical_model.sql:223#RAISE EXCEPTION 'POSTCONDITION FAILED: media_canonical_enabled is ON — Phase 1 must not flip the read path';` ``),
+  the flag IS TRUE in production (§11.7's own correction), and the raise is
+  inside `BEGIN … COMMIT` — so the transaction rolls back and the columns are
+  not created. The ledger records it as `do_not_apply` as written
+  (`docs/architecture/migration-disposition-ledger.md:134`).
+- **A successor exists and is the file the rows actually wait on.** `2470`
+  re-issues the same column set without that postcondition, and is itself
+  `blocked_by_owner_decision — MEDIA_CANONICAL_FLAG`
+  (`docs/architecture/migration-disposition-ledger.md:130`).
+- **So the open item is not "apply 2250".** It is a choice of ORDER, and 2470's
+  own header states both: take the flag DOWN and then apply 2250, or apply 2470
+  under the live flag. Either creates the four `media_assets` columns; neither
+  is a thing a lane may do.
+
+**The count is nine, and §11.6 made it ten by accident.** §11.7 names MD36,
+MD37, MD38, MD57, MD60, MD338, MD339, MD343 and MD429 — nine, and all nine rest
+on `captured_at` / `provenance` / `intelligence_eligibility`, which production
+genuinely lacks. §11.6 added MD43 as a tenth on the visibility_override ground
+refuted in §12.5. **Nine is right; MD43 was never one of them.**
+
+### 12.7 Row moves
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| MD216 | W | **C** | §27's four populations are four. `loadPeopleAffinities` resolves Trip Crew and Shared Moment participants from two tables already in production, a second `for_you`-narrowed lane admits their public perspectives, and §27's declared order beats the count. M16/M17/M18/M20 red; M19b red on the stated public-only bound. §12.2. |
+| MD147 | W | **C** | `independentSourceCount` is `clusterByIndependence` over the two signals a perspective carries — the asset key and the party token — instead of a second name for `contributorCount`. Three copies of one photograph are one source. M21/M22/M23 red; M24 red in the other direction, proving the sync detector's inertness is a choice. §12.3. |
+| MD43 | W | **W** | Verdict unchanged, blocker replaced. §11.6's *"production does not have the column"* is false — 0191 created it inline and the production dump carries it. The real blocker is that `attachCanonicalMedia` has no caller and `media_attachments` is empty in both databases, which makes MD43 a **(d)** row, not a **(c)** one. §12.5. |
+
+Nothing else moved. The other nine group-(a) rows were re-read and §11.6's
+argument holds for each: MD94 / MD213 / MD378 wait on a directions affordance
+that does not exist, MD370 / MD383 on a table absent from production,
+MD104 on a conversation id the share handler does not hold, MD15 / MD33 / MD428
+on decisions taken in the client.
+
+### 12.8 The §9.10 decision, scoped — the rows it moves, and both verdicts
+
+Not taken here. Named exactly, because §11.11 said *"those rows and a hundred
+like them"* and a hundred is not a list.
+
+`MEDIA_RANKING_ENABLED` is seeded FALSE
+(`` `artifacts/api-server/src/migrations/2038_media_admin_flags.sql:23#('MEDIA_RANKING_ENABLED', false,` ``)
+and with it false the ranker returns chronological order with `score=0` and no
+snapshot
+(`` `artifacts/api-server/src/services/ranking/MediaFeedRankingService.ts:648#if (!flags.rankingEnabled) {` ``).
+`MEDIA_WORLD_SHELL_ENABLED` is seeded FALSE
+(`` `artifacts/api-server/src/migrations/2300_phantom_feature_flag_rows.sql:116#false,` ``).
+
+| block | rows | verdict as graded today | verdict under *"a flag-dark row is not a realized row"* |
+| --- | --- | --- | --- |
+| §24 ranker terms — each graded C on a `DEFAULT_WEIGHTS` weight or a ranking layer | MD178, MD180, MD181, MD182, MD183, MD185, MD186, MD189, MD190, MD193, MD199, MD200 — **12** | **C** | **W** |
+| §44 outcome names whose only emitter is the dark action rail | MD375, MD379 — **2** | **C** | **W** |
+
+**Two §24 rows are deliberately NOT on that list.** MD191 (Privacy) and MD192
+(Safety) are graded C on a GATE that runs before ranking and independently of the
+flag, which their own evidence says in as many words. They stay C under either
+reading, and including them would have inflated the decision's cost by two.
+
+**The corpus was not enumerated.** These fourteen are the two blocks §11.11
+names, verified row by row. Whether the convention has the same cost elsewhere
+is unmeasured here — and census-map grades the identical shape the other way
+today (`census-map.md` §41), so the decision is a corpus convention and not a
+media one.
+
+### 12.9 §11.8 is stale in the direction that matters
+
+§11.8 declined to repoint forty §5 citations because *"UNANCHORED sits at its
+ceiling of 6490 with zero headroom."* Measured at `d9ab209d7`:
+**6417 of 6490 — 73 of headroom.** The argument for a separate pass still
+stands on its own merits; the arithmetic it rested on does not. The forty ids
+§11.8 names are still unrepointed and still correct as findings.
+
+Five anchored citations WERE repointed here, by exact original line text and not
+by offset, because this section's code displaced them:
+`loadPlaceNeighborhoods` 323→338, `[ctx, neighborhoods]` 433→448,
+`loadTaggedPostIds` 902→1106, `loadTaggedMedia` 949→1153 in this document, and
+the Hidden Gems bucket 861→1065 in `census-highlights-memories.md`.
+`census-telegraph.md` cites the same file twice at `:978`, now `:1182`, and both
+were repointed — the third time in four sections that an anchored citation has
+caught its own decay, and the reason this paragraph can say the repoint is right
+rather than hope so.
+
+### 12.10 Restated headline
+
+> | Measure | Was, §11.10 | Now |
+> | --- | --- | --- |
+> | Denominator (testable requirements) | 450 | **450** |
+> | BUILT-AND-CORRECT | 285 | **287** |
+> | BUILT-BUT-WRONG | 76 | **74** |
+> | NOT-BUILT | 87 | **87** |
+> | CANNOT-VERIFY | 2 | **2** |
+> | **CONSTRUCTED%** = (C+W)/450 | 80.2 % | **361 / 450 = 80.2 %** |
+> | **CORRECT%** (raw) = C/450 | 63.3 % | **287 / 450 = 63.8 %** |
+>
+> Restated from `pnpm -s check:census-integrity`, not by hand. Construction does
+> not move, again and for the same reason: both repairs closed a computation for
+> a field that was already declared and already served, so the W column handed
+> two rows to the C column and the C+W total never noticed. The gap between the
+> two figures fell 16.9 → **16.2** points.
+
+The **spec-attributable** figure (§0: 216 / 450) is **not restated**: attribution
+was not re-run, and adjusting it by adding two promoted rows would be arithmetic
+dressed as measurement.
+
+### 12.11 The least flattering true thing about this pass
+
+**It closed the two easiest rows in group (a) and left the argument for the
+other nine exactly where it found it.** MD216 and MD147 were the two rows whose
+requirement was satisfiable entirely inside one server file, over tables that
+are already in production, with no product decision in the way. That is why they
+were closed, and a pass that picked the two tractable rows out of eleven should
+say so rather than imply the queue was worked.
+
+Second, and structural: **§12.5 is the second time in two sections that a stated
+deployment blocker turned out to be false when somebody opened the migration.**
+§11.7 corrected §3 about `media_canonical_enabled`; §12.5 corrects §11.6 about
+`visibility_override`. Both were asserted from reading a migration rather than
+the database, both were wrong in the direction that made a row look harder than
+it is, and nothing in this repository can catch the next one — the production
+table list and the structure dump are the only two artifacts that could, and
+neither is consulted by any check.

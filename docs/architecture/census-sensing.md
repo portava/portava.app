@@ -391,7 +391,7 @@ Legend: **BC** BUILT-AND-CORRECT · **BW** BUILT-BUT-WRONG · **NB** NOT-BUILT �
 | S44 | World Dynamics → `WorldState`/`WorldMoment` (change, anomalies, hotspots, rhythm); must not claim cause when unknown | **BW** | Hotspots and rhythm exist and the must-not-claim half is enforced: `world_pulse` (`worldPulseProducer.ts`), `city_model`, `traveler_flow`, and cause hypotheses structurally separated (S10). **Change** and **anomalies** do not exist — there is no `WorldMoment`, no transition object and no anomaly detector. |
 | S45 | Forecast → `ForecastState` with calibration; must not be presented as observed current fact | **BW** | The must-not half is enforced (S11); the engine is thin. `prediction` is a map kind and `portava_prediction` a source class, with `src/lib/temporalProjection.ts` producing time-shifted projections — but no horizon field, no calibration attached to a forecast, and no `ForecastState`. |
 | S46 | Opportunity → `OpportunityProjection`; must not claim canonical world truth | **BW** | Wall has a `contextual_opportunity` object type (`services/wall/WallProjectionService.ts:57`) and Compass has recommendations, but each surface builds its own; there is no shared Opportunity engine or projection. |
-| S47 | Product surfaces consume projections; they do not reimplement engine logic | **BC** | `src/lib/liveClaimRead.ts` is the single read path, consumed by Map (`mapProjection.ts:98`), Wall (`ContextThreadService.ts:46`), Compass (`CompassMediaContext.ts:38`), Media (`MediaProjectionService.ts:49`), Input (`inputAssistance/liveSuggestions.ts:39`) and Trails (`trailLiveIntel.ts:27`). `LiveForYouService.ts:37-40` reuses `loadNearbyEvents` explicitly so *"The Wall must not implement a second place-state system"*. |
+| S47 | Product surfaces consume projections; they do not reimplement engine logic | **BC** | `src/lib/liveClaimRead.ts` is the single read path, consumed by Map (`mapProjection.ts:98`), Wall (`ContextThreadService.ts:46`), Compass (`CompassMediaContext.ts:58`), Media (`MediaProjectionService.ts:49`), Input (`inputAssistance/liveSuggestions.ts:39`) and Trails (`trailLiveIntel.ts:27`). `LiveForYouService.ts:37-40` reuses `loadNearbyEvents` explicitly so *"The Wall must not implement a second place-state system"*. |
 | S48 | Canonical truth classes: OBSERVED / CORROBORATED / INFERRED / PREDICTED / CONFLICTING / STALE / UNKNOWN | **BW** | `grep -ri truth_class\|truthClass` → **nothing**. The concept is spread across four unrelated vocabularies: `SOURCE_CLASSES` (`intelContracts.ts:44`), `CLAIM_STATUSES` (`:138`, has `conflicting`/`expired`), `CONFIDENCE_BANDS` (`:410`) and `FRESHNESS_STATES` (`mapObjects.ts:121`). `presence/domain/types.ts:67-71` `ESTIMATE_STATES` is the closest single vocabulary but is presence-scoped. **CORROBORATED has no representation.** |
 | S49 | Every server-built state consumed by Map/Discovery/Wall/Compass carries truth class, confidence, freshness **and coverage** | **BW** | Three of four. `MapObject` (`mapObjects.ts:362-398`) carries `freshness`, `confidence`, `sourceClass` and `provenance`; it carries **no coverage**, and no truth class per S48. |
 | S50 | Prediction never rendered indistinguishably from observation | **BC** | Server: `mapProjection.ts:697-701`. Client mirror: `travel-buddy-standalone/src/types/mapObjects.ts:113-117` `FORECAST_KINDS` with the same §37 comment. |
@@ -2686,7 +2686,7 @@ class in every sentence), and this lane did not ground `/compass/ask`. What that
 needs is a grounding check over the model's final text against the structured
 evidence that was in its context — and the ask pipeline does not currently carry
 live claims into context in a comparable form (`src/compass/CompassStructuredContext.ts`
-reads none; only `CompassMediaContext.ts:124` does), so the honest order is
+reads none; only `CompassMediaContext.ts:263` does), so the honest order is
 evidence-in-context first, checker second. A checker wired to no evidence would
 be a callerless contract, which this census counts as built and wrong.
 **S83** stays W: a `TripWorldContext` needs `ExperienceSession`s (S54, N, and
@@ -2936,3 +2936,107 @@ reason that stopped being true.
 | id | was | now | why |
 | --- | --- | --- | --- |
 | S49 `MapObject` | W | **W** | Verdict unchanged, evidence replaced. The stated reason — "no coverage, and no truth class per S48" — is false on both halves since §6 moved S48 to C and `MapObject` gained `truthClass` / `coverage`. The true remaining gap is `DiscoveryCandidate` carrying three of the four. |
+
+## §9 — 2026-09-13: what `SENSING_AUTH_POSTURE` actually blocks, enumerated rather than asserted
+
+Measured at `d9ab209d7`. `head_commit` is unchanged; §1–§8 stand as written.
+**No verdict moved in either direction, and nothing was built.** §8 said half
+this census's correctness gap is one undecided question and left the sentence
+there. This section opens it, because "the owner must decide" is the kind of
+claim a lane can be told and cannot check — and it is checkable.
+
+### §9.1 The blockage, stated as a fact about the tree
+
+`SENSING_AUTH_POSTURE` is a source constant, not a flag and not a database row —
+`` `artifacts/api-server/src/lib/sensingAuthPosture.ts:54#export const SENSING_AUTH_POSTURE: SensingAuthPosture = "undecided";` ``
+— and the module says in its own header that there is *"deliberately no
+environment variable or flag that can flip it at runtime."* So no deploy and no
+flag flip can move any row that waits on it: only a reviewed diff can, which is
+what makes these thirteen different in kind from census-map's 41.
+
+**What it blocks is not a refusal. It is the absence of a caller.**
+`sensingEligibility` FAILS CLOSED while the posture reads `undecided`, so a
+route that called it would refuse everyone — but no route calls it. Enumerated
+exhaustively across both trees (every reference to `sensingEligibility`,
+`postureAdmitsAnonymous` and `SENSING_ISSUANCE_CLASSES`, opened one at a time,
+with no `head -N` applied to any search asserted here as an absence):
+
+- `` `artifacts/api-server/src/lib/sensingAuthPosture.ts:90#export function sensingEligibility(` `` has **two** referrers. One is
+  `src/test/sensingAuthPosture.test.ts`. The other is
+  `src/lib/sensingContributionSession.ts`, which imports the issuance-class
+  vocabulary and not the function.
+- **No route imports any sensing contribution module.** The whole stack —
+  `sensingAnonStore`, `sensingAnonService`, `sensingContributionSession`,
+  `sensingContributionPolicy`, `sensingPresenceState`, `sensingCoverageAggregate`,
+  `sensingDifferencingGate`, `sensingRevocationLineage` — is referenced only by
+  its own tests, by its own siblings, by `lib/envValidation.ts` and by
+  `scripts/checkCensusFreshness.ts`.
+- **`sensing_anon_contributions` has no writer in production code.** The only
+  non-test, non-migration module that names the table besides the store itself
+  is the retention sweep
+  (`` `artifacts/api-server/src/lib/sensingRetentionScheduler.ts:156#gate: "sensing_anon_contributions must exist in this database",` ``),
+  which deletes. `src/index.ts` starts that scheduler and imports nothing else
+  from the stack.
+
+> **So the posture blocks the EXISTENCE of an ingest route, not its behaviour.**
+> The thirteen rows are not "built and refusing"; they are "built and
+> unaddressed". Registering a route that called `sensingEligibility` today would
+> add a handler that returns `posture_undecided` to every caller forever, which
+> moves no row in this census and is the vacuous shape §7 already refuses.
+
+### §9.2 The thirteen re-read, and the count checked
+
+S18, S20, S24, S25, S30, S33, S35, S39, S42, S51, S52, S111, S112 — thirteen ids,
+each opened at its last statement. Every one closes on a clause of the same
+shape: *"no writer is registered"*, *"admitting nobody by owner decision"*,
+*"nothing publishes an aggregate for it to guard"*, *"nothing issues a session"*,
+*"the ingest they protect does not exist"*, *"no surface consumes it"*, *"not one
+signal is produced anywhere"*, *"nothing can populate it"*, *"the resolver has no
+caller"*, *"nothing bridges to them"*. **Thirteen of twenty-six is 50.0 %** — §8's
+*"about half"* is exact, not rounded, and this section could not find a
+fourteenth or a twelfth.
+
+### §9.3 S49 re-executed — the §24 objection holds at both of its lines
+
+§8 declined to add `coverage` to `DiscoveryCandidate` because the Map strips it
+inside a protected zone and Discovery does not run that pass. Both halves were
+re-executed here rather than taken:
+
+- The Map does strip it, for the stated reason —
+  `` `artifacts/api-server/src/lib/protectedLocations.ts:748#delete out.coverage;` ``,
+  under a comment reading *"`coverage` restates the cohort that `count` was
+  deleted for."*
+- Discovery does not run it. `` `artifacts/api-server/src/lib/discoveryCandidate.ts:122#export interface DiscoveryCandidate {` ``,
+  `lib/discoveryLiveRank.ts` and the `routes/discovery*.ts` handlers contain
+  **zero** references to `protectedLocations`, `protected_zones` or
+  `protectedZone`.
+
+So copying the bucket across would publish on Discovery a cohort signal the Map
+withholds for the same place. **S49 stays W, the decision stays the owner's, and
+this section adds only that §8's reasoning survived being checked.**
+
+### §9.4 Row moves
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| S49 | W | **W** | Verdict unchanged, and §8's *reason* re-executed rather than restated: the Map's `coverage` strip and Discovery's absence of any protected-zone pass were both confirmed at the lines above. No new evidence, no move. §9.3. |
+
+Nothing else moved. **No row was built.** This census's headline is unchanged
+and is restated from `pnpm -s check:census-integrity` rather than by hand:
+**127 rows — 98 C, 26 W, 2 N, 1 X.** CONSTRUCTED 97.6 %, CORRECT 77.2 %, the
+distance still 20.5 points and still the W column.
+
+### §9.5 What this section could not settle
+
+**It cannot prove the thirteen are ALL of it.** §9.2 verified that each of the
+thirteen closes on an "unreached" clause; it did not verify that no row OUTSIDE
+the thirteen also waits on the posture, because that would mean re-executing the
+other ninety-eight C rows and this section executed none of them. §8's own
+sample found one C row whose stated reason had quietly stopped being true
+(S49's), and nothing here re-ran that search.
+
+**And the enumeration in §9.1 is the same class of claim it criticises.** It is
+an asserted absence. It was settled by opening every reference rather than by a
+grep that stops, which is the strongest method available in this tree — and
+there is still nothing in this repository that can check whether a stated
+absence was actually searched for.

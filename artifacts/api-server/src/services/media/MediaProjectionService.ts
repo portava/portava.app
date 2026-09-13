@@ -144,6 +144,13 @@ export interface CandidateFilter {
   city?: string | null;
   placeId?: string | null;
   authorId?: string | null;
+  /**
+   * NARROWING ONLY. Composes WITH the `feedType` branch below rather than
+   * replacing it, so a caller can say "these authors, under the for_you rules"
+   * without widening what `for_you` admits. `authorId` (singular) is the
+   * pre-existing single-author escape hatch and keeps its own semantics.
+   */
+  authorIds?: string[] | null;
   tripId?: string | null;
   postIds?: string[] | null;
   limit?: number;
@@ -184,6 +191,14 @@ export async function loadEligibleCandidates(
     query = query.eq("visibility", "public");
   } else if (filter.feedType === "following") {
     query = query.in("author_id", [...viewer.followedCreatorIds]);
+  }
+
+  // Applied AFTER the feedType branch, never instead of it: an empty array here
+  // would mean "no author matches", so the caller is responsible for not asking
+  // at all — `buildPeopleProjection` skips the lane entirely when the set is
+  // empty rather than issuing `.in("author_id", [])`.
+  if (filter.authorIds && filter.authorIds.length > 0) {
+    query = query.in("author_id", filter.authorIds.slice(0, DEFAULT_CANDIDATE_LIMIT));
   }
 
   if (filter.placeId) query = query.eq("canonical_place_id", filter.placeId);
@@ -590,6 +605,22 @@ export interface PlaceProjection {
   freshness: FreshnessState;
 }
 
+/**
+ * Map each candidate post id to the trip it was contributed under, for the §18
+ * independence clustering ONLY. Posts with no trip contribute `null` and stay
+ * their own solo unit.
+ */
+function partyTokensByPostId(rows: MediaCandidateRow[]): Map<string, string | null> {
+  const out = new Map<string, string | null>();
+  for (const r of rows) {
+    const id = (r as any)?.id;
+    if (id == null) continue;
+    const tripId = (r as any)?.trip_id;
+    out.set(String(id), typeof tripId === "string" && tripId.length > 0 ? tripId : null);
+  }
+  return out;
+}
+
 export async function buildPlaceProjection(
   sc: SupabaseClient,
   viewer: ViewerResolved,
@@ -647,7 +678,13 @@ export async function buildPlaceProjection(
   if (!placeName) placeName = media.find((m) => m.placeLabel)?.placeLabel ?? null;
 
   const currentState = await readCurrentState(sc, placeId, nowMs);
-  const perspectives = buildPerspectiveSummary(media, nowMs);
+  // §18 actor-relationship side channel: the party token each perspective was
+  // contributed under. Read off the CANDIDATE rows and handed to the summary as
+  // an input — it is never written onto a projection, because `MediaProjection`
+  // is a privacy whitelist and trip membership is not on it.
+  const perspectives = buildPerspectiveSummary(media, nowMs, {
+    groupKeyById: partyTokensByPostId(candidates),
+  });
 
   return {
     placeId,
@@ -661,8 +698,111 @@ export async function buildPlaceProjection(
 
 // ── §27 People lens ──────────────────────────────────────────────────────────
 
+/**
+ * Which of §27's populations a contributor reaches this lens through.
+ *
+ * §27 names four — *followed users, Trip Crew, Shared Moment participants and
+ * relevant creators* — and three values cover them, because the fourth has no
+ * separate source: a "relevant creator" reaches the People lens through the
+ * follow graph, which is exactly what census-media MD216 already credits when
+ * it says *"followed users and creators are handled"*. Inventing a fourth enum
+ * value with no producer would be a vocabulary entry standing in for a build.
+ */
+export type PeopleRelation = "followed" | "trip_crew" | "shared_moment";
+
+/**
+ * §27's declared order IS the priority order. A contributor who qualifies under
+ * more than one population is counted ONCE, at the earliest-declared one.
+ */
+const PEOPLE_RELATION_ORDER: readonly PeopleRelation[] = ["followed", "trip_crew", "shared_moment"];
+
+export interface PeopleAffinities {
+  /** Other accepted members of trips the VIEWER has accepted. Never the viewer. */
+  tripCrewIds: Set<string>;
+  /** Other accepted members of Shared Moments the VIEWER has accepted. Never the viewer. */
+  sharedMomentIds: Set<string>;
+}
+
+/** Membership rows in any other state are not a relationship. */
+const ACCEPTED_MEMBERSHIP_STATUS = "accepted";
+
+/**
+ * Resolve the two §27 populations the follow graph cannot express.
+ *
+ * TWO HOPS EACH, and the first hop is the viewer's own accepted membership —
+ * so an invitation the viewer has not accepted yields nobody, and an invitation
+ * somebody else has not accepted does not make them crew. Read viewer-scoped at
+ * line level in both directions.
+ *
+ * FAIL-SOFT, and the asymmetry with the gem read in `projectCandidatesProtected`
+ * is deliberate for the same reason `loadPlaceNeighborhoods` is: losing the gem
+ * context would WIDEN disclosure, losing this one only removes people from a
+ * lens. An empty set here means "no affinity lane", never "admit everyone".
+ */
+export async function loadPeopleAffinities(
+  sc: SupabaseClient,
+  viewerId: string,
+): Promise<PeopleAffinities> {
+  const tripCrewIds = new Set<string>();
+  const sharedMomentIds = new Set<string>();
+
+  const peers = async (
+    table: string,
+    groupCol: string,
+    into: Set<string>,
+  ): Promise<void> => {
+    let mine: string[] = [];
+    try {
+      const { data, error } = await (sc as any)
+        .from(table)
+        .select(`${groupCol}, user_id, status`)
+        .eq("user_id", viewerId);
+      if (error) {
+        logger.warn(
+          { table, code: (error as any)?.code ?? null, message: (error as any)?.message ?? null },
+          "loadPeopleAffinities: viewer membership read failed — this §27 population is empty for this request",
+        );
+        return;
+      }
+      for (const r of (data as any[]) ?? []) {
+        if (String(r?.status ?? ACCEPTED_MEMBERSHIP_STATUS) !== ACCEPTED_MEMBERSHIP_STATUS) continue;
+        if (r?.[groupCol] != null) mine.push(String(r[groupCol]));
+      }
+    } catch {
+      return;
+    }
+    mine = [...new Set(mine)];
+    if (mine.length === 0) return;
+
+    try {
+      const { data, error } = await (sc as any)
+        .from(table)
+        .select(`${groupCol}, user_id, status`)
+        .in(groupCol, mine.slice(0, DEFAULT_CANDIDATE_LIMIT));
+      if (error) return;
+      for (const r of (data as any[]) ?? []) {
+        if (String(r?.status ?? ACCEPTED_MEMBERSHIP_STATUS) !== ACCEPTED_MEMBERSHIP_STATUS) continue;
+        const uid = r?.user_id == null ? null : String(r.user_id);
+        if (!uid || uid === viewerId) continue;
+        into.add(uid);
+      }
+    } catch {
+      /* non-fatal — the population stays empty */
+    }
+  };
+
+  await Promise.all([
+    peers("trip_members", "trip_id", tripCrewIds),
+    peers("shared_moment_memberships", "moment_id", sharedMomentIds),
+  ]);
+
+  return { tripCrewIds, sharedMomentIds };
+}
+
 export interface PeopleGroup {
   contributor: MediaProjection["contributor"];
+  /** Which §27 population put this contributor on the lens. */
+  relation: PeopleRelation;
   perspectiveCount: number;
   freshness: FreshnessState;
   media: MediaProjection[];
@@ -674,17 +814,72 @@ export interface PeopleProjection {
   totalPerspectives: number;
 }
 
+/**
+ * §27 People lens — all four declared populations.
+ *
+ * TWO LANES, and the split is the privacy argument:
+ *
+ *  1. **The follow lane** (`feedType: "following"`) is unchanged. Its visibility
+ *     gate admits a followed author's `trip_only` item on a trip the viewer is a
+ *     member of, because the follow lane carries `viewerTripIds` as that proof.
+ *  2. **The affinity lane** (`feedType: "for_you"`, narrowed to the crew and
+ *     Shared Moment ids) is PUBLIC-ONLY, and the bound is stated rather than
+ *     hidden: a crew member's `trip_only` or `private` post is WITHHELD rather
+ *     than guessed at. The shared eligibility gate refuses non-public items on
+ *     `for_you` in the query AND again per item, so nothing here widens it —
+ *     this lane narrows an existing feed type, it does not invent a new one.
+ *
+ * Before this, the lens ran lane 1 ALONE, whose per-item gate refuses any author
+ * the viewer does not follow. Trip Crew and Shared Moment participants were
+ * therefore structurally unreachable no matter what they posted, while the
+ * client's own copy named both populations.
+ */
 export async function buildPeopleProjection(
   sc: SupabaseClient,
   viewer: ViewerResolved,
   nowMs: number,
 ): Promise<PeopleProjection> {
   const generatedAt = new Date(nowMs).toISOString();
-  const candidates = await loadEligibleCandidates(sc, viewer, {
-    feedType: "following",
-    limit: DEFAULT_CANDIDATE_LIMIT,
-  });
-  const media = await projectCandidatesProtected(sc, viewer, candidates, nowMs);
+
+  const affinities = await loadPeopleAffinities(sc, viewer.viewerId);
+  const affinityIds = [...new Set([...affinities.tripCrewIds, ...affinities.sharedMomentIds])].filter(
+    (id) => !viewer.followedCreatorIds.has(id),
+  );
+
+  const [followed, affinity] = await Promise.all([
+    loadEligibleCandidates(sc, viewer, {
+      feedType: "following",
+      limit: DEFAULT_CANDIDATE_LIMIT,
+    }),
+    affinityIds.length === 0
+      ? Promise.resolve([] as MediaCandidateRow[])
+      : loadEligibleCandidates(sc, viewer, {
+          feedType: "for_you",
+          authorIds: affinityIds,
+          limit: DEFAULT_CANDIDATE_LIMIT,
+        }),
+  ]);
+
+  // Dedupe by post id: a followed crew member is one person with one library,
+  // and two lanes reaching the same row must not count it twice.
+  const byId = new Map<string, MediaCandidateRow>();
+  for (const row of [...followed, ...affinity]) {
+    const id = (row as any)?.id;
+    if (id == null) continue;
+    if (!byId.has(String(id))) byId.set(String(id), row);
+  }
+
+  const media = await projectCandidatesProtected(sc, viewer, [...byId.values()], nowMs);
+
+  const relationOf = (cid: string): PeopleRelation | null => {
+    if (viewer.followedCreatorIds.has(cid)) return "followed";
+    if (affinities.tripCrewIds.has(cid)) return "trip_crew";
+    if (affinities.sharedMomentIds.has(cid)) return "shared_moment";
+    // The viewer's own items ride the follow lane's self-exemption; they are
+    // not one of §27's populations, so they group under `followed` rather than
+    // being dropped from a lens the viewer is looking at.
+    return cid === viewer.viewerId ? "followed" : null;
+  };
 
   const byContributor = new Map<string, MediaProjection[]>();
   for (const m of media) {
@@ -696,18 +891,27 @@ export async function buildPeopleProjection(
   }
 
   const people: PeopleGroup[] = [];
-  for (const items of byContributor.values()) {
+  for (const [cid, items] of byContributor) {
+    const relation = relationOf(cid);
+    if (!relation) continue;
     const sorted = items.sort(
       (a, b) => new Date(b.capturedAt).getTime() - new Date(a.capturedAt).getTime(),
     );
     people.push({
       contributor: sorted[0].contributor,
+      relation,
       perspectiveCount: sorted.length,
       freshness: aggregateFreshness(sorted.map((m) => m.capturedAt), nowMs),
       media: sorted.slice(0, 12),
     });
   }
-  people.sort((a, b) => b.perspectiveCount - a.perspectiveCount);
+  // §27's declared order first, the count only inside a population.
+  people.sort((a, b) => {
+    const byRelation =
+      PEOPLE_RELATION_ORDER.indexOf(a.relation) - PEOPLE_RELATION_ORDER.indexOf(b.relation);
+    if (byRelation !== 0) return byRelation;
+    return b.perspectiveCount - a.perspectiveCount;
+  });
 
   return { generatedAt, people, totalPerspectives: media.length };
 }

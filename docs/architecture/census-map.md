@@ -1159,3 +1159,110 @@ stated — and the distance between them, which is the only figure that measures
 correctness, did not move by a thousandth: it was 48/293 before and 48/293
 after. Anyone quoting the recount's improvement as progress is quoting a parser
 fix.
+
+## §41 — 2026-09-13: the 85 % re-measured from the production table list, and the row it double-counted
+
+Measured at `d9ab209d7`. `head_commit` stays `42aeac38`; §1–§40 stand as written.
+**No verdict moved in either direction.** This section exists because §40's
+central number was taken on trust by a later pass, and a number that decides
+whether a lane works here should be re-derived rather than quoted.
+
+### §41.1 The claim, and what re-measuring it gives
+
+§40: *"Eighty-five per cent of this census's correctness gap is a deployment
+gap, not a code gap"* — 41 of 48.
+
+Re-derived without reading §40's tables: every `M<n>` row in this document was
+parsed, last-statement-wins, and each W row's stated blocker was opened. The
+extraction agrees with `check:census-integrity` exactly — **46 W**, not 48; §40
+moved M201 and M226 out of the W column in the same section that stated 48.
+
+| my classification | rows | share of the 46 |
+| --- | --- | --- |
+| capped by an absent table, an absent/false flag row, or an empty curated table | **41** | **89.1 %** |
+| logic wrong in code | 3 — M42, M123, M43 | 6.5 % |
+| needs something nobody has written | 2 — M65, M129 | 4.3 % |
+
+> **The claim is CORRECT and now understates itself.** 41/48 = 85.4 % against
+> §40's denominator; 41/46 = **89.1 %** against the W column as it actually
+> stands. Both figures rest on the same 41 rows. **The map is built; the map is
+> not deployed** remains the honest statement of this census, and a lane with
+> production read-only cannot move any of the 41.
+
+### §41.2 The deploy step each capped row waits on, named
+
+Verified against the committed production table list
+(`artifacts/api-server/baseline/20260907_production_tables.txt` — 431 tables,
+measured 2026-09-07). Of the nine objects below, **exactly one is present**.
+
+| rows | the object that is missing | present in production? | the deploy step |
+| --- | --- | --- | --- |
+| M259–M274, M275 — **17** | `map_telemetry_events` + `map_telemetry_drops` (`` `artifacts/api-server/src/migrations/2202_map_telemetry.sql:45#CREATE TABLE IF NOT EXISTS public.map_telemetry_events (` ``) and the flag row `` `artifacts/api-server/src/migrations/2202_map_telemetry.sql:176#('map_telemetry_enabled', FALSE,` `` | **no** (both tables absent) | apply 2202, then flip `map_telemetry_enabled` — the flag ROW does not exist either, because 2202 creates it |
+| M7, M83, M85, M86, M87, M90, M91, M92, M93, M94 — **10** | the four `locate_friends_*` tables (`` `artifacts/api-server/src/migrations/2219_locate_friends_sessions.sql:74#CREATE TABLE IF NOT EXISTS public.locate_friends_sessions (` ``) | **no** (all four absent) | apply 2219 |
+| M10, M133, M139, M179 — **4** | `protected_zones` (`` `artifacts/api-server/src/migrations/2217_protected_locations.sql:60#CREATE TABLE IF NOT EXISTS public.protected_zones (` ``) and the flag row `` `artifacts/api-server/src/migrations/2201_map_projection_flag.sql:17#('map_projection_enabled', FALSE,` `` | **no** (table absent) | **2217 FIRST**, then 2201 — the order in this document's CORRECTION HEADER, and flipping the gateway first blanks the map |
+| M5, M119, M279 — **3** | `geo_zones` holds 0 rows; plus 2218 / 2224 | **the table IS present** — the only one of the nine | an **ops backfill** of the curated zone set, not a migration |
+| M67 — **1** | `route_flow_contribution_consent` (`` `artifacts/api-server/src/lib/routeHopSignal.ts:115#export const ROUTE_FLOW_CONSENT_TABLE = "route_flow_contribution_consent";` ``) | **no** | apply 2224; the producer requires ≥2 signal families and has exactly one without it |
+| M282 — **1** | the flag row `` `artifacts/api-server/src/migrations/2295_map_world_intelligence_flag.sql:77#'map_world_intelligence_enabled',` ``, seeded OFF | n/a — a flag, not a table | flip one flag row |
+| M221, M222, M223, M278, M280 — **5** | nothing of their own | — | they fall out when M5 / M7 / M10 / M83–M94 are lifted |
+
+**17 + 10 + 4 + 3 + 1 + 1 + 5 = 41.**
+
+### §41.3 The row §40's own tables count twice
+
+§40's summary table says **(c) = 41** and its blocker table enumerates **42
+ids** — because **M123 appears in both** the (c) "downstream of the above" list
+and the (a) table, where §40 itself writes *"it is M42 wearing a layer name."*
+
+Resolved here in favour of **(a)**, and the reason is not bookkeeping: M123's
+blocker is a code defect — `` `artifacts/api-server/src/migrations/2191_memory_projector_content_and_support.sql:179#FROM public.saved_places s` `` projects the PLACE lane from a writerless
+table — and `saved_places` **is** in the production table list. Nothing about
+M123 waits on a deployment. So the group sizes are (c) 41, (a) 3, (d) 2 = 46,
+and the enumerated list under (c) is the thing that was wrong, not the 41.
+
+### §41.4 M42 / M123 / M43 re-read — and still not built here
+
+- **M42 and M123.** §40 declined to write the migration because PR #451 is that
+  migration. Re-executed: the defect is real at HEAD (the line cited above), and
+  a second migration redefining `project_user_memory` would hand the integrator
+  a conflict for no earlier landing. **The argument holds. Not built.**
+- **M43.** Re-executed and still true: the legend draws a `blue_dot` for
+  "Current user" and no canvas renders one. It is a React Native marker render
+  with no pure surface to drive, so the only assertion available is a source
+  scan — which is what §40 said, and saying it twice does not make it a build.
+  **Not built.**
+
+### §41.5 A cross-census inconsistency this section can only report
+
+**M282 is graded W here for exactly the shape census-media grades C.** Its own
+evidence says *"fully built … four kinds on both mirrors, four producers, two
+client layers. Behind `map_world_intelligence_enabled`, seeded OFF."* That is
+complete-behind-a-dark-flag. `census-media.md` §11.3.3 keeps MD375 and MD379 at
+**C** on the identical reasoning — their only emitter is dark — and
+`census-media.md` §12.8 enumerates fourteen media rows that turn on it.
+
+So the open convention question (`census-media` §9.10, restated in §12.8) is a
+**corpus** question and the two censuses currently answer it differently. Under
+media's convention M282 is C and this census's CORRECT% rises by one row; under
+the alternative, fourteen media rows fall to W. **Not taken here, and not takeable
+by a lane** — it is one rule for thirteen documents.
+
+### §41.6 Row moves
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| M123 | W | **W** | Verdict unchanged, GROUP corrected. §40 lists it under both (c) "downstream" and (a); its blocker is M42's writerless-`saved_places` projection, which is code, and `saved_places` is present in production. It belongs to (a) alone, which is what makes §40's (c) enumeration 42 ids under a table saying 41. §41.3. |
+
+Nothing else moved. **No row was built, no migration applied, no flag flipped.**
+This section's product is a re-derived number and a corrected partition, and it
+closed no gap: the distance between CONSTRUCTED and CORRECT was 46/293 before it
+and 46/293 after.
+
+### §41.7 What this section could NOT check
+
+The eight absent objects are absent from a **table list measured 2026-09-07**.
+That list is the strongest artifact in the tree for this question and it is six
+days old at the time of writing, it names tables and not columns or flag rows,
+and nothing in this repository re-measures it. `map_projection_enabled` and
+`map_world_intelligence_enabled` are flag ROWS, so their production state is not
+visible in a table list at all — both are recorded here on their migration seed
+and on the same ledger §40 used, which is one source and not two.
