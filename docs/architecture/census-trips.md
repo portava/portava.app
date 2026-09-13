@@ -23,12 +23,12 @@ preserved in §36.1 as the record of that measurement.
 | Measure | Value |
 | --- | --- |
 | **Denominator (testable requirements)** | **451** |
-| BUILT-AND-CORRECT | **317** |
-| BUILT-BUT-WRONG | **130** |
+| BUILT-AND-CORRECT | **318** |
+| BUILT-BUT-WRONG | **129** |
 | NOT-BUILT | **3** |
 | CANNOT-VERIFY | **1** |
 | **CONSTRUCTED%** = (C+W)/451 | **447 / 451 = 99.1 %** |
-| **CORRECT%** (raw) = C/451 | **317 / 451 = 70.3 %** |
+| **CORRECT%** (raw) = C/451 | **318 / 451 = 70.5 %** |
 
 > **RESTATED 2026-09-11 (§38): 89 → 87 CORRECT, 127 → 129 WRONG.** §38 re-derived
 > 39 of the C rows against the code and **two did not hold**, both for the same
@@ -394,6 +394,20 @@ preserved in §36.1 as the record of that measurement.
 > **CORRECT% is 70.3 %, and §17.2's suppression on that surface is real code on a
 > gate that is FALSE on every deployment — §67.4 says so before the row is read
 > as more than it is.**
+
+> **RESTATED 2026-09-13 (§68): 317 → 318 CORRECT, 130 → 129 WRONG. CONSTRUCTED
+> 99.1 % unchanged, CORRECT 70.3 % → 70.5 %.** §68 does the thing this document
+> has asserted eleven times and never counted: it classifies **every one of the
+> 130 BUILT-BUT-WRONG rows** by one mechanical question — *would a production
+> deploy and a flag flip, with no code change, make this row true?* The answer is
+> **OWNER 103 · BOTH 21 · BRANCH 1 · NEITHER 5**. The headline's own sentence —
+> *"the overwhelming majority are wrong for one reason: no database has 2779–2803
+> and the flags are seeded FALSE"* — **is true, and is now a number**: 103 of 130
+> need nothing from this branch at all, and 124 of 130 cannot close without the
+> owner. **The BRANCH list is one row long**, and §68.3 builds it: §8.4's
+> tight-arrival trigger had had its arrival estimate since §49 and its
+> `participantIds` were empty on every input, so "alert affected participants"
+> named nobody. TR144 W → C.
 | **CORRECT% (spec-attributable)** | **WITHDRAWN — not measured. See §36.4** |
 | CANNOT-VERIFY share | **1 / 451 = 0.2 %** |
 
@@ -3945,7 +3959,7 @@ nothing to get.
   reads makes a sub-projection AHEAD and the Today projection is refused
   `TRIP_PROJECTION_VERSION_AHEAD` rather than assembled from two states. The
   test drives it with a stateful fake
-  (`src/test/tripTodayProjection.test.ts:105#LIVE`) and a
+  (`src/test/tripTodayProjection.test.ts:124#LIVE`) and a
   mutation that stops handing the version over went red.
 - `GET /trips/:tripId/today` (`server/trips/readRoutes/tripProjections.ts:301#today`);
   one refusal mapping for the three gated builders
@@ -4115,7 +4129,7 @@ to explain and no route.
   (`:114#explainTripDecision`) — sentences from the record. Every
   §40.3–§40.5 build records one (`domain/trips/projections/TripFreedomProjection.ts:234#recordTripDecision`,
   `TripHealthProjection.ts:204#recordTripDecision`,
-  `TripTodayProjection.ts:353#recordTripDecision`) naming ids,
+  `TripTodayProjection.ts:366#recordTripDecision`) naming ids,
   versions and counts — never a coordinate or a name — and carries its
   `decisionId`. `GET /trips/:tripId/decisions/:decisionId/explain`
   (`server/trips/readRoutes/tripProjections.ts:648#explain`) and Compass
@@ -4808,7 +4822,7 @@ route writes goes through the kernel as a command that already exists
   on a weather-bound plan; late check-in is an arrival estimate past the
   desk's deadline; crew transport mismatch is the party over the vehicle's
   seats (`domain/trips/services/TripRiskTriggers.ts:94#DEFAULT_VEHICLE_CAPACITY`).
-  On Today as `riskTriggers` (`domain/trips/projections/TripTodayProjection.ts:389#riskTriggers,`),
+  On Today as `riskTriggers` (`domain/trips/projections/TripTodayProjection.ts:402#riskTriggers,`),
   reading 2782's segments under the same gate for the party-size row.
 - **§9.4 the impact preview, §15.3 the booking side effects** —
   `domain/trips/services/TripImpactPreview.ts:119#previewImpact` over a typed
@@ -5584,7 +5598,7 @@ under a mutation before its commit.
   and this commitment's prep, a lower bound like every travel term here,
   null when the hop could not be estimated (`domain/trips/projections/TripFreedomProjection.ts:205#arrivalEstimates.push(`);
   Today takes that as `estimatedArrivalAt` and a lodging's required arrival
-  as its desk deadline (`domain/trips/projections/TripTodayProjection.ts:328#checkInDeadlineAt:`).
+  as its desk deadline (`domain/trips/projections/TripTodayProjection.ts:340#checkInDeadlineAt:`).
   `test/tripTodayProjection.test.ts:84#late_check_in`: a hotel whose desk
   closes ten minutes after the traveller leaves the previous commitment,
   ten kilometres away, fires with the minutes over the desk; the same
@@ -5816,7 +5830,7 @@ and the column §17.4 needed.
   derived and the switch is `NORMAL` again. The route says so in words
   (`prioritySwitch`) rather than writing a priority anywhere.
   `test/tripHealthProjection.test.ts:138#REGROUP_OPEN → SAFETY_EVENT` and
-  `test/tripTodayProjection.test.ts:219#kind === "regroup"` pin the flip and
+  `test/tripTodayProjection.test.ts:238#kind === "regroup"` pin the flip and
   the flip back; `test/tripMeetingCheckpointsRoute.test.ts:82#chosenBy` pins
   the route.
 - **The map's meetup layer (TR262)** — `server/trips/readRoutes/tripMapProjection.ts:247#kind: "meeting_checkpoint"`:
@@ -7379,3 +7393,300 @@ a trip's destination in a conversation — which is the point, and is why the fo
 mutation is recorded. And §66.3's own caveat still stands unfixed: `currentPlan`
 prefers an `in_progress` status over the clock, so a plan left in progress after
 its window keeps reading as current.
+
+---
+
+## §68 The 130 WRONG rows, classified — and the one of them this branch could close
+
+Eleven restatements of this document have ended with a sentence like §41.3's,
+and the headline carries its strongest form:
+
+> *"Of the 130 W rows, the overwhelming majority are wrong for one reason: no
+> database has 2779–2803 and the flags are seeded FALSE, so a row true on this
+> branch is not true on any deployment."*
+
+**That has never been counted.** "Overwhelming majority" is an assertion, and a
+sibling census has already shown how such an assertion goes wrong: census-telegraph
+counted its own 176 W rows and found 24 owner-capped — one in five, not the "large
+part" it had been claiming. This section does the same count here, and the answer
+is the opposite one.
+
+### 68.1 The question, asked once per row
+
+For every one of the 130 rows the integrity checker reads as BUILT-BUT-WRONG:
+
+> **Would a production deploy and a flag flip, with NO code change, make this row
+> true?**
+
+- **OWNER** — yes. A migration and/or a flag. Nothing on this branch.
+- **BOTH** — an owner deploy AND a branch change.
+- **BRANCH** — pure code. No storage, no flag. *The list nobody had.*
+- **NEITHER** — a subsystem nobody has written.
+
+**Tie-break, stated before the count rather than after it: when a row could
+plausibly sit in two classes, it goes in the HARDER one.** An error then lands as
+"this is not the owner's" rather than as work an owner is waiting on. So OWNER is
+a FLOOR and BOTH is a CEILING, deliberately.
+
+| class | rows | share of 130 |
+| --- | --- | --- |
+| **OWNER** | **103** | 79.2 % |
+| **BOTH** | **21** | 16.2 % |
+| **BRANCH** | **1** | 0.8 % |
+| **NEITHER** | **5** | 3.8 % |
+
+**The headline's claim is TRUE, and it is now a number.** 103 of 130 need nothing
+from this branch at all; **124 of 130 cannot close without the owner**; and the
+BRANCH list — the one this pass existed to find — **is one row long**. That is the
+most useful thing this section says, and it is not flattering to the branch: a lane
+that is 99.1 % constructed has run out of work it can do by itself.
+
+**Three facts the classification rests on, each read rather than assumed:**
+
+1. **Production carries 2420 and nothing after it in the kernel chain.**
+   `artifacts/api-server/src/lib/capability/production-applied-migrations.json:47#2420_trip_kernel_foundation`
+   records the apply on 2026-09-08. 2450, 2500 and 2590 are absent, which is why
+   production's `trip_kernel_execute` is the plan-family-only one. So `trips.version`,
+   `trip_events`, `trip_outbox` and `trip_command_receipts` ARE deployed, and the
+   thirteen rows that rest only on them are gated by a FLAG, not by a migration.
+2. **2760–2795 are in portava-ci or in no database at all**, per
+   `artifacts/api-server/src/scripts/checkProductionDrift.ts:126#trip_stages:` and
+   the block that follows it. Ninety rows rest on one of these.
+3. **The §24 ratchet has exactly one ungated writer left**
+   (`artifacts/api-server/src/scripts/tripKernelWriterBaseline.ts:257#ungated: 1`)
+   and it is blocked on an OPEN OWNER DECISION, not on code:
+   `artifacts/api-server/src/services/appeals/resolveAppeal.ts:104#RESTORE_SEMANTICS_DECISION`.
+   That is why TR1 and TR435 are BOTH and not BRANCH — the branch cannot take the
+   decision, and the command that would carry it is a kernel migration.
+
+### 68.2 Every row, with its blocker
+
+The class is of the row as counted at `f8384ea5b`. TR144 is the BRANCH row and
+§68.3 closes it, so after this section the live distribution over the remaining
+**129** W rows is **OWNER 103 · BOTH 21 · BRANCH 0 · NEITHER 5**.
+
+| id | class | what stands in the way | what closes it |
+| --- | --- | --- | --- |
+| TR2 | OWNER | an ownership claim over several objects; every one of them now exists on the branch and none is deployed | apply 2760–2794 and flip both flags |
+| TR3 | OWNER | an ownership claim over several objects; every one of them now exists on the branch and none is deployed | apply 2760–2794 and flip both flags |
+| TR4 | OWNER | an ownership claim over several objects; every one of them now exists on the branch and none is deployed | apply 2760–2794 and flip both flags |
+| TR6 | OWNER | an ownership claim over several objects; every one of them now exists on the branch and none is deployed | apply 2760–2794 and flip both flags |
+| TR12 | OWNER | the storage is IN PRODUCTION (2420) and `trip_kernel_enabled` is seeded FALSE, so the kernel path never runs there | flip `trip_kernel_enabled` |
+| TR13 | OWNER | 2760 `trip_stages` is in portava-ci and in no other database | apply 2760 + 2764 |
+| TR14 | OWNER | 2761 `trip_legs` / `trip_commitments` is in portava-ci and in no other database | apply 2761 + 2765 |
+| TR15 | OWNER | 2761 `trip_legs` / `trip_commitments` is in portava-ci and in no other database | apply 2761 + 2765 |
+| TR16 | OWNER | 2770–2772 plan spec columns and `trip_plan_participants`, in no database | apply 2770–2772 |
+| TR18 | OWNER | 2782 `trip_transport_segments`, in no database | apply 2782 |
+| TR19 | OWNER | 2783 goal scope and `permissions_version`, in no database | apply 2783 |
+| TR20 | OWNER | 2762 `trip_goals` / `trip_decision_tasks` / `trip_risks`, portava-ci only | apply 2762 + 2766 |
+| TR21 | OWNER | 2762 `trip_goals` / `trip_decision_tasks` / `trip_risks`, portava-ci only | apply 2762 + 2766 |
+| TR22 | OWNER | 2762 `trip_goals` / `trip_decision_tasks` / `trip_risks`, portava-ci only | apply 2762 + 2766 |
+| TR23 | OWNER | 2763 presence / proposals / snapshots / outcomes, portava-ci only (2767/2773/2774 on top) | apply 2763 and its writers |
+| TR24 | OWNER | 2780 `trip_subgroups`, in no database | apply 2780 |
+| TR26 | OWNER | 2763 presence / proposals / snapshots / outcomes, portava-ci only (2767/2773/2774 on top) | apply 2763 and its writers |
+| TR27 | OWNER | 2763 presence / proposals / snapshots / outcomes, portava-ci only (2767/2773/2774 on top) | apply 2763 and its writers |
+| TR28 | OWNER | 2763 presence / proposals / snapshots / outcomes, portava-ci only (2767/2773/2774 on top) | apply 2763 and its writers |
+| TR29 | OWNER | 2763 presence / proposals / snapshots / outcomes, portava-ci only (2767/2773/2774 on top) | apply 2763 and its writers |
+| TR38 | OWNER | `trip_operational_projections_enabled` seeded FALSE by 2778 on every deployment | flip `trip_operational_projections_enabled` once its prerequisites are applied |
+| TR39 | OWNER | `trip_operational_projections_enabled` seeded FALSE by 2778 on every deployment | flip `trip_operational_projections_enabled` once its prerequisites are applied |
+| TR40 | OWNER | `trip_operational_projections_enabled` seeded FALSE by 2778 on every deployment | flip `trip_operational_projections_enabled` once its prerequisites are applied |
+| TR41 | OWNER | `trip_operational_projections_enabled` seeded FALSE by 2778 on every deployment | flip `trip_operational_projections_enabled` once its prerequisites are applied |
+| TR42 | OWNER | `trip_operational_projections_enabled` seeded FALSE by 2778 on every deployment | flip `trip_operational_projections_enabled` once its prerequisites are applied |
+| TR43 | OWNER | `trip_operational_projections_enabled` seeded FALSE by 2778 on every deployment | flip `trip_operational_projections_enabled` once its prerequisites are applied |
+| TR44 | OWNER | `trip_operational_projections_enabled` seeded FALSE by 2778 on every deployment | flip `trip_operational_projections_enabled` once its prerequisites are applied |
+| TR45 | OWNER | `trip_operational_projections_enabled` seeded FALSE by 2778 on every deployment | flip `trip_operational_projections_enabled` once its prerequisites are applied |
+| TR46 | OWNER | 2779 plan lifecycle and the §7.2 write guard, in no database | apply 2779 |
+| TR50 | OWNER | 2780 `trip_subgroups`, in no database | apply 2780 |
+| TR55 | OWNER | 2779 plan lifecycle and the §7.2 write guard, in no database | apply 2779 |
+| TR58 | OWNER | the storage is IN PRODUCTION (2420) and `trip_kernel_enabled` is seeded FALSE, so the kernel path never runs there | flip `trip_kernel_enabled` |
+| TR59 | OWNER | the storage is IN PRODUCTION (2420) and `trip_kernel_enabled` is seeded FALSE, so the kernel path never runs there | flip `trip_kernel_enabled` |
+| TR60 | OWNER | the storage is IN PRODUCTION (2420) and `trip_kernel_enabled` is seeded FALSE, so the kernel path never runs there | flip `trip_kernel_enabled` |
+| TR61 | OWNER | 2779 plan lifecycle and the §7.2 write guard, in no database | apply 2779 |
+| TR62 | OWNER | 2779 plan lifecycle and the §7.2 write guard, in no database | apply 2779 |
+| TR64 | OWNER | 2768 emits `trip.proposal_accepted`; in no database | apply 2768 |
+| TR65 | OWNER | 2779 plan lifecycle and the §7.2 write guard, in no database | apply 2779 |
+| TR66 | OWNER | 2785 `trip_disruptions`, in no database | apply 2785 |
+| TR78 | OWNER | 2760 `trip_stages` is in portava-ci and in no other database | apply 2760 + 2764 |
+| TR79 | OWNER | 2761 `trip_legs` / `trip_commitments` is in portava-ci and in no other database | apply 2761 + 2765 |
+| TR80 | OWNER | 2783 goal scope and `permissions_version`, in no database | apply 2783 |
+| TR81 | OWNER | 2761 `trip_legs` / `trip_commitments` is in portava-ci and in no other database | apply 2761 + 2765 |
+| TR82 | OWNER | 2770–2772 plan spec columns and `trip_plan_participants`, in no database | apply 2770–2772 |
+| TR83 | OWNER | 2770–2772 plan spec columns and `trip_plan_participants`, in no database | apply 2770–2772 |
+| TR84 | OWNER | 2762 `trip_goals` / `trip_decision_tasks` / `trip_risks`, portava-ci only | apply 2762 + 2766 |
+| TR85 | OWNER | 2762 `trip_goals` / `trip_decision_tasks` / `trip_risks`, portava-ci only | apply 2762 + 2766 |
+| TR86 | OWNER | 2762 `trip_goals` / `trip_decision_tasks` / `trip_risks`, portava-ci only | apply 2762 + 2766 |
+| TR87 | OWNER | 2763 presence / proposals / snapshots / outcomes, portava-ci only (2767/2773/2774 on top) | apply 2763 and its writers |
+| TR88 | OWNER | 2763 presence / proposals / snapshots / outcomes, portava-ci only (2767/2773/2774 on top) | apply 2763 and its writers |
+| TR89 | OWNER | the storage is IN PRODUCTION (2420) and `trip_kernel_enabled` is seeded FALSE, so the kernel path never runs there | flip `trip_kernel_enabled` |
+| TR90 | OWNER | 2763 presence / proposals / snapshots / outcomes, portava-ci only (2767/2773/2774 on top) | apply 2763 and its writers |
+| TR91 | OWNER | 2763 presence / proposals / snapshots / outcomes, portava-ci only (2767/2773/2774 on top) | apply 2763 and its writers |
+| TR122 | OWNER | 2761 `trip_legs` / `trip_commitments` is in portava-ci and in no other database | apply 2761 + 2765 |
+| TR123 | OWNER | 2761 `trip_legs` / `trip_commitments` is in portava-ci and in no other database | apply 2761 + 2765 |
+| TR124 | OWNER | 2761 `trip_legs` / `trip_commitments` is in portava-ci and in no other database | apply 2761 + 2765 |
+| TR125 | OWNER | 2761 `trip_legs` / `trip_commitments` is in portava-ci and in no other database | apply 2761 + 2765 |
+| TR126 | OWNER | 2761 `trip_legs` / `trip_commitments` is in portava-ci and in no other database | apply 2761 + 2765 |
+| TR127 | OWNER | 2761 `trip_legs` / `trip_commitments` is in portava-ci and in no other database | apply 2761 + 2765 |
+| TR129 | OWNER | 2779 plan lifecycle and the §7.2 write guard, in no database | apply 2779 |
+| TR133 | OWNER | `trip_operational_projections_enabled` seeded FALSE by 2778 on every deployment | flip `trip_operational_projections_enabled` once its prerequisites are applied |
+| TR134 | OWNER | `trip_operational_projections_enabled` seeded FALSE by 2778 on every deployment | flip `trip_operational_projections_enabled` once its prerequisites are applied |
+| TR136 | OWNER | 2760 `trip_stages` is in portava-ci and in no other database | apply 2760 + 2764 |
+| TR138 | OWNER | 2783 goal scope and `permissions_version`, in no database | apply 2783 |
+| TR139 | OWNER | 2783 goal scope and `permissions_version`, in no database | apply 2783 |
+| TR148 | OWNER | 2770–2772 plan spec columns and `trip_plan_participants`, in no database | apply 2770–2772 |
+| TR149 | OWNER | 2770–2772 plan spec columns and `trip_plan_participants`, in no database | apply 2770–2772 |
+| TR151 | OWNER | 2780 `trip_subgroups`, in no database | apply 2780 |
+| TR154 | OWNER | 2774/2775 proposal governance, in no database | apply 2774 + 2775 |
+| TR157 | OWNER | 2763 presence / proposals / snapshots / outcomes, portava-ci only (2767/2773/2774 on top) | apply 2763 and its writers |
+| TR169 | OWNER | the storage is IN PRODUCTION (2420) and `trip_kernel_enabled` is seeded FALSE, so the kernel path never runs there | flip `trip_kernel_enabled` |
+| TR174 | OWNER | §48's bundle is issued only where its signing secret is set | set the bundle signing secret on the deployment |
+| TR194 | OWNER | 2779 plan lifecycle and the §7.2 write guard, in no database | apply 2779 |
+| TR213 | OWNER | 2781 `trip_decisions`, in no database — the ledger is a per-process ring without it | apply 2781 |
+| TR254 | OWNER | `trip_operational_projections_enabled` seeded FALSE by 2778 on every deployment | flip `trip_operational_projections_enabled` once its prerequisites are applied |
+| TR255 | OWNER | 2760 `trip_stages` is in portava-ci and in no other database | apply 2760 + 2764 |
+| TR258 | OWNER | 2761 `trip_legs` / `trip_commitments` is in portava-ci and in no other database | apply 2761 + 2765 |
+| TR268 | OWNER | 2782 `trip_transport_segments`, in no database | apply 2782 |
+| TR269 | OWNER | 2782 `trip_transport_segments`, in no database | apply 2782 |
+| TR270 | OWNER | 2782 `trip_transport_segments`, in no database | apply 2782 |
+| TR271 | OWNER | 2782 `trip_transport_segments`, in no database | apply 2782 |
+| TR283 | OWNER | 2782 `trip_transport_segments`, in no database | apply 2782 |
+| TR284 | OWNER | 2782 `trip_transport_segments`, in no database | apply 2782 |
+| TR286 | OWNER | 2782 `trip_transport_segments`, in no database | apply 2782 |
+| TR297 | OWNER | 2784 `trip_reservation_events`, in no database | apply 2784 |
+| TR298 | OWNER | 2784 `trip_reservation_events`, in no database | apply 2784 |
+| TR319 | OWNER | `trip_operational_projections_enabled` seeded FALSE by 2778 on every deployment | flip `trip_operational_projections_enabled` once its prerequisites are applied |
+| TR335 | OWNER | 2761 `trip_legs` / `trip_commitments` is in portava-ci and in no other database | apply 2761 + 2765 |
+| TR337 | OWNER | `trip_operational_projections_enabled` seeded FALSE by 2778 on every deployment | flip `trip_operational_projections_enabled` once its prerequisites are applied |
+| TR338 | OWNER | 2794 `trip_meeting_checkpoints`, in no database | apply 2794 |
+| TR344 | OWNER | the storage is IN PRODUCTION (2420) and `trip_kernel_enabled` is seeded FALSE, so the kernel path never runs there | flip `trip_kernel_enabled` |
+| TR345 | OWNER | the storage is IN PRODUCTION (2420) and `trip_kernel_enabled` is seeded FALSE, so the kernel path never runs there | flip `trip_kernel_enabled` |
+| TR346 | OWNER | the storage is IN PRODUCTION (2420) and `trip_kernel_enabled` is seeded FALSE, so the kernel path never runs there | flip `trip_kernel_enabled` |
+| TR348 | OWNER | the storage is IN PRODUCTION (2420) and `trip_kernel_enabled` is seeded FALSE, so the kernel path never runs there | flip `trip_kernel_enabled` |
+| TR352 | OWNER | 2784 `trip_reservation_events`, in no database | apply 2784 |
+| TR354 | OWNER | the storage is IN PRODUCTION (2420) and `trip_kernel_enabled` is seeded FALSE, so the kernel path never runs there | flip `trip_kernel_enabled` |
+| TR374 | OWNER | the storage is IN PRODUCTION (2420) and `trip_kernel_enabled` is seeded FALSE, so the kernel path never runs there | flip `trip_kernel_enabled` |
+| TR376 | OWNER | 2781 `trip_decisions`, in no database — the ledger is a per-process ring without it | apply 2781 |
+| TR377 | OWNER | 2763 presence / proposals / snapshots / outcomes, portava-ci only (2767/2773/2774 on top) | apply 2763 and its writers |
+| TR401 | OWNER | 2781 `trip_decisions`, in no database — the ledger is a per-process ring without it | apply 2781 |
+| TR402 | OWNER | 2781 `trip_decisions`, in no database — the ledger is a per-process ring without it | apply 2781 |
+| TR405 | OWNER | 2763 presence / proposals / snapshots / outcomes, portava-ci only (2767/2773/2774 on top) | apply 2763 and its writers |
+| TR407 | OWNER | the storage is IN PRODUCTION (2420) and `trip_kernel_enabled` is seeded FALSE, so the kernel path never runs there | flip `trip_kernel_enabled` |
+| TR1 | BOTH | one ungated writer remains (`trip_membership` in `resolveAppeal.ts`) and it is blocked on the OPEN owner decision APPEAL_RESTORE_SEMANTICS | the decision, then ADMIN_RESTORE_PARTICIPANT in the kernel, then the flag |
+| TR33 | BOTH | `trip_plan_items.source_id` is still `text` with no FK and no reconciliation record; 2770's `place_id` is typed but unconstrained | a migration adding the constraint, plus the writers that fill it |
+| TR35 | BOTH | six of §3.1's thirteen lifecycle states have no representation in any migration or any file | a lifecycle migration and the code that moves through it |
+| TR77 | BOTH | `trips.current_stage_id` and `trips.home_timezone` exist in NO migration on this branch | a migration adding both, plus the writers |
+| TR92 | BOTH | `trip_plan_items.source_id` is still `text` with no FK and no reconciliation record; 2770's `place_id` is typed but unconstrained | a migration adding the constraint, plus the writers that fill it |
+| TR93 | BOTH | `trip_plan_items.source_id` is still `text` with no FK and no reconciliation record; 2770's `place_id` is typed but unconstrained | a migration adding the constraint, plus the writers that fill it |
+| TR116 | BOTH | 2770 gives all six scopes and the client still writes `visibility` | apply 2770 and change the client writer |
+| TR150 | BOTH | 2771 gives attendance; transport, budget and the meeting point still take a stated party | apply 2771 and convert the three consumers |
+| TR152 | BOTH | 2780 gives subgroups; a transport segment has no subgroup column | a migration for the column, plus 2780/2782 |
+| TR153 | BOTH | five of the contract's eight fields are not columns on `trip_proposals` | a migration adding them, plus 2763/2774 |
+| TR173 | BOTH | the four `locate_friends_*` tables are in no deployment AND the session is scoped by a `route_plans.id`, not a trip | apply the tables and re-scope the session |
+| TR229 | BOTH | 2782's segments exist and the leg estimator does not consult them | apply 2782 and make the leg read the segment |
+| TR256 | BOTH | safety still depends on each writer setting `location_is_private`; §14.1's `anchor` is not a thing | an anchor object (schema) and the projection that derives from it |
+| TR261 | BOTH | `route_plans` keeps its own optimizer and checkpoint state, and the gate is FALSE | delete the second optimizer, then flip the gate |
+| TR290 | BOTH | a re-imported policy overwrites; there is no policy version and no history of what it said when | a version column and the re-import path that writes it |
+| TR378 | BOTH | 38 of 60 trip write endpoints are still direct writes outside the aggregate's canonical tables | convert the remaining 38, then flip `trip_kernel_enabled` |
+| TR408 | BOTH | there are no event-payload adapters, and a fixture-covered adapter needs a SECOND payload version to adapt from — `schema_version` is written by `trip_kernel_execute`, which is a migration | a kernel migration that bumps a payload version, then the adapter and its fixtures |
+| TR425 | BOTH | there is no leg to delegate from (2761) and no field on either side names the other | apply 2761 and build the Layover seam |
+| TR435 | BOTH | the ratchet's last ungated writer is TR1's, and the flag is off, so every legacy path is live | the same decision and command as TR1, then the flag |
+| TR437 | BOTH | `route_plans` keeps its own optimizer and checkpoint state, and the gate is FALSE | delete the second optimizer, then flip the gate |
+| TR440 | BOTH | fourteen mixed read/write routers stay under `routes/`; moving them under `readRoutes/` before TR378 splits them would file writes as reads | TR378's conversion, then the move |
+| TR144 | BRANCH | the §8.4 tight-arrival trigger fires, and its `participantIds` were empty on every input, so "alert affected participants" named nobody | CLOSED HERE — §68.3 |
+| TR128 | NEITHER | no routed travel-time provider exists, so FEASIBLE is unprovable and no window can be certified | a routed provider — a subsystem nobody has written |
+| TR267 | NEITHER | the departure-time term is a static band table, not a traffic or transit source | the same routed provider |
+| TR341 | NEITHER | no routed travel-time provider exists, so FEASIBLE is unprovable and no window can be certified | a routed provider — a subsystem nobody has written |
+| TR412 | NEITHER | no routed travel-time provider exists, so FEASIBLE is unprovable and no window can be certified | a routed provider — a subsystem nobody has written |
+| TR427 | NEITHER | recurring commitments and routine-aware context do not exist in any form | a recurrence and routine subsystem nobody has written |
+
+### 68.3 The BRANCH group, built: §8.4's tight arrival had no one to alert
+
+§8.4 gives the risk register four triggers. Three are C. TR144 — *"tight arrival
+(flight ETA shifts beyond threshold) → move/cancel downstream plan, **alert
+affected participants**"* — is the only one still W, and §44 said why:
+
+> *"TR144 stays W: `tight_arrival` is built and tested, and Today passes no ETA
+> because no trip table carries one — the same shape as TR146."*
+
+**That reason stopped being true in §49 and nobody re-read the row.** §49 built the
+arrival estimate for TR146 — the freedom projection's per-hop *previous departure +
+travel + prep* — and the two triggers read the SAME field on the SAME input object,
+so TR144 got its producer in the same commit that moved TR146 to C. Mutating that
+one line red-fails both tests, which is the proof that they share it.
+
+**What was actually missing was the second clause, and it had never been named.**
+`participantIds` on every trigger commitment was `[]` on every input Today built,
+so a fired `tight_arrival` returned an empty participant list: the mitigation said
+"alert affected participants" and named nobody, on every trip, always.
+
+`artifacts/api-server/src/domain/trips/projections/TripTodayProjection.ts:323#acceptedCrewIds`
+now derives the accepted crew once — the same set `crewSize` already counted — and
+`artifacts/api-server/src/domain/trips/projections/TripTodayProjection.ts:341#participantIds: acceptedCrewIds`
+hands it to the trigger. **Why the crew and not something finer, stated rather than
+assumed:** §5.1 gives PLANS a participant relation (`trip_plan_participants`, 2771)
+and gives COMMITMENTS none, so the accepted crew is the finest relation a commitment
+has. An `invited`, `declined`, `removed` or `left` member is not on the trip and is
+not alerted. Naming a finer set for the downstream PLANS is TR150's, and TR150 stays
+W — see §68.2, where it is BOTH.
+
+`artifacts/api-server/src/test/tripTodayProjection.test.ts:95#tight arrival (TR144)`
+drives it through the real projection: a commitment due at 10:05 whose hop from the
+previous commitment puts the traveller there ninety minutes later fires
+`tight_arrival` with the downstream named, the §8.4 mitigation verbatim, a magnitude
+past the 30-minute threshold, and **the two accepted members and not the invited
+third**.
+
+**Two mutations, each seen red before the green was trusted:**
+
+| mutation | what went red |
+| --- | --- |
+| `participantIds: acceptedCrewIds` → `participantIds: []` | the TR144 case only — 20 pass / 1 fail |
+| `estimatedArrivalAt: est?.estimatedArrivalAt ?? null` → `null` | TR144 **and** TR146 — 19 / 2, which is the evidence that §49's producer is the one TR144 was waiting for |
+
+Both restored and verified byte-identical to the backup with `cmp`. 21/21 green.
+
+### 68.4 Row moves
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| TR144 | W | **C** | §8.4's tight-arrival trigger fires on the freedom projection's arrival estimate (`artifacts/api-server/src/domain/trips/services/TripRiskTriggers.ts:115#tight_arrival`), names the downstream commitments and plans within twelve hours, carries §8.4's mitigation verbatim, and now names WHO to alert — the accepted crew, the finest relation a commitment has. Graded on the standard §44 applied to TR145 and TR147 and §49 to TR146. |
+
+**Three W rows whose stated reason is FALSE, corrected without moving the verdict.**
+Each still fails for a true reason, and each had been carrying a reason a reader
+would have acted on:
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| TR89 `trip_events` | W | **W** | **The stated evidence is false.** The row says `trip_activity_log` is *"the nearest deployed table"* and that `aggregate_version` and `sequence` are missing. `artifacts/api-server/src/migrations/2420_trip_kernel_foundation.sql:101#CREATE TABLE IF NOT EXISTS public.trip_events` declares all seven §5.1 columns, and 2420 is IN PRODUCTION. The table is deployed, its writer is deployed, and `artifacts/api-server/src/services/appeals/roleAtRemoval.ts:89#from("trip_events")` reads it. It stays W for the true reason and the true reason only: `trip_kernel_enabled` is FALSE everywhere, so nothing invokes the writer and the deployed table is empty. |
+| TR126 | W | **W** | *"`trip_plan_items.lock_type` … is the nearest analogue"* predates 2761. `artifacts/api-server/src/migrations/2761_trip_legs_and_commitments.sql:110#flexibility` is the §7.1 vocabulary on the commitment, and 2761's own header names TR126 as the measurement it answers. W because 2761 is in portava-ci and no other database. |
+| TR127 | W | **W** | *"The only confidence in the trip domain is `trip_reservations.extraction_confidence`"* predates 2761 as well: `artifacts/api-server/src/migrations/2761_trip_legs_and_commitments.sql:111#§7.1 confidence, 0..1` is a per-commitment confidence, and the file says in the same line that it is distinct from the extraction one. Same W, same reason as TR126. |
+
+**Rows looked at that did not move.** TR4's *"recovery (§17.3) does not [exist]"* is
+contradicted inside this document — §44 moved TR320 and TR321–TR327 to C — but the
+row is W for a reason that survives the correction, so it is recorded here and
+classified OWNER in §68.2 rather than restated. TR408 was opened as a BRANCH
+candidate and closed as BOTH: an adapter registry with no second payload version to
+adapt from is a registry with zero adapters, and `schema_version` is written by
+`trip_kernel_execute`, which is a migration — 2450 says so in its own header
+(*"schema_version stays 1 — no existing event payload changes shape"*). TR440 was
+opened as a BRANCH candidate and closed as BOTH for the same class of reason: the
+fourteen routers under `routes/` are mixed read/write, so filing them under
+`readRoutes/` before TR378 splits them would put writes in a directory that says
+"reads".
+
+### 68.5 What this section does NOT claim
+
+- **It does not read 130 rows against the code.** It reads each row's stated
+  blocker and asks which actor can remove it. Where a row's stated blocker is a
+  migration number, the classification trusts the section that stated it — §41.3's
+  thirty-one statements, §59's five, §63's seven. Three such reasons were spot-read
+  and three were false (§68.4). **A full re-derivation of the other 127 would very
+  likely find more**, and the OWNER count would move if it did.
+- **It moves one row, and one row is what the BRANCH list held.** A pass that
+  moved more would have had to move rows an owner action gates, and this document
+  has enough of those already.
+- **The ceiling is unchanged.** 2778 seeds `trip_operational_projections_enabled`
+  FALSE, `trip_kernel_enabled` is FALSE, and TR144's own trigger is served on
+  Today, which rides the first of them. **The row is C on the standard §44 and §49
+  set for its three siblings — the trigger fires from real inputs on the branch —
+  and on every deployment today nobody is alerted, because nothing reaches the
+  projection at all.** That is said here rather than left for a reader to find.
