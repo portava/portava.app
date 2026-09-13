@@ -23,6 +23,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { randomUUID } from "node:crypto";
 import { getWeatherContext, type DailyWeather } from "../lib/weatherCache.js";
 import { tripKernelClient, executeTripCommand, planCommandTypeForPatch } from "../domain/trips/commands/tripKernel.js";
+import { COMPASS_AUTOPILOT_ALGORITHM_VERSION } from "./CompassAlgorithmVersion.js";
 import { recordOpportunityCompletion } from "../domain/trips/services/tripOpportunityMetrics.js";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -76,6 +77,15 @@ export interface ItemChange {
   lockType: LockType;
   before: Record<string, unknown>;
   after: Record<string, unknown>;
+  /**
+   * Trips §18 (census-compass CT-13) — the versioned algorithm that produced
+   * this change, stored WITH it. `trip_autopilot_proposals` has no envelope
+   * column and this pass wrote no migration, so the stamp rides on every entry
+   * of the `changes` JSONB: a proposal stays explainable as long as any one
+   * change survives. Optional on the type so a row written before the stamp
+   * existed still parses.
+   */
+  algorithmVersion?: string;
 }
 
 export interface RepairProposal {
@@ -539,7 +549,18 @@ export function buildRepairProposals(
   }
 
   // Safety net: a proposal must never contain a change to a fixed item.
-  return proposals.filter((p) => p.changes.every((c) => c.lockType !== "fixed"));
+  //
+  // Trips §18 — and, on the way out, STAMP every surviving change with the
+  // algorithm version. Stamping here rather than at each of the eight
+  // construction sites is the point: a ninth repair rule added later cannot
+  // forget to stamp itself, because nothing reaches a caller except through
+  // this return.
+  return proposals
+    .filter((p) => p.changes.every((c) => c.lockType !== "fixed"))
+    .map((p) => ({
+      ...p,
+      changes: p.changes.map((c) => ({ ...c, algorithmVersion: COMPASS_AUTOPILOT_ALGORITHM_VERSION })),
+    }));
 }
 
 // ── Run: detect + propose (durable, deduped, never auto-executed) ─────────────

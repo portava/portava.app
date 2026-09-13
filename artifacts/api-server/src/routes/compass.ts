@@ -30,9 +30,20 @@ import {
   sendKernelRejection,
   setTripVersionHeader,
 } from "../domain/trips/commands/tripKernel.js";
-import { buildConsumerProjection, buildListIdentityProjections } from "../services/passport/PassportConsumerProjections.js";
+import {
+  buildConsumerProjection,
+  buildListIdentityProjections,
+  explicitIntentBoost,
+  genericInterestWeight,
+  readVisibleExplicitIntent,
+  sharedItems,
+} from "../services/passport/PassportConsumerProjections.js";
 import { allowDiscoveryPersonCard } from "../services/passport/PassportConsumerAccess.js";
 import { isCompassEnabled, isEnabled } from "../compass/flags.js";
+import {
+  ALGORITHM_VERSION_KEY,
+  COMPASS_RANKING_ALGORITHM_VERSION,
+} from "../compass/CompassAlgorithmVersion.js";
 import { checkRateLimit } from "../lib/rateLimit.js";
 import { getCompassProfile } from "../compass/CompassProfileService.js";
 import { logCompassImpression } from "../lib/rankLog.js";
@@ -224,8 +235,17 @@ export interface RecommendationRow {
   ranking_factors:   Record<string, unknown> | null;
 }
 
-/** Build the Phase 7 ranking snapshot stored alongside a served recommendation. */
-function rankingSnapshot(item: {
+/**
+ * Build the Phase 7 ranking snapshot stored alongside a served recommendation.
+ *
+ * Trips §18 (census-compass CT-13): the snapshot carries the stored INPUTS and,
+ * since this pass, the VERSIONED ALGORITHM that turned them into this pick. It
+ * goes in the existing `ranking_factors` JSONB rather than a new column — the
+ * reader below takes named keys, so an added key is additive and needs no
+ * migration — and it is what makes "why was I shown this?" answerable a month
+ * later, when the weights have moved.
+ */
+export function rankingSnapshot(item: {
   compassMatch?: number;
   communityScore?: number;
   rankingFactors?: unknown[];
@@ -235,6 +255,7 @@ function rankingSnapshot(item: {
     compassMatch:   item.compassMatch   ?? null,
     communityScore: item.communityScore ?? null,
     factors:        Array.isArray(item.rankingFactors) ? item.rankingFactors.slice(0, 8) : [],
+    [ALGORITHM_VERSION_KEY]: COMPASS_RANKING_ALGORITHM_VERSION,
   };
 }
 
@@ -976,6 +997,7 @@ router.get("/compass/why/:recommendationId", async (req, res) => {
         compassMatch?: number | null;
         communityScore?: number | null;
         factors?: { key: string; label: string; weight: number; detail?: string }[];
+        algorithmVersion?: string | null;
       } | null;
       if (snapshot && Array.isArray(snapshot.factors)) {
         const grounded = buildWhyThisText(snapshot.factors as any);
@@ -986,6 +1008,11 @@ router.get("/compass/why/:recommendationId", async (req, res) => {
           factors:        presentableFactors(snapshot.factors as any).slice(0, 5),
           compassMatch:   snapshot.compassMatch   ?? null,
           communityScore: snapshot.communityScore ?? null,
+          // §18 — the algorithm that produced this pick, as STORED with it.
+          // Read back from the row, never from the current constant: a
+          // recommendation served by an older rule set must not claim the
+          // current one. Null for rows written before the stamp existed.
+          algorithmVersion: snapshot.algorithmVersion ?? null,
         });
         return;
       }
@@ -3580,6 +3607,10 @@ router.get("/compass/recommendations", async (req, res) => {
       type TravelerEntry = {
         id: string; score: number; reasonCode: string;
         sharedInterests: string[]; row: any;
+        /** §8 explicit current intents this viewer and this traveler share. */
+        sharedExplicitIntents: string[];
+        /** The bounded §8 boost actually added to `score` (0 when none). */
+        intentBoost: number;
       };
       const scoredTravelers: TravelerEntry[] = [];
 
@@ -3593,15 +3624,21 @@ router.get("/compass/recommendations", async (req, res) => {
         // Destination overlap (15 pts — heading to the same city)
         if (destOverlapSet.has(p.id)) score += 15;
 
-        // Shared interest overlap (30 pts max)
+        // Shared GENERIC interest overlap, through Passport's exported weight.
+        //
+        // Passport `:94` (census-compass CP-01) requires explicit current intent
+        // to be weighted ABOVE generic interests. That comparison is only
+        // meaningful if both sides are on one scale, so this term is no longer a
+        // local `overlapRatio * 30`: it is `genericInterestWeight` from the same
+        // module that exports `explicitIntentBoost`, whose per-match and cap
+        // values are chosen so one explicit match always outweighs one generic
+        // one (4 vs 12 per match; 16 vs 36 capped). The person card and the
+        // ranking now read one truth, which is what the §35 comment on
+        // GET /compass/people/:userId/passport already claimed.
         const pInterests = ((p.interests ?? []) as string[]).map((i: string) => i.toLowerCase());
         const vStyles    = (profile.travelStyles ?? []).map((s: string) => s.toLowerCase());
         const sharedInterests = pInterests.filter((i: string) => vStyles.includes(i));
-        const overlapRatio =
-          vStyles.length > 0 && pInterests.length > 0
-            ? sharedInterests.length / Math.max(vStyles.length, pInterests.length)
-            : 0;
-        score += overlapRatio * 30;
+        score += genericInterestWeight(sharedInterests.length);
 
         // City overlap (20 pts)
         if (effectiveCity && p.home_city &&
@@ -3642,24 +3679,37 @@ router.get("/compass/recommendations", async (req, res) => {
           reasonCode,
           sharedInterests: sharedInterests.slice(0, 3),
           row:             p,
+          sharedExplicitIntents: [],
+          intentBoost:     0,
         });
       }
 
       scoredTravelers.sort((a, b) => b.score - a.score);
 
-      const topTravSlice = scoredTravelers.slice(0, limit);
-      const topTravIds   = topTravSlice.map((s) => s.id);
+      // Passport `:94` / §8 — the explicit-intent pass runs on a POOL wider than
+      // the page so an explicit match can promote someone the generic score put
+      // just below the fold, and bounded so a rare, real signal cannot turn one
+      // list request into fifty window reads. `readVisibleExplicitIntent` is one
+      // read per candidate and there is no batch variant to consume; 24 is the
+      // ceiling, and the whole pass is skipped entirely unless the VIEWER has an
+      // explicit, open-to-plans window of their own — with no viewer intent the
+      // overlap is empty for everyone and every boost is zero, so the reads
+      // would buy nothing. Ordering therefore changes only when an explicit
+      // window exists on both sides, which is §8's own condition.
+      const INTENT_POOL_MAX = 24;
+      const intentPool  = scoredTravelers.slice(0, Math.min(Math.max(limit * 2, limit), INTENT_POOL_MAX));
+      const poolTravIds = intentPool.map((s) => s.id);
 
       // Batch-check which travelers the viewer already follows
       const followingSet  = new Set<string>();
       const friendSet     = new Set<string>();
       const requestedSet  = new Set<string>();
-      if (topTravIds.length > 0) {
+      if (poolTravIds.length > 0) {
         const { data: followRows } = await sc
           .from("user_follows")
           .select("following_id")
           .eq("follower_id", user.id)
-          .in("following_id", topTravIds);
+          .in("following_id", poolTravIds);
         for (const r of (followRows ?? []) as any[]) followingSet.add(r.following_id);
 
         // Friend set — user_friendships stores the normalized (min, max) pair
@@ -3667,14 +3717,14 @@ router.get("/compass/recommendations", async (req, res) => {
         // side `user.id` lands on depends on UUID comparison; both directions
         // must be queried. Mirrors discoverySearch's friendSet construction.
         const [friendsAsA, friendsAsB] = await Promise.all([
-          sc.from("user_friendships").select("user_b").eq("user_a", user.id).in("user_b", topTravIds),
-          sc.from("user_friendships").select("user_a").eq("user_b", user.id).in("user_a", topTravIds),
+          sc.from("user_friendships").select("user_b").eq("user_a", user.id).in("user_b", poolTravIds),
+          sc.from("user_friendships").select("user_a").eq("user_b", user.id).in("user_a", poolTravIds),
         ]);
         for (const r of (friendsAsA.data ?? []) as any[]) friendSet.add(r.user_b as string);
         for (const r of (friendsAsB.data ?? []) as any[]) friendSet.add(r.user_a as string);
 
         // For private profiles not yet followed, check for a pending follow request
-        const privateUnfollowed = topTravSlice
+        const privateUnfollowed = intentPool
           .filter((s) => s.row.is_private && !followingSet.has(s.id))
           .map((s) => s.id);
         if (privateUnfollowed.length > 0) {
@@ -3687,6 +3737,45 @@ router.get("/compass/recommendations", async (req, res) => {
           for (const r of (reqRows ?? []) as any[]) requestedSet.add(r.recipient_id);
         }
       }
+
+      // ── Passport `:94` / §8 — explicit current intent, weighted ABOVE the
+      //    generic interest term (census-compass CP-01) ─────────────────────
+      //
+      // As found, this list scored `sharedInterests` and read no availability
+      // window at all, while `get_travel_compatibility` — the OTHER people-
+      // ranking surface in Compass — already read both parties' explicit
+      // windows through this exact seam. One surface honoured `:94` and the
+      // other did not. Both now read `readVisibleExplicitIntent`, at the
+      // visibility the viewer is actually entitled to, and add the same bounded
+      // `explicitIntentBoost`.
+      //
+      // Fail-quiet by construction: `readVisibleExplicitIntent` never throws and
+      // a degraded read yields no windows, which yields no overlap, which yields
+      // a zero boost — the list falls back to exactly its previous ordering
+      // rather than to a wrong one.
+      const nowMsIntent = Date.now();
+      const viewerIntentRead = await readVisibleExplicitIntent(sc, user.id, "self", nowMsIntent);
+      if (viewerIntentRead.intents.length > 0 && intentPool.length > 0) {
+        const reads = await Promise.all(
+          intentPool.map(async (entry) => {
+            // The window-visibility relationship the viewer actually has with
+            // this traveler. Anything the viewer is not provably a follower or
+            // friend of is read as `public`, which under-reads rather than
+            // over-reads — the safe direction for someone else's availability.
+            const ctx =
+              followingSet.has(entry.id) || friendSet.has(entry.id) ? "follower" as const : "public" as const;
+            const read = await readVisibleExplicitIntent(sc, entry.id, ctx, nowMsIntent);
+            return { entry, read };
+          }),
+        );
+        applyExplicitIntentWeighting(
+          intentPool,
+          viewerIntentRead.intents,
+          new Map(reads.map(({ entry, read }) => [entry.id, read] as const)),
+        );
+      }
+
+      const topTravSlice = intentPool.slice(0, limit);
 
       // §35 / census-passport P169 — identity through the Passport BATCH
       // projection, which is now viewer-aware, instead of a fourth inline copy
@@ -3725,7 +3814,14 @@ router.get("/compass/recommendations", async (req, res) => {
             : (isPrivate && !followingSet.has(s.id)
               ? null
               : ((s.row.username ?? null) as string | null)),
-          reason:   buildTravelerReasonText(s.reasonCode, isPrivate ? [] : s.sharedInterests, isPrivate ? null : (s.row.home_city ?? null)),
+          reason:   buildTravelerReasonText(
+            s.reasonCode,
+            isPrivate ? [] : s.sharedInterests,
+            isPrivate ? null : (s.row.home_city ?? null),
+            // A private profile suppresses its identifying detail here exactly
+            // as it does for interests and city; the intent is theirs, not ours.
+            isPrivate ? [] : s.sharedExplicitIntents,
+          ),
           city:     isPrivate ? null : ((s.row.home_city ?? null) as string | null),
           data: {
             userId:          s.id,
@@ -3737,6 +3833,11 @@ router.get("/compass/recommendations", async (req, res) => {
             isPrivate,
             verified:        ident?.verified ?? false,
             sharedInterests: isPrivate ? [] : s.sharedInterests,
+            // §8 — the explicit current-intent overlap that outranked it, and
+            // the bounded weight it was worth, so "why this person" is
+            // answerable from stored inputs rather than from the sentence.
+            sharedExplicitIntents: isPrivate ? [] : s.sharedExplicitIntents,
+            explicitIntentWeight:  s.intentBoost,
             reasonCode:      s.reasonCode,
             followStatus,
           },
@@ -4070,11 +4171,76 @@ function buildBuddyReasonText(
 }
 
 // ── Traveler reason text ──────────────────────────────────────────────────────
-function buildTravelerReasonText(
+/** The minimum shape `applyExplicitIntentWeighting` mutates. */
+export interface ExplicitIntentWeightable {
+  id: string;
+  score: number;
+  reasonCode: string;
+  sharedExplicitIntents: string[];
+  intentBoost: number;
+}
+
+/** What one traveler's visible explicit-intent read yields. */
+export interface ExplicitIntentReadLike {
+  intents: string[];
+  hasActiveWindow: boolean;
+}
+
+/**
+ * Passport `:94` / §8 — weight EXPLICIT CURRENT INTENT above generic interests,
+ * in place, and re-sort.
+ *
+ * Pure and separate from the route so the rule can be proven rather than
+ * inferred from an integration fixture. Three properties it must have, and
+ * each is a test:
+ *
+ *   1. A traveler with NO active open-to-plans window gets no boost, whatever
+ *      their intent list says. `explicitIntentBoost` enforces this; the loop
+ *      must not work around it.
+ *   2. One shared explicit intent outweighs one shared generic interest,
+ *      because INTENT_WEIGHT_PER_MATCH (12) > GENERIC_WEIGHT_PER_MATCH (4) and
+ *      the list's generic term is now `genericInterestWeight` too.
+ *   3. A boosted traveler's REASON changes to `explicit_intent`, so the list
+ *      says which of the two signals put them there.
+ *
+ * A traveler whose boost is zero is left completely untouched — same score,
+ * same reason code, same (empty) overlap — so ordering changes ONLY where an
+ * explicit window exists on both sides.
+ */
+export function applyExplicitIntentWeighting<T extends ExplicitIntentWeightable>(
+  entries: T[],
+  viewerIntents: readonly string[],
+  readByTravelerId: ReadonlyMap<string, ExplicitIntentReadLike>,
+): T[] {
+  if (viewerIntents.length === 0) return entries;
+  for (const entry of entries) {
+    const read = readByTravelerId.get(entry.id);
+    if (!read) continue;
+    const shared = sharedItems([...viewerIntents], read.intents);
+    const boost  = explicitIntentBoost(shared.length, read.hasActiveWindow);
+    if (boost <= 0) continue;
+    entry.sharedExplicitIntents = shared.slice(0, 3);
+    entry.intentBoost = boost;
+    entry.score += boost;
+    entry.reasonCode = "explicit_intent";
+  }
+  entries.sort((a, b) => b.score - a.score);
+  return entries;
+}
+
+export function buildTravelerReasonText(
   reasonCode: string,
   sharedInterests: string[],
   city: string | null,
+  /** §8 explicit current intents shared with the viewer, when that is the reason. */
+  sharedExplicitIntents: string[] = [],
 ): string {
+  // Passport `:94` — an explicit CURRENT intent is a different and stronger
+  // statement than a long-term interest, and it is named first so the traveller
+  // can see which of the two put this person in front of them.
+  if (reasonCode === "explicit_intent" && sharedExplicitIntents.length > 0) {
+    return `Open to plans right now: ${sharedExplicitIntents.slice(0, 2).join(", ")}`;
+  }
   if (reasonCode === "mutual_connections") return "People you both follow";
   if (reasonCode === "destination_overlap") return "Heading to the same destination";
   if (reasonCode === "shared_interests" && sharedInterests.length > 0) {

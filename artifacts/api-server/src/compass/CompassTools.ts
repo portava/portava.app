@@ -47,6 +47,11 @@ import { buildTripCompassProjection } from "../domain/trips/projections/TripComp
 import { buildTripFreedomProjection } from "../domain/trips/projections/TripFreedomProjection.js";
 import { buildTripRouteChainProjection } from "../domain/trips/projections/TripRouteChainProjection.js";
 import { buildTripPulseProjection } from "../domain/trips/projections/TripPulseProjection.js";
+import {
+  applySafetyAttention,
+  readSafetyAttention,
+  safetyAttentionOnTheWire,
+} from "./CompassSafetyAttention.js";
 import { buildTripOpportunityProjection } from "../domain/trips/projections/TripOpportunityProjection.js";
 import { loadImpactState } from "../domain/trips/services/TripImpactState.js";
 import { simulateChange } from "../domain/trips/services/TripReplan.js";
@@ -866,10 +871,20 @@ async function toolSearchPlaces(
   // catalog's own category fields, fail-closed under suppression.
   const attention = await resolveTripAttention(sc, userId, args["tripId"]);
   const held = applyAttentionSuppression(candidates, attention, (p: any) => [p.category, p.primary_category]);
+  // §17 SAFETY leg (census-compass CT-11): the trip switch above is behind
+  // trip_operational_projections_enabled and is keyed on a trip. A Safe Return
+  // session belongs to the PERSON and is read ungated, so this second pass is
+  // the one that actually withholds anything on today's deployments. Same
+  // classifier, same fail-closed-under-suppression rule.
+  const safety = await readSafetyAttention(sc, userId);
+  const safeHeld = applySafetyAttention(held.kept, safety, (p: any) => [p.category, p.primary_category]);
   const wire = attentionOnTheWire(attention, held.withheld);
-  return held.kept.length > 0
-    ? { candidates: held.kept, ranked: ranking !== null, attention: wire }
-    : { candidates: [], attention: wire, info: held.withheld > 0 ? `No candidates offered: ${held.detail}` : "No matching places found in the catalog." };
+  const safetyWire = safetyAttentionOnTheWire(safety, safeHeld.withheld);
+  const withheldTotal = held.withheld + safeHeld.withheld;
+  const withheldDetail = safeHeld.withheld > 0 ? safeHeld.detail : held.detail;
+  return safeHeld.kept.length > 0
+    ? { candidates: safeHeld.kept, ranked: ranking !== null, attention: wire, safetyAttention: safetyWire }
+    : { candidates: [], attention: wire, safetyAttention: safetyWire, info: withheldTotal > 0 ? `No candidates offered: ${withheldDetail}` : "No matching places found in the catalog." };
 }
 
 async function toolSearchEvents(
@@ -941,10 +956,16 @@ async function toolSearchEvents(
   // its category names a safety or logistics need.
   const attention = await resolveTripAttention(sc, userId, args["tripId"]);
   const held = applyAttentionSuppression(candidates, attention, (e: any) => [e.category]);
+  // §17 SAFETY leg — see toolSearchPlaces. Ungated, person-scoped.
+  const safety = await readSafetyAttention(sc, userId);
+  const safeHeld = applySafetyAttention(held.kept, safety, (e: any) => [e.category]);
   const wire = attentionOnTheWire(attention, held.withheld);
-  return held.kept.length > 0
-    ? { candidates: held.kept, ranked: ranking !== null, attention: wire }
-    : { candidates: [], attention: wire, info: held.withheld > 0 ? `No candidates offered: ${held.detail}` : "No matching upcoming public events found." };
+  const safetyWire = safetyAttentionOnTheWire(safety, safeHeld.withheld);
+  const withheldTotal = held.withheld + safeHeld.withheld;
+  const withheldDetail = safeHeld.withheld > 0 ? safeHeld.detail : held.detail;
+  return safeHeld.kept.length > 0
+    ? { candidates: safeHeld.kept, ranked: ranking !== null, attention: wire, safetyAttention: safetyWire }
+    : { candidates: [], attention: wire, safetyAttention: safetyWire, info: withheldTotal > 0 ? `No candidates offered: ${withheldDetail}` : "No matching upcoming public events found." };
 }
 
 async function toolGetPlaceDetails(sc: SupabaseClient, args: Record<string, unknown>): Promise<unknown> {
