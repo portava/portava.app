@@ -204,13 +204,30 @@ async function startApp(state: State) {
   });
 }
 
-async function patchReq(base: string, path: string, body: unknown) {
+/**
+ * What a JSON response body is, before anything has been asserted about it.
+ *
+ * Typed as a record of UNKNOWN values on purpose. `res.json()` returns nothing
+ * the compiler can vouch for, and the two shapes these cases actually receive
+ * are different — an error envelope (`{ error, message }`) and a memory object —
+ * so naming either one here would be a fixture describing a shape production
+ * does not always emit, which is the thing the test-typecheck ratchet exists to
+ * stop. `unknown` values still compare fine: node's `assert.equal` takes
+ * `unknown` on both sides.
+ */
+type JsonBody = Record<string, unknown> | null;
+
+async function patchReq(
+  base: string,
+  path: string,
+  body: unknown,
+): Promise<{ status: number; body: JsonBody }> {
   const res = await fetch(`${base}${path}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json", connection: "close", Authorization: "Bearer owner-tok" },
     body: JSON.stringify(body),
   });
-  return { status: res.status, body: await res.json().catch(() => null) };
+  return { status: res.status, body: (await res.json().catch(() => null)) as JsonBody };
 }
 
 const stored = (state: State): Row => state.memories.find((r) => r.id === M)!;
