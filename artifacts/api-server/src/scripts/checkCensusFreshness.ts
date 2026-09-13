@@ -1499,6 +1499,7 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/server/telegraph/searchRoute.ts",
     "artifacts/api-server/src/lib/discoveryLiveRankRead.ts",
     "artifacts/api-server/src/domain/trips/services/TripFreedomConsumers.ts",
+    "artifacts/api-server/src/domain/trips/policies/tripOperationalProjections.ts",
   ],
 };
 

@@ -20,7 +20,7 @@ production** (§5): the last `surface='discovery'` serve was 2026-08-15, thirtee
 
 | Field | Value |
 | --- | --- |
-| `head_commit` | `42aeac38` — RE-DECLARED 2026-09-09 from `090684ab54489d23707a0fd5e3f8ed661072a34f`, the working-tree commit §8 measured at. The move is a measurement, not a judgement: `git diff --name-only 090684ab 42aeac38` over this census's 10 scoped paths returns **0 files**, so every verdict is exactly as true at one as at the other. It was necessary because `090684ab` is PRE-SQUASH — this repository squash-merges, so it is an ancestor of nothing, is on no remote branch, and `check:census-freshness` could resolve it only on the clone that wrote it (`CENSUS_HEAD_COMMITS_UNREACHABLE_IN_CI`, where CI measured this census among four that could not be checked at all). `42aeac38` is #476's squash, where this document's content reached `main`. **Changed by the Trips lane, not this one**, because the neutrality above is a measured fact rather than a call about Discovery's verdicts — revert it if you disagree; nothing else in this document is touched. |
+| `head_commit` | `820b60638` — RE-DECLARED 2026-09-13 by §9, replacing `42aeac38`. The previous declaration was a NEUTRAL move (0 counted files differ between `090684ab` and `42aeac38`) made by the Trips lane so this census could be aged at all. This one is not neutral and does not pretend to be: `820b60638` is the commit §9 measured at, it carries §9.5's build, and between `42aeac38` and it three sibling lanes edited files this census counts — which is how sixteen unreadable rows and two stale N verdicts survived unnoticed. §9.8 states exactly which rows were re-executed here (all 10 N, all 11 W, 22 of 46 C) and which 24 were not. It does NOT certify the 24. Read §9.1 before quoting any percentage. |
 | Originally censused at | working tree `507f8427` plus uncommitted sibling work, 2026-09-07 |
 | Recensused | 2026-09-08 — see §8 for the method and what it does not claim |
 
@@ -325,3 +325,221 @@ is declared, and it is stated here so the declaration can be judged rather than
 trusted.
 
 Discovery remains **dark in production** (§5). Nothing above changes that.
+
+---
+
+## 9. Re-measured 2026-09-13 — sixteen rows the tallier could not read, and the sixth capability built
+
+*Measured at `820b60638`, the commit above this one, which carries the build in §9.5 and nothing
+else. Declared as `head_commit` in §0, replacing `42aeac38`; that replacement and the §0 wording that
+explains it are the only edits this pass makes above this line.*
+
+### 9.1 Sixteen of this census's 67 requirements were in no bucket and no denominator
+
+`pnpm -s check:census-integrity` at `3eaf2436f` read **51** of 67 rows and reported `C=39 W=6 N=6` —
+67.2 % constructed, 58.2 % correct. This document has never claimed those numbers either.
+
+The sixteen were not counted in prose. Each was **already a table row with a stated verdict**; the
+tallier could not read the CELL, because `verdictOf` requires the whole cell to be one token after
+`*` and the vacuity flags are stripped, and these sixteen cells all carry a qualifier beside the
+verdict:
+
+| The shape | Rows carrying it |
+|---|---|
+| `**N** — owner hold` | A01, A05, A18 |
+| `**W** — deployment` / `**C** — verified in the catalog, not by the suite` | B01, C28 |
+| `**N → W** …` — an as-found/now pair in one cell | A03, A20, A25 |
+| `**W → C (fixed)** / (fixed this pass)` | A17, C11 |
+| `**W → partially closed**` | B03, C19 |
+| `**C** (by reference, line re-opened)` | B06, B07, B08, B09 |
+
+So the difference between 58.2 % and this document's stated 68.7 % was **entirely a parser**, and
+16 requirements — a quarter of the census — sat outside every number the repository reports.
+§9.4 restates all sixteen. After it the gap is zero.
+
+**And the other 31 "id-keyed rows with no verdict" the tool prints are not requirements:** ten are
+the §6 owner decisions (`D1`–`D10`), five are the §7 fix table (`F1`–`F5`), and the rest are those
+tables' continuation rows. The honest count of unmeasurable requirements here was sixteen.
+
+### 9.2 The tally in §2d has been one row wrong since 2026-09-13, and this section is why
+
+A20 was re-measured `N → W` earlier the same day by the integrator, whose note says in full: *"the
+Discovery headline is NOT restated here — moving it is the Discovery lane's to do."* It was not
+moved. §2d still reads A: 10 C / 5 W / 10 N, and the A rows at `3eaf2436f` are 10 / 6 / 9. The
+headline `46 / 11 / 10` should have read `46 / 12 / 9` from that moment. That is corrected here, and
+it is the reason `check:census-integrity` would have gone red the instant the sixteen rows became
+readable: with 67 of 67 parsed there is no prose gap for a mismatch to hide in.
+
+### 9.3 Read the two numbers separately
+
+| Stage | C | W | N | CONSTRUCTED | CORRECT |
+|---|---|---|---|---|---|
+| What the tallier could read at `3eaf2436f` (51 of 67 rows) | 39 | 6 | 6 | 67.2 % | 58.2 % |
+| What §2d states | 46 | 11 | 10 | 85.1 % | 68.7 % |
+| What the ROWS said at `3eaf2436f`, A20's move folded in | 46 | 12 | 9 | 86.6 % | 68.7 % |
+| Re-measured at `3eaf2436f`, before this lane changed anything | 46 | 14 | 7 | 89.6 % | 68.7 % |
+| After this lane's build | 47 | 13 | 7 | 89.6 % | 70.1 % |
+
+- **+19.4 points of CONSTRUCTED and +10.5 of CORRECT are the tallier learning to read.** No code.
+- **+3.0 points of CONSTRUCTED are other lanes' code** — the Sensing lane's live ranker (A01) and the
+  Trips lane's freedom-window consumer (A11), neither of which this census had measured.
+- **+1.4 points of CORRECT — exactly one row, A20 — is this lane's build.** That is the whole of what
+  this pass constructed in Discovery, and no other row was moved to C.
+
+### 9.4 The sixteen unparseable rows, restated
+
+Verdicts are unchanged from what each cell already stated, except A01, A03's reason, A20 and A25
+where §9.5 and §9.6 say otherwise. The qualifier each cell carried is written into the reason column
+so nothing is lost.
+
+| id | was | now | why |
+|---|---|---|---|
+| A01 | `N — owner hold` | W | **Moved. The owner hold no longer describes the tree.** Sensing's lane built the live half of `:133` and wired it into both serve points: `artifacts/api-server/src/lib/discoveryLiveRankRead.ts:51#export const RANK_CLAIM_TYPES` consumes crowd level, crowd trajectory, vibe state, queue wait and walk-in access through the one gated live read path, applied at `artifacts/api-server/src/routes/discovery.ts:1722#const liveRanked = await withDiscoveryLiveRank` and again on the cold path. **W and not C:** it is behind `artifacts/api-server/src/lib/discoveryLiveRankRead.ts:45#export const DISCOVERY_LIVE_RANK_FLAG` (migration 2850, seeded FALSE, refuses to commit ON), so on every deployment the helper returns the same array reference it was handed; and forecast, travel time, compatibility and **safety** are still absent from the term list. |
+| A03 | `N → W (built this pass, deliberately in the wrong bucket)` | W | Same bucket, **different reason, and the old one is now false.** The row's whole argument for W was *"`whyNow` is `null` on every row by construction — there is no live producer"*. There is one: `artifacts/api-server/src/lib/discoveryCandidate.ts:225#export function whyNowOf` returns the live grade's grounded reasons. It stays W because it is now doubly deployment-gated — the projection behind `discovery_candidate_projection_enabled` (2361, FALSE) and the producer behind `discovery_live_rank_enabled` (2850, FALSE) — so `whyNow` is still null on every row in every deployment, for a reason that is a flag rather than an absence. |
+| A05 | `N — owner hold` | N | Unchanged. No intent-mode concept in `routes/discovery*.ts` or `lib/discovery*.ts`; the explicit hold at `docs/discovery/ROADMAP.md:648#Step 7/8 modifiers` stands. |
+| A17 | `W → C (fixed this pass)` | C | Unchanged. Re-executed: `artifacts/api-server/src/routes/discoverySearch.ts:407#export { fetchBlockedSet }` still re-exports `lib/blocks`' reader rather than a private copy, and the test still pins function identity, not resemblance. |
+| A18 | `N — owner hold` | N | Unchanged. No intent term in the ranker; the supply side exists and nothing consumes it. |
+| A20 | `N → W` | C | **Moved by this lane's build. See §9.5.** |
+| A25 | `N → W (Discovery half built; Map half absent)` | W | Unchanged. `readDiscoveryCandidatesForViewer` still has no caller outside its own test — the Map gateway is another agent's file (D10). A reader nobody reads. |
+| B01 | `W — deployment` | W | Unchanged, and **not re-verified against production this pass**: §5's reading that `canonical_locations.search_key` is absent was taken 2026-09-07 and no production read was made here. |
+| B03 | `W → partially closed` | W | Unchanged. The launch leg is built behind `discovery_buddy_launch_gate_enabled` (2360, FALSE, not applied to production); category and availability legs remain unbuilt. |
+| B06 | `C (by reference, line re-opened)` | C | Unchanged. Gem rows are selected without their exact coordinate pair. |
+| B07 | `C (by reference, lines re-opened)` | C | Unchanged. Events, trips and plans each apply a viewer-eligibility filter before exposure. |
+| B08 | `C (by reference, line re-opened)` | C | Unchanged. `fetchAgeRestrictedSet` returns null on error and every caller returns `[]` on null. |
+| B09 | `C (by reference)` | C | Unchanged. `InputSuggestion` has no coordinate field. |
+| C11 | `W → C (fixed)` | C | Unchanged. The header no longer states the opposite of its own tests about private accounts. |
+| C19 | `W → partially closed` | W | Unchanged. `displayName` is emitted additively; the legacy `name` still bakes in `@username` until the client resolves the byline (D2). |
+| C28 | `C — verified in the catalog, not by the suite` | C | Unchanged, and the qualifier matters enough to repeat in full: the suite that would prove this **skips without live credentials** and the `test` script pins an unreachable `SUPABASE_URL`, so a green run proves nothing here. The verdict rests on a catalogue read taken 2026-09-07, which was **not** repeated in this pass. |
+
+### 9.5 What this pass built: Telegraph §606's sixth capability, and A20
+
+A20's own text named the target: *"five of six capabilities are now registered through one contract"*
+and **search behaviour is the missing sixth**. Measured, the gap was sharper than "missing":
+
+**Search behaviour existed. It was registered in a DIFFERENT REGISTRY, keyed differently.** Preview,
+authorization, current state, actions and revocation are registered per OBJECT FAMILY in
+`artifacts/api-server/src/services/telegraph/shareables.ts:517#const LOADERS`. Search behaviour was a
+pair of maps keyed by MESSAGE SUBTYPE in `domain/telegraph/contracts/conversationSearch.ts`. Nothing
+read the two together, so they could disagree about a family forever without a single failure — and
+they did: `MAP_PIN` and `MEETUP_POINT` are both shareable and were in neither search map. A Discovery
+pin shared into a thread had a preview, an authorization refusal, a live state and a revocation, and
+no bucket.
+
+The build puts the sixth capability on the one contract:
+
+| what | where |
+|---|---|
+| The registration, by object family: bucket, structured flag, and the message subtypes each family is carried by | `artifacts/api-server/src/domain/telegraph/contracts/conversationSearch.ts:92#export const SEARCH_BEHAVIOUR` |
+| Its type, stating what §21's last line means by "structured" | `artifacts/api-server/src/domain/telegraph/contracts/conversationSearch.ts:68#export interface TelegraphSearchBehaviour` |
+| The sixth member on the contract itself, beside the other five | `artifacts/api-server/src/services/telegraph/shareables.ts:102#getSearchBehaviour()` |
+| The one searchable card kind with no shareable family, DECLARED rather than folded into `PLACE` | `artifacts/api-server/src/domain/telegraph/contracts/conversationSearch.ts:121#export const FAMILYLESS_SUBTYPE_BUCKET` |
+| Fifteen cases across five blocks, including literal copies of both pre-change maps | `artifacts/api-server/src/test/telegraphSearchCapability.test.ts:1#/**` |
+
+`SUBTYPE_BUCKET` and `STRUCTURED_SUBTYPES` are now **derived** from the registration rather than
+declared beside it, and a subtype claimed by two families throws at module load instead of taking
+whichever key was written last.
+
+**Why this makes A20 `C` and not `W (gated)`.** There is no flag: the registration is pure data, the
+contract member is a synchronous lookup that touches no database (pinned — the test hands
+`shareableFor` a client proxy that throws on any property read), and the search path that consumes
+the derived maps is reachable on every deployment at
+`artifacts/api-server/src/server/telegraph/searchRoute.ts:47#/telegraph/search`, registered in
+`routes/index.ts`. All six of §606's capabilities now answer from one contract for the three families
+Discovery shares — `PLACE`, `MAP_PIN`, `HIDDEN_GEM`.
+
+**What this build deliberately does NOT claim.** It does not claim conversation search is complete;
+§21's own rows are census-telegraph's. It does not claim `compass_card` is registered — that subtype
+has a bucket and no shareable family, and the declaration says so with the reason rather than hiding
+it. And it changes no stored row's classification: block D of the test holds literal copies of the
+ten-entry `SUBTYPE_BUCKET` and eight-entry `STRUCTURED_SUBTYPES` this replaces and asserts the derived
+values equal them.
+
+### 9.6 Row moves
+
+| id | was | now | why |
+|---|---|---|---|
+| A11 | N | W | *"`FreedomWindow`: zero occurrences. No engine to consume."* is false. The Trips lane published the engine and Discovery consumes it: `artifacts/api-server/src/routes/discoverySearch.ts:784#if (ctx?.tripId)` reads the trip's windows through `artifacts/api-server/src/domain/trips/services/TripFreedomConsumers.ts:128#export async function readTripWindows` and places each event's start against them, then `artifacts/api-server/src/routes/discoverySearch.ts:803#Trips §7.3` leads with the fitting rows. **W on both halves of the clause:** the consumption is behind `artifacts/api-server/src/domain/trips/policies/tripOperationalProjections.ts:29#export const TRIP_OPERATIONAL_PROJECTIONS_FLAG` (2778, seeded FALSE, schema 2760–2785 unapplied), so on every deployment the read refuses; and the independent calculation the clause forbids is still there at `artifacts/api-server/src/lib/portavaRank.ts:87#availableMinutes?`. |
+| A01 | N | W | Stated in full in §9.4. |
+| A20 | W | C | Stated in full in §9.5. |
+
+### 9.7 Mutations, each watched red and reverted byte-identical
+
+Applied to the tree, run, observed failing, reverted, and the file compared with its pre-mutation
+backup by `cmp` — reported identical every time.
+
+| mutation applied | what went red |
+|---|---|
+| `removed getSearchBehaviour from shareableFor` | block A — 11 pass / 4 fail, **and** `pnpm typecheck` TS2741 "Property 'getSearchBehaviour' is missing … but required in type 'TelegraphShareable'" |
+| `made getSearchBehaviour return a hard-coded PLACES bucket instead of the registration` | block A — 12 pass / 3 fail |
+| `unregistered MAP_PIN — exactly the pre-change state` | block B — 14 pass / 1 fail |
+| `removed meeting_point from MEETUP_POINT.carriedBy` | blocks C and D — 12 pass / 3 fail |
+| `claimed compass_card from PLACE while leaving it in the exception list` | module throws at load, the whole file fails: *"compass_card is declared family-less and is also carried by PLACE"* |
+
+**P24 — what would turn A20's green claim red?** Three things, and each is now guarded: deleting the
+contract member (typecheck, block A), registering a family in `LOADERS` without a search behaviour
+(block B, which fails specifically on A20's three Discovery families), or re-forking the subtype maps
+by hand (blocks C and D). What is **not** guarded, and is stated so nobody reads more into the green
+than is there: nothing asserts that the search ROUTE remains registered. If
+`server/telegraph/searchRoute.ts` were unmounted, all fifteen cases would stay green and A20 would be
+`C` over a path nothing reaches — a vacuous verdict. The route is watched by this census's
+`CENSUS_SCOPE` from now on for exactly that reason, which ages the row rather than defending it.
+
+### 9.8 What was NOT re-read
+
+This section re-executed **all 10 NOT-BUILT rows, all 11 BUILT-BUT-WRONG rows, and 22 of the 46
+BUILT-AND-CORRECT rows** — every `C` whose evidence names `routes/discovery.ts`,
+`routes/discoverySearch.ts` or a `lib/discovery*` file, since three sibling lanes edited those files
+after this census was taken. Their CLAIMS all held. Their POINTERS did not: `routes/discoverySearch.ts`
+has grown from about 2,130 lines to 2,324 and the unanchored line numbers in C01, C02, C04, C07, C08,
+C10, C12, C13, C14, C15, C33 and A17 have all drifted — the same in-range-but-wrong class §8 recorded
+for C22, and the reason `check:doc-citations` passing is not evidence a citation is useful. The
+citations added by this section carry anchors; the pre-existing unanchored ones were not repaired
+here, and that is a debt this pass leaves behind.
+
+The remaining 24 `C` rows were not re-opened. The production and CI facts in §5 were read on
+2026-09-07 and were not re-read here — including the two this pass would most like to have re-read,
+B01's absent `search_key` and C28's grants.
+
+### 9.9 CEILING — what is not reachable, and why
+
+- **A05 and A18 are an explicit owner hold** (`docs/discovery/ROADMAP.md:222#RANKER WORK GOES ON EXPLICIT HOLD`, `docs/discovery/ROADMAP.md:648#Step 7/8 modifiers`), not an agent's to close. A01 has
+  now half-escaped that hold by another lane's hand, which is worth noticing: the hold said "no
+  optimising ranking machinery over an empty corpus", and machinery was built anyway, seeded off.
+- **A07, A13, A14, A21 and A24 remain blocked on a contract another surface has not published.**
+  Re-grepped this pass: no safety projection reaches the ranker, `LayoverSnapshot` still has zero
+  occurrences, no Invisible state exists anywhere, and §607's `authorize / preview / execute /
+  optional compensate` has no `execute` or `compensate` member on any registry — A21 is **not**
+  closed by §9.5's work, which registers a sixth READ capability and no execution path.
+- **A20 is `C` on a surface Discovery is dark on.** §5 stands unrepaired: the last
+  `surface='discovery'` serve was 2026-08-15, thirteen rows ever, and every engine path but `legacy`
+  is off by flag. A shared Discovery card is searchable in a conversation on every deployment — that
+  part is real and ungated — but the surface that produces the card is barely reached. **BUILT ON A
+  BRANCH IS NOT MERGED. MERGED IS NOT DEPLOYED. DEPLOYED IS NOT FLAG ENABLED. FLAG ENABLED IS NOT
+  PRODUCTION REALIZED.**
+- **Four FALSE-seeded flags and two unapplied migrations hold five of this census's W rows down**:
+  `discovery_candidate_projection_enabled` (2361), `discovery_buddy_launch_gate_enabled` (2360),
+  `discovery_trip_projection_enabled` (2550, plus 2420), `discovery_live_rank_enabled` (2850) and
+  `trip_operational_projections_enabled` (2778, plus 2760–2785). None was flipped or applied here,
+  and none is this lane's to flip.
+- **The full api-server suite was NOT run to completion for this pass.** It was started and killed by
+  SIGTERM under machine load; the integrator runs the authoritative suite once. What was run: the two
+  new test files, and `telegraphSearch` (33), `telegraphShare` (34), `telegraphKinds`,
+  `telegraphConversationCapabilities`, `compass-tools`, `telegraphCompassTools`, `compassCensusGates`,
+  `compassSurfaces` and `compassTelegraph` — 289 cases across the suites the changed files pass
+  through, all green, plus `typecheck` exit 0 and `typecheck:tests` at the 864 / 116 baseline.
+
+### 9.10 Restated headline
+
+> **Discovery, at `820b60638`: 67 requirements · 47 BUILT-AND-CORRECT · 13 BUILT-BUT-WRONG ·
+> 7 NOT-BUILT · 0 CANNOT-VERIFY → CONSTRUCTED 60 / 67 = 89.6 % · CORRECT 47 / 67 = 70.1 %.**
+> Inbound obligations alone (A01–A25, the column §1 says to read first): 11 correct / 7 wrong /
+> 7 not built — CONSTRUCTED 72.0 % · CORRECT 44.0 %. As found at `3eaf2436f`: 46 / 14 / 7 / 0. As the
+> tallier could read it at `3eaf2436f`: 39 / 6 / 6 / 0 over 51 of 67 rows. Of the move from 58.2 % to
+> 70.1 % correct, **10.5 points are the tallier learning to read, 0 points are other lanes' code
+> (their two moves were both into BUILT-BUT-WRONG), and 1.4 points — one row, A20 — is this lane's.**
+
+| BUILT-AND-CORRECT | **47** |
+|---|---|
+| BUILT-BUT-WRONG | **13** |
+| NOT-BUILT | **7** |
+| CANNOT-VERIFY | **0** |
