@@ -432,6 +432,37 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/migrations/2462_meetup_time_votes_write_boundary.sql",
   ],
   "census-highlights-memories.md": [
+    // WIDENED 2026-09-13 by section B, which built §25's certification runner and
+    // gave the 154 prose-counted requirements real rows. A row is only as fresh
+    // as the files its evidence names, so the three surfaces those rows now cite
+    // are watched. src/scripts/check*.ts, guardRegistry.ts, package.json and the
+    // neighbouring censuses stay out, on the same machinery exclusion every other
+    // scope here applies.
+    // WIDENED 2026-09-13 at integration, after check:census-scope-coverage put the
+    // document at 89% against its 96% floor and named the nine files below. Every
+    // one is a SUBJECT of this census, not machinery: seven are the memory-kernel
+    // and highlight migrations §24-§27 grade, one is the public-feed privacy test
+    // a §19 row cites as its evidence, and outboxWorker.ts is where section B
+    // repointed the two `projection_lag_seconds` citations after finding them
+    // pointing at a file that no longer emits the metric. Adding them is the only
+    // honest way through: the alternative the guard offers — declaring them not
+    // graded — would be false for all nine, and lowering the floor is the response
+    // the guard says is never right.
+    "artifacts/api-server/src/migrations/2710_memory_command_kernel_tables.sql",
+    "artifacts/api-server/src/migrations/2711_memory_kernel_execute.sql",
+    "artifacts/api-server/src/migrations/2720_highlight_resurfacing_preferences.sql",
+    "artifacts/api-server/src/migrations/2721_highlight_projection_policies.sql",
+    "artifacts/api-server/src/migrations/2722_highlight_sources.sql",
+    "artifacts/api-server/src/migrations/2723_highlight_class_lifecycle_and_pin.sql",
+    "artifacts/api-server/src/migrations/2730_memory_derivative_registry.sql",
+    "artifacts/api-server/src/test/memoriesPublicFeedPrivacy.test.ts",
+    "artifacts/api-server/src/server/trips/outboxWorker.ts",
+    "artifacts/api-server/src/services/memoryCertification/",
+    "artifacts/api-server/src/test/memoryCertificationFixtures.test.ts",
+    "artifacts/api-server/src/test/memoryCertificationInvariants.test.ts",
+    "artifacts/api-server/src/test/memoryCertificationChaos.test.ts",
+    "artifacts/api-server/src/routes/contentStamps.ts",
+    "artifacts/api-server/src/routes/wellKnownShare.ts",
     "artifacts/api-server/src/routes/memories.ts",
     "artifacts/api-server/src/routes/highlights.ts",
     "artifacts/api-server/src/routes/stories.ts",

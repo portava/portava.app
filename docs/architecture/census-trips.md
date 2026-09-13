@@ -4981,7 +4981,7 @@ re-derives and cites rather than argues.
   file can say.
 - **§24 the CI gate** — `src/scripts/checkTripDecisionDiff.ts:39#--update`
   is `check:trip-decision-diff`, in `check:all`
-  (`artifacts/api-server/scripts/run-all-checks.sh:231#check:trip-decision-diff`):
+  (`artifacts/api-server/scripts/run-all-checks.sh:241#check:trip-decision-diff`):
   exit 1 with the classified report when a decision moved, exit 2 when it
   cannot run. `golden.json` is the tree's record with the note that explains
   its last change. The test (`src/test/tripDecisionDiff.test.ts:102#mutation`)

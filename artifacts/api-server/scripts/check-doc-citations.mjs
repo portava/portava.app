@@ -196,7 +196,17 @@ export const COVERED = [
 // this check was green on all of them. That is the class this file's header
 // predicted was "much larger than the out-of-range one", measured on a second
 // document and found larger there too.
-export const MIN_ANCHORED_CITATIONS = 278;
+// The Highlights/Memories census closed its prose gap on 2026-09-13 — 154
+// requirements that lived in paragraphs became rows — and anchored every
+// citation those rows carry. Measured count 347, so the floor is 347. Same
+// ratchet, same rule: raising it is the job, lowering it is a deliberate
+// reduction in coverage and must be argued for in the PR that does it.
+// Four more landed with the section 24 evidence corrections in the same pass: 351.
+// MERGED 2026-09-13: both raises above are real and were measured on different
+// trees — the Trips pass on this branch, the Highlights pass on a worktree 141
+// commits behind it. Neither number is the merged tree's, so the floor below is
+// re-measured HERE rather than taking the larger of two stale counts.
+export const MIN_ANCHORED_CITATIONS = 1532;
 
 // ---------------------------------------------------------------------------
 // THE FULL-ANCHOR PASS, and why it is a SECOND pass rather than a wider ANCHOR

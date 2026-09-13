@@ -54,6 +54,49 @@ const CENSUS_DIR = join(REPO, "docs/architecture");
  * green. A census with no scope entry is not floored here — `census-freshness`
  * already reports it as unmeasurable, which is the louder complaint.
  */
+/**
+ * SHARED MACHINERY, EXCLUDED FROM EVERY CENSUS'S DENOMINATOR.
+ *
+ * WHY THIS EXISTS. The failure message below has always offered two responses —
+ * add the path to CENSUS_SCOPE, "or, if they are genuinely not what this census
+ * grades, say so". The second was not actionable: there was nowhere to say it,
+ * so a census that cited a guard script had exactly one way to go green, which
+ * was to WATCH that script and thereafter age on every unrelated lane's guard
+ * work. Every CENSUS_SCOPE in checkCensusFreshness.ts already refuses that, in
+ * a comment, one census at a time. This list makes the convention those comments
+ * describe explicit, uniform, and machine-readable.
+ *
+ * WHY IT CANNOT BE USED TO HIDE A GAP. Nothing here is product code. These are
+ * the files a census NAMES as the thing that measured it — the checker, the
+ * registry that declares the checker, the package script that runs it, the
+ * staleness ledger. A census citing its own SUBJECT can never qualify, because
+ * subjects are routes, services, projections, migrations and tests, none of
+ * which is in this list. Removing machinery from the denominator can only RAISE
+ * a coverage ratio, so no floor below is weakened by it and none was lowered.
+ *
+ * WHAT WOULD MAKE THIS WRONG (P24): adding a path here that a census actually
+ * grades. The defence is that the list is global — a path added for one census
+ * silently stops being watched for all thirteen — so it is a loud place to
+ * cheat, not a quiet one.
+ */
+const NOT_GRADED: readonly string[] = [
+  "artifacts/api-server/package.json",
+  "package.json",
+  "travel-buddy-standalone/package.json",
+  "artifacts/api-server/src/scripts/guardRegistry.ts",
+  "artifacts/api-server/src/scripts/CENSUS_STALENESS_ACKNOWLEDGED.json",
+  "artifacts/api-server/src/scripts/checkCensusFreshness.ts",
+  "artifacts/api-server/src/scripts/checkCensusScopeCoverage.ts",
+  ".github/workflows/ci.yml",
+  ".github/workflows/live-db.yml",
+];
+
+/** A census's own guard is machinery too: `src/scripts/check*.ts` and `audit*.ts`. */
+function isMachinery(p: string): boolean {
+  if (NOT_GRADED.includes(p)) return true;
+  return /^artifacts\/api-server\/src\/scripts\/(check|audit|rlsDispositions|generate)[A-Za-z0-9]*\.ts$/.test(p);
+}
+
 const CENSUS_SCOPE_FLOORS: Record<string, number> = {
   // Set 2026-09-11 at each census's MEASURED coverage, rounded down by ~2
   // points so a citation added to an already-watched file cannot trip the
@@ -131,7 +174,9 @@ for (const f of files) {
     continue;
   }
   const covered = (p: string) => scope.some((s) => (s.endsWith("/") ? p.startsWith(s) : p === s || p.startsWith(s + "/")));
-  const cited = [...counts.keys()];
+  const allCited = [...counts.keys()];
+  const machinery = allCited.filter(isMachinery);
+  const cited = allCited.filter((p) => !isMachinery(p));
   const uncovered = cited.filter((p) => !covered(p)).sort((a, b) => (counts.get(b)! - counts.get(a)!));
   const ratio = cited.length === 0 ? 1 : (cited.length - uncovered.length) / cited.length;
   const floor = CENSUS_SCOPE_FLOORS[f];
@@ -142,7 +187,8 @@ for (const f of files) {
       `${(ratio * 100).toFixed(0).padStart(3)}%` +
       (floor != null ? ` (floor ${(floor * 100).toFixed(0)}%)` : " (no floor set)") +
       (ambiguous ? ` · ${ambiguous} ambiguous basename(s) not resolved` : "") +
-      (unresolved ? ` · ${unresolved} citation(s) name no file in the tree` : ""),
+      (unresolved ? ` · ${unresolved} citation(s) name no file in the tree` : "") +
+      (machinery.length ? ` · ${machinery.length} machinery file(s) excluded from the denominator` : ""),
   );
   if (uncovered.length > 0) {
     for (const p of uncovered.slice(0, 5)) rows.push(`        unwatched ×${counts.get(p)}  ${p}`);

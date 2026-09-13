@@ -699,6 +699,24 @@ export const GUARDS: readonly GuardEntry[] = [
     reach: { kind: "check-all", script: "check:census-integrity" },
   },
   {
+    checker: "src/scripts/checkMemoryCertification.ts",
+    inspects: {
+      countPattern: "fixtures (\\d+) certified",
+      unit: "§25 canonical certification fixtures certified against spec-derived expectations",
+    },
+    responsibility:
+      "The Highlights/Memories spec §25 certification suite — twelve canonical fixtures, nine hard " +
+      "invariant tests and nine property/chaos scenarios — runs against the real memory engines and " +
+      "reports, per requirement, whether the property HELD, was VIOLATED, or has NO SURFACE in this " +
+      "repository to be true of.",
+    // NO_SURFACE and PARTIAL are findings, not failures. Failing on them would
+    // make deleting the scenario the cheapest way to a green build, and the
+    // number of them is the honest measure of how much of §25 is real. What
+    // fails is a fixture diverging from its spec-derived expectation, an
+    // invariant being violated, or a scenario breaking.
+    reach: { kind: "check-all", script: "check:memory-certification" },
+  },
+  {
     checker: "src/scripts/checkSecurityDefinerOracles.ts",
     inspects: {
       countPattern: "(\\d+) SECURITY DEFINER function\\(s\\) alive",
