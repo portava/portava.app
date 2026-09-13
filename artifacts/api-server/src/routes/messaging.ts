@@ -64,6 +64,7 @@ import {
   markTranslationsPending,
   buildDisplayFields,
   retranslateForUser,
+  senderLanguageFrom,
   type TranslationStatusValue,
 } from '../services/messageTranslation';
 import { shouldRetranslateOnLanguageChange } from '../lib/retranslateGate';
@@ -1030,12 +1031,16 @@ router.post('/message-requests/:requestId/accept', async (req, res) => {
   }
   const threadIsE2ee = (acceptThreadMeta as any)?.is_e2ee === true;
   if (previewBody && !threadIsE2ee) {
-    const { data: senderProfile } = await sc
+    const { data: senderProfile, error: senderProfileErr } = await sc
       .from('profiles')
       .select('preferred_language, preferred_message_language')
       .eq('id', req_.sender_id)
       .maybeSingle();
-    const senderLanguage = (senderProfile as any)?.preferred_language ?? (senderProfile as any)?.preferred_message_language ?? 'en';
+    // T344/T363 — the error is BOUND. supabase-js RESOLVES on a database
+    // failure, so the old `?? 'en'` turned an unreadable `profiles` into a
+    // durable stored claim that this sender had chosen English. One shared
+    // interpreter now decides what the read actually established.
+    const senderLanguage = senderLanguageFrom(senderProfile, senderProfileErr);
 
     const { data: previewMsg } = await sc
       .from('messages')
@@ -1054,7 +1059,8 @@ router.post('/message-requests/:requestId/accept', async (req, res) => {
         body: previewBody,
         senderId: req_.sender_id,
         threadId,
-        senderPreferredLanguage: senderLanguage,
+        senderPreferredLanguage: senderLanguage.preferredLanguage,
+        senderPreferenceUnreadable: senderLanguage.unreadable,
         logger: req.log,
       }).catch(() => {});
     }
@@ -2447,12 +2453,16 @@ router.post('/threads/:threadId/messages', async (req, res) => {
   const sc = client;
 
   // Fetch sender's language preference (for detection fallback).
-  const { data: senderProfile } = await sc
+  const { data: senderProfile, error: senderProfileErr } = await sc
     .from('profiles')
     .select('preferred_language, preferred_message_language')
     .eq('id', user.id)
     .maybeSingle();
-  const senderLanguage = (senderProfile as any)?.preferred_language ?? (senderProfile as any)?.preferred_message_language ?? 'en';
+  // T344/T363 — the error is BOUND. supabase-js RESOLVES on a database
+  // failure, so the old `?? 'en'` turned an unreadable `profiles` into a
+  // durable stored claim that this sender had chosen English. One shared
+  // interpreter now decides what the read actually established.
+  const senderLanguage = senderLanguageFrom(senderProfile, senderProfileErr);
 
   const now = new Date().toISOString();
 
@@ -2785,7 +2795,8 @@ router.post('/threads/:threadId/messages', async (req, res) => {
     body,
     senderId: user.id,
     threadId,
-    senderPreferredLanguage: senderLanguage,
+    senderPreferredLanguage: senderLanguage.preferredLanguage,
+    senderPreferenceUnreadable: senderLanguage.unreadable,
     logger: req.log,
   }).catch(() => {
     // Outer safety net — translateMessageForThread already catches internally.
@@ -3076,19 +3087,24 @@ router.post('/messages/:messageId/translate/retry', async (req, res) => {
   // Reset to pending and re-run.
   await markTranslationsPending(sc, messageId);
 
-  const { data: senderProfile } = await sc
+  const { data: senderProfile, error: senderProfileErr } = await sc
     .from('profiles')
     .select('preferred_language, preferred_message_language')
     .eq('id', m.sender_id)
     .maybeSingle();
-  const senderLanguage = (senderProfile as any)?.preferred_language ?? (senderProfile as any)?.preferred_message_language ?? 'en';
+  // T344/T363 — the error is BOUND. supabase-js RESOLVES on a database
+  // failure, so the old `?? 'en'` turned an unreadable `profiles` into a
+  // durable stored claim that this sender had chosen English. One shared
+  // interpreter now decides what the read actually established.
+  const senderLanguage = senderLanguageFrom(senderProfile, senderProfileErr);
 
   translateMessageForThread(sc, {
     messageId,
     body: m.body,
     senderId: m.sender_id,
     threadId: m.thread_id,
-    senderPreferredLanguage: senderLanguage,
+    senderPreferredLanguage: senderLanguage.preferredLanguage,
+    senderPreferenceUnreadable: senderLanguage.unreadable,
     logger: req.log,
   }).catch(() => {});
 });
@@ -3168,19 +3184,24 @@ router.patch('/threads/:threadId/messages/:messageId', async (req, res) => {
   // Invalidate existing translations and regenerate for updated body.
   await markTranslationsPending(sc, messageId);
 
-  const { data: senderProfile } = await sc
+  const { data: senderProfile, error: senderProfileErr } = await sc
     .from('profiles')
     .select('preferred_language, preferred_message_language')
     .eq('id', user.id)
     .maybeSingle();
-  const senderLanguage = (senderProfile as any)?.preferred_language ?? (senderProfile as any)?.preferred_message_language ?? 'en';
+  // T344/T363 — the error is BOUND. supabase-js RESOLVES on a database
+  // failure, so the old `?? 'en'` turned an unreadable `profiles` into a
+  // durable stored claim that this sender had chosen English. One shared
+  // interpreter now decides what the read actually established.
+  const senderLanguage = senderLanguageFrom(senderProfile, senderProfileErr);
 
   translateMessageForThread(sc, {
     messageId,
     body: newBody,
     senderId: user.id,
     threadId,
-    senderPreferredLanguage: senderLanguage,
+    senderPreferredLanguage: senderLanguage.preferredLanguage,
+    senderPreferenceUnreadable: senderLanguage.unreadable,
     logger: req.log,
   }).catch(() => {});
 });
@@ -3272,12 +3293,31 @@ router.get('/circles/:circleOwnerId/chat', async (req, res) => {
   }
 
   // Get owner profile for title.
-  const { data: ownerProfile } = await sc
+  //
+  // T344/T363, the second of §15.2's named consequences. The error was dropped,
+  // and supabase-js RESOLVES on a database failure, so an unreadable `profiles`
+  // arrived here as `data: null` — indistinguishable from a circle owner who
+  // does not exist — and this route answered "Circle owner not found". That is
+  // a confident statement about the world made from a read that never happened,
+  // and the caller acts on it: a 404 tells them the circle is gone, so they stop
+  // asking. A `profiles` outage is not the deletion of a circle.
+  //
+  // `degraded_unavailable` is this codebase's own code for "the check was NOT
+  // PERFORMED" and the only code marked retryable (lib/http.ts RETRYABLE_CODES);
+  // the same posture the E2EE-flag and thread-roster reads in this file already
+  // take. A genuinely absent owner still gets the 404 it deserves.
+  const { data: ownerProfile, error: ownerProfileErr } = await sc
     .from('profiles')
     .select('id, name, handle, username, full_name')
     .eq('id', circleOwnerId)
     .maybeSingle();
 
+  if (ownerProfileErr) {
+    req.log.error({ err: ownerProfileErr, circleOwnerId },
+      'circle owner profile read failed — refusing rather than reporting the circle owner as nonexistent');
+    sendError(res, 'degraded_unavailable', 'We could not open this circle chat right now. Please try again shortly.');
+    return;
+  }
   if (!ownerProfile) { sendError(res, 'not_found', 'Circle owner not found'); return; }
 
   try {

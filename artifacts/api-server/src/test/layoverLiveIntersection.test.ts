@@ -241,21 +241,42 @@ function cardsOf(r: { ok: true; recommendations: any[] } | { ok: false; message:
   return r.recommendations;
 }
 
+/**
+ * ── FOUR ASSERTIONS HERE USED TO ENCODE census-layover L293b ────────────────
+ * Every `assert.equal(market.activityTimeMin, 90)` below was reading
+ * `estimateActivityTime("attraction")` — a per-category constant substituted
+ * for a duration `discovery_places` has no column for — and the queue case
+ * asserted 180 because it was 90 + 90. The producer no longer substitutes one,
+ * so the number the REAL path yields is `null`, and the cases say so.
+ *
+ * WHAT THIS COSTS AND WHAT IT DOES NOT. The §11 friction ARITHMETIC is pinned
+ * where it can be stated honestly — "Sensing §11 — friction becomes minutes the
+ * existing engine can see" at the top of this file, on `intersectOne`, with a
+ * dwell a caller STATED (60 + 45 = 105). What the real-producer cases pin now
+ * is the boundary condition that arithmetic has to respect: a live queue
+ * LENGTHENS a stated duration and cannot conjure one out of an absence. Adding
+ * `frictionMinutes` to nothing would have turned "nobody said" into "90
+ * minutes", which is the same substitution one layer along.
+ *
+ * The DROP path is unaffected and is asserted unchanged below: an unsafe
+ * density still removes the card, whether or not anyone timed the visit.
+ */
 describe("Sensing §11 through the REAL generateRecommendations", () => {
-  it("flag ABSENT (production's state): the landside card keeps its own activity time", async () => {
+  it("flag ABSENT (production's state): the landside card's duration is untouched — and unstated", async () => {
     const db = makeLayoverDb(tables([], [snapshotRow()])) as any;
     const cards = cardsOf(await generateRecommendations(db, AIRPORT, layoverSession()));
     const market = cards.find((c) => c.title === "Night Market");
     assert.ok(market, "the landside card must still be generated");
-    assert.equal(market.activityTimeMin, 90, "an unflagged run must not read a claim");
+    assert.equal(market.activityTimeMin, null, "an unflagged run must not read a claim — nor invent a duration");
   });
 
-  it("ON: the Live queue is added to the activity time the safety engine rated", async () => {
+  it("ON: a Live queue cannot lengthen a duration nobody stated", async () => {
     const db = makeLayoverDb(tables([{ flag: "layover_live_intersection_enabled", enabled: true }], [snapshotRow()])) as any;
     const cards = cardsOf(await generateRecommendations(db, AIRPORT, layoverSession()));
     const market = cards.find((c) => c.title === "Night Market");
     assert.ok(market, "the card must survive a queue — a wait is not a closed door");
-    assert.equal(market.activityTimeMin, 180, "90 minutes of activity plus a 90-minute live queue");
+    assert.equal(market.activityTimeMin, null,
+      "a 90-minute queue was added to an absence and became a 90-minute visit");
   });
 
   it("ON: a Live unsafe_density removes the landside card entirely", async () => {
@@ -281,7 +302,7 @@ describe("Sensing §11 through the REAL generateRecommendations", () => {
     const cards = cardsOf(await generateRecommendations(db, AIRPORT, layoverSession()));
     const market = cards.find((c) => c.title === "Night Market");
     assert.ok(market);
-    assert.equal(market.activityTimeMin, 90);
+    assert.equal(market.activityTimeMin, null);
   });
 
   it("ON but the place is UNBRIDGED: no subject, so nothing is looked up and nothing changes", async () => {
@@ -291,6 +312,26 @@ describe("Sensing §11 through the REAL generateRecommendations", () => {
     const cards = cardsOf(await generateRecommendations(db, AIRPORT, layoverSession()));
     const market = cards.find((c) => c.title === "Night Market");
     assert.ok(market);
-    assert.equal(market.activityTimeMin, 90);
+    assert.equal(market.activityTimeMin, null);
+  });
+
+  it("the friction arithmetic still adds to a STATED duration — the absence is the only thing refused", () => {
+    // The positive control for the four cases above: `intersectOne` with a
+    // dwell someone stated still gains the queue, so what changed is the
+    // producer's honesty and not §11's mechanism.
+    const queue = () => [env(), env({ claimType: "queue.wait", value: { minMinutes: 45 } })];
+    const stated = intersectOne(cand("stated", queue()), { nowMs: NOW });
+    assert.equal(stated.frictionMinutes, 45, "positive control: the fixture carries a queue");
+    assert.equal(stated.adjustedActivityMin, 60 + 45);
+    const absent = intersectOne(
+      cand("absent", queue(), { travelTimeMin: null, activityTimeMin: null }),
+      { nowMs: NOW },
+    );
+    assert.equal(absent.adjustedActivityMin, null);
+    assert.equal(absent.frictionMinutes, 45, "the reading itself is unchanged");
+    // An unknown ETA is not an instant arrival: `interceptPeak` answers
+    // `reachable: null`, so nothing is promoted or demoted on a journey length
+    // nobody measured.
+    assert.equal(absent.interception.reachable, null);
   });
 });

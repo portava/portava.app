@@ -145,6 +145,7 @@ Processing and EXIF policy: `src/lib/mediaProcessing.ts`. Access: `src/lib/media
 - `buildDisplayFields()`
 - `markTranslationsPending()`
 - `retranslateForUser()`
+- `senderLanguageFrom()`
 - `translateMessageForThread()`
 
 ### 9. Current enum literals

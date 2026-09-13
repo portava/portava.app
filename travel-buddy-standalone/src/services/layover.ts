@@ -429,8 +429,15 @@ export interface LayoverRecommendation {
   description: string | null;
   safetyRating: SafetyRating;
   safetyLabel: string;
-  travelTimeMin: number;
-  activityTimeMin: number;
+  /**
+   * Minutes to get there, or NULL when nobody has measured the journey
+   * (census-layover L293). It is not 0 and must never be rendered as one: the
+   * server has no routed travel-time provider, so this is null for every
+   * landside card. Show the absence; a blank reads as "nearby".
+   */
+  travelTimeMin: number | null;
+  /** Minutes at the destination, or NULL when nobody stated a duration. */
+  activityTimeMin: number | null;
   returnBufferMin: number;
   hardReturnTime: string | null;
   warningReason: string | null;
@@ -463,7 +470,11 @@ export interface LayoverSafetyResult {
   layoverMinutes: number;
   tier: LayoverTier;
   tierLabel: string;
-  /** Provenance of the 20-minute landside probe leg. Never "measured" here. */
+  /**
+   * Provenance of this answer's landside leg. There is no longer a leg here at
+   * all — census L293c deleted the fabricated 20-minute probe this endpoint
+   * used to score — so the value is "unmeasured", and never "measured".
+   */
   travelTimeSource: string;
   advice: LeaveAdvice;
   certification: LayoverCertification;

@@ -22,6 +22,7 @@ import {
   translateMessageForThread,
   buildDisplayFields,
   markTranslationsPending,
+  senderLanguageFrom,
   type TranslationStatusValue,
 } from '../services/messageTranslation';
 import { nameVisibilitySet } from '../lib/publicIdentity';
@@ -320,19 +321,24 @@ router.patch('/messages/:messageId', asyncHandler(async (req, res) => {
 
   await markTranslationsPending(sc, messageId);
 
-  const { data: senderProfile } = await sc
+  const { data: senderProfile, error: senderProfileErr } = await sc
     .from('profiles')
     .select('preferred_language, preferred_message_language')
     .eq('id', user.id)
     .maybeSingle();
-  const senderLanguage = (senderProfile as any)?.preferred_language ?? (senderProfile as any)?.preferred_message_language ?? 'en';
+  // T344/T363 — the error is BOUND. supabase-js RESOLVES on a database
+  // failure, so the old `?? 'en'` turned an unreadable `profiles` into a
+  // durable stored claim that this sender had chosen English. One shared
+  // interpreter now decides what the read actually established.
+  const senderLanguage = senderLanguageFrom(senderProfile, senderProfileErr);
 
   translateMessageForThread(sc, {
     messageId,
     body: newBody,
     senderId: user.id,
     threadId: m.thread_id,
-    senderPreferredLanguage: senderLanguage,
+    senderPreferredLanguage: senderLanguage.preferredLanguage,
+    senderPreferenceUnreadable: senderLanguage.unreadable,
     logger: req.log,
   }).catch(() => {});
 }));

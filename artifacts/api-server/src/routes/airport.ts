@@ -76,7 +76,7 @@ import {
   type LayoverSession,
   LAYOVER_RETURNING_READERS_WIDENED,
 } from "../services/airport/LayoverSessionService.js";
-import { safetyLabel } from "../services/airport/LayoverSafetyEngine.js";
+import { safetyLabel, type TravelTimeSource } from "../services/airport/LayoverSafetyEngine.js";
 // Every feasibility number this file publishes comes from ONE call to
 // `certifySessionFeasibility` per request. `assess`, `computeWindow` and
 // `adviseLeaving` are deliberately NOT imported here any more: four handlers
@@ -87,7 +87,9 @@ import {
   certifySessionFeasibility,
   certificationHeader,
   type LayoverFeasibilityRecord,
-  type LandsideProbe,
+  // `LandsideProbe` is deliberately NOT imported any more: census L293c deleted
+  // the only probe this file built, and an import kept "for later" is how a
+  // fabricated literal finds its way back into a handler.
 } from "../services/airport/LayoverFeasibility.js";
 import {
   wallTimeToUtc,
@@ -842,29 +844,36 @@ router.get("/airport/sessions/:id/safety", async (req, res) => {
   const airport = await airportOr503(sc, res, session);
   if (!airport) return;
 
-  // The generic "leaving airport" probe. The 20-minute leg is a category
-  // constant, not a route from this airport, and the response says so
-  // (travelTimeSource) rather than letting the rating pose as measured —
-  // spec §2.1 "never fabricate freshness". It is now a NAMED INPUT of the
-  // certified record, so it is covered by the record's inputHash instead of
-  // being a literal only this handler knew about.
-  const probe: LandsideProbe = {
-    title:           "Leaving airport",
-    travelTimeMin:   20,
-    activityTimeMin: 30,
-    travelTimeSource: "category_default",
-  };
+  // NO PROBE (census-layover L293c). This handler used to invent a candidate —
+  // `travelTimeMin: 20, activityTimeMin: 30`, the same two numbers for every
+  // session at every airport on earth — purely so `assess` had something to
+  // score, and published that score as the session's OVERALL safety. §7 made
+  // the literal a named input of the certified record so it landed in the
+  // inputHash and carried `travelTimeSource: "category_default"`; the finding
+  // of L293 is that naming a fabrication and labelling its provenance does not
+  // stop it being one. A traveller reading "safe" here was reading the output
+  // of a twenty-minute journey nobody had ever measured, to a place that does
+  // not exist.
+  //
+  // The question this endpoint actually answers is about the WINDOW — "given my
+  // timings, can I go out at all?" — and `record.windowOnly` answers it with no
+  // journey in it, against the same certified deadline as everything else in
+  // this response. Its bands are `adviseLeaving`'s own, so `overallRating` and
+  // `advice.verdict` below cannot contradict each other.
   const record = certifySessionFeasibility(airport, session, {
     nowMs: Date.now(),
-    landsideProbe: probe,
   });
-  const a = record.landside!;
+  const a = record.windowOnly;
 
   res.json({
     featureEnabled:  true,
     overallRating:   a.rating,
     overallLabel:    safetyLabel(a.rating),
-    travelTimeSource: probe.travelTimeSource,
+    // There is no journey in this answer, so there is no figure whose
+    // provenance could be anything else. The field stays on the response
+    // because the client reads it; what it now reports is the truth — nobody
+    // measured a way out of this airport.
+    travelTimeSource: "unmeasured" as TravelTimeSource,
     availableMinutes: a.availableMinutes,
     usableMinutes:   record.envelope.usableMinutes,
     // One computation, one buffer, one deadline: both of these come out of

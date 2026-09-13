@@ -47,6 +47,7 @@ import {
   computeWindow,
   computeReturnDeadline,
   travelTimeSourceFor,
+  assessWindowOnly,
   TRAVEL_TIME_SOURCE_IS_ROUTED,
   type ActivityCandidate,
   type LayoverReasonCode,
@@ -56,6 +57,9 @@ import {
   type SafetyAssessment,
   type TravelTimeSource,
 } from "./LayoverSafetyEngine.js";
+// L47's classifier, reused for the same reason census L293 reuses it in the
+// engine: a landside 0 is an absence, not a free journey.
+import { statedTravelMin } from "./LayoverPlanFit.js";
 
 /**
  * Version of the RECORD SHAPE, separate from `LAYOVER_ENGINE_VERSION` (the
@@ -267,16 +271,25 @@ export type FeasibilitySession = Pick<LayoverSession,
 >;
 
 /**
- * The generic "can I go landside at all" probe. `GET /:id/safety` has always
- * asked this question with a 20-minute leg and a 30-minute activity that
- * describe no real place (census L293c); the numbers are unchanged, but they
- * are now a NAMED INPUT that lands in the record and in the hash, instead of a
- * literal buried in a route handler where nothing could see it.
+ * A named landside journey to certify alongside the window.
+ *
+ * `GET /:id/safety` used to build one of these out of thin air — a 20-minute
+ * leg and a 30-minute activity describing no real place, identical for every
+ * session at every airport — purely so `assess` had something to score, and
+ * published the score as the session's overall safety. §7 made the literal a
+ * NAMED INPUT so it landed in the record's `inputHash`; census L293c is the
+ * finding that naming a fabrication does not stop it being one, and the
+ * route no longer passes a probe at all (`assessWindowOnly` answers instead).
+ *
+ * The shape survives because a caller that genuinely HAS a journey — a real
+ * place with a real leg — should be able to certify it. Its terms are
+ * therefore `number | null`: a probe may state that nobody measured the
+ * journey, and `assess` then fails closed on it like any other candidate.
  */
 export interface LandsideProbe {
   title: string;
-  travelTimeMin: number;
-  activityTimeMin: number;
+  travelTimeMin: number | null;
+  activityTimeMin: number | null;
   travelTimeSource: TravelTimeSource;
 }
 
@@ -426,6 +439,18 @@ export interface LayoverFeasibilityRecord {
 
   /** The landside probe's assessment, when a probe was named. */
   landside: (SafetyAssessment & { probe: LandsideProbe }) | null;
+
+  /**
+   * The session's answer WITH NO JOURNEY IN IT — "given my window, can I go out
+   * at all?" — rated against the same certified deadline as everything above.
+   *
+   * It exists because `GET /:id/safety` must publish an overall rating and used
+   * to get one by inventing a candidate (census L293c). Computed here rather
+   * than in the route so it cannot be derived twice, at two instants, from two
+   * deadlines: that is the duplicate-buffer defect `9c26efba` closed, and a
+   * second derivation in a handler is exactly how it came back last time.
+   */
+  windowOnly: SafetyAssessment;
 }
 
 /**
@@ -438,14 +463,21 @@ export interface LayoverFeasibilityRecord {
  * that table for why. Today nothing on this tree is routed, so this is always
  * STATIC_DEFAULT / LOW / fallback 3.
  */
-function outboundTravelEstimate(probe: LandsideProbe): Estimate {
+function outboundTravelEstimate(probe: LandsideProbe): Estimate | null {
+  // NOTHING MEASURED, NOTHING ESTIMATED. A probe whose leg is unstated has no
+  // outbound travel estimate — not a zero-minute one, and not a LOW-confidence
+  // placeholder either. `estimates.outboundTravel` is already `Estimate | null`,
+  // and `worstConfidence` folds in only the estimates that exist, so an absence
+  // stays an absence all the way into the record's confidence.
+  const stated = statedTravelMin({ travelMin: probe.travelTimeMin, insideAirport: false });
+  if (stated === null) return null;
   const source = travelTimeSourceFor({
     insideAirport: false,
     travelTimeSource: probe.travelTimeSource,
   });
   const routed = TRAVEL_TIME_SOURCE_IS_ROUTED[source];
   return pointEstimate(
-    probe.travelTimeMin,
+    stated,
     routed ? "LIVE" : "STATIC_DEFAULT",
     routed ? "MEDIUM" : "LOW",
     routed ? 0 : 3,
@@ -535,6 +567,8 @@ export function certifyFeasibility(inputs: FeasibilityInputs): LayoverFeasibilit
   const landside = candidate
     ? { ...assess(airport, session, candidate, nowMs, deadline), probe: probe! }
     : null;
+  // Same deadline object, not a second derivation. See `windowOnly`.
+  const windowOnly = assessWindowOnly(airport, session, envelope, nowMs, deadline);
 
   const advice = adviseLeaving(airport, session, envelope, {
     travelTimeSource: probe?.travelTimeSource,
@@ -578,6 +612,7 @@ export function certifyFeasibility(inputs: FeasibilityInputs): LayoverFeasibilit
     reasonCodes: advice.reasonCodes,
     disclaimer: advice.disclaimer,
     landside,
+    windowOnly,
   };
 }
 

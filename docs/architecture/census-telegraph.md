@@ -4425,7 +4425,7 @@ to the content.
 
 | piece | where |
 | --- | --- |
-| The four lines | `artifacts/api-server/src/routes/messaging.ts:2253#mediaUrl: isDeleted ? null : ((m as any).media_url ?? null),` |
+| The four lines | `artifacts/api-server/src/routes/messaging.ts:2259#mediaUrl: isDeleted ? null : ((m as any).media_url ?? null),` |
 | The assertion that does not depend on knowing the field names | `artifacts/api-server/src/test/telegraphDeletedMediaRedaction.test.ts:201#it("the deleted asset appears NOWHERE in the serialized response", async () => {` |
 
 `mediaType` goes with the other three deliberately. "This was a video" is a fact
@@ -4478,12 +4478,12 @@ ratchet counts a SYNTAX, and the defect is a semantics.
 
 | piece | where |
 | --- | --- |
-| The three primary reads, now a refusal | `artifacts/api-server/src/routes/messaging.ts:1742#for (const [label, r] of [` |
-| The member-profile batch, now the refusal its own comment had claimed for months | `artifacts/api-server/src/routes/messaging.ts:1772#if (profileErr) {` |
-| The message-request list, which returned `sender: null` for everybody | `artifacts/api-server/src/routes/messaging.ts:781#if (profilesErr) {` |
-| Trip context: omitted, because `undefined` ("not known") and `null` ("this trip has no city") are different claims | `artifacts/api-server/src/routes/messaging.ts:1983#tripCity: tripCityDegraded ? undefined : tripCity,` |
-| The preview says `failed` only when it failed | `artifacts/api-server/src/routes/messaging.ts:1820#let previewTranslationsDegraded = false;` |
-| The thread read reports §18's own word for "we did not translate this", instead of inventing a monolingual thread | `artifacts/api-server/src/routes/messaging.ts:2106#status: 'failed' as TranslationStatusValue,` |
+| The three primary reads, now a refusal | `artifacts/api-server/src/routes/messaging.ts:1748#for (const [label, r] of [` |
+| The member-profile batch, now the refusal its own comment had claimed for months | `artifacts/api-server/src/routes/messaging.ts:1778#if (profileErr) {` |
+| The message-request list, which returned `sender: null` for everybody | `artifacts/api-server/src/routes/messaging.ts:782#if (profilesErr) {` |
+| Trip context: omitted, because `undefined` ("not known") and `null` ("this trip has no city") are different claims | `artifacts/api-server/src/routes/messaging.ts:1989#tripCity: tripCityDegraded ? undefined : tripCity,` |
+| The preview says `failed` only when it failed | `artifacts/api-server/src/routes/messaging.ts:1826#let previewTranslationsDegraded = false;` |
+| The thread read reports §18's own word for "we did not translate this", instead of inventing a monolingual thread | `artifacts/api-server/src/routes/messaging.ts:2112#status: 'failed' as TranslationStatusValue,` |
 | The whole thing, driven end to end against the real router | `artifacts/api-server/src/test/telegraphInboxFailsLoud.test.ts:160#describe("T344/T438 — an unreadable inbox is a REFUSAL, never an empty inbox", () => {` |
 
 Two more things the execution turned up, both recorded rather than quietly
@@ -4885,7 +4885,7 @@ four move to NEITHER (50 → 46). NEITHER becomes 93. The four groups still sum 
 | T37 | W | **C** | §5's Travel family: Trip, Trip stage, plan, event, route, reservation-safe derivative, layover plan. Was four of seven. `ROUTE` had a vocabulary entry and no loader; RESERVATION and LAYOVER_PLAN had no name at all, though `trip_reservations` and `layover_sessions` are both in the production inventory — the gap was in the vocabulary, not the database. The reservation loader is the one that carries a rule beyond "does this viewer see it": SAFE means the projection carries no confirmation reference, no pasted email and no extraction, asserted by scanning the whole serialized reference rather than named fields. Seven of seven. |
 | T38 | W | **C** | §5's Places family: place, Hidden Gem, map pin, neighborhood, meetup point. Was four of five; NEIGHBORHOOD "deliberately has no loader ... rather than pretending". What §11 refused to pretend about was an authorization model, and `neighborhood_areas` has none to get wrong: it is derived public reference data with no owner and no visibility column. It now resolves, carrying its `confidence` as status so a low-confidence grid cell and a high-confidence OSM polygon are not the same claim. Five of five. **The citation this row carries, `test/telegraphShare.test.ts:295`, still resolves and its `it(...)` is unchanged — but the assertion inside it was FALSIFIED by this pass and now names `VISA_CARD`, which is the family that is in the vocabulary with no loader today.** |
 | T3 | W | **C** | Pillar **Share** — "any eligible Portava object moves through a safe permission-aware share projection". The projection half was already right; the row stayed W because "Media (§5's fifth family) is not a shareable type at all". It is now: `MEDIA` is in the vocabulary and resolves through `media_assets` with the same contract as the other twenty-one types. All five families have loaders and all twenty-two types answer preview, current state, actions, deep link, search behaviour and revocation. **Stated so nobody over-reads this C: `media_assets.media_type` admits `image` and `video` only, so §6.2's voice, GIF and file kinds remain unshareable — they have no row shape in any migration, which is T40 and is NEITHER. "Any eligible object" is satisfied because an object that cannot be stored is not an eligible object; it is not satisfied in the sense that Telegraph can carry a voice note.** |
-| T290 | W | **C** | §24 `ConversationProjection` — "renderable ordered thread WITH CURRENT PERMISSIONS". §12's restatement left exactly one gap: "it still carries no permissions block, which is the half §24 names explicitly". `GET /threads/:threadId/messages` now answers one (`artifacts/api-server/src/routes/messaging.ts:2308#permissions:`), carrying §14.1's ten capabilities, their per-capability reasons, which of the eight inputs were read, and `degraded` when one of them could not be. The block is ASKED of `resolveConversationCapabilities` (`artifacts/api-server/src/routes/messaging.ts:2300#const resolvedCapabilities = await resolveConversationCapabilities(sc, {`) rather than re-derived, and the test compares it field-by-field against that resolver run directly on the same fixture (`artifacts/api-server/src/test/telegraphProjectionPermissions.test.ts:213#it("the projection's block EQUALS resolveConversationCapabilities on the same fixture", async () => {`) — a second implementation of §14.1 would pass a "has ten keys" test and fail that one, which is the failure mode being guarded. It gates nothing: `CAPABILITY_ENFORCEMENT_SITES` still names where each refusal happens. `PRJ-02`'s note is corrected in the same pass (`artifacts/api-server/src/domain/telegraph/projections/projectionRegistry.ts:58#id: "PRJ-02",`), which had said the block "does not exist" — stale since T207 went C. **Why this is C and not W on history bounding: T290's requirement is the projection; the §14.3 bound is T211's, is flag-gated, and §12's own restatement recorded it as gained. PRJ-02 stays `partial` for that reason and this row does not.** |
+| T290 | W | **C** | §24 `ConversationProjection` — "renderable ordered thread WITH CURRENT PERMISSIONS". §12's restatement left exactly one gap: "it still carries no permissions block, which is the half §24 names explicitly". `GET /threads/:threadId/messages` now answers one (`artifacts/api-server/src/routes/messaging.ts:2314#permissions:`), carrying §14.1's ten capabilities, their per-capability reasons, which of the eight inputs were read, and `degraded` when one of them could not be. The block is ASKED of `resolveConversationCapabilities` (`artifacts/api-server/src/routes/messaging.ts:2306#const resolvedCapabilities = await resolveConversationCapabilities(sc, {`) rather than re-derived, and the test compares it field-by-field against that resolver run directly on the same fixture (`artifacts/api-server/src/test/telegraphProjectionPermissions.test.ts:213#it("the projection's block EQUALS resolveConversationCapabilities on the same fixture", async () => {`) — a second implementation of §14.1 would pass a "has ten keys" test and fail that one, which is the failure mode being guarded. It gates nothing: `CAPABILITY_ENFORCEMENT_SITES` still names where each refusal happens. `PRJ-02`'s note is corrected in the same pass (`artifacts/api-server/src/domain/telegraph/projections/projectionRegistry.ts:58#id: "PRJ-02",`), which had said the block "does not exist" — stale since T207 went C. **Why this is C and not W on history bounding: T290's requirement is the projection; the §14.3 bound is T211's, is flag-gated, and §12's own restatement recorded it as gained. PRJ-02 stays `partial` for that reason and this row does not.** |
 
 ### 15.7 The restated headline
 
@@ -4937,7 +4937,13 @@ Named so the next lane does not re-derive them.
      `senderLanguage` defaults to `'en'` on a dropped error at four call sites,
      and the value flows into `translateMessageForThread`, which writes
      `messages.language_detection_source = 'sender_preference'`
-     (`artifacts/api-server/src/services/messageTranslation.ts:130#detectionSource = senderPreferredLanguage ? 'sender_preference' : 'default';`).
+     (`artifacts/api-server/src/services/messageTranslation.ts:268#detectionSource = 'sender_preference';`
+     — THE ONE CITATION IN THIS DOCUMENT WHOSE ANCHOR TEXT HAD TO CHANGE, and
+     §16 says why: the line this paragraph originally named,
+     `detectionSource = senderPreferredLanguage ? 'sender_preference' : 'default';`,
+     WAS the defect and no longer exists. The anchor now names the arm that
+     replaced it. The sentence above is left exactly as written, because it is
+     a true statement about the tree on the day it was written.)
      So a profiles outage does not merely degrade — it writes a durable,
      queryable assertion that the sender's stated preference was English, when
      no preference was read. The distinguishing mechanism ALREADY EXISTS one
@@ -4945,10 +4951,13 @@ Named so the next lane does not re-derive them.
      `routes/groupChat.ts:328` is a fifth instance of the same line.
    - **An unreadable `profiles` becomes a confident 404.** "Circle owner not
      found" is produced by a read whose error was discarded
-     (`artifacts/api-server/src/routes/messaging.ts:3275#const { data: ownerProfile } = await sc`).
+     (`artifacts/api-server/src/routes/messaging.ts:3309#const { data: ownerProfile, error: ownerProfileErr } = await sc`
+     — the SECOND citation in this document whose anchor text had to change,
+     for the same reason as the one above: the read named here was the defect,
+     and the line now binds the error it used to drop. §16.6.)
    - **A mention notification names "@someone"** when the tagger's profile read
      fails — indistinguishable from a tagger who has no handle
-     (`artifacts/api-server/src/routes/messaging.ts:2704#const { data: taggerProfile } = await sc`).
+     (`artifacts/api-server/src/routes/messaging.ts:2714#const { data: taggerProfile } = await sc`).
    - **The quoted reply context still degrades silently ON THE WIRE.** Both
      reads now log (§14), but a reply whose quote could not be read and a
      message that quoted nothing are the same JSON.
@@ -5010,3 +5019,228 @@ Named so the next lane does not re-derive them.
    `census-discovery.md`'s scope, so this section's edit ages that document — it
    was ALREADY stale on two other files before this lane touched it, and this
    makes three.
+
+## 16. §15.2's first bullet, executed — a durable false claim about why a message had the language it has
+
+§15.2 named seven sites in `routes/messaging.ts` and one in `routes/groupChat.ts`
+that the §15 lane read and did not fix, and asked the next lane to start from
+that list rather than a grep. This section is that lane. It closes the first of
+§15.2's bullets — the five language call sites and the pipeline that consumed
+them — and the second, the confident 404. **It moves no verdict**, and §16.4
+says why in terms of the rows rather than in terms of effort.
+
+### 16.1 What was wrong, restated from the code rather than from §15.2
+
+Five call sites — messaging.ts lines 1038, 2455, 3084 and 3176, and
+groupChat.ts line 328, as they stood on the day §15 was written, which is why
+they are spelled in words rather than as citations: those positions describe a
+tree that no longer exists — read the sender's profile for a language preference
+and threw the error away:
+
+```
+const { data: senderProfile } = await sc.from('profiles')
+  .select('preferred_language, preferred_message_language').eq('id', …).maybeSingle();
+const senderLanguage = (senderProfile as any)?.preferred_language
+  ?? (senderProfile as any)?.preferred_message_language ?? 'en';
+```
+
+supabase-js RESOLVES on a database error, so THREE DIFFERENT WORLDS arrived at
+the pipeline as the identical string `'en'`: the sender chose English, the
+sender chose nothing, and the read FAILED. `translateMessageForThread` then
+stamped the row.
+
+§15.2 said "the distinguishing mechanism ALREADY EXISTS one layer down
+(`'default'` is the other value); the route is feeding it a lie." **Executing it
+found that half of that sentence is wrong, and the correction is the reason this
+needed more than deleting five `?? 'en'`s.** The mechanism did not exist. It
+compiled, and it could not run:
+
+```
+sourceLanguage = senderPreferredLanguage ?? 'en';
+detectionSource = senderPreferredLanguage ? 'sender_preference' : 'default';
+```
+
+Every caller pre-coalesced, so the ternary was never handed a nullish value and
+`'default'` was DEAD CODE — reachable only via a stored empty-string preference,
+which no writer in this tree produces (`''` survives `?? 'en'` and is falsy, so
+that one path did reach it; nothing writes it). A reader auditing the column
+would have concluded the two cases were already told apart. They were not:
+**every row ever written by the fallback said `sender_preference`.**
+
+### 16.2 The vocabulary, and why it is four words and not three
+
+`messages.language_detection_source` is a durable, queryable assertion about how
+a message's language was decided, so each value has to be something the server
+actually knows:
+
+| value | what it claims |
+| --- | --- |
+| `provider` | the provider read the text and named a language |
+| `sender_preference` | the profile was read and carried a stated language |
+| `default` | the profile was read successfully and stated nothing |
+| `sender_preference_unreadable` | the profile could NOT be read |
+
+The fourth is new. Folding a failed read into `default` was the available
+cheaper option and it is the one this tree's own rule forbids: AN UNREADABLE X
+IS NOT AN EMPTY X — `preferences_unreadable` in `LayoverPrivacyGuard`,
+`plan_unreadable` in `LayoverReplanService`, `trip_unreadable` in
+`SafeReturnNotificationService`, `state: 'unreadable'` in
+`highlightResurfacing`. `default` is a POSITIVE statement — "we looked, and the
+sender has stated nothing" — and a `profiles` outage is not entitled to make it.
+The name follows the same `<thing>_unreadable` convention its siblings use.
+
+**No migration, and the absence was verified rather than assumed.**
+`language_detection_source` is a plain nullable `text` column with no CHECK
+constraint in `migrations/0009_translation.sql`, in
+`migrations/APPLY_THESE_IN_ORDER.sql`, or in
+`artifacts/api-server/baseline/20260819_baseline_structure.sql:7564#language_detection_source text,`. The
+trailing comment on 0009 still lists the original three values; it is a comment,
+not a constraint, and applied migrations are checksummed against the live ledger
+(`check:migration-ledger`), so it was deliberately left alone. The
+`LanguageDetectionSource` type is the vocabulary of record
+(`artifacts/api-server/src/services/messageTranslation.ts:63#export type LanguageDetectionSource =`).
+
+### 16.3 What changed, and what deliberately did not
+
+The five sites now BIND the error and hand the pipeline two things instead of
+one: the language the sender stated (`string | null`) and whether the read
+succeeded. One shared interpreter decides what the read established
+(`artifacts/api-server/src/services/messageTranslation.ts:107#export function senderLanguageFrom(`),
+because five copies of a coalesce is how one defect came to exist in five
+places. All three fallback arms are now reachable, and `'default'` is reachable
+for the first time.
+
+**The behaviour a user sees is unchanged.** A message is still translated and
+still gets an `original_language` in every branch; `'en'` is still the language
+used when nothing better is known. What changed is the CLAIM about where that
+language came from.
+
+Shown red before green, in
+`artifacts/api-server/src/test/messageLanguageProvenance.test.ts`: 4 pass / 13
+fail against the unfixed tree, 17 / 0 after, and 19 / 0 once the 404 below was
+closed in the same suite. The suite asserts that the three fallback worlds land
+on three DIFFERENT stored words — a single assertion that
+`sender_preference_unreadable` is spelled correctly would survive someone
+aliasing it back onto `default`.
+
+Then MUTATED BACK, one mutation at a time, each run, reverted, and the three
+source files compared byte-for-byte with `cmp`. **Nothing survived**, which is
+the claim a green suite cannot make on its own:
+
+| mutation | result |
+| --- | --- |
+| the whole fix reverted to `HEAD` | 5 / 14 |
+| `?? 'en'` re-introduced at the send-path call site | 17 / 2 |
+| the error binding dropped at the `groupChat` call site | 17 / 2 |
+| the `'default'` arm made unreachable again (service-side coalesce) | 11 / 8 |
+| `'sender_preference_unreadable'` folded back into `'default'` | 13 / 6 |
+| `senderPreferenceUnreadable` dropped from ONE call site | 17 / 2 |
+| `?? 'en'` at the one call site no route case here drives | 18 / 1 |
+| `senderLanguageFrom` ignoring the error it binds | 14 / 5 |
+| the circle-owner refusal deleted | 18 / 1 |
+
+The seventh row is the one that justifies the structural case existing: that
+site is reached by NOTHING else in the suite, and without it re-introducing the
+defect at one of the five would have been silent.
+
+### 16.4 T344, T363 and T438 do NOT move, and the reason is the denominator
+
+§15.2 measured **31** reads spelled `const { data: x } = await` in
+`routes/messaging.ts` and named seven consequences it had read. This section
+closed two of them: the five language call sites plus the pipeline that consumed
+them, and the confident 404. `GET /circles/:id/chat` now refuses retryably when
+the owner's profile CANNOT BE READ and still returns 404 when the owner is
+genuinely absent
+(`artifacts/api-server/src/routes/messaging.ts:3309#const { data: ownerProfile, error: ownerProfileErr } = await sc`).
+Consequences that remain open in the same file:
+
+- a mention notification that names `@someone`
+  (`artifacts/api-server/src/routes/messaging.ts:2714#const { data: taggerProfile } = await sc`),
+- quoted-reply context degrading silently ON THE WIRE,
+- and the remainder of the 31 that §15.2 did not individually read.
+
+The mention notification was left ALONE ON PURPOSE rather than by running out of
+room, and the reason is a trap worth writing down: that read uses `.single()`,
+which errors when NO ROW MATCHES as well as when the table is unreadable. Simply
+binding its error would make a tagger with no profile row indistinguishable from
+a `profiles` outage — the same conflation this section exists to remove, moved
+one step along. Fixing it honestly means moving to `.maybeSingle()` and deciding
+what a mention notification should say when the tagger cannot be named at all,
+which is a product question this lane has no evidence to answer.
+
+T344 asks that no schema/permission failure become a plausible empty
+inbox/context; T363 says the same about plausible empty STATE; T438's emphasized
+half says the same about inboxes. A row that is W because a class is unfinished
+does not become C when one member of the class is finished, and claiming
+otherwise is the exact failure mode `check:census-integrity` exists to make
+harder. **They stay W.** What has changed is that the list the next lane starts
+from is four items long instead of five.
+
+There is also a consequence of this class INSIDE the fix's own file that is left
+open and is named here rather than discovered later: step 3 of
+`translateMessageForThread` reads the RECIPIENTS' profiles with the same dropped
+error, so an unreadable `profiles` silently gives every recipient
+`preferredLanguage: 'en'`
+(`artifacts/api-server/src/services/messageTranslation.ts:294#const { data: profiles } = await sc`).
+That is a degraded translation rather than a false stored claim — it writes
+`status: 'skipped'`, which is true of what happened — so it is a smaller defect
+than the one fixed here, but it is the same shape and it is not fixed.
+
+### 16.5 Headline, restated from the tool
+
+`pnpm -s check:census-integrity` recomputes the per-census counts from the
+tables rather than from any prose, and after this section telegraph reads:
+
+```
+census                        rows     C     W     N    X   denom  unreconciled
+telegraph                      439   220   167    49    3     451  12 counted where this tool cannot read
+```
+
+Unchanged by this section, which is the correct outcome for work that moves no
+verdict.
+
+### 16.6 Citations repointed: fifteen, and one of them is different
+
+Adding one import and six error bindings to `routes/messaging.ts` shifted every
+anchored citation below them. **Fourteen** were repointed by matching the EXACT
+ORIGINAL LINE TEXT from `HEAD` and finding where that identical line now sits —
+never by applying an offset, and each resolved to exactly one line. Eleven in
+§14 and §15 of this document, two in census-compass, one in census-trust. No
+anchor text and no prose changed in any of the fourteen.
+
+**Two could not be repointed that way and are flagged in place.** The second is
+§15.2's circle-owner citation, which pointed at line 3296 of `messaging.ts`
+anchored on `const { data: ownerProfile } = await sc`. That line now reads
+`const { data: ownerProfile, error: ownerProfileErr } = await sc`, because the
+missing binding WAS the defect. The first:
+§15.2's other citation pointed at line 130 of `messageTranslation.ts`, anchored on
+`detectionSource = senderPreferredLanguage ? 'sender_preference' : 'default';`
+— the line that WAS the defect. (That pair is written out in words here rather
+than in citation form on purpose: spelled as a citation it would be a live
+claim about where a deleted line sits, and `check:doc-citations` would be right
+to fail it.) It does not exist anywhere in the tree now, so there is no original
+line text to find. Its anchor was changed to name the arm that replaced it, with
+the original text quoted inline so the record of what was there is not lost, and
+§15.2's sentence was left exactly as written: it was true of the tree on the day
+it was written, and this section is where it stops being true.
+
+### 16.7 What this section did not run
+
+`npm test` was not run — the machine is shared and another lane holds it. What
+ran, individually and green: `messageLanguageProvenance` (19), `messaging` (22),
+`groupChat` (39), `telegraphInboxFailsLoud` (12), `telegraphChat` (48),
+`telegraphRlsAuthorizationMatrix` (38), `telegraphAdversarialFixtures` (27),
+`telegraphLifecycle` (34), `accessControl` (33), `adminPhase12` (31),
+`retranslateGate` (6), `commentTranslationInvalidation` (4),
+`contentTranslationInvalidation` (16), `messagingThreadDedupe` (12),
+`messagingPermissionsHardening` (19) and `messagingOffApp` (11) — every suite
+that drives a route this section edited, plus every suite that imports
+`messageTranslation.ts`. **A green partial run is not a green run and this
+section does not claim one.**
+
+`check:doc-citations`, `check:census-freshness` and `check:test-registration`
+are red on another lane's in-flight work — `routes/airport.ts`,
+`services/airport/*` and two unregistered `layover*`/`media*` test files. Every
+failing citation is into census-layover and census-sensing; none is into a file
+this section edited, and the UNANCHORED ratchet is back at exactly its ceiling
+of 6443, which was verified after every change.

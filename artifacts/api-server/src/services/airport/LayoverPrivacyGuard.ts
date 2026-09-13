@@ -46,10 +46,12 @@ export interface RawRecommendation {
   title: string;
   description?: string | null;
   safetyRating: string;
-  travelTimeMin: number;
+  /** Null when nobody measured the landside leg (census L293). */
+  travelTimeMin: number | null;
   /** Provenance of travelTimeMin. Absent = not measured (travelTimeSourceFor). */
   travelTimeSource?: TravelTimeSource | null;
-  activityTimeMin: number;
+  /** Null when nobody stated a duration. */
+  activityTimeMin: number | null;
   returnBufferMin: number;
   hardReturnTime?: Date | string | null;
   warningReason?: string | null;
@@ -74,14 +76,24 @@ export interface SafeRecommendation {
   description: string | null;
   safetyRating: string;
   safetyLabel: string;
-  travelTimeMin: number;
   /**
-   * How travelTimeMin was obtained. "category_default" means a per-category
-   * constant, not a route — the client must not present it as measured.
-   * Always populated; never "measured" on this tree (no producer exists).
+   * One-way minutes to the place, or NULL when nobody has measured the journey
+   * (census L293). `null` is not 0 and must never be rendered as one: it is the
+   * value every landside card on this tree carries, because the only configured
+   * travel-time provider is `noRoutedProvider`. A client shows "travel time
+   * unknown", not "0m away".
+   */
+  travelTimeMin: number | null;
+  /**
+   * How travelTimeMin was obtained. "unmeasured" means there is no figure at
+   * all; "category_default" means a per-category constant, not a route, and
+   * survives only on rows written before L293 was closed. The client must not
+   * present either as measured. Always populated; never "measured" on this
+   * tree (no routed provider is configured).
    */
   travelTimeSource: TravelTimeSource;
-  activityTimeMin: number;
+  /** Minutes at the destination, or NULL when nobody stated a duration. */
+  activityTimeMin: number | null;
   returnBufferMin: number;
   hardReturnTime: string | null;
   warningReason: string | null;
@@ -98,7 +110,12 @@ export interface SafeRecommendation {
   sortOrder: number;
 }
 
-import { safetyLabel, travelTimeSourceFor, type TravelTimeSource } from "./LayoverSafetyEngine.js";
+import {
+  safetyLabel,
+  travelTimeSourceFor,
+  persistedTravelTimeSource,
+  type TravelTimeSource,
+} from "./LayoverSafetyEngine.js";
 
 export function sanitizeRecommendation(rec: RawRecommendation): SafeRecommendation {
   const isMeetup = rec.recType === "meetup";
@@ -120,7 +137,15 @@ export function sanitizeRecommendation(rec: RawRecommendation): SafeRecommendati
     safetyRating:         rec.safetyRating,
     safetyLabel:          safetyLabel(rec.safetyRating as any),
     travelTimeMin:        rec.travelTimeMin,
-    travelTimeSource:     travelTimeSourceFor(rec),
+    // `travelTimeSourceFor` is still the fail-closed resolver for an explicit
+    // source; what changed with census L293 is the DEFAULT it falls back to. It
+    // used to be "category_default" for anything landside, which is now a claim
+    // about a constant nothing produces. The fallback is the row's own facts
+    // instead: a landside figure that is absent reads "unmeasured".
+    travelTimeSource:     travelTimeSourceFor({
+      insideAirport:    rec.insideAirport,
+      travelTimeSource: rec.travelTimeSource ?? persistedTravelTimeSource(rec),
+    }),
     activityTimeMin:      rec.activityTimeMin,
     returnBufferMin:      rec.returnBufferMin,
     hardReturnTime:       hardReturnStr,

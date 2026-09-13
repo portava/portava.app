@@ -407,6 +407,28 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     // that cites a test three times while not watching it cannot notice the
     // test changing under the verdict. The floor is NOT raised with it.
     "artifacts/api-server/src/test/layoverPlanFitUnknownLegs.test.ts",
+    // WIDENED 2026-09-13 (§16), same argument a third time: L293's move rests
+    // entirely on this file's assertions, and §16 cites it as the evidence that
+    // the three fabricated numbers are gone and that `assess` fails closed
+    // without them. The floor is NOT raised with it.
+    "artifacts/api-server/src/test/layoverUnmeasuredJourney.test.ts",
+    // WIDENED 2026-09-13 (§16). Two files this census now GRADES and did not
+    // watch. `layoverLiveIntersection.ts` carries §11's friction into the cards
+    // L293 changed — a live queue may lengthen a stated duration and may not
+    // conjure one out of an absence — and census-sensing watching it does not
+    // make THIS census notice it moving under L293's row. `TravelTimeProvider.ts`
+    // is the port whose only answer, NO_ROUTED_PROVIDER, is the reason every
+    // landside leg is `unmeasured`: if a routed provider is ever wired there,
+    // L293's verdict and L9's remaining half both change and this census must
+    // find out. The floor is NOT raised with either.
+    "artifacts/api-server/src/lib/layoverLiveIntersection.ts",
+    "artifacts/api-server/src/domain/trips/contracts/TravelTimeProvider.ts",
+    // And the reader those cards' live pass goes through. L81 and L276 are both
+    // scored on `grep -rn liveClaimRead services/airport/`, and §11's note at
+    // census-layover.md:1990 rests on ITS gates being the thing that closes the
+    // read. A census whose two `N` verdicts are a grep against a file it does
+    // not watch cannot notice the grep starting to return something.
+    "artifacts/api-server/src/lib/liveClaimRead.ts",
     "artifacts/api-server/src/services/airport/",
     "artifacts/api-server/src/routes/airport.ts",
     "travel-buddy-standalone/src/services/layover.ts",

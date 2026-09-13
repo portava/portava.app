@@ -11,6 +11,16 @@
 import type { AirportProfile } from "./AirportProfileService.js";
 import type { LayoverSession } from "./LayoverSessionService.js";
 import { localHour, localDayString } from "./AirportTime.js";
+// census L293 is L47's defect on the other surface, so it is closed with L47's
+// module rather than a second copy of its rule. `statedTravelMin` is where
+// "airside 0 is a FACT, landside 0 is an ABSENCE" is decided, once, for both
+// `layover_plan_stops.travel_min` and `layover_recommendations.travel_time_min`
+// — two INTEGER NOT NULL DEFAULT 0 columns that cannot say "nobody measured".
+// Aliased on import because this module publishes fields of the same names.
+import {
+  statedTravelMin as statedLegMin,
+  statedDurationMin as statedDwellMin,
+} from "./LayoverPlanFit.js";
 
 export type SafetyRating =
   | "safe"
@@ -106,18 +116,31 @@ export const RETURN_SOON_LEAD_MIN = 30;
  *
  *   inside_airport    no landside travel — the candidate is airside, 0 minutes
  *                     by construction, not by estimate.
+ *   unmeasured        THERE IS NO FIGURE. Nobody has measured this leg and no
+ *                     routed provider answered for it, so the candidate's
+ *                     `travelTimeMin` is `null`. This is what every landside
+ *                     card on this tree now carries (census L293): the three
+ *                     category constants that used to stand here — 15/25 from
+ *                     `estimateTravelTime`, the city-escape card's 30 and the
+ *                     safety route's 20 — are deleted, not relabelled. A
+ *                     traveller is told the journey is unknown rather than told
+ *                     a number that was chosen without a coordinate.
  *   category_default  a per-category constant chosen without reading a
- *                     coordinate (LayoverRecommendationService.estimateTravelTime
- *                     — 15 or 25 min; the city-escape card's 30; the safety
- *                     route's 20). This is every landside number on this tree.
+ *                     coordinate. NOTHING PRODUCES ONE any more; the value
+ *                     survives because rows written before L293 was closed
+ *                     still hold such a number, and reporting those as
+ *                     `unmeasured` would be a second fabrication in the other
+ *                     direction. See `persistedTravelTimeSource`.
  *   measured          derived from a real route/distance for THIS place from
- *                     THIS airport. Declared so a client can distinguish it;
- *                     NO PRODUCER EXISTS on this tree (pinned by
+ *                     THIS airport — i.e. from a `TravelTimeProvider` whose
+ *                     `routed` flag is true. Declared so a client can
+ *                     distinguish it; the only configured provider on this tree
+ *                     is `noRoutedProvider`, so nothing produces it (pinned by
  *                     src/test/layoverTravelTimeProvenance.test.ts). When one is
  *                     built, persist the source on the row — see
  *                     `travelTimeSourceFor` for why the read path cannot infer it.
  */
-export const TRAVEL_TIME_SOURCES = ["inside_airport", "category_default", "measured"] as const;
+export const TRAVEL_TIME_SOURCES = ["inside_airport", "category_default", "measured", "unmeasured"] as const;
 export type TravelTimeSource = (typeof TRAVEL_TIME_SOURCES)[number];
 
 /**
@@ -137,6 +160,10 @@ export const TRAVEL_TIME_SOURCE_IS_ROUTED: Record<TravelTimeSource, boolean> = {
   inside_airport:   false,
   category_default: false,
   measured:         true,
+  // Not routed, and not a figure at all. Kept in the table rather than special-
+  // cased at the call sites, so "is this a route?" is still one question with
+  // one answer for every member of the vocabulary.
+  unmeasured:       false,
 };
 
 /**
@@ -159,6 +186,36 @@ export function travelTimeSourceFor(c: {
     return c.travelTimeSource;
   }
   return c.insideAirport ? "inside_airport" : "category_default";
+}
+
+/**
+ * Provenance of a PERSISTED row's travel figure, resolved from the row itself.
+ *
+ * `layover_recommendations.travel_time_min` is `INTEGER NOT NULL DEFAULT 0`
+ * (migration 0127), so — exactly like `layover_plan_stops.travel_min` in L47 —
+ * the column cannot hold "nobody measured this". The row's own
+ * `inside_airport` is what tells the two apart, and `statedTravelMin` is where
+ * that rule lives:
+ *
+ *   inside_airport, 0   0 minutes of landside travel, BY CONSTRUCTION. A fact.
+ *   landside, 0         nobody stated a journey. An ABSENCE -> "unmeasured".
+ *   landside, > 0       a number is stored. Nothing produces one any more, so
+ *                       it was written before L293 was closed -> the honest
+ *                       label for it is still "category_default". Calling it
+ *                       "unmeasured" would deny a figure the row visibly holds;
+ *                       calling it "measured" would be the original defect.
+ *
+ * This remains exact only while nothing produces "measured" — see
+ * `travelTimeSourceFor` for why, and `layoverTravelTimeProvenance.test.ts` for
+ * the tripwire that holds it.
+ */
+export function persistedTravelTimeSource(row: {
+  insideAirport: boolean;
+  travelTimeMin: number | null | undefined;
+}): TravelTimeSource {
+  if (row.insideAirport) return "inside_airport";
+  const stated = statedLegMin({ travelMin: row.travelTimeMin, insideAirport: false });
+  return stated === null ? "unmeasured" : "category_default";
 }
 
 /**
@@ -238,8 +295,20 @@ export function liveExtraMinutes(live?: LiveConditions | null): number {
 
 export interface ActivityCandidate {
   title: string;
-  travelTimeMin: number;       // one-way travel time in minutes
-  activityTimeMin: number;     // time needed at the destination
+  /**
+   * One-way travel time in minutes, or `null` when NOBODY HAS MEASURED IT
+   * (census L293). `null` is not a zero and is not a default: it is the value
+   * every landside candidate on this tree carries, because the only configured
+   * `TravelTimeProvider` is `noRoutedProvider` and it answers
+   * `NO_ROUTED_PROVIDER` for every pair of points.
+   *
+   * A landside 0 is read the same way — see `statedTravelMin` — so a caller
+   * cannot slip an absence past this type by spelling it `0`. Airside 0 stays
+   * a fact.
+   */
+  travelTimeMin: number | null;
+  /** Time needed at the destination, or `null` when nobody has stated one. */
+  activityTimeMin: number | null;
   insideAirport: boolean;
   verified?: boolean;
   /** Provenance of `travelTimeMin`. Absent = not measured (see travelTimeSourceFor). */
@@ -249,10 +318,29 @@ export interface ActivityCandidate {
 export interface SafetyAssessment {
   rating: SafetyRating;
   availableMinutes: number;
-  requiredMinutes: number;     // total time needed (travel×2 + activity + buffer)
+  /**
+   * Total time needed: travel×2 + activity + buffer.
+   *
+   * A LOWER BOUND whenever `requiredMinutesIsLowerBound` is true — the terms
+   * nobody stated are omitted rather than guessed, exactly as `planFitTotals`
+   * omits an unstated leg. A lower bound can REFUSE ("even this overflows") and
+   * can never CERTIFY.
+   */
+  requiredMinutes: number;
   returnBufferMin: number;     // computed buffer
   hardReturnTime: Date;        // absolute time user must leave by
   usableMinutes: number;       // availableMinutes - returnBufferMin
+  /**
+   * The one-way landside leg AS A STATED FIGURE: 0 for an airside candidate (a
+   * fact), a positive number when one was stated, `null` when nobody measured
+   * it. This is the value the arithmetic above actually used, published so a
+   * caller never has to re-derive it from the candidate.
+   */
+  statedTravelMin: number | null;
+  /** The dwell as a stated figure, or `null` when nobody stated one. */
+  statedActivityMin: number | null;
+  /** TRUE when `requiredMinutes` omits a term, so the real total is larger. */
+  requiredMinutesIsLowerBound: boolean;
   warningReason: string | null;
   breakdown: {
     baseBuffer:       number;
@@ -427,7 +515,43 @@ export function computeReturnDeadline(
 }
 
 /**
+ * The sentence a traveller is shown when the journey behind a card was never
+ * measured. Exported so the test can assert on the exact words, and so no
+ * caller re-spells it.
+ *
+ * It names the REAL cause. The refusal it accompanies is `not_recommended`,
+ * whose stock label is "too little time to return safely" — an arithmetic claim
+ * this engine has no right to make about a leg it never measured. The warning
+ * is therefore the load-bearing half of the answer, not decoration.
+ */
+export const UNMEASURED_TRAVEL_WARNING =
+  "We have not measured how long it takes to get there from this airport, so we cannot tell you it is safe to go.";
+
+/** The same, for a card whose time-at-the-destination nobody stated. */
+export const UNSTATED_ACTIVITY_WARNING =
+  "Nobody has said how long this takes, so we cannot tell you it fits your layover.";
+
+/**
  * Assess a single activity against the current session state.
+ *
+ * ── IT FAILS CLOSED ON A TERM NOBODY STATED (census L293) ───────────────────
+ * `travelTimeMin: null` — or a landside `0`, which is the same absence wearing
+ * the only value an `INTEGER NOT NULL` column can hold — means nobody measured
+ * the journey. The old code multiplied a fabricated 15, 25, 20 or 30 by two and
+ * returned `"safe"`; a traveller read that and left an airport.
+ *
+ * The rule now has L47's shape. `requiredMinutes` counts only the terms that
+ * were stated, which makes it a LOWER BOUND, and a lower bound is allowed to do
+ * exactly one thing: refuse. So:
+ *
+ *   - if even the lower bound overflows the usable window, the refusal is
+ *     CERTAIN and keeps its arithmetic reason;
+ *   - otherwise, with any term unstated, the answer is still a refusal
+ *     (`not_recommended`) but the reason is the missing measurement. Never
+ *     "safe", never "possible_but_risky" — those are certifications, and
+ *     nothing here has been measured well enough to certify.
+ *
+ * Airside is untouched: its 0 is a fact, not an estimate.
  */
 export function assess(
   airport: EngineAirport,
@@ -459,37 +583,59 @@ export function assess(
   const bufferMin      = breakdown.totalBuffer;
   const usableMin      = Math.max(0, availableMin - bufferMin);
 
-  // Inside airport: no travel time, always include buffer
-  const tripTimeMin    = candidate.insideAirport
-    ? 0
-    : candidate.travelTimeMin * 2; // round trip
+  // The two terms, as FACTS or as absences. `statedLegMin` is L47's own rule:
+  // airside 0 is a fact, landside 0 is the absence of a journey.
+  const statedTravel   = statedLegMin({ travelMin: candidate.travelTimeMin, insideAirport: candidate.insideAirport });
+  const statedActivity = statedDwellMin({ durationMin: candidate.activityTimeMin });
+  const lowerBound     = statedTravel === null || statedActivity === null;
 
-  const requiredMin    = tripTimeMin + candidate.activityTimeMin + bufferMin;
+  // Round trip. Airside is 0 by construction; landside is twice the OUTBOUND
+  // leg, and only when that leg was stated.
+  const tripTimeMin    = candidate.insideAirport ? 0 : (statedTravel ?? 0) * 2;
+
+  // Only the stated terms are counted, so this is a lower bound whenever
+  // `lowerBound` is true. Nothing is substituted for what is missing.
+  const requiredMin    = tripTimeMin + (statedActivity ?? 0) + bufferMin;
+  const outAndBackMin  = tripTimeMin + (statedActivity ?? 0);
 
   let rating: SafetyRating;
   let warningReason: string | null = null;
 
   if (candidate.insideAirport) {
-    // Inside airport is always safe unless the layover itself is too short
-    if (availableMin < candidate.activityTimeMin + 15) {
+    if (statedActivity === null) {
+      // An airside card whose dwell nobody stated. Its 0 travel is still a
+      // fact, but "safe" would be a claim about a length no one gave.
+      rating = "not_recommended";
+      warningReason = UNSTATED_ACTIVITY_WARNING;
+    } else if (availableMin < statedActivity + 15) {
+      // Inside airport is always safe unless the layover itself is too short
       rating = "possible_but_risky";
       warningReason = "Your layover is very short — plan for a quick visit.";
     } else {
       rating = "safe";
     }
   } else if (!session.wantsToLeave) {
+    // Not a time claim, so an unstated leg does not change it: the traveller
+    // said they are staying airside, and that answer is theirs.
     rating = "airport_only";
     warningReason = "You indicated you'd prefer to stay at the airport.";
   } else if (usableMin <= 0) {
     rating = "not_recommended";
     warningReason = "Not enough time after your required return buffer.";
-  } else if (usableMin < tripTimeMin + candidate.activityTimeMin) {
+  } else if (usableMin < outAndBackMin) {
+    // CERTAIN refusal: even the lower bound overflows, so no measurement of the
+    // missing terms could rescue it. The arithmetic reason is the true one.
     rating = "not_recommended";
-    warningReason = `You'd need ${tripTimeMin + candidate.activityTimeMin} min but only have ${usableMin} min usable.`;
-  } else if (usableMin - tripTimeMin - candidate.activityTimeMin < 20) {
+    warningReason = `You'd need ${outAndBackMin} min but only have ${usableMin} min usable.`;
+  } else if (lowerBound) {
+    // It MIGHT fit. Nobody has measured it, and "possible but risky" would be a
+    // certification of a risk this engine cannot size. Refuse, and say why.
+    rating = "not_recommended";
+    warningReason = statedTravel === null ? UNMEASURED_TRAVEL_WARNING : UNSTATED_ACTIVITY_WARNING;
+  } else if (usableMin - outAndBackMin < 20) {
     rating = "possible_but_risky";
     warningReason = "Your return buffer is tight — any delay could cause you to miss your flight.";
-  } else if (!candidate.verified && candidate.travelTimeMin > 30) {
+  } else if (!candidate.verified && (statedTravel ?? 0) > 30) {
     rating = "possible_but_risky";
     warningReason = "Unverified place far from airport — allow extra time.";
   } else {
@@ -503,6 +649,80 @@ export function assess(
     returnBufferMin: bufferMin,
     hardReturnTime,
     usableMinutes: usableMin,
+    statedTravelMin: statedTravel,
+    statedActivityMin: statedActivity,
+    requiredMinutesIsLowerBound: lowerBound,
+    warningReason,
+    breakdown,
+  };
+}
+
+/**
+ * The session's own answer, WITH NO JOURNEY IN IT (census L293c).
+ *
+ * `GET /:id/safety` used to invent a candidate — `travelTimeMin: 20,
+ * activityTimeMin: 30`, the same two numbers for every session at every airport
+ * — purely so `assess` had something to score, and published that score as the
+ * session's overall safety. There is no place and no journey behind that
+ * question: what the traveller is asking is "given my window, can I go out at
+ * all?", and the window alone answers it.
+ *
+ * So this rates the WINDOW. `requiredMinutes` is the buffer and nothing else,
+ * `statedTravelMin` / `statedActivityMin` are null because no leg was named,
+ * and `requiredMinutesIsLowerBound` is true because any real outing costs more
+ * than the buffer.
+ *
+ * THE BANDS ARE `adviseLeaving`'S, NOT NEW ONES, AND SO IS THE NUMBER THEY READ.
+ * 90 / 45 are the same thresholds that produce `yes` / `tight` / `no`, and they
+ * are applied to `window.usableMinutes` — the ENVELOPE's figure, which starts
+ * the clock at the later of `now` and the earliest realistic landside exit.
+ * `assess`'s own `availableMinutes − buffer` is a different and more optimistic
+ * number (it charges nothing for immigration and bags), and rating against it
+ * while the same response published the envelope's is how `overallRating` and
+ * `advice.verdict` came to disagree — caught by this pass's own regression
+ * test, with `verdict: "no"` sitting next to `possible_but_risky` at 20 usable
+ * minutes. The window is therefore a REQUIRED argument: there is no default
+ * that could be right, and computing a second one here would put the two back.
+ */
+export function assessWindowOnly(
+  airport: EngineAirport,
+  session: EngineSession,
+  /** The certified envelope this answer is about. `computeWindow`'s output. */
+  window: LayoverWindow,
+  nowMs = Date.now(),
+  certified?: ReturnDeadline,
+  live?: LiveConditions | null,
+): SafetyAssessment {
+  const { cutoffMs, breakdown, hardReturnTime } = certified ?? computeReturnDeadline(airport, session, live);
+  const availableMin = Math.max(0, Math.round((cutoffMs - nowMs) / 60000));
+  const bufferMin    = breakdown.totalBuffer;
+  const usableMin    = window.usableMinutes;
+
+  let rating: SafetyRating;
+  let warningReason: string | null = null;
+  if (!session.wantsToLeave) {
+    rating = "airport_only";
+    warningReason = "You indicated you'd prefer to stay at the airport.";
+  } else if (usableMin >= 90) {
+    rating = "safe";
+  } else if (usableMin >= 45) {
+    rating = "possible_but_risky";
+    warningReason = `Only ~${usableMin} min usable — a very short trip right by the airport at most.`;
+  } else {
+    rating = "not_recommended";
+    warningReason = `After the required buffers you'd have ~${usableMin} min — not enough to leave and return safely.`;
+  }
+
+  return {
+    rating,
+    availableMinutes: availableMin,
+    requiredMinutes: bufferMin,
+    returnBufferMin: bufferMin,
+    hardReturnTime,
+    usableMinutes: usableMin,
+    statedTravelMin: null,
+    statedActivityMin: null,
+    requiredMinutesIsLowerBound: true,
     warningReason,
     breakdown,
   };
@@ -558,7 +778,15 @@ export function rankActivities<T extends ActivityCandidate>(
     .sort((a, b) => {
       const rDiff = RATING_ORDER[a.assessment.rating] - RATING_ORDER[b.assessment.rating];
       if (rDiff !== 0) return rDiff;
-      return a.travelTimeMin - b.travelTimeMin;
+      // "within a rating, shorter travel time wins" — but a leg nobody measured
+      // is not a short one. `a.travelTimeMin - b.travelTimeMin` was NaN for a
+      // null, and a NaN comparator silently leaves the array in whatever order
+      // the engine's sort happened to produce. Unstated legs sort last, which
+      // is the same direction every other decision here fails.
+      const at = a.assessment.statedTravelMin ?? Number.POSITIVE_INFINITY;
+      const bt = b.assessment.statedTravelMin ?? Number.POSITIVE_INFINITY;
+      if (at === bt) return 0;
+      return at < bt ? -1 : 1;
     });
 }
 
@@ -756,9 +984,16 @@ export interface LeaveAdviceFacts {
 /**
  * The `unknowns` line for a travel time that was not measured. Exported so the
  * test can assert on the exact sentence the traveller sees.
+ *
+ * REWORDED WITH L293. It used to say the times "are category estimates", which
+ * was true while `estimateTravelTime` existed and is now false in the
+ * traveller's favour: there are no estimates at all. The sentence has to cover
+ * both what this tree produces today (nothing — `unmeasured`) and what rows
+ * written before L293 still hold (`category_default`), and "has not been
+ * measured" is the claim both share.
  */
 export const TRAVEL_TIME_UNMEASURED_UNKNOWN =
-  "Travel times to places outside the airport are category estimates, not measured routes from this airport";
+  "How long it takes to reach places outside this airport has not been measured — no routed travel time exists for this airport";
 
 /** "Can I Leave the Airport?" decision, phrased as guidance. */
 export function adviseLeaving(
@@ -771,10 +1006,11 @@ export function adviseLeaving(
   const unknowns: string[] = [
     "Visa or transit-permit requirements for your nationality",
   ];
-  // Landside travel times: on this tree every one is a category constant
-  // (TravelTimeSource "category_default"). Say so wherever the traveller might
-  // act on it — i.e. whenever they intend to leave — and stop saying so only
-  // when the caller asserts the figures were measured. Absent facts fail closed.
+  // Landside travel times: on this tree there are none (TravelTimeSource
+  // "unmeasured"), and rows written before census L293 hold a category constant
+  // ("category_default"). Say so wherever the traveller might act on it — i.e.
+  // whenever they intend to leave — and stop saying so only when the caller
+  // asserts the figures were measured. Absent facts fail closed.
   if (session.wantsToLeave && travelTimeSourceFor({ insideAirport: false, travelTimeSource: facts.travelTimeSource }) !== "measured") {
     unknowns.push(TRAVEL_TIME_UNMEASURED_UNKNOWN);
   }

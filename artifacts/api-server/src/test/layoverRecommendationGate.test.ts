@@ -200,15 +200,37 @@ describe("§9.1 ordering — safety is the primary key, preference is the tiebre
         `card ${i} ("${got[i].title}", ${got[i].safetyRating}) outranks "${got[i - 1].title}" (${got[i - 1].safetyRating})`);
     }
 
-    // The discriminating pair: the VERIFIED attraction leads the preference
-    // sort and does not fit; the unverified cafe does. Safety must win.
+    // ── THIS ASSERTION USED TO ENCODE census-layover L293 (changed with it) ──
+    // It read:
+    //     assert.equal(got[market].safetyRating, "not_recommended");
+    //     assert.equal(got[cafe].safetyRating,   "safe");
+    //     assert.ok(cafe < market, "the card that fits must come before …");
+    // The cafe was "safe" for exactly one reason: `estimateTravelTime("cafe")`
+    // returned 15 and `estimateActivityTime("cafe")` returned 30, so `assess`
+    // had 2·15 + 30 = 60 minutes to fit into a 105-minute window. Neither
+    // number described the cafe. The discriminating pair was discriminating on
+    // a fabrication, and asserting it was asserting the defect.
+    //
+    // Both journeys are now unmeasured, so both fail closed — which is the
+    // honest answer for a producer that has no routed provider. The ordering
+    // claim this case makes (safety is the primary key) survives above, on the
+    // whole returned list; the RATING KEY itself is pinned on `rankActivities`
+    // by "the RATING key decides even when the travel-time key disagrees with
+    // it", with hand-built candidates — which that case's own comment already
+    // said was the only place it could be pinned.
     const market = got.findIndex((r) => r.title === "Night Market");
     const cafe = got.findIndex((r) => r.title === "Riverside Cafe");
     assert.ok(market >= 0 && cafe >= 0, "both landside fixtures should be present");
     assert.equal(got[market].safetyRating, "not_recommended");
-    assert.equal(got[cafe].safetyRating, "safe");
-    assert.ok(cafe < market,
-      "the card that fits must come before the verified card that does not — this is the whole of L184");
+    assert.equal(got[cafe].safetyRating, "not_recommended",
+      "a journey nobody measured cannot be rated safe, however wide the window");
+    assert.equal(got[market].travelTimeMin, null);
+    assert.equal(got[cafe].travelTimeMin, null);
+    // Both are below every airside card, which is what "safety is the primary
+    // key" now costs a landside card with no measurement behind it.
+    const lastAirside = got.map((r) => r.insideAirport).lastIndexOf(true);
+    assert.ok(lastAirside >= 0 && cafe > lastAirside && market > lastAirside,
+      `an unmeasured landside card outranks an airside one: ${JSON.stringify(got.map((r) => [r.title, r.safetyRating]))}`);
   });
 
   it("every card carries the ONE certified hard return, so ranking derived no second deadline", async () => {
@@ -294,17 +316,29 @@ describe("§9.1 ordering — safety is the primary key, preference is the tiebre
     );
   });
 
-  it("within one rating the pre-existing preference order survives", async () => {
-    // A wide window: both landside fixtures are `safe`, so the rating cannot
-    // separate them and `rankActivities`' own travel-time key decides — 15 min
-    // before 25 min. A ranker that discarded the incoming list would still have
-    // to produce this, which is the point: nothing below the safety key is lost.
+  it("within one rating the pre-existing preference order survives", () => {
+    // ── THIS CASE USED TO ENCODE census-layover L293 (rewritten with it) ─────
+    // It ran through `generateRecommendations` and asserted that the cafe led
+    // the market because "15 min before 25 min". Those two numbers were
+    // `estimateTravelTime`'s two branches — the fabrication itself — and the
+    // `safe` ratings it also asserted were their product. The claim it was
+    // making, though, is real and is about `rankActivities`: BELOW the safety
+    // key, the travel-time key still decides, and below THAT the incoming order
+    // survives because the sort is stable.
+    //
+    // So it is made where it can be made honestly — on the function, with legs
+    // a caller STATED. The producer can no longer state one, and pretending it
+    // can is what this pass removed.
     const s = session();
-    const got = cards(await generateRecommendations(makeLayoverDb(tables()), AIRPORT, s, NOW));
-    const cafe = got.findIndex((r) => r.title === "Riverside Cafe");
-    const market = got.findIndex((r) => r.title === "Night Market");
-    assert.equal(got[cafe].safetyRating, "safe");
-    assert.equal(got[market].safetyRating, "safe");
-    assert.ok(cafe < market, "shorter travel leads inside one rating");
+    const ranked = rankActivities(AIRPORT, s, [
+      { title: "further",  travelTimeMin: 25, activityTimeMin: 30, insideAirport: false, verified: true },
+      { title: "nearer",   travelTimeMin: 15, activityTimeMin: 30, insideAirport: false, verified: true },
+      { title: "unstated", travelTimeMin: null, activityTimeMin: 30, insideAirport: false, verified: true },
+    ], NOW);
+    assert.equal(ranked[0]!.assessment.rating, "safe");
+    assert.equal(ranked[1]!.assessment.rating, "safe");
+    const order = ranked.map((r) => r.title);
+    assert.deepEqual(order.slice(0, 2), ["nearer", "further"], "shorter STATED travel leads inside one rating");
+    assert.equal(order[2], "unstated", "an unmeasured leg is not a short one");
   });
 });

@@ -14,9 +14,16 @@ import type { LayoverSession } from "./LayoverSessionService.js";
 import {
   rankActivities,
   travelTimeSourceFor,
+  persistedTravelTimeSource,
   type SafetyRating,
   type TravelTimeSource,
 } from "./LayoverSafetyEngine.js";
+// census L293 closes with L47's module, not a second copy of its rule: airside
+// 0 is a FACT, landside 0 is an ABSENCE. `layover_recommendations.travel_time_min`
+// is `INTEGER NOT NULL DEFAULT 0` exactly like `layover_plan_stops.travel_min`,
+// so the read path needs the same classifier the plan path already uses.
+import { statedTravelMin, statedDurationMin } from "./LayoverPlanFit.js";
+import { airportPoint, placePoint, landsideLeg } from "./LayoverTravelTime.js";
 import {
   certifySessionFeasibility,
   certificationHeader,
@@ -67,7 +74,7 @@ const LIVE_INTERSECTION_OFF: LayoverLiveOutcome = {
 async function readLayoverLive(
   db: SupabaseClient,
   session: LayoverSession,
-  candidates: ReadonlyArray<{ key: string; subjectId: string | null; travelTimeMin: number; activityTimeMin: number }>,
+  candidates: ReadonlyArray<{ key: string; subjectId: string | null; travelTimeMin: number | null; activityTimeMin: number | null }>,
   nowMs: number,
 ): Promise<LayoverLiveOutcome> {
   let on = false;
@@ -141,8 +148,10 @@ export interface RecommendationRow {
   title: string;
   description: string | null;
   safetyRating: SafetyRating;
-  travelTimeMin: number;
-  activityTimeMin: number;
+  /** Null when nobody measured the landside leg — see `statedTravelMin`. */
+  travelTimeMin: number | null;
+  /** Null when nobody stated a duration. */
+  activityTimeMin: number | null;
   returnBufferMin: number;
   hardReturnTime: string | null;
   warningReason: string | null;
@@ -164,8 +173,8 @@ function rowToRec(row: any): RecommendationRow {
     title:          row.title,
     description:    row.description ?? null,
     safetyRating:   row.safety_rating,
-    travelTimeMin:  row.travel_time_min,
-    activityTimeMin: row.activity_time_min,
+    travelTimeMin:  statedTravelMin({ travelMin: row.travel_time_min, insideAirport: Boolean(row.inside_airport) }),
+    activityTimeMin: statedDurationMin({ durationMin: row.activity_time_min }),
     returnBufferMin: row.return_buffer_min,
     hardReturnTime: row.hard_return_time ?? null,
     warningReason:  row.warning_reason ?? null,
@@ -247,14 +256,21 @@ async function fetchDiscoveryPlaces(
   db: SupabaseClient,
   city: string,
   vibeChips: string[],
+  /**
+   * Where the traveller starts from, when the airport has a usable coordinate.
+   * Passed to the travel-time port; `null` is answered NO_COORDINATES, which is
+   * a different fact from NO_ROUTED_PROVIDER and is kept apart on purpose.
+   */
+  from: { lat: number; lng: number } | null,
+  departAt: Date,
   limit = 8,
 ): Promise<Array<{
   recType: string;
   title: string;
   description: string;
-  travelTimeMin: number;
+  travelTimeMin: number | null;
   travelTimeSource: TravelTimeSource;
-  activityTimeMin: number;
+  activityTimeMin: number | null;
   insideAirport: boolean;
   locationLabel: string;
   city: string;
@@ -270,7 +286,12 @@ async function fetchDiscoveryPlaces(
       // the canonical places.id an intel subject is keyed on (the bridge
       // lib/coverageAssembly documents). Without it the live intersection has
       // no subject to look up and, correctly, looks nothing up.
-      .select("id, name, place_type, category, neighborhood, blurb, verified, canonical_location_id")
+      //
+      // lat/lng joined the SELECT with census L293: the old code answered "how
+      // far is it?" from `place_type` alone and never read a coordinate at all.
+      // Reading them does not by itself produce a travel time — see below — but
+      // a producer that never asks for the position cannot ever have one.
+      .select("id, name, place_type, category, neighborhood, blurb, verified, canonical_location_id, lat, lng")
       .ilike("city", `%${city}%`)
       .eq("status", "active")
       .limit(limit);
@@ -284,15 +305,26 @@ async function fetchDiscoveryPlaces(
     }
     if (!data) return [];
 
-    return (data as any[]).map((p) => ({
+    // ONE port call per place. `landsideLeg` is the whole answer to "how long
+    // does it take to get there": a figure only when a ROUTED provider produced
+    // one, and otherwise the absence, carrying the port's own reason. On this
+    // deployment the provider is `noRoutedProvider`, so every leg comes back
+    // null — which is the point of asking rather than assuming.
+    const legs = await Promise.all((data as any[]).map((p) =>
+      landsideLeg(from, placePoint({ lat: p.lat, lng: p.lng }), departAt),
+    ));
+
+    return (data as any[]).map((p, i) => ({
       recType:        mapPlaceTypeToRecType(p.place_type ?? "activity"),
       title:          p.name,
       description:    p.blurb ?? null,
-      travelTimeMin:  estimateTravelTime(p.place_type),
-      // The SELECT above reads no coordinate; estimateTravelTime is a category
-      // constant. Carry that fact rather than let the number pose as a route.
-      travelTimeSource: "category_default" as const,
-      activityTimeMin: estimateActivityTime(p.place_type),
+      travelTimeMin:  legs[i]!.minutes,
+      travelTimeSource: legs[i]!.source,
+      // `discovery_places` HAS NO DURATION COLUMN. `estimateActivityTime` stood
+      // here and answered 30 / 90 / 60 by category — a semantic substitute for
+      // a field the table does not carry, which is App C1's exact prohibition.
+      // Deleted with no replacement: nobody has said how long this takes.
+      activityTimeMin: null,
       insideAirport:  false,
       locationLabel:  p.neighborhood ? `${p.neighborhood}, ${city}` : city,
       city,
@@ -338,26 +370,25 @@ function mapPlaceTypeToRecType(placeType: string): string {
   return map[placeType] ?? "activity";
 }
 
-/**
- * A per-category CONSTANT — 15 or 25 minutes — chosen without a coordinate.
- * It is not a route and must never be presented as one: every caller tags the
- * result TravelTimeSource "category_default" (spec §2.1 "never fabricate
- * freshness"). Building a routed estimate is out of scope here; carrying the
- * provenance is the obligation this tree can meet honestly.
+/*
+ * DELETED WITH census-layover L293 — `estimateTravelTime(placeType)` and
+ * `estimateActivityTime(placeType)`.
+ *
+ * The first returned 15 minutes for a cafe, restaurant or shop and 25 for
+ * anything else. Its own doc comment said what it was: *"A per-category
+ * CONSTANT — 15 or 25 minutes — chosen without a coordinate."* The second
+ * returned 30 / 90 / 60 for a duration `discovery_places` does not store.
+ * Both were semantic substitutes for facts nobody held, and `assess` turned
+ * them into a `"safe"` rating and a plan-fit verdict a traveller acts on by
+ * leaving an airport.
+ *
+ * They are not replaced. The travel leg is now asked of the travel-time PORT
+ * (`LayoverTravelTime.landsideLeg`), which answers `null` on this deployment
+ * because no routed provider is configured; the duration is `null` because no
+ * column holds one. Carrying the provenance — which §7's pass did, tagging
+ * both `category_default` — was never the fix: a label on an invented number
+ * does not stop the number driving the rating.
  */
-function estimateTravelTime(placeType: string): number {
-  const near = ["cafe", "restaurant", "shopping"];
-  if (near.includes(placeType)) return 15;
-  return 25;
-}
-
-function estimateActivityTime(placeType: string): number {
-  const quick = ["cafe", "shopping"];
-  if (quick.includes(placeType)) return 30;
-  const long = ["museum", "park", "attraction"];
-  if (long.includes(placeType)) return 90;
-  return 60;
-}
 
 /**
  * Generate and persist recommendations for a session.
@@ -429,7 +460,7 @@ export async function generateRecommendations(
   //    time of day the traveler will actually be out there.
   const tod = timeOfDayContext(airport, session, nowMs);
   let discoveryCandidates = session.wantsToLeave && usableMinutes >= 90
-    ? await fetchDiscoveryPlaces(db, city, session.vibeChips)
+    ? await fetchDiscoveryPlaces(db, city, session.vibeChips, airportPoint(airport), new Date(nowMs))
     : [];
   if (!tod.coversEvening) {
     // Daytime-only window: nightlife cards would be dishonest.
@@ -451,8 +482,16 @@ export async function generateRecommendations(
         recType: "quick_city_escape",
         title: `Quick City Tour — ${city}`,
         description: `A short exploration of ${city}'s highlights — ideal for a ${usableMinutes >= 240 ? "half-day" : "quick"} layover.`,
-        travelTimeMin: 30,
-        travelTimeSource: "category_default" as const,
+        // The literal 30 that stood here was census L293's third number: a
+        // journey to a whole city, costed the same from every airport on earth.
+        // Deleted, not relabelled.
+        travelTimeMin: null as number | null,
+        travelTimeSource: "unmeasured" as const,
+        // NOT deleted with it, and the difference is the whole of App C1. This
+        // is not a substitute for a fact about a place: there is no place, and
+        // no field was queried. It is the length of tour the card OFFERS,
+        // derived from the traveller's own certified usable window — a plan
+        // this product is making, stated in the same breath as it is made.
         activityTimeMin: usableMinutes >= 240 ? 120 : 60,
         insideAirport: false,
         locationLabel: city,
@@ -540,6 +579,18 @@ export async function generateRecommendations(
   for (const candidate of ranked) {
     const key = recommendationKey(candidate);
     const activityTimeMin = candidate.activityTimeMin;
+    // WHAT GOES IN THE TWO NOT-NULL COLUMNS. `travel_time_min` and
+    // `activity_time_min` are `INTEGER NOT NULL DEFAULT 0 / 30` (migration
+    // 0127), so an absence has to be written as SOME integer. It is written as
+    // 0, and 0 is the one value the read path can tell apart from a stated
+    // figure for a landside row — the identical arrangement L47 left on
+    // `layover_plan_stops.travel_min`. `getRecommendations` and the return
+    // below both run it back through `statedTravelMin` / `statedDurationMin`,
+    // so the absence survives the round trip instead of becoming a measurement.
+    // No migration is needed for that, and inventing a nullable column here
+    // would break the write on every database that has not run it.
+    const storedTravelMin   = candidate.assessment.statedTravelMin ?? 0;
+    const storedActivityMin = candidate.assessment.statedActivityMin ?? 0;
     // The assessment `rankActivities` already made, against the SAME certified
     // deadline. Re-calling `assess` here would be a third derivation of a
     // number this request has already computed twice.
@@ -552,8 +603,8 @@ export async function generateRecommendations(
       title:            candidate.title,
       description:      (candidate as any).description ?? null,
       safety_rating:    a.rating,
-      travel_time_min:  candidate.travelTimeMin,
-      activity_time_min: activityTimeMin,
+      travel_time_min:  storedTravelMin,
+      activity_time_min: storedActivityMin,
       return_buffer_min: a.returnBufferMin,
       hard_return_time: a.hardReturnTime.toISOString(),
       warning_reason:   a.warningReason,
@@ -715,9 +766,13 @@ export async function generateRecommendations(
       title:           row.title,
       description:     row.description,
       safetyRating:    row.safety_rating,
-      travelTimeMin:   row.travel_time_min,
+      // Read back out of the row through the same classifier the persisted read
+      // path uses, so a card served from this response and the same card served
+      // from `getRecommendations` a second later cannot disagree about whether
+      // its journey was ever measured.
+      travelTimeMin:   statedTravelMin({ travelMin: row.travel_time_min, insideAirport: Boolean(row.inside_airport) }),
       travelTimeSource: sources[idx],
-      activityTimeMin: row.activity_time_min,
+      activityTimeMin: statedDurationMin({ durationMin: row.activity_time_min }),
       returnBufferMin: row.return_buffer_min,
       hardReturnTime:  row.hard_return_time,
       warningReason:   row.warning_reason,
@@ -798,11 +853,17 @@ export async function getRecommendations(
       title:          row.title,
       description:    row.description,
       safetyRating:   row.safety_rating,
-      travelTimeMin:  row.travel_time_min,
-      // No column carries provenance; inferred from inside_airport, which is
-      // exact only while no "measured" producer exists (see travelTimeSourceFor).
-      travelTimeSource: travelTimeSourceFor({ insideAirport: Boolean(row.inside_airport) }),
-      activityTimeMin: row.activity_time_min,
+      // A landside zero is an ABSENCE, not a free journey (census L293 / L47).
+      travelTimeMin:  statedTravelMin({ travelMin: row.travel_time_min, insideAirport: Boolean(row.inside_airport) }),
+      // No column carries provenance; inferred from the row's own facts, which
+      // is exact only while no "measured" producer exists — see
+      // `persistedTravelTimeSource` for the three cases and why a stored
+      // positive number is still reported as the category constant it was.
+      travelTimeSource: persistedTravelTimeSource({
+        insideAirport: Boolean(row.inside_airport),
+        travelTimeMin: row.travel_time_min,
+      }),
+      activityTimeMin: statedDurationMin({ durationMin: row.activity_time_min }),
       returnBufferMin: row.return_buffer_min,
       hardReturnTime: row.hard_return_time,
       warningReason:  row.warning_reason,

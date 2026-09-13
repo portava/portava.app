@@ -10,12 +10,22 @@
  * act on by leaving the airport. Spec §2.1: "missing live intelligence degrades
  * VISIBLY; never fabricate freshness."
  *
- * What is built here is PROVENANCE, not routing: every travel-time figure now
- * travels with a `travelTimeSource` (inside_airport | category_default |
- * measured) from the candidate, through SafeRecommendation, out of
- * routes/airport.ts, and `adviseLeaving` names the fact in its `unknowns`.
- * "measured" is declared so a client can tell it apart; NOTHING PRODUCES IT on
- * this tree, and the last test pins that so the read-path inference stays honest.
+ * What was built here was PROVENANCE, not routing: every travel-time figure
+ * travels with a `travelTimeSource` from the candidate, through
+ * SafeRecommendation, out of routes/airport.ts, and `adviseLeaving` names the
+ * fact in its `unknowns`.
+ *
+ * ── AND PROVENANCE WAS NOT ENOUGH (census-layover L293, 2026-09-13) ──────────
+ * A label on an invented number does not stop the number driving a "safe"
+ * rating. `estimateTravelTime`, `estimateActivityTime` and the `/safety`
+ * probe's 20/30 are now DELETED rather than labelled, and the vocabulary has a
+ * fourth member, `unmeasured`, which means there is no figure at all. Three
+ * assertions in this file were changed with that work and each says so where it
+ * stands; two of them were asserting the defect (the 15/25 constants, and the
+ * probe's provenance), and one was asserting the size of the vocabulary.
+ * "measured" is declared so a client can tell a route apart; nothing produces
+ * it while the configured provider is `noRoutedProvider`, and the last test
+ * pins that so the read-path inference stays honest.
  *
  * Run: SUPABASE_URL=http://127.0.0.1:9 SUPABASE_SERVICE_ROLE_KEY=dummy \
  *      node --import tsx/esm --test src/test/layoverTravelTimeProvenance.test.ts
@@ -115,24 +125,41 @@ describe("travelTimeSourceFor — the fail-closed resolver", () => {
     assert.equal(travelTimeSourceFor({ insideAirport: false, travelTimeSource: "routed" as any }), "category_default");
   });
 
-  it("the vocabulary is exactly the three declared kinds", () => {
-    assert.deepEqual([...TRAVEL_TIME_SOURCES], ["inside_airport", "category_default", "measured"]);
+  it("the vocabulary is exactly the four declared kinds", () => {
+    // CHANGED WITH L293, and NOT because it was asserting the defect: it was
+    // asserting the SIZE of the vocabulary, which is a real thing to pin. What
+    // moved is the vocabulary. "unmeasured" is the answer for a candidate that
+    // has no travel figure at all — the state every landside card is now in —
+    // and it needed a name of its own, because reporting it as
+    // "category_default" would have claimed a constant that no longer exists.
+    assert.deepEqual([...TRAVEL_TIME_SOURCES], ["inside_airport", "category_default", "measured", "unmeasured"]);
   });
 });
 
 describe("generateRecommendations — every card states where its travel time came from", () => {
   for (const stableIds of [false, true]) {
-    it(`stableIds=${stableIds}: landside cards are category_default, airside cards inside_airport, none measured`, async () => {
+    it(`stableIds=${stableIds}: landside cards are unmeasured, airside cards inside_airport, none measured`, async () => {
+      // ── THIS ASSERTION ENCODED THE DEFECT, VERBATIM (changed with L293) ────
+      // It read:
+      //     // Both branches of estimateTravelTime are present (15 for cafe, 25 otherwise).
+      //     assert.ok(landside.some((r) => r.travelTimeMin === 15)
+      //            && landside.some((r) => r.travelTimeMin === 25), …);
+      //     for (const r of landside) assert.equal(r.travelTimeSource, "category_default", …);
+      // — it REQUIRED the two fabricated constants to be present on the cards,
+      // and it required their provenance to say a category constant had been
+      // used. Both halves are now false by construction: the constants are
+      // deleted and the landside figure is an absence. The claim the case is
+      // really making — every card states where its travel time came from, and
+      // none of them claims a route — survives unchanged below.
       const t = tables();
       const recs = cards(await generateRecommendations(makeLayoverDb(t), AIRPORT, session(), Date.now(), { stableIds }));
       const landside = recs.filter((r) => !r.insideAirport);
       const airside = recs.filter((r) => r.insideAirport);
       assert.ok(landside.length >= 3, `positive control: expected discovery + escape cards, got ${landside.length}`);
       assert.ok(airside.length >= 2, `positive control: expected inside-airport cards, got ${airside.length}`);
-      // Both branches of estimateTravelTime are present (15 for cafe, 25 otherwise).
-      assert.ok(landside.some((r) => r.travelTimeMin === 15) && landside.some((r) => r.travelTimeMin === 25),
-        `expected both category constants among ${JSON.stringify(landside.map((r) => r.travelTimeMin))}`);
-      for (const r of landside) assert.equal(r.travelTimeSource, "category_default", `"${r.title}" (${r.travelTimeMin} min)`);
+      assert.ok(landside.every((r) => r.travelTimeMin === null),
+        `a category constant survives among ${JSON.stringify(landside.map((r) => r.travelTimeMin))}`);
+      for (const r of landside) assert.equal(r.travelTimeSource, "unmeasured", `"${r.title}"`);
       for (const r of airside) assert.equal(r.travelTimeSource, "inside_airport", `"${r.title}"`);
       assert.ok(recs.every((r) => r.travelTimeSource !== "measured"));
     });
@@ -273,15 +300,27 @@ describe("routes/airport — provenance is visible at the API boundary", () => {
     assert.ok(Array.isArray(recs) && recs.length >= 4, `positive control: got ${recs?.length} cards`);
     for (const c of recs) {
       assert.ok((TRAVEL_TIME_SOURCES as readonly string[]).includes(c.travelTimeSource), `"${c.title}": ${c.travelTimeSource}`);
-      assert.equal(c.travelTimeSource, c.insideAirport ? "inside_airport" : "category_default", `"${c.title}"`);
+      // WAS `category_default` for every landside card — the fabrication's own
+      // label. There is no category constant to attribute a figure to any more,
+      // because there is no figure (L293).
+      assert.equal(c.travelTimeSource, c.insideAirport ? "inside_airport" : "unmeasured", `"${c.title}"`);
     }
   });
 
-  it("GET /sessions/:id/safety: the literal 20-minute leg is labelled category_default and advice.unknowns says so", async () => {
+  it("GET /sessions/:id/safety: there is no leg at all, and advice.unknowns still says so", async () => {
+    // ── THIS ASSERTION ENCODED THE DEFECT (changed with L293c) ──────────────
+    // It read `assert.equal(r.body.travelTimeSource, "category_default")` and
+    // its title named "the literal 20-minute leg" as a thing to be labelled.
+    // Labelling it was §7's work and it was not enough: the 20 and the 30 were
+    // still the inputs to the rating this endpoint published as the session's
+    // overall safety. The probe is deleted; `record.windowOnly` answers with no
+    // journey in it, so the provenance of the journey is "unmeasured" because
+    // there is none.
     stage();
     const r = await req("GET", "/api/airport/sessions/session-1/safety");
     assert.equal(r.status, 200, JSON.stringify(r.body));
-    assert.equal(r.body.travelTimeSource, "category_default");
+    assert.equal(r.body.travelTimeSource, "unmeasured");
+    assert.equal(r.body.estimates.outboundTravel, null, "an outbound estimate for a journey nobody named");
     assert.ok(r.body.advice.unknowns.includes(TRAVEL_TIME_UNMEASURED_UNKNOWN), JSON.stringify(r.body.advice.unknowns));
   });
 
@@ -296,11 +335,27 @@ describe("routes/airport — provenance is visible at the API boundary", () => {
 // ── The honesty pin ──────────────────────────────────────────────────────────
 
 describe('"measured" has no producer on this tree', () => {
-  // The persisted read path infers provenance from inside_airport because no
-  // column stores it. That inference is exact ONLY while nothing emits
-  // "measured". This test is the tripwire: the first producer must also add a
-  // column, update getRecommendations, and then change this expectation.
-  it("the literal appears only in the engine's declaration and its own comparison", () => {
+  // The persisted read path infers provenance from the row's own facts because
+  // no column stores it. That inference is exact ONLY while nothing emits
+  // "measured". This is the tripwire, and census L293 RETARGETED it rather than
+  // relaxing it.
+  //
+  // WHY IT MOVED. The old form was "the literal appears in no service file but
+  // the engine" — a proxy for "no producer exists" that worked only while the
+  // travel-time PORT was unwired. L293 wires it: `LayoverTravelTime.landsideLeg`
+  // asks `TravelTimeProvider` and would return `"measured"` for a ROUTED answer.
+  // So the proxy is replaced by the thing it was standing in for, asserted two
+  // ways: exactly one file outside the engine may name the literal, and the
+  // configured provider must in fact produce nothing.
+  //
+  // The obligation the old comment recorded is UNCHANGED and still owed: the
+  // first real provider must also add a provenance column to
+  // `layover_recommendations`, update `persistedTravelTimeSource`, and then
+  // change these expectations. That is why the provider is a module constant
+  // and not an environment lookup — see LayoverTravelTime.ts.
+  const PRODUCER = "LayoverTravelTime.ts";
+
+  it("the literal appears only in the engine's declaration, its own comparison, and the ONE port adapter", () => {
     const engine = "LayoverSafetyEngine.ts";
     const svcDir = join(HERE, "..", "services", "airport");
     const files = readdirSync(svcDir).filter((f) => f.endsWith(".ts") && !f.endsWith(".test.ts")).map((f) => join(svcDir, f));
@@ -311,9 +366,24 @@ describe('"measured" has no producer on this tree', () => {
       const hits = (code.match(/"measured"/g) ?? []).length;
       if (f.endsWith(engine)) {
         assert.equal(hits, 2, `${engine}: expected the TRAVEL_TIME_SOURCES entry and adviseLeaving's comparison, found ${hits}`);
+      } else if (f.endsWith(PRODUCER)) {
+        assert.equal(hits, 1, `${PRODUCER}: expected exactly the one assignment behind the routed branch, found ${hits}`);
       } else {
-        assert.equal(hits, 0, `${f} produces or compares "measured" — a measured travel time now exists; persist its provenance on the row and update getRecommendations`);
+        assert.equal(hits, 0, `${f} produces or compares "measured" — a measured travel time now exists; persist its provenance on the row and update persistedTravelTimeSource`);
       }
     }
+  });
+
+  it("and the configured provider produces none of it — asked, not assumed", async () => {
+    const { LAYOVER_TRAVEL_TIME_PROVIDER, landsideLeg, UNMEASURED_LEG } =
+      await import("../services/airport/LayoverTravelTime.js");
+    assert.equal(LAYOVER_TRAVEL_TIME_PROVIDER.id, "none-configured",
+      "a routed provider is configured; the persisted read path can no longer infer provenance");
+    // Two real coordinates, a real departure time: the port still answers that
+    // it has nothing, and the reason is the one the absence deserves.
+    const leg = await landsideLeg({ lat: 25.07, lng: 121.23 }, { lat: 25.01, lng: 121.30 }, new Date());
+    assert.deepEqual(leg, UNMEASURED_LEG);
+    assert.equal(leg.minutes, null);
+    assert.equal(leg.reason, "NO_ROUTED_PROVIDER");
   });
 });

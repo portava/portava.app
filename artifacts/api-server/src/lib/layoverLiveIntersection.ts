@@ -78,8 +78,18 @@ export interface LayoverLiveCandidate {
   envelopes: readonly LiveClaimEnvelope[];
   /** False ⇒ the live gates refused the read. */
   readable: boolean;
-  travelTimeMin: number;
-  activityTimeMin: number;
+  /**
+   * Minutes to reach the place, or `null` when nobody measured the journey
+   * (census-layover L293). It is an ETA and it is passed straight to
+   * `interceptPeak`, whose first parameter has been `number | null` all along:
+   * an unknown ETA answers `reachable: null`, which is neither "you will make
+   * the window" nor "you will miss it". Widened rather than defaulted, because
+   * a 0 here would have said the traveller arrives instantly and the live
+   * window is therefore always catchable.
+   */
+  travelTimeMin: number | null;
+  /** Minutes at the place, or `null` when nobody stated a duration. */
+  activityTimeMin: number | null;
 }
 
 export interface LayoverLiveVerdict {
@@ -87,8 +97,13 @@ export interface LayoverLiveVerdict {
   evidence: LayoverLiveEvidence;
   /** Minutes a live queue adds to the card's activity time. 0 without a reading. */
   frictionMinutes: number;
-  /** The activity time the safety engine should be given. */
-  adjustedActivityMin: number;
+  /**
+   * The activity time the safety engine should be given — `null` when the
+   * card's own duration is unstated. A queue lengthens a stated duration; it
+   * cannot conjure one out of an absence, and returning `frictionMinutes` alone
+   * there would have made "nobody said" into "twelve minutes".
+   */
+  adjustedActivityMin: number | null;
   drop: boolean;
   dropReason: LayoverDropReason;
   /** Intent-relative value in 0..1, or null when it cannot be known. */
@@ -187,7 +202,7 @@ export function intersectOne(c: LayoverLiveCandidate, opts: LayoverIntersectionO
     key: c.key,
     evidence: "reading",
     frictionMinutes,
-    adjustedActivityMin: c.activityTimeMin + frictionMinutes,
+    adjustedActivityMin: c.activityTimeMin === null ? null : c.activityTimeMin + frictionMinutes,
     drop,
     dropReason,
     experienceValue: experienceValue(state, opts.intent ?? null),
