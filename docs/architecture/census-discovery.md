@@ -418,7 +418,7 @@ and **search behaviour is the missing sixth**. Measured, the gap was sharper tha
 
 **Search behaviour existed. It was registered in a DIFFERENT REGISTRY, keyed differently.** Preview,
 authorization, current state, actions and revocation are registered per OBJECT FAMILY in
-`artifacts/api-server/src/services/telegraph/shareables.ts:924#const LOADERS`. Search behaviour was a
+`artifacts/api-server/src/services/telegraph/shareables.ts:948#const LOADERS`. Search behaviour was a
 pair of maps keyed by MESSAGE SUBTYPE in `domain/telegraph/contracts/conversationSearch.ts`. Nothing
 read the two together, so they could disagree about a family forever without a single failure — and
 they did: `MAP_PIN` and `MEETUP_POINT` are both shareable and were in neither search map. A Discovery

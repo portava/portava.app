@@ -77,14 +77,27 @@ function req(method: string, path: string, body?: any): Promise<{ status: number
   });
 }
 
-function stage(opts: { stamps?: boolean; sessionOver?: Record<string, any> } = {}) {
+/**
+ * `sessionRow()` defaults `arrival_time` to `now + 5 minutes`. That default is
+ * right for a session being CREATED and wrong for one being closed as
+ * COMPLETED, and using it for the completion cases is what hid the occurrence
+ * hole this suite was written beside: the happy-path case below was asserting
+ * that a layover which had not begun earns a stamp, and passing. `arrived` puts
+ * the declared arrival in the past, which is what "completed" actually means.
+ * The fourth term is pinned separately — see layoverStampOccurrence.test.ts.
+ */
+function stage(opts: { stamps?: boolean; sessionOver?: Record<string, any>; arrived?: boolean } = {}) {
   const tables: Record<string, any[]> = {
     feature_flags: [
       { flag: "airport_mode_enabled", enabled: true },
       { flag: "passport_stamps_enabled", enabled: opts.stamps !== false },
     ],
     airport_profiles: [airportRow()],
-    layover_sessions: [sessionRow({ user_id: USER_ID, ...(opts.sessionOver ?? {}) })],
+    layover_sessions: [sessionRow({
+      user_id: USER_ID,
+      ...(opts.arrived ? { arrival_time: new Date(Date.now() - 6 * 3_600_000).toISOString() } : {}),
+      ...(opts.sessionOver ?? {}),
+    })],
     layover_events: [],
     layover_plan_stops: [],
     passport_stamps: [],
@@ -135,7 +148,7 @@ describe("the passport seam has moved off session creation (census L19, L162)", 
 
 describe("DELETE /airport/sessions/:id — completion AND election, both required", () => {
   it("a COMPLETED session the traveller elected to keep writes exactly one stamp", async () => {
-    const t = stage();
+    const t = stage({ arrived: true });
     const r = await req("DELETE", "/api/airport/sessions/session-1", { outcome: "completed", passportStamp: true });
     assert.equal(r.status, 200, JSON.stringify(r.body));
     assert.equal(r.body.outcome, "completed");
@@ -192,7 +205,7 @@ describe("DELETE /airport/sessions/:id — completion AND election, both require
   });
 
   it("a session with no resolvable city says so rather than minting an 'Unknown' stamp", async () => {
-    const t = stage({ sessionOver: { airport_id: null, manual_city: null, manual_iata: "ZZZ" } });
+    const t = stage({ arrived: true, sessionOver: { airport_id: null, manual_city: null, manual_iata: "ZZZ" } });
     const r = await req("DELETE", "/api/airport/sessions/session-1", { outcome: "completed", passportStamp: true });
     assert.equal(r.status, 200, JSON.stringify(r.body));
     assert.deepEqual(r.body.passportStamp, { requested: true, written: false, reason: "no_city" });

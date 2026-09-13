@@ -127,6 +127,7 @@ import {
   suggestSafeReturn,
 } from "../services/airport/LayoverNotificationService.js";
 import { createStamp } from "../services/passport/PassportStampService.js";
+import { declaredOccurrenceHasHappened } from "../services/memory/occurrenceGate.js";
 import { detectIntent } from "../services/telegraphIntent.js";
 
 import { requireAdmin } from "../lib/requireAdmin.js";
@@ -599,6 +600,17 @@ router.post("/airport/sessions", async (req, res) => {
   // REDUCTION a reviewer should see coming: a traveller who starts a layover
   // and never closes it out now gets no stamp at all, where before they got one
   // for turning up.
+  //
+  // AND IT IS ALSO GATED ON OCCURRENCE, which is not the same requirement and
+  // was very nearly lost in the merge that produced this file. A sibling lane
+  // fixed this seam from the Memories side, by keeping the stamp here and
+  // refusing when the declared ARRIVAL was still in the future (§1: *"planned,
+  // saved, or nearby must never be represented as experienced without
+  // occurrence evidence or user confirmation"*). Moving the seam to
+  // end-of-session answers §3 and §17 but does NOT answer §1 by itself:
+  // `endSession` is not temporal, so "completed" is a claim the caller makes,
+  // not something that happened. Both requirements are now enforced together,
+  // at the one site — see the FOUR TERMS on `writeElectedLayoverStamp`.
 
   // Trip timeline mirror (best-effort)
   await mirrorSessionToTrip(sc, auth.client, session, airport, user.id);
@@ -2287,11 +2299,15 @@ router.get("/airport/pulse", async (req, res) => {
  * durable artifacts IF THE USER CHOOSES"*; §17 for *"durable only when the user
  * elects Passport/Memory behaviour"*.
  *
- * THREE TERMS, AND ALL THREE ARE REQUIRED, in this order:
+ * FOUR TERMS, AND ALL FOUR ARE REQUIRED, in this order:
  *   1. the session was CLOSED AS COMPLETED — not cancelled, not expired;
  *   2. the traveller ELECTED it on the way out;
  *   3. `passport_stamps_enabled` is on — the kill switch outranks an election,
- *      because a flag that a user's choice can override is not a kill switch.
+ *      because a flag that a user's choice can override is not a kill switch;
+ *   4. the layover HAD ACTUALLY BEGUN. Terms 1 and 2 are things the caller
+ *      SAYS; `endSession` checks neither against a clock, so without this the
+ *      seam would still mint a "you were here" stamp for a city nobody had
+ *      reached — the same defect, moved one route along.
  *
  * IT RETURNS A REASON RATHER THAN A BOOLEAN, and the reason is published.
  * "Nothing was written" has six different meanings here and a client that has
@@ -2307,6 +2323,7 @@ type ElectedStampReason =
   | "already_stamped"
   | "not_elected"
   | "not_completed"
+  | "not_occurred"
   | "feature_disabled"
   | "no_city"
   | "write_failed";
@@ -2322,6 +2339,45 @@ async function writeElectedLayoverStamp(
   try {
     if (!await isFlagEnabled(sc, "passport_stamps_enabled")) {
       return { requested, written: false, reason: "feature_disabled" };
+    }
+
+    // ── THE FOURTH TERM: IT ALSO HAS TO HAVE HAPPENED ────────────────────────
+    // ADDED AT INTEGRATION, because two lanes fixed this seam independently and
+    // each closed a limb the other left open. Completion and election are
+    // statements the CALLER makes; neither is evidence. `endSession` is not
+    // temporal — it sets `status` to whatever the caller named, gated only on
+    // the row still being live — so a traveller who books next Tuesday's
+    // connection can close it as `completed`, elect the stamp, and be handed a
+    // durable `verification_level: 'checkin'` row for a city they have never
+    // been to. That is §1 of the Highlights/Memories spec verbatim: *"planned,
+    // saved, or nearby must never be represented as experienced without
+    // occurrence evidence or user confirmation."*
+    //
+    // Moving the seam from creation to completion did not fix that; it RELOCATED
+    // it, and the relocation is what hid it, because each lane's tests only
+    // covered its own half. Proven red before this line existed — see
+    // src/test/layoverStampOccurrence.test.ts.
+    //
+    // It reuses `declaredOccurrenceHasHappened` rather than an inline `<`, so
+    // this route and §6's candidate pipeline refuse on ONE predicate with one
+    // policy version — see services/memory/occurrenceGate.ts for why it allows
+    // no clock skew in this direction.
+    //
+    // It sits AFTER the flag read deliberately: `feature_disabled` is a kill
+    // switch and outranks every other account of why nothing was written.
+    const occurrence = declaredOccurrenceHasHappened(args.session.arrivalTime, Date.now());
+    if (!occurrence.occurred) {
+      logger.info(
+        {
+          sessionId: args.session.id,
+          userId: args.userId,
+          reason: occurrence.reason,
+          detail: occurrence.detail,
+          policyVersion: occurrence.policyVersion,
+        },
+        "layover passport stamp withheld — the layover had not begun (§1: planned is not experienced)",
+      );
+      return { requested, written: false, reason: "not_occurred" };
     }
 
     // The city is read the same way every other layover surface reads it, and
