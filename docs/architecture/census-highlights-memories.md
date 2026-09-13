@@ -2999,6 +2999,33 @@ THIS census and the defects are in those files.
     and the new arm uses `unauthorized`, a state that contract already has. Not read, not
     re-derived, not moved.
 
+**A SIBLING LANE IS FIXING THE SAME DEFECT AND THE TWO FIXES COLLIDE. THE INTEGRATOR HAS TO
+CHOOSE, AND THIS SECTION SAYS WHICH WAY IT SHOULD GO EVEN THOUGH THAT COSTS IT ITS OWN CODE.**
+While this was being written, the Layover lane was closing L19 and L162 on the same seam, on its
+own branch, by a different and **better** route: it DELETES the creation-time seam outright and
+mints the stamp only at end-of-session, when the outcome is `completed` **and** the traveller has
+elected it. That satisfies BOTH limbs — §1's occurrence limb, because a completed session is one
+that happened, and L19's *"if the user chooses"* limb, which §F's gate does nothing about and
+which §F.7 concedes below. **If the two land together, keep theirs.** Three consequences, stated
+now so the merge is not a discovery:
+
+  1. `declaredOccurrenceHasHappened` becomes unreachable from `routes/airport.ts` — there is no
+     creation-time seam left to gate. The predicate is not thereby worthless (it is the only
+     place §1's rule is written as code rather than as an `if`), but a census may not score an
+     unreachable module BAC, and §A.2 is this document's own rule for that.
+  2. **The CONTROL case of the airport suite goes RED**, and it should:
+     `artifacts/api-server/src/test/memoryPlannedNotExperienced.test.ts:256#the refusal is not a blanket deny`
+     asserts that a past arrival DOES earn a stamp at session creation, and under their fix
+     nothing earns one at session creation. The refusal case stays green, which is exactly the
+     shape §B.3 warns about: a suite whose refusals still pass while its control no longer can
+     is proving less than it looks. Whoever merges must re-point that control at the
+     end-of-session path, not delete it.
+  3. **H239 and H4 survive the merge and get STRONGER, but their evidence in §F.1 and §F.4 is
+     then stale** — it cites a seam that no longer exists. Re-read, do not re-point.
+
+This is the §D.2 seam a third time and the §D.11 merge choice a second. Neither lane knew the
+other was working it.
+
 **Citations repointed — pointers, not judgements.** The three edits displaced fifty-two anchored
 citations across five documents. Every one was moved by taking the EXACT TEXT of the original
 line from the file at `6d4fd1a06` and finding that text in the file now; all fifty-two resolved
