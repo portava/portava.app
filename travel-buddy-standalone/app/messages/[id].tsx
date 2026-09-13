@@ -55,6 +55,7 @@ import { ThreadSafetySheet } from '../../src/components/ThreadSafetySheet';
 import { SharedContextRail, shouldCollapseOnScroll } from '../../src/features/telegraph/index.ts';
 import { PortavaObjectMessage } from '../../src/features/telegraph/sharing/PortavaObjectMessage.tsx';
 import { TypedMessageRenderer, rendersTypedKind } from '../../src/features/telegraph/kinds/TypedMessageRenderer.tsx';
+import { rendersKnownMessageType, safeUnknownBody } from '../../src/features/telegraph/kinds/unsupportedPayload.ts';
 import { parseKindEnvelope as parseTelegraphKindEnvelope } from '../../src/features/telegraph/kinds/kindsApi.ts';
 import { useAnnouncementAcknowledgement } from '../../src/features/telegraph/kinds/useAnnouncementAcknowledgement.ts';
 import { CoordinationPanel } from '../../src/features/telegraph/coordination/CoordinationPanel.tsx';
@@ -968,6 +969,9 @@ function MessageBubble({
   } else {
     bodyToShow = item.displayBody ?? item.body ?? '';
   }
+  // §30A.13 / census T430 — the second of the two unknown-type fallbacks; see
+  // the header of unsupportedPayload.ts for why the rule is this narrow.
+  if (!rendersKnownMessageType(item.msgType)) bodyToShow = safeUnknownBody(bodyToShow);
 
   const isTranslated = item.translated && autoTranslate && !showOriginal;
   const isPending = item.translationStatus === 'pending';

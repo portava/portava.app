@@ -762,16 +762,33 @@ router.get('/me/message-requests', async (req, res) => {
   let profileMap: Record<string, any> = {};
   let locationMap: Record<string, string | null> = {};
   if (senderIds.length > 0) {
-    const { data: profiles } = await sc
+    /*
+      T344. An unreadable `profiles` made every pending request render with
+      `sender: null` — a request list that names nobody, which reads as a
+      corrupt inbox rather than as a failure. It refuses instead.
+    */
+    const { data: profiles, error: profilesErr } = await sc
       .from('profiles')
       .select('id, handle, name, username, full_name, avatar_url, default_language')
       .in('id', senderIds);
+    if (profilesErr) {
+      req.log.error({ err: profilesErr },
+        'me/message-requests: sender profiles unreadable — refusing rather than listing requests from nobody');
+      sendError(res, 'db_error', profilesErr.message);
+      return;
+    }
     for (const p of profiles ?? []) profileMap[(p as any).id] = p;
 
-    const { data: locations } = await sc
+    // The city is decoration on the same row and its absence is already a
+    // normal state (a sender with no location). Logged, not refused — but no
+    // longer dropped.
+    const { data: locations, error: locationsErr } = await sc
       .from('user_location_state')
       .select('user_id, city')
       .in('user_id', senderIds);
+    if (locationsErr) {
+      req.log.warn({ err: locationsErr }, 'me/message-requests: sender cities unreadable — omitted');
+    }
     for (const l of locations ?? []) locationMap[(l as any).user_id] = (l as any).city ?? null;
   }
 
@@ -1343,11 +1360,20 @@ router.get('/me/unread-counts', async (req, res) => {
   // Upcoming confirmed meetups where user RSVP'd going/maybe — runs in parallel
   const meetupCountPromise = (async (): Promise<number> => {
     const now = new Date().toISOString();
-    const { data: upcoming } = await sc
+    // T344: an unreadable `meetups` used to report "no upcoming meetups", which
+    // is a number a person acts on. It is logged and reported as zero-by-
+    // failure rather than zero-by-fact; the badge under-reports, exactly as the
+    // block-set read below already chooses to, and the log is the difference
+    // between a known gap and a silent one.
+    const { data: upcoming, error: upcomingErr } = await sc
       .from('meetups')
       .select('id')
       .eq('status', 'confirmed')
       .gt('starts_at', now);
+    if (upcomingErr) {
+      req.log.warn({ err: upcomingErr }, 'unread-counts: meetups unreadable — badge under-reports');
+      return 0;
+    }
     const ids = (upcoming ?? []).map((m: any) => m.id as string);
     if (ids.length === 0) return 0;
     const { count } = await (sc as any)
@@ -1403,10 +1429,15 @@ router.get('/me/unread-counts', async (req, res) => {
     }
 
     // 2. Get IDs of users in the caller's circle.
-    const { data: circleRows } = await sc
+    // T344: same class as the block-set read above, same narrow answer — an
+    // unreadable circle is reported as zero new highlights, and said so.
+    const { data: circleRows, error: circleErr } = await sc
       .from('circle_memberships')
       .select('other_id')
       .eq('user_id', user.id);
+    if (circleErr) {
+      req.log.warn({ err: circleErr }, 'unread-counts: circle membership unreadable — newHighlights reported as 0');
+    }
     const circleIds = (circleRows ?? [])
       .map((r: any) => r.other_id as string)
       .filter((id: string) => !isExcluded(blockSet, id));
@@ -1682,20 +1713,60 @@ router.get('/me/threads', async (req, res) => {
       .in('thread_id', threadIds),
   ]);
 
+  /*
+    Telegraph §30A / census T344, T363, T438: "schema/permission failures must
+    never be swallowed into plausible empty inboxes."
+
+    THESE THREE READS ARE THE WORST INSTANCE OF THAT CLASS IN THE FILE and the
+    census did not name them — it named four `const { data: x } = await` reads,
+    and the ratchet that measures the defect
+    (test/telegraphRlsAuthorizationMatrix.test.ts, LDB-05) counts that exact
+    destructuring shape, which `threadsRes.data` is not. supabase-js RESOLVES
+    on a database error, so before this change `threadsRes.data ?? []` turned
+    an unreadable `message_threads` into AN INBOX WITH NO CONVERSATIONS, and an
+    unreadable `messages` into every thread reporting zero unread. Both are
+    indistinguishable from the truth and both are wrong.
+
+    A refusal is not a plausible empty state, so all three refuse. These are the
+    inbox's own core tables read through the service client; if one is
+    unreadable the endpoint cannot build an inbox, and saying so is the only
+    honest answer available.
+  */
+  for (const [label, r] of [
+    ['message_threads', threadsRes],
+    ['messages', lastMsgRes],
+    ['message_thread_members', allMembersRes],
+  ] as const) {
+    const e = (r as any).error;
+    if (e) {
+      req.log.error({ err: e, table: label }, 'me/threads: inbox read failed — refusing rather than reporting an empty inbox');
+      sendError(res, 'db_error', e.message ?? `${label} unreadable`);
+      return;
+    }
+  }
+
   // Universal display-name rule: member names show only when opted in.
   // Profiles are fetched as a separate batched query (not an embedded FK
   // join) so a schema/alias drift on the join can't silently return every
-  // member with no profile at all — it would surface as a hard fetch error
-  // for the offending profile ids instead.
+  // member with no profile at all — it surfaces as a hard fetch error for the
+  // offending profile ids instead. That sentence described an INTENT rather
+  // than the code until census T344 was executed: the error was destructured
+  // away, and a drift really did return every member with no profile. It is
+  // now the refusal the comment always claimed.
   {
     const memberRows = ((allMembersRes as any).data ?? []) as any[];
     const memberUserIds = Array.from(new Set(memberRows.map((m: any) => m.user_id).filter(Boolean)));
     let profilesById: Record<string, any> = {};
     if (memberUserIds.length > 0) {
-      const { data: profileRows } = await sc
+      const { data: profileRows, error: profileErr } = await sc
         .from('profiles')
         .select(PROFILE_PUBLIC)
         .in('id', memberUserIds);
+      if (profileErr) {
+        req.log.error({ err: profileErr }, 'me/threads: member profiles unreadable — refusing rather than returning an anonymous inbox');
+        sendError(res, 'db_error', profileErr.message);
+        return;
+      }
       for (const p of (profileRows ?? []) as any[]) profilesById[p.id] = p;
     }
     const allowedMemberNames = await nameVisibilitySet(sc, memberUserIds);
@@ -1730,13 +1801,27 @@ router.get('/me/threads', async (req, res) => {
     .filter(Boolean);
 
   let translationsByMsgId: Record<string, any> = {};
+  /*
+    T344/T363/T438, the secondary half. An unreadable `message_translations` is
+    NOT grounds to refuse the whole inbox — the conversations are real and the
+    caller can still use them — but it must not silently look like "nothing
+    needed translating" either. The preview then carries
+    `previewTranslationStatus: 'failed'`, which is the SAME vocabulary the
+    per-message path already uses for a translation that did not happen, so the
+    client has one thing to render rather than two.
+  */
+  let previewTranslationsDegraded = false;
   if (lastMsgIds.length > 0) {
-    const { data: tRows } = await sc
+    const { data: tRows, error: tErr } = await sc
       .from('message_translations')
       .select('message_id, translated_body, status, source_language')
       .in('message_id', lastMsgIds)
       .eq('recipient_id', user.id);
 
+    if (tErr) {
+      previewTranslationsDegraded = true;
+      req.log.warn({ err: tErr }, 'me/threads: preview translations unreadable — previews marked failed, not silently original');
+    }
     for (const t of tRows ?? []) {
       translationsByMsgId[(t as any).message_id] = t;
     }
@@ -1771,11 +1856,19 @@ router.get('/me/threads', async (req, res) => {
     .map((t: any) => t.trip_id as string);
 
   const tripCityMap: Record<string, string | null> = {};
+  // T344: `undefined` (omitted from JSON) means "not known", which is a
+  // different statement from `null` ("this trip has no city") and must stay
+  // different on the wire — the same rule `needsActionCount` follows below.
+  let tripCityDegraded = false;
   if (tripIds.length > 0) {
-    const { data: tripRows } = await sc
+    const { data: tripRows, error: tripErr } = await sc
       .from('trips')
       .select('id, destination_city')
       .in('id', tripIds);
+    if (tripErr) {
+      tripCityDegraded = true;
+      req.log.warn({ err: tripErr }, 'me/threads: trip context unreadable — omitting tripCity rather than reporting none');
+    }
     for (const tr of tripRows ?? []) {
       tripCityMap[(tr as any).id] = (tr as any).destination_city ?? null;
     }
@@ -1787,11 +1880,16 @@ router.get('/me/threads', async (req, res) => {
     .map((t: any) => t.id as string);
 
   const bookingIdByThread: Record<string, string> = {};
+  let bookingIdDegraded = false;
   if (rentBuddyThreadIds.length > 0) {
-    const { data: bookingRows } = await sc
+    const { data: bookingRows, error: bookingErr } = await sc
       .from('rent_buddy_bookings')
       .select('id, telegraph_thread_id')
       .in('telegraph_thread_id', rentBuddyThreadIds);
+    if (bookingErr) {
+      bookingIdDegraded = true;
+      req.log.warn({ err: bookingErr }, 'me/threads: booking context unreadable — omitting bookingId rather than reporting none');
+    }
     for (const bk of bookingRows ?? []) {
       if ((bk as any).telegraph_thread_id) {
         bookingIdByThread[(bk as any).telegraph_thread_id] = (bk as any).id;
@@ -1844,6 +1942,13 @@ router.get('/me/threads', async (req, res) => {
         createdAt: lm.created_at,
         msgType: lm.msg_type ?? 'text',
         subtype: lm.subtype ?? null,
+        // T344: present ONLY when the translations table could not be read, so
+        // an untranslated preview is a stated failure rather than a silent one.
+        // Omitted in the normal case — a field that is always there says
+        // nothing.
+        ...(previewTranslationsDegraded && lm.sender_id !== user.id
+          ? { previewTranslationStatus: 'failed' as const }
+          : {}),
       };
     }
 
@@ -1868,9 +1973,9 @@ router.get('/me/threads', async (req, res) => {
       // statement from 0 and must stay different on the wire.
       needsActionCount: needsAction.degraded ? undefined : (needsAction.byThread.get(t.id)?.count ?? 0),
       needsActionReasons: needsAction.degraded ? undefined : (needsAction.byThread.get(t.id)?.reasons ?? []),
-      tripCity,
+      tripCity: tripCityDegraded ? undefined : tripCity,
       isAiLastMessage,
-      bookingId: bookingIdByThread[t.id] ?? null,
+      bookingId: bookingIdDegraded ? undefined : (bookingIdByThread[t.id] ?? null),
     };
   });
 
@@ -1965,12 +2070,36 @@ router.get('/threads/:threadId/messages', async (req, res) => {
 
   let translationMap: Record<string, any> = {};
   if (incomingMsgIds.length > 0) {
-    const { data: tRows } = await sc
+    const { data: tRows, error: tErr } = await sc
       .from('message_translations')
       .select('message_id, source_language, target_language, translated_body, status')
       .in('message_id', incomingMsgIds)
       .eq('recipient_id', user.id);
 
+    if (tErr) {
+      /*
+        T344/T363/T438. An unreadable `message_translations` used to be
+        indistinguishable from "no translation exists": every incoming message
+        rendered as its original with `translationStatus: null`, which is the
+        same payload a same-language thread produces. §18 already has a word
+        for "we did not translate this" — `failed` — and it already reaches the
+        client with a retry affordance, so the honest answer is to say that
+        word rather than to invent a monolingual thread. The message is still
+        delivered; only the claim about translation changes.
+      */
+      req.log.warn({ err: tErr, threadId },
+        'thread read: translations unreadable — reporting failed rather than untranslated');
+      for (const id of incomingMsgIds) {
+        const row = rows.find((m) => m.id === id);
+        translationMap[id] = {
+          message_id: id,
+          source_language: (row?.original_language as string | null) ?? 'und',
+          target_language: 'und',
+          translated_body: null,
+          status: 'failed' as TranslationStatusValue,
+        };
+      }
+    }
     for (const t of tRows ?? []) {
       translationMap[(t as any).message_id] = t;
     }
@@ -2008,6 +2137,15 @@ router.get('/threads/:threadId/messages', async (req, res) => {
         .from('messages')
         .select('id, reply_to_id')
         .in('id', allIds);
+      if (replyIdErr) {
+        // T344: still skipped — reply threading genuinely predates migration
+        // 0057 on some deployments and an absent column is a legitimate state
+        // — but no longer SILENTLY. A reply whose quote vanished and a message
+        // that was never a reply look identical on the wire, so the only place
+        // the difference can survive is the log.
+        req.log.warn({ err: replyIdErr, threadId },
+          'thread read: reply_to_id unreadable — replies will render without their quote');
+      }
       if (!replyIdErr && replyIdRows) {
         for (const r of replyIdRows as any[]) {
           if (r.reply_to_id) replyToIdMap[r.id] = r.reply_to_id;
@@ -2021,7 +2159,11 @@ router.get('/threads/:threadId/messages', async (req, res) => {
             .select(`id, body, sender_id, profile:profiles!messages_sender_id_fkey(name, handle, username, full_name)`)
             .in('id', replyIds);
           if (visibleFrom) quotedQuery = quotedQuery.gte('created_at', visibleFrom);
-          const { data: quotedRows } = await quotedQuery;
+          const { data: quotedRows, error: quotedErr } = await quotedQuery;
+          if (quotedErr) {
+            req.log.warn({ err: quotedErr, threadId },
+              'thread read: quoted reply context unreadable — quotes omitted, not invented');
+          }
           // Universal display-name rule: quoted sender shows @handle unless opted in.
           const qAllowed = await nameVisibilitySet(sc, ((quotedRows as any[]) ?? []).map((q: any) => q.sender_id));
           for (const qr of quotedRows as any[] ?? []) {
@@ -2090,11 +2232,21 @@ router.get('/threads/:threadId/messages', async (req, res) => {
       replyToId: replyToIdMap[m.id] ?? null,
       replyToBody: replyToIdMap[m.id] ? (replyContextMap[replyToIdMap[m.id]!]?.body ?? null) : null,
       replyToSenderName: replyToIdMap[m.id] ? (replyContextMap[replyToIdMap[m.id]!]?.senderName ?? null) : null,
-      // Media fields (migration 0152_messages_media.sql)
-      mediaUrl: (m as any).media_url ?? null,
-      mediaType: (m as any).media_type ?? null,
-      mediaThumbnailUrl: (m as any).media_thumbnail_url ?? null,
-      mediaDurationSeconds: (m as any).media_duration_seconds ?? null,
+      // Media fields (migration 0152_messages_media.sql).
+      //
+      // Telegraph §7.2, census T79: a deleted message is removed from NORMAL
+      // RETRIEVAL. `body` above is already nulled on `deleted_at`; these four
+      // were not, so deleting a photo redacted the caption and left the asset
+      // addressable — the URL is a live, directly fetchable object. The
+      // tombstone still says a message was here (deleted: true) and still
+      // carries its time and its sender, which is what a tombstone is for; it
+      // carries no route to the content. `mediaType` goes with the rest
+      // deliberately: "this was a video" is a fact about the deleted content,
+      // and the renderer needs no type for a message with no media.
+      mediaUrl: isDeleted ? null : ((m as any).media_url ?? null),
+      mediaType: isDeleted ? null : ((m as any).media_type ?? null),
+      mediaThumbnailUrl: isDeleted ? null : ((m as any).media_thumbnail_url ?? null),
+      mediaDurationSeconds: isDeleted ? null : ((m as any).media_duration_seconds ?? null),
       // Telegraph §22 — travel scam signals and link reputation, for the
       // RECIPIENT only. A sender who could see their own signals would tune
       // their wording against the detector; a recipient gets the second
