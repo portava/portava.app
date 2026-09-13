@@ -835,6 +835,16 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/migrations/0116_post_hides.sql",
     "artifacts/api-server/src/test/mediaReportIntent.test.ts",
     "artifacts/api-server/src/test/mediaFeed.test.ts",
+    // WIDENED 2026-09-13 by census-media §11. The section executed 120 of the
+    // census's own 288 C rows and moved seven; three of the repairs live in
+    // services/media/MediaProjectionService.ts (already scoped as a directory)
+    // and routes/mediaFeed.ts (already named), and this suite is the only thing
+    // in the tree that goes red if MD47's neighborhood producer, MD227's Tagged
+    // bucket or the MD386/MD389 §44 emitters are removed again. All three
+    // defects survived for as long as they did precisely because a MISSING
+    // producer leaves every existing assertion green, so the census's evidence
+    // for those four rows is this file and nothing else.
+    "artifacts/api-server/src/test/mediaProjectionGaps.test.ts",
   ],
   // census-telegraph.md — declared 2026-09-11 on the same basis as Media above:
   // 451 requirements out of CANNOT BE CHECKED, a clock started rather than a

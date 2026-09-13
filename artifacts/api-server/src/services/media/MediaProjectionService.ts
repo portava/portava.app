@@ -292,6 +292,79 @@ export async function loadProjectionGemContext(
 }
 
 /**
+ * Batch the canonical Place's NEIGHBORHOOD label for a page of rows (spec §7
+ * "MediaAsset → Neighborhood", §46 coarse labels).
+ *
+ * WHY THIS EXISTS. `MediaProjection` has carried a `neighborhood` field since
+ * the shell was written and it was `null` on every projection ever served:
+ * `toMediaProjection` hard-codes `neighborhood: null` (correct — the raw
+ * projector reads one `posts` row and `posts` has no neighborhood column), and
+ * `applyLocationDisclosure` then copies `d.neighborhood` off a disclosure whose
+ * input never carried one. The tier machinery was already complete and correct —
+ * `coarsenMediaLocation` discloses `neighborhood` at the 'neighborhood' and
+ * 'place' tiers and withholds it at 'city' / 'country' / 'hidden' — so the ONLY
+ * thing missing was a producer. The §7 edge was drawn in the type and severed in
+ * the data.
+ *
+ * WHERE THE LABEL COMES FROM. `places.neighborhood`, keyed by the post's
+ * `canonical_place_id` — the same column and the same read `buildPlaceProjection`
+ * already performs for a place header. Media does not own a second neighborhood
+ * source (§48: Places owns canonical Place identity), so this reads theirs.
+ *
+ * FAIL-SOFT, AND THAT IS THE CORRECT POSTURE HERE — unlike the gem context
+ * beside it, which is fail-CLOSED. Losing this lookup costs a LABEL; it can
+ * never disclose anything, because the label is handed to the choke point as an
+ * INPUT and the choke point decides whether the viewer's tier may see it. A
+ * failed read yields an empty map, every row's `neighborhood` stays `null`, and
+ * the projection is exactly what it was before this function existed. The gem
+ * lookup is fail-closed because losing IT would widen disclosure; losing this
+ * one only narrows it.
+ */
+export async function loadPlaceNeighborhoods(
+  sc: SupabaseClient,
+  rows: MediaCandidateRow[],
+): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  const ids = [
+    ...new Set(
+      rows
+        .map((r) => (r as any).canonical_place_id)
+        .filter((v): v is string => typeof v === "string" && v.length > 0),
+    ),
+  ];
+  if (ids.length === 0) return out;
+  try {
+    const { data, error } = await (sc as any)
+      .from("places")
+      .select("id, neighborhood")
+      .in("id", ids);
+    if (error) {
+      logger.warn({ err: error }, "mediaProjection: places.neighborhood read failed; labels stay null");
+      return out;
+    }
+    for (const r of ((data as any[]) ?? [])) {
+      const id = (r as any)?.id;
+      const raw = (r as any)?.neighborhood;
+      const label = typeof raw === "string" && raw.trim().length > 0 ? raw.trim() : null;
+      if (typeof id === "string" && label != null) out.set(id, label);
+    }
+  } catch (err) {
+    logger.warn({ err }, "mediaProjection: places.neighborhood read threw; labels stay null");
+  }
+  return out;
+}
+
+/** The neighborhood label for a row, or null when the place has none / is unknown. */
+export function neighborhoodForRow(
+  row: MediaCandidateRow,
+  neighborhoods: ReadonlyMap<string, string>,
+): string | null {
+  const placeId = (row as any).canonical_place_id;
+  if (typeof placeId !== "string" || placeId.length === 0) return null;
+  return neighborhoods.get(placeId) ?? null;
+}
+
+/**
  * Resolve one row's full location disclosure for this viewer.
  *
  * NOTE ON COORDINATES: the projection layer deliberately does not select
@@ -306,6 +379,7 @@ export function disclosureForRow(
   row: MediaCandidateRow,
   viewerId: string,
   ctx: ProjectionGemContext,
+  neighborhood: string | null = null,
 ): MediaPlaceDisclosure {
   const placeId = typeof row.canonical_place_id === "string" ? row.canonical_place_id : null;
   const ceiling = ctx.determined
@@ -314,6 +388,11 @@ export function disclosureForRow(
   return resolveMediaPlaceDisclosure(
     {
       name: typeof row.location_name === "string" ? row.location_name : null,
+      // §7 MediaAsset → Neighborhood. Handed in as an INPUT so the tier logic
+      // decides disclosure: coarsenMediaLocation keeps it at 'neighborhood' and
+      // 'place' and nulls it at 'city' / 'country' / 'hidden'. Defaulting to
+      // null keeps every other caller's behaviour byte-identical.
+      neighborhood,
       city: typeof row.location_city === "string" ? row.location_city : null,
       country: typeof row.location_country === "string" ? row.location_country : null,
       lat: null,
@@ -348,12 +427,23 @@ export async function projectCandidatesProtected(
   nowMs: number,
 ): Promise<MediaProjection[]> {
   if (rows.length === 0) return [];
-  const ctx = await loadProjectionGemContext(sc, rows);
+  // Two independent batch reads, one round trip's worth of latency. The gem
+  // context is fail-CLOSED (losing it widens disclosure); the neighborhood map
+  // is fail-SOFT (losing it only removes a label) — see loadPlaceNeighborhoods.
+  const [ctx, neighborhoods] = await Promise.all([
+    loadProjectionGemContext(sc, rows),
+    loadPlaceNeighborhoods(sc, rows),
+  ]);
   const out: MediaProjection[] = [];
   for (const row of rows) {
     const p = toMediaProjection(row, nowMs);
     if (!p) continue;
-    out.push(applyLocationDisclosure(p, disclosureForRow(row, viewer.viewerId, ctx)));
+    out.push(
+      applyLocationDisclosure(
+        p,
+        disclosureForRow(row, viewer.viewerId, ctx, neighborhoodForRow(row, neighborhoods)),
+      ),
+    );
   }
   return out;
 }
@@ -739,11 +829,16 @@ export async function buildMyWorldProjection(
   // COUNT only: the media items belong to their own domains' projections, and are
   // not re-projected here. Every read degrades to 0. The §31 memory build runs
   // in parallel with these.
-  const [postcardsCount, memoriesCount, gemsCount, uploadsCount, memory] = await Promise.all([
+  const [postcardsCount, memoriesCount, gemsCount, uploadsCount, tagged, memory] = await Promise.all([
     countOwned(sc, "passport_postcards", "user_id", viewer.viewerId, (r) => (r as any).status === "active" && (r as any).deleted_at == null),
     countOwned(sc, "memories", "owner_id", viewer.viewerId, (r) => !["deleted", "removed", "hidden"].includes(String((r as any).state ?? ""))),
     countOwned(sc, "hidden_gems", "submitted_by", viewer.viewerId, (r) => ["active", "pending"].includes(String((r as any).status ?? "active"))),
     countOwned(sc, "media_assets", "owner_user_id", viewer.viewerId),
+    // §30 Tagged — OTHER people's posts this viewer is tagged in, re-gated. This
+    // is the one non-owner bucket in My World, which is why it is the only one
+    // that goes through the eligibility gate and the location choke point rather
+    // than through countOwned.
+    loadTaggedMedia(sc, viewer, nowMs).catch(() => [] as MediaProjection[]),
     // §31 memory is scoped to the SESSION viewer id — never a query param.
     buildMyWorldMemory(sc, viewer.viewerId).catch(() => undefined),
   ]);
@@ -760,8 +855,9 @@ export async function buildMyWorldProjection(
     // Cross-domain buckets — counted from each domain's owner-scoped table.
     { key: "postcards", label: "Postcards", ownerOnly: false, count: postcardsCount, media: [] },
     { key: "memories", label: "Memories", ownerOnly: false, count: memoriesCount, media: [] },
-    // Tagged has no backing people-tag table yet (pre-launch) — well-formed empty.
-    { key: "tagged", label: "Tagged", ownerOnly: false, count: 0, media: [] },
+    // Tagged — public posts this viewer is tagged in (`public.tags`, source_type
+    // 'post', status 'approved'), re-gated and coarsened. See loadTaggedMedia.
+    { key: "tagged", label: "Tagged", ownerOnly: false, count: tagged.length, media: tagged.slice(0, 60) },
     { key: "gems", label: "Hidden Gems", ownerOnly: false, count: gemsCount, media: [] },
   ];
 
@@ -777,6 +873,93 @@ export async function buildMyWorldProjection(
       notes: [],
     },
   };
+}
+
+/**
+ * The post ids this viewer has been TAGGED in (§30 "Tagged" filter).
+ *
+ * WHAT WAS HERE BEFORE, AND WHY IT WAS WRONG. The Tagged bucket was a literal —
+ * `{ key: "tagged", count: 0, media: [] }` — under the comment *"Tagged has no
+ * backing people-tag table yet (pre-launch)"*. That comment is false, and it is
+ * false in the direction that hides work the repository had already done:
+ * `public.tags` is created by migration `0044_tags_hashtags.sql`, is present in
+ * the production baseline, and is WRITTEN on the post-create path —
+ * `routes/posts.ts` calls `processTagging({ sourceType: 'post', sourceId: post.id })`,
+ * which upserts `(source_type, source_id, tagger_id, tagged_user_id, status)`
+ * through `services/tagging/TaggingService.ts` after the tag-permission, block
+ * and rate checks. The bucket was reporting zero over a populated table.
+ *
+ * STATUS. Only `status='approved'` rows count. A `pending` tag is one the tagged
+ * user has not accepted (the `approval_required` tag permission writes it), and
+ * surfacing it in their own library would be the acceptance the flow is asking
+ * for. `routes/tags.ts` filters the same way.
+ *
+ * BEST-EFFORT, degrading to an empty list: a Tagged bucket that fails to load is
+ * an empty bucket, exactly as it has always been. It can never widen anything —
+ * the ids it produces are handed to `loadEligibleCandidates`, which re-gates
+ * every one of them.
+ */
+export async function loadTaggedPostIds(
+  sc: SupabaseClient,
+  viewerId: string,
+  limit: number = DEFAULT_CANDIDATE_LIMIT,
+): Promise<string[]> {
+  try {
+    const { data, error } = await (sc as any)
+      .from("tags")
+      .select("source_id, tagged_at")
+      .eq("tagged_user_id", viewerId)
+      .eq("source_type", "post")
+      .eq("status", "approved")
+      .order("tagged_at", { ascending: false })
+      .limit(limit);
+    if (error) {
+      logger.warn({ err: error }, "myWorld: tags read failed — Tagged bucket degrades to empty");
+      return [];
+    }
+    const ids: string[] = [];
+    for (const r of ((data as any[]) ?? [])) {
+      const id = (r as any)?.source_id;
+      if (typeof id === "string" && id.length > 0) ids.push(id);
+    }
+    return [...new Set(ids)];
+  } catch (err) {
+    logger.warn({ err }, "myWorld: tags read threw — Tagged bucket degrades to empty");
+    return [];
+  }
+}
+
+/**
+ * Project the media of the posts this viewer is tagged in (§30).
+ *
+ * THE GATES ARE NOT SKIPPED BECAUSE THE VIEWER IS TAGGED. Being tagged in a post
+ * is not consent to see it: the tagger may have been blocked since, the author
+ * may have gone private, the post may have been archived or moderated away. The
+ * ids therefore go through `loadEligibleCandidates` — the same blocks / mutes /
+ * suspension / status / publish_at / visibility / moderation gate plus the
+ * private-account guard every other bucket crosses — and then through
+ * `projectCandidatesProtected`, the location/gem choke point.
+ *
+ * `feedType: "for_you"` means PUBLIC posts only, in the query and again in the
+ * gate. A tagged `trip_only` or `private` post is therefore withheld rather than
+ * guessed at: admitting it would need a membership proof this bucket does not
+ * hold, and under-showing a label is the safe direction. That is a stated bound,
+ * not an oversight.
+ */
+export async function loadTaggedMedia(
+  sc: SupabaseClient,
+  viewer: ViewerResolved,
+  nowMs: number,
+): Promise<MediaProjection[]> {
+  const ids = await loadTaggedPostIds(sc, viewer.viewerId);
+  if (ids.length === 0) return [];
+  const rows = await loadEligibleCandidates(sc, viewer, {
+    feedType: "for_you",
+    postIds: ids,
+    limit: DEFAULT_CANDIDATE_LIMIT,
+  });
+  if (rows.length === 0) return [];
+  return projectCandidatesProtected(sc, viewer, rows, nowMs);
 }
 
 /**

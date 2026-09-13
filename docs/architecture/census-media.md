@@ -1511,3 +1511,482 @@ Both were repointed at the lines the code now occupies, and `census-wall.md` W7'
 `post_saves` anchor moved a second time and was repointed again. `check:doc-citations`
 found every one of them, which is the third time in two sections that an anchored citation
 has earned its keep.
+
+---
+
+## 11. The C column audited — 208 rows machine-resolved, 120 executed, seven wrong
+
+| Field | Value |
+| --- | --- |
+| **Measured at** | `f8384ea5b` — the tip of `claude/sweet-fermat-fmx7up` when this pass started. The document's `head_commit` row (§0) is **not** moved: this section re-reads a SAMPLE, not 450 rows. The counted files this pass changed are named, with an argument each, in `artifacts/api-server/src/scripts/CENSUS_STALENESS_ACKNOWLEDGED.json`. |
+| **What §10.7 asked for** | *"six rows of a 288-row C column were re-read and four were wrong … nobody has checked the other 282, and the sample says that matters."* This section checks 120 of them and reports the rate it actually measured, which is far lower than 67 % and still high enough to matter. |
+| **Prior sections** | Unchanged and not restated. §1–§10 stand as written. Last statement wins for the ids in §11.9. |
+
+### 11.1 Method, and the two sample sizes — stated separately because only one is a measurement
+
+1. **MACHINE-RESOLVED — 208 of the 288 C rows.** Every C row carrying a
+   `file:line` citation had every citation resolved against the tree and the
+   cited line printed and read; 208 rows carry at least one, the other 80 cite a
+   bare filename or nothing. **Zero citations were out of range.** That result is
+   worth exactly what `check:doc-citations` says it is worth — these are all
+   UNANCHORED, *"a bare path:line; nothing here can tell you it is wrong"* — and
+   at least 20 of the 208 point at a line holding something other than the object
+   the row names (§11.8). A range check is not a correctness check, which is the
+   whole reason for pass 2.
+2. **EXECUTED — 120 of the 288.** The claim itself run down: the call site
+   opened, the writer or reader followed to its end, the absence settled by
+   enumerating **every** reference rather than by a grep that stops.
+
+**The rate, both ways, because one of them flatters.** Of the 120, **23 are §40
+module rows whose requirement IS existence** (MD303–MD312, MD315, MD317–MD319,
+MD326–MD328, MD330, MD333–MD337 — each verified present *and* referenced by a
+real importer, so none is an orphan file scoring a letter). Those are easy by
+construction. The other **97 carry a behavioural claim**, and **seven of the 97
+were wrong**:
+
+> **Seven of the 97 executed behavioural C rows were wrong — a 7.2 % error
+> rate.** Taken over all 120 executed rows it is 5.8 %.
+
+**What that says about §9's 67 %.** §9 re-read six rows and four were wrong, and
+its closing sentence treated that as a reason to expect more. It was — but the
+six were chosen adversarially (the whole §36 moderation block and the two report
+rows), and 4/6 is not the rate. 7.2 % is. That is the better number and it is
+not a reassuring one: applied to the 288 C rows, it projects **roughly twenty
+more wrong rows that nobody has found**, and this pass leaves 168 C rows
+unexecuted.
+
+**Coverage — every section, named so the sample cannot be read as the easy
+ones.** The 120 touch all 38 §5 sections that have a C row:
+
+`§2 MD4·5·7·9·10 · §3 MD12·13·16·17 · §4 MD18·19·20·22·23·24 ·
+§5 MD30·31·32·34 · §6 MD39·40·42 · §7 MD45·46·47·49·50·52·54 · §8 MD55·56 ·
+§9 MD59·61·62·67·68 · §10 MD69·72·74 · §11 MD80 · §12–§14 MD81·86·88 ·
+§15 MD95·96·102·106 · §16 MD108·110·114·116·117·121·122·123·126·127·130·139 ·
+§17–§22 MD140·141·142·143·145·148·154·155·156·157·159·161·163 ·
+§23 MD164·166·167·168·170·176 · §24 MD178·183·185·190·191·192·193·199 ·
+§25 MD202·204·205·206·208 · §26 MD209·210·211·212 ·
+§27–§30 MD217·218·220·227·229 · §31 MD230–MD241 ·
+§32 MD242·243·244·245·247·250·251·254 · §33 MD256·257·258 ·
+§34 MD260·261·262·263 · §35 MD264·265 · §36 MD266·267·272·273 ·
+§37 MD278·279·285 · §39 MD302 · §40 the 23 above · §41 MD340·344·352 ·
+§42 MD353·354·355 ·
+§43 MD357·358·359·361·362·363·364·365·366·368·371·372·373 ·
+§44 MD375·377·379·384·386·387·388·389·390·391·392·393 ·
+§45 MD394·395·397·398·401 · §46 MD404·406·407·413 · §46.1 MD414·417·418 ·
+§46.2 MD420·423·426 · §48 MD430·431·432·434·437·438 · §49 MD442·450`
+
+**The rule that found all seven.** §10.1 says an absence asserted from a
+truncated list is not a measurement. Every "nothing writes X" / "nothing reads
+X" settled below was settled by enumerating **every** reference to the
+identifier across both trees and opening each one. No `head -N` was applied to
+any search whose result is asserted here as an absence. Five of the seven were
+found the other way round — a row claiming something IS produced, where nothing
+produced it.
+
+### 11.2 The 73 W rows, grouped by WHY — sizes, and the full partition
+
+Grouped before anything was built, because the group a row is in decides whether
+building it is honest or vacuous. Every one of the 73 appears in exactly one
+group; the ids are listed so the partition can be checked rather than trusted.
+
+| Group | Size | What it means |
+| --- | --- | --- |
+| **(a) Logic wrong in code this branch can fix** | **11** | No migration, no flag, no dark store, no new product decision. |
+| **(b) Logic right, nothing reaches it** | **15** | The compliant artifact exists and is correct; the surface a user reaches is the non-compliant twin. |
+| **(c) Capped by a flag seeded FALSE or an unapplied migration** | **19** | The code is not the binding constraint. |
+| **(d) Needs something nobody has written** | **28** | A classifier, a video decoder, a screen, a client flow. |
+
+- **(a) — 11.** MD15, MD33, MD94, MD104, MD147, MD213, MD216, MD370, MD378, MD383, MD428.
+- **(b) — 15.** MD1, MD2, MD3, MD11, MD29, MD87, MD215, MD286, MD402, MD408, MD412, MD419, MD424, MD425, MD427.
+- **(c) — 19.** MD36, MD37, MD38, MD41, MD43, MD44, MD53, MD57, MD60, MD65, MD66, MD188, MD255, MD274, MD338, MD339, MD343, MD429, MD445.
+- **(d) — 28.** MD35, MD58, MD71, MD73, MD79, MD101, MD103, MD107, MD112, MD149, MD169, MD187, MD194, MD222, MD269, MD275, MD276, MD283, MD300, MD320, MD321, MD348, MD351, MD405, MD435, MD444, MD446, MD449.
+
+**The uncomfortable result of grouping first: group (a) is 11 rows and this pass
+moved none of them.** Each is a small server change whose product would be read
+by nothing — and §9.4 already refused exactly that shape and named it: *"A
+server field with no decision behind it is a vacuous C, and shipping one to move
+a letter is the failure mode this document exists to catch."* The eleven are
+re-argued one at a time in §11.6 rather than converted into eleven letters.
+
+### 11.3 Seven C rows executed, and what each of them actually did
+
+#### 11.3.1 MD47 — the §7 Neighborhood edge was drawn in the type and severed in the data
+
+MD47 read **C** on *"`mediaProjection.ts` lines 89-91 carry `neighborhood`/`city`/`country`
+as coarse labels."* Those lines are a **type declaration** —
+`artifacts/api-server/src/lib/media/mediaProjection.ts:113#neighborhood: string | null;`
+today. Executed, the field was `null` on every projection the World shell has
+ever served, on every route, for every viewer:
+
+- the raw projector hard-codes it —
+  `artifacts/api-server/src/lib/media/mediaProjection.ts:347#neighborhood: null,`
+  — which is correct on its own terms, because `posts` has no neighborhood
+  column: `MEDIA_PROJECTION_POST_COLUMNS` selects `location_name`,
+  `location_city`, `location_country` and `canonical_place_id`, and no fourth
+  label;
+- the disclosure applier copies it off the resolved disclosure —
+  `artifacts/api-server/src/lib/media/mediaProjection.ts:394#neighborhood: d.neighborhood,`;
+- and the disclosure's input never carried one. `disclosureForRow` built
+  `{ name, city, country, lat, lng }`, so
+  `artifacts/api-server/src/lib/mediaLocationVisibility.ts:225#const neighborhood = input.neighborhood ?? null;`
+  resolved to `null` every time.
+
+The **tier machinery was complete and correct the whole time**:
+`artifacts/api-server/src/lib/mediaLocationVisibility.ts:281#case "neighborhood": {`
+discloses the label at the neighborhood and place tiers and nulls it at
+city / country / hidden. Only the producer was missing. Two consumers read the
+field as a label fallback and have therefore always fallen through to `city`.
+
+**MD47 C → W at `f8384ea5b`**, repaired in §11.4.1.
+
+#### 11.3.2 MD227 — the Tagged bucket was a literal, under a comment that was false
+
+MD227 read **C** for §30's seven My World filters. Six read real rows. The
+seventh was
+`{ key: "tagged", label: "Tagged", ownerOnly: false, count: 0, media: [] }`,
+under the comment *"Tagged has no backing people-tag table yet (pre-launch)"*.
+
+Executed: `public.tags` is created by
+`artifacts/api-server/src/migrations/0044_tags_hashtags.sql:15#CREATE TABLE IF NOT EXISTS tags (`,
+is in the committed production baseline (`baseline/20260907_production_tables.txt`),
+and is **written on the post-create path** —
+`artifacts/api-server/src/routes/posts.ts:874#sourceType: 'post',` hands the new
+post's id to `processTagging`, which upserts at
+`artifacts/api-server/src/services/tagging/TaggingService.ts:392#.from('tags')`
+after the tag-permission, block and rate checks. The bucket reported zero over a
+populated table, and the comment that explained the zero is the same defect
+class §10.1 records against itself: an absence asserted without opening the
+writer. Six of seven, which this census grades **W** (MD35: *"Two of three."*).
+
+**MD227 C → W**, repaired in §11.4.2.
+
+#### 11.3.3 MD386, MD387, MD389, MD393 and MD209 — five §44/§26 signals with no producer anywhere
+
+MD386 (Stamp), MD387 (Comment), MD389 (Save) and MD393 (Profile open) each read
+**C** citing the batch allow-list —
+`artifacts/api-server/src/routes/mediaAnalyticsBatch.ts:38#const VALID_EVENT_TYPES = new Set<string>([`,
+whose next three lines name `like`, `comment`, `save`, `profile_open` and
+`place_open` among twenty-two accepted event types.
+An allow-list entry is a thing the server will ACCEPT. It is not a producer, and
+this census already knows the difference: MD213 and MD378 are **W** on the words
+*"`directions_tap` is in the batch allow-list … the outcome name exists with no
+emitter"*, and MD383 is **W** for the same reason. The four rows above were
+graded C on evidence identical in kind.
+
+Settled by enumeration, not by grep-and-stop:
+
+- `media_events` has exactly one writer in the tree —
+  `artifacts/api-server/src/lib/mediaAnalytics.ts:189#const { error } = await sc.from("media_events").insert({`
+  — and `recordMediaEvent` had five call sites: two `impression`, one branching
+  over `rewatch`/`completion`/`qualified_view`/`impression`, one `share`, and
+  the batch endpoint.
+- On the client, **one** file posts to that endpoint —
+  `travel-buddy-standalone/src/hooks/useMediaAnalytics.ts:125#await fetch(` —
+  **one** component consumes the hook —
+  `travel-buddy-standalone/src/features/media/components/MediaActionRail.tsx:94#const { record } = useMediaAnalytics();`
+  — and its recorder is called from exactly **one** place,
+  `travel-buddy-standalone/src/features/media/telemetry/mediaTelemetry.ts:235#record(event, payload);`,
+  inside `emitMediaNorthStar`, which can only ever emit one of the eight §45
+  `media_*` names.
+
+So `like`, `comment`, `save`, `profile_open`, `place_open`, `mode_switch`,
+`add_to_trip`, `directions_tap` and the rest of the §44 vocabulary had **no
+producer on either side of the wire**. The §44 Stamp / Comment / Save /
+Profile-open funnels read zero by construction — the same shape §9.1 found for
+`hideRate` and `notInterestedCount` — and the reason the like handler
+(`artifacts/api-server/src/routes/mediaFeed.ts:2212#router.post("/media/:id/like", asyncHandler(async (req, res) => {`)
+and the save handler recorded nothing is simply that nobody ever added the line.
+
+**MD386, MD387, MD389, MD393 C → W.** MD209 (§26 *"People saved this place"*)
+goes with them: it rests on `save` **and** `place_open`, and neither had a
+producer. **MD209 C → W.** MD386 and MD389 are repaired in §11.4.3; the other
+three are argued in §11.6.
+
+MD375 (§44 Place explored) and MD379 (§44 Added to Trip) were checked in the
+same sweep and **stay C**: each also cites a §45 north-star name, and those
+eight DO have an emitter — the action rail. That emitter is dark behind
+`MEDIA_WORLD_SHELL_ENABLED`, which is the open decision §9.10 put to the owner
+and which this section does not pre-empt.
+
+### 11.4 What this pass built
+
+Three changes, all server-side, none behind a new flag, none needing a migration.
+
+1. **The §7 neighborhood label has a producer.**
+   `artifacts/api-server/src/services/media/MediaProjectionService.ts:323#export async function loadPlaceNeighborhoods(`
+   batches one `places` read over the page's distinct `canonical_place_id`s —
+   the same column `buildPlaceProjection` already reads for a place header, so
+   Media does not open a second neighborhood source (§48: Places owns place
+   identity) — and
+   `artifacts/api-server/src/services/media/MediaProjectionService.ts:433#const [ctx, neighborhoods] = await Promise.all([`
+   runs it alongside the gem context. The label is handed to the choke point as
+   an **input**, never written onto the projection, so `coarsenMediaLocation`
+   still decides: a gem-ceilinged or privacy-coarsened item names no
+   neighborhood. The gem lookup beside it stays fail-CLOSED while this one is
+   fail-SOFT, and the asymmetry is argued in the function's own header rather
+   than left to look like an oversight — losing the gem context would WIDEN
+   disclosure, losing this one only removes a label.
+2. **The §30 Tagged bucket reads the table that was there all along.**
+   `artifacts/api-server/src/services/media/MediaProjectionService.ts:902#export async function loadTaggedPostIds(`
+   reads `tags` for `status='approved'`, `source_type='post'`, and
+   `artifacts/api-server/src/services/media/MediaProjectionService.ts:949#export async function loadTaggedMedia(`
+   puts those ids through `loadEligibleCandidates` and
+   `projectCandidatesProtected` — **being tagged is not consent to see the
+   post**, so the blocks / mutes / suspension / visibility / moderation gate,
+   the private-account guard and the location choke point all still run. Bound
+   stated rather than hidden: `feedType: "for_you"` means a tagged `trip_only`
+   or `private` post is withheld rather than guessed at, because admitting it
+   would need a membership proof this bucket does not hold.
+3. **§44 Stamp and Save emit.**
+   `artifacts/api-server/src/routes/mediaFeed.ts:2240#recordMediaEvent("like", {`
+   and `artifacts/api-server/src/routes/mediaFeed.ts:2346#recordMediaEvent("save", {`
+   — server-side, beside the `share` event that already did this, because the
+   server is the only witness to whether the write succeeded. Save emits only
+   AFTER the upsert, so the number counts saves that happened rather than taps
+   that were attempted. Both sit inside `recordMediaEvent`'s existing
+   `MEDIA_ANALYTICS_ENABLED` gate; this pass flips no flag.
+
+### 11.5 Mutations, and what each one turned red
+
+Seven. Each applied, run, reverted, and the file compared byte-for-byte against
+its pre-mutation copy with `cmp`. Suite:
+`artifacts/api-server/src/test/mediaProjectionGaps.test.ts:242#describe("MD47 — the neighborhood label has a producer", () => {`,
+14 cases in three groups, registered in `artifacts/api-server/package.json`.
+
+| Mutation | What it did | What went red |
+| --- | --- | --- |
+| M9 | drop the `neighborhood` argument from `disclosureForRow`'s call | `a served projection CARRIES the neighborhood at place tier` — 1 of 14 |
+| M10 | make `loadPlaceNeighborhoods` return an empty map | 2 red: the loader's own case and the served projection |
+| M11 | disclose the neighborhood at the `city` tier too — bypass the choke point | `WITHHOLDS the neighborhood when a Hidden Gem ceiling coarsens the item to city` |
+| M12 | restore the hard-coded `count: 0, media: []` on the Tagged bucket | `the Tagged bucket carries the tagged media, not a hard-coded zero` |
+| M13 | let `loadTaggedPostIds` admit `status='pending'` tags | `ignores a PENDING tag — a tag awaiting approval is not yet the viewer's` |
+| M14 | delete the `like` `recordMediaEvent` call | `POST /media/:id/like records a like media event` |
+| M15 | delete the `save` `recordMediaEvent` call | `POST /media/:id/save records a save media event` |
+
+M11 is the one worth naming. M9, M10 and M12–M15 all ask "did the producer come
+back", which is the regression that matters here because a missing producer
+leaves every existing assertion green — that is exactly how all three defects
+survived. M11 asks the other question: it proves the neighborhood travels
+THROUGH the privacy choke point rather than around it, so a future "fix" that
+wrote the label straight onto the projection goes red instead of quietly naming
+a protected gem's neighborhood.
+
+**What would leave these green and worthless.** The §44 cases assert on the two
+HTTP handlers, so they stay green if a CLIENT stops calling those endpoints —
+and they say nothing at all about `comment`, `place_open` or `profile_open`,
+which remain unproduced. The §7 and §30 cases drive `buildPlaceProjection` and
+`buildMyWorldProjection` directly, so they would not notice a ROUTE that stopped
+calling those builders. That is the same P24 gap §9.6 records, still open.
+
+### 11.6 What was NOT built, and the argument for each
+
+**The eleven group-(a) rows**, each a small server change whose product nothing
+would read:
+
+- **MD94 / MD213 / MD378 (directions).** `directions_tap` has no emitter because
+  there is no directions affordance to tap (MD94). Adding the action id first
+  puts a fourteenth entry in the resolver that no rail renders.
+- **MD370 / MD383 (contribution).** `media_contribution` is declared *"reserved"*
+  and `hidden_gem_contributions` is **absent from production**
+  (`scripts/checkProductionDrift.ts`). A contribution endpoint writing to a table
+  that is not there is worse than no endpoint.
+- **MD104 (Share through Telegraph).** The share handler accepts
+  `target: "telegraph"` and returns a URL. Telegraph's own §5 contract
+  (`services/telegraph/shareables.ts`) shares by placing an object body into a
+  **conversation**, and the media share endpoint holds no conversation id. The
+  honest fix is a client composer hand-off; a server field naming a Telegraph
+  object that no composer consumes is §9.4's vacuous C again.
+- **MD147 (Independent Sources).** `lib/intelIndependence.clusterByIndependence`
+  exists and is real. Its detectors merge units on shared evidence media, common
+  source and synchronised timing — **none of which a media projection carries**:
+  no group key, no asset hash, no source ref. Called with what Media has, every
+  perspective becomes its own singleton and `independentSourceCount` equals
+  `contributorCount`, which is the precise thing MD147 says is wrong. Building
+  the call without the signals would turn a true W into a false C.
+- **MD216 (People lens).** §27 names four populations and the builder handles
+  two. Adding trip crew makes it three of four, which this census still grades
+  W. A build that neither moves the letter nor completes the requirement is
+  gold-plating.
+- **MD15 / MD33 / MD428 (client-shaped).** The Gems lens ignoring its own mode
+  bar, `GET /media/gems` being unserved while the lens renders the pre-existing
+  `GemsFeed`, and `WhyThisSheet` explaining the ranker's reasons instead of
+  §47's five are all decided in the client. Two of §47's five reasons — fresh
+  perspectives in the last 10 minutes, area activity increasing — are not
+  ranking inputs at all, so the server has nothing to send.
+- **MD43** is in group (c) rather than (a) for a reason worth stating, because
+  it looks branch-fixable and is not: `media_attachments.visibility_override`
+  has one writer, on the flag-gated canonical path, and **production does not
+  have the column** — migration 2250 is unapplied there. A reader for it would
+  be a read of a column that does not exist.
+
+**MD387 (Comment), MD393 (Profile open), and MD209's `place_open` half.** Media
+has no comment-CREATE endpoint —
+`artifacts/api-server/src/routes/mediaFeed.ts:2448#router.get("/media/:id/comments", asyncHandler(async (req, res) => {`
+is a read, and comments are created on the posts spine. Emitting a *media*
+`comment` signal from the generic post-comment handler would attribute every
+Wall and Pulse comment to Media, which is worse than a zero. `profile_open` and
+`place_open` are client navigations with no server touchpoint at all. All three
+stay **W**.
+
+### 11.7 CORRECTION to §3 — `media_canonical_enabled` is not off in production
+
+§3's gate table records `media_canonical_enabled` as `false`, sourced to
+*"`0191_media_assets.sql`, postcondition in `2250`"*, and eight W rows repeat the
+phrase "the flag is off". **The seed is false; the database is not.**
+`artifacts/api-server/src/lib/mediaAssets.ts:15#travel-buddy  ajrurzioarfkagpuxfnb  (production)  media_canonical_enabled = TRUE`
+records a 2026-09-07 measurement, and the same header says in its own words that
+*"every comment in this tree that calls the canonical layer 'dark' is reading
+the migration, not the database."* This census read the migration.
+
+**No verdict moves, and the corrected reason is worse than the stated one.** The
+canonical writer is dead in production not because the flag is off but because
+migration **2250 is unapplied there**: the payload names `captured_at`,
+`provenance` and `intelligence_eligibility`, that database has none of them, and
+since 2026-09-07 a schema-capability guard refuses the write outright rather
+than attempting one PostgREST rejects. MD36, MD37, MD38, MD57, MD60, MD338,
+MD339, MD343 and MD429 are therefore group **(c)** as §11.2 places them, but for
+the migration half of that group and not the flag half. The practical difference
+is real: a flag is one row to flip, and an unapplied migration in a production
+database is not.
+
+`routes/sharedMoments.ts` gates a contribution on the caller owning a
+`media_assets` row, so with the writer dead that request path cannot succeed for
+any media uploaded since 2026-08-16 — a consequence §3 could not see while it
+believed the layer was merely dark.
+
+### 11.8 The citation decay §5 is carrying, named rather than repointed
+
+At least 20 of the 208 machine-resolved rows cite a line holding something other
+than the object the row names. The concentration is `routes/mediaFeed.ts`, which
+§9 and §10 grew by about 113 lines: MD55, MD105, MD118, MD203, MD363, MD371,
+MD386 and MD388 all cite pre-§9 numbers. Others drifted on their own — MD272
+cites `lib/mediaAssets.ts` line 129 for `computeIntelligenceEligibility`, which is at
+`artifacts/api-server/src/lib/mediaAssets.ts:366#const intelligenceEligibility = computeIntelligenceEligibility({`;
+MD110 and MD114 cite `HiddenGemService.ts` line 150 for a media-attachment write that
+is at
+`artifacts/api-server/src/services/hiddenGems/HiddenGemService.ts:188#unaffected). Records media_assets + media_attachments(entityType=hidden_gem)`;
+MD45 cites `mediaProjection.ts` line 176 for `projectContributor`, now at
+`artifacts/api-server/src/lib/media/mediaProjection.ts:294#function projectContributor(row: MediaCandidateRow): MediaContributor`.
+
+Two are worth naming past the line number, because the wrong line carries a
+wrong sentence:
+
+- **MD106.** The row says the intent signal is *"written only through the
+  service-role endpoint at `routes/mediaActions.ts` line 161, read at
+  `MediaActionResolver.ts` line 612."* The two are **the wrong way round**:
+  `artifacts/api-server/src/routes/mediaActions.ts:161#.from("media_intent_signals")`
+  is the DELETE, and
+  `artifacts/api-server/src/services/media/MediaActionResolver.ts:612#.from("media_intent_signals")`
+  is the upsert — the writer. Enumerated exhaustively, `media_intent_signals`
+  has **no reader anywhere in either tree**, so the asserted read does not exist.
+  MD106 **stays C**, re-derived: its requirement is that a want is an intent
+  signal and not a Like, which the separate table, the separate grant posture
+  and the separate write path all carry on their own. The missing consumer is a
+  real gap and it is not the thing MD106 asserts.
+- **MD199.** Cites `services/ranking/CreatorCapEnforcer.ts` for the media
+  repetition cap. That module is used by Wall, Compass, Pulse and Discovery and
+  **not by Media**, which has its own
+  `artifacts/api-server/src/services/ranking/MediaFeedRankingService.ts:488#export function enforceMediaCreatorCaps<T extends MediaFeedItem>(`.
+  MD199 **stays C** — `seenPenalty`, the fatigue layer and
+  `enforceMediaCreatorCaps` satisfy "− Repetition" — on a correctly named module.
+
+**Not repointed here, deliberately.** UNANCHORED sits at its ceiling of 6490 with
+zero headroom, and rewriting forty §5 citations inside a pass whose job was to
+measure verdicts would fuse two edits that should stay separable. Every citation
+this section ADDS carries an anchor. The list above is the finding; a
+citation-repointing pass is a different pass, and the ids are named so that pass
+does not have to begin by re-deriving them.
+
+### 11.9 Row moves
+
+Executed at `f8384ea5b`, before this pass's code:
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| MD47 | C | W | §7 "→ Neighborhood": the field was `null` on every projection ever served. The raw projector hard-codes it and the disclosure input never carried one, so the tier logic — complete and correct — had nothing to disclose. The cited evidence was a type declaration. §11.3.1. |
+| MD209 | C | W | §26 "People saved this place" rests on the `save` and `place_open` events; neither had a producer anywhere in either tree. §11.3.3. |
+| MD227 | C | W | §30's Tagged filter was `count: 0, media: []` under a comment claiming no backing table, while `public.tags` is in production and written on the post-create path. Six of seven. §11.3.2. |
+| MD386 | C | W | §44 Stamp: `like` is an allow-list entry with no emitter — the same evidence that makes MD213 and MD383 W. §11.3.3. |
+| MD387 | C | W | §44 Comment: the same, and Media has no comment-create endpoint to emit from. §11.3.3. |
+| MD389 | C | W | §44 Save: the same. §11.3.3. |
+| MD393 | C | W | §44 Profile open: the same; a client navigation with no server touchpoint. §11.3.3. |
+
+After this pass's code, on the branch:
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| MD47 | W | C | `loadPlaceNeighborhoods` produces the label, `disclosureForRow` hands it to the choke point, and the choke point still decides — asserted in both directions by M9/M10 (it arrives) and M11 (it is withheld under a gem ceiling). |
+| MD227 | W | C | The Tagged bucket reads `tags` and re-gates every id through the eligibility gate and the location choke point. M12 and M13 red. |
+| MD386 | W | C | `POST /media/:id/like` records a `like` media event. M14 red. |
+| MD389 | W | C | `POST /media/:id/save` records a `save` media event, after the upsert succeeds. M15 red. |
+
+MD209, MD387 and MD393 are **not** repaired and stay where the first table puts
+them, for the reasons in §11.6. MD106 and MD199 had their EVIDENCE corrected and
+their verdicts re-derived (§11.8); neither moves.
+
+### 11.10 Restated headline
+
+> | Measure | Was, §10.6 | Now |
+> | --- | --- | --- |
+> | Denominator (testable requirements) | 450 | **450** |
+> | BUILT-AND-CORRECT | 288 | **285** |
+> | BUILT-BUT-WRONG | 73 | **76** |
+> | NOT-BUILT | 87 | **87** |
+> | CANNOT-VERIFY | 2 | **2** |
+> | **CONSTRUCTED%** = (C+W)/450 | 80.2 % | **361 / 450 = 80.2 %** |
+> | **CORRECT%** (raw) = C/450 | 64.0 % | **285 / 450 = 63.3 %** |
+>
+> **Correctness went down again and construction did not move at all.** Seven
+> rows were wrong before this pass touched anything; three of them are still
+> wrong afterwards. Construction is identical because nothing here was
+> CONSTRUCTED that was not already constructed — the three repairs closed
+> producers for fields and events that were already declared, so the W column
+> absorbed them and the C+W total never noticed.
+
+The **spec-attributable** figure (§0: 216 / 450) is **not restated**, for the
+reason §9.8 gives: attribution was not re-run, and adjusting it by subtracting
+the demoted rows would be arithmetic dressed as measurement.
+
+### 11.11 Decisions surfaced rather than taken
+
+1. **§9.10's first decision is still open, and this pass leaned on it twice.**
+   Grading a complete implementation behind a flag seeded OFF as
+   BUILT-AND-CORRECT is what keeps MD375 and MD379 at C in §11.3.3 — their only
+   emitter is the dark action rail — and what keeps the whole §24 ranking block
+   at C over `MEDIA_RANKING_ENABLED`, which returns chronological order when
+   off. Applying the owner's "true on every deployment" rule instead would move
+   those rows and a hundred like them. **Still not taken here**: it is a
+   corpus-wide convention change. It is named again because this section's audit
+   depended on it — without it, the §44/§45 block does not split into "has a
+   dark emitter" (C) and "has no emitter at all" (W), and that distinction is
+   what five of the seven moves rest on.
+2. **§9.10's second decision is discharged again, not re-opened.** This pass
+   changed `routes/mediaFeed.ts` once more, so `census-wall.md` ages again and is
+   acknowledged again with a per-file argument. W7's `post_saves` anchor moved a
+   THIRD time — the `save` emitter added eighteen lines above it — and was
+   repointed at `routes/mediaFeed.ts:2326#.from("post_saves")`. `check:doc-citations` found it,
+   which is the fourth time in three sections that an anchored citation has
+   earned its keep, and the only reason this section can say the repoint is
+   right rather than hope so.
+3. **New, and for the owner rather than for a lane: §3 is wrong about
+   production** (§11.7). The remedy is not a document edit — it is a decision
+   about migration 2250, which production does not have and which nine W rows
+   are waiting on.
+
+### 11.12 The least flattering true thing about this pass
+
+**It measured a column it was also allowed to grade, and the grading went the
+way that flattered the measurement.** Seven rows moved C → W and four of those
+seven came back to C by the end of the same pass, on code this same pass wrote
+and this same pass tested. Nothing outside this section checked either the
+demotion or the repair. §10 exists precisely because the previous lane's
+headline finding was false, anchored and unreviewed for a commit, and the
+structural fact that produced it is unchanged here: **nothing in this repository
+can check whether a stated absence was actually searched for**, and five of
+§11.3's seven demotions rest on stated absences.
+
+Second, smaller, and still true: **group (a) — the eleven W rows this branch
+could fix — is exactly the group this pass did not touch.** Every repair in
+§11.4 repairs a row this pass itself demoted an hour earlier. The argument in
+§11.6 for leaving the eleven alone is, I believe, correct; it is also the
+argument that made the pass's own work the only work it did.
