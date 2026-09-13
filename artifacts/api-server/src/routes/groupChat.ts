@@ -68,17 +68,37 @@ async function isActiveThreadMember(
   return { active: !left, left };
 }
 
+/**
+ * What a group thread's message read established.
+ *
+ * census T344 ("no plausible empty inbox/**context**") and T363 ("no plausible
+ * empty **state**"). This function used to return a bare `any[]`, and `(data ??
+ * [])` on a DROPPED error meant an unreadable `messages` rendered a trip or
+ * circle chat as A CONVERSATION WITH NO MESSAGES — the same payload a brand-new
+ * thread produces, to a member looking at a thread full of history. No section
+ * of the census had named this site; it is the same defect §14 fixed in
+ * `GET /me/threads` and §17.8 item 2 named two other instances of in this file.
+ *
+ * An array cannot say "I could not read", so the return type says it instead
+ * and both callers answer §18.2's `degraded_unavailable`.
+ */
+type ThreadMessagesRead =
+  | { readonly ok: true; readonly messages: any[] }
+  | { readonly ok: false; readonly error: any };
+
 async function fetchMessagesForThread(
   sc: any,
   threadId: string,
   userId: string,
-): Promise<any[]> {
-  const { data } = await sc
+): Promise<ThreadMessagesRead> {
+  const { data, error: msgsErr } = await sc
     .from('messages')
     .select(`id, thread_id, sender_id, body, deleted_at, created_at, edited_at, original_language, profile:profiles!messages_sender_id_fkey(${PROFILE_PUBLIC})`)
     .eq('thread_id', threadId)
     .order('created_at', { ascending: false })
     .limit(INITIAL_MSG_LIMIT);
+
+  if (msgsErr) return { ok: false, error: msgsErr };
 
   const rows = (data ?? []) as any[];
 
@@ -126,7 +146,7 @@ async function fetchMessagesForThread(
   const senderIds = [...new Set(rows.map((m) => m.sender_id as string))];
   const allowedNames = await nameVisibilitySet(sc, senderIds);
 
-  return rows.map((m) => {
+  const messages = rows.map((m) => {
     const p = m.profile ?? {};
     const isDeleted = Boolean(m.deleted_at);
     const nameAllowed = m.sender_id === userId || allowedNames.has(m.sender_id);
@@ -170,6 +190,8 @@ async function fetchMessagesForThread(
       canShowOriginal: display.canShowOriginal,
     };
   });
+
+  return { ok: true, messages };
 }
 
 // ── GET /api/trips/:tripId/chat ───────────────────────────────────────────────
@@ -210,13 +232,42 @@ router.get('/trips/:tripId/chat', asyncHandler(async (req, res) => {
 
   const { active, left } = await isActiveThreadMember(sc, threadId, user.id);
 
-  const { data: threadRow } = await sc
+  // ── AN UNREADABLE THREAD IS NOT AN ACTIVE THREAD ──────────────────────────
+  // census T344/T363, §17.8 item 2. supabase-js RESOLVES on a database failure,
+  // so a dropped error arrived as `data: null` and every `??` below then
+  // ASSERTED a default: `title: 'Trip Chat'` and — the one that matters —
+  // `status: 'active'`. A thread the trip owner CLOSED or archived read back as
+  // active, to a member who is entitled to believe the number on the screen.
+  // `createdAt: null` and `lastMessageAt: null` are the same shape on two more
+  // fields.
+  //
+  // §18.2's posture, copied rather than reinvented: bind the error, log it, and
+  // answer `degraded_unavailable` — this codebase's own code for "the check was
+  // NOT PERFORMED" and the only code marked retryable in lib/http.ts
+  // RETRYABLE_CODES.
+  const { data: threadRow, error: threadRowErr } = await sc
     .from('message_threads')
     .select('id, thread_type, trip_id, title, status, last_message_at, created_at')
     .eq('id', threadId)
     .maybeSingle();
 
-  const messages = active ? await fetchMessagesForThread(sc, threadId, user.id) : [];
+  if (threadRowErr) {
+    req.log.error({ err: threadRowErr, threadId, tripId },
+      'trip chat: message_threads read failed — refusing rather than reporting the thread as active');
+    sendError(res, 'degraded_unavailable', 'We could not open this chat right now. Please try again shortly.');
+    return;
+  }
+
+  const read = active
+    ? await fetchMessagesForThread(sc, threadId, user.id)
+    : ({ ok: true, messages: [] } as const);
+  if (!read.ok) {
+    req.log.error({ err: (read as any).error, threadId, tripId },
+      'trip chat: messages read failed — refusing rather than rendering an empty conversation');
+    sendError(res, 'degraded_unavailable', 'We could not load this chat right now. Please try again shortly.');
+    return;
+  }
+  const messages = read.messages;
 
   res.status(200).json({
     thread: {
@@ -272,13 +323,31 @@ router.get('/circles/:circleId/chat', asyncHandler(async (req, res) => {
 
   const { active, left } = await isActiveThreadMember(sc, threadId, user.id);
 
-  const { data: threadRow } = await sc
+  // The circle half of the same defect, and the same posture. `'Trusted Circle'`
+  // is a cosmetic lie; `status: 'active'` on a thread the owner closed is not.
+  const { data: threadRow, error: threadRowErr } = await sc
     .from('message_threads')
     .select('id, thread_type, circle_owner_id, title, status, last_message_at, created_at')
     .eq('id', threadId)
     .maybeSingle();
 
-  const messages = active ? await fetchMessagesForThread(sc, threadId, user.id) : [];
+  if (threadRowErr) {
+    req.log.error({ err: threadRowErr, threadId, circleOwnerId },
+      'circle chat: message_threads read failed — refusing rather than reporting the thread as active');
+    sendError(res, 'degraded_unavailable', 'We could not open this chat right now. Please try again shortly.');
+    return;
+  }
+
+  const read = active
+    ? await fetchMessagesForThread(sc, threadId, user.id)
+    : ({ ok: true, messages: [] } as const);
+  if (!read.ok) {
+    req.log.error({ err: (read as any).error, threadId, circleOwnerId },
+      'circle chat: messages read failed — refusing rather than rendering an empty conversation');
+    sendError(res, 'degraded_unavailable', 'We could not load this chat right now. Please try again shortly.');
+    return;
+  }
+  const messages = read.messages;
 
   res.status(200).json({
     thread: {
