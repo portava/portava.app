@@ -92,7 +92,25 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
-const CENSUS_DIR = new URL("../../../../docs/architecture/", import.meta.url).pathname;
+/**
+ * The corpus this tool reads.
+ *
+ * `CENSUS_INTEGRITY_DIR` is a TEST-ONLY seam, and it is narrow on purpose: it
+ * changes WHICH directory is read and nothing else. Every floor below still
+ * applies to whatever it points at, so a fixture cannot be a way to make the
+ * tool agree with less than the real corpus would demand — a fixture with too
+ * few censuses fails MIN_CENSUS_FILES exactly as a broken tree would.
+ *
+ * It exists because the id grammar is module-private and there is no other way
+ * to put a single crafted cell in front of it. CI never sets this: the package
+ * script `check:census-integrity` runs with it unset and reads the real
+ * `docs/architecture/`, which is the invocation that gates the branch. The
+ * fixture run is an ADDITIONAL unit test, never the only reach — the failure
+ * mode `guardRegistry.ts` exists to prevent.
+ */
+const CENSUS_DIR = process.env.CENSUS_INTEGRITY_DIR
+  ? process.env.CENSUS_INTEGRITY_DIR.replace(/\/?$/, "/")
+  : new URL("../../../../docs/architecture/", import.meta.url).pathname;
 
 /** A tree with no censuses is a tree this check could not find. */
 const MIN_CENSUS_FILES = 10;
@@ -269,6 +287,23 @@ function parseIdCell(cellRaw: string): IdCell | null {
   const digitPrefixed = /^([A-Z]{1,4}[0-9]-[0-9]{1,4})(?![0-9A-Za-z-])/.exec(t);
   if (digitPrefixed) {
     return { ids: [digitPrefixed[1]!], label: t.slice(digitPrefixed[1]!.length).trim() };
+  }
+  // 6. A NAMED id, carrying no digits at all. `CPH-EVAL` is census-compass's
+  //    standing nine-query evaluation set — one requirement, named rather than
+  //    numbered because it is not the Nth of anything. Every pattern above and
+  //    the general grammar below require a digit, so it matched nothing and the
+  //    row was dropped silently, which is the same failure as TV-P1 and CX-03
+  //    in a third costume: a requirement invisible to the tallier while the
+  //    document counts it.
+  //
+  //    Deliberately narrow. The suffix is 2-8 capitals with NO digit and no
+  //    lowercase, and the cell must end or break straight after it, so an
+  //    ordinary prose cell cannot be read as an id. A range of named ids is not
+  //    a thing anyone has written and would be unorderable if it were, so this
+  //    returns exactly one id and never expands.
+  const named = /^([A-Z]{1,4}-[A-Z]{2,8})(?![0-9A-Za-z-])/.exec(t);
+  if (named) {
+    return { ids: [named[1]!], label: t.slice(named[1]!.length).trim() };
   }
 
   const lead = /^([A-Z]{1,4}-?)([0-9]{1,4})/.exec(t);
