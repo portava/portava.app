@@ -792,6 +792,110 @@ describe("graph substrate — circle and experience kinds (2290)", () => {
     assert.equal((fake.store.compass_graph_nodes ?? []).length, before, "not one node was deleted on an unreadable read");
   });
 
+  it("§28.8: ONE BATCH FAILS, ANOTHER SUCCEEDS — the successful batch's revocations still apply", async () => {
+    // THE MIXED CASE. `reconcileExperienceNodes` asks `memories` about the node
+    // keys it holds in chunks of DELETE_CHUNK (200). Before the merge at
+    // 75cc31d9e the first chunk whose read failed set `unresolved` and RETURNED,
+    // so a single transient error deferred every later chunk's privacy
+    // revocation for a whole scheduler tick — a day. The merged sweep counts the
+    // failed chunk into `undecided` and CARRIES ON.
+    //
+    // That carry-on was the half of the change with no test behind it, and
+    // census-highlights-memories D.11 says so in as many words: DELETE_CHUNK is
+    // 200 and no fixture in this repository seeded more than 200 experience
+    // nodes, so every existing test exercised a SINGLE batch. Both behaviours
+    // are indistinguishable on one batch. It was measured rather than assumed:
+    // restoring the pre-merge `return` — with `undecided` still assigned, so the
+    // single-batch reports are unchanged — left all 72 tests of
+    // compass-intelligence-graph.test.ts and compassCensusCorrectness.test.ts
+    // GREEN. This test is what turns it red.
+    //
+    // It asserts BOTH directions, because a sweep that carries on wrongly is
+    // worse than one that stops: the batch that answered is acted on, and the
+    // batch that did not is left EXACTLY as it was. A failed batch must not
+    // widen a revocation by one node.
+    const EXAMINED = 250;              // 250 keys ⇒ chunk 1 = 200, chunk 2 = 50
+    const FAILING = 200;               // every key in the first chunk
+    const memories: Row[] = [];
+    const nodes: Row[] = [];
+    const edges: Row[] = [];
+    for (let i = 0; i < EXAMINED; i += 1) {
+      const key = `mem-${String(i).padStart(4, "0")}`;
+      nodes.push({ id: `node-${key}`, node_type: "experience", node_key: key, city: "cebu", attrs: {} });
+      edges.push({ id: `edge-${key}`, src_type: "experience", src_key: key, dst_type: "city", dst_key: "cebu", edge_type: "in_city" });
+      // In BOTH chunks, every third Memory has been archived since the graph was
+      // written — so chunk 1 and chunk 2 each contain revocable rows, and the
+      // only thing that decides whether they are revoked is whether their own
+      // read answered.
+      const archived = i % 3 === 0;
+      memories.push({ id: key, state: archived ? "archived" : "published", visibility: "public" });
+    }
+    // A node the sweep is not scoped to, to prove the blast radius.
+    nodes.push({ id: "node-circle", node_type: "circle", node_key: "c-1", city: "cebu", attrs: {} });
+    fake.store.memories = memories;
+    fake.store.compass_graph_nodes = nodes;
+    fake.store.compass_graph_edges = edges;
+
+    const askedChunks: string[][] = [];
+    const flaky: any = {
+      from: (name: string) => {
+        if (name !== "memories") return fake.fakeClient.from(name);
+        return {
+          select: () => ({
+            in: (_col: string, ids: string[]) => {
+              askedChunks.push([...ids]);
+              // The FIRST batch errors. supabase-js RESOLVES on a database
+              // error, which is the shape that made this path easy to get
+              // wrong in the first place.
+              if (askedChunks.length === 1) {
+                return Promise.resolve({ data: null, error: { message: "57014 canceling statement due to statement timeout" } });
+              }
+              return Promise.resolve({ data: memories.filter((m) => ids.includes(String(m.id))), error: null });
+            },
+          }),
+        };
+      },
+    };
+
+    const report = await reconcileExperienceNodes(flaky);
+
+    assert.equal(report.examined, EXAMINED, "every experience node was examined");
+    assert.equal(report.unresolved, true, "a batch failed, and the report says the pass was partial");
+    assert.equal(report.undecided, FAILING, "the failed batch's keys are counted as unjudged, not silently as 'kept'");
+
+    const survived = fake.store.compass_graph_nodes ?? [];
+    const keyOf = (i: number) => `mem-${String(i).padStart(4, "0")}`;
+    // ── the batch that ANSWERED was acted on ─────────────────────────────────
+    const revokedSecondChunk = [];
+    for (let i = FAILING; i < EXAMINED; i += 1) if (i % 3 === 0) revokedSecondChunk.push(keyOf(i));
+    assert.ok(revokedSecondChunk.length > 0, "fixture sanity: the answering batch contains revocable rows");
+    assert.equal(report.nodesDeleted, revokedSecondChunk.length,
+      "a transient failure on one batch must not hold another batch's privacy revocation for a day");
+    for (const k of revokedSecondChunk) {
+      assert.equal(survived.find((n) => n.node_key === k), undefined, `${k} answered, was ineligible, and must be gone`);
+      assert.equal((fake.store.compass_graph_edges ?? []).find((e) => e.src_key === k), undefined,
+        `the in_city edge of revoked ${k} goes with its node — an orphan edge still inflates the city's sample size`);
+    }
+    // …and the eligible rows in that same batch were kept.
+    for (let i = FAILING; i < EXAMINED; i += 1) {
+      if (i % 3 === 0) continue;
+      assert.ok(survived.find((n) => n.node_key === keyOf(i)), `${keyOf(i)} answered and is still eligible — it must stay`);
+    }
+    // ── the batch that did NOT answer was left exactly as it was ─────────────
+    for (let i = 0; i < FAILING; i += 1) {
+      assert.ok(survived.find((n) => n.node_key === keyOf(i)),
+        `${keyOf(i)} was never answered for; deleting it would erase a live graph during an outage`);
+      assert.ok((fake.store.compass_graph_edges ?? []).find((e) => e.src_key === keyOf(i)),
+        `${keyOf(i)}'s edge is as unjudged as its node`);
+    }
+    assert.ok(survived.find((n) => n.node_type === "circle"), "the sweep is still scoped to experience nodes");
+    // Last, because it is the mechanism rather than the property: two batches
+    // were asked about, which is what makes the two halves above separable at
+    // all. A pass that abandoned after the first failure asks once.
+    assert.equal(askedChunks.length, 2, "250 keys must be asked about in two batches of at most DELETE_CHUNK");
+    assert.equal(askedChunks[0]!.length, FAILING, "the first batch is a full DELETE_CHUNK");
+  });
+
   it("§28.8: rebuildIntelligenceGraph runs the sweep BEFORE folding the aggregates, and reports it", async () => {
     seedCircleAndExperienceData(fake.store);
     const order: string[] = [];

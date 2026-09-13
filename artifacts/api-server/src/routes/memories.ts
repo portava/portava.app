@@ -32,6 +32,10 @@ import { getServiceClient } from "../lib/supabase.js";
 import { isFlagEnabled } from "../lib/featureFlags.js";
 import { sendPushWithRetry } from "../lib/pushWithRetry.js";
 import { nameVisibilitySet, nameVisibleFor } from "../lib/publicIdentity.js";
+import {
+  loadParticipantVisibility,
+  projectParticipants,
+} from "../services/memory/memoryParticipantVisibility.js";
 import { truncateDisplayName } from "../lib/displayName.js";
 import { logger } from "../lib/logger.js";
 import { linkOutcomeSignal } from "../compass/CompassOutcomeEngine.js";
@@ -786,11 +790,38 @@ router.get("/memories/:id", async (req, res) => {
   const singleMemoryGemCtx = await loadMemoryGemContext(sc, [memory]);
   const safeMemory = protectMemoryRow(memory, singleMemoryGemCtx, user.id, precisionEnabled);
 
+  // §10's person visibility ladder, and §23's `canSeeParticipant`. Before this,
+  // EVERY memory_tags row went out with its `tagged_user_id` to every viewer
+  // permitted to read the Memory — so a person who had not consented (`pending`)
+  // was profile-linked to it, and a person who had used the one exit the product
+  // offers (`removed`) was still shipped by id. See
+  // services/memory/memoryParticipantVisibility.ts for the rung order and why
+  // the rung is derived rather than stored.
+  const tagRows = (tags.data ?? []) as any[];
+  const participantIds = [...new Set(tagRows.map((t: any) => String(t.tagged_user_id ?? "")).filter(Boolean))];
+  const participantCtx = await loadParticipantVisibility(sc, memory, user.id, participantIds);
+  const participantProfiles = new Map<string, { name?: string | null; handle?: string | null }>();
+  if (participantIds.length > 0) {
+    // `error` is bound: an unreadable profiles table must not silently become
+    // "nobody has a handle". It costs the handle, never the rung — the ladder
+    // has already decided what may be shown before this map is consulted.
+    const { data: profs, error: profErr } = await sc
+      .from("profiles")
+      .select("id, name, handle")
+      .in("id", participantIds);
+    if (profErr) req.log.error({ err: profErr, memoryId: id }, "memories: participant profile read failed");
+    for (const pr of ((profs as any[]) ?? [])) {
+      participantProfiles.set(String(pr.id), { name: pr.name ?? null, handle: pr.handle ?? null });
+    }
+  }
+  const participants = projectParticipants(participantCtx, tagRows, participantProfiles);
+
   res.json({
     memory: {
       ...mapMemory(safeMemory, user.id),
       items: (items.data ?? []).map(mapItem),
-      tags: (tags.data ?? []).map((t: any) => ({ userId: t.tagged_user_id, status: t.status })),
+      tags: participants.participants,
+      anonymousParticipants: participants.anonymousCount,
       likeCount: likeCount.count ?? 0,
       likedByMe: Boolean(likedByMe.data),
       saveCount: saveCount.count ?? 0,
@@ -1222,7 +1253,7 @@ router.get("/memories/:id/tags", async (req, res) => {
 
   const { data: memory, error: memoryErr } = await sc
     .from("memories")
-    .select("id, owner_id, visibility, state")
+    .select("id, owner_id, visibility, trip_id, state")
     .eq("id", id)
     .neq("state", "deleted")
     .maybeSingle();
@@ -1255,7 +1286,25 @@ router.get("/memories/:id/tags", async (req, res) => {
 
   if (error) { sendError(res, "db_error", error.message); return; }
 
-  res.json({ tags: (data ?? []).map((t: any) => ({ userId: t.tagged_user_id, status: t.status, createdAt: t.created_at })) });
+  // The same ladder as the single read, from the same function. Two
+  // transcriptions of a privacy rule drift, and the drift is silent.
+  const tagRows = (data ?? []) as any[];
+  const participantIds = [...new Set(tagRows.map((t: any) => String(t.tagged_user_id ?? "")).filter(Boolean))];
+  const participantCtx = await loadParticipantVisibility(sc, memory, user.id, participantIds);
+  const participantProfiles = new Map<string, { name?: string | null; handle?: string | null }>();
+  if (participantIds.length > 0) {
+    const { data: profs, error: profErr } = await sc
+      .from("profiles")
+      .select("id, name, handle")
+      .in("id", participantIds);
+    if (profErr) req.log.error({ err: profErr, memoryId: id }, "memories: participant profile read failed");
+    for (const pr of ((profs as any[]) ?? [])) {
+      participantProfiles.set(String(pr.id), { name: pr.name ?? null, handle: pr.handle ?? null });
+    }
+  }
+  const participants = projectParticipants(participantCtx, tagRows, participantProfiles);
+
+  res.json({ tags: participants.participants, anonymousParticipants: participants.anonymousCount });
 });
 
 // ── PATCH /memories/:id/tags/:userId — approve or remove self-tag ────────────

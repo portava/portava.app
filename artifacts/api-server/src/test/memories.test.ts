@@ -981,3 +981,148 @@ describe("§24 source version, from the route", () => {
     assert.ok("sourceVersion" in audit!, "the key is present even when empty");
   });
 });
+
+/* ============================================================================
+ * §10 / §23 — the person visibility ladder ON THE ROUTES
+ *
+ * The decision itself is tested in src/test/memoryParticipantLadder.test.ts.
+ * What is asserted here is the thing that was actually wrong: BOTH routes that
+ * return a Memory's participants used to return every `memory_tags` row, user
+ * id and all, to every viewer permitted to read the Memory, with no filter on
+ * `status`. A person who had not consented was profile-linked to the Memory,
+ * and a person who had REMOVED their own tag was still shipped by id.
+ * ==========================================================================*/
+
+/** The participant shape these two routes now emit. Spelled out rather than
+ *  reached for as `any`, so a fixture describing a shape production never emits
+ *  stops compiling — which is what check-test-typecheck exists for. */
+interface TagView {
+  userId: string;
+  status: string | null;
+  createdAt?: string | null;
+  rung: string;
+  name: string | null;
+  handle: string | null;
+}
+interface MemoryReadBody { memory: { tags: TagView[]; anonymousParticipants: number } }
+interface TagsListBody { tags: TagView[]; anonymousParticipants: number }
+
+describe("§10 person visibility ladder — GET /api/memories/:id", () => {
+  it("a stranger gets no id for a participant who has not consented, and a count instead", async () => {
+    const state = baseState();
+    state.memory_tags.push({ memory_id: MEM_ID, tagged_user_id: FRIEND_ID, status: "pending" });
+    const app = await startApp(state);
+    try {
+      const { status, body: raw } = await get(app.baseUrl, `/api/memories/${MEM_ID}`, auth("stranger-tok"));
+      const body = raw as MemoryReadBody;
+      assert.equal(status, 200);
+      const serialized = JSON.stringify(body);
+      assert.ok(!serialized.includes(FRIEND_ID),
+        "a pending participant's user id must not reach a third party — §5 admits a participant only after consent");
+      assert.equal(body.memory.tags.length, 0);
+      assert.equal(body.memory.anonymousParticipants, 1,
+        "ANONYMOUS_COUNT is a count; dropping it entirely would understate who was there");
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("a stranger gets nothing at all for a participant who removed their tag", async () => {
+    const state = baseState();
+    state.memory_tags.push({ memory_id: MEM_ID, tagged_user_id: FRIEND_ID, status: "removed" });
+    const app = await startApp(state);
+    try {
+      const { body: raw } = await get(app.baseUrl, `/api/memories/${MEM_ID}`, auth("stranger-tok"));
+      const body = raw as MemoryReadBody;
+      assert.ok(!JSON.stringify(body).includes(FRIEND_ID), "a withdrawn participant is not disclosed");
+      assert.equal(body.memory.tags.length, 0);
+      assert.equal(body.memory.anonymousParticipants, 0,
+        "and is not counted either — a count would leak the withdrawal as an arithmetic difference");
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("an APPROVED participant is disclosed, at PROFILE_LINKED, with the rung named", async () => {
+    const state = baseState();
+    state.memory_tags.push({ memory_id: MEM_ID, tagged_user_id: FRIEND_ID, status: "approved" });
+    const app = await startApp(state);
+    try {
+      const { body: raw } = await get(app.baseUrl, `/api/memories/${MEM_ID}`, auth("stranger-tok"));
+      const body = raw as MemoryReadBody;
+      assert.equal(body.memory.tags.length, 1, "positive control: the ladder is not 'refuse everyone'");
+      assert.equal(body.memory.tags[0].userId, FRIEND_ID);
+      assert.equal(body.memory.tags[0].rung, "PROFILE_LINKED");
+      assert.equal(body.memory.tags[0].name, null, "no real-name opt-in row ⇒ no name");
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("the OWNER still sees their pending tags — tag management does not break", async () => {
+    const state = baseState();
+    state.memory_tags.push({ memory_id: MEM_ID, tagged_user_id: FRIEND_ID, status: "pending" });
+    const app = await startApp(state);
+    try {
+      const { body: raw } = await get(app.baseUrl, `/api/memories/${MEM_ID}`, auth("owner-tok"));
+      const body = raw as MemoryReadBody;
+      assert.equal(body.memory.tags.length, 1);
+      assert.equal(body.memory.tags[0].userId, FRIEND_ID);
+      assert.equal(body.memory.tags[0].status, "pending");
+    } finally {
+      await app.close();
+    }
+  });
+});
+
+describe("§10 person visibility ladder — GET /api/memories/:id/tags", () => {
+  it("applies the same ladder as the single read, not a second copy of the old rule", async () => {
+    const state = baseState();
+    state.memory_tags.push(
+      { memory_id: MEM_ID, tagged_user_id: FRIEND_ID, status: "pending", created_at: "2026-01-01T00:00:00Z" },
+      { memory_id: MEM_ID, tagged_user_id: STRANGER_ID, status: "approved", created_at: "2026-01-02T00:00:00Z" },
+    );
+    const app = await startApp(state);
+    try {
+      const { status, body: raw } = await get(app.baseUrl, `/api/memories/${MEM_ID}/tags`, auth("stranger-tok"));
+      const body = raw as TagsListBody;
+      assert.equal(status, 200);
+      assert.ok(!JSON.stringify(body).includes(FRIEND_ID), "the pending participant is not disclosed here either");
+      assert.deepEqual(body.tags.map((t) => t.userId), [STRANGER_ID]);
+      assert.equal(body.anonymousParticipants, 1);
+      assert.equal(body.tags[0].createdAt, "2026-01-02T00:00:00Z", "the field the route already served survives the ladder");
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("a participant always sees their own tag, even before they approve it", async () => {
+    const state = baseState();
+    state.memory_tags.push({ memory_id: MEM_ID, tagged_user_id: FRIEND_ID, status: "pending" });
+    const app = await startApp(state);
+    try {
+      const { body: raw } = await get(app.baseUrl, `/api/memories/${MEM_ID}/tags`, auth("friend-tok"));
+      const body = raw as TagsListBody;
+      assert.deepEqual(body.tags.map((t) => t.userId), [FRIEND_ID],
+        "a person must be able to see the tag they are being asked to approve");
+      assert.equal(body.tags[0].rung, "NAMED");
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("a blocked participant is dropped from the roster and is not counted", async () => {
+    const state = baseState();
+    state.memory_tags.push({ memory_id: MEM_ID, tagged_user_id: FRIEND_ID, status: "approved" });
+    state.blocks.push({ blocker_id: STRANGER_ID, blocked_id: FRIEND_ID });
+    const app = await startApp(state);
+    try {
+      const { body: raw } = await get(app.baseUrl, `/api/memories/${MEM_ID}/tags`, auth("stranger-tok"));
+      const body = raw as TagsListBody;
+      assert.equal(body.tags.length, 0, "§10: blocking must unlink profile identity");
+      assert.equal(body.anonymousParticipants, 0);
+    } finally {
+      await app.close();
+    }
+  });
+});
