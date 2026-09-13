@@ -4209,7 +4209,7 @@ scenario or replay test existed.
   worker replay, and `up.sh` refuses to finish unless they are present.
 - `src/test/db/localDb.ts` — `psql` over a child process, the convention
   `scripts/src/saved-places-truncate-guard.test.ts` set; nothing added to the
-  lockfile. `scripts/local-db/run-tests.sh:21#skip` refuses a vacuous pass:
+  lockfile. `scripts/local-db/run-tests.sh:64#a skipped database test verified nothing` refuses a vacuous pass:
   `skipped` must be 0.
 - `src/test/db/tripKernelPipeline.db.test.ts` on the REAL functions: one event
   at the next aggregate version and one receipt per command; a replay by key is
