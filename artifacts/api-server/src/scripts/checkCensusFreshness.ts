@@ -1328,6 +1328,21 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/test/compass-ux.test.ts",
     "artifacts/api-server/src/test/compassRhythmGate.test.ts",
     "artifacts/api-server/src/routes/trips.ts",
+    // WIDENED 2026-09-13 by census-compass §10. Nine of that section's eleven
+    // row moves rest on files this census did not watch, which is exactly how
+    // it came to state CX-03/CX-05/CT-02/CT-08/CT-10/CT-11/CL-02/CL-06/CL-07/
+    // CTG-05 against a tree that had already built them. A row is only as fresh
+    // as the files its evidence cites.
+    "artifacts/api-server/src/routes/compassDecision.ts",
+    "artifacts/api-server/src/lib/compassDecision.ts",
+    "artifacts/api-server/src/domain/trips/projections/TripCompassProjection.ts",
+    "artifacts/api-server/src/domain/trips/policies/TripAttentionFilter.ts",
+    "artifacts/api-server/src/domain/trips/policies/tripOperationalProjections.ts",
+    "artifacts/api-server/src/domain/trips/services/TripValueOfInformation.ts",
+    "artifacts/api-server/src/domain/trips/services/TripRescue.ts",
+    "artifacts/api-server/src/services/airport/LayoverFeasibility.ts",
+    "artifacts/api-server/src/test/layoverPrivacyCompassContract.test.ts",
+    "artifacts/api-server/src/test/compassToolCountContract.test.ts",
   ],
   // Input Intelligence is the thinnest-citing of the six (36 of 81 backticked
   // paths resolve) and the most client-weighted: its subject is the typing
@@ -1487,6 +1502,18 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/test/discoverySearch.test.ts",
     "artifacts/api-server/src/migrations/2361_discovery_candidate_projection_flag.sql",
     "db/rollback/2026-09-07-2361-discovery-candidate-projection-rollback.sql",
+    // WIDENED 2026-09-13 by census-discovery §9. A20 moved W → C on the sixth
+    // capability being registered through the share contract, and that
+    // registration lives in the two files below; A01 and A11 moved N → W on
+    // readers this census did not watch either. The search route is named
+    // because A20's C rests on the sixth capability being REACHED, not merely
+    // declared — if that route is retired the verdict is wrong again.
+    "artifacts/api-server/src/domain/telegraph/contracts/conversationSearch.ts",
+    "artifacts/api-server/src/test/telegraphSearchCapability.test.ts",
+    "artifacts/api-server/src/server/telegraph/searchRoute.ts",
+    "artifacts/api-server/src/lib/discoveryLiveRankRead.ts",
+    "artifacts/api-server/src/domain/trips/services/TripFreedomConsumers.ts",
+    "artifacts/api-server/src/domain/trips/policies/tripOperationalProjections.ts",
   ],
 };
 

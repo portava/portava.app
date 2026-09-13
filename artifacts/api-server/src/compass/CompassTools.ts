@@ -1,8 +1,23 @@
 /**
  * CompassTools — Phase 4 native function calling for the Compass assistant.
  *
- * Fourteen tools the model may call on demand (the OpenAI schemas in TOOL_DEFINITIONS
- * below are the authoritative list). Hard rules (master-roadmap.md):
+ * Thirty-three tools the model may call on demand (the OpenAI schemas in
+ * COMPASS_TOOL_DEFINITIONS below are the authoritative list).
+ *
+ * THAT SENTENCE IS NOW EXECUTABLE, BECAUSE IT HAS BEEN WRONG THREE TIMES.
+ * It read "Eight tools" while eleven were declared (census-compass CC-05, fixed
+ * 2026-09-07 by editing the word). It then read "Fourteen" while thirty-three
+ * were declared — the same defect, one week later, because editing a word fixes
+ * an instance and not a class. A count in a comment decays every time somebody
+ * adds a tool, and nothing has ever been able to notice.
+ *
+ * So the number is also `COMPASS_TOOL_COUNT_IN_HEADER` below, and
+ * `src/test/compassToolCountContract.test.ts` asserts BOTH halves: that the
+ * constant equals `COMPASS_TOOL_DEFINITIONS.length`, and that the number WORD
+ * in the sentence above parses to the constant. Adding a tool without touching
+ * either now fails a test instead of quietly making this header a lie.
+ *
+ * Hard rules (master-roadmap.md):
  *   - Candidate generation is strictly separated from AI explanation: tools
  *     produce candidates from real DB data; the model interprets, ranks,
  *     chooses, and explains — it must NEVER invent the candidate list.
@@ -89,6 +104,13 @@ import {
   TELEGRAPH_COMPASS_TOOL_NAMES,
   executeTelegraphConversationTool,
 } from "./TelegraphConversationTools.js";
+/**
+ * The number of tools the file header states, as a number this process can
+ * compare. Pinned to `COMPASS_TOOL_DEFINITIONS.length` AND to the header's own
+ * number word by `src/test/compassToolCountContract.test.ts`.
+ */
+export const COMPASS_TOOL_COUNT_IN_HEADER = 33;
+
 // ── Tool definitions (OpenAI function schemas) ────────────────────────────────
 
 export const COMPASS_TOOL_DEFINITIONS = [

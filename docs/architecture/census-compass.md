@@ -11,7 +11,7 @@ aggregate counts read from the production project on 2026-09-07 (read-only; no u
 
 | Field | Value |
 |---|---|
-| `head_commit` | `42aeac38` — DECLARED 2026-09-11. It **starts a clock; it does not certify a past.** Read the next row before quoting it. |
+| `head_commit` | `820b60638` — RE-DECLARED 2026-09-13 by §10, replacing `42aeac38`. This one is different in kind from the one it replaces: `42aeac38` started a clock over verdicts nobody had re-read, and §10 says what happened next — nine of them were false by the time the clock was read. `820b60638` is the commit §10 measured at, and §10.6 states exactly which rows were re-executed there (all 15 N, all 19 W, 12 of 56 C) and which 44 were not. It **still does not certify the 44.** Read the next row, then §10.1. |
 | **What that declaration does and does not say** | `42aeac38` is #476's squash — the commit where this document itself reached `main`. Its verdicts were taken at working tree `4a166aeb` **plus uncommitted sibling work**, per the note above — and `4a166aeb` **exists nowhere**: verified against FULL history (`git fetch --unshallow`, 4,300 commits, then `git cat-file -e`), not assumed. This census is therefore the weakest-anchored of the six declared together: its measured state was never a commit at all, so no diff against it is possible even in principle, and this declaration **does not claim otherwise**. What it claims is mechanically checked: `git diff --name-only 42aeac38..HEAD` over the 6 paths in `CENSUS_SCOPE["census-compass.md"]` returns **0 files**, and from here any change to one of them ages this census. Before it, `check:census-freshness` reported this document as CANNOT BE CHECKED. FRESH means *no counted file has moved since `42aeac38`*; it does **not** mean the rows were re-read, and none has been. Declared by the Trips lane while recounting the sibling census; if this lane disagrees, reverting costs only the check. |
 
 ---
@@ -379,3 +379,220 @@ Every excluded candidate is named (§1.1). Every gated or vacuous `C` is flagged
 subtracted: removing the 7 flagged rows from source (a) gives 29 / 70 = **41.4 %** correct. Removing
 source (c) entirely gives the inbound-only figures in §0. Removing the four fixed rows from (c) —
 on the argument that a contract fixed today should not be counted as met — gives 52 / 90 = 57.8 %.
+
+---
+
+## 10. Re-measured 2026-09-13 — and most of this document was measuring a tree that no longer exists
+
+*Measured at `820b60638`, the commit above this one, which carries the two builds §10.8 describes and
+nothing else. Declared as `head_commit` in the Declaration table at the top of this file, replacing
+`42aeac38`; that replacement is the only edit this pass makes above this line, and it is recorded
+here so it can be judged rather than discovered.*
+
+### 10.1 First, the thing that is not a percentage: ten rows were invisible to the tallier
+
+`pnpm -s check:census-integrity` at `3eaf2436f` read **80** of this document's 90 rows and reported
+`C=47 W=18 N=15` — a headline of 72.2 % constructed, 52.2 % correct. This document has never claimed
+those numbers. It claims 83.3 % and 62.2 %, and it was right.
+
+The gap was not prose. Every one of the ten missing requirements was **already a table row**; the
+tallier could not read its verdict CELL, because ten cells carry a qualifier the parser refuses:
+
+| The shape | Rows carrying it |
+|---|---|
+| `**W → C**` — an as-found/now pair inside one cell | CC-05, CC-07, CC-08, CC-09 |
+| `**C (gated)**` — a verdict plus a deployment note | CG-05, CH-04, CW-02, CC-17 |
+| `**W → C (gated)**` — both | CX-01 |
+| `**W — violated**` — a verdict plus an emphasis | CT-01 |
+
+`verdictOf` in `artifacts/api-server/src/scripts/checkCensusIntegrity.ts:164#function verdictOf(cell: string)` strips
+`*` and the vacuity flags and then requires the WHOLE cell to be one token. `C (GATED)` is not one
+token, so the row vanished from every bucket and every denominator. Ten requirements were in no
+number this repository reports, and the census that lost them looked fine.
+
+**The other fourteen "id-keyed rows with no verdict" the tool prints for this census are not
+requirements and should not be read as a defect**: five are the §6 fixes table (`F1`–`F5`), eight are
+the §7 owner decisions (`D1`–`D8`), and one is a §5 claims row that happens to begin `SX-09`. The
+honest count of unmeasurable REQUIREMENTS in census-compass was ten, and after §10.4 it is zero.
+
+**This was not fixed by changing the tool.** The two shapes are dropped corpus-wide and other
+censuses use them; changing `verdictOf` mid-flight would move other lanes' published numbers without
+their consent. The ten rows are restated below in a parseable cell instead, with the qualifier moved
+into the reason column where it loses nothing.
+
+### 10.2 Then the thing that is a percentage: nine of eleven verdict moves are OTHER LANES' code
+
+This document was taken at working tree `4a166aeb` on 2026-09-07. Between then and `3eaf2436f` the
+Sensing, Trips and Layover lanes built a great deal of what it scores as NOT-BUILT, and nothing aged
+it, because the files they built in were not in this census's `CENSUS_SCOPE`. Re-executing the rows —
+running the greps their evidence names, rather than re-reading the sentences — moved nine rows before
+this lane wrote a line of code.
+
+**Read the two figures separately, because they are not the same kind of thing.**
+
+| Stage | C | W | N | CONSTRUCTED | CORRECT |
+|---|---|---|---|---|---|
+| What the tallier could read at `3eaf2436f` (80 of 90 rows) | 47 | 18 | 15 | 72.2 % | 52.2 % |
+| What this document already claimed, and was right about | 56 | 19 | 15 | 83.3 % | 62.2 % |
+| Re-measured at `3eaf2436f`, before this lane changed anything | 60 | 24 | 6 | 93.3 % | 66.7 % |
+| After this lane's two builds | 61 | 23 | 6 | 93.3 % | 67.8 % |
+
+So of the +21.1 points of CONSTRUCTED and +15.6 points of CORRECT this section publishes:
+
+- **+11.1 / +10.0 is the tallier learning to read.** Nothing was built. Nothing was even
+  re-measured. Ten cells were rewritten so a parser could see verdicts the document had stated all
+  along.
+- **+10.0 / +4.5 is other lanes' construction, measured here for the first time.** Real code, real
+  moves, and not this lane's work.
+- **+0.0 / +1.1 is this lane's own construction** — exactly one row, CC-05, and what it built is a
+  header word and a test. There is no honest way to describe this pass as having constructed
+  anything else in Compass.
+
+### 10.3 Row moves
+
+Nine of these are re-measurements of code other lanes shipped; the two CC-05 rows are this lane's.
+Every "was" is what the document said at `3eaf2436f`; every "now" is what the tree says.
+
+| id | was | now | why |
+|---|---|---|---|
+| CX-03 | N | W | The decision vocabulary EXISTS. `artifacts/api-server/src/lib/compassDecision.ts:80#export const COMPASS_DECISIONS` declares exactly the seven the spec names, and `artifacts/api-server/src/routes/compassDecision.ts:4#GO NOW` serves them. The old evidence — *"one unrelated hit"* on a grep — was true when written and is now false. **W, not C:** gated by `artifacts/api-server/src/routes/compassDecision.ts:39#export const COMPASS_DECISION_FLAG`, migration 2800 seeded FALSE, so on every deployment the route answers `feature_disabled`. |
+| CX-05 | N | W | Switching cost is `artifacts/api-server/src/lib/compassDecision.ts:91#export const SWITCHING_COST` — a threshold a candidate must beat before the engine says SWITCH, reported per answer. Same route, same FALSE-seeded flag, same reason for W. |
+| CT-02 | N | W | `TripCompassProjection` is no longer *"zero occurrences"*: Trips published it and Compass consumes it at `artifacts/api-server/src/compass/CompassTools.ts:754#const built = await buildTripCompassProjection`, imported at `artifacts/api-server/src/compass/CompassTools.ts:39#import { buildTripCompassProjection }`, and it is NOT behind the operational gate. **W, not C:** the duplication the clause forbids is still there — a grep for `.from("trip` across `compass/` returns raw reads of `trips`, `trip_members` and `trip_plan_items` from eight further modules. One tool consumes the projection; the rest of Compass still reads the tables. |
+| CT-08 | N | W | Value-of-information is a computation, not a prompt line: `artifacts/api-server/src/compass/CompassTools.ts:1240#questionsWorthAsking` scores unknowns through `artifacts/api-server/src/domain/trips/services/TripValueOfInformation.ts:1#/**` and splits them into `ask` and `representedAsUncertainty`. **W:** it lives inside `get_opportunities`, whose projection is behind `artifacts/api-server/src/domain/trips/policies/tripOperationalProjections.ts:29#export const TRIP_OPERATIONAL_PROJECTIONS_FLAG` — off on every deployment, so the scorer never runs. |
+| CT-10 | N | C | The escalation the row said no tool names is now a tool's whole subject. `artifacts/api-server/src/compass/CompassTools.ts:370#§17.3 Trip Rescue` names airline, airport, operator, property, embassy/consulate, local emergency, human support and the crew; `artifacts/api-server/src/compass/CompassTools.ts:1299#const plan = planRescue` calls `artifacts/api-server/src/domain/trips/services/TripRescue.ts:66#export function planRescue`. **C and not gated:** the tool degrades to the problem's generic plan when the impact state cannot be read, so it answers on every deployment. Reachable but exercised by nobody — §4 records no Compass conversation in production for 40 days. |
+| CT-11 | N | W | Commercial suppression under a severe state exists and is applied to a list: `artifacts/api-server/src/domain/trips/policies/TripAttentionFilter.ts:115#const kept = items.filter` keeps only safety-and-logistics candidates while the switch says suppress, called from `artifacts/api-server/src/compass/CompassTools.ts:848#const held = applyAttentionSuppression`. **W for two reasons, both named:** it is behind the same operational flag, off everywhere; and it reads TRIP HEALTH, not `safeReturnActive` — the safe-return leg this row's original evidence named is still unguarded. |
+| CL-02 | W | C | *"Nothing compares the prose with the deterministic verdict"* is false. `artifacts/api-server/src/services/airport/LayoverCompassService.ts:173#const bounded = enforceCompassEnvelope` reads the answer the model produced, refuses one stating a later deadline or more usable time than the certified record, falls back to the deterministic answer, and reports the attempt in `boundaryViolations` rather than swallowing it. Ungated. |
+| CL-06 | N | C | *"has no tool schema and asks nothing"* is false. A question is asked only when re-certifying the session with the candidate answer flipped would move verdict, risk band or usable minutes, and only the single highest-value one: `artifacts/api-server/src/services/airport/LayoverCompassService.ts:205#clarifyingQuestion`. That is the spec's own test for "smallest sufficient number". |
+| CL-07 | N | C | *"no test exercises `answerLayoverQuestion` against the engine's numbers"* is false. `artifacts/api-server/src/test/layoverPrivacyCompassContract.test.ts:409#const answer = await answerLayoverQuestion` does exactly that, and `artifacts/api-server/src/test/layoverPrivacyCompassContract.test.ts:44#enforceCompassEnvelope` drives the boundary directly. The contract test §23 asks for exists. |
+| CTG-05 | N | C | *"0 of 8 in `CompassTools.ts`"* is false — they are in a sibling module, all eight, and the mapping to §18.3's names is written down rather than inferred: `artifacts/api-server/src/compass/TelegraphConversationTools.ts:67#export const TELEGRAPH_TOOL_SPEC_NAMES` maps `getConversationContext()` through `searchAuthorizedConversationContent()` one-to-one onto the eight `telegraph_*` tools, dispatched at `artifacts/api-server/src/compass/TelegraphConversationTools.ts:624#export async function executeTelegraphConversationTool` and spread into the Compass definition list. No flag. |
+| CC-05 | C | W | **Measured backward, and this is the important one.** §3 recorded CC-05 `W → C` on 2026-09-07 by editing the header from "Eight" to "eleven". At `3eaf2436f` the header read *"Fourteen tools the model may call on demand"* and thirty-three were declared. The row was wrong again, by nineteen, one week after being marked correct. |
+| CC-05 | W | C | The count is now checked instead of asserted: `artifacts/api-server/src/compass/CompassTools.ts:4#Thirty-three tools the model may call on demand` states it, `artifacts/api-server/src/compass/CompassTools.ts:108#number of tools the file header states` carries it as a constant, and `artifacts/api-server/src/test/compassToolCountContract.test.ts:1#/**` asserts the constant equals the definition count AND that the header's number WORD parses to the constant. Both halves are needed: pinning only the constant leaves the prose free to lie. |
+
+### 10.4 The ten unparseable rows, restated so the tallier can count them
+
+No verdict changes here except where §10.3 already moved it. The `was` column reproduces the cell
+the document carried; the `now` column is the same verdict in a shape `verdictOf` can read, and the
+qualifier it used to carry is written out in full so nothing is lost.
+
+| id | was | now | why |
+|---|---|---|---|
+| CX-01 | `W → C (gated)` | C | Unchanged verdict. Built and correct, and **inert on every deployment**: the live-constraint stage needs `COMPASS_LIVE_CONSTRAINTS_ENABLED`, an environment variable no deployment sets. Re-executed: `artifacts/api-server/src/compass/CompassLiveConstraints.ts:130#export const UNSAFE_CROWD_LEVEL` still names it and the exclusion still applies to every viewer. |
+| CG-05 | `C (gated)` | C | Unchanged. `compass_ai_writing_enabled` has no row in production and the reader is fail-closed, so no AI writing has ever run. |
+| CT-01 | `W — violated` | W | Unchanged. Compass still writes canonical trip tables from three engine sites; no kernel command exists to route them through. |
+| CH-04 | `C (gated)` | C | Unchanged. `memory_projection` is false in production. |
+| CW-02 | `C (gated)` | C | Unchanged. `wall_compass_handoff_enabled` is false in production. |
+| CC-05 | `W → C` | C | Superseded twice by §10.3 above — measured W at `3eaf2436f`, then C with a test. This row exists so the cell parses; §10.3's second CC-05 row is the current statement. |
+| CC-07 | `W → C` | C | Unchanged. Social trust floor fails closed on an unreadable `trust_profiles`. |
+| CC-08 | `W → C` | C | Unchanged. `refreshHiddenUsers` throws rather than building an empty hidden set. |
+| CC-09 | `W → C` | C | Unchanged. Sender suspension reads `user_account_states`, not the dead `trust_profiles.public_level` compare. |
+| CC-17 | `C (gated)` | C | Unchanged. The projected-memory prompt is flag-gated and the flag is false. |
+
+### 10.5 Reasons that are now wrong, on rows that did NOT move
+
+A verdict can be right for a reason that has expired. These four keep their bucket and lose their
+evidence, which is worth more to a reader than a percentage.
+
+| requirement | verdict | the reason that expired |
+|---|---|---|
+| CX-02 (Sensing `:137` intent modes) | W | *"Two vocabularies exist and neither is this one"* — there are now **three**. `artifacts/api-server/src/lib/compassDecision.ts:83#export const DECISION_INTENTS` is `quiet · social · high_energy · explore`, four of the spec's eight **in the spec's own words**, while `artifacts/api-server/src/compass/CompassTemporaryIntent.ts:40#export const MAP_INTENT_KINDS` still carries the Map §13 nine. Semantically it is still four of eight — Right Now, Tonight, Nearby and Trip are unrepresented — so the verdict holds and the count of vocabularies in the evidence does not. |
+| CT-03 (Trips `:185` temporal freedom) | W | The consumption half is now built: `get_freedom_windows` reads the engine's projection. The row stays W because the clause forbids the independent calculation, and `check_trip_conflicts` still derives free time from `trip_plan_items` itself. |
+| CT-07 (Trips §12.1 twelve tools) | W | *"3 of 12 exist under other names and 9 are absent"* is false: **twelve of twelve** are declared and dispatched — `get_current_trip`, `get_today_state`, `get_crew_state`, `get_freedom_windows`, `get_commitments`, `get_saved_ideas`, `get_live_conditions`, `simulate_plan`, `create_proposal`, `replan_day`, `find_meeting_point`, `explain_trip_decision`. It stays W on a different fact: four of them build a projection behind `trip_operational_projections_enabled` and answer *"not enabled"* on every deployment. |
+| CT-09 (Trips §4 governed proposal) | W | *"What is still missing: `decisionRule`, `affectedObjects`, and a table"* — `decisionRule` now exists as a first-class enum on `create_proposal` (`host` / `majority` / `unanimous` / `anyone`) and is persisted with the proposal. `affectedObjects` still has zero occurrences, so the row stays W with one third of its gap closed. |
+
+### 10.6 What was NOT re-read, said plainly
+
+This section re-executed **all 15 NOT-BUILT rows, all 19 BUILT-BUT-WRONG rows, and 12 of the 56
+BUILT-AND-CORRECT rows** — the ones whose evidence names a file another lane has been editing. The
+remaining 44 `C` rows were not re-opened. Their citations resolve (`check:doc-citations` exit 0) but
+that proves a line exists, not that the sentence about it is still true, and CC-05 is this pass's own
+proof that a `C` can rot in a week. **Any of those 44 may be as stale as CT-02 was.** The
+production-flag and row-count facts in §4 were read on 2026-09-07 and were not re-read here.
+
+### 10.7 The two denominators: the reason still holds, and it is stronger
+
+§0 states 70 and 90 on purpose — source (a) is what other specs demand of Compass, source (c) is
+Compass grading its own homework — and warns that (c) *"lifts the correctness figure by eleven
+points"*. Keep it. After this pass the gap is **wider, not narrower**:
+
+| Population | rows | C | W | N | CONSTRUCTED | CORRECT |
+|---|---|---|---|---|---|---|
+| Source (a) — inbound obligations | 70 | 41 | 23 | 6 | 64 / 70 = **91.4 %** | 41 / 70 = **58.6 %** |
+| Source (c) — contracts Compass states about itself | 20 | 20 | 0 | 0 | twenty of twenty | twenty of twenty |
+| Both | 90 | 61 | 23 | 6 | 84 / 90 = **93.3 %** | 61 / 90 = **67.8 %** |
+
+Compass now scores **every one of the twenty rules it wrote for itself, and 58.6 % of the seventy
+other surfaces wrote for it.** A single 67.8 % averages those two populations into a number that
+describes neither. **The inbound figure is still the one to trust**, and after this pass the case for
+saying so is 41.4 points wide.
+
+### 10.8 What this pass built, and the mutations that proved it
+
+Two builds. One is Discovery's and is recorded in `census-discovery.md` §9; the Compass half is the
+tool-count contract.
+
+| what | where | closes |
+|---|---|---|
+| `COMPASS_TOOL_COUNT_IN_HEADER` beside the definitions, and a test asserting it against the definition count and against the header's own number word | `artifacts/api-server/src/compass/CompassTools.ts:108#number of tools the file header states`, `artifacts/api-server/src/test/compassToolCountContract.test.ts:1#/**` | CC-05, for the third time and the first time executably |
+
+Mutations, each applied, watched go red, reverted, and the file compared byte-for-byte with its
+backup by `cmp`:
+
+| mutation applied | what went red |
+|---|---|
+| `header word back to "Fourteen"` (the state at `3eaf2436f`) | C2 — 4 pass / 1 fail |
+| `COMPASS_TOOL_COUNT_IN_HEADER set to 14` | C1 and C2 — 3 pass / 2 fail |
+| `removed the TELEGRAPH spread — eight tools added without touching the count` | C1 — 4 pass / 1 fail |
+
+**P24 — what would turn this green claim red?** A tool declared somewhere the dispatcher reaches but
+the definition list does not contain: the count would be right about the array and wrong about the
+surface. C3 closes that from the other side by asserting every dispatchable name is in the
+definitions. What is NOT closed: a tool reachable through a path that consults neither — nothing in
+this repository can currently see such a tool, and this test does not claim to.
+
+**A mutation that would stay green, said out loud:** renaming a tool leaves both the count and the
+test untouched, because neither pins the NAMES. CT-07's twelve-of-twelve finding rests on reading
+those names, and nothing executable defends it.
+
+### 10.9 CEILING — what is not reachable from here, and why
+
+- **CX-08 (Attention Engine) is unbuildable by an agent and stays N.** Re-verified:
+  `artifacts/api-server/src/compass/CompassNotificationEngine.ts:83#export type NotificationOutcome` has
+  seven outcomes and **no `wall`**, and no relevance, novelty, half-life, interruption-cost or
+  attention-budget term exists anywhere in `compass/`. Owner decision D4 stands: nobody owns this.
+- **CX-11 (Opportunity Engine downstream of the kernel) stays N** even though a `TripOpportunityProjection`
+  now exists and a tool reads it — that is a *trip* opportunity object behind the operational gate,
+  not the shared kernel-downstream object Sensing `:118` describes, and the feed surfaces still build
+  candidates directly. Recording it as C would be crediting a different requirement.
+- **CL-03 and CL-05 stay N.** A recursive grep for `layover` across `compass/`, `routes/compass.ts`
+  and `routes/compassHome.ts` still returns nothing; the twelve layover tools remain absent from a
+  tool list that has grown to thirty-three. This is a real, buildable gap and this lane did not build
+  it.
+- **CH-02 stays N.** Zero of the eight Memory read tools; Memory reaches the prompt as a projected
+  block instead.
+- **CM-02 stays N.** No plan compiler on Compass's side.
+- **The flags that make five of the moves above inert are the owner's.**
+  `compass_decision_enabled` (2800), `trip_operational_projections_enabled` (2778, plus the 2760–2785
+  schema it needs), `COMPASS_LIVE_CONSTRAINTS_ENABLED`, `memory_projection`,
+  `wall_compass_handoff_enabled` and `compass_ai_writing_enabled` are all off or absent. **BUILT ON A
+  BRANCH IS NOT MERGED. MERGED IS NOT DEPLOYED. DEPLOYED IS NOT FLAG ENABLED.** Five of the eleven
+  moves in §10.3 are W precisely because of that chain, and no percentage in this document should be
+  read as saying a traveller can do any of it.
+- **Nothing here changes §4.** Compass chat has still had no production conversation since
+  2026-07-29. Every tool row above — twelve Trips tools, eight Telegraph tools, the rescue plan —
+  governs a surface nobody is using.
+
+### 10.10 Restated headline
+
+> **Compass, at `820b60638`: 90 requirements · 61 BUILT-AND-CORRECT · 23 BUILT-BUT-WRONG ·
+> 6 NOT-BUILT · 0 CANNOT-VERIFY → CONSTRUCTED 93.3 % · CORRECT 67.8 %.** Inbound obligations alone
+> (70 rows, the figure to trust): CONSTRUCTED 91.4 % · CORRECT 58.6 %. As found at `3eaf2436f`,
+> before this lane changed anything: 60 / 24 / 6 / 0. As the tallier could read it at `3eaf2436f`:
+> 47 / 18 / 15 / 0 over 80 of 90 rows. Of the move from 52.2 % to 67.8 % correct, **10.0 points are
+> the tallier learning to read, 4.5 points are other lanes' code this census had not measured, and
+> 1.1 points — one row — is this lane's.**
+
+| BUILT-AND-CORRECT | **61** |
+|---|---|
+| BUILT-BUT-WRONG | **23** |
+| NOT-BUILT | **6** |
+| CANNOT-VERIFY | **0** |
