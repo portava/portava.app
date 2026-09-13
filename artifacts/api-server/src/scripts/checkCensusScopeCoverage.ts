@@ -85,6 +85,13 @@ const NOT_GRADED: readonly string[] = [
   "travel-buddy-standalone/package.json",
   "artifacts/api-server/src/scripts/guardRegistry.ts",
   "artifacts/api-server/src/scripts/CENSUS_STALENESS_ACKNOWLEDGED.json",
+  // A guard's own burn-down ledger, the same category as the staleness ledger
+  // above and read only by src/scripts/checkUncheckedSupabaseReads.ts. A census
+  // names it when a lane it describes DELETED a call site and had to delete the
+  // allowlist key with it — the entry is validated on every run, so a stale key
+  // fails the checker. That is the census naming the thing that measured it.
+  // It is not product code and no census grades it.
+  "artifacts/api-server/src/scripts/UNCHECKED_READS_ALLOWLIST.json",
   "artifacts/api-server/src/scripts/checkCensusFreshness.ts",
   "artifacts/api-server/src/scripts/checkCensusScopeCoverage.ts",
   // The citation guard itself. It lives in `scripts/` rather than
