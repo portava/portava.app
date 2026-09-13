@@ -469,7 +469,13 @@ const UNRESOLVED_ALLOWLIST = new Map<string, number>([
   ["src/routes/rentABuddy.ts|select|dynamic table name", 1],
   //
   // Select lists composed at runtime.
-  ["src/routes/memories.ts|select|select list not statically resolvable", 6],
+  // 6 -> 5 (2026-09-13, integration owner): the Highlights and Memories lane
+  // moved the gem-ceiling protection inside `enrichMemories`, and one select
+  // that had been composed at runtime became statically resolvable. The guard
+  // fails closed on a SHRINKING blind-spot count precisely so the ledger gets
+  // trimmed instead of quietly over-claiming; found by the credentialled
+  // check:all job, which is the only place this check actually executes.
+  ["src/routes/memories.ts|select|select list not statically resolvable", 5],
   // 4 → 5: the §12–§22 lane added one more select built from a column constant
   // (the needs-action read). Bumped consciously rather than by regeneration.
   ["src/routes/messaging.ts|select|select list not statically resolvable", 5],
