@@ -209,7 +209,16 @@ export const COVERED = [
 // RAISED 2026-09-13 from 1532 to the merged tree's measurement after §11.2 of
 // census-layover anchored 31 citations (14 mechanically, 17 by re-reading the
 // claim). Raising is the job; the number is what the checker counts, not a guess.
-export const MIN_ANCHORED_CITATIONS = 1640;
+// RAISED 2026-09-13 by section C of census-highlights-memories.md, 1640 -> 1705. Two
+// sources, and they are different in kind. FORTY-TWO of these are REPAIRS, not new
+// claims: extracting §23's read ladder out of routes/memories.ts shrank that file by
+// 146 lines and adding §16's accessors moved CompassTools.ts, and every anchored
+// citation below those points went stale in one commit — 22 in
+// census-highlights-memories, 20 in census-trips. Each was verified to HOLD at the
+// previous commit before being moved, so this is the anchor half doing exactly the job
+// its header describes: the range half was green on all 42. The rest are section C's
+// own citations, anchored on the way in.
+export const MIN_ANCHORED_CITATIONS = 1705;
 
 // ---------------------------------------------------------------------------
 // THE FULL-ANCHOR PASS, and why it is a SECOND pass rather than a wider ANCHOR
@@ -242,7 +251,8 @@ export const MIN_ANCHORED_CITATIONS = 1640;
 // coverage and must be justified in the PR that does it.
 // RAISED 2026-09-13 from 1319 for the same reason — every one of those 31 is
 // backticked, so all 31 landed in the whole-anchor population too.
-export const MIN_FULL_ANCHOR_CITATIONS = 1513;
+// RAISED 2026-09-13 by section C, 1513 -> 1570, alongside the anchored floor above.
+export const MIN_FULL_ANCHOR_CITATIONS = 1570;
 
 // ---------------------------------------------------------------------------
 // THE CEILING, and why a floor on the good form was not enough
@@ -288,7 +298,12 @@ export const MIN_FULL_ANCHOR_CITATIONS = 1513;
 // census-compass and census-telegraph that were ALREADY wrong at HEAD —
 // `:18` a blank line, `:81` a ` */`, `:152` a `  }`. The ratchet's own
 // direction, twice on the day it was added.
-export const MAX_UNANCHORED_CITATIONS = 6491;
+// LOWERED 2026-09-13 by section C, 6491 -> 6490. A ceiling that may only fall has to be
+// pulled down when it falls, or the one citation of headroom it just gained is headroom
+// for the next unanchored one. The single citation is census-telegraph's
+// `routes/memories.ts:1858`, which this pass had to repoint anyway because the file
+// shrank past it, and which got an anchor on the way.
+export const MAX_UNANCHORED_CITATIONS = 6490;
 
 // Exported so src/test/docCitations.test.ts walks the same tree: a second
 // checkout under .claude/worktrees/ (an agent's) carries stale copies of every
