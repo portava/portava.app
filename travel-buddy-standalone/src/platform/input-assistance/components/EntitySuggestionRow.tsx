@@ -16,6 +16,7 @@ import { View, Text, Pressable, StyleSheet } from 'react-native';
 import type { InputSuggestion } from '../types/inputSuggestion.ts';
 import { EntityIcon } from './entityIcon.tsx';
 import { freshnessDisplay } from './freshnessDisplay.ts';
+import { suggestionBadges } from './suggestionBadges.ts';
 import { color, space, radius, type as t, avatar } from '../../../theme/tokens.ts';
 
 export interface EntitySuggestionRowProps {
@@ -32,10 +33,15 @@ function EntitySuggestionRowBase({ suggestion, onPress, active, leading, testID 
   // §31: render ONLY the freshness the server attached — the state label plus the
   // "Updated 4m ago" age, verbatim. Never synthesized; absent ⇒ no chip.
   const fresh = freshnessDisplay(suggestion.freshness).text;
+  // §20 verification / official / Hidden Gem protection. Derived from the SAME
+  // helper the announcement below joins, so a badge can never be visible and
+  // unannounced (or the reverse).
+  const badges = suggestionBadges(suggestion);
   const a11yLabel = [
     suggestion.label,
     suggestion.entityType,
     suggestion.subtitle,
+    ...badges.map((b) => b.label),
     fresh,
   ]
     .filter(Boolean)
@@ -72,6 +78,17 @@ function EntitySuggestionRowBase({ suggestion, onPress, active, leading, testID 
           <Text style={styles.subtitle} numberOfLines={1}>
             {suggestion.subtitle}
           </Text>
+        ) : null}
+        {badges.length > 0 ? (
+          <View style={styles.badgeLine}>
+            {badges.map((b) => (
+              <View key={b.id} style={styles.badge} testID={`ia-badge-${b.id}`}>
+                <Text style={styles.badgeText} numberOfLines={1}>
+                  {b.label}
+                </Text>
+              </View>
+            ))}
+          </View>
         ) : null}
         {suggestion.reason ? (
           <Text style={styles.reason} numberOfLines={1}>
@@ -128,6 +145,25 @@ const styles = StyleSheet.create({
     ...t.small,
     color: color.faint,
     marginTop: 1,
+  },
+  badgeLine: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    gap: space.sm,
+    marginTop: 2,
+  },
+  badge: {
+    paddingHorizontal: space.sm,
+    paddingVertical: 1,
+    borderRadius: radius.pill,
+    backgroundColor: color.paper,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: color.haze,
+  },
+  badgeText: {
+    ...t.stamp,
+    color: color.deep,
   },
   freshBadge: {
     paddingHorizontal: space.sm,

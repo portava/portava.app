@@ -27,7 +27,7 @@ import type { InputFieldPolicy } from '../types/fieldPolicy.ts';
 import type { InputSuggestion, InputSessionContext, WritingDraft } from '../types/inputSuggestion.ts';
 import { resolveFieldPolicy } from '../contexts/fieldRegistry.ts';
 import { requestSuggestions } from '../services/inputAssistance.ts';
-import { sharedSuggestionCache, SuggestionCache } from '../services/suggestionCache.ts';
+import { sharedSuggestionCache, SuggestionCache, isCacheablePrivacyClass } from '../services/suggestionCache.ts';
 import { createSequenceGuard } from '../services/raceGuard.ts';
 import { finalizeSuggestions } from '../services/suggestionRanking.ts';
 import { emitInputEvent } from '../services/inputTelemetry.ts';
@@ -140,7 +140,13 @@ export function useInputAssistance(
     // field's non-AI cache entry for the same text.
     const cacheFieldId = aiAssist === true ? `${fieldId}::ai:${aiKey}` : fieldId;
     const cacheKey = SuggestionCache.key(cacheFieldId, trimmed, latKey, lngKey);
-    const cached = sharedSuggestionCache.get(cacheKey);
+    // §29 — the field's declared privacyClass decides whether its suggestions
+    // may live in the process-global cache at all. A `personal` / `sensitive` /
+    // `private_message` field never reads from it and never writes to it, so a
+    // viewer-scoped list (recipients, a sensitive location) is not retained
+    // under the raw text that produced it. See suggestionCache.ts.
+    const cacheable = isCacheablePrivacyClass(policy.privacyClass);
+    const cached = cacheable ? sharedSuggestionCache.get(cacheKey) : null;
     if (cached) {
       guardRef.current.invalidate();
       setSuggestions(cached);
@@ -180,7 +186,7 @@ export function useInputAssistance(
 
         if (res.ok) {
           const finalized = finalizeSuggestions(res.suggestions, policy.maxSuggestions);
-          sharedSuggestionCache.set(cacheKey, finalized);
+          if (cacheable) sharedSuggestionCache.set(cacheKey, finalized);
           setSuggestions(finalized);
           setUnavailable(false);
           setLoading(false);

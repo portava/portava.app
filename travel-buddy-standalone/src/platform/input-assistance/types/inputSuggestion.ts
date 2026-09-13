@@ -54,6 +54,22 @@ export interface InputSuggestion {
   confidence?: number;
   freshness?: FreshnessState;
 
+  /**
+   * §20 display context — verification / trust, where appropriate. Mirrors the
+   * server's `InputSuggestion` (`artifacts/api-server/src/lib/inputAssistance/types.ts`).
+   * Present only when TRUE: an absent key is "not applicable", never a negative
+   * claim about a person.
+   */
+  verified?: boolean;
+  official?: boolean;
+
+  /**
+   * §20/§24 Hidden Gem protection label. `'hidden'` means the gem's sensitivity
+   * level denies placement entirely; `'approximate'` means it may carry a
+   * centroid. Never a coordinate, and `'exact'` is not producible.
+   */
+  locationPrecision?: 'approximate' | 'hidden';
+
   source:
     | 'canonical'
     | 'recent'
