@@ -204,7 +204,7 @@ and the guarantee lives underneath it, in work that predates the programme:
 
 | Pre-existing substrate | What it already provided | Verdicts it, not this spec, earns |
 | --- | --- | --- |
-| `routes/discoverySearch.ts` (Discovery cross-entity search; its header is an OpenAPI contract note, no GII reference) | `dispatchSearch` + all 17 per-type searchers, `matchTier`, `SEARCH_ALIASES`, the fail-closed block/age gate, the `visibility='public'` gates on events/trips/plans, `gemSearchPosition` | G56, G59, G68, G70, G73, G92, G93, G95, G126, G128, G129, G185, G186, G218, G220 |
+| `routes/discoverySearch.ts` (Discovery cross-entity search; its header is an OpenAPI contract note, no GII reference) | `dispatchSearch` + all 18 per-type searchers (the eighteenth, `searchSaved`, is Map spec §27's viewer-scoped "Saved items" heading; it is unreachable from this layer — see G220), `matchTier`, `SEARCH_ALIASES`, the fail-closed block/age gate, the `visibility='public'` gates on events/trips/plans, `gemSearchPosition` | G56, G59, G68, G70, G73, G92, G93, G95, G126, G128, G129, G185, G186, G218, G220 |
 | `lib/canonicalLocations.ts` (universal location service) — its *pre-GII* half: `normalizeLocationName`, `CITY_NAME_ALIASES`, `matchCanonical` | Unicode/case/punctuation folding, two misspelling entries | G55 (partly), G59 |
 | `lib/blocks.ts`, `lib/usernameRules.ts`, `lib/rateLimit.ts`, `lib/http.requireUser` | block set, username rules, rate buckets, auth | G184, G152, G235, part of G-§47 |
 | Intelligence Gathering programme (`lib/liveClaimRead.ts`, the IG gate chain) | the gated, fail-closed live read the §31 lane consumes verbatim | the substrate under G194/G196, though the projection above it is GII's |
@@ -352,7 +352,7 @@ of the field→mode table.
 | G28 | `maxSuggestions` caps the response | C | `routes/inputAssistance.ts:144` (`Math.min(requestedLimit, policy.maxSuggestions)`); `gateway.ts:586`. |
 | G29 | `debounceMs` | C | `policyRegistry.ts:86` defaults to 120 ms; consumed at `useInputAssistance.ts:200`. |
 | G30 | `offlinePolicy` declares per-field offline degradation | **N** | Declared at `policyRegistry.ts:87` with five values and set deliberately per context (`static_dictionary` on country/language/interest, `cached_local` on the geo pickers) — and **read by nothing on either side**. The client re-declares a *different* taxonomy that is also unread. This is the mechanism §32 depends on, and it is inert. |
-| G31 | `privacyClass` classifies the field's privacy posture | **N** | Declared at `policyRegistry.ts:88` and set to `sensitive_location` / `viewer_scoped` / `private_message` on nine contexts (`:203`, `:210`, `:230`, `:236`, `:256`, `:265`, `:272`) — and **read by nothing**. `test/inputPolicyContractParity.test.ts:139` inspects it, but no production path branches on it; the actual sensitive-location protection comes from `discoverySearch.ts:980` and would be identical if this field were deleted. |
+| G31 | `privacyClass` classifies the field's privacy posture | **N** | Declared at `policyRegistry.ts:88` and set to `sensitive_location` / `viewer_scoped` / `private_message` on nine contexts (`:203`, `:210`, `:230`, `:236`, `:256`, `:265`, `:272`) — and **read by nothing**. `test/inputPolicyContractParity.test.ts:139` inspects it, but no production path branches on it; the actual sensitive-location protection comes from `discoverySearch.ts:1434#sensitivity_level,` and would be identical if this field were deleted. |
 | G32 | `validationRules` declares the field's non-blocking checks | **N** | Declared optional at `types.ts:189`; **no registry entry sets it**, and `hooks/useInputValidation.ts:61` marks the resolver an unbuilt "Phase 5 extension point". The §23 validations that do exist are hard-wired by context in `creation.ts:298-322`, not driven by this field. |
 | G33 | `telemetryPolicy` governs event emission and raw-text capture | W | The enforcement is real on the client (`services/inputTelemetry.ts:48-62` drops `text`/`query`/`rawText`/`message`; allowlist at `:66-72`). But the two sides declare **different shapes** — server `{logRawText: boolean; events: string[]}` (`types.ts:161-166`) vs client `{captureRawText: boolean; events: 'all' \| names[]}` (`types/fieldPolicy.ts:64-68`) — so the "implemented verbatim … matches byte-for-byte" claim at `types.ts:5-7` is false for this member, and a server policy change to it cannot reach the client. |
 | G34 | `discovery.search` → `search` | C | `policyRegistry.ts:97-107`. |
@@ -403,7 +403,7 @@ of the field→mode table.
 | G59 | Common misspelling tolerance | C ᵖ | `discoverySearchHelpers.ts:63-95` `SEARCH_ALIASES` (~30 curated travel-domain misspellings) plus `canonicalLocations.ts:161-164` (`siargoa`, `nyc`) and `:186` (`phu qouc`, the spec's own example). The bulk is pre-existing Discovery work. |
 | G60 | Local-language and English-name variants | C | `canonicalLocations.ts:180-191` — `saigon`, `sai gon`, `krung thep` resolve to the English canonical row. |
 | G61 | Transliteration where supported | W | What exists is closed-up **Latin** variants (`danang`, `hochiminh`, `phuquoc`) and one romanised name (`krung thep`). There is no script transliteration anywhere — no Cyrillic, CJK, Thai or Arabic → Latin mapping — so a traveller typing `กรุงเทพ` or `胡志明市` resolves nothing, in a product whose launch cities are in Vietnam, Thailand and the Philippines. |
-| G62 | Punctuation and emoji handling **appropriate to field context** | W | Field-appropriate punctuation handling does exist for two contexts: the `@`/`#` sigil strip (`gateway.ts:159-161`) and `canonicalizeHashtag` (`socialIdentity.ts:46-50`, `[A-Za-z0-9]{2,64}`). Everything else gets one global strip (`normalizeLocationName:95-99`) plus `sanitizeQuery`, which removes only `(),` (`discoverySearch.ts:107-109`). **Emoji are not handled at all**: they survive `sanitizeQuery` into the `ilike` pattern and match nothing, and `canonicalizeHashtag('#🔥')` returns `null`, so an emoji hashtag silently produces no reference. |
+| G62 | Punctuation and emoji handling **appropriate to field context** | W | Field-appropriate punctuation handling does exist for two contexts: the `@`/`#` sigil strip (`gateway.ts:159-161`) and `canonicalizeHashtag` (`socialIdentity.ts:46-50`, `[A-Za-z0-9]{2,64}`). Everything else gets one global strip (`normalizeLocationName:95-99`) plus `sanitizeQuery`, which removes only `(),` (`discoverySearch.ts:142-144#sanitizeQuery`). **Emoji are not handled at all**: they survive `sanitizeQuery` into the `ilike` pattern and match nothing, and `canonicalizeHashtag('#🔥')` returns `null`, so an emoji hashtag silently produces no reference. |
 | G63 | Phone/keyboard typo tolerance **where confidence is sufficient** | **N** | No edit-distance, keyboard-adjacency model, trigram index or confidence measure exists (`2220…sql:16-17` notes "`unaccent` is installed but unused, and there is no `pg_trgm`"). The only tolerance is the fixed alias table already counted at G59; a typo not in that table is simply a miss, and no confidence is computed to decide whether to apply one. |
 | G64 | Never normalize stored canonical display names destructively | C | `projectCanonicalCity` labels from `row.name`/`row.display_name` (`projection.ts:114`) while folding only the lookup key; `2220…sql:19-22` states the constraint explicitly and adds a generated column rather than rewriting `normalized_name`. |
 
@@ -414,12 +414,12 @@ of the field→mode table.
 | G65 | Resolve to canonical entities, not just strings | C | `projection.ts:63-67` (`open_entity` + `entityId`), `:130` (`set_structured_value` + full binding). |
 | G66 | City / Country / Neighborhood: aliases, transliterations, geocoding reconciliation, canonical geographic ID | W | Aliases and canonical id are right (`geoResolver.ts:120-145`). **Neighborhood is not resolved at all**: `entityMap.ts:38` maps `neighborhood → 'cities'` with the comment "Phase 1: neighborhoods resolve through the city path", so a `neighborhood_picker` returns cities. Provider/geocoding reconciliation has no implementation in this layer. |
 | G67 | Place: canonical Place first, duplicate/alias handling, current operating state where available | W | Canonical-first and duplicate handling are real (`duplicateDetection.ts:281-370`, reusing `isSamePlace`). **Current operating state is absent**: `InputSuggestion` has no open/closed field (`types.ts:206-244`) and nothing computes one. |
-| G68 | Hidden Gem: separate identity, protection and approximate-location rules | C ᵖ | `discoverySearch.ts:978-980` selects `sensitivity_level, approx_latitude, approx_longitude` and the exact pair is "deliberately absent"; `gemSearchPosition:241-255` returns `hidden` for a denied or unparseable sensitivity level. Pre-existing Discovery work that the gateway inherits. |
+| G68 | Hidden Gem: separate identity, protection and approximate-location rules | C ᵖ | `discoverySearch.ts:1434#sensitivity_level,` selects `sensitivity_level, approx_latitude, approx_longitude` and the exact pair is "deliberately absent"; `:277-291#gemSearchPosition` returns `hidden` for a denied or unparseable sensitivity level. Pre-existing Discovery work that the gateway inherits. |
 | G69 | User: username/display name, block/privacy filtering, relationship context | C | `socialIdentity.ts:63-116` builds the candidate pool from the viewer's own follows/friends/threads/trip-crew and returns `null` (⇒ no recipients) on any read error; `:154-229` block-filters and account-status-filters on top. |
-| G70 | Trip / Event / Plan: viewer eligibility before result exposure | C ᵖ | `discoverySearch.ts:622` (`.eq("visibility","public")` on events), `:724-725` (trips, plus `show_in_discovery`), `:806-826` (plans, gated by the parent trip's visibility and owner status). Proven end-to-end through the gateway by `test/inputAssistanceCertification.test.ts:330-366`. |
-| G71 | Buddy: service category, availability, launch/safety/payment eligibility | W | The only gate is `discoverySearch.ts:488` — `.not("buddy_verified_at","is",null)`. No service-category filter, no availability check, and no safety or payment eligibility gate reaches the suggestion path. |
+| G70 | Trip / Event / Plan: viewer eligibility before result exposure | C ᵖ | `discoverySearch.ts:718#visibility` (`.eq("visibility","public")` on events), `:890#visibility` + `:891#show_in_discovery` (trips), `:1035-1038#admitted:` (plans, gated by the parent trip's visibility and owner status). Proven end-to-end through the gateway by `test/inputAssistanceCertification.test.ts:330-366`. |
+| G71 | Buddy: service category, availability, launch/safety/payment eligibility | W | The only gate is `discoverySearch.ts:575#buddy_verified_at` — `.not("buddy_verified_at","is",null)`. No service-category filter, no availability check, and no safety or payment eligibility gate reaches the suggestion path. |
 | G72 | Hashtag: canonical normalized hashtag plus visibility rules | C | `socialIdentity.ts:46-50` `canonicalizeHashtag`; the `is_blocked = false` filter at `:319-390` is mutation-proven in `test/inputAssistanceInvariants.test.ts` (item 2). |
-| G73 | Language / Interest: controlled dictionaries where possible | C ᵖ | `discoverySearch.ts:1827-1828` — `searchStatic(q, COMMON_LANGUAGES …)` / `COMMON_INTERESTS`, server-side static lists. Pre-existing. |
+| G73 | Language / Interest: controlled dictionaries where possible | C ᵖ | `discoverySearch.ts:2055-2056#COMMON_LANGUAGES` — `searchStatic(q, COMMON_LANGUAGES …)` / `COMMON_INTERESTS`, server-side static lists. Pre-existing. |
 
 ### §12 City and Destination Autocomplete
 
@@ -461,13 +461,13 @@ of the field→mode table.
 | G92 | `ExactMatch` | C ᵖ | `projection.ts:33-40` `tierConfidence(3) = 0.99` over `matchTier` (pre-existing). |
 | G93 | `PrefixMatch` | C ᵖ | `tierConfidence(2) = 0.85`; `discoverySearchHelpers.ts:168`. |
 | G94 | `ContextFit` | C | The policy gate is the context-fit term: only the field's declared entity types are ever queried (`gateway.ts:327-330`). |
-| G95 | `GeographicFit` | C ᵖ | `gateway.ts:380` passes `{lat, lng, userCity}` into `SearchQueryContext`; `discoverySearch.ts:1800` applies the city boost in `rankCombined`. Pre-existing. |
+| G95 | `GeographicFit` | C ᵖ | `gateway.ts:380` passes `{lat, lng, userCity}` into `SearchQueryContext`; `discoverySearchHelpers.ts:257-262#userCity` applies the city boost inside `discoverySearchHelpers.ts:227#rankCombined` — the old pointer named `discoverySearch.ts`, which only imports and calls it. Pre-existing. |
 | G96 | `TripFit` | W | Trip context influences only the **zero-character** defaults (`geoResolver.ts:214-250`) and an exact `cityId` match in `applySessionBias` (`gateway.ts:646-659`). A typed query in a Trip gets no Trip-derived rank term. |
 | G97 | `TemporalFit` | **N** | The parser computes a real window (`semanticParser.ts:264-362`, ISO bounds), but nothing consumes it as a ranking or filtering input: `gateway.ts:380` constructs `SearchQueryContext` with `{lat, lng, userCity, nearbyIntent}` only — `startsAfter`/`startsBefore`, which `discoverySearch` supports, are never set. The window is projected into a search *string* and thrown away. |
 | G98 | `RelationshipFit` | W | Real and load-bearing for recipient search, where the candidate pool **is** the viewer's graph (`socialIdentity.ts:63-116`). Absent everywhere else: `with_crew` / `followed` parse (`semanticParser.ts:418-425`) and then constrain nothing. |
 | G99 | `Freshness` | C | `liveSuggestions.ts:75-78` (+0.06 / +0.03), applied before the final rank at `gateway.ts:576-580`. |
 | G100 | `PriorSelection` | C | `personalization.ts:243-268`, clamped to `BOOST_CEILING` and restricted to `BOOSTABLE_TYPES` (`:70`), both mutation-proven. ☠prod. |
-| G101 | `TrustConfidence` | **N** | No trust term exists. `verified` and `is_official` are selected by `searchTravelers` (`discoverySearch.ts:481`) and then dropped by the projection whitelist (`projection.ts:82-88`); nothing reads them into `confidence`. |
+| G101 | `TrustConfidence` | **N** | No trust term exists. `verified` and `is_official` are selected by `searchTravelers` (`discoverySearch.ts:568#is_official,`) and then dropped by the projection whitelist (`projection.ts:82-88`); nothing reads them into `confidence`. |
 | G102 | `Diversity` | W | There is a per-type fan-out quota (`gateway.ts:379`, `perType = ceil(max/types)`) and a §13 reserved slot for completions (`projection.ts:360-383`), which produce diversity as a side effect of slot allocation. There is no diversity **term** in the score, so within a type a run of near-identical rows is never spread. |
 | G103 | `PrivacyRisk` | **N** | Privacy is strictly binary in this system — included or excluded, fail-closed (`gateway.ts:373-378`). Nothing computes a risk weight, so nothing can be *demoted* for privacy risk rather than dropped. |
 | G104 | `Staleness` | W | Stale live claims are removed upstream by `readLiveClaimEnvelopes` and simply never appear, and `freshnessDisplay.ts:53-58` drops a stale label. Correct behaviour, but there is no staleness **penalty** in the score: a stale row is not demoted, it is invisible. |
@@ -517,10 +517,10 @@ of the field→mode table.
 | G123 | Closed or unavailable where current operating status is relevant | **N** | No operating-status field on `InputSuggestion` (`types.ts:206-244`), no producer, no filter. |
 | G124 | Outside Trip date/time window | W | `filterInfeasibleCandidates` supports a window (`creation.ts:170-178`) and **no caller passes one** — the single call site passes `{ city }` only (`:291`). The §18 parser that computes windows never reaches it (G97). |
 | G125 | Outside selected city/area where the field is constrained | W | Same function, same single call site: it demotes out-of-city **duplicate** candidates in a creation flow (`creation.ts:287-292`). A city-constrained picker's ordinary candidates are not filtered by city. |
-| G126 | Age, trust, membership, role or invite restrictions | C ᵖ | Age: `fetchAgeRestrictedSet` fail-closed (`gateway.ts:374-378`). Membership/role: `discoverySearch.ts:806-826` (plans via parent-trip ownership), `:724-725` (trips). Trust/invite have no separate gate but no path exposes an invite-scoped object either. Pre-existing. |
+| G126 | Age, trust, membership, role or invite restrictions | C ᵖ | Age: `fetchAgeRestrictedSet` fail-closed (`gateway.ts:374-378`). Membership/role: `discoverySearch.ts:1035-1038#admitted:` (plans via parent-trip ownership), `:890#visibility` + `:891#show_in_discovery` (trips). Trust/invite have no separate gate but no path exposes an invite-scoped object either. Pre-existing. |
 | G127 | Unavailable Buddy category or required safety/payment gate | **N** | See G71 — only `buddy_verified_at IS NOT NULL`; there is no category, availability, safety or payment gate in the suggestion path. |
 | G128 | Blocked / private / ineligible people or content | C ᵖ | `gateway.ts:373-378` and `:614-619`, both fail-closed on a null set. Pre-existing `fetchBlockedSet`. |
-| G129 | Protected or sensitive locations whose exact position cannot be surfaced | C ᵖ | Structural: `InputSuggestion` has **no coordinate field at all** (`types.ts:206-244`) and `discoverySearch.ts:980` never selects a gem's exact pair. Deep-scanned by `test/inputAssistanceCertification.test.ts:265-327`. |
+| G129 | Protected or sensitive locations whose exact position cannot be surfaced | C ᵖ | Structural: `InputSuggestion` has **no coordinate field at all** (`types.ts:206-244`) and `discoverySearch.ts:1434#sensitivity_level,` never selects a gem's exact pair. Deep-scanned by `test/inputAssistanceCertification.test.ts:265-327`. |
 | G130 | Stale live states beyond allowed freshness | C | `liveSuggestions.ts:293` — the only live input is `readLiveClaimEnvelopes`, which owns the not-expired filter; an empty result attaches nothing (`:306`). |
 | G131 | Duplicate Place/Gem/Event candidates when creation mode should resolve existing records first | C | `duplicateDetection.ts:241-370` (gems, places), `:383+` (events); `gateway.ts:534-546` then drops the redundant plain entity row for a duplicated id so the flow shows one unambiguous choice. |
 
@@ -617,7 +617,7 @@ uses are share/copy affordances (`components/ShareSheet.tsx`,
 | G177 | Open/closed or availability state where valid | **N** | No field, no producer. See G67. |
 | G178 | Freshness / current-state badge where applicable | C | `components/freshnessDisplay.ts:47-64` → `EntitySuggestionRow.tsx:63-69`, rendering only strings the server sent. |
 | G179 | Current Trip or Saved relationship | W | "Current Trip"/"Upcoming Trip" appears as `reason` on **zero-character defaults only** (`geoResolver.ts:243-249`). A typed result never carries a Trip relationship, and "Saved" is nowhere — no saved-entity lookup exists in the layer. |
-| G180 | User verification / trust context where appropriate | **N** | `verified` and `is_official` are selected by `searchTravelers` (`discoverySearch.ts:481`) and dropped by the projection whitelist (`projection.ts:82-88`); no suggestion can carry them. |
+| G180 | User verification / trust context where appropriate | **N** | `verified` and `is_official` are selected by `searchTravelers` (`discoverySearch.ts:568#is_official,`) and dropped by the projection whitelist (`projection.ts:82-88`); no suggestion can carry them. |
 | G181 | Hidden Gem protection / status labels | **N** | `sensitivity_level` is read to decide the position (`gemSearchPosition:241-255`) and never projected as a label, so a protected gem looks identical to an unprotected one in a suggestion row. |
 | G182 | Why this is suggested, when useful | C | `projection.ts:84` copies `matchedReason` into `reason`; the geo defaults set it explicitly (`geoResolver.ts:243-249`), and `EntitySuggestionRow.tsx:76-80` renders it. |
 
@@ -627,12 +627,12 @@ uses are share/copy affordances (`components/ShareSheet.tsx`,
 | --- | --- | --- | --- |
 | G183 | No suggestion is returned merely because it matched text; viewer eligibility is resolved first | C | `gateway.ts:373-402` — the block and age sets are fetched and, when either is `null`, **nothing** is emitted; the comment at `:402` names it as fail-closed. |
 | G184 | Blocked users and blocked relationships suppressed | C ᵖ | `fetchBlockedSet` (pre-existing) at `gateway.ts:374`, `:615`; the null-set refusal is the mutation-proven case in `test/inputAssistanceGateway.test.ts`. |
-| G185 | Private Trips/Events/Plans excluded unless the viewer is eligible | C ᵖ | `discoverySearch.ts:622`, `:724-725`, `:806-826`. Proven **through the gateway** by `test/inputAssistanceCertification.test.ts:330-366`. |
+| G185 | Private Trips/Events/Plans excluded unless the viewer is eligible | C ᵖ | `discoverySearch.ts:718#visibility`, `:890#visibility`, `:891#show_in_discovery`, `:1035-1038#admitted:`. Proven **through the gateway** by `test/inputAssistanceCertification.test.ts:330-366`. |
 | G186 | Private captions/tags/metadata never enter public suggestion indexes | C ᵖ | The projection copies a fixed whitelist (`projection.ts:82-88`) and drops `metadata`, `privacyState`, `accessState`, owner/host ids and counts; the searches select public columns only. |
 | G187 | Precise private location never leaked through autocomplete | C | Structural — `InputSuggestion` declares no coordinate field (`types.ts:206-244`); the one place a coordinate legitimately travels is the **public city-centre** inside a picker binding (`geoResolver.ts:70-81`). Deep-scanned adversarially at `test/inputAssistanceCertification.test.ts:265-327`. |
 | G188 | Presence/location inference cannot be exposed beyond current authorization | C | The only inference path is the live lane, and it consumes nothing but `readLiveClaimEnvelopes` behind `liveLabelsServable` (`liveSuggestions.ts:271-279`), which owns the full IG gate chain. No presence or location-inference source is wired into the gateway at all. |
 | G189 | Memory-based suggestions remain owner-scoped unless deliberately shared | C | `personalization.ts:159-180` filters `.eq('user_id', …)` from a session-derived id, never a parameter; `SURFACEABLE_GEO_TYPES` (`:83`) restricts injection to public geo entities so a remembered **person** can never be re-published around the privacy gate — mutation-proven (`test/inputAssistanceInvariants.test.ts`, item 5). ☠prod. |
-| G190 | Sensitive-location and protected-place rules applied before projection | W | The **gem** sensitivity rule is applied at source and is real (`discoverySearch.ts:980`, `gemSearchPosition:241-255`). The repo's actual protected-place gate — `lib/protectedLocations.ts`, built for the Map spec §24 — is **never consulted by this path**, and `protected_zones` is absent from production anyway (`scripts/checkProductionDrift.ts:104-117`). A protected zone that is not a hidden gem has no effect on a suggestion. |
+| G190 | Sensitive-location and protected-place rules applied before projection | W | The **gem** sensitivity rule is applied at source and is real (`discoverySearch.ts:1434#sensitivity_level,`, `:277-291#gemSearchPosition`). The repo's actual protected-place gate — `lib/protectedLocations.ts`, built for the Map spec §24 — is **never consulted by this path**, and `protected_zones` is absent from production anyway (`scripts/checkProductionDrift.ts:104-117`). A protected zone that is not a hidden gem has no effect on a suggestion. |
 | G191 | AI receives only the minimum permitted structured context | C | `aiWriting.ts:107-130` `buildPermittedWritingContext` emits coarse city/country/category/dates only, wraps the user's text with `wrapUgc` (data-not-instructions) and runs `stripCoordinateFields` as a backstop. (`d4db6009` records honestly that the backstop has no reachable path today.) |
 
 ### §30 Conflict Resolution Precedence
@@ -657,7 +657,7 @@ declared and read by nothing (G30). What follows is what actually exists.
 
 | id | Requirement | V | Evidence / divergence |
 | --- | --- | --- | --- |
-| G197 | Countries / languages / interests → local static dictionary | **N** | The dictionaries are **server-side** (`discoverySearch.ts:1827-1828`, `COMMON_LANGUAGES` / `COMMON_INTERESTS` behind `searchStatic`). The client ships none: `platform/input-assistance/` contains no country, language or interest list, so an offline country picker returns nothing. |
+| G197 | Countries / languages / interests → local static dictionary | **N** | The dictionaries are **server-side** (`discoverySearch.ts:2055-2056#COMMON_LANGUAGES`, `COMMON_LANGUAGES` / `COMMON_INTERESTS` behind `searchStatic`). The client ships none: `platform/input-assistance/` contains no country, language or interest list, so an offline country picker returns nothing. |
 | G198 | Cities → cached / local compact city index | W | Only the 60-entry, 60-second in-memory SWR cache (`services/suggestionCache.ts:18-33`). There is no local city index, and the cache is not persisted, so a cold app start offline has nothing. (`lib/cityCentroids.ts` exists but is a map-camera helper, not consumed by this layer.) |
 | G199 | Recent selections → device-local where allowed | W | `services/suggestionHistory.ts:31-32` is an in-memory `Map`, and its own header says the AsyncStorage-backed store is "a LATER PHASE". Recents do not survive an app restart on either side (server table absent, client store in memory). |
 | G200 | Saved / Trip entities → cached subset where permitted | **N** | No saved-entity cache and no Trip-entity cache in the layer. |
@@ -690,7 +690,7 @@ declared and read by nothing (G30). What follows is what actually exists.
 | G217 | Prefer local: request cancellation / state | C | `services/raceGuard.ts`; `useInputAssistance.ts:157`, `:211`. |
 | G218 | Prefer server: canonical entity lookup requiring current DB state | C ᵖ | `gateway.ts:343-404` → `dispatchSearch`. |
 | G219 | Prefer server: privacy/eligibility filtering | C | `gateway.ts:373-378`, `:614-619` — server-side and fail-closed; the client explicitly does no re-filtering (`hooks/useTelegraphRecipients.ts:15-18`). |
-| G220 | Prefer server: cross-entity search | C ᵖ | `entityMap.ts:16-33` (17 types) → `dispatchSearch` (`discoverySearch.ts:1797-1830`). |
+| G220 | Prefer server: cross-entity search | C ᵖ | `entityMap.ts:16-33#DispatchSearchType` (17 types) → `dispatchSearch` (`discoverySearch.ts:1999#dispatchSearch`, switch at `:2020-2057#"travelers":`). Still 17 after the §27 `saved` lane landed: `DispatchSearchType` is an EXPLICIT union and `ENTITY_TO_SEARCH` is `Record<EntityType, DispatchSearchType>`, so `SEARCH_TYPES`' eighteenth member (`:2046#searchSaved`) has no `EntityType` that reaches it. |
 | G221 | Prefer server: Live Intelligence suggestions | C | `liveSuggestions.ts:250-317`. ☠prod |
 | G222 | Prefer server: provider federation | **N** | No provider lane exists in the gateway; `external_places_enabled` is dormant and no provider candidate is ever projected. |
 | G223 | Prefer server: personalized ranking requiring server-owned context | C | `personalization.ts:243-268` runs server-side over server-held memory. ☠prod |
@@ -784,13 +784,13 @@ narrow resolver extension rather than a new architecture).
 | G274 | QueryNormalizer | W | There is no normalizer service: three unrelated helpers are called inline at `gateway.ts:158-167` (`applyAliases` from Discovery, `sanitizeQuery` from Discovery, `normalizeLocationName` from the location service), with the geographic fold living in `canonicalLocations`. The client's own module names the gap: *"Real alias resolution belongs to the server's QueryNormalizer (§40)"* (`services/queryNormalization.ts:12-15`) — which does not exist. |
 | G275 | EntitySuggestionService | C | `gateway.ts:601-640` `dispatchAndProject`. |
 | G276 | CityResolver | C | `geoResolver.ts:120-145`. |
-| G277 | CountryResolver | W | No canonical country resolver: `entityMap.ts:37` maps `country → 'countries'`, and `discoverySearch.ts:1664-1685` `searchCountries` **aggregates `profiles.home_country`** (`.from("profiles").select("id, home_country").ilike("home_country", pat)`). A country picker therefore resolves against the user table, not a canonical country registry, so a country with no users in it does not exist. |
-| G278 | PlaceResolver | C ᵖ | `discoverySearch.ts:1818` `searchPlaces`. |
-| G279 | HiddenGemResolver | C ᵖ | `discoverySearch.ts:1819` + `gemSearchPosition:241-255`. |
+| G277 | CountryResolver | W | No canonical country resolver: `entityMap.ts:37` maps `country → 'countries'`, and `discoverySearch.ts:1884#searchCountries` **aggregates `profiles.home_country`** (`:1895-1896#home_country")`) (`.from("profiles").select("id, home_country").ilike("home_country", pat)`). A country picker therefore resolves against the user table, not a canonical country registry, so a country with no users in it does not exist. |
+| G278 | PlaceResolver | C ᵖ | `discoverySearch.ts:2043#searchPlaces`. |
+| G279 | HiddenGemResolver | C ᵖ | `discoverySearch.ts:2047#searchHiddenGems` + `:277-291#gemSearchPosition`. |
 | G280 | UserResolver | C | `socialIdentity.ts:146-229`. |
-| G281 | TripResolver | C ᵖ | `discoverySearch.ts:1810`. |
-| G282 | EventResolver | C ᵖ | `discoverySearch.ts:1806`. |
-| G283 | BuddyResolver | W | `discoverySearch.ts:1802` is `searchTravelers` with `isBuddy`, whose only buddy-specific predicate is `:488` `.not("buddy_verified_at","is",null)`. No category, availability or eligibility resolution (G71, G127). |
+| G281 | TripResolver | C ᵖ | `discoverySearch.ts:2036#searchTrips`. |
+| G282 | EventResolver | C ᵖ | `discoverySearch.ts:2029#searchEvents`. |
+| G283 | BuddyResolver | W | `discoverySearch.ts:2025#searchTravelers` is `searchTravelers` with `isBuddy`, whose only buddy-specific predicate is `:575#buddy_verified_at` `.not("buddy_verified_at","is",null)`. No category, availability or eligibility resolution (G71, G127). |
 | G284 | IntentSuggestionService | C | `semanticIntent.ts:336-379`. |
 | G285 | SemanticQueryParser | C | `semanticParser.ts:525-589`. |
 | G286 | PersonalSuggestionService | C | `personalization.ts:159-436`. ☠prod |
@@ -887,7 +887,7 @@ outcome half of the taxonomy.
 | G334 | Rate-limit high-volume prefix enumeration where it can reveal private entity existence | C | `routes/inputAssistance.ts:147` (90/min per user) plus the structural defence: the one enumerable private surface, recipient search, is graph-scoped so prefix typing cannot probe for a stranger's existence at any rate. |
 | G335 | Protect recipient/user search from account-enumeration abuse | C | `socialIdentity.ts:56-116` — the candidate pool **is** the viewer's own follows/friends/thread-partners/trip-crew, and any read error returns `null` ⇒ no recipients. The header names this as the security property of the file. |
 | G336 | Apply authentication and viewer scope before private entity lookup | C | `routes/inputAssistance.ts:101-103` `requireUser` before anything; the user id used downstream is session-derived, never a body parameter (`:167`, `:274`). |
-| G337 | Sanitize pasted URLs and untrusted text before rendering | **N** | `sanitizeQuery` (`gateway.ts:163`) is a PostgREST-filter guard that strips only `(),` (`discoverySearch.ts:107-109`) — not a URL sanitizer. No URL parsing, scheme allowlisting or link sanitization exists in the layer, because no paste path exists (§24). Untrusted *AI* text is sanitized (G339); untrusted pasted text is not, because it never arrives. |
+| G337 | Sanitize pasted URLs and untrusted text before rendering | **N** | `sanitizeQuery` (`gateway.ts:163`) is a PostgREST-filter guard that strips only `(),` (`discoverySearch.ts:142-144#sanitizeQuery`) — not a URL sanitizer. No URL parsing, scheme allowlisting or link sanitization exists in the layer, because no paste path exists (§24). Untrusted *AI* text is sanitized (G339); untrusted pasted text is not, because it never arrives. |
 | G338 | AI-assisted paths must not bypass validation, moderation or authorization | C | `aiWriting.ts:162-180` `sanitizeSuggestedText` runs the same private-location + policy scanners user-authored text passes and **drops** a failing variant (`:331`) rather than surfacing it; the flag gate is fail-closed (`:80-90`); publish-time validation is untouched because the suggestion re-enters the ordinary create path. |
 | G339 | All action suggestions use the same authorization gate as the target action itself | C | Structural: the gateway only ever *proposes* a `SuggestionAction` (`types.ts:191-198`); nothing in `lib/inputAssistance/` executes one, so `add_to_trip` still goes through the trip endpoint's own auth (`semanticIntent.ts:273-276` states it). |
 
@@ -941,7 +941,7 @@ this area? (The underlying behaviours are scored in their own sections.)
 | --- | --- | --- | --- |
 | G361 | §53 Trip Destination: 0-char defaults → local prefix cache → server canonical resolver → choose → store city_id+country+timezone → prefetch → next fields inherit | W | Four of seven steps work: 0-char defaults (`geoResolver.ts:180-257`), the canonical resolver (`:120-145`), the stored binding (`:70-81`), and the field wiring (`components/selectors/GlobalPlacePicker.tsx` → `app/trip/new.tsx`). **Local prefix cache does not exist** (G204/G214), **prefetch does not exist** (G209), and "next fields inherit Bangkok context" is only the exact-`cityId` reorder of G107. |
 | G362 | §54 Telegraph Message: type "meet at" → action candidates (share meeting point / Trip stop / current Place) → eligibility → tap → structured entity share inserted | **N** | The context has a policy (`policyRegistry.ts:267-274`) and **no registered field**, `share_entity` has **no producer** (G303), and no Telegraph composer imports the platform. Only the *recipient picker* half of Telegraph is wired (`app/telegraph/new.tsx` via `hooks/useTelegraphRecipients.ts`), which is §14/§54's other half. |
-| G363 | §55 Hidden Gem Creation: name/location → entity + duplicate search → existing candidates → sensitive-location policy → exact/approximate/pin → confirm → canonical reference | C | Wired end-to-end: `app/gems/submit.tsx:242-244` registers `hidden_gem_name` through `hooks/useCreationAssistance.ts` and renders `CreationAssist` at `app/gems/submit.tsx:274#CreationAssist`; the backend chain is `duplicateDetection.ts:241-370` → `creation.ts:258-296` (constraint filter) → `projectDuplicate:191-215` (`resolve_existing`), with the sensitive-location rule at `discoverySearch.ts:980` and the pin fallback at `validationSuite.ts:305-315`. |
+| G363 | §55 Hidden Gem Creation: name/location → entity + duplicate search → existing candidates → sensitive-location policy → exact/approximate/pin → confirm → canonical reference | C | Wired end-to-end: `app/gems/submit.tsx:242-244` registers `hidden_gem_name` through `hooks/useCreationAssistance.ts` and renders `CreationAssist` at `app/gems/submit.tsx:274#CreationAssist`; the backend chain is `duplicateDetection.ts:241-370` → `creation.ts:258-296` (constraint filter) → `projectDuplicate:191-215` (`resolve_existing`), with the sensitive-location rule at `discoverySearch.ts:1434#sensitivity_level,` and the pin fallback at `validationSuite.ts:305-315`. |
 | G364 | §56 Compass Prompt: type "where should" → suggested prompts → current surface + Trip context attached as structured refs → submit → Compass receives intent + permitted entities | C | `app/(tabs)/ai.tsx:60`, `:398-410` wires `compass_prompt` through `useAiWritingAssist` and renders `CompassStarters` + `AiWritingAssist`; the structured refs are attached at `projection.ts:283-303` and `semanticIntent.ts:231-268` (`open_compass` carrying the parse). |
 
 ### §57 Product Success Metrics
@@ -1921,3 +1921,155 @@ and `semanticIntent.ts` by name; this pass changed neither. The residual §8.9
 recorded against it — that the trust term is NOT the identity for a row carrying
 `verified` or `isOfficial` — is unchanged by §9 and still stands exactly as
 written.
+
+---
+
+## 10. The `90a515a6..HEAD` re-read of `routes/discoverySearch.ts`
+
+§9 declared `head_commit` `90a515a6`. One counted file has moved since:
+`artifacts/api-server/src/routes/discoverySearch.ts`, +290 / −27 across seven
+hunks. This section is the re-read that freshness asks for. **It moves no
+verdict and no headline number** — §8.7's table stands unchanged — and its
+whole output is a correction to *pointers*, plus one count in §2's inventory.
+
+### 10.1 What the diff actually contains
+
+| hunk | at (HEAD lines) | what changed | rows that could care |
+| --- | --- | --- | --- |
+| 1 | `discoverySearch.ts:76-84#nameVisibilitySet` | import swap: `presentedName` out, `buildListIdentityProjections` in, `resolvePlaceIdBridge` added | none |
+| 2 | `discoverySearch.ts:117-128#SEARCH_TYPES` | `SEARCH_TYPES` gains a ninth Map-spec §27 heading, `"saved"` — 17 wire types become 18 | G218, G220 |
+| 3 | `discoverySearch.ts:392-396#chunkIds` | new `chunkIds` paging helper (PostgREST `.in()` URL length) | none |
+| 4 | `discoverySearch.ts:646#buildListIdentityProjections` | `searchTravelers`' inline identity assembly moved into `services/passport/PassportConsumerProjections.ts:1146#buildListIdentityProjections`; hunk is net zero lines | G101, G180 |
+| 5 | `discoverySearch.ts:1262-1417#searchSaved` | a new viewer-scoped `searchSaved` lane, ~238 lines, reading `wishlist_places` + `discovery_place_saves` | G128, G129, G186 |
+| 6 | `discoverySearch.ts:2046#searchSaved` | `dispatchSearch` gains `case "saved"` | G218, G220 |
+| 7 | `discoverySearch.ts:2064#FAN_LIMIT` + `:2066#deliberately` | the `type=all` fan-out comment: 17 of 18 types fan out, `saved` deliberately excluded | G220 |
+
+Nothing else in the file changed. No gem predicate, no `visibility` gate, no
+`sanitizeQuery`, no static dictionary, no `searchCountries` aggregation, no
+`matchTier`, no `rankCombined` (which is not even in this file — see 10.3).
+
+### 10.2 Why no verdict moves, hunk by hunk
+
+**Hunks 2, 6 and 7 — the `saved` lane cannot reach this layer.** The obvious
+worry is that an eighteenth search type widens what the Global Input
+Intelligence gateway dispatches, and it does not. `dispatchTypes` is typed
+`lib/inputAssistance/entityMap.ts:16#DispatchSearchType`, an **explicit**
+seventeen-member union that does not contain `saved`, and the only producer of
+those values is `lib/inputAssistance/entityMap.ts:35#ENTITY_TO_SEARCH`, a
+`Record<EntityType, DispatchSearchType>` — so a search type with no `EntityType`
+mapped onto it is unreachable by construction, not by convention. `entityMap.ts`
+is **byte-identical** between `90a515a6` and HEAD (`git diff` returns empty), so
+this is a property of the merged tree and not an inherited claim. G218 and G220
+therefore still describe a seventeen-type dispatch, and their `ᵖ` still holds.
+
+That also disposes of G129 and G186 without needing the whitelist argument:
+`searchSaved` does put `lat` / `lng` on `metadata` (`discoverySearch.ts:1366#lat:`
+and `discoverySearch.ts:1400#lat:`), but no `saved` row can arrive at
+`projectSearchResult`. And
+had one arrived, it would change nothing: `metadata` is not in the §42 whitelist
+(`lib/inputAssistance/projection.ts:108#display-safe`), which is G186's entire
+content, and `searchPlaces` (`discoverySearch.ts:1143#lat:`), `searchEvents`
+(`discoverySearch.ts:792#metadata:`) and `searchCities`
+(`discoverySearch.ts:1848#metadata:`) already carried the same keys before this
+diff. G129's structural claim — `InputSuggestion` has no
+coordinate field — is about `lib/inputAssistance/types.ts`, which this diff does
+not touch.
+
+**Hunk 4 — the identity move is behaviour-preserving on this caller.** The four
+rules that left `searchTravelers` were re-read at their destination rather than
+taken on trust: `presentedName` is the same canonical helper
+(`PassportConsumerProjections.ts:1171#presentedName`); `nameAllowed` is
+`isSelf || allowedRealNames.has(id)`, the old `p.id === userId ||
+allowedNames.has(...)`; `avatarUrl` is `(!lockedPreview && showAvatar) ?
+avatar_url : null`, the old expression verbatim; and `verified` is `prof.verified
+=== true`, which agrees with the old `(p.verified) ?? false` on every boolean and
+null. The one genuine difference is the projection's added `isSelf` exemption in
+`lockedPreview` and `showAvatar` — and it is unreachable from here, because
+`searchTravelers` excludes the viewer at `discoverySearch.ts:570#.neq("id",`
+before any of it runs. G101 and G180 rest on `verified` / `is_official` being
+SELECTED and surviving to the row: the select at
+`discoverySearch.ts:568#is_official,` is untouched, `verified` is still assigned
+at `discoverySearch.ts:688#verified:` and `isOfficial` still comes straight off
+the row at `discoverySearch.ts:689#isOfficial:`. §8.4's producer for G101,
+`lib/inputAssistance/rankingSignals.ts:130#applyTrustConfidence`, reads those two
+fields off `SearchResult` and is not in this diff.
+
+Hunk 4 also cannot reach G95: `rankCombined` is not in this file.
+
+**Hunks 1 and 3 are inert** — an import line and an unexported array-paging
+helper with no policy content.
+
+### 10.3 Twenty-nine pointers repointed across 23 rows, and what they really named
+
+The merge that produced HEAD advanced this census's `discoverySearch.ts` line
+numbers by a MECHANICAL offset (+18 below the new lane, +250 above it). That is
+correct for the citations §8.3 had already anchored — all of them still resolve,
+which is the anchor form earning its keep for a second time. It is **not**
+correct for the unanchored ones in §4, and re-reading them at HEAD found that
+every one lands on unrelated code. Most were already wrong at `90a515a6`, and
+several were already wrong when §8.3 said so in passing ("the old pointer, lines
+960–962, is stale by 224") without repairing the §4 rows that carried them. They
+are repaired here, by reading the merged tree for the exact line — never by
+offset and never by nearest candidate — and every one now carries an ANCHOR so
+the next move is loud.
+
+The measurement, so the claim is checkable: before this pass the document held 49
+resolved citations into `routes/discoverySearch.ts`, of which 20 were anchored
+(all 20 still resolve — the §8.3 anchors surviving a 263-line shift is the anchor
+form earning its keep) and **29 were unanchored. All 29 were wrong.** After it,
+every citation into the file is anchored and holds.
+
+| cited row | old pointer (dead) | now | what the old pointer actually named at HEAD |
+| --- | --- | --- | --- |
+| G31 | line 980 | `routes/discoverySearch.ts:1434#sensitivity_level,` | a bare `);` |
+| G62 | lines 107-109 | `routes/discoverySearch.ts:142-144#sanitizeQuery` | three import specifiers |
+| G68 | lines 978-980, and `gemSearchPosition` "241-255" | `routes/discoverySearch.ts:1434#sensitivity_level,` + `:277-291#gemSearchPosition` | the hidden-gem blocked/age filter, not the select |
+| G70 | lines 622, 724-725, 806-826 | `routes/discoverySearch.ts:718#visibility`, `:890#visibility`, `:891#show_in_discovery`, `:1035-1038#admitted:` | a friendship predicate; a comment; a `tripFit` metadata bag |
+| G71 | line 488 | `routes/discoverySearch.ts:575#buddy_verified_at` | a JSDoc line about a cache |
+| G73 | lines 1827-1828 | `routes/discoverySearch.ts:2055-2056#COMMON_LANGUAGES` | the city-dedupe loop in `searchCities` |
+| G95 | line 1800, in the wrong file | `routes/discoverySearchHelpers.ts:257-262#userCity` | `.eq("is_private", false)` — and see below |
+| G101 | line 481 | `routes/discoverySearch.ts:568#is_official,` | a comment about the `type=all` fan-out |
+| G126 | lines 806-826, 724-725 | `routes/discoverySearch.ts:1035-1038#admitted:`, `:890#visibility` + `:891#show_in_discovery` | as G70 |
+| G129 | line 980 | `routes/discoverySearch.ts:1434#sensitivity_level,` | a bare `);` |
+| G180 | line 481 | `routes/discoverySearch.ts:568#is_official,` | as G101 |
+| G185 | lines 622, 724-725, 806-826 | `routes/discoverySearch.ts:718#visibility`, `:890#visibility`, `:891#show_in_discovery`, `:1035-1038#admitted:` | as G70 |
+| G190 | line 980, and `gemSearchPosition` "241-255" | `routes/discoverySearch.ts:1434#sensitivity_level,` + `:277-291#gemSearchPosition` | as G68 |
+| G197 | lines 1827-1828 | `routes/discoverySearch.ts:2055-2056#COMMON_LANGUAGES` | as G73 |
+| G220 | lines 1797-1830 | `routes/discoverySearch.ts:1999#dispatchSearch` + `:2020-2057#"travelers":` | the `searchCities` profile select |
+| G277 | lines 1664-1685 | `routes/discoverySearch.ts:1884#searchCountries` + `:1895-1896#home_country")` | a `catch { return []; }` |
+| G278 | line 1818 | `routes/discoverySearch.ts:2043#searchPlaces` | `let skipped = 0;` |
+| G279 | line 1819 | `routes/discoverySearch.ts:2047#searchHiddenGems` + `:277-291#gemSearchPosition` | a `for` header |
+| G281 | line 1810 | `routes/discoverySearch.ts:2036#searchTrips` | a fail-closed comment |
+| G282 | line 1806 | `routes/discoverySearch.ts:2029#searchEvents` | `.eq("allow_profile_discovery", false)` |
+| G283 | lines 1802 and 488 | `routes/discoverySearch.ts:2025#searchTravelers` + `:575#buddy_verified_at` | a `.limit(...)`; a cache JSDoc |
+| G337 | lines 107-109 | `routes/discoverySearch.ts:142-144#sanitizeQuery` | as G62 |
+| G363 | line 980 | `routes/discoverySearch.ts:1434#sensitivity_level,` | a bare `);` |
+
+**One of those was wrong about the file, not the line.** G95 cited
+`discoverySearch.ts` for "applies the city boost in `rankCombined`".
+`rankCombined` is defined in `routes/discoverySearchHelpers.ts:227#rankCombined`
+and its city tiebreak is `discoverySearchHelpers.ts:257-262#userCity`;
+`discoverySearch.ts` only imports and calls it. No mechanical offset could ever
+have found that, and §8.3 did not: it re-anchored G95's `gateway.ts` half and
+dropped the second half rather than repairing it. The verdict is unaffected —
+the boost exists and is applied — but the row now points at the code.
+
+### 10.4 One inventory count corrected
+
+§2's file inventory described `routes/discoverySearch.ts` as "`dispatchSearch` +
+all 17 per-type searchers". Hunk 2 makes that 18. The row now says 18 and names
+`searchSaved` as the one this layer cannot reach, so the number in §2 and the
+seventeen-type claim in G220 no longer look like a contradiction. **This is a
+count in a scope table, not a requirement verdict**: no `G` row's bucket changes,
+the denominator is still 373, and §8.7's headline is untouched.
+
+### 10.5 Freshness
+
+`head_commit` is **not** re-declared here. This section re-read one file against
+`90a515a6..HEAD`; it did not re-measure the other 98 the census cites, and
+declaring HEAD would report FRESH about rows nobody reopened — the thing §8.9 and
+the header row both refuse. The ledger entry for this census instead names
+`since=90a515a6` and carries the argument above per file. The spent
+`579694d6` entry, which §9 superseded when it re-declared `head_commit`, is moved
+to the ledger's `retired` array rather than deleted, so the two arguments it
+carried survive their acknowledgement.
