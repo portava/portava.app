@@ -2766,13 +2766,19 @@ project `ajrurzioarfkagpuxfnb` was not touched, queried or altered.
 
 `POST /api/airport/sessions` creates a layover session. Thirty lines before the end of the
 handler it refuses a session whose flight has already gone —
-`artifacts/api-server/src/routes/airport.ts:518#if (departureMs <= Date.now()) {`, *"This layover
+`artifacts/api-server/src/routes/airport.ts:519#if (departureMs <= Date.now()) {`, *"This layover
 has already departed — set a departure time in the future"*. **A layover session is, by the
 route's own validation, a FUTURE event.**
 
-At the end of the same handler it minted a Passport stamp for the layover's city:
-`artifacts/api-server/src/routes/airport.ts:634#sourceType: "layover_session", verificationLevel: "checkin",`.
-Nothing required the ARRIVAL to have happened. A traveller describing next Tuesday's connection
+At the end of the same handler it minted a Passport stamp for the layover's city.
+**RE-READ AT INTEGRATION, NOT RE-POINTED — that write is no longer in this handler**, and §F.7's
+consequence 3 said this evidence would go stale for exactly this reason. The sibling Layover lane
+deleted the creation-time seam outright; the only `passport_stamps` write left on this route is
+reached from `DELETE /airport/sessions/:id`, behind four terms, at
+`artifacts/api-server/src/routes/airport.ts:2394#sourceType: "layover_session", verificationLevel: "checkin",`.
+The paragraph stays in the PAST TENSE because the defect it describes was real at `6d4fd1a06` and
+is not real now; what follows is the reading of the tree as it was, and §G says what the merge did
+with it. Nothing required the ARRIVAL to have happened. A traveller describing next Tuesday's connection
 was recorded in `passport_stamps` as having **checked in** to an airport city they had not
 reached, and might never reach.
 
@@ -2880,13 +2886,27 @@ mutation-covered:
     boundary is `<=`, not `<`, so an artifact minted in the same millisecond as the event it
     records is not refused — that is a real shape and is not the one this gate exists to stop.
 
-**2. The seam gated.** `artifacts/api-server/src/routes/airport.ts:611#const layoverOccurrence`
-decides, and a refusal is LOGGED with its reason and policy version rather than being silent.
-**The refusal is terminal for that session and this is stated rather than buried**: nothing
-re-runs the seam later, so a layover set up in advance earns no stamp at all. That removes a
-stamp that was never earned and keeps the one that was — the real flow is a traveller opening
-Airport Mode in the terminal, whose declared arrival is already in the past, and the control
-test below is exactly that traveller.
+**2. The seam gated.** **RE-READ AT INTEGRATION — the gate is on a different route than this
+section left it on, and it is still this predicate.** §F gated the CREATION-time seam inside
+`POST /airport/sessions`; that call site no longer exists, because the merge kept the Layover
+lane's structure, so this section names no line number for it — a citation to a deleted line is
+the one kind this document must not carry. The predicate now decides at
+`artifacts/api-server/src/routes/airport.ts:2368#const occurrence = declaredOccurrenceHasHappened(args.session.arrivalTime, Date.now());`,
+the fourth term of `artifacts/api-server/src/routes/airport.ts:2331#async function writeElectedLayoverStamp`,
+and a refusal is still LOGGED with its reason and policy version rather than being silent — and
+is now also REPORTED to the caller, as `reason: "not_occurred"`, which the creation-time seam
+could not do because it was fire-and-forget.
+
+**§F PREDICTED THIS WOULD MAKE THE PREDICATE UNREACHABLE. IT DID NOT, AND §G WITHDRAWS THAT
+PREDICTION.** Completion and election are things the CALLER says; `endSession` consults no clock,
+so moving the seam answered §3 and §17 and left §1 open. Composing the two lanes was the only
+resolution that closed all three limbs.
+
+**The refusal is still terminal for that session**: nothing re-runs the seam after the session is
+closed, so a layover set up in advance and closed out early earns no stamp at all. That removes a
+stamp that was never earned and keeps the one that was — the real flow is a traveller who opened
+Airport Mode in the terminal, whose declared arrival is already in the past and who elects the
+stamp on the way out, and the control test below is exactly that traveller.
 
 **3. §28.11 on the one Compass accessor that was swallowing its reads.**
 `artifacts/api-server/src/compass/MemoryCompassTools.ts:546#async function toolMemoryGetEvidence`
@@ -2920,12 +2940,12 @@ the other two suites already ran.
 
 | what it asserts | file |
 |---|---|
-| a future instant is refused, with §6's own reason code | `artifacts/api-server/src/test/memoryPlannedNotExperienced.test.ts:200#refuses an instant that has not arrived` |
-| a layover that has not begun writes NO `passport_stamps` row | `artifacts/api-server/src/test/memoryPlannedNotExperienced.test.ts:241#a session whose arrival is still in the future` |
-| the gate is not a blanket deny — a past arrival still earns it | `artifacts/api-server/src/test/memoryPlannedNotExperienced.test.ts:256#the refusal is not a blanket deny` |
-| turning up inside the meetup radius DOES earn the stamp | `artifacts/api-server/src/test/memoryPlannedNotExperienced.test.ts:435#CONTROL — turning up inside the radius` |
-| checking in before the window opens earns nothing | `artifacts/api-server/src/test/memoryPlannedNotExperienced.test.ts:460#checking in before the window opens` |
-| an invited-but-not-accepted member earns nothing | `artifacts/api-server/src/test/memoryPlannedNotExperienced.test.ts:475#an invited-but-not-accepted member earns nothing` |
+| a future instant is refused, with §6's own reason code | `artifacts/api-server/src/test/memoryPlannedNotExperienced.test.ts:217#refuses an instant that has not arrived` |
+| a layover that has not begun writes NO `passport_stamps` row | `artifacts/api-server/src/test/memoryPlannedNotExperienced.test.ts:281#a session whose arrival is still in the future` |
+| the gate is not a blanket deny — a past arrival still earns it | `artifacts/api-server/src/test/memoryPlannedNotExperienced.test.ts:306#the refusal is not a blanket deny` |
+| turning up inside the meetup radius DOES earn the stamp | `artifacts/api-server/src/test/memoryPlannedNotExperienced.test.ts:492#CONTROL — turning up inside the radius` |
+| checking in before the window opens earns nothing | `artifacts/api-server/src/test/memoryPlannedNotExperienced.test.ts:517#checking in before the window opens` |
+| an invited-but-not-accepted member earns nothing | `artifacts/api-server/src/test/memoryPlannedNotExperienced.test.ts:532#an invited-but-not-accepted member earns nothing` |
 | an unreadable participant read is not "nobody was there" | `artifacts/api-server/src/test/memoryCompassTools.test.ts:584#an unreadable memory_tags read is not reported` |
 | an unreadable attachment read is not "nothing is attached" | `artifacts/api-server/src/test/memoryCompassTools.test.ts:596#an unreadable memory_items read is not reported` |
 | a blocked viewer is refused the owner's public Memory card | `artifacts/api-server/src/test/telegraphShare.test.ts:396#a Memory whose owner has blocked the viewer degrades` |
@@ -3071,7 +3091,7 @@ now so the merge is not a discovery:
      place §1's rule is written as code rather than as an `if`), but a census may not score an
      unreachable module BAC, and §A.2 is this document's own rule for that.
   2. **The CONTROL case of the airport suite goes RED**, and it should:
-     `artifacts/api-server/src/test/memoryPlannedNotExperienced.test.ts:256#the refusal is not a blanket deny`
+     `artifacts/api-server/src/test/memoryPlannedNotExperienced.test.ts:306#the refusal is not a blanket deny`
      asserts that a past arrival DOES earn a stamp at session creation, and under their fix
      nothing earns one at session creation. The refusal case stays green, and a suite whose
      refusals still pass while its control no longer can is proving less than it looks —
