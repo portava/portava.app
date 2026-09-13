@@ -1,8 +1,12 @@
 /**
  * CompassTools — Phase 4 native function calling for the Compass assistant.
  *
- * Fourteen tools the model may call on demand (the OpenAI schemas in TOOL_DEFINITIONS
- * below are the authoritative list). Hard rules (master-roadmap.md):
+ * The tools the model may call on demand. COMPASS_TOOL_DEFINITIONS below is the
+ * authoritative list and no count is restated here: census-compass CC-05 caught
+ * this header claiming "eight" when eleven were declared, the fix restated
+ * "fourteen", and five lanes have since taken the array past forty. A number in
+ * a comment beside the array it counts is a claim that goes stale on the next
+ * append, so there is no number. Hard rules (master-roadmap.md):
  *   - Candidate generation is strictly separated from AI explanation: tools
  *     produce candidates from real DB data; the model interprets, ranks,
  *     chooses, and explains — it must NEVER invent the candidate list.
