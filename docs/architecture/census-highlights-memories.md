@@ -2837,14 +2837,13 @@ and a reader checking that grep would have concluded the family had five members
 **Family two: `user_stamps`, minted through
 `artifacts/api-server/src/services/passport/StampAwardEngine.ts:799#export async function awardStamp`.
 NOT READ, AND THAT IS WHY NOTHING IN THIS SECTION MOVES FORWARD.** It is a criteria engine over
-`stamp_definitions`,
-reached from **more than fifteen** route call sites — the Trips, Events, Follows, Rent-a-Buddy,
+`stamp_definitions`, reached from **more than fifteen** route call sites — the Trips, Events, Follows, Rent-a-Buddy,
 Hidden Gems, Safe Return, Stamps, Stamp Catalog and two Admin routers — and this section read
 one of them. That one is enough to show the question is live rather than theoretical:
 `artifacts/api-server/src/routes/trips.ts:424#definitionSlug: "first_trip_created",` awards
 `first_trip_created` and `trip_planner` **at trip creation**, for a trip whose status is merely
-not `draft`, passing the trip's `destinationCity` and `destinationCountry` onto the stamp row. Those two slugs are PLANNING achievements and a
-badge for planning a trip is not a visit claim — but whether a `user_stamps` row carrying a city
+not `draft`, passing the trip's `destinationCity` and `destinationCountry` onto the stamp row.
+Those two slugs are PLANNING achievements and a badge for planning a trip is not a visit claim — but whether a `user_stamps` row carrying a city
 is rendered anywhere as somewhere the traveller has BEEN depends on that table's readers, and
 this section did not read them either. (It did check the one that would have been worst:
 `artifacts/api-server/src/lib/mapProducers/personalCityProducer.ts:272#.from("passport_stamps")`
