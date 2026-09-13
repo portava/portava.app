@@ -311,7 +311,19 @@ export async function buildTripTodayProjection(
     log.warn({ err: segErr.message, tripId }, "today: trip_transport_segments unreadable — refusing");
     return { ok: false, reason: "TRIP_PROJECTION_UNAVAILABLE", message: "The transport segments could not be read" };
   }
-  const crewSize = memberRows.filter((m) => m.status == null || m.status === "accepted").length || 1;
+  // §8.4 (TR144): the tight-arrival mitigation is "move/cancel downstream plan;
+  // ALERT AFFECTED PARTICIPANTS", and until now the trigger's participantIds
+  // were empty on every input, so the second half named nobody and no alert
+  // could be addressed. A commitment is a trip-level obligation: §5.1 gives
+  // PLANS a participant relation (trip_plan_participants, 2771) and gives
+  // commitments none, so the finest relation a commitment has is the accepted
+  // crew — the same set crewSize already counts. An invited or declined member
+  // is not on the trip and is not alerted. Naming a finer set for the downstream
+  // PLANS is TR150's, which stays W.
+  const acceptedCrewIds = memberRows
+    .filter((m) => m.status == null || m.status === "accepted")
+    .map((m) => String(m.user_id));
+  const crewSize = acceptedCrewIds.length || 1;
   const riskTriggers = evaluateRiskTriggers({
     now: nowMs,
     // §8.4 (TR146): the arrival estimate is the freedom projection's per-hop
@@ -326,6 +338,7 @@ export async function buildTripTodayProjection(
         id: String(c.id), type, startsAt: c.starts_at ?? null, requiredArrivalAt: c.required_arrival_at ?? null,
         estimatedArrivalAt: est?.estimatedArrivalAt ?? null,
         checkInDeadlineAt: type === "lodging" ? (c.required_arrival_at ?? null) : null,
+        participantIds: acceptedCrewIds,
       };
     }),
     plans: ((items ?? []) as any[]).map((p) => ({ id: String(p.id), title: p.title ?? null, startsAt: p.starts_at ?? null, endsAt: p.ends_at ?? null, weatherSensitive: looksWeatherSensitive(p.title, p.category === "activity" ? p.location_name : null), partySize: null })),

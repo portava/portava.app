@@ -92,6 +92,25 @@ describe("§11.1 buildTripTodayProjection — composed, not re-derived", () => {
     assert.ok(r2.ok);
     assert.equal(r2.projection.riskTriggers.find((t) => t.kind === "late_check_in")!.fired, false);
   });
+  it("§8.4 tight arrival (TR144) fires from the same producer, names the downstream, and names the accepted crew to alert", async () => {
+    // B must be there at 10:05; the freedom hop puts the traveller there an hour
+    // and a half later — A departs 10:00 ten kilometres away and B's prep is
+    // 01:30:00, so the estimate is 10:00 + travel + 90 min. Past the 30-minute
+    // threshold by a margin no travel band moves.
+    const tables = withStages(base());
+    tables.trip_commitments[1] = { ...tables.trip_commitments[1], required_arrival_at: T("10:05"), prep_duration: "01:30:00" };
+    tables.trip_members = [...tables.trip_members, { trip_id: TRIP_ID, user_id: OTHER_ID, role: "member", status: "invited" }];
+    const r = await buildTripTodayProjection(makeClient(tables) as any, TRIP_ID, OWNER_ID, { now: new Date(T("09:00")) });
+    assert.ok(r.ok, JSON.stringify(r));
+    const tight = r.projection.riskTriggers.find((t) => t.kind === "tight_arrival")!;
+    assert.equal(tight.fired, true, JSON.stringify(tight));
+    assert.ok(tight.affectedIds.includes("B"), "the commitment whose estimated arrival is past what it needs");
+    assert.equal(tight.mitigation, "Move/cancel downstream plan; alert affected participants.");
+    assert.ok((tight.magnitude ?? 0) > 30, "minutes past the threshold");
+    // The half that was empty on every input until now: WHO to alert.
+    assert.deepEqual([...tight.participantIds].sort(), [OWNER_ID, MEMBER_ID].sort(),
+      "the accepted crew — an invited member is not on the trip yet and is not alerted");
+  });
   it("a conflict becomes an unresolvedAction and AT_RISK health; an unplaced commitment becomes a place_commitment action", async () => {
     const tables = withStages(base());
     tables.trip_commitments = [...tables.trip_commitments, { id: "C", trip_id: TRIP_ID, type: "other", starts_at: null, required_arrival_at: null, place_id: null, lateness_tolerance: null, prep_duration: null, flexibility: "flexible" }];
