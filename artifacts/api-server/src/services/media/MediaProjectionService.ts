@@ -746,20 +746,29 @@ export async function loadPeopleAffinities(
   const tripCrewIds = new Set<string>();
   const sharedMomentIds = new Set<string>();
 
+  // THE READS ARE PASSED IN, NOT BUILT FROM A TABLE NAME. Both hops used to be
+  // one `.from(table).select(`${groupCol}, user_id, status`)` parameterised by
+  // the caller. That is the same query written once, but it is invisible to
+  // check:write-path-columns, which can only compare a select list against the
+  // live schema when the table and the list are both literals. A dynamic pair
+  // is a blind spot where a column that does not exist reaches PostgREST, which
+  // rejects the WHOLE statement with 42703 — and supabase-js resolves that
+  // rather than throwing, so the population silently empties. The two callers
+  // below therefore spell both reads out; `groupCol` survives only to read the
+  // key back off the returned row, where it cannot hide a phantom column.
   const peers = async (
-    table: string,
+    label: string,
     groupCol: string,
+    readMine: () => PromiseLike<{ data: unknown; error: unknown }>,
+    readGroup: (groups: string[]) => PromiseLike<{ data: unknown; error: unknown }>,
     into: Set<string>,
   ): Promise<void> => {
     let mine: string[] = [];
     try {
-      const { data, error } = await (sc as any)
-        .from(table)
-        .select(`${groupCol}, user_id, status`)
-        .eq("user_id", viewerId);
+      const { data, error } = await readMine();
       if (error) {
         logger.warn(
-          { table, code: (error as any)?.code ?? null, message: (error as any)?.message ?? null },
+          { table: label, code: (error as any)?.code ?? null, message: (error as any)?.message ?? null },
           "loadPeopleAffinities: viewer membership read failed — this §27 population is empty for this request",
         );
         return;
@@ -775,10 +784,7 @@ export async function loadPeopleAffinities(
     if (mine.length === 0) return;
 
     try {
-      const { data, error } = await (sc as any)
-        .from(table)
-        .select(`${groupCol}, user_id, status`)
-        .in(groupCol, mine.slice(0, DEFAULT_CANDIDATE_LIMIT));
+      const { data, error } = await readGroup(mine.slice(0, DEFAULT_CANDIDATE_LIMIT));
       if (error) return;
       for (const r of (data as any[]) ?? []) {
         if (String(r?.status ?? ACCEPTED_MEMBERSHIP_STATUS) !== ACCEPTED_MEMBERSHIP_STATUS) continue;
@@ -792,8 +798,28 @@ export async function loadPeopleAffinities(
   };
 
   await Promise.all([
-    peers("trip_members", "trip_id", tripCrewIds),
-    peers("shared_moment_memberships", "moment_id", sharedMomentIds),
+    peers(
+      "trip_members",
+      "trip_id",
+      () => (sc as any).from("trip_members").select("trip_id, user_id, status").eq("user_id", viewerId),
+      (groups) => (sc as any).from("trip_members").select("trip_id, user_id, status").in("trip_id", groups),
+      tripCrewIds,
+    ),
+    peers(
+      "shared_moment_memberships",
+      "moment_id",
+      () =>
+        (sc as any)
+          .from("shared_moment_memberships")
+          .select("moment_id, user_id, status")
+          .eq("user_id", viewerId),
+      (groups) =>
+        (sc as any)
+          .from("shared_moment_memberships")
+          .select("moment_id, user_id, status")
+          .in("moment_id", groups),
+      sharedMomentIds,
+    ),
   ]);
 
   return { tripCrewIds, sharedMomentIds };
@@ -1111,11 +1137,17 @@ export async function loadTaggedPostIds(
   try {
     const { data, error } = await (sc as any)
       .from("tags")
-      .select("source_id, tagged_at")
+      // `created_at`, NOT `tagged_at`. The canonical 0043 migration declares
+      // `tagged_at` and it was never applied — migrations/README.md:12 and
+      // docs/migrations.md:26 both record that live `tags` has no such column.
+      // Naming it here failed the WHOLE read with 42703, which supabase-js
+      // resolves rather than throws, so the bucket degraded to empty for every
+      // viewer and looked exactly like "you have no tags".
+      .select("source_id, created_at")
       .eq("tagged_user_id", viewerId)
       .eq("source_type", "post")
       .eq("status", "approved")
-      .order("tagged_at", { ascending: false })
+      .order("created_at", { ascending: false })
       .limit(limit);
     if (error) {
       logger.warn({ err: error }, "myWorld: tags read failed — Tagged bucket degrades to empty");

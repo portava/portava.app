@@ -298,7 +298,7 @@ check errs toward silence. A `from("table")` grep also misses variable and RPC
 access. **Every "nothing writes/reads X" claim in this census was settled by
 reading the call sites**, and the two dynamic `.from(table)` sites in the tree
 (`services/media/MyWorldMemoryService.ts:614`,
-`services/media/MediaProjectionService.ts:1182#const { data } = await (sc as any).from(table).select("*").eq(ownerCol, ownerId).limit(1000);`) were opened and confirmed to be
+`services/media/MediaProjectionService.ts:1214#const { data } = await (sc as any).from(table).select("*").eq(ownerCol, ownerId).limit(1000);`) were opened and confirmed to be
 gem- and media-scoped helpers whose callers cannot pass a messaging table name.
 
 ---
@@ -1077,7 +1077,7 @@ whether the built code can do anything.
    INCOMPLETE and that the check errs toward silence. Every "nothing
    writes/reads X" claim above was settled by reading call sites, and the tree's
    two dynamic `.from(table)` sites (`services/media/MyWorldMemoryService.ts:614`,
-   `services/media/MediaProjectionService.ts:1182#const { data } = await (sc as any).from(table).select("*").eq(ownerCol, ownerId).limit(1000);`) were opened and confirmed to be
+   `services/media/MediaProjectionService.ts:1214#const { data } = await (sc as any).from(table).select("*").eq(ownerCol, ownerId).limit(1000);`) were opened and confirmed to be
    gem- and media-scoped helpers whose callers cannot pass a messaging table name.
 
 ---

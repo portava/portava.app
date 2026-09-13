@@ -872,6 +872,18 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     // producer leaves every existing assertion green, so the census's evidence
     // for those four rows is this file and nothing else.
     "artifacts/api-server/src/test/mediaProjectionGaps.test.ts",
+    // §13's evidence base: what the LIVE schema actually is. MD227 was C for a
+    // whole interval while the Tagged bucket returned nothing, because the read
+    // named `tags.tagged_at` — a column the canonical migration declares and the
+    // database has never had. These three files are the only artifacts in the
+    // tree that can settle that question, and until §13 two of them were cited
+    // by this census while nothing aged it when they moved. If the live schema
+    // snapshot gains or loses a column, or the baseline structure dump is
+    // regenerated, or 0043 is rewritten, §13's central claim can become false —
+    // so this census must go stale on all three rather than keep quoting them.
+    "artifacts/api-server/src/test/generated/liveColumns.json",
+    "artifacts/api-server/baseline/20260819_baseline_structure.sql",
+    "migrations/0043_tags_hashtags.sql",
   ],
   // census-telegraph.md — declared 2026-09-11 on the same basis as Media above:
   // 451 requirements out of CANNOT BE CHECKED, a clock started rather than a

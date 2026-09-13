@@ -321,7 +321,7 @@ describe("MD227 — My World's Tagged bucket reads public.tags", () => {
   it("loadTaggedPostIds returns the viewer's approved post tags", async () => {
     const sc = makeSc(baseData({
       tags: [
-        { source_type: "post", source_id: TAGGED_POST, tagged_user_id: VIEWER, status: "approved", tagged_at: isoAgo(1000) },
+        { source_type: "post", source_id: TAGGED_POST, tagged_user_id: VIEWER, status: "approved", created_at: isoAgo(1000) },
       ],
     }));
     assert.deepEqual(await loadTaggedPostIds(sc, VIEWER), [TAGGED_POST]);
@@ -330,7 +330,7 @@ describe("MD227 — My World's Tagged bucket reads public.tags", () => {
   it("ignores a PENDING tag — a tag awaiting approval is not yet the viewer's", async () => {
     const sc = makeSc(baseData({
       tags: [
-        { source_type: "post", source_id: TAGGED_POST, tagged_user_id: VIEWER, status: "pending", tagged_at: isoAgo(1000) },
+        { source_type: "post", source_id: TAGGED_POST, tagged_user_id: VIEWER, status: "pending", created_at: isoAgo(1000) },
       ],
     }));
     assert.deepEqual(await loadTaggedPostIds(sc, VIEWER), []);
@@ -339,7 +339,7 @@ describe("MD227 — My World's Tagged bucket reads public.tags", () => {
   it("ignores a tag on a COMMENT — §30's Tagged bucket is media, not mentions", async () => {
     const sc = makeSc(baseData({
       tags: [
-        { source_type: "comment", source_id: TAGGED_POST, tagged_user_id: VIEWER, status: "approved", tagged_at: isoAgo(1000) },
+        { source_type: "comment", source_id: TAGGED_POST, tagged_user_id: VIEWER, status: "approved", created_at: isoAgo(1000) },
       ],
     }));
     assert.deepEqual(await loadTaggedPostIds(sc, VIEWER), []);
@@ -348,7 +348,7 @@ describe("MD227 — My World's Tagged bucket reads public.tags", () => {
   it("ignores someone ELSE's tag", async () => {
     const sc = makeSc(baseData({
       tags: [
-        { source_type: "post", source_id: TAGGED_POST, tagged_user_id: AUTHOR, status: "approved", tagged_at: isoAgo(1000) },
+        { source_type: "post", source_id: TAGGED_POST, tagged_user_id: AUTHOR, status: "approved", created_at: isoAgo(1000) },
       ],
     }));
     assert.deepEqual(await loadTaggedPostIds(sc, VIEWER), []);
@@ -359,7 +359,7 @@ describe("MD227 — My World's Tagged bucket reads public.tags", () => {
       posts: [makePost({ id: TAGGED_POST, author_id: AUTHOR })],
       places: [{ id: PLACE_1, neighborhood: "An Thuong" }],
       tags: [
-        { source_type: "post", source_id: TAGGED_POST, tagged_user_id: VIEWER, status: "approved", tagged_at: isoAgo(1000) },
+        { source_type: "post", source_id: TAGGED_POST, tagged_user_id: VIEWER, status: "approved", created_at: isoAgo(1000) },
       ],
     }));
     const viewer = await resolveViewer(sc, VIEWER, {});

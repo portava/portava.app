@@ -1727,9 +1727,9 @@ Three changes, all server-side, none behind a new flag, none needing a migration
    than left to look like an oversight — losing the gem context would WIDEN
    disclosure, losing this one only removes a label.
 2. **The §30 Tagged bucket reads the table that was there all along.**
-   `artifacts/api-server/src/services/media/MediaProjectionService.ts:1106#export async function loadTaggedPostIds(`
+   `artifacts/api-server/src/services/media/MediaProjectionService.ts:1132#export async function loadTaggedPostIds(`
    reads `tags` for `status='approved'`, `source_type='post'`, and
-   `artifacts/api-server/src/services/media/MediaProjectionService.ts:1153#export async function loadTaggedMedia(`
+   `artifacts/api-server/src/services/media/MediaProjectionService.ts:1185#export async function loadTaggedMedia(`
    puts those ids through `loadEligibleCandidates` and
    `projectCandidatesProtected` — **being tagged is not consent to see the
    post**, so the blocks / mutes / suspension / visibility / moderation gate,
@@ -2047,7 +2047,7 @@ resolves both populations in two hops each, where the FIRST hop is the viewer's
 own accepted membership — an invitation the viewer never accepted yields nobody,
 and an invitation somebody else never accepted does not make them crew. The lens
 then runs TWO lanes
-(`` `artifacts/api-server/src/services/media/MediaProjectionService.ts:837#export async function buildPeopleProjection(` ``):
+(`` `artifacts/api-server/src/services/media/MediaProjectionService.ts:863#export async function buildPeopleProjection(` ``):
 the follow lane unchanged, and an affinity lane that is `feedType: "for_you"`
 NARROWED to the crew and Shared Moment ids by a new composing filter
 (`` `artifacts/api-server/src/services/media/MediaProjectionService.ts:200#if (filter.authorIds && filter.authorIds.length > 0) {` ``).
@@ -2314,3 +2314,75 @@ the database, both were wrong in the direction that made a row look harder than
 it is, and nothing in this repository can catch the next one — the production
 table list and the structure dump are the only two artifacts that could, and
 neither is consulted by any check.
+
+## 13. MD227's C was awarded against a fixture, and the column it read does not exist
+
+| | |
+|---|---|
+| **Measured at** | `32f07232f` — the tip of `claude/sweet-fermat-fmx7up` when this pass started. The document's `head_commit` row (§0) is **not** moved: this section re-reads ONE function, not 450 rows. |
+| **Found by** | `check:write-path-columns` on the `api-server · check:all + live_pulse gate` job of PR #483, which runs with credentials against the sanctioned CI project and is therefore the only check in this repository that compares a select list against a live `information_schema`. Not by a test, and not by reading the code. |
+
+### 13.1 What was wrong
+
+§11.3.2 moved **MD227** W → C on the sentence *"The Tagged bucket reads `tags`"*, and
+§12 restated it as *"the §30 Tagged bucket reads the table that was there all
+along."* Both sentences are true about the TABLE and false about the read.
+`artifacts/api-server/src/services/media/MediaProjectionService.ts:1132#export async function loadTaggedPostIds(`
+selected and ordered by `tags.tagged_at`. **There is no such column.** The
+canonical `0043_tags_hashtags.sql` declares it and it was never applied —
+`migrations/README.md` line 12 says so in as many words, and `docs/migrations.md`
+line 26 records it in the schema-audit allowlist for exactly that reason. Live
+`tags` carries `created_at`.
+
+PostgREST rejects an unknown column with 42703 and fails the WHOLE statement,
+and supabase-js RESOLVES that rejection rather than throwing. So the read landed
+in the function's own `if (error)` branch and returned `[]` with a warn line.
+**The Tagged bucket was empty for every viewer, on every request, since the row
+was moved to C** — and it was empty in the one way nothing above it could
+detect, because "you have no tags" is the documented degradation and looks
+identical.
+
+### 13.2 Why four tests over this function did not notice
+
+`src/test/mediaProjectionGaps.test.ts` covers `loadTaggedPostIds` four times and
+all four passed, because every fixture row carried a `tagged_at` key. The
+fixtures had been written to match the code, so the tests proved the code
+matched the fixture and proved nothing about the database. This is the same
+failure shape `src/test/helpers/schemaStrictSupabase.ts` was built for after the
+Memory/Compass lane shipped five of them, and the helper existed in this tree the
+whole time — the media lane simply did not reach for it.
+
+### 13.3 What now backs the row
+
+`artifacts/api-server/src/test/mediaTaggedBucketLiveSchema.test.ts:60#describe("§30 Tagged bucket — every column it names is a column the live tags table has", () => {`
+drives the production function through `makeSchemaStrictClient`, which validates
+every column named in a select list or a filter against
+`generated/liveColumns.json` — the live `information_schema` — and answers 42703
+exactly as production does. Watched RED first: **3 of 3 failed** before the
+repair, each reporting `column tags.tagged_at does not exist`; **3 of 3 pass**
+after. The four `tagged_at` fixture keys in `mediaProjectionGaps.test.ts` were
+replaced with `created_at` in the same commit, so no fixture in this tree
+re-plants the dead column.
+
+### 13.4 No verdict moves, and that is the uncomfortable part
+
+**MD227 stays C**, so no percentage in this document changes and none is
+restated. That is not a clean outcome: the row was C for the whole interval
+between §11.3.2 and this section while the feature it grades returned nothing,
+and the census had no way to say so because a verdict records a judgement, not
+the date the judgement stopped being true. The honest summary is that
+**CORRECT% was overstated by one row for that interval** and the correction is
+visible only here, in prose, rather than in the count.
+
+### 13.5 What would have caught it sooner, and what still would not
+
+Only `check:write-path-columns`, and only in a job with live credentials — which
+is why this was found by CI on a pull request and not by the 20,000-test local
+suite, `run-all-checks.sh`, or any reviewer reading the diff. The general lesson
+is narrow and worth stating plainly: **in this repository a column name is not
+checkable by reading code, tests, or migrations.** The canonical migration chain
+asserted this column exists; it was wrong, and it had been wrong in writing since
+the file was authored. `check:missing-live-columns` reads migrations against the
+live schema from the other direction and passed on this same run, because
+`tags.tagged_at` is in ITS allowlist — the allowlist entry recorded the drift and
+then silenced the only other check that could have named it.
