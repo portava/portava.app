@@ -23,6 +23,11 @@ import { isUuid } from "../lib/followDecisions";
 import { getServiceClient } from "../lib/supabase";
 import { resolveInteractionPermissions } from "../services/interactionPermissions";
 import { reportRateLimit } from "../lib/rateLimit";
+// ONE vocabulary. These two lists used to be private literals in this file, and
+// POST /api/media/:id/report wrote the same `reports` table from its own,
+// narrower contract — any string, no severity, no rate limit. Two writers of one
+// table cannot each own the list; see lib/reportReasons.ts for what that cost.
+import { REPORT_REASON_CODES, reportSeverityFor } from "../lib/reportReasons";
 
 const router = Router();
 
@@ -30,12 +35,7 @@ const TARGET_TYPES = [
   "user", "profile", "message", "thread", "trip", "post", "place", "event",
 ] as const;
 
-const REASON_CODES = [
-  "harassment", "spam", "hate_speech", "violence",
-  "impersonation", "nudity", "misinformation", "other",
-] as const;
-
-const HIGH_SEVERITY_CODES = new Set<string>(["harassment", "hate_speech", "violence"]);
+const REASON_CODES = REPORT_REASON_CODES;
 
 const CreateReportSchema = z.object({
   target_type:   z.enum(TARGET_TYPES),
@@ -116,7 +116,7 @@ router.post("/reports", async (req, res) => {
     }
   }
 
-  const severity = HIGH_SEVERITY_CODES.has(reason_code) ? "high" : "normal";
+  const severity = reportSeverityFor(reason_code);
 
   const { data: report, error } = await sc
     .from("reports")

@@ -771,6 +771,22 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/routes/mapSearch.ts",
     "travel-buddy-standalone/src/components/CachedImage.tsx",
     "artifacts/api-server/src/migrations/2041_media_ranking_snapshots.sql",
+    // WIDENED 2026-09-13 by census-media §9. The section executed MD105
+    // (§15 "Report / Not Relevant") and found the reachable Media options sheet
+    // filing moderation reports for two VIEWER-PREFERENCE taps, so that row is
+    // now graded against the report contract itself and against the store the
+    // preference half writes. Those four files decide MD105 and MD273 and were
+    // watched by nothing: routes/reports.ts is where the reason vocabulary and
+    // the severity rule live (§9.1), lib/reportReasons.ts is the classifier the
+    // media endpoint now dispatches on, 0116_post_hides.sql is the table the
+    // hide lands in, and the two test files are the only things that would go
+    // red if either verdict rotted. A C row that rots becomes a false
+    // assurance, which is the argument check:census-scope-coverage is built on.
+    "artifacts/api-server/src/routes/reports.ts",
+    "artifacts/api-server/src/lib/reportReasons.ts",
+    "artifacts/api-server/src/migrations/0116_post_hides.sql",
+    "artifacts/api-server/src/test/mediaReportIntent.test.ts",
+    "artifacts/api-server/src/test/mediaFeed.test.ts",
   ],
   // census-telegraph.md — declared 2026-09-11 on the same basis as Media above:
   // 451 requirements out of CANNOT BE CHECKED, a clock started rather than a
