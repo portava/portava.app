@@ -55,11 +55,32 @@ export async function syncTripChatMembers(
   if (existing) {
     threadId = (existing as any).id;
   } else {
-    const { data: trip } = await sc
+    // ── A DURABLE TITLE MUST NOT COME FROM A READ THAT NEVER HAPPENED ────────
+    // census T344/T363, §17.8 item 2, §18.4. supabase-js RESOLVES on a database
+    // failure, so a dropped error arrived here as `data: null` — which this
+    // branch read as "the trip has no title" and wrote `'Trip Chat'` onto a row
+    // it is about to INSERT. That is the worst consequence in this class and
+    // §18.4 says why: unlike a 404, it does not go away when the outage does.
+    // The thread keeps the generic title for the life of the trip, nothing
+    // logs, and no later healthy sync revisits it — the create branch runs
+    // once.
+    //
+    // Refuse with the `null` this function already uses for "could not sync",
+    // which every caller already handles. A trip row that is genuinely absent
+    // is a different world and still gets the generic title below.
+    const { data: trip, error: tripErr } = await sc
       .from('trips')
       .select('title, destination_city')
       .eq('id', tripId)
       .maybeSingle();
+
+    if (tripErr) {
+      console.error(
+        `syncTripChatMembers: trip read failed for trip ${tripId}: ${tripErr.message} ` +
+          `— refusing to create a thread whose DURABLE title would be a generic guess`,
+      );
+      return null;
+    }
 
     const title = trip
       ? `${(trip as any).title}${(trip as any).destination_city ? ` · ${(trip as any).destination_city}` : ''}`
@@ -229,11 +250,25 @@ export async function syncCircleChatMembers(
   if (existing) {
     threadId = (existing as any).id;
   } else {
-    const { data: ownerProfile } = await sc
+    // Same rule as the trip branch, same reason: this title is INSERTed and
+    // never revisited, so an unreadable `profiles` would name the owner's own
+    // circle `'Trusted Circle'` permanently. §17.8 item 2 named the two `trips`
+    // reads; these two `profiles` reads are the same defect in the circle half
+    // of the same two functions, and closing one group without the other would
+    // leave the class open by exactly the shape it was closed for.
+    const { data: ownerProfile, error: ownerProfileErr } = await sc
       .from('profiles')
       .select('name, handle')
       .eq('id', circleOwnerId)
       .maybeSingle();
+
+    if (ownerProfileErr) {
+      console.error(
+        `syncCircleChatMembers: owner profile read failed for circle ${circleOwnerId}: ` +
+          `${ownerProfileErr.message} — refusing to create a thread whose DURABLE title would be a generic guess`,
+      );
+      return null;
+    }
 
     const title = ownerProfile
       ? `${(ownerProfile as any).name ?? (ownerProfile as any).handle ?? 'Circle'}'s Trusted Circle`

@@ -42,7 +42,21 @@ export async function syncTripChatMembers(
 ): Promise<string> {
   const now = new Date().toISOString();
 
-  const { data: trip } = await sc
+  // ── A DURABLE TITLE MUST NOT COME FROM A READ THAT NEVER HAPPENED ─────────
+  // census T344/T363, §17.8 item 2, §18.4. supabase-js RESOLVES on a database
+  // failure, so a dropped error arrived here as `data: null`, `?? 'Trip Chat'`
+  // read that as "the trip has no title", and the INSERT below stamped the
+  // guess onto the thread row. §18.4: "a durable wrong title is the worst of
+  // the three consequences in this class, because unlike a 404 it does not go
+  // away when the outage does."
+  //
+  // The error is bound here and JUDGED in the create branch only, deliberately.
+  // This read runs on every call, but the title is used on exactly one of
+  // them — the call that creates the thread. Throwing on an unreadable `trips`
+  // when the thread already exists would turn a cosmetic outage into a failed
+  // sync for every healthy trip chat in the system, which is a worse answer
+  // than the defect. So the refusal is placed where the durability is.
+  const { data: trip, error: tripErr } = await sc
     .from('trips')
     .select('id, title, destination_city')
     .eq('id', tripId)
@@ -74,6 +88,15 @@ export async function syncTripChatMembers(
   if (existing) {
     threadId = (existing as any).id as string;
   } else {
+    // The title read above is only load-bearing HERE. Refuse rather than write
+    // the guess; throwing is what every other write failure in this function
+    // already does, so the caller retries against a live database.
+    if (tripErr) {
+      throw new Error(
+        `syncTripChatMembers: trip read failed for trip ${tripId}: ${tripErr.message} ` +
+          `— refusing to create a thread whose DURABLE title would be a generic guess`,
+      );
+    }
     const { data: created, error: createErr } = await sc
       .from('message_threads')
       .insert({
@@ -234,7 +257,10 @@ export async function syncCircleChatMembers(
 ): Promise<string> {
   const now = new Date().toISOString();
 
-  const { data: ownerProfile } = await sc
+  // Same rule as the trip branch, same reason, same placement: an unreadable
+  // `profiles` would name the owner's own circle after the fallback `'Circle'`
+  // permanently, and the title is load-bearing only in the create branch.
+  const { data: ownerProfile, error: ownerProfileErr } = await sc
     .from('profiles')
     .select('id, name, handle')
     .eq('id', circleOwnerId)
@@ -263,6 +289,12 @@ export async function syncCircleChatMembers(
   if (existing) {
     threadId = (existing as any).id as string;
   } else {
+    if (ownerProfileErr) {
+      throw new Error(
+        `syncCircleChatMembers: owner profile read failed for circle ${circleOwnerId}: ` +
+          `${ownerProfileErr.message} — refusing to create a thread whose DURABLE title would be a generic guess`,
+      );
+    }
     const { data: created, error: createErr } = await sc
       .from('message_threads')
       .insert({
