@@ -512,7 +512,15 @@ describe("§11.1 step 5 — the action universe, diffed", () => {
   it("candidateFits is the certified window, not a category guess", () => {
     const r = certifySessionFeasibility(airport(), session(), { nowMs: NOW });
     for (const c of CANDIDATES) {
-      const cost = (c.insideAirport ? 0 : c.travelTimeMin * 2) + c.activityTimeMin;
+      // EVERY FIXTURE ABOVE STATES BOTH TERMS, asserted rather than assumed:
+      // `ReplanCandidate`'s terms became `number | null` when census L47's
+      // classifier reached this module, and a fixture carrying a null here
+      // would make this case about the unmeasured branch instead of about the
+      // arithmetic it is named for. That branch is covered on its own in
+      // src/test/layoverReplanCandidateLegs.test.ts.
+      assert.notEqual(c.travelTimeMin, null, `${c.id} states no travel leg`);
+      assert.notEqual(c.activityTimeMin, null, `${c.id} states no dwell`);
+      const cost = (c.insideAirport ? 0 : c.travelTimeMin! * 2) + c.activityTimeMin!;
       assert.equal(candidateFits(r, c), cost <= r.envelope.usableMinutes, c.id);
     }
   });

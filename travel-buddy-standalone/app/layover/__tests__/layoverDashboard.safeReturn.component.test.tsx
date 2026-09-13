@@ -180,7 +180,7 @@ jest.mock('../../../src/services/layover', () => ({
   getLayoverBuddies: jest.fn(async () => ({ city: 'Bangkok', buddies: [] })),
   getLayoverPresence: jest.fn(async () => ({ sharing: false, count: 0, travelers: [] })),
   addStopFromRecommendation: jest.fn(async () => null),
-  endLayoverSession: jest.fn(async () => true),
+  endLayoverSession: jest.fn(async () => ({ ok: true, outcome: 'cancelled', passportStamp: { requested: false, written: false, reason: 'not_elected' } })),
   sendLayoverTelegraph: jest.fn(async () => null),
   setReturnDeadline: jest.fn(async () => null),
   setShareCityStatus: jest.fn(async () => null),
@@ -534,4 +534,3 @@ test('L123 — the screen passes the certified return anchor to the map card', a
   await waitFor(() => expect(layoverService.returnToAirportNow).toHaveBeenCalledTimes(1));
   expect(layoverService.returnToAirportNow).toHaveBeenCalledWith('sess-1');
 });
-

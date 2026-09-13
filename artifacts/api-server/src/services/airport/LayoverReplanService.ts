@@ -75,6 +75,8 @@ import {
   type ReplanCandidate,
   type ReplanOutcome,
 } from "./LayoverEventReplanner.js";
+// L47's classifier. One rule for "nobody stated this leg", not a fourth copy.
+import { statedDurationMin, statedTravelMin } from "./LayoverPlanFit.js";
 import { emitLayoverEvent } from "./LayoverSessionService.js";
 import { logger } from "../../lib/logger.js";
 
@@ -509,12 +511,34 @@ export async function recordReplanDecision(
   }
 }
 
-/** Plan stops as the replanner sees candidates. */
+/**
+ * Plan stops as the replanner sees candidates.
+ *
+ * THE THIRD PLACE THE SAME UNKNOWN WAS LAUNDERED (census L47, §16.8 item 4).
+ * This read `Number(s.travelMin ?? 0)` and `Number(s.durationMin ?? 0)`, which
+ * turned `layover_plan_stops`' `NOT NULL DEFAULT 0` into a zero-minute journey
+ * to a place outside the airport — charged twice, because `candidateFits`
+ * doubles the outbound leg — and then reported the stop as fitting the
+ * certified window. §16.8 recorded it as reachable only by rows written before
+ * L47's write boundary landed; those rows exist, and "the table cannot contain
+ * the value any more" is an argument about data, not about code.
+ *
+ * It now goes through `LayoverPlanFit`'s classifier — the same one the plan
+ * routes, the Compass tool and the crew solver use — so there is ONE rule for
+ * what an unstated leg is, not a fourth copy of it.
+ */
 export function candidatesFromStops(stops: Array<Record<string, unknown>>): ReplanCandidate[] {
-  return stops.map((s) => ({
-    id: String(s.id),
-    travelTimeMin: Number(s.travelMin ?? 0),
-    activityTimeMin: Number(s.durationMin ?? 0),
-    insideAirport: Boolean(s.insideAirport),
-  }));
+  return stops.map((s) => {
+    const shape = {
+      travelMin: s.travelMin as number | null | undefined,
+      durationMin: s.durationMin as number | null | undefined,
+      insideAirport: Boolean(s.insideAirport),
+    };
+    return {
+      id: String(s.id),
+      travelTimeMin: statedTravelMin(shape),
+      activityTimeMin: statedDurationMin(shape),
+      insideAirport: shape.insideAirport,
+    };
+  });
 }

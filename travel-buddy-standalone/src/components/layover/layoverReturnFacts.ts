@@ -23,6 +23,7 @@
  */
 import type {
   AbortEffect,
+  LayoverAirportIntelligence,
   LayoverCertification,
   LayoverOfflineBundle,
   ReturnNowStatusCapability,
@@ -246,5 +247,74 @@ export function statusCapabilityNote(
       return 'Your layover stays open so you keep the countdown.';
     default:
       return null;
+  }
+}
+
+// ── §2.1 "degrades VISIBLY" · §22 airport maturity, said plainly ─────────────
+
+/**
+ * The traveller-facing sentence for where these minutes came from.
+ *
+ * Census L9 and L250 are one gap: the fallback ladder has always been real and
+ * a traveller could never see which rung they were standing on. This turns the
+ * server's derived provenance into words. It does NOT re-derive the provenance
+ * — every branch below is keyed on `intel.tier`, which the server computed off
+ * the certified record's own estimates.
+ *
+ * EVERY SENTENCE IS A CLAIM THE TREE CAN SUPPORT.
+ *  - GENERIC says nothing about the airport went in, because nothing did.
+ *  - AIRPORT_RECORD says addressable-not-curated rather than "configured for
+ *    this airport": `airport_profiles`' buffer columns are `NOT NULL DEFAULT
+ *    60/90/120/180/30/15/20`, so an uncurated row holds exactly the generic
+ *    numbers and claiming otherwise would be the fabrication §2.1 forbids.
+ *  - The live line is stated on EVERY rung but the last, because "we have no
+ *    live airport conditions" is the half of L9 the ladder could never show.
+ */
+export type AirportIntelligenceTone = 'generic' | 'partial' | 'curated' | 'live';
+
+export interface AirportIntelligenceSummary {
+  tone: AirportIntelligenceTone;
+  /** Short label for the rung, e.g. "Generic timings". */
+  title: string;
+  /** One sentence naming what the minutes are, and what they are not. */
+  detail: string;
+  /** Stated separately because its absence is the requirement, not a footnote. */
+  liveLine: string;
+}
+
+export function summarizeAirportIntelligence(
+  intel: LayoverAirportIntelligence | null | undefined,
+  iataCode: string,
+): AirportIntelligenceSummary | null {
+  if (!intel) return null;
+  const code = iataCode ? iataCode.toUpperCase() : 'this airport';
+  const liveLine = intel.liveObserved
+    ? 'A current airport observation is folded into these minutes.'
+    : 'No live airport conditions — queues and traffic today are not measured.';
+
+  switch (intel.tier) {
+    case 'LIVE':
+      return { tone: 'live', title: 'Live airport conditions', detail: `A current observation for ${code} is in these minutes.`, liveLine };
+    case 'VERIFIED_RECORD':
+      return {
+        tone: 'curated',
+        title: 'Verified airport record',
+        detail: `${code} has a verified record and these minutes come from it.`,
+        liveLine,
+      };
+    case 'AIRPORT_RECORD':
+      return {
+        tone: 'partial',
+        title: 'Unverified airport record',
+        detail: `${code} has a record of its own, but nobody has verified it — these minutes may simply be the defaults.`,
+        liveLine,
+      };
+    default:
+      return {
+        tone: 'generic',
+        title: 'Generic timings',
+        detail: `Nothing about ${code} went into these minutes. They are this app's standard allowances for any airport.`,
+        liveLine,
+      };
   }
 }

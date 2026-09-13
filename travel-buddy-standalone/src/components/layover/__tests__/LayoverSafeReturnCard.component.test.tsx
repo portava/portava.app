@@ -152,6 +152,16 @@ function overviewFixture(opts: { certifiedAt?: string; staleAfter?: string } = {
     },
     share: { enabled: false, othersInCity: 0 },
     certification: { ...CERTIFICATION },
+    // §2.1/§22 (census L9, L250): which rung of the fallback ladder these
+    // minutes came off. Transcribed from the server's `airportIntelligence()`
+    // rather than invented: AIRPORT_RECORD is an `airport_profiles` row that
+    // nobody has verified, which is what `airport.verified: false` above
+    // means and what all 3,206 production rows are.
+    airportIntelligence: {
+      tier: 'AIRPORT_RECORD', airportAddressable: true, airportVerified: false,
+      liveObserved: false, bufferSourceClass: 'AIRPORT_PROFILE', bufferFallbackLevel: 2,
+      confidence: 'LOW', sourceRefs: ['airport_profiles.international_buffer_min'],
+    },
     safeReturn: { ...POSTURE },
     offlineBundle: {
       bundleVersion: '2026.09.08-1',

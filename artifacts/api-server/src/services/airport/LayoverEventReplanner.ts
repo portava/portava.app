@@ -518,11 +518,24 @@ function withLiveTerm(
 
 // ── §11.1 step 5 — the action universe, and its diff ─────────────────────────
 
-/** A candidate as the replanner needs to see it: an id and its time cost. */
+/**
+ * A candidate as the replanner needs to see it: an id and its time cost.
+ *
+ * THE TERMS ARE NULLABLE, AND THAT IS THE POINT (census L47, §16.8 item 4).
+ * `layover_plan_stops.travel_min` is `INTEGER NOT NULL DEFAULT 0`, so a stop
+ * whose journey nobody measured is STORED as the number zero. Reading that back
+ * as a zero-minute journey charged a traveller nothing to get to a place
+ * outside the airport and nothing to get back, and `candidateFits` then
+ * certified the stop against the return deadline. `null` is the value the
+ * column cannot hold and the arithmetic must have.
+ *
+ * Inside the terminal a 0 is a FACT — an airside stop has no landside leg by
+ * construction — and it stays a number. `candidatesFromStops` draws the line.
+ */
 export interface ReplanCandidate {
   id: string;
-  travelTimeMin: number;
-  activityTimeMin: number;
+  travelTimeMin: number | null;
+  activityTimeMin: number | null;
   insideAirport: boolean;
 }
 
@@ -541,12 +554,34 @@ export interface ActionUniverse {
   reasonCodes: LayoverReasonCode[];
   /** Ids that still fit inside the certified window, sorted. */
   feasibleCandidateIds: string[];
+  /**
+   * Ids that are absent from `feasibleCandidateIds` because a term of theirs is
+   * unstated, NOT because the arithmetic refused them — census L47's three
+   * valued rule at candidate level. A plan nobody measured and a plan that
+   * overflows are different answers, and folding them together is how "does not
+   * fit" came to mean "we did not look".
+   */
+  unmeasuredCandidateIds: string[];
 }
 
-/** Does a candidate still fit inside the certified usable window? */
+/**
+ * Does a candidate still fit inside the certified usable window?
+ *
+ * FALSE FOR AN UNMEASURED CANDIDATE, and that is a refusal to certify rather
+ * than a claim of infeasibility — `unmeasuredCandidateIds` above is what keeps
+ * the two apart. An unstated term makes the cost a LOWER BOUND, and a lower
+ * bound can refuse a plan but can never certify one (census L47).
+ */
 export function candidateFits(record: LayoverFeasibilityRecord, c: ReplanCandidate): boolean {
-  const round = c.insideAirport ? 0 : c.travelTimeMin * 2;
-  return round + c.activityTimeMin <= record.envelope.usableMinutes;
+  if (candidateIsUnmeasured(c)) return false;
+  const round = c.insideAirport ? 0 : c.travelTimeMin! * 2;
+  return round + c.activityTimeMin! <= record.envelope.usableMinutes;
+}
+
+/** A term nobody stated. Airside carries no landside leg, so only dwell can be absent. */
+export function candidateIsUnmeasured(c: ReplanCandidate): boolean {
+  if (c.activityTimeMin === null) return true;
+  return !c.insideAirport && c.travelTimeMin === null;
 }
 
 export function actionUniverseOf(
@@ -561,6 +596,7 @@ export function actionUniverseOf(
     hardReturnMs: record.deadline.hardReturnTime.getTime(),
     reasonCodes: [...record.reasonCodes].sort(),
     feasibleCandidateIds: candidates.filter((c) => candidateFits(record, c)).map((c) => c.id).sort(),
+    unmeasuredCandidateIds: candidates.filter(candidateIsUnmeasured).map((c) => c.id).sort(),
   };
 }
 
@@ -573,6 +609,12 @@ export interface ActionUniverseDiff {
   deadlineDeltaMinutes: number;
   candidatesGained: string[];
   candidatesLost: string[];
+  /**
+   * Ids the recomputation could not judge at all, after the event. Published so
+   * that a candidate missing from `candidatesGained` is legibly "not measured"
+   * rather than silently "does not fit" (census L47, §16.8 item 4).
+   */
+  candidatesUnmeasured: string[];
   reasonCodesAdded: LayoverReasonCode[];
   reasonCodesRemoved: LayoverReasonCode[];
 }
@@ -598,6 +640,7 @@ export function diffActionUniverse(before: ActionUniverse, after: ActionUniverse
     deadlineDeltaMinutes: Math.round((after.hardReturnMs - before.hardReturnMs) / 60_000),
     candidatesGained: after.feasibleCandidateIds.filter((id) => !beforeIds.has(id)),
     candidatesLost: before.feasibleCandidateIds.filter((id) => !afterIds.has(id)),
+    candidatesUnmeasured: [...after.unmeasuredCandidateIds],
     reasonCodesAdded: after.reasonCodes.filter((c) => !beforeCodes.has(c)),
     reasonCodesRemoved: before.reasonCodes.filter((c) => !afterCodes.has(c)),
   };
