@@ -12,7 +12,8 @@
  *     with graceful degradation when the endpoint is unavailable (§38);
  *   - overlay visibility tied to focus + non-empty results;
  *   - keyboard navigation (Arrow/Enter/Escape) with an active-row highlight,
- *     and screen-reader announcement of field purpose + result count (§46);
+ *     and screen-reader announcement of field purpose, result count and the
+ *     SELECTION RESULT (§46 — see `selectionAnnouncement` below);
  *   - suggestion selection: applies `replacementText` (never silently replaces
  *     more than the field text, §22) and reports the chosen suggestion up.
  *
@@ -22,6 +23,7 @@
  */
 import React, { forwardRef, useCallback, useMemo, useState } from 'react';
 import {
+  AccessibilityInfo,
   View,
   Text,
   TextInput,
@@ -60,6 +62,31 @@ export interface SmartInputProps extends Omit<TextInputProps, 'onChange'> {
   emptyState?: React.ReactNode;
   /** Optional leading renderer for entity rows (e.g. sanctioned avatar). */
   renderLeading?: (s: InputSuggestion) => React.ReactNode;
+}
+
+/**
+ * §46 — the sentence a screen reader hears when a suggestion is ACCEPTED.
+ *
+ * §46 asks for four announcements: field purpose, suggestion count, the active
+ * suggestion, "and selection result". The first three were wired; the fourth was
+ * not, and its absence is not cosmetic. `handleSelect` emits telemetry, applies
+ * the replacement text and closes the overlay — three state changes, none of
+ * which a screen-reader user can perceive. What they get is the suggestion list
+ * disappearing and silence, with no confirmation that anything was chosen or
+ * that the field they are sitting in now holds different text.
+ *
+ * `applied` is load-bearing rather than decorative: a row that carries
+ * `replacementText` rewrites the field under the cursor, and a row that does not
+ * (an action, a validation, a caller that handled insertion itself and returned
+ * false) leaves it exactly as typed. Announcing "field updated" in the second
+ * case would be a false statement about the user's own text, which is worse than
+ * saying nothing.
+ *
+ * Pure and exported so the sentence is testable without a screen reader.
+ */
+export function selectionAnnouncement(s: InputSuggestion, applied: boolean): string {
+  const what = (s.label ?? '').trim() || 'Suggestion';
+  return applied ? `${what} selected. Field updated.` : `${what} selected.`;
 }
 
 export const SmartInput = forwardRef<TextInput, SmartInputProps>(function SmartInput(
@@ -112,8 +139,20 @@ export const SmartInput = forwardRef<TextInput, SmartInputProps>(function SmartI
       const result = onSelectSuggestion?.(s);
       // Default: apply replacementText to the field (never touches text outside
       // the field, §22). A caller returning false has handled insertion itself.
-      if (result !== false && s.replacementText != null) {
-        onChangeText(s.replacementText);
+      const applied = result !== false && s.replacementText != null;
+      if (applied) {
+        onChangeText(s.replacementText as string);
+      }
+      // §46 — announce the SELECTION RESULT. The overlay is about to close; on a
+      // screen reader that is the disappearance of the live region that had been
+      // reading the list, and nothing replaces it. This is the replacement.
+      // Wrapped because an announcement must never be able to break a selection:
+      // `announceForAccessibility` is a native bridge call and a platform where
+      // it is unavailable must cost the user nothing.
+      try {
+        AccessibilityInfo.announceForAccessibility(selectionAnnouncement(s, applied));
+      } catch {
+        // best-effort — assistive announcement failure is never a UX failure
       }
       // §35 Phase 8 — record this EXPLICIT accept as selection memory so the
       // gateway can personalize THIS user's future rank + zero-char recents. It

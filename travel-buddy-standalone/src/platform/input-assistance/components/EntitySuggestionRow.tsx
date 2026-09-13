@@ -9,7 +9,9 @@
  * `freshness`), and an optional "why this is suggested" reason.
  *
  * Accessibility: role=button, a composed accessibilityLabel announcing the
- * title, type, subtitle and freshness, and `selected` state for keyboard nav.
+ * title, type, subtitle and freshness, `selected` state for keyboard nav, and a
+ * caret glyph that marks the keyboard-active row WITHOUT relying on colour
+ * (§46 "non-color-only state indicators" — see the activeSlot comment below).
  */
 import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
@@ -57,6 +59,35 @@ function EntitySuggestionRowBase({ suggestion, onPress, active, leading, testID 
       accessibilityState={{ selected: !!active }}
       testID={testID ?? `ia-entity-row-${suggestion.id}`}
     >
+      {/*
+        §46 "high contrast and NON-COLOUR-ONLY state indicators".
+        The keyboard-active row used to differ from every other row by exactly
+        one property — `backgroundColor` — so a sighted user who cannot resolve
+        that hue against the row ground had no way to tell which row Enter would
+        take. `accessibilityState.selected` (above) serves assistive tech and
+        does nothing for them.
+        This slot is the second, non-colour channel: a caret GLYPH that is
+        present on the active row and absent everywhere else. Presence/absence of
+        a mark survives any colour vision, any contrast setting and a greyscale
+        screenshot. The slot keeps its width whether or not the caret is drawn,
+        so arrowing down the list moves the highlight without shifting the text.
+        It is hidden from assistive tech on purpose: `selected` already carries
+        this to a screen reader, and announcing a decorative caret would be a
+        second, redundant reading of the same fact.
+      */}
+      <View style={styles.activeSlot}>
+        {active ? (
+          <Text
+            style={styles.activeMarker}
+            accessibilityElementsHidden
+            importantForAccessibility="no"
+            testID="ia-row-active-marker"
+          >
+            ▸
+          </Text>
+        ) : null}
+      </View>
+
       <View style={styles.leading}>
         {leading ?? <EntityIcon entityType={suggestion.entityType} tint={color.deep} />}
       </View>
@@ -113,6 +144,16 @@ const styles = StyleSheet.create({
   },
   rowActive: {
     backgroundColor: color.haze,
+  },
+  /** Fixed width so the caret's presence never reflows the row (§46). */
+  activeSlot: {
+    width: space.sm,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  activeMarker: {
+    ...t.bodyStrong,
+    color: color.deep,
   },
   leading: {
     width: avatar.s32,
