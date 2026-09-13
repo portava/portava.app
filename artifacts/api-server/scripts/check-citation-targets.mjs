@@ -89,8 +89,20 @@ import {
  * pointer moved. The clearest is census-compass.md:164, whose anchor text
  * `nameVisibilitySet` has zero occurrences anywhere in routes/compass.ts. The
  * batched identity read it describes now lives in buildListIdentityProjections.
- * Pointing it there would be asserting evidence for a C row nobody re-derived. */
-export const MAX_DEAD_TARGETS = 276;
+ * Pointing it there would be asserting evidence for a C row nobody re-derived.
+ *
+ * LOWERED AGAIN 2026-09-13, 276 -> 275, by census-wall §8. That one came out of a
+ * FRESHNESS finding rather than a citation pass: check:census-freshness named a
+ * counted file that had changed, revalidating the affected row meant opening it,
+ * and the row turned out to cite `AccountDeletionService.ts:1068` for a step that
+ * has never been on line 1068 in this repository's history -- 1102 at the census's
+ * own head_commit, 1138 today. It survived because the citation was UNANCHORED, so
+ * doc-citations checked only that the file was long enough and this checker only
+ * that the line was not blank; `delete_user_saves` is neither blank nor punctuation.
+ * It is now `:1138#delete_wall_session_intent`. The general lesson is the one at the
+ * top of this file: a pointer that lands on real code can still name the wrong code,
+ * and the only thing that finds THAT is a person reading the claim. */
+export const MAX_DEAD_TARGETS = 275;
 
 /** Pinned to a commit by its own declaration; its lines must not track HEAD. */
 const PINNED_DOCS = new Set(['docs/architecture/mobile-reachability-ledger.md']);

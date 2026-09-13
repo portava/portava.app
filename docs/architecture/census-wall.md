@@ -252,7 +252,7 @@ NOT-BUILT · **?** = CANNOT-VERIFY. Backend paths are relative to
 | id | Requirement | V | Evidence |
 | --- | --- | --- | --- |
 | W67 | Consumes the platform-wide layer; no separate Wall autocomplete engine | C | `services/wall/WallSessionIntentService.ts` delegates parsing to the `lib/inputAssistance` gateway; the Wall owns no tokenizer. |
-| W68 | Typed intent creates a temporary Wall session context | C | `routes/wall.ts:784-798` — a per-request `session_intent` is parsed fresh and never persisted; otherwise the stored intent applies. Store: `wall_session_intents` (migration 2271), written at `WallSessionIntentService.ts:203`, deleted at `:227` and on account deletion (`services/accountDeletion/AccountDeletionService.ts:1068`). |
+| W68 | Typed intent creates a temporary Wall session context | C | `routes/wall.ts:784-798` — a per-request `session_intent` is parsed fresh and never persisted; otherwise the stored intent applies. Store: `wall_session_intents` (migration 2271), written at `WallSessionIntentService.ts:203`, deleted at `:227` and on account deletion (`artifacts/api-server/src/services/accountDeletion/AccountDeletionService.ts:1138#delete_wall_session_intent`). *(Cited as line 1068 until §8. That line was never this step — see §8.1.)* |
 | W69 | Canonical entities become structured filters, not raw strings | C | `lib/wallProjection.ts:401-417` `StructuredIntentFilter` carries `kind` + `entityId`; residual text stays in `keywords`. |
 | W70 | Clearing the intent restores the prior Wall state | C | `routes/wall.ts:1085-1099` `DELETE /wall/session-intent` → `clearStoredIntent`; client `hooks/useWallSessionIntent.ts` re-fetches unsteered. |
 | W71 | Voice input and typo normalization use the same global engine | **?** | The Wall correctly delegates to the shared gateway, so *if* voice/typo normalization live there the Wall inherits them. Whether the shared engine actually implements voice input is a Global Input Intelligence question, out of this spec's tree and censused by the sibling agent on that spec. Not counted for or against the Wall. |
@@ -534,7 +534,7 @@ anything, and they are the most consequential paragraphs in this census.
 2. **Live For You's `place_state` kind is structurally empty in production.** `readLiveClaimEnvelopes` returns `[]` when the promoted-scope allowlist is empty (`lib/liveClaimRead.ts:316-317`), and `intel_live_promoted_scopes` is on the writerless-reads ratchet as a deliberately-empty human allowlist whose own note says: *"This is why `wall_live_for_you_enabled` should stay off: it would serve an empty strip"* (`src/scripts/checkWriterlessReads.ts:174-181`). The other five strip kinds have their own producers and are unaffected.
 3. **§16's two clocks depend on a flag-gated writer.** `recordMediaAsset` returns early unless `media_canonical_enabled` is on (`lib/mediaAssets.ts:119`), so `media_assets.captured_at` — the only `experienceAt` source — is written only when that flag is lit. The producer chain is complete and correct in code; whether it produces anything is a deployment fact.
 4. **§32's server sink is not deployed.** Migration 2308 creates `wall_telemetry_events`; production contains exactly one `wall*` table, `wall_session_intents`. Thirteen of the fifteen client-emitted §32 events therefore have nowhere to land, and the transport is fire-and-forget so the 404 is silent. The client half and the route half are both built and correct.
-5. **`wall_session_intents` is the Wall's only storage, and it does have writers** — `WallSessionIntentService.ts:203` (upsert), `:227` (delete), plus the account-deletion step at `AccountDeletionService.ts:1068`. It is *not* on the writerless-reads ratchet (`KNOWN_WRITERLESS_READS`, `checkWriterlessReads.ts:102-213`, does not list it). The counter-signal in the brief — one `wall*` table — is real and is explained: **the Wall genuinely rides on `posts`, `post_media`, `media_assets`, `media_attachments`, `shared_moments`, `places`, `hidden_gems`, `rent_buddy_profiles`, `trips`, `trip_members`, `user_follows`, `blocks` and `rank_events`, and owns almost no state of its own by design (§30).** That is the architecture working as specified, not a gap. The one thing it *should* own and does not yet have deployed is the §32 telemetry sink.
+5. **`wall_session_intents` is the Wall's only storage, and it does have writers** — `WallSessionIntentService.ts:203` (upsert), `:227` (delete), plus the account-deletion step at `artifacts/api-server/src/services/accountDeletion/AccountDeletionService.ts:1138#delete_wall_session_intent` (cited as line 1068 until §8; see §8.1). It is *not* on the writerless-reads ratchet (`KNOWN_WRITERLESS_READS`, `checkWriterlessReads.ts:102-213`, does not list it). The counter-signal in the brief — one `wall*` table — is real and is explained: **the Wall genuinely rides on `posts`, `post_media`, `media_assets`, `media_attachments`, `shared_moments`, `places`, `hidden_gems`, `rent_buddy_profiles`, `trips`, `trip_members`, `user_follows`, `blocks` and `rank_events`, and owns almost no state of its own by design (§30).** That is the architecture working as specified, not a gap. The one thing it *should* own and does not yet have deployed is the §32 telemetry sink.
 6. **Writer-attribution caveat.** `checkWriterlessReads.ts:39-41` states that a dynamic `.from(expr)` anywhere makes writer attribution INCOMPLETE and that the check errs toward silence. Every "nothing writes X" claim above was settled by reading the writer call sites, not by grepping `from("…")`.
 
 ---
@@ -817,3 +817,59 @@ corpus — and still not the same proof.
 | BUILT-BUT-WRONG | **1** |
 | NOT-BUILT | **0** |
 | CANNOT-VERIFY | **8** |
+
+---
+
+## §8 — Freshness, 2026-09-13: the file that changed was harmless; the citation it exposed was not
+
+`check:census-freshness` called this census stale because one counted file changed that the
+acknowledgement did not name: `artifacts/api-server/src/services/accountDeletion/AccountDeletionService.ts`.
+Revalidating the affected row — rather than adding the filename to a ledger and moving on — found a
+broken pointer that had been broken since before this census was written.
+
+### 8.1 W68's account-deletion citation was never right, and nothing could have caught it
+
+W68 and §4's prose both cited `AccountDeletionService.ts:1068` for the `wall_session_intents`
+deletion step. It is not there and never was:
+
+| Commit | Where `delete_wall_session_intent` actually is | What `:1068` actually is |
+|---|---|---|
+| `42aeac38` (this census's own `head_commit`) | line 1102 | `{ name: "delete_user_saves", … }` |
+| HEAD | line 1138 | a `warnings.push` inside the memories step |
+
+So the citation was **34 lines wrong on the day it was written** and is 70 lines wrong now. The
+freshness change did not break it; the change merely caused it to be looked at.
+
+**Why no checker found it.** The citation was UNANCHORED — a bare `path:line`. `check:doc-citations`
+verifies exactly one thing about that form, that the file is long enough, and a 1,300-line file is
+long enough for line 1068. `check:citation-targets` verifies the line is not blank or pure
+punctuation, and `delete_user_saves` is neither. Both passed, for months, on a pointer naming the
+wrong statement. This is the fourth time an anchored citation would have caught something an
+unanchored one hid, and it is the argument for the anchor form stated in one row rather than in the
+abstract.
+
+Both citations are now `…:1138#delete_wall_session_intent`. The anchor is unique in the file
+(one occurrence; the two other matches in the tree are in `test/accountDeletionCascade.test.ts` and
+a comment in `lib/deletionDispositions.ts`), so the next time this step moves, the checker names it.
+
+**W68's VERDICT does not move and is not re-derived here.** It was `C` because the step exists and
+runs, and it does exist and does run — at a line the document was naming wrongly. A wrong pointer to
+a real thing is a citation defect, not a verdict defect, and calling it either more or less than that
+would be the mistake.
+
+### 8.2 The change itself: additive, and nowhere near anything this census grades
+
+`f9d0b9a07` added 36 lines to `AccountDeletionService.ts`: one import, and one new step
+`request_provider_verification_deletion` inserted at lines 971-1006, immediately above the existing
+`delete_identity_verifications` step, plus a `warnings.push` on its failure path. **No existing step
+was edited, reordered or removed** — the diff is `36 insertions(+), 0 deletions(-)`, which is
+checkable rather than asserted.
+
+This census grades that file for exactly one thing: that `wall_session_intents` has a deletion step
+(W68, and §4 point 5's rebuttal of the "one `wall*` table" counter-signal). That step is
+`{ name: "delete_wall_session_intent", … }`, 130 lines below the last inserted line, byte-identical at
+both commits. Identity-verification erasure touches no Wall table and no Wall row.
+
+**What this section does NOT claim.** It does not re-derive W68 or any other row against HEAD. It
+argues that this one file's one change cannot have moved this census's one dependency on it, and it
+repairs a citation defect it found on the way. The headline is unchanged: 196 C / 1 W / 0 N / 8 CV.
