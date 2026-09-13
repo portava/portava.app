@@ -396,7 +396,7 @@ commit.** Rows not restated keep the verdict the body left them with.
 
 | Field | Value |
 | --- | --- |
-| `head_commit` | `983cfaf75` — RE-DECLARED 2026-09-13 by **§12**, replacing `3ca68cb06`. §12 re-measured the whole census against the verified-foundation plan and the v2 upgrade, corrected the denominator from 52 to 93, re-executed nine of the fifty `C` rows and both `W` rows, and repaired four rows in `routes/verification.ts` and `routes/admin.ts` — so the declaration moves to the commit those repairs landed in, and every §12 citation into those two files is post-repair. The 52 original verdicts are unchanged; see §12.8 for what was re-executed and §12.2 for the arithmetic. The previous declaration read: `3ca68cb06` — RE-DECLARED 2026-09-13 by §5, replacing `42aeac38`. §5 re-executed **all six** of the rows this census could not previously be parsed on (A3, A8, C5, C13, C17, C27) and both remaining BUILT-BUT-WRONG rows at this commit, and edited no Trust source file. It does **not** certify the other 44 `C` rows. The previous declaration read: `42aeac38` — RE-DECLARED 2026-09-09 from `7bca4b0d0e19d29ea0a96982f74b35d26402fa52`, the working-tree commit that addendum was measured at. The move is a measurement, not a judgement: `git diff --name-only 7bca4b0d 42aeac38` over this census's 15 scoped paths returns **0 files**, so all 52 verdicts are exactly as true at one as at the other. It was necessary because `7bca4b0d` is PRE-SQUASH — this repository squash-merges, so it is an ancestor of nothing, is on no remote branch, and `check:census-freshness` could resolve it only on the clone that wrote it (`CENSUS_HEAD_COMMITS_UNREACHABLE_IN_CI`). `42aeac38` is #476's squash, where this document's content reached `main`. |
+| `head_commit` | `f9d0b9a07` — RE-DECLARED 2026-09-13 by **§13**, which built phase V-7 (TV-7a, TV-7b) and moved both rows to `C`; §12's citations into `routes/verification.ts` and `routes/admin.ts` are unaffected. The previous declaration read: `983cfaf75` — RE-DECLARED 2026-09-13 by **§12**, replacing `3ca68cb06`. §12 re-measured the whole census against the verified-foundation plan and the v2 upgrade, corrected the denominator from 52 to 93, re-executed nine of the fifty `C` rows and both `W` rows, and repaired four rows in `routes/verification.ts` and `routes/admin.ts` — so the declaration moves to the commit those repairs landed in, and every §12 citation into those two files is post-repair. The 52 original verdicts are unchanged; see §12.8 for what was re-executed and §12.2 for the arithmetic. The previous declaration read: `3ca68cb06` — RE-DECLARED 2026-09-13 by §5, replacing `42aeac38`. §5 re-executed **all six** of the rows this census could not previously be parsed on (A3, A8, C5, C13, C17, C27) and both remaining BUILT-BUT-WRONG rows at this commit, and edited no Trust source file. It does **not** certify the other 44 `C` rows. The previous declaration read: `42aeac38` — RE-DECLARED 2026-09-09 from `7bca4b0d0e19d29ea0a96982f74b35d26402fa52`, the working-tree commit that addendum was measured at. The move is a measurement, not a judgement: `git diff --name-only 7bca4b0d 42aeac38` over this census's 15 scoped paths returns **0 files**, so all 52 verdicts are exactly as true at one as at the other. It was necessary because `7bca4b0d` is PRE-SQUASH — this repository squash-merges, so it is an ancestor of nothing, is on no remote branch, and `check:census-freshness` could resolve it only on the clone that wrote it (`CENSUS_HEAD_COMMITS_UNREACHABLE_IN_CI`). `42aeac38` is #476's squash, where this document's content reached `main`. |
 | `generated_at` | 2026-09-08 |
 | **Denominator (testable requirements)** | **52** |
 | Scanned | `services/trust/` (8 services), `lib/trustScore.ts`, `lib/trustMaintenanceScheduler.ts`, `routes/trust-admin.ts`, plus every file the eight open rows named: `routes/events.ts`, `routes/pulse.ts`, `routes/rentABuddyMarketplace.ts`, `routes/admin.ts`, `routes/trips.ts`, `routes/tripCrewLocation.ts`, `compass/*`, `services/ranking/CreatorActivityScoreService.ts`, `services/passport/*`, `services/hiddenGems/*` |
@@ -909,3 +909,48 @@ privacy invariant forbids and ignores the one it mandates, a moderation queue th
 grow, a provider that has never been chosen, and a retention job that was never written — plus
 one genuine CANNOT-VERIFY where a policy has to be decided before correctness even has a
 meaning.
+
+---
+
+## 13. V-7 built — two rows move, 2026-09-13, `f9d0b9a07`
+
+*Same 93-row denominator, same counting rule. Two rows move; nothing else is restated. No
+production read, no migration applied, no flag flipped.*
+
+### 13.1 Verdict changes
+
+| id | Was | Now | Evidence at `f9d0b9a07` |
+|---|---|---|---|
+| TV-7a | W | **C** | Both criteria now hold, in the order the plan states. `services/identityVerification/providerErasure.ts:62-110` reads the user's `provider_verification_ref`s and asks the configured provider to redact each; `services/accountDeletion/AccountDeletionService.ts:969-1000` runs it as the named step `request_provider_verification_deletion` **before** `delete_identity_verifications`. The ordering is the requirement, not a nicety — after the delete, `provider_verification_ref` is gone and the vendor's copy of the document is unredactable by anyone, permanently — so it is asserted as an ordering (`test/verificationProviderErasure.test.ts`, the `idxRead < idxDelete` assertion) rather than as two independent calls. A provider that cannot be reached does **not** block the erasure: the step records a failure with the refs in its message, which may be the only surviving record of what still needs redacting, and a warning carries them out. An unreadable `identity_verifications` is a different failure in kind and throws, because supabase-js resolves on a read error and an unbound one makes a table that could not be read look exactly like a user who never verified. **RED 6 tests / 5 pass / 1 fail → GREEN 6/6**; M5 (step removed) **5/1**, M6 (step moved after the delete) **5/1**. |
+| TV-7b | NB | **C** | `services/identityVerification/retention.ts:57-78` deletes `failed` / `expired` rows whose `updated_at` predates a 90-day cutoff, counting what it removed via a chained `.select("id")` rather than assuming; `lib/trustMaintenanceScheduler.ts:616-640` runs it every pass. Two choices carry the row and each has a dangerous opposite. **The status filter is positive** — exactly the two statuses the plan names. Not `canceled`, which the plan does not mention and which this does not decide for it; and not `verified`, which is not stale data but the standing evidence `lib/travelerVerification.ts` and `routes/rentABuddyRollout.ts` gate in-person introductions on. A negative filter would also sweep in any status added later, so the test asserts the SET (M8 adds `verified` and two tests go red). **It runs above the `trust_engine_enabled` gate** — that flag governs scoring, and below the gate a data-protection promise would be switchable by a scoring feature flag; turning the trust engine off must stop scores moving, not quietly start retaining failed government-ID checks forever (M7 moves it below and the flag-off test goes red). Reuses the existing 6-hourly scheduler rather than adding a second one. Non-fatal but never silent: the purge throws on a database error so the WARN exists, and `verificationRecordsPurged` is `number | null` because "did not run" is not zero. **RED 7 / 5 / 2 → GREEN 7/7.** |
+
+### 13.2 Rows that did NOT move, and why
+
+The remaining eight `NB` and `CV` rows are each blocked on a decision, not on effort, and §12.7
+names the decision for every one. **TV-5b** (age gating on `is_over_18`) was not built although
+it is small, because building it decides **D-DOB**: the gate would have to stop reading
+`profiles.date_of_birth`, which seven live profiles carry and six routes read. **TV-0e / TV-2c**
+(the badge) need **D-BADGE**, whose wording and colours the v2 document lists as unresolved.
+**TRV2-08** needs **D-RESTRICTION-REACH**, a product scope decision about which Compass,
+Discovery and booking actions enforce restrictions. **TV-6b** needs **D-PROVIDER**. **TV-1c**
+stays `W` until **D-2870-APPLY**: the migration exists and is applied to no database, and a `C`
+on a staged file is the "merged is not deployed" error this census is named for.
+
+### 13.3 Restated headline
+
+> **Trust, at `f9d0b9a07`: 93 requirements · 71 BUILT-AND-CORRECT · 14 BUILT-BUT-WRONG ·
+> 7 NOT-BUILT · 1 CANNOT-VERIFY → CONSTRUCTED 85 / 93 = 91.4 % · CORRECT 71 / 93 = 76.3 %.**
+>
+> Against the pre-pass figure of 52 requirements · 50 / 2 / 0 / 0 → CONSTRUCTED 100.0 % ·
+> CORRECT 96.2 %: **CONSTRUCTED −8.6 points, CORRECT −19.9 points.** Six rows were built this
+> pass, each red-before and green-after with its mutations logged; not one of the original 52
+> verdicts moved in either direction.
+
+| BUILT-AND-CORRECT | **71** |
+|---|---|
+| BUILT-BUT-WRONG | **14** |
+| NOT-BUILT | **7** |
+| CANNOT-VERIFY | **1** |
+
+*This supersedes §12.10 under LAST-STATEMENT-WINS. §12.10 is the state before V-7 was built and
+is left in place because this file is append-only.*
