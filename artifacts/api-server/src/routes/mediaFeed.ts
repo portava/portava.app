@@ -46,6 +46,12 @@ import {
 import {
   reportGem,
 } from "../services/hiddenGems/HiddenGemModerationService.js";
+import {
+  classifyMediaReportReason,
+  reportSeverityFor,
+} from "../lib/reportReasons.js";
+import { reportRateLimit } from "../lib/rateLimit.js";
+import { hidePostForViewer } from "../lib/postHide.js";
 import { nameVisibilitySet } from "../lib/publicIdentity.js";
 import {
   loadRestrictiveGems,
@@ -1061,11 +1067,49 @@ router.get("/media/gems-feed", asyncHandler(async (req, res) => {
 }));
 
 // ── POST /api/media/:id/report ─────────────────────────────────────────────────
-// Routes to the appropriate report pipeline based on media kind:
-//   - hidden_gems → reportGem() (writes to hidden_gem_reports)
-//   - posts       → reports table (same pipeline as reports.ts)
-// The reason "media_does_not_match_place" is only meaningful for gems;
-// post reports use standard reason codes (spam, nudity, harassment, etc.)
+//
+// THREE INTENTS ARRIVE HERE AND THEY MUST NOT SHARE A DESTINATION.
+//
+// This endpoint used to accept `z.string().max(100).default("spam")` and send
+// whatever arrived to a moderation pipeline. It described itself as "the same
+// pipeline as reports.ts" and was not: no reason vocabulary, no severity, no
+// rate limit, and `alreadyReported` hard-coded false on the post branch.
+//
+// What made that more than untidy is what the shipped client sends. The Media
+// options sheet (components/media/MediaMoreMenu.tsx) renders, for a NON-OWNER,
+// "Not interested" and "Hide" as its first two rows — above "Report" — on both
+// reachable surfaces, WatchFeed (the default mode) and GemsFeed. They call:
+//
+//     Not interested → hideMedia(id)                   → reason 'not_interested'
+//     Hide           → reportMedia(id,'hide_from_feed')→ reason 'hide_from_feed'
+//
+// So on a post, a viewer saying "not for me" filed a permanent `reports` row —
+// evidence-preserved, never deleted — against another user's content. On a gem
+// it inserted `hidden_gem_reports` and incremented `hidden_gems.report_count`,
+// the very signal HiddenGemModerationService.resolveGemReport documents as
+// needing protection from weaponisation. And it hid nothing — while a WORKING
+// hide existed a few hundred lines away: `POST /api/posts/:postId/hide`
+// (routes/posts.ts) writes `post_hides`, three readers honour it (the following
+// feed and the global feed in routes/posts.ts, and routes/pulse.ts), the client
+// calls it from the Pulse feed card, and src/test/postHide.test.ts covers it.
+// Media did not lack a hide; Media pointed its own two hide gestures at the
+// moderation queue instead of at the feature. The write below now goes through
+// lib/postHide, the one writer both routes share.
+//
+// The split, fail-closed at the end:
+//   PREFERENCE ('not_interested' | 'hide_from_feed')
+//        → post: upsert post_hides. Never a report.
+//        → gem : no per-viewer gem hide store exists in production
+//                (the only gem tables are reports/saves/verifications/visits),
+//                so this reports `hidden: false` and files NOTHING. Doing
+//                nothing is strictly better than filing an accusation.
+//   ABUSE (the eight REPORT_REASON_CODES)
+//        → post: rate limit, real severity, honest alreadyReported, `reports`.
+//        → gem : reportGem, as before.
+//   GEM_PLACE_MISMATCH ('media_does_not_match_place')
+//        → gem : reportGem.  post: refused — a post has no place to mismatch.
+//   UNKNOWN → refused. The old `.default("spam")` turned "we do not understand
+//             this field" into "file a spam report"; that is the fail-open.
 
 router.post("/media/:id/report", asyncHandler(async (req, res) => {
   const auth = await requireUser(req, res);
@@ -1081,13 +1125,21 @@ router.post("/media/:id/report", asyncHandler(async (req, res) => {
   const { id } = req.params;
   if (!id || !UUID_RE.test(id)) { sendError(res, "invalid_payload", "Invalid media id"); return; }
 
+  // `reason` is REQUIRED. It used to default to "spam", so a body that omitted
+  // it filed a spam report about content nobody had complained about.
   const reasonSchema = z.object({
-    reason: z.string().max(100).default("spam"),
+    reason: z.string().min(1).max(100),
     notes: z.string().max(500).optional(),
   });
   const parsed = reasonSchema.safeParse(req.body);
   if (!parsed.success) {
     sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid payload");
+    return;
+  }
+  const reason = parsed.data.reason.trim();
+  const intent = classifyMediaReportReason(reason);
+  if (intent === "unknown") {
+    sendError(res, "invalid_payload", `Unsupported reason: ${reason}`);
     return;
   }
 
@@ -1099,9 +1151,18 @@ router.post("/media/:id/report", asyncHandler(async (req, res) => {
     .maybeSingle();
 
   if (gemRow) {
+    if (intent === "preference") {
+      // NOT a report. See the header: there is no per-viewer gem hide store, so
+      // the honest answer is that nothing was persisted — the client already
+      // drops the item from the session list. What must NOT happen is the old
+      // behaviour, where "not interested" became a moderation report and moved
+      // hidden_gems.report_count.
+      res.json({ ok: true, alreadyReported: false, hidden: false, store: "none" });
+      return;
+    }
     // ── Hidden gem: use existing reportGem pipeline ─────────────────────────
     try {
-      const result = await reportGem(sc, id, user.id, parsed.data.reason, parsed.data.notes);
+      const result = await reportGem(sc, id, user.id, reason, parsed.data.notes);
       res.json({ ok: result.ok, alreadyReported: result.alreadyReported });
     } catch (err: any) {
       req.log.error({ err }, "media/:id/report (gem) failed");
@@ -1110,7 +1171,6 @@ router.post("/media/:id/report", asyncHandler(async (req, res) => {
     return;
   }
 
-  // ── Post: write to reports table (same pipeline as reports.ts) ────────────
   const { data: postRow } = await sc
     .from("posts")
     .select("id, status")
@@ -1119,14 +1179,67 @@ router.post("/media/:id/report", asyncHandler(async (req, res) => {
 
   if (!postRow) { sendError(res, "not_found", "Media item not found"); return; }
 
+  if (intent === "gem_place_mismatch") {
+    sendError(res, "invalid_payload", `Unsupported reason: ${reason}`);
+    return;
+  }
+
+  if (intent === "preference") {
+    // ── Viewer preference: the viewer's own hide list, not the queue ────────
+    // The SAME writer POST /posts/:postId/hide uses, deliberately: this is the
+    // pre-existing hide feature Media had been bypassing, not a new one, and
+    // two copies of an idempotent upsert drift on the conflict target — which
+    // is the idempotency contract. lib/postHide.ts argues it in full.
+    const hidden = await hidePostForViewer(sc, user.id, id);
+    if (!hidden.ok) {
+      req.log.error({ err: hidden.message }, "media/:id/report (hide) failed");
+      sendError(res, "db_error", hidden.message);
+      return;
+    }
+    res.json({ ok: true, alreadyReported: false, hidden: true, store: "post_hides" });
+    return;
+  }
+
+  // ── Post: the real report pipeline ────────────────────────────────────────
+  // Same three obligations POST /api/reports carries, which this branch used to
+  // skip: a rate limit, a computed severity, and a truthful alreadyReported.
+  const rl = reportRateLimit(user.id);
+  if (!rl.allowed) {
+    res.setHeader("Retry-After", String(Math.ceil(rl.retryAfterMs / 1000)));
+    sendError(res, "rate_limited", "Too many reports. Please try again later.");
+    return;
+  }
+
+  const { data: existingReport, error: existingErr } = await sc
+    .from("reports")
+    .select("id")
+    .eq("reporter_id", user.id)
+    .eq("target_type", "post")
+    .eq("target_id", id)
+    .limit(1)
+    .maybeSingle();
+  if (existingErr) {
+    // Fail-closed on the duplicate check, exactly as reportGem does: a failed
+    // read is indistinguishable from "not reported yet", and letting it through
+    // lets one reporter file the same accusation repeatedly.
+    req.log.error({ err: existingErr }, "media/:id/report duplicate lookup failed");
+    sendError(res, "db_error", existingErr.message);
+    return;
+  }
+  if (existingReport) {
+    res.json({ ok: true, alreadyReported: true });
+    return;
+  }
+
   const { error } = await sc
     .from("reports")
     .insert({
       reporter_id: user.id,
       target_type: "post",
       target_id: id,
-      reason_code: parsed.data.reason,
+      reason_code: reason,
       reason_detail: parsed.data.notes ?? null,
+      severity: reportSeverityFor(reason),
     });
 
   if (error) {

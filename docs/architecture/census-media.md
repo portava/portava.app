@@ -1085,3 +1085,429 @@ separate clauses.
 
 That is not a construction failure. Every one of the 291 correct verdicts is real code I
 read. It is a **shipping** failure, and no certification scoped to construction can see it.
+
+---
+
+## 9. Six C rows executed, four of them wrong, and the two the pass repaired
+
+| Field | Value |
+| --- | --- |
+| **Measured at** | `3eaf2436f` — the tip of `claude/sweet-fermat-fmx7up` when this pass started, and an ancestor of the branch head that carries §9. The document's single `head_commit` row (§0) is **not** moved: this section re-reads six rows, not 450, and a document-wide declaration must not be moved by a partial re-measurement. The counted files this pass changed are named, one at a time with an argument, in `artifacts/api-server/src/scripts/CENSUS_STALENESS_ACKNOWLEDGED.json`. |
+| **Method** | For each row: read the OBJECT the row cites, then execute the claim the row makes — follow the call site to a writer, or to the absence of one. Six rows were picked for weight, not for ease: everything §36 (moderation), the two report rows, and §16.1's duplicate check. |
+| **What this section is NOT** | A re-measurement of the other 444 rows. Nothing here says they are right; it says nobody re-read them. |
+| **Prior sections** | Unchanged and not restated. §1–§8 stand as written. Last statement wins for the six ids below. |
+
+### 9.1 What the report endpoint actually does
+
+MD105 read **C** on this evidence: the row named `POST /media/:id/report` at line 1070 of
+`routes/mediaFeed.ts` and said *"not-interested/hide are consumed as ranking penalties"* at
+lines 65 to 70 of `services/ranking/MediaFeedRankingService.ts`.
+Both halves are false, and the way they are false is worse than either.
+
+**The client sends viewer preferences to the moderation endpoint.** The Media options sheet
+is the reachable one — `components/media/MediaMoreMenu.tsx` is imported by `WatchFeed.tsx`
+and `GemsFeed.tsx`, which are two of the three modes of the shipped Media tab, not the dark
+World shell. For a non-owner its first two rows are "Not interested" and "Hide", **above**
+"Report", and both post to the report endpoint:
+`travel-buddy-standalone/src/components/media/MediaMoreMenu.tsx:135#await hideMedia(mediaId);`
+and `travel-buddy-standalone/src/components/media/MediaMoreMenu.tsx:142#await reportMedia(mediaId, 'hide_from_feed');`,
+through `travel-buddy-standalone/src/services/mediaInteractions.ts:124#export async function hideMedia`.
+
+So, before this pass:
+
+- On a **post**, tapping "Not interested" inserted a row into `reports` with
+  `reason_code = 'not_interested'` — the table `routes/reports.ts` documents as
+  evidence-preserving and never deleted. A viewer's taste became a permanent accusation
+  against another user's content.
+- On a **gem**, the same tap ran `reportGem`, which inserts `hidden_gem_reports` and then
+  increments the gem's report count at
+  `artifacts/api-server/src/services/hiddenGems/HiddenGemModerationService.ts:66#const { error: updError } = await db.from("hidden_gems").update({ report_count: next }).eq("id", gemId);`.
+  That is the same counter whose sibling function spends a paragraph explaining that a
+  report pile must never become a finding, or the trust system becomes a weapon.
+- **Nothing was hidden.** `post_hides` — created by
+  `artifacts/api-server/src/migrations/0116_post_hides.sql:9#CONSTRAINT post_hides_unique UNIQUE (user_id, post_id)`,
+  present in production, and READ by
+  `artifacts/api-server/src/routes/pulse.ts:157#const { data: hiddenRows } = await sc`
+  to suppress a viewer's hidden posts — was written by **nothing anywhere in the tree**.
+  Pulse honoured a list no surface could add to.
+- **The cited ranking penalty had no inputs.** `notInterestedPenalty` reads three fields
+  (`artifacts/api-server/src/services/ranking/MediaFeedRankingService.ts:348#const hideR = hideRate ?? (notInterestedCount != null ? notInterestedCount / total : 0);`)
+  and no producer in the tree set any of them. Every feed was ranked as though nobody had
+  ever hidden anything. MD105's second clause described a computation whose operands did
+  not exist.
+
+Three further divergences from the contract the row claims: the schema accepted
+`z.string().max(100).default("spam")`, so an **unknown** reason was written verbatim as a
+`reason_code` and a **missing** reason became a spam report; no severity was computed, so a
+`harassment` report from Media never reached the auto-restrict and anti-retaliation path
+`routes/reports.ts` exists to run; and there was no rate limit and no duplicate check, with
+`alreadyReported` hard-coded false on the post branch.
+
+**MD105: C → W at `3eaf2436f`.** MD371 (`POST /media/:id/report`) stays **C** — the endpoint
+§43 names does exist — but its one-citation evidence is exactly the kind of C that cannot
+see any of the above, and this section is the correction to that record rather than to the
+verdict.
+
+### 9.2 §36's "Safety moderation" is an admin console and an audit log
+
+MD269 read **C** on `media_assets.moderation_status`, `routes/adminMedia.ts`,
+`post_media_moderation_ledger` *(in production)* and `lib/moderationAudit.ts`. Executed:
+
+1. **The only production writer of `post_media` rows is the postcard transport**, and it
+   promotes to distributable unconditionally. The row is created pending at
+   `artifacts/api-server/src/routes/postcards.ts:481#moderation_status: 'pending',` and the
+   completion handler sets
+   `artifacts/api-server/src/routes/postcards.ts:978#moderation_status:      'approved',`
+   with no classifier, no queue and no hold of any kind between them. Nothing decides; the
+   state machine's promotion step is a literal.
+2. **`post_media_moderation_ledger` has no reader and no writer.** It appears in
+   `src/test/generated/liveColumns.json` and the two committed schema snapshots and nowhere
+   else — no migration creates it, no module touches it. It was cited as evidence by two
+   rows.
+3. **`lib/moderationAudit.ts` writes `moderation_actions`** — an audit of what an admin did,
+   after they did it. It is a record, not a stage.
+4. **`routes/adminMedia.ts` can write exactly three values** —
+   `artifacts/api-server/src/routes/adminMedia.ts:846#action === "approve" ? "approved" :`
+   and the two beneath it. Reactive and manual.
+
+§36 lists Safety moderation as a **pipeline stage**. What exists is an unconditional
+promotion plus a console someone may use afterwards. **MD269 C → W**, and with it
+**MD283 C → W** (§37 says video takes the same pipeline as images, which is true and is
+the problem — nothing decodes video, so nothing could classify it even in principle) and
+**MD351 C → W** (§41 names a *MediaModerationService*; there is no such module, and one of
+the four things cited in its place is inert).
+
+### 9.3 The distribution gate was fail-closed at one level and fail-open at the next
+
+MD273 read **C**: *"`filterEligibleMediaCandidates` is the fail-closed distribution gate"*,
+plus a second clause naming line 1119 of `services/wall/WallCandidateLoaders.ts` as the place
+*"the moderation states that must never reach a social surface"* are listed. The two clauses
+are about different code, and the row read them as one gate.
+
+The POST-level gate is an allow-list and is fail-closed. The per-`post_media`-row gate,
+fourteen lines below it in the same function, was a **deny-list of two legacy values**,
+`rejected` and `flagged`. Migration 2250 then reconciled media moderation onto the §36
+vocabulary —
+`artifacts/api-server/src/migrations/2250_media_asset_canonical_model.sql:26#3. moderation_status reconciled to a canonical superset`
+— adding `limited`, `removed` and `owner_deleted`, and the deny-list was never extended. A
+restricted item, a **taken-down** item and an **owner-deleted** item all read as
+distributable to the gate this document calls fail-closed. The strict list the row cites,
+`artifacts/api-server/src/services/wall/WallCandidateLoaders.ts:1120#const QUICK_MEDIA_BLOCKED_MODERATION`,
+blocks four of them — but it runs on `media_assets`, the dark canonical layer, not on
+`post_media`, where the live gate is. The repository held two answers to one question, in
+two files, and the census quoted the strict one while the lax one ran.
+
+**MD273 C → W at `3eaf2436f`.** Bound stated honestly: `adminMedia` cannot write any of the
+three leaked states today, so this was a gate standing open, not a leak flowing through it.
+
+### 9.4 MD112's evidence was stale, in the direction that undercounts
+
+MD112 (§16.1 DUPLICATE CHECK) read **N** on *"No gem-level duplicate detection exists at
+submission **or anywhere else**."* The second half is false. Gem duplicate detection exists
+and is real similarity scoring, not a stub:
+`artifacts/api-server/src/lib/inputAssistance/duplicateDetection.ts:110#export function scoreGemDuplicate`
+and `artifacts/api-server/src/lib/inputAssistance/duplicateDetection.ts:241#export async function findDuplicateGems`,
+consumed by
+`artifacts/api-server/src/services/hiddenGems/HiddenGemModerationService.ts:288#export async function getDuplicateCandidates`
+and served at
+`artifacts/api-server/src/routes/hiddenGems.ts:1500#router.get("/admin/hidden-gems/duplicate-candidates"`.
+
+What is missing is only the placement §16.1 asks for: the submission handler
+`artifacts/api-server/src/routes/hiddenGems.ts:267#router.post("/hidden-gems"` does not call
+it, so the check is an admin queue rather than a stage. **MD112 N → W.**
+
+**Deliberately not built, and why.** The obvious fix — call `findDuplicateGems` at
+submission — would produce a `duplicateCandidates` field on the 201 that no client reads,
+because the detector's own contract forbids the only action that would matter: it never
+blocks creation and never auto-merges, and leaves the decision to the creation flow or the
+user. A server field with no decision behind it is a vacuous C, and shipping one to move a
+letter is the failure mode this document exists to catch. What MD112 needs is a client
+merge-or-create step; that is a client decision, not a server one, and it is named here
+rather than faked.
+
+### 9.5 What this pass built
+
+All five changes are on surfaces a user reaches today. None needs a migration; none is
+behind a flag.
+
+1. **The report endpoint now separates three intents.** New module
+   `artifacts/api-server/src/lib/reportReasons.ts:119#if (VIEWER_PREFERENCE_REASONS.has(r)) return "preference";`
+   classifies a reason as preference, abuse, gem-place-mismatch or unknown, and the endpoint
+   dispatches on it at
+   `artifacts/api-server/src/routes/mediaFeed.ts:1140#const intent = classifyMediaReportReason(reason);`.
+   A preference on a post upserts `post_hides`
+   (`artifacts/api-server/src/routes/mediaFeed.ts:1193#const hidden = await hidePostForViewer(sc, user.id, id);`)
+   and files nothing; a preference on a gem files nothing at all
+   (`artifacts/api-server/src/routes/mediaFeed.ts:1160#res.json({ ok: true, alreadyReported: false, hidden: false, store: "none" });`),
+   because production has no per-viewer gem hide store — doing nothing beats filing an
+   accusation. An unknown reason is refused instead of defaulted, and `reason` is now
+   required: `artifacts/api-server/src/routes/mediaFeed.ts:1131#reason: z.string().min(1).max(100),`.
+2. **A real report now carries the real contract.** Rate limit, a duplicate check that
+   fails closed the way `reportGem`'s does
+   (`artifacts/api-server/src/routes/mediaFeed.ts:1213#const { data: existingReport, error: existingErr } = await sc`),
+   and a computed severity
+   (`artifacts/api-server/src/routes/mediaFeed.ts:1242#severity: reportSeverityFor(reason),`).
+   The vocabulary is now one list, imported by both writers of the `reports` table:
+   `artifacts/api-server/src/routes/reports.ts:30#import { REPORT_REASON_CODES, reportSeverityFor }`
+   and `artifacts/api-server/src/routes/reports.ts:119#const severity = reportSeverityFor(reason_code);`.
+3. **The hide now hides.** A viewer-hide gate in the one choke point every media candidate
+   crosses — `artifacts/api-server/src/lib/mediaEligibility.ts:355#if (hiddenPostIds.has(c.id)) return false;`
+   — so Watch, Grid and, through `projectCandidatesProtected`, all six World-shell builders
+   honour it. Fail-soft, like the mute gate beside it and unlike the block gate: losing it
+   costs a preference, not a safety decision.
+4. **The §36 deny-list is now the union of the two the repository was holding**:
+   `artifacts/api-server/src/lib/mediaEligibility.ts:78#export const NON_DISTRIBUTABLE_MEDIA_MODERATION_STATES`.
+   It stays a deny-list rather than becoming an allow-list because `post_media` defaults to
+   the legacy `'pending'` and an allow-list would hide every new upload — that asymmetry is
+   argued in the constant's own header rather than left to look like an oversight.
+5. **The §24 penalty stops being a read with no writer.** `loadMediaSignals` now reads the
+   `watch_impression` rows `POST /media/:id/view` has always written and nothing has ever
+   read, and publishes a hide count **only** where an impression denominator exists —
+   without one,
+   `artifacts/api-server/src/services/ranking/MediaFeedRankingService.ts:346#const total = totalImpressions ?? 1;`
+   would turn a single tap into the maximum penalty.
+
+### 9.6 Mutations, and what each one turned red
+
+Seven. Each was applied, run, reverted, and the file compared byte-for-byte against its
+pre-mutation copy with `cmp`. Suite:
+`artifacts/api-server/src/test/mediaReportIntent.test.ts:171#describe("classifyMediaReportReason"`,
+26 cases, registered in `artifacts/api-server/package.json`.
+
+| Mutation | What it did | What went red |
+| --- | --- | --- |
+| M1 | restore `.default("spam")` on the reason schema | `refuses a body with no reason` — 1 of 26 |
+| M2 | make the classifier never return `preference`, and add the two preference strings to the report vocabulary | 4 red, incl. `hide writes post_hides, not reports` and `a preference on a GEM files nothing and never moves report_count` |
+| M3 | delete `severity` from the `reports` insert | `a harassment report is high severity` and `a spam report is normal severity` |
+| M4 | delete the viewer-hide gate line from `mediaEligibility` | `a hidden post never reaches the feed` |
+| M5 | shrink the deny-list back to `rejected` and `flagged` | 4 red: `owner_deleted`, `removed` and `limited` all became distributable |
+| M6 | publish a hide count with no impression denominator | `publishes NO hide count without an impression denominator` |
+| M7 | stop counting `watch_impression` rows | `counts distinct hides as notInterestedCount once the item has impressions` |
+
+M2 is the one worth naming: it is not a typo-scale edit but a re-creation of the exact
+production behaviour §9.1 reports, and it is the mutation that proves the suite would have
+caught the defect had the suite existed.
+
+**What would leave these green and worthless (P24).** M4 and M5 assert on
+`filterEligibleMediaCandidates` directly, so both stay green if a FEED stops calling it.
+That is not hypothetical for the World shell, whose callers are dark. The partial protection
+is `src/test/mediaFeed.test.ts`, which drives the HTTP route. There is still no test that
+the shipped route consults the gate *for the hide specifically*; that gap is real and is
+stated rather than papered over.
+
+### 9.7 Row moves
+
+Executed at `3eaf2436f`, before this pass's code:
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| MD105 | C | W | The reachable "Not interested" and "Hide" rows filed moderation reports on posts and on gems; the cited ranking penalty read three fields no producer wrote; the endpoint accepted any string, defaulted a missing reason to spam, computed no severity, rate-limited nothing and never checked for a duplicate. §9.1. |
+| MD273 | C | W | The per-`post_media` gate was the legacy two-value deny-list; `limited`, `removed` and `owner_deleted` — three of the six states 2250 made admissible — passed it. The strict list the row cited runs on a different table. §9.3. |
+| MD269 | C | W | §36 Safety moderation has no classifier, no hold and no queue: the postcard transport promotes to approved unconditionally, and one of the four things cited as evidence has no reader or writer in the tree. §9.2. |
+| MD283 | C | W | §37 video moderation is the same pipeline, and the pipeline decides nothing. Video is additionally never decoded, so no classifier could run on it even if one existed. §9.2. |
+| MD351 | C | W | There is no MediaModerationService. What exists is an admin route, an audit writer, an inert table and the distribution gate — the last of which §9.3 shows was itself half open. §9.2. |
+| MD112 | N | W | Stale evidence, in the undercounting direction: gem duplicate detection exists and scores real similarity; it runs in the admin queue rather than at submission, which is W, not N. §9.4. |
+
+After this pass's code, on the branch:
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| MD105 | W | C | Preference and abuse are separated and dispatched (§9.5.1); the report half carries the vocabulary, the rate limit, the duplicate check and the severity (§9.5.2); the preference half is stored in `post_hides`, honoured by every media surface (§9.5.3) and reaches the ranker with a denominator (§9.5.5). Seven mutations red. **The C is earned by the fix, not by the original evidence** — the row was silently wrong for as long as it read C. |
+| MD273 | W | C | The deny-list is now the union of the two the repository held, and the four leaked states are asserted red by mutation M5. |
+
+MD269, MD283, MD351 and MD112 are **not** repaired and stay where the first table puts
+them. A safety classifier, a video decode tier, a moderation service and a client
+merge-or-create flow are none of them branch-scale work, and none of them is faked here.
+
+### 9.8 Restated headline
+
+> | Measure | Was, §0 | Now |
+> | --- | --- | --- |
+> | Denominator (testable requirements) | 450 | **450** |
+> | BUILT-AND-CORRECT | 291 | **288** |
+> | BUILT-BUT-WRONG | 69 | **73** |
+> | NOT-BUILT | 88 | **87** |
+> | CANNOT-VERIFY | 2 | **2** |
+> | **CONSTRUCTED%** = (C+W)/450 | 80.0 % | **361 / 450 = 80.2 %** |
+> | **CORRECT%** (raw) = C/450 | 64.7 % | **288 / 450 = 64.0 %** |
+>
+> **Correctness went DOWN and construction went up by one row.** That is the whole shape of
+> this pass: four rows moved backward on executed evidence, two moved forward on code that
+> exists and is mutation-tested, and one moved up out of NOT-BUILT because its evidence was
+> stale rather than because anything was built for it.
+
+The **spec-attributable** figure (§0: 216 / 450) is **not restated**. Attribution was not
+re-run, and adjusting it by subtracting the demoted rows would be arithmetic dressed as
+measurement. Read §0's attribution number as measured at `68ed59d9` and untouched here.
+
+### 9.9 CEILING — what this pass could not reach, and why
+
+- **The dark shell is still the ceiling on everything §4.1, §15, §32, §44 and §45.**
+  `MEDIA_WORLD_SHELL_ENABLED` is seeded false and `MEDIA_ANALYTICS_ENABLED` is seeded false
+  (`artifacts/api-server/src/migrations/2038_media_admin_flags.sql:65#('MEDIA_ANALYTICS_ENABLED', false,`).
+  Every §44 telemetry row and every §45 north-star emitter is therefore correct over a path
+  nothing reaches — **⌀** by the owner's rule, **C** by this document's own convention (§1,
+  *"Flag-dark is a deployment fact, not a verdict"*). Those two rules disagree, and §9.10
+  puts the disagreement to the owner rather than silently re-basing a hundred rows.
+- **`media_assets` is still on no read path**, so MD36–MD38, MD272 and MD338–MD339 remain
+  what §6 already says they are.
+- **MD8 (authentic outranks generated) cannot be built without the canonical flip.** The
+  ranker has no provenance input because `post_media` has no `source_type` column;
+  `media_assets` has one and is dark. Building a penalty term over a field that is always
+  null would be a vacuous C, which is why it was not built.
+- **Deployment.** Everything in §9.5 is on a branch. Built on a branch is not merged; merged
+  is not deployed. Nothing here has run against production data, and no database was queried
+  in this pass either.
+- **The other 444 rows were not re-read.** Six were, and four of them were wrong. On a
+  document with 288 C rows and no prior adversarial re-read, that is not a reassuring
+  sample — it is a reason to expect more.
+
+### 9.10 Two decisions surfaced rather than taken
+
+1. **The flag-dark convention contradicts the owner's honesty rule.** §1 of this document
+   grades a complete implementation behind a flag seeded OFF as BUILT-AND-CORRECT, following
+   the Wall census. The owner's standing rule is that a row is correct only when true on
+   every deployment, and that a C over a path nothing reaches is vacuous. Applying the
+   owner's rule here would move a large fraction of the 288 — the whole §44 and §45
+   telemetry block, the §15 action rail, the §32 Compass affordances and the §4.1 shell —
+   from C to W in one edit, and would make this census incomparable with the twelve siblings
+   that follow the other convention. **Not taken.** It is a corpus-wide convention change,
+   and one lane should not make it inside one document.
+2. **`census-media.md` counts `routes/mediaFeed.ts`, which `census-wall.md` also counts.**
+   This pass changed it, so both censuses are acknowledged in
+   `CENSUS_STALENESS_ACKNOWLEDGED.json` with a per-file argument. One Wall citation — W7's
+   `post_saves` anchor — moved by 110 lines and was repointed, not deleted. The
+   anchored-citation check is what found it, which is the check working.
+
+---
+
+## 10. CORRECTION to §9.1 — the hide was already built, and Media was bypassing it
+
+**§9.1 states something false, and this section is the correction rather than a
+deletion.** The sentence was:
+
+> **Nothing was hidden.** `post_hides` … was written by **nothing anywhere in the tree**.
+> Pulse honoured a list no surface could add to.
+
+Both halves are wrong. At `3eaf2436f`, `post_hides` had **one writer and three readers**:
+
+| | Where |
+| --- | --- |
+| WRITER | `POST /api/posts/:postId/hide` — `artifacts/api-server/src/routes/posts.ts:2619#router.post("/posts/:postId/hide"`, an idempotent upsert on the same conflict target §9 later duplicated |
+| READER | the following feed — `artifacts/api-server/src/routes/posts.ts:1238#.from("post_hides")` |
+| READER | the global feed — `artifacts/api-server/src/routes/posts.ts:1380#.from("post_hides")` |
+| READER | Pulse — `artifacts/api-server/src/routes/pulse.ts:157#const { data: hiddenRows } = await sc` |
+| CLIENT | `travel-buddy-standalone/src/services/posts.ts:652#export async function hidePost` , called from `travel-buddy-standalone/src/components/PulseFeedCard.tsx:141#const ok = await hidePost(item.id);` |
+| TEST | `artifacts/api-server/src/test/postHide.test.ts:5#- Authenticated user can hide a post (upserts into post_hides, returns { hidden: true })` |
+
+### 10.1 How the error was made, because the method is the point
+
+The absence was established with
+`grep -rn "post_hides" src migrations | grep -v "\.test\." | head -20`. The writer sorted
+past the cut. **An absence asserted from a truncated list is not a measurement**, and §7's
+first method caveat already says this document settles every "nothing writes X" by opening
+call sites rather than by counting greps — a rule I stated and then broke in the same
+document. The two "nothing writes X" claims §7 names (`media_assets`,
+`media_intent_signals`) were settled properly; this third one was not, and it is the one I
+added.
+
+It is the same defect class §9 exists to catch, arriving by the same route: a confident
+sentence, an anchored citation, and a check underneath it that was never run.
+
+### 10.2 The corrected finding is worse, not weaker
+
+Portava has a **complete, reachable, tested hide feature**: a route, three feed readers, a
+client service and a UI entry point on the Pulse card. Tapping "Hide" on a Pulse card
+worked. Tapping "Hide" on the **Media** tab — the same gesture, two rows above "Report" in
+the same options sheet — posted to `/api/media/:id/report` and filed a moderation report
+instead.
+
+So Media did not lack a hide. Media built a **divergent duplicate of a working feature and
+pointed it at the moderation queue**. "The feature was never built" would be a gap; this is
+a bypass, and a bypass is worse, because the working path's existence is what makes the
+wrong one look finished.
+
+### 10.3 Does MD105's verdict move? No — re-derived.
+
+The W at `3eaf2436f` rested on four things. The false one was **decoration on the first,
+not load-bearing**, and each of the surviving three is independently sufficient:
+
+| Leg | Status |
+| --- | --- |
+| Preference taps filed moderation reports on both the post and the gem surface | Holds, and §10.2 strengthens it |
+| The report half diverged from the contract: `.default("spam")`, no severity, no rate limit, no duplicate check | Holds — re-verified at `routes/mediaFeed.ts` on the base |
+| The "Not Relevant" ranking penalty read three fields no producer in `src` set | Holds — `hideRate` and `notInterestedCount` are consumed and set by nothing; `adminCompass`'s `hideRatePct` is a different field off `hide_category` |
+| *"`post_hides` had no writer"* | **FALSE — withdrawn** |
+
+The C after the repair never depended on the withdrawn leg either. What it needs is that
+the media path now writes the store and that the media surfaces honour it: the report route
+writes through `artifacts/api-server/src/lib/postHide.ts:49#export async function hidePostForViewer`,
+the gate at `artifacts/api-server/src/lib/mediaEligibility.ts:355#if (hiddenPostIds.has(c.id)) return false;`
+reads it, and the ranker counts it. Mutations M2, M4 and M8 hold all three red.
+
+**No verdict moves.** MD105 stays **C**, re-derived on the corrected premises; MD273,
+MD269, MD283, MD351 and MD112 are untouched by this correction — none of them cited
+`post_hides`.
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| MD105 | C | C | Unchanged. §9.7's W→C is re-derived in §10.3 with the false premise removed; the three surviving legs each carry it on their own. |
+
+### 10.4 Two writers by choice, or one writer by design
+
+§9 wrote a second three-line upsert into `post_hides` rather than reaching the existing
+hide path — which, at the time, it did not know existed. Left alone that would be two
+copies of an idempotency contract, and the conflict target **is** the contract: get
+`onConflict`/`ignoreDuplicates` wrong on one caller and a second tap becomes a 500 on a
+gesture whose entire point is that repeating it is harmless. That is the same drift that
+had already put two different moderation deny-lists in two files (§9.3).
+
+So this section extracts `artifacts/api-server/src/lib/postHide.ts:58#{ onConflict: "user_id,post_id", ignoreDuplicates: true },`
+and routes **both** callers through it —
+`artifacts/api-server/src/routes/posts.ts:2637#const hidden = await hidePostForViewer(sc, user.id, postId);`
+and `artifacts/api-server/src/routes/mediaFeed.ts:1193#const hidden = await hidePostForViewer(sc, user.id, id);`.
+**Two routes reach the hide, by choice; one writer, in one file.** A new case,
+`the media hide "writes through the SAME idempotency contract as POST /posts/:postId/hide"`,
+asserts the conflict target rather than only the row.
+
+### 10.5 Mutation M8
+
+| Mutation | What it did | What went red |
+| --- | --- | --- |
+| M8 | change the shared writer's conflict target to `post_id` and `ignoreDuplicates: false` | `writes through the SAME idempotency contract as POST /posts/:postId/hide` — 1 of 27; `postHide.test.ts` stayed green, which is the point: its own fake never inspected the options, so the contract was unasserted on BOTH callers until now |
+
+Applied, run, reverted, `cmp` byte-identical. 27 cases in `mediaReportIntent`, 4 in
+`postHide`, all green after revert.
+
+### 10.6 Restated headline — unchanged by this correction
+
+> | Measure | Value |
+> | --- | --- |
+> | Denominator (testable requirements) | **450** |
+> | BUILT-AND-CORRECT | **288** |
+> | BUILT-BUT-WRONG | **73** |
+> | NOT-BUILT | **87** |
+> | CANNOT-VERIFY | **2** |
+> | **CONSTRUCTED%** = (C+W)/450 | **361 / 450 = 80.2 %** |
+> | **CORRECT%** (raw) = C/450 | **288 / 450 = 64.0 %** |
+>
+> Identical to §9.8. A correction that withdraws a premise without moving a verdict must
+> not move the number either, and saying so is part of the correction.
+
+### 10.7 What §9 got right, kept verbatim because it still applies
+
+§9's closing observation stands and this section is its best illustration: **six rows of a
+288-row C column were re-read and four were wrong.** The honest reading was never "four
+rows were wrong" — it was "nobody has checked the other 282, and the sample says that
+matters." §10 adds the second half: the re-reader is in the sample too. One of the three
+supporting claims under the pass's own headline finding was false, it was anchored,
+authoritative and wrong for one commit, and it was caught by a reviewer rather than by any
+check in this repository. Nothing here can check whether a stated absence was actually
+searched for.
+
+**Citations repointed, not deleted.** §9's anchors into `routes/mediaFeed.ts` moved when
+§10 changed that file, and §9.5.1's citation of the inline upsert names code §10 replaced.
+Both were repointed at the lines the code now occupies, and `census-wall.md` W7's
+`post_saves` anchor moved a second time and was repointed again. `check:doc-citations`
+found every one of them, which is the third time in two sections that an anchored citation
+has earned its keep.

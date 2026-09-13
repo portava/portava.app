@@ -923,6 +923,28 @@ export async function loadMediaRankingFlags(
  *   rewatchRate         = rewatches  / qualifiedViews
  * When an item has no qualified-view rows the rates remain null so the ranking
  * service falls back to neutral multipliers (1.0×).
+ *
+ * ALSO LOADS notInterestedCount, AND UNTIL 2026-09-13 NOTHING DID.
+ * ------------------------------------------------------------------
+ * `applyNegativeFeedbackPenalty` below reads `hideRate`, `hideCount` and
+ * `notInterestedCount` off the candidate, and this loader — the only producer of
+ * media signals on the feed path — set neither. A grep of the tree found no
+ * other writer of any of the three. So the penalty layer ran on every request
+ * with `hideRate ?? (notInterestedCount != null ? … : 0)` resolving to 0: the
+ * whole "Not Interested / Hide" arm of §24's discovery-behaviour input was a
+ * READ WITH NO WRITER, and every feed was ranked as though nobody had ever
+ * hidden anything.
+ *
+ * The store was there the whole time and the MEDIA surfaces were not using it:
+ * `post_hides` (0116, UNIQUE (user_id, post_id)) has been written by
+ * POST /api/posts/:postId/hide and read by three feeds (the following and
+ * global feeds in routes/posts.ts, and routes/pulse.ts), while Media's own
+ * "Not interested" and "Hide" POSTed to /media/:id/report — filing a moderation
+ * report and hiding nothing. So the rows existed, from Pulse, and this loader
+ * simply never asked for them. Now that the media report route writes the same
+ * store too, this counts it: `notInterestedCount` is the number of
+ * DISTINCT viewers who have hidden the item, which is exactly the population
+ * the penalty's `hideR = notInterestedCount / totalImpressionCount` expects.
  */
 export async function loadMediaSignals(
   db: SupabaseClient | null,
@@ -936,35 +958,77 @@ export async function loadMediaSignals(
       .from("rank_events")
       .select("item_id, event_type")
       .in("item_id", postIds)
-      .in("event_type", ["watch_completion", "watch_rewatch", "watch_qualified_view"]);
+      .in("event_type", [
+        "watch_completion",
+        "watch_rewatch",
+        "watch_qualified_view",
+        // The impression anchor. POST /media/:id/view has always written it
+        // (routes/mediaFeed.ts, `type === "impression" → "watch_impression"`)
+        // and nothing read it, which is why totalImpressionCount was null on
+        // every candidate and notInterestedPenalty's `totalImpressions ?? 1`
+        // would have turned ONE hide into the maximum penalty. It is read here
+        // so the hide signal below is a RATE and not a raw count over 1.
+        "watch_impression",
+      ]);
 
     if (error || !data) return result;
 
     // Aggregate counts per item_id
-    const counts = new Map<string, { completions: number; rewatches: number; qualifiedViews: number }>();
+    const counts = new Map<string, { completions: number; rewatches: number; qualifiedViews: number; impressions: number }>();
     for (const row of (data as { item_id: string; event_type: string }[])) {
       if (!counts.has(row.item_id)) {
-        counts.set(row.item_id, { completions: 0, rewatches: 0, qualifiedViews: 0 });
+        counts.set(row.item_id, { completions: 0, rewatches: 0, qualifiedViews: 0, impressions: 0 });
       }
       const c = counts.get(row.item_id)!;
       if (row.event_type === "watch_completion")      c.completions++;
       else if (row.event_type === "watch_rewatch")    c.rewatches++;
       else if (row.event_type === "watch_qualified_view") c.qualifiedViews++;
+      else if (row.event_type === "watch_impression") c.impressions++;
     }
 
     // Derive rates: only set when there is at least one qualified-view event
     for (const [itemId, c] of counts) {
+      const impressions = c.impressions > 0 ? { totalImpressionCount: c.impressions } : {};
       if (c.qualifiedViews > 0) {
         result.set(itemId, {
           watchCompletionRate: c.completions / c.qualifiedViews,
           rewatchRate:         c.rewatches  / c.qualifiedViews,
+          ...impressions,
         });
       } else {
         // Has completion/rewatch rows but no qualified-view anchor — leave null
-        result.set(itemId, { watchCompletionRate: null, rewatchRate: null });
+        result.set(itemId, { watchCompletionRate: null, rewatchRate: null, ...impressions });
       }
     }
   } catch { /* non-fatal: returns empty map; ranking falls back to 1.0× multipliers */ }
+
+  // ── Negative feedback: distinct viewers who hid the item ──────────────────
+  // Separate try so a rank_events failure cannot take the hide counts with it,
+  // and vice versa. Absent rows mean zero hides, which is the neutral value the
+  // penalty already assumed — so this can only ever ADD signal, never remove it.
+  //
+  // DELIBERATELY SET ONLY WHERE AN IMPRESSION COUNT EXISTS. notInterestedPenalty
+  // divides by `totalImpressions ?? 1`, so publishing a hide count for an item
+  // with no measured impressions would read as a 100% hide rate and apply the
+  // full 0.6 penalty off a single tap. No denominator means no rate, and no rate
+  // means the penalty stays where it has always been: neutral.
+  try {
+    const { data: hideRows, error: hideErr } = await db
+      .from("post_hides")
+      .select("post_id")
+      .in("post_id", postIds);
+    if (!hideErr && hideRows) {
+      const hides = new Map<string, number>();
+      for (const row of (hideRows as { post_id: string }[])) {
+        hides.set(row.post_id, (hides.get(row.post_id) ?? 0) + 1);
+      }
+      for (const [itemId, n] of hides) {
+        const prior = result.get(itemId);
+        if (!prior || prior.totalImpressionCount == null) continue;
+        result.set(itemId, { ...prior, notInterestedCount: n });
+      }
+    }
+  } catch { /* non-fatal: no hide signal is the same as no hides */ }
 
   return result;
 }
