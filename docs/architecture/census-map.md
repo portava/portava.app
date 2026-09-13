@@ -1149,7 +1149,7 @@ spec-attributable)*`, and the tokeniser accepted `⌀` as a qualifier but not a
 parenthesised one — so it reported C 231 against a document stating 235, and
 the discrepancy hid inside an unreconciled-prose number. The tokeniser reads it
 now
-(`` `artifacts/api-server/src/scripts/checkCensusIntegrity.ts:194#function verdictOf(cell: string)` ``,
+(`` `artifacts/api-server/src/scripts/checkCensusIntegrity.ts:212#function verdictOf(cell: string)` ``,
 executed by
 `` `artifacts/api-server/src/test/censusIntegrityQualifiedVerdicts.test.ts:65#describe("the tool reads census-map's qualified verdicts"` ``).
 

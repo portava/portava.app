@@ -1243,8 +1243,8 @@ Both of those parentheses have been read, by hand, against the document. Neither
 says what its wording suggests.
 
 **The 23 are not counted in prose. They are 23 table rows whose verdict cell reads
-`C ᵖ`.** `verdictOf` in `src/scripts/checkCensusIntegrity.ts:194#verdictOf` strips
-`*` and `[⌀†‡]` before matching (`src/scripts/checkCensusIntegrity.ts:198#replace(/[⌀†‡]/g,`) and does not strip `ᵖ`,
+`C ᵖ`.** `verdictOf` in `src/scripts/checkCensusIntegrity.ts:212#verdictOf` strips
+`*` and `[⌀†‡]` before matching (`src/scripts/checkCensusIntegrity.ts:216#replace(/[⌀†‡]/g,`) and does not strip `ᵖ`,
 so `C ᵖ` fails its `^([A-Z]{1,3}|\?)$` test and the row vanishes. §2 of this
 document states the population itself — *"Result: 23 of the 230 correct verdicts
 are `ᵖ`"* — and 373 − 350 = 23. The two sets are the same set. **This census counts

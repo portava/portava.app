@@ -216,7 +216,13 @@ export const COVERED = [
 // all 13 by re-reading the anchor at the cited line, and the 106 UNANCHORED
 // citations into the same three files moved silently and are still wrong. The
 // ceiling below did NOT fall this pass; §12.4 says why.
-export const MIN_ANCHORED_CITATIONS = 2507;
+// RAISED AGAIN 2026-09-13 from 2507 to the merged tree's count after the trust
+// lane anchored §12 (2635 -> 2816 in its own worktree) and the three regrade
+// lanes wrote their new rows anchored rather than bare. That last part is the
+// point worth keeping: census GROWTH does not have to buy itself headroom under
+// the ceiling below. A new requirement can carry an anchored citation on the day
+// it is written, and these three censuses grew by 153 rows while UNANCHORED FELL.
+export const MIN_ANCHORED_CITATIONS = 3381;
 
 // ---------------------------------------------------------------------------
 // THE FULL-ANCHOR PASS, and why it is a SECOND pass rather than a wider ANCHOR
@@ -253,7 +259,12 @@ export const MIN_ANCHORED_CITATIONS = 2507;
 // wrote is backticked with the path spelled out, after ten of them were first
 // written as bare `:NNN#anchor` continuations with a space in the anchor — the
 // shape §11.2 taught this file to refuse, and the refusal caught all ten.
-export const MIN_FULL_ANCHOR_CITATIONS = 2329;
+// RAISED AGAIN 2026-09-13 from 2329 alongside the floor above, same measurement,
+// same tree. The gap between the two floors (3381 anchored, 3193 whole-anchor)
+// is 188 citations written with an anchor but NOT backticked: checkable for
+// their first token only. That gap is the next thing to close, not a rounding
+// error, and it is stated here so it is not rediscovered as a surprise.
+export const MIN_FULL_ANCHOR_CITATIONS = 3193;
 
 // ---------------------------------------------------------------------------
 // THE CEILING, and why a floor on the good form was not enough
@@ -304,6 +315,15 @@ export const MIN_FULL_ANCHOR_CITATIONS = 2329;
 // for the next unanchored one. The single citation is census-telegraph's
 // `routes/memories.ts:1858`, which this pass had to repoint anyway because the file
 // shrank past it, and which got an anchor on the way.
+//
+// 2026-09-13, HELD AT 6434 WITH 32 CITATIONS OF HEADROOM, DELIBERATELY AND ON
+// RECORD. The three regrade lanes pushed this to 6564 — 130 over — by adding
+// rows faster than they anchored them. The instruction was to anchor the 130
+// rather than raise the ceiling, and that is what happened: the count is 6402.
+// The ceiling is NOT being pulled down to 6402 in the same commit, because the
+// same instruction said to leave it where it is. So the 32 is real headroom and
+// a reader should know it exists: the next 32 unanchored citations will pass
+// this check. Whoever writes them should lower this number instead.
 export const MAX_UNANCHORED_CITATIONS = 6434;
 
 // Exported so src/test/docCitations.test.ts walks the same tree: a second

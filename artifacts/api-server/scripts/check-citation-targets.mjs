@@ -76,8 +76,21 @@ import {
   resolveCitationPath, expandLineSpec,
 } from './check-doc-citations.mjs';
 
-/** Measured 2026-09-13. CEILING — may only fall. */
-export const MAX_DEAD_TARGETS = 293;
+/** Measured 2026-09-13. CEILING — may only fall.
+ * LOWERED 2026-09-13 from 293 to 276. Two passes moved it: ten citations in
+ * census-compass and census-discovery repointed by locating the EXACT text the
+ * original line named (not the nearest plausible line), and the trust lane's
+ * §12 anchoring, which repointed every citation its own ~30-line growth in
+ * routes/verification.ts, routes/admin.ts and lib/trustMaintenanceScheduler.ts
+ * had aged out from under. 304 -> 292 -> 276.
+ *
+ * Seven citations in census-compass and census-discovery are STILL dead and were
+ * deliberately left that way, because each needs its claim re-read rather than its
+ * pointer moved. The clearest is census-compass.md:164, whose anchor text
+ * `nameVisibilitySet` has zero occurrences anywhere in routes/compass.ts. The
+ * batched identity read it describes now lives in buildListIdentityProjections.
+ * Pointing it there would be asserting evidence for a C row nobody re-derived. */
+export const MAX_DEAD_TARGETS = 276;
 
 /** Pinned to a commit by its own declaration; its lines must not track HEAD. */
 const PINNED_DOCS = new Set(['docs/architecture/mobile-reachability-ledger.md']);
