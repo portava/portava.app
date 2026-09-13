@@ -5673,10 +5673,12 @@ telegraph                      439   221   166    49    3     451  12 counted wh
 > eviction — is a defect no row in this census had ever named.** A census that
 > could only record work by moving a number would have no way to say that.
 
-**The full suite: 20,165 tests, 3 failed, 0 skipped.** One was this section's
-and is fixed — the narrowed NOT NULL guard of M19, green in isolation and red
-again under M19. The other TWO are `test/tripOpportunityProjection.test.ts`
-cases 1 and 3, and they are NOT this lane's: swapping all eight source files
+**The full suite: 20,165 tests, 20,163 passed, 2 failed, 0 skipped.** The run
+before it had three. The third was this section's — the NOT NULL guard M19
+narrows — and it is gone: fixed, green in isolation, red again under M19, and
+green in the full run at the position it had failed at. The remaining TWO are
+`test/tripOpportunityProjection.test.ts` cases 1 and 3, and they are NOT this
+lane's: swapping all eight source files
 this branch changed back to their `6d4fd1a06` content and re-running the file
 reproduces both failures exactly (16 / 2), after which the eight were restored
 and compared byte-identical. The file's own comment says why it is fragile —
