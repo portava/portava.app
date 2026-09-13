@@ -532,29 +532,33 @@ export function reconcile(
     rulesApplied.push(`rule 5: contradiction increases uncertainty — confidence -> ${confidence}`);
   }
 
-  // Rule 5, the second half. An official reading is not automatically the
-  // answer: if something fresher contradicts it, the conservative value is
-  // taken (already done above) AND the result cannot claim HIGH confidence,
-  // whatever the official source's own weight was.
-  const officialMax = accepted
-    .filter((s) => s.observation.observerKind === "official")
-    .reduce((m, s) => Math.max(m, s.observation.value), Number.NEGATIVE_INFINITY);
-  const fresherContradiction = accepted.some(
-    (s) =>
-      s.observation.observerKind !== "official" &&
-      Number.isFinite(officialMax) &&
-      Math.abs(s.observation.value - officialMax) > tolerance &&
-      s.ageMinutes <
-        Math.min(
-          ...accepted
-            .filter((x) => x.observation.observerKind === "official")
-            .map((x) => x.ageMinutes),
-        ),
-  );
-  if (fresherContradiction && confidence === "HIGH") {
-    confidence = "MEDIUM";
-    rulesApplied.push("rule 5: official reading contradicted by fresher evidence — capped at MEDIUM");
-  }
+  // ── RULE 5, SECOND HALF: THERE IS DELIBERATELY NO EXTRA BRANCH HERE ────────
+  //
+  // "Official data is not automatically truth when fresh contradictory evidence
+  // exists" is satisfied by two mechanisms that are already above, and this is
+  // recorded rather than left as an absence because the FIRST version of this
+  // file did add a third:
+  //
+  //     if (fresherContradiction && confidence === "HIGH") confidence = "MEDIUM";
+  //
+  // That branch was DEAD and a mutation test proved it. Disabling it changed no
+  // test result at all (40 pass / 0 fail, mutated and unmutated), and reading it
+  // back shows why it could never fire: `fresherContradiction` requires two
+  // readings differing by more than `tolerance`, which is the definition of
+  // `conflict` five lines above, and the conflict branch has already stepped
+  // HIGH down to MEDIUM by the time this test runs. A guard whose condition
+  // implies a guard that already fired is decoration with a comment on it.
+  //
+  // What actually implements the rule:
+  //   * the OFFICIAL READING DOES NOT WIN BY BEING OFFICIAL — `chosen` is the
+  //     conservative value over every credible reading, and observer kind is
+  //     nowhere in that selection. Proved by the mutation that takes the mean
+  //     (6 failures) and by "the largest credible delay is chosen, whoever
+  //     reported it", which sweeps every observer kind.
+  //   * CONTRADICTION INCREASES UNCERTAINTY — the step-down above, proved by
+  //     the mutation that removes it.
+  //
+  // Do not re-add a cap without a test that goes red without it.
 
   const oldest = accepted.reduce((a, b) => (a.ageMinutes >= b.ageMinutes ? a : b));
   const soonestExpiry = accepted

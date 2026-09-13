@@ -65,6 +65,11 @@
  *       vocabulary silently stops being the spec's eleven.
  *       MEASURED: 47 pass / 3 fail (out of 50).
  *
+ *   M10 `normalizeEvent` — set `receivedAt` from `occurredAt` instead of from
+ *       the receive clock, collapsing two of the envelope's ten members into
+ *       one and destroying the only record of ingest latency.
+ *       MEASURED: 49 pass / 1 fail (out of 50).
+ *
  *   M9  `diffActionUniverse` — return `candidatesLost: []` unconditionally, so
  *       a plan that stopped fitting is invisible to steps 7 and 8. This is the
  *       one that matters: with it, the high-priority notification for "your

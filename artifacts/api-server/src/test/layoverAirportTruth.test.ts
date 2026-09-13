@@ -20,7 +20,21 @@
  * Every mutation was made to PRODUCTION code in
  * `src/services/airport/LayoverAirportTruth.ts`, measured, and reverted.
  *
- * GREEN, unmutated: 37 pass / 0 fail. Every count below is out of 37.
+ * GREEN, unmutated: 40 pass / 0 fail. M1-M8 were measured out of 37, before the
+ * three §23 trust-weighting tests were added; M9-M11 out of 40.
+ *
+ * ── ONE MUTATION STAYED GREEN, AND THAT IS THE MOST USEFUL RESULT HERE ───────
+ * M11 disabled the second half of §10.1 rule 5 — an explicit
+ * `if (fresherContradiction && confidence === "HIGH") confidence = "MEDIUM"`
+ * cap that the first version of `reconcile` carried. MEASURED: 40 pass / 0
+ * fail, IDENTICAL to unmutated. Reading it back showed why it could never
+ * fire: `fresherContradiction` requires two readings differing by more than
+ * the tolerance, which is the definition of `conflict`, and the conflict
+ * step-down five lines earlier has already taken HIGH to MEDIUM. The branch was
+ * DEAD. It has been deleted rather than kept with a test written around it, the
+ * reason is recorded where it was, and M3 was RE-MEASURED afterwards: with the
+ * dead cap gone the step-down mutation fails 2 tests instead of 1, because the
+ * cap had been silently covering for it.
  *
  *   M1  `reconcile` — take the MEAN of the credible readings instead of the
  *       max (`chosen = values.reduce((a,b)=>a+b,0)/values.length`), i.e. the
@@ -33,11 +47,10 @@
  *
  *   M3  `reconcile` — stop stepping confidence down on contradiction, so a
  *       disagreement is recorded and then ignored.
- *       MEASURED: 35 pass / 1 fail. Note WHICH test survived: "a fresher
- *       contradicting reading caps confidence below HIGH" still passed,
- *       because the rule-5 cap is a SECOND, independent mechanism. That is the
- *       reason both are asserted separately rather than one standing in for
- *       the other.
+ *       MEASURED: 35 pass / 1 fail (out of 37, with the dead rule-5 cap still
+ *       present). RE-MEASURED after deleting that cap: 38 pass / 2 fail (out
+ *       of 40). The extra failure is "a fresher contradicting reading caps
+ *       confidence below HIGH", which had been passing on the dead branch.
  *
  *   M4  `screenObservations` — accept future-dated observations, so a
  *       clock-skewed feed always looks freshest and outvotes every real
@@ -60,6 +73,17 @@
  *   M8  `screenObservations` — disable the §23 rate limit, so one observer can
  *       flood a fact with as many readings as it likes.
  *       MEASURED: 36 pass / 1 fail.
+ *
+ *   M9  `OBSERVER_KIND_TRUST` — set `community: 1.0`, so a stranger's report
+ *       is believed exactly as much as the airport's own feed and §23's
+ *       trust-weighting requirement is met in name only.
+ *       MEASURED: 38 pass / 2 fail (out of 40).
+ *
+ *   M10 `decayFactor` — return 1 at and past the TTL instead of 0, so a reading
+ *       never quite stops counting.
+ *       MEASURED: 39 pass / 1 fail (out of 40).
+ *
+ *   M11 the dead rule-5 cap — see the note above. MEASURED: 40 pass / 0 fail.
  *
  * NOTE ON M1-M8 COUNTS. Five of the eight fail exactly one test. That is what a
  * file of INDEPENDENT rules looks like when each rule has one assertion and one
@@ -437,6 +461,50 @@ describe("§10.1 rule 5 — official data is not automatically truth", () => {
       nowMs: NOW, factType: "security_wait_minutes", airportRef: AIRPORT,
     });
     assert.equal(out.truth!.confidence, "HIGH");
+  });
+});
+
+describe("§23 trust weighting — who is talking changes how sure the answer is", () => {
+  const order = ["INSUFFICIENT", "LOW", "MEDIUM", "HIGH"];
+
+  it("the same reading, equally fresh, is believed less from strangers than from the airport", () => {
+    const official = reconcile(
+      [obs({ value: 40, observerKind: "official", observerId: "feed", observedAt: at(0) })],
+      { nowMs: NOW, factType: "security_wait_minutes", airportRef: AIRPORT },
+    ).truth!;
+    const community = reconcile(
+      [
+        obs({ value: 40, observerKind: "community", observerId: "a", observedAt: at(0) }),
+        obs({ value: 40, observerKind: "community", observerId: "b", observedAt: at(0) }),
+      ],
+      { nowMs: NOW, factType: "security_wait_minutes", airportRef: AIRPORT },
+    ).truth!;
+    assert.equal(official.value, community.value, "the VALUE must be the same — only the trust differs");
+    assert.ok(
+      order.indexOf(community.confidence) < order.indexOf(official.confidence),
+      `community ${community.confidence} was believed as much as official ${official.confidence}`,
+    );
+  });
+
+  it("an observer's own low standing score lowers it further", () => {
+    const trusted = reconcile(
+      [obs({ value: 40, observerKind: "operator_feed", observerId: "x", observedAt: at(0) })],
+      { nowMs: NOW, factType: "security_wait_minutes", airportRef: AIRPORT },
+    ).truth!;
+    const doubted = reconcile(
+      [obs({ value: 40, observerKind: "operator_feed", observerId: "x", observerTrust: 0.2, observedAt: at(0) })],
+      { nowMs: NOW, factType: "security_wait_minutes", airportRef: AIRPORT },
+    ).truth!;
+    assert.ok(order.indexOf(doubted.confidence) < order.indexOf(trusted.confidence));
+  });
+
+  it("an out-of-range trust score is clamped, not obeyed", () => {
+    const inflated = reconcile(
+      [obs({ value: 40, observerKind: "community", observerId: "a", observerTrust: 99, observedAt: at(0) }),
+       obs({ value: 40, observerKind: "community", observerId: "b", observerTrust: 99, observedAt: at(0) })],
+      { nowMs: NOW, factType: "security_wait_minutes", airportRef: AIRPORT },
+    ).truth!;
+    assert.notEqual(inflated.confidence, "HIGH", "a self-declared trust of 99 bought HIGH confidence");
   });
 });
 
