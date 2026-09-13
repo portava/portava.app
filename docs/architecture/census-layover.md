@@ -1641,7 +1641,7 @@ who wants only the second fact should skip to §11.3.
 
 ### 11.1 What was built, and where
 
-**1. `services/airport/LayoverAirportTruth.ts` — §10 and §10.1, 831 lines.**
+**1. `services/airport/LayoverAirportTruth.ts` — §10 and §10.1, 824 lines.**
 
 The spec's five fact classes as a closed set (`:62#AIRPORT_FACT_CLASSES`) with
 the freshness its table gives each (`:80#FACT_CLASS_TTL_MIN` — FAST_LIVE 20
@@ -1688,7 +1688,7 @@ adjusts nothing.
 with the I/O lifted out; the divergence is stated in its own doc comment rather
 than hidden.
 
-**2. `services/airport/LayoverEventReplanner.ts` — §11 and §11.1, 924 lines.**
+**2. `services/airport/LayoverEventReplanner.ts` — §11 and §11.1, 922 lines.**
 
 §11's canonical envelope with all ten members, none optional
 (`:106#LayoverEventEnvelope`), and the eleven-type vocabulary as a closed set
