@@ -45,6 +45,7 @@ import {
 import { isFlagEnabled } from "../lib/featureFlags.js";
 import { logger } from "../lib/logger.js";
 import { resolveMediaForPosts } from "../lib/postMediaResolve.js";
+import { postPlainThreadMessage } from "../lib/threadMessage.js";
 import { isPostPublished } from "../lib/postVisibility.js";
 import { nameVisibilitySet, presentedName } from "../lib/publicIdentity.js";
 import {
@@ -1226,11 +1227,47 @@ router.post("/airport/sessions/:id/telegraph", async (req, res) => {
   const airport = await airportOr503(sc, res, session);
   if (!airport) return;
 
-  // Emit Telegraph suggestion event (no private location in payload)
+  // ── census-layover L271 — THE MESSAGE IS NOT DISCARDED ─────────────────────
+  //
+  // This route used to classify the intent, resolve `threadId`, emit an event
+  // NAMING that thread, and return `ok: true` — without writing the message
+  // anywhere. The client then pushed the traveller into that very chat, where
+  // their own text was not. The event claimed a send; the thread was empty; the
+  // thread was right.
+  //
+  // The write goes through lib/threadMessage.ts rather than being inlined
+  // because one of its rules is a privacy rule, not a convenience: an E2EE
+  // thread REFUSES a plaintext body, and an unreadable `is_e2ee` refuses too
+  // rather than guessing `false`. Membership is already proved above — a
+  // threadId is only non-null for an ACCEPTED member of the linked trip — so
+  // the helper is asked to write, not to decide who may.
+  //
+  // `posted` is on the wire because the client's next move depends on it: it
+  // navigates to the chat, and navigating someone to a conversation their
+  // message did not reach is the defect this closes, not a lesser version of it.
+  let posted = false;
+  let postFailure: string | null = null;
+  if (threadId) {
+    const sent = await postPlainThreadMessage(sc, {
+      threadId,
+      senderId: user.id,
+      body: parsed.data.message,
+      subtype: "layover_suggestion",
+    });
+    posted = sent.ok;
+    if (!sent.ok) postFailure = sent.reason;
+  }
+
+  // Emit Telegraph suggestion event (no private location in payload).
+  // `posted` travels with it: a suggestion that was composed and one that
+  // reached a thread are different facts, and the event is the only durable
+  // record of which happened.
   await emitLayoverEvent(sc, session.id, user.id, "telegraph_suggestion_sent", {
     intent:   intent?.intent ?? "layover_activity",
     city:     airport.city !== "Unknown" ? airport.city : session.manualCity ?? null,
     threadId,
+    posted,
+    postFailure,
     // NOTE: no coords, no neighborhood — city-level only
   });
 
@@ -1240,6 +1277,8 @@ router.post("/airport/sessions/:id/telegraph", async (req, res) => {
     confidence: intent?.confidence ?? 0.7,
     city: airport.city !== "Unknown" ? airport.city : session.manualCity ?? null,
     threadId,
+    posted,
+    postFailure,
   });
 });
 

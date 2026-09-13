@@ -233,16 +233,37 @@ export default function LayoverDashboardScreen() {
     await scheduleReminder();
   }, [id, overview, scheduleReminder]);
 
+  /**
+   * census-layover L271 — NAVIGATE TO THE CHAT ONLY IF THE MESSAGE IS IN IT.
+   *
+   * This used to push to the trip chat whenever the session had a `tripId`,
+   * without looking at the response at all — so a failed send, and even a send
+   * the server never attempted, still landed the traveller in a conversation
+   * where their own text was missing and nothing said why. The server now
+   * writes the message and reports `posted`; this switches on that.
+   *
+   * The Compass fallback keeps its old job for a layover with no trip: there is
+   * no thread to post to, so the text is carried into /ai as a prefill instead
+   * of being lost.
+   */
   const handleTelegraph = useCallback(async () => {
     if (!id || !overview) return;
     const msg = `On a layover in ${city ?? 'town'} with about ${Math.round(overview.window.usableMinutes / 60)}h to spare — any quick tips?`;
     const res = await sendLayoverTelegraph(id, msg);
-    if (overview.session.tripId) {
-      router.push(`/trip/chat?id=${overview.session.tripId}` as any);
-    } else if (res) {
-      router.push({ pathname: '/ai', params: { prefillMessage: msg } } as any);
-    } else {
+    if (!res) {
       showToast('Telegraph is unavailable right now');
+    } else if (res.posted && overview.session.tripId) {
+      router.push(`/trip/chat?id=${overview.session.tripId}` as any);
+    } else if (res.threadId && !res.posted) {
+      // There IS a chat and the message did not reach it. Sending the traveller
+      // there would show them an absence they cannot explain.
+      showToast(
+        res.postFailure === 'e2ee'
+          ? 'That chat is end-to-end encrypted — send this from the chat itself'
+          : 'Could not post to your trip chat. Please try again.',
+      );
+    } else {
+      router.push({ pathname: '/ai', params: { prefillMessage: msg } } as any);
     }
   }, [id, overview, city, router, showToast]);
 

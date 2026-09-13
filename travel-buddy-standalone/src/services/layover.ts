@@ -870,10 +870,22 @@ export async function getLayoverBuddies(sessionId: string): Promise<{
 
 // ── Telegraph ─────────────────────────────────────────────────────────────────
 
+/**
+ * census-layover L271 — `posted` is the field the caller actually needs.
+ *
+ * The route used to return `ok: true` and a `threadId` whether or not the
+ * message reached that thread, and this screen navigated on `threadId` alone.
+ * A traveller was therefore pushed into a chat their text was not in, and told
+ * nothing. `posted` says whether the message is in the thread; `postFailure`
+ * names why not (`e2ee` | `unverifiable` | `no_thread` | `insert_failed`) so
+ * the caller can say something true rather than something reassuring.
+ */
 export async function sendLayoverTelegraph(sessionId: string, message: string): Promise<{
   intent: string;
   city: string | null;
   threadId: string | null;
+  posted: boolean;
+  postFailure: string | null;
 } | null> {
   const res = await authedFetch(airportUrl('sessions', sessionId, 'telegraph'), {
     method: 'POST',
