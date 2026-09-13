@@ -13,6 +13,49 @@
  * Pure module (no React, no network, no RN) — unit-tested under node:test.
  */
 import type { InputSuggestion } from '../types/inputSuggestion.ts';
+import type { PrivacyClass } from '../types/inputContext.ts';
+
+/**
+ * §29/§32 — the privacy classes whose suggestions must NOT be held in the
+ * process-wide cache.
+ *
+ * `privacyClass` was declared on every one of the 29 contexts and READ BY
+ * NOTHING: `sensitive` on `hidden_gem_location`, `personal` on
+ * `telegraph_recipient` and `compass_prompt`, `private_message` on the
+ * message body. No production path branched on it, and deleting the field
+ * would have changed no behaviour. This is its first reader.
+ *
+ * What it changes, concretely. `sharedSuggestionCache` is ONE process-global
+ * map keyed by (fieldId, typed text, coarse coords), living for the life of the
+ * app process and holding whole suggestion lists. For `telegraph_recipient`
+ * that list is PEOPLE — who the viewer is eligible to message — retained under
+ * the raw prefix they typed, minutes after the sheet closed, and served back
+ * without a round trip that could re-check eligibility. `public` fields
+ * (a city, a country, a place) carry none of that: the same list is the same
+ * for everyone, which is exactly why the cache is safe there and only there.
+ *
+ * A refused field is not degraded, only slower: it re-requests, and the gateway
+ * re-runs the block/age gate on every keystroke — which is the behaviour a
+ * viewer-scoped list should have had all along.
+ */
+const UNCACHEABLE_PRIVACY_CLASSES: ReadonlySet<PrivacyClass> = new Set<PrivacyClass>([
+  'personal',
+  'sensitive',
+  'private_message',
+]);
+
+/**
+ * True when a field's suggestions may be held in the shared cache.
+ *
+ * Fail-CLOSED on an unknown or missing class: a field whose policy could not be
+ * resolved is treated as uncacheable, because the cost of being wrong in that
+ * direction is one extra request and the cost of being wrong in the other is a
+ * retained list of people.
+ */
+export function isCacheablePrivacyClass(privacyClass: PrivacyClass | null | undefined): boolean {
+  if (privacyClass == null) return false;
+  return !UNCACHEABLE_PRIVACY_CLASSES.has(privacyClass);
+}
 
 export interface SuggestionCacheOptions {
   /** Entry lifetime in ms. Default 60_000 (matches legacy search cache). */

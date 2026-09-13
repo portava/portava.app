@@ -246,6 +246,30 @@ export interface InputSuggestion {
   confidence?: number;
   freshness?: FreshnessState;
 
+  /**
+   * §20 display context — verification / trust, where appropriate.
+   *
+   * `searchTravelers` has always SELECTED `verified` and `is_official`
+   * (`routes/discoverySearch.ts:161`, `:163`) and the §42 projection whitelist
+   * dropped both, so no suggestion could carry them and §20's "user
+   * verification / trust context" row had no field to live in. These two are
+   * the SAME public badges the profile and search surfaces already render —
+   * they are not a raw trust vector, a ranking feature, or a policy decision,
+   * which is what §42 forbids. Absent (not `false`) for every row that is not
+   * a person.
+   */
+  verified?: boolean;
+  official?: boolean;
+
+  /**
+   * §20/§24 Hidden Gem protection label. `'approximate'` when the gem may carry
+   * a centroid, `'hidden'` when its sensitivity level denies placement
+   * entirely. Derived from `metadata.coordsPrecision`, the vocabulary the map
+   * surface already badges, and NEVER from a coordinate — `'exact'` is not in
+   * the union because the gem search path cannot produce one.
+   */
+  locationPrecision?: 'approximate' | 'hidden';
+
   source:
     | 'canonical'
     | 'recent'

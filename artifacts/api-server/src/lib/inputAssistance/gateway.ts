@@ -47,6 +47,8 @@ import {
   buildUnresolvedAddress,
 } from './creation';
 import { buildSemanticAssistance, isSemanticContext } from './semanticIntent';
+import { extractTemporal } from './semanticParser';
+import type { TemporalWindow } from './rankingSignals';
 import { buildAiAssistedWriting, isAiTextContext } from './aiWriting';
 import { enrichSuggestionsWithLive } from './liveSuggestions';
 import {
@@ -165,6 +167,20 @@ export async function generateSuggestions(
   // §16 session-bias comparison below (the stroke/alias-aware geographic fold
   // lives in the geoResolver / suggestCanonicalLocationsFolded path).
   const normalized = normalizeLocationName(q);
+
+  // ── §15 TemporalFit — the window the parser was already computing ───────────
+  // `extractTemporal` normalises "tonight" / "tomorrow morning" / "Friday after
+  // dinner" into an ISO window. Until Phase 9 that window went into a search
+  // STRING and was discarded; nothing ranked on it, which is why §15's
+  // TemporalFit had no producer. It is resolved ONCE here and handed to the
+  // projection as a ranking term — NOT as a filter. See rankingSignals.ts for
+  // the measured reason a hard filter was rejected ("Saturday Night Market").
+  // A deferred window ("when we arrive") carries no bounds and is dropped.
+  const temporalWindow: TemporalWindow | null = (() => {
+    const t = extractTemporal(aliased, tz ?? null).intent;
+    if (!t || (t.startsAfter === null && t.startsBefore === null)) return null;
+    return { startsAfter: t.startsAfter, startsBefore: t.startsBefore };
+  })();
 
   const isGeoPicker = GEO_PICKER_CONTEXTS.has(context);
   const wantsRecent = policy.allowedSuggestionTypes.includes('recent');
@@ -362,7 +378,7 @@ export async function generateSuggestions(
       if (otherTypes.length > 0) {
         suggestions.push(
           ...(await dispatchAndProject(sc, otherTypes, {
-            q, userId, context, policy, lat, lng, city,
+            q, userId, context, policy, lat, lng, city, temporalWindow,
           })),
         );
       }
@@ -395,7 +411,7 @@ export async function generateSuggestions(
           for (const r of items) {
             if (seenIds.has(r.id)) continue;
             seenIds.add(r.id);
-            suggestions.push(projectSearchResult(r, context, POLICY_VERSION, q));
+            suggestions.push(projectSearchResult(r, context, POLICY_VERSION, q, { temporalWindow }));
           }
         });
       }
@@ -609,6 +625,8 @@ async function dispatchAndProject(
     lat: number | null;
     lng: number | null;
     city: string | null;
+    /** §15 TemporalFit window resolved once by the caller (null when none). */
+    temporalWindow: TemporalWindow | null;
   },
 ): Promise<InputSuggestion[]> {
   const [blockedSet, ageRestrictedSet] = await Promise.all([
@@ -633,7 +651,7 @@ async function dispatchAndProject(
     for (const r of items) {
       if (seen.has(r.id)) continue;
       seen.add(r.id);
-      out.push(projectSearchResult(r, p.context, POLICY_VERSION, p.q));
+      out.push(projectSearchResult(r, p.context, POLICY_VERSION, p.q, { temporalWindow: p.temporalWindow }));
     }
   }
   return out;

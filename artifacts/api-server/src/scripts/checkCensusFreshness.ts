@@ -1420,6 +1420,16 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/test/inputAssistanceCompassAI.test.ts",
     "travel-buddy-standalone/src/platform/input-assistance/compass/compassPrompt.ts",
     "travel-buddy-standalone/app/telegraph/new.tsx",
+    // WIDENED 2026-09-13 by §8 (Phase 9). A census must watch what it CITES, and
+    // §8.3/§8.4 cite these four as the evidence for seven moved rows. The first is
+    // already covered by the lib/inputAssistance/ directory entry above and is named
+    // here only so a reader of this list can see the whole Phase-9 surface in one
+    // place; the other three are genuinely new paths.
+    "artifacts/api-server/src/lib/inputAssistance/rankingSignals.ts",
+    "travel-buddy-standalone/src/platform/input-assistance/contexts/fieldInventory.ts",
+    "travel-buddy-standalone/src/platform/input-assistance/components/suggestionBadges.ts",
+    "artifacts/api-server/src/test/inputAssistanceRankingSignals.test.ts",
+    "artifacts/api-server/src/test/inputAssistanceFieldInventory.test.ts",
   ],
   "census-discovery.md": [
     // WIDENED 2026-09-13 with A20's new evidence. That row was re-measured N → W
