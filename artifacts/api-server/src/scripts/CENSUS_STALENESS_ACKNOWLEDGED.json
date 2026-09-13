@@ -694,6 +694,37 @@
         "artifacts/api-server/src/server/trips/outboxWorker.ts",
         "artifacts/api-server/src/server/trips/projectionWorkers/tripReminderScheduler.ts"
       ]
+    },
+    {
+      "census": "census-compass.md",
+      "since": "820b60638",
+      "acknowledgedAt": "2026-09-13",
+      "reason": "CROSS-LANE STALENESS FROM INTEGRATION, not from this census's own lane. census-compass was measured at 820b6063 in its own worktree; the Input Intelligence and Layover lanes then merged into the same branch and touched two files this census counts. Each argument below was VERIFIED AT THE SOURCE by the integrator, not taken from the lane's report.\n\n(1) src/lib/inputAssistance/projection.ts \u2014 projectSearchResult gained a trailing parameter `signals: ProjectionSignals = {}` and now composes two \u00a715 terms onto the confidence. Both are the IDENTITY on the inputs every existing caller supplies, verified by reading rankingSignals.ts: temporalFit returns 'neutral' whenever the window is falsy (`if (!window) return 'neutral'`), and applyTemporalFit's switch falls to `default: return base`; applyTrustConfidence returns `base` unchanged when the additive weight is zero (`if (w === 0) return base`). The parameter defaults to `{}`, so `signals.temporalWindow ?? null` is null for every caller that does not opt in, and no existing call site passes it. THE RESIDUAL, STATED RATHER THAN GLOSSED: the trust term is NOT the identity for a row that carries `verified === true` or `isOfficial === true` \u2014 such a row's confidence rises, capped at SIGNAL_CEILING. This cannot move a Compass verdict because no Compass row in this census grades the relative ordering of suggestion rows by confidence; the census's inputAssistance rows grade which tools exist and what they return, not rank order. If a future Compass row does grade ordering, this acknowledgement does not cover it and must be re-derived.\n\n(2) src/routes/airport.ts \u2014 the Layover lane added a \u00a711 replan call to PATCH /airport/sessions/:id. The change is strictly ADDITIVE to the response (`res.json({ ok: true, session })` became `res.json({ ok: true, session, replan })`), the replanner is documented and written never to throw and never to fail the edit, and no existing field was removed or altered. Compass's reference to this file cannot be moved by an added response key it does not read.",
+      "files": [
+        "artifacts/api-server/src/lib/inputAssistance/projection.ts",
+        "artifacts/api-server/src/routes/airport.ts"
+      ]
+    },
+    {
+      "census": "census-discovery.md",
+      "since": "820b60638",
+      "acknowledgedAt": "2026-09-13",
+      "reason": "CROSS-LANE STALENESS FROM INTEGRATION, not from this census's own lane. census-discovery was measured at 820b6063; the Input Intelligence lane then merged and touched four files it counts. Verified at the source by the integrator.\n\ngateway.ts, projection.ts, rankingSignals.ts and types.ts are the \u00a715 Phase 9 ranking-signal addition. The two new terms are the identity on the inputs every pre-existing caller supplies: temporalFit returns 'neutral' on a falsy window and applyTemporalFit returns `base` in its default branch; applyTrustConfidence returns `base` when the weight is zero. projectSearchResult's new `signals` parameter defaults to `{}`, and dispatchSearch is called with identical arguments, so every row that carries neither a trust flag nor a start time keeps a byte-identical confidence.\n\nTHE RESIDUAL, STATED: a row carrying `verified` or `isOfficial` now scores higher (ceiling-capped), which can reorder results among trusted rows. Discovery's rows in this census grade which fields a search result exposes and which surfaces consume them, not the rank order of trusted rows against untrusted ones, so no verdict here turns on that reordering. A Discovery row that grades ranking order is NOT covered by this entry.\n\nAlso recorded rather than hidden, carried over from the lane that made it: census-discovery's UNANCHORED gateway.ts citation now points 15 lines high at its second part. Nothing checks an unanchored citation, which is exactly why the unanchored ceiling exists and must keep falling.",
+      "files": [
+        "artifacts/api-server/src/lib/inputAssistance/gateway.ts",
+        "artifacts/api-server/src/lib/inputAssistance/projection.ts",
+        "artifacts/api-server/src/lib/inputAssistance/rankingSignals.ts",
+        "artifacts/api-server/src/lib/inputAssistance/types.ts"
+      ]
+    },
+    {
+      "census": "census-layover.md",
+      "since": "fa14590e5",
+      "acknowledgedAt": "2026-09-13",
+      "reason": "CROSS-LANE STALENESS FROM INTEGRATION. census-layover was re-measured FRESH at fa14590e by its own lane; the Compass + Discovery lane then merged into the same branch and touched one file layover counts.\n\nsrc/compass/CompassTools.ts \u2014 the ENTIRE non-comment change is one added line: `export const COMPASS_TOOL_COUNT_IN_HEADER = 33;`. Verified by diffing 3eaf2436f..820b60638 over that file and filtering comment lines: exactly one code line is added and none is removed or changed. COMPASS_TOOL_DEFINITIONS itself is untouched \u2014 the array's every mention in the diff is inside a comment. No tool was added, removed, renamed or re-signatured, so no behaviour a Layover row could grade has changed. The rest of the diff corrects a header sentence that said 'Fourteen tools' while thirty-three were declared, and pins that number to a test so the sentence cannot rot a fourth time.",
+      "files": [
+        "artifacts/api-server/src/compass/CompassTools.ts"
+      ]
     }
   ],
   "retired": [
