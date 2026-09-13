@@ -227,17 +227,18 @@ export async function bandCandidate(
   provider: TravelTimeProvider = straightLineTravelTimeProvider,
 ): Promise<EnvelopeVerdict> {
   if (!envelope || !point) return NO_VERDICT;
-  let oneWay: number;
-  let metres: number;
-  try {
-    metres = haversineMeters(envelope.centre, point);
-    const r = await estimateTravel(provider, { from: envelope.centre, to: point, departAt }, departAt);
-    if (r.kind !== "estimate") return NO_VERDICT;
-    oneWay = Number(r.estimate.minutes);
-    if (!Number.isFinite(oneWay) || oneWay < 0) return NO_VERDICT;
-  } catch {
-    return NO_VERDICT;
-  }
+  // NO try/catch HERE, and its absence is deliberate. `estimateTravel` already
+  // wraps the provider — a throw comes back as `unknown / PROVIDER_UNAVAILABLE`
+  // and a malformed answer as `unknown / PROVIDER_MALFORMED` — so a second
+  // catch around this call is unreachable. The first draft had one; a mutation
+  // that turned it into a fail-CLOSED block stayed GREEN, which is how the dead
+  // branch was found. `haversineMeters` cannot throw either: both points come
+  // from `airportPoint` / `placePoint`, which admit only finite coordinates.
+  const metres = haversineMeters(envelope.centre, point);
+  const r = await estimateTravel(provider, { from: envelope.centre, to: point, departAt }, departAt);
+  if (r.kind !== "estimate") return NO_VERDICT;
+  const oneWay = Number(r.estimate.minutes);
+  if (!Number.isFinite(oneWay) || oneWay < 0) return NO_VERDICT;
   if (oneWay * 2 > envelope.usableMinutes) {
     return {
       band: "BLOCKED",

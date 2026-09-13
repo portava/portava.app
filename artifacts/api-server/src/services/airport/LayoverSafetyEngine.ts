@@ -983,11 +983,17 @@ export function computeWindow(
   // Usable window from the later of "now" and "earliest landside". When the
   // engine returns no window there is none to clip, and the answer is 0 — which
   // is precisely what `Math.max(0, …)` produced before, so no number moves.
+  //
+  // THE `freedom.window ? … : 0` GUARD THAT USED TO STAND HERE WAS DEAD, and a
+  // mutation proved it: replacing the whole expression with the pre-adapter
+  // `hardReturnMs − windowStart` failed nothing across three suites. When there
+  // IS a window its end is `hardReturnTime` (swept); when there is not, the
+  // engine refused precisely because that end is at or before the window's
+  // start, so `Math.max(0, …)` is already 0. Keeping a branch that cannot be
+  // observed is how a reader comes to believe a check is load-bearing.
   const windowEndMs    = freedom.window ? Date.parse(freedom.window.endsAt) : hardReturnMs;
   const windowStartMs  = Math.max(nowMs, earliestOutMs);
-  const usableMinutes  = freedom.window
-    ? Math.max(0, Math.round((windowEndMs - windowStartMs) / 60000))
-    : 0;
+  const usableMinutes  = Math.max(0, Math.round((windowEndMs - windowStartMs) / 60000));
 
   // Overnight: window crosses into a different airport-local calendar day and
   // is long enough that sleep is part of the plan.

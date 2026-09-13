@@ -121,6 +121,30 @@ describe("§8 safe envelope — the radius IS the provider's bound, inverted", (
     const far = north(TPE, 500_000);
     assert.equal((await bandCandidate(env, far, AT, refuses)).band, "UNCERTIFIED");
     assert.equal((await bandCandidate(env, far, AT, throws)).band, "UNCERTIFIED");
+
+    // A provider that answers with a NUMBER THAT IS NOT ONE. No provider on
+    // this tree does — this pins the guard that would otherwise be vacuous, and
+    // the direction it fails in: a card is left standing and rated, never
+    // blocked on arithmetic nobody could do. (Found by mutation: deleting the
+    // finiteness check failed nothing until this case existed.)
+    for (const bad of [Number.NaN, Number.POSITIVE_INFINITY, -5]) {
+      const malformed = {
+        id: "malformed", routed: false,
+        async estimate() {
+          return {
+            kind: "estimate" as const,
+            estimate: {
+              minutes: bad, sourceClass: "STATIC_DEFAULT", confidence: "LOW",
+              fallbackLevel: 3, sourceRefs: [], observedAt: null, expiresAt: null,
+              p50Minutes: bad, p75Minutes: bad, p90Minutes: bad,
+            },
+          } as any;
+        },
+      };
+      const v = await bandCandidate(env, far, AT, malformed);
+      assert.equal(v.band, "UNCERTIFIED", `a ${bad} minute bound must not band anything`);
+      assert.equal(v.lowerBoundOneWayMin, null);
+    }
   });
 
   it("declares the spec's three bands and produces neither certification", async () => {

@@ -152,6 +152,11 @@ describe("§7 adapter — the window is the engine's and the numbers are unchang
         "the §7 window and the certified deadline disagree — two ways to compute one number",
       );
       assert.equal(Date.parse(w.freedomWindow.beginsAt), w.earliestOutTime.getTime());
+      // The window says WHICH airport it is about. Pinned because a mutation
+      // that dropped the label failed nothing: `computeWindow` reads no
+      // coordinate, so the place is the IATA code or it is nothing at all.
+      assert.equal(w.freedomWindow.origin?.placeId, a.iataCode);
+      assert.equal(w.freedomWindow.requiredDestination?.placeId, a.iataCode);
       withWindow += 1;
     }
     assert.ok(withWindow > 300, `expected many cases to have a window, got ${withWindow}`);
@@ -173,6 +178,26 @@ describe("§7 adapter — the window is the engine's and the numbers are unchang
       const w = computeWindow(a, s, nowMs);
       if (w.freedomWindow) assert.equal(w.freedomWindow.certified, false);
     }
+  });
+
+  /**
+   * FOUND BY MUTATION. Hard-coding `confidence: "HIGH"` in `computeWindow`'s
+   * adapter context failed NOTHING: the window carries a `NO_ORIGIN` constraint
+   * (this computation reads no coordinate), which keeps `certified` false on
+   * its own, so the confidence value was unobservable. It is the field a
+   * consumer would read to decide how much of the buffer to trust, so it is
+   * pinned to the rule `bufferEstimates` uses rather than left free.
+   */
+  it("the window's confidence is the BUFFER's — MEDIUM at a verified airport, LOW elsewhere", () => {
+    let verified = 0;
+    let generic = 0;
+    for (const { a, s, nowMs } of grid()) {
+      const w = computeWindow(a, s, nowMs);
+      if (!w.freedomWindow) continue;
+      assert.equal(w.freedomWindow.confidence, a.verified ? "MEDIUM" : "LOW");
+      if (a.verified) verified += 1; else generic += 1;
+    }
+    assert.ok(verified > 100 && generic > 100, `both rungs must be exercised (${verified}/${generic})`);
   });
 
   it("the boarding cutoff, not departure, anchors the window's end", () => {
@@ -308,6 +333,32 @@ describe("§18 TemporalFreedomService", () => {
     assert.equal(earliestLandsideMs(ctx), ctx.arrivalMs + ctx.exitDelayMin * MIN);
     const { window } = buildFreedomWindow(ctx);
     assert.equal(Date.parse(window!.beginsAt), earliestLandsideMs(ctx));
+  });
+
+  /**
+   * FOUND BY MUTATION. Swapping the hop's `travelMinutes: 0` for
+   * `null / NO_ROUTED_PROVIDER` failed NOTHING across three suites: the engine
+   * computes `endsAt = deadline − prep` in the unknown branch and
+   * `deadline − (0 + prep)` in the known one, so every INSTANT is identical and
+   * only the window's own honesty moves. The adapter's header claims that 0 is
+   * a FACT — two commitments at one airport — and not a missing measurement;
+   * these are the assertions that make the claim cost something.
+   */
+  it("the zero hop is a FACT, not an unknown — reserved, unconstrained, and not downgraded", () => {
+    const { window } = buildFreedomWindow(ctx);
+    assert.ok(window);
+    assert.equal(
+      window!.reservedMinutes, ctx.returnBufferMin,
+      "the buffer is reserved off the end; `null` here would mean nobody measured the hop",
+    );
+    assert.ok(
+      !window!.hardConstraints.some((h) => h.kind === "TRAVEL_UNKNOWN"),
+      "a layover's hop is known to be zero — TRAVEL_UNKNOWN would be a false absence",
+    );
+    assert.equal(
+      window!.confidence, ctx.confidence,
+      "the window's confidence is the buffer's, not INSUFFICIENT — the hop adds no doubt",
+    );
   });
 
   it("the window names the outbound flight as the destination it is bounded by", () => {
