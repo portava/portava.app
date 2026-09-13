@@ -160,12 +160,43 @@ const VERDICT_ALIASES: Record<string, Verdict> = {
  *    verdict, not a different verdict, and it made the cell unparseable.
  *  - `×N` states that one row carries N consecutive requirements. Dropping it
  *    dropped the row AND the N requirements with it.
+ *
+ * A FOURTH was found on 2026-09-13, and it is the same mistake as `⌀`.
+ * census-map writes four of its rows as `C *(not spec-attributable)*` — the
+ * verdict, then a parenthesised note saying the artifact predates the spec and
+ * so does not count toward that census's ATTRIBUTION percentage. It is a
+ * qualifier on a verdict, exactly as `⌀` is, and it was the entire reason
+ * census-map reported "4 counted where this tool cannot read". Those four are
+ * not prose: M47, M169, M176 and M177 are ordinary table rows, and the census's
+ * own headline counts them. With them dropped the tool reported C 231 against a
+ * document stating 235, and the difference was invisible as a discrepancy
+ * because it surfaced as an unreconciled-prose number instead.
+ *
+ * SCOPED, AND MEASURED RATHER THAN ASSERTED. Only a trailing parenthesised note
+ * is stripped, and only around the verdict token; a prose cell containing a
+ * parenthesis still fails the token match below. Dumping (census, id, verdict)
+ * for all thirteen censuses before and after, the diff is FOUR LINES: M47,
+ * M169, M176 and M177 appear, each as C. Not one existing verdict anywhere
+ * changes.
+ *
+ * It does read more CELLS than that, and saying otherwise would be the
+ * comfortable version. Thirty-seven cells across six censuses newly parse —
+ * `C (gated)` in compass, `C (by reference)` in discovery, `W (improved)` and
+ * `C (tree)` in layover, `BW (unchanged)` in sensing, `W (§27)` and
+ * `N (§29)` in trips. Every one is a verdict cell with a qualifier, which is
+ * why none of them moves a count: each restates an id a recount section had
+ * already restated, or sits in a PR-comparison table that is skipped. What they
+ * DO move is this tool's own bookkeeping — the per-census "revised", "no
+ * verdict" and "PR-comparison" tallies printed below shift in five censuses.
+ * Those numbers are how a reader judges how much of a headline is
+ * machine-checked, so the shift is reported here rather than discovered later.
  */
 function verdictOf(cell: string): { verdict: Verdict; multiplier: number } | null {
   const t = cell
     .trim()
     .replace(/\*/g, "")
     .replace(/[⌀†‡]/g, "") // vacuity / footnote flags qualify a verdict, they are not one
+    .replace(/\s*\([^()]*\)\s*$/, "") // `C (not spec-attributable)` — an attribution note, not a verdict
     .trim()
     .toUpperCase();
   const m = /^([A-Z]{1,3}|\?)\s*(?:[×X]\s*([0-9]{1,4}))?$/.exec(t);

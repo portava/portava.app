@@ -2802,3 +2802,137 @@ and the intel tables hold zero rows in production. **Realised in production:
 surfaces and deliberately stays W because a prohibition must refuse, not merely
 be refusable.
 
+
+---
+
+## §8 — 2026-09-13: why the 26 BUILT-BUT-WRONG rows are wrong, counted
+
+The distance between this census's CONSTRUCTED (97.6 %) and CORRECT (77.2 %) is
+20.5 points, and that distance **is** the W column: 26 / 127. On a census that
+is 97.6 % constructed, those 26 are not unbuilt work — they are built work that
+is wrong, unreachable, or waiting on somebody. Nobody had sorted them, so this
+pass did, and the sort is the finding.
+
+| why a row is W | rows | who can move it |
+| --- | --- | --- |
+| **(b) logic right, nothing reaches it — and the "nothing" is the OPEN `SENSING_AUTH_POSTURE` decision** | **13** | the owner, by deciding the posture |
+| **(d) needs something nobody has written** | **6** | a commissioned build, mostly outside this lane's trees |
+| **(c) capped by an owner decision that is NOT the auth posture** | **5** | the owner, per decision |
+| **(a) logic wrong in code** | **1** | a lane — with a §24 prerequisite, below |
+| **(f) built, and deliberately held W** | **1** | nobody: this is the census working |
+
+**Twenty-five of the twenty-six are not a lane's to move.** Nineteen wait on a
+named owner decision, six need work that has not been commissioned, and one —
+S66 — is held at W on purpose because a prohibition must refuse, not merely be
+refusable. That is the shape of a census whose code is finished and whose
+policy is not.
+
+### (b) the 13 held by `SENSING_AUTH_POSTURE`
+
+S18, S20, S24, S25, S30, S33, S35, S39, S42, S51, S52, S111, S112. Each is
+built, each was executed with a red mutation in §7, and each admits nobody
+because the posture reads `undecided`. **This pass did not touch them and did
+not resolve the posture.** They are listed here only so the count is visible:
+half this census's correctness gap is one undecided question.
+
+### (c) the 5 held by other owner decisions
+
+| row | the decision |
+| --- | --- |
+| S19, S26, S118 | `intel_observations.actor_id uuid NOT NULL REFERENCES profiles(id)` is the design. Removing it is the owner's. |
+| S32 | there is no signal ingest, only human-claim capture. Building one is the posture question wearing another name. |
+| S97 | the §22 zone anchor resolves to the NEAREST place to satisfy an FK. §7 ruled the alternatives — delete a Map feature, or drop `subject_id NOT NULL REFERENCES places(id)` — both owner decisions. **Re-read this pass and the ruling stands.** |
+
+### (d) the 6 that need work nobody has commissioned
+
+S3 and S106 need one `PresenceEstimate` store and fusion layer behind the
+already-correct ladder in `presence/domain/types.ts`, and the crew half lives in
+trees this lane may not enter. S21 needs an on-device reduction path: the store
+is right and the boundary is server-side, and moving it is a client capture
+change, not a server edit. S79 needs live claims carried into `/compass/ask`'s
+context before a grounding checker can exist — §7 already establishes that
+order. S83 and S92 both need `ExperienceSession` (S54), which does not exist.
+
+### (a) the 1 — and a row correction, because its stated reason is now false
+
+**S49's verdict is right and its evidence is wrong.** The row reads: *"Three of
+four. `MapObject` carries `freshness`, `confidence`, `sourceClass` and
+`provenance`; it carries **no coverage**, and no truth class per S48."* Executed
+2026-09-13, both halves of that are false:
+
+- **S48 moved W→C** in this census's own §6, so there IS a canonical truth
+  vocabulary — seven classes with CORROBORATED representable
+  (`` `artifacts/api-server/src/lib/truthClass.ts:1#/**` ``).
+- **`MapObject` carries both fields.** `truthClass` and `coverage` are declared
+  on the envelope
+  (`` `artifacts/api-server/src/lib/mapObjects.ts:454#truthClass?:` ``),
+  the vocabulary is pinned mutually-assignable with the Wall's so the two cannot
+  drift
+  (`` `artifacts/api-server/src/lib/mapObjects.ts:278#const _truthClassPin: MutuallyAssignable<TruthClass, WallTruthClass> = true;` ``),
+  and `applyLiveClaims` sets them from the ExperienceState
+  (`` `artifacts/api-server/src/lib/mapProjection.ts:800#experienceState.truth.truthClass,` ``).
+- A **shared envelope carrying exactly the four** exists and is adopted by
+  thirteen modules — crowd, vibe, forecast, opportunity, safety, compass
+  decision, wall moments, discovery live-rank, layover intersection
+  (`` `artifacts/api-server/src/lib/experienceTruth.ts:43#export interface TruthMetadata {` ``).
+
+**The row stays W for a different reason, one nobody had written down.** The one
+server-built state Discovery consumes, `DiscoveryCandidate`, carries truth class,
+confidence and freshness and **no coverage**
+(`` `artifacts/api-server/src/lib/discoveryCandidate.ts:122#export interface DiscoveryCandidate {` ``)
+— even though the grade it is built from already carries a full `TruthMetadata`
+including coverage
+(`` `artifacts/api-server/src/lib/discoveryLiveRank.ts:210#TruthMetadata` ``).
+So the gap is one field on one interface, and the value to put in it is already
+in the same function.
+
+**It was NOT built here, and the reason is a real one rather than a budget
+one.** `MapObject`'s own comment says §24's coarsening must be able to REMOVE
+`coverage`, *"because `coverage` restates the cohort `count` deletes"*, and the
+Map strips it inside a protected zone. `DiscoveryCandidate` does not run
+`protectedLocations`. Copying the bucket across without that pass would publish,
+on Discovery, a cohort signal the Map deliberately withholds for the same place
+— closing a census row by opening a §24 hole. **The decision this surfaces:
+either route `DiscoveryCandidate` through the same coarsening, or rule that a
+four-value coverage bucket over an already k-gated state is not protected-zone
+sensitive. Either is an owner's call and either closes S49.**
+
+### (f) the 1 held on purpose
+
+S66. Built on three more surfaces in §7 and still W, because a dangerous place
+can be refused by three surfaces and is refused by none. Recorded here so the
+count of "W rows a lane should move" is not inflated by it.
+
+### C rows executed this pass, and what happened
+
+Seven BUILT-AND-CORRECT rows were re-executed looking for a backward move —
+the S66 / S97 outcome is what a working census looks like, and a pass that
+finds none should say so rather than imply it did not look.
+
+| row | the claim | result |
+| --- | --- | --- |
+| S13 | ≥15 actors, ≥5 groups, ≤20 % single-group share, 10-minute delay | **Holds**, value for value, at the cited lines. |
+| S16, S67 | `intelProjection.ts` is the SOLE writer of `intel_state_snapshots` | **Holds.** `IntelCaptureService` only reads it (invalidation targets); the only other writes are a retention sweep and two backfills, both in migrations. |
+| S47 | product surfaces consume projections and do not reimplement engine logic | **Holds**, and it survived the hardest case: census-map M139 records the client's rollback projector as a second on-device reconstruction, but that module shapes only and refuses to invent freshness or a confidence band. |
+| S57 | clients compute no crowd / vibe / safety / opportunity state | **Holds.** Every client reference to `activity` reads `obj.activity`; none derives one. |
+| S90, S109 | Rent-a-Buddy reads no intel table | **Holds.** |
+| S101 | create-content and observe are separate commands | **Holds.** No path from a post to a claim; `quickSignal` and `mapContributionToClaim` are the only two mappers. |
+
+**No backward move was found.** One row's stated reason was falsified (S49,
+above), which is the same defect in a weaker form: a verdict that is right for a
+reason that stopped being true.
+
+### What this pass did NOT do
+
+- It did not resolve `SENSING_AUTH_POSTURE`, and did not move any of the 13
+  rows that wait on it.
+- It did not add `coverage` to `DiscoveryCandidate`, for the §24 reason above.
+- It built nothing in this census. `head_commit` is unchanged and no sensing
+  row moved in either direction; S49's **evidence** is restated below, its
+  verdict is not.
+
+### Row corrections
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| S49 `MapObject` | W | **W** | Verdict unchanged, evidence replaced. The stated reason — "no coverage, and no truth class per S48" — is false on both halves since §6 moved S48 to C and `MapObject` gained `truthClass` / `coverage`. The true remaining gap is `DiscoveryCandidate` carrying three of the four. |

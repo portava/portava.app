@@ -118,7 +118,7 @@ served by `router.post("/v1/intel/observations/:id/claims:action")`
 76 `/api/...` mentions in the client sit in comments. Excluding them cuts the legacy list
 from 114 to 39. The canonical case, verified at the call site:
 
-- `app/map/index.tsx:1046` and `app/map/__tests__/projectedPlaces.component.test.tsx:7`
+- `app/map/index.tsx:1045` and `app/map/__tests__/projectedPlaces.component.test.tsx:7`
   both name `GET /api/discovery/places`. **No such route exists on the server.**
 - The real call is `getDiscoveryPlaces()` at `src/services/discovery.ts:474`, which fetches
   `` `${base}/api/discovery?${params}` `` at **`src/services/discovery.ts:521`**.
@@ -136,7 +136,7 @@ Seven comment-only mentions name no route that exists:
 | `/api/threads/:threadId/telegraph` | `src/services/telegraphChat.ts:3` |
 | `/api/admin/trust` | `src/services/trustAdmin.ts:4` |
 | `/api/visuals` | `src/services/visuals.ts:2` |
-| `/api/discovery/places` | `app/map/index.tsx:1046` |
+| `/api/discovery/places` | `app/map/index.tsx:1045` |
 
 ### Reading a chain in the JSON
 
@@ -215,7 +215,7 @@ auth behaviour, and there is no route to wire it to.
 `POST /api/map/compass-command` (`mapSearch.ts:230`) genuinely have no client caller.
 
 **`/api/map/search` was NOT wired, on purpose.** `MapSearchSheet` is not unmounted - it is
-mounted at `app/map/index.tsx:3181` - and it already searches, via `searchUnified()`
+mounted at `app/map/index.tsx:3180` - and it already searches, via `searchUnified()`
 (`src/services/discovery.ts:793`) against `GET /api/discovery/search`
 (`discovery.ts:825`). Re-pointing it would be a regression on two counts:
 
@@ -314,7 +314,7 @@ Full per-route detail, including the resolved chain for each wired route, is in
 | POST | `/api/compass/sense/check` | `artifacts/api-server/src/routes/compassSense.ts:101` |
 | GET | `/api/compass/sense/nudges` | `artifacts/api-server/src/routes/compassSense.ts:122` |
 | GET | `/api/compass/value-delivered` | `artifacts/api-server/src/routes/compassOutcomes.ts:67` |
-| GET | `/api/discovery/people/:userId/passport` | `artifacts/api-server/src/routes/discoverySearch.ts:2247` |
+| GET | `/api/discovery/people/:userId/passport` | `artifacts/api-server/src/routes/discoverySearch.ts:2510` |
 | GET | `/api/events/:id/activity` | `artifacts/api-server/src/routes/events.ts:5956` |
 | GET | `/api/events/:id/attendees` | `artifacts/api-server/src/routes/events.ts:3710` |
 | DELETE | `/api/events/:id/attendees/:userId` | `artifacts/api-server/src/routes/events.ts:4930` |

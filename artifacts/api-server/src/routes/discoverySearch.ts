@@ -81,6 +81,7 @@ import { allowDiscoveryPersonCard } from "../services/passport/PassportConsumerA
 // two copies of a privacy rule is how these two serve points drifted apart in
 // the first place.
 import { fetchBlockedSet, submitterIsVisible } from "../lib/blocks.js";
+import { resolvePlaceIdBridge } from "../lib/placeIdBridge.js";
 import { isFlagEnabled } from "../lib/featureFlags.js";
 // Trips' projection contract (census-discovery A10 / D3, Trips spec §25) and
 // Discovery's consumer of it. Gated by the CAPABILITY
@@ -118,6 +119,12 @@ const SEARCH_TYPES = [
   "places", "hidden_gems", "hashtags", "posts", "circles",
   "stamps", "activities", "cities", "countries", "languages",
   "interests", "vibes",
+  // Map spec §27's ninth heading, "Saved items". The client has carried the
+  // whole branch since map search was written — MAP_SEARCH_RESULT_TYPES ends in
+  // 'saved', SavedSearchResult carries a savedKind discriminant, frameFor has a
+  // 'saved' case — and it was unreachable because this list had no member that
+  // produced one. See searchSaved below.
+  "saved",
 ] as const;
 
 // Exported (additive, behavior-preserving) so the Global Input Intelligence
@@ -375,6 +382,17 @@ function sqlPattern(q: string): string {
   // filter clauses. They carry no search meaning here, so strip them outright;
   // then escape the LIKE wildcards `%` and `_`.
   return `%${q.replace(/[,()]/g, "").replace(/[%_]/g, "\\$&")}%`;
+}
+
+/**
+ * Split a list of ids into pages. PostgREST puts `.in()` lists in the URL, so an
+ * unbounded list becomes a request too long for the gateway to forward — a
+ * failure that arrives as a resolved error and reads as "no rows".
+ */
+function chunkIds<T>(items: T[], size: number): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
+  return out;
 }
 
 function decodeCursor(cursor: string | undefined): number {
@@ -1167,6 +1185,238 @@ async function searchPlaces(
 }
 
 /**
+ * §27 "Saved items" — the ninth search heading, and the only VIEWER-SCOPED one.
+ *
+ * WHY THIS EXISTS
+ * ===============
+ * The Map spec §27 lists nine result headings and the client has carried all
+ * nine since map search was written: `MAP_SEARCH_RESULT_TYPES` ends in
+ * `'saved'`, `SavedSearchResult` carries a `savedKind` discriminant,
+ * `frameFor` has a `case 'saved'` with its own FOCUS_TRIP / FOCUS_AREA /
+ * FOCUS_PLACE ladder, and `SERVER_TYPE_TO_MAP_TYPE` holds `saved` and
+ * `wishlist` keys. Every one of those was unreachable: `SEARCH_TYPES` — the
+ * wire vocabulary the client's own coverage test derives from this file — had
+ * no `saved` member, so no result of that type could ever arrive. census-map
+ * M201 recorded the whole heading as BUILT-BUT-WRONG for exactly that reason.
+ *
+ * THE TWO TABLES SAVES ACTUALLY LAND IN
+ * =====================================
+ * Not `public.saved_places`. That table has zero writers anywhere in the repo
+ * (see lib/mapProducers/savedPlaceProducer.ts, which was moved off it by #446,
+ * and scripts/checkWriterlessReads). Real saves land in:
+ *
+ *   `wishlist_places`        POST /api/wishlist — every TripWishlistPicker save,
+ *                            including the Map's own long-press. `place_id` is
+ *                            TEXT in the SERVED id space (`db/<uuid>`,
+ *                            `comm/<uuid>`, an OSM key), with a `place_data`
+ *                            snapshot beside it.
+ *   `discovery_place_saves`  POST /api/discovery/community/:id/save — the
+ *                            DiscoveryWall bookmark. `place_id` is a
+ *                            `discovery_places.id` uuid.
+ *
+ * Neither is a superset of the other, so reading one alone loses a whole save
+ * path. Both are read here, bridged onto one venue key, and deduped.
+ *
+ * WHY IT DOES NOT CALL `readSavedPlacePins`
+ * =========================================
+ * That function is the map gateway's PRIVACY-COMPLETE saved read, and
+ * src/test/gatewayBypassGuard.test.ts names routes/mapProjection.ts as its one
+ * approved caller. Search is not a projection: it has no viewport, no §24
+ * protection pass and no MapObject envelope. Calling it from here would either
+ * break that guard or widen it to a caller that does none of the work it
+ * guarantees. So this lane issues its own, narrower read of the same two
+ * tables and produces a plain SearchResult like every other lane.
+ *
+ * WHAT IT DOES NOT DO. A save is private to the person who made it, so this
+ * lane never reads another user's rows: `user_id` is the authenticated
+ * viewer's and nothing widens it. A blocked submitter's venue is filtered out
+ * with the same `submitterIsVisible` rule searchPlaces applies — blocking
+ * someone should not be undone by having saved their venue earlier.
+ */
+const SAVED_SOURCE_ROW_CAP = 200;
+const SAVED_ID_CHUNK = 50;
+
+interface WishlistSaveRow { place_id?: unknown; place_data?: unknown; saved_at?: unknown }
+interface DiscoverySaveRow { place_id?: unknown; saved_at?: unknown }
+
+/** The snapshot `place_data` shape this lane reads. Every field optional. */
+function snapshotOf(raw: unknown): { name: string | null; city: string | null; lat: number | null; lng: number | null } {
+  const d = (raw ?? {}) as Record<string, unknown>;
+  const num = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null);
+  const str = (v: unknown): string | null => (typeof v === "string" && v.trim() !== "" ? v : null);
+  return {
+    name: str(d.name) ?? str(d.title),
+    city: str(d.city) ?? str(d.locationPreview),
+    lat: num(d.lat) ?? num(d.latitude),
+    lng: num(d.lng) ?? num(d.longitude),
+  };
+}
+
+/** Case-insensitive substring match, the in-memory twin of the SQL `ilike`. */
+function matchesQuery(q: string, ...fields: Array<string | null>): boolean {
+  const needle = q.trim().toLowerCase();
+  if (needle === "") return false;
+  return fields.some((f) => typeof f === "string" && f.toLowerCase().includes(needle));
+}
+
+async function searchSaved(
+  sc: any, q: string, userId: string,
+  blockedSet: Set<string> | null,
+  offset: number, fetchLimit: number,
+): Promise<SearchResult[]> {
+  if (blockedSet === null) return [];
+  try {
+    const [wishRes, dpsRes] = await Promise.all([
+      sc.from("wishlist_places")
+        .select("place_id, place_data, saved_at")
+        .eq("user_id", userId)
+        .order("saved_at", { ascending: false })
+        .limit(SAVED_SOURCE_ROW_CAP),
+      sc.from("discovery_place_saves")
+        .select("place_id, saved_at")
+        .eq("user_id", userId)
+        .order("saved_at", { ascending: false })
+        .limit(SAVED_SOURCE_ROW_CAP),
+    ]);
+
+    // supabase-js RESOLVES on a DB error, so an unreadable table and an empty
+    // one arrive identically. Read each independently: one table being
+    // unreadable must not silently turn the other's saves into "no saves".
+    const wishRows: WishlistSaveRow[] = Array.isArray(wishRes?.data) ? wishRes.data : [];
+    const dpsRows: DiscoverySaveRow[] = Array.isArray(dpsRes?.data) ? dpsRes.data : [];
+
+    const savedAtOf = (r: { saved_at?: unknown }): string | null =>
+      typeof r.saved_at === "string" ? r.saved_at : null;
+
+    /** venueId (a discovery_places.id) → the most recent moment it was saved. */
+    const byVenue = new Map<string, string | null>();
+    const noteVenue = (id: string, at: string | null): void => {
+      const prev = byVenue.get(id);
+      if (prev === undefined) { byVenue.set(id, at); return; }
+      if (at && (!prev || at > prev)) byVenue.set(id, at);
+    };
+
+    for (const r of dpsRows) {
+      if (typeof r.place_id === "string" && r.place_id !== "") noteVenue(r.place_id, savedAtOf(r));
+    }
+
+    /** Wishlist rows that reach no discovery_places row — snapshot only. */
+    const snapshotOnly: Array<{ servedId: string; savedAt: string | null; snap: ReturnType<typeof snapshotOf> }> = [];
+    const wishlist = wishRows.filter((r): r is WishlistSaveRow & { place_id: string } =>
+      typeof r.place_id === "string" && r.place_id !== "");
+
+    const servedIds = [...new Set(wishlist.map((r) => r.place_id))];
+    const bridged = new Map<string, Set<string>>();
+    for (const page of chunkIds(servedIds, SAVED_ID_CHUNK)) {
+      // noCache: an OSM venue's discovery_places row is created lazily on first
+      // save, so a cached known-empty from before that save would drop it.
+      const { toCanonical } = await resolvePlaceIdBridge(sc, page, { noCache: true });
+      for (const [served, ids] of toCanonical) bridged.set(served, ids);
+    }
+
+    for (const r of wishlist) {
+      const ids = bridged.get(r.place_id);
+      if (ids && ids.size > 0) {
+        // Deterministic when one served id mirrors onto several rows.
+        noteVenue([...ids].sort()[0] as string, savedAtOf(r));
+        continue;
+      }
+      snapshotOnly.push({ servedId: r.place_id, savedAt: savedAtOf(r), snap: snapshotOf(r.place_data) });
+    }
+
+    // ── resolve the authoritative venue rows, filtered by the query ──────────
+    const pat = sqlPattern(q);
+    const venues: any[] = [];
+    for (const page of chunkIds([...byVenue.keys()], SAVED_ID_CHUNK)) {
+      const { data, error } = await sc
+        .from("discovery_places")
+        .select("id, name, city, blurb, image_url, primary_category, category, lat, lng, submitted_by")
+        .in("id", page)
+        .eq("status", "active")
+        .or(`name.ilike.${pat},city.ilike.${pat},blurb.ilike.${pat}`);
+      if (error || !Array.isArray(data)) continue;
+      venues.push(...data);
+    }
+
+    const out: SearchResult[] = [];
+    for (const v of venues) {
+      if (!v || typeof v.id !== "string") continue;
+      if (!submitterIsVisible(v.submitted_by, blockedSet)) continue;
+      const name = (v.name as string | null) ?? "";
+      out.push({
+        id: v.id,
+        type: "saved",
+        title: name,
+        subtitle: ((v.primary_category ?? v.category) as string | null) ?? null,
+        avatarUrl: null,
+        imageUrl: (v.image_url as string | null) ?? null,
+        fallbackInitials: initials(name),
+        locationPreview: (v.city as string | null) ?? null,
+        matchedReason: "Saved",
+        actionState: { isSaved: true },
+        privacyState: null,
+        accessState: { canAccess: true },
+        destinationRoute: `/place/${v.id}`,
+        metadata: {
+          // The client's SavedSearchResult discriminant. Stated by the server
+          // rather than assumed by the adapter, so a future saved Trip or Area
+          // can arrive through the same heading without a second wire type.
+          savedKind: "place",
+          category: v.primary_category ?? v.category,
+          lat: (v.lat as number | null) ?? null,
+          lng: (v.lng as number | null) ?? null,
+          savedAt: byVenue.get(v.id) ?? null,
+        },
+        createdAt: byVenue.get(v.id) ?? null,
+        startsAt: null,
+      });
+    }
+
+    // ── the snapshot tail ────────────────────────────────────────────────────
+    // A wishlist save whose served id reaches no discovery_places row is still
+    // a save the person made, and dropping it would make the heading lie about
+    // its own contents. It is matched against the snapshot the save recorded
+    // and placed from the snapshot's coordinates — never from anywhere else.
+    for (const s of snapshotOnly) {
+      if (!matchesQuery(q, s.snap.name, s.snap.city)) continue;
+      const name = s.snap.name ?? "";
+      if (name === "") continue;
+      out.push({
+        id: s.servedId,
+        type: "saved",
+        title: name,
+        subtitle: null,
+        avatarUrl: null,
+        imageUrl: null,
+        fallbackInitials: initials(name),
+        locationPreview: s.snap.city,
+        matchedReason: "Saved",
+        actionState: { isSaved: true },
+        privacyState: null,
+        accessState: { canAccess: true },
+        destinationRoute: `/place/${s.servedId}`,
+        metadata: {
+          savedKind: "place",
+          lat: s.snap.lat,
+          lng: s.snap.lng,
+          savedAt: s.savedAt,
+          fromSnapshot: true,
+        },
+        createdAt: s.savedAt,
+        startsAt: null,
+      });
+    }
+
+    // Most recently saved first, then the caller's page. Match-tier ranking is
+    // applied by dispatchSearch, as it is for every other non-place lane.
+    out.sort((a, b) => String(b.createdAt ?? "").localeCompare(String(a.createdAt ?? "")));
+    return out.slice(offset, offset + fetchLimit);
+  } catch {
+    return [];
+  }
+}
+
+/**
  * Hidden gems — approved/active only; blocked/age-restricted/suspended submitter excluded.
  */
 async function searchHiddenGems(
@@ -1791,6 +2041,9 @@ export async function dispatchSearch(
       return rankCombined(raw, q, ctx?.userCity, { upcomingFirst: true }).slice(offset, offset + fetchLimit);
     }
     case "places":      return searchPlaces(sc, q, blockedSet, offset, fetchLimit, ctx);
+    // Already ordered most-recently-saved-first inside the lane; rankByMatchTier
+    // is a stable sort, so an exact-name save still leads without losing that.
+    case "saved":       return rankByMatchTier(await searchSaved(sc, q, userId, blockedSet, offset, fetchLimit),       q);
     case "hidden_gems": return rankByMatchTier(await searchHiddenGems(sc, q, userId, blockedSet, ageRestrictedSet, offset, fetchLimit), q);
     case "hashtags":    return rankByMatchTier(await searchHashtags(sc, q, offset, fetchLimit),                                         q);
     case "posts":       return rankByMatchTier(await searchPosts(sc, q, userId, blockedSet, ageRestrictedSet, offset, fetchLimit),      q);
@@ -1808,7 +2061,17 @@ export async function dispatchSearch(
 
 // ── type=all fan-out ───────────────────────────────────────────────────────────
 //
-// All 17 non-"all" types run in parallel at FAN_LIMIT items each.
+// 17 of the 18 non-"all" types run in parallel at FAN_LIMIT items each.
+//
+// `saved` is the one deliberately LEFT OUT. It is the only viewer-scoped type
+// — the person's own saves, not a public corpus — and this fan-out feeds the
+// app's ONE global search as well as the map's. Folding a private, always-
+// matching bucket into "All" would change what every other surface shows, and
+// what census-discovery and census-input-intelligence measure, for the sake of
+// one Map spec heading. Map search asks for it explicitly alongside `all`
+// instead (src/components/map/MapSearchSheet.tsx), which is a decision this
+// lane can make about its own surface. Whether "All" should include your saves
+// is an owner's call, not a side effect.
 // Results are merged round-robin so no type dominates the top.
 // The merged pool is sliced at [globalOffset, globalOffset+limit].
 // hasMore = pool.length > globalOffset + limit.

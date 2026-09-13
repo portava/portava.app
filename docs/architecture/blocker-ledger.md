@@ -753,7 +753,7 @@ used everywhere and is not the problem. The RESOLUTION is copied.
 | --- | --- | --- | --- |
 | `lib/mapTravelers.ts` | canonical | was inline, order correct | **fixed** — now requests `buildMapPresenceProjections` (P98) |
 | `services/passport/PassportConsumerProjections.ts` | canonical | **a FIFTH copy, added by the fix above** | **fixed** — see below |
-| `routes/discoverySearch.ts:624` | canonical | `p.name` ALONE, and `display_name` was not even in the SELECT | **fixed** — adopts `presentedName`; a user with a display name was shown the other one |
+| `routes/discoverySearch.ts:642` | canonical | `p.name` ALONE, and `display_name` was not even in the SELECT | **fixed** — adopts `presentedName`; a user with a display name was shown the other one |
 | `routes/compass.ts:3672` | canonical | `display_name ?? name ?? username` inline | **NOT fixed — see below** |
 | `services/passport/PassportProjectionService.ts` | canonical | canonical | fine |
 

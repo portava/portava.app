@@ -46,7 +46,7 @@ export const discoverySearchQueryLimitMax = 50;
 
 export const DiscoverySearchQueryParams = zod.object({
   "q": zod.coerce.string().min(discoverySearchQueryQMin).max(discoverySearchQueryQMax).describe('Search query (minimum 2 characters, maximum 200). PostgREST metacharacters are stripped server-side.'),
-  "type": zod.enum(['all', 'travelers', 'buddies', 'events', 'trips', 'plans', 'places', 'hidden_gems', 'hashtags', 'posts', 'circles', 'stamps', 'activities', 'cities', 'countries', 'languages', 'interests', 'vibes']).default(discoverySearchQueryTypeDefault).describe('Content type to search. Defaults to \"all\".'),
+  "type": zod.enum(['all', 'travelers', 'buddies', 'events', 'trips', 'plans', 'places', 'hidden_gems', 'hashtags', 'posts', 'circles', 'stamps', 'activities', 'cities', 'countries', 'languages', 'interests', 'vibes', 'saved']).default(discoverySearchQueryTypeDefault).describe('Content type to search. Defaults to \"all\".'),
   "limit": zod.coerce.number().min(1).max(discoverySearchQueryLimitMax).default(discoverySearchQueryLimitDefault).describe('Maximum results per page (1-50). Defaults to 20.'),
   "cursor": zod.coerce.string().optional().describe('Opaque pagination cursor from a previous response nextCursor field.')
 })
@@ -56,7 +56,7 @@ export const discoverySearchResponseResultsItemTypeDefault = `all`;
 export const DiscoverySearchResponse = zod.object({
   "results": zod.array(zod.object({
   "id": zod.string().describe('Unique identifier of the result item'),
-  "type": zod.enum(['all', 'travelers', 'buddies', 'events', 'trips', 'plans', 'places', 'hidden_gems', 'hashtags', 'posts', 'circles', 'stamps', 'activities', 'cities', 'countries', 'languages', 'interests', 'vibes']).default(discoverySearchResponseResultsItemTypeDefault),
+  "type": zod.enum(['all', 'travelers', 'buddies', 'events', 'trips', 'plans', 'places', 'hidden_gems', 'hashtags', 'posts', 'circles', 'stamps', 'activities', 'cities', 'countries', 'languages', 'interests', 'vibes', 'saved']).default(discoverySearchResponseResultsItemTypeDefault),
   "title": zod.string().describe('Primary display text'),
   "subtitle": zod.string().nullable().describe('Secondary display text (e.g. @handle for travelers, city for events)'),
   "avatarUrl": zod.string().nullable().describe('Profile photo or avatar URL'),

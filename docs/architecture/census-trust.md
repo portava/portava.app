@@ -216,7 +216,7 @@ an ABSENT profile a non-buddy's Buddy row reads "Not yet rated" rather than "Not
 There is one `buildTrust`; every consumer variant is projected from the one `PassportProjection`
 (`PassportConsumerProjections.buildConsumerProjection`). So the seven call sites —
 `routes/trips.ts:467`, `routes/rentABuddy.ts:1248`, `services/passport/EventPassportService.ts:423`,
-`routes/discoverySearch.ts:2087`, `routes/compass.ts:4225`, `routes/telegraph.ts:370`,
+`routes/discoverySearch.ts:2350`, `routes/compass.ts:4225`, `routes/telegraph.ts:370`,
 `routes/safeReturn.ts:1185#buildConsumerProjection` — all inherit the fix. *(Cited `:852` until 2026-09-12; that line was never the call, which is at the `buildConsumerProjection(db, "safety", …)` site — a range-only citation that stayed green while wrong, the §37 class. Anchored now.)* But note what each actually ships:
 
 | Consumer | Variant | Carries `domains`? | Reached by the constant-50 "Established" defect? | Changed by #467? |

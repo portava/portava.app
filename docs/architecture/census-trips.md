@@ -6622,12 +6622,12 @@ rows stay W with the reason narrowed to the gate alone.
   `TRIP_TEMPORAL_CONFLICT`, the commitments named
   (`routes/rentABuddy.ts:2132#error: "trip_time_conflict"`); every other verdict
   rides on the 201. Discovery search takes `tripId`
-  (`routes/discoverySearch.ts:1985#tripId: ctxTripId,`), reads the windows once
-  (`routes/discoverySearch.ts:785#const read = await readTripWindows(sc, ctx.tripId, userId);`),
+  (`routes/discoverySearch.ts:2248#tripId: ctxTripId,`), reads the windows once
+  (`routes/discoverySearch.ts:803#const read = await readTripWindows(sc, ctx.tripId, userId);`),
   places each event's start against them as `metadata.tripFit`
   (`domain/trips/services/TripFreedomConsumers.ts:153#export function fitInstantToWindows(`)
   and leads with the ones that fit, stably, AFTER the match-tier ranking
-  (`routes/discoverySearch.ts:804#function leadWithTripFit(`). Tests: the
+  (`routes/discoverySearch.ts:822#function leadWithTripFit(`). Tests: the
   verdicts against the real freedom projection on the health fixture's Paris
   trip — 13:00 local FITS, 11:30 crosses A, 17:30 runs into B's reserved
   travel, a later date OUTSIDE_TRIP, no start time UNPLACED, gate closed or
