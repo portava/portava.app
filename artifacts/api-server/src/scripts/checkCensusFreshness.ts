@@ -1522,6 +1522,22 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "travel-buddy-standalone/src/platform/input-assistance/components/suggestionBadges.ts",
     "artifacts/api-server/src/test/inputAssistanceRankingSignals.test.ts",
     "artifacts/api-server/src/test/inputAssistanceFieldInventory.test.ts",
+    // WIDENED 2026-09-13 by §9 (Phase 10). Same rule as §8's widening: a census
+    // must watch what it CITES, and §9 cites these three as the evidence for six
+    // moved rows. `lib/inputAssistance/semanticParser.ts` is not repeated here —
+    // the directory entry at the top of this list already covers it — but its
+    // test file was unwatched, which meant the §18 sequence-operator proof could
+    // have been deleted without ageing this census.
+    "artifacts/api-server/src/test/inputAssistanceSemanticIntent.test.ts",
+    "travel-buddy-standalone/src/platform/input-assistance/components/__tests__/suggestionAccessibility.component.test.tsx",
+    "travel-buddy-standalone/src/platform/input-assistance/hooks/__tests__/useInputAssistance.localTier.component.test.tsx",
+    // §9.4 cites this migration as the evidence that the §35 selection-memory
+    // table is written and unapplied. It is THIS lane's migration, so it is
+    // watched by name — the same treatment 2220 already gets, and for the same
+    // reason. The Map / Passport / Wall telemetry migrations §9.4 also names are
+    // deliberately NOT here: they are other lanes' files, and watching them would
+    // age this census every time those lanes touch their own telemetry.
+    "artifacts/api-server/src/migrations/2258_input_selection_history.sql",
   ],
   "census-discovery.md": [
     // WIDENED 2026-09-13 with A20's new evidence. That row was re-measured N → W

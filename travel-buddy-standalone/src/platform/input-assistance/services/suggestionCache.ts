@@ -126,6 +126,47 @@ export class SuggestionCache {
     return this.get(key) !== null;
   }
 
+  /**
+   * §33 tier 1 / §34 "prefer local: cached city prefix matching" — the entry for
+   * the LONGEST cached query that is a strict prefix of `query`, or null.
+   *
+   * WHY THIS EXISTS. Until it did, the cache was keyed by the WHOLE query
+   * string, so it only ever answered a query the user had typed before,
+   * character for character. Typing forward — "ba" → "ban" → "bang" — missed on
+   * every keystroke even though the answer for "ba" was sitting in the map, and
+   * §33's middle tier ("1 char → local/cache prefix match") had no substrate at
+   * all: a cache miss went straight to the network. The empty prefix is included
+   * deliberately, because a field's zero-state entry is cached under `''` and is
+   * exactly the local list a 1-character query should be narrowed out of.
+   *
+   * The search is by CONSTRUCTED KEY, never by parsing keys back apart: the
+   * fieldId segment can itself contain the `|` separator (the §22 AI variant
+   * appends a JSON blob), so splitting a key is not safe. At most
+   * `query.length` map lookups, each O(1), longest prefix first — so the most
+   * specific cached answer wins and the scan stops there.
+   *
+   * The rows this returns were the server's answer for a SHORTER query and are
+   * therefore a superset, never a subset: they must be narrowed to the typed
+   * text before being shown. `narrowToQuery` (suggestionRanking.ts) is that
+   * step, and this method deliberately does not do it — a cache should not know
+   * how a suggestion row matches.
+   */
+  longestPrefix(
+    fieldId: string,
+    query: string,
+    lat?: number | null,
+    lng?: number | null,
+  ): { query: string; suggestions: InputSuggestion[] } | null {
+    const q = query.trim().toLowerCase();
+    // Strictly shorter than `q` — the exact key is the caller's own SWR hit.
+    for (let n = q.length - 1; n >= 0; n--) {
+      const prefix = q.slice(0, n);
+      const hit = this.get(SuggestionCache.key(fieldId, prefix, lat, lng));
+      if (hit) return { query: prefix, suggestions: hit };
+    }
+    return null;
+  }
+
   clear(): void {
     this.map.clear();
   }

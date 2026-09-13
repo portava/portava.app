@@ -6,7 +6,7 @@
 | **`.docx` reconciliation** | The `.txt` and the `.docx` are **identical** after whitespace/Unicode normalisation. I extracted `word/document.xml`, stripped tags, NFC-normalised and collapsed whitespace on both sides: 508 non-empty lines each, `difflib` diff length **0**. The "`.docx` is authoritative" clause never had to be exercised, and no verdict here rests on a transcription difference. |
 | **Section count** | The brief said 59. **It is 58** (`§1 Product Definition` … `§58 Final Architecture Principle`; verified by `grep -nE '^[0-9]+\. '`, which returns 58 headings plus one false positive at line 101 — §9's inline "1. Exact canonical Portava entity…" ranked list). Four sibling censuses found their briefed section counts wrong; this is a fifth. |
 | **Tree censused** | `claude/portava-continuation-uqta94`, HEAD `68ed59d9`. |
-| `head_commit` | `579694d6` — RE-DECLARED 2026-09-13 by §8, replacing `42aeac38`. It **starts a clock; it does not certify a past.** Read the next row before quoting it, and read §8.9 for what this re-declaration cost: the acknowledgement written against `42aeac38` is spent and was deleted. |
+| `head_commit` | `90a515a6` — RE-DECLARED 2026-09-13 by §9, replacing `579694d6` (itself a §8 re-declaration of `42aeac38`). It **starts a clock; it does not certify a past.** Read the next row before quoting it, and read §9.9 for what this re-declaration is and is not worth. `579694d6` carried no acknowledgement of its own, so nothing was spent to replace it — the only ledger edit §9 makes is to **census-discovery**, whose entry is extended with an argument for the one `lib/inputAssistance/` file this pass changed. |
 | **What that declaration does and does not say** | `42aeac38` is #476's squash — the commit where this document itself reached `main`. Its verdicts were taken at a pre-squash working tree that **exists nowhere**: verified against FULL history (`git fetch --unshallow`, 4,300 commits, then `git cat-file -e`), not assumed — a shallow clone had made every such commit look unresolvable for the wrong reason. So `nobody` can diff that tree against `42aeac38`, and this declaration **does not claim that interval was empty**. What it claims is mechanically checked: `git diff --name-only 42aeac38..HEAD` over the paths in `CENSUS_SCOPE` returns **0 files**, and from here any change to one of them ages this census. Before it, `check:census-freshness` reported this document as CANNOT BE CHECKED — the weakest of the three states, not the safest. FRESH means *no counted file has moved since `42aeac38`*; it does **not** mean the rows were re-read, and none has been. Declared by the Trips lane while recounting the sibling census; if this lane disagrees, reverting costs only the check. |
 | **Method** | Requirement-level, four buckets, exactly one bucket per requirement. Every BUILT verdict cites a `file:line` I opened and read. |
 | **Database** | Not queried. Every production fact below comes from the supplied ground truth, from `src/scripts/checkProductionDrift.ts` (which records a direct CI-vs-production comparison), or from a commit message whose author did measure it. |
@@ -1344,7 +1344,7 @@ CORRECT is still C minus the count of `ᵖ` rows, which is still 23.
 | G181 | N | **C** | §20 **Hidden Gem protection label**. `gemSearchPosition` already decided whether a gem may carry a centroid and wrote it to `metadata.coordsPrecision`; the projection dropped the whole bag, so a protected gem rendered identically to an unprotected one. `lib/inputAssistance/rankingSignals.ts:151#gemLocationPrecision` reads that word into `lib/inputAssistance/types.ts:271#locationPrecision` at `lib/inputAssistance/projection.ts:117#gemLocationPrecision`. A precision WORD, never a position: `'exact'` is not in the union because the gem path cannot produce one, and a test serialises the row and greps for the centroid. |
 | G356 | N | **C** | §50 **the field inventory exists.** Three source files cited "the client audit's §50 field table" as an existing artifact and a repo-wide search returned only those three references to it. `travel-buddy-standalone/src/platform/input-assistance/contexts/fieldInventory.ts:102#FIELD_INVENTORY` is that table — 24 records, one per registered fieldId — and `src/test/inputAssistanceFieldInventory.test.ts:201#registrars` refuses a registered field that is not inventoried. The three dangling citations now point at it. |
 | G357 | N | **C** | §50 **the per-field record.** `fieldInventory.ts:415#fieldInventoryRow` merges the recorded half (screen/route, component file, current implementation, provider, zero-state, validation, known issues, migration status) with the four attributes `INPUT_CONTEXT_REGISTRY` already owns (desired mode, entity types, offline policy, privacy class) rather than copying them, so the row cannot disagree with the registry. Every `componentFile` is asserted to exist on disk, and `migrationStatus` is MEASURED, not claimed: `src/test/inputAssistanceFieldInventory.test.ts:296#mounted` scans `src/` and `app/` for each fieldId. |
-| G31 | N | **C** | §29 **`privacyClass` has a reader.** It was declared on all 29 contexts and read by nothing — deleting it would have changed no behaviour. `travel-buddy-standalone/src/platform/input-assistance/services/suggestionCache.ts:41#UNCACHEABLE_PRIVACY_CLASSES` and `:55#isCacheablePrivacyClass` now gate the process-global suggestion cache, wired at `hooks/useInputAssistance.ts:148#isCacheablePrivacyClass` (read) and `:189#sharedSuggestionCache.set` (write). Not hypothetical: `telegraph.recipient` is `personal` AND mounted, so a global map was holding a list of PEOPLE under the raw prefix the viewer typed and serving it back without a round trip that could re-check eligibility. |
+| G31 | N | **C** | §29 **`privacyClass` has a reader.** It was declared on all 29 contexts and read by nothing — deleting it would have changed no behaviour. `travel-buddy-standalone/src/platform/input-assistance/services/suggestionCache.ts:41#UNCACHEABLE_PRIVACY_CLASSES` and `:55#isCacheablePrivacyClass` now gate the process-global suggestion cache, wired at `hooks/useInputAssistance.ts:148#isCacheablePrivacyClass` (read) and `:222#sharedSuggestionCache.set` (write). Not hypothetical: `telegraph.recipient` is `personal` AND mounted, so a global map was holding a list of PEOPLE under the raw prefix the viewer typed and serving it back without a round trip that could re-check eligibility. |
 
 ### 8.5 One row whose evidence was false, verdict unchanged
 
@@ -1485,3 +1485,439 @@ residue is recorded there rather than hidden: census-discovery's unanchored two-
 citation into `lib/inputAssistance/gateway.ts` (its 27-and-384 pair) now points 15
 lines high at its second part. That is a stale pointer in another census's citation, not a moved
 verdict, and re-pointing it is that census's to do.
+
+---
+
+## 9. Phase 10 — the CORRECTNESS gap, grouped and then worked
+
+§8 closed the counting. What it left is the only thing left: **the W column.**
+CONSTRUCTED% and CORRECT% differ by exactly the BUILT-BUT-WRONG rows — 69 of
+them, 18.5 points — and every one of those is a thing the programme paid to
+build and did not finish. This section groups all 69 by *why* they are W,
+builds six of them, and says precisely what blocks the largest group it did not
+build. Measured and built at `90a515a6`.
+
+**Nothing here re-labels a row.** §8 was explicit that of its +8.0-point move,
++6.2 was a tallier learning to read a superscript. There is no such move
+available now — every one of the 373 rows already parses — so all of §9's
+movement is code, and the constructed percentage does not move at all. Only
+CORRECT% does, which is the whole point: **the gap is what shrinks.**
+
+### 9.1 The 69 BUILT-BUT-WRONG rows, grouped by blocker
+
+Every W row was re-read and assigned to exactly one group, by its **dominant**
+blocker — several rows have a second one, and where that matters it is named.
+The group sizes are the useful output: they say where the remaining 69 actually
+live, and they say that only two of the five groups are reachable from a branch
+at all.
+
+| group | count | what it means | reachable from a branch? |
+| --- | --- | --- | --- |
+| **(a) logic wrong in code** | 13 | A production path runs and does the wrong thing. Nothing is missing; something is incorrect. | **Yes** |
+| **(b) logic right, nothing reaches it** | 14 | A correct, tested implementation exists and no production path calls it. | **Yes** |
+| **(c) emits into a sink nothing consumes** | 6 | The §44/§45 telemetry chain. The event is defined, scrubbed, policy-gated — and its destination is `() => {}`. | **No — see §9.4** |
+| **(d) capped by a flag or migration** | 6 | The code is right and the column, table or flag it needs is absent from production. | **No — owner action** |
+| **(e) needs something nobody has written** | 30 | Not a defect and not a wiring gap: the thing itself does not exist. | Yes, but it is building, not fixing |
+
+**(a) logic wrong in code — 13.**
+G16, G33, G53, G62, G66, G107, **G115**, G173, **G210**, G211, G277, **G324**,
+**G329**. Four are built below. The nine left are, in rough order of how wrong
+they are: `searchCountries` aggregating `profiles.home_country` so a country
+with no users in it does not exist (G277); emoji surviving `sanitizeQuery` into
+the `ilike` pattern to match nothing (G62); `neighborhood → 'cities'` so a
+neighbourhood picker returns cities (G66); two engines racing on every
+keystroke of the main search screen (G16); the client and server declaring
+different `telemetryPolicy` shapes under a header that claims they match
+byte-for-byte (G33); §16 carryover being a reorder rather than a constraint
+(G107); a plain `ScrollView` where §33 asks for virtualization (G211); the
+keyboard-occlusion guarantee resting on an argument rather than a mechanism
+(G173); and §9's 11-step trust order reproduced as 6 of 11 (G53).
+
+**(b) logic right, nothing reaches it — 14.**
+G6, G18, G98, G109, G116, G122, G124, G125, G190, **G204**, **G214**, G261,
+G305, G359. Two are built below. This is the group §8 named as the reason six
+of its seven moved rows were N: *something was declared, computed or selected,
+and nothing read it.* It is still the second-largest group, and it is the
+cheapest per row. The three biggest single items in it are one function with
+one caller (`filterInfeasibleCandidates` covers G122/G124/G125 between them), a
+protected-place gate the suggestion path never consults (G190), and a
+`open_compass` action the server emits that every client surface drops (G305).
+
+**(c) emits into a sink nothing consumes — 6.** G5, G14, G263, G306, G323,
+G355. §9.4.
+
+**(d) capped by a flag or migration — 6.** G57 (migration 2220's `search_key`),
+G75, G85, G89, G213, G226 (migration 2258's `input_selection_history`). None
+moved and none can; they are the deployment actions §3 lists.
+
+**(e) needs something nobody has written — 30.** G13, G61, G67, G71, G82, G90,
+G96, G102, G104, G134, G136, G147, G172, G179, G198, G199, G216, G224, G228,
+G233, G240, G241, G260, G274, G283, G340, G341, G344, G350, G361.
+
+13 + 14 + 6 + 6 + 30 = 69.
+
+### 9.2 What this pass built
+
+**§33/§34 — the local prefix tier (G204, G214, and the defect under G210).**
+The SWR cache was keyed by the WHOLE query string, so it only ever answered a
+query the user had typed before, character for character. Typing forward — "ba"
+→ "ban" → "bang" — missed on every keystroke even though the answer for the
+shorter prefix was in the map, and §33's middle rung ("1 char → local/cache
+prefix match") had no substrate at all: a miss went straight to the network.
+Meanwhile `queryNormalization.ts` already held a diacritic/stroke/alias fold
+and `matchesGeographicQuery`, fully unit-tested, with **no production
+consumer** — group (b) exactly.
+
+`travel-buddy-standalone/src/platform/input-assistance/services/suggestionCache.ts:154#longestPrefix`
+finds the longest cached STRICT prefix of the typed text, by constructed key
+rather than by parsing keys apart (the fieldId segment can itself contain the
+`|` separator — the §22 AI variant appends a JSON blob — so splitting a key is
+not safe). The empty prefix is deliberately in range, because a field's
+zero-state list is cached under `''` and is exactly the local list a
+one-character query should be narrowed out of.
+`travel-buddy-standalone/src/platform/input-assistance/services/suggestionRanking.ts:94#narrowToQuery`
+narrows those rows to the typed text. It is **strictly subtractive** — it can
+only drop rows, never add, reorder, re-score or rewrite one — so §42's "the
+server is the ranking authority" is untouched; it decides only which of the
+rows the server already returned survive another keystroke. Query-derived rows
+are never reused at all
+(`travel-buddy-standalone/src/platform/input-assistance/services/suggestionRanking.ts:71#LOCALLY_REUSABLE_TYPES`):
+a `completion` carries the old text in `replacementText` and would submit it, a
+`correction`/`validation` judged a string the user has since changed, an
+`ai_suggestion` was written for it. The hook consults both at
+`travel-buddy-standalone/src/platform/input-assistance/hooks/useInputAssistance.ts:175#localTier`.
+
+**§33 — network loss retains the rows (G210).** The `unavailable` branch called
+`setSuggestions([])`. §33 asks for the opposite in the same sentence: *"retain
+local/cached suggestions"* and explicit degraded behaviour. The degraded state
+was right and the retention was inverted — the last good rows were discarded at
+the one moment the user cannot get new ones. It now serves the narrowed local
+list at
+`travel-buddy-standalone/src/platform/input-assistance/hooks/useInputAssistance.ts:240#setSuggestions`,
+and with nothing local to retain it is `[]`, the old behaviour exactly.
+
+**§29 is not weakened by any of this, and that is checked rather than asserted.**
+The local tier reads the same process-global cache the §8 `privacyClass` gate
+guards, so an uncacheable field (`personal` / `sensitive` / `private_message`)
+neither writes to it nor reads from it here. The test that proves it seeds the
+cache DIRECTLY for `telegraph_recipient` and asserts the hook still serves
+nothing, which isolates the read guard from the write guard instead of leaning
+on the write guard to make the read guard look correct.
+
+**§46 — the selection result is announced (G324).** `handleSelect` emitted
+telemetry, applied the replacement text and closed the overlay: three state
+changes, none of them perceivable. A screen-reader user heard the list vanish
+and nothing else.
+`travel-buddy-standalone/src/platform/input-assistance/components/SmartInput.tsx:87#selectionAnnouncement`
+is the sentence and
+`travel-buddy-standalone/src/platform/input-assistance/components/SmartInput.tsx:153#announceForAccessibility`
+is the call. The `applied` argument is load-bearing, not decorative: a row
+carrying `replacementText` rewrites the field under the cursor and a row that
+does not (an action, a validation, a caller that handled insertion itself)
+leaves it exactly as typed. Announcing "Field updated" in the second case would
+be a false statement about the user's own text, which is worse than silence.
+
+**§46 — a non-colour active indicator (G329).** The keyboard-active row
+differed from every other row by `backgroundColor` alone, so a sighted user who
+cannot resolve that hue had no way to tell which row Enter would take;
+`accessibilityState.selected` serves assistive tech and does nothing for them.
+`travel-buddy-standalone/src/platform/input-assistance/components/EntitySuggestionRow.tsx:78#activeSlot`
+adds a second channel: a caret glyph present on the active row and absent
+everywhere else. Presence/absence of a mark survives any colour vision, any
+contrast setting and a greyscale screenshot. The slot keeps its width either
+way so arrowing down the list does not reflow the text, and the caret is hidden
+from assistive tech
+(`travel-buddy-standalone/src/platform/input-assistance/components/EntitySuggestionRow.tsx:84#ia-row-active-marker`)
+because `selected` already carries the fact and a second reading of it is noise.
+
+**This is also the FIRST accessibility test in the layer.** §46's closing note
+in §4 records that all 24 existing test files were listed and none referenced
+`accessibilityLabel`, `accessibilityRole` or any a11y assertion. Two §46 rows
+were BUILT-BUT-WRONG underneath that silence.
+`travel-buddy-standalone/src/platform/input-assistance/components/__tests__/suggestionAccessibility.component.test.tsx:83#NON-COLOUR marker`
+is where it stops being silent.
+
+**§18 — "on the way" could not split a sequence (G115).** §18 names six
+sequence operators; five split. `extractGeo` runs on the whole query BEFORE
+`splitSequence` and used to `strip` this one out as its `along` relationship,
+so by the time the splitter ran there was nothing left to split on: *"food on
+the way to the club"* parsed as ONE stage. The phrase is genuinely both
+operators — §18 lists it under sequence, `extractGeo` reads it as a
+relationship — and it is now recorded as the relationship at
+`artifacts/api-server/src/lib/inputAssistance/semanticParser.ts:431#ALONG_RE`
+and left in place for
+`artifacts/api-server/src/lib/inputAssistance/semanticParser.ts:513#ALONG_RE`
+to consume. The regex is shared, not retyped, so the two readings can never
+drift into covering different phrases. A one-stage query is unchanged: the
+splitter drops its own separators, so *"coffee along the way"* still yields one
+stage with raw `coffee`.
+
+### 9.3 Row moves
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| G204 | W | **C** | §33's tier ladder has its middle rung. `suggestionCache.ts:154#longestPrefix` + `suggestionRanking.ts:94#narrowToQuery` are consulted at `useInputAssistance.ts:175#localTier` BEFORE the network answers, so a keystroke past a cached prefix renders locally instead of showing nothing until a round trip completes. The revalidation request still goes out — that is SWR, and the hook's own header has always said "still server-assisted if minChars ≤ 1". Proven at `travel-buddy-standalone/src/platform/input-assistance/hooks/__tests__/useInputAssistance.localTier.component.test.tsx:98#renders local rows before the server answers`. |
+| G214 | W | **C** | §34 "prefer local: cached city prefix matching" has a prefix index. The row's exact complaint — *"the SWR cache is keyed by the whole query string … There is no prefix index"* — is answered by `suggestionCache.ts:154#longestPrefix`, which is O(len(query)) O(1) lookups, longest prefix first, TTL- and coordinate-respecting. The fold that makes "danang" match "Đà Nẵng" and "hcmc" match "Ho Chi Minh City" is the pre-existing `queryNormalization`, now reached for the first time. |
+| G210 | W | **C** | §33 "network loss: retain local/cached suggestions **and** explicit degraded behaviour" — both halves. The degraded half was already exact; the retention half was inverted (`setSuggestions([])`). `useInputAssistance.ts:240#setSuggestions` now retains the narrowed local list while still setting `unavailable`. Proven at `travel-buddy-standalone/src/platform/input-assistance/hooks/__tests__/useInputAssistance.localTier.component.test.tsx:110#RETAINS`. |
+| G324 | W | **C** | §46's fourth announcement exists. Purpose, count and active row were already wired; the selection result was not. `SmartInput.tsx:153#announceForAccessibility` speaks it, and `SmartInput.tsx:87#selectionAnnouncement` says "Field updated" only when the field really was rewritten. Proven at `travel-buddy-standalone/src/platform/input-assistance/components/__tests__/suggestionAccessibility.component.test.tsx:204#never claims it did`. |
+| G329 | W | **C** | §46 "non-color-only state indicators". The active row now carries a caret glyph as well as its background tint (`EntitySuggestionRow.tsx:78#activeSlot`), so the state survives greyscale. The caret is hidden from assistive tech on purpose — `accessibilityState.selected` already carries it. |
+| G115 | W | **C** | §18's sixth sequence operator fires. `semanticParser.ts:431#ALONG_RE` records the relationship without consuming the phrase, and `semanticParser.ts:513#ALONG_RE` splits on it, so *"food on the way to the club"* is two stages and still `along`. Proven at `artifacts/api-server/src/test/inputAssistanceSemanticIntent.test.ts:324#on the way`. |
+
+Six rows, all W → C. **CONSTRUCTED% does not move** — these were already
+counted as constructed, which is exactly what made them the gap.
+
+### 9.4 §44 telemetry: what blocks it, precisely
+
+The brief that commissioned this pass asked for the §44 emitters and described
+them as "nine rows sitting at W because the sink is `() => {}`". **They are
+not at W. G311 and G313–G320 are `N`** — no call site exists at all — and §8.8
+declined to add the call sites for a stated reason: doing so would move them
+**N → W**, which widens the very gap this pass exists to close. That reasoning
+still holds and this pass did not add them either.
+
+The row that *is* at W is **G306**, and its failing half is the destination.
+The question §9 was asked to settle is whether that destination can be given
+"on this branch with no migration and no flag". **It cannot, and here is the
+mechanical reason rather than an opinion:**
+
+1. **There is no table.** `ls artifacts/api-server/src/migrations | grep -iE
+   'input|telemetry'` returns five files. Three are sibling lanes' telemetry
+   ingests — the Map, Passport and Wall telemetry-event migrations, numbered
+   2202, 2287 and 2308 — and two are §35 selection memory
+   (`artifacts/api-server/src/migrations/2258_input_selection_history.sql:1#input_selection_history`)
+   and a Map refusal event. **There is no §44 events table in the migration set
+   at all.** Not unapplied: absent. The three sibling migrations are named by
+   number rather than cited by path on purpose: they are other lanes' files, and
+   watching them would age THIS census every time Map, Passport or Wall touch
+   their own telemetry.
+2. **Every sibling that closed this closed it WITH a migration.** Map, Passport
+   and Wall each shipped a table, a route and a collection flag. The Passport
+   ingest says so in its own header: *"With `passport_telemetry_enabled` OFF
+   (its shipped state) every accepted event is still a no-op inside
+   `recordPassportEvent` — the route is the transport, the flag is the
+   collection decision."* A §44 destination built to that pattern needs all
+   three of the things the brief excludes.
+3. **The one destination that does exist is itself dead.** `/input-assistance/select`
+   writes `input_selection_history`, and `src/scripts/checkProductionDrift.ts`
+   classifies that table `"unapplied"`, *"In portava-ci, absent from
+   production."* So the lane's only existing write path is the ☠prod group (d)
+   already knows about.
+4. **A device-local sink would be a `⌀`.** The alternative to a server is to
+   keep the events on the device — but §42 makes ranking server-owned, so
+   nothing on the client could consume them, and a sink whose only reader is
+   itself is the same black hole with a longer name.
+
+So **G306 stays W**, and G5, G14, G263, G323 and G355 stay W with it. That is
+six rows this pass could have made *look* better by emitting nine more events
+into nothing, and did not. The honest statement is the one §8.8 already made
+and this pass re-verified: **§44 is an owner decision about a migration, not a
+coding gap.**
+
+### 9.5 Evidence found false, verdicts unchanged
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| G233 | W | **W** | Verdict stands; **half the stated evidence is now false.** The row reads *"the verification flags are dropped before projection (G180), so a viewer cannot even tell the real account from the copy."* They are not dropped. §8's G180 build added `artifacts/api-server/src/lib/inputAssistance/projection.ts:114#verified` and `:115#official`, and `travel-buddy-standalone/src/platform/input-assistance/components/suggestionBadges.ts:42#Official` renders both as badges — so a viewer CAN now tell them apart, and §8's `applyTrustConfidence` additionally ranks the verified account above the copy. What is still true is the row's first clause, and it is the whole reason the verdict does not move: **nothing in the suggestion path detects or demotes an impersonating handle.** No confusable/homoglyph comparison exists anywhere in the layer. The row is W for one reason now, not two. |
+
+**A second falsity, and it is larger than one row.** §4's citations into the
+files this pass edited do not resolve, and — checked rather than assumed —
+**most of them did not resolve at the base commit either.** Three, opened at
+`f8384ea5` before a line of this pass was written:
+
+- G307 points at SmartInput.tsx line 170 for the `input_opened` emit. Line 170
+  held `autoCapitalize={textInputProps.autoCapitalize ?? 'none'}`.
+- G309 points at useInputAssistance.ts line 161 for `suggestion_request_started`.
+  Line 161 was blank.
+- G329 points at EntitySuggestionRow.tsx lines 97 to 99 for `rowActive`. Those
+  three lines held closing JSX.
+
+All three verdicts are right — the emitters and the style rule do exist, at
+`SmartInput.tsx:212#input_opened`, `useInputAssistance.ts:200#suggestion_request_started`
+and `EntitySuggestionRow.tsx:145#rowActive`. What is wrong is every pointer.
+**This is what the UNANCHORED ceiling is for and it is why that ceiling must
+keep falling:** `check:doc-citations` caught all three of the *anchored*
+citations this pass invalidated and repointed them; it caught none of the ~60
+unanchored ones, because a bare `path:line` carries nothing that can be
+checked. §4 is deliberately NOT rewritten — it is a measurement taken at a tree,
+and editing it to match a later one is the habit this census refuses — but no
+reader should take an unanchored §4 pointer as a coordinate. Every citation
+§9 adds is anchored.
+
+### 9.6 Mutations applied, watched go red, reverted, `cmp`-verified
+
+Thirteen. Each was applied to the real file, the named suite was run and
+watched fail, the file was restored from a backup taken before the edit, and
+`cmp` compared the two byte-for-byte (clean in every case).
+
+| mutation | suite | failures |
+| --- | --- | --- |
+| `suggestionCache.ts`: scan prefixes from `n = q.length` (include the exact key) | raceAndCache | 1 |
+| `suggestionCache.ts`: scan prefixes shortest-first | raceAndCache | 1 |
+| `suggestionRanking.ts`: drop the `LOCALLY_REUSABLE_TYPES` gate | raceAndCache | 1 |
+| `suggestionRanking.ts`: `narrowToQuery` returns its input unfiltered | raceAndCache | 3 |
+| `useInputAssistance.ts`: restore `setSuggestions([])` in the `unavailable` branch | localTier | 1 |
+| `useInputAssistance.ts`: delete the `if (localTier) setSuggestions(localTier)` block | localTier | 1 |
+| `useInputAssistance.ts`: drop the `cacheable` guard on `localTier` | localTier | 1 |
+| `SmartInput.tsx`: delete the `announceForAccessibility` call | suggestionAccessibility | 2 |
+| `SmartInput.tsx`: pass a literal `true` for `applied` | suggestionAccessibility | 1 |
+| `EntitySuggestionRow.tsx`: never render the caret | suggestionAccessibility | 3 |
+| `EntitySuggestionRow.tsx`: render the caret unconditionally | suggestionAccessibility | 2 |
+| `semanticParser.ts`: restore `strip(ALONG_RE)` in the `along` branch | semanticIntent | 1 |
+| `semanticParser.ts`: drop `ALONG_RE.source` from `SEQUENCE_SPLIT_RE` | semanticIntent | 3 |
+
+**Two assertions that could not have failed were caught while writing them, and
+are recorded here rather than quietly fixed** — §8.6 found one of this shape (a
+trust ceiling satisfied by a term that does nothing) and asked the next pass to
+look for more.
+
+1. **The negative caret assertion.** RNTL's queries exclude
+   accessibility-hidden elements by default, and the caret is deliberately
+   hidden from assistive tech. "An inactive row carries no marker" therefore
+   passed for a caret that WAS rendered — the mutation "render the caret
+   unconditionally" left it green. Every caret query now passes
+   `{ includeHiddenElements: true }`, including the negative one, and that
+   mutation now fails.
+2. **The announcement sentence tested without its call site.** The first draft
+   asserted `selectionAnnouncement`'s output and spied on `AccessibilityInfo`
+   in isolation. Both would have stayed green with the call deleted from
+   `SmartInput` — a perfect sentence nobody speaks, which is the exact state
+   §46 was BUILT-BUT-WRONG in. The suite now drives the real `SmartInput`,
+   presses a real row, and asserts what left the component.
+
+A third, smaller one is worth naming because it wasted a run: RNTL 14.0.1's
+`render` is ASYNC. An un-awaited `render` returns a Promise whose query methods
+are `undefined`, which surfaces as a confident-looking `TypeError` rather than
+as a failed assertion. Both new suites await it.
+
+### 9.7 Restated headline
+
+> | Measure | was (§8.7) | now (§9) |
+> | --- | --- | --- |
+> | **Denominator — testable requirements** | 373 | **373** |
+> | BUILT-AND-CORRECT | 237 | **243** |
+> | BUILT-BUT-WRONG | 69 | **63** |
+> | NOT-BUILT | 63 | **63** |
+> | CANNOT-VERIFY | 4 | **4** |
+> | **CONSTRUCTED%** = (C+W)/373 | 82.0 % | **306 / 373 = 82.0 %** |
+> | **CORRECT%** (raw) = C/373 | 63.5 % | **243 / 373 = 65.1 %** |
+> | **CORRECT% (spec-attributable)** = (C−23ᵖ)/373 | 57.4 % | **220 / 373 = 59.0 %** |
+> | **THE GAP** = W/373 | **18.5 %** | **63 / 373 = 16.9 %** |
+> | CANNOT-VERIFY share | 1.1 % | **4 / 373 = 1.1 %** |
+
+243 + 63 + 63 + 4 = 373, so the four buckets still sum to the denominator and
+`check:census-integrity`'s strictest rule stays switched on. The constructed
+figure is **identical** before and after, deliberately: a pass that closes the
+correctness gap cannot move it, and any pass that claims both numbers rose by
+the same work has counted something twice.
+
+None of the six moved rows carries `ᵖ`. The prefix tier reuses pre-existing
+fold helpers, but the tier that consumes them did not exist yesterday, so the
+spec-attributable count rises by the full six and the `ᵖ` population is still
+the same 23 §8.3 lists.
+
+**P25 — what would turn this red?** Any of: a `check:census-integrity` run
+where the four buckets stop summing to 373; any of the thirteen mutations in
+§9.6 being applied and its named suite staying green; `check:doc-citations`
+finding an anchor absent from the first line of a cited range; or a reader
+opening `suggestionCache.ts:154#longestPrefix` and finding that the hook does
+not call it — which is the failure mode group (b) exists to name, and the
+reason both new rows are proven through the hook rather than through the pure
+function alone.
+
+### 9.8 CEILING — what was not built, and why
+
+**Nothing in §9.2 is behind a flag or a migration**, so all six rows are true on
+every deployment that runs this code. The same caveat §8.8 attached applies
+unchanged and is not weakened by repetition: built on a branch is not merged,
+merged is not deployed, deployed is not in a shipped app binary, and the §46
+work reaches a human only where a screen mounts the SDK row — **8 fieldIds of
+24**, by this census's own inventory.
+
+Carried forward from §8.8 and **re-checked**, not assumed:
+
+1. **§48 capability handshake (G343).** The reasoning still holds. There is
+   still exactly one client;
+   `travel-buddy-standalone/src/platform/input-assistance/search/smartActions.ts:40#DISPATCHABLE_ACTION_TYPES`
+   is still the single closed set, and the actions outside it are still
+   `share_entity` / `drop_pin` (no producer, G303) and `open_compass` (whose
+   rows carry `replacementText` and are usable as text anyway). A handshake
+   that filters nothing is a `C ⌀`, and a `⌀` bought with a day of work is
+   worse than an honest `N`. **Left as is, on purpose.**
+2. **§32 client static dictionaries (G197 / G212).** Still unreachable, and the
+   §8.4 field inventory is what proves it: the three contexts with
+   `offlinePolicy: 'static_dictionary'` are `country_picker`, `language` and
+   `interest`, and none of them is mounted.
+3. **§20 distance (G176).** Still an owner decision, not a coding one, and §8.5
+   already recorded that the row's stated evidence is false in the other
+   direction: there is no `distanceKm` on `SearchResult` to be "dropped by the
+   whitelist". Not built.
+4. **§24 paste (G154–G162, G337), §25 dictation (G163), §30 precedence (G192).**
+   Untouched, for §8.8's reasons.
+5. **§44 emitters and the §45 loop.** §9.4.
+
+**What §9 chose not to build inside its own reachable groups, and why** — this
+is the part a reader should hold against it:
+
+- **§20's constraint filter (G122/G124/G125) was examined and deliberately not
+  wired.** It is the most tempting item in group (b): a correct, mutation-proven
+  `filterInfeasibleCandidates` with exactly one caller, and three W rows behind
+  it. It was not wired because the wiring would have been **vacuous**, and that
+  was checked rather than guessed: the function's soft half REORDERS candidates
+  feasible-first, and `orderSuggestions` re-sorts everything afterwards by
+  `TYPE_RANK` then confidence, so a pre-projection reordering survives only as a
+  stability tiebreak among rows that already tie on both keys. Its hard half
+  (`blocked` / `sensitiveExact`) is already enforced upstream by the §29 gate and
+  by `gemSearchPosition`. Three rows of "constructed" bought with a call whose
+  effect the next sort erases is the same trade §8.8 refused for telemetry, and
+  it is refused here for the same reason. **Making those rows true needs the
+  demotion expressed as a confidence term, the way §15's TemporalFit already is
+  — that is a real build, and it is the single best-value item left in group
+  (b).**
+- **G211 (virtualization) was left alone.** Swapping the overlay's `ScrollView`
+  for a `FlatList` is an afternoon and would move a row. With
+  `maxSuggestions ≤ 8` on every context it would virtualize nothing that needs
+  virtualizing, and this pass preferred four defects that change what a user
+  actually gets.
+- **G199/G261 (device-local recents) were scoped and dropped.** AsyncStorage is
+  already a dependency and already mocked in the harness, so persisting
+  `suggestionHistory` is small. It was dropped because the module has **no
+  production consumer at all** — persisting an unread store would have produced
+  a second `⌀`, and wiring the consumer (record on select, serve as zero-state)
+  is a larger build than this pass had room for. It is the best-value item left
+  in group (e).
+
+### 9.9 Scope and freshness
+
+`head_commit` moves from `579694d6` to `90a515a6`, the commit §9 measures and
+builds. `579694d6` carried **no** acknowledgement of its own, so unlike §8's
+re-declaration nothing was spent here.
+
+Three paths join this census's `CENSUS_SCOPE` entry, on §8.9's rule that a
+census must watch what it cites:
+`artifacts/api-server/src/test/inputAssistanceSemanticIntent.test.ts`,
+`platform/input-assistance/components/__tests__/suggestionAccessibility.component.test.tsx`
+and `platform/input-assistance/hooks/__tests__/useInputAssistance.localTier.component.test.tsx`.
+`lib/inputAssistance/semanticParser.ts` is already covered by the directory
+entry. The three files §9 changed on the client — `suggestionCache.ts`,
+`suggestionRanking.ts`, `useInputAssistance.ts`, `SmartInput.tsx`,
+`EntitySuggestionRow.tsx` and `raceAndCache.test.ts` — were all already watched.
+
+**Cross-lane.** Only **census-discovery** needed an acknowledgement, and only
+for one file: it watches `lib/inputAssistance/` as a directory and this pass
+changed `semanticParser.ts` inside it. Its entry is extended with an argument,
+not a filename: that `extractGeo` still sets `relationship = 'along'` off the
+same regex — `ALONG_RE` is that regex extracted verbatim, not rewritten — and
+that `splitSequence` drops its own separators, so a query with no stage after
+the operator yields byte-identical stage text. **The residual is stated there
+rather than glossed:** a query that DOES carry a following stage now parses as
+two stages, `parsed.sequence` flips to true, and a second `StageIntent` appears.
+That is a real behaviour change and is not argued as a no-op; it cannot move a
+Discovery verdict only because `grep -rn semanticParser` over
+`artifacts/api-server/src` resolves to `lib/inputAssistance/` and its tests and
+to nothing under `routes/discovery*`.
+
+**census-compass needed nothing.** It watches `lib/inputAssistance/projection.ts`
+and `semanticIntent.ts` by name; this pass changed neither. The residual §8.9
+recorded against it — that the trust term is NOT the identity for a row carrying
+`verified` or `isOfficial` — is unchanged by §9 and still stands exactly as
+written.

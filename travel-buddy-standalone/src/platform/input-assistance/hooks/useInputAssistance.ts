@@ -29,7 +29,7 @@ import { resolveFieldPolicy } from '../contexts/fieldRegistry.ts';
 import { requestSuggestions } from '../services/inputAssistance.ts';
 import { sharedSuggestionCache, SuggestionCache, isCacheablePrivacyClass } from '../services/suggestionCache.ts';
 import { createSequenceGuard } from '../services/raceGuard.ts';
-import { finalizeSuggestions } from '../services/suggestionRanking.ts';
+import { finalizeSuggestions, narrowToQuery } from '../services/suggestionRanking.ts';
 import { emitInputEvent } from '../services/inputTelemetry.ts';
 
 export interface UseInputAssistanceOptions {
@@ -155,6 +155,39 @@ export function useInputAssistance(
       return;
     }
 
+    // ── §33 TIER 1 / §34 — the LOCAL prefix tier ────────────────────────────
+    // The ladder in this file's own header claims three tiers; until now there
+    // were two. `minChars` was checked, the exact-string cache was probed, and a
+    // miss went straight to the network — so typing forward ("ba" → "ban" →
+    // "bang") was a round trip per keystroke even though the answer for the
+    // shorter prefix was in the map, and §34's "prefer local: cached city prefix
+    // matching" had nothing behind it.
+    //
+    // This is that tier. It reuses the longest cached PREFIX of the typed text
+    // and narrows it on-device to the rows that still match. It is subtractive
+    // only (`narrowToQuery` cannot invent, reorder or re-score a row), so the
+    // server remains the authority (§42) — this just stops the field going blank
+    // between keystrokes, and is the list retained when the network dies below.
+    //
+    // Privacy is the same gate as the exact-string cache: an uncacheable field
+    // (personal / sensitive / private_message) neither wrote to the cache nor
+    // reads from it here, so no viewer-scoped list is ever re-shown locally.
+    const localTier = cacheable
+      ? (() => {
+          const hit = sharedSuggestionCache.longestPrefix(cacheFieldId, trimmed, latKey, lngKey);
+          if (!hit) return null;
+          const narrowed = finalizeSuggestions(
+            narrowToQuery(hit.suggestions, trimmed),
+            policy.maxSuggestions,
+          );
+          return narrowed.length > 0 ? narrowed : null;
+        })()
+      : null;
+    if (localTier) {
+      setSuggestions(localTier);
+      setUnavailable(false);
+    }
+
     setLoading(true); // keep previous suggestions visible while fetching
     const mySeq = guardRef.current.next();
     emitInputEvent('query_length_changed', fieldId, policy.context, { length: trimmed.length }, policy.telemetryPolicy);
@@ -194,9 +227,17 @@ export function useInputAssistance(
         } else if (res.aborted) {
           // Newer request in flight — do nothing (never flash empty).
         } else if (res.unavailable) {
-          // Endpoint missing / offline → degrade to no suggestions, no error.
+          // §33 "network loss: RETAIN local/cached suggestions" + explicit
+          // degraded behaviour. This branch used to `setSuggestions([])`, which
+          // is the exact opposite of the requirement: it discarded the last good
+          // rows at the one moment the user cannot get new ones. The degraded
+          // STATE is still set (the overlay shows its quiet note, never an
+          // error) — what changes is that the local tier computed above survives
+          // it. `localTier` is already narrowed to the typed text, so this
+          // retains rows that still match rather than freezing a stale list.
+          // With nothing local to retain it is `[]`, the old behaviour.
           setUnavailable(true);
-          setSuggestions([]);
+          setSuggestions(localTier ?? []);
           setLoading(false);
         } else {
           // Transient error: keep whatever is on screen, just stop the spinner.
