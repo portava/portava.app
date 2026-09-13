@@ -304,7 +304,7 @@ export const MIN_FULL_ANCHOR_CITATIONS = 2329;
 // for the next unanchored one. The single citation is census-telegraph's
 // `routes/memories.ts:1858`, which this pass had to repoint anyway because the file
 // shrank past it, and which got an anchor on the way.
-export const MAX_UNANCHORED_CITATIONS = 6443;
+export const MAX_UNANCHORED_CITATIONS = 6434;
 
 // Exported so src/test/docCitations.test.ts walks the same tree: a second
 // checkout under .claude/worktrees/ (an agent's) carries stale copies of every
