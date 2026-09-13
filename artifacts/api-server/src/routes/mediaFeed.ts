@@ -2226,6 +2226,24 @@ router.post("/media/:id/like", asyncHandler(async (req, res) => {
   }
   const { stampCount } = await stampEntity(sc, user.id, "media", id);
   void linkOutcomeSignal(sc, user.id, id, "liked", "route:media_like");
+  // §44 "Stamp" — the telemetry signal, which had no producer anywhere in the
+  // tree. `like` has been in the batch allow-list (routes/mediaAnalyticsBatch)
+  // and in the client's MediaEventType union since 2039; nothing ever emitted
+  // it. The only client consumer of useMediaAnalytics is MediaActionRail, whose
+  // recorder only ever fires the eight §45 north-star names, and this handler
+  // recorded nothing — so the §44 Stamp funnel read zero by construction, the
+  // same shape §9.1 found for hideRate/notInterestedCount. Emitted server-side,
+  // beside the share event that already does this, because the STAMP is what
+  // this route does: a client emitter would be a second source of truth for an
+  // event the server is already the only witness to.
+  // Fire-and-forget and MEDIA_ANALYTICS_ENABLED-gated inside recordMediaEvent.
+  recordMediaEvent("like", {
+    media_id:  id,
+    post_id:   id,
+    viewer_id: user.id,
+    mode:      mediaAccess.kind === "post" ? "watch" : "gems",
+    surface:   mediaAccess.kind === "post" ? "watch_feed" : "gems_feed",
+  }, sc);
   res.json({ ok: true, stampCount });
 }));
 
@@ -2320,6 +2338,18 @@ router.post("/media/:id/save", asyncHandler(async (req, res) => {
       );
     if (error) { req.log.error({ err: error }, "hidden_gem_saves upsert failed"); sendError(res, "db_error", error.message); return; }
   }
+
+  // §44 "Save" / §26 "People saved this place" — same gap as `like` above: the
+  // event name was allow-listed and never produced. Emitted only AFTER the
+  // upsert succeeded, so the count measures saves that happened rather than
+  // taps that were attempted.
+  recordMediaEvent("save", {
+    media_id:  id,
+    post_id:   id,
+    viewer_id: user.id,
+    mode:      mediaAccess.kind === "post" ? "watch" : "gems",
+    surface:   mediaAccess.kind === "post" ? "watch_feed" : "gems_feed",
+  }, sc);
 
   res.json({ saved: true, mediaId: id });
 }));
