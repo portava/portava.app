@@ -551,6 +551,51 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     // while changing what this census can claim — the same argument that put
     // test/storyHighlightVisibility.test.ts in this list above.
     "artifacts/api-server/src/test/memoryParticipantLadder.test.ts",
+    // WIDENED 2026-09-13 by section F, which worked §25's H239 from the SURFACE
+    // end — "planned activity without occurrence cannot earn a visit
+    // Memory/Stamp" — and found that one of the five Passport-stamp seams in the
+    // tree minted a `verification_level: 'checkin'` city stamp for a layover the
+    // route itself validates as being in the FUTURE. Five files, and each is a
+    // SUBJECT of a row rather than machinery:
+    //   routes/airport.ts — the seam that was wrong, and where §1's occurrence
+    //     gate now sits. H4 and H239 both rest on it. It is graded by
+    //     census-layover as well (L19, L162); being in two scopes is the correct
+    //     answer for a file two specs have a rule about, and §F.7 names it.
+    //   routes/geofence.ts — the second live surface the new suite drives, and
+    //     the one H4's own body evidence has cited since the first pass.
+    //   test/memoryPlannedNotExperienced.test.ts — the EVIDENCE H239 now cites.
+    //     Deleting it would not change the code and would change what this
+    //     census can claim; the same argument that put storyHighlightVisibility
+    //     and memoryParticipantLadder in this list.
+    //   services/telegraph/shareables.ts — a FOURTH reader of the Memory
+    //     visibility rule, which H205's ceiling had counted as two and which
+    //     disagreed with §23's predicate on blocks until §F.3. H84 and H205 both
+    //     now cite it.
+    //   test/telegraphShare.test.ts — that fix's red-first evidence.
+    //   routes/location.ts, routes/hiddenGems.ts, routes/safeReturn.ts and
+    //     services/passport/PassportStampService.ts — the other four seams §F.2
+    //     enumerates. §F grades H239 on the whole set, not on the two it drives
+    //     through a router, so a fifth seam appearing or one of these four
+    //     losing its occurrence gate has to age the document. None of the four
+    //     has changed in this census's window, which is why they need no
+    //     acknowledgement.
+    //   test/generated/liveColumns.json — the live information_schema. This
+    //     census's largest single class of verdict is "the table §3.6 names is
+    //     not in production", and §F's schema-strict assertions are only worth
+    //     anything because that file is the live column set rather than a
+    //     fixture. A refresh of it is EXACTLY when those verdicts should be
+    //     re-read, so ageing the document on it is the behaviour wanted, not a
+    //     cost of it.
+    "artifacts/api-server/src/test/generated/liveColumns.json",
+    "artifacts/api-server/src/routes/airport.ts",
+    "artifacts/api-server/src/routes/geofence.ts",
+    "artifacts/api-server/src/routes/location.ts",
+    "artifacts/api-server/src/routes/hiddenGems.ts",
+    "artifacts/api-server/src/routes/safeReturn.ts",
+    "artifacts/api-server/src/services/passport/PassportStampService.ts",
+    "artifacts/api-server/src/test/memoryPlannedNotExperienced.test.ts",
+    "artifacts/api-server/src/services/telegraph/shareables.ts",
+    "artifacts/api-server/src/test/telegraphShare.test.ts",
     // And compassCensusCorrectness.test.ts, which is a COMPASS-lane file and is
     // watched here anyway. D.11 rests H237's and H263's survival on its B2 case —
     // the fixture that seeds one experience node per visibility rung and decides
