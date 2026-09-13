@@ -144,6 +144,11 @@ function overviewFixture(opts: { certifiedAt?: string; staleAfter?: string } = {
     planFit: {
       totalPlannedMin: 0, returnTravelMin: 0, neededMin: 0, usableMinutes: 345,
       fitsWindow: true, overflowMin: 0, backByTime: HARD_RETURN,
+      // L47 made the plan-level answer three-valued: a total that omits a leg
+      // nobody stated is not a total. This fixture has no stops at all, so
+      // nothing is unstated and `neededMin` is exact rather than a lower bound.
+      fit: 'fits', unstatedTravelStops: 0, unstatedDurationStops: 0,
+      neededMinIsLowerBound: false,
     },
     share: { enabled: false, othersInCity: 0 },
     certification: { ...CERTIFICATION },
