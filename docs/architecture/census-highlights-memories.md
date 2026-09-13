@@ -3050,9 +3050,10 @@ adds is anchored.
 ### F.8 The W column after this section, and precisely how many rows any branch can reach
 
 §D.1's grouping was re-checked against the document as it stands rather than taken on trust, and
-it still reproduces. §E closed H77 and H209 out of it; this section closes nothing out of it,
-because H239 sits in group (c) and is the **second row to leave group (c) without a migration**
-— which is a finding about the grouping, not about the row. H239 was filed under
+it still reproduces. §E closed H77 and H209 out of it; this section takes one more — and the
+interesting thing is WHICH pile it comes out of. H239 was in group **(c)**, the 106 rows D.1
+says no branch can reach, and it is the **second row to leave (c) without a migration**. That is
+a finding about the grouping, not about the row. H239 was filed under
 "§25 invariants, certified against fixtures of the unapplied stores", and that was true of its
 ENGINE half and false of its surface half. **Like H209 before it, it was a closeable row filed
 among the unreachable ones.**
