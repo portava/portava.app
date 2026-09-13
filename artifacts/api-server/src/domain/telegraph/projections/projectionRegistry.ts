@@ -64,9 +64,16 @@ export const TELEGRAPH_PROJECTIONS: readonly TelegraphProjection[] = [
       "GET /threads/:id/messages sanitizes sender identities per viewer, joins " +
       "per-recipient translations, resolves reply context and enriches mention " +
       "spans — and it now BOUNDS history to the caller's window when the §14.3 " +
-      "flag is on. It still carries no permissions block, which is the half §24 " +
-      "names explicitly: 'renderable ordered thread WITH CURRENT PERMISSIONS'. " +
-      "That block is §14.1's ConversationCapabilities (T207) and does not exist.",
+      "flag is on. It now also carries §24's second clause, 'renderable ordered " +
+      "thread WITH CURRENT PERMISSIONS': a `permissions` block holding §14.1's " +
+      "ten ConversationCapabilities, their per-capability reasons, which of the " +
+      "eight inputs were read, and `degraded` when one of them could not be. " +
+      "The block is ASKED of `resolveConversationCapabilities` rather than " +
+      "re-derived, so the projection cannot disagree with the gate, and it " +
+      "gates nothing itself — CAPABILITY_ENFORCEMENT_SITES names where each " +
+      "refusal actually happens. `partial` and not `built` for one remaining " +
+      "reason: history is bounded only while telegraph_history_bound_enabled " +
+      "is TRUE, and that flag is seeded FALSE in every database (T211).",
   },
   {
     id: "PRJ-03",

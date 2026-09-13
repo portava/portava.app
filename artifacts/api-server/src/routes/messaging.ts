@@ -43,6 +43,13 @@ import {
 // Telegraph §22 — "stranger media ... until accepted": the server decides who
 // is a stranger; the client renders the shield.
 import { resolveSenderConnectedness } from '../domain/telegraph/policies/senderConnectedness.js';
+// Telegraph §24 — `ConversationProjection` is "a renderable ordered thread WITH
+// CURRENT PERMISSIONS". The permissions half is §14.1's ConversationCapabilities
+// and it already exists, resolved and tested, behind its own route. It is
+// imported rather than re-derived so the projection cannot disagree with the
+// gate: two implementations of "may this person call" is the defect §30A.1
+// names, not a redundancy.
+import { resolveConversationCapabilities } from '../domain/telegraph/policies/conversationCapabilityPolicy.js';
 import { z } from 'zod';
 import { requireUser, sendError } from '../lib/http';
 import { canMessage } from '../lib/messagingPermissions';
@@ -2267,7 +2274,45 @@ router.get('/threads/:threadId/messages', async (req, res) => {
     };
   });
 
-  res.status(200).json({ messages, threadId });
+  // ── §24's second half: WITH CURRENT PERMISSIONS ────────────────────────────
+  //
+  // §24 asks for "a renderable ordered thread with current permissions" and
+  // this endpoint carried only the first clause. A client that renders a Call
+  // button, a Create Plan button and a Share Location button has to decide
+  // whether to show them, and with no permissions block it had three choices:
+  // show everything and let the action fail, hide everything, or re-derive the
+  // rules client-side from membership and block state. The third is the one
+  // §30A.1 names as the anti-pattern, and it is what a client with no answer
+  // eventually does.
+  //
+  // THIS BLOCK IS NOT A GATE, AND THAT IS LOAD-BEARING. §14.1's last sentence
+  // is that capabilities are computed, never assumed, and every capability is
+  // separately enforced where the operation lives —
+  // `CAPABILITY_ENFORCEMENT_SITES` names each site. Sending this block does not
+  // move any refusal here; a client that ignores it still cannot call, and a
+  // client that trusts it still gets refused if the answer went stale between
+  // the read and the act.
+  //
+  // `degraded` travels with it for the reason the contract states: a capability
+  // set computed over an unreadable `blocks` table is a FLOOR, not the truth.
+  // Shipping the booleans without it would hand a client a confident false and
+  // recreate, one layer up, the exact defect §30A.16 forbids.
+  const resolvedCapabilities = await resolveConversationCapabilities(sc, {
+    viewerId: user.id,
+    conversationId: threadId,
+  });
+
+  res.status(200).json({
+    messages,
+    threadId,
+    permissions: {
+      capabilities: resolvedCapabilities.capabilities,
+      reasons: resolvedCapabilities.reasons,
+      inputsRead: resolvedCapabilities.inputsRead,
+      degraded: resolvedCapabilities.degraded,
+      degradedReasons: resolvedCapabilities.degradedReasons,
+    },
+  });
 });
 
 /* ---------------------------------------------------------------------------

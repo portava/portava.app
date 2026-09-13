@@ -147,14 +147,43 @@ export function deepLinkFor(objectType: TelegraphObjectType, objectId: string): 
     case "PROFILE":
       return `/u/${objectId}`;
     case "BOOKING":
-    case "BUDDY_SERVICE":
       return `/(rent-a-buddy)/booking/${objectId}`;
     case "STAMP":
       return `/stamp/${objectId}`;
+    case "ROUTE":
+      return `/route/${objectId}`;
+    case "LAYOVER_PLAN":
+      return `/layover/${objectId}`;
+    case "MEDIA":
+      return `/media-viewer/${objectId}`;
     default:
       return `/`;
   }
 }
+
+/**
+ * The families whose deep link is the app's ROOT because the client has no
+ * screen that takes one — read off `travel-buddy-standalone/app/`, not guessed.
+ *
+ * This exists so the `default:` arm above is a DECLARED absence instead of a
+ * silent one. A family that is shareable and has nowhere to open is a real and
+ * acceptable state — the projection, the live state, the actions and the
+ * revocation all still work, which is what §5 asks for — but it is not a state
+ * anybody should reach by accident. The contract test walks every shareable
+ * family and requires that the set of families answering `/` is EXACTLY this
+ * one, so adding a loader without a screen fails loudly, and adding the screen
+ * without deleting the entry fails too.
+ */
+export const FAMILIES_WITH_NO_CLIENT_SCREEN: readonly TelegraphObjectType[] = [
+  "HIGHLIGHT",
+  "NEIGHBORHOOD",
+  "RESERVATION",
+  // BUDDY_SERVICE used to answer `/(rent-a-buddy)/booking/${id}`, which was a
+  // real screen for the wrong object: that route takes a BOOKING id and
+  // `app/(rent-a-buddy)/buddy/[id].tsx` takes a BUDDY id. A `buddy_services.id`
+  // opens neither. The honest answer is the root and a declared absence.
+  "BUDDY_SERVICE",
+];
 
 /** §5.1 `getAvailableActions`, drawn from §8.1's fourteen. */
 export function shareActionsFor(objectType: TelegraphObjectType): TelegraphAction[] {
@@ -510,6 +539,384 @@ const loadBooking: Loader = async (client, id, viewerId) => {
 };
 
 /**
+ * Social — a Highlight.
+ *
+ * A Highlight is the one shareable family with a BUILT-IN end: `expires_at` is
+ * NOT NULL on the table. So §5.3's "deleted, private or unauthorized" has a
+ * fourth road here — an object that becomes unavailable because time passed,
+ * with nothing written and nobody acting. A card that kept rendering it would
+ * be a backdoor into content the author chose to make temporary, which is the
+ * same defect as the frozen card and arrives on its own.
+ *
+ * An unparseable `expires_at` is UNKNOWN, not "not expired": "we cannot tell
+ * when this ends" must not resolve to "it never does".
+ *
+ * `highlights.visibility` is public | travelers_nearby | circle_only |
+ * trip_only | private. Only `public` and ownership are granted here, for the
+ * reason `loadMemory` states: the other three need a relationship read owned by
+ * another surface, and approximating it here is the backdoor §5.3 forbids.
+ */
+const loadHighlight: Loader = async (client, id, viewerId) => {
+  const { data, error } = await client
+    .from("highlights")
+    .select(
+      "id, owner_id, caption, location_name, location_city, visibility, expires_at, deleted_at, archived_at, media_url, media_type, updated_at",
+    )
+    .eq("id", id)
+    .maybeSingle();
+  if (error) return { state: UNAVAILABLE("unknown"), projection: null };
+  if (!data) return { state: UNAVAILABLE("not_found"), projection: null };
+  const r = data as Row;
+  if (r.deleted_at || r.archived_at) return { state: UNAVAILABLE("deleted"), projection: null };
+  const expiresAt = Date.parse(String(r.expires_at ?? ""));
+  if (!Number.isFinite(expiresAt)) return { state: UNAVAILABLE("unknown"), projection: null };
+  if (expiresAt <= Date.now()) return { state: UNAVAILABLE("deleted"), projection: null };
+  const mine = r.owner_id === viewerId;
+  if (!mine && r.visibility !== "public") return { state: UNAVAILABLE("private"), projection: null };
+  return {
+    state: AVAILABLE("live"),
+    projection: proj(
+      "HIGHLIGHT",
+      id,
+      (r.caption as string) || "Highlight",
+      [r.location_name, r.location_city].filter(Boolean).join(", ") || null,
+      (r.media_url as string) ?? null,
+      (r.updated_at as string) ?? null,
+    ),
+  };
+};
+
+/**
+ * Social — a Stamp.
+ *
+ * Two reads, because the earned row and the thing it was earned for are two
+ * tables: `user_stamps` is the award, `stamp_definitions` is the name and the
+ * artwork. The second read is bound and checked like the first — an unreadable
+ * definition is `unknown`, not an untitled stamp.
+ *
+ * A stamp can be REVOKED (`is_revoked`), which is §5.3's case exactly: the
+ * award was taken back and the card must stop rendering it. `display_on_passport
+ * = false` is the owner having hidden it from their own passport, so it is not
+ * something a third party may be handed either.
+ */
+const loadStamp: Loader = async (client, id, viewerId) => {
+  const { data, error } = await client
+    .from("user_stamps")
+    .select(
+      "id, user_id, stamp_definition_id, title_override, city, country, visibility, display_on_passport, is_revoked, earned_at",
+    )
+    .eq("id", id)
+    .maybeSingle();
+  if (error) return { state: UNAVAILABLE("unknown"), projection: null };
+  if (!data) return { state: UNAVAILABLE("not_found"), projection: null };
+  const r = data as Row;
+  if (r.is_revoked === true) return { state: UNAVAILABLE("deleted"), projection: null };
+  const mine = r.user_id === viewerId;
+  if (!mine && (r.visibility !== "public" || r.display_on_passport === false)) {
+    return { state: UNAVAILABLE("private"), projection: null };
+  }
+  let title = (r.title_override as string) ?? null;
+  let icon: string | null = null;
+  if (r.stamp_definition_id) {
+    const { data: def, error: dErr } = await client
+      .from("stamp_definitions")
+      .select("id, name, icon_url, universal_artwork_url")
+      .eq("id", r.stamp_definition_id)
+      .maybeSingle();
+    if (dErr) return { state: UNAVAILABLE("unknown"), projection: null };
+    const d = (def ?? null) as Row | null;
+    if (d) {
+      title = title ?? ((d.name as string) ?? null);
+      icon = ((d.icon_url as string) ?? (d.universal_artwork_url as string)) ?? null;
+    }
+  }
+  return {
+    state: AVAILABLE("earned"),
+    projection: proj(
+      "STAMP",
+      id,
+      title ?? "Stamp",
+      [r.city, r.country].filter(Boolean).join(", ") || null,
+      icon,
+      (r.earned_at as string) ?? null,
+    ),
+  };
+};
+
+/**
+ * Places — a neighborhood.
+ *
+ * `neighborhood_areas` is DERIVED public reference data: a name, a city, a
+ * centre and confidence scores computed from OSM or a grid. It has no owner, no
+ * visibility column and nothing private in it, so there is no authorization
+ * read to do and none is invented. §11's census said NEIGHBORHOOD "deliberately
+ * has no loader ... rather than pretending"; the thing it refused to pretend
+ * about was an authorization model, and this family genuinely has none to get
+ * wrong.
+ *
+ * What it CAN be wrong about is precision, so `confidence` travels in the
+ * subtitle rather than being dropped: a `low`-confidence grid cell and a `high`
+ * confidence OSM polygon are different claims about the same shape.
+ */
+const loadNeighborhood: Loader = async (client, id) => {
+  const { data, error } = await client
+    .from("neighborhood_areas")
+    .select("id, name, city_name, country, confidence, source, computed_at")
+    .eq("id", id)
+    .maybeSingle();
+  if (error) return { state: UNAVAILABLE("unknown"), projection: null };
+  if (!data) return { state: UNAVAILABLE("not_found"), projection: null };
+  const r = data as Row;
+  return {
+    state: AVAILABLE(String(r.confidence ?? "low")),
+    projection: proj(
+      "NEIGHBORHOOD",
+      id,
+      (r.name as string) ?? "Neighborhood",
+      [r.city_name, r.country].filter(Boolean).join(", ") || null,
+      null,
+      (r.computed_at as string) ?? null,
+    ),
+  };
+};
+
+/**
+ * Travel — a route plan.
+ *
+ * A DRAFT route is not a route anyone else has been shown, so it degrades for
+ * everybody but its owner; a cancelled one degrades for everybody. Membership
+ * is `route_plan_members`, which is the table the route surface itself uses —
+ * a trip or circle id on the row is NOT taken as membership, because being on
+ * the trip a route was planned for is not the same as having been added to the
+ * route.
+ */
+const loadRoute: Loader = async (client, id, viewerId) => {
+  const { data, error } = await client
+    .from("route_plans")
+    .select("id, owner_user_id, title, route_style, status, is_approximated, updated_at")
+    .eq("id", id)
+    .maybeSingle();
+  if (error) return { state: UNAVAILABLE("unknown"), projection: null };
+  if (!data) return { state: UNAVAILABLE("not_found"), projection: null };
+  const r = data as Row;
+  if (r.status === "cancelled") return { state: UNAVAILABLE("deleted"), projection: null };
+  const mine = r.owner_user_id === viewerId;
+  if (!mine) {
+    if (r.status === "draft") return { state: UNAVAILABLE("private"), projection: null };
+    const { data: member, error: mErr } = await client
+      .from("route_plan_members")
+      .select("user_id")
+      .eq("route_plan_id", id)
+      .eq("user_id", viewerId)
+      .maybeSingle();
+    if (mErr) return { state: UNAVAILABLE("unknown"), projection: null };
+    if (!member) return { state: UNAVAILABLE("unauthorized"), projection: null };
+  }
+  return {
+    state: AVAILABLE(String(r.status)),
+    projection: proj(
+      "ROUTE",
+      id,
+      (r.title as string) ?? "Route",
+      [r.route_style, r.is_approximated === true ? "approximate" : null].filter(Boolean).join(" · ") || null,
+      null,
+      (r.updated_at as string) ?? null,
+    ),
+  };
+};
+
+/**
+ * Travel — §5's "reservation-safe derivative", and the SAFE is the whole point.
+ *
+ * `trip_reservations` holds three things that must never leave the person who
+ * pasted them: `confirmation_ref` (a booking reference is a credential — it is
+ * what an airline's "manage my booking" page authenticates on), `raw_text` (the
+ * pasted confirmation email, entire) and `extraction` (the model's read of it,
+ * which contains whatever the email did). A DERIVATIVE is what is left when
+ * those are gone: what kind of thing it is, what it is called, when, and where.
+ *
+ * Those three columns are not in the `select` and are not in the projection,
+ * and the test asserts the absence against a fixture row that HAS them — so a
+ * later "just add the ref, it's useful" edit fails rather than shipping.
+ */
+const loadReservation: Loader = async (client, id, viewerId) => {
+  const { data, error } = await client
+    .from("trip_reservations")
+    .select("id, trip_id, user_id, type, title, starts_at, ends_at, location_name, status, updated_at")
+    .eq("id", id)
+    .maybeSingle();
+  if (error) return { state: UNAVAILABLE("unknown"), projection: null };
+  if (!data) return { state: UNAVAILABLE("not_found"), projection: null };
+  const r = data as Row;
+  if (r.status === "dismissed") return { state: UNAVAILABLE("deleted"), projection: null };
+  if (r.user_id !== viewerId) {
+    const { data: member, error: mErr } = await client
+      .from("trip_members")
+      .select("user_id, status")
+      .eq("trip_id", r.trip_id)
+      .eq("user_id", viewerId)
+      .maybeSingle();
+    if (mErr) return { state: UNAVAILABLE("unknown"), projection: null };
+    if (!member || (member as Row).status !== "accepted") {
+      return { state: UNAVAILABLE("unauthorized"), projection: null };
+    }
+  }
+  return {
+    state: AVAILABLE(String(r.status)),
+    projection: proj(
+      "RESERVATION",
+      id,
+      (r.title as string) ?? "Reservation",
+      [r.type, r.location_name, r.starts_at].filter(Boolean).join(" · ") || null,
+      null,
+      (r.updated_at as string) ?? null,
+    ),
+  };
+};
+
+/**
+ * Travel — a layover plan.
+ *
+ * `layover_sessions` is the plan and `layover_plan_stops` hangs off it. A
+ * layover is over when it is over: `expired` and `completed` are not states a
+ * card should keep offering, and `cancelled` is a deletion. Only the traveller
+ * and the accepted members of the trip the layover belongs to may see one; a
+ * session with no `trip_id` is private to its owner, full stop.
+ */
+const loadLayoverPlan: Loader = async (client, id, viewerId) => {
+  const { data, error } = await client
+    .from("layover_sessions")
+    .select(
+      "id, user_id, trip_id, manual_airport_name, manual_city, manual_iata, arrival_time, departure_time, status, updated_at",
+    )
+    .eq("id", id)
+    .maybeSingle();
+  if (error) return { state: UNAVAILABLE("unknown"), projection: null };
+  if (!data) return { state: UNAVAILABLE("not_found"), projection: null };
+  const r = data as Row;
+  if (r.status === "cancelled" || r.status === "expired") {
+    return { state: UNAVAILABLE("deleted"), projection: null };
+  }
+  if (r.user_id !== viewerId) {
+    if (!r.trip_id) return { state: UNAVAILABLE("private"), projection: null };
+    const { data: member, error: mErr } = await client
+      .from("trip_members")
+      .select("user_id, status")
+      .eq("trip_id", r.trip_id)
+      .eq("user_id", viewerId)
+      .maybeSingle();
+    if (mErr) return { state: UNAVAILABLE("unknown"), projection: null };
+    if (!member || (member as Row).status !== "accepted") {
+      return { state: UNAVAILABLE("unauthorized"), projection: null };
+    }
+  }
+  const where = (r.manual_city as string) ?? (r.manual_airport_name as string) ?? (r.manual_iata as string) ?? null;
+  return {
+    state: AVAILABLE(String(r.status)),
+    projection: proj(
+      "LAYOVER_PLAN",
+      id,
+      where ? `Layover in ${where}` : "Layover",
+      [r.arrival_time, r.departure_time].filter(Boolean).join(" → ") || null,
+      null,
+      (r.updated_at as string) ?? null,
+    ),
+  };
+};
+
+/**
+ * Media — §5's fifth family, and the one that had no loader at all.
+ *
+ * `media_assets.visibility` defaults to `inherit`, which means "whatever the
+ * object this asset hangs off says". This loader cannot resolve that — the
+ * parent could be a post, a memory, a highlight or a message, each with its own
+ * ladder — so `inherit` degrades to `private` for anybody but the owner. That
+ * is the conservative direction and it is deliberate: the permissive reading of
+ * "inherit" is a backdoor into whatever the parent was hiding.
+ *
+ * Moderation is a second gate. A `rejected` asset is gone; a `flagged` or
+ * `pending` one is under review and is not something a third party may be
+ * handed while that is true, even if it is public.
+ */
+const loadMedia: Loader = async (client, id, viewerId) => {
+  const { data, error } = await client
+    .from("media_assets")
+    .select(
+      "id, owner_user_id, caption, alt_text, media_type, thumbnail_url, public_url, visibility, moderation_status, processing_status, updated_at",
+    )
+    .eq("id", id)
+    .maybeSingle();
+  if (error) return { state: UNAVAILABLE("unknown"), projection: null };
+  if (!data) return { state: UNAVAILABLE("not_found"), projection: null };
+  const r = data as Row;
+  if (r.moderation_status === "rejected") return { state: UNAVAILABLE("deleted"), projection: null };
+  const processing = String(r.processing_status ?? "");
+  if (processing === "removed" || processing === "expired" || processing === "rejected" || processing === "failed") {
+    return { state: UNAVAILABLE("deleted"), projection: null };
+  }
+  const mine = r.owner_user_id === viewerId;
+  if (!mine) {
+    if (r.visibility !== "public") return { state: UNAVAILABLE("private"), projection: null };
+    if (r.moderation_status !== "approved") return { state: UNAVAILABLE("unauthorized"), projection: null };
+  }
+  if (processing !== "ready") return { state: UNAVAILABLE("unknown"), projection: null };
+  return {
+    state: AVAILABLE(String(r.media_type ?? "image")),
+    projection: proj(
+      "MEDIA",
+      id,
+      (r.caption as string) || (r.alt_text as string) || (r.media_type === "video" ? "Video" : "Photo"),
+      (r.media_type as string) ?? null,
+      ((r.thumbnail_url as string) ?? (r.public_url as string)) ?? null,
+      (r.updated_at as string) ?? null,
+    ),
+  };
+};
+
+/**
+ * Services — a Buddy's advertised service.
+ *
+ * BUDDY_SERVICE was in the registry pointing at `loadBooking`, which reads
+ * `rent_buddy_bookings`. A service id is not a booking id, so `isShareable`
+ * answered true and every actual BUDDY_SERVICE reference then resolved
+ * `not_found` — a family that looked registered and could not be shared. The
+ * two are genuinely different objects: a booking is an agreement between two
+ * named people, a service is a marketplace LISTING anyone may be shown.
+ *
+ * Which is why the authorization is different too. A listing is public once it
+ * is both `approved` (an admin act) and `is_active` (the buddy's own switch) —
+ * and a listing that has lost either is exactly §5.3's case: the card in the
+ * thread must stop offering it.
+ */
+const loadBuddyService: Loader = async (client, id, viewerId) => {
+  const { data, error } = await client
+    .from("buddy_services")
+    .select("id, buddy_id, category, title, description, hourly_rate_usd, is_active, approved, updated_at")
+    .eq("id", id)
+    .maybeSingle();
+  if (error) return { state: UNAVAILABLE("unknown"), projection: null };
+  if (!data) return { state: UNAVAILABLE("not_found"), projection: null };
+  const r = data as Row;
+  const mine = r.buddy_id === viewerId;
+  if (!mine) {
+    if (r.approved !== true) return { state: UNAVAILABLE("unauthorized"), projection: null };
+    if (r.is_active !== true) return { state: UNAVAILABLE("deleted"), projection: null };
+  }
+  const rate = r.hourly_rate_usd == null ? null : `$${r.hourly_rate_usd}/hr`;
+  return {
+    state: AVAILABLE(r.is_active === true ? "active" : "paused"),
+    projection: proj(
+      "BUDDY_SERVICE",
+      id,
+      (r.title as string) ?? "Buddy service",
+      [r.category, rate].filter(Boolean).join(" · ") || null,
+      null,
+      (r.updated_at as string) ?? null,
+    ),
+  };
+};
+
+/**
  * The registry. A type absent from here is NOT shareable, and
  * `resolveShareProjection` says so with `not_found` rather than inventing a
  * card — an unknown family must not silently become a live reference.
@@ -528,8 +935,15 @@ const LOADERS: Partial<Record<TelegraphObjectType, Loader>> = {
   MEMORY: loadMemory,
   MEMORY_NOTE: loadMemory,
   PROFILE: loadProfile,
+  HIGHLIGHT: loadHighlight,
+  STAMP: loadStamp,
+  NEIGHBORHOOD: loadNeighborhood,
+  ROUTE: loadRoute,
+  RESERVATION: loadReservation,
+  LAYOVER_PLAN: loadLayoverPlan,
+  MEDIA: loadMedia,
   BOOKING: loadBooking,
-  BUDDY_SERVICE: loadBooking,
+  BUDDY_SERVICE: loadBuddyService,
 };
 
 /** Which object families §5 can carry today. Read by the route and by tests. */

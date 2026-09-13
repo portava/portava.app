@@ -267,6 +267,7 @@ describe("§5.1 TelegraphShareable", () => {
     assert.ok(has("TRIP") && has("EVENT") && has("MEETUP"), "Travel");
     assert.ok(has("PLACE") && has("HIDDEN_GEM") && has("MEETUP_POINT"), "Places");
     assert.ok(has("BOOKING") && has("BUDDY_SERVICE"), "Services");
+    assert.ok(has("MEDIA"), "Media");
   });
 
   it("getDeepLink points at routes the client actually has", () => {
@@ -294,7 +295,7 @@ describe("§5.1 TelegraphShareable", () => {
   it("an unknown family is not shareable and has no shareable", () => {
     const c = useState({});
     assert.equal(isShareable("SOMETHING_ELSE"), false);
-    assert.equal(shareableFor(c as any, "NEIGHBORHOOD", "x"), null);
+    assert.equal(shareableFor(c as any, "VISA_CARD", "x"), null);
   });
 });
 

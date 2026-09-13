@@ -39,6 +39,18 @@ export const TELEGRAPH_OBJECT_TYPES = [
   "MEETUP",
   "ROUTE",
   "BOOKING",
+  /**
+   * §5's Travel family names seven things, and two of them had no name here at
+   * all: a trip reservation, and a layover plan. Both are stored — `trips`'
+   * `trip_reservations` and Layover's `layover_sessions` — so the gap was in
+   * the vocabulary, not the database. RESERVATION is deliberately its own type
+   * rather than a flavour of BOOKING: a Rent-a-Buddy booking is a two-party
+   * agreement inside Portava, a reservation is a record of something bought
+   * OUTSIDE it and carries a confirmation reference that must never leave the
+   * owner (see `shareables.ts#loadReservation`).
+   */
+  "RESERVATION",
+  "LAYOVER_PLAN",
   // Places
   "PLACE",
   "HIDDEN_GEM",
@@ -55,6 +67,14 @@ export const TELEGRAPH_OBJECT_TYPES = [
   // Services
   "BUDDY_SERVICE",
   "VISA_CARD",
+  /**
+   * Media — §5's FIFTH object family, and the only one that had no member here.
+   * It is `media_assets`, the one media store this tree has. Photo and video
+   * are the two `media_assets.media_type` admits; §6.2's voice, GIF and file
+   * kinds have no row shape in any migration (census T40), so this type names
+   * what is stored and does not pretend to the rest.
+   */
+  "MEDIA",
   // Promoted-but-uncommitted (§3.1 bullet 4, §3.3 "UNRESOLVED / WANT TO DO")
   "WANT_TO_DO",
 ] as const;
