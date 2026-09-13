@@ -4021,7 +4021,24 @@ either reads or is asked, on a path the app mounts.
    passed to the model, and `layover_stable_recommendation_ids_enabled` is still
    FALSE.
 7. **THE FULL SUITE IS NOT AT ZERO ON THIS BRANCH, AND IT WAS NOT THIS PASS.**
-   The complete registered run finished with TWO failing cases outside this
+   The complete registered run — all 1141 files — finishes **20154 tests, 20152
+   passed, 2 failed, 0 cancelled, 0 skipped, 0 todo**. The denominator is up 26
+   from the 20128 this branch started at, which is exactly the 10 + 7 + 9 cases
+   of this pass's three new server suites. The two failures are outside this
+
+   **CORRECTED AT INTEGRATION: on the merged branch the suite IS at zero.** This
+   pass measured against `6d4fd1a06`. The integrating branch had already closed
+   the same real-clock defect in `53615fd72`, by freezing the clock for that
+   describe block
+   (`artifacts/api-server/src/test/tripOpportunityProjection.test.ts:189#before(() => { mock.timers.enable({ apis: ["Date"], now: NOW.getTime() }); });`).
+   The merged tree runs **20,216 tests, 20,216 passed, 0 failed, 0 cancelled, 0
+   skipped, 0 todo**, exit 0. So item 7's figures are right for the commit they
+   were taken at and are NOT the merged numbers; this pass's attribution — four
+   files checked out at the base in place, same two cases by name either way,
+   then restored — was sound, and the fix simply predated the base it measured
+   against. The claim that *"the brief's 0-failed baseline is not reachable on
+   this branch"* is withdrawn: it is reached.
+
    census's subject, both in the trip-opportunity projection suite — named in
    prose for the reason item 5 gives, since it is a TEST this census does not
    grade and citing it would spend coverage on it:
