@@ -206,7 +206,10 @@ export const COVERED = [
 // trees — the Trips pass on this branch, the Highlights pass on a worktree 141
 // commits behind it. Neither number is the merged tree's, so the floor below is
 // re-measured HERE rather than taking the larger of two stale counts.
-export const MIN_ANCHORED_CITATIONS = 1532;
+// RAISED 2026-09-13 from 1532 to the merged tree's measurement after §11.2 of
+// census-layover anchored 31 citations (14 mechanically, 17 by re-reading the
+// claim). Raising is the job; the number is what the checker counts, not a guess.
+export const MIN_ANCHORED_CITATIONS = 1640;
 
 // ---------------------------------------------------------------------------
 // THE FULL-ANCHOR PASS, and why it is a SECOND pass rather than a wider ANCHOR
@@ -237,7 +240,52 @@ export const MIN_ANCHORED_CITATIONS = 1532;
 // 2026-09-13 across docs/architecture, docs/handoff and docs/ci after the 21
 // corrections. Raising it is expected; lowering it is a deliberate reduction in
 // coverage and must be justified in the PR that does it.
-export const MIN_FULL_ANCHOR_CITATIONS = 1319;
+// RAISED 2026-09-13 from 1319 for the same reason — every one of those 31 is
+// backticked, so all 31 landed in the whole-anchor population too.
+export const MIN_FULL_ANCHOR_CITATIONS = 1513;
+
+// ---------------------------------------------------------------------------
+// THE CEILING, and why a floor on the good form was not enough
+// ---------------------------------------------------------------------------
+// The two numbers above are FLOORS on anchored citations. A floor stops the
+// good form from being deleted. It does not stop the BAD form from being
+// added, and the bad form is the one that rots.
+//
+// MEASURED 2026-09-13 while merging the Layover lane. census-layover cites
+// `LayoverRecommendationService.ts` by bare `path:line` in four rows, and all
+// four named the wrong code — not because the merge moved them, but because
+// they were ALREADY wrong at the census's own head_commit `af1864a7` and at
+// `014a25d5`, its base:
+//
+//   L5   cites :309-318 for the wholesale delete-and-reinsert.
+//        At BOTH commits the delete is at :473 and the insert at :477.
+//   L78  cites :251-257 for "verified first, then a time-of-day nudge".
+//        That range is a placeType -> recType map.
+//   L182 cites :23-47 for timeOfDayContext sampling every 30 minutes.
+//        That range is import statements.
+//   L258 cites :320-328 for "logs only { count: rows.length }".
+//        That range is a section comment.
+//
+// THIS SCRIPT WAS GREEN OVER ALL FOUR, truthfully. The range half only asks
+// whether the file is long enough, and 309 in a 500-line file is. The anchor
+// halves never saw them, because an unanchored citation gives them nothing to
+// re-read. The whole class is invisible by construction, and it is by far the
+// largest class in the corpus.
+//
+// So the ceiling. It cannot repair the existing population — that is a pass of
+// its own, done a document at a time — but it stops the population GROWING,
+// which is the part that compounds. Every citation added from here carries an
+// anchor, or this check goes red and says why.
+//
+// GROW-ONLY IS THE WRONG DIRECTION HERE, so read the contract carefully: unlike
+// the floors above, this number may only ever go DOWN. Raising it is a
+// deliberate decision to add unverifiable claims and must be argued for in the
+// PR that does it. Lowering it is the job.
+//
+// Measured 2026-09-13 on the merged tree: 8135 citations, 1610 anchored.
+// LOWERED 2026-09-13 from 6525 by §11.2 of census-layover. The ratchet's own
+// direction, exercised the first time on the day it was added.
+export const MAX_UNANCHORED_CITATIONS = 6494;
 
 // Exported so src/test/docCitations.test.ts walks the same tree: a second
 // checkout under .claude/worktrees/ (an agent's) carries stale copies of every
@@ -295,6 +343,23 @@ export const BARE_PATH_RE = new RegExp(
 
 const FULL_ANCHOR_RE = new RegExp(
   String.raw`\x60((?:${SEG}+\/)*${SEG}+\.(?:${EXT_ALT})):(${SPEC})#([^\x60]+)\x60`,
+  'g',
+);
+
+// A BARE `:NNN#anchor` WHOSE ANCHOR HAS A SPACE MATCHES NOTHING AT ALL, and
+// that is worse than either half being wrong: the citation is not checked, not
+// counted, and not reported. INHERITED_RE's ANCHOR stops at the first space (it
+// has to — the grammar reads unbackticked prose too), and FULL_ANCHOR_RE needs
+// the path spelled out, so a shape like `:622#count: rows.length` falls between
+// them. Found 2026-09-13 the only way it can be: by mutating one to a wrong
+// line and watching the check stay green.
+//
+// Measured across docs/architecture, docs/handoff and docs/ci at the moment it
+// was found: 310 inherited `:spec#anchor` citations, ZERO of them multi-word.
+// So this refuses a shape nothing currently uses, which is the cheapest moment
+// to refuse it. The fix for an author is one word: spell the path.
+const UNBINDABLE_INHERITED_RE = new RegExp(
+  String.raw`\x60:(${SPEC})#([^\x60]*\s[^\x60]*)\x60`,
   'g',
 );
 
@@ -498,6 +563,7 @@ export function evaluateCitations({ coveredFiles, readFile, byBasename }) {
   const ambiguous = [];
   const orphans = [];
   const badFullAnchor = [];
+  const unbindable = [];
   let total = 0;
   let anchored = 0;
   let fullAnchored = 0;
@@ -573,6 +639,17 @@ export function evaluateCitations({ coveredFiles, readFile, byBasename }) {
       }
     }
 
+    // ── A SHAPE NO PASS CAN SEE — refused rather than skipped ───────────────
+    for (const m of text.matchAll(UNBINDABLE_INHERITED_RE)) {
+      unbindable.push({
+        doc: docRel,
+        line: text.slice(0, m.index).split('\n').length,
+        cited: `:${m[1]}#${m[2]}`,
+        reason: 'a bare `:NNN#anchor` with a SPACE in the anchor is matched by no pass — ' +
+          'spell the file path so the whole-anchor pass can read it',
+      });
+    }
+
     // ── SECOND PASS: backticked citations, compared on the WHOLE anchor ──────
     // Deliberately independent of the loop above: it re-extracts from the same
     // text with a grammar that can see a multi-word anchor, because the first
@@ -603,7 +680,7 @@ export function evaluateCitations({ coveredFiles, readFile, byBasename }) {
       });
     }
   }
-  return { badRange, badAnchor, ambiguous, orphans, total, anchored, badFullAnchor, fullAnchored };
+  return { badRange, badAnchor, ambiguous, orphans, total, anchored, badFullAnchor, fullAnchored, unbindable };
 }
 
 // ---------------------------------------------------------------------------
@@ -646,6 +723,7 @@ function main() {
   console.log(`  file:line citations ...... ${res.total}`);
   console.log(`  of those, anchored ....... ${res.anchored} (floor ${MIN_ANCHORED_CITATIONS})`);
   console.log(`  whole-anchor checkable ... ${res.fullAnchored} (floor ${MIN_FULL_ANCHOR_CITATIONS}) — backticked, so the anchor has an unambiguous end`);
+  console.log(`  UNANCHORED ............... ${res.total - res.anchored} (ceiling ${MAX_UNANCHORED_CITATIONS}) — a bare path:line; nothing here can tell you it is wrong`);
   console.log(`  repo files indexed ....... ${repoIndex.fileCount}`);
   console.log('');
 
@@ -676,6 +754,10 @@ function main() {
   section('BACKTICKED citations whose WHOLE anchor is not at the cited line', res.badFullAnchor,
     (c) => `${c.doc}:${c.line}  ${c.cited}  -- ${c.reason}`);
   failed += res.badFullAnchor.length;
+
+  section('citations written in a shape NO pass can check', res.unbindable,
+    (c) => `${c.doc}:${c.line}  ${c.cited}  -- ${c.reason}`);
+  failed += res.unbindable.length;
 
   if (res.orphans.length) {
     console.log('');
@@ -708,6 +790,19 @@ function main() {
       `Deleting backticks or anchors empties it silently, so the count is floored. ` +
       `Restore them, or justify the reduction in the PR that lowers this number.`,
     );
+    process.exit(2);
+  }
+  const unanchored = res.total - res.anchored;
+  if (unanchored > MAX_UNANCHORED_CITATIONS) {
+    console.error(
+      `CHECKER ERROR: ${unanchored} UNANCHORED citation(s) found, ceiling is ` +
+      `${MAX_UNANCHORED_CITATIONS} — ${unanchored - MAX_UNANCHORED_CITATIONS} more than the tree ` +
+      `carried when this ceiling was measured. An unanchored \`path:line\` is checked for ONE ` +
+      `thing, that the file is long enough; nothing here can tell you it names the right code, ` +
+      `and four citations in census-layover proved that class can be wrong for months while this ` +
+      `script reports clean. Add \`#anchor\` to the new citations — a short literal from the ` +
+      `line, so the checker can re-read it — or, if the count really must rise, say in the PR ` +
+      `which claims you are choosing to leave unverifiable and why.`);
     process.exit(2);
   }
   if (res.anchored < MIN_ANCHORED_CITATIONS) {

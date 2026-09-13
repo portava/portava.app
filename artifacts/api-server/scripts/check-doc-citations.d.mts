@@ -40,6 +40,10 @@ export interface EvaluationResult {
 
 export const COVERED: CoveredEntry[];
 export const MIN_ANCHORED_CITATIONS: number;
+/** SHRINK-ONLY floor on backticked citations whose WHOLE anchor is re-read. */
+export const MIN_FULL_ANCHOR_CITATIONS: number;
+/** GROW-NEVER ceiling on bare `path:line` citations — the class nothing can verify. */
+export const MAX_UNANCHORED_CITATIONS: number;
 /** Directories the walker never enters — `.git`, `node_modules`, and `.claude` (agent worktrees carry stale copies of every cited file). Shared with src/test/docCitations.test.ts. */
 export const SKIP_DIRS: Set<string>;
 
