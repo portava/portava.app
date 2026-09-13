@@ -1071,11 +1071,15 @@ nothing.
 
 Fourteen places in this document counted requirements in a paragraph or in a table whose
 first column is not a requirement id. This is the map. **Nothing was renumbered**: the ids
-below are the continuation of the body's own sequence, and they are forced — the body
-numbers H1–H210 explicitly, the "Denominator by section" table fixes how many requirements
-each section carries, and applying those counts in section order leaves exactly one
-possible id for every requirement. The allocation is therefore reproducible by anyone with
-this document and the spec, and it lands on 266 exactly.
+below are the continuation of the body's own sequence, and they are forced. Two thirds of
+them the body already names in its prose — H22–H37, H54–H62, H104–H114 and the ranges
+`H115–H122` / `H123–H128` all appear there in so many words, they simply appear in
+sentences rather than in rows. The rest (H130–H174 and H211–H266) the body never writes
+down, and they are derived rather than invented: the "Denominator by section" table fixes
+how many requirements each section carries, the body's ids run to H210, and applying the
+section counts in order leaves exactly one possible id for every remaining requirement.
+The allocation is reproducible by anyone with this document and the spec, and it lands on
+266 exactly.
 
 | Where the count lived | Shape it was in | Ids | Verdicts assigned in B.5 |
 |---|---|---|---|
