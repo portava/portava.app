@@ -2965,8 +2965,10 @@ largest stated gap.
 4. **The gate answers about a DECLARED instant, not an observed one.** The arrival time is
    typed by the traveller. §1 admits *user confirmation* as a limb, and a person who says "I
    landed at 14:00" when 14:00 is in the past is confirming they are there; but the stamp still
-   carries `verification_level: 'checkin'`, which on §4's ladder means something stronger than a
-   self-declaration. **That is not repaired here** and it is **D-F2**.
+   carries `verification_level: 'checkin'`, which names an observation the server never made.
+   §4's own TruthLevel would call that `USER_ASSERTED`, and H41 already scores this repository's
+   `unverified/gps/checkin/verified` ladder BUILT-BUT-WRONG for being a different vocabulary
+   from §4's. **That is not repaired here** and it is **D-F2**.
 5. **The §28.11 repair makes the accessor honest; it does not make it useful.** H120 stays W.
 6. **The share-card block check is one-directional.** A viewer who blocked the OWNER still sees
    the owner's public Memory card. `canReadMemory` refuses in both directions. The divergence is
