@@ -122,11 +122,22 @@ post-repair for files this pass edited.
 
 Not counted here. Checked because the brief asked what it marked wrong.
 
+> **The `Row` column now spells out the owning census, and that is an ARITHMETIC fix, not a
+> cosmetic one.** `check:census-integrity` parses any leading `P45` as a verdict row of the
+> document it is reading, so these three Passport rows were being counted in THIS census's
+> totals — three extra BUILT-BUT-WRONG rows in census-trust, on top of the same three already
+> counted in census-passport, in a table whose first line says *"Not counted here"*. The tool
+> read 49 rows and `C=44 W=5` while this document's own recount claimed 52 and `50 / 2`, and the
+> three-row difference was exactly this. Naming the census makes the cell unparseable as a
+> trust id, which is the truthful shape: they are census-passport's rows and census-passport
+> counts them. Verified after the edit: 52 rows parsed, `C=50 W=2 N=0 X=0`, which is what §4's
+> recomputed headline says.
+
 | Row | Its verdict | Stands? | Correction |
 |---|---|---|---|
-| P45 — domain-specific/confidence-aware/explainable; the 50-substitution | W | **Yes.** `buildDomainTrust:951-973` still reads a literal 50 in this tree. | Its cause — "`trust_engine_enabled` is seeded false, so nothing writes `trust_events`, `trust_profiles` is empty" — is wrong for production: the flag is TRUE, 5 events exist, 2 profiles exist. The constant reaches 56 of 58 users because the emitters are silent (A6), not because the engine is off. |
-| P50 — an 82 with high evidence ≠ 82 with little | W | **Yes.** `buildTrust:985-986` derives confidence from `stats.stamps + stats.trips * 2 + verified`. | Its §5 table says #467 "would flip P45, P50 and P154 from W to C". **#467 does not touch the confidence derivation** (its `buildTrust` hunk replaces only the profile read); P50 stays W after #467. The trust-side prerequisite for fixing it — an evidence measure — did not exist until A3 this pass. |
-| P154 — Phase 4 Trust | W | Yes, via P45. | As P45. |
+| census-passport P45 — domain-specific/confidence-aware/explainable; the 50-substitution | W | **Yes.** `buildDomainTrust:951-973` still reads a literal 50 in this tree. | Its cause — "`trust_engine_enabled` is seeded false, so nothing writes `trust_events`, `trust_profiles` is empty" — is wrong for production: the flag is TRUE, 5 events exist, 2 profiles exist. The constant reaches 56 of 58 users because the emitters are silent (A6), not because the engine is off. |
+| census-passport P50 — an 82 with high evidence ≠ 82 with little | W | **Yes.** `buildTrust:985-986` derives confidence from `stats.stamps + stats.trips * 2 + verified`. | Its §5 table says #467 "would flip P45, P50 and P154 from W to C". **#467 does not touch the confidence derivation** (its `buildTrust` hunk replaces only the profile read); P50 stays W after #467. The trust-side prerequisite for fixing it — an evidence measure — did not exist until A3 this pass. |
+| census-passport P154 — Phase 4 Trust | W | Yes, via P45. | As P45. |
 | §3 deployment fact 1 — "the trust engine is dark" | fact | **No.** | See §0. The scheduler is not merely registered; it demonstrably ran on 2026-08-27 (both profile rows created with 0 admin actions) and again on 2026-09-04 (stale refresh at `STALE_DAYS` = 7). |
 
 ### 2.C — Trust's own code contracts (32)
@@ -216,7 +227,7 @@ an ABSENT profile a non-buddy's Buddy row reads "Not yet rated" rather than "Not
 There is one `buildTrust`; every consumer variant is projected from the one `PassportProjection`
 (`PassportConsumerProjections.buildConsumerProjection`). So the seven call sites —
 `routes/trips.ts:467`, `routes/rentABuddy.ts:1248`, `services/passport/EventPassportService.ts:423`,
-`routes/discoverySearch.ts:2350`, `routes/compass.ts:4225`, `routes/telegraph.ts:370`,
+`routes/discoverySearch.ts:2350`, `routes/compass.ts:4276`, `routes/telegraph.ts:370`,
 `routes/safeReturn.ts:1185#buildConsumerProjection` — all inherit the fix. *(Cited `:852` until 2026-09-12; that line was never the call, which is at the `buildConsumerProjection(db, "safety", …)` site — a range-only citation that stayed green while wrong, the §37 class. Anchored now.)* But note what each actually ships:
 
 | Consumer | Variant | Carries `domains`? | Reached by the constant-50 "Established" defect? | Changed by #467? |
@@ -385,7 +396,7 @@ commit.** Rows not restated keep the verdict the body left them with.
 
 | Field | Value |
 | --- | --- |
-| `head_commit` | `42aeac38` — RE-DECLARED 2026-09-09 from `7bca4b0d0e19d29ea0a96982f74b35d26402fa52`, the working-tree commit this addendum was measured at. The move is a measurement, not a judgement: `git diff --name-only 7bca4b0d 42aeac38` over this census's 15 scoped paths returns **0 files**, so all 52 verdicts are exactly as true at one as at the other. It was necessary because `7bca4b0d` is PRE-SQUASH — this repository squash-merges, so it is an ancestor of nothing, is on no remote branch, and `check:census-freshness` could resolve it only on the clone that wrote it (`CENSUS_HEAD_COMMITS_UNREACHABLE_IN_CI`). `42aeac38` is #476's squash, where this document's content reached `main`. |
+| `head_commit` | `3ca68cb06` — RE-DECLARED 2026-09-13 by §5, replacing `42aeac38`. §5 re-executed **all six** of the rows this census could not previously be parsed on (A3, A8, C5, C13, C17, C27) and both remaining BUILT-BUT-WRONG rows at this commit, and edited no Trust source file. It does **not** certify the other 44 `C` rows. The previous declaration read: `42aeac38` — RE-DECLARED 2026-09-09 from `7bca4b0d0e19d29ea0a96982f74b35d26402fa52`, the working-tree commit that addendum was measured at. The move is a measurement, not a judgement: `git diff --name-only 7bca4b0d 42aeac38` over this census's 15 scoped paths returns **0 files**, so all 52 verdicts are exactly as true at one as at the other. It was necessary because `7bca4b0d` is PRE-SQUASH — this repository squash-merges, so it is an ancestor of nothing, is on no remote branch, and `check:census-freshness` could resolve it only on the clone that wrote it (`CENSUS_HEAD_COMMITS_UNREACHABLE_IN_CI`). `42aeac38` is #476's squash, where this document's content reached `main`. |
 | `generated_at` | 2026-09-08 |
 | **Denominator (testable requirements)** | **52** |
 | Scanned | `services/trust/` (8 services), `lib/trustScore.ts`, `lib/trustMaintenanceScheduler.ts`, `routes/trust-admin.ts`, plus every file the eight open rows named: `routes/events.ts`, `routes/pulse.ts`, `routes/rentABuddyMarketplace.ts`, `routes/admin.ts`, `routes/trips.ts`, `routes/tripCrewLocation.ts`, `compass/*`, `services/ranking/CreatorActivityScoreService.ts`, `services/passport/*`, `services/hiddenGems/*` |
@@ -444,3 +455,87 @@ All three were mutation-proven, and two of them caught a defect in themselves on
 the first run — the ownership guard rejected an allowlist entry I had just
 written for a file that did not need one, and the enforcement test passed a
 mutation because it was matching a COMMENT rather than the gate.
+
+---
+
+## 5. The correctness pass, 2026-09-13 — six rows this document had already earned, and could not be read
+
+*Re-measured at `3ca68cb06`, declared as `head_commit` at the top of this file. No Trust source file
+was edited by this pass; every row below was RE-EXECUTED, not rewritten.*
+
+### 5.0 The gap was arithmetic, and it had two causes
+
+This document's §4 recount claims **50 / 2 over 52**. `check:census-integrity` read
+**44 C / 5 W over 49** — a 6-point correctness difference between what the census says about itself
+and what the only machine that reads it could see. Neither number was a lie; the document could not
+be parsed.
+
+| cause | rows | effect on the parsed figure |
+|---|---|---|
+| Six verdict cells written as `**W → C**` or `**NB → C**` — an as-found/now pair in one cell, which `verdictOf` refuses because the WHOLE cell must be one token | A3 · A8 · C5 · C13 · C17 · C27 | six `C` rows in **no** bucket and **no** denominator |
+| Three cells in §2.B whose first token is a PASSPORT id (`P45`, `P50`, `P154`), in a table whose own first line reads *"Not counted here"* | P45 · P50 · P154 | three `W` rows added to **this** census's totals, and double-counted with census-passport |
+
+The first is the exact defect `census-compass.md` §10.1 found in itself and fixed by restating the
+cells; this is the same fix on the same parser. The second is worse than unreadable — it was
+**wrong in the direction that flatters nobody**: it inflated Trust's BUILT-BUT-WRONG count by three
+rows that belong to another document, so both censuses were charged for the same three
+requirements. Fixed in §2.B by spelling out the owning census, which makes the cell unparseable as a
+Trust id — the truthful shape, since census-passport counts them and this table explicitly does not.
+
+**Nothing about the tree changed. The document now says to a machine what it already said to a
+reader.**
+
+### 5.1 The six rows, restated in a cell the tallier can read — each RE-EXECUTED first
+
+No verdict changes. The `was` column reproduces the cell this document carried; the `now` column is
+the same verdict in a parseable shape; the reason names the line that was opened to confirm it is
+still true at `3ca68cb06`, because a restatement that is not re-executed is just a reformat.
+
+| id | was | now | re-executed at this commit |
+|---|---|---|---|
+| A3 | `NB → C` | C | `artifacts/api-server/src/services/trust/TrustScoreService.ts:294#export function measureEvidence` still computes the decayed evidence weight and count, and `artifacts/api-server/src/services/trust/TrustScoreService.ts:371#.update({ evidence_weight: evidence.weight, evidence_count: evidence.count })` still persists both. The migration that holds the columns is present at `artifacts/api-server/src/migrations/2371_trust_profiles_evidence.sql:1#-- 2371_trust_profiles_evidence.sql`. NULL still means not measured, 0 still means measured empty. |
+| A8 | `W → C` | C | `artifacts/api-server/src/migrations/2370_trust_tables_privileges.sql:1#-- 2370_trust_tables_privileges.sql` is in the tree and still carries the REVOKE-then-grant-service_role shape with the RAISE-on-residue postcondition. **The row's caveat is unchanged and matters more than the verdict: applied to CI, NOT to production** — this pass made no production read and no production change, so A8's `C` is a statement about the migration, not about the live grants. |
+| C5 | `W → C` | C | `artifacts/api-server/src/services/trust/TrustEventService.ts:374#async function queueEventForReview` still writes the open `event_review` row, called on the pending-review path, and the admin queue that reads it is still routed at `artifacts/api-server/src/routes/trust-admin.ts:147#router.get("/admin/trust/events/pending", async (req, res) => {`. |
+| C13 | `W → C` | C | The cap table still keys on the type the emitter actually writes: `artifacts/api-server/src/services/trust/TrustCapService.ts:248#gps_coordinate_jump:       [{ category: "location_honesty", ceiling: 55, reasonCode: "coordinate_jump",      expiresInDays: 7  }],`. The residual owner decision on unproduced ceilings is unchanged and stays in §5's list. |
+| C17 | `W → C` | C | `artifacts/api-server/src/services/trust/TrustRestrictionService.ts:333#export async function expireOldRestrictions(db: SupabaseClient): Promise<number> {` still binds its own error, and it still has the caller it lacked: `artifacts/api-server/src/lib/trustMaintenanceScheduler.ts:608#restrictionsExpired = await expireOldRestrictions(db);`. |
+| C27 | `W → C` | C | `artifacts/api-server/src/routes/trust-admin.ts:78#const SETTING_BOUNDS: Record<string, SettingBound> = {` still bounds each key structurally and `artifacts/api-server/src/routes/trust-admin.ts:95#export function trustSettingRejection(key: string, value: unknown): string | null {` still rejects a value outside it before the write. |
+
+Executed alongside them, because two rows in this census rest on guards rather than on lines:
+`pnpm -s check:trust-table-ownership` → *"891 source file(s) scanned; 21 read(s) inside services/trust;
+3 file(s) owned elsewhere with a written reason; **0 violation(s)**"*, which is A17's whole claim and
+is also why `census-compass.md` CTR-01 moved W→C in the same pass — that census was still grading
+Compass on three direct trust reads the seam had already absorbed.
+
+### 5.2 The two BUILT-BUT-WRONG rows, grouped
+
+| group | rows | which |
+|---|---|---|
+| **(a) logic wrong in code this pass owns** | **0** | — |
+| **(b) logic right, nothing reaches it** | **0** | — |
+| **(c) capped by a deployment** | **1** | A6 |
+| **(d) needs a decision nobody has made** | **1** | C22 |
+
+**Neither is engineering, and §4 already said so.** A6 is *defined* as a production measurement —
+the emitters are on `main`, the production `trust_events` ledger measured 2026-09-08 still carries no
+`stamp_verified` row, and merging does not write one. C22 asks whether `adminOverrideScore` means
+**pin** or **cap**; both are defensible, they are different products, and building either would be
+taking the decision. This pass made **no production read**, so A6's remainder is unchanged in every
+particular, including its date.
+
+**Trust's ceiling without a deploy and without an owner is 50 / 52, and it is now the number the
+tooling reports as well as the number the document claims.** That is the entire content of this
+section: no code, no verdict, one arithmetic reconciliation.
+
+### 5.3 Restated headline
+
+> **Trust, at `3ca68cb06`: 52 requirements · 50 BUILT-AND-CORRECT · 2 BUILT-BUT-WRONG · 0 NOT-BUILT ·
+> 0 CANNOT-VERIFY → CONSTRUCTED 52 / 52 = 100 % · CORRECT 50 / 52 = 96.2 %.** Unchanged from §4's
+> recount, which was right all along; what changed is that `check:census-integrity` can now read it,
+> and that three census-passport rows stopped being counted twice across the corpus. The gap between
+> CONSTRUCTED and CORRECT is **3.8 points**: one deployment and one word.
+
+| BUILT-AND-CORRECT | **50** |
+|---|---|
+| BUILT-BUT-WRONG | **2** |
+| NOT-BUILT | **0** |
+| CANNOT-VERIFY | **0** |

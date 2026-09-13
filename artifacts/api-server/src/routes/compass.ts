@@ -30,8 +30,7 @@ import {
   sendKernelRejection,
   setTripVersionHeader,
 } from "../domain/trips/commands/tripKernel.js";
-import { nameVisibilitySet } from "../lib/publicIdentity.js";
-import { buildConsumerProjection } from "../services/passport/PassportConsumerProjections.js";
+import { buildConsumerProjection, buildListIdentityProjections } from "../services/passport/PassportConsumerProjections.js";
 import { allowDiscoveryPersonCard } from "../services/passport/PassportConsumerAccess.js";
 import { isCompassEnabled, isEnabled } from "../compass/flags.js";
 import { checkRateLimit } from "../lib/rateLimit.js";
@@ -129,6 +128,11 @@ import {
   type AddToTripProposal,
   type ToolExecution,
 } from "../compass/CompassTools.js";
+import {
+  enforceCompassGroundingEnvelope,
+  readGroundingEvidence,
+  type GroundingResult,
+} from "../compass/CompassGroundingEnvelope.js";
 import { buildCompassContext as buildLocationCompassContext } from "../services/location/CompassLocationContext.js";
 import { buildCompassMediaContext, formatMediaContextLines } from "../compass/CompassMediaContext.js";
 import { resolveViewer as resolveMediaViewer } from "../services/media/MediaProjectionService.js";
@@ -1307,6 +1311,22 @@ async function runToolCallingLoop(
   return { finalRaw: "", toolLog, proposals };
 }
 
+/**
+ * Sensing `:148` output boundary — read the answer back against the confidence
+ * band of the turn's OWN tool results before publishing it.
+ *
+ * Called on both the streamed and the non-streamed branch, with the same tool
+ * log both branches already carry, so the two cannot drift. See
+ * `compass/CompassGroundingEnvelope.ts` for why a refusal appends rather than
+ * replaces, and for what it deliberately does not police.
+ */
+function groundCompassAnswer(message: string, toolLog: ToolExecution[]): GroundingResult {
+  return enforceCompassGroundingEnvelope(
+    message,
+    readGroundingEvidence(toolLog.map((t) => t.result)),
+  );
+}
+
 /** Truncate tool results so the persisted payload stays bounded. */
 function _boundedToolLog(toolLog: ToolExecution[]): Array<Record<string, unknown>> {
   return toolLog.map((t) => {
@@ -1617,7 +1637,19 @@ router.post("/compass/ask", async (req, res) => {
         clientAbort.signal,
       );
       const _parsed = _parseModelResponse(finalRaw);
-      const message      = finalRaw === "" ? SUMMARISE_EMPTY_FALLBACK_MESSAGE : _parsed.message;
+      const _rawMessage  = finalRaw === "" ? SUMMARISE_EMPTY_FALLBACK_MESSAGE : _parsed.message;
+      // Sensing `:148`. The tokens are already on the wire — the client rebuilds
+      // the bubble from the accumulated deltas — so the correction is sent as
+      // one more delta rather than by rewriting what was said.
+      const _grounded    = groundCompassAnswer(_rawMessage, toolLog);
+      const message      = _grounded.text;
+      if (_grounded.correction && !res.writableEnded) {
+        req.log.warn(
+          { userId: user.id, violations: _grounded.violations.map((v) => v.kind) },
+          "compass/ask stream: answer over-claimed against its own tool evidence",
+        );
+        res.write(`data: ${JSON.stringify({ delta: `\n\n${_grounded.correction}` })}\n\n`);
+      }
       const payload      = _parsed.payload;
       const quickActions = _parsed.quickActions;
       // Phase 5: validate + hydrate model-declared UI blocks against tool candidates.
@@ -1656,7 +1688,7 @@ router.post("/compass/ask", async (req, res) => {
       } catch { /* non-fatal */ }
       // Phase 6: bounded-cadence memory compression (fire-and-forget)
       compressConversationIfDue(sc, user.id, conversationId).catch(() => {});
-      res.write(`data: ${JSON.stringify({ done: true, conversationId, promptVersion: COMPASS_ASK_PROMPT_VERSION, payload, quickActions, pendingProposals: proposals, uiBlocks, meta: { droppedInventedIds: uiBlockMeta.droppedInventedIds }, intent: intentResult })}\n\n`);
+      res.write(`data: ${JSON.stringify({ done: true, conversationId, message, promptVersion: COMPASS_ASK_PROMPT_VERSION, payload, quickActions, pendingProposals: proposals, uiBlocks, meta: { droppedInventedIds: uiBlockMeta.droppedInventedIds, groundingViolations: _grounded.violations.map((v) => v.kind) }, intent: intentResult })}\n\n`);
       res.end();
     } catch (err) {
       if (clientAbort.signal.aborted) {
@@ -1678,7 +1710,17 @@ router.post("/compass/ask", async (req, res) => {
       sc, user.id, guardProfile, messages as any, req.log,
     );
     const _parsed = _parseModelResponse(finalRaw);
-    const message      = finalRaw === "" ? SUMMARISE_EMPTY_FALLBACK_MESSAGE : _parsed.message;
+    const _rawMessage  = finalRaw === "" ? SUMMARISE_EMPTY_FALLBACK_MESSAGE : _parsed.message;
+    // Sensing `:148` — the same boundary the streamed branch applies, on the
+    // same tool log, so the two branches cannot publish different answers.
+    const _grounded    = groundCompassAnswer(_rawMessage, toolLog);
+    const message      = _grounded.text;
+    if (_grounded.correction) {
+      req.log.warn(
+        { userId: user.id, violations: _grounded.violations.map((v) => v.kind) },
+        "compass/ask: answer over-claimed against its own tool evidence",
+      );
+    }
     const payload      = _parsed.payload;
     const quickActions = _parsed.quickActions;
     // Phase 5: validate + hydrate model-declared UI blocks against tool candidates.
@@ -1717,7 +1759,7 @@ router.post("/compass/ask", async (req, res) => {
     } catch { /* non-fatal */ }
     // Phase 6: bounded-cadence memory compression (fire-and-forget)
     compressConversationIfDue(sc, user.id, conversationId).catch(() => {});
-    res.json({ conversationId, message, payload: payload ?? null, quickActions, pendingProposals: proposals, uiBlocks, meta: { droppedInventedIds: uiBlockMeta.droppedInventedIds }, promptVersion: COMPASS_ASK_PROMPT_VERSION, intent: intentResult });
+    res.json({ conversationId, message, payload: payload ?? null, quickActions, pendingProposals: proposals, uiBlocks, meta: { droppedInventedIds: uiBlockMeta.droppedInventedIds, groundingViolations: _grounded.violations.map((v) => v.kind) }, promptVersion: COMPASS_ASK_PROMPT_VERSION, intent: intentResult });
   } catch (err) {
     req.log.error({ err, userId: user.id }, "compass/ask: LLM call failed");
     res.json({
@@ -3646,19 +3688,28 @@ router.get("/compass/recommendations", async (req, res) => {
         }
       }
 
-      // Universal display-name rule: real names only for opted-in travelers.
-      const allowedTravNames = await nameVisibilitySet(sc, topTravSlice.map((s) => s.id));
+      // §35 / census-passport P169 — identity through the Passport BATCH
+      // projection, which is now viewer-aware, instead of a fourth inline copy
+      // of the display-name rule. It owns four facts: may the real name be
+      // shown, what that name is (through `lib/publicIdentity`'s choke point,
+      // which TRIMS — this file did not, so a whitespace-only display_name used
+      // to render as a blank title here while every other surface fell through
+      // to the handle), whether the avatar may be shown, and the badge. What
+      // stays here is Compass's own: the @username fallback, and the wider
+      // suppression a private row gets (city, username, reason) whether or not
+      // the viewer follows — which is Compass's product rule, not Discovery's,
+      // and is deliberately NOT folded into the shared projection.
+      const travIdentity = await buildListIdentityProjections(
+        sc,
+        topTravSlice.map((s) => ({ ...s.row, id: s.id })),
+        { viewerId: user.id, following: followingSet, friends: friendSet },
+      );
       const travelerRecommendations = topTravSlice.map((s) => {
-        const nameOk = allowedTravNames.has(s.id);
+        const ident = travIdentity.get(s.id);
+        // A row the projection does not know lost its profile between reads:
+        // answer with the most restrictive shape rather than the raw columns.
+        const nameOk = ident?.nameAllowed ?? false;
         const isPrivate = s.row.is_private ?? false;
-        const isFollowing = followingSet.has(s.id);
-        const isFriend = friendSet.has(s.id);
-        // Avatar gate (mirrors discoverySearch): a private account the viewer
-        // already follows behaves like a public one, and a public account's
-        // owner can still opt out via show_profile_picture_publicly (default
-        // true). The !avatarPrivate term closes the private-avatar leak.
-        const avatarPrivate = isPrivate && !isFollowing;
-        const showAvatar = isFollowing || isFriend || s.row.show_profile_picture_publicly !== false;
         const followStatus: "following" | "requested" | "not_following" =
           followingSet.has(s.id) ? "following"
           : requestedSet.has(s.id) ? "requested"
@@ -3670,7 +3721,7 @@ router.get("/compass/recommendations", async (req, res) => {
           // Universal display-name rule: hidden names fall back to @username
           // (and to null for private non-followed profiles, which suppress it).
           title: nameOk
-            ? ((s.row.display_name ?? s.row.name ?? s.row.username ?? null) as string | null)
+            ? (ident?.presentedName ?? ((s.row.username ?? null) as string | null))
             : (isPrivate && !followingSet.has(s.id)
               ? null
               : ((s.row.username ?? null) as string | null)),
@@ -3680,11 +3731,11 @@ router.get("/compass/recommendations", async (req, res) => {
             userId:          s.id,
             // Private profiles: suppress identifying details until followed
             username:        isPrivate ? null : ((s.row.username ?? null) as string | null),
-            displayName:     nameOk ? ((s.row.display_name ?? s.row.name ?? null) as string | null) : null,
-            avatarUrl:       (!avatarPrivate && showAvatar) ? ((s.row.avatar_url ?? null) as string | null) : null,
+            displayName:     ident?.presentedName ?? null,
+            avatarUrl:       ident?.avatarUrl ?? null,
             homeCity:        isPrivate ? null : ((s.row.home_city ?? null) as string | null),
             isPrivate,
-            verified:        s.row.verified ?? false,
+            verified:        ident?.verified ?? false,
             sharedInterests: isPrivate ? [] : s.sharedInterests,
             reasonCode:      s.reasonCode,
             followStatus,

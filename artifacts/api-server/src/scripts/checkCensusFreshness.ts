@@ -1381,6 +1381,9 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     // the other censuses — package.json and check* machinery are named as tools,
     // not graded. See check:census-scope-coverage for why the ratio matters.
     "artifacts/api-server/src/test/compassCensusGates.test.ts",
+    // ADDED 2026-09-13 (§11): CX-04 and CH-03 are C because of what this file
+    // asserts, so an edit to it must age the census that rests on it.
+    "artifacts/api-server/src/test/compassCensusCorrectness.test.ts",
     "artifacts/api-server/src/services/airport/LayoverCompassService.ts",
     "artifacts/api-server/src/test/compass-live-constraints.test.ts",
     "travel-buddy-standalone/src/features/map/compass/compassMapModel.ts",
@@ -1559,6 +1562,9 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/lib/inputAssistance/",
     // WIDENED 2026-09-11: cited 49 files, watched 11 (22%). Same exclusions.
     "artifacts/api-server/src/services/passport/PassportConsumerProjections.ts",
+    // ADDED 2026-09-13 (§10): A15 is C because of what this file asserts about
+    // the shared list-identity projection, so an edit to it must age this census.
+    "artifacts/api-server/src/test/passportListIdentityProjection.test.ts",
     "artifacts/api-server/src/test/discoverySearchBlockedSubmitter.test.ts",
     "artifacts/api-server/src/test/discoveryBlockedSubmitter.test.ts",
     "artifacts/api-server/src/lib/discoveryEngineMode.ts",

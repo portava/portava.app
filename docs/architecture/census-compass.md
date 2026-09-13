@@ -11,7 +11,7 @@ aggregate counts read from the production project on 2026-09-07 (read-only; no u
 
 | Field | Value |
 |---|---|
-| `head_commit` | `820b60638` — RE-DECLARED 2026-09-13 by §10, replacing `42aeac38`. This one is different in kind from the one it replaces: `42aeac38` started a clock over verdicts nobody had re-read, and §10 says what happened next — nine of them were false by the time the clock was read. `820b60638` is the commit §10 measured at, and §10.6 states exactly which rows were re-executed there (all 15 N, all 19 W, 12 of 56 C) and which 44 were not. It **still does not certify the 44.** Read the next row, then §10.1. |
+| `head_commit` | `3ca68cb06` — RE-DECLARED 2026-09-13 by §11, replacing `820b60638`. §11 re-executed all 23 BUILT-BUT-WRONG rows and eleven BUILT-AND-CORRECT ones at this commit, and §11.6 names exactly which 45 `C` rows it did **not** re-open. This declaration therefore says the same thing the last one did and no more: no counted file has moved since `3ca68cb06`. It does **not** certify the 45. The previous declaration read: `820b60638` — RE-DECLARED 2026-09-13 by §10, replacing `42aeac38`. This one is different in kind from the one it replaces: `42aeac38` started a clock over verdicts nobody had re-read, and §10 says what happened next — nine of them were false by the time the clock was read. `820b60638` is the commit §10 measured at, and §10.6 states exactly which rows were re-executed there (all 15 N, all 19 W, 12 of 56 C) and which 44 were not. It **still does not certify the 44.** Read the next row, then §10.1. |
 | **What that declaration does and does not say** | `42aeac38` is #476's squash — the commit where this document itself reached `main`. Its verdicts were taken at working tree `4a166aeb` **plus uncommitted sibling work**, per the note above — and `4a166aeb` **exists nowhere**: verified against FULL history (`git fetch --unshallow`, 4,300 commits, then `git cat-file -e`), not assumed. This census is therefore the weakest-anchored of the six declared together: its measured state was never a commit at all, so no diff against it is possible even in principle, and this declaration **does not claim otherwise**. What it claims is mechanically checked: `git diff --name-only 42aeac38..HEAD` over the 6 paths in `CENSUS_SCOPE["census-compass.md"]` returns **0 files**, and from here any change to one of them ages this census. Before it, `check:census-freshness` reported this document as CANNOT BE CHECKED. FRESH means *no counted file has moved since `42aeac38`*; it does **not** mean the rows were re-read, and none has been. Declared by the Trips lane while recounting the sibling census; if this lane disagrees, reverting costs only the check. |
 
 ---
@@ -99,11 +99,11 @@ construction that is inert in production; it counts as built, consistent with ev
 |---|---|---|---|
 | CX-01 | `:129` Safety constraints outrank opportunity/vibe; a dangerous place is never "best move now" — the **Compass half** (registry SX-09) | **W → C (gated)** | *As found:* `compass/CompassSafetyFilter.ts:119-135` lists sixteen author/content conditions and no world safety state — that half of the registry verdict holds. But the registry stopped there. The gated live-constraint stage **did** see the one server-owned safety claim, `unsafe_density` (`lib/intelContracts.ts:256-257`, *"a safety claim, not a vibe"*), folded it into `PACKED_CROWD_LEVELS` (`compass/CompassLiveConstraints.ts:108`) and (pre-edit `:392-401`) **demoted** it — only for a viewer whose intent was `quiet`. A safety claim treated as a busyness preference is the exact inversion `:129` forbids. *Now:* `:112-130` names it `UNSAFE_CROWD_LEVEL` and `constraintReasonFor` (`:406-415`) returns `kind: "exclude"` for every viewer, whatever the intent; `packed` is unchanged. Inert until `COMPASS_LIVE_CONSTRAINTS_ENABLED=true` (`:76-85`), which production does not set. Pinned by `test/compassCensusGates.test.ts` D1–D4. |
 | CX-02 | `:137` Intent modes Right Now · Tonight · Explore · Quiet · Social · High Energy · Nearby · Trip on shared intelligence | **W** | Two vocabularies exist and neither is this one. `compass/CompassIntentModeEngine.ts:5-22` derives nine *context* modes (safety/arrival/night/…) from `CompassContext`, not from shared intelligence. `compass/CompassTemporaryIntent.ts` carries the Map §13 vocabulary into ranking as a bounded addend — `bored · eat · party · explore · meet_people · date_night · chill · local · surprise_me` — which covers Explore, Quiet (`chill`), Social (`meet_people`) and High Energy (`party`): **four of eight**. Right Now, Tonight, Nearby and Trip are unrepresented. Corrects census-sensing S72's "Quiet / High Energy unrepresented". |
-| CX-03 | `:147` Compass emits a decision: GO NOW · GO SOON · WAIT · STAY · SWITCH · SKIP · RETURN | **N** | `grep -rniE "go_now|go soon|goSoon|switch_cost" compass/ routes/compass*.ts` → one unrelated hit (`routes/compass.ts:145`, timezone comment). Compass returns ranked items, nudges and Plan B (`CompassLiveConstraints.ts:711`), never a decision. |
-| CX-04 | `:148` Ground natural-language claims in structured truth | **W** | More grounding exists than the registry credited: the CANDIDATE RULE (`compass/CompassTools.ts:231`), a CONFIDENCE RULE that forbids claiming live status without `verified_live` data (`:231`), factor-grounded "why this" (`CompassRecommendationEngine.ts:23-27`; `routes/compass.ts:945-958`), and UI blocks that drop any id the tools did not return (`CompassUiBlocks.ts:11-15`). All of it is **input**-side or **reference**-side; nothing reads the model's prose back against the confidence band of its inputs. The failure the spec names (*"low-confidence dance_likelihood → 'everyone is dancing'"*) is prevented only by prompt text. |
+| CX-03 | `:147` Compass emits a decision: GO NOW · GO SOON · WAIT · STAY · SWITCH · SKIP · RETURN | **N** | `grep -rniE "go_now|go soon|goSoon|switch_cost" compass/ routes/compass*.ts` → one unrelated hit (`routes/compass.ts:149`, timezone comment). Compass returns ranked items, nudges and Plan B (`CompassLiveConstraints.ts:711`), never a decision. |
+| CX-04 | `:148` Ground natural-language claims in structured truth | **W** | More grounding exists than the registry credited: the CANDIDATE RULE (`compass/CompassTools.ts:231`), a CONFIDENCE RULE that forbids claiming live status without `verified_live` data (`:231`), factor-grounded "why this" (`CompassRecommendationEngine.ts:23-27`; `routes/compass.ts:949-962`), and UI blocks that drop any id the tools did not return (`CompassUiBlocks.ts:11-15`). All of it is **input**-side or **reference**-side; nothing reads the model's prose back against the confidence band of its inputs. The failure the spec names (*"low-confidence dance_likelihood → 'everyone is dancing'"*) is prevented only by prompt text. |
 | CX-05 | `:149` Current Experience value introduces switching cost | **N** | Zero occurrences of `switching`/`switch_cost` in `compass/` and `routes/compass*.ts`. |
 | CX-06 | `:150` Home consumes a server-assembled `UserNowProjection`/equivalent | **C** | `routes/compassHome.ts:1-20` — one endpoint assembling bestNextMove, circleActivity, startingSoon, tonightVibe, weatherWindow; `:285` the single route. Name absent, equivalent present (registry SX-24). |
-| CX-07 | `:151` Home = "what matters now"; Compass = "what should I do about it" | **C** | `routes/compassHome.ts:285` vs `routes/compass.ts:1303` (`POST /compass/ask`). |
+| CX-07 | `:151` Home = "what matters now"; Compass = "what should I do about it" | **C** | `routes/compassHome.ts:285` vs `routes/compass.ts:1307` (`POST /compass/ask`). |
 | CX-08 | `:176` Attention Engine is mandatory before NOTIFY / WALL / SILENT / IGNORE | **N** | `compass/CompassNotificationEngine.ts:4-27` is a ten-level priority stack with quiet hours and mutes: a send/suppress filter with no relevance, novelty, half-life, interruption-cost or attention-budget term and no WALL outcome (`:83-90` — the outcome union has no `wall`). Nobody owns this engine (registry SX-45). |
 | CX-09 | `:19` Existing Compass paths keep functioning while new projections are partial or gated | **C** | Live intel enters Compass only through the fail-closed `readLiveClaimEnvelopes` seam (`CompassLiveConstraints.ts:11-18`, returns `[]` when anything is off); the stage itself is env-gated OFF (`:76-85`); a disabled `COMPASS_ENABLED` returns an honest fallback envelope (`routes/compassHome.ts:19-20`); `flags.ts:24-37` turns an unreadable `feature_flags` into "every flag off". |
 | CX-10 | `:118`, `:191` Context Kernel assembling nine contexts, consumed by all surfaces | **W** | `compass/CompassContextEngine.ts:6-17` is an eleven-state machine that is Compass-local; it has no World, Experience or Attention context and is consumed by no other surface (registry SX-54). |
@@ -119,7 +119,7 @@ construction that is inert in production; it counts as built, consistent with ev
 |---|---|---|---|
 | CG-01 | `:8` Compass consumes the shared layer; no surface builds its own assistance engine | **W** | The client duplicates the server's starter set: `travel-buddy-standalone/src/…/compass/compassPrompt.ts` re-implements `buildCompassStarters` and `app/(tabs)/ai.tsx:399` calls the client one (census-input-intelligence G359 `W`). Client-side; recorded, not edited. |
 | CG-02 | `:150-152` Compass prompt: contextual starters based on current surface | **C** | census-input-intelligence G88 `C` (`projection.ts:258-304`), confirmed by the client wiring at `app/(tabs)/ai.tsx:398-410` (G364). |
-| CG-03 | `:160-163` Context carryover bounded to the task; Compass prompt carries Trip context; no silent preference rewrite | **C** | Trip context is attached server-side on every ask (`compass/CompassTripContext.ts:1-11`, called at `routes/compass.ts:1459-1463`) and as structured refs on starters (G364). Boundedness: `CompassTemporaryIntent.ts:14-20` *"reads no profile and writes nothing, so it CANNOT rewrite a preference"*; `compass/CompassSearchDecayService.ts:5-9` decays a search nudge so it *"doesn't permanently skew"* the feed. |
+| CG-03 | `:160-163` Context carryover bounded to the task; Compass prompt carries Trip context; no silent preference rewrite | **C** | Trip context is attached server-side on every ask (`compass/CompassTripContext.ts:1-11`, called at `routes/compass.ts:1479-1483`) and as structured refs on starters (G364). Boundedness: `CompassTemporaryIntent.ts:14-20` *"reads no profile and writes nothing, so it CANNOT rewrite a preference"*; `compass/CompassSearchDecayService.ts:5-9` decays a search nudge so it *"doesn't permanently skew"* the feed. |
 | CG-04 | `:213` Compass: convert phrase into structured request/action with referenced entities | **C** | G137 `C` (`semanticIntent.ts:231-268` produces `open_compass` with the parse); the drop is on the *search bar's* client (G305), not Compass's — `app/(tabs)/ai.tsx:98-104` consumes `prefillMessage`. |
 | CG-05 | `:216-229` AI-assisted writing for Compass is opt-in, editable, never silently inserted | **C (gated)** | G138/G143 `C`; `compass_ai_writing_enabled` has **no row** in production `feature_flags` (verified 2026-09-07), and `aiWriting.ts:80-90` reads it fail-closed, so no AI writing has run. |
 
@@ -135,11 +135,11 @@ construction that is inert in production; it counts as built, consistent with ev
 | CT-06 | `:283` Trips remain operational without Compass | **C** | TR222 `C` (`routes/index.ts:146,173,251-254`; `test/tripsHostingDegraded.test.ts`). |
 | CT-07 | §12.1 The twelve Compass tools (`getTripContext` … `findMeetingPoint`) | **W** | 3 of 12 exist under other names — `get_current_trip` (TR202 `W`, `CompassTools.ts:80-84`), `get_whos_around` (TR204 `W`), `add_to_trip` (TR210 `W`) — and 9 are absent (TR203, 205–209, 211–212 `N`). |
 | CT-08 | §12.3 Value-of-information before asking the traveller | **N** | TR220 `N`; `CompassTools.ts:230` instructs *"CALL the matching tool instead of guessing"* — nothing scores a question. |
-| CT-09 | §4 `TripProposal` as a governed object (decision rule, affected objects, expiry) | **W** | **Corrects TR26/TR210** (*"not persisted… no expiresAt"*): the proposal **is** persisted, inside the conversation message payload (`routes/compass.ts:1745-1765` reads `pendingProposals`/`resolvedProposals`), with a 24 h TTL that fails closed on a missing timestamp (`:1728`, `:1771-1774`). What is still missing: `decisionRule`, `affectedObjects`, and a table any *other* participant could see. |
+| CT-09 | §4 `TripProposal` as a governed object (decision rule, affected objects, expiry) | **W** | **Corrects TR26/TR210** (*"not persisted… no expiresAt"*): the proposal **is** persisted, inside the conversation message payload (`routes/compass.ts:1787-1807` reads `pendingProposals`/`resolvedProposals`), with a 24 h TTL that fails closed on a missing timestamp (`:1728`, `:1771-1774`). What is still missing: `decisionRule`, `affectedObjects`, and a table any *other* participant could see. |
 | CT-10 | §15 Compass must escalate to airline / airport / embassy / emergency / human support where appropriate | **N** | No Compass tool or prompt rule names an institution; `services/safeReturn` is not imported by `CompassTools.ts` (TR217). census-trips TR328 credits SafeReturn's contact flow — that is not Compass. |
 | CT-11 | §17 Commercial recommendations suppressed when a severe operational/safety state requires attention | **N** | `safety_mode` reaches ranking only as a context boost for `notification`-type items (`compass/CompassScoringEngine.ts:272`); nothing suppresses paid/featured items when `safeReturnActive` (TR319 *"unguarded absence"*). |
 | CT-12 | §16 Friend nearby → meetup opportunity, subject to both parties' privacy | **W** | `get_whos_around` is real and privacy-correct (`CompassTools.ts:183-188`; `CompassSocialEngine.ts:350-379` every target through `canViewCirclePresenceBatch`, fail-closed per target) but produces presence, not an opportunity (TR304). |
-| CT-13 | §18 Automated suggestions explainable from stored inputs and a versioned algorithm | **W** | Stored inputs: yes — every autopilot proposal persists `reason` and per-item before/after `changes` (`CompassAutopilotEngine.ts:598-606`), and every served recommendation persists its factor snapshot (`routes/compass.ts:945-958`). Versioned algorithm: no — `grep -i "algorithm\|version" CompassAutopilotEngine.ts` → nothing; `compass_algorithm_versions` exists as a table and nothing stamps a proposal with it. |
+| CT-13 | §18 Automated suggestions explainable from stored inputs and a versioned algorithm | **W** | Stored inputs: yes — every autopilot proposal persists `reason` and per-item before/after `changes` (`CompassAutopilotEngine.ts:598-606`), and every served recommendation persists its factor snapshot (`routes/compass.ts:949-962`). Versioned algorithm: no — `grep -i "algorithm\|version" CompassAutopilotEngine.ts` → nothing; `compass_algorithm_versions` exists as a table and nothing stamps a proposal with it. |
 
 ### 2.4 Layover spec — 7 rows
 
@@ -157,11 +157,11 @@ construction that is inert in production; it counts as built, consistent with ev
 
 | id | Obligation | V | Evidence |
 |---|---|---|---|
-| CP-01 | `:94` Weight explicit current intent above generic interests | **W** | **Corrects census-passport P42 / census-discovery A18 / registry P-05** (*"nothing consumes it"* / *COULD NOT ESTABLISH*): `compass/CompassTools.ts:876-900` reads both travellers' explicit windows through `readVisibleExplicitIntent` + `getActiveWindows` at the caller's permitted visibility and applies `explicitIntentBoost` — pinned by `test/compass-social.test.ts` D2. But that is **one of two** people-ranking surfaces: the traveler recommendation list at `routes/compass.ts:3369-3600` builds `sharedInterests` reason codes and reads no window (`grep -i intent` over `:3400-3480` → nothing). |
-| CP-02 | `:207-221` Compass consumes its Passport projection variant; §35 does not rebuild identity independently (P100, P169) | **W** | Half-closed since census-passport: `GET /compass/people/:userId/passport` (`routes/compass.ts:4198-4232`) serves `discovery_card` through `buildConsumerProjection` behind the fail-closed `allowDiscoveryPersonCard` gate (`services/passport/PassportConsumerAccess.ts:62-90`). But **no client calls it** (`grep -rn "compass/people/" travel-buddy-standalone/src` → nothing), and the traveler list still reads `profiles` directly — `routes/compass.ts:3369-3376` selects `username, display_name, name, avatar_url, …` — one of the two real direct person-identity readers in the tree (census-discovery C33). Owner decision D2 in §7. |
-| CP-03 | `:263` A Passport block propagates into Compass social recommendations | **C** | P120 `C`; re-verified at the two Compass legs: `routes/compass.ts:3350-3366` reads `blocks` **with** `blkErr` bound and answers `block_check_failed` with an empty list (fail-closed), and `CompassTools.ts:1176-1186` re-resolves hidden users per social tool call. |
+| CP-01 | `:94` Weight explicit current intent above generic interests | **W** | **Corrects census-passport P42 / census-discovery A18 / registry P-05** (*"nothing consumes it"* / *COULD NOT ESTABLISH*): `compass/CompassTools.ts:876-900` reads both travellers' explicit windows through `readVisibleExplicitIntent` + `getActiveWindows` at the caller's permitted visibility and applies `explicitIntentBoost` — pinned by `test/compass-social.test.ts` D2. But that is **one of two** people-ranking surfaces: the traveler recommendation list at `routes/compass.ts:3411-3642` builds `sharedInterests` reason codes and reads no window (`grep -i intent` over `:3400-3480` → nothing). |
+| CP-02 | `:207-221` Compass consumes its Passport projection variant; §35 does not rebuild identity independently (P100, P169) | **W** | Half-closed since census-passport: `GET /compass/people/:userId/passport` (`routes/compass.ts:4249-4283`) serves `discovery_card` through `buildConsumerProjection` behind the fail-closed `allowDiscoveryPersonCard` gate (`services/passport/PassportConsumerAccess.ts:62-90`). But **no client calls it** (`grep -rn "compass/people/" travel-buddy-standalone/src` → nothing), and the traveler list still reads `profiles` directly — `routes/compass.ts:3411-3418` selects `username, display_name, name, avatar_url, …` — one of the two real direct person-identity readers in the tree (census-discovery C33). Owner decision D2 in §7. |
+| CP-03 | `:263` A Passport block propagates into Compass social recommendations | **C** | P120 `C`; re-verified at the two Compass legs: `routes/compass.ts:3392-3408` reads `blocks` **with** `blkErr` bound and answers `block_check_failed` with an empty list (fail-closed), and `CompassTools.ts:1176-1186` re-resolves hidden users per social tool call. |
 | CP-04 | §18 Shared context → Compass handoff | **C** | P87 `C` (`SharedContextService.compassHandoff:40-61` → `app/(tabs)/ai.tsx:98-104`). |
-| CP-05 | Universal display-name rule (`.agents/memory/display-name-privacy.md`): `@handle` unless opted in; self exempt; via `nameVisibilitySet` | **C** | `routes/compass.ts:3556` `nameVisibilitySet(sc, …)` batched; `:3578-3582` `title` = real name iff `nameOk`, else the **bare** username (null for private non-followed); `data.displayName` null unless `nameOk` (`:3590`). The list excludes the viewer (`:3374` `.neq("id", user.id)`), so the self-exemption cannot be violated here. The client renders `@` from the bare username (`components/compass/CompassTravelerRow.tsx:57-60` via `primaryIdentityText`). **The brief's "third shape, `title`=`@username`" is not what ships** — title is the bare username and this is the *same* shape census-discovery C19 found in Discovery search. |
+| CP-05 | Universal display-name rule (`.agents/memory/display-name-privacy.md`): `@handle` unless opted in; self exempt; via `nameVisibilitySet` | **C** | `routes/compass.ts:3598` `nameVisibilitySet(sc, …)` batched; `:3578-3582` `title` = real name iff `nameOk`, else the **bare** username (null for private non-followed); `data.displayName` null unless `nameOk` (`:3590`). The list excludes the viewer (`:3374` `.neq("id", user.id)`), so the self-exemption cannot be violated here. The client renders `@` from the bare username (`components/compass/CompassTravelerRow.tsx:57-60` via `primaryIdentityText`). **The brief's "third shape, `title`=`@username`" is not what ships** — title is the bare username and this is the *same* shape census-discovery C19 found in Discovery search. |
 
 ### 2.6 Telegraph spec v1.1 — 9 rows
 
@@ -169,7 +169,7 @@ construction that is inert in production; it counts as built, consistent with ev
 |---|---|---|---|
 | CTG-01 | `:87` Availability expiry revokes across Compass | **C** | The only availability Compass consumes is read live: `CompassTools.ts:63` imports `getActiveWindows` (*"explicit-only, expiry re-evaluated on read"*, `:872-873`), called per tool call at `:889-892`; nothing stores a copy. |
 | CTG-02 | `:285` Block cascade into Compass retrieval; no subsystem rediscovers a blocked relationship | **C** | T219 Compass leg `C`: `CompassTools.ts:285-313` `refreshHiddenUsers` per social call; feed-side `CompassSafetyFilter.ts:120-121` conditions 1–2. One hole closed this pass (§3.C CC-08). |
-| CTG-03 | `:369`, `:578` Deleted/unsent objects removed from Compass retrieval | **C ⌀** | Compass retrieves **no message content**: `/compass/telegraph` (`routes/compass.ts:4009-4200`) reads `message_thread_members`, `message_threads`, `trips`, `profiles` — never `messages`; the fallback builder reads membership only (`CompassFallbackFeedBuilder.ts:389`). A report invalidates the Compass cache (`routes/messaging.ts:2723`, T276). Vacuous in the one place it could matter. |
+| CTG-03 | `:369`, `:578` Deleted/unsent objects removed from Compass retrieval | **C ⌀** | Compass retrieves **no message content**: `/compass/telegraph` (`routes/compass.ts:4060-4251`) reads `message_thread_members`, `message_threads`, `trips`, `profiles` — never `messages`; the fallback builder reads membership only (`CompassFallbackFeedBuilder.ts:389`). A report invalidates the Compass cache (`routes/messaging.ts:2723`, T276). Vacuous in the one place it could matter. |
 | CTG-04 | `:621` Unavailable/Invisible revokes Compass availability projections promptly | **C** | Same read-time path as CTG-01; presence honours pauses/visibility per target through `canViewCirclePresenceBatch` (`CompassSocialEngine.ts:376-379`). |
 | CTG-05 | §18.3 Eight conversation tools (`getConversationContext` … `searchAuthorizedConversationContent`) | **N** | T244–T251: 0 of 8 in `CompassTools.ts:65-220`; `create_meetup_draft` exists outside Compass (`routes/telegraphCommands.ts:34`). |
 | CTG-06 | §18.3 Compass sees only data authorized to the conversational context | **C** | T252 `C` (`services/telegraphChatSuggestions.ts:27#export interface TelegraphChatPrivacyVerdict`, `services/telegraphChatSuggestions.ts:106#export async function resolvePrivacyVerdict`, `services/telegraphChatSuggestions.ts:237-255#show_telegraph_dm, show_telegraph_trip, show_telegraph_circle`; `routes/telegraphChat.ts:17-21`). |
@@ -181,16 +181,16 @@ construction that is inert in production; it counts as built, consistent with ev
 
 | id | Obligation | V | Evidence |
 |---|---|---|---|
-| CH-01 | `:460-461` Compass is a consumer of Memory facts; must not mutate canonical facts through prose | **C** | H129 `C`: the tool set has no Memory mutation (`CompassTools.ts:65-220`); `forgetMemory` at `routes/compass.ts:2145` writes `compass_memories` (a chat store), not `memories`. |
+| CH-01 | `:460-461` Compass is a consumer of Memory facts; must not mutate canonical facts through prose | **C** | H129 `C`: the tool set has no Memory mutation (`CompassTools.ts:65-220`); `forgetMemory` at `routes/compass.ts:2187` writes `compass_memories` (a chat store), not `memories`. |
 | CH-02 | `:462-469` Eight Memory read tools (`getMemory`, `searchMemories`, `getSharedMemories`, `getPlaceHistory`, `getTripMemories`, `getMemoryEvidence`, `createMemoryDraft`, `suggestMemoryCorrection`) | **N** | 0 of 8 in `CompassTools.ts:65-220`. Resolves the registry's H-01 *COULD NOT ESTABLISH*: established absent. Memory reaches the prompt as a projected block instead (CH-04). |
-| CH-03 | `:742` Never keep deleted Memories in Compass projections | **W** | Compass's own reads are clean: `CompassGraphEngine.ts:697-703` selects `state = published` and `≠ only_me` (*"belt and braces"* re-check at `:704`); `PassportRemembersService.ts:396-402` drops `deleted/removed/hidden`; the prompt block goes through `memory_retrieve`/`memory_rediscover` (`ProjectedMemoryPrompt.ts:110,120`), Memories-owned RPCs. But a graph **node** built from a memory persists after that memory is deleted: the only pruning is of stale city/time-slice keys (`CompassGraphEngine.ts:1198-1250`); no deletion hook, no per-memory prune. The node carries anchors only (`:693-694` *"never the title, caption or media"*), which bounds the leak to "this owner was at this place/trip/event" — a derived fact of a deleted memory, kept until the next rebuild. |
+| CH-03 | `:742` Never keep deleted Memories in Compass projections | **W** | Compass's own reads are clean: `CompassGraphEngine.ts:707-713` selects `state = published` and `≠ only_me` (*"belt and braces"* re-check at `:704`); `PassportRemembersService.ts:396-402` drops `deleted/removed/hidden`; the prompt block goes through `memory_retrieve`/`memory_rediscover` (`ProjectedMemoryPrompt.ts:110,120`), Memories-owned RPCs. But a graph **node** built from a memory persists after that memory is deleted: the only pruning is of stale city/time-slice keys (`CompassGraphEngine.ts:1208-1260`); no deletion hook, no per-memory prune. The node carries anchors only (`:693-694` *"never the title, caption or media"*), which bounds the leak to "this owner was at this place/trip/event" — a derived fact of a deleted memory, kept until the next rebuild. |
 | CH-04 | `:528` `CompassMemoryProjection` — minimal authorized retrieval facts | **C (gated)** | Equivalent under another name: `compass/ProjectedMemoryPrompt.ts:1-27` — bounded, UGC-wrapped, flag-gated (`memory_projection`, **false in production**), service-role RPC with the caller's own id. |
 
 ### 2.8 Media spec — 4 rows
 
 | id | Obligation | V | Evidence |
 |---|---|---|---|
-| CM-01 | `:294-304` `CompassMediaContext { mediaAssetId, entityRefs, viewerContext, permittedIntelligenceRefs }` | **C** | `compass/CompassMediaContext.ts:8-12` and the four privacy rules at `:15-35`; consumed at `routes/compass.ts:1484` (MD242–MD246 `C`). |
+| CM-01 | `:294-304` `CompassMediaContext { mediaAssetId, entityRefs, viewerContext, permittedIntelligenceRefs }` | **C** | `compass/CompassMediaContext.ts:8-12` and the four privacy rules at `:15-35`; consumed at `routes/compass.ts:1504` (MD242–MD246 `C`). |
 | CM-02 | `:178` Convert a Trail / Trip recap / itinerary into an executable Compass plan | **N** | MD107 `W` from Media's side (the action adds trip-plan items); on Compass's side no plan compiler exists. Resolves registry MD-05 *COULD NOT ESTABLISH*: absent. |
 | CM-03 | §32 The nine questions (*worth going now · find similar · still busy · where is this · build a plan · what's nearby · where after · quieter/cheaper · add to Trip*) | **W** | Four carried (MD246, MD250, `create_plan`, `add_to_trip`); "where should we go after" (MD252) and "quieter/cheaper" (MD101) have no comparator or sequencing concept in `CompassMediaContext.ts`. |
 | CM-04 | §33 Compass owns recommendation/decision support; the engine stays propose-only | **C** | MD436 `C`: `CompassMediaContext.ts:12-13` *"does NOT fork the Compass engine; the engine stays propose-only"*. |
@@ -201,7 +201,7 @@ construction that is inert in production; it counts as built, consistent with ev
 |---|---|---|---|
 | CMP-01 | Map `:162` Compass does not create live facts | **C** | M104/M288 `C` (`compassMapModel.ts:8,191`). |
 | CMP-02 | Map §13 TemporaryIntent is a separate, request-scoped addend to Compass ranking — never written back | **C** | `compass/CompassTemporaryIntent.ts:1-29`; `compass/types.ts:74`; census-map M97/M102 `C`. |
-| CMP-03 | Map `:162` Compass Map Mode: 3–5 best next moves with a WHY panel | **C** | M103/M105 `C` (`compassMapModel.ts:67-68, 212-223`); server surface `GET /compass/recommendations` (`routes/compass.ts:3115`). |
+| CMP-03 | Map `:162` Compass Map Mode: 3–5 best next moves with a WHY panel | **C** | M103/M105 `C` (`compassMapModel.ts:67-68, 212-223`); server surface `GET /compass/recommendations` (`routes/compass.ts:3157`). |
 | CW-01 | Wall `:146` Compass references canonical objects in responses/actions | **C** | `compass/CompassUiBlocks.ts:7-15` — every block reference validated against the turn's tool results; unknown ids dropped. |
 | CW-02 | Wall `:143` Ask Compass from a place-linked post | **C (gated)** | W85 `C`; `wall_compass_handoff_enabled` is **false** in production (2026-09-04). |
 | CTR-01 | Trust §35 Consume Trust through the canonical read (`getDisplayTrustScore`) | **W** | census-trust A17: four direct reads in Compass. After this pass **three** remain — `CompassProfileService.ts:86-89` (→ `null` when absent, `:251-252`, never substituted), `CompassTools.ts:850-853` (floor, now fail-closed), `CompassActiveUserRewardEngine.ts:188-199` (`trust_caps`). The fourth (`CompassNotificationEngine.ts:450`, pre-edit) read a value the column cannot hold and is replaced (§6 F2). |
@@ -221,16 +221,16 @@ construction that is inert in production; it counts as built, consistent with ev
 | CC-03 | Eligibility FAIL-OPEN, trust floor 20 applies only to a *known* score (`CompassEligibilityEngine.ts:36, 54-57, 207`) | **C** | `:55-56` `authorTrust !== null && authorTrust < 20` — an absent score passes. Honest, and **vacuous in production**: 56 of 58 users have no `trust_profiles` row, so the floor decides almost nothing. |
 | CC-04 | Every tool result is stripped of coordinate-shaped and private keys before reaching the model (`CompassTools.ts:10-12`) | **C** | `:238-250` `PRIVATE_KEY_RE` + recursive `stripCoordinateFields`; applied at `:1185`. |
 | CC-05 | *"Eight tools the model may call"* (`CompassTools.ts:4`) | **W → C** | Eleven are declared (`:61-216`; census-layover L102 counted them). Header corrected to eleven and pointed at `TOOL_DEFINITIONS` as the authority. |
-| CC-06 | `add_to_trip` proposes only; the server holds the proposal; confirm re-authorizes (`CompassTools.ts:19-21`) | **C** | `:713-726` authorization before proposing; `routes/compass.ts:1730-1778` finds the held proposal in the conversation, refuses resolved/expired ones (24 h TTL, fail-closed on a missing timestamp). |
+| CC-06 | `add_to_trip` proposes only; the server holds the proposal; confirm re-authorizes (`CompassTools.ts:19-21`) | **C** | `:713-726` authorization before proposing; `routes/compass.ts:1772-1820` finds the held proposal in the conversation, refuses resolved/expired ones (24 h TTL, fail-closed on a missing timestamp). |
 | CC-07 | *"Below-floor accounts are not surfaced in social answers"* (`CompassTools.ts:839`) | **W → C** | As found (pre-edit `:826-834`), the gate read `{ data: trust }` only and the comment admitted *"fail-open on infra error"*: an **unreadable** `trust_profiles` surfaced a below-floor account for exactly as long as the outage lasted — the same discarded-`error` defect the event gates carried (`10a91737`). Now `:847-856` binds `error` and answers *"not available"*. Absent row still admitted (owner decision D1). |
-| CC-08 | `refreshHiddenUsers` *"never widen visibility"* (`CompassTools.ts:272-284, 309`) | **W → C** | As found (pre-edit `:295-297`), with **no** snapshot (`profile` null) and a failed `blocks`/`user_mutes` read it built the base from **empty** hidden lists — every blocked, blocker and muted user un-hidden for that call. Unreachable from `/compass/ask` today (`routes/compass.ts:1407` loads the profile without a `.catch`), but the signature admits null (`:1208`). Now `:301-309` throws with no snapshot, which `executeCompassTool` turns into *"Tool execution failed."* — closed, not empty. |
+| CC-08 | `refreshHiddenUsers` *"never widen visibility"* (`CompassTools.ts:272-284, 309`) | **W → C** | As found (pre-edit `:295-297`), with **no** snapshot (`profile` null) and a failed `blocks`/`user_mutes` read it built the base from **empty** hidden lists — every blocked, blocker and muted user un-hidden for that call. Unreachable from `/compass/ask` today (`routes/compass.ts:1427` loads the profile without a `.catch`), but the signature admits null (`:1208`). Now `:301-309` throws with no snapshot, which `executeCompassTool` turns into *"Tool execution failed."* — closed, not empty. |
 | CC-09 | A suspended sender is suppressed through safety-filter parity (`CompassNotificationEngine.ts:5-6, 431-436`) | **W → C** | As found (pre-edit `:449-454`), it compared `trust_profiles.public_level === "suspended"` — a value the live CHECK forbids (`trust_profiles_public_level_check`: new_traveler … city_trusted, read from the production catalogue 2026-09-07; census-trust A17 called it dead, confirmed). Suspension lives in `user_account_states` (`lib/circleAccessGuard.ts:72-88`, `lib/http.ts:348-357`). Now `:459-483` reads that table, honours `expires_at`, binds `error` and logs a failed read instead of discarding it. Posture on an unreadable table stays deliver-with-warning, matching the blocked-sender step at `:406-424`. |
 | CC-10 | Live-constraint stage gated OFF by an env-guarded constant (`CompassLiveConstraints.ts:36-41, 76-85`) | **C** | `test/compass-live-constraints.test.ts:178-206`; production sets no such variable. |
 | CC-11 | Truth boundary: only a Live-band, unexpired, observation-class envelope may exclude; emerging may only nudge (`:19-27`) | **C** | `test/compass-live-constraints.test.ts:266-313`; `test/compassCensusGates.test.ts` D4 re-pins it for the new safety exclusion. |
 | CC-12 | *"All Compass services call `isEnabled()`"*; flags read fail-closed (`flags.ts:5, 24-37`) | **C** | `loadFlags` returns `{}` when `data` is null (supabase-js resolves on error → `data` null → every flag false), so an unreadable `feature_flags` turns Compass OFF, not on. |
 | CC-13 | `sharesSocialContext` fail-closed (`CompassSocialEngine.ts:436-475`) | **C** | A failed circle read falls through to trips; a failed trip read returns `false` (`:472-474`). No path yields `true` on error. |
 | CC-14 | Profile trust read is honest about absence (`CompassProfileService.ts:6, 251-252`) | **C** | `trustScore: trust?.overall_score ?? null` — no `?? 50` anywhere in `compass/` or `routes/compass*.ts` (grep). |
-| CC-15 | Graph reads only PUBLISHED, non-`only_me` memories; person nodes store no profile attributes (`CompassGraphEngine.ts:690-705, 37-40`) | **C** | `:698-700` filter + `:704` re-check. |
+| CC-15 | Graph reads only PUBLISHED, non-`only_me` memories; person nodes store no profile attributes (`CompassGraphEngine.ts:700-715, 37-40`) | **C** | `:698-700` filter + `:704` re-check. |
 | CC-16 | Passport Remembers excludes deleted/removed/hidden source Memories (`PassportRemembersService.ts:393`) | **C** | `:400-402`. |
 | CC-17 | Projected-memory prompt is flag-gated, bounded, never fatal (`ProjectedMemoryPrompt.ts:20-26`) | **C (gated)** | `memory_projection` false in production; RPCs at `:110,120` take the caller's own id. |
 | CC-18 | Autopilot: propose, never auto-execute; durable pending row; permissions and lock types re-verified at confirm (`CompassAutopilotEngine.ts:66-85`) | **C** | `:598-606` insert with before/after; confirm path `:647-648` applies within re-verified permissions. Its own contract holds — which is exactly why CT-01 is a *kernel* violation and not a *policy* one. |
@@ -282,12 +282,12 @@ has zero lifetime rows behind it.
 |---|---|---|
 | `COMPASS_V1_RULE_BASED_ENABLED` is *absent* from production | `census-discovery.md:178` | **FALSE — TRUE since 2026-07-17.** The for_you pipeline is on. |
 | Nothing consumes explicit intent on the Compass side | `census-passport.md` P42; `census-discovery.md` A18; registry P-05 (*COULD NOT ESTABLISH*) | **FALSE for `get_travel_compatibility`** — `CompassTools.ts:876-900`, pinned by `test/compass-social.test.ts` D2. Still true for the traveler recommendation list (CP-01 `W`). |
-| The `add_to_trip` proposal *"is not persisted, has no … `expiresAt`"* | `census-trips.md` TR210, TR26 | **HALF FALSE** — persisted in the conversation message payload (`routes/compass.ts:1745-1765`) with a 24 h TTL (`:1728, :1771-1774`). No `decisionRule`/`affectedObjects` (CT-09 `W`). |
+| The `add_to_trip` proposal *"is not persisted, has no … `expiresAt`"* | `census-trips.md` TR210, TR26 | **HALF FALSE** — persisted in the conversation message payload (`routes/compass.ts:1787-1807`) with a 24 h TTL (`:1728, :1771-1774`). No `decisionRule`/`affectedObjects` (CT-09 `W`). |
 | *"Eight tools the model may call"* | `compass/CompassTools.ts:4` | **FALSE — eleven.** Fixed. |
 | Compass writes canonical trip state from two sites (`:206`, `:598`) | registry T-01 and §6; the brief | **FLOOR** — a third: `CompassAutopilotEngine.ts:647-648` updates `trip_plan_items` on confirm; plus `routes/compassAutopilot.ts:229-230, 246-247`. |
 | SX-09 Compass half: *"`CompassSafetyFilter.ts:159-197` reads no world safety state"* | registry; census-sensing S66 | **TRUE BUT INCOMPLETE** — the gated live stage *did* read the safety claim and demoted it only against a `quiet` intent (pre-edit `CompassLiveConstraints.ts:392-401`). Worse than not reading it. Fixed under the gate. |
 | *"Quiet / High Energy / Nearby / Right Now have no representation"* | census-sensing S72; registry SX-15 | **PARTLY STALE** — `CompassTemporaryIntent` carries `chill`/`party`/`meet_people`/`explore` into ranking. Right Now, Tonight, Nearby, Trip remain absent (4 of 8). |
-| Compass uses a *third* redaction shape with `title` = `@username` | the brief for this pass | **NOT WHAT SHIPS** — `title` is the bare username (`routes/compass.ts:3578-3582`); the client prepends `@`. Same shape as Discovery search (census-discovery C19). |
+| Compass uses a *third* redaction shape with `title` = `@username` | the brief for this pass | **NOT WHAT SHIPS** — `title` is the bare username (`routes/compass.ts:3620-3624`); the client prepends `@`. Same shape as Discovery search (census-discovery C19). |
 | `CompassNotificationEngine.ts:454` tests a value the CHECK forbids — a dead check | `census-trust.md` A17 | **CONFIRMED** against the production catalogue; replaced (§6 F2). |
 | `memory_recaps` *"seeded off (2214)"* | `census-highlights-memories.md` H15 | Production has **no row** — same effect (the reader is fail-closed), recorded for accuracy. |
 | `trust_engine_enabled` is off | (widespread; not repeated by any Compass-facing row) | **FALSE** — true since 2026-07-17. Not repeated here. |
@@ -334,7 +334,7 @@ Run with the four pre-existing suites whose behaviour was touched (`compass-soci
 | # | Decision | Why it is the owner's |
 |---|---|---|
 | D1 | Should an account with **no** `trust_profiles` row pass the social trust floor? Today it does (F1 preserves that). 56 of 58 users are in that state; the engine is on and its emitters are starved (5 `trust_events` in 52 days). | The same decision `10a91737` deferred for the event gates (`TRUST_SCORE_WHEN_NO_PROFILE`). |
-| D2 | Source the traveler recommendation cards (`routes/compass.ts:3369-3600`) from the Passport `discovery_card` projection, behind a flag seeded FALSE — closes CP-02/P169's Compass leg and retires one of the two direct person-identity readers. Cost: one projection per candidate (≤ 50) or a batch variant Passport would have to publish. | Changes what a user sees; touches Passport's contract. |
+| D2 | Source the traveler recommendation cards (`routes/compass.ts:3411-3642`) from the Passport `discovery_card` projection, behind a flag seeded FALSE — closes CP-02/P169's Compass leg and retires one of the two direct person-identity readers. Cost: one projection per candidate (≤ 50) or a batch variant Passport would have to publish. | Changes what a user sees; touches Passport's contract. |
 | D3 | Build the Sensing `:147` decision vocabulary and `:149` switching cost without a Compass spec? Both are pure functions over signals Compass already has (open-now, event start, live constraints, Plan B), but their *semantics* — when is WAIT right — are product decisions. | No spec to build against. |
 | D4 | The Attention Engine (`:176`) has no owner; Compass's priority stack is the closest artefact and is not it. | Cross-surface ownership. |
 | D5 | Wire a client caller for `GET /compass/people/:userId/passport` (none exists) or retire it. | Client scope. |
@@ -357,7 +357,7 @@ Compass needs, from the kernel, exactly two commands and one store:
    per-user preferences *about* a trip; the owner may rule them out of scope).
 3. **A proposal store** the kernel owns — today `trip_autopilot_proposals` is inserted at `:598` and
    its status flipped at `routes/compassAutopilot.ts:229-230, 246-247`; `add_to_trip` proposals live
-   inside `compass_conversation_messages` payloads (`routes/compass.ts:1745-1765`). Trips §4's
+   inside `compass_conversation_messages` payloads (`routes/compass.ts:1787-1807`). Trips §4's
    `TripProposal` (decisionRule, affectedObjects, expiresAt) would unify both.
 
 All three sites have **zero lifetime rows** in production; there is no data to migrate.
@@ -613,4 +613,197 @@ those names, and nothing executable defends it.
 |---|---|
 | BUILT-BUT-WRONG | **23** |
 | NOT-BUILT | **6** |
+| CANNOT-VERIFY | **0** |
+
+---
+
+## 11. The correctness pass, 2026-09-13 — four rows moved, and two of them were moved by code
+
+*Measured at `3ca68cb06`, the commit below this one, which carries the three builds §11.4 describes
+and nothing else. Declared as `head_commit` in the Declaration table at the top of this file,
+replacing `820b60638`; that replacement and this section are the only edits this pass makes to this
+document.*
+
+### 11.0 What this pass was asked to do, and what it actually moved
+
+§10 published a 15.6-point correctness move of which **1.1 points was its own work** — the rest was a
+parser learning to read cells and other lanes' code this census had never measured. This pass had no
+parser to fix: all 90 rows already parse. So every point below is either code this lane wrote or a
+verdict whose stated evidence was **false when re-executed**, and the two are labelled separately
+because they are not the same kind of thing.
+
+| Stage | C | W | N | CONSTRUCTED | CORRECT |
+|---|---|---|---|---|---|
+| At `820b60638`, where §10 left it | 61 | 23 | 6 | 93.3 % | 67.8 % |
+| Rows whose evidence was FALSE on re-execution (CTR-01, CH-02) | +2 | −1 | −1 | +1.1 | +2.2 |
+| Rows this lane BUILT (CX-04, CH-03) | +2 | −2 | 0 | 0.0 | +2.2 |
+| **At `3ca68cb06`** | **65** | **20** | **5** | **94.4 %** | **72.2 %** |
+
+**Half of this move is this lane's own code and half is a stale sentence, and the half that is
+code is the smaller claim of the two.** Two rows were BUILT-BUT-WRONG for a reason nobody had
+attacked; two were graded against sentences that had quietly expired.
+
+### 11.1 The 23 BUILT-BUT-WRONG rows, grouped by WHY they are wrong
+
+Grouped before anything was built, so the group sizes are a measurement and not a description of
+what happened to get done. The question asked of each row was: *what exactly stands between this row
+and `C`?*
+
+| group | rows | which |
+|---|---|---|
+| **(a) logic wrong in code this pass owns** | **5** | CX-04 · CH-03 · CT-02 · CT-03 · CP-01 |
+| **(b) logic right, nothing reaches it** | **3** | CG-01 · CL-04 · CP-02 |
+| **(c) capped by a flag seeded FALSE or an unapplied migration** | **6** | CX-03 · CX-05 · CT-07 · CT-08 · CT-09 · CT-11 |
+| **(d) needs something nobody has written** | **8** | CX-02 · CX-10 · CX-15 · CT-01 · CT-12 · CT-13 · CTG-08 · CM-03 |
+| **(e) already correct — the row's own evidence had expired** | **1** | CTR-01 |
+
+**Two of the five (a) rows were built and are `C` below. The other three were not, and the reason is
+the same one in each case: each needs a user-visible behaviour change on a live route, with no flag
+to hide behind, and this pass was forbidden to write a migration.** CP-01 changes who appears in a
+traveler list; CT-02 and CT-03 change where eleven modules read trip state from, which is Trips' to
+publish before Compass can consume. Naming them (a) rather than (d) is the honest grade: the code
+that is wrong is Compass's, and what stops it is a rule about this pass, not a missing contract.
+
+**All three (b) rows are CLIENT files** — `app/(tabs)/ai.tsx` calls the client's starter set instead
+of the server's (CG-01), no screen reaches the layover Compass endpoint (CL-04), and no screen calls
+`GET /compass/people/:userId/passport` (CP-02). §9 excluded client edits from this census's
+ownership and that exclusion still holds; what changed is that CP-02's *server* half is now closed —
+see §11.5.
+
+**The (c) six are the chain §10.9 named**, and nothing in this pass can touch it: *BUILT ON A BRANCH
+IS NOT MERGED. MERGED IS NOT DEPLOYED. DEPLOYED IS NOT FLAG ENABLED.*
+
+### 11.2 Row moves
+
+| id | was | now | why |
+|---|---|---|---|
+| CX-04 | W | **C** | **Built.** *"Nothing reads the model's prose back against the confidence band of its inputs"* is no longer true. `artifacts/api-server/src/compass/CompassGroundingEnvelope.ts:126#export function readGroundingEvidence` walks the turn's OWN tool results for a `verified_live` source class, a wait datum and a crowd datum; `artifacts/api-server/src/compass/CompassGroundingEnvelope.ts:221#export function enforceCompassGroundingEnvelope` reads the answer back against them and refuses to publish an UNHEDGED current-conditions claim the turn cannot support. Wired on both branches of `/compass/ask` from the same tool log — `artifacts/api-server/src/routes/compass.ts:1323#function groundCompassAnswer` at `artifacts/api-server/src/routes/compass.ts:1644#const _grounded    = groundCompassAnswer(_rawMessage, toolLog);` (streamed) and `artifacts/api-server/src/routes/compass.ts:1716#const _grounded    = groundCompassAnswer(_rawMessage, toolLog);` (not) — and the violations travel on the response instead of being swallowed. **Ungated**: no flag, no migration, runs on every deployment. Pinned by `artifacts/api-server/src/test/compassCensusCorrectness.test.ts:1#/**` block A, ten cases, three mutations. |
+| CH-03 | W | **C** | **Built.** *"A graph node built from a memory persists after that memory is deleted … no deletion hook, no per-memory prune"* is closed for the node. **RESTATED AT INTEGRATION — the function this row first named is not the one on the branch.** Two lanes fixed CH-03 independently and in the same file: this lane wrote `pruneOrphanedExperienceNodes`, the Highlights & Memories lane wrote `reconcileExperienceNodes`, and the merge had to keep ONE. The surviving sweep is `artifacts/api-server/src/compass/CompassGraphEngine.ts:1478#export async function reconcileExperienceNodes`, and this lane's screening predicate is the reason it is the one that survived: `pruneOrphanedExperienceNodes` decided eligibility with `state = 'published' AND visibility <> 'only_me'`, while `buildGraphFromSources` now writes only `published` AND `public` rows, so that sweep would have kept every NAMED audience (`friends_only`, `trip_crew`, `circle_only`, `custom`) in the public world model for good — the leak this row exists to close, wearing the fix's name. The survivor decides through `isPublicWorldMemory`, the same predicate the builder gates its write on. This lane's own contributions were kept: the pure `deadExperienceKeys` helper (delete only on a positive answer), the per-batch `undecided` count, and blocks B1–B6 rewritten against the surviving function, with B2 widened to the four named-audience rungs and mutation-proved red under the discarded predicate. It removes an `experience` node and every edge touching it once the source Memory is deleted, unpublished or no longer `public`, and runs inside the daily rebuild BEFORE the world models and the confidence index derive anything from it (`artifacts/api-server/src/compass/CompassGraphEngine.ts:1574#const experienceRevocations = await reconcileExperienceNodes(db);`). The scheduler that calls it is registered unconditionally, so this is ungated. **It is still not a HOOK**, and the row's `C` is for the sweep, not the window: a node survives until the next daily rebuild. Pinned by block B, six cases, three mutations. |
+| CTR-01 | W | **C** | **Not built — MEASURED. The row's evidence expired.** It read *"After this pass three remain"* and named three line ranges in `CompassProfileService.ts`, `CompassTools.ts` and `CompassActiveUserRewardEngine.ts`. All three now go through the service seam the requirement names: `artifacts/api-server/src/compass/CompassProfileService.ts:88#getTrustProfileResult(db, userId),`, `artifacts/api-server/src/compass/CompassTools.ts:104#import { getTrustProfileResult } from "../services/trust/TrustScoreService.js";` and `artifacts/api-server/src/compass/CompassActiveUserRewardEngine.ts:207#const read = await getActiveCapsResult(db, userId);`. Executed, not read: `pnpm -s check:trust-table-ownership` → *"891 source file(s) scanned; 21 read(s) inside services/trust; 3 file(s) owned elsewhere with a written reason; 0 violation(s)"*. census-trust A17 closed this from the other side and this census never noticed. |
+| CH-02 | N | **C** | **Not built — MEASURED, and it is the CTG-05 move again.** *"0 of 8 in `CompassTools.ts`, lines 65-220"* is false: all eight §16 Memory accessors are declared in a sibling module and spread into the definition list, and the mapping to the spec's names is WRITTEN DOWN rather than inferred — `artifacts/api-server/src/compass/MemoryCompassTools.ts:102#export const MEMORY_TOOL_SPEC_NAMES` maps `getMemory(memoryId)` … `suggestMemoryCorrection(memoryId, patch)` one-to-one onto `memory_get` … `memory_suggest_correction`, declared at `artifacts/api-server/src/compass/MemoryCompassTools.ts:743#export const MEMORY_COMPASS_TOOL_DEFINITIONS` and spread at `artifacts/api-server/src/compass/CompassTools.ts:508#...MEMORY_COMPASS_TOOL_DEFINITIONS,`. No flag. **CH-01 is unaffected and stays `C`**: not one of the eight issues an INSERT, UPDATE or DELETE — the two write-shaped ones return a proposal the user confirms through the existing authenticated routes. |
+
+### 11.3 Reasons that are now wrong on rows that did NOT move
+
+A verdict can be right for a reason that has expired, and §10.6 warned that 44 `C` rows rested on
+sentences nobody had re-read. These are the ones this pass re-executed and found stale. Each keeps
+its bucket and loses its evidence.
+
+| requirement | verdict | the reason that expired |
+|---|---|---|
+| CT-01 (Trips `:12` kernel) | W | **"No kernel exists (census-trips TR1)" is FALSE.** The kernel exists and Compass uses it: `artifacts/api-server/src/compass/CompassAutopilotEngine.ts:670#const r = await executeTripCommand(kernel, {` routes the `trip_plan_items` write — the third site this row itself added to the floor — through `executeTripCommand`, keeping the direct update as an explicitly-marked flag-off twin. `create_proposal` does the same (`artifacts/api-server/src/compass/CompassTools.ts:1299#const r = await executeTripCommand(sc, {`) and REFUSES outright when `trip_kernel_enabled` is false. **The row stays W** on a smaller floor: `trip_autopilot_settings` (`artifacts/api-server/src/compass/CompassAutopilotEngine.ts:209#await sc.from("trip_autopilot_settings").upsert(`) and `trip_autopilot_proposals` (`artifacts/api-server/src/compass/CompassAutopilotEngine.ts:601#const { error } = await sc.from("trip_autopilot_proposals").insert({`) are still written directly, as are the route's status flips. The row moves from group (d) to group (c): what stands between it and `C` is now a flag and two write sites, not an absent kernel. |
+| CT-02 (Trips `:25` typed projections) | W | *"A grep for `.from("trip` across `compass/` returns raw reads … from eight further modules"* — it is now **eleven**: `CompassTools`, `CompassTripContext`, `CompassProfileService`, `CompassAutopilotEngine`, `CompassFallbackFeedBuilder`, `CompassSocialEngine`, `CompassGraphEngine`, `CompassSenseEngine`, `CompassLiveEngine`, `MemoryRecapsService`, `PassportRemembersService`. The verdict holds and the number in its evidence does not. |
+| CX-14 (§6 user dislike ≠ bad venue) | C | *"Feedback writes `compass_feedback_events` and `compass_user_preferences` **only**"* is false by one table: `artifacts/api-server/src/compass/CompassFeedbackEngine.ts:350#.from("compass_recent_context")` upserts a session-suppression list. **The verdict holds** — that is still a per-user preference store with no path to an intel claim, which is what the clause forbids — but the word "only" is now wrong, and this is exactly the shape of drift §10.6 warned about. |
+
+### 11.4 What this pass built, and the mutations that proved it
+
+Three builds, one of which closes rows in two other censuses and is recorded in full in
+`census-passport.md` §12 and `census-discovery.md` §10.
+
+| what | where | closes |
+|---|---|---|
+| A Sensing `:148` OUTPUT boundary: the turn's tool results reduced to a confidence band, and the answer refused against it | `artifacts/api-server/src/compass/CompassGroundingEnvelope.ts:221#export function enforceCompassGroundingEnvelope` | CX-04 |
+| A per-memory sweep of `experience` graph nodes and their edges, inside the daily rebuild | `artifacts/api-server/src/compass/CompassGraphEngine.ts:1478#export async function reconcileExperienceNodes` | CH-03 |
+| A viewer-aware BATCH list identity projection, adopted by the Compass traveler list | `artifacts/api-server/src/services/passport/PassportConsumerProjections.ts:1146#export async function buildListIdentityProjections` | census-passport P169, census-discovery A15; CP-02's server half |
+
+**Why the grounding envelope APPENDS a correction instead of replacing the answer, said plainly
+because it is the weakest part of the build.** The layover precedent replaces a refused answer with
+a deterministic one, and it can: that answer is one paragraph about one certified record. A Compass
+answer is free prose over many candidates, most of it correctly grounded. Worse, `/compass/ask`'s
+streamed branch has already sent the tokens — the client rebuilds the bubble from the accumulated
+deltas — so a replacement computed after the last token cannot un-say anything. An appended
+correction is one more delta and reaches the live bubble with no client change. **The words already
+sent are not retracted, and the correction says so.**
+
+Mutations, each applied, run, watched fail, reverted, and compared byte-for-byte with its backup by
+`cmp` — identical every time.
+
+| mutation applied | what went red |
+|---|---|
+| `hasVerifiedLive` hard-coded `true` — every turn claims a live source | A1 — 15 pass / 1 fail |
+| the HEDGE exemption disabled — a correctly-labelled sentence is flagged | A3 — 15 / 1 |
+| `waitMinutes: null` counted as a wait reading | A7 — 15 / 1 |
+| the prune deletes on an unreadable `memories` table | B3 — 15 / 1 |
+| one branch of `/compass/ask` unwired from the envelope | C1 — 17 / 1 |
+| the `nodeErr` binding dropped | **STAYED GREEN — see below** |
+
+**A mutation that stayed green, and what it cost to fix.** Dropping the `nodeErr` binding changed
+nothing observable: an unreadable `compass_graph_nodes` and a graph with no experience nodes both
+produced the identical `{0, 0, 0, 0}` report. That is the exact defect `GraphRebuildReport.nodesFailed`
+exists to fix *one function above in the same file*, written again by the same hands. The report now
+carries `artifacts/api-server/src/compass/CompassGraphEngine.ts:1412#unresolved: boolean;` — RESTATED AT INTEGRATION: the compass lane found this mutation against its own `ExperiencePruneReport.sourceUnavailable`, and that report did not survive the merge with the Highlights & Memories lane's sweep (see CH-03). The surviving report closes the same mutation with `unresolved`, and block B4 still fails when the error binding is dropped
+and the mutation fails. **The test was wrong before the code was**, and only a mutation could say so.
+
+**A mutation that would still stay green, said out loud.** The grounding envelope's triggers are
+regular expressions over English. A model that writes *"the place is absolutely rammed as of this
+second"* — no NOW-marker from the list, no present-progressive crowd shape — is not caught, and
+nothing in this repository can currently see such a sentence. The envelope raises the cost of an
+ungrounded claim; it does not make one impossible, and CX-04's `C` should be read as "the boundary
+exists and is wired", not "prose can no longer over-claim".
+
+### 11.5 CP-02 stays W, and its remainder is now one hop
+
+CP-02 had two halves: *"no client calls `GET /compass/people/:userId/passport`"* and *"the traveler
+list still reads `profiles` directly"*. **The second half is closed** —
+`artifacts/api-server/src/routes/compass.ts:3702#const travIdentity = await buildListIdentityProjections(`
+takes the name rule, the private-preview rule, the picture opt-out and the badge from the Passport
+batch projection instead of the fourth inline copy this file carried. The first half is unchanged:
+`grep -rn "compass/people/" travel-buddy-standalone/src` still returns nothing. **Owner decision D5
+stands and is now the row's whole remainder.**
+
+That inline copy was not merely duplicated, it was WRONG: it read `display_name ?? name ?? username`
+without trimming, so a subject whose `display_name` is whitespace rendered as a **blank title** in
+the Compass traveler list while every other surface fell through to the handle. See
+`census-passport.md` §12 for the full account.
+
+### 11.6 What was re-read, and what was not
+
+This pass re-executed **all 23 BUILT-BUT-WRONG rows** — that is what §11.1's grouping is — and
+**eleven `C` rows** chosen because their evidence names a file another lane has been editing: CC-03,
+CC-04, CC-14, CC-20, CH-01, CP-03, CP-05, CTG-01, CTR-03, CX-13, CX-14. **One of the eleven was
+wrong** (CX-14, §11.3), and it was wrong in its evidence, not its verdict. The remaining **45 `C`
+rows were not re-opened**, and §10.6's warning still applies to every one of them: their citations
+resolve, which proves a line exists, not that the sentence about it is still true.
+
+The production flag and row-count facts in §4 were read on 2026-09-07 and were **not** re-read here.
+Nothing in this section is a production measurement.
+
+**A side-effect worth recording, because it measures the ratchet's own stated limit.** This pass
+inserted lines into `routes/compass.ts` and `compass/CompassGraphEngine.ts`, which shifted every
+citation into them by up to 72 lines. Eight ANCHORED citations across four censuses broke and
+`check:doc-citations` refused the commit until they were repointed — the anchor half doing exactly
+what it exists for. Thirty-eight UNANCHORED ones also moved and **nothing noticed**; they were
+repointed mechanically from the diff's own hunk map, which preserves whatever they were worth
+before. Two of them turned out to be worth nothing already: `census-media.md` cited
+`routes/compass.ts:1484` for `buildCompassMediaContext` on four rows, and the call has been at
+`artifacts/api-server/src/routes/compass.ts:1527#const mediaCtx = await buildCompassMediaContext(sc, mediaViewer, mediaId, Date.now());`
+through several passes. Those four were repointed AND anchored rather than left; the rest were not
+re-read, and an unanchored citation nobody re-read is a number, not evidence.
+
+### 11.7 The two denominators — keep them, and the inbound half is where the move happened
+
+| Population | rows | C | W | N | CONSTRUCTED | CORRECT |
+|---|---|---|---|---|---|---|
+| Source (a) — inbound obligations | 70 | 45 | 20 | 5 | 65 / 70 = **92.9 %** | 45 / 70 = **64.3 %** |
+| Source (c) — contracts Compass states about itself | 20 | 20 | 0 | 0 | twenty of twenty | twenty of twenty |
+| Both | 90 | 65 | 20 | 5 | 85 / 90 = **94.4 %** | 65 / 90 = **72.2 %** |
+
+All four moves are source (a) rows, so the self-graded twenty did not move and cannot have flattered
+this. **The inbound figure is still the one to trust**, and the gap between the two populations is
+**35.7 points** — narrower than §10.7's 41.4 only because the inbound half improved, which is the
+direction that matters.
+
+### 11.8 Restated headline
+
+> **Compass, at `3ca68cb06`: 90 requirements · 65 BUILT-AND-CORRECT · 20 BUILT-BUT-WRONG ·
+> 5 NOT-BUILT · 0 CANNOT-VERIFY → CONSTRUCTED 94.4 % · CORRECT 72.2 %.** Inbound obligations alone
+> (70 rows, the figure to trust): CONSTRUCTED 92.9 % · CORRECT 64.3 %. Of the 4.4-point correctness
+> move from 67.8 %, **2.2 points are two rows this lane built and 2.2 points are two rows whose
+> stated evidence was false when re-executed.** The gap between CONSTRUCTED and CORRECT — the W
+> column — is **22.2 points**, and 14 of the 20 rows in it wait on a flag, a client, or a contract
+> another surface has not published.
+
+| BUILT-AND-CORRECT | **65** |
+|---|---|
+| BUILT-BUT-WRONG | **20** |
+| NOT-BUILT | **5** |
 | CANNOT-VERIFY | **0** |

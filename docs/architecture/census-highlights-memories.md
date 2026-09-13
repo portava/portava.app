@@ -425,7 +425,7 @@ Memory search of any kind, and no embedding of any kind anywhere in the repo (th
 |---|---|---|---|---|
 | H115–H122 | `getMemory`, `searchMemories`, `getSharedMemories`, `getPlaceHistory`, `getTripMemories`, `getMemoryEvidence`, `createMemoryDraft`, `suggestMemoryCorrection` | NB ×8 | `compass/CompassTools.ts:109-484` defines 11 tools: `get_user_profile`, `get_current_trip`, `search_places`, `search_events`, `get_place_details`, `get_circle_activity`, `check_trip_conflicts`, `add_to_trip`, `get_whos_around`, `get_travel_compatibility`, `get_group_recommendation`. **None** is memory-facing | |
 | H123–H128 | LLM boundary: may summarize supported evidence · may propose merge/split/correction · may ask a minimal clarifying question · may not invent states/participants/identity/attendance/outcomes · may not bypass privacy policy · may not use stale history as current truth | NB ×6 | No memory-facing LLM path exists to constrain; no boundary is encoded. (`2221_compass_ai_writing_default_off.sql` is the adjacent posture, for Compass prose generally) | |
-| H129 | Compass must not mutate canonical Memory facts through prose | **BAC** | The tool set at `compass/CompassTools.ts:109` contains no Memory mutation; the only write-shaped tool is `add_to_trip` (`compass/CompassTools.ts:421`). `routes/compass.ts:2226` `forgetMemory` writes `compass_memories` (a chat store), not `memories` | — |
+| H129 | Compass must not mutate canonical Memory facts through prose | **BAC** | The tool set at `compass/CompassTools.ts:109` contains no Memory mutation; the only write-shaped tool is `add_to_trip` (`compass/CompassTools.ts:421`). `routes/compass.ts:2268` `forgetMemory` writes `compass_memories` (a chat store), not `memories` | — |
 
 ### §17 Command bus and domain events (33)
 
@@ -1512,7 +1512,7 @@ row, and the wording each one supports was re-read at the new line before it was
 | the tool array (§16 rows) | `CompassTools.ts:62-210` | `CompassTools.ts:94-468` | The array's real extent on the merged tree. |
 | H129's tool set | `CompassTools.ts:62` | `CompassTools.ts:94` | Same. |
 | H129's write-shaped tool | `:158` | `CompassTools.ts:406` | Bare `:158` also named no file; now fully qualified. |
-| H129's `forgetMemory` | `routes/compass.ts:2150` | `routes/compass.ts:2226` | +76 lines above it; the call is unchanged. |
+| H129's `forgetMemory` | `routes/compass.ts:2192` | `routes/compass.ts:2268` | +76 lines above it; the call is unchanged. |
 | H4's GPS city stamp | `routes/location.ts:334-374` | `routes/location.ts:392-432` | +58 lines above it; the block is unchanged. |
 | the `passport_memories_enabled` gate | `routes/location.ts:357` | `routes/location.ts:419` | The mechanical +58 lands on `});`, which is what `:357` had been pointing at too. A sentence about a flag read should not point at a closing paren, so this one goes to the line that names the flag. |
 | H4's check-in stamp | `routes/geofence.ts:634-676` | `routes/geofence.ts:809-861` | **Not the merge's doing — this was wrong before it.** `geofence.ts` is byte-identical between `254e1876` and the merged tree, and `:634-676` names the plan-geofence *reveal* handler, not the check-in stamp. The block H4 actually grades — the flag, `createStamp` at `verificationLevel: checkin`, then `createSuggestedMemory` — is `:809-861`. Found by re-reading a neighbour of a citation the merge did move; H4 stays **BAC** because the code it describes is exactly what is at the corrected lines. |
@@ -1591,13 +1591,13 @@ out: `artifacts/api-server/src/test/memoryCompassTools.test.ts:245#offered`.
 ### C.2 Reachability, stated as a chain with its weak links named
 
 `POST /compass/ask` → `COMPASS_TOOL_DEFINITIONS` handed to the model
-(`artifacts/api-server/src/routes/compass.ts:1260#COMPASS_TOOL_DEFINITIONS`) → the model emits a
+(`artifacts/api-server/src/routes/compass.ts:1264#COMPASS_TOOL_DEFINITIONS`) → the model emits a
 tool call → `executeCompassTool` dispatches by name → `executeMemoryCompassTool`.
 
 Three things that chain depends on, each said rather than assumed:
 
 1. **`COMPASS_ENABLED`.** Read fail-closed at
-   `artifacts/api-server/src/routes/compass.ts:1333#isCompassEnabled`. The committed production
+   `artifacts/api-server/src/routes/compass.ts:1353#isCompassEnabled`. The committed production
    snapshot records it `true`. That is a repository artifact, not a live query — production was
    not touched.
 2. **An OpenAI credential.** `artifacts/api-server/src/lib/openai.ts:4#apiKey` reads
@@ -2007,7 +2007,7 @@ loop re-asserts it (`artifacts/api-server/src/compass/CompassGraphEngine.ts:775#
 separately mutation-covered, because defence in depth that nothing exercises is a comment.
 
 **2. §28.8 revocation.**
-`artifacts/api-server/src/compass/CompassGraphEngine.ts:1437#reconcileExperienceNodes` is
+`artifacts/api-server/src/compass/CompassGraphEngine.ts:1478#reconcileExperienceNodes` is
 `reconcileExperienceNodes`: it reads the persisted `experience` node keys, asks `memories`
 about **those ids**, and deletes the nodes — and every edge touching them — whose Memory is
 gone or no longer eligible. Three design choices, each load-bearing:
@@ -2024,7 +2024,7 @@ gone or no longer eligible. Three design choices, each load-bearing:
   - **Edges first, and before the aggregates are folded.** A node deleted before its edges
     leaves orphan `in_city` edges, and those are what `buildCityWorldModels` counts; a sweep
     run after the fold would let a revoked experience into today's score anyway.
-    `artifacts/api-server/src/compass/CompassGraphEngine.ts:1523#experienceRevocations` places it.
+    `artifacts/api-server/src/compass/CompassGraphEngine.ts:1574#experienceRevocations` places it.
 
 **3. §1 in the Memory domain, not only on the Compass surface.**
 `artifacts/api-server/src/services/memory/historicalTruth.ts:275#asHistoricalMemoryPayload` is
@@ -2063,7 +2063,7 @@ already runs, so `check:test-registration` covers them:
 | id | was | now | why |
 |---|---|---|---|
 | H5 | W | **C** | §1's separation is now a property of the Memory DOMAIN, which is exactly what section C said was missing: "*`routes/memories.ts` still serializes Memory rows with no truth class on them.*" Every canonical Memory the REST domain serves — single read, discovery feed, profile listing, trip recap, create and patch responses — carries `truthClass: "historical"` and `establishesCurrentStatus: false`, applied by `artifacts/api-server/src/routes/memories.ts:1764#asHistoricalMemoryPayload` rather than written into each handler. **CEILING: this is a declaration on the datum, not an enforcement on the reader.** What is mechanical is that the caveat cannot be dropped without dropping a field, that a payload claiming `current_world` has the claim removed, and that `currentWorldReading` still refuses a historical source class |
-| H237 | W | **C** | "Deleted memory cannot remain in Compass retrieval." It now holds on the only Compass projection of Memories **production actually has**: `artifacts/api-server/src/compass/CompassGraphEngine.ts:1437#reconcileExperienceNodes` revokes the experience node and every edge touching it when the Memory is deleted, archived, hard-deleted with its owner's account, or narrowed below `public`. **PART OF THIS MOVE IS A RE-READ, NOT A BUILD, AND IS LABELLED AS SUCH:** the §16 accessors section C built already excluded deleted Memories (`canCompassReadMemory` requires `published`; every tool query filters `state <> 'deleted'`) and this row did not account for them. The BUILD half is the graph sweep. **CEILING: the revocation is bounded by the rebuild's daily cadence**, so a deleted Memory can sit in the aggregate substrate for up to 24 hours, and §24's `privacy_revocation_latency` — the metric that would measure exactly that — does not exist |
+| H237 | W | **C** | "Deleted memory cannot remain in Compass retrieval." It now holds on the only Compass projection of Memories **production actually has**: `artifacts/api-server/src/compass/CompassGraphEngine.ts:1478#reconcileExperienceNodes` revokes the experience node and every edge touching it when the Memory is deleted, archived, hard-deleted with its owner's account, or narrowed below `public`. **PART OF THIS MOVE IS A RE-READ, NOT A BUILD, AND IS LABELLED AS SUCH:** the §16 accessors section C built already excluded deleted Memories (`canCompassReadMemory` requires `published`; every tool query filters `state <> 'deleted'`) and this row did not account for them. The BUILD half is the graph sweep. **CEILING: the revocation is bounded by the rebuild's daily cadence**, so a deleted Memory can sit in the aggregate substrate for up to 24 hours, and §24's `privacy_revocation_latency` — the metric that would measure exactly that — does not exist |
 | H263 | C | **C** | **NO NET MOVE, AND THAT IS THE WORST WAY TO READ THIS ROW.** Its C was a FALSE GREEN at `f8384ea5b`: its stated evidence was "*the only path from derived memory to any shared surface is `memoryProducer.ts` … Nothing feeds memory into world intelligence*", and `CompassGraphEngine` was a second path, running daily, carrying `friends_only`, `trip_crew`, `circle_only` and `custom` Memories into the Destination World Model. The row ends green because the gate was narrowed to `public` (D.3), not because the sentence was rewritten. Evidence replaced: the rule now holds on **both** paths, and both are named |
 | H189 | W | **W** | Evidence corrected, verdict unmoved. The row read "*revokes nothing — there are no derivatives or indexes to revoke, and no cache invalidation on the memories path*". Half of that is now false: there IS a public derivative of a Memory in production — its experience node and edges in the Compass graph — and narrowing a Memory's audience now revokes it. **Still W for two reasons, both stated rather than implied:** the revocation is asynchronous with a daily ceiling, and `compass_feed_cache` is still never invalidated on a memory visibility change |
 | H190 | W | **W** | Same correction, same verdict. A soft delete now revokes the graph derivative on the same cadence. The media bytes stay publicly served, §21's five-step deletion lifecycle still does not exist, and neither moves |

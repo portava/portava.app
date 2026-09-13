@@ -20,7 +20,7 @@ production** (§5): the last `surface='discovery'` serve was 2026-08-15, thirtee
 
 | Field | Value |
 | --- | --- |
-| `head_commit` | `820b60638` — RE-DECLARED 2026-09-13 by §9, replacing `42aeac38`. The previous declaration was a NEUTRAL move (0 counted files differ between `090684ab` and `42aeac38`) made by the Trips lane so this census could be aged at all. This one is not neutral and does not pretend to be: `820b60638` is the commit §9 measured at, it carries §9.5's build, and between `42aeac38` and it three sibling lanes edited files this census counts — which is how sixteen unreadable rows and two stale N verdicts survived unnoticed. §9.8 states exactly which rows were re-executed here (all 10 N, all 11 W, 22 of 46 C) and which 24 were not. It does NOT certify the 24. Read §9.1 before quoting any percentage. |
+| `head_commit` | `3ca68cb06` — RE-DECLARED 2026-09-13 by §10, replacing `820b60638`. §10 re-executed all 13 BUILT-BUT-WRONG rows and ten BUILT-AND-CORRECT ones at this commit; §10.4 names which ten and reports what it found (four stale line numbers, no wrong verdict). It does **not** certify the other 38 `C` rows. The previous declaration read: `820b60638` — RE-DECLARED 2026-09-13 by §9, replacing `42aeac38`. The previous declaration was a NEUTRAL move (0 counted files differ between `090684ab` and `42aeac38`) made by the Trips lane so this census could be aged at all. This one is not neutral and does not pretend to be: `820b60638` is the commit §9 measured at, it carries §9.5's build, and between `42aeac38` and it three sibling lanes edited files this census counts — which is how sixteen unreadable rows and two stale N verdicts survived unnoticed. §9.8 states exactly which rows were re-executed here (all 10 N, all 11 W, 22 of 46 C) and which 24 were not. It does NOT certify the 24. Read §9.1 before quoting any percentage. |
 | Originally censused at | working tree `507f8427` plus uncommitted sibling work, 2026-09-07 |
 | Recensused | 2026-09-08 — see §8 for the method and what it does not claim |
 
@@ -116,7 +116,7 @@ with `docs/`, `db/` or `travel-buddy-standalone/`.
 | C16 | `GET /discovery` needs no auth and returns only public place data; `submitted_by` never serialised (`discovery.ts:1-5`; test *"never serialises submitted_by to the client"*) | **C** | `routes/discovery.ts:1393` optional auth; `test/discoveryBlockedSubmitter.test.ts` *"submitted_by is never mapped onto the DiscoveryPlace that toPublic returns"*. |
 | C17 | The community submitter block rule is `lib/blocks.submitterIsVisible`, shared, not re-implemented (`discovery.ts:874-879`) | **C** | `routes/discovery.ts:50,879`; applied at `:2654` before names are resolved (`:2658`). |
 | C18 | Viewer sees their own byline on a place they submitted (`f37e1cf0`) | **C** | `routes/discovery.ts:2675` (memoised viewer, guarded on `rows.length`), `:2694`. Tests *"shows the viewer their OWN name…"*, *"still redacts everyone ELSE"*, *"does not exempt the submitter from an ANONYMOUS caller's view"*. Not redone; the pattern was reused for C19. |
-| C19 | Display-name redaction shape (`.agents/memory/display-name-privacy.md`: null name + separate handle) | **W → partially closed** | **Measured, and the lead was half wrong:** the search list's shape is `title` = name-or-bare-handle, `subtitle` = `@handle` (`routes/discoverySearch.ts:669#subtitle`) — there is no `name` field — which is the **same** shape as Compass (`routes/compass.ts:3578-3589`, `title` bare username / `displayName` null). Discovery's one divergent shape is the community byline, which bakes the literal `@username` **into `name`** (`discovery.ts:2780#name`). It cannot be changed in place: `travel-buddy-standalone/src/components/DiscoveryWall.tsx:407` renders `By {submittedBy.name}` raw, so a null there is a blank byline — a user-visible change with no flag. **Now:** the canonical shape is emitted **additively** as `displayName` (`routes/discovery.ts:2783#displayName`: real name iff self or opted-in, else null, never a handle) alongside the unchanged legacy field, from one `nameAllowed` decision (`:2694`) so the two fields cannot disagree about *whether* a name is withheld (pinned: *"the two byline fields never disagree…"*). The legacy `name` stays until the client resolves the byline through `displayIdentity(displayName, handle)` (§6 D2). Stays W until then. |
+| C19 | Display-name redaction shape (`.agents/memory/display-name-privacy.md`: null name + separate handle) | **W → partially closed** | **Measured, and the lead was half wrong:** the search list's shape is `title` = name-or-bare-handle, `subtitle` = `@handle` (`routes/discoverySearch.ts:669#subtitle`) — there is no `name` field — which is the **same** shape as Compass (`routes/compass.ts:3723-3734#title:`, `title` bare username / `displayName` null — REPOINTED AT INTEGRATION: both lanes carried this citation at the reason-code scoring block, which is not the card shape it claims; the shape is the `title`/`data.displayName` pair above). Discovery's one divergent shape is the community byline, which bakes the literal `@username` **into `name`** (`discovery.ts:2780#name`). It cannot be changed in place: `travel-buddy-standalone/src/components/DiscoveryWall.tsx:407` renders `By {submittedBy.name}` raw, so a null there is a blank byline — a user-visible change with no flag. **Now:** the canonical shape is emitted **additively** as `displayName` (`routes/discovery.ts:2783#displayName`: real name iff self or opted-in, else null, never a handle) alongside the unchanged legacy field, from one `nameAllowed` decision (`:2694`) so the two fields cannot disagree about *whether* a name is withheld (pinned: *"the two byline fields never disagree…"*). The legacy `name` stays until the client resolves the byline through `displayIdentity(displayName, handle)` (§6 D2). Stays W until then. |
 | C20 | Engine mode resolves to `legacy` on every failure path (`lib/discoveryEngineMode.ts` header) | **C** | `:151-175`; tests A–L. |
 | C21 | An unreadable/absent/malformed cohort includes NOBODY; `kind:"all"` must be typed (`lib/discoveryCohort.ts` header) | **C** | `:85` `COHORT_NONE`, `:102` `NOBODY(...)` for every parse failure; tests N2–N6. |
 | C22 | Shadow never changes what was served and writes only to `discovery_shadow_serves` (`lib/discoveryShadow.ts` header) | **C** | `routes/discovery.ts:1812#served` (`served: false`, handed a client that cannot write), invoked after the response is sent (`:1790#served`); `lib/discoveryShadow.ts:186#discovery_shadow_serves` the single insert; tests G, I. (Re-anchored 2026-09-08: both line numbers had drifted 30-odd lines when the silent-write burn-down `2550b8ba` edited this file. The claim held; the pointers did not.) |
@@ -541,5 +541,120 @@ B01's absent `search_key` and C28's grants.
 | BUILT-AND-CORRECT | **47** |
 |---|---|
 | BUILT-BUT-WRONG | **13** |
+| NOT-BUILT | **7** |
+| CANNOT-VERIFY | **0** |
+
+---
+
+## 10. The correctness pass, 2026-09-13 — one row, and an honest account of why only one
+
+*Measured at `3ca68cb06`, the commit below this one. Declared as `head_commit` in §0, replacing
+`820b60638`; that replacement and this section are the only edits this pass makes to this document.*
+
+### 10.1 The 13 BUILT-BUT-WRONG rows, grouped by WHY they are wrong
+
+Grouped BEFORE anything was built, so these sizes are a measurement rather than a description of
+what happened to get done. The question asked of each row: *what exactly stands between this row and
+`C`?* — and for Discovery the answer is uncomfortable.
+
+| group | rows | which |
+|---|---|---|
+| **(a) logic wrong in code this pass owns** | **1** | A15 |
+| **(b) logic right, nothing reaches it** | **3** | A08 · A25 · C19 |
+| **(c) capped by a flag seeded FALSE or an unapplied migration** | **6** | A01 · A03 · A10 · A11 · B01 · B04 |
+| **(d) needs something nobody has written** | **3** | B02 · B03 · B05 |
+
+**Twelve of Discovery's thirteen wrong rows are not wrong code.** Six are correct code behind a flag
+seeded FALSE or a migration production does not have (2850, 2361, 2550 + 2420, 2778 + 2760–2785, 2220,
+2217). Three are correct server code with no caller: `readDiscoveryCandidatesForViewer` still has no
+consumer outside its own test (`grep -rn readDiscoveryCandidatesForViewer src` → the reader, its
+test, nothing else), the legacy suggest hook still runs on every keystroke beside the gateway
+(`travel-buddy-standalone/src/hooks/useGlobalSearchSuggestions.ts:6#regressing the hard-won legacy path`),
+and C19's `displayName` is emitted additively while the client still reads the legacy `name`. Three
+need a decision or an artefact nobody has produced: whether stripping an emoji may change a live
+route's results (B02 — `artifacts/api-server/src/routes/discoverySearch.ts:142#export function sanitizeQuery` still
+strips only `(),`), what a buddy's service category and availability even are as columns (B03), and a
+canonical country registry (B05 — `country_essentials` exists in production and is keyed by ISO code
+with **no name column**, so it is not the registry this needs).
+
+**One row was wrong code, and this pass built it.**
+
+### 10.2 Row moves
+
+| id | was | now | why |
+|---|---|---|---|
+| A15 | W | **C** | **Built.** The row's own gap was three named rules: *"the search list still assembles its own identity payload … `:598-640` applies its own privacy logic (locked preview, `show_profile_picture_publicly`, name rule)"*. All three are now the Passport batch projection's — `artifacts/api-server/src/routes/discoverySearch.ts:646#const identity = await buildListIdentityProjections(sc, nameSafe as any[], {` over `artifacts/api-server/src/services/passport/PassportConsumerProjections.ts:1146#export async function buildListIdentityProjections`, with the avatar taken from it (`artifacts/api-server/src/routes/discoverySearch.ts:670#avatarUrl: ident?.avatarUrl ?? null,`) rather than gated here. **What the row objected to is closed; what remains is not what it objected to.** The `select` at `artifacts/api-server/src/routes/discoverySearch.ts:568#.select("id, handle, username, name, display_name, avatar_url, is_private, home_city, home_country, account_status` stays, and stays deliberately: those columns are what the search MATCHES and RANKS on, and the projection's own header draws that line — *"a ranked list still selects the columns it ranks on — that is ranking input, not an identity payload"*. The cost objection is answered rather than accepted: the projection is a batch, and Discovery hands it the allow-set it already resolved (`artifacts/api-server/src/routes/discoverySearch.ts:652#allowedRealNames: allowedNames,`), so the search still makes **one** `profile_privacy_settings` read, not two. Pinned by `artifacts/api-server/src/test/passportListIdentityProjection.test.ts:1#/**` — 14 cases, three mutations. |
+
+### 10.3 What this pass built
+
+One build, shared with two other censuses; the full account is in `census-passport.md` §12, because
+the row it closes there (P169) is the one that specified it.
+
+| what | where | closes |
+|---|---|---|
+| A viewer-relationship-aware BATCH list identity projection: name allowed, presented name, locked preview, avatar, badge — one implementation for both bulk lists | `artifacts/api-server/src/services/passport/PassportConsumerProjections.ts:1146#export async function buildListIdentityProjections` | census-discovery A15 · census-passport P169 · census-compass CP-02's server half |
+
+**What Discovery got out of it beyond the row.** The name rule was already canonical here — this file
+adopted `presentedName` earlier — so Discovery's own output does not change. The surface that
+changes is Compass's, which carried a fourth, untrimmed copy. **Discovery's gain is that the rule can
+no longer fork away from it silently**, which is a smaller and more honest claim than "a defect was
+fixed in Discovery".
+
+Mutations, each applied, run, watched fail, reverted, and compared byte-for-byte by `cmp`:
+
+| mutation applied | what went red |
+|---|---|
+| a friendship unlocks a private account's preview | 1d — 13 pass / 1 fail |
+| the projection resolves the name inline, without trimming | 1b — 13 / 1 |
+| `routes/compass.ts` put its own copy of the name rule back | 3b — 13 / 1, **after the guard itself was fixed** |
+
+**The third mutation stayed green on the first run**, because the no-private-copy guard's pattern
+tolerated only ONE dot: it saw `p.display_name ?? p.name` and not `s.row.display_name ?? s.row.name`.
+A guard that cannot see the copy it was written to forbid is worse than none, and only the mutation
+said so.
+
+### 10.4 Rows re-executed and left where they were
+
+All 13 BUILT-BUT-WRONG rows were re-executed — that is §10.1 — and **ten `C` rows** were
+spot-checked because §9.8 warned that 24 of them had not been re-opened: A02, A09, A16, A19, B08,
+C01, C03, C07, C09, C10. **All ten hold on their verdicts.** What did not hold is arithmetic: the
+line numbers in C07, C09, C10 and A15's evidence (`:529`, `:587`, `:603`, `:567`) have drifted with
+the file and **`check:doc-citations` cannot see it**, because those citations are UNANCHORED — a bare
+`path:line` that nothing can tell you is wrong. That is the ratchet's own stated limit, measured here
+rather than theorised: this pass found four stale line numbers in ten spot-checks, and the check
+reported the corpus clean throughout.
+
+### 10.5 What was NOT built, and why — stated so it can be argued with
+
+- **B02 (emoji in `sanitizeQuery`) was left alone deliberately, and it is the one row here a reader
+  should push back on.** The fix is two characters of regex. What stops it is that "🔥 bar" currently
+  matches nothing and would start matching "bar" — a user-visible result change on a live route with
+  no flag, and owner decision D5 in §6 records the previous pass declining it for that reason. This
+  pass was forbidden to write a migration, so it could not add the flag that would make the change
+  safe. **Overriding another lane's recorded owner decision because the fix is small is how a census
+  stops meaning anything**, so it was not overridden; but the decision is now two passes old and the
+  surface is dark in production (§5), which is the argument for simply making it.
+- **B04 (protected locations) is not one line of wiring.** `artifacts/api-server/src/lib/protectedLocations.ts`
+  operates on `MapObject`s with geometry and suppresses fail-CLOSED by design; `protected_zones` is
+  absent from production. Wiring Discovery straight into it with no flag would turn every production
+  search into an empty result on the first failed read. It needs a flag, and a flag needs a migration.
+- **A25 (a reader nobody reads) is one call in `routes/mapProjection.ts`**, which is the Map lane's
+  file and not this census's to edit. Recorded again rather than taken.
+- **No production read was made in this pass**, so B01's "`canonical_locations.search_key` is absent"
+  remains a 2026-09-07 measurement, unchanged and un-refreshed.
+
+### 10.6 Restated headline
+
+> **Discovery, at `3ca68cb06`: 67 requirements · 48 BUILT-AND-CORRECT · 12 BUILT-BUT-WRONG ·
+> 7 NOT-BUILT · 0 CANNOT-VERIFY → CONSTRUCTED 60 / 67 = 89.6 % · CORRECT 48 / 67 = 71.6 %.**
+> CONSTRUCTED does not move, because nothing here was NOT-BUILT and became built; one row moved
+> across the W→C line and that is the whole of it. Inbound obligations alone (A01–A25): 12 correct /
+> 6 wrong / 7 not built — CONSTRUCTED 72.0 % · CORRECT 48.0 %. **The gap between CONSTRUCTED and
+> CORRECT is 17.9 points, and twelve of the twelve rows in it are flag-capped, caller-less or waiting
+> on a decision — not one of them is code this pass could have corrected.**
+
+| BUILT-AND-CORRECT | **48** |
+|---|---|
+| BUILT-BUT-WRONG | **12** |
 | NOT-BUILT | **7** |
 | CANNOT-VERIFY | **0** |

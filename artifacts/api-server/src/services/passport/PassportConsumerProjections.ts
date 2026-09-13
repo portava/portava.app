@@ -1022,3 +1022,157 @@ export async function buildMapPresenceProjections(
   }
   return out;
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// VIEWER-RELATIONSHIP LIST IDENTITY (spec §35 / census-passport P169)
+//
+// P169 states exactly what was left after every per-user consumer adopted
+// `buildConsumerProjection`:
+//
+//     "What actually remains is not four unadopted consumers — it is two BULK
+//      LIST endpoints ... the discovery search list and the Compass traveler
+//      suggestions. Both still build identity inline, and both do so for
+//      exactly the reason the map did — the per-user projection is ~34 reads
+//      per target and a list cannot pay it. The batch path they need now
+//      exists (buildMapPresenceProjections), but it is not a drop-in for
+//      either: the map's projection is viewer-INDEPENDENT (a pin carries no
+//      follow/friend context), while both of these gate on the viewer
+//      relationship — Discovery suppresses the avatar unless
+//      `isFollowing || isFriend || show_profile_picture_publicly`, and Compass
+//      suppresses the title entirely for a private non-followed profile.
+//      Extending the batch projection with a viewer-relationship input is the
+//      remaining work, and it is one job, not two."
+//
+// This is that one job. The relationships are PASSED IN, not read here, for the
+// same reason `buildMapPresenceProjections` takes its rows: both callers already
+// load them (Discovery from `user_follows` + `user_friendships`, Compass from
+// the same two), and re-reading them here would double the cost of the very
+// surfaces that could not afford the per-user path.
+//
+// ── WHAT THIS OWNS, AND WHAT IT DELIBERATELY LEAVES TO THE CALLER ───────────
+// It owns the four facts the two lists were computing identically and, in one
+// case, WRONGLY:
+//
+//   nameAllowed    — may this viewer see this subject's real name
+//   presentedName  — what that name is, through `lib/publicIdentity`'s choke
+//                    point, which applies `display_name ?? name ?? full_name`
+//                    AND TRIMS
+//   avatarUrl      — the private-account gate AND the per-owner opt-out
+//   verified       — the badge
+//
+// It does NOT own the FALLBACK label (Discovery falls back to the handle,
+// Compass to the username — different products, both defensible), nor what else
+// a locked row suppresses (Compass also blanks city and username; Discovery
+// keeps them for a followed private account). Those differ on purpose and
+// folding them together here would be taking two product decisions under cover
+// of a refactor.
+//
+// ── THE DIVERGENCE THIS CLOSES IS NOT HYPOTHETICAL ──────────────────────────
+// `routes/discoverySearch.ts` already resolved the name through
+// `presentedName`. `routes/compass.ts` wrote `display_name ?? name ?? username`
+// inline — a FOURTH copy of the rule, and the one that disagreed: it does not
+// trim, so a subject whose `display_name` is whitespace renders as a blank
+// title in the Compass traveler list while every other surface falls through to
+// the handle. That is the same class of defect `presentedName`'s own docblock
+// records ("One rule, three implementations, and this was the one that
+// disagreed") and the reason a shared projection is worth more than a shared
+// comment.
+
+/** The profile columns a viewer-aware list row needs. Structural, like `MapPresenceProfileRow`. */
+export interface ListIdentityProfileRow {
+  id: string;
+  handle?: string | null;
+  username?: string | null;
+  name?: string | null;
+  display_name?: string | null;
+  avatar_url?: string | null;
+  is_private?: boolean | null;
+  show_profile_picture_publicly?: boolean | null;
+  verified?: boolean | null;
+}
+
+/**
+ * The viewer-relationship facts, resolved ONCE for the whole page by the caller.
+ *
+ * `following` and `friends` are separate because they gate different things: a
+ * FOLLOW unlocks a private account's preview, while either a follow or a
+ * friendship satisfies the picture opt-out. Collapsing them into one set would
+ * quietly unlock private previews for friends who do not follow.
+ */
+export interface ListViewerRelationships {
+  viewerId: string | null;
+  following: ReadonlySet<string>;
+  friends: ReadonlySet<string>;
+  /**
+   * The name-visibility allow-set, when the caller ALREADY resolved it.
+   *
+   * Discovery has to: census-discovery C09's rule — a row whose only match was
+   * a hidden name is dropped, so searching someone's name cannot reveal it is
+   * theirs — needs the allow-set BEFORE the row survives to be projected. Without
+   * this field that caller would read `profile_privacy_settings` twice per
+   * search, and a projection that doubles its adopter's read count is a
+   * projection that does not get adopted. Omit it and the projection reads it
+   * itself, which is what the Compass list does.
+   */
+  allowedRealNames?: ReadonlySet<string>;
+}
+
+export interface ListIdentityProjection {
+  id: string;
+  /** True when the real name may be shown to this viewer (self is always true). */
+  nameAllowed: boolean;
+  /** The real name, trimmed, or null — never a fallback; the caller picks that. */
+  presentedName: string | null;
+  /** A private account this viewer does not follow: the locked-preview state. */
+  lockedPreview: boolean;
+  /** null when locked, or when the owner opted out and the viewer is neither follower nor friend. */
+  avatarUrl: string | null;
+  verified: boolean;
+}
+
+/**
+ * Identity for N list rows against ONE viewer, keyed by subject id.
+ *
+ * Costs exactly one read for the whole page — the `nameVisibilitySet` call both
+ * callers already made — and no per-target read at all. A subject the caller
+ * passed that is absent from the result does not exist; callers drop rather than
+ * default, which is why this returns a Map.
+ *
+ * FAIL-CLOSED ON THE NAME, inherited from `buildMapPresenceProjections`: an
+ * unreadable visibility table yields an empty allow-set, so every row falls back
+ * to its handle. Showing a handle to someone who opted in is cosmetic; showing a
+ * real name to someone who did not is the privacy failure.
+ */
+export async function buildListIdentityProjections(
+  sc: SupabaseClient,
+  rows: readonly ListIdentityProfileRow[],
+  viewer: ListViewerRelationships,
+): Promise<Map<string, ListIdentityProjection>> {
+  const out = new Map<string, ListIdentityProjection>();
+  if (rows.length === 0) return out;
+
+  const allowedRealNames =
+    viewer.allowedRealNames ?? (await nameVisibilitySet(sc, rows.map((r) => r.id)));
+
+  for (const prof of rows) {
+    // SELF-EXEMPTION BEFORE OPT-IN (census-discovery C10). Both callers exclude
+    // the viewer from their own result today, so this branch is unreachable from
+    // them — it is here because the rule is the projection's, and a future list
+    // that does include the viewer must not have to remember it.
+    const isSelf = viewer.viewerId !== null && prof.id === viewer.viewerId;
+    const nameAllowed = isSelf || allowedRealNames.has(prof.id);
+    const isFollowing = viewer.following.has(prof.id);
+    const isFriend = viewer.friends.has(prof.id);
+    const lockedPreview = (prof.is_private ?? false) && !isFollowing && !isSelf;
+    const showAvatar = isSelf || isFollowing || isFriend || prof.show_profile_picture_publicly !== false;
+    out.set(prof.id, {
+      id: prof.id,
+      nameAllowed,
+      presentedName: presentedName(prof, nameAllowed),
+      lockedPreview,
+      avatarUrl: (!lockedPreview && showAvatar) ? (prof.avatar_url ?? null) : null,
+      verified: prof.verified === true,
+    });
+  }
+  return out;
+}

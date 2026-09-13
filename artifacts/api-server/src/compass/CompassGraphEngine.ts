@@ -1398,8 +1398,39 @@ export interface ExperienceReconcileReport {
   nodesDeleted: number;
   /** Edges touching a deleted experience node, on either endpoint. */
   edgesDeleted: number;
-  /** True when a `memories` read failed, so this pass deleted NOTHING. */
+  /**
+   * Node keys this pass REFUSED TO JUDGE, because the `memories` read that
+   * would have decided them failed. They are neither kept-by-decision nor
+   * deleted; the next tick decides them. Non-zero means the sweep was PARTIAL
+   * — the batches that answered were acted on, the ones that did not were left
+   * exactly as they were. Without this number a sweep that judged three nodes
+   * of three thousand reports the same `nodesDeleted: 0` as one that judged
+   * all three thousand and found nothing to remove.
+   */
+  undecided: number;
+  /** True when a read failed, so this pass could not judge every node. */
   unresolved: boolean;
+}
+
+/**
+ * Memory ids whose graph node must go, out of the ids this pass asked about.
+ *
+ * DELETE ONLY ON A POSITIVE ANSWER. `liveIds` holds the ids a SUCCESSFUL read
+ * returned and `isPublicWorldMemory` accepted, so an asked-about id missing
+ * from it means "gone, or no longer eligible" — exactly the condition to
+ * revoke on, PROVIDED the read succeeded and the id was actually asked for.
+ * A failed read returns the same empty set as a fully-revoked one, and
+ * deleting on that would empty the graph during an outage. So the caller
+ * passes the ids it asked about and `ok`; on `ok === false` nothing is dead,
+ * which is what makes carrying on to the next batch after a failed one safe.
+ */
+function deadExperienceKeys(
+  asked: readonly string[],
+  liveIds: ReadonlySet<string>,
+  ok: boolean,
+): string[] {
+  if (!ok) return [];
+  return asked.filter((k) => !liveIds.has(k));
 }
 
 /**
@@ -1420,6 +1451,13 @@ export interface ExperienceReconcileReport {
  * compass_graph_nodes IS a Compass projection and the world model IS a public
  * derivative, so the rule lands here.
  *
+ * ONE ELIGIBILITY PREDICATE, NOT TWO. The dooming decision runs through
+ * `isPublicWorldMemory` — the same function `buildGraphFromSources` gates its
+ * write on. A sweep with its own looser predicate (`visibility <> 'only_me'`,
+ * say) is the defect it is supposed to close, wearing the fix's name: it keeps
+ * exactly the named-audience rows the builder now refuses to write, so a
+ * Memory narrowed from `public` to `friends_only` survives the sweep forever.
+ *
  * POSITIVE, NOT INFERRED BY ABSENCE — deliberately. The obvious implementation
  * is "delete every experience node the build did not just write", and it is
  * wrong here: `buildGraphFromSources` reads at most BUILD_LIMIT (5000) rows, so
@@ -1428,14 +1466,17 @@ export interface ExperienceReconcileReport {
  * rows. This asks `memories` about the ids it actually holds instead, in
  * batches, so the answer does not depend on how much the builder read.
  *
- * FAILS CLOSED, in the only direction that is closed here: if the `memories`
- * read errors or throws, `unresolved` is set and NOTHING is deleted. Deleting
- * on an unreadable source would erase a live graph on a transient outage;
- * keeping a stale node one more day is recoverable, and the next tick retries.
- * The report says which of the two happened rather than reporting zero twice.
+ * FAILS CLOSED, PER BATCH. A `memories` read that errors or throws decides
+ * NOTHING: `deadExperienceKeys` refuses to name a key on `ok === false`, so
+ * not one node in that batch can be deleted, and its keys are counted into
+ * `undecided` instead. The batches that DID answer are still acted on — a
+ * single transient read must not hold a privacy revocation for another day,
+ * and it cannot widen one either, because a batch that failed contributes no
+ * dead keys. `unresolved` says at least one batch was skipped; `undecided`
+ * says how many nodes that left unjudged.
  */
 export async function reconcileExperienceNodes(db: SupabaseClient): Promise<ExperienceReconcileReport> {
-  const report: ExperienceReconcileReport = { examined: 0, nodesDeleted: 0, edgesDeleted: 0, unresolved: false };
+  const report: ExperienceReconcileReport = { examined: 0, nodesDeleted: 0, edgesDeleted: 0, undecided: 0, unresolved: false };
 
   let nodes: any[];
   try {
@@ -1444,6 +1485,9 @@ export async function reconcileExperienceNodes(db: SupabaseClient): Promise<Expe
       .select("id, node_key")
       .eq("node_type", "experience")
       .limit(CLEANUP_FETCH_LIMIT);
+    // An unreadable node table is not an empty one. Bind the error rather than
+    // letting `data: null` read as "no experience nodes" — then `unresolved`
+    // separates the two reports, which are otherwise identical zeroes.
     if (error) { report.unresolved = true; return report; }
     nodes = (data as any[]) ?? [];
   } catch {
@@ -1465,36 +1509,43 @@ export async function reconcileExperienceNodes(db: SupabaseClient): Promise<Expe
 
   /** Memory ids that MAY stay. Absent from this set ⇒ gone or ineligible. */
   const eligible = new Set<string>();
+  /** Keys a positive, successful read named as gone or no longer eligible. */
+  const doomed = new Set<string>();
+  let undecided = 0;
   for (let i = 0; i < memoryIds.length; i += DELETE_CHUNK) {
     const chunk = memoryIds.slice(i, i + DELETE_CHUNK);
+    let ok = false;
     try {
       const { data, error } = await db
         .from("memories")
         .select("id, state, visibility")
         .in("id", chunk);
-      if (error) { report.unresolved = true; return report; }
-      for (const r of (data as any[]) ?? []) {
-        if (isPublicWorldMemory(r)) eligible.add(String(r.id));
+      if (error) {
+        report.unresolved = true;
+      } else {
+        ok = true;
+        for (const r of (data as any[]) ?? []) {
+          if (isPublicWorldMemory(r)) eligible.add(String(r.id));
+        }
       }
     } catch {
       report.unresolved = true;
-      return report;
     }
+    for (const k of deadExperienceKeys(chunk, eligible, ok)) doomed.add(k);
+    if (!ok) undecided += chunk.length;
   }
+  report.undecided = undecided;
 
   const doomedNodeIds: string[] = [];
-  const doomedKeys = new Set<string>();
-  for (const [memoryId, nodeIds] of idByMemory) {
-    if (eligible.has(memoryId)) continue;
-    doomedKeys.add(memoryId);
-    doomedNodeIds.push(...nodeIds);
-  }
+  for (const key of doomed) doomedNodeIds.push(...(idByMemory.get(key) ?? []));
   if (doomedNodeIds.length === 0) return report;
 
   // Edges FIRST. A node row deleted before its edges leaves edges pointing at
   // nothing, and those edges are what buildCityWorldModels actually counts —
   // an `in_city` edge from a revoked experience keeps inflating the city's
-  // sample size whether or not its node still exists.
+  // sample size whether or not its node still exists. If the process dies
+  // between the two deletes, this order leaves a node nothing derives from;
+  // the other order leaves the leak.
   try {
     const { data: edges } = await db
       .from("compass_graph_edges")
@@ -1503,8 +1554,8 @@ export async function reconcileExperienceNodes(db: SupabaseClient): Promise<Expe
     const doomedEdgeIds: string[] = [];
     for (const e of (edges as any[]) ?? []) {
       const touches =
-        (String(e.src_type ?? "") === "experience" && doomedKeys.has(String(e.src_key ?? ""))) ||
-        (String(e.dst_type ?? "") === "experience" && doomedKeys.has(String(e.dst_key ?? "")));
+        (String(e.src_type ?? "") === "experience" && doomed.has(String(e.src_key ?? ""))) ||
+        (String(e.dst_type ?? "") === "experience" && doomed.has(String(e.dst_key ?? "")));
       if (touches) doomedEdgeIds.push(String(e.id));
     }
     report.edgesDeleted = await deleteByIds(db, "compass_graph_edges", doomedEdgeIds);

@@ -73,8 +73,8 @@ import {
   type CanonicalRow,
 } from "../lib/canonicalLocations";
 import type { SensitivityLevel } from "../services/hiddenGems/HiddenGemPrivacyGuard.js";
-import { nameVisibilitySet, presentedName } from "../lib/publicIdentity";
-import { buildConsumerProjection } from "../services/passport/PassportConsumerProjections.js";
+import { nameVisibilitySet } from "../lib/publicIdentity";
+import { buildConsumerProjection, buildListIdentityProjections } from "../services/passport/PassportConsumerProjections.js";
 import { allowDiscoveryPersonCard } from "../services/passport/PassportConsumerAccess.js";
 // The canonical author-side block rule for a `discovery_places` row. Shared with
 // routes/discovery.ts (which re-exports it) rather than re-implemented here —
@@ -636,38 +636,38 @@ async function searchTravelers(
       ...(friendsAsB ?? []).map((e: any) => e.user_a as string),
     ]);
 
+    // §35 / census-passport P169 — identity comes from the Passport batch
+    // projection, not from this file. The name rule, the private-preview rule,
+    // the picture opt-out and the badge are ONE implementation shared with the
+    // Compass traveler list; what stays here is the part that is genuinely
+    // Discovery's (the @handle fallback, the location preview, the follow /
+    // request action state). `nameVisibilitySet` is read inside the projection,
+    // so this costs no extra round trip — the same one read for the whole page.
+    const identity = await buildListIdentityProjections(sc, nameSafe as any[], {
+      viewerId: userId,
+      following: followingSet,
+      friends: friendSet,
+      // Already resolved above for C09's hidden-name match rule; handing it over
+      // keeps this search at ONE `profile_privacy_settings` read, not two.
+      allowedRealNames: allowedNames,
+    });
+
     const type: Exclude<SearchType, "all"> = isBuddy ? "buddies" : "travelers";
     const mapped: SearchResult[] = nameSafe.map((p: any): SearchResult => {
-      // Name defaults to @handle unless the subject opted in (or is the viewer).
-      const nameAllowed = p.id === userId || allowedNames.has(p.id as string);
-      // Resolved through the CANONICAL helper, not inline. This used to read
-      // `p.name` alone, and the select above did not even fetch `display_name` —
-      // so a user who set a display name different from their profile name was
-      // shown the OTHER one in people search, while the map pin
-      // (lib/mapTravelers) and the Compass traveler list both honoured it. One
-      // rule, three implementations, and this was the one that disagreed.
-      // presentedName also TRIMS: a whitespace-only name falls through to the
-      // handle instead of rendering as a blank title with no way to tell who
-      // the row is.
-      const presented = presentedName(p, nameAllowed);
+      const ident = identity.get(p.id as string);
+      // A row the projection does not know is a row whose profile vanished
+      // between the two reads. Fall back to the most restrictive answer rather
+      // than to the raw columns: no name, no avatar, locked.
+      const presented = ident?.presentedName ?? null;
       const fallbackLabel = presented ?? (p.handle as string) ?? "?";
       const isFollowing = followingSet.has(p.id as string);
-      const isFriend = friendSet.has(p.id as string);
-      // Private accounts the viewer doesn't already follow get a locked
-      // preview: no avatar/location/matchedReason leak, canAccess=false.
-      // Once followed, the row behaves exactly like a public traveler.
-      const isPrivate = ((p.is_private as boolean) ?? false) && !isFollowing;
-      // Independent of is_private: a PUBLIC profile's owner can still opt out
-      // of showing their photo to non-followers/non-friends via
-      // show_profile_picture_publicly. isPrivate's own gate above already
-      // covers the case where the account itself is private.
-      const showAvatar = isFollowing || isFriend || (p as any).show_profile_picture_publicly !== false;
+      const isPrivate = ident ? ident.lockedPreview : true;
       return {
         id: p.id,
         type,
         title: presented ?? (p.handle as string) ?? "",
         subtitle: p.handle ? `@${p.handle as string}` : null,
-        avatarUrl: (!isPrivate && showAvatar) ? ((p.avatar_url as string | null) ?? null) : null,
+        avatarUrl: ident?.avatarUrl ?? null,
         imageUrl: null,
         fallbackInitials: initials(fallbackLabel),
         locationPreview: isPrivate
@@ -685,7 +685,7 @@ async function searchTravelers(
         metadata: null,
         createdAt: null,
         startsAt: null,
-        verified: (p.verified as boolean) ?? false,
+        verified: ident?.verified ?? false,
         isOfficial: (p.is_official as boolean) ?? false,
       };
     });
