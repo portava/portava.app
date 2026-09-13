@@ -974,6 +974,25 @@ still being edited in. A `head_commit` declared into a moving tree is stale befo
 then a recensus that re-reads the remaining 155 rows — not fourteen of them — against that commit.
 It joins the checkable set then, the way the Wall and Trust censuses did.
 
+**RE-CHECKED 2026-09-13 by the integrating lane, because the freshness pass is the moment to test a
+refusal rather than inherit it. The third reason has EXPIRED; the refusal stands on the first two,
+and on a fourth the section could not have known.** §13's work is committed — `cd400d2ff` carries
+`PassportJourneyService`, `PassportMapService`, `PassportProjectionService`,
+`PassportConsumerProjections`, the three new suites and both screens — so *"there is no commit to
+declare"* is no longer true, and a declaration at `cd400d2ff` would name a tree in which P75 and
+P126 really are `C`. That is the whole of what has changed. §3's and §12.5's ground is untouched:
+fourteen of 169 rows were re-executed this pass, and declaring would report FRESH about the other
+155, which is §12.5's argument with a different numerator and is the thing this document has
+refused three times. **The fourth reason is mechanical and is worth stating because it means a
+declaration would buy nothing even if the first two were waived:** `census-passport.md` has NO entry
+in `CENSUS_SCOPE` in `src/scripts/checkCensusFreshness.ts` — deliberately, and that file says why in
+a comment naming this document's own refusal — so a `head_commit` declared today would move this
+census from *"no head_commit declared — CANNOT BE CHECKED"* to *"declares a commit but has no scope
+— CANNOT BE CHECKED"*. Both are reported by name and neither is a pass. **What would make declaring
+right is therefore unchanged in substance and now has a second half:** the 155-row recensus above,
+AND a `CENSUS_SCOPE` entry listing the paths this document is a measurement of, added in the same
+change so the declaration is checkable the moment it is made.
+
 ### 13.8 Restated headline
 
 Recomputed by `pnpm -s check:census-integrity`, which parses the tables rather than trusting prose —
