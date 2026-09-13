@@ -1188,7 +1188,14 @@ const DIRECT_READS = [
   // ── Fire-and-forget background tasks. A failed read means the side effect ─
   // ── silently does not happen. Safe here (no stamp / no memory is not an ───
   // ── exposure) but caller-dependent, hence recorded per site. ──────────────
-  { file: 'routes/airport.ts',    flag: 'passport_stamps_enabled',   reason: `Read directly inside a \`void (async () => ...)\` block, ${V}: a failed read means no layover stamp is emitted. Fail-closed in the sense that matters — nothing is exposed.` },
+  // REMOVED 2026-09-13 (census-layover L19/L162): `routes/airport.ts` no longer
+  // reads `passport_stamps_enabled` directly. The layover seam moved off session
+  // CREATION — where it minted a stamp for a city the traveller had not been to,
+  // inside a `void (async () => ...)` block that could not report what it did —
+  // onto `DELETE /airport/sessions/:id`, where it is awaited and goes through the
+  // shared `isFlagEnabled` reader like every other gate on that file. The entry
+  // is deleted rather than kept "in case it comes back": this checker fails on a
+  // stale entry precisely so an allowlist cannot outlive its site.
   { file: 'routes/geofence.ts',   flag: 'passport_stamps_enabled',   reason: `Read directly inside a fire-and-forget block, ${V}: failure means no check-in stamp. Fail-closed.` },
   { file: 'routes/geofence.ts',   flag: 'passport_memories_enabled', reason: `Read directly inside a fire-and-forget block, ${V}: failure means no suggested memory. Fail-closed.` },
   { file: 'routes/hiddenGems.ts', flag: 'hidden_gems_passport_enabled', reason: `Read directly inside a fire-and-forget block, ${V}: failure means no gem-visit stamp. Fail-closed.` },

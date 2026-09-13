@@ -100,6 +100,12 @@ function publication(over: Record<string, unknown> = {}): ReplanOutcome {
       verdictChanged: false, returnStateChanged: false, tierChanged: false,
       usableMinutesDelta: 60, deadlineDeltaMinutes: 60,
       candidatesGained: [], candidatesLost: [],
+      // census L47 / §17.3: the ids the recomputation could not judge at
+      // all, because a leg or a dwell is unstated. Published beside the two
+      // lists above so "not in candidatesGained" is legibly "not measured"
+      // rather than silently "does not fit". Empty here: every fixture stop
+      // states both terms.
+      candidatesUnmeasured: [],
       reasonCodesAdded: [], reasonCodesRemoved: [],
     },
     invalidation: { noLongerFeasible: [], staleCertification: [], newInputHash: 'a1b2c3d4e5f60718' },
@@ -224,6 +230,7 @@ test('a lost planned stop is named and RECOMMENDATION_EXPIRED is surfaced', asyn
         verdictChanged: false, returnStateChanged: false, tierChanged: false,
         usableMinutesDelta: -60, deadlineDeltaMinutes: -60,
         candidatesGained: [], candidatesLost: ['stop-1'],
+        candidatesUnmeasured: [],
         reasonCodesAdded: [], reasonCodesRemoved: [],
       },
       invalidation: { noLongerFeasible: ['stop-1'], staleCertification: [], newInputHash: 'ff00' },
@@ -288,6 +295,12 @@ test('replanLines never returns an empty list — a press always gets an answer'
       verdictChanged: false, returnStateChanged: false, tierChanged: false,
       usableMinutesDelta: 0, deadlineDeltaMinutes: 0,
       candidatesGained: [], candidatesLost: [],
+      // census L47 / §17.3: the ids the recomputation could not judge at
+      // all, because a leg or a dwell is unstated. Published beside the two
+      // lists above so "not in candidatesGained" is legibly "not measured"
+      // rather than silently "does not fit". Empty here: every fixture stop
+      // states both terms.
+      candidatesUnmeasured: [],
       reasonCodesAdded: [], reasonCodesRemoved: [],
     },
   }) as Extract<ReplanOutcome, { ran: true }>;

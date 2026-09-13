@@ -21,7 +21,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, Pressable, ActivityIndicator,
-  RefreshControl, Alert, Platform,
+  RefreshControl,
 } from 'react-native';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -57,6 +57,7 @@ import { LayoverRecsSection } from '../../src/components/layover/LayoverRecsSect
 import { LayoverMapCard } from '../../src/components/layover/LayoverMapCard';
 import { LayoverPeopleSection } from '../../src/components/layover/LayoverPeopleSection';
 import { LayoverSafeReturnCard } from '../../src/components/layover/LayoverSafeReturnCard';
+import { LayoverEndSheet } from '../../src/components/layover/LayoverEndSheet';
 import { useSafeReturnAbort } from '../../src/components/layover/useSafeReturnAbort';
 import { LayoverCompassCard } from '../../src/components/layover/LayoverCompassCard';
 import { LayoverFlightChangeCard } from '../../src/components/layover/LayoverFlightChangeCard';
@@ -277,14 +278,27 @@ export default function LayoverDashboardScreen() {
     }
   }, [id, overview, city, router, showToast]);
 
-  const doEndLayover = useCallback(async () => {
+  /**
+   * §3 L19 / §17 L162 — the close carries the OUTCOME and the ELECTION.
+   *
+   * It used to send neither: every close was `cancelled`, so a traveller who
+   * came back and boarded was recorded as having abandoned the layover, and the
+   * Passport stamp had already been written at session CREATION for a city they
+   * had not been to. Both answers now come from the sheet, and the server's own
+   * `passportStamp.reason` is what the toast says — this screen does not
+   * re-derive whether a stamp was written.
+   */
+  const doEndLayover = useCallback(async (choice: { outcome: 'completed' | 'cancelled'; passportStamp: boolean }) => {
     if (!id) return;
     setEndConfirmOpen(false);
     setEndBusy(true);
     try {
-      const ok = await endLayoverSession(id);
-      if (ok) {
+      const result = await endLayoverSession(id, choice);
+      if (result.ok) {
         await cancelScheduledNotification(notifIdRef.current);
+        if (choice.passportStamp && result.passportStamp && !result.passportStamp.written) {
+          showToast('Layover ended — the Passport stamp could not be saved');
+        }
         router.back();
       } else {
         showToast('Could not end the layover');
@@ -295,19 +309,13 @@ export default function LayoverDashboardScreen() {
   }, [id, router, showToast]);
 
   const confirmEnd = useCallback(() => {
-    // QA round 2, minor F: the web path used a raw window.confirm(), which drops
-    // the user out of the app's visual language and blocks the JS thread while
-    // it is open. ConfirmSheet is the in-app equivalent. Native keeps the OS
-    // alert, which is the platform idiom.
-    if (Platform.OS === 'web') {
-      setEndConfirmOpen(true);
-    } else {
-      Alert.alert('End layover?', 'Your plan stays saved in your history.', [
-        { text: 'Keep going', style: 'cancel' },
-        { text: 'End layover', style: 'destructive', onPress: doEndLayover },
-      ]);
-    }
-  }, [doEndLayover]);
+    // ONE SHEET ON BOTH PLATFORMS, which is a departure from this screen's own
+    // rule that native keeps the OS alert. The rule is about CONFIRMATIONS;
+    // ending a layover is now a form with two independent answers, and
+    // `Alert.alert` can only carry it as two chained dialogs — which would make
+    // "I made my flight" and "keep the stamp" look like one decision.
+    setEndConfirmOpen(true);
+  }, []);
 
   // ── Render ──────────────────────────────────────────────────────────────────
 
@@ -414,7 +422,15 @@ export default function LayoverDashboardScreen() {
         {returnCardFirst && returnCard}
 
         <LayoverHero airport={airport} session={session} window={win} localTimes={localTimes} nowMs={nowMs} />
-        <CanILeaveCard advice={advice} window={win} airport={airport} />
+        {/* §2.1/§22 (census L9, L250): the card says which rung of the fallback
+            ladder these minutes came off. The server derives it from the
+            certified record; this screen only forwards it. */}
+        <CanILeaveCard
+          advice={advice}
+          window={win}
+          airport={airport}
+          airportIntelligence={overview.airportIntelligence ?? null}
+        />
         {/* The one §11 event producer this tree has: the traveller. A flight
             time the gate agent just announced is a fact no feed here carries,
             and the server runs the whole §11.1 pipeline over it. */}
@@ -542,6 +558,7 @@ export default function LayoverDashboardScreen() {
             style={[styles.footerBtn, styles.footerEnd, endBusy && styles.footerBtnDim]}
             onPress={confirmEnd}
             disabled={endBusy}
+            testID="layover-end-open"
           >
             <Power size={17} color={color.signalDim} />
             <Text style={[styles.footerBtnText, { color: color.signalDim }]}>End</Text>
@@ -568,15 +585,12 @@ export default function LayoverDashboardScreen() {
         onCancel={() => setNotifRationaleOpen(false)}
       />
 
-      <ConfirmSheet
+      {/* §3 L19 / §17 L162 — outcome and election, asked once, on both platforms. */}
+      <LayoverEndSheet
         visible={endConfirmOpen}
-        title="End this layover?"
-        body="Your plan stays saved in your history."
-        confirmLabel="End layover"
-        loadingLabel="Ending…"
-        destructive
-        loading={endBusy}
-        onConfirm={doEndLayover}
+        stampCity={city}
+        busy={endBusy}
+        onEnd={doEndLayover}
         onCancel={() => setEndConfirmOpen(false)}
       />
 

@@ -1,19 +1,41 @@
 /**
  * CanILeaveCard — "Can I leave the airport?" verdict with the honest
- * breakdown: reasons, hard numbers, what we can't know (visas!), and the
- * guidance disclaimer.
+ * breakdown: reasons, hard numbers, what we can't know (visas!), where the
+ * numbers came from, and the guidance disclaimer.
+ *
+ * §2.1 "missing live intelligence degrades VISIBLY" and §22 "do not imply
+ * equivalent intelligence globally" — census L9 and L250 — are why the
+ * provenance strip below is INSIDE the always-visible unknowns box rather than
+ * behind the "How we got these numbers" accordion. Both rows say the same
+ * thing: a traveller at an airport nobody has ever curated read the same
+ * numbers, presented identically, as one at a curated airport. A disclosure a
+ * reader has to open is a disclosure most readers never see.
  */
 import React, { useState } from 'react';
 import { View, Text, StyleSheet, Pressable } from 'react-native';
 import { ChevronDown, ChevronUp, DoorOpen, HelpCircle } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../../theme/tokens.ts';
 import { fmtClock, fmtDur } from './layoverFormat.ts';
-import type { LeaveAdvice, LayoverWindow, PublicAirport } from '../../services/layover.ts';
+import { summarizeAirportIntelligence } from './layoverReturnFacts.ts';
+import type {
+  LeaveAdvice,
+  LayoverWindow,
+  PublicAirport,
+  LayoverAirportIntelligence,
+} from '../../services/layover.ts';
 
 interface Props {
   advice: LeaveAdvice;
   window: LayoverWindow;
   airport: PublicAirport;
+  /**
+   * OPTIONAL, and deliberately so: a caller that has not been given the
+   * server's disclosure renders no provenance rather than a guessed one. The
+   * one thing this card must never do is invent a maturity from
+   * `airport.verified`, which is the field that conflated all three rungs in
+   * the first place.
+   */
+  airportIntelligence?: LayoverAirportIntelligence | null;
 }
 
 const VERDICT: Record<LeaveAdvice['verdict'], { label: string; bg: string; fg: string }> = {
@@ -23,9 +45,17 @@ const VERDICT: Record<LeaveAdvice['verdict'], { label: string; bg: string; fg: s
   stay_airside:{ label: 'Staying in — good call',   bg: 'rgba(10,61,74,0.10)',   fg: color.deep },
 };
 
-export function CanILeaveCard({ advice, window: win, airport }: Props) {
+const PROVENANCE_FG: Record<string, string> = {
+  generic: color.warn,
+  partial: color.warn,
+  curated: color.success,
+  live:    color.success,
+};
+
+export function CanILeaveCard({ advice, window: win, airport, airportIntelligence }: Props) {
   const [expanded, setExpanded] = useState(false);
   const v = VERDICT[advice.verdict];
+  const provenance = summarizeAirportIntelligence(airportIntelligence, airport.iataCode);
 
   return (
     <View style={styles.card}>
@@ -90,6 +120,20 @@ export function CanILeaveCard({ advice, window: win, airport }: Props) {
         {advice.unknowns.map((u) => (
           <Text key={u} style={styles.unknownText}>— {u}</Text>
         ))}
+
+        {/* Where these minutes came from — §2.1 "degrade visibly" (L9, L250). */}
+        {provenance && (
+          <View style={styles.provenanceBox} testID="layover-airport-intelligence">
+            <Text
+              style={[styles.provenanceTitle, { color: PROVENANCE_FG[provenance.tone] ?? color.warn }]}
+              testID={`layover-airport-intelligence-${provenance.tone}`}
+            >
+              {provenance.title}
+            </Text>
+            <Text style={styles.unknownText}>{provenance.detail}</Text>
+            <Text style={styles.unknownText}>{provenance.liveLine}</Text>
+          </View>
+        )}
       </View>
 
       <Text style={styles.disclaimer}>{advice.disclaimer}</Text>
@@ -121,6 +165,8 @@ const styles = StyleSheet.create({
   unknownHead:{ flexDirection: 'row', alignItems: 'center', gap: 6 },
   unknownTitle:{ ...t.bodyStrong, color: color.warn },
   unknownText:{ ...t.small, color: color.mute },
+  provenanceBox:{ borderTopWidth: 1, borderTopColor: 'rgba(200,133,26,0.25)', marginTop: space.xs, paddingTop: space.xs, gap: 2 },
+  provenanceTitle:{ ...t.bodyStrong },
 
   disclaimer: { ...t.small, color: color.faint, fontStyle: 'italic' },
 });

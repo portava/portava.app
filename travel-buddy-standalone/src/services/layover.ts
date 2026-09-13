@@ -214,6 +214,30 @@ export interface LayoverCertification {
   bufferPercentile: EstimatePercentile;
 }
 
+/**
+ * §2.1 "degrades VISIBLY" · §22 "do not imply equivalent intelligence globally".
+ *
+ * Transcribed from `airportIntelligence()` in
+ * `artifacts/api-server/src/services/airport/LayoverFeasibility.ts`. The server
+ * derives every field from the certified record's own estimates; the client
+ * must not re-derive a maturity of its own from `airport.verified`, because a
+ * second opinion about the same numbers is the duplicate derivation this
+ * surface has been removing for four passes.
+ */
+export type AirportIntelligenceTier = 'GENERIC' | 'AIRPORT_RECORD' | 'VERIFIED_RECORD' | 'LIVE';
+
+export interface LayoverAirportIntelligence {
+  tier: AirportIntelligenceTier;
+  airportAddressable: boolean;
+  airportVerified: boolean;
+  liveObserved: boolean;
+  bufferSourceClass: string;
+  /** 2 = an airport row supplied the buffers, 3 = a code constant did. */
+  bufferFallbackLevel: 0 | 1 | 2 | 3;
+  confidence: EstimateConfidence;
+  sourceRefs: string[];
+}
+
 export type SafeReturnPrimaryAction = 'explore' | 'plan_return' | 'return_now' | 'recover_connection';
 
 /** §15 — what the surface must do now, derived from the certified record. */
@@ -363,6 +387,8 @@ export interface LayoverOverview {
   share: { enabled: boolean; othersInCity: number };
   /** §2.1 — which rules and which inputs produced `advice`/`window`. */
   certification: LayoverCertification;
+  /** §2.1/§22 — how much of THIS airport went into those numbers. */
+  airportIntelligence: LayoverAirportIntelligence;
   /** §15 — the posture the surface should take now. */
   safeReturn: SafeReturnPosture;
   /** §16 — the bundle that lets an offline client say how old its answer is. */
@@ -478,6 +504,7 @@ export interface LayoverSafetyResult {
   travelTimeSource: string;
   advice: LeaveAdvice;
   certification: LayoverCertification;
+  airportIntelligence: LayoverAirportIntelligence;
   safeReturn: SafeReturnPosture;
 }
 
@@ -587,6 +614,14 @@ export type ReplanOutcome =
         deadlineDeltaMinutes: number;
         candidatesGained: string[];
         candidatesLost: string[];
+        /**
+         * Stops the recomputation could not judge because a leg or a dwell is
+         * unstated (census L47). PUBLISHED AND NOT YET RENDERED — listed here
+         * because this file's rule is that a field appears when the server puts
+         * it on the wire, and named as unread in census §17.5 rather than
+         * scored as reachable.
+         */
+        candidatesUnmeasured: string[];
         reasonCodesAdded: string[];
         reasonCodesRemoved: string[];
       };
@@ -747,9 +782,51 @@ export async function returnToAirportNow(sessionId: string): Promise<ReturnNowOu
   };
 }
 
-export async function endLayoverSession(sessionId: string): Promise<boolean> {
-  const res = await authedFetch(airportUrl('sessions', sessionId), { method: 'DELETE' });
-  return res.ok;
+/**
+ * §3 L19 · §17 L162 — how the layover ended, and whether to keep a stamp of it.
+ *
+ * `outcome` and `passportStamp` are two separate answers and the client must
+ * send them separately: "I made my flight" is a fact about the session, and
+ * "put this city in my Passport" is a durable artifact the traveller elects.
+ * The server refuses the second without the first and says which term failed —
+ * `reason` below is the server's word, never re-derived here.
+ */
+export type LayoverEndOutcome = 'completed' | 'cancelled';
+
+export type LayoverStampReason =
+  | 'written'
+  | 'already_stamped'
+  | 'not_elected'
+  | 'not_completed'
+  | 'feature_disabled'
+  | 'no_city'
+  | 'write_failed';
+
+export interface LayoverEndResult {
+  ok: boolean;
+  outcome: LayoverEndOutcome;
+  passportStamp: { requested: boolean; written: boolean; reason: LayoverStampReason } | null;
+}
+
+export async function endLayoverSession(
+  sessionId: string,
+  opts: { outcome?: LayoverEndOutcome; passportStamp?: boolean } = {},
+): Promise<LayoverEndResult> {
+  const outcome: LayoverEndOutcome = opts.outcome ?? 'cancelled';
+  const res = await authedFetch(airportUrl('sessions', sessionId), {
+    method: 'DELETE',
+    body: JSON.stringify({ outcome, passportStamp: opts.passportStamp === true }),
+  });
+  if (!res.ok) return { ok: false, outcome, passportStamp: null };
+  let body: any = null;
+  try { body = await res.json(); } catch { body = null; }
+  return {
+    ok: true,
+    // The SERVER's outcome, not the requested one: an older server that ignores
+    // the field must not have its answer overwritten by this client's hope.
+    outcome: body?.outcome === 'completed' ? 'completed' : 'cancelled',
+    passportStamp: body?.passportStamp ?? null,
+  };
 }
 
 // ── Dashboard / overview ──────────────────────────────────────────────────────

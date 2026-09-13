@@ -86,6 +86,7 @@ import { safetyLabel, type TravelTimeSource } from "../services/airport/LayoverS
 import {
   certifySessionFeasibility,
   certificationHeader,
+  airportIntelligence,
   type LayoverFeasibilityRecord,
   // `LandsideProbe` is deliberately NOT imported any more: census L293c deleted
   // the only probe this file built, and an import kept "for later" is how a
@@ -584,27 +585,20 @@ router.post("/airport/sessions", async (req, res) => {
     await suggestSafeReturn(sc, session, reasons);
   }
 
-  // Passport seam: emit layover stamp
-  void (async () => {
-    try {
-      const { data: flagRow } = await sc.from("feature_flags").select("enabled").eq("flag", "passport_stamps_enabled").maybeSingle();
-      if ((flagRow as any)?.enabled) {
-        const airportCity = (airport?.city && airport.city !== "Unknown" ? airport.city : null) ?? session.manualCity ?? null;
-        if (airportCity) {
-          await createStamp(sc, {
-            userId: user.id, stampType: "activity",
-            city: airportCity, tripId: session.tripId ?? null,
-            sourceType: "layover_session", verificationLevel: "checkin",
-          });
-          await emitLayoverEvent(sc, session.id, user.id, "passport_seam_emitted", { type: "layover_start" });
-        }
-      }
-    } catch (err) {
-      // Best-effort seam, but a silently lost layover stamp is a product-integrity
-      // gap — make the failure visible in the server log.
-      logger.warn({ err, sessionId: session.id, userId: user.id }, "layover passport seam failed — stamp not emitted");
-    }
-  })();
+  // NO PASSPORT SEAM HERE (census L19, L162).
+  //
+  // This handler used to mint a durable `passport_stamps` row the instant a
+  // traveller typed two flight times into a form — for a city they had not been
+  // to, before anything had been completed, with no election of any kind and no
+  // path that ever removed it. §3's requirement is *"post-session durable
+  // artifacts IF THE USER CHOOSES"* and §17's is *"durable only when the user
+  // elects Passport/Memory behaviour"*; a stamp at creation is neither half.
+  //
+  // The seam now lives on `DELETE /airport/sessions/:id`, where there is an
+  // outcome to be post- and an election to be made. Deleting it here is a
+  // REDUCTION a reviewer should see coming: a traveller who starts a layover
+  // and never closes it out now gets no stamp at all, where before they got one
+  // for turning up.
 
   // Trip timeline mirror (best-effort)
   await mirrorSessionToTrip(sc, auth.client, session, airport, user.id);
@@ -897,6 +891,13 @@ router.get("/airport/sessions/:id/safety", async (req, res) => {
     // a stored answer be traced to the rules and inputs that produced it.
     certification: certificationHeader(record),
     estimates:     record.estimates,
+    // §2.1 "degrades VISIBLY" / §22 "do not imply equivalent intelligence
+    // globally" — census L9 and L250. `estimates` above has carried the
+    // provenance per term since the certified record landed and no client has
+    // ever read it; this is the same truth in the one shape a surface can say
+    // out loud. Derived from the record, never from a second read of the
+    // profile.
+    airportIntelligence: airportIntelligence(record),
     // §15: the posture the client should take now — what this verdict MEANS for
     // getting back, rather than leaving each caller to re-derive it from the
     // envelope. Derived from the same certified record, so it cannot disagree.
@@ -1659,6 +1660,8 @@ router.get("/airport/sessions/:id/overview", async (req, res) => {
     },
     certification: certificationHeader(record),
     estimates:     record.estimates,
+    // The dashboard's copy of the §2.1/§22 disclosure — see GET /:id/safety.
+    airportIntelligence: airportIntelligence(record),
     stops,
     planFit,
     share: {
@@ -2274,6 +2277,82 @@ router.get("/airport/pulse", async (req, res) => {
 
 // ── DELETE /api/airport/sessions/:id ─────────────────────────────────────────
 
+/**
+ * §3 L19 · §17 L162 — the Passport seam, where the spec puts it.
+ *
+ * It used to fire from `POST /airport/sessions`: a durable, deduplicated
+ * `passport_stamps` row for a city the traveller had not yet been to, written
+ * because they had typed two flight times into a form. Nothing removed it if
+ * they stayed airside, and nothing asked them first. §3 asks for *"post-session
+ * durable artifacts IF THE USER CHOOSES"*; §17 for *"durable only when the user
+ * elects Passport/Memory behaviour"*.
+ *
+ * THREE TERMS, AND ALL THREE ARE REQUIRED, in this order:
+ *   1. the session was CLOSED AS COMPLETED — not cancelled, not expired;
+ *   2. the traveller ELECTED it on the way out;
+ *   3. `passport_stamps_enabled` is on — the kill switch outranks an election,
+ *      because a flag that a user's choice can override is not a kill switch.
+ *
+ * IT RETURNS A REASON RATHER THAN A BOOLEAN, and the reason is published.
+ * "Nothing was written" has six different meanings here and a client that has
+ * to guess which one applies will tell the traveller the wrong thing — the same
+ * rule `replanAfterSessionEdit` follows for its named refusals.
+ *
+ * AWAITED, NOT FIRE-AND-FORGET. The creation-time seam was `void (async () => …)`,
+ * which is why nobody could ever be told whether their stamp existed. A
+ * response that reports the outcome has to have the outcome.
+ */
+type ElectedStampReason =
+  | "written"
+  | "already_stamped"
+  | "not_elected"
+  | "not_completed"
+  | "feature_disabled"
+  | "no_city"
+  | "write_failed";
+
+async function writeElectedLayoverStamp(
+  sc: any,
+  args: { userId: string; session: LayoverSession; outcome: "completed" | "cancelled"; elected: boolean },
+): Promise<{ requested: boolean; written: boolean; reason: ElectedStampReason }> {
+  const requested = args.elected;
+  if (!requested) return { requested, written: false, reason: "not_elected" };
+  if (args.outcome !== "completed") return { requested, written: false, reason: "not_completed" };
+
+  try {
+    if (!await isFlagEnabled(sc, "passport_stamps_enabled")) {
+      return { requested, written: false, reason: "feature_disabled" };
+    }
+
+    // The city is read the same way every other layover surface reads it, and
+    // "Unknown" is the fallback profile's placeholder rather than a place — a
+    // stamp for it would be exactly the fabricated artifact Appendix C1 forbids.
+    const resolved = await resolveAirportForSession(sc, args.session);
+    const airportCity = resolved.ok && resolved.airport.city !== "Unknown" ? resolved.airport.city : null;
+    const city = airportCity ?? args.session.manualCity ?? null;
+    if (!city) return { requested, written: false, reason: "no_city" };
+
+    const result = await createStamp(sc, {
+      userId: args.userId, stampType: "activity",
+      city, tripId: args.session.tripId ?? null,
+      sourceType: "layover_session", verificationLevel: "checkin",
+    });
+    if (!result) return { requested, written: false, reason: "write_failed" };
+
+    await emitLayoverEvent(sc, args.session.id, args.userId, "passport_seam_emitted", {
+      type: "layover_completed",
+      elected: true,
+      isNew: result.isNew,
+    });
+    return { requested, written: true, reason: result.isNew ? "written" : "already_stamped" };
+  } catch (err) {
+    // A silently lost layover stamp is a product-integrity gap — it is logged,
+    // and now it is also REPORTED, so the traveller is not told it worked.
+    logger.warn({ err, sessionId: args.session.id, userId: args.userId }, "layover passport seam failed — stamp not emitted");
+    return { requested, written: false, reason: "write_failed" };
+  }
+}
+
 router.delete("/airport/sessions/:id", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
@@ -2292,14 +2371,28 @@ router.delete("/airport/sessions/:id", async (req, res) => {
   const rawOutcome = (req.body?.outcome ?? req.query?.outcome) as unknown;
   const outcome: "completed" | "cancelled" = rawOutcome === "completed" ? "completed" : "cancelled";
 
+  // §3 L19 / §17 L162: the traveller's ELECTION to keep a durable artifact.
+  // Positive-only — an absent field is not consent, and the query-string form
+  // requires the literal "true" rather than any truthy string, because
+  // `?passportStamp=false` arriving as the string "false" would otherwise read
+  // as a yes.
+  const rawElection = (req.body?.passportStamp ?? req.query?.passportStamp) as unknown;
+  const electedStamp = rawElection === true || rawElection === "true";
+
   const session = await endSession(sc, req.params.id, user.id, outcome);
   if (!session) {
     sendError(res, "not_found", "Session not found or already closed");
     return;
   }
 
-  // Passport seam: safe layover completed only on explicit completion
-  res.json({ ok: true, session, outcome });
+  const passportStamp = await writeElectedLayoverStamp(sc, {
+    userId: user.id,
+    session,
+    outcome,
+    elected: electedStamp,
+  });
+
+  res.json({ ok: true, session, outcome, passportStamp });
 });
 
 // ── Admin: POST /api/admin/airport/profiles ───────────────────────────────────

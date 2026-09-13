@@ -655,3 +655,129 @@ export function certificationHeader(r: LayoverFeasibilityRecord) {
     bufferPercentile: r.inputs.bufferPercentile,
   };
 }
+
+// ── §2.1 "degrades VISIBLY" · §22 airport maturity ───────────────────────────
+
+/**
+ * How much of THIS airport's own intelligence the numbers rest on, weakest
+ * first.
+ *
+ *   GENERIC          no `airport_profiles` row supplied any buffer term. The
+ *                    minutes are this repository's constants; NOTHING about the
+ *                    specific airport went into them.
+ *   AIRPORT_RECORD   a row addressed to THIS airport supplied them, and nobody
+ *                    has verified that row. Addressable is not curated: those
+ *                    columns are `NOT NULL DEFAULT 60/90/120/180/30/15/20`
+ *                    (`src/migrations/0127_layover_system.sql:28#domestic_buffer_min`),
+ *                    so an uncurated row holds exactly the generic numbers.
+ *                    What this rung claims is that the value CAN be curated per
+ *                    airport, not that it has been.
+ *   VERIFIED_RECORD  that row carries `verified = TRUE`. Measured 2026-09-07:
+ *                    0 of 3,206 production rows do, so this rung is reachable
+ *                    and currently empty in production.
+ *   LIVE             a live observation folded into the buffer. Nothing on this
+ *                    tree supplies `liveConditions` outside tests, so this rung
+ *                    is DECLARED AND UNREACHED — it is here so a future producer
+ *                    cannot invent a spelling, and the positive control in
+ *                    `src/test/layoverAirportIntelligence.test.ts` is what stops
+ *                    `liveObserved` from being a literal `false`.
+ */
+export const AIRPORT_INTELLIGENCE_TIERS = [
+  "GENERIC",
+  "AIRPORT_RECORD",
+  "VERIFIED_RECORD",
+  "LIVE",
+] as const;
+export type AirportIntelligenceTier = (typeof AIRPORT_INTELLIGENCE_TIERS)[number];
+
+/**
+ * What a surface must be able to say, in the traveller's own interest, about
+ * where the minutes it is showing them came from.
+ *
+ * Census L9 (§2.1) — *"missing live intelligence degrades VISIBLY to
+ * historical/conservative fallback"* — and L250 (§22) — *"do not imply
+ * equivalent intelligence globally"* — are one gap stated twice: the fallback
+ * ladder has always been real and it has never been visible. A traveller at an
+ * airport nobody has curated read the same numbers, with the same presentation
+ * and the same confidence, as one at an airport an admin had configured by
+ * hand.
+ *
+ * EVERY FIELD IS READ OFF THE RECORD, NOT RECOMPUTED. The provenance comes from
+ * `record.estimates` — the very objects `bufferEstimates` built the arithmetic
+ * out of — and `airportVerified` from `record.inputs.airport`, the named input
+ * set that is inside `inputHash`. A disclosure derived from a second read of
+ * the profile could disagree with the numbers it describes, which is the
+ * duplicate-derivation defect this module exists to prevent.
+ *
+ * IT DECIDES NOTHING. Like `confidence` above, this is reported and not acted
+ * on. Withholding landside recommendations at the GENERIC rung is spec §22's
+ * "airport-side guidance only by default" (census L243) — a product decision
+ * with a cost, because in production EVERY airport is at GENERIC or
+ * AIRPORT_RECORD — and it is not taken here.
+ */
+export interface AirportIntelligenceDisclosure {
+  tier: AirportIntelligenceTier;
+  /** True when an `airport_profiles` row for THIS airport supplied every buffer term. */
+  airportAddressable: boolean;
+  /** That row's own curation flag. False when there is no row. */
+  airportVerified: boolean;
+  /** True when a live observation folded into the buffer. */
+  liveObserved: boolean;
+  /** Weakest source class among the terms the AIRPORT supplies. */
+  bufferSourceClass: EstimateSourceClass;
+  /** Worst (highest) fallback level among those same terms. 2 = a row, 3 = a constant. */
+  bufferFallbackLevel: EstimateFallbackLevel;
+  /** The record's own confidence — the weakest estimate behind the verdict. */
+  confidence: EstimateConfidence;
+  /** What to look at to see where the numbers came from. Deduplicated, sorted. */
+  sourceRefs: string[];
+}
+
+/**
+ * The four terms the AIRPORT contributes, and deliberately only those.
+ *
+ * `timeOfDayExtra` and `exitDelay` are source constants whatever the airport
+ * row says — `bufferEstimates` marks them STATIC_DEFAULT explicitly — so
+ * folding them in would collapse every airport to GENERIC and destroy the
+ * distinction this disclosure exists to draw.
+ */
+function airportSuppliedTerms(e: FeasibilityEstimates): Estimate[] {
+  return [e.baseBuffer, e.immigrationExtra, e.bagsExtra, e.trafficExtra];
+}
+
+export function airportIntelligence(r: LayoverFeasibilityRecord): AirportIntelligenceDisclosure {
+  const terms = airportSuppliedTerms(r.estimates);
+  const airportAddressable = terms.every((t) => t.sourceClass === "AIRPORT_PROFILE");
+  const airportVerified = r.inputs.airport.verified;
+  const liveObserved = r.estimates.liveExtra.sourceClass === "LIVE";
+
+  // Weakest class wins: ESTIMATE_SOURCE_CLASSES is ordered weakest-first, so a
+  // single constant among four columns must not present as a curated airport.
+  let weakest = ESTIMATE_SOURCE_CLASSES.length - 1;
+  for (const t of terms) {
+    const i = ESTIMATE_SOURCE_CLASSES.indexOf(t.sourceClass);
+    if (i >= 0 && i < weakest) weakest = i;
+  }
+
+  const tier: AirportIntelligenceTier = liveObserved
+    ? "LIVE"
+    : airportAddressable && airportVerified
+      ? "VERIFIED_RECORD"
+      : airportAddressable
+        ? "AIRPORT_RECORD"
+        : "GENERIC";
+
+  return {
+    tier,
+    airportAddressable,
+    airportVerified,
+    liveObserved,
+    bufferSourceClass: ESTIMATE_SOURCE_CLASSES[weakest]!,
+    bufferFallbackLevel: terms.reduce<EstimateFallbackLevel>(
+      (worst, t) => (t.fallbackLevel > worst ? t.fallbackLevel : worst),
+      0,
+    ),
+    confidence: r.confidence,
+    sourceRefs: [...new Set(terms.flatMap((t) => t.sourceRefs))].sort(),
+  };
+}
