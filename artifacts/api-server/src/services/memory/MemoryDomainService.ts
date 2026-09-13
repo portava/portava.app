@@ -108,6 +108,64 @@ export interface CommandAudit {
   eventId?: string | null;
   /** false when only the operational log holds this row (kernel flag off). */
   durable: boolean;
+  /**
+   * §18/§24 "source version": the version of the Memory this command ACTED ON,
+   * as the row read it. `memories` has no `current_version` column (that is
+   * §3.1's field, and census H17 records it as one of ten that do not exist),
+   * so the honest stand-in is the row's own `updated_at` — the same value §18's
+   * `sourceVersionOf` digests, for the same reason: any edit moves it.
+   *
+   * Null on a command that had no prior row to read (CREATE_MEMORY) or where
+   * the read failed. Null is a state, not a gap: "there was no prior version"
+   * and "we did not look" are both honest, and neither is a number.
+   */
+  sourceVersion?: string | null;
+}
+
+/**
+ * §24's FAILURE CLASS — the category a refusal belongs to, which is not its
+ * reason code.
+ *
+ * A reason code says WHICH rule refused ("MEMORY_LIFECYCLE_TERMINAL"). A class
+ * says WHAT KIND of thing went wrong, and they are different questions with
+ * different readers: the reason code is for the client's switch statement, the
+ * class is for whoever is looking at a spike on a dashboard and has to decide
+ * whether it is a broken deployment, a hostile client, or users doing something
+ * the product forbids. §24 asks for both because one does not give you the
+ * other: a rise in `authorization` is a very different morning from a rise in
+ * `infrastructure`, and both are "rejected" with a different string attached.
+ *
+ * Closed over `MemoryKernelReason` plus the http codes the legacy path answers
+ * with, and it returns `"unclassified"` rather than guessing — a new reason
+ * code arriving in a class it was never sorted into would be a silent
+ * miscategorisation, which is the failure this field exists to prevent.
+ */
+export type MemoryFailureClass =
+  | "validation"
+  | "authorization"
+  | "not_found"
+  | "lifecycle"
+  | "idempotency"
+  | "infrastructure"
+  | "unclassified";
+
+const VALIDATION_REASONS = new Set(["MEMORY_COMMAND_MALFORMED", "MEMORY_COMMAND_UNKNOWN_TYPE", "invalid_payload"]);
+const AUTHORIZATION_REASONS = new Set(["MEMORY_AUTH_NOT_OWNER", "MEMORY_AUTH_NOT_PARTICIPANT", "MEMORY_AUTH_IDEMPOTENCY_KEY_FOREIGN", "forbidden"]);
+const NOT_FOUND_REASONS = new Set(["MEMORY_NOT_FOUND", "MEMORY_ITEM_NOT_FOUND", "MEMORY_TAG_NOT_FOUND", "not_found"]);
+const LIFECYCLE_REASONS = new Set(["MEMORY_LIFECYCLE_TERMINAL", "MEMORY_LIFECYCLE_INVALID_TRANSITION", "MEMORY_LIFECYCLE_UNKNOWN_STATE"]);
+const IDEMPOTENCY_REASONS = new Set(["MEMORY_IDEMPOTENCY_KEY_REUSED"]);
+const INFRASTRUCTURE_REASONS = new Set(["MEMORY_KERNEL_UNAVAILABLE", "db_error", "server_not_configured"]);
+
+export function failureClassOf(a: Pick<CommandAudit, "outcome" | "reason">): MemoryFailureClass | null {
+  if (a.outcome !== "rejected") return null;
+  const reason = a.reason ?? "";
+  if (VALIDATION_REASONS.has(reason)) return "validation";
+  if (AUTHORIZATION_REASONS.has(reason)) return "authorization";
+  if (NOT_FOUND_REASONS.has(reason)) return "not_found";
+  if (LIFECYCLE_REASONS.has(reason)) return "lifecycle";
+  if (IDEMPOTENCY_REASONS.has(reason)) return "idempotency";
+  if (INFRASTRUCTURE_REASONS.has(reason)) return "infrastructure";
+  return "unclassified";
 }
 
 /**
@@ -116,7 +174,17 @@ export interface CommandAudit {
  * Do not log sensitive raw content unless strictly necessary."
  *
  * Nothing from the Memory's body reaches this line — ids, the command name, the
- * outcome and the reason code only.
+ * outcome, the reason code, and the two fields above.
+ *
+ * SEVEN OF §24's EIGHT FIELDS, AND THE EIGHTH SAID PLAINLY. `projectionName` is
+ * null here and always will be: a command is not a projection, and this is the
+ * COMMAND log. §24's eighth field belongs to the PROJECTION log, and this
+ * repository has no reachable one to put it in — `services/memoryProjections/
+ * derivativeRegistry.ts` is the projection half and its storage is migration
+ * 2730, written and unapplied, so nothing there has ever run outside a test.
+ * The key is emitted as an explicit null rather than omitted, so a reader
+ * grepping the eight field names finds eight, and finds this one empty on
+ * purpose instead of wondering whether it was dropped.
  */
 export function auditCommand(a: CommandAudit): void {
   const line = {
@@ -128,6 +196,9 @@ export function auditCommand(a: CommandAudit): void {
     idempotencyKey: a.idempotencyKey,
     outcome: a.outcome,
     reason: a.reason ?? null,
+    failureClass: failureClassOf(a),
+    sourceVersion: a.sourceVersion ?? null,
+    projectionName: null,
     engineVersion: "memory-kernel/1",
     durable: a.durable,
   };
@@ -197,6 +268,12 @@ export interface MemoryOwnershipRow {
   visibility: string | null;
   trip_id: string | null;
   allowed_user_ids: string[] | null;
+  /**
+   * §24's "source version" for the audit line. `updated_at` exists on
+   * `memories` since 0067, so selecting it adds no schema dependency; it is on
+   * the read the handler already performs, so it costs no round trip.
+   */
+  updated_at?: string | null;
 }
 
 /**
@@ -217,7 +294,7 @@ export async function loadMemoryForCommand(
 ): Promise<{ ok: true; row: MemoryOwnershipRow } | { ok: false; http: CommandHttpError }> {
   const { data, error } = await sc
     .from("memories")
-    .select("id, owner_id, state, visibility, trip_id, allowed_user_ids")
+    .select("id, owner_id, state, visibility, trip_id, allowed_user_ids, updated_at")
     .eq("id", memoryId)
     .neq("state", "deleted")
     .maybeSingle();
@@ -331,6 +408,12 @@ export interface DispatchInput<T> {
    * flag-off behaviour is byte-identical to what it was.
    */
   legacy: () => Promise<{ ok: true; body: T } | { ok: false; http: CommandHttpError }>;
+  /**
+   * §24 source version — the `updated_at` of the row this command acted on, as
+   * the handler read it BEFORE the write. Omitted by a create (there was no
+   * prior version) and by any caller that did not load a row.
+   */
+  sourceVersion?: string | null;
   /** Turn the kernel's `result` jsonb into the route's response body. */
   fromKernelResult?: (result: any) => T;
 }
@@ -362,6 +445,7 @@ export async function dispatchMemoryCommand<T>(input: DispatchInput<T>): Promise
         commandId, commandType: input.commandType, memoryId: input.memoryId,
         actorUserId: input.actorUserId, idempotencyKey: input.idempotencyKey,
         outcome: "rejected", reason: legacy.http.code, durable: false,
+        sourceVersion: input.sourceVersion ?? null,
       });
       return legacy;
     }
@@ -369,6 +453,7 @@ export async function dispatchMemoryCommand<T>(input: DispatchInput<T>): Promise
       commandId, commandType: input.commandType, memoryId: input.memoryId,
       actorUserId: input.actorUserId, idempotencyKey: input.idempotencyKey,
       outcome: "accepted", eventId: null, durable: false,
+      sourceVersion: input.sourceVersion ?? null,
     });
     return { ok: true, body: legacy.body, duplicate: false, commandId, eventId: null, idempotencyKey: input.idempotencyKey };
   }
@@ -387,6 +472,7 @@ export async function dispatchMemoryCommand<T>(input: DispatchInput<T>): Promise
       commandId, commandType: input.commandType, memoryId: input.memoryId,
       actorUserId: input.actorUserId, idempotencyKey: input.idempotencyKey,
       outcome: "rejected", reason: result.reason,
+      sourceVersion: input.sourceVersion ?? null,
       // The kernel wrote its own audit row for every rejection it evaluated.
       // MEMORY_KERNEL_UNAVAILABLE is the one reason where it did not, because
       // the function never ran — that one is log-only and says so.
@@ -399,6 +485,7 @@ export async function dispatchMemoryCommand<T>(input: DispatchInput<T>): Promise
     commandId, commandType: input.commandType, memoryId: result.memoryId,
     actorUserId: input.actorUserId, idempotencyKey: input.idempotencyKey,
     outcome: result.duplicate ? "duplicate" : "accepted", eventId: result.eventId, durable: true,
+    sourceVersion: input.sourceVersion ?? null,
   });
 
   const body = input.fromKernelResult

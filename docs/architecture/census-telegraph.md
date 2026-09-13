@@ -1848,7 +1848,7 @@ screen to reach for.
 `visibility: "only_me"` and `state: "draft"` as LITERALS, not as defaults a
 caller can override, into `memories` — the canonical table — so the draft is
 readable back by its owner through the route that already exists
-(`routes/memories.ts:1712#state` applies `state = published` only when the viewer is
+(`routes/memories.ts:1723#state` applies `state = published` only when the viewer is
 NOT the owner). The save is also recorded in `saved_messages`, so the old
 affordance and the new draft agree instead of disagreeing.
 

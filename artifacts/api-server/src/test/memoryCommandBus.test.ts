@@ -34,9 +34,13 @@ import {
   MEMORY_LIFECYCLE_STATES,
   MEMORY_STORED_STATES,
 } from "../lib/memoryCommandBus.js";
+import { readFileSync } from "node:fs";
+import { logger } from "../lib/logger.js";
 import {
+  auditCommand,
   authorizeParticipantCommand,
   commandTypeForPatch,
+  failureClassOf,
   guardLifecycle,
 } from "../services/memory/MemoryDomainService.js";
 
@@ -333,5 +337,157 @@ describe("§24 memory_command_rejected_total counts by reason", () => {
     });
     assert.equal(r.ok, true);
     assert.equal((r as any).eventType, "memory.archived");
+  });
+});
+
+// ── §24 the operational log's field set ──────────────────────────────────────
+//
+// Spec §24 (.txt:640): "Operational logs must include memoryId, commandId,
+// eventId, source version, engine version, reason codes, projection name, and
+// failure class."
+//
+// census-highlights-memories H223 measured five of the eight: memoryId,
+// commandId, eventId, reason and engineVersion. The doc comment above
+// auditCommand QUOTED all eight while the object below it carried five, which
+// is the shape of claim this census exists to catch — in the file that cites
+// the census.
+//
+// `projectionName` stays null and H223 stays BUILT-BUT-WRONG because of it: a
+// command log has no projection, and the projection log that would carry the
+// eighth field is services/memoryProjections/derivativeRegistry.ts, whose
+// storage is migration 2730 — written, unapplied, never run outside a test.
+describe("§24 failure class — the category of a refusal, not its reason code", () => {
+  it("is null for anything that was not a refusal", () => {
+    assert.equal(failureClassOf({ outcome: "accepted", reason: undefined }), null);
+    assert.equal(failureClassOf({ outcome: "duplicate", reason: undefined }), null,
+      "a replay answered from the receipt is a success, not a failure");
+  });
+
+  it("sorts every declared kernel reason into a class, and none into unclassified", () => {
+    const expected: Record<string, string> = {
+      MEMORY_COMMAND_MALFORMED: "validation",
+      MEMORY_COMMAND_UNKNOWN_TYPE: "validation",
+      MEMORY_NOT_FOUND: "not_found",
+      MEMORY_ITEM_NOT_FOUND: "not_found",
+      MEMORY_TAG_NOT_FOUND: "not_found",
+      MEMORY_AUTH_NOT_OWNER: "authorization",
+      MEMORY_AUTH_NOT_PARTICIPANT: "authorization",
+      MEMORY_AUTH_IDEMPOTENCY_KEY_FOREIGN: "authorization",
+      MEMORY_IDEMPOTENCY_KEY_REUSED: "idempotency",
+      MEMORY_LIFECYCLE_TERMINAL: "lifecycle",
+      MEMORY_LIFECYCLE_INVALID_TRANSITION: "lifecycle",
+      MEMORY_LIFECYCLE_UNKNOWN_STATE: "lifecycle",
+      MEMORY_KERNEL_UNAVAILABLE: "infrastructure",
+    };
+    for (const [reason, cls] of Object.entries(expected)) {
+      assert.equal(failureClassOf({ outcome: "rejected", reason }), cls, `${reason} is ${cls}`);
+    }
+  });
+
+  it("keeps authorization apart from not_found — the two refusals a reader must not confuse", () => {
+    assert.notEqual(
+      failureClassOf({ outcome: "rejected", reason: "MEMORY_AUTH_NOT_OWNER" }),
+      failureClassOf({ outcome: "rejected", reason: "MEMORY_NOT_FOUND" }),
+      "a spike in 'you may not' and a spike in 'there is no such thing' are different mornings",
+    );
+    assert.notEqual(
+      failureClassOf({ outcome: "rejected", reason: "MEMORY_KERNEL_UNAVAILABLE" }),
+      failureClassOf({ outcome: "rejected", reason: "MEMORY_LIFECYCLE_TERMINAL" }),
+      "a broken deployment and a user editing a deleted Memory must not share a class",
+    );
+  });
+
+  it("classifies the legacy path's http codes too — the path that actually runs today", () => {
+    // memory_kernel_enabled has no row in production, so every refusal a user
+    // meets comes through the legacy branch with an http code, not a kernel
+    // reason. A classifier that only knew the kernel's vocabulary would answer
+    // "unclassified" for 100% of production refusals.
+    assert.equal(failureClassOf({ outcome: "rejected", reason: "forbidden" }), "authorization");
+    assert.equal(failureClassOf({ outcome: "rejected", reason: "not_found" }), "not_found");
+    assert.equal(failureClassOf({ outcome: "rejected", reason: "invalid_payload" }), "validation");
+    assert.equal(failureClassOf({ outcome: "rejected", reason: "db_error" }), "infrastructure");
+  });
+
+  it("REFUSES to guess: an unknown reason is 'unclassified', not folded into the nearest class", () => {
+    assert.equal(failureClassOf({ outcome: "rejected", reason: "MEMORY_SOMETHING_NEW" }), "unclassified");
+    assert.equal(failureClassOf({ outcome: "rejected", reason: undefined }), "unclassified");
+  });
+
+  it("every MemoryKernelReason the bus declares has a class — the sets cannot drift apart silently", () => {
+    // The union is a type, so it is read from the file rather than retyped: a
+    // reason added to lib/memoryCommandBus.ts and not sorted here would answer
+    // "unclassified" in production and nothing would say so.
+    const src = readFileSync(new URL("../lib/memoryCommandBus.ts", import.meta.url), "utf8");
+    const union = src.match(/export type MemoryKernelReason =([\s\S]*?);\n/)?.[1] ?? "";
+    const reasons = [...union.matchAll(/"([A-Z_]+)"/g)].map((m) => m[1]!);
+    assert.ok(reasons.length >= 13, `expected the declared union, read ${reasons.length}`);
+    for (const reason of reasons) {
+      assert.notEqual(failureClassOf({ outcome: "rejected", reason }), "unclassified",
+        `${reason} is declared by the command bus and sorted into no failure class`);
+    }
+  });
+});
+
+describe("§24 the audit LINE, not just the classifier", () => {
+  // FOUND BY A SURVIVING MUTATION. Replacing `failureClass: failureClassOf(a)`
+  // with `failureClass: null` in auditCommand broke nothing: every assertion
+  // was on the classifier, and none on the line it is supposed to appear on.
+  // A field that is computed and then not logged is not a log field.
+  function capture(fn: () => void): Array<Record<string, unknown>> {
+    const lines: Array<Record<string, unknown>> = [];
+    const realInfo = logger.info.bind(logger);
+    const realWarn = logger.warn.bind(logger);
+    (logger as any).info = (obj: any) => { lines.push(obj); };
+    (logger as any).warn = (obj: any) => { lines.push(obj); };
+    try { fn(); } finally {
+      (logger as any).info = realInfo;
+      (logger as any).warn = realWarn;
+    }
+    return lines;
+  }
+
+  /** §24 .txt:640, in the spec's own order. */
+  const SECTION_24_FIELDS = [
+    "memoryId", "commandId", "eventId", "sourceVersion",
+    "engineVersion", "reason", "projectionName", "failureClass",
+  ] as const;
+
+  it("an ACCEPTED command logs all eight §24 field names", () => {
+    const [line] = capture(() => auditCommand({
+      commandId: "cmd-1", commandType: "CHANGE_VISIBILITY", memoryId: "mem-1",
+      actorUserId: "user-1", idempotencyKey: "key-1", outcome: "accepted",
+      eventId: "evt-1", durable: false, sourceVersion: "2026-09-13T00:00:00.000Z",
+    }));
+    assert.ok(line, "auditCommand emitted no line at all");
+    for (const f of SECTION_24_FIELDS) {
+      assert.ok(f in line!, `§24 field ${f} is missing from the operational log line`);
+    }
+    assert.equal(line!.sourceVersion, "2026-09-13T00:00:00.000Z");
+    assert.equal(line!.failureClass, null, "an accepted command has no failure class");
+    assert.equal(line!.projectionName, null,
+      "a command is not a projection — the key is present and empty on purpose");
+    assert.equal(line!.engineVersion, "memory-kernel/1");
+  });
+
+  it("a REJECTED command logs the failure class beside the reason code", () => {
+    const [line] = capture(() => auditCommand({
+      commandId: "cmd-2", commandType: "ARCHIVE_MEMORY", memoryId: "mem-2",
+      actorUserId: "user-2", idempotencyKey: "key-2", outcome: "rejected",
+      reason: "MEMORY_LIFECYCLE_TERMINAL", durable: false, sourceVersion: null,
+    }));
+    assert.equal(line!.reason, "MEMORY_LIFECYCLE_TERMINAL", "the reason code is what the client switches on");
+    assert.equal(line!.failureClass, "lifecycle", "the class is what an operator reads on a dashboard");
+    assert.equal(line!.sourceVersion, null, "null is a state, not a missing key");
+    assert.ok("sourceVersion" in line!);
+  });
+
+  it("does not log the Memory's body — §24's second sentence", () => {
+    const [line] = capture(() => auditCommand({
+      commandId: "cmd-3", commandType: "UPDATE_MEMORY", memoryId: "mem-3",
+      actorUserId: "user-3", idempotencyKey: "key-3", outcome: "accepted", durable: false,
+    }));
+    for (const forbidden of ["title", "caption", "patch", "payload", "allowedUserIds", "hiddenUserIds", "locationLat", "locationLng"]) {
+      assert.equal(forbidden in line!, false, `${forbidden} must never reach an operational log`);
+    }
   });
 });

@@ -513,6 +513,27 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/lib/memoryCommandBus.ts",
     "artifacts/api-server/src/lib/memoryOutbox.ts",
     "artifacts/api-server/src/lib/highlightPermissions.ts",
+    // WIDENED 2026-09-13 by section D, which grouped the 134 BUILT-BUT-WRONG
+    // rows and, doing so, found the reader of `public.memories` no section of
+    // this census had ever named: CompassGraphEngine's experience builder. Two
+    // rows are now graded on it (H263 §28.10, H237 §28.8) and two more cite it
+    // (H189, H190), so a change to any of these four must age this document.
+    //
+    // CompassGraphEngine.ts and its suite are ALSO cited by census-compass and
+    // watched by no scope at all until now. Adding them here does not take them
+    // from that lane; it means this census stops being able to claim a verdict
+    // about a file it does not watch. §D.9 names the cross-lane change loudly.
+    //
+    // intelligenceGraphScheduler.ts and index.ts are the two files that make
+    // "this runs daily in production" a fact rather than an assumption — if the
+    // scheduler stops being started, or its interval changes, H237's ceiling
+    // ("bounded by the rebuild's daily cadence") changes with it.
+    "artifacts/api-server/src/compass/CompassGraphEngine.ts",
+    "artifacts/api-server/src/test/compass-intelligence-graph.test.ts",
+    "artifacts/api-server/src/lib/intelligenceGraphScheduler.ts",
+    "artifacts/api-server/src/index.ts",
+    "artifacts/api-server/src/test/memories.test.ts",
+    "artifacts/api-server/src/test/memoryCommandBus.test.ts",
     // WIDENED 2026-09-11: cited 65 files, watched 19. Same exclusions as
     // the other censuses — package.json and check* machinery are named as tools,
     // not graded. See check:census-scope-coverage for why the ratio matters.
