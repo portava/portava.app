@@ -3298,9 +3298,11 @@ did not take the queue. It asked the question §D.2 asked — *which code actual
 data?* — of the two surfaces this census owns, and enumerated every read on each **to the
 bottom** rather than to the first one that looked wired.
 
-Three of the four Memory reads that publish a coordinate performed the location protection.
-Three of the four Highlight reads that publish a location performed the §10 clamp. In both
-cases the fourth did not, and in both cases the fourth is a PROFILE read — the surface a
+**Three of the four Memory reads that publish a coordinate performed the location protection.
+Two of the three Highlight reads that publish a location to anyone but its owner performed the
+§10 clamp.** (`GET /highlights/archived` is the fourth Highlight read and is not counted: it
+filters `.eq("owner_id", user.id)` and publishes to nobody else, so §10 does not reach it.) The
+read that was missing in each case is the SAME read — the PROFILE listing, the surface a
 stranger lands on. Neither omission is visible from the function that does the protecting; it
 is visible only from a list of callers, which is the same shape of finding as §F's unread
 `createStamp` family and the reason that enumeration was worth the pass it cost.
