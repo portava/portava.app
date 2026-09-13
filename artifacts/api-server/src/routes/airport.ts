@@ -77,6 +77,12 @@ import {
   LAYOVER_RETURNING_READERS_WIDENED,
 } from "../services/airport/LayoverSessionService.js";
 import { safetyLabel, type TravelTimeSource } from "../services/airport/LayoverSafetyEngine.js";
+// §8's outer envelope edge. Published beside the window because it is the one
+// piece of envelope GEOMETRY this tree can certify, and because it is what
+// `generateRecommendations` blocks landside cards on — a traveller who loses a
+// card to it should be able to read the bound that removed it.
+import { safeEnvelope } from "../services/airport/LayoverEnvelope.js";
+import { airportPoint } from "../services/airport/LayoverTravelTime.js";
 // Every feasibility number this file publishes comes from ONE call to
 // `certifySessionFeasibility` per request. `assess`, `computeWindow` and
 // `adviseLeaving` are deliberately NOT imported here any more: four handlers
@@ -914,6 +920,8 @@ router.get("/airport/sessions/:id/safety", async (req, res) => {
     // getting back, rather than leaving each caller to re-derive it from the
     // envelope. Derived from the same certified record, so it cannot disagree.
     safeReturn: safeReturnPosture(record),
+    // §8 — the outer edge of the safe envelope, cut from the window above.
+    safeEnvelope: safeEnvelopeFor(airport, record),
   });
 });
 
@@ -1339,6 +1347,23 @@ function serializeEnvelope(record: LayoverFeasibilityRecord) {
   };
 }
 
+/**
+ * §8 `SafeEnvelope`, for the response.
+ *
+ * The SAME pure function `generateRecommendations` blocks cards with, given the
+ * same two arguments — the certified window's `usableMinutes` and the airport's
+ * coordinate — so the bound a traveller reads here is the bound that removed
+ * the card they are not seeing. It is not a second derivation of a number: the
+ * window it is cut from is `record.envelope`, this request's one certification.
+ *
+ * `null` when the airport has no usable coordinate, which is what the fallback
+ * profile's `(0, 0)` means. There is then no envelope, nothing is blocked, and
+ * the response says so rather than publishing a disc centred on the ocean.
+ */
+function safeEnvelopeFor(airport: AirportProfile, record: LayoverFeasibilityRecord) {
+  return safeEnvelope(record.envelope.usableMinutes, airportPoint(airport));
+}
+
 function stopRowToJson(row: any) {
   return {
     id:               row.id,
@@ -1685,6 +1710,10 @@ router.get("/airport/sessions/:id/overview", async (req, res) => {
     // certifiedAt/staleAfter/inputHash so an offline client can say how old its
     // answer is instead of presenting a stale deadline as current.
     safeReturn: safeReturnPosture(record),
+    // §8 — the same outer edge, from the same certified window. The dashboard's
+    // copy: a traveller who sees fewer landside cards than a city has places
+    // can read the bound that removed them.
+    safeEnvelope: safeEnvelopeFor(airport, record),
     offlineBundle: buildOfflineBundle({
       session,
       airport,
