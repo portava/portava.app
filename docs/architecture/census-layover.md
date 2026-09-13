@@ -1617,3 +1617,328 @@ reach became reachable. A census that counted a mounted component as new
 construction would have reported growth where there was none — and the corrected
 arithmetic above does not change that, because all three moves are W → C, which
 leaves C + W where it was.
+
+---
+
+## 11. Build pass — 2026-09-13, §10 truth reconciliation and §11 event-driven replanning
+
+Paths relative to `artifacts/api-server/src/` unless prefixed `db/` or
+`travel-buddy-standalone/`. Same denominator (296), same counting rule (§1),
+same prohibition rule (§1's three bullets), same buckets. Commits `4a7d9e0f`
+and `af1864a7` on `worktree-agent-a1965b10a690c9e97`. **Nothing here is merged,
+nothing is deployed, no flag is flipped and no migration is applied.** Most of
+the owner's rule chain is not even reached: this is BUILT ON BRANCH and no more.
+
+**Read this before any verdict below.** Every artifact in this pass is reachable
+from a test and from nothing else. There is no ingest route, no reader, no feed,
+no webhook and no producer of an observation or an event anywhere in the tree,
+and the migration that would store either is **written and NOT applied**. The
+arithmetic a traveller's session runs is term-for-term what it was before this
+pass — pinned, not asserted, by
+`test/layoverLiveConditions.test.ts:134#the five original terms`. CONSTRUCTED%
+below moves by 12 points and **not one number on any screen changes.** A reader
+who wants only the second fact should skip to §11.3.
+
+### 11.1 What was built, and where
+
+**1. `services/airport/LayoverAirportTruth.ts` — §10 and §10.1, 831 lines.**
+
+The spec's five fact classes as a closed set (`:62#AIRPORT_FACT_CLASSES`) with
+the freshness its table gives each (`:80#FACT_CLASS_TTL_MIN` — FAST_LIVE 20
+minutes, TRAVELER_OBSERVATION 45, OPERATIONAL_SEMI_LIVE 12 hours,
+STATIC_TOPOLOGY a month, HISTORICAL_MODEL 90 days). Fifteen fact types, each
+bound to exactly one class (`:95#AIRPORT_FACT_TYPES`), one per example in the
+spec's own Examples column. `TruthValue<T>` with all eight members
+(`:304#TruthValue`), every one set by the reconciler and none a placeholder —
+asserted member by member and as an exact key set at
+`test/layoverAirportTruth.test.ts:306#eight`.
+
+`reconcile` (`:447#reconcile`) applies §10.1's five rules and records which
+fired, in order, in `rulesApplied`:
+
+- **never silently merge** — the chosen value is the maximum over the credible
+  readings (`:512#chosen`), never a mean; a disagreement past the fact's own
+  tolerance (`:511#conflict`, table at `:164#CONFLICT_TOLERANCE_MIN`) sets
+  `conflict` and keeps BOTH sources rather than averaging them (`:519#average`);
+- **preserve provenance and the conflict flag** — `sourceRefs` carries every
+  accepted reading's ref and `conflict` is always set explicitly, conflict or
+  not (`:581#fallbackLevel:` is inside the same record literal);
+- **prefer conservative** — observer kind is nowhere in the selection, so an
+  official feed's lower figure does not beat a corroborated higher one
+  (`test/layoverAirportTruth.test.ts:345#largest`);
+- **community observations require plausibility, corroboration and decay** —
+  `isImplausible` rejects rather than down-weights (`:368#isImplausible`, ranges
+  at `:135#PLAUSIBLE_RANGE`), a community-only safety-critical fact needs
+  `MIN_COMMUNITY_CORROBORATION` DISTINCT observers (`:232#MIN_COMMUNITY_CORROBORATION`,
+  enforced `:497#community-only`), and weight decays linearly to zero at the
+  class TTL (`:353#decayFactor`);
+- **official data is not automatically truth; contradiction increases
+  uncertainty** — the step-down at `:531#stepDownConfidence`.
+
+Plus §23's controls over the same channel: a per-(observer, fact) rate limit
+(`:224#OBSERVATION_RATE_LIMIT`) that applies to official feeds too, and trust
+weighting by observer kind × the observer's own standing × decay
+(`:192#OBSERVER_KINDS`). Plus §10's historical model — per-local-hour percentile
+bands that are **not published below five samples** (`:739#buildHistoricalModel`,
+`:718#MIN_SAMPLES_PER_BAND`) — and §22-L4 calibration measurement
+(`:799#measureCalibration`), which measures prediction error and deliberately
+adjusts nothing.
+
+`getTruth(subject, factType, atTime, corpus)` (`:608#getTruth`) is §18's method
+with the I/O lifted out; the divergence is stated in its own doc comment rather
+than hidden.
+
+**2. `services/airport/LayoverEventReplanner.ts` — §11 and §11.1, 924 lines.**
+
+§11's canonical envelope with all ten members, none optional
+(`:106#LayoverEventEnvelope`), and the eleven-type vocabulary as a closed set
+(`:71#LAYOVER_EVENT_TYPES`) checked against a hand transcription of the spec at
+`test/layoverEventReplanner.test.ts:170#eleven`. Then the eight numbered steps,
+each a separately exported function carrying its step number:
+
+| Step | Function | Note |
+| --- | --- | --- |
+| 1 normalise + dedupe | `:203#normalizeEvent`, `:319#dedupeEvents` | per-type payload validator; dedup key is `source:sourceEventId`, or a content digest — **never the eventId**, which is the §24 failure |
+| 2 impacted sessions | `:362#impactedSessions` | direct subject, or airport fanout bounded by the session's own window |
+| 3 affected nodes | `:416#EVENT_AFFECTS`, `:442#applyEventToInputs` | maps each event type to the named `FeasibilityInputs` fields it can move; **five of the eleven move nothing** and are skipped |
+| 4 immutable snapshot | — | **NOT BUILT.** `ReplanOutcome.snapshotPersisted` is typed literally `false` (`:796#snapshotPersisted:`) with reason `no_snapshot_storage` (`:797#no_snapshot_storage`) |
+| 5 diff the action universe | `:552#actionUniverseOf`, `:588#diffActionUniverse` | verdict, return state, tier, usable minutes, deadline, feasible candidate ids, reason codes |
+| 6 invalidate | `:630#invalidateRecommendations` | decides; writes nothing |
+| 7 OpportunityEvent | `:683#opportunityEventFor` | `null` unless materially changed (`:655#MATERIALITY`) |
+| 8 notify | `:752#shouldNotify` | strictly narrower than step 7 |
+
+`handleEvent` (`:818#handleEvent`) runs 2 through 8 in order. `disruptionAfter`
+(`:919#disruptionAfter`) finally gives §15.2's state machine an input — and
+refuses to give it a false one: a security-queue event is not a flight
+disruption (`:905#disruptionEventFor`).
+
+**3. The seam into the safety arithmetic.** `LiveConditions`
+(`services/airport/LayoverSafetyEngine.ts:192#LiveConditions`) is the one shape
+the buffer accepts live intelligence in, and
+`LayoverAirportTruth.liveConditionsFrom` (`:660#liveConditionsFrom`) is the only
+thing that builds one. It becomes a SIXTH buffer term, `liveExtra`
+(`LayoverSafetyEngine.ts:270#liveExtra:`, summed into the total at
+`:380#liveExtra`), additive-only and clamped at zero (`:229#liveExtraMinutes`)
+so a live signal can make a deadline earlier and never later. It is a NAMED
+INPUT of the certified record (`LayoverFeasibility.ts:303#liveConditions:`), so
+it is inside `inputHash` and inside a replay, and it produces the only §6.2
+estimate on this tree that can carry a real `observedAt`/`expiresAt`
+(`LayoverFeasibility.ts:496#liveExtraEstimate`). Both version constants moved:
+`LAYOVER_ENGINE_VERSION` to `2026.09.13-1` because the arithmetic gained a term,
+`LAYOVER_FEASIBILITY_VERSION` because the record shape did.
+
+**4. `migrations/2860_layover_airport_truth_and_events.sql` — WRITTEN, NOT
+APPLIED, NO WRITER.** `airport_fact_observations` (`:155#airport_fact_observations`)
+carries the provenance (`:187#observer_kind`, `:194#source_ref`) and TTL
+(`:197#observed_at`, `:200#expires_at`) this census records as absent from every
+layover table. `layover_external_events` (`:233#layover_external_events`)
+carries the envelope and the UNIQUE dedup index §24 requires
+(`:276#layover_external_events_dedup_uidx`). Both are SELECT-only or nothing for
+client roles, and the write boundary is asserted as a postcondition
+(`:347#client-writable`) — the check L201 records as missing the last time a
+layover table shipped. Rollback at
+`db/rollback/2026-09-13-2860-layover-airport-truth-and-events-rollback.sql:54#REFUSED`;
+it refuses rather than dropping rows if a writer has appeared since. Both tables
+are recorded as `unapplied` in `scripts/checkProductionDrift.ts` with the
+reason, so `check:production-drift` is green by explanation rather than by
+silence.
+
+**§19-7's condition is EVALUATED, in writing, for the first time.** L197 says
+the clause "Create airport intelligence observation/truth tables IF the existing
+intelligence schema cannot represent the required TTL/provenance cleanly" was
+"neither evaluated nor satisfied". 2860's header now evaluates it
+(`:29#EVALUATED`): `intel_observations` and `intel_claims`
+(`2130_intel_storage.sql:140`, `:204`) DO carry most of `TruthValue<T>`, and
+three things block reuse — `actor_id uuid NOT NULL REFERENCES profiles(id)`
+(`2130_intel_storage.sql:142#actor_id`), `subject_id uuid NOT NULL REFERENCES
+places(id)` (`:144#subject_id`), and a `subject_kind` CHECK with no 'airport'
+(`:166#intel_observations_subject_kind_check`). An airport feed has no profile
+and an airport is not a place. The condition is satisfied; the alternative is a
+Sensing-lane change to a live table, which this lane does not own.
+
+**5. Three test files, 117 tests, 18 mutations.** `test/layoverLiveConditions.test.ts`
+(27), `test/layoverAirportTruth.test.ts` (40), `test/layoverEventReplanner.test.ts`
+(50). Every mutation was made to PRODUCTION code, measured, and reverted, and
+each is recorded with its pass/fail count in its file's header. Two are worth
+lifting out:
+
+- **A monotonicity sweep cannot see a term wired to nothing.** Omitting
+  `liveExtra` from `totalBuffer` failed 3 of 27 — all three the STRICT cases —
+  and passed all six monotonicity sweeps over ~1,400 points, because a term that
+  never enters the sum is CONSTANT in its input and a constant is
+  non-increasing. Recorded at `test/layoverLiveConditions.test.ts:39#READ`.
+- **A mutation that changed nothing found dead code.** Disabling the second half
+  of §10.1 rule 5 — an `if (fresherContradiction && confidence === "HIGH")` cap
+  the first draft carried — produced 40 pass / 0 fail, identical to unmutated,
+  because its condition implies `conflict`, which had already stepped HIGH down.
+  The branch was deleted (`af1864a7`) rather than kept with a test written
+  around it, and the step-down mutation was RE-MEASURED afterwards: 2 failures
+  instead of 1, because the dead cap had been covering for it.
+
+### 11.2 Row moves
+
+Thirty-seven rows move. **Thirteen `N → C`, one `W → C`, twenty-three `N → W`.**
+
+Every `C` in this table is **vacuous in the §1 sense (`⌀`)**: the rule,
+prohibition or vocabulary is real, fail-closed and swept, and the path it
+governs is EMPTY because nothing on this tree produces an observation or an
+event. §1's prohibition rule admits that verdict and marks it `⌀`; a reader who
+rejects vacuous satisfaction should subtract all fourteen and read **28/296 =
+9.5 %**, unchanged from §10. The `⌀` is stated here in the column header rather
+than in the verdict cell because `check:census-integrity` cannot read `C ⌀` as a
+verdict — the defect §9.5 had to repair for L51 and L52.
+
+| id | was | now | why — every `C` below is `⌀`, vacuous |
+| --- | --- | --- | --- |
+| L84 | N | C | `TruthValue<T>` with all eight members the spec names, every one set by `reconcile` — `LayoverAirportTruth.ts:304#TruthValue`, exact key set asserted `test/layoverAirportTruth.test.ts:306#eight`. §1 counts a declared interface as one requirement. |
+| L85 | N | C | Was `N ∅`, unguarded absence. Now guarded: two credible readings past the fact's tolerance set `conflict` and keep both refs (`LayoverAirportTruth.ts:511#conflict`), and no code path averages (`:512#chosen`, `:519#average`). Red-first: replacing the maximum with the mean fails 6 of 40. |
+| L86 | N | C | Provenance and the conflict flag are both always set, conflict or not (`LayoverAirportTruth.ts:581#fallbackLevel:`; `test/layoverAirportTruth.test.ts:306#eight`). The storage half — provenance columns on a table — is written and unapplied (2860), which is part of why this is `⌀`. |
+| L87 | N | C | The conservative reading wins and observer kind is nowhere in the selection: an official feed's lower figure loses to a corroborated higher one, swept over every observer kind (`LayoverAirportTruth.ts:512#chosen`; `test/layoverAirportTruth.test.ts:345#largest`). |
+| L88 | N | C | All three named halves, each independently red-first: plausibility (`LayoverAirportTruth.ts:368#isImplausible`, mutation to always-false → 1 failure), corroboration (`:497#community-only`, mutation → 2), decay (`:353#decayFactor`, mutation → 1). |
+| L89 | N | C | Contradiction steps confidence down (`LayoverAirportTruth.ts:531#stepDownConfidence`, mutation → 2 failures) and the official reading does not win by being official (L87's selection). A redundant third mechanism was found dead by mutation and deleted — see §11.1. |
+| L90 | W | C | Was 3 of 10 members on `layover_events`. All ten now exist as one non-optional shape (`LayoverEventReplanner.ts:106#LayoverEventEnvelope`), produced by `normalizeEvent` and asserted member by member (`test/layoverEventReplanner.test.ts:196#ten`); `receivedAt` is pinned apart from `occurredAt` by mutation. The table that would store it is unapplied. |
+| L91 | N | C | Exactly the spec's eleven, in its order, as a closed set (`LayoverEventReplanner.ts:71#LAYOVER_EVENT_TYPES`), compared against a hand transcription rather than against itself (`test/layoverEventReplanner.test.ts:170#eleven`). Dropping one fails 3 of 50; a twelfth cannot be introduced by writing one. |
+| L92 | N | C | §11.1 step 1. Normalisation with a per-type payload validator (`LayoverEventReplanner.ts:203#normalizeEvent`) and dedup by a stable source key, never by eventId (`:319#dedupeEvents`). Red-first: keying on eventId fails 2, skipping validation fails 4. |
+| L96 | N | C | §11.1 step 5. `actionUniverseOf` + `diffActionUniverse` (`LayoverEventReplanner.ts:552#actionUniverseOf`, `:588#diffActionUniverse`), exercised in both directions — a spike that loses options (`test/layoverEventReplanner.test.ts:423#drops`) and a delay that gains them. Red-first: emptying `candidatesLost` fails 2. |
+| L98 | N | C | §11.1 step 7. `null` unless the options materially changed (`LayoverEventReplanner.ts:683#opportunityEventFor`, thresholds `:655#MATERIALITY`); the two flight reason codes are emitted here because only a diff can know them. Red-first: emitting unconditionally fails 1. |
+| L251 | N | C | Was `N ∅`. Both halves exist over the same channel: a rate limit that applies to official feeds too (`LayoverAirportTruth.ts:224#OBSERVATION_RATE_LIMIT`, mutation → 1 failure) and trust weighting by kind × standing × decay (`:192#OBSERVER_KINDS`, mutation setting community trust to 1.0 → 2 failures). |
+| L252 | N | C | Outlier rejection against each fact's declared physical range rather than a dispersion nobody has the population for (`LayoverAirportTruth.ts:368#isImplausible`, `:135#PLAUSIBLE_RANGE`); a 900-minute queue from an official feed is refused (`test/layoverAirportTruth.test.ts:188#implausible`). Red-first: always-false fails 1. |
+| L257 | N | C | Both halves. Every payload is validated per event type (`LayoverEventReplanner.ts:203#normalizeEvent`) and dedup is by `source:sourceEventId` or a content digest (`:319#dedupeEvents`), with `eventId` deliberately excluded. |
+| L44 | N | W | A material disruption now has an input: `disruptionAfter` walks §15.2's machine from a flight event (`LayoverEventReplanner.ts:919#disruptionAfter`), `invalidateRecommendations` names the stale set (`:630#invalidateRecommendations`) and `handleEvent` replans (`:818#handleEvent`). The audit-trail half is not built — nothing writes — and nothing produces the event. |
+| L80 | N | W | The class exists with the spec's freshness and its three fact types (`LayoverAirportTruth.ts:95#AIRPORT_FACT_TYPES` — `security_layout`, `lounge_hours`, `transport_schedule`). No producer of any of the three, and no applied storage. A channel is not a fact. |
+| L81 | N | W | Four fact types at a 20-minute TTL, and two of them REACH THE SAFETY BUFFER through `liveConditionsFrom` (`LayoverAirportTruth.ts:660#liveConditionsFrom`) — more than any other class has. Still no producer: every production session runs `liveConditions = null`. |
+| L82 | N | W | The class exists and is confidence-weighted the way the spec asks (trust × decay), with a corroboration floor above it. There is NO SUBMISSION SURFACE — no route, no screen, nothing a traveller can report from. |
+| L83 | N | W | `buildHistoricalModel` folds observations into per-local-hour p50/p75/p90 bands and withholds a band below five samples (`LayoverAirportTruth.ts:739#buildHistoricalModel`). "Recalibrated" is NOT built: `measureCalibration` measures error and adjusts nothing. |
+| L93 | N | W | §11.1 step 2 built as a function over a session list handed in (`LayoverEventReplanner.ts:362#impactedSessions`), with the window bound that stops an airport event reaching a departed flight. It is not a fanout: there is no query and no index on an airport, route or flight subject (L259 unchanged). |
+| L94 | N | W | §11.1 step 3. The node map is real and the skip is real — five event types move nothing and are skipped rather than re-certified (`LayoverEventReplanner.ts:416#EVENT_AFFECTS`; `test/layoverEventReplanner.test.ts:677#SKIPPED`). The recompute itself re-certifies the whole record, because there is one atomic derivation and no node subgraph to recompute. |
+| L99 | N | W | §11.1 step 8 exists and is strictly narrower than step 7 — there is a material change that produces no notification (`LayoverEventReplanner.ts:752#shouldNotify`; `test/layoverEventReplanner.test.ts:613#STRICTLY`). It governs nothing: the ONE notification this product sends is still the client's fixed 30-minute reminder (`travel-buddy-standalone/app/layover/[id].tsx:167`), which this rule does not gate. |
+| L179 | N | W | `handleEvent` exists with the spec's name and runs steps 2-8 in order (`LayoverEventReplanner.ts:818#handleEvent`). It takes a context bag instead of reading sessions, writes nothing, and has no caller outside its test. |
+| L180 | N | W | `getTruth(subject, factType, atTime, corpus)` (`LayoverAirportTruth.ts:608#getTruth`). Signature divergence stated in the code: the spec's version reads a store, there is no store, so the corpus is an argument. |
+| L181 | N | W | `reconcile(observations)` matches the spec's signature exactly and implements all five §10.1 rules. Scored W rather than C for consistency with how this document has scored every other built-but-uncalled service method (L133-L135, L137, L139, L156, L157): a named service operation with no caller is W here. |
+| L212 | N | W | `HandleEventResult` carries `replanned`, `skipped` and `notifications`, so a replan rate is derivable from a call — the same rule that scored L208 and L214 W. Nothing calls it, nothing counts, nothing is emitted. |
+| L225 | N | W | The scenario now exists as a test over the certified record with a real arrival-delay event (`test/layoverEventReplanner.test.ts:464#arrival`), including that the deadline does NOT move — an arrival delay is not a departure delay. Same limit as L226: a unit test over the solver, not a session; no delay input reaches one. |
+| L227 | N | W | The scenario exists and the contraction is swept, not sampled (`test/layoverLiveConditions.test.ts:265#monotone`). **Considered `C` and rejected**: §9 scored L226 W with the words "a unit test over the solver, not a scenario of a session", and a security spike is in exactly that position — no security wait reaches a session. |
+| L228 | N | W | `traffic_extra_min` is still a static admin constant and this does not change it. What is new is a SEPARATE live term that moves the deadline earlier and leaves the static figure alone, asserted as both (`test/layoverEventReplanner.test.ts:489#traffic`). Same solver-not-session limit. |
+| L247 | N | W | `measureCalibration` measures signed error, absolute error and p90 coverage per hour band (`LayoverAirportTruth.ts:799#measureCalibration`) and returns zeros when there is nothing to compare. It MEASURES ONLY — no model is calibrated, and there are no outcomes to calibrate against. |
+| L263 | N | W | The code half is built and red-first (dedup key, first-occurrence-wins). The schema half — `UNIQUE (dedup_key)` — is written and **NOT APPLIED** (`2860_layover_airport_truth_and_events.sql:276#layover_external_events_dedup_uidx`), and its postcondition asserts the index is UNIQUE rather than merely present. |
+| L281 | N | W | `SECURITY_WAIT_HIGH` has an emitter for the first time (`LayoverAirportTruth.ts:677#SECURITY_WAIT_HIGH`) and reaches the certified record's `reasonCodes`. Not `C`: §7 promoted the four codes that ARE emitted on real sessions, and this one is emitted only when a fact nobody produces is supplied. |
+| L285 | N | W | `DATA_STALE` emitted when a contributing truth is past its own expiry (`LayoverAirportTruth.ts:681#DATA_STALE`). Same limit. |
+| L286 | N | W | `SOURCE_CONFLICT` emitted when a contributing truth was contradicted (`LayoverAirportTruth.ts:679#SOURCE_CONFLICT`). Same limit. |
+| L287 | N | W | `TRAFFIC_DEGRADED` emitted on a degraded ground-transport reading (`LayoverAirportTruth.ts:678#TRAFFIC_DEGRADED`). Same limit. |
+| L288 | N | W | `FLIGHT_MOVED_EARLIER` emitted by the diff, and only for a flight event — a queue spike also moves the deadline earlier and must not claim the flight moved (`LayoverEventReplanner.ts:709#FLIGHT_MOVED_EARLIER`; asserted both ways at `test/layoverEventReplanner.test.ts:585#FLIGHT_MOVED_EARLIER`). Same limit. |
+| L289 | N | W | `FLIGHT_DELAY_CREATED_OPPORTUNITY` emitted only when a delay actually widened the window materially (`LayoverEventReplanner.ts:718#FLIGHT_DELAY_CREATED_OPPORTUNITY`) — not on every delay, because a delay into the night band can shrink it. Same limit. |
+| L51 | C | C | **Verdict unchanged, vacuity narrowed and NOT removed.** `test/layoverFeasibilityInvariants.test.ts`'s own header says "`security_wait` HAS NO INPUT on this tree". It has one now (`LayoverSafetyEngine.ts:192#LiveConditions`) and the invariant is swept over it directly, 0-240 minutes, in two timezones (`test/layoverLiveConditions.test.ts:177#non-increasing`) instead of over the buffer columns that stood in for it. Still `⌀`: nothing supplies the input. |
+
+### 11.3 The ceiling
+
+**What would turn each green claim red, and what this pass does not touch.**
+
+1. **The whole of §11.2 is one route away from being nothing, and there is no
+   route.** Not "a route behind a flag seeded FALSE" — NO ROUTE. Nothing
+   constructs an `AirportObservation` or a `LayoverEventEnvelope` outside
+   `src/test/`; the only importers of `LayoverAirportTruth.ts` and
+   `LayoverEventReplanner.ts` are their two test files. Every `C` above is a
+   rule over an empty set and every `W` above is a channel with no content.
+
+2. **2860 is written and NOT applied, and no writer may land before it is.**
+   That ordering is 2700's rule and the reason is mechanical: supabase-js sends
+   every key in an insert payload, so a writer naming an unapplied table's
+   column fails outright on every database. The sequence is apply → confirm the
+   postconditions → land the writer behind a flag seeded FALSE. Anyone who lands
+   the writer first breaks the route, not the migration.
+
+3. **The live buffer term is the one change that could move a traveller's
+   number, and it cannot today.** `liveExtra` is 0 for every caller that
+   supplies no conditions, which is every caller on this tree outside tests, and
+   the equality is pinned (`test/layoverLiveConditions.test.ts:134#the five original terms`).
+   **The day an ingest route exists, that pin is what stands between a
+   crowd-sourced queue report and a traveller's flight deadline.** It should be
+   read as a load-bearing test, not a regression check.
+
+4. **A monotonicity sweep is not a wiring check** — measured, not argued: see
+   §11.1's second bullet. Any future term added to the ladder needs a STRICT
+   assertion as well as a monotone one, or it can be wired to nothing and stay
+   green over a thousand points.
+
+5. **§11.1 step 4 is not built and cannot be faked.** No snapshot is persisted,
+   `snapshotPersisted` is typed `false`, and L95 stays `N`. Until 2700 AND 2860
+   are applied there is nowhere to put a snapshot, so L5, L191, L206, L207,
+   L209, L240 and L261 stay where they are.
+
+6. **Rows deliberately NOT moved, having been opened and read:**
+
+| id | stays | why |
+| --- | --- | --- |
+| L95 | N | §11.1 step 4. The certified record IS immutable; a snapshot in the spec's sense is a stored versioned artifact, and 2700 is unapplied. Reporting `snapshotPersisted: false` is honesty, not a snapshot. |
+| L97 | W | §11.1 step 6 now has a real staleness test (`inputHash` mismatch) and a real feasibility test, but nothing APPLIES the decision — the legacy delete-and-reinsert path is what runs, and `layover_stable_recommendation_ids_enabled` is still FALSE. |
+| L62 | N | Queue friction is now modelled as a buffer term — but §8's requirement is about REACHABILITY AND ROUTE geometry, and transport reliability, route alternatives, weather and re-entry cost have no model. A buffer term is not a route. |
+| L79 | W | Four topology fact types now exist with a month-long TTL. "Invalidated on authoritative change" is not built: expiry is by TTL only, and `terminal_info` still has no writer and is null on all 3,206 production airports. |
+| L197 | W | §19-7's condition is now EVALUATED in writing (§11.1 item 4) and the table carries both TTL and provenance — but "create" means applied, and 2860 is not. This is the row that moves the day 2860 lands. |
+| L194, L198, L259 | W | 2860 adds a dedup index for a NEW table. `layover_events` still has no dedup index, there is still no checkpoints table, and there is still no airport/route/flight subject index for a fanout that does not exist. |
+| L54, L55 | W | The live term is the first estimate on this tree that CAN carry a non-degenerate provenance — and it is a `STATIC_DEFAULT` zero in production, so every distribution is still flat and the percentile selection is still a no-op on the numbers. |
+| L34, L48, L230, L49 | N | Entry permission is untouched by this pass. Still unread anywhere under `routes/airport.ts` or `services/airport/`, still an open PR's subject, still an owner decision. |
+| L50 | N | Unchanged, still blocked on owner decision **L50-a** from §8. |
+| L218 | N | No layover certification document was written. Adding one describing tests over an empty channel would make the artifact list longer and the product no more certified. |
+| L245, L246 | N | §22's L2 and L3 rungs are about SIGNALS BEING AVAILABLE, not about a channel existing. Zero external live signals, zero Portava observations. Defining where they would go does not make an airport more mature. |
+
+7. **One row in another lane's census is adjacent and that file is NOT edited.**
+   `census-sensing.md` records, from the Sensing side, that
+   `grep -rn liveClaimRead services/airport/` returns nothing — still true, this
+   pass consumes no `intel_*` table. But 2860's header takes a position on
+   whether `intel_observations` should carry airport facts, and that is a
+   Sensing decision. It is surfaced as owner decision 9 below rather than
+   written into their document.
+
+8. **Owner decisions this pass surfaces** (numbering continues from §8's 1-7):
+
+   9. **Apply 2860, or reject the second table.** The alternative recorded in its
+      header is widening `intel_observations`' two NOT NULL foreign keys and its
+      `subject_kind` CHECK — a change to a live table the Sensing lane owns. One
+      of the two has to happen before any observation can be stored anywhere.
+   10. **Is a traveller-submitted queue report wanted at all?** The screening,
+       corroboration and rate limiting are built for it, and the table forbids
+       attributing a row to a profile. If the answer is no, the
+       `TRAVELER_OBSERVATION` class and `MIN_COMMUNITY_CORROBORATION` should be
+       deleted rather than left looking like a shipped capability.
+   11. **`SECURITY_WAIT_BASELINE_MIN = 20` is a declared assumption, not a
+       measurement** (`LayoverAirportTruth.ts:634#SECURITY_WAIT_BASELINE_MIN`).
+       It says how much queue the generic base buffer already covers, and no
+       column anywhere holds that number per airport. Before any live wait
+       reaches a traveller, someone has to decide whether that constant is
+       right — or whether `airport_profiles` should gain a real column.
+
+### Recomputed headline — commit `af1864a7`
+
+Same 296 denominator, same counting rule, same prohibition rule. Recomputed by
+`pnpm -s check:census-integrity` from the tables themselves, last-verdict-wins,
+with the eight PR-comparison rows skipped. As at §10 this census reports **0
+requirements counted where the parser cannot read**, so the headline must sum to
+the denominator, and a figure that disagrees with the parsed counts is simply
+wrong.
+
+| Measure | At `743ae78f` (§10) | Now (`af1864a7`) |
+| --- | ---: | ---: |
+| BUILT-AND-CORRECT | 28 | **42** |
+| BUILT-BUT-WRONG | 120 | **142** |
+| NOT-BUILT | 148 | **112** |
+| CANNOT-VERIFY | 0 | **0** |
+| Sum | 296 | **296** |
+| CONSTRUCTED% | 50.0 % | **62.2 %** (184/296) |
+| CORRECT% raw | 9.5 % | **14.2 %** (42/296) |
+| CORRECT% non-vacuous | 9.1 % (27/296) | **9.5 %** (28/296 — all fourteen new `C` verdicts are `⌀`) |
+| CORRECT% spec-attributable | 3.7 % (11/296) | **8.4 %** (25/296 — the eleven, plus the fourteen new `C` rows, each of which cites the spec section it implements in its source file's own header) |
+
+**Read the CORRECT% jump the way §10 asked its own to be read.** Raw CORRECT%
+rises 4.7 points; NON-VACUOUS CORRECT% rises by one row, and that row is L51,
+which keeps its `⌀` — the 28 is 27 plus a re-derivation, not a new capability.
+Every one of the fourteen new `C` verdicts is a rule over a path with nothing in
+it. That is a real improvement, because §1's prohibition rule exists precisely
+to distinguish a guarded absence from an unguarded one and three of these rows
+were `N ∅` — but it is not a traveller noticing anything.
+
+**CONSTRUCTED% rose 12.2 points and no traveller can reach any of it.** 36 rows
+left `N`. Of those, **every single one** is code with no caller outside
+`src/test/`, or a schema object in an unapplied migration. Zero are consumed by
+a route. Zero are consumed by the client. The last three passes of this census
+have each had to write a version of that sentence, and this one is the largest
+gap between construction and reach so far.
