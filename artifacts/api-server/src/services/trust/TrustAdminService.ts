@@ -290,7 +290,16 @@ export async function adminOverrideScore(
 ): Promise<{ ok: boolean }> {
   if (newScore < 0 || newScore > 100) throw new Error("Score must be 0–100");
 
-  // Set the cap at the override value to lock it in place
+  // A CEILING, NOT A PIN — and the difference is a product decision nobody has
+  // taken yet (census-trust D-OVERRIDE). `trust_caps` has only `ceiling_score`
+  // and TrustScoreService applies it as `if (score > cap) score = cap`, so an
+  // override BELOW the natural score binds and an override ABOVE it does
+  // nothing. The `trust_profiles` upsert below does not rescue that: the
+  // `recalculateTrustScore` on this function's own last line overwrites it
+  // before the call returns, so an upward override never lands at all.
+  // Pinned by `src/test/trust-integration.test.ts` — "D-OVERRIDE:
+  // adminOverrideScore caps, and a cap only binds downward". Changing the
+  // answer must change those assertions.
   const cap = await createCap(db, {
     userId: targetUserId,
     category,

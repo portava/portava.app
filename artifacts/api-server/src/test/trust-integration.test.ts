@@ -727,7 +727,7 @@ describe("Service: admin restrict blocks hosting seam, lift restores it", () => 
 // ── Override cap → remove override ────────────────────────────────────────────
 
 describe("Service: adminOverrideScore → adminRemoveOverride restores score", () => {
-  it("cap override locks score; removing it allows natural recalc", async () => {
+  it("a DOWNWARD cap override binds; removing it allows natural recalc", async () => {
     const tables = makeTables();
     const db = makeTrustClient(tables);
 
@@ -742,6 +742,83 @@ describe("Service: adminOverrideScore → adminRemoveOverride restores score", (
     await adminRemoveOverride(db, ADMIN, USER_A, "plan_attendance", "Restoring");
     const restored = await recalculateTrustScore(db, USER_A);
     assert.ok(restored.categories.plan_attendance >= capped.categories.plan_attendance);
+  });
+});
+
+// ── D-OVERRIDE: an override is a CEILING, and a ceiling is not a pin ──────────
+//
+// `adminOverrideScore` creates a `trust_caps` row with `ceiling_score = newScore`
+// and ALSO upserts `trust_profiles` directly "for immediate effect". Those two
+// writes disagree the moment anything recalculates, and they disagree in ONE
+// direction only:
+//
+//   override BELOW the natural score -> the cap binds, the override survives.
+//   override ABOVE the natural score -> the cap does not bind, recalculation
+//                                       returns the natural score, and the
+//                                       admin's number is silently gone.
+//
+// `loadCaps` folds caps with `Math.min` (TrustScoreService.ts:186) and
+// `trust_caps` has no floor column at all, so this is structural rather than a
+// bug in one branch. The tests below PIN that asymmetry so the product decision
+// — does an admin override mean PIN or CAP? — has to change an assertion to be
+// made, instead of being made by accident. Nothing here says which answer is
+// right; it says what today's answer is.
+describe("D-OVERRIDE: adminOverrideScore caps, and a cap only binds downward", () => {
+  it("an override BELOW the natural score survives recalculation", async () => {
+    const tables = makeTables();
+    const db = makeTrustClient(tables);
+    for (let i = 0; i < 5; i++) {
+      await db.from("trust_events").insert({ user_id: USER_A, event_type: "PLAN_ATTENDED", category: "plan_attendance", delta: 10, severity: "minor", status: "applied", source_type: "user_action" });
+    }
+    const natural = (await recalculateTrustScore(db, USER_A)).categories.plan_attendance;
+    assert.ok(natural > 20, `fixture must earn a natural score well above the override; got ${natural}`);
+
+    await adminOverrideScore(db, ADMIN, USER_A, "plan_attendance", 20, "Downward");
+    const after = (await recalculateTrustScore(db, USER_A)).categories.plan_attendance;
+    assert.equal(after, 20, "a downward override is a binding ceiling");
+  });
+
+  it("an override ABOVE the natural score does NOT survive recalculation", async () => {
+    const tables = makeTables();
+    const db = makeTrustClient(tables);
+    // One negative event, so the natural score sits below the neutral 50.
+    await db.from("trust_events").insert({ user_id: USER_B, event_type: "PLAN_NO_SHOW", category: "plan_attendance", delta: -20, severity: "minor", status: "applied", source_type: "user_action" });
+    const natural = (await recalculateTrustScore(db, USER_B)).categories.plan_attendance;
+    assert.ok(natural < 90, `fixture must sit below the override; got ${natural}`);
+
+    await adminOverrideScore(db, ADMIN, USER_B, "plan_attendance", 90, "Upward");
+
+    // WORSE THAN "it does not persist": the override never lands at all.
+    // `adminOverrideScore` upserts `trust_profiles` "for immediate effect" and
+    // then, on its own last line before the audit write, awaits
+    // `recalculateTrustScore` — which recomputes from events, applies the cap
+    // as a CEILING, and overwrites the upsert. The admin's number is gone
+    // before the function returns, so there is no window in which it was true.
+    const persisted = tables.trust_profiles.find((r: any) => r.user_id === USER_B);
+    assert.equal(
+      (persisted as any)?.plan_attendance, natural,
+      "the trailing recalculate inside adminOverrideScore overwrites its own upsert",
+    );
+
+    // And it stays gone on every later recalculation, because a ceiling of 90
+    // cannot lift a score of `natural`. No event, no audit line, no error.
+    const after = (await recalculateTrustScore(db, USER_B)).categories.plan_attendance;
+    assert.equal(after, natural, "an upward override is discarded — a cap is not a pin");
+    assert.notEqual(after, 90, "the admin's number is nowhere in the result");
+  });
+
+  it("trust_caps records the override as a ceiling, with no floor anywhere", async () => {
+    const tables = makeTables();
+    const db = makeTrustClient(tables);
+    await adminOverrideScore(db, ADMIN, USER_A, "communication", 30, "Ceiling shape");
+    const cap = tables.trust_caps.find((c: any) => c.user_id === USER_A && c.category === "communication");
+    assert.ok(cap, "an override must leave a cap row");
+    assert.equal((cap as any).ceiling_score, 30, "the override value is stored as a CEILING");
+    assert.equal((cap as any).reason_code, "admin_override");
+    assert.ok(
+      !Object.keys(cap as any).some((k) => /floor/i.test(k)),
+      "trust_caps has no floor column — an override can only ever pull a score down",
+    );
   });
 });
 

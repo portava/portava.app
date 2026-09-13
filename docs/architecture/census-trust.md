@@ -539,3 +539,81 @@ section: no code, no verdict, one arithmetic reconciliation.
 | BUILT-BUT-WRONG | **2** |
 | NOT-BUILT | **0** |
 | CANNOT-VERIFY | **0** |
+
+## 11. D-OVERRIDE pinned — the decision now costs an assertion, and the comment was lying
+
+| | |
+|---|---|
+| **Measured at** | `6d4fd1a06`. `head_commit` is **not** moved: this section re-reads one function and its tests, not 52 rows. |
+
+### 11.1 C22 stays W, and it is still an owner decision
+
+Nothing here answers whether an admin override should mean **pin** (the admin's
+number wins until lifted) or **cap** (the admin sets a maximum and events move
+the score beneath it). That is D-OVERRIDE and it is not a lane's to take. What
+this section does is stop the current answer from being an accident.
+
+C22's existing verdict and reasoning are confirmed, including the part that caps
+it: `adminOverrideScore` is **not reachable from any route**. `grep` across
+`src/routes/` and `src/server/` returns no importer.
+
+**A naming trap, found while checking that and worth one sentence so the next
+reader does not repeat it:** `routes/trust-admin.ts` DOES expose
+`POST /admin/trust/users/:userId/cap/override` — and it does the OPPOSITE of what
+its path says. It calls `liftCap`, audits the action as `lift_cap`, and sets no
+score. A reader grepping for "override" finds a live admin endpoint and could
+reasonably conclude C22 is wired. It is not.
+
+### 11.2 The finding is sharper than "an upward override does not persist"
+
+The previous statement was that `recalculateTrustScore` recomputes from events,
+"so an override ABOVE the event-derived score does not hold". Measured, it is
+worse than that: **the upward override never lands at all.**
+
+`adminOverrideScore` creates the cap, upserts `trust_profiles` directly under a
+comment saying "for immediate effect", and then, **on its own last line before
+the audit write**, awaits `recalculateTrustScore`. That recomputation overwrites
+the upsert before the function returns. There is no window — not even a
+transient one — in which the admin's number is the stored value. The admin gets
+`{ ok: true }`, an audit row saying `score_override`, and no change.
+
+The ceiling itself is
+`artifacts/api-server/src/services/trust/TrustScoreService.ts:318#if (caps[cat] !== undefined && score > caps[cat]) {`
+— a strict one-directional clamp — and `trust_caps` carries only
+`ceiling_score`, with no floor column anywhere.
+
+### 11.3 What now holds the answer in place
+
+Three tests in `src/test/trust-integration.test.ts`, under
+`D-OVERRIDE: adminOverrideScore caps, and a cap only binds downward`: a downward
+override binds; an upward override is absent from `trust_profiles` immediately
+after the call AND after any later recalculation; and the cap row stores the
+override as `ceiling_score` with no floor-shaped key. Whichever way D-OVERRIDE is
+decided, **changing the behaviour must change these assertions** — which is the
+point.
+
+Mutations, each reverted and verified byte-identical:
+
+| # | mutation | result |
+|---|---|---|
+| M2 | drop the trailing `recalculateTrustScore` from `adminOverrideScore` | **RED** 60/1 |
+| M3 | the cap stores `100` instead of the override value | **RED** 58/3 |
+| M4 | `score > caps[cat]` → `score !== caps[cat]` (a PIN — the D-OVERRIDE alternative) | **RED** 60/1 |
+| M1 | `loadCaps` folds with `Math.max` instead of `Math.min` | **GREEN — reported, not buried** |
+
+**M1 stayed green and that is stated rather than hidden.** It is an EQUIVALENT
+mutation under these fixtures, not a hole in the pin: that fold only runs when a
+category carries TWO active caps (`cur !== undefined`), and every fixture here
+creates one. The predicate that actually decides ceiling-versus-pin is
+`:318`, and M4 mutates exactly it and goes red. A second-cap fixture would make
+M1 bite too, and is not written here because no row grades multi-cap folding.
+
+### 11.4 The comment was false and is now accurate
+
+`TrustAdminService.ts` said *"Set the cap at the override value to lock it in
+place"*. A ceiling does not lock anything in place; it only stops a score going
+above it. The existing test carried the same word in its title — *"cap override
+locks score"* — so the tree asserted the misreading in two places and contradicted
+it in none. Both now say what the code does, and point at D-OVERRIDE.
+
+**No verdict moves.** C22 was W and stays W, for the reason it already gave.
