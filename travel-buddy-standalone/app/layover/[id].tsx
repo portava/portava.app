@@ -46,6 +46,7 @@ import {
 } from '../../src/services/layover';
 import {
   cancelScheduledNotification,
+  notificationPromptWouldAppear,
   scheduleLocalNotificationAt,
 } from '../../src/lib/safeNotifications';
 import { AirportEssentialsCard } from '../../src/components/layover/AirportEssentialsCard';
@@ -85,6 +86,8 @@ export default function LayoverDashboardScreen() {
   // §13 L120/L141 — the traveller's override of the certified collapse. False
   // is the server's posture; true is "I know, show me anyway".
   const [showExploration, setShowExploration] = useState(false);
+  // §17.1 L165 — the rationale that precedes the OS notification prompt.
+  const [notifRationaleOpen, setNotifRationaleOpen] = useState(false);
   const notifIdRef = useRef<string | null>(null);
 
   const [nowMs, setNowMs] = useState(() => Date.now());
@@ -183,7 +186,21 @@ export default function LayoverDashboardScreen() {
     }
   }, [id, overview, loadPresence, showToast]);
 
-  const handleReminder = useCallback(async () => {
+  /**
+   * §17.1 L165 — EXPLAIN THE PERMISSION BEFORE THE OS ASKS FOR IT.
+   *
+   * The request was already contextual (it only happens inside this tap), but
+   * nothing told the traveller WHY, and the OS dialog cannot: it says
+   * "Portava would like to send you notifications", which is a request without
+   * a reason and is the one people decline by reflex. The reason is specific
+   * and worth a sentence — this notification is how a safe return window that
+   * moves reaches someone who has walked away from their phone.
+   *
+   * The sheet is shown ONLY when a dialog is actually about to appear
+   * (`notificationPromptWouldAppear`), so a traveller who has already granted
+   * permission gets their reminder on one tap, as before.
+   */
+  const scheduleReminder = useCallback(async () => {
     if (!id || !overview) return;
     setReminderBusy(true);
     try {
@@ -209,6 +226,12 @@ export default function LayoverDashboardScreen() {
       setReminderBusy(false);
     }
   }, [id, overview, showToast]);
+
+  const handleReminder = useCallback(async () => {
+    if (!id || !overview) return;
+    if (await notificationPromptWouldAppear()) { setNotifRationaleOpen(true); return; }
+    await scheduleReminder();
+  }, [id, overview, scheduleReminder]);
 
   const handleTelegraph = useCallback(async () => {
     if (!id || !overview) return;
@@ -435,6 +458,7 @@ export default function LayoverDashboardScreen() {
             style={[styles.footerBtn, reminderBusy && styles.footerBtnDim]}
             onPress={handleReminder}
             disabled={reminderBusy}
+            testID="layover-remind-me"
           >
             {overview.returnReminderAt
               ? <BellRing size={17} color={color.success} />
@@ -455,6 +479,25 @@ export default function LayoverDashboardScreen() {
           </Pressable>
         </View>
       )}
+
+      {/* §17.1 L165 — the explanation, in front of the OS dialog rather than
+          after it. "Not now" leaves the permission untouched: declining the
+          EXPLANATION must not be turned into declining the permission, because
+          the OS remembers the second answer and not the first. */}
+      <ConfirmSheet
+        visible={notifRationaleOpen}
+        title="Let us warn you when to head back"
+        body={
+          `Your safe return time can move while you're out — a longer security queue, ` +
+          `traffic, or a flight change. A notification is the only way we can tell you ` +
+          `once you've put your phone away. Your phone will ask next; we only use it for ` +
+          `this layover's return warnings.`
+        }
+        confirmLabel="Continue"
+        cancelLabel="Not now"
+        onConfirm={() => { setNotifRationaleOpen(false); void scheduleReminder(); }}
+        onCancel={() => setNotifRationaleOpen(false)}
+      />
 
       <ConfirmSheet
         visible={endConfirmOpen}

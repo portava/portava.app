@@ -49,6 +49,8 @@ jest.mock('react-native-safe-area-context', () => ({
 jest.mock('../../../src/lib/safeNotifications', () => ({
   scheduleLocalNotificationAt: jest.fn(async () => null),
   cancelScheduledNotification: jest.fn(async () => undefined),
+  // §17.1 L165 — whether an OS dialog is about to appear. Driven per test.
+  notificationPromptWouldAppear: jest.fn(async () => false),
 }));
 
 // ── Heavy sibling sections, stubbed to null ───────────────────────────────────
@@ -348,4 +350,83 @@ test('a NORMAL posture leaves the exploration block standing', async () => {
 
   await waitFor(() => expect(screen.getByTestId('layover-exploration')).toBeTruthy());
   expect(screen.queryByTestId('layover-exploration-collapsed')).toBeNull();
+});
+
+// ── §17.1 L165 — the permission is explained BEFORE the OS asks ──────────────
+//
+// The request was already contextual — it fires inside the "Remind me" tap and
+// nowhere else — and that half was never the gap. The gap was that nothing said
+// WHY, and the OS dialog cannot: the sentence it shows is the app's name and
+// the word "notifications".
+//
+// MUTATIONS, each against the screen, reverted and `cmp`-verified. 13 pass / 0
+// fail unmutated:
+//   1. `handleReminder` calling `scheduleReminder` directly (no sheet) 3 failed
+//   2. the probe replaced by `true` — the sheet shown unconditionally   1 failed
+//   3. "Not now" wired to `scheduleReminder` instead of dismissing      1 failed
+
+const notifications = require('../../../src/lib/safeNotifications');
+const layoverService = require('../../../src/services/layover');
+
+test('a traveller whose phone is about to ask is told why first', async () => {
+  notifications.notificationPromptWouldAppear.mockResolvedValueOnce(true);
+  layoverService.setReturnDeadline.mockClear();
+  (global as any).__overview = overview(false);
+  await render(<LayoverDashboardScreen />);
+
+  await waitFor(() => expect(screen.getByTestId('layover-remind-me')).toBeTruthy());
+  fireEvent.press(screen.getByTestId('layover-remind-me'));
+
+  await waitFor(() => expect(screen.getByText('Let us warn you when to head back')).toBeTruthy());
+  // The reason is SPECIFIC to this permission, not a generic "enable alerts".
+  expect(screen.getByText(/safe return time can move/)).toBeTruthy();
+  // Nothing has been scheduled or written yet — the explanation precedes the ask.
+  expect(layoverService.setReturnDeadline).not.toHaveBeenCalled();
+  expect(notifications.scheduleLocalNotificationAt).not.toHaveBeenCalled();
+});
+
+test('continuing from the rationale proceeds to the real reminder', async () => {
+  notifications.notificationPromptWouldAppear.mockResolvedValueOnce(true);
+  layoverService.setReturnDeadline.mockClear();
+  (global as any).__overview = overview(false);
+  await render(<LayoverDashboardScreen />);
+
+  await waitFor(() => expect(screen.getByTestId('layover-remind-me')).toBeTruthy());
+  fireEvent.press(screen.getByTestId('layover-remind-me'));
+  await waitFor(() => expect(screen.getByText('Continue')).toBeTruthy());
+  fireEvent.press(screen.getByText('Continue'));
+
+  await waitFor(() => expect(layoverService.setReturnDeadline).toHaveBeenCalledWith('sess-1', 30));
+});
+
+test('a traveller who already granted permission is not shown an explanation', async () => {
+  // The probe answers false, which is the production case for anyone who has
+  // used the reminder once. An explanation on every tap is how people learn to
+  // dismiss the one that matters.
+  layoverService.setReturnDeadline.mockClear();
+  (global as any).__overview = overview(false);
+  await render(<LayoverDashboardScreen />);
+
+  await waitFor(() => expect(screen.getByTestId('layover-remind-me')).toBeTruthy());
+  fireEvent.press(screen.getByTestId('layover-remind-me'));
+
+  await waitFor(() => expect(layoverService.setReturnDeadline).toHaveBeenCalledWith('sess-1', 30));
+  expect(screen.queryByText('Let us warn you when to head back')).toBeNull();
+});
+
+test('"Not now" dismisses the explanation and asks the OS for nothing', async () => {
+  notifications.notificationPromptWouldAppear.mockResolvedValueOnce(true);
+  layoverService.setReturnDeadline.mockClear();
+  notifications.scheduleLocalNotificationAt.mockClear();
+  (global as any).__overview = overview(false);
+  await render(<LayoverDashboardScreen />);
+
+  await waitFor(() => expect(screen.getByTestId('layover-remind-me')).toBeTruthy());
+  fireEvent.press(screen.getByTestId('layover-remind-me'));
+  await waitFor(() => expect(screen.getByText('Not now')).toBeTruthy());
+  fireEvent.press(screen.getByText('Not now'));
+
+  await waitFor(() => expect(screen.queryByText('Let us warn you when to head back')).toBeNull());
+  expect(layoverService.setReturnDeadline).not.toHaveBeenCalled();
+  expect(notifications.scheduleLocalNotificationAt).not.toHaveBeenCalled();
 });
