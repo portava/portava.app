@@ -126,6 +126,7 @@ import {
   suggestSafeReturn,
 } from "../services/airport/LayoverNotificationService.js";
 import { createStamp } from "../services/passport/PassportStampService.js";
+import { declaredOccurrenceHasHappened } from "../services/memory/occurrenceGate.js";
 import { detectIntent } from "../services/telegraphIntent.js";
 
 import { requireAdmin } from "../lib/requireAdmin.js";
@@ -585,8 +586,44 @@ router.post("/airport/sessions", async (req, res) => {
   }
 
   // Passport seam: emit layover stamp
+  //
+  // §1 OF THE HIGHLIGHTS/MEMORIES SPEC GATES THIS, AND IT DID NOT USED TO.
+  // "Planned, saved, or nearby must never be represented as experienced without
+  // occurrence evidence or user confirmation." This handler validates, ~30
+  // lines above, that the DEPARTURE is in the future; nothing required the
+  // ARRIVAL to be in the past. So a traveller describing next Tuesday's
+  // connection was minted a `passport_stamps` row for the layover city with
+  // `verification_level: 'checkin'` — a claim they had checked in somewhere
+  // they had not reached. Both gates are on in the committed production
+  // snapshot (`airport_mode_enabled`, `passport_stamps_enabled`), so it was
+  // live. census-layover L19 and L162 score the same write W from the Layover
+  // spec's side ("fires at session creation, not post-session ... before the
+  // traveller has completed anything"); this is the same defect seen from the
+  // Memories side, where the rule is sharper because it is about what the
+  // artifact CLAIMS.
+  //
+  // The gate is the shared §1 predicate, not a local `>` — see
+  // services/memory/occurrenceGate.ts for why it allows no clock skew.
+  // Refusal is terminal for this session: nothing re-runs the seam later, so a
+  // layover set up in advance earns no stamp at all. That removes an unearned
+  // stamp and keeps the earned one — the real flow is a traveller opening
+  // Airport Mode in the terminal, whose declared arrival is already past.
+  const layoverOccurrence = declaredOccurrenceHasHappened(arrivalIso, Date.now());
   void (async () => {
     try {
+      if (!layoverOccurrence.occurred) {
+        logger.info(
+          {
+            sessionId: session.id,
+            userId: user.id,
+            reason: layoverOccurrence.reason,
+            detail: layoverOccurrence.detail,
+            policyVersion: layoverOccurrence.policyVersion,
+          },
+          "layover passport seam withheld — the layover has not begun (§1: planned is not experienced)",
+        );
+        return;
+      }
       const { data: flagRow } = await sc.from("feature_flags").select("enabled").eq("flag", "passport_stamps_enabled").maybeSingle();
       if ((flagRow as any)?.enabled) {
         const airportCity = (airport?.city && airport.city !== "Unknown" ? airport.city : null) ?? session.manualCity ?? null;

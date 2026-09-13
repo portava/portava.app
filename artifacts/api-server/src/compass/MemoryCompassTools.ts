@@ -560,6 +560,32 @@ async function toolMemoryGetEvidence(sc: SupabaseClient, viewerId: string, args:
     .limit(MAX_RESULTS);
   const tags = await sc.from("memory_tags").select("tagged_user_id, status").eq("memory_id", memoryId).limit(50);
 
+  // §28.11 — "Never swallow projection/schema failures into plausible-looking
+  // empty history without structured error state."
+  //
+  // These two reads used to be the file's only unchecked ones. supabase-js
+  // RESOLVES on a database failure, so `{ data: null }` is what an empty table
+  // and an unreadable table both look like, and `?? []` turned the second into
+  // the first: an unreadable `memory_tags` was reported as
+  // `confirmed_participants: 0` — a claim that nobody was there — and an
+  // unreadable `memory_items` as `attached_artifacts: []`. Both go to a
+  // language model beside a field called `evidence_store_reason`, which is the
+  // worst possible place for a confident guess. Every other read here already
+  // checks and refuses; `ownHistoryIds` says why in its own header.
+  //
+  // The whole tool is not refused, because the honest headline — there is no
+  // §6 evidence store — is true whatever these two reads did, and losing it
+  // would trade one silence for another. What changes is that a count nobody
+  // could compute is `null` and is NAMED as unavailable, so the difference
+  // between "zero" and "unknown" survives all the way to the prompt.
+  const tagsUnavailable = Boolean(tags.error);
+  const itemsUnavailable = Boolean(items.error);
+  if (tagsUnavailable) {
+    log.error({ err: tags.error, memoryId, viewerId }, "memory tools: evidence participant read failed — reporting unavailable rather than zero");
+  }
+  if (itemsUnavailable) {
+    log.error({ err: items.error, memoryId, viewerId }, "memory tools: evidence artifact read failed — reporting unavailable rather than empty");
+  }
   const tagRows = ((tags.data as any[]) ?? []);
   return {
     memory_id: memoryId,
@@ -567,15 +593,31 @@ async function toolMemoryGetEvidence(sc: SupabaseClient, viewerId: string, args:
     evidence_store: "absent",
     evidence_store_reason:
       "§3.6 names a `memory_evidence` table for assertion-level provenance and confidence. No migration in this repository creates it, so no assertion in this Memory has a provenance record, a confidence score or an eligibility verdict attached to it.",
-    attached_artifacts: ((items.data as any[]) ?? []).map((i: any) => ({
-      artifact_id: String(i.id),
-      kind: "memory_item",
-      media_type: (i.media_type as string | null) ?? null,
-      caption: typeof i.caption === "string" ? wrapUgc(i.caption) : null,
-      created_at: (i.created_at as string | null) ?? null,
-    })),
-    confirmed_participants: tagRows.filter((t) => t.status === "approved").length,
-    unconfirmed_participants: tagRows.filter((t) => t.status === "pending").length,
+    attached_artifacts: itemsUnavailable
+      ? null
+      : ((items.data as any[]) ?? []).map((i: any) => ({
+          artifact_id: String(i.id),
+          kind: "memory_item",
+          media_type: (i.media_type as string | null) ?? null,
+          caption: typeof i.caption === "string" ? wrapUgc(i.caption) : null,
+          created_at: (i.created_at as string | null) ?? null,
+        })),
+    ...(itemsUnavailable
+      ? {
+          attached_artifacts_unavailable: true,
+          attached_artifacts_unavailable_reason:
+            "The attachment list could not be read. This does NOT mean the Memory has no attachments — say that it could not be looked up.",
+        }
+      : {}),
+    confirmed_participants: tagsUnavailable ? null : tagRows.filter((t) => t.status === "approved").length,
+    unconfirmed_participants: tagsUnavailable ? null : tagRows.filter((t) => t.status === "pending").length,
+    ...(tagsUnavailable
+      ? {
+          participants_unavailable: true,
+          participants_unavailable_reason:
+            "The participant list could not be read. This does NOT mean nobody was there — say that it could not be looked up.",
+        }
+      : {}),
     caveat:
       "`attached_artifacts` are files attached to the Memory. They are NOT §6-normalized evidence: nothing here says a photo was captured at the place or the time the Memory claims. Do not describe them as proof.",
   };

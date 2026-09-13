@@ -90,6 +90,7 @@ interface State {
   blocksError?: boolean;
   tagsError?: boolean;
   crewError?: boolean;
+  itemsError?: boolean;
 }
 
 function memory(over: Record<string, unknown>): Record<string, unknown> {
@@ -178,6 +179,7 @@ function makeClient(state: State = {}): Client {
       if (table === "blocks" && state.blocksError) return { message: "blocks read blew up" };
       if (table === "memory_tags" && state.tagsError) return { message: "tags read blew up" };
       if (table === "trip_members" && state.crewError) return { message: "crew read blew up" };
+      if (table === "memory_items" && state.itemsError) return { message: "items read blew up" };
       return null;
     };
 
@@ -559,6 +561,57 @@ describe("§16 — getMemoryEvidence says there is no evidence store", () => {
     const { client } = makeClient();
     const out: any = await executeMemoryCompassTool(client, ALICE, "memory_get_evidence", { memoryId: M_BOB_ONLYME });
     assert.equal(out.authorized, false);
+  });
+
+  /*
+   * §28.11 — "Never swallow projection/schema failures into plausible-looking
+   * empty history without structured error state."
+   *
+   * `toolMemoryGetEvidence` made two reads — `memory_items` and `memory_tags` —
+   * and destructured neither one's `error`. supabase-js RESOLVES on a database
+   * failure, so `{ data: null }` and "this Memory has no attachments and nobody
+   * was there" were the same value, and the payload reported the second. Every
+   * other read in the file checks and refuses; these two were the exception,
+   * and the exception is the one handed to a language model as
+   * `confirmed_participants: 0` beside a field literally named
+   * `evidence_store_reason`. census-highlights-memories H264 has scored §28.11
+   * BUILT-AND-CORRECT since the body.
+   *
+   * The assertion is not "it refuses" — either refusing or reporting the
+   * failure would satisfy §28.11. It is that the answer MUST NOT be a confident
+   * zero, because a zero is a claim about the Memory.
+   */
+  it("an unreadable memory_tags read is not reported as 'nobody was there'", async () => {
+    const { client } = makeClient({ tagsError: true });
+    const out: any = await executeMemoryCompassTool(client, ALICE, "memory_get_evidence", { memoryId: M_OWN_PUBLIC });
+    assert.notEqual(
+      out.confirmed_participants,
+      0,
+      "a failed participant read was served to the model as a confident zero",
+    );
+    assert.notEqual(out.unconfirmed_participants, 0);
+    assert.equal(out.participants_unavailable, true, "the failure must be structured, not merely absent");
+  });
+
+  it("an unreadable memory_items read is not reported as 'nothing is attached'", async () => {
+    const { client } = makeClient({ itemsError: true });
+    const out: any = await executeMemoryCompassTool(client, ALICE, "memory_get_evidence", { memoryId: M_OWN_PUBLIC });
+    assert.notDeepEqual(
+      out.attached_artifacts,
+      [],
+      "a failed attachment read was served to the model as an empty artifact list",
+    );
+    assert.equal(out.attached_artifacts_unavailable, true);
+  });
+
+  it("CONTROL — a healthy read still answers with the counts and the artifacts", async () => {
+    const { client } = makeClient();
+    const out: any = await executeMemoryCompassTool(client, ALICE, "memory_get_evidence", { memoryId: M_OWN_PUBLIC });
+    assert.equal(out.confirmed_participants, 0);
+    assert.equal(out.unconfirmed_participants, 0);
+    assert.equal(out.attached_artifacts.length, 1);
+    assert.equal(out.participants_unavailable, undefined, "a healthy read must not carry a failure marker");
+    assert.equal(out.attached_artifacts_unavailable, undefined);
   });
 });
 
