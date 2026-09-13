@@ -107,7 +107,9 @@ const CENSUS_SCOPE_FLOORS: Record<string, number> = {
   "census-compass.md": 0.96,   // widened 2026-09-11
   "census-discovery.md": 0.96,   // widened 2026-09-11: 22% -> 98%
   "census-highlights-memories.md": 0.96,   // widened 2026-09-11
-  "census-input-intelligence.md": 0.95,   // widened 2026-09-11
+  "census-input-intelligence.md": 0.98,   // widened 2026-09-11; RAISED 0.95 -> 0.98 on 2026-09-13 when §8
+                                          // added rankingSignals.ts, fieldInventory.ts, suggestionBadges.ts and
+                                          // its two test files to the scope, taking measured coverage to 100%.
   "census-layover.md": 0.96,   // widened 2026-09-11; RAISED 0.90 -> 0.96 on 2026-09-13 when §11's own migration, rollback and three test files were added to its scope, taking it to 100%. A ratchet, per the rule above.
   "census-map.md": 0.96,   // widened 2026-09-11
   "census-media.md": 0.96,   // widened 2026-09-11

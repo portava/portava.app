@@ -6,7 +6,7 @@
 | **`.docx` reconciliation** | The `.txt` and the `.docx` are **identical** after whitespace/Unicode normalisation. I extracted `word/document.xml`, stripped tags, NFC-normalised and collapsed whitespace on both sides: 508 non-empty lines each, `difflib` diff length **0**. The "`.docx` is authoritative" clause never had to be exercised, and no verdict here rests on a transcription difference. |
 | **Section count** | The brief said 59. **It is 58** (`§1 Product Definition` … `§58 Final Architecture Principle`; verified by `grep -nE '^[0-9]+\. '`, which returns 58 headings plus one false positive at line 101 — §9's inline "1. Exact canonical Portava entity…" ranked list). Four sibling censuses found their briefed section counts wrong; this is a fifth. |
 | **Tree censused** | `claude/portava-continuation-uqta94`, HEAD `68ed59d9`. |
-| `head_commit` | `42aeac38` — DECLARED 2026-09-11. It **starts a clock; it does not certify a past.** Read the next row before quoting it. |
+| `head_commit` | `579694d6` — RE-DECLARED 2026-09-13 by §8, replacing `42aeac38`. It **starts a clock; it does not certify a past.** Read the next row before quoting it, and read §8.9 for what this re-declaration cost: the acknowledgement written against `42aeac38` is spent and was deleted. |
 | **What that declaration does and does not say** | `42aeac38` is #476's squash — the commit where this document itself reached `main`. Its verdicts were taken at a pre-squash working tree that **exists nowhere**: verified against FULL history (`git fetch --unshallow`, 4,300 commits, then `git cat-file -e`), not assumed — a shallow clone had made every such commit look unresolvable for the wrong reason. So `nobody` can diff that tree against `42aeac38`, and this declaration **does not claim that interval was empty**. What it claims is mechanically checked: `git diff --name-only 42aeac38..HEAD` over the paths in `CENSUS_SCOPE` returns **0 files**, and from here any change to one of them ages this census. Before it, `check:census-freshness` reported this document as CANNOT BE CHECKED — the weakest of the three states, not the safest. FRESH means *no counted file has moved since `42aeac38`*; it does **not** mean the rows were re-read, and none has been. Declared by the Trips lane while recounting the sibling census; if this lane disagrees, reverting costs only the check. |
 | **Method** | Requirement-level, four buckets, exactly one bucket per requirement. Every BUILT verdict cites a `file:line` I opened and read. |
 | **Database** | Not queried. Every production fact below comes from the supplied ground truth, from `src/scripts/checkProductionDrift.ts` (which records a direct CI-vs-production comparison), or from a commit message whose author did measure it. |
@@ -1218,3 +1218,270 @@ repository has. Two changes would have made it hold up:
    — it is "is there anything in the tree that could be wrong here?" For
    accessibility focus management, the offline substrate, nine telemetry emitters
    and the local performance tier, the answer was yes.
+
+---
+
+## 8. Phase 9 — the counting was wrong before the building was
+
+Measured at `3eaf2436f` and built at `579694d6`. This section does two things in
+this order, deliberately: it fixes what the tallier could not read, and only then
+moves seven rows. The order matters because six of the seven moved rows were
+NOT-BUILT for the same reason the counting was broken — something was declared,
+computed or selected, and nothing read it.
+
+### 8.1 The "prose gap" is not prose, and the "verdict-less rows" are not unjudged
+
+`check:census-integrity` at `3eaf2436f` reported this census as:
+
+```
+input-intelligence  rows 350  C 207  W 69  N 70  X 4  denom 373
+                    23 counted where this tool cannot read
+                    [33 id-keyed row(s) carry no verdict — not verdict tables, not counted]
+```
+
+Both of those parentheses have been read, by hand, against the document. Neither
+says what its wording suggests.
+
+**The 23 are not counted in prose. They are 23 table rows whose verdict cell reads
+`C ᵖ`.** `verdictOf` in `src/scripts/checkCensusIntegrity.ts:164#verdictOf` strips
+`*` and `[⌀†‡]` before matching (`src/scripts/checkCensusIntegrity.ts:168#replace(/[⌀†‡]/g,`) and does not strip `ᵖ`,
+so `C ᵖ` fails its `^([A-Z]{1,3}|\?)$` test and the row vanishes. §2 of this
+document states the population itself — *"Result: 23 of the 230 correct verdicts
+are `ᵖ`"* — and 373 − 350 = 23. The two sets are the same set. **This census counts
+ZERO requirements in prose.** Every one of the 373 is on a row and always was.
+
+**The 33 verdict-less rows decompose into three groups, none of them an unjudged
+requirement:**
+
+| group | count | what they are |
+| --- | --- | --- |
+| `C ᵖ` verdict cells | 23 | The rows above. Judged BUILT-AND-CORRECT, unreadable by the tool. |
+| §6 restatements | 4 | G327, G328, G354, G371 restated in "What could not be verified" without a verdict cell. All four already carry `**?**` in §4 and are counted as the 4 CANNOT-VERIFY. |
+| §3 deployment table | 6 | Rows keyed by *lists* of ids (`G5, G45, G75, …`) saying what is inert in production. Cross-references to verdicts §4 already holds. |
+
+**Nothing in this census is unjudged.** The brief that commissioned this pass
+described these 33 as "requirements nobody has judged … invisible to every number
+this repo reports", and that is the one thing they are not. What they are is
+*unrecheckable*: see §8.3, where re-reading the 23 found the evidence on most of
+them stale by hundreds of lines, which is the real cost of a row a tool cannot
+parse.
+
+**One coincidence worth naming before somebody quotes it.** The tool's `C 207`
+happens to equal this document's *spec-attributable* CORRECT of 207, and its
+`(207+69)/373 = 74.0 %` / `207/373 = 55.5 %` happen to equal the spec-attributable
+pair — because the marker the tool cannot read IS the attribution marker. Anyone
+who quoted 74.0 % / 55.5 % as "what the tallier says this census is" was right by
+accident and would have been wrong the moment one `ᵖ` moved.
+
+### 8.2 What fixing the parse moves, and what it does not — both numbers
+
+The brief asked for this split explicitly, so here it is with nothing folded
+together.
+
+| | constructed | correct (raw) |
+| --- | --- | --- |
+| **What the tallier read before §8** | 74.0 % (276/373) | 55.5 % (207/373) |
+| **What the tallier reads after §8.3 alone**, no building | 80.2 % (299/373) | 61.7 % (230/373) |
+| **What the tallier reads after §8.4 too** | 82.0 % (306/373) | 63.5 % (237/373) |
+
+So of the **+8.0 points** the machine-visible headline moves in this pass,
+**+6.2 points (23/373) is the tallier learning to read `ᵖ` and NOTHING ELSE**, and
+**+1.9 points (7/373) is code that did not exist yesterday.** The document's OWN
+headline — the one a human reading §4 would compute — moves only by that second
+number: **80.2 % → 82.0 % constructed, 61.7 % → 63.5 % correct.** It was never
+74.0 %.
+
+The denominator does **not** grow. It was 373 before and is 373 after; no
+requirement was discovered, invented or reclassified. A denominator that grows
+is honest, but this one had nothing to grow by, and saying otherwise to make the
+percentage look earned would be the failure this whole exercise is against.
+
+### 8.3 The 23 `ᵖ` rows, restated so a machine can read them — and re-verified
+
+Every row below keeps its verdict (`C`, earned by pre-existing work — the `ᵖ`
+meaning now lives in its own column so the verdict cell is a bare token). Every
+citation was re-opened at `579694d6` and **anchored**, because most of the
+originals no longer resolve: `discoverySearch.ts` has moved by ~220 lines since
+the tree this census was taken on, so evidence written as "lines 960–962 select
+sensitivity_level" now lands 224 lines short of the select it names.
+
+| id | was | now | attr | re-verified evidence at `579694d6` |
+| --- | --- | --- | --- | --- |
+| G56 | `C ᵖ` (unreadable) | **C** | ᵖ | `routes/discoverySearchHelpers.ts:170#matchTier` lowercases both sides; every DB predicate is `ilike`. **The old pointer, lines 163–179, is stale by 7.** |
+| G59 | `C ᵖ` (unreadable) | **C** | ᵖ | `routes/discoverySearchHelpers.ts:70#SEARCH_ALIASES` plus `lib/canonicalLocations.ts:162#siargoa` and `:186#qouc` (the spec's own example misspelling). |
+| G68 | `C ᵖ` (unreadable) | **C** | ᵖ | `routes/discoverySearch.ts:1184#sensitivity_level,` selects the approximate pair and never the exact one; `:270#gemSearchPosition` fails closed to `hidden`. **The old pointer, lines 960–962, is stale by 224.** |
+| G70 | `C ᵖ` (unreadable) | **C** | ᵖ | `routes/discoverySearch.ts:700#visibility` (events), `:872#visibility` + `:873#show_in_discovery` (trips). Proven through the gateway by `src/test/inputAssistanceCertification.test.ts:330#PUBLIC`. |
+| G73 | `C ᵖ` (unreadable) | **C** | ᵖ | `routes/discoverySearch.ts:1802#COMMON_LANGUAGES` — server-side static lists behind `searchStatic`. **The old pointer, lines 1577–1578, is stale by 225.** |
+| G92 | `C ᵖ` (unreadable) | **C** | ᵖ | `lib/inputAssistance/projection.ts:39#tierConfidence` — `tierConfidence(3) = 0.99` over `matchTier`. |
+| G93 | `C ᵖ` (unreadable) | **C** | ᵖ | `lib/inputAssistance/projection.ts:39#tierConfidence` — `tierConfidence(2) = 0.85`, over `routes/discoverySearchHelpers.ts:170#matchTier`. |
+| G95 | `C ᵖ` (unreadable) | **C** | ᵖ | `lib/inputAssistance/gateway.ts:396#SearchQueryContext` passes `{lat, lng, userCity}` into the city boost. **The old pointer, line 380, is stale by 16 — this pass moved it.** |
+| G126 | `C ᵖ` (unreadable) | **C** | ᵖ | Age: `lib/inputAssistance/gateway.ts:389#ageRestrictedSet`, fail-closed at `:394#blockedSet`. Membership/role: `routes/discoverySearch.ts:873#show_in_discovery`. Trust/invite have no separate gate and no path exposes an invite-scoped object. |
+| G128 | `C ᵖ` (unreadable) | **C** | ᵖ | `lib/inputAssistance/gateway.ts:389#ageRestrictedSet` and `:394#blockedSet` — a null set from either suppresses every entity row; the picker branch repeats it at `:633#fetchBlockedSet`. |
+| G129 | `C ᵖ` (unreadable) | **C** | ᵖ | Structural: `lib/inputAssistance/types.ts:230#InputSuggestion` has no coordinate field, and `routes/discoverySearch.ts:1184#sensitivity_level,` never selects a gem's exact pair. Deep-scanned by `src/test/inputAssistanceCertification.test.ts:269#findCoordLeaks`. **Phase 9 widened the projection by three fields and this deep scan still passes** (§8.4). |
+| G152 | `C ᵖ` (unreadable) | **C** | ᵖ | `lib/inputAssistance/validationSuite.ts:172#normalization` for hashtag validity, `:264#correction` for the row it produces; handles reuse the pre-existing `lib/usernameRules.ts`. |
+| G165 | `C ᵖ` (unreadable) | **C** | ᵖ | Realised in production by the pre-existing `travel-buddy-standalone/src/components/MentionInput.tsx:145#insertTag`, which keeps display text while recording structured tag spans. The platform's own version is still unconsumed. |
+| G184 | `C ᵖ` (unreadable) | **C** | ᵖ | `lib/inputAssistance/gateway.ts:389#ageRestrictedSet` and `:633#fetchBlockedSet`; the null-set refusal is the mutation-proven case in `src/test/inputAssistanceGateway.test.ts:384#suppresses`. |
+| G185 | `C ᵖ` (unreadable) | **C** | ᵖ | `routes/discoverySearch.ts:700#visibility`, `:872#visibility`, `:873#show_in_discovery`; proven through the gateway by `src/test/inputAssistanceCertification.test.ts:330#PUBLIC`. |
+| G186 | `C ᵖ` (unreadable) | **C** | ᵖ | `lib/inputAssistance/projection.ts:108#display-safe` — a fixed whitelist that still drops `metadata`, `privacyState`, `accessState`, owner/host ids and counts. **Phase 9 added three fields to that whitelist; none is private (§8.4).** |
+| G218 | `C ᵖ` (unreadable) | **C** | ᵖ | `lib/inputAssistance/gateway.ts:359#dispatchTypes` → `routes/discoverySearch.ts:1749#dispatchSearch`. |
+| G220 | `C ᵖ` (unreadable) | **C** | ᵖ | `lib/inputAssistance/entityMap.ts:35#ENTITY_TO_SEARCH` → `routes/discoverySearch.ts:1749#dispatchSearch`. |
+| G235 | `C ᵖ` (unreadable) | **C** | ᵖ | `routes/inputAssistance.ts:147#input_assist_suggest` (90/min) and `:252#input_assist_select` (60/min). Both still resolve exactly. |
+| G278 | `C ᵖ` (unreadable) | **C** | ᵖ | `routes/discoverySearch.ts:1793#searchPlaces`. **The old pointer, line 1568, is stale by 225.** |
+| G279 | `C ᵖ` (unreadable) | **C** | ᵖ | `routes/discoverySearch.ts:1794#searchHiddenGems` + `:270#gemSearchPosition`. |
+| G281 | `C ᵖ` (unreadable) | **C** | ᵖ | `routes/discoverySearch.ts:1786#searchTrips`. |
+| G282 | `C ᵖ` (unreadable) | **C** | ᵖ | `routes/discoverySearch.ts:1779#searchEvents`. |
+
+`ᵖ` still means "correct, but earned by pre-existing work". The spec-attributable
+CORRECT is still C minus the count of `ᵖ` rows, which is still 23.
+
+### 8.4 Row moves — seven NOT-BUILT rows built
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| G97 | N | **C** | §15 **TemporalFit** now has a producer. `extractTemporal` was already normalising "tonight" / "tomorrow morning" / "Friday after dinner" into an ISO window; the window went into a search STRING and was discarded. It is now resolved once per request at `lib/inputAssistance/gateway.ts:179#TemporalWindow` and handed to the projection at `:414#temporalWindow`, where `lib/inputAssistance/rankingSignals.ts:104#applyTemporalFit` boosts a row that starts inside it and demotes one that starts outside. Deliberately a RANKING term, not a filter — see the ceiling note in §8.7. |
+| G101 | N | **C** | §15 **TrustConfidence** now has a producer. `verified` and `is_official` were selected by `searchTravelers` (`routes/discoverySearch.ts:161#verified?:`) and dropped by the §42 whitelist. `lib/inputAssistance/rankingSignals.ts:130#applyTrustConfidence` reads them into `confidence`, clamped by `:59#SIGNAL_CEILING` strictly below the exact-match band so §9's trust order holds. |
+| G180 | N | **C** | §20 **verification / trust context** is displayable. `lib/inputAssistance/types.ts:261#verified` and `:262#official` are projected at `lib/inputAssistance/projection.ts:114#verified` — only when TRUE, so an absent key is "not applicable" and never a negative claim about a person — and rendered as badges by `travel-buddy-standalone/src/platform/input-assistance/components/suggestionBadges.ts:40#suggestionBadges`, which the row both renders and announces from one call (`components/EntitySuggestionRow.tsx:39#suggestionBadges`, `:44#badges.map`). |
+| G181 | N | **C** | §20 **Hidden Gem protection label**. `gemSearchPosition` already decided whether a gem may carry a centroid and wrote it to `metadata.coordsPrecision`; the projection dropped the whole bag, so a protected gem rendered identically to an unprotected one. `lib/inputAssistance/rankingSignals.ts:151#gemLocationPrecision` reads that word into `lib/inputAssistance/types.ts:271#locationPrecision` at `lib/inputAssistance/projection.ts:117#gemLocationPrecision`. A precision WORD, never a position: `'exact'` is not in the union because the gem path cannot produce one, and a test serialises the row and greps for the centroid. |
+| G356 | N | **C** | §50 **the field inventory exists.** Three source files cited "the client audit's §50 field table" as an existing artifact and a repo-wide search returned only those three references to it. `travel-buddy-standalone/src/platform/input-assistance/contexts/fieldInventory.ts:102#FIELD_INVENTORY` is that table — 24 records, one per registered fieldId — and `src/test/inputAssistanceFieldInventory.test.ts:201#registrars` refuses a registered field that is not inventoried. The three dangling citations now point at it. |
+| G357 | N | **C** | §50 **the per-field record.** `fieldInventory.ts:415#fieldInventoryRow` merges the recorded half (screen/route, component file, current implementation, provider, zero-state, validation, known issues, migration status) with the four attributes `INPUT_CONTEXT_REGISTRY` already owns (desired mode, entity types, offline policy, privacy class) rather than copying them, so the row cannot disagree with the registry. Every `componentFile` is asserted to exist on disk, and `migrationStatus` is MEASURED, not claimed: `src/test/inputAssistanceFieldInventory.test.ts:296#mounted` scans `src/` and `app/` for each fieldId. |
+| G31 | N | **C** | §29 **`privacyClass` has a reader.** It was declared on all 29 contexts and read by nothing — deleting it would have changed no behaviour. `travel-buddy-standalone/src/platform/input-assistance/services/suggestionCache.ts:41#UNCACHEABLE_PRIVACY_CLASSES` and `:55#isCacheablePrivacyClass` now gate the process-global suggestion cache, wired at `hooks/useInputAssistance.ts:148#isCacheablePrivacyClass` (read) and `:189#sharedSuggestionCache.set` (write). Not hypothetical: `telegraph.recipient` is `personal` AND mounted, so a global map was holding a list of PEOPLE under the raw prefix the viewer typed and serving it back without a round trip that could re-check eligibility. |
+
+### 8.5 One row whose evidence was false, verdict unchanged
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| G176 | N | **N** | Verdict stands; the stated evidence does not. The row read *"`SearchResult.distanceKm`, where it exists, is dropped by the projection whitelist"*. **There is no `distanceKm` on `SearchResult`** — `routes/discoverySearch.ts:143#SearchResult` has no such field and `grep -rn distanceKm` over `artifacts/api-server/src` returns only services/ranking/DiscoveryRankingService.ts, a different object on a different surface. Distance is computed transiently inside the places ordering and never lives on a row, so nothing is being "dropped by the whitelist": the field was never there. Not built this pass on purpose — see §8.8. |
+
+### 8.6 Mutations applied, watched go red, reverted, `cmp`-verified
+
+Every behaviour claimed above has a named mutation that was actually applied. Each
+was reverted and the file compared byte-for-byte against a backup taken before the
+edit (`cmp` clean in every case).
+
+| mutation | failures |
+| --- | --- |
+| `projection.ts`: drop the `applyTrustConfidence` wrapper | 2 |
+| `projection.ts`: drop the `applyTemporalFit` wrapper | 1 |
+| `gateway.ts`: drop `{ temporalWindow }` from the `projectSearchResult` call | 1 |
+| `projection.ts`: delete `if (r.verified === true) …` | 1 |
+| `projection.ts`: delete `if (precision) suggestion.locationPrecision = …` | 1 |
+| `suggestionBadges.ts`: delete the `official` branch | 1 |
+| `fieldInventory.ts`: flip `discovery.search` to `registered_unmounted` | 1 |
+| `fieldInventory.ts`: flip `geo.country` to `mounted` | 1 |
+| `fieldInventory.ts`: change one row's `context` | 1 |
+| `creationFields.ts`: register a new fieldId without inventorying it | 1 |
+| `suggestionCache.ts`: remove `personal` from the uncacheable set | 2 |
+| `useInputAssistance.ts`: remove the cache **write** guard, keep the read guard | 1 |
+| `EntitySuggestionRow.tsx`: drop the badges from `accessibilityLabel` | 1 |
+
+**One assertion was found worthless this way and strengthened rather than kept.**
+The "trust never lifts a weaker match past the exact band" test passed with the
+trust term removed entirely — a `<` bound is satisfied by a term that does
+nothing. It now asserts the boost actually applies before asserting the ceiling,
+which is the same defect the personalization suite had already documented for
+`BOOST_CEILING`. The mutation that left it green is recorded here rather than
+quietly fixed.
+
+### 8.7 Restated headline
+
+> | Measure | was (§4 as written) | now (§8) |
+> | --- | --- | --- |
+> | **Denominator — testable requirements** | 373 | **373** |
+> | BUILT-AND-CORRECT | 230 | **237** |
+> | BUILT-BUT-WRONG | 69 | **69** |
+> | NOT-BUILT | 70 | **63** |
+> | CANNOT-VERIFY | 4 | **4** |
+> | **CONSTRUCTED%** = (C+W)/373 | 80.2 % | **306 / 373 = 82.0 %** |
+> | **CORRECT%** (raw) = C/373 | 61.7 % | **237 / 373 = 63.5 %** |
+> | **CORRECT% (spec-attributable)** = (C−23ᵖ)/373 | 55.5 % | **214 / 373 = 57.4 %** |
+> | CANNOT-VERIFY share | 1.1 % | **4 / 373 = 1.1 %** |
+
+Every one of the 373 requirements is now on a row a machine can parse: parsed rows
+= denominator = 373, which switches on `check:census-integrity`'s strictest rule —
+the headline must now sum to the denominator or the check fails. It does: 237 + 69
++ 63 + 4 = 373.
+
+**P24 — what would turn this red?** Any of: a `pnpm -s check:census-integrity` run
+where the four buckets stop summing to 373; a `check:census-freshness` run after a
+counted file moves without an acknowledgement; any of the thirteen mutations in
+§8.6 being applied and the suite staying green; or a reader opening one of the
+thirty-one anchored citations above and finding the anchor text absent from that
+line (`check:doc-citations` asserts exactly that, on the FIRST line of every cited
+range).
+
+### 8.8 CEILING — what is not reachable, and why
+
+**Nothing in §8.4 is behind a flag or a migration**, so all seven rows are true on
+every deployment that runs this code. That is the strongest thing that can be said
+about them, and it is much weaker than "done": built on a branch is not merged,
+merged is not deployed, deployed is not in a shipped app binary. Two of the four
+§20 display fields only reach a human where a screen mounts the SDK row, and §8.4's
+own inventory says that is **8 fieldIds of 24**.
+
+**What this pass could not build, with the reason:**
+
+1. **§48 feature-capability handshake (G343).** The mechanism is a morning's work —
+   the request declares what the client renders, the response declares what the
+   server can emit, the gateway drops the difference. It was **not** built because
+   it would be **vacuous today**: there is exactly one client, and it renders or
+   dispatches every suggestion type and every action the server currently emits
+   except `share_entity` and `drop_pin`, which have **no producer** (G303), and
+   `open_compass`, whose rows also carry `replacementText` and are therefore usable
+   anyway. A handshake that filters nothing is a `C ⌀`, and a `⌀` bought with a day
+   of work is worse than an honest `N`.
+2. **§32 client static dictionaries (G197 / G212).** Shipping a country / language /
+   interest list client-side is trivial. It is **unreachable**: the three contexts
+   with `offlinePolicy: 'static_dictionary'` are `country_picker`, `language` and
+   `interest`, and the inventory now proves that none of them is mounted — the only
+   `assistContext` any screen passes is `trip_destination`. Building it would have
+   produced a second `⌀`.
+3. **§20 distance (G176).** Buildable — haversine over the viewer's coordinates and
+   a place's `metadata.lat/lng`. **Not taken, and surfaced instead as an owner
+   decision**: a distance from the viewer to a *hidden gem* constrains that gem to a
+   circle, and this census's G129 verdict and the certification's coordinate deep
+   scan both rest on "`InputSuggestion` has no coordinate field at all". Trading
+   that for a distance label is a privacy decision, not a coding one.
+4. **§24 paste (G154–G162, G337), §25 dictation (G163), §30 precedence (G192).**
+   Untouched. Paste is a ten-row client feature with no handler anywhere; dictation
+   is conditional on a speech transport the app does not depend on; precedence has
+   three of its seven tiers with no producer, so an implementation would guard a
+   conflict that cannot occur.
+5. **§44 telemetry emitters (G311, G313–G320) and the §45 loop (G322).** Adding the
+   nine missing call sites is small and would move nine rows **N → W, not N → C**,
+   because the sink is `() => {}` and `setTelemetrySink` is called from no non-test
+   file. Nine rows of "constructed" bought with nine emissions into a black hole is
+   exactly the kind of number this census exists to refuse.
+
+**What is NOT reachable at all from a branch**, unchanged from §3: migration 2220
+(`canonical_locations.search_key`), 2221 (`compass_ai_writing_enabled`), 2258
+(`input_selection_history`) are absent from production, `isFlagEnabled` is
+fail-closed, and every `intel_*` table holds zero rows. The 69 BUILT-BUT-WRONG rows
+that depend on those are owner deployment actions and none of them moved.
+
+### 8.9 Scope and freshness
+
+`head_commit` is updated in the header table from `42aeac38` to `579694d6`, the
+commit this section measures, and the spent acknowledgement for this census is
+deleted from the ledger — an acknowledgement written against a superseded
+measurement is not a silence anyone should inherit.
+
+Four new paths were added to this census's `CENSUS_SCOPE` entry, because §8 cites
+them as evidence and a census must watch what it cites:
+`lib/inputAssistance/rankingSignals.ts` (already covered by the directory entry),
+`platform/input-assistance/contexts/fieldInventory.ts`,
+`platform/input-assistance/components/suggestionBadges.ts`, and the two new test
+files.
+
+**Cross-lane.** `lib/inputAssistance/` is counted by **census-discovery** and
+`lib/inputAssistance/projection.ts` by **census-compass**. Both entries in
+`CENSUS_STALENESS_ACKNOWLEDGED.json` were extended with a per-file argument rather
+than a filename: that `projectSearchResult`'s new parameter defaults to `{}` and
+both new terms are the identity on their absent inputs, so every caller that passes
+no signals gets a byte-identical row; that `dispatchSearch` is called with the same
+arguments, so no Discovery ranking path changed; and that for compass_prompt's only
+entity types (place / hidden_gem / city) both terms are provably inert, because
+none of the three carries `verified`, `is_official` or a `startsAt`. One honest
+residue is recorded there rather than hidden: census-discovery's unanchored two-part
+citation into `lib/inputAssistance/gateway.ts` (its 27-and-384 pair) now points 15
+lines high at its second part. That is a stale pointer in another census's citation, not a moved
+verdict, and re-pointing it is that census's to do.
