@@ -3337,7 +3337,7 @@ stopped being true, and the next reader trusts the reason.
    The verdict stays W — `trip_activity_log` is still what the *route* layer
    writes — but "nearest table" is no longer true.
 3. **TR334** (N) says `grep -rli "offlineBundle|offline.*queue|queuedOperation"`
-   over the client returns *nothing*. It returns `travel-buddy-standalone/src/services/layover.ts:355`
+   over the client returns *nothing*. It returns `travel-buddy-standalone/src/services/layover.ts:382#statusCapability: ReturnNowStatusCapability;`
    and four more — the **Layover** offline bundle. The verdict holds (there is
    no *trip* bundle, signed or otherwise); the grep as written does not.
 4. **TR213 `explainTripDecision`** (N) holds, and so does its reason — there is
