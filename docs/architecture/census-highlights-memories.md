@@ -3223,3 +3223,67 @@ keeps catching in other passes turned out to be in this one too. A number that m
 third of a point on that evidence would have been another false green in a document that has
 already caught four — H84 in §A, H263 in §D, and H4 and H264 here — and the first one that was
 avoidable by its own author before anybody else had to find it.
+
+## G. The merge did not choose, and §F's first consequence was wrong — 2026-09-13, written by the INTEGRATING LANE
+
+§F closed with a handoff: the Layover lane was fixing the same seam by a better route, **"if the
+two land together, keep theirs"**, and three consequences were written down *"so the merge is not
+a discovery"*. The integration verified that against both diffs rather than inheriting it. It is
+half right, and the wrong half is the half §F could not see from inside its own branch.
+
+**WHAT THE TWO FIXES ACTUALLY COVERED.** §1 has an occurrence limb; L19 and §17 L162 have an
+election limb. Neither lane closed both:
+
+| limb | §F's gate (creation-time) | Layover's fix (end-of-session) |
+| --- | --- | --- |
+| §1 — *"planned, saved, or nearby must never be represented as experienced"* | **yes** | no |
+| L19 — *"post-session durable artifacts **if the user chooses**"* | no | **yes** |
+| §17 L162 — *"durable only when the user elects Passport/Memory behaviour"* | no | **yes** |
+
+§F assumed the occurrence limb came free with the other two — *"a completed session is one that
+happened"*. It does not.
+`artifacts/api-server/src/services/airport/LayoverSessionService.ts:234#export async function endSession`
+is not temporal: it sets `status` to whatever the caller named, gated only on the row still being
+live. Nothing between creating a layover and closing it consults a clock. So at the Layover lane's
+tip, a traveller could create next Tuesday's connection, close it as `completed`, elect the stamp,
+and be handed a durable `verification_level: 'checkin'` row for a city they had never reached —
+the same defect §F found, moved one route along, and the move is what hid it, because each lane's
+tests only covered its own half.
+
+**THE OTHER LANE'S GREEN CASE WAS DEMONSTRATING IT.** `sessionRow()` defaults `arrival_time` to
+`now + 5 minutes`, so *"a COMPLETED session the traveller elected to keep writes exactly one
+stamp"* — passing — asserted that a layover which had not begun earns a stamp. A fixture default
+carried the defect straight through a suite written to catch it. That is §B.1's paired-control
+lesson from the other side: a control can be green and still be pointing at the wrong world.
+
+**RESOLUTION: COMPOSE, DO NOT CHOOSE.** The merge kept the Layover lane's structure — creation
+seam deleted, stamp minted at `DELETE` behind completion, election and the kill switch — and added
+this document's predicate as a **fourth term** with its own published reason, `not_occurred`.
+
+**§F'S CONSEQUENCE 1 IS THEREFORE FALSE AND IS WITHDRAWN.** It read *"`declaredOccurrenceHasHappened`
+becomes unreachable from `routes/airport.ts`"* and concluded §A.2 forbade scoring the module. There
+is a seam left to gate; it is on a different route.
+**No row moves on this correction** — H4 and H239 were not green and are not made green by it.
+What changes is that the module is reachable, which §F had conceded it would not be.
+
+Consequences 2 and 3 stood and were carried out as written: the airport CONTROL case was
+**re-pointed** at the end-of-session path rather than deleted — keeping its schema-strict
+`deadColumnErrors` assertion, which is why it was kept rather than folded into the Layover suite —
+and §F.1/§F.4's evidence was **re-read** rather than re-pointed.
+
+**RED FIRST, AT THE OTHER LANE'S TIP.** Taken against `152b3b62e` itself, not a reconstruction:
+4 cases, 3 green and 1 red, `expected: 0, actual: 1`. The three that passed are what make the red
+mean something — a past arrival still earns exactly one stamp, the boundary is `<= now`, and
+`not_elected` still binds independently — so the new case cannot be satisfied by a gate that
+refuses everything. After the fourth term: **24 of 24** across the three affected suites.
+
+**MUTATIONS.** Inverting the term (`!occurrence.occurred` → `occurrence.occurred`) fails 5 of 11 —
+red in BOTH directions, so the term is not merely present but load-bearing each way. Disabling it
+(`if (false && …)`) fails 2 of 17 across this document's suite and the Layover suite together,
+which is what proves the re-pointed CONTROL is still doing work rather than passing vacuously.
+
+**WHAT WOULD TURN THIS RED (P24).** A fifth caller of `createStamp` with
+`sourceType: 'layover_session'` on a path that does not run the four terms; `endSession` gaining a
+temporal guard of its own and the two disagreeing; or `arrivalTime` ceasing to be the instant the
+layover begins. None is guarded against beyond the suites above, and no guard in this repository
+would catch any of them.

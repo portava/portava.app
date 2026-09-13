@@ -3665,20 +3665,47 @@ The seam is deleted there
 (`artifacts/api-server/src/routes/airport.ts:589#NO PASSPORT SEAM HERE`)
 and rebuilt on the close
 (`artifacts/api-server/src/routes/airport.ts:2331#async function writeElectedLayoverStamp`)
-behind **three terms, each pinned by its own negative case**:
+behind **four terms, each pinned by its own negative case**:
 
 | term | what fails without it |
 | --- | --- |
 | the session closed as **completed** | `artifacts/api-server/src/test/layoverCompletionStamp.test.ts:179#an ELECTED but CANCELLED session writes nothing` |
 | the traveller **elected** it | `artifacts/api-server/src/test/layoverCompletionStamp.test.ts:169#a COMPLETED session the traveller did NOT elect` |
 | `passport_stamps_enabled` is on | `artifacts/api-server/src/test/layoverCompletionStamp.test.ts:198#the kill switch still wins` |
+| the layover **had actually begun** | `artifacts/api-server/src/test/layoverStampOccurrence.test.ts:133#a layover that has NOT BEGUN earns no stamp` |
 
 The order is the argument: a kill switch a user's choice can override is not a
-kill switch, so the flag is checked last and wins.
+kill switch, so the flag is checked last of the three this pass wrote, and wins.
 
-**IT IS AWAITED AND IT ANSWERS WITH A REASON.** "Nothing was written" has six
-meanings here — not elected, not completed, flag off, no city, the write failed,
-already stamped — and a client that has to guess which one applies will tell the
+**THE FOURTH TERM WAS ADDED AT INTEGRATION AND THIS PASS DID NOT WRITE IT.**
+Stated here rather than in the merge commit alone, because without it this
+section would read as though moving the seam had been sufficient, and it was
+not. Completion and election are things the CALLER says. `endSession`
+(`artifacts/api-server/src/services/airport/LayoverSessionService.ts:234#export async function endSession`)
+consults no clock — it sets `status` to whatever the caller named, gated only on
+the row still being live — so at this pass's own tip a traveller could create a
+layover for next Tuesday, close it as `completed`, elect the stamp, and be
+handed a durable `verification_level: 'checkin'` row for a city they had never
+been to. That is the same defect §17.5 says it closed, moved one route along.
+
+**AND THIS SECTION'S OWN GREEN CASE WAS DEMONSTRATING IT.** `sessionRow()`
+defaults `arrival_time` to `now + 5 minutes`, so *"a COMPLETED session the
+traveller elected to keep writes exactly one stamp"* — which passed — asserted
+that a layover which had not begun earns a stamp. The fixture is corrected to a
+past arrival for the two cases that reach the city and occurrence terms, and the
+new file above pins the fourth term with a CONTROL (a past arrival still earns
+exactly one), a boundary case (`<= now`) and a case proving `not_elected` still
+binds independently. Proven RED at this pass's tip `152b3b62e` — 3 passed, 1
+failed, `expected: 0, actual: 1` — before the term existed.
+
+The sibling Highlights & Memories lane had written the predicate this term uses
+(`artifacts/api-server/src/services/memory/occurrenceGate.ts:80#export function declaredOccurrenceHasHappened`)
+against the CREATION-time seam this pass deleted. Neither lane's fix was
+sufficient alone; the merge composed them rather than choosing.
+
+**IT IS AWAITED AND IT ANSWERS WITH A REASON.** "Nothing was written" has seven
+meanings here — not elected, not completed, flag off, **not occurred**, no city,
+the write failed, already stamped — and a client that has to guess which one applies will tell the
 traveller the wrong thing. The old seam could not answer at all. `"no_city"` is
 the one worth naming: the fallback profile's placeholder city is the literal
 string `"Unknown"`, and a stamp for it would be exactly the fabricated artifact
@@ -3872,7 +3899,7 @@ either reads or is asked, on a path the app mounts.
 | id | the sentence that is false at this commit | what is true |
 | --- | --- | --- |
 | L10 | *"`status='completed'` is never written … The system cannot distinguish a safe return from an abandonment."* (the row also names a line in `routes/airport.ts` that was already stale by some 750 lines before this pass; it is quoted without it rather than repointed, for §12.4's reason) | It is written, by a traveller pressing "I made my flight" (`artifacts/api-server/src/routes/airport.ts:2444#const passportStamp = await writeElectedLayoverStamp` sits immediately after the `endSession` that writes it). The verdict does not move — see §17.6. |
-| L19 | *"the only gate is the `passport_stamps_enabled` flag"* — and the line it named with it | There are three gates and the flag is the last of them. The row moves; the sentence is restated in §17.5 rather than left. |
+| L19 | *"the only gate is the `passport_stamps_enabled` flag"* — and the line it named with it | There are FOUR gates (three written by this pass, the fourth added at integration) and the flag is the last of the three, not the last of the four. The row moves; the sentence is restated in §17.5 rather than left. |
 | L32 | *"Absent, and unreachable in principle: nothing ever marks a session completed."* | The second clause is false. The table is still absent, which is what the row scores, so the verdict does not move. |
 | L294 | *"Seven bare `catch { return … }` blocks remain in `LayoverSessionService.ts` (`:187, 229, 255, 367, 387, 416`)"* — already corrected to **six** by §13.5 | Still six, all still bare, at the same six lines: re-measured at this commit with `grep -n catch`, which returns exactly `187, 229, 255, 367, 387, 416` plus one comment at `289`. Nothing in this pass touched that file. Recorded because §13.5's correction is two sections above a later section that repeats the seven. |
 
