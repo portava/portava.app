@@ -66,7 +66,8 @@ Two warnings about that guard:
    `/api` prefix literally: `POST /api/calls/webhook` (`app.ts:122`) and
    `POST /api/verification/webhook` (`app.ts:126`). Both must precede `express.json()`
    (`app.ts:131`) because signature verification needs the unparsed body
-   (`routes/verification.ts:238`, `:290`). `callsWebhook.ts` exports a handler and registers
+   (`routes/verification.ts:296#export const webhookRawParser = express.raw({ type: () => true, limit: "512kb" });`,
+   `routes/verification.ts:299#const rawBody = Buffer.isBuffer(req.body)`). `callsWebhook.ts` exports a handler and registers
    nothing, which is why it is not in the 140.
 2. **The root share surface.** `wellKnownShare.ts` is mounted with no prefix (`app.ts:144`) and
    owns `/.well-known/apple-app-site-association` (`:97`), `/.well-known/assetlinks.json`
