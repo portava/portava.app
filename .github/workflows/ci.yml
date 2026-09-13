@@ -247,6 +247,24 @@ jobs:
         shell: bash
         run: bash .github/scripts/pnpm-run.sh artifacts/api-server @workspace/api-server check:doc-citations
 
+      # check:citation-targets — the sub-case doc-citations provably cannot
+      # judge. It splits the corpus in two: an ANCHORED citation is re-read and
+      # fails when the code moves; an UNANCHORED one is checked only for "is the
+      # file long enough", and its own error text says "nothing here can tell you
+      # it names the right code". The ceiling on those stops the class growing
+      # and does nothing about the 6,443 already there.
+      #
+      # One case has an answer without reading the claim: a SINGLE-LINE citation
+      # whose line is blank, or is nothing but a bracket or a comment fence, is
+      # not a citation that might be wrong — no census claim is evidenced by
+      # `});`. Those are stale pointers left where code moved. Ranges, `:1`, and
+      # the commit-pinned mobile-reachability-ledger.md are excluded by name and
+      # for stated reasons; see the script header.
+      - name: 'check:citation-targets (static; unanchored citations that land on nothing)'
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        shell: bash
+        run: bash .github/scripts/pnpm-run.sh artifacts/api-server @workspace/api-server check:citation-targets
+
       - name: 'check:async-handlers'
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         shell: bash

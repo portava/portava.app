@@ -11,7 +11,7 @@
  *
  * Run: node --import tsx/esm --test src/test/tripOpportunityProjection.test.ts
  */
-import { describe, it, beforeEach, after } from "node:test";
+import { describe, it, beforeEach, after, before, mock } from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import type { Server } from "node:http";
@@ -165,6 +165,30 @@ describe("§13 buildTripOpportunityProjection — the eight inputs from the trip
 });
 
 describe("routes, Compass, Today and the map", () => {
+  // THE CLOCK IS FROZEN HERE, and this suite was a time bomb until it was.
+  //
+  // The direct projection calls above pass `{ now: NOW }`, so they are pinned.
+  // These go through HTTP, and the production routes call
+  // `buildTripOpportunityProjection(sc, tripId, user.id)` with NO `now` — which
+  // is CORRECT for production: a route must read the real clock. The fixture,
+  // however, pins the trip's window to a literal 2026-09-13 10:00–16:00, so
+  // whether a candidate is still executable depended on what time of day the
+  // suite happened to run.
+  //
+  // Measured, not guessed: at 13:00 UTC this file is 18/18; at 14:26 UTC on the
+  // same tree, same commit, it is 16/2 — "Cannot read properties of undefined
+  // (reading 'candidateId')" and a 0-versus-1 count, because the window the
+  // fixture describes had closed underneath it. CI passed at ~13:5x and would
+  // have failed on the next run a couple of hours later, for no diff.
+  //
+  // Freezing `Date` is the fix that keeps the route path honest: the route
+  // still reads the clock, the clock is just made a fixture like every other
+  // input. Production is unchanged, and adding a `now` parameter to the route
+  // to make a test pass would have been changing the shape of the thing being
+  // tested.
+  before(() => { mock.timers.enable({ apis: ["Date"], now: NOW.getTime() }); });
+  after(() => { mock.timers.reset(); });
+
   it("GET /opportunities serves a member and refuses a stranger; POST accept writes ADD_PLAN through the kernel once (source_type opportunity), counts accepted, and refuses a non-executable one by reason", async () => {
     const tables = base(); tables.trip_saved_places = [saved("park"), saved("museum", { place_type: "museum" })];
     const calls: Row[] = [];

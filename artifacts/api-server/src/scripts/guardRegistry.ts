@@ -919,4 +919,24 @@ export const GUARDS: readonly GuardEntry[] = [
       unit: "Telegraph domain modules inspected",
     },
   },
+
+  // APPENDED AT THE END ON PURPOSE, not filed with the other workflow-reached
+  // guards above. Two censuses cite this file by line — census-trips:5174 and
+  // census-highlights-memories:915 — and inserting into the middle displaced
+  // both, which check:doc-citations caught. Appending shifts nothing. A new
+  // entry belongs here unless its position carries meaning.
+  {
+    checker: "scripts/check-citation-targets.mjs",
+    responsibility:
+      "An UNANCHORED single-line citation lands on real code, not on a blank line or a bare bracket — the one stale-pointer case answerable without reading the claim.",
+    reach: { kind: "workflow", script: "check:citation-targets" },
+    // MEASURED: "check:citation-targets — 2882 single-line unanchored citation(s)
+    // judged, 295 land on nothing". The JUDGED count is the inspection proof: a
+    // green that judged nothing would be a green over an empty corpus, which is
+    // the failure this registry exists to make visible.
+    inspects: {
+      countPattern: "(\\d+) single-line unanchored citation\\(s\\) judged",
+      unit: "single-line unanchored citation(s) judged against the file they name",
+    },
+  },
 ];

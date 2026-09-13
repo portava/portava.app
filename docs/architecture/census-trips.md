@@ -4249,7 +4249,7 @@ scenario or replay test existed.
   **tampered** snapshot fails to verify (`:149#snapshot`); RLS hides a private
   trip and its events from a non-member (`:163#RLS`).
 - A CI job runs it on a `postgis/postgis:16-3.4` service container
-  (`.github/workflows/ci.yml:646#api-server-local-db`); the verdict job requires
+  (`.github/workflows/ci.yml:664#api-server-local-db`); the verdict job requires
   it. The same files sit in the ordinary `test` list and skip there without a
   database, exactly as `tripKernelLive.test.ts` skips without credentials.
 
