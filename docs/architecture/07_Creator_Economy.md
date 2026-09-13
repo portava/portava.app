@@ -19,7 +19,7 @@ names them apart first and only then says what Impact should mean.
 | Standing | Where it lives | What it measures | Reversible? | Reaches a user today? |
 |---|---|---|---|---|
 | **CreatorActivityScore** 0–100 | `creator_activity_scores` (`artifacts/api-server/supabase/migrations/20260801_ranking_discovery_foundation.sql:10-47`) | recency-weighted publishing + participation + received response, minus spam | recomputed every pass; can fall | **No** — flag OFF, see §1.2 |
-| **Trust** 0–100 + six public levels | `trust_profiles` (`services/trust/TrustScoreService.ts:276-291`) | safety and reliability of a *person* across nine categories | decays; caps clamp | label only; number only to self (`PassportProjectionService.ts:1007-1021`) |
+| **Trust** 0–100 + six public levels | `trust_profiles` (`services/trust/TrustScoreService.ts:276-291`) | safety and reliability of a *person* across nine categories | decays; caps clamp | label only; number only to self (`PassportProjectionService.ts:1053-1067`) |
 | **Contribution reputation** L1–L5 | derived on read from `passport_contribution_events` (`services/passport/PassportReputationService.ts:134-160`) | qualified real-world contribution volume, paid excluded | derived, never stored | **Yes** — the Passport ContributionCard |
 | **Earned credits** (non-cash) | `intel_reward_ledger` (`migrations/2170_intel_reward_ledger.sql:34-56`) | QIU booked against finalized, attributed outcomes | **append-only, immutable** | **No** — `intel_rewards` seeded OFF (`2170:59-65`) |
 
@@ -259,8 +259,8 @@ measurement and must never be merged.
 | Half-life | 90 days (`TrustScoreService.ts:60`) | 14 days (`CreatorActivityScoreService.ts:159`) |
 | Asymmetry | **deliberate**: positives ramp with a confidence weight of 5, negatives bite at full strength on the first occurrence (`TrustScoreService.ts:151-215`) | symmetric; penalties are capped at 25/15 |
 | Ceilings | `trust_caps` clamp a category from above regardless of positive history (`TrustScoreService.ts:127-149`, `:249-255`) | none |
-| What it gates | **capabilities** — `public_level` maps through `LEVEL_RANK` to `canHostTrip`, `canCreateLargePlan`, `canUseCrewLocation`, `canContributeLiveIntel`, `canBecomeBuddy` (`services/passport/PassportProjectionService.ts:552-577`) | **ranking only**, and only when a flag is on |
-| Visibility | label to everyone, number to self only (`PassportProjectionService.ts:1007-1021`) | never shown to anyone (§6) |
+| What it gates | **capabilities** — `public_level` maps through `LEVEL_RANK` to `canHostTrip`, `canCreateLargePlan`, `canUseCrewLocation`, `canContributeLiveIntel`, `canBecomeBuddy` (`services/passport/PassportProjectionService.ts:598-623`) | **ranking only**, and only when a flag is on |
+| Visibility | label to everyone, number to self only (`PassportProjectionService.ts:1053-1067`) | never shown to anyone (§6) |
 
 **There is exactly one coupling, and it runs one way.** `trust_profiles.overall_score` becomes a
 **safety multiplier** on the creator score — `< 20 → 0.0`, `< 30 → 0.3`, `< 40 → 0.6`,
@@ -308,7 +308,7 @@ places it touches them are called out rather than left to be discovered.
   contract gap; deliberately **not changed here**.
 - **#467, #453, #454, #455 — display side.** They stop the constant 50 being presented as a
   measurement — today `buildTrust` falls back to a literal `50` for the per-domain projection when
-  no profile is readable (`services/passport/PassportProjectionService.ts:992`) — and render the
+  no profile is readable (`services/passport/PassportProjectionService.ts:1038`) — and render the
   server's real per-domain strengths and recovery hints instead of client constants.
   *Consequence here:* **do not design a creator-facing "trust tier" or "impact tier"
   chip.** The tier vocabulary that exists (`new_inactive` … `highly_active`,

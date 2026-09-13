@@ -87,6 +87,12 @@ const NOT_GRADED: readonly string[] = [
   "artifacts/api-server/src/scripts/CENSUS_STALENESS_ACKNOWLEDGED.json",
   "artifacts/api-server/src/scripts/checkCensusFreshness.ts",
   "artifacts/api-server/src/scripts/checkCensusScopeCoverage.ts",
+  // The citation guard itself. It lives in `scripts/` rather than
+  // `src/scripts/` and ends in `.mjs`, so the pattern below does not reach it —
+  // the one machinery file in the tree that the convention already covers in
+  // spirit and missed in letter. Several censuses name it as the thing that
+  // MEASURED their citations; none grades it, and it is not product code.
+  "artifacts/api-server/scripts/check-doc-citations.mjs",
   ".github/workflows/ci.yml",
   ".github/workflows/live-db.yml",
 ];

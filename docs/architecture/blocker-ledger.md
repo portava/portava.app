@@ -754,7 +754,7 @@ used everywhere and is not the problem. The RESOLUTION is copied.
 | `lib/mapTravelers.ts` | canonical | was inline, order correct | **fixed** — now requests `buildMapPresenceProjections` (P98) |
 | `services/passport/PassportConsumerProjections.ts` | canonical | **a FIFTH copy, added by the fix above** | **fixed** — see below |
 | `routes/discoverySearch.ts:642` | canonical | `p.name` ALONE, and `display_name` was not even in the SELECT | **fixed** — adopts `presentedName`; a user with a display name was shown the other one |
-| `routes/compass.ts:3672` | canonical | `display_name ?? name ?? username` inline | **NOT fixed — see below** |
+| `routes/compass.ts:3702` | canonical | `display_name ?? name ?? username` inline | **NOT fixed — see below** |
 | `services/passport/PassportProjectionService.ts` | canonical | canonical | fine |
 
 ### The fifth copy, written by the commit that removed the first
@@ -806,7 +806,7 @@ NOT-BUILT row in that census (150 C / 17 W / 1 N / 1 ?).
 
 Passport spec §11 names seven capabilities derived from trust evidence + domain
 policy. Six exist and are derived server-side in
-`services/passport/PassportProjectionService.ts:683#buildOwnerCapabilities`:
+`services/passport/PassportProjectionService.ts:729#buildOwnerCapabilities`:
 
 ```
 canJoinPublicTrip · canHostTrip · canCreateLargePlan

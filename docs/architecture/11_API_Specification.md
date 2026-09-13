@@ -279,7 +279,7 @@ participants, `safetyNotes` to the host (`events.ts:3753-3787`). A new response 
 the row directly instead of calling the formatter silently drops those redactions.
 
 Four files leak snake_case: `adminRankingConfig.ts:220,316` (`old_value`, `old_enabled`),
-`compass.ts:1995,2048,2860` and `places.ts:460,495` (`powered_by`) — the compass ones because a
+`compass.ts:2002,2048,2860` and `places.ts:460,495` (`powered_by`) — the compass ones because a
 DB row is spread into the response as a fallback.
 
 **There is no uniform list envelope.** Each router names its own collection key — `places`,

@@ -402,6 +402,11 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     // is NOT raised with it — this widening only keeps the existing 96 % from
     // falling when the new citations land.
     "artifacts/api-server/src/test/layoverRecommendationGate.test.ts",
+    // WIDENED 2026-09-13 (§15): the plan-fit file, for the same reason as the
+    // line above it. L47's move rests entirely on its assertions, and a census
+    // that cites a test three times while not watching it cannot notice the
+    // test changing under the verdict. The floor is NOT raised with it.
+    "artifacts/api-server/src/test/layoverPlanFitUnknownLegs.test.ts",
     "artifacts/api-server/src/services/airport/",
     "artifacts/api-server/src/routes/airport.ts",
     "travel-buddy-standalone/src/services/layover.ts",
@@ -517,6 +522,21 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/services/memoryProjections/",
     "artifacts/api-server/src/services/memoryRetrieval/",
     "artifacts/api-server/src/services/highlights/",
+    // WIDENED 2026-09-13 by section E, which built §10's person visibility ladder
+    // and §23's canSeeParticipant on the Memory participant surface. The service
+    // itself is already covered by `src/services/memory/`; its test file is the
+    // EVIDENCE H77 and H209 now cite, and deleting it would not change the code
+    // while changing what this census can claim — the same argument that put
+    // test/storyHighlightVisibility.test.ts in this list above.
+    "artifacts/api-server/src/test/memoryParticipantLadder.test.ts",
+    // And compassCensusCorrectness.test.ts, which is a COMPASS-lane file and is
+    // watched here anyway. D.11 rests H237's and H263's survival on its B2 case —
+    // the fixture that seeds one experience node per visibility rung and decides
+    // which of two competing §28.8 sweeps the merge should have kept. A census
+    // that names a test as the thing deciding two of its verdicts has to age when
+    // that test changes; the alternative is exactly the seam D.2 named, where a
+    // fact moves in one lane and the document resting on it does not notice.
+    "artifacts/api-server/src/test/compassCensusCorrectness.test.ts",
     "artifacts/api-server/src/lib/memoryCommandBus.ts",
     "artifacts/api-server/src/lib/memoryOutbox.ts",
     "artifacts/api-server/src/lib/highlightPermissions.ts",
