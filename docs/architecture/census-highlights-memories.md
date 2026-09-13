@@ -2742,8 +2742,8 @@ instruction:
 > a real check-in (H4) and is not covered by this test**.
 
 Two claims. The second one — *the live stamp path enforces the rule* — had never been checked.
-It was inherited from H4's body evidence, which names two routes and was written eight passes
-ago. **This section enumerated every path in the repository that mints a durable "you were here"
+It was inherited from H4's body evidence, which names two routes and was written in the body,
+before section A. **This section enumerated every path in the repository that mints a durable "you were here"
 artifact, and one of the five did not enforce the rule at all.**
 
 The denominator is still **266**, the counting rule in "How I decided what counts" is unchanged,
@@ -2775,8 +2775,9 @@ line of TypeScript that was missing.
 **Three spec rules, one write.** §1 — *"Planned, saved, or nearby must never be represented as
 experienced without occurrence evidence or user confirmation"*. §25's H239 — *"planned activity
 without occurrence cannot earn a visit Memory/Stamp"*. And §4's TruthLevel, because the row does
-not merely exist, it **names its own evidence** `checkin`, which is the rung above `gps` on
-`passport_stamps.verification_level`.
+not merely exist, it **names its own evidence** `checkin` on
+`passport_stamps.verification_level` — a rung that says a check-in happened, which is a claim no
+amount of typing into a form can earn.
 
 **HALF OF THIS WAS ALREADY ON THE RECORD IN ANOTHER CENSUS AND THIS SECTION DID NOT FIND IT.**
 `census-layover.md` scores the same write **W** twice and describes it exactly: L19 —
