@@ -41,6 +41,8 @@ import {
   buildCityWorldModels,
   computeCityConfidenceIndex,
   rebuildIntelligenceGraph,
+  reconcileExperienceNodes,
+  isPublicWorldMemory,
   getCityWorldModel,
   getCityConfidence,
   worldModelBoostForItem,
@@ -159,7 +161,21 @@ function makeFakeClient(store: Record<string, Row[]> = {}) {
             for (const r of arr) {
               const existing = tbl(tableName).find((e) => keys.every((k) => e[k] === r[k]));
               if (existing) Object.assign(existing, r);
-              else tbl(tableName).push({ ...r });
+              // A FAKE LOOSER THAN PRODUCTION CANNOT FAIL A TEST ABOUT
+              // PRODUCTION. compass_graph_nodes.id is `uuid PRIMARY KEY DEFAULT
+              // gen_random_uuid()` (20260730_compass_intelligence_graph.sql:11)
+              // and compass_graph_edges the same, so a row INSERTED by upsert
+              // gets an id from the database exactly as one inserted by insert
+              // does. This fake used to mint an id only on `insert`, so every
+              // upserted row carried `id: undefined` — and any code that reads
+              // rows back by id and deletes them (cleanupNonCanonicalCityRows,
+              // reconcileExperienceNodes) appeared to succeed while deleting
+              // nothing at all. The §28.8 sweep's first run here reported three
+              // nodes deleted with three still in the store.
+              else tbl(tableName).push({
+                id: `30000000-0000-0000-0000-${String(++idCounter).padStart(12, "0")}`,
+                ...r,
+              });
             }
             _lastWritten = arr;
             return b;
@@ -519,6 +535,13 @@ describe("graph substrate — circle and experience kinds (2290)", () => {
   const MEM_PUB   = "m0000000-0000-0000-0000-000000000001";
   const MEM_ONLYME = "m0000000-0000-0000-0000-000000000002";
   const MEM_DRAFT  = "m0000000-0000-0000-0000-000000000003";
+  // §28.10. The four private audiences on `memories.visibility` (0067) that the
+  // old `<> 'only_me'` gate admitted into public-world intelligence. Each is an
+  // owner's choice of a NAMED audience that is not the world.
+  const MEM_FRIENDS = "m0000000-0000-0000-0000-000000000004";
+  const MEM_CREW    = "m0000000-0000-0000-0000-000000000005";
+  const MEM_CIRCLE  = "m0000000-0000-0000-0000-000000000006";
+  const MEM_CUSTOM  = "m0000000-0000-0000-0000-000000000007";
   const friEvening = "2026-07-24T11:00:00Z"; // Fri 19:00 in Cebu
 
   function seedCircleAndExperienceData(store: Record<string, Row[]>) {
@@ -532,13 +555,25 @@ describe("graph substrate — circle and experience kinds (2290)", () => {
     store.memories = [
       { id: MEM_PUB, owner_id: USER_ID, title: "Best lechon", caption: "with the crew", place_id: "osm/node/77", trip_id: "trip-1", event_id: "evt-hosted",
         location_city: "Cebu", location_country: "Philippines", location_lat: 10.3, location_lng: 123.9, starts_at: friEvening, created_at: friEvening,
-        state: "published", visibility: "friends_only" },
+        state: "published", visibility: "public" },
       { id: MEM_ONLYME, owner_id: USER_B, title: "private", caption: null, place_id: "osm/node/78", trip_id: null, event_id: null,
         location_city: "Cebu", location_country: "Philippines", location_lat: 10.3, location_lng: 123.9, starts_at: friEvening, created_at: friEvening,
         state: "published", visibility: "only_me" },
       { id: MEM_DRAFT, owner_id: USER_B, title: "draft", caption: null, place_id: "osm/node/79", trip_id: null, event_id: null,
         location_city: "Cebu", location_country: "Philippines", location_lat: 10.3, location_lng: 123.9, starts_at: friEvening, created_at: friEvening,
         state: "draft", visibility: "public" },
+      ...([
+        [MEM_FRIENDS, "friends_only"],
+        [MEM_CREW,    "trip_crew"],
+        [MEM_CIRCLE,  "circle_only"],
+        [MEM_CUSTOM,  "custom"],
+      ] as const).map(([id, visibility]) => ({
+        id, owner_id: USER_B, title: `${visibility} memory`, caption: null,
+        place_id: `osm/node/${id.slice(-2)}`, trip_id: null, event_id: null,
+        location_city: "Cebu", location_country: "Philippines", location_lat: 10.3, location_lng: 123.9,
+        starts_at: friEvening, created_at: friEvening,
+        state: "published", visibility,
+      })),
     ];
   }
 
@@ -559,7 +594,7 @@ describe("graph substrate — circle and experience kinds (2290)", () => {
     assert.equal(edges.find((e) => e.edge_type === "hosted_by" && e.src_key === "evt-solo"), undefined, "an event without a circle has no hosted_by edge");
   });
 
-  it("emits experience nodes from PUBLISHED, non-only_me memories with person/place/trip/event/city edges and a time-slice", async () => {
+  it("emits experience nodes from PUBLISHED, PUBLIC memories with person/place/trip/event/city edges and a time-slice", async () => {
     seedCircleAndExperienceData(fake.store);
     await buildGraphFromSources(fake.fakeClient);
     const nodes = fake.store.compass_graph_nodes ?? [];
@@ -582,13 +617,198 @@ describe("graph substrate — circle and experience kinds (2290)", () => {
       "an experience is a world-model observation for its city and slice");
     assert.ok(edges.some((e) => e.edge_type === "active_in" && e.src_key === USER_ID && e.dst_key === "cebu|fri:evening"));
 
-    // The only_me memory and the draft never enter the graph — no node, no edge, no person link.
-    for (const id of [MEM_ONLYME, MEM_DRAFT]) {
+    // §28.10 — EVERY memory that is not `published` + `public` stays out of the
+    // world model: the draft, only_me, and the four NAMED-AUDIENCE rungs the old
+    // `<> 'only_me'` gate used to admit. A friends_only Memory is as private as
+    // an only_me one as far as the world is concerned; the audience is named,
+    // and the audience is not the world.
+    for (const id of [MEM_ONLYME, MEM_DRAFT, MEM_FRIENDS, MEM_CREW, MEM_CIRCLE, MEM_CUSTOM]) {
       assert.equal(nodes.find((n) => n.node_type === "experience" && n.node_key === id), undefined, `${id} must not become a node`);
       assert.equal(edges.find((e) => e.src_key === id || e.dst_key === id), undefined, `${id} must not appear on any edge`);
     }
     assert.equal(nodes.find((n) => n.node_type === "person" && n.node_key === USER_B), undefined,
       "a person whose only memories are excluded gets no person node from this builder");
+    // The place a private Memory names must not arrive by the back door either:
+    // an `at_place` edge would put the venue in the city's observation set.
+    for (const suffix of ["04", "05", "06", "07"]) {
+      assert.equal(nodes.find((n) => n.node_type === "place" && n.node_key === `osm/node/${suffix}`), undefined,
+        `the place of a private memory (osm/node/${suffix}) must not become a graph node`);
+    }
+  });
+
+  it("§28.10: a client that IGNORES the query predicate still gets no private memory into the graph", async () => {
+    // FOUND BY A SURVIVING MUTATION. Deleting the belt-and-braces
+    // `isPublicWorldMemory` check from the builder loop broke no test, because
+    // every other test drives a fake that honours `.eq()`. Defence in depth
+    // that nothing exercises is not defence in depth; it is a comment.
+    //
+    // So this drives a client that returns the WHOLE table whatever it was
+    // asked for — the shape a query-builder bug, a view with a different
+    // definition, or a future migration to an RPC could produce — and asserts
+    // the loop refuses on its own.
+    seedCircleAndExperienceData(fake.store);
+    const deaf: any = {
+      from: (name: string) => {
+        if (name !== "memories") return fake.fakeClient.from(name);
+        const rows = fake.store.memories ?? [];
+        const chain: any = new Proxy({}, {
+          get(_t, prop: string) {
+            if (prop === "then") return (resolve: Function) => resolve({ data: rows, error: null });
+            return () => chain;
+          },
+        });
+        return chain;
+      },
+    };
+    await buildGraphFromSources(deaf);
+    const nodes = fake.store.compass_graph_nodes ?? [];
+    for (const id of [MEM_ONLYME, MEM_DRAFT, MEM_FRIENDS, MEM_CREW, MEM_CIRCLE, MEM_CUSTOM]) {
+      assert.equal(nodes.find((n) => n.node_type === "experience" && n.node_key === id), undefined,
+        `${id} reached the loop and the loop must still refuse it`);
+    }
+    assert.ok(nodes.find((n) => n.node_type === "experience" && n.node_key === MEM_PUB),
+      "positive control: the public one still lands, so the refusal is not 'refuse everything'");
+  });
+
+  it("§28.6/§28.10: the eligibility runs in the QUERY, not only in the loop", async () => {
+    // Two reasons this is asserted on the query and not only on the output.
+    //
+    // 1. BUILD_LIMIT is 5000. A gate that admits private rows into the result
+    //    set and drops them in TypeScript spends that budget on rows it will
+    //    throw away, so on a real tree the graph silently loses PUBLIC memories
+    //    past the limit. The output assertions above cannot see that: the fake
+    //    holds seven rows.
+    // 2. Spec §28.6 — "never expose private canonical Memory records to public
+    //    search and rely on post-filtering". The belt-and-braces
+    //    isPublicWorldMemory check is defence in depth, and defence in depth
+    //    stops being that the moment it is the only defence.
+    seedCircleAndExperienceData(fake.store);
+    const filters: Array<[string, string, unknown]> = [];
+    // The fake's builder returns ITSELF from every chain method, so recording
+    // only the first call records nothing: `.select()` hands back the raw
+    // builder and `.eq()` is then invoked on that, past the recorder. The
+    // wrapper re-wraps whenever the inner builder returns itself.
+    const wrap = (inner: any): any => new Proxy({}, {
+      get(_t, prop: string) {
+        if (prop === "then") return (...a: any[]) => inner.then(...a);
+        const v = inner[prop];
+        if (typeof v !== "function") return v;
+        return (...args: any[]) => {
+          if (prop === "eq" || prop === "neq") filters.push([prop, args[0], args[1]]);
+          const r = v(...args);
+          return r === inner ? wrap(inner) : r;
+        };
+      },
+    });
+    const recording: any = {
+      from: (name: string) => {
+        const inner = fake.fakeClient.from(name);
+        return name === "memories" ? wrap(inner) : inner;
+      },
+    };
+    await buildGraphFromSources(recording);
+    assert.ok(filters.some(([op, k, v]) => op === "eq" && k === "state" && v === "published"),
+      "the memories read must ask the database for published rows");
+    assert.ok(filters.some(([op, k, v]) => op === "eq" && k === "visibility" && v === "public"),
+      "the memories read must ask the database for PUBLIC rows — not for 'anything but only_me'");
+    assert.equal(filters.find(([op, k]) => op === "neq" && k === "visibility"), undefined,
+      "a `visibility <> …` predicate admits every rung it does not name; the gate is an allow-list of one");
+  });
+
+  it("§28.10: the eligibility gate is `published` AND `public`, stated once and used by both halves", () => {
+    // The builder and the revocation sweep must agree, or the graph keeps a row
+    // it would no longer admit. One predicate, asserted directly.
+    assert.equal(isPublicWorldMemory({ state: "published", visibility: "public" }), true);
+    for (const visibility of ["friends_only", "trip_crew", "circle_only", "custom", "only_me"]) {
+      assert.equal(isPublicWorldMemory({ state: "published", visibility }), false,
+        `${visibility} is a NAMED audience, not the world`);
+    }
+    for (const state of ["draft", "archived", "deleted", "removed"]) {
+      assert.equal(isPublicWorldMemory({ state, visibility: "public" }), false,
+        `a ${state} Memory is not a published account of anything`);
+    }
+    assert.equal(isPublicWorldMemory(null), false, "an absent Memory is never eligible");
+    assert.equal(isPublicWorldMemory(undefined), false);
+  });
+
+  it("§28.8: a rebuild REVOKES experience nodes and edges whose Memory was deleted, archived or made private", async () => {
+    seedCircleAndExperienceData(fake.store);
+    await buildGraphFromSources(fake.fakeClient);
+    assert.ok((fake.store.compass_graph_nodes ?? []).find((n) => n.node_type === "experience" && n.node_key === MEM_PUB),
+      "precondition: the public memory is in the graph");
+
+    // Three ways a Memory stops being public-world intelligence, one of each.
+    const mems = fake.store.memories ?? [];
+    const pub = mems.find((m) => m.id === MEM_PUB)!;
+    // …the owner narrows it.
+    pub.visibility = "friends_only";
+    // …plus two rows that were eligible when the graph was written and are not now.
+    fake.store.compass_graph_nodes!.push(
+      { id: "n-archived", node_type: "experience", node_key: "m0000000-0000-0000-0000-0000000000a1", city: "cebu", attrs: {} },
+      { id: "n-vanished", node_type: "experience", node_key: "m0000000-0000-0000-0000-0000000000a2", city: "cebu", attrs: {} },
+    );
+    mems.push({ id: "m0000000-0000-0000-0000-0000000000a1", state: "archived", visibility: "public" });
+    // m…a2 has no row at all — hard-deleted with its owner's account.
+    fake.store.compass_graph_edges!.push(
+      { id: "e-archived", src_type: "experience", src_key: "m0000000-0000-0000-0000-0000000000a1", dst_type: "city", dst_key: "cebu", edge_type: "in_city" },
+      { id: "e-vanished", src_type: "person", src_key: USER_B, dst_type: "experience", dst_key: "m0000000-0000-0000-0000-0000000000a2", edge_type: "experienced" },
+    );
+
+    const report = await reconcileExperienceNodes(fake.fakeClient);
+    assert.equal(report.unresolved, false, "the memories read succeeded, so the sweep is authoritative");
+    assert.equal(report.examined, 3, "three experience nodes were examined");
+    assert.equal(report.nodesDeleted, 3, "narrowed, archived and vanished are all revoked");
+
+    const nodes = fake.store.compass_graph_nodes ?? [];
+    const edges = fake.store.compass_graph_edges ?? [];
+    assert.equal(nodes.find((n) => n.node_type === "experience" && n.node_key === MEM_PUB), undefined,
+      "a Memory narrowed to friends_only does not stay in a Compass projection");
+    assert.equal(nodes.find((n) => n.id === "n-archived"), undefined, "an archived Memory's node is revoked");
+    assert.equal(nodes.find((n) => n.id === "n-vanished"), undefined, "a hard-deleted Memory's node is revoked");
+    for (const id of ["e-archived", "e-vanished"]) {
+      assert.equal(edges.find((e) => e.id === id), undefined, `edge ${id} touching a revoked experience is deleted`);
+    }
+    assert.equal(edges.find((e) => e.src_key === MEM_PUB || e.dst_key === MEM_PUB), undefined,
+      "no edge survives its experience node — an orphan in_city edge still counts toward the city's sample size");
+    // Nothing else is touched: the circle and its edges are not experience rows.
+    assert.ok(nodes.find((n) => n.node_type === "circle" && n.node_key === CIRCLE_ID), "the sweep is scoped to experience nodes");
+  });
+
+  it("§28.8: an unreadable `memories` read deletes NOTHING and says so, rather than erasing the graph", async () => {
+    seedCircleAndExperienceData(fake.store);
+    await buildGraphFromSources(fake.fakeClient);
+    const before = (fake.store.compass_graph_nodes ?? []).length;
+
+    const blinded: any = {
+      from: (name: string) =>
+        name === "memories"
+          ? { select: () => ({ in: () => Promise.resolve({ data: null, error: { message: "57014 canceling statement" } }) }) }
+          : fake.fakeClient.from(name),
+    };
+    const report = await reconcileExperienceNodes(blinded);
+    assert.equal(report.unresolved, true, "an unreadable source is reported, not silently treated as 'nothing is eligible'");
+    assert.equal(report.nodesDeleted, 0);
+    assert.equal(report.edgesDeleted, 0);
+    assert.equal((fake.store.compass_graph_nodes ?? []).length, before, "not one node was deleted on an unreadable read");
+  });
+
+  it("§28.8: rebuildIntelligenceGraph runs the sweep BEFORE folding the aggregates, and reports it", async () => {
+    seedCircleAndExperienceData(fake.store);
+    const order: string[] = [];
+    const traced: any = {
+      from: (name: string) => {
+        if (name === "memories" || name === "compass_city_models") order.push(name);
+        return fake.fakeClient.from(name);
+      },
+    };
+    const report = await rebuildIntelligenceGraph(traced);
+    assert.ok(report.experienceRevocations, "the report names the sweep even when it removed nothing");
+    assert.equal(report.experienceRevocations!.unresolved, false);
+    const lastMemoriesRead = order.lastIndexOf("memories");
+    const firstModelWrite = order.indexOf("compass_city_models");
+    assert.ok(lastMemoriesRead >= 0 && firstModelWrite >= 0, "both stages ran");
+    assert.ok(lastMemoriesRead < firstModelWrite,
+      "the revocation sweep must finish before the world model is folded, or a revoked experience is counted into today's score anyway");
   });
 
   it("every emitted node_type is an admitted kind, and migration 2290 admits exactly GRAPH_NODE_KINDS (no trail)", async () => {

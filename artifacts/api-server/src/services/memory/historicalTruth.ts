@@ -233,3 +233,53 @@ export function fuseHistoricalWithCurrent(
     fusion_note: current.available ? FUSION_NOTE_BOTH : FUSION_NOTE_NO_CURRENT_DATA,
   };
 }
+
+// ── §1 on the Memory domain's own payloads ───────────────────────────────────
+
+/**
+ * The marking every serialized canonical Memory carries.
+ *
+ * camelCase because it rides on the REST payload shape `routes/memories.ts`
+ * already serves, not on the snake_case `HistoricalFact` the §16 tools emit.
+ * The two are the same claim in the two vocabularies this repository uses, and
+ * `MEMORY_TRUTH_CLASS` is the single literal both take it from.
+ */
+export const MEMORY_TRUTH_CLASS: TruthClass = "historical";
+
+export const MEMORY_TRUTH_ENVELOPE = Object.freeze({
+  truthClass: MEMORY_TRUTH_CLASS,
+  establishesCurrentStatus: false as const,
+});
+
+/**
+ * Mark a canonical Memory payload as the historical claim it is.
+ *
+ * WHY THIS EXISTS AT ALL, given the module above already encodes §14. The
+ * boundary was real but it lived on ONE consumer: the §16 Compass accessors
+ * built `HistoricalFact` values, and `routes/memories.ts` — every REST read of
+ * a Memory, which is where the app itself gets its Memories — serialized bare
+ * columns with nothing on them saying what kind of truth they are. So the
+ * separation was a property of the Compass surface rather than of the Memory
+ * domain, and census-highlights-memories H5 said exactly that in those words.
+ * A rule that holds on one of two consumers is not a boundary; it is a habit.
+ *
+ * MECHANICAL, NOT ADVISORY, in one specific way: the marking is applied by the
+ * serializer rather than written into each payload literal, and a payload that
+ * arrives already CLAIMING to be current-world has that claim REMOVED rather
+ * than merged. A Memory row is a record of the past by construction — there is
+ * no column on `memories` that is a reading of the world now — so a payload
+ * asserting otherwise is a bug upstream, and letting it through would be the
+ * §14 violation ("never derive 'open tonight' from 'visited in March'") wearing
+ * this function as a rubber stamp.
+ */
+export function asHistoricalMemoryPayload<T extends Record<string, unknown>>(
+  payload: T,
+): T & typeof MEMORY_TRUTH_ENVELOPE {
+  if (payload.truthClass !== undefined && payload.truthClass !== MEMORY_TRUTH_CLASS) {
+    log.warn(
+      { offered: payload.truthClass },
+      "historicalTruth: a canonical Memory payload offered a non-historical truth class — overridden (§1: a Memory is a record of the past)",
+    );
+  }
+  return { ...payload, ...MEMORY_TRUTH_ENVELOPE };
+}

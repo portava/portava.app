@@ -4,6 +4,8 @@ import http from "node:http";
 import express from "express";
 import { _setTestClient } from "../lib/http.js";
 import memoriesRouter from "../routes/memories.js";
+import { logger } from "../lib/logger.js";
+import { asHistoricalMemoryPayload } from "../services/memory/historicalTruth.js";
 
 /**
  * Backend tests for the Memory System API.
@@ -807,5 +809,175 @@ describe("GET /api/trips/:tripId/memory", () => {
       const { status } = await get(app.baseUrl, `/api/trips/${TRIP_ID}/memory`, auth("owner-tok"));
       assert.equal(status, 404);
     } finally { await app.close(); }
+  });
+});
+
+// ── §1 / §14 — a Memory the domain serves says it is a record of the past ─────
+//
+// Highlights/Memories spec §1: "Historical truth and current-world truth are
+// separate. A place remembered as visited in 2026 does not establish that it is
+// open now." §14 restates it as the fusion invariant, and §16 as a rule the LLM
+// may not break.
+//
+// census-highlights-memories H5 held this BUILT-BUT-WRONG with a precise
+// complaint: the boundary was encoded in services/memory/historicalTruth.ts and
+// route-reachable, "but on ONE consumer … routes/memories.ts still serializes
+// Memory rows with no truth class on them, so the separation is a property of
+// the Compass surface rather than of the Memory domain."
+//
+// These tests are about the DOMAIN, so they drive the REST routes rather than
+// the helper: the marking has to arrive on the wire, on every read shape, or it
+// is a property of a function nobody called.
+/**
+ * The shape `routes/memories.ts` serves, declared rather than inferred.
+ *
+ * The helpers above return `body` as `unknown` (fetch's `.json()` does), and
+ * `pnpm typecheck:tests` refuses a fixture describing a shape production never
+ * emits — which is the gate working, not an obstacle. So the shape is WRITTEN
+ * DOWN here, against `mapMemory`'s return type, and read through it. `any`
+ * would have passed the gate by switching it off.
+ */
+interface SerializedMemory {
+  id: string;
+  ownerId: string;
+  truthClass: string;
+  establishesCurrentStatus: boolean;
+}
+interface MemoryBody { memory: SerializedMemory }
+interface MemoryListBody { memories: SerializedMemory[] }
+const one = (b: unknown): MemoryBody => b as MemoryBody;
+const many = (b: unknown): MemoryListBody => b as MemoryListBody;
+
+describe("§1 historical truth class on canonical Memory payloads", () => {
+  it("a single Memory read carries truthClass historical and establishesCurrentStatus false", async () => {
+    const app = await startApp(baseState());
+    try {
+      const { status, body } = await get(app.baseUrl, `/api/memories/${MEM_ID}`, auth("owner-tok"));
+      assert.equal(status, 200);
+      assert.equal(one(body).memory.truthClass, "historical");
+      assert.equal(one(body).memory.establishesCurrentStatus, false,
+        "the caveat rides on the datum — a consumer cannot drop it without dropping a field");
+    } finally { await app.close(); }
+  });
+
+  it("a stranger's read of the same Memory carries it too — it is not an owner-only field", async () => {
+    const app = await startApp(baseState());
+    try {
+      const { status, body } = await get(app.baseUrl, `/api/memories/${MEM_ID}`, auth("stranger-tok"));
+      assert.equal(status, 200);
+      assert.equal(one(body).memory.truthClass, "historical");
+      assert.equal(one(body).memory.establishesCurrentStatus, false);
+    } finally { await app.close(); }
+  });
+
+  it("the discovery feed, the profile listing and the trip recap all carry it", async () => {
+    const app = await startApp(baseState());
+    try {
+      const feed = await get(app.baseUrl, "/api/memories", auth("owner-tok"));
+      assert.equal(feed.status, 200);
+      assert.ok(many(feed.body).memories.length > 0, "precondition: the feed returned a Memory");
+      for (const m of many(feed.body).memories) {
+        assert.equal(m.truthClass, "historical", `feed memory ${m.id} is unmarked`);
+        assert.equal(m.establishesCurrentStatus, false);
+      }
+
+      const profile = await get(app.baseUrl, `/api/users/${USER_ID}/memories`, auth("owner-tok"));
+      assert.equal(profile.status, 200);
+      assert.ok(many(profile.body).memories.length > 0, "precondition: the profile listing returned a Memory");
+      for (const m of many(profile.body).memories) {
+        assert.equal(m.truthClass, "historical", `profile memory ${m.id} is unmarked`);
+        assert.equal(m.establishesCurrentStatus, false);
+      }
+
+      const trip = await get(app.baseUrl, `/api/trips/${TRIP_ID}/memory`, auth("owner-tok"));
+      assert.equal(trip.status, 200);
+      assert.equal(one(trip.body).memory.truthClass, "historical");
+      assert.equal(one(trip.body).memory.establishesCurrentStatus, false);
+    } finally { await app.close(); }
+  });
+
+  it("a WRITE answers with the marking too — create and patch, not only reads", async () => {
+    const app = await startApp(baseState());
+    try {
+      const created = await post(app.baseUrl, "/api/memories", auth("owner-tok"), { title: "Dinner" });
+      assert.equal(created.status, 201);
+      assert.equal(one(created.body).memory.truthClass, "historical");
+      assert.equal(one(created.body).memory.establishesCurrentStatus, false);
+
+      const patched = await patch(app.baseUrl, `/api/memories/${MEM_ID}`, auth("owner-tok"), { title: "Dinner, corrected" });
+      assert.equal(patched.status, 200);
+      assert.equal(one(patched.body).memory.truthClass, "historical");
+      assert.equal(one(patched.body).memory.establishesCurrentStatus, false);
+    } finally { await app.close(); }
+  });
+
+  it("a payload that arrives already claiming to be current_world has the claim REMOVED, not merged", () => {
+    // THIS TEST WAS VACUOUS ON ITS FIRST WRITING AND A MUTATION SAID SO.
+    // It drove the ROUTE with a `truthClass: "current_world"` column on the
+    // fixture row and asserted the response said "historical" — and it passed
+    // with the override deliberately broken, because `mapMemory` builds its
+    // payload from an explicit field list and never copies an unknown column.
+    // The route could not reach the branch under test, so the green meant
+    // nothing. Asserted on the function, where the property is real.
+    const marked = asHistoricalMemoryPayload({ id: MEM_ID, truthClass: "current_world", establishesCurrentStatus: true });
+    assert.equal(marked.truthClass, "historical",
+      "a canonical Memory is a record of the past whatever the payload claims");
+    assert.equal(marked.establishesCurrentStatus, false);
+    assert.equal(marked.id, MEM_ID, "everything else on the payload survives");
+  });
+});
+
+// ── §24 the source version actually reaches the log from the route ───────────
+//
+// FOUND BY A SURVIVING MUTATION. Deleting `sourceVersion: existing.updated_at`
+// from the PATCH dispatch broke nothing: the audit-line tests build a
+// CommandAudit by hand, so they prove auditCommand logs whatever it is handed
+// and say nothing about whether the route hands it anything. A field wired only
+// in a unit test is not wired.
+describe("§24 source version, from the route", () => {
+  function captureLines(): { lines: Array<Record<string, unknown>>; restore: () => void } {
+    const lines: Array<Record<string, unknown>> = [];
+    const realInfo = logger.info.bind(logger);
+    const realWarn = logger.warn.bind(logger);
+    (logger as any).info = (obj: any) => { lines.push(obj); };
+    (logger as any).warn = (obj: any) => { lines.push(obj); };
+    return { lines, restore: () => { (logger as any).info = realInfo; (logger as any).warn = realWarn; } };
+  }
+
+  it("a PATCH logs the updated_at the row had BEFORE the write", async () => {
+    const state = baseState();
+    const priorVersion = "2026-01-02T03:04:05.000Z";
+    state.memories[0]!.updated_at = priorVersion;
+    const app = await startApp(state);
+    const cap = captureLines();
+    try {
+      const { status } = await patch(app.baseUrl, `/api/memories/${MEM_ID}`, auth("owner-tok"), { title: "Corrected" });
+      assert.equal(status, 200);
+    } finally {
+      cap.restore();
+      await app.close();
+    }
+    const audit = cap.lines.find((l) => "commandId" in l && "failureClass" in l);
+    assert.ok(audit, "the PATCH emitted no §24 audit line");
+    assert.equal(audit!.sourceVersion, priorVersion,
+      "the audit names the version the command acted on, not the one it produced");
+    assert.equal(audit!.commandType, "UPDATE_MEMORY");
+  });
+
+  it("a CREATE logs a null source version — there was no prior row to version", async () => {
+    const app = await startApp(baseState());
+    const cap = captureLines();
+    try {
+      const { status } = await post(app.baseUrl, "/api/memories", auth("owner-tok"), { title: "New" });
+      assert.equal(status, 201);
+    } finally {
+      cap.restore();
+      await app.close();
+    }
+    const audit = cap.lines.find((l) => l.commandType === "CREATE_MEMORY");
+    assert.ok(audit, "the CREATE emitted no §24 audit line");
+    assert.equal(audit!.sourceVersion, null,
+      "'there was no prior version' is a state, and it is not a fabricated timestamp");
+    assert.ok("sourceVersion" in audit!, "the key is present even when empty");
   });
 });

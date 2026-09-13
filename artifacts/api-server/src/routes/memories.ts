@@ -60,6 +60,7 @@ import {
   readMemoryCommandEnvelope,
   sendMemoryCommandRejection,
 } from "../lib/memoryCommandBus.js";
+import { asHistoricalMemoryPayload } from "../services/memory/historicalTruth.js";
 import {
   authorizeParticipantCommand,
   commandTypeForPatch,
@@ -908,6 +909,8 @@ router.patch("/memories/:id", async (req, res) => {
     memoryId: id,
     actorUserId: user.id,
     idempotencyKey,
+    // §24 source version — the row as it was BEFORE this command.
+    sourceVersion: existing.updated_at ?? null,
     payload: {
       patch,
       from_state: lifecycle.fromState,
@@ -982,6 +985,8 @@ router.delete("/memories/:id", async (req, res) => {
     memoryId: id,
     actorUserId: user.id,
     idempotencyKey,
+    // §24 source version — the row as it was BEFORE this command.
+    sourceVersion: existing.updated_at ?? null,
     payload: { from_state: lifecycle.fromState, to_state: lifecycle.toState },
     legacy: async () => {
       // THE WRITE THAT MAKES THE DELETION REAL, AND ITS RESULT WAS THROWN AWAY.
@@ -1053,6 +1058,8 @@ router.post("/memories/:id/items", async (req, res) => {
     memoryId: id,
     actorUserId: user.id,
     idempotencyKey,
+    // §24 source version — the row as it was BEFORE this command.
+    sourceVersion: loaded.row.updated_at ?? null,
     payload: {
       media_type: parsed.data.mediaType,
       position: parsed.data.position,
@@ -1143,6 +1150,8 @@ router.delete("/memories/:id/items/:itemId", async (req, res) => {
     memoryId: id,
     actorUserId: user.id,
     idempotencyKey,
+    // §24 source version — the row as it was BEFORE this command.
+    sourceVersion: loaded.row.updated_at ?? null,
     payload: { item_id: itemId },
     legacy: async () => {
       // Delete the DB row first so the item is immediately inaccessible.
@@ -1316,6 +1325,8 @@ router.patch("/memories/:id/tags/:userId", async (req, res) => {
     memoryId: id,
     actorUserId: user.id,
     idempotencyKey,
+    // §24 source version — the row as it was BEFORE this command.
+    sourceVersion: loaded.row.updated_at ?? null,
     payload: { tagged_user_id: userId, status: newStatus, actor_role: authorized.actorRole },
     legacy: async () => {
       // `.select()`: an UPDATE without it returns data:null, so `error === null`
@@ -1743,7 +1754,14 @@ function mapMemory(r: any, viewerId?: string) {
   // viewer (audit MEM·M2). Fail-safe: only the owner sees them; any caller that
   // does not pass a viewer gets them omitted.
   const isOwner = viewerId != null && viewerId === r.owner_id;
-  return {
+  // §1 / §14 — every Memory this domain serves says, on the datum, that it is a
+  // record of the past and establishes nothing about now. Applied by the
+  // serializer, so no handler can forget it and none can override it: see
+  // services/memory/historicalTruth.ts. THIS IS THE ONLY SERIALIZATION POINT
+  // for a canonical Memory in this file — every route below returns
+  // mapMemory(...) or spreads it — which is what makes one call here a property
+  // of the domain rather than of whichever handler remembered.
+  return asHistoricalMemoryPayload({
     id: r.id,
     ownerId: r.owner_id,
     title: r.title ?? null,
@@ -1774,7 +1792,7 @@ function mapMemory(r: any, viewerId?: string) {
     state: r.state,
     createdAt: r.created_at,
     updatedAt: r.updated_at ?? null,
-  };
+  });
 }
 
 function mapItem(r: any) {
