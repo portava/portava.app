@@ -44,6 +44,7 @@ import { LayoverMapCard } from '../../src/components/layover/LayoverMapCard';
 import { LayoverPeopleSection } from '../../src/components/layover/LayoverPeopleSection';
 import { LayoverSafeReturnCard } from '../../src/components/layover/LayoverSafeReturnCard';
 import { LayoverCompassCard } from '../../src/components/layover/LayoverCompassCard';
+import { LayoverFlightChangeCard } from '../../src/components/layover/LayoverFlightChangeCard';
 import { fmtClock } from '../../src/components/layover/layoverFormat';
 import { KeyboardSafeScrollView } from '../../src/components/ui/KeyboardSafeView';
 
@@ -320,6 +321,15 @@ export default function LayoverDashboardScreen() {
 
         <LayoverHero airport={airport} session={session} window={win} localTimes={localTimes} nowMs={nowMs} />
         <CanILeaveCard advice={advice} window={win} airport={airport} />
+        {/* The one §11 event producer this tree has: the traveller. A flight
+            time the gate agent just announced is a fact no feed here carries,
+            and the server runs the whole §11.1 pipeline over it. */}
+        <LayoverFlightChangeCard
+          session={session}
+          canEdit={!!canEdit}
+          onChanged={() => load(true)}
+          onError={showToast}
+        />
         <AirportEssentialsCard countryCode={airport.countryCode} countryName={airport.country !== 'Unknown' ? airport.country : undefined} />
 
         {/* §15.1 "every active landside plan must expose RETURN TO AIRPORT" —

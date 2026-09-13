@@ -391,6 +391,10 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/test/layoverAirportTruth.test.ts",
     "artifacts/api-server/src/test/layoverEventReplanner.test.ts",
     "artifacts/api-server/src/test/layoverLiveConditions.test.ts",
+    // WIDENED 2026-09-13 by §12, which cites this file as the evidence that
+    // §11.1 is reachable from PATCH /airport/sessions/:id. It grades the route,
+    // not the harness: every one of §12's row moves rests on an assertion in it.
+    "artifacts/api-server/src/test/layoverSessionEditReplan.test.ts",
     "artifacts/api-server/src/services/airport/",
     "artifacts/api-server/src/routes/airport.ts",
     "travel-buddy-standalone/src/services/layover.ts",
