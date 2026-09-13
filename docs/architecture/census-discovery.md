@@ -717,7 +717,21 @@ about the code**, which a row may legitimately cite — simply not the requireme
 3. **Every obligation carries exactly one disposition — ADDITION / DUPLICATE / SPLIT — with its
    reason.** §11.4 is that table, line per obligation.
 
-### 11.3 Headline — measured before and after
+### 11.3 The corrected denominator, and what it is made of
+
+| layer | rows | kept / added |
+|---|---|---|
+| The existing 67 — A01–A25, B01–B09, C01–C33 | **67** | **PRESERVED IN FULL.** Not discarded, not replaced by the shorter upgrade checklist. Three are re-graded in §11.6; the other 64 stand as §10 left them. |
+| `DV-01`…`DV-82` — the restored Discovery Architecture v1 package | **+82** | New. Source file and section named per row (§11.5). Eight further obligations were checked and **not** added, as DUPLICATEs of existing rows (§11.4). |
+| `DSV2-04` · `DSV2-05` · `DSV2-06` · `DSV2-12` | **+4** | New. The only four of the twelve DSV2 requirements that add ground the restored package and the existing 67 do not already cover; the other eight are DUPLICATE or the already-counted half of a SPLIT (§11.4). |
+| | **153** | |
+
+The owner's framing forbids both failure modes by name, so both are stated as refusals: this does
+**not** replace the existing denominator with the shorter upgrade checklist — all 67 are still here
+and still counted — and it does **not** count one feature twice: every duplicate is named in §11.4
+with its reason and counted once.
+
+### 11.3a Headline — measured before and after
 
 > **Discovery, at `b7f137a4d`: 153 requirements · 63 BUILT-AND-CORRECT · 46 BUILT-BUT-WRONG ·
 > 42 NOT-BUILT · 2 CANNOT-VERIFY → CONSTRUCTED 109 / 153 = 71.2 % · CORRECT 63 / 153 = 41.2 %.**
