@@ -587,6 +587,19 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     //     re-read, so ageing the document on it is the behaviour wanted, not a
     //     cost of it.
     "artifacts/api-server/src/test/generated/liveColumns.json",
+    //   services/passport/StampAwardEngine.ts and routes/trips.ts — §F.2's SECOND
+    //     stamp family, the one it did not read, and the call site that shows the
+    //     question is live. H4 and H239 are both held by this module at the end
+    //     of §F: it is the definitive surface rule 7 says must be read before
+    //     either can be BUILT-AND-CORRECT again. A census whose two reddest
+    //     cheap rows hang on a file has to age when that file changes.
+    //   lib/mapProducers/personalCityProducer.ts — the counter-example §F.2
+    //     checked so a reader does not assume the map is implicated: it reads
+    //     `passport_stamps`, the AUDITED family, not `user_stamps`. If it ever
+    //     switches tables, that sentence becomes false and H4's blocker widens.
+    "artifacts/api-server/src/services/passport/StampAwardEngine.ts",
+    "artifacts/api-server/src/routes/trips.ts",
+    "artifacts/api-server/src/lib/mapProducers/personalCityProducer.ts",
     "artifacts/api-server/src/routes/airport.ts",
     "artifacts/api-server/src/routes/geofence.ts",
     "artifacts/api-server/src/routes/location.ts",

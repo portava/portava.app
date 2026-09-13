@@ -2727,7 +2727,7 @@ into a test by first proving the ceiling was real.
 
 ---
 
-## F. §25's H239, worked from the surface end — and the planned layover that was minting a checked-in stamp — 2026-09-13, measured at HEAD `46156b375`
+## F. A live defect fixed, a green withdrawn, and an enumeration that repeated the mistake it was written to correct — 2026-09-13, measured at HEAD `46156b375`
 
 §E worked the BRANCH queue — groups (a) and (b) of §D.1 — and left twelve rows open with a
 reason against each. This section did not work that queue again. It took ONE row that §D.1 had
@@ -2743,8 +2743,20 @@ instruction:
 
 Two claims. The second one — *the live stamp path enforces the rule* — had never been checked.
 It was inherited from H4's body evidence, which names two routes and was written in the body,
-before section A. **This section enumerated every path in the repository that mints a durable "you were here"
-artifact, and one of the five did not enforce the rule at all.**
+before section A. **One of the seams it does not name minted a `verification_level: 'checkin'`
+city stamp for a layover the route itself validates as being in the FUTURE, on two open
+production flags. That is fixed here.**
+
+**AND THEN THIS SECTION MADE THE SAME MISTAKE AND CAUGHT ITSELF.** The fix was written, the
+tests were written, and this section was drafted with H239 moving **W → C** on an enumeration of
+*"every path in the repository that mints a durable 'you were here' artifact"*. That enumeration
+was a search for callers of two FUNCTIONS, and the sentence it was made to support is about a
+SET. There is a second stamp family it never looked at — §F.2 — and one of that family's call
+sites awards a stamp carrying a destination city **at trip creation**. So the C is not earned,
+H239 stays **W**, and **H4, which makes the identical universal claim, comes DOWN to W with
+it.** The headline in §F.10 therefore moves the wrong way, and moving the wrong way is the
+correct outcome here: the row was never true, and this section's first draft would have
+re-greened it on exactly the kind of evidence that made it false in the first place.
 
 The denominator is still **266**, the counting rule in "How I decided what counts" is unchanged,
 and the four buckets are unchanged. No migration was written and none was applied. Production
@@ -2769,7 +2781,7 @@ reached, and might never reach.
 and
 `artifacts/api-server/src/lib/capability/snapshots/20260908-production-schema.json:5996#passport_stamps_enabled`.
 Both gates on the path are open. **This is not an unapplied migration and not a flag seeded
-false** — the two causes that account for 105 of this document's 129 remaining W rows. It is a
+false** — the two causes that account for 105 of this document's 131 remaining W rows. It is a
 line of TypeScript that was missing.
 
 **Three spec rules, one write.** §1 — *"Planned, saved, or nearby must never be represented as
@@ -2791,13 +2803,19 @@ fixable by another, fully documented, owned by neither. What §F adds to L19 and
 sharper rule (§1 is about what the artifact CLAIMS, not about who elected it), the fix, and the
 red-first evidence. The observation was not its own.
 
-### F.2 The five seams, enumerated — because "the live stamp path" is not one path
+### F.2 The seams — one family enumerated to the bottom, and a second one this section did NOT read
 
-A repository-wide search for callers of `createStamp`
-(`artifacts/api-server/src/services/passport/PassportStampService.ts:63#export async function createStamp`)
-and of `createSuggestedMemory` returns **five** route seams, not the two H4's evidence names.
-Each is listed with the occurrence evidence it requires, because "it enforces the rule" is a
-claim about a set:
+**There are TWO stamp families in this repository and they write DIFFERENT TABLES.** Saying so
+first is the whole point of this subsection, because the first draft of it said "five seams" and
+meant "five callers of the two functions I happened to grep for".
+
+**Family one: `passport_stamps` and `passport_memories`, minted through `createStamp` /
+`createSuggestedMemory`. ENUMERATED TO THE BOTTOM, and the enumeration is closed rather than
+asserted:** the ONLY `.insert(` into `passport_stamps` anywhere outside `src/test/` is inside
+`artifacts/api-server/src/services/passport/PassportStampService.ts:63#export async function createStamp`
+— every other write to that table is an `update` of `catalog_id` or `visibility`, never a new
+stamp — so enumerating that function's callers enumerates the family. Five route seams, each
+listed with the occurrence evidence it requires:
 
 | seam | what it requires before it mints | verdict at `6d4fd1a06` |
 |---|---|---|
@@ -2807,8 +2825,36 @@ claim about a set:
 | `POST /api/me/safe-return/sessions/:id/confirm` | the traveller's own explicit "I am safe" (`artifacts/api-server/src/routes/safeReturn.ts:562#stampType: "safe_return",`), which is §1's *user confirmation* limb | enforces |
 | `POST /api/airport/sessions` | **nothing.** The session is created and the stamp follows | **does not enforce** |
 
-Four of five hold. The fifth is the one nobody had opened, and it is the only one whose
-requirement is not in the route at all.
+Four of five held. The fifth is the one nobody had opened, and it was the only one whose
+requirement was not in the route at all. It is gated now (§F.3).
+
+A **sixth** writer reaches `passport_memories` without going through `createSuggestedMemory`:
+`POST /api/events/:id/memory` inserts directly. It was opened and it holds — the handler refuses
+unless `events.state` is `completed`, and the row is written by an explicit host action, so both
+of §1's limbs are present. It is named because the first draft's grep would not have found it,
+and a reader checking that grep would have concluded the family had five members when it has six.
+
+**Family two: `user_stamps`, minted through
+`artifacts/api-server/src/services/passport/StampAwardEngine.ts:799#export async function awardStamp`.
+NOT READ, AND THAT IS WHY NOTHING IN THIS SECTION MOVES FORWARD.** It is a criteria engine over
+`stamp_definitions`,
+reached from **more than fifteen** route call sites — the Trips, Events, Follows, Rent-a-Buddy,
+Hidden Gems, Safe Return, Stamps, Stamp Catalog and two Admin routers — and this section read
+one of them. That one is enough to show the question is live rather than theoretical:
+`artifacts/api-server/src/routes/trips.ts:424#definitionSlug: "first_trip_created",` awards
+`first_trip_created` and `trip_planner` **at trip creation**, for a trip whose status is merely
+not `draft`, passing the trip's `destinationCity` and `destinationCountry` onto the stamp row. Those two slugs are PLANNING achievements and a
+badge for planning a trip is not a visit claim — but whether a `user_stamps` row carrying a city
+is rendered anywhere as somewhere the traveller has BEEN depends on that table's readers, and
+this section did not read them either. (It did check the one that would have been worst:
+`artifacts/api-server/src/lib/mapProducers/personalCityProducer.ts:272#.from("passport_stamps")`
+is the map's personal-city producer and it reads `passport_stamps`, the audited family, not
+`user_stamps`.)
+
+**Rule 7 of this census's own method decides what to do with that**: a prohibition is
+BUILT-AND-CORRECT when *"I read that surface and no violating path exists"*, and is NOT
+assumed-satisfied when *"I did not read a definitive surface"*. Family two is a definitive
+surface for a claim phrased "never". It was not read. So H239 does not move and H4 comes down.
 
 ### F.3 What was built
 
@@ -2900,15 +2946,18 @@ the fake.
 
 | id | was | now | why |
 |---|---|---|---|
-| H239 | W | **C** | §25's invariant "planned activity without occurrence cannot earn a visit Memory/Stamp". Its BBW rested on two things and this section changed both: the rule is now true on ALL FIVE live seams (§F.2), and it is COVERED on the live surface by a registered suite rather than only on `evidence.ts`. That is §B.5's own rule for grading a §25 invariant verbatim — *"BAC only when the property is proved on a path production serves — either the module is imported by a route, **or a separate registered suite covers the live surface**"* — and it is the rule H236 and H240 are already C under. **CEILING, and it is why this is not a clean green.** Two of the five seams are driven end to end through their real routers; the other three are pinned only as a SET, by the enumeration in §F.2 read at this commit, and a sixth seam appearing would not turn anything red. The engine half is unchanged: `evidence.ts` is still imported by no route, so what moved is the surface, not the pipeline. |
-| H4 | C | **C** | **NO NET MOVE, AND THAT IS THE WORST WAY TO READ THIS ROW.** Its C was a **FALSE GREEN** at `6d4fd1a06`: the stated evidence is two routes — `routes/geofence.ts` and `routes/location.ts` — and the sentence it supports is universal, *"Planned/saved/nearby never represented as 'experienced'"*. There was a third seam, it was flag-open in production, and it wrote `verification_level: 'checkin'` for a layover the same handler had just validated as being in the future. The row ends green because the gate was added (§F.3), **not because the sentence was rewritten**. Evidence replaced: the rule now holds on all five seams and all five are named. |
+| H239 | W | **W** | **DRAFTED AS W → C AND WITHDRAWN BEFORE IT WAS COMMITTED, for a reason worth more than the move would have been.** §25's invariant is "planned activity without occurrence cannot earn a visit Memory/Stamp". Two of its three blockers were genuinely removed here: the rule is now true on every seam of family one (§F.2), and the live surface is covered by a registered suite rather than only by `evidence.ts` — which is §B.5's own rule for grading a §25 invariant, *"BAC only when the property is proved on a path production serves — either the module is imported by a route, **or a separate registered suite covers the live surface**"*, the rule H236 and H240 are C under. The third blocker is the one this section put there: **`user_stamps` and `StampAwardEngine` were never read**, and an invariant phrased "cannot" is not proved by auditing the stamp family you thought of. Also unchanged: the engine half — `evidence.ts` is imported by no route — and the three family-one seams that are argued from reading rather than driven. |
+| H4 | C | **W** | **A BACKWARD MOVE, AND THE MOST USEFUL THING IN THIS SECTION.** §1: "Planned/saved/nearby never represented as 'experienced' without occurrence evidence or user confirmation." Its C has stood since the body on evidence naming `routes/geofence.ts` and `routes/location.ts` — two of the five seams of ONE of the two stamp families. It was **already false** when this section began: `POST /api/airport/sessions` wrote a `checkin`-verified city stamp for a layover validated as being in the future, on two open production flags. That half is fixed. What is NOT fixed, and what takes the row down rather than restoring it, is that the claim is universal and family two — `user_stamps`, fifteen-plus call sites, one of which awards at trip creation with a destination city attached — has not been read by anybody. **Rule 7: a prohibition graded without reading a definitive surface is not assumed-satisfied.** The row returns to C when somebody enumerates `StampAwardEngine`'s callers the way §F.2 enumerates `createStamp`'s, and not before. |
 | H264 | C | **C** | **A SECOND FALSE GREEN, CLOSED THE SAME WAY.** §28.11 — "never swallow projection/schema failures into plausible-looking empty history without structured error state" — was C on `routes/memories.ts`'s block-lookup branch. Rule 7 of this census's own counting method grades a prohibition **on the surface where a violation would live**, and a violating path existed: `toolMemoryGetEvidence` reported an unreadable participant table as `confirmed_participants: 0`. Read the object, not the sentence about it. Green now because the two reads bind their errors. **D-C2 DOES NOT RESCUE THE OLD GREEN AND DOES NOT UNDERWRITE THE NEW ONE.** If the OpenAI credential is absent the tool never executes — but rule 7 asks whether a violating path exists on the surface, and §A.2 already holds that unreachable code is BUILT. A prohibition is not satisfied by its violation being unreachable. This row's C rests on the live branch in `routes/memories.ts` and on there now being no violating path beside it, neither of which turns on a model choosing anything. |
 | H205 | C | **C** | **Evidence corrected, verdict unmoved.** §B.2 states the row's ceiling as *"two other surfaces re-derive the rule instead of calling it"*, and §C names the same two. There are **three**, not two: `artifacts/api-server/src/services/telegraph/shareables.ts:452#const loadMemory` is a third re-derivation — a fourth reader of the rule, counting the predicate itself — and unlike the other two it says nothing about mirroring anything and DISAGREED with the predicate on blocks until §F.3. The verdict survives because the requirement is the predicate and the predicate exists with its surface parameter; what is now true and was not is that one of the three transcriptions had drifted, which is the failure mode the ceiling was written to warn about, arriving. |
 | H84 | W | **W** | **Evidence corrected, verdict unmoved, and the correction is against the half the row said was FINE.** §A.3 records H84's split as *"the blocking half is still correct and fail-closed; the deletion half was never true"*. The blocking half was not universally correct either: a Memory share card reached a viewer its owner had blocked. That is closed here. W stands on the deletion half, which is owner decision **D6** and is untouched — `highlights` and its four children are still in `UNCLASSIFIED_BACKLOG`. |
 | H120 | W | **W** | **Evidence extended, verdict unmoved.** §C.3 has this row at W because `getMemoryEvidence` is *"an accessor over an absent store"* — §3.6's `memory_evidence` has no migration in this tree (H24). That is unchanged and is the whole of the W. What changed is that the accessor's two reads no longer answer a database failure with a confident zero. An accessor that is honest about a store that does not exist is still an accessor over a store that does not exist. |
 
-**No other row moved, and no row in another lane's census was moved.** §F.7 names the two
-census-layover rows and the two census-compass rows this work bears on and leaves all four alone.
+**One row moved, and it moved DOWN. No row in another lane's census was moved.** §F.7 names the
+two census-layover rows and the two census-compass rows this work bears on and leaves all four
+alone — and note that H4 coming down does NOT license taking census-layover's L19 or L162 down
+with it: those rows are scored against the Layover spec's "if the user chooses" limb, they are
+already W, and this lane does not grade them.
 
 ### F.5 Red-first: every mutation, and the one the harness refused
 
@@ -2950,29 +2999,33 @@ largest stated gap.
 
 ### F.6 The ceiling
 
-1. **One row. This section does not pretend that is a dent in 129.** §D.1's arithmetic is
-   unchanged and is restated in §F.8: **105 of the 129 W rows that remain are capped by storage
-   nobody has applied**, and applying eight migrations remains the single largest available move
-   on this document and an owner act.
-2. **Three of the five seams are read, not driven.** `routes/location.ts`, `routes/hiddenGems.ts`
+1. **NO row moved forward, and one moved back.** §D.1's arithmetic is unchanged and is restated
+   in §F.8: **105 of the 131 W rows are capped by storage nobody has applied**, and applying
+   eight migrations remains the single largest available move on this document and an owner act.
+   What this section changed is the code, in three places, and the record, in six rows.
+2. **THE BIGGEST HOLE IS THE ONE THIS SECTION OPENED IN ITSELF: `user_stamps` is unread.**
+   `StampAwardEngine.awardStamp` is reached from more than fifteen route call sites and this
+   pass read one of them. Until somebody reads the rest, neither H4 nor H239 can be green, and
+   the reason is not a migration, a flag or an owner — it is that nobody has looked.
+3. **Three of family one's five seams are read, not driven.** `routes/location.ts`, `routes/hiddenGems.ts`
    and `routes/safeReturn.ts` were opened at this commit and each was found to require a GPS fix,
    a GPS check-in, or the traveller's own confirmation. That is an argument from reading, and a
    reading is not a test. They are in this census's `CENSUS_SCOPE` so a change to any of them
    ages the document, which is the weakest of the three available guarantees and is the one this
    section has.
-3. **The airport refusal is terminal.** A traveller who sets up a layover in advance now earns no
+4. **The airport refusal is terminal.** A traveller who sets up a layover in advance now earns no
    stamp for it, ever, because nothing re-runs the seam once the arrival passes. That is the
    correct direction — the stamp was unearned — but it is a behaviour change and the owner
    decision it opens is **D-F1** below.
-4. **The gate answers about a DECLARED instant, not an observed one.** The arrival time is
+5. **The gate answers about a DECLARED instant, not an observed one.** The arrival time is
    typed by the traveller. §1 admits *user confirmation* as a limb, and a person who says "I
    landed at 14:00" when 14:00 is in the past is confirming they are there; but the stamp still
    carries `verification_level: 'checkin'`, which names an observation the server never made.
    §4's own TruthLevel would call that `USER_ASSERTED`, and H41 already scores this repository's
    `unverified/gps/checkin/verified` ladder BUILT-BUT-WRONG for being a different vocabulary
    from §4's. **That is not repaired here** and it is **D-F2**.
-5. **The §28.11 repair makes the accessor honest; it does not make it useful.** H120 stays W.
-6. **The share-card block check is one-directional.** A viewer who blocked the OWNER still sees
+6. **The §28.11 repair makes the accessor honest; it does not make it useful.** H120 stays W.
+7. **The share-card block check is one-directional.** A viewer who blocked the OWNER still sees
    the owner's public Memory card. `canReadMemory` refuses in both directions. The divergence is
    narrower than it was and it is not gone.
 
@@ -3026,8 +3079,10 @@ now so the merge is not a discovery:
      §B.1 built four paired controls into the §25 fixtures for exactly that reason, so that
      *"a gate that refuses everything fails all four"*. Whoever merges must re-point this
      control at the end-of-session path, not delete it.
-  3. **H239 and H4 survive the merge and get STRONGER, but their evidence in §F.1 and §F.4 is
-     then stale** — it cites a seam that no longer exists. Re-read, do not re-point.
+  3. **Neither H239 nor H4 is green, so the merge cannot break a green — but their evidence in
+     §F.1 and §F.4 goes stale**, because it cites a seam that will no longer exist. Re-read, do
+     not re-point. Both rows are held by §F.2's second family either way, and the merge does not
+     touch that.
 
 This is the §D.2 seam a third time and the §D.11 merge choice a second. Neither lane knew the
 other was working it.
@@ -3053,24 +3108,32 @@ adds is anchored.
 ### F.8 The W column after this section, and precisely how many rows any branch can reach
 
 §D.1's grouping was re-checked against the document as it stands rather than taken on trust, and
-it still reproduces. §E closed H77 and H209 out of it; this section takes one more — and the
-interesting thing is WHICH pile it comes out of. H239 was in group **(c)**, the 106 rows D.1
-says no branch can reach, and it is the **second row to leave (c) without a migration**. That is
-a finding about the grouping, not about the row. H239 was filed under
-"§25 invariants, certified against fixtures of the unapplied stores", and that was true of its
-ENGINE half and false of its surface half. **Like H209 before it, it was a closeable row filed
-among the unreachable ones.**
+it still reproduces. This section takes nothing OUT of the W column and puts one row IN — and
+what is worth reading is where the two rows it touches now sit.
+
+**H239 leaves group (c) without going anywhere better.** D.1 filed it under "§25 invariants,
+certified against fixtures of the unapplied stores", among the 106 rows no branch can reach.
+That was true of its ENGINE half and false of its surface half, and the surface half is now
+built and covered. What holds it is no longer storage; it is an unread second stamp family,
+which is code. **It moves (c) → (a), and like H209 before it, it was a closeable row filed among
+the unreachable ones — the difference is that this time closing it needs a pass nobody has
+spent, not a paragraph.** **H4 joins (a) for the same reason.**
 
 | group | rows at §E | rows now | what it means |
 |---|---:|---:|---|
-| **(a)** logic wrong or incomplete in code | 7 | 7 | H6, H10, H84, H189, H190, H193, H202 — §E.5 opened all seven and named what stops each |
+| **(a)** logic wrong or incomplete in code | 7 | **9** | H6, H10, H84, H189, H190, H193, H202 — §E.5 opened all seven — **plus H239 and H4, both waiting on one thing: somebody enumerating `StampAwardEngine`'s callers the way §F.2 enumerates `createStamp`'s** |
 | **(b)** logic right, nothing reaches it | 5 | 5 | H104, H105, H165, H166, H198 |
 | **(c)** capped by an unapplied migration, an absent column, or a flag with no row | 106 | **105** | H239 leaves it |
 | **(d)** rests on an LLM choosing to call something | 3 | 3 | H120, H123, H126 — owner decision **D-C2** |
 | **(e)** needs something nobody has written | 9 | 9 | |
-| | 130 | **129** | |
+| | 130 | **131** | |
 
-**THREE of the 129 W rows are blocked on D-C2 and 126 are not.** The three are H120, H123 and
+**THE SINGLE CHEAPEST ROW IN THIS DOCUMENT IS NOW H4.** It needs no migration, no flag, no owner
+decision and no product ruling — it needs one lane to read fifteen call sites and say, for each,
+whether the stamp it awards is a visit claim and whether the thing that earned it had happened.
+That is a day, and it is worth two rows.
+
+**THREE of the 131 W rows are blocked on D-C2 and 128 are not.** The three are H120, H123 and
 H126, and they are already W — D-C2's outcome cannot make them worse. The thirteen rows D-C2
 genuinely endangers are all **C** rows and §E.7 enumerates them; that exposure is unchanged by
 this section, which added nothing to group (d) and leant on nothing in it. **Every row this
@@ -3097,6 +3160,14 @@ routes, and the Telegraph share loader is reached by resolving a share reference
   `canReadMemory` refuses in both directions; `loadProfile` and now `loadMemory` refuse in one.
   Two answers are defensible and the file's own neighbour picked one; this section matched the
   neighbour rather than deciding.
+- **D-F4 (NEW, and it is a LANE assignment rather than an owner decision) — somebody must read
+  `StampAwardEngine`.** It is the only thing between H4 and C, and H4 is now the cheapest row in
+  the document. The work is: enumerate `awardStamp`'s call sites, and for each say (1) whether
+  the stamp it awards is a claim about having BEEN somewhere, and (2) whether the thing that
+  earned it had happened at the moment it was written. `POST /trips` is the one to start with,
+  because it awards at creation with a destination city attached. This is named as a decision
+  only because deciding NOT to do it is also a decision, and it would leave two rows red for the
+  reason that nobody looked.
 - **D-C2 (OPEN, inherited)** — unchanged, not leant on, and §F.8 says exactly which rows it
   reaches.
 - **D6 (OPEN, inherited)** — unchanged, and it is what holds H84.
@@ -3109,17 +3180,26 @@ Restated from `npm run -s check:census-integrity`, not counted by hand.
 | figure | section E | **now** |
 |---|---:|---:|
 | Denominator | 266 | **266** |
-| BUILT-AND-CORRECT | 56 | **57** |
-| BUILT-BUT-WRONG | 130 | **129** |
+| BUILT-AND-CORRECT | 56 | **55** |
+| BUILT-BUT-WRONG | 130 | **131** |
 | NOT-BUILT | 78 | **78** |
 | CANNOT-VERIFY | 2 | **2** |
 | CONSTRUCTED% | 69.9 % | **69.9 %** |
-| CORRECT%, raw | 21.1 % | **21.4 %** |
-| **the gap** | **48.8 points** | **48.5 points** |
+| CORRECT%, raw | 21.1 % | **20.7 %** |
+| **the gap** | **48.8 points** | **49.2 points** |
 
-**Three tenths of a point, and the number is the least interesting thing here again.** What this
-section is worth is not in that table. It is that a route which validates its own event as being
-in the FUTURE was, on two open production flags, writing a Passport row that said the traveller
-had checked in — and that the census carrying the rule against it had been reporting that rule
-BUILT-AND-CORRECT since the body, through five re-measurements, on evidence naming two of the
-five places the rule has to hold.
+**CORRECT went DOWN and the gap got WIDER, and this section is worth more than the one that
+drafted itself going the other way.** The brief that commissioned this work asked for the gap to
+shrink. What was available to shrink it honestly was one row, and one row turned out not to be
+available: the draft that moved H239 to C rested on an enumeration of the stamp family this
+author happened to grep for, which is the same shape of evidence that had been holding H4 green
+since the body — two routes named out of two families, one of which nobody has read.
+
+So the ledger for this pass is: **one live production defect found and fixed** (a route that
+validates its own event as being in the FUTURE was writing a Passport row saying the traveller
+had checked in, on two open flags); **two more found and fixed** (a Compass accessor reporting an
+unreadable participant table as "nobody was there", and a share card that a block did not stop);
+**three red-first suites added**; and **one green withdrawn**, because the thing this census
+keeps catching in other passes turned out to be in this one too. A number that moved up by a
+third of a point on that evidence would have been the fourth false green in this document's
+history, and the first that was avoidable by its own author.
