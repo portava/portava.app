@@ -3424,9 +3424,14 @@ underneath) it is red for the right one, and the 4-pass/3-fail figure above is f
 | M3 | the `state` precondition is deleted from the PATCH write | RED — 3 of 43 |
 | M4 | the zero-row answer is downgraded from `conflict` to `db_error` | RED — 1 of 7 |
 | M5 | the precondition is widened from `state` to a whole-row `updated_at` CAS | RED — 3 of 7, **and this is the mutation worth reading**: it fails the field-level case, so "a concurrent title edit must not block a caption edit" is load-bearing rather than decorative |
-| M6 | the profile Highlight read stops clamping (`disclosed` → `visible`) | RED — 4 of 61 |
+| M6 | the profile Highlight read stops clamping (`disclosed` → `visible`) | RED — 3 of 62 |
 | M7 | a null service client answers `absent` instead of `unreadable` | RED — 1 of 55, **after** the branch was moved (below) |
 | M8 | `enrichMemories` ignores the precision flag and always clamps | RED — 2 of 46 |
+
+Every figure above is from a re-run against the FINAL committed code, not from the run that
+first produced each mutation: M6 was recorded as "4 of 61" while the highlights suite was six
+cases long and is "3 of 62" now that it is eight, and publishing the older number would have
+been a count nobody could reproduce.
 
 **M7 STAYED GREEN TWICE, AND THE REASON WAS A FALSE GREEN IN THIS PASS'S OWN TEST.** The first
 form of the fix decided the null-client case *in the route*, and the route-level case written to
