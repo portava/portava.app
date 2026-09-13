@@ -1591,13 +1591,13 @@ out: `artifacts/api-server/src/test/memoryCompassTools.test.ts:247#offered`.
 ### C.2 Reachability, stated as a chain with its weak links named
 
 `POST /compass/ask` → `COMPASS_TOOL_DEFINITIONS` handed to the model
-(`artifacts/api-server/src/routes/compass.ts:1291#COMPASS_TOOL_DEFINITIONS`) → the model emits a
+(`artifacts/api-server/src/routes/compass.ts:1295#COMPASS_TOOL_DEFINITIONS`) → the model emits a
 tool call → `executeCompassTool` dispatches by name → `executeMemoryCompassTool`.
 
 Three things that chain depends on, each said rather than assumed:
 
 1. **`COMPASS_ENABLED`.** Read fail-closed at
-   `artifacts/api-server/src/routes/compass.ts:1380#isCompassEnabled`. The committed production
+   `artifacts/api-server/src/routes/compass.ts:1384#isCompassEnabled`. The committed production
    snapshot records it `true`. That is a repository artifact, not a live query — production was
    not touched.
 2. **An OpenAI credential.** `artifacts/api-server/src/lib/openai.ts:4#apiKey` reads

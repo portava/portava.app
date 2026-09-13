@@ -130,7 +130,11 @@ import {
   appendMessage,
   touchConversation,
 }                                                from "../services/compass/CompassConversationService.js";
-import { classify as classifyIntent, type IntentClassification } from "../services/compass/CompassIntentClassifier.js";
+import {
+  classify as classifyIntent,
+  CLASSIFIER_CONTEXT_TURNS,
+  type IntentClassification,
+} from "../services/compass/CompassIntentClassifier.js";
 import { getWeatherContext as getWeatherForAsk }  from "../lib/weatherCache.js";
 import {
   COMPASS_TOOL_DEFINITIONS,
@@ -1428,9 +1432,18 @@ router.post("/compass/ask", async (req, res) => {
   // itinerary branch (structured day-by-day payload); everything else —
   // including classifier null/error/low confidence — falls through to the
   // normal conversation/tool loop.
+  //
+  // The classifier is given the last two turns as well as the new message, per
+  // compass-phase1-spec.md §2 ("input = last user message + last 2 turns").
+  // `history` is already loaded above and was previously not passed, which left
+  // the router resolving a pronoun with no antecedent — the standing evaluation
+  // set's "What did you mean?" and "Which one is closer?" are exactly that case.
   let intentResult: IntentClassification | null = null;
   try {
-    intentResult = await classifyIntent(prompt);
+    intentResult = await classifyIntent(
+      prompt,
+      history.slice(-CLASSIFIER_CONTEXT_TURNS).map((h) => ({ role: h.role, content: h.content })),
+    );
   } catch { /* non-fatal — treated as no classification */ }
   const isItineraryIntent =
     intentResult !== null &&

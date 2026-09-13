@@ -101,7 +101,25 @@ export interface SuppressedNudge {
     | "category_disabled"
     | "quiet_hours"
     | "duplicate"
-    | "daily_cap";
+    | "daily_cap"
+    /**
+     * The traveller's permission changed BETWEEN the snapshot this run started
+     * from and this candidate's delivery. `runSense` reads settings once and
+     * then awaits an evaluation pass and a dedupe read per candidate, so the
+     * snapshot is already stale by the time anything is sent; a presence switch
+     * to `passive`, or a category turned off, must stop the send rather than
+     * lose a race with it. Revalidating is what the upgrade specification asks
+     * for in its own words — authorization is rechecked before a consequential
+     * action, and a notification is a disclosure.
+     */
+    | "revoked_mid_run"
+    /**
+     * The live session was stopped between the tick reading it and this
+     * candidate's delivery. Same race, different authority: a live nudge is
+     * authorized by an OPEN session, so a closed one withdraws the authority
+     * for every candidate still queued behind it.
+     */
+    | "session_ended";
 }
 
 export interface SenseRunResult {
@@ -622,6 +640,30 @@ export async function runSense(
     }
     if (deliveredToday >= cap) {
       suppressed.push({ dedupeKey: nudge.dedupeKey, type: nudge.type, reason: "daily_cap" });
+      continue;
+    }
+
+    // LAST GATE BEFORE DISCLOSURE. Everything above this line was decided from
+    // `settings`, read once at the top of this run and now several awaits old —
+    // an evaluation pass over the traveller's trips, events and plan items, a
+    // quiet-window read, and one dedupe read per candidate. A traveller who
+    // switches to `passive` or turns this category off during that window has
+    // revoked the permission this send depends on, and the snapshot cannot know
+    // it. So the permission is re-read here, immediately before the notification
+    // exists, rather than inferred from state that predates the revocation.
+    //
+    // FAIL-CLOSED on an unreadable settings row: `getSenseSettings` already
+    // resolves an unreadable row to the `passive` default (its own fail-closed
+    // posture), so "could not check" arrives here as "do not send". That is the
+    // correct direction for a disclosure — a nudge withheld during an outage is
+    // recoverable, a nudge sent into a revoked permission is not.
+    const nowSettings = await getSenseSettings(sc, userId);
+    const stillPermitted =
+      nowSettings.presenceLevel !== "passive" &&
+      nowSettings.categories[nudge.category] !== false &&
+      !(nowSettings.presenceLevel === "aware" && !AWARE_CATEGORIES.has(nudge.category));
+    if (!stillPermitted) {
+      suppressed.push({ dedupeKey: nudge.dedupeKey, type: nudge.type, reason: "revoked_mid_run" });
       continue;
     }
 

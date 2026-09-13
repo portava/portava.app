@@ -6603,10 +6603,10 @@ rows stay W with the reason narrowed to the gate alone.
   the result carries `attention` (consulted, mode, suppressed, reason,
   withheld) and both tool declarations name `tripId`. The trip brief —
   `GET /compass/recommendations?surface=trip&tripId=` — consults the same
-  switch (`routes/compass.ts:3929#tripAttention = await readTripAttention(sc, tripId, user.id);`)
+  switch (`routes/compass.ts:3942#tripAttention = await readTripAttention(sc, tripId, user.id);`)
   after the member partition and before the static safety note, which is
   therefore never withheld, and returns the reading
-  (`routes/compass.ts:4077#attention: attentionOnTheWire(tripAttention, attentionWithheld)`);
+  (`routes/compass.ts:4090#attention: attentionOnTheWire(tripAttention, attentionWithheld)`);
   the client shows it as read — one line, even with nothing left to show
   (`travel-buddy-standalone/src/components/TripPage.tsx:840#testID="compass-brief-attention"`).
   Tests through `executeCompassTool` with the health fixture's open regroup
