@@ -1672,7 +1672,7 @@ so nothing ever entered the pipeline. This section builds the first two
 and feeds the third rather than replacing it: a candidate is FILED into the
 review queue the platform already has, `moderation_reports`, as a
 system-originated `place` / `safety_concern` row — the queue
-`routes/admin.ts:2050#/admin/moderation/reports` already serves — and
+`routes/admin.ts:2086#/admin/moderation/reports` already serves — and
 asserts nothing. One migration, 2803, seeds a flag FALSE; no table, no
 column. Every rule went red under a mutation before its commit; the
 mutations are listed in §5.3.
@@ -1731,7 +1731,7 @@ mutations are listed in §5.3.
   (`lib/safetyCandidate.ts:256#reporter_id`; `lib/safetyCandidate.ts:260#category`;
   `lib/safetyCandidate.ts:72#SAFETY_CANDIDATE_DETAILS_PREFIX`;
   `test/safetyCandidate.test.ts:141#no reporter`). That is the queue
-  `routes/admin.ts:2050#/admin/moderation/reports` serves to reviewers
+  `routes/admin.ts:2086#/admin/moderation/reports` serves to reviewers
   today, with its `place` filter; the row shape is one the table already
   admits, verified on the object rather than assumed — 2803's preconditions
   read the table's own CHECK constraints and the column's nullability and
