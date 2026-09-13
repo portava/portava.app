@@ -716,6 +716,13 @@ router.get("/memories", async (req, res) => {
 const MEMORY_SELECT = "id, owner_id, title, caption, visibility, allowed_user_ids, hidden_user_ids, trip_id, event_id, place_id, location_city, location_country, location_lat, location_lng, canonical_location_id, starts_at, ends_at, state, created_at, updated_at";
 
 /**
+ * The create-from-trip narrower list (POST /trips/:tripId/memory). Module-level
+ * and a bare literal for the same reason as the two above: a select list
+ * assembled at the call site is one `check:write-path-columns` cannot resolve.
+ */
+const TRIP_MEMORY_SELECT = "id, owner_id, title, caption, visibility, trip_id, starts_at, ends_at, state, created_at";
+
+/**
  * The same list plus the §10 precision rung.
  *
  * TWO SELECT CONSTANTS, NOT ONE WITH A CONDITIONAL SUFFIX BUILT AT THE CALL
@@ -1288,6 +1295,23 @@ router.delete("/memories/:id/items/:itemId", async (req, res) => {
   // craft a URL pointing to another user's object.  Enforcing the path prefix
   // means only files uploaded by this user (path = `memories/${user.id}/...`) can ever
   // be removed via this code path.
+  //
+  // THE `try/catch` HERE USED TO BE THE ONLY HANDLING, AND IT NEVER RAN.
+  // supabase-storage-js RESOLVES with `{ data: null, error }` on a failed
+  // removal — it does not throw — so the catch below was written for an
+  // exception that never arrives, and `await remove(...)` discarded its error.
+  // The row is already gone at this point, which makes the discarded error the
+  // whole of §25's "partial media deletion" chaos case: the item is
+  // unreachable, the bytes are still publicly served, and nothing anywhere
+  // recorded that the two had diverged.
+  //
+  // The response stays 204. The canonical command DID succeed and re-running it
+  // would 404; turning a storage failure into a client error would be a lie in
+  // the other direction. What changes is that the orphan is now findable:
+  // error-level, with the storage path and the §24 `failureClass`. §21 asks for
+  // deletion to be "observable, retryable, dead-lettered on repeated downstream
+  // failure" — there is no dead-letter table (census H193), so this is the
+  // observable half, and it is honest about being only that.
   try {
     const mediaUrl: string = (item as any).media_url ?? "";
     const marker = "/object/public/post-media/";
@@ -1296,14 +1320,24 @@ router.delete("/memories/:id/items/:itemId", async (req, res) => {
       const storagePath = mediaUrl.slice(markerIdx + marker.length);
       const ownerPrefix = `memories/${user.id}/`;
       if (storagePath && storagePath.startsWith(ownerPrefix)) {
-        await sc.storage.from("post-media").remove([storagePath]);
+        const { error: storageErr } = await sc.storage.from("post-media").remove([storagePath]);
+        if (storageErr) {
+          req.log.error(
+            { err: storageErr, memoryId: id, itemId, storagePath, failureClass: "storage_object_orphaned" },
+            "memories: item row deleted but its storage object could not be removed — the bytes are orphaned and still served",
+          );
+        }
       } else {
         req.log.warn({ storagePath, userId: user.id }, "memories: storage path does not match owner prefix — skipping delete");
       }
     }
   } catch (storageErr) {
-    // Non-fatal: DB row is already gone; log and continue
-    req.log.warn({ err: storageErr }, "memories: storage delete failed (item already removed from DB)");
+    // Kept for a genuine throw (a malformed client, a transport error). It is
+    // no longer the only thing standing between a failed removal and silence.
+    req.log.error(
+      { err: storageErr, memoryId: id, itemId, failureClass: "storage_object_orphaned" },
+      "memories: item row deleted but the storage removal threw — the bytes are orphaned and still served",
+    );
   }
 
   res.status(204).send();
@@ -1656,12 +1690,39 @@ router.post("/trips/:tripId/memory", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
-  const { data: trip } = await sc
+  // §19. The eighth Memory-creating path, and the last one that did not read
+  // the envelope. Placed before any read so a malformed key is refused without
+  // the server having looked at anything.
+  const idempotencyKey = requireIdempotencyKey(req, res);
+  if (idempotencyKey === null) return;
+
+  // `.error` IS BOUND ON BOTH READS BELOW, and the difference is not cosmetic.
+  //
+  // supabase-js RESOLVES on a database error. The two reads here used to be
+  // `const { data: trip }` and `const { data: members }`, so an unreadable
+  // `trips` answered 404 "Trip not found" for a trip that exists, and — far
+  // worse — an unreadable `trip_members` produced `members === null`,
+  // `crewIds === []`, and the handler WENT ON TO WRITE a canonical Memory with
+  // `visibility: 'trip_crew'` and no participant at all. §22 forbids
+  // fabricating participant links; an empty crew the server never managed to
+  // read is exactly that, and it is durable. §28.11 forbids the shape in
+  // general: a failure must not become plausible-looking empty history.
+  //
+  // The refusal is `degraded_unavailable` (503, retryable) — this codebase's
+  // established answer for "the check could not be performed", as distinct from
+  // "the check was performed and failed". Nothing is written on either arm; the
+  // client retries and gets ONE Memory, not a second one.
+  const { data: trip, error: tripErr } = await sc
     .from("trips")
     .select("id, owner_id, title, destination_city, destination_country, start_date, end_date, status")
     .eq("id", tripId)
     .maybeSingle();
 
+  if (tripErr) {
+    req.log.error({ err: tripErr, tripId }, "create-from-trip: trips read failed — refusing rather than answering not_found");
+    sendError(res, "degraded_unavailable", "Could not read the trip. Please try again.");
+    return;
+  }
   if (!trip) { sendError(res, "not_found", "Trip not found"); return; }
   if ((trip as any).owner_id !== user.id) { sendError(res, "forbidden", "Only the trip owner can create a memory"); return; }
 
@@ -1670,39 +1731,77 @@ router.post("/trips/:tripId/memory", async (req, res) => {
     return;
   }
 
-  const { data: members } = await sc
+  const { data: members, error: membersErr } = await sc
     .from("trip_members")
     .select("user_id")
     .eq("trip_id", tripId)
     .in("role", ["owner", "member"]);
 
+  if (membersErr) {
+    req.log.error({ err: membersErr, tripId }, "create-from-trip: trip_members read failed — refusing BEFORE the write");
+    sendError(res, "degraded_unavailable", "Could not read the trip crew. Please try again.");
+    return;
+  }
+
   const crewIds = ((members ?? []) as any[])
     .map((m) => m.user_id as string)
     .filter((uid) => uid !== user.id);
 
-  const { data: memory, error } = await sc
-    .from("memories")
-    .insert({
-      owner_id: user.id,
-      title: (trip as any).title,
-      caption: null,
-      visibility: "trip_crew",
-      allowed_user_ids: [],
-      hidden_user_ids: [],
-      trip_id: tripId,
-      starts_at: (trip as any).start_date ? new Date((trip as any).start_date).toISOString() : null,
-      ends_at: (trip as any).end_date ? new Date((trip as any).end_date).toISOString() : null,
-      state: "draft",
-    })
-    .select("id, owner_id, title, caption, visibility, trip_id, starts_at, ends_at, state, created_at")
-    .single();
+  const tripInsertRow = {
+    owner_id: user.id,
+    title: (trip as any).title,
+    caption: null,
+    visibility: "trip_crew",
+    allowed_user_ids: [],
+    hidden_user_ids: [],
+    trip_id: tripId,
+    starts_at: (trip as any).start_date ? new Date((trip as any).start_date).toISOString() : null,
+    ends_at: (trip as any).end_date ? new Date((trip as any).end_date).toISOString() : null,
+    state: "draft",
+  };
 
-  if (error) { req.log.error({ err: error }, "create-from-trip failed"); sendError(res, "db_error", error.message); return; }
+  // §17. This insert used to be a bare `sc.from("memories").insert(...)` — the
+  // one canonical-Memory write in this file that never crossed the command
+  // boundary, so it had no commandId, no audit line and no idempotency key
+  // while the other six did. It goes through the same dispatch as POST
+  // /memories now: kernel when `memory_kernel_enabled` is on, the identical
+  // direct write when it is off, and an audit line either way.
+  const created = await dispatchMemoryCommand<any>({
+    sc,
+    commandType: "CREATE_MEMORY",
+    memoryId: null,
+    actorUserId: user.id,
+    idempotencyKey,
+    payload: {
+      to_state: lifecycleStateOf("draft"),
+      visibility: "trip_crew",
+      write: tripInsertRow,
+      select: TRIP_MEMORY_SELECT,
+    },
+    legacy: async () => {
+      const { data, error } = await sc
+        .from("memories")
+        .insert(tripInsertRow)
+        .select(TRIP_MEMORY_SELECT as any)
+        .single();
+      if (error) {
+        req.log.error({ err: error }, "create-from-trip failed");
+        return { ok: false, http: { code: "db_error", message: error.message } };
+      }
+      return { ok: true, body: data };
+    },
+  });
+
+  if (!created.ok) { sendCommandFailure(req, res, created); return; }
+  const memory = created.body;
 
   const memoryId = (memory as any).id;
   let taggedCount = 0;
 
-  if (crewIds.length > 0) {
+  // `!created.duplicate` for the same reason POST /memories skips it: a replayed
+  // command must not tag the crew a second time — the original command already
+  // did, and the receipt is what says so.
+  if (crewIds.length > 0 && !created.duplicate) {
     const tagRows = crewIds.map((uid) => ({ memory_id: memoryId, tagged_user_id: uid, status: "pending" }));
     // Same defect as the create route: `.then(undefined, cb)` is a REJECTION
     // handler and supabase-js RESOLVES on a database error, so a failed insert
@@ -1741,12 +1840,21 @@ router.get("/trips/:tripId/memory", async (req, res) => {
   // Resolve the trip owner first.  The create-from-trip route (POST /trips/:tripId/memory)
   // requires caller == trip owner, so the canonical trip memory always has owner_id == trip.owner_id.
   // Scoping to that owner prevents an unrelated crew member's trip-linked memory from being surfaced.
-  const { data: trip } = await sc
+  //
+  // `.error` bound for the same reason as the POST twin: an unreadable `trips`
+  // used to answer 404 "Trip not found", which is a claim about the world made
+  // out of a failure to look at it (§28.11).
+  const { data: trip, error: tripErr } = await sc
     .from("trips")
     .select("id, owner_id")
     .eq("id", tripId)
     .maybeSingle();
 
+  if (tripErr) {
+    req.log.error({ err: tripErr, tripId }, "trip-memory: trips read failed — refusing rather than answering not_found");
+    sendError(res, "degraded_unavailable", "Could not read the trip. Please try again.");
+    return;
+  }
   if (!trip) { sendError(res, "not_found", "Trip not found"); return; }
 
   const tripOwnerId = (trip as any).owner_id as string;

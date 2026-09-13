@@ -259,7 +259,7 @@ for this spec (there are none).
 
 | id | Requirement | Bucket | Evidence / divergence | Attr |
 |---|---|---|---|---|
-| H1 | Canonical Memory facts independent of viewer layout and AI narrative | NB | `memories` rows are read and serialized straight to the client (`artifacts/api-server/src/routes/memories.ts:1878#function mapMemory`, the one serialization point every Memory response spreads); there is no fact layer beneath a projection | |
+| H1 | Canonical Memory facts independent of viewer layout and AI narrative | NB | `memories` rows are read and serialized straight to the client (`artifacts/api-server/src/routes/memories.ts:1986#function mapMemory`, the one serialization point every Memory response spreads); there is no fact layer beneath a projection | |
 | H2 | Automatic Memories private-first; publishing always a separate projection decision | BBW | `routes/stories.ts:585-620` — "save to Highlight" hard-codes `visibility: "public"` regardless of the source Story's audience (close-friends, allow-lists). Publishing is not a decision; it is a side effect | pre |
 | H3 | AI may summarize supported evidence but may not manufacture historical facts | NB | No AI path over Memories exists; no guard exists either | |
 | H4 | Planned/saved/nearby never represented as "experienced" without occurrence evidence or user confirmation | **BAC** | `routes/geofence.ts:809-861` (a stamp requires an actual check-in, then only a *suggested* memory) and `routes/location.ts:392-432` (GPS city stamp → *suggested* memory). Suggestions are inert until explicit acceptance (`services/passport/PassportMemoryService.ts:150`). Matches §6's "GPS proximity: weak alone; typically candidate-level only" | pre |
@@ -487,7 +487,7 @@ consumers.
 | H182 | Distinct original / viewer / card / tiny signed renditions | NB | `lib/mediaAssets.ts:151` carries `thumbnail_path`/`thumbnail_url` only — two tiers, not four | |
 | H183 | Perceptual fingerprints detect duplicate imports without filename dependence | BBW | `2046_phash_dedup.sql` implements pHash — for `post_media`. `memory_items` has no `phash` column and never enters that path | pre |
 | H184 | Video scenes as logical segments without duplicating originals | NB | `highlights.video_duration_seconds` is a length cap (`routes/highlights.ts:128-138`), not segmentation | |
-| H185 | Face recognition must not be a dependency for People Memories | **BAC** | People on a Memory are `memory_tags` — an explicit social-graph primitive with consent (`routes/memories.ts:206-216`, `:1427#memory_tags`). No face-recognition code exists in the repo | — |
+| H185 | Face recognition must not be a dependency for People Memories | **BAC** | People on a Memory are `memory_tags` — an explicit social-graph primitive with consent (`routes/memories.ts:206-216`, `:1461#memory_tags`). No face-recognition code exists in the repo | — |
 
 ### §21 Deletion, forgetting and revocation (8)
 
@@ -697,7 +697,7 @@ body gave them.
 | --- | --- | --- |
 | A command boundary with idempotency keys, per-attempt audit, transactional outbox | **In code, yes. In production, no.** | `lib/memoryCommandBus.ts:281` (11 command types), `:434` `IDEMPOTENCY_KEY_HEADER`, `:440` envelope reader, `:470` `executeMemoryCommand`; `lib/memoryOutbox.ts:67-79` (§17's fourteen event names verbatim); `services/memory/MemoryDomainService.ts:121` `auditCommand`, `:338` `dispatchMemoryCommand`. The kernel tables and `public.memory_kernel_execute` are migrations **2710 / 2711, NOT applied**. |
 | The flag is seeded FALSE | **Stronger than that — the row does not exist.** | 2710 seeds `memory_kernel_enabled`; 2710 is unapplied, so the production flag set (`lib/capability/snapshots/20260908-production-schema.json`) contains no such key, and `isFlagEnabled` is fail-closed. Every memory write in production is the legacy direct write, audited only by a log line marked `durable:false` (`MemoryDomainService.ts:360-370`). |
-| Seven routes cross the boundary | **Yes** | `routes/memories.ts:481#CREATE_MEMORY` (CREATE), `:942#dispatchMemoryCommand` (PATCH → ARCHIVE / CONFIRM / CHANGE_VISIBILITY / CHANGE_PLACE / UPDATE via `commandTypeForPatch` in `MemoryDomainService.ts`), `routes/memories.ts:1086#DELETE_MEMORY` (DELETE), `:1159#ADD_MEDIA` (ADD_MEDIA), `:1251#REMOVE_MEDIA` (REMOVE_MEDIA), `:1420#ADD_PERSON` (ADD_PERSON / REMOVE_PERSON) |
+| Seven routes cross the boundary | **Yes** | `routes/memories.ts:481#CREATE_MEMORY` (CREATE), `:949#dispatchMemoryCommand` (PATCH → ARCHIVE / CONFIRM / CHANGE_VISIBILITY / CHANGE_PLACE / UPDATE via `commandTypeForPatch` in `MemoryDomainService.ts`), `routes/memories.ts:1093#DELETE_MEMORY` (DELETE), `:1159#ADD_MEDIA` (ADD_MEDIA), `:1258#REMOVE_MEDIA` (REMOVE_MEDIA), `:1454#ADD_PERSON` (ADD_PERSON / REMOVE_PERSON) |
 | MERGE / SPLIT / PIN / UNPIN / PUBLISH_HIGHLIGHT / HIDE_HIGHLIGHT / SET_RESURFACING_POLICY are **not** declared | **Yes, and the code says why** | `lib/memoryCommandBus.ts:306-313` — `MEMORY_COMMAND_TYPES_NOT_DECLARED`, each with its reason. They stay NOT-BUILT. |
 | `memoryProjections/**` — registry, evidence, episodes, significance, graph | **Yes, and reachable from nothing** | `evidence.ts:246, 435`; `episodeDetection.ts:244`; `significance.ts:162`; `memoryGraph.ts:246`; `projectionRegistry.ts:501`; `derivativeRegistry.ts:287`. **No route or lib outside `src/test/` imports any of them** — grepped across `src/routes/`, `src/lib/`, `src/services/` and `src/scripts/` at this commit. |
 | `memoryRetrieval/**` | **Yes, test-only** | `searchMemories.ts:169`, namespace table at `:49`. Same reachability finding. |
@@ -1310,7 +1310,7 @@ row below is BBW or NB, never BAC.
 `docs/specs/Portava_Highlights_Memories_Development_Architecture_Spec_v1.txt` — and nowhere
 in any source file. The other two occur in COMMENTS only: `place_correction_rate` at
 `artifacts/api-server/src/services/memory/MemoryDomainService.ts:219#place_correction_rate`
-and again at `artifacts/api-server/src/routes/memories.ts:939#place_correction_rate`, both
+and again at `artifacts/api-server/src/routes/memories.ts:946#place_correction_rate`, both
 explaining why CHANGE_PLACE is a distinct command; and `projection_lag` at
 `artifacts/api-server/src/lib/memoryOutbox.ts:233#projection_lag`, plus the different token
 `projection_lag_seconds` in a comment at
@@ -1324,7 +1324,7 @@ alerts on any of the twelve.
 | H212 | `candidate_reject_rate` | NB | Occurs only in this census and the spec. `evaluateEligibility` produces a rejection reason and nothing counts one |
 | H213 | `candidate_split_rate` | NB | Occurs only in this census and the spec; SPLIT_MEMORY is an undeclared command |
 | H214 | `candidate_merge_rate` | NB | Occurs only in this census and the spec; MERGE_MEMORY is an undeclared command |
-| H215 | `place_correction_rate` | NB | Named in two comments — `artifacts/api-server/src/services/memory/MemoryDomainService.ts:219#place_correction_rate` and `artifacts/api-server/src/routes/memories.ts:939#place_correction_rate` — both saying the command exists so the metric COULD be counted. No counter is incremented anywhere |
+| H215 | `place_correction_rate` | NB | Named in two comments — `artifacts/api-server/src/services/memory/MemoryDomainService.ts:219#place_correction_rate` and `artifacts/api-server/src/routes/memories.ts:946#place_correction_rate` — both saying the command exists so the metric COULD be counted. No counter is incremented anywhere |
 | H216 | `participant_correction_rate` | NB | Occurs only in this census and the spec. ADD_PERSON / REMOVE_PERSON are dispatched and counted by nothing |
 | H217 | `false_memory_rate` | NB | Occurs only in this census and the spec. It is corrected-over-surfaced inferred assertions, and neither quantity is stored anywhere |
 | H218 | `explicit_memory_without_candidate_rate` | NB | Occurs only in this census and the spec |
@@ -1567,7 +1567,7 @@ section B records — re-declare at the squash when this lands — is unchanged 
 | §23's ladder, no longer module-private | `artifacts/api-server/src/services/memory/memoryReadPolicy.ts:90#canReadMemory` | Moved out of `routes/memories.ts` comment for comment. Nothing in the ladder changed. `routes/memories.ts:182#memoryReadPolicy.js` imports it back, so the repository has one copy where it had one private one. |
 | A fifth read surface | `artifacts/api-server/src/services/memory/memoryReadPolicy.ts:82#MemoryReadSurface` | `"compass"` joins single, profile, trip and public_feed. It runs the ADDRESSED ladder, not the feed rule, because a Memory shared with this viewer is a Memory this viewer may be told about. |
 | One gate the eight cannot half-perform | `artifacts/api-server/src/services/memory/memoryReadPolicy.ts:276#canCompassReadMemory` | The ladder AND the bidirectional block check in one call. `routes/memories.ts` calls `isBlocked` separately at four read sites, which is fine three lines apart and is not fine across eight accessors. |
-| §23's audience predicate | `artifacts/api-server/src/services/memory/memoryReadPolicy.ts:360#canPublishMemory` | Refuses the three combinations `canReadMemory` denies to every non-owner. Reasons and user-facing messages at `artifacts/api-server/src/services/memory/memoryReadPolicy.ts:339#PUBLISH_REFUSAL_MESSAGE`. Wired at `artifacts/api-server/src/routes/memories.ts:426#canPublishMemory` (POST) and `:906#canPublishMemory` (PATCH, on the MERGED row). |
+| §23's audience predicate | `artifacts/api-server/src/services/memory/memoryReadPolicy.ts:360#canPublishMemory` | Refuses the three combinations `canReadMemory` denies to every non-owner. Reasons and user-facing messages at `artifacts/api-server/src/services/memory/memoryReadPolicy.ts:339#PUBLISH_REFUSAL_MESSAGE`. Wired at `artifacts/api-server/src/routes/memories.ts:426#canPublishMemory` (POST) and `:913#canPublishMemory` (PATCH, on the MERGED row). |
 | §14's invariant as a datum, not a habit | `artifacts/api-server/src/services/memory/historicalTruth.ts:88#establishes_current_status` | Every Memory fact leaves the tools carrying `establishes_current_status: false`. A consumer cannot drop the caveat without dropping a field. |
 | §14's refusal | `artifacts/api-server/src/services/memory/historicalTruth.ts:194#currentWorldReading` | A current-world claim built from a `historical` or `ai_inference` source class is REFUSED and comes back unavailable. The admitted set is two names at `:67#CURRENT_WORLD_SOURCE_CLASSES`. |
 | §14's fusion, which is a juxtaposition | `artifacts/api-server/src/services/memory/historicalTruth.ts:224#fuseHistoricalWithCurrent` | Returns both halves with `merged: false` and sets `may_state_current_status` from the CURRENT half alone. There is no code path in the module that produces one merged claim. |
@@ -2029,7 +2029,7 @@ gone or no longer eligible. Three design choices, each load-bearing:
 **3. §1 in the Memory domain, not only on the Compass surface.**
 `artifacts/api-server/src/services/memory/historicalTruth.ts:275#asHistoricalMemoryPayload` is
 `asHistoricalMemoryPayload`, and
-`artifacts/api-server/src/routes/memories.ts:1891#asHistoricalMemoryPayload` applies it at `mapMemory` — the
+`artifacts/api-server/src/routes/memories.ts:1999#asHistoricalMemoryPayload` applies it at `mapMemory` — the
 single serialization point every memory route returns through. A payload arriving with a
 `truthClass` that is not `historical` has the claim **removed**, not merged.
 
@@ -2062,7 +2062,7 @@ already runs, so `check:test-registration` covers them:
 
 | id | was | now | why |
 |---|---|---|---|
-| H5 | W | **C** | §1's separation is now a property of the Memory DOMAIN, which is exactly what section C said was missing: "*`routes/memories.ts` still serializes Memory rows with no truth class on them.*" Every canonical Memory the REST domain serves — single read, discovery feed, profile listing, trip recap, create and patch responses — carries `truthClass: "historical"` and `establishesCurrentStatus: false`, applied by `artifacts/api-server/src/routes/memories.ts:1891#asHistoricalMemoryPayload` rather than written into each handler. **CEILING: this is a declaration on the datum, not an enforcement on the reader.** What is mechanical is that the caveat cannot be dropped without dropping a field, that a payload claiming `current_world` has the claim removed, and that `currentWorldReading` still refuses a historical source class |
+| H5 | W | **C** | §1's separation is now a property of the Memory DOMAIN, which is exactly what section C said was missing: "*`routes/memories.ts` still serializes Memory rows with no truth class on them.*" Every canonical Memory the REST domain serves — single read, discovery feed, profile listing, trip recap, create and patch responses — carries `truthClass: "historical"` and `establishesCurrentStatus: false`, applied by `artifacts/api-server/src/routes/memories.ts:1999#asHistoricalMemoryPayload` rather than written into each handler. **CEILING: this is a declaration on the datum, not an enforcement on the reader.** What is mechanical is that the caveat cannot be dropped without dropping a field, that a payload claiming `current_world` has the claim removed, and that `currentWorldReading` still refuses a historical source class |
 | H237 | W | **C** | "Deleted memory cannot remain in Compass retrieval." It now holds on the only Compass projection of Memories **production actually has**: `artifacts/api-server/src/compass/CompassGraphEngine.ts:1478#reconcileExperienceNodes` revokes the experience node and every edge touching it when the Memory is deleted, archived, hard-deleted with its owner's account, or narrowed below `public`. **PART OF THIS MOVE IS A RE-READ, NOT A BUILD, AND IS LABELLED AS SUCH:** the §16 accessors section C built already excluded deleted Memories (`canCompassReadMemory` requires `published`; every tool query filters `state <> 'deleted'`) and this row did not account for them. The BUILD half is the graph sweep. **CEILING: the revocation is bounded by the rebuild's daily cadence**, so a deleted Memory can sit in the aggregate substrate for up to 24 hours, and §24's `privacy_revocation_latency` — the metric that would measure exactly that — does not exist |
 | H263 | C | **C** | **NO NET MOVE, AND THAT IS THE WORST WAY TO READ THIS ROW.** Its C was a FALSE GREEN at `f8384ea5b`: its stated evidence was "*the only path from derived memory to any shared surface is `memoryProducer.ts` … Nothing feeds memory into world intelligence*", and `CompassGraphEngine` was a second path, running daily, carrying `friends_only`, `trip_crew`, `circle_only` and `custom` Memories into the Destination World Model. The row ends green because the gate was narrowed to `public` (D.3), not because the sentence was rewritten. Evidence replaced: the rule now holds on **both** paths, and both are named |
 | H189 | W | **W** | Evidence corrected, verdict unmoved. The row read "*revokes nothing — there are no derivatives or indexes to revoke, and no cache invalidation on the memories path*". Half of that is now false: there IS a public derivative of a Memory in production — its experience node and edges in the Compass graph — and narrowing a Memory's audience now revokes it. **Still W for two reasons, both stated rather than implied:** the revocation is asynchronous with a daily ceiling, and `compass_feed_cache` is still never invalidated on a memory visibility change |
@@ -2070,7 +2070,7 @@ already runs, so `check:test-registration` covers them:
 | H223 | W | **W** | **A BUILD THAT DID NOT MOVE A ROW, recorded as such.** Five of §24's eight operational-log fields were present while the doc comment above them quoted all eight. Seven land now — `failureClass` and `sourceVersion` were added at `artifacts/api-server/src/services/memory/MemoryDomainService.ts:199#failureClass`. `projectionName` is an explicit null and will stay one on this path: a command is not a projection, and the projection log that would carry the eighth field is `services/memoryProjections/derivativeRegistry.ts`, whose storage is 2730 — written, unapplied, never run outside a test. By this census's own rule (A.2: code built, storage unapplied ⇒ BBW) the row does not move, and it is not moved |
 | H79 | W | **W** | **Evidence falsified and replaced; verdict unmoved.** The row points at a range of `routes/memories.ts` that is now the create and patch schemas, and says of it "*still the service client over canonical `memories`, still `.limit()` before block filtering*". Neither is true at this commit — the feed is `artifacts/api-server/src/routes/memories.ts:552#router.get`: every privacy predicate runs inside the query and `LIMIT` applies to the already-filtered set, with `hidden_user_ids` now among them. W stands on the half the row got right — §10 asks the public surface to read a DERIVATIVE, and the derivative is 2338, unapplied |
 | H258 | W | **W** | **Evidence falsified and replaced; verdict unmoved.** The row reads "*Zero of the Compass read tools exist (H115–H122)*". Section C built all eight and moved six of them to C in this same document. W stands because §15's retrieval is still 2730 |
-| H83 | C | **C** | **Evidence falsified and replaced; verdict unmoved.** The row proves "being tagged does not make another user a co-owner" by citing `userId !== user.id → 403` — a line that no longer exists. `artifacts/api-server/src/routes/memories.ts:1421#authorizeParticipantCommand` is now `authorizeParticipantCommand`, under which the **owner** may also remove a tag. The verdict survives for a different reason than the one written: a tagged user still gets no edit right and no audience right; what changed is that the owner gained one |
+| H83 | C | **C** | **Evidence falsified and replaced; verdict unmoved.** The row proves "being tagged does not make another user a co-owner" by citing `userId !== user.id → 403` — a line that no longer exists. `artifacts/api-server/src/routes/memories.ts:1455#authorizeParticipantCommand` is now `authorizeParticipantCommand`, under which the **owner** may also remove a tag. The verdict survives for a different reason than the one written: a tagged user still gets no edit right and no audience right; what changed is that the owner gained one |
 
 ### D.5 Red-first: every mutation, and the one the harness refused
 
@@ -2226,7 +2226,7 @@ Three more things a Compass reader should know:
 
 **Two citations in `census-telegraph.md` were REPOINTED, and nothing else in that document was
 read or changed.** Both named line 1712 of `routes/memories.ts` with the anchor `state`; this pass's edits to that
-file moved it to `artifacts/api-server/src/routes/memories.ts:1843#state`, and
+file moved it to `artifacts/api-server/src/routes/memories.ts:1951#state`, and
 `check:doc-citations` named both. (The stale number is written out in words here rather than in
 citation form: reproducing a broken `path:line#anchor` inside a note about it is itself a broken
 citation, which this section learned by doing it.) The claim they carry — "applies
@@ -2478,9 +2478,9 @@ itself rather than trusting a caller to have loaded it, and **every read it make
 `trip_members` makes a crew-scoped roster disclose nobody.
 
 Both routes go through
-`artifacts/api-server/src/routes/memories.ts:807#loadParticipantVisibility` and
-`artifacts/api-server/src/routes/memories.ts:828#participants.participants`, and
-`artifacts/api-server/src/routes/memories.ts:1378#participants.participants`.
+`artifacts/api-server/src/routes/memories.ts:814#loadParticipantVisibility` and
+`artifacts/api-server/src/routes/memories.ts:835#participants.participants`, and
+`artifacts/api-server/src/routes/memories.ts:1412#participants.participants`.
 
 **THE RUNG IS DERIVED, NOT STORED, AND THAT IS THE WHOLE REASON THIS ROW WAS REACHABLE.** The
 Highlights surface reads its rung out of `highlight_projection_policies`, which is migration
@@ -2682,7 +2682,7 @@ above.
 citation below it. Each was moved by locating **the exact text of the original line** in the new
 file and taking that line's new number; where the text was not unique, the citation was left
 alone rather than guessed at, and one —
-`artifacts/api-server/src/routes/memories.ts:942#dispatchMemoryCommand` — was resolved by exact
+`artifacts/api-server/src/routes/memories.ts:949#dispatchMemoryCommand` — was resolved by exact
 text plus its ordinal, because the line occurs twice in both files and the first is still the
 first.
 
@@ -3364,10 +3364,10 @@ and was never re-asserted.
 
 | what | where | why it is there and not somewhere else |
 |---|---|---|
-| Location protection moved INTO the list serializer | `artifacts/api-server/src/routes/memories.ts:1958#async function enrichMemories` and `artifacts/api-server/src/routes/memories.ts:1962#const safeRows` | It was the CALLER's job and one caller did not know. Every list response on this surface goes through this one function, so a fifth list read cannot omit the protection without omitting the serializer. It cannot be applied twice by accident either: coarsening is a grid snap, not an idempotent clamp, so `GET /memories` stopped pre-protecting in the same change |
+| Location protection moved INTO the list serializer | `artifacts/api-server/src/routes/memories.ts:2066#async function enrichMemories` and `artifacts/api-server/src/routes/memories.ts:2070#const safeRows` | It was the CALLER's job and one caller did not know. Every list response on this surface goes through this one function, so a fifth list read cannot omit the protection without omitting the serializer. It cannot be applied twice by accident either: coarsening is a grid snap, not an idempotent clamp, so `GET /memories` stopped pre-protecting in the same change |
 | §10 clamp on the third Highlight read | `artifacts/api-server/src/routes/highlights.ts:686#applyLocationPrecision` | Matches the two existing call sites exactly. **No owner bypass was introduced**, because neither existing call site has one — `GET /highlights/active` clamps the viewer's own Highlights — while the Memory sibling `protectMemoryRow` does bypass. Matching what exists can only narrow disclosure; inventing a bypass on one of three routes would widen it |
 | `readProjectionPolicies(null, …)` answers `unreadable` | `artifacts/api-server/src/services/highlights/highlightProjectionPolicy.ts:381#no service client is configured` | `getServiceClient()` can return null and the profile read tolerates that for its author lookup. `absent` means "this deployment has no such control"; a missing client means "there IS a control and we cannot see it". Deciding it in the function rather than at each call site is what stops the third caller picking the other one |
-| A compare-and-swap on the field the §5 guard judged | `artifacts/api-server/src/routes/memories.ts:989#write = existing.state == null` and the zero-row disambiguation at `artifacts/api-server/src/routes/memories.ts:1028#code: "conflict"` | Pinned to `state` and **nothing else**, which is the field-level half of §19's sentence. A whole-row precondition (`updated_at`) would refuse a caption edit racing a title edit — two commands that are not in competition — and §19 asks for the opposite. Zero matched rows are re-read so that "somebody changed it first" (409) is answered differently from "the write broke" (500) and from "it is gone" (404) |
+| A compare-and-swap on the field the §5 guard judged | `artifacts/api-server/src/routes/memories.ts:996#write = existing.state == null` and the zero-row disambiguation at `artifacts/api-server/src/routes/memories.ts:1035#code: "conflict"` | Pinned to `state` and **nothing else**, which is the field-level half of §19's sentence. A whole-row precondition (`updated_at`) would refuse a caption edit racing a title edit — two commands that are not in competition — and §19 asks for the opposite. Zero matched rows are re-read so that "somebody changed it first" (409) is answered differently from "the write broke" (500) and from "it is gone" (404) |
 
 `GET /highlights/archived` was examined and deliberately **not** changed: it filters
 `.eq("owner_id", user.id)`, so it publishes nothing to anyone but the owner, and §10 governs
@@ -3480,7 +3480,7 @@ test, which is why the "after" count is 8 and not 6.
 | id | was | now | the correction |
 |---|---|---|---|
 | H241 | C | **C** | The row's evidence names one importer, `routes/highlights.ts`, and one module. The invariant now holds on four reads across both surfaces; the two that were not enforcing it are named in H.1. Verdict unchanged and the reason is in H.4 |
-| H166 | W | **W** | The row reads *"`GET /trips/:tripId/memory` returns a raw list"*. It does not and did not: `artifacts/api-server/src/routes/memories.ts:1794#memory: {` returns a single `{ memory }` object for the canonical trip Memory, scoped to the trip OWNER. The gap the row is pointing at is real — `TripMemoryProjection` builds a LIST of a trip's Memories and nothing consumes it — but the sentence describing it was wrong, and a reader checking the row would have found a shape that does not exist |
+| H166 | W | **W** | The row reads *"`GET /trips/:tripId/memory` returns a raw list"*. It does not and did not: `artifacts/api-server/src/routes/memories.ts:1902#memory: {` returns a single `{ memory }` object for the canonical trip Memory, scoped to the trip OWNER. The gap the row is pointing at is real — `TripMemoryProjection` builds a LIST of a trip's Memories and nothing consumes it — but the sentence describing it was wrong, and a reader checking the row would have found a shape that does not exist |
 | H165 | W | **W** | E.5 declined this row on the ground that *"nothing in this repository can tell you which clients read those shapes"*. That is too strong and the next lane should not inherit it. travel-buddy-standalone/src/services/highlights.ts line 172, `fetchUserHighlights`, calls `GET /api/users/${userId}/highlights` and maps `location_name` / `location_city` / `location_country`; travel-buddy-standalone/src/services/memories.ts line 270 calls `GET /api/users/${userId}/memories`. (Client paths are given in words for the same scope-coverage reason as H.6 item 5: this census grades the API server, and citing the client would claim otherwise.) ONE client is in this tree and is measurable — the repository's own convention is to measure it, which is how `memoryCommandBus.ts` established that `updateMemory` has zero production callers. What is NOT measurable is the mobile client: `docs/architecture/mobile-reachability-ledger.md` is pinned to `22ab17151b98adcaf81b5bc976cf1502043f535f` and must not track HEAD. **The honest blocker is "one of two clients is readable", not "no client is"** |
 
 ### H.8 Files changed outside this lane, named loudly
@@ -3580,3 +3580,131 @@ times: what this branch can reach is not what this document is capped on. What i
 two live disclosures on the surface a stranger lands on, one live route that could undo a
 deletion, and a green in its own suite that was passing for the wrong reason. None of those is a
 percentage point, and three of them were being served to users.
+
+
+---
+
+## I. The eighth Memory-creating path, and a lane that built §25 twice — 2026-09-13, the INTEGRATING LANE
+
+*A lane was dispatched against this census and finished with three commits. Its worktree had been
+cut from `014a25d5`, **315 commits behind** this branch, so it worked against a 1,185-line copy of
+this document that ran to section A. **Its branch was not merged.** Two of the three defects it
+found are real, still present here, and are fixed below with its test. The third of its deliverables
+is a duplicate of work section B already did, and taking it would have counted one feature twice.*
+
+### I.1 What was NOT taken, and why that is the important half
+
+The lane built `services/memoryCertification/fixtureRegistry.ts` (20 KB) and
+`certificationLedger.ts` (4.5 KB) — a §25 certification surface with twelve fixtures, nine
+invariants and a blocked-entry registry.
+
+**This census already has one.** Section B built it: `services/memoryCertification/fixtures.ts`
+(`artifacts/api-server/src/services/memoryCertification/fixtures.ts:42#export const CERTIFICATION_FIXTURE_IDS`),
+plus `invariants.ts`, `chaos.ts`, `world.ts` and `runCertification.ts` — 125 KB across five modules,
+each fixture carrying the `census_id` of the row it IS, and §25's thirty requirements already
+standing as rows **H224–H253** with 22 BAC, 7 BBW and 1 NB.
+
+The lane's thirty ids — `HF1`–`HF12`, `HI1`–`HI9`, `HX1`–`HX9` — are not thirty new requirements.
+They are the same thirty §25 requirements under a second id scheme, built by a worktree that
+predated section B and could not see it. **Measured rather than asserted:** merging its census
+sections took `check:census-integrity` to *"296 verdict rows parsed but the stated denominator is
+266 — more rows than requirements is arithmetically impossible"*, and of the 32 ids its sections
+name, 30 were absent from this document and 2 were restatements. Absent from the id list is not
+absent from the census: every one of the 30 is covered by an `H224`–`H253` row.
+
+**So the denominator does not move and neither does the row count.** Counting them would have
+inflated CORRECT% by thirty rows of work that was already counted, which is the failure this
+document exists to catch. The merge was aborted rather than resolved.
+
+**What is genuinely lost by not taking it, stated so it is not forgotten.** The lane's fixtures
+execute against the real routes; section B's harness is deterministic and in-memory. That is a real
+difference in what a fixture proves, and it is a question worth answering — but answering it means
+reconciling two surfaces into one, not carrying both, and it is recorded here as open rather than
+done.
+
+### I.2 The two defects, which are real and were still here
+
+Both are the same class this census has now found five times: **supabase-js RESOLVES on a database
+error**, so a discarded `.error` makes a failure indistinguishable from an empty result.
+
+**(a) `POST /trips/:tripId/memory` wrote a canonical Memory with no participant.** Two reads bound
+neither error. An unreadable `trips` answered `404 "Trip not found"` for a trip that exists — a claim
+about the world made out of a failure to look at it. Far worse, an unreadable `trip_members` produced
+`members === null`, `crewIds === []`, and **the handler went on to write** a `visibility: 'trip_crew'`
+Memory with an empty crew. §22 forbids fabricating participant links; an empty crew the server never
+managed to read is exactly that, and it is durable. Both reads are now bound at
+`artifacts/api-server/src/routes/memories.ts:1721#if (tripErr) {` and
+`artifacts/api-server/src/routes/memories.ts:1740#if (membersErr) {`, each refusing with
+`degraded_unavailable` — this codebase's established answer for *"the check could not be
+performed"*, as distinct from *"the check was performed and failed"*. **Nothing is written on either
+arm**, so a retry yields one Memory and not a second.
+
+**(b) `GET /trips/:tripId/memory` had the same 404-from-a-failure on its own `trips` read**, bound at
+`artifacts/api-server/src/routes/memories.ts:1854#"trip-memory: trips read failed — refusing rather than answering not_found");`.
+
+**(c) `DELETE /memories/:id/items/:itemId` discarded a storage failure into a `try/catch` that never
+ran.** supabase-storage-js resolves with `{ data: null, error }` rather than throwing, so the catch
+was written for an exception that never arrives and `await remove(...)` dropped its error on the
+floor. The row was already gone at that point, so the failure left the item unreachable, the bytes
+still publicly served, and **nothing anywhere recording that the two had diverged**. Now bound at
+`artifacts/api-server/src/routes/memories.ts:1326#failureClass: "storage_object_orphaned" },` with an
+error-level line carrying the storage path. The response stays 204 deliberately: the canonical
+command DID succeed and re-running it would 404, so turning a storage failure into a client error
+would be a lie in the other direction.
+
+### I.3 The §17 boundary, which this route had never crossed
+
+`POST /trips/:tripId/memory` was the one canonical-Memory write in this file that went straight to
+`sc.from("memories").insert(...)`: no command id, no audit line, no idempotency key, while the other
+six Memory-writing routes all read the envelope. It now dispatches through the same path as
+`POST /memories` — kernel when `memory_kernel_enabled` is on, the byte-identical direct write when it
+is off, an audit line either way — at
+`artifacts/api-server/src/routes/memories.ts:1769#const created = await dispatchMemoryCommand<any>({`,
+with `requireIdempotencyKey` read before any database access at
+`artifacts/api-server/src/routes/memories.ts:1696#const idempotencyKey = requireIdempotencyKey(req, res);`
+so a malformed key is refused without the server having looked at anything.
+
+The crew tagging is guarded by `!created.duplicate` for the reason `POST /memories` already skips it:
+a replayed command must not tag the crew a second time.
+
+### I.4 Red before green, and the test asserts on the STORE
+
+`artifacts/api-server/src/test/memoriesTripMemoryDegraded.test.ts:1#/**` was taken from the lane
+unchanged and run against this tree **before** any of the above:
+
+| | tests | pass | fail |
+|---|---|---|---|
+| merged tree, unfixed | 5 | **0** | **5** |
+| after (a) + (c) | 5 | 3 | 2 |
+| after (b) + §17 | 5 | **5** | 0 |
+
+The outage cases assert that **no row reached `memories`** and that `taggedCount` is not a number
+describing rows that do not exist — not merely that the status code was 503. A status-only assertion
+passes against a route that fails closed for the wrong reason, which is why this one does not use one.
+
+Regression beside the change, unmodified: **794 of 794** across every `memor*` and `highlight*` suite.
+`npx tsc --noEmit` clean; `typecheck:tests` at its exact 864/116 baseline.
+
+### I.5 Row moves — and the honest answer is that none of them is a move
+
+| row | was | now | why |
+|---|---|---|---|
+| **H264** | `C` | **`C`** | **A THIRD FALSE GREEN, and the verdict does not move because it was already the right letter.** §28.11 forbids swallowing a failure into plausible-looking empty history without a structured error state. Rule 7 of this census grades a prohibition **on the surface where a violation would live** — and two violating paths were live on `routes/memories.ts` the whole time H264 read `C`: the POST answering `not_found` from an unreadable `trips`, and the GET doing the same. Both are closed. The letter is unchanged; what changed is that it is now true of the whole surface rather than of the branch section D happened to read. |
+| **H193** | `BRANCH, with an (e) tail` | **unchanged** | §21 asks for deletion to be *"observable, retryable, dead-lettered on repeated downstream failure"*. (c) above delivers **the observable third only**. There is still no retry and no dead-letter store, so the row keeps its classification, and claiming otherwise on the strength of one log line would be the reclassification this document refuses. |
+| **H190** | half (e) | **unchanged** | The media bytes still stay publicly served. (c) makes the orphan *findable*; it does not delete it. |
+| **H129** | `BAC` | **`BAC`, verified for the first time** | The lane re-read the claim rather than repairing the pointer, which is what §J of the report asked for and what the integrator's note to it asked for. `forgetMemory` deletes from `compass_memories` scoped to `id` **and** `user_id`; the only two `from("memories")` in the Compass surface are `.select(` reads. It closed in the direction the row guessed — and it did not have to. |
+
+**No verdict moves, the denominator is unchanged at 266, and CONSTRUCTED and CORRECT are exactly what
+they were.** Three live defects were fixed and one row was verified for the first time. That is a
+correctness pass, and a census whose numbers rise every time code is committed is not measuring
+anything.
+
+**What would turn this red:** unbind either read in `POST /trips/:tripId/memory` and the degraded
+cases go from 5/5 to 3/5 with a `trip_crew` Memory in the store; drop the `!created.duplicate` guard
+and a replayed command tags the crew twice; restore the bare `.remove([storagePath])` and the orphan
+goes silent again.
+
+**Owed, not done.** `head_commit` still reads `338837b44` and this section changes a file this census
+counts. Re-declaring it must name the squash commit, so the declaration is not moved here; the four
+files that changed under the current declaration are argued one at a time in
+`CENSUS_STALENESS_ACKNOWLEDGED`, and `check:census-freshness` is green at 0 STALE.
