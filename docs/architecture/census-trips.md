@@ -23,12 +23,12 @@ preserved in §36.1 as the record of that measurement.
 | Measure | Value |
 | --- | --- |
 | **Denominator (testable requirements)** | **451** |
-| BUILT-AND-CORRECT | **316** |
-| BUILT-BUT-WRONG | **131** |
+| BUILT-AND-CORRECT | **317** |
+| BUILT-BUT-WRONG | **130** |
 | NOT-BUILT | **3** |
 | CANNOT-VERIFY | **1** |
 | **CONSTRUCTED%** = (C+W)/451 | **447 / 451 = 99.1 %** |
-| **CORRECT%** (raw) = C/451 | **316 / 451 = 70.1 %** |
+| **CORRECT%** (raw) = C/451 | **317 / 451 = 70.3 %** |
 
 > **RESTATED 2026-09-11 (§38): 89 → 87 CORRECT, 127 → 129 WRONG.** §38 re-derived
 > 39 of the C rows against the code and **two did not hold**, both for the same
@@ -376,6 +376,24 @@ preserved in §36.1 as the record of that measurement.
 > and the one gated term (§17.2's mode) degrades to `unread` instead of
 > refusing. TR5 stays W for a true reason now: the projection is served but not
 > yet consumed, and the consumer is one edit in a file another lane holds.
+
+> **RESTATED 2026-09-13 (§67): 316 → 317 CORRECT, 131 → 130 WRONG — one row,
+> TR5.** §66 built the seventh typed projection and said in its own ceiling that
+> a single edit stood between TR5 and C. §67 makes that edit:
+> `services/telegraphChatSuggestions.ts` consumes `TripTelegraphProjection`
+> instead of hand-rolling two selects, and all seven projections now have a
+> consumer that is neither their own serving route nor a test.
+>
+> **The edit was covering two authorization defects and they are the part worth
+> remembering.** The rule it replaced, `role IN ('owner','member')`, predates
+> migration `0078`: a **co-host** got no trip context in their own trip's
+> conversation, and because the rule read `role` and never `status`, a member who
+> had **declined, been removed, or left** kept the trip's destination in their
+> suggestion prompt. Neither had a test; both are closed; neither was found by
+> looking for it, only by comparing the hand-rolled rule with the canonical one.
+> **CORRECT% is 70.3 %, and §17.2's suppression on that surface is real code on a
+> gate that is FALSE on every deployment — §67.4 says so before the row is read
+> as more than it is.**
 | **CORRECT% (spec-attributable)** | **WITHDRAWN — not measured. See §36.4** |
 | CANNOT-VERIFY share | **1 / 451 = 0.2 %** |
 
@@ -7271,3 +7289,93 @@ membership the caller passed, and nothing here checks that against the thread.
 And `currentPlan` prefers an `in_progress` status over the clock, so a plan
 left in progress after its window closes keeps reading as current — the same
 staleness §11.1 carries on Today, and it is not fixed here.
+
+---
+
+## §67 The edit §66.3 named — and two defects it was hiding
+
+§66 built `TripTelegraphProjection` and closed with *"what stands between TR5 and C
+is a single edit in a file another lane holds."* The lanes are merged, so this is
+that edit. It also turned out to be covering two real authorization defects, which
+is the part worth reading.
+
+### 67.1 What the conversation read before
+
+`services/telegraphChatSuggestions.ts` decides what a Telegraph thread may know
+about the trip it is attached to. For a trip thread it ran two hand-rolled
+selects — `trip_members` for the gate and `trips` for the destination — and
+re-derived, beside the canonical one, the rule for who counts as crew:
+
+```
+.from("trip_members").select("role").eq("trip_id", tripId)
+  .eq("user_id", userId).in("role", ["owner", "member"]).maybeSingle()
+```
+
+**That rule is wrong in both directions, and had been since `0078`.**
+
+| defect | what it did | measured |
+|---|---|---|
+| `co_host` is not in the list | a co-host of a trip got NO context in that trip's own conversation, and `resolvePrivacyVerdict` told them `not_trip_member` | `artifacts/api-server/src/migrations/0078_trip_members_expansion.sql:8#co_host` adds the role; the rule predates it and was never revisited |
+| it reads `role` and never `status` | a member who had **declined**, been **removed**, or **left** kept the trip's destination in their suggestion prompt for as long as the row survived | `artifacts/api-server/src/migrations/0078_trip_members_expansion.sql:17#invited','accepted','declined','removed','left` is the status vocabulary the rule ignored |
+
+Neither had a test. Both are closed here, and neither was found by looking for
+them — they fell out of comparing the hand-rolled rule against the projection's.
+
+### 67.2 What it reads now
+
+`resolvePrivacyVerdict` consumes `buildTripTelegraphProjection` and nothing else:
+the gate is the projection's (`status` accepted), the destination is
+`projection.trip.destinationCity ?? destinationCountry`, and §17.2's reading
+travels on the verdict as an `AttentionReading`.
+
+One rule is kept beside it rather than folded in, with its reason:
+`SUGGESTIBLE_TRIP_ROLES` is `owner`, `co_host`, `member` — **`viewer` is
+deliberately absent**, because every card carries an action (`add_to_plan`,
+`create_meetup`, …) and the routes behind those refuse a viewer. Offering one
+would be offering a button that 403s. The projection does not decide who may
+act, and this says so in one line instead of pretending it does.
+
+`buildSuggestions` then asks `applyAttentionSuppression` — **the same decider
+Compass's search tools and the trip brief use** — rather than writing a second
+list of what "commercial" means. A trip in `SAFETY_EVENT` gets no nightlife card
+and still gets the one about the airport.
+
+### 67.3 The row
+
+| id | was | now | why |
+|---|---|---|---|
+| TR5 | W | **C** | All seven typed projections exist AND each has a consumer that is neither its own serving route nor a test: Compass → `artifacts/api-server/src/compass/CompassTools.ts:24#buildTripCompassProjection`; Map → the client at `travel-buddy-standalone/src/features/trips/map/tripMapProjection.ts:72#map-projection`; Discovery → `artifacts/api-server/src/lib/discoveryTripProjectionConsumer.ts`; Safety → `artifacts/api-server/src/domain/trips/services/TripImpactState.ts:9#operationalState`; Passport and Memory → `artifacts/api-server/src/domain/trips/services/TripCloseoutService.ts:28#buildTripMemoryProjection` and `artifacts/api-server/src/routes/tripPostTrip.ts:30#buildTripPassportProjection`; Telegraph → `artifacts/api-server/src/services/telegraphChatSuggestions.ts:22#buildTripTelegraphProjection`, built here. |
+
+**Rows looked at that did not move.** TR319 stays W: §17.2 is now consulted by one
+more surface, and it is still gated (below). TR358–TR363 stay C.
+
+### 67.4 The ceiling, stated before anyone reads the row as more than it is
+
+**The §17.2 suppression is wired and flag-capped.** `readTripAttention` goes
+through the health projection, which is behind
+`trip_operational_projections_enabled`, seeded **FALSE on every deployment**. So
+in production today `tripAttention.consulted` is `false`, `applyAttentionSuppression`
+withholds nothing, and **not one card changes**. A test asserts exactly that
+rather than leaving it to be assumed. What is real today is the membership fix;
+the suppression is real code on a closed gate, like most of this branch.
+
+**Four mutations, each seen red before the green was trusted:**
+
+| mutation | what went red |
+|---|---|
+| drop `co_host` from `SUGGESTIBLE_TRIP_ROLES` | the co-host case — 47 pass / 1 fail |
+| `canUseTripContext = true` regardless of role | the viewer case — 47 / 1 |
+| return `cards` instead of `filtered.kept` | the nightlife-suppression case — 47 / 1 |
+| the PROJECTION's `accepted()` returns true for every status | the removed-member case — 47 / 1 |
+
+The fourth is the one that matters most: it proves the removed-member protection
+lives in the projection's gate, not in this file's role test, which is the whole
+argument for consuming it. **48 / 48 restored, and both files verified byte-identical
+to their backups after each mutation.**
+
+**What would turn this red (P24).** The verdict trusts the projection's crew read
+completely now, so a change to `TripTelegraphProjection`'s gate changes who sees
+a trip's destination in a conversation — which is the point, and is why the fourth
+mutation is recorded. And §66.3's own caveat still stands unfixed: `currentPlan`
+prefers an `in_progress` status over the clock, so a plan left in progress after
+its window keeps reading as current.

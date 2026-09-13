@@ -131,8 +131,6 @@
     "services/tagging/TaggingService.ts::filterByContentVisibility::user_friendships.filter": "FAIL-CLOSED: no row -> deny / not-found; a DB error is silently reported as that denial and never logged",
     "services/tagging/TaggingService.ts::filterByContentVisibility::user_follows.filter": "FAIL-CLOSED: no row -> deny / not-found; a DB error is silently reported as that denial and never logged",
     "services/telegraphChatSuggestions.ts::resolvePrivacyVerdict::message_threads.maybeSingle": "FAIL-CLOSED: no row -> deny / not-found; a DB error is silently reported as that denial and never logged",
-    "services/telegraphChatSuggestions.ts::resolvePrivacyVerdict::trip_members.maybeSingle": "FAIL-CLOSED: no row -> deny / not-found; a DB error is silently reported as that denial and never logged",
-    "services/telegraphChatSuggestions.ts::resolvePrivacyVerdict::trips.maybeSingle": "FAIL-CLOSED: only a destination label; unreadable -> null label -> no trip context offered",
     "services/telegraphChatSuggestions.ts::resolvePrivacyVerdict::circle_memberships.maybeSingle": "FAIL-CLOSED: no row -> deny / not-found; a DB error is silently reported as that denial and never logged",
       "lib/calls/callGatewayAdapter.ts::isEligibleRabConversation::rent_buddy_profiles.filter": "FAIL-CLOSED: no row -> deny / not-found; a DB error is silently reported as that denial and never logged",
     "lib/calls/callGatewayAdapter.ts::eventStaffRole::events.maybeSingle": "FAIL-CLOSED: no row -> deny / not-found; a DB error is silently reported as that denial and never logged",

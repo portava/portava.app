@@ -283,9 +283,12 @@ export const MIN_FULL_ANCHOR_CITATIONS = 1513;
 // PR that does it. Lowering it is the job.
 //
 // Measured 2026-09-13 on the merged tree: 8135 citations, 1610 anchored.
-// LOWERED 2026-09-13 from 6525 by §11.2 of census-layover. The ratchet's own
-// direction, exercised the first time on the day it was added.
-export const MAX_UNANCHORED_CITATIONS = 6494;
+// LOWERED 2026-09-13 from 6525 by §11.2 of census-layover, then to 6491 by
+// census-trips §67, which had to repoint three more citations in
+// census-compass and census-telegraph that were ALREADY wrong at HEAD —
+// `:18` a blank line, `:81` a ` */`, `:152` a `  }`. The ratchet's own
+// direction, twice on the day it was added.
+export const MAX_UNANCHORED_CITATIONS = 6491;
 
 // Exported so src/test/docCitations.test.ts walks the same tree: a second
 // checkout under .claude/worktrees/ (an agent's) carries stale copies of every

@@ -19,6 +19,10 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { logger } from "../lib/logger.js";
 import type { IntentResult } from "./telegraphIntent.js";
+import { buildTripTelegraphProjection } from "../domain/trips/projections/TripTelegraphProjection.js";
+import {
+  applyAttentionSuppression, attentionNotConsulted, type AttentionReading,
+} from "../domain/trips/policies/TripAttentionFilter.js";
 
 export interface TelegraphChatPrivacyVerdict {
   canUseTripContext: boolean;
@@ -30,7 +34,27 @@ export interface TelegraphChatPrivacyVerdict {
   circleOwnerId: string | null;
   tripDestination: string | null;
   threadType: "direct" | "trip" | "circle";
+  /**
+   * §17.2's switch as `TripTelegraphProjection` reported it, or a
+   * not-consulted reading. NEVER null-as-"fine": a switch that could not be
+   * read says so, and `applyAttentionSuppression` treats that as "withhold
+   * nothing" — the same posture Compass and the trip brief take.
+   */
+  tripAttention: AttentionReading;
 }
+
+/**
+ * The roles a suggestion may be offered to. `viewer` is deliberately absent:
+ * every card carries an action (`add_to_plan`, `create_meetup`, …) and the
+ * routes behind those refuse a viewer, so offering one would be offering a
+ * button that 403s.
+ *
+ * `co_host` is deliberately PRESENT, and its absence was a defect. The rule
+ * this replaced was `role IN ('owner','member')`, written before 0078 added
+ * `co_host` and `viewer` to `member_role`; a co-host got no trip context in
+ * their own trip's conversation, and no test covered it.
+ */
+const SUGGESTIBLE_TRIP_ROLES: ReadonlySet<string> = new Set(["owner", "co_host", "member"]);
 
 export interface SuggestionCard {
   id: string;
@@ -102,6 +126,7 @@ export async function resolvePrivacyVerdict(
       circleOwnerId: null,
       tripDestination: null,
       threadType: "direct",
+      tripAttention: attentionNotConsulted(null, "the thread could not be read"),
     };
   }
 
@@ -109,29 +134,71 @@ export async function resolvePrivacyVerdict(
   const tripId = (thread as any).trip_id ?? null;
   const circleOwnerId = (thread as any).circle_owner_id ?? null;
 
-  // Trip context: only if user is accepted trip member
+  // ── Trip context comes from the TRIP's projection, not from this file ─────
+  //
+  // TR5: "Trips owns context distribution (stable typed projections for
+  // Compass, Map, Telegraph, …)". `TripTelegraphProjection` is that object and
+  // it is the only thing read here now. What this replaced was a hand-rolled
+  // pair of selects — `trip_members` for the gate, `trips` for the
+  // destination — and re-deriving a membership rule beside the canonical one
+  // is how the two drifted apart. They HAD drifted, in both directions:
+  //
+  //   • `role IN ('owner','member')` predates 0078, which added `co_host`. A
+  //     co-host of a trip got NO context in that trip's own conversation and
+  //     was told `not_trip_member`.
+  //   • the rule read ROLE and never `status`, so a member who had `declined`,
+  //     been `removed`, or `left` kept their trip's destination in the
+  //     suggestion prompt for as long as the row survived.
+  //
+  // The projection's gate is `status accepted`, which fixes the second, and
+  // the role test below is kept because a card carries an ACTION and the
+  // projection deliberately does not decide who may act. Together they are
+  // strictly closer to the intended rule than what they replace.
+  //
+  // WHAT IS NOT CLAIMED: the §17.2 reading is soft and is gated by
+  // `trip_operational_projections_enabled`, which is seeded FALSE on every
+  // deployment today, so `tripAttention.consulted` is false in production and
+  // NOTHING is suppressed yet. The wiring is real; the effect is flag-capped,
+  // and `buildSuggestions` says so by asking the canonical filter rather than
+  // inventing a second rule.
   let canUseTripContext = false;
   let tripDestination: string | null = null;
+  let tripAttention: AttentionReading = attentionNotConsulted(tripId, "not a trip thread");
   if (threadType === "trip" && tripId) {
-    const { data: membership } = await client
-      .from("trip_members")
-      .select("role")
-      .eq("trip_id", tripId)
-      .eq("user_id", userId)
-      .in("role", ["owner", "member"])
-      .maybeSingle();
-    canUseTripContext = Boolean(membership);
-
-    if (canUseTripContext) {
-      const { data: trip } = await client
-        .from("trips")
-        .select("destination_city, destination_country")
-        .eq("id", tripId)
-        .maybeSingle();
-      tripDestination =
-        (trip as any)?.destination_city ??
-        (trip as any)?.destination_country ??
-        null;
+    tripAttention = attentionNotConsulted(tripId, "the trip context could not be read");
+    const built = await buildTripTelegraphProjection(client as any, tripId, userId, [userId]);
+    if (built.ok) {
+      // The caller named exactly itself, so `participants` is the viewer's own
+      // crew row or nothing. The projection already refused a viewer who is
+      // not accepted crew, so reaching here means accepted.
+      const me = built.projection.participants.find((pp) => pp.userId === userId) ?? null;
+      canUseTripContext = me !== null && SUGGESTIBLE_TRIP_ROLES.has(me.role);
+      if (canUseTripContext) {
+        tripDestination =
+          built.projection.trip.destinationCity ??
+          built.projection.trip.destinationCountry ??
+          null;
+        const a = built.projection.attention;
+        tripAttention = a.status === "ok" && a.items[0]
+          ? {
+              consulted: true,
+              tripId,
+              mode: a.items[0].mode as AttentionReading["mode"],
+              suppressed: a.items[0].suppressed,
+              reason: a.items[0].suppressed ? "TRIP_DISRUPTION_SUPPRESSED" : null,
+              detail: a.items[0].detail,
+              info: null,
+              attention: null,
+            }
+          : attentionNotConsulted(tripId, a.status === "ok" ? "the switch returned no reading" : a.reason);
+      }
+    } else if (built.reason !== "TRIP_AUTH_NOT_CREW") {
+      // A trip that cannot be READ is not a trip the viewer is not on. Both
+      // withhold context, and the log has to be able to tell them apart.
+      logger.warn(
+        { tripId, userId, threadId, reason: built.reason, message: built.message },
+        "telegraphChatSuggestions: trip context unavailable — withholding, not refusing",
+      );
     }
   }
 
@@ -199,6 +266,7 @@ export async function resolvePrivacyVerdict(
       circleOwnerId,
       tripDestination: null,
       threadType,
+      tripAttention,
     };
   }
   if (threadType === "circle" && !canUseCircleContext) {
@@ -212,6 +280,7 @@ export async function resolvePrivacyVerdict(
       circleOwnerId,
       tripDestination: null,
       threadType,
+      tripAttention,
     };
   }
 
@@ -229,6 +298,7 @@ export async function resolvePrivacyVerdict(
     circleOwnerId,
     tripDestination,
     threadType,
+    tripAttention,
   };
 }
 
@@ -259,7 +329,20 @@ export function buildSuggestions(
   const secondary = buildSecondaryCard(intentType, dest, verdict);
   if (secondary && cards.length < 2) cards.push(secondary);
 
-  return cards.map((c) => ({
+  // §17.2 — a trip that needs attention does not want a nightlife card.
+  //
+  // The classification is NOT re-derived here. `applyAttentionSuppression` is
+  // the same decider Compass's search tools and the trip brief use, and
+  // consuming it rather than writing a second list of "commercial" categories
+  // is the whole point of having one. It withholds nothing when the switch was
+  // not consulted, which is every deployment today.
+  const filtered = applyAttentionSuppression(
+    cards,
+    verdict.tripAttention,
+    (c) => [c.category, c.intent_type, c.title, c.location_context],
+  );
+
+  return filtered.kept.map((c) => ({
     ...c,
     id: `${threadId}_${userId}_${intentType}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
   }));
