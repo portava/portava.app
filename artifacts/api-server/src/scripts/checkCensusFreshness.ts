@@ -1374,6 +1374,12 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "travel-buddy-standalone/app/telegraph/new.tsx",
   ],
   "census-discovery.md": [
+    // WIDENED 2026-09-13 with A20's new evidence. That row was re-measured N → W
+    // because the Telegraph §1–§11 lane published the content capability
+    // contract A20 said did not exist, and a row is only as fresh as the files
+    // its evidence names — so the two it now names are watched.
+    "artifacts/api-server/src/services/telegraph/shareables.ts",
+    "travel-buddy-standalone/src/features/telegraph/sharing/useShareRevocation.ts",
     "artifacts/api-server/src/routes/discovery.ts",
     "artifacts/api-server/src/routes/discoverySearch.ts",
     "artifacts/api-server/src/lib/discoveryCandidate.ts",
@@ -1541,7 +1547,21 @@ for (const f of files) {
 
   let changed: string[];
   try {
-    changed = git(["diff", "--name-only", `${commit}..${head}`, "--", ...scope]).split("\n").filter(Boolean);
+    // MEASURE THE TREE A COMMIT WOULD PRODUCE, NOT JUST HEAD.
+    // `commit..head` cannot see staged or unstaged work, and that is not a
+    // theoretical gap: on 2026-09-12 a three-lane Telegraph merge passed this
+    // check as part of a 38-green local battery and failed the SAME check in CI
+    // the moment it became a commit, on 26 files. The guard was right about the
+    // commit; the gate had been run at the wrong moment, and nothing in the
+    // output said so. Unioning the two working-tree diffs closes that: a
+    // pre-commit run now measures what the commit will contain, and a clean
+    // tree gives exactly the old answer, so CI is unaffected.
+    const committed = git(["diff", "--name-only", `${commit}..${head}`, "--", ...scope]);
+    const staged = git(["diff", "--name-only", "--cached", "--", ...scope]);
+    const unstaged = git(["diff", "--name-only", "--", ...scope]);
+    changed = [...new Set(
+      [committed, staged, unstaged].flatMap((out) => out.split("\n")).filter(Boolean),
+    )].sort();
   } catch {
     problems.push(`::error::${f}: git could not diff ${commit}..HEAD, though ${commit.slice(0, 8)} resolves and is an ancestor of HEAD. This is not the unreachable-declaration case; read the git error above.`);
     continue;

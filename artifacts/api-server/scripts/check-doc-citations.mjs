@@ -198,6 +198,37 @@ export const COVERED = [
 // document and found larger there too.
 export const MIN_ANCHORED_CITATIONS = 278;
 
+// ---------------------------------------------------------------------------
+// THE FULL-ANCHOR PASS, and why it is a SECOND pass rather than a wider ANCHOR
+// ---------------------------------------------------------------------------
+// ANCHOR above stops at the first space, and that is not an oversight — the
+// citation grammar matches UNBACKTICKED text too, so an anchor allowed to run
+// to the end of the line would swallow the prose after `foo.ts:12#bar baz`.
+//
+// The cost of that stop was measured on 2026-09-13 and it is not small. A
+// multi-word anchor is verified on its FIRST TOKEN only, so
+// `#const held = applyAttentionSuppression(...)` is checked as `const`, which
+// matches almost every line of every TypeScript file in the repo. Twenty-one
+// citations across census-trips, census-sensing and census-telegraph pointed at
+// the WRONG LINE while this script reported "anchored citations whose anchor is
+// NOT at the cited lines: 0". Two of them were off by fifteen lines; one had a
+// malformed anchor (two fragments concatenated by an earlier re-anchor) that
+// appeared nowhere in the file at all. The range half could not see them — every
+// one was IN RANGE — and the anchor half said they held. That is the
+// vacuous-green state this file's header warns about, reached through a
+// different door.
+//
+// So: a citation written INSIDE BACKTICKS has an unambiguous end, and for those
+// the whole anchor can be compared. That is this pass. It is additive — it
+// cannot make a previously-passing unbackticked citation fail — and it carries
+// its own floor so the class cannot be quietly emptied.
+
+// SHRINK-ONLY, same contract as MIN_ANCHORED_CITATIONS above. Measured 1147 on
+// 2026-09-13 across docs/architecture, docs/handoff and docs/ci after the 21
+// corrections. Raising it is expected; lowering it is a deliberate reduction in
+// coverage and must be justified in the PR that does it.
+export const MIN_FULL_ANCHOR_CITATIONS = 1319;
+
 // Exported so src/test/docCitations.test.ts walks the same tree: a second
 // checkout under .claude/worktrees/ (an agent's) carries stale copies of every
 // cited file, and a walker that indexes them resolves a citation against the
@@ -249,6 +280,11 @@ export const INHERITED_RE = new RegExp(String.raw`\x60:(${SPEC})${ANCHOR}\x60`, 
 // resolves `:1786` against whatever file was cited last, which is a guess.
 export const BARE_PATH_RE = new RegExp(
   String.raw`\x60((?:\.{1,2}\/)*(?:${SEG}+\/)*${SEG}+\.(?:${EXT_ALT}))\x60`,
+  'g',
+);
+
+const FULL_ANCHOR_RE = new RegExp(
+  String.raw`\x60((?:${SEG}+\/)*${SEG}+\.(?:${EXT_ALT})):(${SPEC})#([^\x60]+)\x60`,
   'g',
 );
 
@@ -451,8 +487,10 @@ export function evaluateCitations({ coveredFiles, readFile, byBasename }) {
   const badAnchor = [];
   const ambiguous = [];
   const orphans = [];
+  const badFullAnchor = [];
   let total = 0;
   let anchored = 0;
+  let fullAnchored = 0;
 
   const lineCache = new Map();
   const linesOf = (rel) => {
@@ -524,8 +562,38 @@ export function evaluateCitations({ coveredFiles, readFile, byBasename }) {
         });
       }
     }
+
+    // ── SECOND PASS: backticked citations, compared on the WHOLE anchor ──────
+    // Deliberately independent of the loop above: it re-extracts from the same
+    // text with a grammar that can see a multi-word anchor, because the first
+    // pass cannot and the gap between them is where twenty-one wrong lines hid.
+    for (const m of text.matchAll(FULL_ANCHOR_RE)) {
+      const [, citedPath, spec, fullAnchor] = m;
+      const candidates = resolveCitationPath(citedPath, byBasename, fromDir);
+      if (candidates.length !== 1) continue; // ambiguity is the first pass's to report
+      const lines = linesOf(candidates[0]);
+      if (lines === null) continue;
+      const { ranges } = expandLineSpec(spec);
+      if (ranges.length === 0) continue;
+      fullAnchored += 1;
+      if (anchorHolds(lines, ranges, fullAnchor)) continue;
+      const where = ranges.map(([lo, hi]) => (lo === hi ? `${lo}` : `${lo}-${hi}`)).join(',');
+      const found = lines
+        .map((t, n) => (t.includes(fullAnchor) ? n + 1 : 0))
+        .filter(Boolean)
+        .slice(0, 3);
+      const docLine = text.slice(0, m.index).split('\n').length;
+      badFullAnchor.push({
+        doc: docRel,
+        line: docLine,
+        cited: `${citedPath}:${where}#${fullAnchor.length > 60 ? fullAnchor.slice(0, 60) + '…' : fullAnchor}`,
+        reason: found.length
+          ? `the WHOLE anchor is at ${candidates[0]}:${found.join(',')}, not ${where}`
+          : `the WHOLE anchor appears NOWHERE in ${candidates[0]} — the anchor text itself is wrong`,
+      });
+    }
   }
-  return { badRange, badAnchor, ambiguous, orphans, total, anchored };
+  return { badRange, badAnchor, ambiguous, orphans, total, anchored, badFullAnchor, fullAnchored };
 }
 
 // ---------------------------------------------------------------------------
@@ -567,6 +635,7 @@ function main() {
   console.log(`  covered files ............ ${coveredFiles.length}`);
   console.log(`  file:line citations ...... ${res.total}`);
   console.log(`  of those, anchored ....... ${res.anchored} (floor ${MIN_ANCHORED_CITATIONS})`);
+  console.log(`  whole-anchor checkable ... ${res.fullAnchored} (floor ${MIN_FULL_ANCHOR_CITATIONS}) — backticked, so the anchor has an unambiguous end`);
   console.log(`  repo files indexed ....... ${repoIndex.fileCount}`);
   console.log('');
 
@@ -594,6 +663,10 @@ function main() {
     (c) => `${c.doc}:${c.line}  ${c.cited}  -- ${c.reason}`);
   failed += res.badAnchor.length;
 
+  section('BACKTICKED citations whose WHOLE anchor is not at the cited line', res.badFullAnchor,
+    (c) => `${c.doc}:${c.line}  ${c.cited}  -- ${c.reason}`);
+  failed += res.badFullAnchor.length;
+
   if (res.orphans.length) {
     console.log('');
     console.log(`INFO bare \`:NNN\` specs with no file named on their line: ${res.orphans.length}`);
@@ -617,6 +690,16 @@ function main() {
   }
 
   console.log('');
+  if (res.fullAnchored < MIN_FULL_ANCHOR_CITATIONS) {
+    console.error(
+      `CHECKER ERROR: ${res.fullAnchored} whole-anchor-checkable citation(s) found, ` +
+      `floor is ${MIN_FULL_ANCHOR_CITATIONS}. This is the half that caught 21 citations ` +
+      `pointing at the wrong line while the first-token comparison called them clean. ` +
+      `Deleting backticks or anchors empties it silently, so the count is floored. ` +
+      `Restore them, or justify the reduction in the PR that lowers this number.`,
+    );
+    process.exit(2);
+  }
   if (res.anchored < MIN_ANCHORED_CITATIONS) {
     console.error(
       `CHECKER ERROR: ${res.anchored} anchored citation(s) found, floor is ` +
