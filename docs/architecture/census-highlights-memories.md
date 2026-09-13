@@ -2256,3 +2256,138 @@ branch, and the nine that were are nine. What this section is actually worth is 
 table — it is a live daily path that carried four private audiences into public-world
 intelligence and never took any of them back out, found by counting rows instead of reading
 the same files a fourth time.
+
+---
+
+## D.11 The integration re-read — four counted files moved under this document
+
+**This section changes no verdict and moves no row.** It restates one bullet of D.3 that the
+merge made half-false, records a report field D.3 did not have, and names a behaviour that no
+test in this repository pins. `check:census-freshness` named exactly which four files to look
+at; this is what was found in them.
+
+**What happened mechanically.** Section D was measured at `d3b19fa9d`. It was merged into
+`claude/sweet-fermat-fmx7up` at `75cc31d9e`, together with the Compass, Discovery, Passport,
+Trust and Wall lane. `head_commit` stays `d3b19fa9d` — the merge commit keeps it an ancestor of
+HEAD, which is the checker's stated rule — and it is still PRE-SQUASH, so B.1's owner follow-up
+is unchanged and still owed.
+
+### The merge had to choose between two fixes of the same defect
+
+Both lanes closed §28.8 / §21 independently and neither knew the other was doing it. This lane
+wrote `reconcileExperienceNodes`; the Compass lane wrote `pruneOrphanedExperienceNodes`. **The
+merge kept this lane's function and deleted the other**, and the reason matters to two rows of
+this document rather than being a merge-hygiene detail: the deleted sweep screened on
+`state = 'published' AND visibility <> 'only_me'` — which is D.2's **Defect 1**, the six-rung
+gate, wearing the fix's name. A sweep on that predicate keeps every named audience
+(`friends_only`, `trip_crew`, `circle_only`, `custom`) in the graph permanently: the builder no
+longer writes those rows, but a row already in `compass_graph_nodes` is never asked about again
+by a sweep that considers it eligible. Had it survived, **H263 would be a false green for the
+second time and H237's C would not be earned.**
+
+The surviving sweep decides through `isPublicWorldMemory`
+(`artifacts/api-server/src/compass/CompassGraphEngine.ts:548#isPublicWorldMemory`), the same
+predicate `buildGraphFromSources` gates its write on, which is the property D.3 item 1 claims
+and is unchanged at this commit. A Compass-lane test pins the distinction:
+`artifacts/api-server/src/test/compassCensusCorrectness.test.ts:214#B2` seeds one experience
+node per rung — `only_me`, `draft`, `archived`, the named audiences and `public` — and asserts
+that **only the `public`, `published` Memory keeps its node**. Under the discarded predicate
+every named audience is eligible and survives, so the case goes red on the count. The counts
+themselves are deliberately not reproduced here: that fixture is being widened by the Compass
+lane in the same tree as this is written, and a number copied out of a file that is moving is
+the decay this document already carries seventeen repointed citations for.
+
+### The four files
+
+| file | what changed between `d3b19fa9d` and `75cc31d9e` | does it move a verdict here? |
+|---|---|---|
+| `artifacts/api-server/src/compass/CompassGraphEngine.ts` | +71/−20, all inside the §28.8 sweep: the surviving `reconcileExperienceNodes` absorbed two things from the deleted implementation — a new report field and a per-batch failure path | **No — but it falsifies half a sentence.** See below |
+| `artifacts/api-server/src/routes/compass.ts` | +72/−21: a Sensing `:148` grounding envelope applied on both `/compass/ask` branches, and `GET /compass/recommendations` moved onto the Passport batch identity projection | No. All three lines this census cites are byte-identical; only their numbers moved, and the merge repointed them |
+| `artifacts/api-server/src/services/media/MediaProjectionService.ts` | +188/−5: a `places.neighborhood` label producer, and the §30 Tagged bucket made real over `public.tags` | No. The one line this census cites is the "Hidden Gems" strip literal, and it is unchanged |
+| `artifacts/api-server/src/services/passport/PassportConsumerProjections.ts` | +154/−0, appended: `buildListIdentityProjections`, a viewer-aware batch identity projection for list surfaces | No. It projects list IDENTITY; the row it is cited by turns on this module not projecting MEMORIES |
+
+### The half-sentence the merge falsified
+
+D.3's second bullet under **2. §28.8 revocation** reads, and stays on the record as written:
+
+> **Fails closed.** An unreadable `memories` read sets `unresolved` and deletes **nothing**.
+> Deleting on a transient outage erases a graph; keeping a stale node one more day is
+> recoverable, and the next tick retries. The report distinguishes the two rather than
+> reporting zero twice.
+
+**Restated at `75cc31d9e`: it fails closed PER BATCH, and the pass no longer abandons itself.**
+The sweep asks `memories` about the node keys it holds in chunks of 200
+(`artifacts/api-server/src/compass/CompassGraphEngine.ts:1274#DELETE_CHUNK`). Before the merge,
+the first chunk whose read errored or threw set `unresolved` and **returned** — every later
+chunk's revocations waited a day. Now a failed chunk sets `unresolved`, counts its keys into a
+new field, and the loop **carries on**
+(`artifacts/api-server/src/compass/CompassGraphEngine.ts:1535#undecided`).
+
+Three corrections, each mechanical:
+
+1. **"deletes nothing" is now a statement about the FAILED BATCH, not about the pass.** Nothing
+   in a batch that failed can be deleted, because the dooming decision is a pure helper,
+   `artifacts/api-server/src/compass/CompassGraphEngine.ts:1427#deadExperienceKeys`, which
+   returns `[]` on `ok === false` and is called with the batch's own `ok`
+   (`artifacts/api-server/src/compass/CompassGraphEngine.ts:1534#deadExperienceKeys`). A failed
+   batch therefore contributes no dead keys and cannot widen a revocation. The batches that
+   answered are acted on.
+2. **"reporting zero twice" is now three states, not two.** `ExperienceReconcileReport` gained
+   `artifacts/api-server/src/compass/CompassGraphEngine.ts:1410#undecided` — the node keys the
+   pass refused to judge. A clean sweep reports `undecided: 0, unresolved: false`; a partial one
+   reports a non-zero `undecided`; a sweep that could not read the node table at all reports
+   `examined: 0, unresolved: true`. D.3's sentence covered the first and the third and had no
+   word for the second, because before the merge the second did not exist.
+3. **The whole-pass fail-closed claim survives in one place, and only there.** An unreadable
+   `compass_graph_nodes` read still returns immediately and decides nothing
+   (`artifacts/api-server/src/compass/CompassGraphEngine.ts:1491#report.unresolved`). That is
+   the read D.3's third design choice depends on, and it is untouched.
+
+**The evidence-table line in D.3 is restated the same way.** It reads "an unreadable `memories`
+read deletes nothing and says so", citing
+`artifacts/api-server/src/test/compass-intelligence-graph.test.ts:777#unreadable`. That test
+blinds **every** `memories` read, so what it pins is the all-batches-fail case — where the
+statement is still exactly true — and it still passes unchanged. So does
+`artifacts/api-server/src/test/compassCensusCorrectness.test.ts:251#B3`, which asserts the same
+shape plus `undecided: 2`.
+
+**What no test pins, stated rather than left to be discovered.** The MIXED case — one batch
+fails, another succeeds, the successful one's revocations are applied anyway — is asserted by
+construction and by nothing else. `DELETE_CHUNK` is 200 and no fixture in this repository seeds
+more than 200 experience nodes, so every existing test exercises a single batch, and
+`deadExperienceKeys` is not exported and is named by no test. The carry-on path is the half of
+this change that is new behaviour, and it is the half with no red-first evidence behind it. It
+is recorded here as a ceiling rather than counted as a build.
+
+### Every row that cites one of the four files, re-derived
+
+| row | verdict at `d3b19fa9d` | at `75cc31d9e` | the mechanical reason it does not move |
+|---|---|---|---|
+| H237 | C | **C** | The sweep still revokes the experience node and every edge touching it, and still runs before the aggregates are folded (`artifacts/api-server/src/compass/CompassGraphEngine.ts:1574#experienceRevocations`, re-read at the new line). The per-batch change moves the ceiling in the SAFE direction: a transient read failure no longer defers every other batch's revocation for a day. The stated ceiling — daily cadence, no `privacy_revocation_latency` — is unchanged |
+| H263 | C | **C** | The §28.10 gate is byte-identical: `:548`, `:768` and `:775` are untouched by the merge. What the merge decided is which sweep AGREES with that gate, and it kept the one that does |
+| H189 | W | **W** | Unchanged. `compass_feed_cache` is still never invalidated on a Memory visibility change, which is the half the W rests on |
+| H190 | W | **W** | Unchanged. The media bytes stay publicly served and §21's five-step deletion lifecycle still does not exist |
+| H129 | BAC | **BAC** | The grounding envelope added to `/compass/ask` reads the answer back against the turn's tool evidence and appends a correction; it writes nothing. `grep -cE '\.from\("memories"' src/routes/compass.ts` returns **0** at this commit, and the cited `forgetMemory` call still writes `compass_memories` |
+| H104–H106 | BBW | **BBW** | Their current evidence is `services/memoryProjections/memoryGraph.ts`, not this file — the `MediaProjectionService.ts` citation sits in section A's superseded §13 paragraph. The Tagged bucket reads `public.tags` (people tags), not `memory_relations`, which still has no migration anywhere in the tree |
+| H164 | BBW | **BBW** | `buildListIdentityProjections` projects display name, avatar and badge for list rows. `grep -cE '\.from\("memor'` and `grep -cE '\.from\("highlight'` over `src/services/passport/PassportConsumerProjections.ts` each return **0** at this commit: the module still projects Passport artefacts, not Memories, which is what the row says |
+
+**H123–H128 were re-read and are not moved, and the reason is narrower than "not relevant".**
+Section C moved them to W, W, C, W, C, C on evidence in `memoryCompassTools` — prompt rules,
+`canCompassReadMemory`, the truth class — none of which is in a changed file. The new envelope
+is a mechanism, and a mechanism is exactly what C.5 item 5 says H126 would need; but it polices
+three claim kinds and they are named in the type itself
+(`artifacts/api-server/src/compass/CompassGroundingEnvelope.ts:60#live_claim_without_verified_source`):
+a live-status claim with no `verified_live` datum, a wait figure with no wait datum, a crowd
+assertion with no crowd datum. H126's weakest third is emotional states, preference and
+historical outcomes on a MEMORY. The envelope does not read those, so it does not close them,
+and H126 stays W.
+
+**What this section would have looked like if it had gone the other way.** If the merge had
+kept `pruneOrphanedExperienceNodes` instead, this would be a re-measurement: H263 would go back
+to a false green and H237's C would have to be withdrawn, because a sweep that agrees with the
+OLD gate leaves four private audiences in `compass_graph_nodes` for good. The B2 case above is
+what decides it, and it is named rather than paraphrased so the next reader can run it instead
+of trusting this paragraph.
+
+**The headline in D.10 is unchanged: 266 rows, 54 C, 132 W, 78 N, 2 X.** Nothing in this
+section constructed anything.
