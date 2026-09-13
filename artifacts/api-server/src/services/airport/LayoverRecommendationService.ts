@@ -24,6 +24,11 @@ import {
 // so the read path needs the same classifier the plan path already uses.
 import { statedTravelMin, statedDurationMin } from "./LayoverPlanFit.js";
 import { airportPoint, placePoint, landsideLeg } from "./LayoverTravelTime.js";
+// §8 — the outer edge of the safe envelope, which is the half a straight-line
+// LOWER BOUND can certify. See LayoverEnvelope's header for why the inner edge
+// cannot be, and why a block is the only verdict it may produce.
+import { safeEnvelope, bandCandidates, type EnvelopeVerdict } from "./LayoverEnvelope.js";
+import type { GeoPoint } from "../../domain/trips/contracts/TravelTimeProvider.js";
 import {
   certifySessionFeasibility,
   certificationHeader,
@@ -278,6 +283,13 @@ async function fetchDiscoveryPlaces(
   placeId: string | null;
   canonicalPlaceId: string | null;
   verified: boolean;
+  /**
+   * Where the place is, when the row carries a usable coordinate. Published
+   * beside the leg because the leg is `null` on this tree and the POSITION is
+   * not: it is what the §8 envelope tests, and a candidate whose position the
+   * caller never saw cannot be blocked for being unreachable.
+   */
+  point: GeoPoint | null;
 }>> {
   try {
     let query = db
@@ -333,6 +345,9 @@ async function fetchDiscoveryPlaces(
       /** The canonical subject for the live read; null when the row is unbridged. */
       canonicalPlaceId: (p.canonical_location_id as string | null) ?? null,
       verified:       Boolean(p.verified),
+      // The same rule the leg is asked with — `(0, 0)` and a non-finite pair
+      // are both "no coordinate", not a point in the Gulf of Guinea.
+      point:          placePoint({ lat: p.lat, lng: p.lng }),
     }));
   } catch (err) {
     logger.warn({ err, city }, "discovery_places read threw — landside candidates omitted");
@@ -502,10 +517,59 @@ export async function generateRecommendations(
       }]
     : [];
 
+  // ── §8 / §6.1 — A CERTAINLY-UNREACHABLE PLACE IS BLOCKED, NOT RATED ───────
+  //
+  // census-layover L50 ("block unsafe recommendations") read NOT-BUILT with the
+  // right observation: *"Every landside card is now `not_recommended`, which is
+  // a RATING and not a block: the cards are still generated, still persisted
+  // and still served."* A `not_recommended` card still carries an "Add to plan"
+  // control and still occupies the list a traveller reads.
+  //
+  // A rating is all `assess` can produce, because it has no measured leg to
+  // refuse on. The envelope does: a great-circle distance is a LOWER BOUND on
+  // travel time, so a place whose round trip exceeds the certified window at
+  // that bound cannot fit however it is reached. That is the one landside
+  // verdict this tree can prove, and a proof is what a block needs.
+  //
+  // It matters most for the defect L61 names — `fetchDiscoveryPlaces` matches
+  // with `ilike("city", "%…%")`, so a place in a DIFFERENT city whose name
+  // contains the string was a candidate, was rated, and was served. Its
+  // distance now blocks it.
+  //
+  // FAILS OPEN, everywhere. No airport coordinate, no place coordinate, no
+  // envelope, a bound that could not be computed — each leaves the card
+  // standing and lets `assess` rate it as before. Nothing is withheld without
+  // the proof.
+  const envelope = safeEnvelope(usableMinutes, airportPoint(airport));
+  const bands = await bandCandidates(
+    envelope,
+    discoveryCandidates.map((c) => ({ key: recommendationKey(c), point: c.point })),
+    new Date(nowMs),
+  );
+  const blocked: Array<{ key: string; verdict: EnvelopeVerdict }> = [];
+  const reachableDiscovery = discoveryCandidates.filter((c) => {
+    const v = bands.get(recommendationKey(c));
+    if (v?.band !== "BLOCKED") return true;
+    blocked.push({ key: recommendationKey(c), verdict: v });
+    return false;
+  });
+  if (blocked.length > 0) {
+    logger.info(
+      {
+        sessionId: session.id,
+        blocked: blocked.length,
+        usableMinutes,
+        radiusMetres: envelope?.radiusMetres ?? null,
+        reasons: blocked.map((b) => b.verdict.reason),
+      },
+      "layover envelope blocked candidates outside the certified outer bound",
+    );
+  }
+
   const allCandidates = [
-    ...insideCandidates.map((c) => ({ ...c, city: null as null, neighborhood: null as null, placeId: null as null, canonicalPlaceId: null as null, verified: true })),
-    ...discoveryCandidates,
-    ...cityEscapeCandidates.map((c) => ({ ...c, canonicalPlaceId: null as null })),
+    ...insideCandidates.map((c) => ({ ...c, city: null as null, neighborhood: null as null, placeId: null as null, canonicalPlaceId: null as null, verified: true, point: null as GeoPoint | null })),
+    ...reachableDiscovery,
+    ...cityEscapeCandidates.map((c) => ({ ...c, canonicalPlaceId: null as null, point: null as GeoPoint | null })),
   ];
 
   // ── Sensing §11: intersect feasibility with live intelligence ──────────────
