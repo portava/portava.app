@@ -2917,9 +2917,11 @@ from a byte-for-byte backup and `cmp`-verified. None is a change to a test or to
 assertion reads back. The harness inherits §C.4's rule: **an anchor that is not unique in its
 file is REFUSED before it is applied.**
 
-**Two of the three claims below did not need a mutation to go red — they went red on the first
-run, against the tree as it stood.** That is said plainly because it is the difference between
-finding a defect and adding coverage to code that was already right.
+**All three defect claims below went red on their FIRST run, against the tree as it stood — no
+mutation was needed to produce them.** That is said plainly because it is the difference between
+finding a defect and adding coverage to code that was already right, and this section did both:
+the geofence cases (7 and 8) and the geofence control were green from the start and are covered,
+not repaired.
 
 | # | mutation (production file) | what went red |
 |---|---|---|
