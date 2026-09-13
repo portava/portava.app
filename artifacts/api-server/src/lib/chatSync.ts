@@ -82,20 +82,61 @@ export async function syncTripChatMembers(
   }
 
   // 2. Read currently-accepted trip members.
-  const { data: acceptedRows } = await sc
+  //
+  // ── AN UNREADABLE ROSTER IS NOT AN EMPTY ROSTER ────────────────────────────
+  // census T344/T363. This read is the INPUT to step 5, which sets
+  // `left_at = now()` for every thread member not in the accepted set. With the
+  // error dropped, supabase-js resolved an unreadable `trip_members` as
+  // `data: null`, `?? []` made it "this trip has no accepted members", and step
+  // 5 evicted THE ENTIRE CREW — owner included — from their own chat. That is
+  // not a plausible empty read; it is a destructive write driven by a read that
+  // never happened.
+  //
+  // And it does not heal. Step 4 clears `left_at` only when the trip ROLE
+  // CHANGED, deliberately (see its comment): a member with `left_at` set is
+  // presumed to have left of their own accord. So every subsequent HEALTHY sync
+  // reads an evicted crew and leaves it evicted, and each member is answered
+  // 403 "Not a member of this thread" on a conversation they never left.
+  //
+  // Refusing with `null` — the value this function already uses for "could not
+  // sync", which every caller already handles — is the only answer the evidence
+  // supports: we do not know who belongs in this thread, so we change nothing.
+  const { data: acceptedRows, error: acceptedErr } = await sc
     .from('trip_members')
     .select('user_id, role')
     .eq('trip_id', tripId)
     .in('role', ['owner', 'member']);
 
+  if (acceptedErr) {
+    console.error(
+      `syncTripChatMembers: accepted-member read failed for trip ${tripId}: ${acceptedErr.message} ` +
+        `— refusing to reconcile rather than evicting a crew this read could not see`,
+    );
+    return null;
+  }
+
   const accepted = (acceptedRows ?? []) as Array<{ user_id: string; role: string }>;
   const acceptedIds = new Set(accepted.map((r) => r.user_id));
 
   // 3. Read current thread members (including those who already left).
-  const { data: currentMembers } = await sc
+  //
+  // Dropped, this read fails in BOTH directions at once: an unreadable roster
+  // looks like a thread with no members, so step 4 re-INSERTS every accepted
+  // member (a duplicate row, or a unique-violation for the whole sync) and step
+  // 5 removes nobody, so a member the trip really removed keeps thread access
+  // with nothing said. Same refusal as above.
+  const { data: currentMembers, error: currentErr } = await sc
     .from('message_thread_members')
     .select('user_id, left_at, role')
     .eq('thread_id', threadId);
+
+  if (currentErr) {
+    console.error(
+      `syncTripChatMembers: thread roster read failed for trip ${tripId}: ${currentErr.message} ` +
+        `— refusing to reconcile against a roster this read could not see`,
+    );
+    return null;
+  }
 
   const currentById = new Map(
     ((currentMembers ?? []) as any[]).map((m) => [m.user_id, m]),
@@ -215,10 +256,25 @@ export async function syncCircleChatMembers(
   }
 
   // 2. Read accepted circle members (owner + members of owner's circle).
-  const { data: memberRows } = await sc
+  //
+  // Same rule as the trip branch: this is the input to step 5, and an
+  // unreadable `circle_memberships` read as an empty circle evicts every member
+  // but the owner. The circle branch does restore on the next healthy sync
+  // (step 4 here clears `left_at`, which the trip branch does not) — but a
+  // recoverable eviction is still an eviction, and between the two syncs every
+  // member is told they are not in a circle chat they never left.
+  const { data: memberRows, error: memberErr } = await sc
     .from('circle_memberships')
     .select('other_id')
     .eq('user_id', circleOwnerId);
+
+  if (memberErr) {
+    console.error(
+      `syncCircleChatMembers: circle member read failed for circle ${circleOwnerId}: ${memberErr.message} ` +
+        `— refusing to reconcile rather than evicting members this read could not see`,
+    );
+    return null;
+  }
 
   const memberIds = ((memberRows ?? []) as any[]).map((r) => r.other_id);
 
@@ -228,11 +284,20 @@ export async function syncCircleChatMembers(
     ...memberIds.map((id) => ({ user_id: id, role: 'member' })),
   ];
 
-  // 3. Read current thread members.
-  const { data: currentMembers } = await sc
+  // 3. Read current thread members. Refused for the same reason as the trip
+  // branch's step 3.
+  const { data: currentMembers, error: currentErr } = await sc
     .from('message_thread_members')
     .select('user_id, left_at, role')
     .eq('thread_id', threadId);
+
+  if (currentErr) {
+    console.error(
+      `syncCircleChatMembers: thread roster read failed for circle ${circleOwnerId}: ${currentErr.message} ` +
+        `— refusing to reconcile against a roster this read could not see`,
+    );
+    return null;
+  }
 
   const currentById = new Map(
     ((currentMembers ?? []) as any[]).map((m) => [m.user_id, m]),

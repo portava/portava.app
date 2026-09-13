@@ -88,11 +88,36 @@ async function fetchMessagesForThread(
 
   let translationMap: Record<string, any> = {};
   if (incomingIds.length > 0) {
-    const { data: tRows } = await sc
+    const { data: tRows, error: tErr } = await sc
       .from('message_translations')
       .select('message_id, source_language, target_language, translated_body, status')
       .in('message_id', incomingIds)
       .eq('recipient_id', userId);
+
+    if (tErr) {
+      /*
+        census T344/T363. This is the read §14 fixed in `routes/messaging.ts`
+        and did not fix here — the same query in the other reader, reached by
+        GET /trips/:tripId/chat and GET /circles/:circleId/chat. With the error
+        dropped, an unreadable `message_translations` is indistinguishable from
+        "no translation exists": every incoming message renders as its original
+        with `translationStatus: null`, which is exactly the payload a
+        same-language thread produces. §18 already has a word for "we did not
+        translate this" — `failed` — and it already reaches the client with a
+        retry affordance. The message is still delivered; only the claim about
+        translation changes.
+      */
+      for (const id of incomingIds) {
+        const row = rows.find((m) => m.id === id);
+        translationMap[id] = {
+          message_id: id,
+          source_language: (row?.original_language as string | null) ?? 'und',
+          target_language: 'und',
+          translated_body: null,
+          status: 'failed' as TranslationStatusValue,
+        };
+      }
+    }
     for (const t of tRows ?? []) translationMap[(t as any).message_id] = t;
   }
 
