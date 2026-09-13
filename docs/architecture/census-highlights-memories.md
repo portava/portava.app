@@ -2855,13 +2855,13 @@ unavailability (`artifacts/api-server/src/compass/MemoryCompassTools.ts:581#cons
 so the difference between "zero" and "unknown" survives to the prompt.
 
 **4. A block that stopped the profile card and not the Memory card beside it.**
-`artifacts/api-server/src/services/telegraph/shareables.ts:452#const loadMemory` is a FOURTH
-reader of the Memory visibility rule. H205's ceiling counts two mirrors —
-`routes/contentStamps.ts` and `routes/wellKnownShare.ts`, both of which say in their own comments
-that they mirror it — and this is a third, which does not say so and which disagreed with §23's
-predicate on exactly one rung: `memoryReadPolicy.canReadMemory` checks blocks in both directions
-and `loadMemory` checked none. `loadProfile`, twenty lines below in the same file, has checked
-them since it was written. So a traveller who blocked somebody had that person refused their
+`artifacts/api-server/src/services/telegraph/shareables.ts:452#const loadMemory` is a THIRD
+re-derivation of the Memory visibility rule — a fourth READER of it, counting §23's predicate
+itself. H205's ceiling counts two re-derivations, `routes/contentStamps.ts` and
+`routes/wellKnownShare.ts`, both of which say in their own comments that they mirror the
+predicate. This one does not say so, and it disagreed with the predicate on exactly one rung:
+`memoryReadPolicy.canReadMemory` checks blocks in both directions and `loadMemory` checked none.
+`loadProfile`, the next loader down in the same file, has checked them since it was written. So a traveller who blocked somebody had that person refused their
 PROFILE share card and served the title and city of their PUBLIC Memory in the same chat. The
 check is now there
 (`artifacts/api-server/src/services/telegraph/shareables.ts:487#.eq("blocker_id", r.owner_id as string)`),
