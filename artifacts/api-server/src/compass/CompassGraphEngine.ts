@@ -434,6 +434,16 @@ export interface GraphRebuildReport {
   citiesModeled: number;
   citiesScored: number;
   strongestCity: string | null;
+  /**
+   * Experience nodes removed because their source Memory is deleted or no
+   * longer eligible (Highlights/Memories `:742`). Reported rather than silent:
+   * a rebuild that prunes thousands is either a mass deletion or a broken
+   * eligibility read, and the two must be distinguishable in one log line.
+   */
+  experienceNodesPruned: number;
+  experienceEdgesPruned: number;
+  /** Experience keys left undecided because the `memories` read failed. */
+  experienceKeysUndecided: number;
 }
 
 // ── Node kinds ────────────────────────────────────────────────────────────────
@@ -1314,15 +1324,161 @@ export async function cleanupNonCanonicalCityRows(
   };
 }
 
+// ── Experience-node prune (Highlights/Memories §742) ──────────────────────────
+
+export interface ExperiencePruneReport {
+  /** Experience nodes read from the graph and checked against `memories`. */
+  nodesChecked: number;
+  /** Experience nodes whose source Memory is deleted or no longer eligible. */
+  nodesDeleted: number;
+  /** Edges with a deleted experience node on either endpoint. */
+  edgesDeleted: number;
+  /**
+   * Node keys this pass REFUSED to judge because the `memories` read that would
+   * decide them failed. They are neither kept-by-decision nor deleted; the next
+   * run decides them. Non-empty means the prune was partial.
+   */
+  undecidedKeys: number;
+  /**
+   * True when the graph-node read itself failed, so this pass judged nothing.
+   *
+   * WITHOUT THIS FIELD THE TWO CASES ARE THE SAME REPORT. An unreadable
+   * `compass_graph_nodes` and a graph with no experience nodes both produce
+   * `{0, 0, 0, 0}`, which is the exact defect `GraphRebuildReport.nodesFailed`
+   * exists to fix one function above — and it was found here the only way it
+   * can be, by mutating the error binding away and watching the test stay
+   * green.
+   */
+  sourceUnavailable: boolean;
+}
+
+/**
+ * Memory ids whose graph node must go, out of the ids this pass asked about.
+ *
+ * DELETE ONLY ON A POSITIVE ANSWER. `buildGraphFromSources` reads `memories`
+ * filtered to `state = 'published'` AND `visibility <> 'only_me'`, so the only
+ * thing an eligibility-filtered read can tell us about an id it does not return
+ * is "not eligible OR not there" — which is exactly the condition to prune on,
+ * PROVIDED the read succeeded and the id was actually asked for. A failed read
+ * returns the same empty set as a fully-pruned one, and deleting on that would
+ * empty the graph during an outage. So the caller passes the ids it asked about
+ * and `ok`; on `ok === false` nothing is dead.
+ */
+function deadExperienceKeys(
+  asked: readonly string[],
+  liveIds: ReadonlySet<string>,
+  ok: boolean,
+): string[] {
+  if (!ok) return [];
+  return asked.filter((k) => !liveIds.has(k));
+}
+
+/**
+ * Remove `experience` nodes (and their edges) whose source Memory is gone.
+ *
+ * WHY THIS EXISTS. Highlights/Memories `:742` — "never keep deleted Memories in
+ * Compass projections". `buildGraphFromSources` writes an experience node per
+ * PUBLISHED, non-`only_me` memory with `upsert`, and an upsert never deletes:
+ * once a memory is deleted, unpublished, or switched to `only_me`, its node and
+ * edges stay in `compass_graph_nodes` / `compass_graph_edges` for good. The node
+ * carries anchors only (`has_place` / `has_trip` / `has_event`, city, country —
+ * never the title, caption or media), which bounds the leak to "this owner was
+ * at this place/trip/event", but that is still a derived fact of a Memory the
+ * owner removed, and `cleanupNonCanonicalCityRows` prunes only stale CITY keys.
+ *
+ * WHAT IT DOES NOT DO. It is not a deletion HOOK: a node survives until the next
+ * rebuild, so this closes the unbounded leak, not the window. A hook would have
+ * to live in the Memories delete path, which is another surface's file.
+ */
+export async function pruneOrphanedExperienceNodes(
+  db: SupabaseClient,
+): Promise<ExperiencePruneReport> {
+  const empty: ExperiencePruneReport = { nodesChecked: 0, nodesDeleted: 0, edgesDeleted: 0, undecidedKeys: 0, sourceUnavailable: false };
+
+  const { data: nodeRows, error: nodeErr } = await db
+    .from("compass_graph_nodes")
+    .select("id, node_key")
+    .eq("node_type", "experience")
+    .limit(CLEANUP_FETCH_LIMIT);
+  // An unreadable node table is not an empty one. Bind the error rather than
+  // letting `data: null` read as "no experience nodes" — the discarded-`error`
+  // defect this repository keeps finding in its own gates.
+  if (nodeErr) return { ...empty, sourceUnavailable: true };
+
+  const idsByKey = new Map<string, string[]>();
+  for (const r of (nodeRows as any[]) ?? []) {
+    const key = String(r.node_key ?? "");
+    const id = String(r.id ?? "");
+    if (!key || !id) continue;
+    const list = idsByKey.get(key);
+    if (list) list.push(id);
+    else idsByKey.set(key, [id]);
+  }
+  const allKeys = [...idsByKey.keys()];
+  if (allKeys.length === 0) return empty;
+
+  const deadKeys = new Set<string>();
+  let undecided = 0;
+  for (let i = 0; i < allKeys.length; i += DELETE_CHUNK) {
+    const chunk = allKeys.slice(i, i + DELETE_CHUNK);
+    const { data, error } = await db
+      .from("memories")
+      .select("id")
+      .eq("state", "published")
+      .neq("visibility", "only_me")
+      .in("id", chunk)
+      .limit(DELETE_CHUNK);
+    if (error) { undecided += chunk.length; continue; }
+    const live = new Set(((data as any[]) ?? []).map((r) => String(r.id ?? "")));
+    for (const k of deadExperienceKeys(chunk, live, true)) deadKeys.add(k);
+  }
+
+  if (deadKeys.size === 0) {
+    return { nodesChecked: allKeys.length, nodesDeleted: 0, edgesDeleted: 0, undecidedKeys: undecided, sourceUnavailable: false };
+  }
+
+  const deadNodeIds: string[] = [];
+  for (const k of deadKeys) deadNodeIds.push(...(idsByKey.get(k) ?? []));
+  const nodesDeleted = await deleteByIds(db, "compass_graph_nodes", deadNodeIds);
+
+  // Edges are filtered in memory, the same way cleanupNonCanonicalCityRows does
+  // it: an `.or()` across two (type, key) pairs is one expression string this
+  // code would have to build by hand, and a mistyped one silently matches
+  // everything in a DELETE.
+  const { data: edgeRows, error: edgeErr } = await db
+    .from("compass_graph_edges")
+    .select("id, src_type, src_key, dst_type, dst_key")
+    .limit(CLEANUP_FETCH_LIMIT * 5);
+  let edgesDeleted = 0;
+  if (!edgeErr) {
+    const deadEdgeIds: string[] = [];
+    for (const r of (edgeRows as any[]) ?? []) {
+      const srcDead = String(r.src_type ?? "") === "experience" && deadKeys.has(String(r.src_key ?? ""));
+      const dstDead = String(r.dst_type ?? "") === "experience" && deadKeys.has(String(r.dst_key ?? ""));
+      if (srcDead || dstDead) deadEdgeIds.push(String(r.id));
+    }
+    edgesDeleted = await deleteByIds(db, "compass_graph_edges", deadEdgeIds);
+  }
+
+  return { nodesChecked: allKeys.length, nodesDeleted, edgesDeleted, undecidedKeys: undecided, sourceUnavailable: false };
+}
+
 // ── Full rebuild orchestrator ─────────────────────────────────────────────────
 
 /** Rebuild graph → world models → confidence index, in order. */
 export async function rebuildIntelligenceGraph(db: SupabaseClient): Promise<GraphRebuildReport> {
   const { nodesUpserted, edgesUpserted, nodesFailed, edgesFailed } = await buildGraphFromSources(db);
+  // Prune BEFORE the world models and the confidence index are derived: both
+  // read the graph, and a model built over a deleted Memory's node is the leak
+  // one derivation further on.
+  const pruned = await pruneOrphanedExperienceNodes(db);
   const citiesModeled = await buildCityWorldModels(db);
   const { scored, strongestCity } = await computeCityConfidenceIndex(db);
   return {
     nodesUpserted, edgesUpserted, nodesFailed, edgesFailed,
     citiesModeled, citiesScored: scored, strongestCity,
+    experienceNodesPruned: pruned.nodesDeleted,
+    experienceEdgesPruned: pruned.edgesDeleted,
+    experienceKeysUndecided: pruned.undecidedKeys,
   };
 }

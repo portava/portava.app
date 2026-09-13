@@ -36,6 +36,11 @@ const FAKE_REPORT = {
   citiesModeled: 1,
   citiesScored: 1,
   strongestCity: "Cebu",
+  // The rebuild also prunes experience nodes whose source Memory is gone
+  // (Highlights/Memories `:742`); a scheduled run reports what it removed.
+  experienceNodesPruned: 0,
+  experienceEdgesPruned: 0,
+  experienceKeysUndecided: 0,
 };
 
 describe("IntelligenceGraphScheduler", () => {
