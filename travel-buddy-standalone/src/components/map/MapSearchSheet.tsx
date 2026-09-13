@@ -87,11 +87,22 @@ export function MapSearchSheet({
         return;
       }
       setLoading(true);
-      const res = await searchUnified(q, 'all', null, {
+      const opts = {
         lat: lat ?? undefined,
         lng: lng ?? undefined,
         city: city ?? undefined,
-      }).catch(() => null);
+      };
+      // TWO REQUESTS, ON PURPOSE. §27's ninth heading is "Saved items", and it
+      // is the only viewer-scoped type the search has: a person's own saves,
+      // not a public corpus. It is deliberately absent from the server's `all`
+      // fan-out, because that fan-out also feeds the app's one global search
+      // and folding a private always-matching bucket into "All" everywhere is
+      // an owner's call, not a side effect of lighting up a Map heading. So the
+      // MAP asks for it, for the map's own sheet.
+      const [res, savedRes] = await Promise.all([
+        searchUnified(q, 'all', null, opts).catch(() => null),
+        searchUnified(q, 'saved', null, opts).catch(() => null),
+      ]);
       // A stale response must not replace a newer one.
       if (seq !== seqRef.current) return;
       setLoading(false);
@@ -101,7 +112,11 @@ export function MapSearchSheet({
         return;
       }
       setError(null);
-      setResults(toMapSearchResults(res.data.results));
+      // The saved lane failing is NOT a search failure — the rest of §27 is
+      // still a usable answer, and an error banner over eight good headings
+      // because the ninth was unreachable would be the worse outcome.
+      const savedResults = savedRes && savedRes.ok ? savedRes.data.results : [];
+      setResults(toMapSearchResults([...res.data.results, ...savedResults]));
     },
     [lat, lng, city],
   );

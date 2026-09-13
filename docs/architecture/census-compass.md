@@ -405,7 +405,7 @@ tallier could not read its verdict CELL, because ten cells carry a qualifier the
 | `**W → C (gated)**` — both | CX-01 |
 | `**W — violated**` — a verdict plus an emphasis | CT-01 |
 
-`verdictOf` in `artifacts/api-server/src/scripts/checkCensusIntegrity.ts:164#function verdictOf(cell: string)` strips
+`verdictOf` in `artifacts/api-server/src/scripts/checkCensusIntegrity.ts:194#function verdictOf(cell: string)` strips
 `*` and the vacuity flags and then requires the WHOLE cell to be one token. `C (GATED)` is not one
 token, so the row vanished from every bucket and every denominator. Ten requirements were in no
 number this repository reports, and the census that lost them looked fine.

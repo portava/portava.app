@@ -77,14 +77,19 @@
 | Measure | Value |
 | --- | --- |
 | **Denominator (testable requirements)** | **293** |
-| BUILT-AND-CORRECT | **235** |
-| BUILT-BUT-WRONG | **48** |
+| BUILT-AND-CORRECT | 235 | **237** |
+| BUILT-BUT-WRONG | 48 | **46** |
 | NOT-BUILT | **5** |
 | CANNOT-VERIFY | **5** |
-| **CONSTRUCTED%** = (235+48)/293 | **283 / 293 = 96.6 %** |
-| **CORRECT%** (raw) = 235/293 | **80.2 %** |
-| **CORRECT% (spec-attributable)** = 224/293 | **76.5 %** |
+| **CONSTRUCTED%** = (237+46)/293 | **283 / 293 = 96.6 %** |
+| **CORRECT%** (raw) = 237/293 | **80.9 %** |
+| **CORRECT% (spec-attributable)** = 226/293 | **77.1 %** |
 | CANNOT-VERIFY share | **5 / 293 = 1.7 %** |
+
+*The two-column rows are the 2026-09-13 pass: M201 and M226 moved W→C after
+being built and executed. CONSTRUCTED% does not move, and that is the point —
+these were BUILT-BUT-WRONG rows, so closing them is a pure CORRECT% gain. §40
+records the moves, the mutations, and what was left alone.*
 
 ### The attribution finding, stated first because it is the one that differs
 
@@ -324,10 +329,10 @@ client paths to `travel-buddy-standalone/` unless stated.
 | M5 | Crowd Flow | **W** | Producer (`lib/crowdFlowProducer.ts`), gateway lane and client renderer all exist. The mode gate is `CROWD_FLOW: inputs.crowdFlowObjectCount > 0` (`src/stores/mapStore.tsx:98`), and the gateway serves zero objects in production (§Headline). The surface can never open there. |
 | M6 | Trip Map | C | `src/features/trips/map/tripMapSources.ts`, `tripMapModel.ts`; capability hard-true at `src/stores/mapStore.tsx:96`. |
 | M7 | Locate My Friends | **W** | Complete server (`lib/locateFriendsSession.ts`, 48 KB) and client (`src/services/locateFriends.ts`, `src/components/map/LocateFriendsPanel.tsx`). **All four storage tables are absent from production** — `locate_friends_sessions`, `_members`, `_positions`, `_audit`, `scripts/checkProductionDrift.ts:176-179`. |
-| M8 | Intent Mode | C | `src/components/map/IntentSheet.tsx:2`; opened at `app/map/index.tsx:2667`. |
+| M8 | Intent Mode | C | `src/components/map/IntentSheet.tsx:2`; opened at `app/map/index.tsx:2666`. |
 | M9 | Compass Map Recommendations | C | `src/features/map/compass/compassMapModel.ts`; capability hard-true, `src/stores/mapStore.tsx:94`. |
 | M10 | Time Machine | **W** | Producer `lib/temporalProjection.ts`, route `routes/mapProjectionTemporal.ts`, control `src/components/map/TimeMachineControl.tsx`. The capability requires the producer be reachable (`src/stores/mapStore.tsx:105-107`), and the temporal route rides `map_projection_enabled` and dies on the same `protected_zones` branch (`routes/mapProjectionTemporal.ts:574-591`). |
-| M11 | Layers / Legend | C | `src/components/map/LayersSheet.tsx:2`; opened at `app/map/index.tsx:3230`. |
+| M11 | Layers / Legend | C | `src/components/map/LayersSheet.tsx:2`; opened at `app/map/index.tsx:3229`. |
 
 ### §3 Live Map / Map Home (6)
 
@@ -673,7 +678,7 @@ The persistent rail is M17. The seven long-press actions:
 | M198 | Hidden Gems | C | `mapSearchModel.ts:47`; `searchAdapter.ts:73`. |
 | M199 | Areas | C | `mapSearchModel.ts:48`; `searchAdapter.ts:79-80` (`cities`, `countries`). |
 | M200 | Hashtags | C | `mapSearchModel.ts:49`; `searchAdapter.ts:74`. |
-| M201 | Saved items | **W** | The type is declared (`mapSearchModel.ts:50`), carries a `savedKind` discriminant (`:144-148`), has group copy (`:64`) and is handled by the adapter's client-side alias table (`searchAdapter.ts:107-108`) and both geometry branches (`:277,292-293`). But **`SERVER_TYPE_TO_MAP_TYPE` — the table naming what the unified search actually returns (`:63-80`) — has no entry that yields `'saved'`.** No saved item can arrive from the search; the branch is unreachable from the server. |
+| M201 | Saved items | C | **Moved W→C 2026-09-13.** The row's finding was right: the client carried the whole branch (`mapSearchModel.ts:50`, `:144-148`, `:64`) and the server had no type that could reach it. It has one now — `` `artifacts/api-server/src/routes/discoverySearch.ts:127#saved` `` is wire vocabulary, produced by `` `artifacts/api-server/src/routes/discoverySearch.ts:1262#async function searchSaved(` `` over the two tables saves actually land in (`wishlist_places` + `discovery_place_saves`, as `savedPlaceProducer` reads them after #446), dispatched at `` `artifacts/api-server/src/routes/discoverySearch.ts:2046#case "saved":` ``. The adapter's `saved` key moved out of the tolerated-alias block into the wire table (`` `travel-buddy-standalone/src/features/map/search/searchAdapter.ts:84#saved:` ``) and `savedKind` is now read from the wire rather than hard-coded (`` `travel-buddy-standalone/src/features/map/search/searchAdapter.ts:261#export function savedKindFromMetadata` ``). The map asks for it: `` `travel-buddy-standalone/src/components/map/MapSearchSheet.tsx:104#searchUnified(q,` ``. Executed: `` `artifacts/api-server/src/test/mapSearchSavedItems.test.ts:168#it("dispatchSearch has a` `` (15 cases; deleting the dispatch case reddens 9, dropping either save table reddens 6). **Not in the `all` fan-out** — see the owner decision in §40. |
 | M202 | Geographic results centre or frame the relevant map object | C | `mapSearchModel.ts:218` — bounds used where known; `:265-267` a saved area frames as `FOCUS_AREA`, a saved trip as `FOCUS_TRIP`; `:307-309` a saved item inherits the geography of what it saved. `searchAdapter.ts:19` refuses to fall back to the user's position because that "pretends the result is where they are". |
 
 ### §28 Offline and Degraded Mode (8)
@@ -717,10 +722,10 @@ not exist under those names**; every responsibility they name has a home.
 | M221 | Mode CROWD_FLOW | **W** | `vocabulary.ts:50`; unreachable in production (M5). |
 | M222 | Mode LOCATE_FRIENDS | **W** | `vocabulary.ts:51`; storage absent (M7). |
 | M223 | Mode TIME_MACHINE | **W** | `vocabulary.ts:52`; gateway-dark (M10). |
-| M224 | Overlay INTENT | C | `mapMachine.ts:140`; dispatched `app/map/index.tsx:2667`. |
-| M225 | Overlay LAYERS | C | `mapMachine.ts:140`; dispatched `app/map/index.tsx:2546,2569`. |
-| M226 | Overlay FILTERS | **W** | Declared at `mapMachine.ts:140` and covered by the reducer — **and never entered.** A repo-wide search for `overlay: 'FILTERS'` outside tests returns nothing; the actual filter sheet is driven by a plain `useState` that bypasses the machine (`app/map/index.tsx:906` `filterSheetOpen`, opened `:2604`, closed `:3240`), and the header's own filters button dispatches `'LAYERS'` instead (`:2569`). A dead state in the machine and a sheet outside it. |
-| M227 | Overlay SEARCH | C | `mapMachine.ts:140`; dispatched `app/map/index.tsx:2544-2545`, rendered `:3182`. |
+| M224 | Overlay INTENT | C | `mapMachine.ts:140`; dispatched `app/map/index.tsx:2666`. |
+| M225 | Overlay LAYERS | C | `mapMachine.ts:140`; dispatched `app/map/index.tsx:2545,2569`. |
+| M226 | Overlay FILTERS | C | **Moved W→C 2026-09-13.** The reducer was always right; nothing entered the state. Both "filters" affordances dispatch it now — the floating control at `` `travel-buddy-standalone/app/map/index.tsx:2568#onFiltersPress={()` `` (it used to dispatch `'LAYERS'`) and the carousel's empty-state button at `` `travel-buddy-standalone/app/map/index.tsx:2603#onFiltersPress={()` `` — and the sheet reads the machine: `` `travel-buddy-standalone/app/map/index.tsx:3245#visible={overlayOpen('FILTERS')}` ``. The bypassing `filterSheetOpen` `useState` is gone, so D1 mutual exclusion and `resolveBack` now actually govern it. `LayersSheet` keeps its own header entry point (`onLayersPress`), so this did not fix one sheet by breaking another. Executed: `` `travel-buddy-standalone/src/features/map/state/__tests__/filtersOverlay.test.ts:136#test('the` `` (12 cases; restoring the `useState` reddens 2, re-pointing the control at `'LAYERS'` reddens 3). |
+| M227 | Overlay SEARCH | C | `mapMachine.ts:140`; dispatched `app/map/index.tsx:2543-2544`, rendered `:3181`. |
 | M228–M235 | Camera FOLLOW_USER, FREE_EXPLORE, FOCUS_PLACE, FOCUS_AREA, FOCUS_ROUTE, FOCUS_TRIP, FOCUS_GROUP, COMPASS_RECOMMENDATIONS | C ×8 | `mapMachine.ts:149-160` all eight in §30's order. `:163-179` `MODE_CAMERA` couples each mode to a framing **as data**, with FOCUS_ROUTE deliberately absent from it because §5 makes navigation cross-cutting rather than a mode (`:178-180`). `:191-215` `OBJECT_KIND_CAMERA` refines by kind — zone-shaped kinds get FOCUS_AREA because "framing them as a pin would imply a precision §23 never granted", and `crew_member` gets FOCUS_GROUP for the same reason. D4 (`:66-73`): a user pan drops to FREE_EXPLORE and changes nothing else. |
 
 ### §31 Clustering and Rendering Priority (7)
@@ -758,7 +763,7 @@ not exist under those names**; every responsibility they name has a home.
 | M254 | Initial usable map under 2 s on a normal connection | **?** | Needs a device and a network. No timing harness or budget assertion exists in the tree. |
 | M255 | Pan responsiveness ~60 fps | **?** | Needs a device and the map SDK. |
 | M256 | Viewport intelligence first results within ~500-800 ms when cached/server-ready | **?** | Needs a running server with a warm cache; also currently unmeasurable because the gateway serves nothing (§Headline). |
-| M257 | Debounce after the camera settles; never re-query on every pixel | C | `app/map/index.tsx:942-948` — *"a coarse centre grid and only re-queries after the §34 settle debounce"*; `:1010` "once the camera settles, the viewport intelligence is fetched"; `src/components/discovery/DiscoveryMapView.tsx:137` reports the camera only on settle. |
+| M257 | Debounce after the camera settles; never re-query on every pixel | C | `app/map/index.tsx:941-947` — *"a coarse centre grid and only re-queries after the §34 settle debounce"*; `:1009` "once the camera settles, the viewport intelligence is fetched"; `src/components/discovery/DiscoveryMapView.tsx:137` reports the camera only on settle. |
 | M258 | Keep animation layers GPU-friendly | **?** | A rendering property of MapLibre layers on a device. Static reading cannot falsify it. |
 
 ### §35 Product Telemetry (17)
@@ -771,7 +776,7 @@ note reading *"Telemetry writer targets a table production does not have; the
 write fails there"*). The writer is `routes/mapTelemetry.ts:213` (drops) and
 `:225` (events), behind a second gate — `map_telemetry_enabled`, seeded OFF
 (`:161`, `migrations/2202_map_telemetry.sql`). The client transport is wired
-(`app/map/index.tsx:1298-1299` `setMapTelemetryTransport(createFetchTelemetryTransport(…))`
+(`app/map/index.tsx:1297-1298` `setMapTelemetryTransport(createFetchTelemetryTransport(…))`
 → `/api/map/telemetry`, `src/features/map/telemetry/mapTelemetry.ts:1281`).
 
 **This is the identical shape the Wall census found** — 13 of 15 Wall telemetry
@@ -1048,3 +1053,109 @@ M33 (the Place marker) and M213 (the components) are untouched by the
 marker change. `head_commit` stays `42aeac38`: this addendum restates two
 rows' evidence, it does not re-measure the census. The staleness ledger
 names the four files against this section.
+
+---
+
+## §40 — 2026-09-13: the BUILT-BUT-WRONG bucket, grouped and counted
+
+This census's gap between CONSTRUCTED and CORRECT **is** its W column:
+48 / 293 = 16.4 points. Nobody had ever asked *why* those 48 were W, so the
+first thing this pass did was sort them into four causes and count each. The
+answer decides what a lane can do here, and it is not what the headline
+suggests.
+
+| why a row is W | rows | what would close it |
+| --- | --- | --- |
+| **(c) capped by a flag, an unapplied migration, or an empty table** | **41** | applying a migration / seeding a flag / an ops backfill — **not code** |
+| **(a) logic wrong in code** | **3** | a code change (one of the three is a SQL projector) |
+| **(b) logic right, nothing reaches it** | **2** | wiring — both built this pass |
+| **(d) needs something nobody has written** | **2** | a capture path or a data source that does not exist |
+
+**Eighty-five per cent of this census's correctness gap is a deployment gap,
+not a code gap.** 41 of 48 rows are code that is written, reviewed, tested and
+unreachable in production because a table is absent, a flag row does not exist,
+or a curated dataset was never loaded. A lane with production READ-ONLY cannot
+move any of them, and moving them by re-labelling would be a lie. The honest
+statement of this census is: *the map is built; the map is not deployed.*
+
+### (c) the 41 — grouped by the single thing blocking each
+
+| blocker | rows |
+| --- | --- |
+| `map_telemetry` table + `map_telemetry_enabled` (migration 2202, unapplied) | M259–M274, M275 — **17** |
+| the four `locate_friends_*` tables (migration 2219, unapplied) | M7, M83, M85, M86, M87, M90, M91, M92, M93, M94 — **10** |
+| `map_projection_enabled` (2201) — and `protected_zones` (2217) before it | M10, M133, M139, M179 — **4** |
+| Crowd Flow: `geo_zones` holds 0 rows (an **ops** action), plus 2218/2224 | M5, M119, M279 — **3** |
+| `route_flow_contribution_consent` absent | M67 — **1** |
+| `map_world_intelligence_enabled` seeded OFF (2295) | M282 — **1** |
+| downstream of the above, with no blocker of their own | M123, M221, M222, M223, M278, M280 — **6** |
+
+The order in which those blockers must be lifted is already written in this
+document's CORRECTION HEADER, and it is not the obvious one: **2217 first**, or
+flipping the gateway blanks the map.
+
+### (a) the 3, and why only one arm of one of them was touched
+
+| row | the defect | what happened here |
+| --- | --- | --- |
+| M42 | the Memory arm reads `memory_projections` filtered to `subject_type='place'`, and migration 2191's PLACE lane projects from the writerless `saved_places` | **Not built.** This census already records that **PR #451 fixes exactly this**. Writing the same migration again would hand the integrator a conflict in the one file both touch, for no earlier landing. |
+| M123 | the Memories layer is correct and its only producer is dead upstream | **Not built** — it is M42 wearing a layer name. |
+| M43 | the legend draws a `blue_dot` glyph for "Current user" and `DiscoveryMapView` renders no user marker at all; `app/map/index.tsx` reads `userLat`/`userLng` only to move the camera | **Not built.** The claim was re-executed and is still true. The fix is a render, and the only execution available to this lane is a source scan — see "the least flattering thing" below. |
+
+### (d) the 2
+
+**M65** names five of seven §10 signal families with no capture anywhere;
+`crowdFlowProducer`'s own `DECLARED_BUT_UNFED_FAMILIES` and
+`UNFED_FAMILY_BLOCKERS` say, per family, what must exist first. **M129** needs
+an `entrance` kind in `MAP_OBJECT_KINDS`, a producer for it, and a source of
+entrance geometry; the repo has none of the three. Neither is a defect to fix;
+both are work to commission.
+
+### Row moves
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| M201 `Saved items` | W | **C** | §27's ninth heading now has a producer: a `saved` SearchType and a `searchSaved` lane over `wishlist_places` + `discovery_place_saves`, the adapter's `saved` key promoted from tolerated alias to wire vocabulary, `savedKind` read from the wire, and the map's own search sheet asking for it. 15 server cases + 4 client cases; three mutations red. |
+| M226 `Overlay FILTERS` | W | **C** | The declared overlay is entered: both filters affordances dispatch `OPEN_OVERLAY FILTERS` and the sheet reads `overlayOpen('FILTERS')`. The bypassing `useState` is deleted, so D1 mutual exclusion and `resolveBack` govern the sheet for the first time. 12 cases; two mutations red. |
+
+### An owner decision this pass surfaced and did NOT take
+
+`saved` is deliberately **absent from the server's `type=all` fan-out**
+(`` `artifacts/api-server/src/routes/discoverySearch.ts:2064#// 17 of the 18 non-"all" types run in parallel at FAN_LIMIT items each.` ``).
+It is the only viewer-scoped search type — a person's own saves, not a public
+corpus — and that fan-out feeds the app's ONE global search as well as the
+map's. Folding a private, always-matching bucket into "All" would change what
+Discovery and the global search screen show, and what census-discovery and
+census-input-intelligence measure, as a side effect of lighting a Map heading.
+So the map asks for it explicitly alongside `all`, and **whether "All" should
+include your saves is left to the owner.**
+
+### What this pass did NOT do, stated so the next one does not re-derive it
+
+- It did not move any (c) row. Production is read-only here; no migration was
+  applied and no flag flipped.
+- It did not write the M42 migration, because PR #451 is that migration.
+- It did not build M43, M65 or M129.
+- `head_commit` stays `42aeac38`. Two rows were re-read and re-executed; the
+  other 291 were not. The staleness ledger names the files this section
+  changed.
+
+### Separately, and NOT a correctness fix: four rows became countable
+
+`check:census-integrity` reported this census as *"4 counted where this tool
+cannot read"*, a phrase that means PROSE. It was not prose. M47, M169, M176 and
+M177 are ordinary table rows whose verdict cell reads `C *(not
+spec-attributable)*`, and the tokeniser accepted `⌀` as a qualifier but not a
+parenthesised one — so it reported C 231 against a document stating 235, and
+the discrepancy hid inside an unreconciled-prose number. The tokeniser reads it
+now
+(`` `artifacts/api-server/src/scripts/checkCensusIntegrity.ts:194#function verdictOf(cell: string)` ``,
+executed by
+`` `artifacts/api-server/src/test/censusIntegrityQualifiedVerdicts.test.ts:65#describe("the tool reads census-map's qualified verdicts"` ``).
+
+**This built nothing and closed no gap.** It moved the *recount* from
+95.2 % / 78.8 % to 96.6 % / 80.2 % — to the numbers this document had always
+stated — and the distance between them, which is the only figure that measures
+correctness, did not move by a thousandth: it was 48/293 before and 48/293
+after. Anyone quoting the recount's improvement as progress is quoting a parser
+fix.
