@@ -33,9 +33,17 @@ export interface EvaluationResult {
   badRange: Finding[];
   badAnchor: Finding[];
   ambiguous: Finding[];
+  /** Anchored citations whose anchor holds in two or more candidate files, so nothing decides which file was meant. Ratcheted at zero. */
+  undecidable: Finding[];
+  /** Backticked citations whose WHOLE anchor is not at the cited line. */
+  badFullAnchor: Finding[];
+  /** Citations in a shape no pass can bind — a bare `:NNN#anchor` whose anchor contains a space. */
+  unbindable: Finding[];
   orphans: Array<Orphan & { doc: string }>;
   total: number;
   anchored: number;
+  /** Of `anchored`, those written in backticks, so the anchor has an unambiguous end. */
+  fullAnchored: number;
 }
 
 export const COVERED: CoveredEntry[];

@@ -302,6 +302,104 @@ describe("Expo dynamic-route paths — `app/messages/[id].tsx`", () => {
 
 // ---------------------------------------------------------------------------
 
+describe("an anchor that holds in TWO candidate files decides nothing", () => {
+  /**
+   * THE HOLE THIS CLOSES, AND WHY IT IS A RATCHET AT ZERO.
+   *
+   * `holding.length === 0` was the only anchor failure. "Holds for at least one
+   * candidate" is the right rule when the other candidates are wrong — a 45-line
+   * `app/messages/[id].tsx` beside a 2973-line one is decided by line count
+   * before the anchor is ever consulted. It is the WRONG rule when two
+   * candidates are BOTH long enough and the anchor sits in both, because then
+   * the check is green and neither the checker nor a reader knows which file the
+   * citation meant. Edit the file the author actually meant and the citation
+   * stays green on the strength of the copy they did not mean: a stale citation
+   * wearing a passing anchor, indistinguishable from a correct one.
+   *
+   * MEASURED BEFORE IT WAS WRITTEN, over the real corpus at 3eaf2436f: 648
+   * ambiguous citations, of which 413 have two or more candidates long enough to
+   * contain the cited line, of which 30 carry an anchor, of which 0 hold in more
+   * than one file. So this forbids a shape that does not yet exist rather than
+   * grandfathering one that does — the strongest kind of ratchet, and the reason
+   * it could be added without repointing a single citation.
+   *
+   * The remedy is always available and always cheap: spell enough of the path to
+   * name one file.
+   */
+  const tree: Record<string, string> = {
+    "docs/x/GUIDE.md": [
+      "both copies carry it: `services/discovery.ts:2#sharedLine`",
+      "only the server copy carries it: `services/discovery.ts:3#serverOnly`",
+    ].join("\n"),
+    "artifacts/api-server/src/services/discovery.ts": ["a", "sharedLine here", "serverOnly here"].join("\n"),
+    "travel-buddy-standalone/src/services/discovery.ts": ["a", "sharedLine here", "clientOnly here"].join("\n"),
+  };
+  const byBasename = new Map<string, string[]>([
+    ["discovery.ts", [
+      "artifacts/api-server/src/services/discovery.ts",
+      "travel-buddy-standalone/src/services/discovery.ts",
+    ]],
+    ["GUIDE.md", ["docs/x/GUIDE.md"]],
+  ]);
+  const readFile = (rel: string): string | null => tree[rel] ?? null;
+  const res = evaluateCitations({ coveredFiles: ["docs/x/GUIDE.md"], readFile, byBasename });
+
+  it("refuses the citation whose anchor holds in both files", () => {
+    assert.equal(res.undecidable.length, 1);
+    assert.equal(res.undecidable[0]?.cited, "services/discovery.ts:2#sharedLine");
+    assert.match(String(res.undecidable[0]?.reason), /holds at :2 in 2 different files/);
+    assert.match(
+      String(res.undecidable[0]?.detail),
+      /artifacts\/api-server\/src\/services\/discovery\.ts AND travel-buddy-standalone\/src\/services\/discovery\.ts/,
+    );
+  });
+
+  it("leaves alone the citation an anchor DOES decide", () => {
+    // `serverOnly` is on line 3 of the server copy and nowhere in the client
+    // copy, so the anchor picks one file. That is an ambiguous path made
+    // unambiguous by its anchor, which is exactly what an anchor is for — and
+    // charging it here would make the pass a false positive on 30 real
+    // citations.
+    assert.equal(
+      res.undecidable.some((f) => f.cited.includes("#serverOnly")),
+      false,
+    );
+  });
+
+  it("does not double-charge: an undecidable anchor is not ALSO a bad anchor", () => {
+    assert.equal(res.badAnchor.length, 0);
+  });
+
+  it("SEEN GOING RED: make the second anchor shared and the count rises to 2", () => {
+    // A green run proves nothing until it has been seen go red. Mutate the
+    // client copy so `serverOnly` appears there too, and the citation that
+    // passed above must now be refused.
+    const mutated: Record<string, string> = { ...tree,
+      "travel-buddy-standalone/src/services/discovery.ts": ["a", "sharedLine here", "serverOnly here"].join("\n") };
+    const red = evaluateCitations({
+      coveredFiles: ["docs/x/GUIDE.md"],
+      readFile: (rel: string): string | null => mutated[rel] ?? null,
+      byBasename,
+    });
+    assert.equal(red.undecidable.length, 2);
+  });
+
+  it("SEEN GOING GREEN: spelling the path to name one file clears it", () => {
+    // The documented remedy has to actually work, or the pass is a trap.
+    const spelled: Record<string, string> = { ...tree,
+      "docs/x/GUIDE.md": "`artifacts/api-server/src/services/discovery.ts:2#sharedLine`" };
+    const green = evaluateCitations({
+      coveredFiles: ["docs/x/GUIDE.md"],
+      readFile: (rel: string): string | null => spelled[rel] ?? null,
+      byBasename,
+    });
+    assert.equal(green.undecidable.length, 0);
+    assert.equal(green.badAnchor.length, 0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+
 describe("an anchored citation that goes OUT OF RANGE is still an anchored citation", () => {
   /**
    * THE DEFECT THIS PINS, AND HOW IT WAS FOUND.

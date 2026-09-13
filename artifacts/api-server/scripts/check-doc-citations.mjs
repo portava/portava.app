@@ -564,6 +564,7 @@ export function evaluateCitations({ coveredFiles, readFile, byBasename }) {
   const badRange = [];
   const badAnchor = [];
   const ambiguous = [];
+  const undecidable = [];
   const orphans = [];
   const badFullAnchor = [];
   const unbindable = [];
@@ -639,6 +640,29 @@ export function evaluateCitations({ coveredFiles, readFile, byBasename }) {
           reason: `"${c.anchor}" does not appear at ${target.rel}:${where}`,
           detail: 'the code moved, or the citation named the wrong place',
         });
+      } else if (holding.length > 1) {
+        // ── AN ANCHOR THAT HOLDS IN TWO FILES DECIDES NOTHING ────────────────
+        // "holds for at least one candidate" is the right rule when the other
+        // candidates are wrong. It is the WRONG rule when two candidates both
+        // satisfy it, because then the pass is green without anyone — checker
+        // or reader — knowing which file the citation meant. A later edit to
+        // the file the author actually meant leaves the citation green on the
+        // strength of the copy they did not mean. That is a citation certified
+        // by the wrong file, and it is indistinguishable from a correct one.
+        //
+        // Measured before it was written, not assumed: of 648 ambiguous
+        // citations in the corpus, 413 have two or more candidates long enough
+        // to contain the cited line, 30 of those carry an anchor, and 0 of
+        // those 30 hold in more than one file. So this lands as a ratchet AT
+        // ZERO — it forbids a shape that does not yet exist rather than
+        // grandfathering one that does. The remedy is always available and
+        // always cheap: spell enough of the path to name one file.
+        const where = ranges.map(([lo, hi]) => (lo === hi ? `${lo}` : `${lo}-${hi}`)).join(',');
+        undecidable.push({
+          doc: docRel, line: c.line, cited: label,
+          reason: `"${c.anchor}" holds at :${where} in ${holding.length} different files`,
+          detail: `${holding.map((h) => h.rel).join(' AND ')} — spell the path so it names one`,
+        });
       }
     }
 
@@ -683,7 +707,7 @@ export function evaluateCitations({ coveredFiles, readFile, byBasename }) {
       });
     }
   }
-  return { badRange, badAnchor, ambiguous, orphans, total, anchored, badFullAnchor, fullAnchored, unbindable };
+  return { badRange, badAnchor, ambiguous, undecidable, orphans, total, anchored, badFullAnchor, fullAnchored, unbindable };
 }
 
 // ---------------------------------------------------------------------------
@@ -761,6 +785,10 @@ function main() {
   section('citations written in a shape NO pass can check', res.unbindable,
     (c) => `${c.doc}:${c.line}  ${c.cited}  -- ${c.reason}`);
   failed += res.unbindable.length;
+
+  section('citations whose anchor holds in MORE THAN ONE candidate file', res.undecidable,
+    (c) => `${c.doc}:${c.line}  ${c.cited}  -- ${c.reason}; ${c.detail}`);
+  failed += res.undecidable.length;
 
   if (res.orphans.length) {
     console.log('');
