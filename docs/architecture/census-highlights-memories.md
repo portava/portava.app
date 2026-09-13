@@ -3200,5 +3200,6 @@ had checked in, on two open flags); **two more found and fixed** (a Compass acce
 unreadable participant table as "nobody was there", and a share card that a block did not stop);
 **three red-first suites added**; and **one green withdrawn**, because the thing this census
 keeps catching in other passes turned out to be in this one too. A number that moved up by a
-third of a point on that evidence would have been the fourth false green in this document's
-history, and the first that was avoidable by its own author.
+third of a point on that evidence would have been another false green in a document that has
+already caught four — H84 in §A, H263 in §D, and H4 and H264 here — and the first one that was
+avoidable by its own author before anybody else had to find it.
