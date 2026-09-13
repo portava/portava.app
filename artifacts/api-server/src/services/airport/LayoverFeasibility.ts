@@ -52,6 +52,7 @@ import {
   type LayoverReasonCode,
   type LayoverWindow,
   type LeaveAdvice,
+  type LiveConditions,
   type SafetyAssessment,
   type TravelTimeSource,
 } from "./LayoverSafetyEngine.js";
@@ -65,8 +66,12 @@ import {
  * History:
  *   2026.09.08-1  first certified record: single derivation for the four route
  *                 call sites, inputHash, §6.2 estimate representation.
+ *   2026.09.13-1  §10 `liveConditions` becomes a named input (so it is inside
+ *                 the hash and inside a replay) and a sixth `liveExtra`
+ *                 estimate. `null` for every caller on this tree outside
+ *                 tests; the shape changed, so the shape's version moved.
  */
-export const LAYOVER_FEASIBILITY_VERSION = "2026.09.08-1";
+export const LAYOVER_FEASIBILITY_VERSION = "2026.09.13-1";
 
 // ── §6.2 Estimate representation ─────────────────────────────────────────────
 
@@ -205,6 +210,14 @@ export interface BufferEstimates {
   bagsExtra: Estimate;
   trafficExtra: Estimate;
   timeOfDayExtra: Estimate;
+  /**
+   * §10 live conditions as the sixth term. THE ONLY ESTIMATE ON THIS TREE THAT
+   * CAN CARRY A NON-DEGENERATE PROVENANCE: when conditions are supplied it is
+   * sourceClass LIVE at fallback level 0 with a real `observedAt`/`expiresAt`,
+   * and when they are not it is a 0-minute STATIC_DEFAULT — which is what every
+   * production request produces, because nothing supplies conditions.
+   */
+  liveExtra: Estimate;
 }
 
 export interface FeasibilityEstimates extends BufferEstimates {
@@ -228,7 +241,8 @@ export function conservativeBufferMinutes(
     estimateMinutesAt(b.immigrationExtra, percentile) +
     estimateMinutesAt(b.bagsExtra, percentile) +
     estimateMinutesAt(b.trafficExtra, percentile) +
-    estimateMinutesAt(b.timeOfDayExtra, percentile)
+    estimateMinutesAt(b.timeOfDayExtra, percentile) +
+    estimateMinutesAt(b.liveExtra, percentile)
   );
 }
 
@@ -278,14 +292,29 @@ export interface FeasibilityInputs {
   bufferPercentile: EstimatePercentile;
   /** Absent = the traveller's landside question is not being asked. */
   landsideProbe: LandsideProbe | null;
+  /**
+   * §10 reconciled live conditions behind the buffer. A NAMED INPUT rather
+   * than an ambient read, for the same reason `landsideProbe` is one: it lands
+   * in `inputHash`, so a record computed under an observed 40-minute security
+   * queue is a different computation from the same session computed without
+   * one, and `replayFeasibility` reproduces the right one. `null` for every
+   * caller on this tree outside tests.
+   */
+  liveConditions: LiveConditions | null;
 }
 
 /** Project the domain objects onto the named input set. */
 export function feasibilityInputs(
   airport: FeasibilityAirport,
   session: FeasibilitySession,
-  opts: { nowMs: number; landsideProbe?: LandsideProbe | null; bufferPercentile?: EstimatePercentile },
+  opts: {
+    nowMs: number;
+    landsideProbe?: LandsideProbe | null;
+    bufferPercentile?: EstimatePercentile;
+    liveConditions?: LiveConditions | null;
+  },
 ): FeasibilityInputs {
+  const live = opts.liveConditions ?? null;
   return {
     engineVersion: LAYOVER_ENGINE_VERSION,
     feasibilityVersion: LAYOVER_FEASIBILITY_VERSION,
@@ -313,6 +342,19 @@ export function feasibilityInputs(
     nowMs: opts.nowMs,
     bufferPercentile: opts.bufferPercentile ?? SAFETY_CRITICAL_PERCENTILE,
     landsideProbe: opts.landsideProbe ?? null,
+    // Projected field by field, like `airport` and `session` above: a caller
+    // handing in an object with extra keys must not change the hash, or two
+    // structurally identical computations stop matching.
+    liveConditions: live
+      ? {
+          securityWaitExtraMin: live.securityWaitExtraMin,
+          immigrationWaitExtraMin: live.immigrationWaitExtraMin,
+          groundTransportExtraMin: live.groundTransportExtraMin,
+          reasonCodes: [...live.reasonCodes],
+          observedAt: live.observedAt,
+          expiresAt: live.expiresAt,
+        }
+      : null,
   };
 }
 
@@ -438,6 +480,29 @@ function bufferEstimates(inputs: FeasibilityInputs, breakdown: SafetyAssessment[
       breakdown.timeOfDayExtra, "STATIC_DEFAULT", "LOW", 3,
       ["LayoverSafetyEngine.timeOfDayBand"],
     ),
+    liveExtra: liveExtraEstimate(inputs.liveConditions, breakdown.liveExtra),
+  };
+}
+
+/**
+ * The §10 live term as a §6.2 estimate.
+ *
+ * Two cases, and the difference between them is the whole point of §2.1's
+ * "never fabricate freshness": with conditions supplied the term is LIVE at
+ * fallback level 0 and carries the observation's own `observedAt`/`expiresAt`;
+ * with none it is a ZERO-minute STATIC_DEFAULT at level 3 with a source ref
+ * that says so in words. It never claims to be a live reading of "no queue".
+ */
+function liveExtraEstimate(live: LiveConditions | null, minutes: number): Estimate {
+  if (!live) {
+    return pointEstimate(0, "STATIC_DEFAULT", "LOW", 3, ["no live conditions supplied"]);
+  }
+  return {
+    ...pointEstimate(minutes, "LIVE", "MEDIUM", 0, [
+      `LayoverAirportTruth.liveConditionsFrom(${live.reasonCodes.join(",") || "no codes"})`,
+    ]),
+    observedAt: live.observedAt,
+    expiresAt: live.expiresAt,
   };
 }
 
@@ -451,9 +516,11 @@ function bufferEstimates(inputs: FeasibilityInputs, breakdown: SafetyAssessment[
 export function certifyFeasibility(inputs: FeasibilityInputs): LayoverFeasibilityRecord {
   const { airport, session, nowMs } = inputs;
 
+  const live = inputs.liveConditions;
+
   // ONE deadline computation. Everything below reads it; nothing recomputes it.
-  const deadline = computeReturnDeadline(airport, session);
-  const envelope = computeWindow(airport, session, nowMs);
+  const deadline = computeReturnDeadline(airport, session, live);
+  const envelope = computeWindow(airport, session, nowMs, live);
 
   const probe = inputs.landsideProbe;
   const candidate: ActivityCandidate | null = probe
@@ -471,6 +538,7 @@ export function certifyFeasibility(inputs: FeasibilityInputs): LayoverFeasibilit
 
   const advice = adviseLeaving(airport, session, envelope, {
     travelTimeSource: probe?.travelTimeSource,
+    liveConditions: live,
   });
 
   const buffers = bufferEstimates(inputs, deadline.breakdown);
@@ -487,6 +555,10 @@ export function certifyFeasibility(inputs: FeasibilityInputs): LayoverFeasibilit
     buffers.baseBuffer, buffers.immigrationExtra, buffers.bagsExtra,
     buffers.trafficExtra, buffers.timeOfDayExtra, estimates.exitDelay,
     ...(estimates.outboundTravel ? [estimates.outboundTravel] : []),
+    // The live term folds in ONLY when it is a live term. A "no conditions
+    // supplied" zero is a placeholder, and folding its LOW confidence in would
+    // report the ABSENCE of live intelligence as evidence about the buffer.
+    ...(live ? [buffers.liveExtra] : []),
   ];
 
   return {
@@ -523,7 +595,12 @@ export const replayFeasibility = certifyFeasibility;
 export function certifySessionFeasibility(
   airport: FeasibilityAirport,
   session: FeasibilitySession,
-  opts: { nowMs: number; landsideProbe?: LandsideProbe | null; bufferPercentile?: EstimatePercentile },
+  opts: {
+    nowMs: number;
+    landsideProbe?: LandsideProbe | null;
+    bufferPercentile?: EstimatePercentile;
+    liveConditions?: LiveConditions | null;
+  },
 ): LayoverFeasibilityRecord {
   return certifyFeasibility(feasibilityInputs(airport, session, opts));
 }

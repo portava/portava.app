@@ -209,6 +209,7 @@ describe("inputHash is an identity for the computation, not a decoration", () =>
     const reordered = deepReverse(base);
     // Rebuild with the sub-objects' keys in a different insertion order.
     const shuffled = {
+      liveConditions: base.liveConditions,
       landsideProbe: base.landsideProbe,
       bufferPercentile: base.bufferPercentile,
       nowMs: base.nowMs,
