@@ -237,8 +237,54 @@ export interface DomainTrust {
   domain: string;
   /** Presentation word, e.g. "Excellent" | "Strong" | "Established" | "Building" | "New" | "Not applicable". */
   presentation: string;
-  /** False when the domain does not apply to this user (e.g. Buddy for a non-buddy). */
+  /**
+   * False when the domain does not apply to this user (e.g. Buddy for a
+   * non-buddy). It has exactly this ONE meaning. "Not measured" is a different
+   * statement about a person and lives in `basis` — repurposing this flag for
+   * it would change the word a real person is shown, which is an owner
+   * decision rather than a field.
+   */
   applicable: boolean;
+  /** What this domain's word rests on. See `domainTrustBasis`. */
+  basis: DomainTrustBasis;
+}
+
+/**
+ * WHAT ONE DOMAIN'S PRESENTATION WORD RESTS ON (§9/§10 "explainable").
+ *
+ *   unavailable     `trust_profiles` could not be READ. Whatever the word says,
+ *                   it is not a statement about this person's trust.
+ *   measured        every category the domain averages was present on the
+ *                   profile — the word is a measurement.
+ *   partial         some were present and some were the neutral substitution.
+ *                   A mean of three real scores and one default is neither a
+ *                   measurement nor a default, and saying so is the point.
+ *   substituted     NONE was present. The word is the neutral 50's word — the
+ *                   56-of-58 production case census-passport §3 measured.
+ *   not_applicable  the domain does not apply at all (Buddy for a non-buddy).
+ *                   Zero-of-zero inputs is vacuously "all measured", and
+ *                   reporting THAT as `measured` would claim a domain nobody
+ *                   scored had been scored.
+ *
+ * EXPORTED so its test exercises the shipped predicate rather than a copy of
+ * it, for the same reason `trustConfidenceBasis` is.
+ */
+export type DomainTrustBasis =
+  | "measured"
+  | "partial"
+  | "substituted"
+  | "unavailable"
+  | "not_applicable";
+
+export function domainTrustBasis(
+  state: TrustProfileRead["state"],
+  measuredInputs: number,
+  totalInputs: number,
+): DomainTrustBasis {
+  if (state === "unavailable") return "unavailable";
+  if (totalInputs <= 0) return "not_applicable";
+  if (measuredInputs <= 0) return "substituted";
+  return measuredInputs >= totalInputs ? "measured" : "partial";
 }
 
 export interface TrustProjection {
@@ -1069,22 +1115,34 @@ function buildDomainTrust(
   overallScore: number,
   categories: Record<string, number> | null | undefined,
   isBuddy: boolean,
+  state: TrustProfileRead["state"],
+  overallMeasured: boolean,
 ): DomainTrust[] {
   const c = (k: string): number => {
     const v = Number((categories as Record<string, number> | undefined)?.[k]);
     return Number.isFinite(v) ? v : 50;
   };
+  // The SAME test `c` applies, asked separately so the answer does not depend on
+  // the order the domains happen to read their categories in — `respect_safety`
+  // feeds three domains and must report identically to each.
+  const isMeasured = (k: string): boolean =>
+    Number.isFinite(Number((categories as Record<string, number> | undefined)?.[k]));
+  const basisOf = (...keys: string[]): DomainTrustBasis =>
+    domainTrustBasis(state, keys.filter(isMeasured).length, keys.length);
+
   const domains: DomainTrust[] = [
-    { key: "overall",     domain: "Overall",     presentation: presentationWord(overallScore), applicable: true },
-    { key: "traveler",    domain: "Traveler",    presentation: presentationWord(mean(c("respect_safety"), c("communication"), c("location_honesty"), c("passport_authenticity"))), applicable: true },
-    { key: "trip_guest",  domain: "Trip Guest",  presentation: presentationWord(mean(c("plan_attendance"), c("respect_safety"), c("communication"))), applicable: true },
-    { key: "trip_host",   domain: "Trip Host",   presentation: presentationWord(c("host_quality")), applicable: true },
-    { key: "contributor", domain: "Contributor", presentation: presentationWord(mean(c("content_quality"), c("community_value"), c("guide_accuracy"))), applicable: true },
+    { key: "overall",     domain: "Overall",     presentation: presentationWord(overallScore), applicable: true, basis: domainTrustBasis(state, overallMeasured ? 1 : 0, 1) },
+    { key: "traveler",    domain: "Traveler",    presentation: presentationWord(mean(c("respect_safety"), c("communication"), c("location_honesty"), c("passport_authenticity"))), applicable: true, basis: basisOf("respect_safety", "communication", "location_honesty", "passport_authenticity") },
+    { key: "trip_guest",  domain: "Trip Guest",  presentation: presentationWord(mean(c("plan_attendance"), c("respect_safety"), c("communication"))), applicable: true, basis: basisOf("plan_attendance", "respect_safety", "communication") },
+    { key: "trip_host",   domain: "Trip Host",   presentation: presentationWord(c("host_quality")), applicable: true, basis: basisOf("host_quality") },
+    { key: "contributor", domain: "Contributor", presentation: presentationWord(mean(c("content_quality"), c("community_value"), c("guide_accuracy"))), applicable: true, basis: basisOf("content_quality", "community_value", "guide_accuracy") },
     // Buddy is a contextual projection (§20): "Not applicable" unless the user
-    // actually offers a buddy service.
+    // actually offers a buddy service. A domain that does not apply has no
+    // inputs, so `basisOf()` reports not_applicable rather than a vacuous
+    // "measured".
     isBuddy
-      ? { key: "buddy", domain: "Buddy", presentation: presentationWord(mean(c("host_quality"), c("respect_safety"), c("communication"))), applicable: true }
-      : { key: "buddy", domain: "Buddy", presentation: "Not applicable", applicable: false },
+      ? { key: "buddy", domain: "Buddy", presentation: presentationWord(mean(c("host_quality"), c("respect_safety"), c("communication"))), applicable: true, basis: basisOf("host_quality", "respect_safety", "communication") }
+      : { key: "buddy", domain: "Buddy", presentation: "Not applicable", applicable: false, basis: basisOf() },
   ];
   return domains;
 }
@@ -1150,8 +1208,18 @@ async function buildTrust(
   const evidenceWeight = profileRead.state === "ok" ? profileRead.profile.evidenceWeight : null;
   const evidenceCount = profileRead.state === "ok" ? profileRead.profile.evidenceCount : null;
   const confidenceBasis = trustConfidenceBasis(profileRead.state, evidenceWeight, evidenceCount);
-  const overallForDomains = profile && Number.isFinite(Number(profile.overall_score)) ? Number(profile.overall_score) : 50;
-  const domains = buildDomainTrust(overallForDomains, profile?.categories as Record<string, number> | undefined, isBuddy);
+  const overallMeasured = !!profile && Number.isFinite(Number(profile.overall_score));
+  const overallForDomains = overallMeasured ? Number(profile!.overall_score) : 50;
+  // Explainability at the level the words are SHOWN. `presentation` is
+  // unchanged on every branch — see `DomainTrust.applicable` for why the
+  // substituted domains keep both their word and their flag.
+  const domains = buildDomainTrust(
+    overallForDomains,
+    profile?.categories as Record<string, number> | undefined,
+    isBuddy,
+    profileRead.state,
+    overallMeasured,
+  );
 
   if (context === "public") {
     const badge = await getPublicTrustBadge(sc, userId);

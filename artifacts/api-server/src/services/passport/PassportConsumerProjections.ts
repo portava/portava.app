@@ -122,6 +122,7 @@ import {
   type PassportViewerActions,
   type TravelStats,
   type TravelerStateKind,
+  type DomainTrustBasis,
 } from "./PassportProjectionService.js";
 import type { SharedContextProjection } from "./SharedContextService.js";
 import type { TravelDimension } from "./PassportTravelIdentityService.js";
@@ -308,7 +309,13 @@ export interface TripsProjection {
    * TABLE 12 trip-domain presentations ONLY (trip_guest / trip_host) — a
    * qualitative word each, never the 0-100 score (§9/§34 "not a leaderboard").
    */
-  trustDomains: Array<{ key: string; domain: string; presentation: string; applicable: boolean }>;
+  /**
+   * TABLE 12 domain words. `basis` travels WITH the word on purpose: this is
+   * the only consumer that receives `presentation` at all, and a word whose
+   * evidence is a neutral substitution must not arrive looking like a
+   * measurement (§10). See `domainTrustBasis`.
+   */
+  trustDomains: Array<{ key: string; domain: string; presentation: string; applicable: boolean; basis: DomainTrustBasis }>;
   /** Languages the owner permitted into the aggregate's travel identity (§19). */
   languages: string[];
   /** Travel-style axes only (pace / planning / social / group style) (TABLE 20). */
@@ -779,7 +786,7 @@ function toTripsProjection(full: PassportProjection): TripsProjection {
   if (full.trust) {
     trips.trustDomains = full.trust.domains
       .filter((d) => TRIPS_TRUST_DOMAIN_KEYS.has(d.key))
-      .map((d) => ({ key: d.key, domain: d.domain, presentation: d.presentation, applicable: d.applicable }));
+      .map((d) => ({ key: d.key, domain: d.domain, presentation: d.presentation, applicable: d.applicable, basis: d.basis }));
   }
   const { languages, travelStyle } = tripsTravelIdentity(full.travelIdentity?.dimensions);
   trips.languages = languages;
