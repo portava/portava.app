@@ -27,8 +27,14 @@ export type SafetyRating =
  * History:
  *   2026.09.07-1  ramped time-of-day buffer (1-Lipschitz), single deadline
  *                 anchor (9c26efba); returnState ladder + reason codes added.
+ *   2026.09.13-1  §10 live conditions become a SIXTH buffer term (`liveExtra`).
+ *                 The term is 0 for every caller that supplies none, which is
+ *                 every caller on this tree outside tests, so no number a
+ *                 traveller sees moves — but the ARITHMETIC gained a term and
+ *                 the rule for this constant is that a new term bumps it, not
+ *                 that a new term which happens to be zero does not.
  */
-export const LAYOVER_ENGINE_VERSION = "2026.09.07-1";
+export const LAYOVER_ENGINE_VERSION = "2026.09.13-1";
 
 /**
  * Spec Appendix A reason codes — the whole vocabulary, declared once so it can
@@ -39,11 +45,19 @@ export const LAYOVER_ENGINE_VERSION = "2026.09.07-1";
  *   INSUFFICIENT_USABLE_TIME    verdict "no"
  *   RETURN_THRESHOLD_REACHED    returnState RETURN_NOW / CONNECTION_AT_RISK
  *   AIRPORT_MATURITY_LIMITED    airport.verified === false (spec §22 L0)
- * Declared, never emitted (no input exists): BAGGAGE_STATUS_CRITICAL_UNKNOWN
- * (checked_bags is a boolean, unknown is unrepresentable), SECURITY_WAIT_HIGH,
- * RETURN_ROUTE_UNRELIABLE, AIRPORT_CHANGE_REQUIRED, SELF_TRANSFER_FRICTION,
- * DATA_STALE, SOURCE_CONFLICT, TRAFFIC_DEGRADED, FLIGHT_MOVED_EARLIER,
- * FLIGHT_DELAY_CREATED_OPPORTUNITY, RECOMMENDATION_EXPIRED.
+ * Emitted only when a caller supplies the fact, and NO PRODUCER OF THAT FACT
+ * EXISTS ON THIS TREE outside tests — so in production these are still never
+ * emitted, and saying otherwise would be the fabricated-freshness §2.1 forbids:
+ *   SECURITY_WAIT_HIGH   `LiveConditions.reasonCodes` from LayoverAirportTruth
+ *   TRAFFIC_DEGRADED     "
+ *   DATA_STALE           "  (every credible observation past its expiry)
+ *   SOURCE_CONFLICT      "  (§10.1 contradiction, never silently merged)
+ *   FLIGHT_MOVED_EARLIER          LayoverEventReplanner, on a cutoff that moved
+ *   FLIGHT_DELAY_CREATED_OPPORTUNITY  "  , on a delay that widened the window
+ * Declared, never emitted anywhere (no input exists in any shape):
+ * BAGGAGE_STATUS_CRITICAL_UNKNOWN (checked_bags is a boolean, unknown is
+ * unrepresentable), RETURN_ROUTE_UNRELIABLE, AIRPORT_CHANGE_REQUIRED,
+ * SELF_TRANSFER_FRICTION, RECOMMENDATION_EXPIRED.
  */
 export const LAYOVER_REASON_CODES = [
   "ENTRY_NOT_CONFIRMED",
@@ -147,6 +161,81 @@ export function travelTimeSourceFor(c: {
   return c.insideAirport ? "inside_airport" : "category_default";
 }
 
+/**
+ * Spec §10 "Fast live" conditions, as the ONE shape the buffer arithmetic will
+ * accept them in.
+ *
+ * WHAT THIS IS. Three additive minute figures and the reason codes that
+ * explain them, produced by `LayoverAirportTruth.liveConditionsFrom()` out of
+ * reconciled observations and by nothing else. The engine deliberately does
+ * NOT take raw observations: reconciliation, conflict handling, decay and the
+ * conservative-source rule are §10.1 policy and belong one layer up, so what
+ * reaches the arithmetic is already a decided number with a stated reason.
+ *
+ * WHAT IT IS NOT. It is not a producer. NOTHING ON THIS TREE BUILDS ONE
+ * OUTSIDE TESTS: there is no observation table applied, no ingest route and no
+ * external feed, so every production call passes `undefined` and every number
+ * below is 0. That absence is the point of the default — `NO_LIVE_CONDITIONS`
+ * reproduces today's arithmetic term for term, and
+ * `src/test/layoverLiveConditions.test.ts` pins that equality so the seam
+ * cannot start moving numbers by accident.
+ *
+ * WHY ADDITIVE-ONLY, AND NEVER SUBTRACTIVE. §10.1: "For safety calculations,
+ * prefer conservative values when credible sources disagree." A live signal may
+ * only ever make the buffer LARGER. An observed queue SHORTER than the baseline
+ * the static buffer already assumes contributes 0, not a discount: shrinking a
+ * safety buffer on a single crowd-sourced reading is the failure mode the
+ * conservative rule exists to forbid, and it is also what keeps
+ * `usableMinutes` monotonically non-increasing in every live wait (spec §6.1
+ * L51, swept in `layoverLiveConditions.test.ts`).
+ */
+export interface LiveConditions {
+  /** Extra minutes over the baseline the static buffer already covers. >= 0. */
+  securityWaitExtraMin: number;
+  /** Extra immigration-hall minutes over the airport's own immigration term. >= 0. */
+  immigrationWaitExtraMin: number;
+  /** Extra ground-transport minutes over the airport's traffic term. >= 0. */
+  groundTransportExtraMin: number;
+  /** Appendix A codes the truth layer decided apply. Merged into the advice. */
+  reasonCodes: LayoverReasonCode[];
+  /**
+   * Oldest observation these minutes rest on, ISO, and the instant they stop
+   * being usable. Carried rather than computed here so the §6.2 estimate built
+   * from them can state a real `observedAt`/`expiresAt` instead of `null` —
+   * the arithmetic ignores both. `null` when there is no observation.
+   */
+  observedAt: string | null;
+  expiresAt: string | null;
+}
+
+/** The absence of live intelligence, spelled out. Adds 0 to every term. */
+export const NO_LIVE_CONDITIONS: LiveConditions = {
+  securityWaitExtraMin: 0,
+  immigrationWaitExtraMin: 0,
+  groundTransportExtraMin: 0,
+  reasonCodes: [],
+  observedAt: null,
+  expiresAt: null,
+};
+
+/**
+ * The single scalar the buffer adds for live conditions.
+ *
+ * Fails closed in both directions a caller can get wrong: an absent
+ * `LiveConditions` is 0, and a negative or non-finite term is clamped to 0
+ * rather than trusted — a producer that computed −20 must not be able to hand
+ * a traveller twenty extra minutes in the city.
+ */
+export function liveExtraMinutes(live?: LiveConditions | null): number {
+  if (!live) return 0;
+  const term = (n: number) => (Number.isFinite(n) && n > 0 ? n : 0);
+  return (
+    term(live.securityWaitExtraMin) +
+    term(live.immigrationWaitExtraMin) +
+    term(live.groundTransportExtraMin)
+  );
+}
+
 export interface ActivityCandidate {
   title: string;
   travelTimeMin: number;       // one-way travel time in minutes
@@ -171,6 +260,14 @@ export interface SafetyAssessment {
     bagsExtra:        number;
     trafficExtra:     number;
     timeOfDayExtra:   number;
+    /**
+     * §10 live conditions, as one additive term. 0 whenever no live intelligence
+     * was supplied — which is every production request today. It is a SEPARATE
+     * term and never folded into `trafficExtra` on purpose: a traveller asking
+     * "why is my deadline earlier than yesterday" must be able to see that the
+     * answer is an observed queue and not the airport's static traffic figure.
+     */
+    liveExtra:        number;
     totalBuffer:      number;
   };
 }
@@ -266,6 +363,11 @@ export function computeBuffer(
   /** Instant the buffer is required to be complete by — the flight cutoff. */
   at: Date,
   timezone?: string,
+  /**
+   * §10 reconciled live conditions. Absent (the only case in production today)
+   * adds 0 and leaves every other term untouched.
+   */
+  live?: LiveConditions | null,
 ): SafetyAssessment["breakdown"] {
   const baseBuffer       = session.flightType === "international"
     ? airport.internationalBufferMin
@@ -274,8 +376,9 @@ export function computeBuffer(
   const bagsExtra        = session.checkedBags         ? airport.checkedBagsExtraMin  : 0;
   const trafficExtra     = airport.trafficExtraMin;
   const timeOfDayExtraMin = timeOfDayExtra(at, timezone);
-  const totalBuffer       = baseBuffer + immigrationExtra + bagsExtra + trafficExtra + timeOfDayExtraMin;
-  return { baseBuffer, immigrationExtra, bagsExtra, trafficExtra, timeOfDayExtra: timeOfDayExtraMin, totalBuffer };
+  const liveExtra         = liveExtraMinutes(live);
+  const totalBuffer       = baseBuffer + immigrationExtra + bagsExtra + trafficExtra + timeOfDayExtraMin + liveExtra;
+  return { baseBuffer, immigrationExtra, bagsExtra, trafficExtra, timeOfDayExtra: timeOfDayExtraMin, liveExtra, totalBuffer };
 }
 
 /**
@@ -306,9 +409,16 @@ export function computeReturnDeadline(
   session: Pick<LayoverSession,
     "flightType" | "immigrationRequired" | "checkedBags" | "departureTime" | "boardingTime"
   >,
+  /**
+   * §10 reconciled live conditions. `liveExtra` is a constant with respect to
+   * the cutoff, so guarantee 1 above (monotone in the cutoff) is unaffected by
+   * it — proved for non-zero live conditions in
+   * `src/test/layoverLiveConditions.test.ts`, not merely argued here.
+   */
+  live?: LiveConditions | null,
 ): ReturnDeadline {
   const cutoffMs  = layoverCutoffMs(session);
-  const breakdown = computeBuffer(airport, session, new Date(cutoffMs), airport.timezone);
+  const breakdown = computeBuffer(airport, session, new Date(cutoffMs), airport.timezone, live);
   return {
     cutoffMs,
     breakdown,
@@ -334,8 +444,16 @@ export function assess(
    * passing it and omitting it give identical assessments.
    */
   certified?: ReturnDeadline,
+  /**
+   * §10 live conditions, used ONLY when no certified deadline was handed in.
+   * A caller that passes both is telling the engine two things at once, so the
+   * certified deadline wins — it is the one already published elsewhere in the
+   * same response, and a candidate rated against a different buffer than the
+   * one on screen is precisely headline defect 2.
+   */
+  live?: LiveConditions | null,
 ): SafetyAssessment {
-  const { cutoffMs, breakdown, hardReturnTime } = certified ?? computeReturnDeadline(airport, session);
+  const { cutoffMs, breakdown, hardReturnTime } = certified ?? computeReturnDeadline(airport, session, live);
   const availableMin   = Math.max(0, Math.round((cutoffMs - nowMs) / 60000));
 
   const bufferMin      = breakdown.totalBuffer;
@@ -519,11 +637,13 @@ export function computeWindow(
   airport: EngineAirport,
   session: EngineSession,
   nowMs = Date.now(),
+  /** §10 reconciled live conditions; absent adds 0 to the buffer. */
+  live?: LiveConditions | null,
 ): LayoverWindow {
   const arrivalMs = new Date(session.arrivalTime).getTime();
   const tz        = airport.timezone;
 
-  const { cutoffMs, breakdown: breakdownBase, hardReturnTime } = computeReturnDeadline(airport, session);
+  const { cutoffMs, breakdown: breakdownBase, hardReturnTime } = computeReturnDeadline(airport, session, live);
 
   const totalMinutes  = Math.max(0, Math.round((cutoffMs - arrivalMs) / 60000));
   const exitDelayMin  = estimateExitDelay(session);
@@ -598,6 +718,13 @@ export interface LeaveAdviceFacts {
    * `unknowns` so a category constant is never mistaken for a routed estimate.
    */
   travelTimeSource?: TravelTimeSource;
+  /**
+   * §10 reconciled live conditions behind this window's buffer. Its reason
+   * codes are merged into the advice's codes; absent contributes none. The
+   * MINUTES are not re-read here — they are already inside `window`, and
+   * reading them twice is how two numbers in one response stop agreeing.
+   */
+  liveConditions?: LiveConditions | null;
 }
 
 /**
@@ -628,6 +755,13 @@ export function adviseLeaving(
   // Entry is never confirmed on this tree — the visa line above is a standing
   // unknown, and the code says so in a form a client or a metric can count.
   const reasonCodes: LayoverReasonCode[] = ["ENTRY_NOT_CONFIRMED"];
+  // §10 live conditions carry their own Appendix A codes (SECURITY_WAIT_HIGH,
+  // TRAFFIC_DEGRADED, DATA_STALE, SOURCE_CONFLICT). They are merged, never
+  // re-derived here, and de-duplicated so a caller passing the same code twice
+  // cannot inflate a count. Empty in production — nothing produces conditions.
+  for (const code of facts.liveConditions?.reasonCodes ?? []) {
+    if (!reasonCodes.includes(code)) reasonCodes.push(code);
+  }
   if (!airport.verified) reasonCodes.push("AIRPORT_MATURITY_LIMITED");
   if (window.returnState === "RETURN_NOW" || window.returnState === "CONNECTION_AT_RISK") {
     reasonCodes.push("RETURN_THRESHOLD_REACHED");

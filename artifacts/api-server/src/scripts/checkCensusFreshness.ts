@@ -378,6 +378,19 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/test/tripCloseout.test.ts",
   ],
   "census-layover.md": [
+    // WIDENED 2026-09-13 at integration of the Layover lane's §11. Every path
+    // below is an artifact §11 GRADES, not machinery: migration 2860 and its
+    // rollback are the two tables L14/L86/L194/L263 are scored against, and the
+    // three test files are the evidence the fourteen new C verdicts cite. They
+    // were measured at 94% against a 90% floor — passing, and still wrong to
+    // leave, because an uncovered citation is a row that can rot without the
+    // guard noticing. The floor is raised to 96% below, which is the ratchet the
+    // widening earns.
+    "artifacts/api-server/src/migrations/2860_layover_airport_truth_and_events.sql",
+    "db/rollback/2026-09-13-2860-layover-airport-truth-and-events-rollback.sql",
+    "artifacts/api-server/src/test/layoverAirportTruth.test.ts",
+    "artifacts/api-server/src/test/layoverEventReplanner.test.ts",
+    "artifacts/api-server/src/test/layoverLiveConditions.test.ts",
     "artifacts/api-server/src/services/airport/",
     "artifacts/api-server/src/routes/airport.ts",
     "travel-buddy-standalone/src/services/layover.ts",
