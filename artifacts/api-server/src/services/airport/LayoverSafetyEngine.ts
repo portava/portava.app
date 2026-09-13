@@ -511,13 +511,39 @@ export function assess(
 /**
  * Sort a list of activities by safety + vibe fit.
  * Safe activities come first; within same rating, shorter travel time wins.
+ *
+ * §9.1's "HARD GATE … before any optimisation", as an ordering: the certified
+ * rating is the primary key and every preference the caller has already encoded
+ * is demoted beneath it. `Array.prototype.sort` is stable, so candidates that
+ * tie on (rating, travelTimeMin) keep the order they arrived in — which is how
+ * the recommendation service's verified/time-of-day/live ordering survives
+ * underneath this one instead of being discarded by it.
+ *
+ * THE `certified` PARAMETER IS NOT AN OPTIMISATION. Until 2026-09-13 this
+ * function had no caller outside its test, and giving it one without this
+ * parameter would have silently reintroduced the defect `9c26efba` closed: a
+ * SECOND `computeReturnDeadline` derivation inside one request, at a different
+ * `nowMs` and — worse — without the `LiveConditions` the caller certified with,
+ * so a live queue reading would have moved the deadline the cards were rated
+ * against and not the one ranking them. Callers that hold a certified deadline
+ * pass it; the fallback below is the same pure function and is what the unit
+ * test still exercises.
  */
-export function rankActivities(
+export function rankActivities<T extends ActivityCandidate>(
   airport: EngineAirport,
   session: EngineSession,
-  candidates: ActivityCandidate[],
+  /**
+   * Generic in the candidate rather than widened to `ActivityCandidate`: the
+   * recommendation service's candidates carry `recType`, `placeId`, `city` and
+   * the rest, the spread below preserves them at runtime, and a non-generic
+   * signature threw them away at the type level — which is how a caller ends up
+   * re-deriving what it already had.
+   */
+  candidates: T[],
   nowMs = Date.now(),
-): Array<ActivityCandidate & { assessment: SafetyAssessment }> {
+  /** The deadline this request already certified. See the note above. */
+  certifiedDeadline?: ReturnDeadline,
+): Array<T & { assessment: SafetyAssessment }> {
   const RATING_ORDER: Record<SafetyRating, number> = {
     safe:               0,
     possible_but_risky: 1,
@@ -526,7 +552,7 @@ export function rankActivities(
   };
 
   // One deadline for the whole list, not one per candidate.
-  const certified = computeReturnDeadline(airport, session);
+  const certified = certifiedDeadline ?? computeReturnDeadline(airport, session);
   return candidates
     .map((c) => ({ ...c, assessment: assess(airport, session, c, nowMs, certified) }))
     .sort((a, b) => {

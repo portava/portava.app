@@ -12,7 +12,7 @@ const logger = rootLogger.child({ service: "LayoverRecommendationService" });
 import type { AirportProfile } from "./AirportProfileService.js";
 import type { LayoverSession } from "./LayoverSessionService.js";
 import {
-  assess,
+  rankActivities,
   travelTimeSourceFor,
   type SafetyRating,
   type TravelTimeSource,
@@ -401,13 +401,34 @@ export async function generateRecommendations(
   // one deadline, one audit trail.
   const certified = certifySessionFeasibility(airport, session, { nowMs });
 
+  // ── §9.1 THE HARD GATE — MEASURED IN USABLE TIME, NOT SCHEDULED TIME ──────
+  //
+  // `session.layoverMinutes` is the SCHEDULED window: arrival to departure, a
+  // number typed in at session creation that knows nothing about immigration,
+  // bags, security, traffic or the clock. Gating landside candidates on it is
+  // the divergence census-layover L77 names — "a gate exists but it is the
+  // wrong gate" — and it is not a rounding error: an international connection
+  // with a 95-minute scheduled window and a 150-minute certified buffer has
+  // NEGATIVE usable time and was still being offered a city.
+  //
+  // `certified.envelope.usableMinutes` is the engine's own answer to the same
+  // question — free landside minutes between the earliest realistic exit and
+  // the certified hard return, from `nowMs` — and it is the number every card
+  // is then rated against. Gating on it makes the gate and the rating agree.
+  //
+  // WHAT THIS DOES NOT CLOSE: §9.1 asks for eligibility + ENTRY + time +
+  // safety. Entry permission is unread anywhere on this tree (L34, L48, L230)
+  // and is an open owner decision, so the entry term of this gate is still
+  // missing. Three of four terms is not four.
+  const usableMinutes = certified.envelope.usableMinutes;
+
   // 1. Inside-airport suggestions (always generated)
   const insideCandidates = insideAirportCandidates(session);
 
   // 2. Discovery places near airport city — filtered and ranked for the
   //    time of day the traveler will actually be out there.
   const tod = timeOfDayContext(airport, session, nowMs);
-  let discoveryCandidates = session.wantsToLeave && session.layoverMinutes >= 90
+  let discoveryCandidates = session.wantsToLeave && usableMinutes >= 90
     ? await fetchDiscoveryPlaces(db, city, session.vibeChips)
     : [];
   if (!tod.coversEvening) {
@@ -422,15 +443,17 @@ export async function generateRecommendations(
     return rank(a) - rank(b);
   });
 
-  // 3. Quick city escape for long layovers
-  const cityEscapeCandidates = session.wantsToLeave && session.layoverMinutes >= 180
+  // 3. Quick city escape for long layovers — same gate, same reason. The
+  //    "half-day" wording and the 120-minute tour are claims about time the
+  //    traveller actually has, so they are measured in the same units.
+  const cityEscapeCandidates = session.wantsToLeave && usableMinutes >= 180
     ? [{
         recType: "quick_city_escape",
         title: `Quick City Tour — ${city}`,
-        description: `A short exploration of ${city}'s highlights — ideal for a ${session.layoverMinutes >= 240 ? "half-day" : "quick"} layover.`,
+        description: `A short exploration of ${city}'s highlights — ideal for a ${usableMinutes >= 240 ? "half-day" : "quick"} layover.`,
         travelTimeMin: 30,
         travelTimeSource: "category_default" as const,
-        activityTimeMin: session.layoverMinutes >= 240 ? 120 : 60,
+        activityTimeMin: usableMinutes >= 240 ? 120 : 60,
         insideAirport: false,
         locationLabel: city,
         city,
@@ -479,6 +502,33 @@ export async function generateRecommendations(
     );
   }
 
+  // ── §9.1 — SAFETY IS THE PRIMARY SORT KEY, ABOVE EVERY PREFERENCE ─────────
+  //
+  // Everything above this line orders by preference: `verified` first, then a
+  // time-of-day nudge, then the live pass. None of it knows whether a card
+  // still fits the certified window, so the top card could be a museum the
+  // traveller cannot get back from while a `safe` café sat below it.
+  //
+  // `rankActivities` is the engine's own safety-first comparator and it had NO
+  // CALLER OUTSIDE ITS TEST until this line existed. It re-sorts by the
+  // certified rating and, within a rating, by travel time; `sort` is stable, so
+  // every ordering decision made above survives as the tiebreak beneath it.
+  //
+  // `certified.deadline` is passed deliberately — see the note on
+  // `rankActivities`. Omitting it derives a SECOND deadline for this request,
+  // at a different instant and without this request's `LiveConditions`, which
+  // is the duplicate-buffer defect `9c26efba` closed.
+  const frictionAdjusted = assessable.map((candidate) => {
+    // §11's friction, as minutes: the live queue is added to the activity time
+    // the safety engine is given, so the CARD's own rating and hard return time
+    // account for it. Without a reading this is the candidate's own number.
+    const verdict = live.byKey.get(recommendationKey(candidate));
+    return verdict?.adjustedActivityMin !== undefined
+      ? { ...candidate, activityTimeMin: verdict.adjustedActivityMin }
+      : candidate;
+  });
+  const ranked = rankActivities(airport, session, frictionAdjusted, nowMs, certified.deadline);
+
   // Assess each through safety engine
   const rows: any[] = [];
   const keys: string[] = [];
@@ -487,14 +537,13 @@ export async function generateRecommendations(
   const sources: TravelTimeSource[] = [];
   let sortOrder = 0;
 
-  for (const candidate of assessable) {
+  for (const candidate of ranked) {
     const key = recommendationKey(candidate);
-    // §11's friction, as minutes: the live queue is added to the activity time
-    // the safety engine is given, so the CARD's own rating and hard return time
-    // account for it. Without a reading this is the candidate's own number.
-    const verdict = live.byKey.get(key);
-    const activityTimeMin = verdict?.adjustedActivityMin ?? candidate.activityTimeMin;
-    const a = assess(airport, session, { ...candidate, activityTimeMin }, nowMs, certified.deadline);
+    const activityTimeMin = candidate.activityTimeMin;
+    // The assessment `rankActivities` already made, against the SAME certified
+    // deadline. Re-calling `assess` here would be a third derivation of a
+    // number this request has already computed twice.
+    const a = candidate.assessment;
     keys.push(key);
     sources.push(travelTimeSourceFor(candidate));
     const row = {

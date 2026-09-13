@@ -2,8 +2,21 @@
  * Layover dashboard — the live command center for an active layover.
  *
  * Hero (countdown, tier, airport-local time) → Can-I-Leave guidance →
- * mini-plan with hard return marker → time-aware recommendations → map →
- * people (presence opt-in + Rent-a-Buddy) → sticky footer actions.
+ * mini-plan with hard return marker → Compass → the exploration block
+ * (time-aware recommendations → map → people) → sticky footer actions.
+ *
+ * ── THE LAYOUT IS THE CERTIFIED POSTURE, NOT A LOCAL GUESS ───────────────────
+ * Two fields of `overview.safeReturn` decide the shape of this screen, and both
+ * are derived server-side from the certified record by `safeReturnPosture`
+ * (`artifacts/api-server/src/services/airport/LayoverSafeReturnService.ts:102#export function safeReturnPosture`).
+ * Nothing here re-derives a return state from a clock:
+ *
+ *   returnRoutePrimary     → the abort card is hoisted above the hero (§15)
+ *   explorationCollapsed   → the exploration block collapses to a notice (§13)
+ *
+ * Collapsed is not hidden. "Show them anyway" is one press and the traveller
+ * keeps the whole city; what the posture buys is that the default answer at
+ * RETURN_NOW is the airport, not a restaurant.
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -33,6 +46,7 @@ import {
 } from '../../src/services/layover';
 import {
   cancelScheduledNotification,
+  notificationPromptWouldAppear,
   scheduleLocalNotificationAt,
 } from '../../src/lib/safeNotifications';
 import { AirportEssentialsCard } from '../../src/components/layover/AirportEssentialsCard';
@@ -69,6 +83,11 @@ export default function LayoverDashboardScreen() {
   // QA round 2, minor F: drives the in-app confirm on web (see confirmEnd).
   const [endConfirmOpen, setEndConfirmOpen] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
+  // §13 L120/L141 — the traveller's override of the certified collapse. False
+  // is the server's posture; true is "I know, show me anyway".
+  const [showExploration, setShowExploration] = useState(false);
+  // §17.1 L165 — the rationale that precedes the OS notification prompt.
+  const [notifRationaleOpen, setNotifRationaleOpen] = useState(false);
   const notifIdRef = useRef<string | null>(null);
 
   const [nowMs, setNowMs] = useState(() => Date.now());
@@ -167,7 +186,21 @@ export default function LayoverDashboardScreen() {
     }
   }, [id, overview, loadPresence, showToast]);
 
-  const handleReminder = useCallback(async () => {
+  /**
+   * §17.1 L165 — EXPLAIN THE PERMISSION BEFORE THE OS ASKS FOR IT.
+   *
+   * The request was already contextual (it only happens inside this tap), but
+   * nothing told the traveller WHY, and the OS dialog cannot: it says
+   * "Portava would like to send you notifications", which is a request without
+   * a reason and is the one people decline by reflex. The reason is specific
+   * and worth a sentence — this notification is how a safe return window that
+   * moves reaches someone who has walked away from their phone.
+   *
+   * The sheet is shown ONLY when a dialog is actually about to appear
+   * (`notificationPromptWouldAppear`), so a traveller who has already granted
+   * permission gets their reminder on one tap, as before.
+   */
+  const scheduleReminder = useCallback(async () => {
     if (!id || !overview) return;
     setReminderBusy(true);
     try {
@@ -193,6 +226,12 @@ export default function LayoverDashboardScreen() {
       setReminderBusy(false);
     }
   }, [id, overview, showToast]);
+
+  const handleReminder = useCallback(async () => {
+    if (!id || !overview) return;
+    if (await notificationPromptWouldAppear()) { setNotifRationaleOpen(true); return; }
+    await scheduleReminder();
+  }, [id, overview, scheduleReminder]);
 
   const handleTelegraph = useCallback(async () => {
     if (!id || !overview) return;
@@ -283,6 +322,20 @@ export default function LayoverDashboardScreen() {
   // sends `safeReturn`, and getLayoverOverview warns loudly when it does not —
   // but a missing field must degrade the LAYOUT, not blank the whole dashboard.
   const returnCardFirst = overview.safeReturn?.returnRoutePrimary === true;
+  // §13 L120 / L141 — the OTHER half of the same certified posture. The server
+  // derives `explorationCollapsed` from the certified return state
+  // (`safeReturnPosture`, RETURN_NOW or CONNECTION_AT_RISK) and has published
+  // it since the safe-return pass; until now the client read `returnRoutePrimary`
+  // beside it and dropped this one on the floor, so the card was HOISTED and
+  // exploration was never COLLAPSED.
+  //
+  // COLLAPSED, NOT HIDDEN, and the distinction is the requirement. §13 asks for
+  // exploration-first affordances to be SUPPRESSED when the traveller is due
+  // back; it does not ask for the app to decide on their behalf that a city no
+  // longer exists. `showExploration` is the traveller's own override and it
+  // survives until they leave the screen — one press, and everything is back.
+  const explorationCollapsed =
+    overview.safeReturn?.explorationCollapsed === true && !showExploration;
 
   return (
     <View style={styles.container}>
@@ -345,27 +398,56 @@ export default function LayoverDashboardScreen() {
           onChanged={onStopsChanged}
           onError={showToast}
         />
-        <LayoverRecsSection
-          recs={recs}
-          loading={recsLoading}
-          canPlan={!!canEdit}
-          addedRecIds={addedRecIds}
-          addingRecId={addingRecId}
-          onAddToPlan={handleAddRec}
-        />
+        {/* Compass is the EXPLAINER, not an exploration affordance, so it sits
+            outside the block below and stays mounted in every posture. It moved
+            here from between the recommendations and the map only so that the
+            three exploration surfaces are contiguous and can be collapsed as
+            one; nothing about the panel itself changed. */}
         <LayoverCompassCard sessionId={session.id} timezone={airport.timezone} />
-        <LayoverMapCard airport={airport} stops={stops} />
-        <LayoverPeopleSection
-          city={city ?? null}
-          shareEnabled={overview.share.enabled}
-          shareBusy={shareBusy}
-          presenceCount={presence.count || overview.share.othersInCity}
-          travelers={presence.travelers}
-          buddies={buddies}
-          canEdit={!!canEdit}
-          onToggleShare={handleToggleShare}
-          onOpenBuddy={(b) => router.push(`/(rent-a-buddy)/buddy/${b.id}` as any)}
-        />
+
+        {explorationCollapsed ? (
+          <View style={styles.collapsedNotice} testID="layover-exploration-collapsed">
+            <Text style={styles.collapsedTitle} testID="layover-exploration-collapsed-title">
+              {overview.safeReturn?.returnState === 'CONNECTION_AT_RISK'
+                ? 'Your connection is at risk'
+                : "It's time to head back"}
+            </Text>
+            <Text style={styles.collapsedBody}>
+              Ideas, the map and people nearby are collapsed while you return. The
+              return card above has your deadline.
+            </Text>
+            <Pressable
+              style={styles.collapsedBtn}
+              onPress={() => setShowExploration(true)}
+              testID="layover-exploration-show-anyway"
+            >
+              <Text style={styles.collapsedBtnText}>Show them anyway</Text>
+            </Pressable>
+          </View>
+        ) : (
+          <View style={styles.exploration} testID="layover-exploration">
+            <LayoverRecsSection
+              recs={recs}
+              loading={recsLoading}
+              canPlan={!!canEdit}
+              addedRecIds={addedRecIds}
+              addingRecId={addingRecId}
+              onAddToPlan={handleAddRec}
+            />
+            <LayoverMapCard airport={airport} stops={stops} />
+            <LayoverPeopleSection
+              city={city ?? null}
+              shareEnabled={overview.share.enabled}
+              shareBusy={shareBusy}
+              presenceCount={presence.count || overview.share.othersInCity}
+              travelers={presence.travelers}
+              buddies={buddies}
+              canEdit={!!canEdit}
+              onToggleShare={handleToggleShare}
+              onOpenBuddy={(b) => router.push(`/(rent-a-buddy)/buddy/${b.id}` as any)}
+            />
+          </View>
+        )}
       </ScrollView>
       </KeyboardSafeScrollView>
 
@@ -376,6 +458,7 @@ export default function LayoverDashboardScreen() {
             style={[styles.footerBtn, reminderBusy && styles.footerBtnDim]}
             onPress={handleReminder}
             disabled={reminderBusy}
+            testID="layover-remind-me"
           >
             {overview.returnReminderAt
               ? <BellRing size={17} color={color.success} />
@@ -396,6 +479,25 @@ export default function LayoverDashboardScreen() {
           </Pressable>
         </View>
       )}
+
+      {/* §17.1 L165 — the explanation, in front of the OS dialog rather than
+          after it. "Not now" leaves the permission untouched: declining the
+          EXPLANATION must not be turned into declining the permission, because
+          the OS remembers the second answer and not the first. */}
+      <ConfirmSheet
+        visible={notifRationaleOpen}
+        title="Let us warn you when to head back"
+        body={
+          `Your safe return time can move while you're out — a longer security queue, ` +
+          `traffic, or a flight change. A notification is the only way we can tell you ` +
+          `once you've put your phone away. Your phone will ask next; we only use it for ` +
+          `this layover's return warnings.`
+        }
+        confirmLabel="Continue"
+        cancelLabel="Not now"
+        onConfirm={() => { setNotifRationaleOpen(false); void scheduleReminder(); }}
+        onCancel={() => setNotifRationaleOpen(false)}
+      />
 
       <ConfirmSheet
         visible={endConfirmOpen}
@@ -435,6 +537,16 @@ const styles = StyleSheet.create({
 
   endedBanner: { backgroundColor: 'rgba(200,133,26,0.12)', borderRadius: radius.md, padding: space.md },
   endedText: { ...t.small, color: color.warn, fontWeight: '600' },
+
+  // §13 L120/L141 — the exploration block and the notice that stands in its
+  // place. The wrapper repeats the ScrollView's own `gap` so that collapsing
+  // three siblings into one child does not change the spacing between them.
+  exploration:     { gap: space.md },
+  collapsedNotice: { backgroundColor: color.paperRaised, borderRadius: radius.md, borderWidth: 1, borderColor: color.haze, padding: space.md, gap: space.xs },
+  collapsedTitle:  { ...t.body, color: color.ink, fontWeight: '700' },
+  collapsedBody:   { ...t.small, color: color.mute },
+  collapsedBtn:    { alignSelf: 'flex-start', paddingVertical: space.xs, paddingHorizontal: space.sm, borderRadius: radius.sm, backgroundColor: color.haze },
+  collapsedBtnText:{ ...t.small, color: color.ink, fontWeight: '600' },
 
   footer:    { position: 'absolute', left: 0, right: 0, bottom: 0, flexDirection: 'row', gap: space.sm, paddingHorizontal: space.lg, paddingTop: space.md, backgroundColor: color.paper, borderTopWidth: 1, borderTopColor: color.haze },
   footerBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, backgroundColor: color.paperRaised, borderWidth: 1, borderColor: color.haze, borderRadius: radius.md, paddingVertical: space.md },

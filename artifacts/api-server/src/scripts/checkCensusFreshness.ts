@@ -395,6 +395,13 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     // §11.1 is reachable from PATCH /airport/sessions/:id. It grades the route,
     // not the harness: every one of §12's row moves rests on an assertion in it.
     "artifacts/api-server/src/test/layoverSessionEditReplan.test.ts",
+    // WIDENED 2026-09-13 by §13, which cites this file as the evidence that the
+    // §9.1 hard gate reads usable time and that the safety-first comparator has
+    // a caller. It grades the recommendation path a traveller walks, not a
+    // harness: two of §13's three row moves rest on assertions in it. The floor
+    // is NOT raised with it — this widening only keeps the existing 96 % from
+    // falling when the new citations land.
+    "artifacts/api-server/src/test/layoverRecommendationGate.test.ts",
     "artifacts/api-server/src/services/airport/",
     "artifacts/api-server/src/routes/airport.ts",
     "travel-buddy-standalone/src/services/layover.ts",
