@@ -7953,3 +7953,47 @@ mechanically, **not** by hand-counting:
 
 CONSTRUCTED is unchanged — TR35 was already BUILT and is now shown to be
 CORRECT. The 28.6-point gap between the two closes to **28.4**.
+
+## 68. The real-clock class, third and fourth instance — measured, not theorised
+
+`53615fd72` froze the clock for `tripOpportunityProjection.test.ts`'s route block and recorded why:
+the direct service calls in that file pass `{ now: NOW }` and are fixtures, while the cases that go
+through HTTP let the route read the wall clock, so the file passed before 14:00 UTC and failed after.
+**The same shape was in two more files and nobody had looked.**
+
+**Measured on one tree, twice, with nothing changed between the runs:**
+
+| run | UTC | result |
+| --- | --- | --- |
+| full suite | 16:04 | 20,216 tests, **0 failed** |
+| full suite | 17:19 | 20,240 tests, **4 failed** |
+
+The denominator difference is exactly the 24 cases of a test file added between the runs; the four
+failures are `tripPulseProjection.test.ts` (2) and `tripReplanRoutes.test.ts` (2), failing
+`0 !== 1` on a signal count and on an empty candidate diff — a window the wall clock had moved out
+from under, exactly as the first instance did.
+
+**Attributed before it was fixed, not after.** The batch running at the time changed
+`routes/messaging.ts` and `routes/groupChat.ts`; those were checked out at HEAD in place and the
+same four cases failed by name, 39 passed / 4 failed either way, then restored byte-identical. So
+they are not that batch's, and they are not new: they have been latent in this file since the route
+cases were written.
+
+**Fixed the same way**, in the three route-driving `describe` blocks:
+`mock.timers.enable({ apis: ["Date"], now: NOW.getTime() })` in `before`, `mock.timers.reset()` in
+`after`. The route still reads the clock; the clock is now a fixture like every other input.
+Adding a `now` parameter to the route to make a test pass would have changed the shape of the
+thing under test, and is not what was done. 61 of 61 green at 17:20 UTC — the hour they were red.
+
+**Mutation:** removing the freeze from `tripPulseProjection.test.ts` at that same hour fails 2 of
+23; restored byte-identical, 23 of 23.
+
+**No verdict moves.** Nothing about the routes changed, and a test that was wrong about WHEN it
+could pass was never evidence about whether the requirement was built.
+
+**What this cost, stated plainly:** two lanes this wave reported the first instance's two failures
+as "not mine" and were right, and a third run would have reported these two files the same way.
+A suite whose result depends on the hour is not a gate — it is a coin whose bias nobody had
+measured. **Whether more of this class remains is not known**; the three files found so far were
+each found by a failure, not by a search, and no guard in this repository looks for a route-driving
+test that does not freeze `Date`.

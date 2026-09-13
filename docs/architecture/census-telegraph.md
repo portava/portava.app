@@ -4425,7 +4425,7 @@ to the content.
 
 | piece | where |
 | --- | --- |
-| The four lines | `artifacts/api-server/src/routes/messaging.ts:2303#mediaUrl: isDeleted ? null : ((m as any).media_url ?? null),` |
+| The four lines | `artifacts/api-server/src/routes/messaging.ts:2384#mediaUrl: isDeleted ? null : ((m as any).media_url ?? null),` |
 | The assertion that does not depend on knowing the field names | `artifacts/api-server/src/test/telegraphDeletedMediaRedaction.test.ts:201#it("the deleted asset appears NOWHERE in the serialized response", async () => {` |
 
 `mediaType` goes with the other three deliberately. "This was a video" is a fact
@@ -4478,12 +4478,12 @@ ratchet counts a SYNTAX, and the defect is a semantics.
 
 | piece | where |
 | --- | --- |
-| The three primary reads, now a refusal | `artifacts/api-server/src/routes/messaging.ts:1748#for (const [label, r] of [` |
-| The member-profile batch, now the refusal its own comment had claimed for months | `artifacts/api-server/src/routes/messaging.ts:1778#if (profileErr) {` |
-| The message-request list, which returned `sender: null` for everybody | `artifacts/api-server/src/routes/messaging.ts:782#if (profilesErr) {` |
-| Trip context: omitted, because `undefined` ("not known") and `null` ("this trip has no city") are different claims | `artifacts/api-server/src/routes/messaging.ts:1989#tripCity: tripCityDegraded ? undefined : tripCity,` |
-| The preview says `failed` only when it failed | `artifacts/api-server/src/routes/messaging.ts:1826#let previewTranslationsDegraded = false;` |
-| The thread read reports §18's own word for "we did not translate this", instead of inventing a monolingual thread | `artifacts/api-server/src/routes/messaging.ts:2112#status: 'failed' as TranslationStatusValue,` |
+| The three primary reads, now a refusal | `artifacts/api-server/src/routes/messaging.ts:1829#for (const [label, r] of [` |
+| The member-profile batch, now the refusal its own comment had claimed for months | `artifacts/api-server/src/routes/messaging.ts:1859#if (profileErr) {` |
+| The message-request list, which returned `sender: null` for everybody | `artifacts/api-server/src/routes/messaging.ts:796#if (profilesErr) {` |
+| Trip context: omitted, because `undefined` ("not known") and `null` ("this trip has no city") are different claims | `artifacts/api-server/src/routes/messaging.ts:2070#tripCity: tripCityDegraded ? undefined : tripCity,` |
+| The preview says `failed` only when it failed | `artifacts/api-server/src/routes/messaging.ts:1907#let previewTranslationsDegraded = false;` |
+| The thread read reports §18's own word for "we did not translate this", instead of inventing a monolingual thread | `artifacts/api-server/src/routes/messaging.ts:2193#status: 'failed' as TranslationStatusValue,` |
 | The whole thing, driven end to end against the real router | `artifacts/api-server/src/test/telegraphInboxFailsLoud.test.ts:160#describe("T344/T438 — an unreadable inbox is a REFUSAL, never an empty inbox", () => {` |
 
 Two more things the execution turned up, both recorded rather than quietly
@@ -4885,7 +4885,7 @@ four move to NEITHER (50 → 46). NEITHER becomes 93. The four groups still sum 
 | T37 | W | **C** | §5's Travel family: Trip, Trip stage, plan, event, route, reservation-safe derivative, layover plan. Was four of seven. `ROUTE` had a vocabulary entry and no loader; RESERVATION and LAYOVER_PLAN had no name at all, though `trip_reservations` and `layover_sessions` are both in the production inventory — the gap was in the vocabulary, not the database. The reservation loader is the one that carries a rule beyond "does this viewer see it": SAFE means the projection carries no confirmation reference, no pasted email and no extraction, asserted by scanning the whole serialized reference rather than named fields. Seven of seven. |
 | T38 | W | **C** | §5's Places family: place, Hidden Gem, map pin, neighborhood, meetup point. Was four of five; NEIGHBORHOOD "deliberately has no loader ... rather than pretending". What §11 refused to pretend about was an authorization model, and `neighborhood_areas` has none to get wrong: it is derived public reference data with no owner and no visibility column. It now resolves, carrying its `confidence` as status so a low-confidence grid cell and a high-confidence OSM polygon are not the same claim. Five of five. **The citation this row carries, `test/telegraphShare.test.ts:295`, still resolves and its `it(...)` is unchanged — but the assertion inside it was FALSIFIED by this pass and now names `VISA_CARD`, which is the family that is in the vocabulary with no loader today.** |
 | T3 | W | **C** | Pillar **Share** — "any eligible Portava object moves through a safe permission-aware share projection". The projection half was already right; the row stayed W because "Media (§5's fifth family) is not a shareable type at all". It is now: `MEDIA` is in the vocabulary and resolves through `media_assets` with the same contract as the other twenty-one types. All five families have loaders and all twenty-two types answer preview, current state, actions, deep link, search behaviour and revocation. **Stated so nobody over-reads this C: `media_assets.media_type` admits `image` and `video` only, so §6.2's voice, GIF and file kinds remain unshareable — they have no row shape in any migration, which is T40 and is NEITHER. "Any eligible object" is satisfied because an object that cannot be stored is not an eligible object; it is not satisfied in the sense that Telegraph can carry a voice note.** |
-| T290 | W | **C** | §24 `ConversationProjection` — "renderable ordered thread WITH CURRENT PERMISSIONS". §12's restatement left exactly one gap: "it still carries no permissions block, which is the half §24 names explicitly". `GET /threads/:threadId/messages` now answers one (`artifacts/api-server/src/routes/messaging.ts:2358#permissions:`), carrying §14.1's ten capabilities, their per-capability reasons, which of the eight inputs were read, and `degraded` when one of them could not be. The block is ASKED of `resolveConversationCapabilities` (`artifacts/api-server/src/routes/messaging.ts:2350#const resolvedCapabilities = await resolveConversationCapabilities(sc, {`) rather than re-derived, and the test compares it field-by-field against that resolver run directly on the same fixture (`artifacts/api-server/src/test/telegraphProjectionPermissions.test.ts:213#it("the projection's block EQUALS resolveConversationCapabilities on the same fixture", async () => {`) — a second implementation of §14.1 would pass a "has ten keys" test and fail that one, which is the failure mode being guarded. It gates nothing: `CAPABILITY_ENFORCEMENT_SITES` still names where each refusal happens. `PRJ-02`'s note is corrected in the same pass (`artifacts/api-server/src/domain/telegraph/projections/projectionRegistry.ts:58#id: "PRJ-02",`), which had said the block "does not exist" — stale since T207 went C. **Why this is C and not W on history bounding: T290's requirement is the projection; the §14.3 bound is T211's, is flag-gated, and §12's own restatement recorded it as gained. PRJ-02 stays `partial` for that reason and this row does not.** |
+| T290 | W | **C** | §24 `ConversationProjection` — "renderable ordered thread WITH CURRENT PERMISSIONS". §12's restatement left exactly one gap: "it still carries no permissions block, which is the half §24 names explicitly". `GET /threads/:threadId/messages` now answers one (`artifacts/api-server/src/routes/messaging.ts:2439#permissions:`), carrying §14.1's ten capabilities, their per-capability reasons, which of the eight inputs were read, and `degraded` when one of them could not be. The block is ASKED of `resolveConversationCapabilities` (`artifacts/api-server/src/routes/messaging.ts:2431#const resolvedCapabilities = await resolveConversationCapabilities(sc, {`) rather than re-derived, and the test compares it field-by-field against that resolver run directly on the same fixture (`artifacts/api-server/src/test/telegraphProjectionPermissions.test.ts:213#it("the projection's block EQUALS resolveConversationCapabilities on the same fixture", async () => {`) — a second implementation of §14.1 would pass a "has ten keys" test and fail that one, which is the failure mode being guarded. It gates nothing: `CAPABILITY_ENFORCEMENT_SITES` still names where each refusal happens. `PRJ-02`'s note is corrected in the same pass (`artifacts/api-server/src/domain/telegraph/projections/projectionRegistry.ts:58#id: "PRJ-02",`), which had said the block "does not exist" — stale since T207 went C. **Why this is C and not W on history bounding: T290's requirement is the projection; the §14.3 bound is T211's, is flag-gated, and §12's own restatement recorded it as gained. PRJ-02 stays `partial` for that reason and this row does not.** |
 
 ### 15.7 The restated headline
 
@@ -4951,13 +4951,13 @@ Named so the next lane does not re-derive them.
      `routes/groupChat.ts:328` is a fifth instance of the same line.
    - **An unreadable `profiles` becomes a confident 404.** "Circle owner not
      found" is produced by a read whose error was discarded
-     (`artifacts/api-server/src/routes/messaging.ts:3391#const { data: ownerProfile, error: ownerProfileErr } = await sc`
+     (`artifacts/api-server/src/routes/messaging.ts:3511#const { data: ownerProfile, error: ownerProfileErr } = await sc`
      — the SECOND citation in this document whose anchor text had to change,
      for the same reason as the one above: the read named here was the defect,
      and the line now binds the error it used to drop. §16.6.)
    - **A mention notification names "@someone"** when the tagger's profile read
      fails — indistinguishable from a tagger who has no handle
-     (`artifacts/api-server/src/routes/messaging.ts:2781#const { data: taggerProfile, error: taggerProfileErr } = await sc`
+     (`artifacts/api-server/src/routes/messaging.ts:2862#const { data: taggerProfile, error: taggerProfileErr } = await sc`
      — the THIRD citation in this document whose anchor text had to change, for
      the same reason as the two above: the read named here WAS the defect, and
      the line now binds the error it used to drop and asks `actorHandleFrom`
@@ -5155,11 +5155,11 @@ closed two of them: the five language call sites plus the pipeline that consumed
 them, and the confident 404. `GET /circles/:id/chat` now refuses retryably when
 the owner's profile CANNOT BE READ and still returns 404 when the owner is
 genuinely absent
-(`artifacts/api-server/src/routes/messaging.ts:3391#const { data: ownerProfile, error: ownerProfileErr } = await sc`).
+(`artifacts/api-server/src/routes/messaging.ts:3511#const { data: ownerProfile, error: ownerProfileErr } = await sc`).
 Consequences that remain open in the same file:
 
 - a mention notification that names `@someone`
-  (`artifacts/api-server/src/routes/messaging.ts:2781#const { data: taggerProfile, error: taggerProfileErr } = await sc`
+  (`artifacts/api-server/src/routes/messaging.ts:2862#const { data: taggerProfile, error: taggerProfileErr } = await sc`
   — anchor repointed by §17 for the reason §15.8 gives about its own two: the
   read named here was the defect and no longer exists in that form. CLOSED by
   §17.2; the sentence above is left as written because it was true of the tree
@@ -5375,7 +5375,7 @@ The honest row is `status: 'failed'` with
 `error_message: 'recipient_preferences_unreadable'` and
 `target_language: 'und'` — ISO 639-2's "undetermined", which this tree already
 writes for exactly this situation
-(`artifacts/api-server/src/routes/messaging.ts:2110#target_language: 'und',`).
+(`artifacts/api-server/src/routes/messaging.ts:2191#target_language: 'und',`).
 **What a user sees does not change**: `buildDisplayFields` renders `failed` as
 the untouched original with no banner, which is what `skipped` rendered too. What
 changes is the claim.
@@ -5401,7 +5401,7 @@ Two degradations, kept apart because they degrade different claims. An unreadabl
 `replyToId` may not be reported at all. Unreadable quoted bodies mean the linkage
 is known and the quote is not. In both cases the affected fields are now OMITTED
 and replaced by `replyContext: 'unavailable'`
-(`artifacts/api-server/src/routes/messaging.ts:2283#...(replyLinkageUnreadable`).
+(`artifacts/api-server/src/routes/messaging.ts:2364#...(replyLinkageUnreadable`).
 Omission rather than `null` is §14's own line for `tripCity`, and here it carries
 real weight: a `null` quote is a TRUE state — the quoted message is deleted, or
 sits outside this member's §14.3 history window — and must stay distinguishable
@@ -5576,20 +5576,29 @@ test that reads the counter back. Both do.
    more in the group-chat reader, are named here so the next lane starts from a
    list rather than a grep:
 
+   > **ALL TWELVE ARE NOW CLOSED — see §18.** The citations in the table below
+   > were re-anchored when they were fixed: each now names the site's SELECT
+   > line, because the line the table originally named was the dropped-error
+   > destructure itself and that line no longer exists. The "what an outage
+   > becomes" column is therefore the PAST behaviour of each route, kept as
+   > written because it is the evidence for what was wrong, not a claim about
+   > the tree. §17.8 item 2's three remaining sites are still open and are not
+   > in this table.
+
    | read | what an outage becomes |
    | --- | --- |
-   | `artifacts/api-server/src/routes/messaging.ts:593#const { data: profile } = await client.from('profiles').select('id').eq('id', recipientId).maybeSingle();` | "User not found" |
-   | `artifacts/api-server/src/routes/messaging.ts:845#const { data: mr } = await sc` | "Message request not found" (accept) |
-   | `artifacts/api-server/src/routes/messaging.ts:1084#const { data: mr } = await sc` | the same, on decline |
-   | `artifacts/api-server/src/routes/messaging.ts:1171#const { data: mr } = await sc` | the same, on cancel |
-   | `artifacts/api-server/src/routes/messaging.ts:1615#const { data: member } = await sc` | "Thread not found" |
-   | `artifacts/api-server/src/routes/messaging.ts:1623#const { data: thread } = await sc` | the same, one read later |
-   | `artifacts/api-server/src/routes/messaging.ts:3112#const { data: msgRow } = await sc` | "Message not found" (translate retry) |
-   | `artifacts/api-server/src/routes/messaging.ts:3225#const { data: msgRow } = await sc` | the same, on edit |
-   | `artifacts/api-server/src/routes/messaging.ts:3321#const { data: trip } = await sc` | "Trip not found" |
-   | `artifacts/api-server/src/routes/messaging.ts:3714#const { data: msgRow } = await sc` | "Message not found in this thread" (save) |
-   | `artifacts/api-server/src/routes/groupChat.ts:312#const { data: msgRow } = await sc` | "Message not found" (edit) |
-   | `artifacts/api-server/src/routes/groupChat.ts:381#const { data: msgRow } = await sc` | the same, on delete |
+   | `artifacts/api-server/src/routes/messaging.ts:593#const { data: profile, error: profileErr } = await client.from('profiles').select('id').eq('id', recipientId).maybeSingle();` | "User not found" |
+   | `artifacts/api-server/src/routes/messaging.ts:861#.select('id, sender_id, recipient_id, status, preview_text')` | "Message request not found" (accept) |
+   | `artifacts/api-server/src/routes/messaging.ts:1113#.select('id, sender_id, recipient_id, status')` | the same, on decline |
+   | `artifacts/api-server/src/routes/messaging.ts:1213#.select('id, sender_id, status')` | the same, on cancel |
+   | `artifacts/api-server/src/routes/messaging.ts:3561#const { data: member } = await sc` | "Thread not found" |
+   | `artifacts/api-server/src/routes/messaging.ts:1692#.select('id, thread_type, is_e2ee')` | the same, one read later |
+   | `artifacts/api-server/src/routes/messaging.ts:3195#.select('id, thread_id, sender_id, body, deleted_at, original_language')` | "Message not found" (translate retry) |
+   | `artifacts/api-server/src/routes/messaging.ts:3321#.select('id, thread_id, sender_id, body, deleted_at')` | the same, on edit |
+   | `artifacts/api-server/src/routes/messaging.ts:3430#.select('id, title, destination_city')` | "Trip not found" |
+   | `artifacts/api-server/src/routes/messaging.ts:3836#.select('id')` | "Message not found in this thread" (save) |
+   | `artifacts/api-server/src/routes/groupChat.ts:314#.select('id, thread_id, sender_id, body, deleted_at')` | "Message not found" (edit) |
+   | `artifacts/api-server/src/routes/groupChat.ts:396#.select('id, thread_id, sender_id, deleted_at')` | the same, on delete |
 
    **They were not fixed here and the reason is scope, not difficulty**: each is
    four lines, and doing twelve credibly means twelve behavioural cases against
@@ -5708,3 +5717,110 @@ citations were repointed by exact original line text across census-compass,
 census-trips and this document, and two anchors were rewritten because the line
 they named WAS the defect and no longer exists — the third and fourth times this
 document has had to do that, for the third and fourth time for the same reason.
+
+## 18. §17.8's list, closed — twelve routes that answered "it does not exist" from a read that never happened
+
+§17.8 enumerated twelve sites and left them with the reason stated plainly:
+*"scope, not difficulty — each is four lines, and doing twelve credibly means twelve behavioural
+cases against twelve routes, which is a section of its own."* This is that section. All twelve are
+closed, and **no row moves**; §18.4 says why, and the reason is §16.4's own rule rather than
+modesty.
+
+### 18.1 What was wrong, and why this shape is worse than a silent empty
+
+supabase-js RESOLVES on a database failure, so `const { data } = await …maybeSingle()` gives
+`null` for two different worlds — the row is absent, and the table could not be read. Twelve
+handlers turned the second into `sendError(res, 'not_found', …)`, which is a POSITIVE claim that
+the object does not exist.
+
+**A 404 is the one refusal a caller acts on by giving up.** A client told "Message request not
+found" removes the request from its list and stops asking. A client told "please try again
+shortly" retries. Fail-open authorization is the famous form of this defect; this form is the one
+that corrupts the user's own model of their data, and it does so silently — nothing logs, nothing
+alerts, and the traveller simply believes a thing of theirs is gone.
+
+Executed against each route with the table failing, BEFORE the fix — these are the answers the
+twelve gave, not a description of them:
+
+| answer given from a read that never happened | count |
+| --- | --- |
+| `not_found` · *"Message not found"* | 4 |
+| `not_found` · *"Message request not found"* | 3 |
+| `not_found` · *"Thread not found"* | 2 |
+| `not_found` · *"User not found"* | 1 |
+| `not_found` · *"Trip not found"* | 1 |
+| `not_found` · *"Message not found in this thread"* | 1 |
+
+### 18.2 The fix is §16's, copied rather than reinvented
+
+§16 closed exactly one instance of this class — the circle-owner read — and every one of the
+twelve now takes that same posture: bind the error, log it at `error`, and answer
+`degraded_unavailable`, this codebase's own code for *"the check was NOT PERFORMED"* and the only
+code marked retryable in `lib/http.ts` RETRYABLE_CODES. A genuinely absent object still gets the
+404 it deserves, on the line below the guard. Two postures for one defect class would have been
+worse than one wrong posture.
+
+The twelve are pinned by
+`artifacts/api-server/src/test/telegraphNotFoundHonesty.test.ts:1#/**`, twenty-four cases: each
+site gets the outage case AND a CONTROL that a genuinely missing object is still `not_found`, so a
+route that had been deleted, or one that answers 503 for everything, fails the pair.
+
+### 18.3 The measurement error this section made, and what it would have hidden
+
+Several of these handlers read the SAME table more than once before reaching the site under test —
+the auth gate reads `profiles`, the membership gate reads `message_thread_members`. Failing a
+table outright would stop the request at the EARLIER read, and the case would go green while
+proving nothing about the site named. So each case measures first: it runs clean, finds the target
+read by its exact select string, and re-runs with the error injected from that operation onward.
+
+**The first draft got that offset wrong by one, and it is recorded because of what it did rather
+than what it cost.** `afterOps: N` in this harness means *"inject once N operations have ALREADY
+happened"* — fail from N+1 onward — so the value that fails the read under test is the count of
+reads BEFORE it, not that count plus one. With the wrong value every `profiles` case silently
+tested the NEXT read on the table: the request came back `forbidden` from the permission gate
+instead of `not_found` from the site, which happened to look like a failure and so was caught.
+**Had the next read been a harmless one, twelve cases would have gone green against an unfixed
+defect** — the §F.10 failure mode, in a file written to close it. The red-first measurement was
+therefore RE-TAKEN with the corrected offset before any fix was credited: twelve outage cases red,
+twelve CONTROLs green, on the tree with the guards reverted.
+
+**Mutations, both directions.** Guards absent: 12 of 24 fail, and they are exactly the twelve
+outage cases. Guards made unconditional (`if (true || err)`): 13 of 24 fail, including all twelve
+CONTROLs — which is what proves the controls are load-bearing and not decoration. Both reverts
+`cmp`-verified byte-identical.
+
+`check:unchecked-supabase-reads` still exits 0: none of the twelve carried an allowlist key, so
+this closed no ledgered defect and staled no entry. 203 related suites re-run — 3,354 tests,
+3,354 passed.
+
+### 18.4 NO ROW MOVES, and this is §16.4's rule rather than caution
+
+§16.4: *"a row that is W because a class is unfinished does not become C when one member is
+finished."* Twelve members are now finished and the class is still unfinished, in two ways that
+are named rather than waved at.
+
+**T344's own remaining evidence is a DIFFERENT subset.** Its current statement names four reads —
+the per-viewer translation read and the trip, booking and circle context reads in the inbox
+projection — each of which *"renders an untranslated message or a thread with no trip context when
+the table is unreadable."* That is a different consequence from a false `not_found`, and not one
+of the four is among the twelve closed here. They were not re-derived in this section, and saying
+so is the point: a row whose named evidence has not been re-read cannot move on work that did not
+touch it.
+
+**§17.8 item 2's three sites are also still open**: the group-chat reader that reports an
+unreadable `message_threads` as `title: 'Trip Chat'`, `status: 'active'` — so a closed thread
+reads as active — and both sync implementations, which write a DURABLE generic title onto a newly
+created thread when `trips` is unreadable. A durable wrong title is the worst of the three
+consequences in this class, because unlike a 404 it does not go away when the outage does.
+
+So **T344 and T363 stay W**, smaller than they were and smaller than §17.8 left them, with the
+remainder enumerated rather than estimated.
+
+### 18.5 What would turn this red (P24)
+
+A thirteenth route added with the same shape and no guard — nothing in this repository would catch
+it, because `check:unchecked-supabase-reads` scopes itself to reads where the empty answer is an
+ACCESS or STATE decision, and a false `not_found` is neither. That scope is deliberate and its own
+header says so; whether it should widen to cover *"a read whose empty answer becomes a confident
+assertion to a user"* is a decision worth taking explicitly, with a measured count, rather than by
+quietly editing a regex. The twelve here are pinned by tests; the thirteenth would not be.

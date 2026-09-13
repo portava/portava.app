@@ -590,7 +590,21 @@ router.post('/users/:userId/message-request', async (req, res) => {
   if (!isUuid(recipientId)) { sendError(res, 'invalid_payload', 'Invalid user id'); return; }
   if (recipientId === user.id) { sendError(res, 'invalid_payload', 'You cannot send a message request to yourself'); return; }
 
-  const { data: profile } = await client.from('profiles').select('id').eq('id', recipientId).maybeSingle();
+  const { data: profile, error: profileErr } = await client.from('profiles').select('id').eq('id', recipientId).maybeSingle();
+
+  // T344/T363, §17.8. supabase-js RESOLVES on a database failure, so a dropped
+  // error arrived here as `data: null` — indistinguishable from a user who does not exist — and
+  // this route answered a confident 404. A 404 is the one refusal a caller acts
+  // on by GIVING UP; an outage is not a deletion. `degraded_unavailable` is this
+  // codebase's own code for "the check was NOT PERFORMED" and the only code
+  // marked retryable (lib/http.ts RETRYABLE_CODES). A genuinely absent user
+  // still gets the 404 it deserves, one line below.
+  if (profileErr) {
+    req.log.error({ err: profileErr, recipientId },
+      'profiles read failed — refusing rather than reporting the recipient as nonexistent');
+    sendError(res, 'degraded_unavailable', 'We could not check that account right now. Please try again shortly.');
+    return;
+  }
   if (!profile) { sendError(res, 'not_found', 'User not found'); return; }
 
   const sc = getServiceClient();
@@ -842,12 +856,25 @@ router.post('/message-requests/:requestId/accept', async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, 'server_not_configured', 'Service client not ready'); return; }
 
-  const { data: mr } = await sc
+  const { data: mr, error: mrErr } = await sc
     .from('message_requests')
     .select('id, sender_id, recipient_id, status, preview_text')
     .eq('id', requestId)
     .maybeSingle();
 
+  // T344/T363, §17.8. supabase-js RESOLVES on a database failure, so a dropped
+  // error arrived here as `data: null` — indistinguishable from a request that does not exist — and
+  // this route answered a confident 404. A 404 is the one refusal a caller acts
+  // on by GIVING UP; an outage is not a deletion. `degraded_unavailable` is this
+  // codebase's own code for "the check was NOT PERFORMED" and the only code
+  // marked retryable (lib/http.ts RETRYABLE_CODES). A genuinely absent request
+  // still gets the 404 it deserves, one line below.
+  if (mrErr) {
+    req.log.error({ err: mrErr, requestId },
+      'message_requests read failed on accept — refusing rather than reporting the request as nonexistent');
+    sendError(res, 'degraded_unavailable', 'We could not open that message request right now. Please try again shortly.');
+    return;
+  }
   if (!mr) { sendError(res, 'not_found', 'Message request not found'); return; }
   const req_ = mr as any;
   if (req_.recipient_id !== user.id) { sendError(res, 'forbidden', 'Only the recipient can accept this request'); return; }
@@ -1081,12 +1108,25 @@ router.post('/message-requests/:requestId/decline', async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, 'server_not_configured', 'Service client not ready'); return; }
 
-  const { data: mr } = await sc
+  const { data: mr, error: mrErr } = await sc
     .from('message_requests')
     .select('id, sender_id, recipient_id, status')
     .eq('id', requestId)
     .maybeSingle();
 
+  // T344/T363, §17.8. supabase-js RESOLVES on a database failure, so a dropped
+  // error arrived here as `data: null` — indistinguishable from a request that does not exist — and
+  // this route answered a confident 404. A 404 is the one refusal a caller acts
+  // on by GIVING UP; an outage is not a deletion. `degraded_unavailable` is this
+  // codebase's own code for "the check was NOT PERFORMED" and the only code
+  // marked retryable (lib/http.ts RETRYABLE_CODES). A genuinely absent request
+  // still gets the 404 it deserves, one line below.
+  if (mrErr) {
+    req.log.error({ err: mrErr, requestId },
+      'message_requests read failed on decline — refusing rather than reporting the request as nonexistent');
+    sendError(res, 'degraded_unavailable', 'We could not open that message request right now. Please try again shortly.');
+    return;
+  }
   if (!mr) { sendError(res, 'not_found', 'Message request not found'); return; }
   const req_ = mr as any;
   if (req_.recipient_id !== user.id) { sendError(res, 'forbidden', 'Only the recipient can decline this request'); return; }
@@ -1168,12 +1208,25 @@ router.post('/message-requests/:requestId/cancel', async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, 'server_not_configured', 'Service client not ready'); return; }
 
-  const { data: mr } = await sc
+  const { data: mr, error: mrErr } = await sc
     .from('message_requests')
     .select('id, sender_id, status')
     .eq('id', requestId)
     .maybeSingle();
 
+  // T344/T363, §17.8. supabase-js RESOLVES on a database failure, so a dropped
+  // error arrived here as `data: null` — indistinguishable from a request that does not exist — and
+  // this route answered a confident 404. A 404 is the one refusal a caller acts
+  // on by GIVING UP; an outage is not a deletion. `degraded_unavailable` is this
+  // codebase's own code for "the check was NOT PERFORMED" and the only code
+  // marked retryable (lib/http.ts RETRYABLE_CODES). A genuinely absent request
+  // still gets the 404 it deserves, one line below.
+  if (mrErr) {
+    req.log.error({ err: mrErr, requestId },
+      'message_requests read failed on cancel — refusing rather than reporting the request as nonexistent');
+    sendError(res, 'degraded_unavailable', 'We could not open that message request right now. Please try again shortly.');
+    return;
+  }
   if (!mr) { sendError(res, 'not_found', 'Message request not found'); return; }
   const req_ = mr as any;
   if (req_.sender_id !== user.id) { sendError(res, 'forbidden', 'Only the sender can cancel this request'); return; }
@@ -1612,19 +1665,47 @@ router.post('/threads/:threadId/e2ee', async (req, res) => {
   if (!sc) { sendError(res, 'server_not_configured', 'Service client not ready'); return; }
 
   // Membership — thread access is gated only by message_thread_members.
-  const { data: member } = await sc
+  const { data: member, error: memberErr } = await sc
     .from('message_thread_members')
     .select('user_id')
     .eq('thread_id', threadId)
     .eq('user_id', user.id)
     .maybeSingle();
+
+  // T344/T363, §17.8. supabase-js RESOLVES on a database failure, so a dropped
+  // error arrived here as `data: null` — indistinguishable from a caller who is not a member — and
+  // this route answered a confident 404. A 404 is the one refusal a caller acts
+  // on by GIVING UP; an outage is not a deletion. `degraded_unavailable` is this
+  // codebase's own code for "the check was NOT PERFORMED" and the only code
+  // marked retryable (lib/http.ts RETRYABLE_CODES). A genuinely absent membership
+  // still gets the 404 it deserves, one line below.
+  if (memberErr) {
+    req.log.error({ err: memberErr, threadId, userId: user.id },
+      'message_thread_members read failed — refusing rather than reporting the thread as nonexistent');
+    sendError(res, 'degraded_unavailable', 'We could not open this conversation right now. Please try again shortly.');
+    return;
+  }
   if (!member) { sendError(res, 'not_found', 'Thread not found'); return; }
 
-  const { data: thread } = await sc
+  const { data: thread, error: threadErr } = await sc
     .from('message_threads')
     .select('id, thread_type, is_e2ee')
     .eq('id', threadId)
     .maybeSingle();
+
+  // T344/T363, §17.8. supabase-js RESOLVES on a database failure, so a dropped
+  // error arrived here as `data: null` — indistinguishable from a thread that does not exist — and
+  // this route answered a confident 404. A 404 is the one refusal a caller acts
+  // on by GIVING UP; an outage is not a deletion. `degraded_unavailable` is this
+  // codebase's own code for "the check was NOT PERFORMED" and the only code
+  // marked retryable (lib/http.ts RETRYABLE_CODES). A genuinely absent thread
+  // still gets the 404 it deserves, one line below.
+  if (threadErr) {
+    req.log.error({ err: threadErr, threadId },
+      'message_threads read failed — refusing rather than reporting the thread as nonexistent');
+    sendError(res, 'degraded_unavailable', 'We could not open this conversation right now. Please try again shortly.');
+    return;
+  }
   if (!thread) { sendError(res, 'not_found', 'Thread not found'); return; }
 
   // Already encrypted — idempotent success so a retry is safe.
@@ -3109,12 +3190,25 @@ router.post('/messages/:messageId/translate/retry', async (req, res) => {
   if (!sc) { sendError(res, 'server_not_configured', 'Service client not ready'); return; }
 
   // Fetch message + verify membership.
-  const { data: msgRow } = await sc
+  const { data: msgRow, error: msgErr } = await sc
     .from('messages')
     .select('id, thread_id, sender_id, body, deleted_at, original_language')
     .eq('id', messageId)
     .maybeSingle();
 
+  // T344/T363, §17.8. supabase-js RESOLVES on a database failure, so a dropped
+  // error arrived here as `data: null` — indistinguishable from a message that does not exist — and
+  // this route answered a confident 404. A 404 is the one refusal a caller acts
+  // on by GIVING UP; an outage is not a deletion. `degraded_unavailable` is this
+  // codebase's own code for "the check was NOT PERFORMED" and the only code
+  // marked retryable (lib/http.ts RETRYABLE_CODES). A genuinely absent message
+  // still gets the 404 it deserves, one line below.
+  if (msgErr) {
+    req.log.error({ err: msgErr, messageId },
+      'messages read failed on translate retry — refusing rather than reporting the message as nonexistent');
+    sendError(res, 'degraded_unavailable', 'We could not read that message right now. Please try again shortly.');
+    return;
+  }
   if (!msgRow) { sendError(res, 'not_found', 'Message not found'); return; }
   const m = msgRow as any;
   if (m.deleted_at) { sendError(res, 'invalid_payload', 'Cannot retry translation on a deleted message'); return; }
@@ -3222,13 +3316,26 @@ router.patch('/threads/:threadId/messages/:messageId', async (req, res) => {
   if (!sc) { sendError(res, 'server_not_configured', 'Service client not ready'); return; }
 
   // Fetch message — must exist, belong to this thread, not deleted, and be owned by caller.
-  const { data: msgRow } = await sc
+  const { data: msgRow, error: msgErr } = await sc
     .from('messages')
     .select('id, thread_id, sender_id, body, deleted_at')
     .eq('id', messageId)
     .eq('thread_id', threadId)
     .maybeSingle();
 
+  // T344/T363, §17.8. supabase-js RESOLVES on a database failure, so a dropped
+  // error arrived here as `data: null` — indistinguishable from a message that does not exist — and
+  // this route answered a confident 404. A 404 is the one refusal a caller acts
+  // on by GIVING UP; an outage is not a deletion. `degraded_unavailable` is this
+  // codebase's own code for "the check was NOT PERFORMED" and the only code
+  // marked retryable (lib/http.ts RETRYABLE_CODES). A genuinely absent message
+  // still gets the 404 it deserves, one line below.
+  if (msgErr) {
+    req.log.error({ err: msgErr, messageId, threadId },
+      'messages read failed on edit — refusing rather than reporting the message as nonexistent');
+    sendError(res, 'degraded_unavailable', 'We could not read that message right now. Please try again shortly.');
+    return;
+  }
   if (!msgRow) { sendError(res, 'not_found', 'Message not found'); return; }
   const m = msgRow as any;
   if (m.deleted_at) { sendError(res, 'invalid_payload', 'Cannot edit a deleted message'); return; }
@@ -3318,12 +3425,25 @@ router.get('/trips/:tripId/chat', async (req, res) => {
   }
 
   // Get trip metadata for response.
-  const { data: trip } = await sc
+  const { data: trip, error: tripErr } = await sc
     .from('trips')
     .select('id, title, destination_city')
     .eq('id', tripId)
     .maybeSingle();
 
+  // T344/T363, §17.8. supabase-js RESOLVES on a database failure, so a dropped
+  // error arrived here as `data: null` — indistinguishable from a trip that does not exist — and
+  // this route answered a confident 404. A 404 is the one refusal a caller acts
+  // on by GIVING UP; an outage is not a deletion. `degraded_unavailable` is this
+  // codebase's own code for "the check was NOT PERFORMED" and the only code
+  // marked retryable (lib/http.ts RETRYABLE_CODES). A genuinely absent trip
+  // still gets the 404 it deserves, one line below.
+  if (tripErr) {
+    req.log.error({ err: tripErr, tripId },
+      'trips read failed — refusing rather than reporting the trip as nonexistent');
+    sendError(res, 'degraded_unavailable', 'We could not open this trip chat right now. Please try again shortly.');
+    return;
+  }
   if (!trip) { sendError(res, 'not_found', 'Trip not found'); return; }
 
   try {
@@ -3711,12 +3831,26 @@ router.post('/threads/:threadId/messages/:messageId/save', async (req, res) => {
   if (!membership) { sendError(res, 'forbidden', 'Not a member of this thread'); return; }
 
   // Verify message belongs to this thread (prevents cross-thread saves).
-  const { data: msgRow } = await sc
+  const { data: msgRow, error: msgErr } = await sc
     .from('messages')
     .select('id')
     .eq('id', messageId)
     .eq('thread_id', threadId)
     .maybeSingle();
+
+  // T344/T363, §17.8. supabase-js RESOLVES on a database failure, so a dropped
+  // error arrived here as `data: null` — indistinguishable from a message that is not in this thread — and
+  // this route answered a confident 404. A 404 is the one refusal a caller acts
+  // on by GIVING UP; an outage is not a deletion. `degraded_unavailable` is this
+  // codebase's own code for "the check was NOT PERFORMED" and the only code
+  // marked retryable (lib/http.ts RETRYABLE_CODES). A genuinely absent message
+  // still gets the 404 it deserves, one line below.
+  if (msgErr) {
+    req.log.error({ err: msgErr, messageId, threadId },
+      'messages read failed on save — refusing rather than reporting the message as nonexistent');
+    sendError(res, 'degraded_unavailable', 'We could not save that message right now. Please try again shortly.');
+    return;
+  }
   if (!msgRow) { sendError(res, 'not_found', 'Message not found in this thread'); return; }
 
   const now = new Date().toISOString();

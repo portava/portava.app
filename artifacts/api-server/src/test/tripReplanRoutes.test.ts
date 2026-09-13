@@ -8,7 +8,7 @@
  *
  * Run: node --import tsx/esm --test src/test/tripReplanRoutes.test.ts
  */
-import { describe, it, beforeEach, after } from "node:test";
+import { describe, it, beforeEach, after, before, mock } from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import type { Server } from "node:http";
@@ -86,6 +86,23 @@ describe("§9.4 POST /proposals/preview and §12.1 POST /simulate", () => {
 });
 
 describe("§11.3 POST /replan — the candidate diff, and proposals only when asked and enabled", () => {
+  // THIS DESCRIBE DRIVES THE ROUTE, AND THE ROUTE READS THE REAL CLOCK.
+  // Every direct service call in this file passes `{ now: NOW }` and is
+  // therefore already a fixture; the HTTP cases are not, and they were
+  // time-of-day dependent as a result. Measured: this file is GREEN at 16:04
+  // UTC and RED at 17:19 UTC on the identical tree, 1 case(s) failing with
+  // `an empty candidate diff` — a free window the wall clock had moved out from under.
+  //
+  // This is the SAME defect, and the same fix, as the one recorded in
+  // `src/test/tripOpportunityProjection.test.ts`. Freezing `Date` keeps the
+  // route path honest: the route still reads the clock, the clock is just made
+  // a fixture like every other input. Production is unchanged, and adding a
+  // `now` parameter to the route to make a test pass would have been changing
+  // the shape of the thing being tested.
+  before(() => { mock.timers.enable({ apis: ["Date"], now: NOW.getTime() }); });
+  after(() => { mock.timers.reset(); });
+
+
   it("rain on the booked walk: cancel with side effects + the café as the fallback add; both shared → proposals; createProposals without the kernel is skipped by name; with it, CREATE_PROPOSAL per entry", async () => {
     const t = fixture();
     t.weather_cache = [{ destination: "Paris", date_key: "2026-09-13:2026-09-15", fetched_at: T("11:00"), forecasts_json: [{ date: "2026-09-13", precipMm: 9, weatherCode: 63, summary: "Rain" }] }];
@@ -163,6 +180,23 @@ describe("§8.2 GET /decisions — urgency on every task", () => {
 });
 
 describe("§8.4 on Today, §8.3 readiness grouping, and the Compass tools", () => {
+  // THIS DESCRIBE DRIVES THE ROUTE, AND THE ROUTE READS THE REAL CLOCK.
+  // Every direct service call in this file passes `{ now: NOW }` and is
+  // therefore already a fixture; the HTTP cases are not, and they were
+  // time-of-day dependent as a result. Measured: this file is GREEN at 16:04
+  // UTC and RED at 17:19 UTC on the identical tree, 1 case(s) failing with
+  // `an empty candidate diff` — a free window the wall clock had moved out from under.
+  //
+  // This is the SAME defect, and the same fix, as the one recorded in
+  // `src/test/tripOpportunityProjection.test.ts`. Freezing `Date` keeps the
+  // route path honest: the route still reads the clock, the clock is just made
+  // a fixture like every other input. Production is unchanged, and adding a
+  // `now` parameter to the route to make a test pass would have been changing
+  // the shape of the thing being tested.
+  before(() => { mock.timers.enable({ apis: ["Date"], now: NOW.getTime() }); });
+  after(() => { mock.timers.reset(); });
+
+
   it("Today carries the four triggers; rain on the walk fires weather_sensitive with the spec's mitigation; the others say why they did not fire", async () => {
     const t = fixture();
     t.weather_cache = [{ destination: "Paris", date_key: "2026-09-13:2026-09-15", fetched_at: T("11:00"), forecasts_json: [{ date: "2026-09-13", precipMm: 9, weatherCode: 63, summary: "Rain" }] }];

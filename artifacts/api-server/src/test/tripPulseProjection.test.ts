@@ -6,7 +6,7 @@
  *
  * Run: node --import tsx/esm --test src/test/tripPulseProjection.test.ts
  */
-import { describe, it, beforeEach, after } from "node:test";
+import { describe, it, beforeEach, after, before, mock } from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import type { Server } from "node:http";
@@ -164,6 +164,23 @@ describe("§17.2 the disruption register in health, and the priority switch", ()
 });
 
 describe("GET /trips/:id/pulse, Compass get_live_conditions, Today's pulseSignals layer", () => {
+  // THIS DESCRIBE DRIVES THE ROUTE, AND THE ROUTE READS THE REAL CLOCK.
+  // Every direct service call in this file passes `{ now: NOW }` and is
+  // therefore already a fixture; the HTTP cases are not, and they were
+  // time-of-day dependent as a result. Measured: this file is GREEN at 16:04
+  // UTC and RED at 17:19 UTC on the identical tree, 2 case(s) failing with
+  // `0 !== 1 on signals.length` — a free window the wall clock had moved out from under.
+  //
+  // This is the SAME defect, and the same fix, as the one recorded in
+  // `src/test/tripOpportunityProjection.test.ts`. Freezing `Date` keeps the
+  // route path honest: the route still reads the clock, the clock is just made
+  // a fixture like every other input. Production is unchanged, and adding a
+  // `now` parameter to the route to make a test pass would have been changing
+  // the shape of the thing being tested.
+  before(() => { mock.timers.enable({ apis: ["Date"], now: NOW.getTime() }); });
+  after(() => { mock.timers.reset(); });
+
+
   it("serves the projection to a member with the envelope, and refuses a stranger by name", async () => {
     const tables = base(); tables.trip_plan_items = [walk()]; tables.weather_cache = [forecast()];
     install(tables);

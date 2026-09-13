@@ -309,12 +309,25 @@ router.patch('/messages/:messageId', asyncHandler(async (req, res) => {
   if (!newBody) { sendError(res, 'invalid_payload', 'body is required'); return; }
   if (newBody.length > 4000) { sendError(res, 'invalid_payload', 'body must be 4000 characters or fewer'); return; }
 
-  const { data: msgRow } = await sc
+  const { data: msgRow, error: msgErr } = await sc
     .from('messages')
     .select('id, thread_id, sender_id, body, deleted_at')
     .eq('id', messageId)
     .maybeSingle();
 
+  // T344/T363, §17.8. supabase-js RESOLVES on a database failure, so a dropped
+  // error arrived here as `data: null` — indistinguishable from a message that does not exist — and
+  // this route answered a confident 404. A 404 is the one refusal a caller acts
+  // on by GIVING UP; an outage is not a deletion. `degraded_unavailable` is this
+  // codebase's own code for "the check was NOT PERFORMED" and the only code
+  // marked retryable (lib/http.ts RETRYABLE_CODES). A genuinely absent message
+  // still gets the 404 it deserves, one line below.
+  if (msgErr) {
+    req.log.error({ err: msgErr, messageId },
+      'messages read failed on group-chat edit — refusing rather than reporting the message as nonexistent');
+    sendError(res, 'degraded_unavailable', 'We could not read that message right now. Please try again shortly.');
+    return;
+  }
   if (!msgRow) { sendError(res, 'not_found', 'Message not found'); return; }
   const m = msgRow as any;
   if (m.deleted_at) { sendError(res, 'invalid_payload', 'Cannot edit a deleted message'); return; }
@@ -378,12 +391,25 @@ router.delete('/messages/:messageId', asyncHandler(async (req, res) => {
   const { messageId } = req.params;
   if (!isUuid(messageId)) { sendError(res, 'invalid_payload', 'Invalid messageId'); return; }
 
-  const { data: msgRow } = await sc
+  const { data: msgRow, error: msgErr } = await sc
     .from('messages')
     .select('id, thread_id, sender_id, deleted_at')
     .eq('id', messageId)
     .maybeSingle();
 
+  // T344/T363, §17.8. supabase-js RESOLVES on a database failure, so a dropped
+  // error arrived here as `data: null` — indistinguishable from a message that does not exist — and
+  // this route answered a confident 404. A 404 is the one refusal a caller acts
+  // on by GIVING UP; an outage is not a deletion. `degraded_unavailable` is this
+  // codebase's own code for "the check was NOT PERFORMED" and the only code
+  // marked retryable (lib/http.ts RETRYABLE_CODES). A genuinely absent message
+  // still gets the 404 it deserves, one line below.
+  if (msgErr) {
+    req.log.error({ err: msgErr, messageId },
+      'messages read failed on group-chat delete — refusing rather than reporting the message as nonexistent');
+    sendError(res, 'degraded_unavailable', 'We could not delete that message right now. Please try again shortly.');
+    return;
+  }
   if (!msgRow) { sendError(res, 'not_found', 'Message not found'); return; }
   const m = msgRow as any;
   if (m.deleted_at) { sendError(res, 'invalid_payload', 'Message is already deleted'); return; }
