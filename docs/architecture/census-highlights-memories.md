@@ -2947,10 +2947,10 @@ largest stated gap.
 
 ### F.6 The ceiling
 
-1. **One row. This section does not pretend that is a dent in 130.** §D.1's arithmetic is
-   unchanged and is restated in §F.8: **106 of the 130 W rows are capped by storage nobody has
-   applied**, and applying eight migrations remains the single largest available move on this
-   document and an owner act.
+1. **One row. This section does not pretend that is a dent in 129.** §D.1's arithmetic is
+   unchanged and is restated in §F.8: **105 of the 129 W rows that remain are capped by storage
+   nobody has applied**, and applying eight migrations remains the single largest available move
+   on this document and an owner act.
 2. **Three of the five seams are read, not driven.** `routes/location.ts`, `routes/hiddenGems.ts`
    and `routes/safeReturn.ts` were opened at this commit and each was found to require a GPS fix,
    a GPS check-in, or the traveller's own confirmation. That is an argument from reading, and a
@@ -3017,7 +3017,7 @@ the file opened at the new number and the line read — before any number was wr
 unanchored **6443** against a ceiling of 6443 — unchanged, because every citation this section
 adds is anchored.
 
-### F.8 The 130 W rows, and precisely how many any branch can reach
+### F.8 The W column after this section, and precisely how many rows any branch can reach
 
 §D.1's grouping was re-checked against the document as it stands rather than taken on trust, and
 it still reproduces. §E closed H77 and H209 out of it; this section closes nothing out of it,
@@ -3036,7 +3036,7 @@ among the unreachable ones.**
 | **(e)** needs something nobody has written | 9 | 9 | |
 | | 130 | **129** | |
 
-**THREE of the 130 W rows are blocked on D-C2 and 127 are not.** The three are H120, H123 and
+**THREE of the 129 W rows are blocked on D-C2 and 126 are not.** The three are H120, H123 and
 H126, and they are already W — D-C2's outcome cannot make them worse. The thirteen rows D-C2
 genuinely endangers are all **C** rows and §E.7 enumerates them; that exposure is unchanged by
 this section, which added nothing to group (d) and leant on nothing in it. **Every row this
