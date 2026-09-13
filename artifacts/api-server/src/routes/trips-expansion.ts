@@ -36,6 +36,12 @@ import {
 } from "../lib/privacy/tripSerializers.js";
 import { computeTripStatus } from "../domain/trips/invariants/tripStatus.js";
 import {
+  deriveTripLifecycle,
+  TRIP_LIFECYCLE_STATES,
+  type LifecycleInputs,
+} from "../domain/trips/services/TripLifecycle.js";
+import { operationalState } from "../domain/trips/projections/TripSafetyProjection.js";
+import {
   isTripKernelEnabled,
   readCommandEnvelope,
   executeTripCommand,
@@ -3172,6 +3178,137 @@ router.get("/trips/:tripId/activity", async (req, res) => {
 
   if (error) { sendError(res, "db_error", error.message); return; }
   res.json({ activity: data ?? [] });
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/trips/:tripId/lifecycle — Trips spec §3.1, derived (census TR35)
+// ---------------------------------------------------------------------------
+/**
+ * The four §3.1 facts a deployment can actually read, each independently.
+ *
+ * Exported so the endpoint's behaviour is testable without an HTTP server, and
+ * so the "a failed read leaves its fact null" rule is stated in ONE place
+ * rather than four times inside the handler.
+ */
+export async function readTripLifecycleFacts(
+  sc: any,
+  tripId: string,
+  viewerId: string,
+  now: Date,
+): Promise<Pick<LifecycleInputs, "confirmedBookings" | "travelLegs" | "completedPlanItems" | "recordedMemories" | "activeDisruptions">> {
+  const [reservations, plans, memories, sessions] = await Promise.all([
+    sc.from("trip_reservations").select("id, type, starts_at, ends_at").eq("trip_id", tripId).eq("status", "confirmed"),
+    sc.from("trip_plan_items").select("id").eq("trip_id", tripId).eq("status", "done").is("removed_at", null),
+    sc.from("passport_memories").select("id").eq("trip_id", tripId),
+    sc.from("safe_return_sessions")
+      .select("id, user_id, status, escalation_level, closed_at, notify_trip_crew_enabled")
+      .eq("trip_id", tripId).in("status", ["active", "missed"]),
+  ]);
+
+  const rows = (r: any): any[] | null => (r?.error ? null : ((r?.data ?? []) as any[]));
+
+  const resRows = rows(reservations);
+  const planRows = rows(plans);
+  const memoryRows = rows(memories);
+  const sessionRows = rows(sessions);
+
+  return {
+    confirmedBookings: resRows === null ? null : resRows.length,
+    // §3.1's TRAVELING and RETURNING are about the journey, so only the two
+    // reservation types that ARE a journey count as legs.
+    travelLegs: resRows === null ? null : resRows
+      .filter((r) => r.type === "flight" || r.type === "transport")
+      .map((r) => ({ id: String(r.id), startsAt: r.starts_at ?? null, endsAt: r.ends_at ?? null })),
+    completedPlanItems: planRows === null ? null : planRows.length,
+    recordedMemories: memoryRows === null ? null : memoryRows.length,
+    activeDisruptions: sessionRows === null ? null : sessionRows.filter((s) => {
+      const visible = String(s.user_id) === viewerId || s.notify_trip_crew_enabled === true;
+      return visible && operationalState(s, now.getTime()) === "NEEDS_HELP";
+    }).length,
+  };
+}
+
+/**
+ * The §3.1 primary lifecycle, computed rather than stored.
+ *
+ * This router's own header has always said it carries "lifecycle"; until now
+ * the only lifecycle it had was `trips.status`, the SEVEN stored values
+ * `computeTripStatus` derives. §3.1 names THIRTEEN, and says in the same
+ * paragraph that lifecycle "is computed from canonical facts plus explicit
+ * user actions" — so the answer is a derivation
+ * (domain/trips/services/TripLifecycle.ts), not a column, exactly as §3.2's
+ * eight operational phases already are.
+ *
+ * NO FLAG, AND NOTHING FROM 2760-2795. Every fact read below is a table
+ * production carries today (baseline/20260907_production_tables.txt), which is
+ * why this endpoint answers on a real deployment rather than reporting
+ * `feature_disabled` the way the §19.2 projections do.
+ *
+ * A READ THAT FAILS LEAVES ITS FACT UNREAD. Each fact is passed as null when
+ * its table could not be read, the clause that needed it cannot fire, and the
+ * response's `unread` names it. That is why this endpoint does not refuse on a
+ * failed read: a lifecycle over the calendar alone is a true smaller answer,
+ * and a silent zero would have made ABANDONED fire on an unread table.
+ *
+ * SAFE RETURN IS THE ONE DISRUPTION FACT A DEPLOYMENT HAS. The §17 register
+ * (`trip_disruptions`, 2785) is in no database, so DISRUPTED is derived from
+ * the input §3.2's phase already treats as disruption: a Safe Return session
+ * in NEEDS_HELP. The opt-in applied here is DELIBERATELY NARROWER than
+ * TripHealthProjection's — only the viewer's own session, or one whose owner
+ * set `notify_trip_crew_enabled`, is counted — because this endpoint does not
+ * read sharing preferences and must not turn an un-shared alarm into a word
+ * the whole crew can read.
+ */
+router.get("/trips/:tripId/lifecycle", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const { tripId } = req.params;
+  if (!UUID_RE.test(tripId)) { sendError(res, "invalid_payload", "Invalid tripId"); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured"); return; }
+
+  const { data: trip, error: tripErr } = await sc
+    .from("trips")
+    .select("id, owner_id, title, destination_city, start_date, end_date, status, timezone")
+    .eq("id", tripId)
+    .maybeSingle();
+  if (tripErr) throw readUnavailable("trips", tripErr);
+  if (!trip) { sendError(res, "not_found", "Trip not found"); return; }
+  const t = trip as any;
+
+  const access = await canAccessTripContent(sc, { userId: user.id }, tripId, { trip: { id: tripId, owner_id: t.owner_id } });
+  if (!access.allowed) { sendTripRefusal(res, "forbidden", access.reason, "Only the trip owner or crew may read the trip's lifecycle"); return; }
+
+  const now = new Date();
+  const facts = await readTripLifecycleFacts(sc, tripId, user.id, now);
+  const storedStatus = computeTripStatus(
+    t.title ?? null, t.destination_city ?? null, t.start_date ?? null, t.end_date ?? null,
+    String(t.status ?? "planning"), t.timezone ?? null,
+  );
+  const decision = deriveTripLifecycle({
+    now,
+    timezone: t.timezone ?? null,
+    startDate: t.start_date ?? null,
+    endDate: t.end_date ?? null,
+    storedStatus,
+    title: t.title ?? null,
+    destinationCity: t.destination_city ?? null,
+    ...facts,
+  });
+
+  res.json({
+    tripId,
+    lifecycle: decision.state,
+    reason: decision.reason,
+    unread: decision.unread,
+    evidence: decision.evidence,
+    /** The stored seven, unchanged: `trips.status` is still what a writer persists. */
+    storedStatus,
+    states: TRIP_LIFECYCLE_STATES,
+  });
 });
 
 // ---------------------------------------------------------------------------
