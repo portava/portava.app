@@ -76,6 +76,7 @@ import { withDiscoveryCandidates } from "../lib/discoveryCandidate.js";
 // withDiscoveryLiveRank returns the very array it was handed, same reference,
 // having read no claim — so the served order and JSON are byte-identical.
 import { parseIntentMode, withDiscoveryLiveRank } from "../lib/discoveryLiveRankRead.js";
+import { blockFingerprint } from "../lib/discoveryCacheEligibility.js";
 import { logger } from "../lib/logger.js";
 
 const router = Router();
@@ -236,7 +237,11 @@ const GEOCODE_MAX_ENTRIES            = 2_000;
 // — e.g. the user swipes away to another tab and back within a few minutes.
 // 10-minute TTL matches the Compass feed TTL used elsewhere.
 const COMPASS_CANDIDATE_CACHE_TTL_MS = 10 * 60 * 1_000;
-const _compassCandidateCache = new Map<string, { places: DiscoveryPlace[]; at: number }>();
+// `blockKey` binds the stored FINAL ORDER to the block set it was ranked under.
+// The hit path below runs only applyFilters, which applies no block rule and
+// re-reads nothing, so without this a block taken inside the TTL would not reach
+// the viewer's own results (lib/discoveryCacheEligibility.ts states the rule).
+const _compassCandidateCache = new Map<string, { places: DiscoveryPlace[]; at: number; blockKey: string }>();
 
 function compassCandidateCacheKey(userId: string, destination: string, radiusKm: number, sortBy: string | null): string {
   return `${userId}:${destination.toLowerCase().trim()}:r${radiusKm}:s${sortBy ?? "default"}`;
@@ -820,6 +825,16 @@ export function _testCacheKeys(): string[] {
 
 /** Test hook: expose enrichOsmSavedCounts for unit testing without going through the route. */
 export const _testEnrichOsmSavedCounts = enrichOsmSavedCounts;
+
+/** Test hooks: READ / CLEAR cache B. The blockKey is exposed because the thing
+ * worth asserting is WHICH block set a stored page was ranked under, not merely
+ * that an entry exists — that is what separates a real invalidation from luck. */
+export function _testCompassCacheEntry(key: string): { ids: string[]; at: number; blockKey: string } | null {
+  const e = _compassCandidateCache.get(key);
+  return e ? { ids: e.places.map((p) => p.id), at: e.at, blockKey: e.blockKey } : null;
+}
+export function _clearTestCompassCache(): void { _compassCandidateCache.clear(); }
+export const _testCompassCandidateCacheKey = compassCandidateCacheKey;
 
 /**
  * Evict all L1 in-memory cache entries that contain an OSM place with the
@@ -1951,14 +1966,20 @@ router.get("/discovery", async (req, res) => {
             // return stale ordering with incorrect distances.
             const cCacheKey = compassCandidateCacheKey(callerUserId, destination, radiusKm, sortBy);
             const skipCache = sortBy === "nearest";
-            const cCacheHit = skipCache ? undefined : _compassCandidateCache.get(cCacheKey);
+            const cBlockKey = blockFingerprint(viewerBlockedIds);
+            const cStored   = skipCache ? undefined : _compassCandidateCache.get(cCacheKey);
+            // A page ranked under a DIFFERENT block set is not this request's to
+            // reuse; a mismatch is a miss, so it falls through and re-ranks.
+            const cCacheHit = cStored && cStored.blockKey === cBlockKey ? cStored : undefined;
             if (cCacheHit && Date.now() - cCacheHit.at < COMPASS_CANDIDATE_CACHE_TTL_MS) {
               const cFiltered = applyFilters(cCacheHit.places);
               const cSlice = cFiltered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE).map(toPublic);
               req.log.info({ destination, cacheLevel: "compass_candidate_hit" }, "discovery: compass candidate cache hit");
               const cAnnotated = await annotateNewToMe(getServiceClient(), callerUserId, cSlice);
+              // 06 §5: cachedAt is the entry's own write clock, which the TTL
+              // check above already reads. Passing null discarded it.
               const cCandidates = await withDiscoveryCandidates(getServiceClient(), cAnnotated, {
-                cacheLevel: "compass_candidate_hit", cachedAt: null, scoredById: null, rankedBy: "compass",
+                cacheLevel: "compass_candidate_hit", cachedAt: cCacheHit.at, scoredById: null, rankedBy: "compass",
               });
               res.json({ places: cCandidates, total: cFiltered.length, destination, context: ctxLabel, cached: true, ageFilterMeta,
                 sourceSummary: { seededDbCount: dbPlaces.length, osmCount: osmPlaces.length, userCreatedCount: 0 } });
@@ -2004,7 +2025,7 @@ router.get("/discovery", async (req, res) => {
             // requests within the TTL skip the full scoring pipeline.
             // Skip storage for nearest sort — position-dependent results must not be cached.
             if (!skipCache) {
-              _compassCandidateCache.set(cCacheKey, { places: compassRanked, at: Date.now() });
+              _compassCandidateCache.set(cCacheKey, { places: compassRanked, at: Date.now(), blockKey: cBlockKey });
               // Keyed per USER, so this is the Map that grows with adoption
               // rather than with content. Reclaim on every write.
               pruneAndBound(_compassCandidateCache, {

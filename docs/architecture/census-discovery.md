@@ -100,7 +100,7 @@ with `docs/`, `db/` or `travel-buddy-standalone/`.
 |---|---|---|---|
 | C01 | Suspended/banned/deleted accounts excluded (`routes/discoverySearch.ts:15#Suspended/banned/deleted` header) | **C** | `routes/discoverySearch.ts:571#.in("account_status",` — `searchTravelers`' `.in("account_status", ["active"])`. |
 | C02 | Profile-discovery opt-outs excluded, fail-closed on query error (header `:16`) | **C** | `:548-556`; `noDiscErr → return []`. Test: *"excludes profiles that opted out of discovery (fail-closed on opt-out error)"*. |
-| C03 | Blocked users excluded both directions; unknown block state → empty search (header `:17-18`) | **C** | `lib/blocks.ts:21#fetchBlockedSet` (null on error), consumed at `routes/discovery.ts:1578#fetchBlockedSet`, `:2375#fetchBlockedSet` and `:2735#fetchBlockedSet`; every per-type searcher returns `[]` on null. Tests: *"returns empty results when the blocks table returns a DB error"*. |
+| C03 | Blocked users excluded both directions; unknown block state → empty search (header `:17-18`) | **C** | `lib/blocks.ts:21#fetchBlockedSet` (null on error), consumed at `routes/discovery.ts:1593#fetchBlockedSet`, `:2396#fetchBlockedSet` and `:2756#fetchBlockedSet`; every per-type searcher returns `[]` on null. Tests: *"returns empty results when the blocks table returns a DB error"*. |
 | C04 | Content from suspended/banned/deleted owners excluded (header `:19-20`) | **C** | `:479-494` `fetchActiveOwnerSet`, empty set on error (exclude, never leak). |
 | C05 | Private trips/events/circles: only `visibility='public'` (header `:21`) | **C** | `:670` events, `:772` trips, `:1225` circles, `:1149` posts (published-and-public gate). |
 | C06 | Plans only from public or caller-owned trips (header `:22`) | **C** | `:828-860`. |
@@ -116,10 +116,10 @@ with `docs/`, `db/` or `travel-buddy-standalone/`.
 | C16 | `GET /discovery` needs no auth and returns only public place data; `submitted_by` never serialised (`discovery.ts:1-5`; test *"never serialises submitted_by to the client"*) | **C** | `routes/discovery.ts:1393` optional auth; `test/discoveryBlockedSubmitter.test.ts` *"submitted_by is never mapped onto the DiscoveryPlace that toPublic returns"*. |
 | C17 | The community submitter block rule is `lib/blocks.submitterIsVisible`, shared, not re-implemented (`discovery.ts:874-879`) | **C** | `routes/discovery.ts:50,879`; applied at `:2654` before names are resolved (`:2658`). |
 | C18 | Viewer sees their own byline on a place they submitted (`f37e1cf0`) | **C** | `routes/discovery.ts:2675` (memoised viewer, guarded on `rows.length`), `:2694`. Tests *"shows the viewer their OWN name…"*, *"still redacts everyone ELSE"*, *"does not exempt the submitter from an ANONYMOUS caller's view"*. Not redone; the pattern was reused for C19. |
-| C19 | Display-name redaction shape (`.agents/memory/display-name-privacy.md`: null name + separate handle) | **W → partially closed** | **Measured, and the lead was half wrong:** the search list's shape is `title` = name-or-bare-handle, `subtitle` = `@handle` (`routes/discoverySearch.ts:669#subtitle`) — there is no `name` field — which is the **same** shape as Compass (`routes/compass.ts:3812-3830#title:`, `title` bare username / `displayName` null — REPOINTED AT INTEGRATION: both lanes carried this citation at the reason-code scoring block, which is not the card shape it claims; the shape is the `title`/`data.displayName` pair above). Discovery's one divergent shape is the community byline, which bakes the literal `@username` **into `name`** (`discovery.ts:2780#name`). It cannot be changed in place: `travel-buddy-standalone/src/components/DiscoveryWall.tsx:407` renders `By {submittedBy.name}` raw, so a null there is a blank byline — a user-visible change with no flag. **Now:** the canonical shape is emitted **additively** as `displayName` (`routes/discovery.ts:2783#displayName`: real name iff self or opted-in, else null, never a handle) alongside the unchanged legacy field, from one `nameAllowed` decision (`:2694`) so the two fields cannot disagree about *whether* a name is withheld (pinned: *"the two byline fields never disagree…"*). The legacy `name` stays until the client resolves the byline through `displayIdentity(displayName, handle)` (§6 D2). Stays W until then. |
+| C19 | Display-name redaction shape (`.agents/memory/display-name-privacy.md`: null name + separate handle) | **W → partially closed** | **Measured, and the lead was half wrong:** the search list's shape is `title` = name-or-bare-handle, `subtitle` = `@handle` (`routes/discoverySearch.ts:669#subtitle`) — there is no `name` field — which is the **same** shape as Compass (`routes/compass.ts:3812-3830#title:`, `title` bare username / `displayName` null — REPOINTED AT INTEGRATION: both lanes carried this citation at the reason-code scoring block, which is not the card shape it claims; the shape is the `title`/`data.displayName` pair above). Discovery's one divergent shape is the community byline, which bakes the literal `@username` **into `name`** (`discovery.ts:2785#name`). It cannot be changed in place: `travel-buddy-standalone/src/components/DiscoveryWall.tsx:407` renders `By {submittedBy.name}` raw, so a null there is a blank byline — a user-visible change with no flag. **Now:** the canonical shape is emitted **additively** as `displayName` (`routes/discovery.ts:2804#displayName`: real name iff self or opted-in, else null, never a handle) alongside the unchanged legacy field, from one `nameAllowed` decision (`:2694`) so the two fields cannot disagree about *whether* a name is withheld (pinned: *"the two byline fields never disagree…"*). The legacy `name` stays until the client resolves the byline through `displayIdentity(displayName, handle)` (§6 D2). Stays W until then. |
 | C20 | Engine mode resolves to `legacy` on every failure path (`lib/discoveryEngineMode.ts` header) | **C** | `:151-175`; tests A–L. |
 | C21 | An unreadable/absent/malformed cohort includes NOBODY; `kind:"all"` must be typed (`lib/discoveryCohort.ts` header) | **C** | `:85` `COHORT_NONE`, `:102` `NOBODY(...)` for every parse failure; tests N2–N6. |
-| C22 | Shadow never changes what was served and writes only to `discovery_shadow_serves` (`lib/discoveryShadow.ts` header) | **C** | `routes/discovery.ts:1812#served` (`served: false`, handed a client that cannot write), invoked after the response is sent (`:1790#served`); `lib/discoveryShadow.ts:186#discovery_shadow_serves` the single insert; tests G, I. (Re-anchored 2026-09-08: both line numbers had drifted 30-odd lines when the silent-write burn-down `2550b8ba` edited this file. The claim held; the pointers did not.) |
+| C22 | Shadow never changes what was served and writes only to `discovery_shadow_serves` (`lib/discoveryShadow.ts` header) | **C** | `routes/discovery.ts:1827#served` (`served: false`, handed a client that cannot write), invoked after the response is sent (`:1805#served`); `lib/discoveryShadow.ts:186#discovery_shadow_serves` the single insert; tests G, I. (Re-anchored 2026-09-08: both line numbers had drifted 30-odd lines when the silent-write burn-down `2550b8ba` edited this file. The claim held; the pointers did not.) |
 | C23 | `rankForViewer(..., { served: false })` performs no write; the suppression is load-bearing (`lib/discoveryPde.ts:84-90`) | **C** | Tests D, D2 (positive control), S, S2. |
 | C24 | Modifiers flag OFF → inert record, no momentum or confidence read (`lib/discoveryModifiers.ts:37-50`) | **C** | `:68` (*"Everything below is inert when false"*), `:130` the one read. |
 | C25 | Serve log inert until seeded; a rejected insert is reported, never thrown (`lib/discoveryServeLog.ts:23-45`) | **C** | `:200-205` cached fail-closed read; tests A, B, B2, J, K. **Deployment:** the flag is **ON in production** and the writer is live — but `surface='discovery'` holds 13 rows ever, last 2026-08-15 (§5). Not a silent write loss (rows landed when the surface was reached); the surface is not reached. |
@@ -130,7 +130,7 @@ with `docs/`, `db/` or `travel-buddy-standalone/`.
 | C30 | Momentum is strictly non-negative with a minimum-evidence floor (`lib/discoveryLocalMomentum.ts:25-45`) | **C** | `:67` `MOMENTUM_MIN_RECENT_WEIGHT = 3`, `:150` floor, `:153` clamp to `[0,1]`. |
 | C31 | Stale L2 entries are served while a background revalidation runs (`.agents/memory/discovery-perf-cache.md`; `discoveryCacheCleanup.ts:22-27`) | **C** | `routes/discovery.ts:1802`. |
 | C32 | One ranking pipeline in the tree — the route no longer imports the ranker directly (`routes/discovery.ts:43-47`) | **C** | `:43-47` (type-only import of `portavaRank`), `:47` `rankForViewer`; test T *"discovery still declares those inputs constant, in source"*. |
-| C33 | The two `profiles` reads in `routes/discovery.ts` are the caller's **own** `date_of_birth` for the age filter, not identity payloads | **C** | `routes/discovery.ts:1545#.select("date_of_birth")` and `routes/discovery.ts:2627#.select("date_of_birth")` — `.select("date_of_birth").eq("id", <caller>)`. **Settles the census-passport P95 citation** (`discovery.ts:1504,2523`) as weak evidence, exactly as the sibling agent judged; the real direct person-identity readers are `routes/discoverySearch.ts:568#.select("id, handle, username, name, display_name, avatar_url` (A15) and `routes/compass.ts:3536#"id, username, display_name, name, avatar_url,` (Compass's traveler list, reported not changed — REPOINTED §11: `compass.ts:3378` is a date computation in the traveller scoring block, and `:1505`/`:2545` were a blank line and a `createdAt: string;`). |
+| C33 | The two `profiles` reads in `routes/discovery.ts` are the caller's **own** `date_of_birth` for the age filter, not identity payloads | **C** | `routes/discovery.ts:1560#.select("date_of_birth")` and `routes/discovery.ts:2648#.select("date_of_birth")` — `.select("date_of_birth").eq("id", <caller>)`. **Settles the census-passport P95 citation** (`discovery.ts:1504,2523`) as weak evidence, exactly as the sibling agent judged; the real direct person-identity readers are `routes/discoverySearch.ts:568#.select("id, handle, username, name, display_name, avatar_url` (A15) and `routes/compass.ts:3536#"id, username, display_name, name, avatar_url,` (Compass's traveler list, reported not changed — REPOINTED §11: `compass.ts:3378` is a date computation in the traveller scoring block, and `:1505`/`:2545` were a blank line and a `createdAt: string;`). |
 
 ### 2d. Tally
 
@@ -162,7 +162,7 @@ registration mechanism itself has zero occurrences, so "not registered" is not a
 | *"Four unmigrated autocomplete engines… likely your highest-value item"* | **FALSE as framed.** Discovery owns **one** of the four; two are Places', one is mentions. Discovery's server route is not a second matcher (it calls the gateway's `dispatchSearch`), and its client hook is wired as a **deliberate, documented fallback** to the gateway, not a stray. The divergence is real (two requests per keystroke) but the consolidation is a client-side fallback removal — not closable inertly from Discovery's files. A08. |
 | *"Three redaction shapes; Discovery contains two"* | **HALF FALSE.** Discovery's search shape (`title` bare-handle / `subtitle` `@handle`) is the **Compass** shape, not a separate one. Discovery has **one** divergent shape (community `name` = `"@username"`). Consolidated additively (`displayName`); the legacy field is client-pinned. C19. |
 | *"`f37e1cf0` fixed the viewer-self exemption; read it as the pattern"* | **CONFIRMED**; not redone; the same `nameAllowed` decision now feeds both byline fields. C18/C19. |
-| *"`discovery.ts:1504,2523` are the caller's own `date_of_birth`, weak evidence; real readers are `discoverySearch.ts:438` and `compass.ts:3376`"* | **CONFIRMED** (post-edit lines `routes/discovery.ts:1545,2627#.select("date_of_birth")`; `routes/discoverySearch.ts:568#.select("id, handle, username, name, display_name, avatar_url`; `routes/compass.ts:3536#"id, username, display_name, name, avatar_url,`). The line numbers inside the QUOTE are the sibling census's own and are stale; they are left as quoted. C33, A15. |
+| *"`discovery.ts:1504,2523` are the caller's own `date_of_birth`, weak evidence; real readers are `discoverySearch.ts:438` and `compass.ts:3376`"* | **CONFIRMED** (post-edit lines `routes/discovery.ts:1560,2648#.select("date_of_birth")`; `routes/discoverySearch.ts:568#.select("id, handle, username, name, display_name, avatar_url`; `routes/compass.ts:3536#"id, username, display_name, name, avatar_url,`). The line numbers inside the QUOTE are the sibling census's own and are stale; they are left as quoted. C33, A15. |
 | census-passport **P95 W — "Nothing calls it"** | **Superseded**: `routes/discoverySearch.ts:2578#buildConsumerProjection(sc,` calls the `discovery_card` variant. A16. |
 | cross-cutting **P-05 "COULD NOT ESTABLISH"** | **Established absent.** A18. |
 
@@ -394,7 +394,7 @@ so nothing is lost.
 
 | id | was | now | why |
 |---|---|---|---|
-| A01 | `N — owner hold` | W | **Moved. The owner hold no longer describes the tree.** Sensing's lane built the live half of `:133` and wired it into both serve points: `artifacts/api-server/src/lib/discoveryLiveRankRead.ts:51#export const RANK_CLAIM_TYPES` consumes crowd level, crowd trajectory, vibe state, queue wait and walk-in access through the one gated live read path, applied at `artifacts/api-server/src/routes/discovery.ts:1722#const liveRanked = await withDiscoveryLiveRank` and again on the cold path. **W and not C:** it is behind `artifacts/api-server/src/lib/discoveryLiveRankRead.ts:45#export const DISCOVERY_LIVE_RANK_FLAG` (migration 2850, seeded FALSE, refuses to commit ON), so on every deployment the helper returns the same array reference it was handed; and forecast, travel time, compatibility and **safety** are still absent from the term list. |
+| A01 | `N — owner hold` | W | **Moved. The owner hold no longer describes the tree.** Sensing's lane built the live half of `:133` and wired it into both serve points: `artifacts/api-server/src/lib/discoveryLiveRankRead.ts:51#export const RANK_CLAIM_TYPES` consumes crowd level, crowd trajectory, vibe state, queue wait and walk-in access through the one gated live read path, applied at `artifacts/api-server/src/routes/discovery.ts:1737#const liveRanked = await withDiscoveryLiveRank` and again on the cold path. **W and not C:** it is behind `artifacts/api-server/src/lib/discoveryLiveRankRead.ts:45#export const DISCOVERY_LIVE_RANK_FLAG` (migration 2850, seeded FALSE, refuses to commit ON), so on every deployment the helper returns the same array reference it was handed; and forecast, travel time, compatibility and **safety** are still absent from the term list. |
 | A03 | `N → W (built this pass, deliberately in the wrong bucket)` | W | Same bucket, **different reason, and the old one is now false.** The row's whole argument for W was *"`whyNow` is `null` on every row by construction — there is no live producer"*. There is one: `artifacts/api-server/src/lib/discoveryCandidate.ts:225#export function whyNowOf` returns the live grade's grounded reasons. It stays W because it is now doubly deployment-gated — the projection behind `discovery_candidate_projection_enabled` (2361, FALSE) and the producer behind `discovery_live_rank_enabled` (2850, FALSE) — so `whyNow` is still null on every row in every deployment, for a reason that is a flag rather than an absence. |
 | A05 | `N — owner hold` | N | Unchanged. No intent-mode concept in `routes/discovery*.ts` or `lib/discovery*.ts`; the explicit hold at `docs/discovery/ROADMAP.md:648#Step 7/8 modifiers` stands. |
 | A17 | `W → C (fixed this pass)` | C | Unchanged. Re-executed: `artifacts/api-server/src/routes/discoverySearch.ts:425#export { fetchBlockedSet }` still re-exports `lib/blocks`' reader rather than a private copy, and the test still pins function identity, not resemblance. |
@@ -658,3 +658,621 @@ reported the corpus clean throughout.
 | BUILT-BUT-WRONG | **12** |
 | NOT-BUILT | **7** |
 | CANNOT-VERIFY | **0** |
+
+---
+
+## 11. Re-denominated 2026-09-13 against the RESTORED requirements
+
+*Measured at `b7f137a4dfbc05830505382e63d418f3900a4cf1` (`b7f137a4d`). APPEND-ONLY and
+LAST-STATEMENT-WINS: where this section and any section above disagree, this one is the later
+statement. It does not edit §0's `head_commit`; it declares its tested commit here, because what it
+changes is the denominator and a denominator is not a freshness fact.*
+
+### 11.1 Why the denominator changed — the overwrite, verified rather than quoted
+
+This census's header says *"Discovery has **no spec**"* (`docs/architecture/census-discovery.md:4#uncommitted sibling-agent work, on 2026-09`) and §1 builds a denominator from three
+substitute sources. That was true when written and is false now, and why it was ever true is the
+finding this section records.
+
+**Discovery's requirements were not lost. They were overwritten by a description of the code.**
+Verified at this commit by opening the files:
+
+| Evidence | What it says |
+|---|---|
+| `docs/architecture/00_STATUS.md:3#These began life as **PROPOSALS**, not des` | *"These began life as **PROPOSALS**, not descriptions of the system."* |
+| `docs/architecture/00_STATUS.md:7-9#Documents` | *"**Documents `01`–`06` have since been rewritten as current-state descriptions derived from the repository** (2026-09-04, unit D3). They now describe what the code does, cite the files that do it…"* |
+| `docs/architecture/05_Graph_Engine.md:6-8#schedule (` | *"The original `05` described **building** one; this document describes the running one…"* |
+| `docs/architecture/02_Trails.md:7#The original` | *"The original `02` proposed Trails as a first-class discovery primitive…"* |
+| `docs/architecture/03_Trending.md:7#The original` | *"The original `03` proposed a trend engine with its own lifecycle…"* |
+| `docs/architecture/04_Behavior_Engine.md:17#Because a row is overwritten by its own ou` | *"…behaviour chains as the original `04` [specified]…"* |
+
+Four of thirteen documents refer to their own originals in the third person and past tense. They are
+a report about the code, written from the code.
+
+**Why that invalidates 71.6 % specifically.** A census scored against a document derived from the
+same code cannot find the code missing: obligations the code does not satisfy were edited out before
+the census read it. The 67 rows were then assembled — honestly; §1 says so — from other surfaces'
+specs (A), a sibling census (B) and Discovery's own module headers (C). §1's own caveat is the tell:
+*"the (c) rows are the easiest to satisfy — they are the surface grading its own homework — and they
+are 33 of 67."*
+
+The originals are restored byte-exact at `docs/specs/discovery-architecture-v1/` (13 files, 2 075
+lines; sha256 per file in `docs/specs/SUPPLIED-SOURCES-2026-09-13.md`).
+
+**The current-state documents are NOT deleted and NOT edited by this pass.** They are real, cited
+work and other guards depend on their line numbers. They are reclassified, not discarded: **evidence
+about the code**, which a row may legitimately cite — simply not the requirement.
+
+### 11.2 Grading rules applied here, stated so the verdicts can be checked
+
+1. **A parent requirement takes `C` only if EVERY criterion inside it passes.** Where some pass and
+   some do not, the parent is `W` and each criterion is listed with its own `file:line`. Applied
+   below to DV-54 (diversity, 2 of 6 axes), DV-55 (cold start, 0 of 3), DV-78 (behaviour
+   expansion, 5 of 8), DV-79 (shadow comparison, 1 of 6), DV-08 (flag states, 3 of 5), DV-71
+   (RLS, 1 of 4 policy kinds) and DV-09.
+2. **Coverage is semantic, not citational.** Every restored obligation was checked against all 67
+   existing rows for overlap of subject, not for a missing citation. Where an existing row already
+   grades the obligation it is a DUPLICATE: that row is re-graded against the restored criteria and
+   nothing is added. This removed eight would-be rows (§11.4).
+3. **Every obligation carries exactly one disposition — ADDITION / DUPLICATE / SPLIT — with its
+   reason.** §11.4 is that table, line per obligation.
+
+### 11.3 The corrected denominator, and what it is made of
+
+| layer | rows | kept / added |
+|---|---|---|
+| The existing 67 — A01–A25, B01–B09, C01–C33 | **67** | **PRESERVED IN FULL.** Not discarded, not replaced by the shorter upgrade checklist. Three are re-graded in §11.6; the other 64 stand as §10 left them. |
+| `DV-01`…`DV-82` — the restored Discovery Architecture v1 package | **+82** | New. Source file and section named per row (§11.5). Eight further obligations were checked and **not** added, as DUPLICATEs of existing rows (§11.4). |
+| `DSV2-04` · `DSV2-05` · `DSV2-06` · `DSV2-12` | **+4** | New. The only four of the twelve DSV2 requirements that add ground the restored package and the existing 67 do not already cover; the other eight are DUPLICATE or the already-counted half of a SPLIT (§11.4). |
+| | **153** | |
+
+The owner's framing forbids both failure modes by name, so both are stated as refusals: this does
+**not** replace the existing denominator with the shorter upgrade checklist — all 67 are still here
+and still counted — and it does **not** count one feature twice: every duplicate is named in §11.4
+with its reason and counted once.
+
+### 11.3a Headline — measured before and after
+
+> **Discovery, at `b7f137a4d`: 153 requirements · 63 BUILT-AND-CORRECT · 46 BUILT-BUT-WRONG ·
+> 42 NOT-BUILT · 2 CANNOT-VERIFY → CONSTRUCTED 109 / 153 = 71.2 % · CORRECT 63 / 153 = 41.2 %.**
+
+| | rows | C | W | N | X | CONSTRUCTED | CORRECT |
+|---|---|---|---|---|---|---|---|
+| **Before** — §10.6, at `3ca68cb06` | 67 | 48 | 12 | 7 | 0 | 89.6 % | 71.6 % |
+| **After** — this section, at `b7f137a4d` | **153** | **63** | **46** | **42** | **2** | **71.2 %** | **41.2 %** |
+| delta | +86 | +15 | +34 | +35 | +2 | −18.4 pts | −30.4 pts |
+
+No code regressed between the two measurements. Fifteen rows were added to `C` — those are real
+capabilities the substitute denominator never counted. They are outnumbered by thirty-five absences
+that no substitute denominator could see, because the document naming them had been replaced by a
+description of the code that lacks them.
+
+The largest single contributor: **four subsystems the restored package specifies exist in no form.**
+Verified at this commit in **both** the repository and production `ajrurzioarfkagpuxfnb` (read-only
+`to_regclass` over eighteen names): `trails`, `content_trails`, `trail_edges`,
+`trail_health_snapshots`, `recommendations`, `recommendation_items`, `conversion_events`,
+`attribution_records`, `attribution_participants`, `ledger_accounts`, `ledger_entries`,
+`payout_holds`, `payout_requests`, `place_momentum`, `place_cooccurrence`, `traveler_affinities`,
+`trail_relations`, `circle_momentum` — **all eighteen NULL in production, and none has a
+`CREATE TABLE` anywhere under `artifacts/api-server/src/migrations/` or `db/`.** Those four
+subsystems account for **25 of the 42 `N` rows** (Trails 8 · Trending-as-an-engine 3 · Creator
+Economy 5 · Revenue 4 · Payment 5).
+
+### 11.4 The mapping — every obligation, one disposition, with its reason
+
+**DSV2, all twelve.** Eight DUPLICATE, four SPLIT, none a pure ADDITION.
+
+| DSV2 | Disposition | Existing row | Reason / what the split adds | Re-grade |
+|---|---|---|---|---|
+| DSV2-01 | **DUPLICATE** | A02 | Same subject: search truth kept independent of recommendation ranking. | A02 **C** holds at the stricter bar — `routes/discoverySearch.ts` never imports the ranker; `lib/discoveryLiveRank.ts:462#if (a.grade.safety.demoted !== b.grade.saf` demotes only inside `GET /discovery`'s window. A quiet venue stays searchable because search reads no live state. |
+| DSV2-02 | **DUPLICATE** | A01 | Same subject: live-intelligence axes into ranking. | A01 **W** holds; reason updated. All eight axes now exist (`lib/discoveryLiveRank.ts:140-148#weights: {`, `lib/discoveryLiveRank.ts:207#/** Live-qualified`). *Unknown must not become favourable* is **satisfied**: `FRESHNESS_AXIS` maps `unknown: 0`, `historical: 0` (`lib/discoveryLiveRank.ts:126#const FRESHNESS_AXIS: Readonly<Record<Fres`) and a null axis contributes nothing. `W` on the 2850 gate and on travel time (§11.7.3). |
+| DSV2-03 | **DUPLICATE** | A05 | Same subject: the eight intent modes. | A05 **N → W**, §11.6. |
+| DSV2-04 | **SPLIT** | A03 | A03 grades the **server** projection. New ground: the **client** leg — *"Observed and predicted recommendations render distinctly; expired why-now claims disappear or become explicitly stale."* Independently testable, separately load-bearing. | A03 **W** holds; new row DSV2-04 **N**. |
+| DSV2-05 | **SPLIT** | DV-03 | DV-03 grades the **ranking**-bypass leg of the shared cache. New ground: the **eligibility** leg on cache-hit paths. Different failure, different test. | DV-03 **W**; new row DSV2-05 **W → C, built this pass** (§11.8). |
+| DSV2-06 | **SPLIT** | DV-04 | DV-04 grades **feature/model loss**. New ground: **binding and invalidation** — permission or evidence change must invalidate or revalidate. | DV-04 **W**; new row DSV2-06 **W**, freshness leg closed by §11.8. |
+| DSV2-07 | **DUPLICATE** | DV-06, DV-07, DV-37, DV-46, **C25** | Four clauses, each already a row. *Rejected writes observable* is **C25**'s own contract — not a new row. | *allowed surfaces write* → DV-44 **W**; *rejected observable* → C25 **C**; *retry deduplicates* → DV-37 **N**; *exposures have denominators* → DV-06 **W**. |
+| DSV2-08 | **DUPLICATE** | A04 | Same subject: Hidden Gem candidates vs canonical approval. | A04 **C** holds — `services/hiddenGems/HiddenGemContributionService.ts:7-12#A contribution is an OBSERVATION. recordGe`: *"A contribution is an OBSERVATION… it never touches the gem's canonical status."* Correlated activity cannot become independent confirmation; review still governs approval. |
+| DSV2-09 | **DUPLICATE** | A07 | Same subject: safety vs opportunity. | A07 **N → W**, §11.6. Separation bar **met**: `lib/compassDecision.ts:269#unsafe: crowdLevel === "unsafe_density",` sets `unsafe` only on the distinct level `unsafe_density`, never on `busy`/`packed` (`lib/compassDecision.ts:284#quiet: { dead: 0.6, quiet: 1.0, moderate:` score `packed: 1.0` for high-energy with `unsafe` false). |
+| DSV2-10 | **DUPLICATE** | DV-53, DV-54, DV-55, DV-32 | Four named concerns, each already a row. | exploration DV-53 **W**; diversity DV-54 **W**; cold start DV-55 **W**; manipulation DV-32 **W**. *"Low-history creators are not automatically excluded"* → DV-15 **C**. |
+| DSV2-11 | **DUPLICATE** | DV-08 (+ A06, C20, C22, C23, C24) | Same subject: OFF inert, SHADOW side-effect-free. | Inertness stays **C** across A06/C20/C22/C23/C24. DV-08 is **W** on a different criterion — five states, three implemented. |
+| DSV2-12 | **SPLIT** | DV-19 | DV-19 grades *optimise for travel value*. New ground: **traceability** — *"Trace served recommendation→exposure→permitted outcome with versions and coverage."* | DV-19 **N**; new row DSV2-12 **N**. |
+
+**Restored package — the eight obligations that turned out already covered, and were NOT added.**
+Each is a DUPLICATE; the existing row was re-graded against the restored criteria instead.
+
+| Restored obligation | DUPLICATE of | Reason |
+|---|---|---|
+| `01` §6 *"rejected events are observable"* | **C25** | C25's stated contract is *"a rejected insert is reported, never thrown"* — the same obligation, already graded. |
+| `04` §3 *"observable on failure"* | **C25** | Same obligation as above, restated in a second document. |
+| `04` §10.4 *"instrument rejected event writes"* | **C25** | Third restatement of the same obligation. Counted once. |
+| `06` §11 *"shadow comparison is available"* | **C22** | C22 grades the shadow mechanism's existence and inertness. Availability of the comparison is the same subject. (Phase 9's six *dimensions* are genuinely more — SPLIT, DV-79.) |
+| `11` §9 error semantics / *"A failure must not masquerade as success"* | **C14** | C14 grades `/discovery/suggest`'s fail-soft contract — precisely this subject. The restored document contradicts it, so C14 is re-graded rather than a second row added. |
+| `06` §5 cache metadata (model/feature/source/reasons/timestamp) | **DV-04** | DV-04 *is* the Cache-B metadata obligation; `06` §5 states the same requirement the `00-readme` finding describes as broken. |
+| `10` §10 *"payment ledger is immutable"* | **DV-66/67** | `09` §11's *"every earning reconstructable"* + *"no balance depends on mutable totals"* is the same property. |
+| `11` §7 *"attribution must be idempotent"* | **DV-63** | `08` §7's *"attribution is auditable"* over a subsystem absent in full; a second row over the same absence would inflate. |
+
+**Restored package — the three SPLITs off existing rows.**
+
+| Restored obligation | SPLIT off | What is genuinely new |
+|---|---|---|
+| `01` §8 five flag states | C20 / C24 / A06 | Those grade **OFF-inertness**. New: that **five named states** exist (COMPARE and PARTIAL do not). → DV-08 |
+| `01` §11 reason vocabulary | A03 | A03 grades the **projection carrying** why-for-user. New: the **nine-code internal vocabulary** and **plain-language user-facing** strings. → DV-18 |
+| `04` §9/§13 intent vs preference | A18 | A18 grades **weighting** explicit intent above generic interests. New: that the two are **distinct representations**. → DV-42 |
+| `10` §5 RLS four-policy explicitness · `11` §10 mutation authorization | C28 | C28 grades the `discovery_places` **GRANT** boundary. New: **RLS policy explicitness** (DV-71) and **route-level auth on the four mutating routes** (DV-73). |
+
+**Restored package — `12`'s phases, dispositioned.** Phases 1, 2, 3, 4, 6, 7, 8, 10, 11 and 12 are
+DUPLICATEs of rows already created from the documents they sequence, and are counted once there:
+Phase 1 → DV-43…47; Phase 2 → DV-03/04; Phase 3 → DV-08 + the inertness rows; Phase 4 → DV-40,
+DV-18, DV-04, DV-06; Phase 6 → DV-20…26; Phase 7 → DV-28…33; Phase 8 → DV-72; Phase 10 →
+DV-03; Phases 11–12 → DV-56…69. Six phases are ADDITIONs or SPLITs (DV-75…80).
+
+**`12`'s Completion definition — all eight bullets, per rule 1.** Seven are DUPLICATEs, counted once
+at the rows named; the eighth is new. The definition is therefore **not** graded as one parent: its
+criteria are separately testable and separately load-bearing, so they are split out and mapped.
+*Recorded explicitly: were it graded as a single parent it would be `W`, since six of eight fail.*
+
+| Completion bullet | Disposition | Verdict at its row |
+|---|---|---|
+| behaviour evidence is trustworthy | DUPLICATE → DV-43…47 | 1 C, 3 W, 1 N |
+| cache paths cannot bypass ranking | DUPLICATE → DV-03 | W |
+| Trails are canonical objects | DUPLICATE → DV-20 | N |
+| Trending uses normalized travel signals | DUPLICATE → DV-30 | C |
+| recommendation exposures are logged | DUPLICATE → DV-40 | N |
+| shadow/flag rollout exists | DUPLICATE → DV-08 | W |
+| attribution and ledger are wired | DUPLICATE → DV-56/65 | N |
+| **payouts remain disabled until economics are validated** | **ADDITION** → DV-81 | **C** |
+
+All other restored obligations are **ADDITIONs**: checked against all 67 existing rows and found to
+have no row grading the same subject. The eight guardrails of `01` §10 are the clearest case — the
+existing census grades block *application* (A19, C03, C17) but no row grades any of the eight
+prohibitions, so each is added.
+
+### 11.5 The 82 restored-package rows
+
+Source `docs/specs/discovery-architecture-v1/`. Every `C` and `W` cites a `file:line` opened at this
+commit. Paths relative to `artifacts/api-server/src/` unless prefixed.
+
+#### `00-readme` §1 — the four findings, RE-MEASURED, not inherited
+
+DSV2 requires it: *"The baseline reports past cache and telemetry defects; reproduce against the
+current head instead of assuming they still exist."* `00_STATUS.md` claims several are fixed; that is
+a claim, and here is the measurement.
+
+| id | Obligation | Verdict | Evidence re-measured at `b7f137a4d` |
+|---|---|---|---|
+| DV-01 | §1.1 *"`living_page` impressions were rejected by a CHECK constraint and silently swallowed by a fire-and-forget path"* | **W** | One criterion passes, one fails — **CHECK criterion PASSES, verified in production**: `pg_get_constraintdef` on `rank_events_surface_check` returns a 14-value list **including `'living_page'` and `'watch_feed'`** — migration `0202` is applied. **Swallow criterion FAILS**: `lib/rankLog.ts:81#feed response.  All errors are swallowed s` and `lib/rankLog.ts:255#recommendations response.  All errors are` both still read *"All errors are swallowed silently."* And the surface cannot adjudicate itself — production `rank_events` holds pulse 203,989 · compass 24,284 · events 5,208 · live_pulse 730 · discovery 13, and **no `living_page` row at all**. `lib/discoveryServeLog.ts:19#(0199:60, 0202:77). Its absence is not rej` states the rule this census must respect: *"Its absence is not rejection. It is that path not running."* Writer is `routes/rankEvents.ts`, outside Discovery's files. |
+| DV-02 | §1.1 *"`discovery` is permitted as a surface but has zero rows"* | **W** | **No longer zero; still dark.** Production `surface='discovery'` → **13 rows, latest `served_at` 2026-08-15**, 29 days before this commit. The writer is live (`discovery_serve_log_enabled` true, §5) and ten serve points are instrumented (`lib/discoveryServeLog.ts:59-64#CACHE_A_L1:             1,`). Rows landed when the surface was reached; the surface is not reached. |
+| DV-03 | §1.2 / `01` §7 Cache A — must never bypass personalization/ranking | **W** | Built, held OFF — **Still true in the shipping default.** User-independent key: `routes/discovery.ts:250#function cacheKey(dest: string, cat: strin` `cacheKey(dest, cat, radius)` — no viewer term. The bypass: `routes/discovery.ts:1709#let servedFiltered = filtered;` `let servedFiltered = filtered;`, with the per-request ranker at `routes/discovery.ts:1720#const outcome = await rankForViewer(merged` reached only inside `if (pdeCohort?.included …)` (`routes/discovery.ts:1714#if (pdeCohort?.included && callerUserId) {`), whose precondition is `engineMode.mode === "pde"` (`routes/discovery.ts:1711#const pdeCohort = (callerUserId && engineM`). `DISCOVERY_ENGINE_MODE` is seeded `enabled=false, mode='legacy'` (`migrations/2091_discovery_engine_mode_flags.sql:9#1. DISCOVERY_ENGINE_MODE  (capability, ena`) and production reads the same (§5). Serve points 1/2/3 hand the cached order to the user unranked on every deployment. The fix is built and wired — built-and-gated, not absent — behind ROADMAP Phase F gate 2, *"not ruled"* (`docs/discovery/ROADMAP.md:648#discovery_ranking_modifiers_enabled`). |
+| DV-04 | §1.2 / `01` §7 Cache B + `06` §5 — preserve model_version, feature_version, candidate source, reasons, ranking timestamp | **W** | 1 of 5 criteria passes — **Still true.** Entry type `routes/discovery.ts:244#const _compassCandidateCache = new Map<str` `Map<string, { places: DiscoveryPlace[]; at: number }>` — ranked order and a write clock, nothing else. Written at `routes/discovery.ts:2028#_compassCandidateCache.set(cCacheKey, { pl`; replayed at `routes/discovery.ts:1975#const cFiltered = applyFilters(cCacheHit.p` with no re-rank; projection handed `scoredById: null` (`routes/discovery.ts:1982#cacheLevel: "compass_candidate_hit", cache`) so `whyForUser` is empty on every Cache-B serve. **model_version FAIL · feature_version FAIL · candidate source FAIL · reason codes FAIL · ranking timestamp PASS** (as of §11.8; it was `cachedAt: null` before this pass). |
+
+#### `01` Discovery Engine
+
+| id | Obligation | Verdict | Evidence |
+|---|---|---|---|
+| DV-05 | §6 *"missing surface writes are explained"* | **C** | `migrations/0202_rank_events_living_page_watch_feed_surfaces.sql:17-20#Written by the code but ZERO rows present:` enumerates which permitted surfaces have zero rows and why, distinguishing *rejected* from *never ran*; `migrations/2298_dead_check_vocabularies.sql:97-103#rank_events_surface_check` freezes the audited vocabulary. Single criterion, met. |
+| DV-06 | §6 *"recommendation exposures carry denominators"* | **W** | A denominator exists and is correct **per item**: `lib/rankLog.ts:154#await recordImpressionDistributionStats(sc` calls `recordImpressionDistributionStats` on the **impression** path and only when the insert was accepted; `routes/rankEvents.ts:229-238#const { error: updateErr } = await sc` updates `outcome`/`outcome_at` and never touches it. The spec's unit is the **recommendation**, and none exists (DV-40 **N**). A denominator over items is not one over recommendations. |
+| DV-07 | §6 *"fire-and-forget failures are surfaced"* / §10.3 *"remove silent failure catches"* — SPLIT off C25 | **W** | 1 of 3 writers — `lib/discoveryServeLog.ts:262-267#const { error } = await sc.from("rank_even` **PASSES** (branches the error, `logger.warn` with serve point, route and count; a throw warned at `lib/discoveryServeLog.ts:277#logger.warn({ err }, "discoveryServeLog: i`). `lib/rankLog.ts:143-148#if (insertError) {` PASSES for the portavaRank path but its Compass path **FAILS** — `lib/rankLog.ts:255#recommendations response.  All errors are`, *"All errors are swallowed silently"*, same at `lib/rankLog.ts:81#feed response.  All errors are swallowed s`. And Discovery's own serve path **FAILS** on a ranking branch: `routes/discovery.ts:2060#} catch { /* fall through to normal rule-b` `} catch { /* fall through to normal rule-based path */ }` wraps the whole Compass block (`routes/discovery.ts:1957#if (category === "for_you" && callerUserId`), so a failure in `rankItemsForDiscovery`, in the Cache-B read, or in serve-point-5 logging degrades to the unranked path with no log line. |
+| DV-08 | §8 five states OFF · SHADOW · COMPARE · PARTIAL · ON — SPLIT off C20/C24/A06 | **W** | 3 of 5 — `lib/discoveryEngineMode.ts:66#export type DiscoveryEngineMode = "legacy"` — `"legacy" \ | "shadow" \| "pde"`, validated `lib/discoveryEngineMode.ts:68#const VALID_MODES: readonly string[] = ["l`. **OFF PASS** (= legacy) · **SHADOW PASS** · **ON PASS** (= pde) · **PARTIAL FAIL** — not a state; reached by crossing a cohort gate with a mode (`lib/discoveryCohort.ts`, applied `routes/discovery.ts:1714#if (pdeCohort?.included && callerUserId) {`) · **COMPARE FAIL** — no state; the artefact exists (`lib/discoveryDivergenceReport.ts`) as a consequence of SHADOW, not a selectable state. §8's last clause — no side effect merely because shadow computes — **PASSES** (C22, C23, C24). |
+| DV-09 | §9 surface-specific objectives: Pulse · Discovery · Trail · Trip Planning · Trending | **W** | 1 of 5 — **Discovery PASS** — `for_you` runs the Compass pipeline (`routes/discovery.ts:2007#const scored = await rankItemsForDiscovery` `rankItemsForDiscovery`) distinctly from the default. **Pulse FAIL** — shares `portavaRank`'s single `DEFAULT_WEIGHTS` with Discovery; per-surface weights exist in `services/ranking/rankingConfig.ts:77-129#exploration: number;` but Discovery does not vary by them. **Trail FAIL · Trending FAIL** — no such surface (DV-20, DV-28). **Trip Planning FAIL** — no trip-fit or route-fit term in `lib/portavaRank.ts`. |
+| DV-10 | §10 — never use private message contents as ranking features | **C** | `grep -rIn -i "message\|conversation\|dm_" lib/portavaRank.ts lib/discoveryPde.ts lib/discoveryModifiers.ts` → **nothing**. The live layer's read set is a five-family allow-list, `lib/discoveryLiveRankRead.ts:51-53#export const RANK_CLAIM_TYPES = [`: *"Nothing else is read, so nothing else can leak."* |
+| DV-11 | §10 — never expose block/unfollow reasons | **C** | `lib/blocks.ts` returns a `Set<string>` of ids — there is no reason field to expose. Consumed at `routes/discovery.ts:1593#viewerBlockedIds = blockSc ? await fetchBl`, `routes/discovery.ts:50#import { fetchBlockedSet, submitterIsVisib`, `routes/discoverySearch.ts:425#export { fetchBlockedSet };`. A block removes a row; it never annotates one. Matches `05` §7. Pinned by `discoveryBlockedSubmitter.test.ts` (25) and `discoverySearchBlockedSubmitter.test.ts` (12). |
+| DV-12 | §10 — never reward abusive engagement | **W** | One direction only. `lib/portavaRank.ts:266#DOWN when the author's trust is unknown/lo` down-weights an author of unknown or low trust — *"manipulation resistance"*. That penalises a low-trust **author**; it does not detect abusive **engagement** (`03` §12's pods, farms, reciprocal action, automation). |
+| DV-13 | §10 — never let one creator permanently dominate a Trail | **N** | No Trail object (DV-20). `lib/portavaRank.ts:367-384#── Diversity (greedy MMR-style re-rank) ──` bounds per-author repetition **within a page**, which is the analogous control on the surface that exists — not the Trail-scoped one this clause names. |
+| DV-14 | §10 — never treat follower count as a direct quality score | **C** | No follower **count** enters the ranker. The one follows read is `lib/discoveryPde.ts:418-421#const { data: followRows } = await sc` — `.from("user_follows").select("following_id").eq("follower_id", userId)` — the set of **whom the viewer follows**, a per-viewer affinity signal (`03` §8's permitted use), never the size of an author's audience. `grep -n -i followerCount lib/portavaRank.ts lib/discoveryPde.ts` → nothing. |
+| DV-15 | §10 — never suppress new creators solely due to low history | **C** | Satisfied by absence, checked rather than assumed: no history-threshold predicate exists in `lib/portavaRank.ts`, `lib/discoveryPde.ts` or `lib/discoveryModifiers.ts`. (The positive half — reserved exploration inventory — is DV-53 **W**; "not excluded" and "given opportunity" are deliberately separate obligations.) |
+| DV-16 | §10 — never infer sensitive personal attributes for ranking | **C** | Inputs enumerated at `lib/discoveryPde.ts:1-60#/**` and `lib/discoveryModifiers.ts:1-50#/**`: taste, graph, behaviour, place affinity, capped momentum. No demographic, health, religious, orientation or political term under any name. Live read set is the five-family allow-list. |
+| DV-17 | §10 — never make safety/private-control events into public reputation penalties | **C** | A block affects visibility only, through set membership (DV-11); it writes to no reputation store. `grep -n reputation routes/discovery*.ts lib/discovery*.ts` → nothing. `04` §4's separation holds because Discovery has no reputation writer. |
+| DV-18 | §11 nine internal reason codes + plain-language explanations — SPLIT off A03 | **N** | **Zero of nine exist**: `grep -rn "trail_affinity\|trip_match\|nearby_now\|trending_local\|creator_affinity\|saved_similar\|social_context\|season_match"` → no Discovery hit. What exists is adjacent and is not this: `lib/discoveryCandidate.ts:209-214#export function whyForUserFromFeatures(fea` returns the ranker's own **feature keys** — internal variable names, not a reason vocabulary — and `lib/discoveryLiveRank.ts:330#if (state.unsafe) out.push("crowd_unsafe_d` emits `crowd_unsafe_density`, a claim label. No plain-language string is produced anywhere. |
+| DV-19 | §12 success on useful saves, itinerary adds, place opens, completed visits, event attendance, low regret, creator diversity, new-creator discovery, Trail freshness, repeat satisfaction | **N** | No outcome instrument. `lib/discoveryServePointReport.ts` measures **ranked share of serves** — engineering coverage — not any listed outcome. No completed-visit, attendance or regret signal exists in `rank_events` (13-column production schema; `outcome` is a funnel token, not a visit confirmation). |
+
+#### `02` Trails §19
+
+**All eight share one context, stated once.** `02` proposes Trails as a first-class primitive. The
+owner redirect of 2026-08-15 marks *"Anything assuming the six P1 components are **peer scoring
+systems**"* **STALE — must be re-scoped before implementation** (`docs/discovery/ROADMAP.md:148#>`);
+step 7 (`docs/discovery/ROADMAP.md:949#local_momentum`) keeps trails a *future modifier*. **Held-by-ruling and not-built are recorded as
+distinct things**: the ruling explains why nobody built it; the rows are `N` because it is not built.
+No Trail table exists in the repository or production (`to_regclass` ×4 → NULL); migration `2290`
+deliberately **refuses** a `trail` graph node kind with a postcondition that fails if one is admitted.
+The four `trail*.ts` modules in the tree are intel-capture route-plan modules, not this primitive.
+
+| id | `02` §19 criterion | Verdict |
+|---|---|---|
+| DV-20 | Trails are canonical objects, not strings | **N** |
+| DV-21 | Trail ranking is modular rather than chronological-only | **N** |
+| DV-22 | New content receives fair opportunity | **N** | Trail-scoped; surface analogue DV-53 **W** |
+| DV-23 | Duplicate saturation is controlled | **N** | Trail-scoped; page analogue DV-54 **W** |
+| DV-24 | Trail relationships are navigable | **N** |
+| DV-25 | User behaviour can influence Trail momentum | **N** |
+| DV-26 | Trail attribution is recordable (trail_id + recommendation_id + contributors + confidence) | **N** | doubly: no `recommendation_id` either (DV-40) |
+| DV-27 | No user has to understand internal scores | **C** |
+
+DV-27 is **not vacuous**: `routes/discovery.ts`'s `toPublic` emits no score field on any path, and
+`11` §4's rule holds across all ten serve points. The nearest thing, `DiscoveryCandidate.confidence`,
+is a declared class prior labelled in source *"Not a measurement"* (`lib/discoveryCandidate.ts:135-136#/** Class prior in [0,1]. Not a measuremen`).
+
+#### `03` Trending §14
+
+| id | Criterion | Verdict | Evidence |
+|---|---|---|---|
+| DV-28 | Distinguishes emerging vs established | **N** | No trend state machine (`03` §4's seven states) under any name. `lib/discoveryLocalMomentum.ts` computes one 48h-vs-baseline scalar; a scalar is not a lifecycle. |
+| DV-29 | Is geographic and temporal | **W** | `lib/discoveryLocalMomentum.ts` is both — **place**-scoped, **48-hour** — but one window on one axis, behind `discovery_ranking_modifiers_enabled` (2289, seeded OFF with a postcondition that RAISEs if seeded ON), absent from production (§5). |
+| DV-30 | Normalizes for exposure | **C** | **The #365 defect is closed, re-verified in both directions.** `content_distribution_stats.eligible_impressions` is incremented on the **impression** path and only when the insert landed (`lib/rankLog.ts:154#await recordImpressionDistributionStats(sc`, `lib/rankLog.ts:298#await recordImpressionDistributionStats(sc` — inside the `else` of the insert-error branch), and the outcome route updates only `outcome`/`outcome_at` (`routes/rankEvents.ts:229-238#const { error: updateErr } = await sc`), so it cannot move the denominator. The normaliser divides by exposures, not conversions. |
+| DV-31 | Can decay and rediscover | **W** | 1 of 2 — **Decay PASS** — recency weighting inside the momentum window (`lib/discoveryLocalMomentum.ts`). **Rediscovery FAIL** — nothing retests a cooled item; `02` §9.5's *"periodically retest promising items"* has no implementation. |
+| DV-32 | Resistant to single-metric manipulation | **W** | Two real defences, both partial: a **minimum-evidence floor** (`MOMENTUM_MIN_RECENT_WEIGHT = 3`) with a hard contribution cap (0.15), and author-trust down-weighting (`lib/portavaRank.ts:266#DOWN when the author's trust is unknown/lo`). None of `03` §12's eight named patterns is detected, and §12's own bar — *"Trending should require diversity of evidence"* — is DV-34 **N**. |
+| DV-33 | Can explain major trend reasons | **N** | DV-18: no reason vocabulary exists. |
+| DV-34 | Independent convergence (`03` §6; also `05` §4 and `05` §9 — **counted once, here**) | **N** | `grep -rn -i "independent\|convergence\|unrelated circles" lib/discovery*.ts lib/portavaRank.ts` → no such signal. No count of distinct circles, no cross-network adoption term. `03` §6 calls this *"one of Portava's strongest travel-specific signals"*. |
+
+#### `04` Behavior Engine
+
+| id | Obligation | Verdict | Evidence |
+|---|---|---|---|
+| DV-35 | §3 every event write is **schema-valid** | **C** | Enforced in the database, not only in code: `rank_events_surface_check` (14 values, production-verified) and `rank_events_outcome_check` (`migrations/0197_rank_events_analytics_columns.sql:21-24#DROP CONSTRAINT IF EXISTS rank_events_outc`); pinned against silent widening by `migrations/2298_dead_check_vocabularies.sql:135#watch_feed`, which RAISEs if the constraint loses a value. |
+| DV-36 | §3 **attributable to a surface** | **C** | `surface` is NOT NULL and CHECK-constrained on every row (production `information_schema.columns`), and every writer passes it explicitly: `lib/discoveryServeLog.ts:253#rankedInRequest: RANKED_IN_REQUEST.has(ser`, `lib/rankLog.ts:142#const { error: insertError } = await sc.fr`. |
+| DV-37 | §3 **idempotent where retried** | **N** | No idempotency mechanism. `lib/discoveryServeLog.ts:262#const { error } = await sc.from("rank_even` is a bare `.insert(rows)` — no `onConflict`, no unique key, no client token; `lib/rankLog.ts:142#const { error: insertError } = await sc.fr` likewise. A retried batch writes duplicate impressions. DSV2-07 asks for *"retry deduplicates"*; nothing does. |
+| DV-38 | §3 **versioned** | **N** | `rank_events` has **no `schema_version` column** — production schema is exactly 13 columns (`id, user_id, item_id, item_kind, position, features, outcome, served_at, outcome_at, surface, session_id, event_type, content_type`). `04` §6 names `schema_version` explicitly. |
+| DV-39 | §3 **privacy-classified** | **W** | The privacy *rule* is enforced — `lib/rankLog.ts:9-12#Spec §8 privacy rule: precise GPS coordina` states it and the writer strips raw-coordinate keys from `features` before insert — but there is no privacy **classification** on the row: no class column, no retention tier. `04` §11's four-layer retention has no implementation. Rule without label. |
+| DV-40 | §5 *"Every served item must have a `recommendation_id`"* + the nine-field minimum record | **N** | **Zero occurrences in Discovery.** `grep -rIn "recommendation_id\|recommendationId" artifacts/api-server/src` returns only Layover and Media hits — different domains, different objects. `rank_events` has no such column. `recommendations` / `recommendation_items` (`10` §3) are absent from the repository **and** production. This one absence holds down DV-06, DV-26, DV-46, DSV2-12 and Phase 4. |
+| DV-41 | §7 distinguish active / passive-foreground / idle dwell | **N** | No dwell column (13-column schema; `04` §6 names `dwell_ms`), and no client emits a dwell distinction. §7's rule — *"Do not infer interest from a phone sitting untouched"* — has nothing to govern. |
+| DV-42 | §9/§13 current intent and long-term preference are **distinct representations** — SPLIT off A18 | **W** | Both halves exist; only one is reachable. Long-term: `loadPdeViewer` (`lib/discoveryPde.ts`) builds a persistent per-viewer profile. Current intent: the eight modes (`lib/discoveryLiveRank.ts:99-101#export const DISCOVERY_INTENT_MODES = [`), per-request and never written back — structurally the separation §9 asks for. **W** because the intent half is gated OFF (2850) with no client sender (DSV2-03), so in every deployment only the long-term half exists — exactly §9's warned failure mode. |
+| DV-43 | §10.1 audit every allowed `rank_events.surface` | **C** | `migrations/0202_…:17-20` is the audit, per surface, distinguishing written-but-empty from never-wired; `migrations/2298:100-101` freezes the audited vocabulary so a surface cannot reappear unaudited. |
+| DV-44 | §10.2 prove ≥1 intentional writer per surface, **or retire it** | **W** | Audit happened (DV-43); retirement did not. The CHECK permits 14 surfaces; production holds rows for **five**. Nine — `search`, `nearby`, `story`, `event`, `trip`, `profile`, `explore`, `living_page`, `watch_feed` — have zero rows and none was retired. `2298` pins the dead vocabulary *as dead* rather than removing it: documents the gap, does not close it. |
+| DV-45 | §10.5 test all CHECK/enum constraints | **W** | Guarded **in migration** (`2298:135` RAISEs if the surface CHECK loses `watch_feed` or `pulse`) and the vocabulary has tests (`discoveryServeLog.test.ts` A, B, B2, J, K), but the suite runs against `SUPABASE_URL=127.0.0.1:9` — unreachable — so **no test exercises a real CHECK rejection**. The C28 limitation applies: a green run does not prove a constraint. |
+| DV-46 | §10.6 test `recommendation_id` propagation | **N** | Nothing to propagate (DV-40). |
+| DV-47 | §10.7 verify discovery events exist **once the ranking path executes** | **W** | Discovery events exist (13 rows), so the *serve* path executed. The **ranking** path has never executed in production: `rankedInRequest: true` needs mode `pde` (held OFF, DV-03) or the cold path, and `lib/discoveryServePointReport.ts` reads ranked-ness from `features.rankedInRequest` over a corpus of 13. The instrument is correct; the corpus cannot answer the question. |
+| DV-48 | §13 raw vs derived features are separated | **W** | Separated where the ranker runs, lost where the cache serves. A ranked serve writes the raw `features` jsonb per impression (`lib/rankLog.ts:142#const { error: insertError } = await sc.fr`) with the derived order separate. A **Cache-B** serve keeps only the derived order (DV-04), so at that serve point the separation does not exist to be respected. |
+
+*Arithmetic note: `04` §13's six bullets are not six further rows. Four — "no event can silently
+fail", "all active surfaces are wired", "recommendation exposures are logged", "events are
+versioned" — are DV-07, DV-44, DV-06 and DV-38 restated, counted once there. §13 contributes
+DV-48 and, with §9, DV-42.*
+
+#### `05` Graph Engine §9
+
+| id | Criterion | Verdict | Evidence |
+|---|---|---|---|
+| DV-49 | Improves candidate generation | **W** | A graph ships — `CompassGraphEngine`, rebuilt on a schedule, widened by migration `2290` to admit the `circle` and `experience` kinds `05` §2 names. It reaches Discovery as a **bounded** world-model city-confidence input to `portavaRank`, behind `discovery_ranking_modifiers_enabled` (2289, OFF, absent from production). It does not generate candidates — that is Overpass plus curated rows (`routes/discovery.ts:1919#queryOverpassDeduped(coords.lat, coords.ln`) — it re-weights them, and only when an unlit flag is lit. |
+| DV-50 | Respects privacy | **C** | `05` §7's three prohibitions all hold: no block reason stored or exposed (DV-11), no relationship-change reason exists as a field, no message content read (DV-10). Graph tables are service-role-only (`20260730_compass_intelligence_graph.sql`). |
+| DV-51 | Can decay stale relationships | **W** | The graph is **rebuilt** on a schedule (`intelligenceGraphScheduler`), retiring an edge that stops being supported — decay by reconstruction, which satisfies §6's warning against a permanent score. It is not the graded, time-aware decay from recency/frequency/diversity that §6 describes. |
+| DV-52 | Remains explainable enough for debugging | **?** | The graph is in `compass/**`, another lane's files and forbidden to this one. Its typed node/edge tables are the precondition for explainability, but whether the **Discovery-facing** consumption is debuggable cannot be established from Discovery's files: the single consumption point sits inside the flag-off modifier path and has never run. Recorded `?` rather than guessed in either direction. |
+
+#### `06` Recommendation Engine
+
+| id | Obligation | Verdict | Evidence |
+|---|---|---|---|
+| DV-53 | §7/§11 exploration is **explicit**: reserved inventory for new creators, low-exposure content, emerging places, new Trails | **W** | Built, inert — `lib/discoveryPde.ts:754#governor = allocateExplorationBudget(gc, {` calls `allocateExplorationBudget` with a budget percentage, stamps `governorSlot`, `governorBudgetPct`, `governorApplied` and `governor_<reason>` into per-item features (`lib/discoveryPde.ts:761#const slotById = new Map(governor.allocati`), reordering only when applied (`lib/discoveryPde.ts:770#if (governor.applied) {`). The whole block sits inside the modifiers flag (`lib/discoveryPde.ts:596#With the modifiers ON the governor owns ex`), seeded OFF; `lib/discoveryPde.ts:526#modifiers: "flag_off", governor: "skipped"` is the flag-off outcome, `governor: "skipped"`. The separate composition path carrying the new-creator bucket, `services/ranking/FeedSlotAllocator.ts:231#export function allocateFeedSlots(` `allocateFeedSlots`, has **no production caller** — `grep -rn allocateFeedSlots --include=*.ts artifacts/api-server/src` returns its definition and two test files only. |
+| DV-54 | §6/§11 diversity **enforced** across creator · place · Trail · content type · geography · repeated-recommendation history | **W** | 2 of 6 axes — `lib/portavaRank.ts:367-384#── Diversity (greedy MMR-style re-rank) ──` `diversify()` is a greedy MMR re-rank with `authorPenalty` 0.35 and `kindPenalty` 0.15 over a 3-pick sliding window, wired unconditionally at `lib/portavaRank.ts:487#const diversified = opts.diversity === fal` (`opts.diversity === false` is the opt-out, not the default) — real and ungated. **creator PASS** (`authorPenalty`) · **content type PASS** (`kindPenalty`) · **place FAIL** (no place key in `DiversityOptions`) · **geography FAIL** · **Trail FAIL** (no object) · **repeated-recommendation history FAIL** (the window is within one page; nothing looks across serves — and could not, without DV-40). |
+| DV-55 | §9 cold start — new user · new creator · new Trail/place | **W** | 0 of 3 fully — **New creator FAIL** — the bucket exists but is uncalled (DV-53). **New user FAIL** — `loadPdeViewer` degrades to a sparse profile rather than failing, which is graceful but not §9's requirement; its three named inputs (onboarding interests, destination/trip context, local context) reach the ranker only as the destination the request already carries — no onboarding-interest read exists in `lib/discoveryPde.ts`. **New Trail FAIL** — no object (DV-20). Graded `W` not `N` because the degradation path is real and deliberate. |
+
+#### `07` Creator Economy §10 · `08` Revenue §7 · `09` Payment §11 — fourteen rows, all `N`
+
+**Stated once; the evidence is one measurement.** None of the objects these documents specify exists.
+Verified in **both** repository and production (read-only): `conversion_events`,
+`attribution_records`, `attribution_participants`, `ledger_accounts`, `ledger_entries`,
+`payout_holds`, `payout_requests` → `to_regclass` **NULL**, and **no `CREATE TABLE`** for any of them
+under `artifacts/api-server/src/migrations/` or `db/`. `09` §1's *"Build now: attribution,
+wallet/accounting model, immutable ledger, pending earnings, holds, rule versioning"* has no
+implementation of any of its six items.
+
+| id | Criterion | Verdict |
+|---|---|---|
+| DV-56 | `07` §10 value can be attributed | **N** |
+| DV-57 | `07` §10 earnings recordable without paying | **N** |
+| DV-58 | `07` §10 rules are versioned | **N** |
+| DV-59 | `07` §10 fraud holds exist | **N** |
+| DV-60 | `07` §10 historical recalculation possible | **N** |
+| DV-61 | `08` §7 revenue aligns with traveler value | **N** |
+| DV-62 | `08` §7 sponsored and organic systems are distinct | **N** |
+| DV-63 | `08` §7 attribution is auditable | **N** |
+| DV-64 | `08` §7 creator share computable from the same ledger | **N** |
+| DV-65 | `09` §11 every earning can be reconstructed | **N** |
+| DV-66 | `09` §11 no balance depends on mutable totals | **N** |
+| DV-67 | `09` §11 attribution is linked | **N** |
+| DV-68 | `09` §11 reversals are possible | **N** |
+| DV-69 | `09` §11 provider can be swapped later | **N** |
+
+**DV-62 is `N`, not a vacuous `C`, and the choice is deliberate.** No sponsored inventory exists, so
+nothing currently contaminates organic rank — but `08` §3's criterion is that the two *systems* be
+distinct, and one of them is absent. Recording that as correct would weaken the requirement. The same
+reasoning makes DV-81 **`C`**: *"payouts remain disabled"* is a requirement absence genuinely
+satisfies; *"sponsored and organic are distinct"* is not.
+
+#### `10` Database · `11` API
+
+| id | Obligation | Verdict | Evidence |
+|---|---|---|---|
+| DV-70 | `10` §10/§8 migration-to-live drift understood; terminal condition *"zero unexplained drift"* | **W** | The machinery is real: `docs/architecture/migration-disposition-ledger.md`, `migration-queue.md`, `production-migration-log.md`, and `migrations/2254_schema_migration_ledger.sql` backfilling the applied set. The terminal condition is not met, and §5 names live instances: `canonical_locations.search_key` (2220) absent from production, `trips.version` (2420) absent, `protected_zones` absent. Drift is *catalogued* — `10` §8's "documented divergence" disposition — not zero. |
+| DV-71 | `10` §5 every user-visible table explicitly defines **read · insert · update · delete** policies — SPLIT off C28 | **W** | 1 of 4 policy kinds, on 1 of 7 tables — Measured in production over `pg_class`/`pg_policy`. **RLS enabled on all seven** `discovery*` tables — the important half **PASSES**. Explicitness **FAILS**: `discovery_place_photos` has RLS on and **zero policies**; `discovery_cache`, `discovery_geocode_cache`, `discovery_place_reports`, `discovery_place_saves`, `discovery_shadow_serves` have **two** each, not four; only `discovery_places` has seven. Fail-closed, so under-specification rather than a leak — but §5's *"Do not rely only on API filtering"* is exactly what a zero-policy table plus a service-role reader amounts to, and §8 of this census records that every Discovery read goes through `getServiceClient()`, bypassing RLS. |
+| DV-72 | `10` §10 derived tables are rebuildable | **W** | The one derived store that exists is rebuildable by construction (DV-51). The five `10` §3 projections that would carry Discovery's derived truth — `traveler_affinities`, `place_cooccurrence`, `trail_relations`, `circle_momentum`, `place_momentum` — are **absent from production and repository**. A table that does not exist is not rebuildable. |
+| DV-73 | `11` §10 every mutation is authorized — SPLIT off C28 | **C** | 4 of 4 — Four mutating routes, each calling `requireUser(req, res)` as its first statement and returning if absent: `routes/discovery.ts:2170#router.post("/discovery/already-known", as` (`POST /discovery/already-known`), `routes/discovery.ts:2904#router.post("/discovery/community", async` (`POST /discovery/community`), `routes/discovery.ts:3075#router.post("/discovery/community/:placeId` (`.../save`), `routes/discovery.ts:3170#router.post("/discovery/community/:placeId` (`.../report`). Reinforced in the catalogue, not only in code: `discovery_places` grants to `authenticated` and `anon` are **SELECT only** in both databases (C28). |
+| DV-74 | `11` §10 admin actions are audited | **W** | Partly, and not on Discovery's own admin surface. The engine-mode write path is fail-closed and refuses an unrecognised mode rather than storing it (`PATCH /admin/feature-flags/:flag/metadata`, migration `2198`) — a real integrity control. `11` §8's Discovery-specific list is six actions: **drift diagnostics PASS**; Trail merge, Trail archive, trend integrity review, creator fraud holds and ledger audit all **FAIL** — four subsystems that do not exist. |
+
+#### `12` Implementation Plan — the six phases that are not duplicates
+
+| id | Phase / clause | Verdict | Evidence |
+|---|---|---|---|
+| DV-75 | Phase 0.2 finish CI: `ci-verdict` · `live-db-verdict` · `unwired-verdict` | **W** | 0 of 3 by name — A substantial `check:*` suite ships under `artifacts/api-server/scripts/` (census freshness, doc citations, flag polarity, test registration, writerless reads). None of the three named verdicts exists under those names, and the one this census most depends on, `check:doc-citations`, is recorded by §9.8 and §10.4 as unable to see a stale unanchored line number. |
+| DV-76 | Phase 0.3 complete privacy/tagging Phase 0 | **?** | Owned by the tagging/notifications censuses, not Discovery's files. Not read here rather than guessed. |
+| DV-77 | Phase 0.4 canonicalize media ingest so no unstripped original persists because a completion handler never ran | **N** | `00-readme` §1.4's finding. Owned by `census-media.md`, outside this lane's files — recorded as a package obligation with its owner named, and **not** counted as Discovery's to close. |
+| DV-78 | Phase 5 behaviour expansion: dwell · replay · place open · Trail open · send/share · trip add · itinerary add · negative feedback | **W** | 5 of 8 — The `rank_events` funnel carries impression → tap → save/join → attended via `outcome`, and `routes/rankEvents.ts:139#upgradableOutcomesFor` / `routes/rankEvents.ts:208#upgradableOutcomesFor` upgrade a row on a strictly lower funnel rung. **dwell FAIL** (no column, DV-41) · **Trail open FAIL** (no object) · **negative feedback FAIL** — `grep -n "not_interested\ |immediate_skip" routes/discovery*.ts` → nothing; none of `04` §4's six negative types has a Discovery writer. |
+| DV-79 | Phase 9 shadow comparison over overlap · save-rate potential · diversity · creator concentration · place diversity · estimated travel intent — SPLIT off C22 | **W** | 1 of 6 — `lib/discoveryDivergenceReport.ts:101-125#export function aggregateDivergence(rows:` `aggregateDivergence` computes **overlap PASS** (`meanOverlapRate`, `lib/discoveryDivergenceReport.ts:115#const overlapRates = rs.map((r) => (r.page`) plus displacement and membership change — richer than asked on that one axis. **save-rate potential FAIL · diversity FAIL · creator concentration FAIL · place diversity FAIL · estimated travel intent FAIL** — none appears in the module. The comparison *mechanism* is `C` (C22); the comparison *dimensions* are one of six. |
+| DV-80 | Phase 13 Ecosystem Governor — concentration · new-creator success · stale content · repeated recommendations · spam rate · Trail freshness · hidden-gem exposure | **N** | `grep -rn -i "ecosystemGovernor\|EcosystemGovernor" artifacts/api-server/src` → nothing. The **exploration** governor (DV-53) is a different object: it allocates slots within one page; the Ecosystem Governor monitors the system and adjusts policy bounds (`06` §8 — *"Governor adjusts policy bounds, not individual user outcomes directly"*). |
+| DV-81 | Completion — *"payouts remain disabled until economics are validated"* | **C** | Genuinely rather than vacuously satisfied: the requirement is that payouts stay off, and no payout path exists to be on — `payout_requests`/`payout_holds` absent from production and migrations, no provider integration, no payout route. `09` §1's "Do later" list is correctly deferred. |
+| DV-82 | Stop conditions — halt rollout if event rejection rises · logging gaps appear · creator concentration spikes · reports/hides increase · **cache bypass reappears** · RLS leaks occur · attribution double-counts | **N** | 0 of 7 enforced — No stop condition is enforced anywhere. Rejections are logged (C25) but nothing thresholds them; there is no concentration monitor (DV-80), no automated RLS-leak detector on this surface, and nothing halts a rollout. The one condition this pass can speak to — *"cache bypass reappears"* — now has a regression test (§11.8), which is a guard on one clause, not the stop condition the phase asks for. |
+
+### 11.6 Existing rows re-graded
+
+Three of the 67 move. **Two move because their stated evidence became false in this tree** — other
+lanes built what these rows recorded as absent — and **one moves because the restored requirement
+says the opposite of the module header it was graded against.** The other 64 stand as §10 left them;
+those re-executed and unchanged are listed after the table.
+
+| id | was | now | why |
+|---|---|---|---|
+| **A05** | **N** (owner hold) | **W** | **Stated evidence is now false.** The row read *"Nothing in `routes/discovery*.ts` or `lib/discovery*.ts` models an intent mode."* All eight of Sensing §8's modes exist in the spec's own wording and order at `lib/discoveryLiveRank.ts:99-101#export const DISCOVERY_INTENT_MODES = [`, with real weight profiles at `lib/discoveryLiveRank.ts:152#export const INTENT_MODE_PROFILES: Readonl`, parsed at `lib/discoveryLiveRankRead.ts:63#export function parseIntentMode(raw: unkno`, reaching the serve path at `routes/discovery.ts:1738#mode: parseIntentMode(req.query.intentMode` and `routes/discovery.ts:2098#mode: parseIntentMode(req.query.intentMode`. **W, not C, on DSV2-03's bar** — *"UI selection is not merely decorative"*: `grep -rIn intentMode travel-buddy-standalone/src` returns **only the Map's own `features/map/intent/intentModel.ts`**, a different lane's model on a different surface. **No Discovery client sends `intentMode`.** Doubly unreachable — flag FALSE (2850) *and* no caller. The owner hold remains in force and still explains why it is off; it no longer describes the code as absent. |
+| **A07** | **N** | **W** | **Stated evidence is now false in both halves.** The row read *"No safety term reaches the ranker… There is also no world safety state to consume."* `lib/discoveryLiveRank.ts:207-208#/** Live-qualified` carries `safety: { unsafe, demoted }` and `lib/discoveryLiveRank.ts:460#Safety first, and only ever downward: a de` forces a demoted row behind every non-demoted row *regardless of score* — Sensing `docs/specs/Portava_Sensing_World_Experience_Intelligence_Upgrade_Architecture_v1.txt:129#Safety constraints outrank opportunity/vib`'s "safety outranks opportunity" implemented as a sort invariant rather than a weight. **W**: gated OFF (2850), and no producer writes `crowd.level='unsafe_density'` in production, so the demotion can never fire. |
+| **C14** | **C** | **W** | **Re-graded against the restored requirement, not against new code.** C14 certifies that `/discovery/suggest` returns `200 { groups: [] }` on any internal error, citing the module's own header as the contract. Restored `11` §9 says the opposite in terms: *"A failure must not masquerade as success"* (`docs/specs/discovery-architecture-v1/discovery-v1-11-api-specification.md:103#A failure must not masquerade as success.`) — and requires six distinguishable failure classes. Applied at `routes/discoverySearch.ts:2016#For types without location context, rankBy`, `routes/discoverySearch.ts:2053#case "cities":      return rankByMatchTier`, `routes/discoverySearch.ts:2108#Promise.resolve(searchStatic(q, COMMON_VIB`: every class collapses to one empty success. This is §11.1 in a single row — the contract C14 grades against is the code's description of itself, and the document outranking it was overwritten. **Not fixed here**: surfacing errors changes a live route's contract with no flag; §6 D5's reasoning applies. New owner decision **D11** (§11.10). |
+
+**Re-executed and unchanged:** A01, A02, A03, A04, A10, A11, A18, A20, A25 (evidence re-read at this
+commit); B01 — **re-verified in production this pass**, which §9.4 and §10.5 both flagged as owed:
+`canonical_locations.search_key` is still **absent** from `ajrurzioarfkagpuxfnb`, so the 2026-09-07
+measurement holds at 2026-09-13; B02, B04, B05; C20, C22, C23, C24, C25, C28. **C25 was re-graded
+against three restored obligations that map onto it** (`01` §6 rejected-events-observable, `04` §3
+observable-on-failure, `04` §10.4 instrument-rejected-writes) and **passes all three**:
+`lib/discoveryServeLog.ts:262-267#const { error } = await sc.from("rank_even` branches the error and warns with serve point, route and count;
+`lib/discoveryServeLog.ts:277#logger.warn({ err }, "discoveryServeLog: i` warns on a throw. **C28 re-verified in the catalogue** rather than carried: `discovery_places`
+has RLS enabled with seven policies, `authenticated`/`anon` SELECT only.
+
+**Net effect on the original 67: C 48 → 47 · W 12 → 15 · N 7 → 5.**
+
+### 11.7 Where the specification is genuinely incomplete — named, not invented
+
+Per the brief these are named and the rest of the work continued.
+
+1. **`01` §8 and `12` Phase 3 require five flag states; the repository implements three and reaches a
+   fourth by a different construction (cohort × mode).** The specification does not say whether
+   PARTIAL must be a *named state* or may be a *gate*. Graded `W` on the literal reading.
+   **Missing:** a ruling on whether `lib/discoveryCohort.ts` discharges PARTIAL. Row DV-08.
+
+2. **`11` §9 and `/discovery/suggest`'s shipping fail-soft contract are in direct conflict.**
+   START_HERE: *"Where baseline and upgrade conflict, record the exact conflict and affected rows and
+   ask for resolution."* **Exact conflict:**
+   `docs/specs/discovery-architecture-v1/discovery-v1-11-api-specification.md:103#A failure must not masquerade as success.` vs
+   `artifacts/api-server/src/routes/discoverySearch.ts:2006-2016#offset: number,`. **Affected rows:** C14, DV-74's
+   sibling clause. **Asked, not taken** — D11.
+
+3. **DSV2's release gate: *"Provider-backed route time remains unverified until its configured
+   integration passes; a distance estimate is not measured travel time."*** Discovery's live-rank
+   travel axis decays over `TRAVEL_HORIZON_MINUTES = 45` (`lib/discoveryLiveRank.ts:114#export const TRAVEL_HORIZON_MINUTES = 45;`) from a
+   `distanceKm` input (`lib/discoveryLiveRankRead.ts:83#_flagCache = { value, at: Date.now() };`) — **a distance estimate on a travel-time
+   axis**, which the gate forbids treating as verified. Graded inside A01's `W` rather than given its
+   own row, since A01 already carries the travel-time term; recorded so the gate is not silently
+   passed.
+
+### 11.8 What this pass built — the Cache-B eligibility defect, red before and green after
+
+**The defect.** `GET /discovery`'s Cache B (`_compassCandidateCache`, `routes/discovery.ts:244#const _compassCandidateCache = new Map<str`)
+holds a **final ranked page** for ten minutes, keyed `userId:destination:radius:sortBy` (`routes/discovery.ts:246#function compassCandidateCacheKey(userId:`).
+On a hit it replays that page through `applyFilters` and slices it (`routes/discovery.ts:1975#const cFiltered = applyFilters(cCacheHit.p`). `applyFilters`
+(`routes/discovery.ts:1623#function applyFilters(raw: DiscoveryPlace[`) applies open-now, minimum-rating, adult-venue and sort — **and no block filter.**
+Block eligibility enters Discovery in exactly one place, `viewerBlockedIds` (`routes/discovery.ts:1590#let viewerBlockedIds: Set<string>`), passed to
+`loadCuratedAndCanonicalPlaces` **at read time** (`routes/discovery.ts:1920#loadCuratedAndCanonicalPlaces(destination,` cold path, `routes/discovery.ts:1687#const dbPlaces = await loadCuratedAndCanon` Cache-A path).
+
+The Cache-A path is therefore **safe**, and that asymmetry is what makes the defect real rather than
+theoretical: a Cache-A hit re-reads curated rows per request and re-applies blocks at `routes/discovery.ts:1687#const dbPlaces = await loadCuratedAndCanon`, so a
+block propagates immediately there. A Cache-B hit re-reads nothing. **A user who blocks someone
+continues to be served that person's submitted places for up to ten minutes.**
+
+Against: DSV2-05 (*"cache-hit paths are tested"*), DSV2-06 (*"Changes in permission… invalidate/
+revalidate affected results"*), and START_HERE (*"Revocation must propagate to caches, projections,
+queued attention, and consumers"*).
+
+**The fix**, in `routes/discovery.ts` only — no migration, no flag, no new table, and no behaviour
+change for any user whose block set has not changed:
+
+| what | where |
+|---|---|
+| The fingerprint rule, as a pure total function with its own header and tests | **new module** `lib/discoveryCacheEligibility.ts` |
+| The entry records the block set it was ranked under | `routes/discovery.ts` — `_compassCandidateCache`'s `blockKey` |
+| A hit whose fingerprint differs from the request's is a **miss**, falling through to a fresh rank | the `cCacheHit` guard |
+| The ranking timestamp survives cache reuse — `cachedAt: cCacheHit.at` instead of `null` | the Cache-B hit's `withDiscoveryCandidates` call |
+| Cache-B read/clear test hooks exposing `blockKey`, so a test asserts **which** block set a stored page was ranked under rather than merely that an entry exists | `_testCompassCacheEntry`, `_clearTestCompassCache`, `_testCompassCandidateCacheKey` |
+
+The rule lives in its own module for two reasons: it is unit-testable without standing up the route,
+and it keeps `routes/discovery.ts` to **+21 lines** rather than +66 — which matters because other
+censuses cite this file by line, and every line added moves their pointers (§11.12).
+
+The fingerprint is deliberately not the set itself but a sorted digest, so an entry cannot be matched
+by a set that merely has the same size. `null` — blocks unreadable, which every Discovery reader
+treats as fail-closed — is its own value: it never matches a **readable** set, so a page built when
+blocks were verifiable cannot be replayed at a moment when they are not; it does match another
+`null`, because two fail-closed pages are the same page and forcing a re-rank per request during a
+blocks outage would turn a degraded read into a load problem.
+
+**Measured red, then green.** The test was written first and run against the pre-fix behaviour. The
+revert was *behaviour only* — the helper, the entry field and the test hooks stayed — so what was
+measured is the defect and not a missing import.
+
+| | pre-fix behaviour | after the fix |
+|---|---|---|
+| `test/discoveryCacheBEligibility.test.ts` (11 cases) | **FAIL — 8 pass / 3 fail** | **PASS — 11 / 11** |
+
+The three that fail before are the three DEFECT cases: **G** a block taken inside the TTL must not be
+served around · **H** a same-size block swap must also invalidate · **I** an unreadable block set must
+not reuse a page ranked under a readable one. The eight that pass in both states are the inertness
+and helper controls — an unchanged block set still hits the cache, a non-empty but unchanged set
+still hits it, the key still separates users, a fresh rank still stores — and their passing in both
+states is what makes the three failures a defect rather than a rewrite.
+
+**Stated rather than claimed: the freshness leg is NOT proven by the red/green.** Case J's
+end-to-end half is inert on this tree, because `discovery_candidate_projection_enabled` (2361) is
+seeded FALSE and the projection returns the same array, so there is no `candidate` object to inspect.
+What J *does* prove is the mapping the fix depends on — `classifyFreshness("compass_candidate_hit",
+null, …)` can only ever report `ageMs: null`, while the entry's own clock produces a real age. The
+one-line change from `null` to `cCacheHit.at` is therefore verified by inspection plus that unit
+assertion, and becomes live with the flag. Recording it as proven would claim more than the
+measurement supports.
+
+**Mutation checks**, each applied to the fixed tree, run, reverted, and `cmp`-verified byte-identical:
+
+| mutation applied | pass / fail | what went red |
+|---|---|---|
+| `blockFingerprint` returns a constant | 6 / 5 | B, C, G, H, I |
+| `blockFingerprint` returns `String(set.size)` | 9 / 2 | B, H — a same-size block swap reuses the page |
+| `blockFingerprint(null)` returns the empty-set value | 9 / 2 | C, I — unreadable conflated with "no blocks", the fail-open direction |
+| the guard compares the entry's fingerprint to itself | 8 / 3 | G, H, I — a no-op check |
+| the store stamps a constant `blockKey` | 10 / 1 | K |
+
+**The fifth mutation is the one worth reading.** Stamping a constant `blockKey` at the store site
+**stayed green** on its first run, across all ten cases then written. The constant happened to equal
+the no-blocks fingerprint, so every *other* block state mismatched and invalidated — the suite could
+see under-invalidation but was blind to **over**-invalidation, where the cache is correct and
+useless. A guard that cannot see the mutation it was written to forbid is worse than none, and only
+the mutation said so. Case **K** was added for exactly that — a viewer with a stable *non-empty*
+block set must still get a cache hit — and the mutation then failed 10 / 1.
+
+**Regression surface.** `pnpm typecheck` exit 0. Adjacent Discovery suites, all green and unchanged:
+`discoveryPdeServePath` 2/2 · `discoveryFeed` 30/30 · `discoverySort` 14/14 ·
+`discoveryBlockedSubmitter` 25/25 · `discoverySurfaceInstrumentation` 7/7 · `discoveryCandidate`
+30/30 · `discoveryVoteL1Eviction` 5/5.
+
+**What this does NOT claim.** It does not re-rank on a block change — it *invalidates*, the cheaper
+and more honest of DSV2-06's two permitted responses (*"invalidate/revalidate"*). It does not close
+DV-04: model and feature provenance still do not survive Cache B, and closing that needs the
+recommendation record DV-40 says does not exist. It does not touch Cache A, already correct on this
+axis. And it changes nothing in production, where Discovery is dark (§5) and
+`COMPASS_V1_RULE_BASED_ENABLED` gates the branch entirely.
+
+### 11.9 Ceiling — what this lane could not reach, and why
+
+- **42 `N` rows; 25 are four absent subsystems.** Trails, Trending-as-an-engine, Creator Economy and
+  the Payment ledger are not code this lane declined to write — they are architecture the owner has
+  ruled STALE (`ROADMAP.md:148#>`) or has not scheduled. Building any would be inventing a denominator.
+- **`recommendation_id` is one object holding down five rows** (DV-06, DV-26, DV-40, DV-46,
+  DSV2-12, plus Phase 4). It needs a migration creating `recommendations` / `recommendation_items`
+  and a `rank_events` column — and `10` §7 forbids editing an applied migration, `12` requires CI
+  rehearsal first, and this lane may not apply migrations to any live project. **Highest-value single
+  item in the corrected denominator, and a migration decision rather than a coding one.**
+- **Ranker and Event Truth holds remain in force and were not lifted.** DV-03's fix is built and
+  held; A01, A05, A07, DSV2-02, -03 and -09 are built-and-gated behind `discovery_live_rank_enabled`
+  (2850) or `discovery_ranking_modifiers_enabled` (2289), both seeded FALSE with postconditions that
+  RAISE if seeded ON. **No flag was flipped and no migration applied by this pass.**
+- **Production untouched.** Every production interaction here was a read-only `SELECT` against
+  `ajrurzioarfkagpuxfnb`: `pg_constraint`, `information_schema.columns`, `pg_class`/`pg_policy`,
+  `to_regclass`, and two aggregates over `rank_events`. No write, deploy, migration or flag change.
+- **Two `CANNOT-VERIFY` rows are recorded as such rather than guessed.** DV-52 (graph
+  explainability) is in `compass/**`; DV-76 (privacy/tagging Phase 0) is another census's. Both
+  would have been easy to score `C` from a distance; neither was.
+- **BUILT ON A BRANCH IS NOT MERGED. MERGED IS NOT DEPLOYED. DEPLOYED IS NOT FLAG ENABLED. FLAG
+  ENABLED IS NOT PRODUCTION REALIZED.** Discovery remains dark: 13 `surface='discovery'` rows ever,
+  latest 2026-08-15, re-read from production at this commit.
+
+### 11.10 New owner decision
+
+| # | Decision | Where it bites |
+|---|---|---|
+| D11 | **Resolve `11` §9 against `/discovery/suggest`'s fail-soft contract.** The restored API specification says *"A failure must not masquerade as success"* and names six failure classes to distinguish; the route returns `200 { groups: [] }` on any internal error, and C14 certified that as correct. Either the route surfaces a distinguishable error (a live-route contract change, so it needs a flag, so it needs a migration), or §9 is explicitly waived for typeahead and C14's contract is rewritten to say so. Not taken here. | C14 · DV-74 |
+
+### 11.11 Restated headline
+
+> **Discovery, at `b7f137a4dfbc05830505382e63d418f3900a4cf1`: 153 requirements ·
+> 63 BUILT-AND-CORRECT · 46 BUILT-BUT-WRONG · 42 NOT-BUILT · 2 CANNOT-VERIFY →
+> CONSTRUCTED 109 / 153 = 71.2 % · CORRECT 63 / 153 = 41.2 %.**
+> Previous statement (§10.6, 67 rows at `3ca68cb06`): 48 / 12 / 7 / 0 → 89.6 % · 71.6 %.
+> The denominator grew by 86 rows and no code regressed between the two measurements.
+> One row — DSV2-05 — was built, tested red-then-green, and moved to `C` by this pass.
+
+| BUILT-AND-CORRECT | **63** |
+|---|---|
+| BUILT-BUT-WRONG | **46** |
+| NOT-BUILT | **42** |
+| CANNOT-VERIFY | **2** |
+| **total** | **153** |
+
+### 11.12 Pointer repairs forced by §11.8's code change — declared, because two of them are outside this census
+
+§11.8 adds **21 lines** to `artifacts/api-server/src/routes/discovery.ts`. Every citation into that
+file below the insertion points moved with it. `check:doc-citations` was **exit 0 at `b7f137a4d`**
+before this pass and is **exit 0 after it**; in between it went red with 25 broken anchors, and this
+subsection records what was done about them so the repair is auditable rather than invisible.
+
+**Nothing below is a change of claim.** In every case the anchor TEXT is unchanged and only the line
+number moved, which is the whole reason the anchor form exists: the checker could name the new line
+because the anchor still matched there.
+
+| file | rows touched | change |
+|---|---|---|
+| `docs/architecture/census-discovery.md` §2 (above this section) | **6 lines** — C03, C19, C22, C33 and two in §3 / §9.4 | line numbers only, inside existing `#anchor` citations |
+| `docs/discovery/ROADMAP.md` | **11 lines** | same |
+| `docs/architecture/census-sensing.md` | **3 lines** | same |
+
+The six in this census, exactly:
+
+| row | citation | was | now |
+|---|---|---|---|
+| C03 | `routes/discovery.ts#fetchBlockedSet` | `:1578`, `:2375`, `:2735` | `:1593`, `:2396`, `:2756` |
+| C19 | `routes/discovery.ts#displayName` | `:2783` | `:2804` |
+| C22 | `routes/discovery.ts#served` | `:1812`, `:1790` | `:1827`, `:1805` |
+| C33 | `routes/discovery.ts#.select("date_of_birth")` | `:1545`, `:2627` | `:1560`, `:2648` |
+| §3 lead row | same pair | `:1545,2627` | `:1560,2648` |
+| §9.4 A01 | `routes/discovery.ts#const liveRanked = await withDiscoveryLiveRank` | `:1722` | `:1737` |
+
+**Two declarations the integration owner should check rather than take on trust.**
+
+1. **This census is APPEND-ONLY, and the six repoints above are edits above this section.** They are
+   line numbers inside anchors and nothing else — no verdict, no evidence sentence, no prose. The
+   distinction matters and is offered for rejection, not assumed: a repoint keeps a claim checkable,
+   where leaving it would have made `check:doc-citations` red on a claim that is still true. The
+   document's own §2a and §2c already carry `POINTERS REPOINTED 2026-09-13 (§11)` markers written by
+   an earlier integrator against a §11 that did not yet exist; this is that §11.
+
+2. **`docs/architecture/census-sensing.md` is another lane's census and this lane edited three of its
+   lines.** The three anchors point at `routes/discovery.ts`, which is this lane's file, and they
+   broke because this lane moved those lines. The edit is `:1722 → :1737` and `:2076 → :2097` on
+   `#withDiscoveryLiveRank`, nothing else. It is flagged here **because it is the kind of cross-lane
+   edit that should not pass unnoticed**: if the Sensing lane would rather own that repair, revert
+   those three lines and the only consequence is that `check:doc-citations` goes red until they do.
+
+
+### 11.13 Making this section machine-readable — and a parser finding that would have inflated it
+
+§9.1 is the reason this subsection exists: sixteen of this census's rows once sat outside every
+number the repository reports, because `verdictOf` could not read a cell that carried a qualifier
+beside the verdict. Repeating that would have been worse the second time, so the rows above were
+run against the tool rather than assumed to be readable, and three things had to change.
+
+**1. Every verdict cell is a bare token.** Twenty-three of the new rows were first written
+`**W** — 1 of 5 criteria passes` and `**CANNOT-VERIFY**`, both of which `verdictOf` rejects. The
+criterion counts that rule 1 requires are still there — they moved to the front of the evidence
+cell, where they are prose rather than an unparseable verdict — and `CANNOT-VERIFY` is written
+`**?**`, which the tool maps to the same bucket.
+
+**2. The ids are `DV-nn`, not `DV1-nn`, and the reason is a real defect in the guard.**
+`parseIdCell`'s prefix pattern is `^([A-Z]{1,4}-?)([0-9]{1,4})`, which cannot absorb a digit into a
+prefix. Given `DV1-20` it therefore takes the prefix as `DV`, and then reads the rest as a **RANGE**:
+`DV1` through `DV20`. Measured, not theorised — with `DV1-nn` ids the tool reported Discovery as
+**C 47 · W 15 · N 87**, because eighty-two rows had expanded into hundreds of phantom ids and the
+last-written table (`07`/`08`/`09`, all `N`) won the collapse. **It would have reported a census
+41 points more not-built than its own body claims, and exited 0 while doing it.** With `DV-nn` the
+prefix absorbs the hyphen and each row is one id.
+
+**This is a finding about the guard, not only about these ids.** Any census using a prefix that ends
+in a digit is exposed: `CPV2-01` and `TRV2-01` — the Compass and Trust v2 vocabularies the owner's
+framing defines — parse as ranges `CPV2–CPV1` and `TRV2–TRV1`, which are backwards, so
+`parseIdCell` returns null and those rows are silently **not counted** rather than miscounted.
+`DSV2-04` is the dangerous middle case: `DSV2`→`DSV4` is a *valid* forward range, so it would expand
+to three phantom ids. Reported to the integration owner; the fix is in
+`src/scripts/checkCensusIntegrity.ts`, which this lane does not own.
+
+**3. What the tool can and cannot read here, reconciled exactly.**
+
+| | rows | C | W | N | X |
+|---|---|---|---|---|---|
+| `check:census-integrity` parses | 149 | 62 | 45 | 40 | 2 |
+| the four DSV2 rows it cannot read (§11.4; they live in the mapping table, not a verdict table, and `DSV2-04` would misparse as a range if they did) | 4 | 1 | 1 | 2 | 0 |
+| **stated in §11.3 and §11.11** | **153** | **63** | **46** | **42** | **2** |
+
+The four, restated so the gap is zero: **DSV2-04 `N`** · **DSV2-05 `C`** · **DSV2-06 `W`** ·
+**DSV2-12 `N`**. The tool reports them as *"4 counted where this tool cannot read"*, which is
+accurate. After this section the difference between what this document says and what the repository
+can verify about it is those four rows and nothing else.
