@@ -41,36 +41,161 @@
 export const TELEGRAPH_SEARCH_BUCKETS = ["MESSAGES", "PLACES", "MEDIA", "PLANS", "MEMORIES"] as const;
 export type TelegraphSearchBucket = (typeof TELEGRAPH_SEARCH_BUCKETS)[number];
 
+// ── §606's SIXTH capability: search behaviour, registered by OBJECT FAMILY ───
+//
+// Telegraph §606: "Every shareable Portava domain registers preview,
+// authorization, current state, actions, SEARCH BEHAVIOR, and revocation
+// through a Telegraph content capability contract."
+//
+// Five of those six were registered through `services/telegraph/shareables.ts`
+// — one `LOADERS` entry per object family, giving `getSharePreview`,
+// `getCurrentState`, `getAvailableActions`, `getDeepLink` and, through the
+// re-resolve, revocation. Search behaviour was not: it lived HERE, in a map
+// keyed by MESSAGE SUBTYPE, declared independently of the families beside it.
+//
+// TWO REGISTRIES KEYED DIFFERENTLY IS THE DEFECT, not an untidiness. A domain
+// that registered a loader did not thereby become searchable, and nothing could
+// tell it had not: `MAP_PIN` and `MEETUP_POINT` are in `LOADERS` and were in
+// neither map here, so a Discovery pin shared into a thread had a preview, an
+// authorization check, a live state and a revocation — and no bucket. The two
+// maps could disagree about a family forever without a single failure, because
+// nothing read them together. census-discovery A20.
+//
+// So the registration moves to the key the contract already uses — the object
+// family — and the subtype maps below are DERIVED from it. A family added to
+// `LOADERS` with no entry here answers `null` from `getSearchBehaviour()`, which
+// is a checkable absence rather than a silent one.
+export interface TelegraphSearchBehaviour {
+  /** Which of §21's five buckets a hit on this family lands in. */
+  bucket: TelegraphSearchBucket;
+  /** §21's last line: "prefer structured plans/decisions/actions over inferred prose." */
+  structured: boolean;
+  /**
+   * The message `subtype` values this family is actually carried by in this
+   * tree — read off the writers, never guessed. An empty list is a real and
+   * common answer: the family is shareable and no card subtype carries it yet.
+   */
+  carriedBy: readonly string[];
+}
+
 /**
- * Which message `subtype` lands in which bucket.
+ * The registration, one entry per shareable object family.
+ *
+ * Keys are `TelegraphObjectType` values written as plain strings ON PURPOSE:
+ * this module is in `domain/`, `vocabulary.ts` is in `services/`, and
+ * check:telegraph-package-boundaries refuses that import. The agreement is
+ * asserted from the other side instead — `services/telegraph/shareables.ts`
+ * types its lookup with `TelegraphObjectType`, and the contract test walks
+ * every key here through `isTelegraphObjectType`, so a typo fails a test rather
+ * than registering a family that does not exist.
+ */
+export const SEARCH_BEHAVIOUR: Readonly<Record<string, TelegraphSearchBehaviour>> = {
+  // Places — Discovery's three families and the meetup point.
+  PLACE:        { bucket: "PLACES",   structured: true,  carriedBy: ["discovery_card"] },
+  HIDDEN_GEM:   { bucket: "PLACES",   structured: true,  carriedBy: ["hidden_gem"] },
+  MEETUP_POINT: { bucket: "PLACES",   structured: true,  carriedBy: ["meeting_point"] },
+  MAP_PIN:      { bucket: "PLACES",   structured: true,  carriedBy: [] },
+  // Travel.
+  MEETUP:       { bucket: "PLANS",    structured: true,  carriedBy: ["meetup", "meetup_confirmed", "meetup_cancelled"] },
+  EVENT:        { bucket: "PLANS",    structured: true,  carriedBy: ["event_context_card"] },
+  PLAN:         { bucket: "PLANS",    structured: true,  carriedBy: [] },
+  // Social.
+  POST:         { bucket: "MEMORIES", structured: false, carriedBy: ["post_card"] },
+  MEMORY:       { bucket: "MEMORIES", structured: false, carriedBy: ["memory_card"] },
+  MEMORY_NOTE:  { bucket: "MEMORIES", structured: false, carriedBy: [] },
+};
+
+/**
+ * Subtypes with a bucket and NO shareable family behind them.
+ *
+ * `compass_card` is the whole list, and it is here rather than quietly folded
+ * into `PLACE` because that would be a lie with the same shape as the defect
+ * above. `shareAuthorizationPolicy.ts` declares it `sourceDomain: "compass"`,
+ * "carries no private source object" — Compass is not one of §5's object
+ * families and has no `LOADERS` entry, so there is no family whose preview,
+ * state, actions and revocation this subtype's search behaviour could sit
+ * beside. Declaring the exception keeps the derived map byte-identical to the
+ * hand-written one it replaces AND leaves the gap visible: this is the one
+ * searchable card kind that is not registered through the capability contract.
+ */
+export const FAMILYLESS_SUBTYPE_BUCKET: Readonly<Record<string, { bucket: TelegraphSearchBucket; structured: boolean; why: string }>> = {
+  compass_card: {
+    bucket: "PLACES",
+    structured: true,
+    why: "Compass answer card — sourceDomain 'compass', which is not a §5 object family and has no shareable loader.",
+  },
+};
+
+/**
+ * Which message `subtype` lands in which bucket — DERIVED from the family
+ * registration above plus the declared exceptions.
  *
  * Subtypes are the ones actually written by this repository — found by reading
  * the writers, not by guessing: `routes/circle.ts` (`meeting_point`, `arrived`,
  * `meetup_confirmed`, `meetup_cancelled`, `hidden_gem`), `routes/messaging.ts`
  * (`discovery_card`, `post_card`, `event_context_card`), `routes/telegraph.ts`
  * (`compass_card`), the call subtypes, and `app/messages/[id].tsx` (`meetup`).
+ *
+ * A subtype claimed by two families would silently take whichever was written
+ * last, so it throws at module load instead. That cannot happen by accident
+ * from reading the table above; it can happen very easily from editing it.
  */
-export const SUBTYPE_BUCKET: Readonly<Record<string, TelegraphSearchBucket>> = {
-  discovery_card: "PLACES",
-  hidden_gem: "PLACES",
-  meeting_point: "PLACES",
-  compass_card: "PLACES",
-  meetup: "PLANS",
-  meetup_confirmed: "PLANS",
-  meetup_cancelled: "PLANS",
-  event_context_card: "PLANS",
-  post_card: "MEMORIES",
-  memory_card: "MEMORIES",
-};
+function deriveSubtypeBucket(): Readonly<Record<string, TelegraphSearchBucket>> {
+  const out: Record<string, TelegraphSearchBucket> = {};
+  const owner: Record<string, string> = {};
+  for (const [family, reg] of Object.entries(SEARCH_BEHAVIOUR)) {
+    for (const subtype of reg.carriedBy) {
+      if (owner[subtype] !== undefined) {
+        throw new Error(
+          `conversationSearch: message subtype "${subtype}" is claimed by both ${owner[subtype]} and ${family}. ` +
+            `One family must own it, or the bucket a hit lands in depends on object key order.`,
+        );
+      }
+      owner[subtype] = family;
+      out[subtype] = reg.bucket;
+    }
+  }
+  for (const [subtype, entry] of Object.entries(FAMILYLESS_SUBTYPE_BUCKET)) {
+    if (owner[subtype] !== undefined) {
+      throw new Error(
+        `conversationSearch: "${subtype}" is declared family-less and is also carried by ${owner[subtype]}.`,
+      );
+    }
+    out[subtype] = entry.bucket;
+  }
+  return out;
+}
+
+export const SUBTYPE_BUCKET: Readonly<Record<string, TelegraphSearchBucket>> = deriveSubtypeBucket();
 
 /**
  * Structured kinds, for §21's last line. "Ask this conversation" prefers these
- * over prose, and this set is what "structured" means — not a vibe.
+ * over prose, and this set is what "structured" means — not a vibe. Derived
+ * from the same registration, so a family cannot be structured in one map and
+ * not in the other.
  */
-export const STRUCTURED_SUBTYPES: ReadonlySet<string> = new Set([
-  "meetup", "meetup_confirmed", "meetup_cancelled", "event_context_card",
-  "meeting_point", "discovery_card", "hidden_gem", "compass_card",
-]);
+function deriveStructuredSubtypes(): ReadonlySet<string> {
+  const out = new Set<string>();
+  for (const reg of Object.values(SEARCH_BEHAVIOUR)) {
+    if (reg.structured) for (const subtype of reg.carriedBy) out.add(subtype);
+  }
+  for (const [subtype, entry] of Object.entries(FAMILYLESS_SUBTYPE_BUCKET)) {
+    if (entry.structured) out.add(subtype);
+  }
+  return out;
+}
+
+export const STRUCTURED_SUBTYPES: ReadonlySet<string> = deriveStructuredSubtypes();
+
+/**
+ * §606's sixth capability, for one object family. `null` means the family
+ * registers no search behaviour — a hit on a message carrying it falls to
+ * MESSAGES like any other prose, which is the safe direction and is now
+ * something a caller can ASK about instead of having to know.
+ */
+export function searchBehaviourFor(objectType: string): TelegraphSearchBehaviour | null {
+  return SEARCH_BEHAVIOUR[objectType] ?? null;
+}
 
 /**
  * Card body fields that may be indexed and echoed. Allowlist — see the header.

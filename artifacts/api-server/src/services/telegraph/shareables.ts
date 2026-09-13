@@ -1,5 +1,6 @@
 /**
- * Telegraph §5 — the one share contract, and §5.3's revocation.
+ * Telegraph §5 — the one share contract, §5.3's revocation, and §606's sixth
+ * capability (search behaviour, see `TelegraphShareable` below).
  *
  * Spec:
  *   §5    "All eligible Portava content should be shareable into Telegraph
@@ -45,6 +46,10 @@ import {
   type TelegraphObjectType,
   isTelegraphObjectType,
 } from "./vocabulary.js";
+import {
+  searchBehaviourFor,
+  type TelegraphSearchBehaviour,
+} from "../../domain/telegraph/contracts/conversationSearch.js";
 
 // ── §5.1 contract ────────────────────────────────────────────────────────────
 
@@ -75,12 +80,26 @@ export interface TelegraphObjectState {
   reason: UnavailableReason | null;
 }
 
-/** §5.1, verbatim. Implemented once per object family by `shareableFor`. */
+/**
+ * §5.1, verbatim — plus §606's sixth capability.
+ *
+ * §606: "Every shareable Portava domain registers preview, authorization,
+ * current state, actions, SEARCH BEHAVIOR, and revocation through a Telegraph
+ * content capability contract." The first five have been here since this file
+ * existed. Search behaviour was registered somewhere else entirely — a map in
+ * `domain/telegraph/contracts/conversationSearch.ts` keyed by message subtype
+ * rather than by object family — so registering a loader here did NOT register
+ * a domain's search behaviour, and no check could see the difference.
+ * `getSearchBehaviour` closes that: the sixth capability now answers from the
+ * same contract as the other five, and returns `null` rather than a guess for a
+ * family that registers none. census-discovery A20.
+ */
 export interface TelegraphShareable {
   getSharePreview(viewerId: string): Promise<TelegraphShareProjection | null>;
   getCurrentState(viewerId: string): Promise<TelegraphObjectState>;
   getAvailableActions(viewerId: string, conversationId: string): Promise<TelegraphAction[]>;
   getDeepLink(): string;
+  getSearchBehaviour(): TelegraphSearchBehaviour | null;
 }
 
 const UNAVAILABLE = (reason: UnavailableReason): TelegraphObjectState => ({
@@ -553,7 +572,20 @@ export function shareableFor(
     getDeepLink() {
       return deepLinkFor(objectType, objectId);
     },
+    getSearchBehaviour() {
+      return searchBehaviourFor(objectType);
+    },
   };
+}
+
+/**
+ * §606's sixth capability for a family, without instantiating a shareable.
+ * `resolveShareProjections` and the search path both need it per FAMILY, not
+ * per object, and building a loader closure to ask a static question would
+ * invite someone to cache the answer on the object.
+ */
+export function searchBehaviourForObjectType(objectType: TelegraphObjectType): TelegraphSearchBehaviour | null {
+  return searchBehaviourFor(objectType);
 }
 
 // ── §5.2 layer three: the resolved reference ─────────────────────────────────
