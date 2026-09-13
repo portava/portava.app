@@ -37,7 +37,7 @@
 import { describe, it, before } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 const SCRIPT = fileURLToPath(new URL("../scripts/checkCensusIntegrity.ts", import.meta.url));
@@ -124,20 +124,48 @@ describe("the tool reads census-map's qualified verdicts", () => {
     assert.ok(Math.abs(constructed - correct - map.w / map.denom) < 1e-12);
   });
 
-  it("no other census gained or lost a requirement to this change", () => {
-    // The tokeniser change reads more cells in six censuses. It moves no other
-    // census's counts, and these are the pre-change figures.
-    const expected: Record<string, [number, number, number, number]> = {
-      compass: [61, 23, 6, 0],
-      discovery: [47, 13, 7, 0],
-      layover: [48, 138, 110, 0],
-      sensing: [98, 26, 2, 1],
-      trips: [317, 130, 3, 1],
-      wall: [196, 1, 0, 8],
-    };
-    for (const [census, [c, w, n, x]] of Object.entries(expected)) {
-      const r = rowFor(census);
-      assert.deepEqual({ c: r.c, w: r.w, n: r.n, x: r.x }, { c, w, n, x }, `${census} moved`);
+  it("no other census can gain or lose a requirement to this change", () => {
+    // ── THIS CASE USED TO BE A SNAPSHOT, AND THE SNAPSHOT WAS THE BUG ───────
+    //
+    // It asserted six censuses' absolute C/W/N/X against a frozen table
+    // labelled "these are the pre-change figures". The CLAIM was right — the
+    // tokeniser change moves no census but map — but a snapshot of the EFFECT
+    // can only stay green if the corpus never changes again, so it went red
+    // the moment compass legitimately moved 61/23/6 -> 69/18/3 on four W->C
+    // builds and two deliberate N->W re-reads. `deepEqual` throws on the first
+    // mismatch, so discovery, layover and trips were failing behind it unseen.
+    //
+    // Bumping the integers would have made the numbers green without making
+    // the claim true, and would have re-armed the identical trap for the next
+    // lane that moves a row. The claim is proved from its CAUSE instead: the
+    // tokeniser change recognises ONE new cell shape, a verdict followed by a
+    // parenthesised italic qualifier. If no census except map contains that
+    // shape, the change cannot reach another census — and unlike a count, that
+    // stays true as censuses move.
+    const dir = fileURLToPath(new URL("../../../../docs/architecture/", import.meta.url));
+    const censuses = readdirSync(dir).filter((f) => /^census-.*\.md$/.test(f)).sort();
+    assert.ok(censuses.length >= 13, `expected the full census corpus, found ${censuses.length}`);
+
+    /** A verdict cell carrying a parenthesised italic qualifier: `| C *(…)*`. */
+    const QUALIFIED_CELL = /\|\s*[CWNX]\s+\*\([^)]*\)\*/g;
+    const byCensus = new Map<string, number>();
+    for (const f of censuses) {
+      const hits = readFileSync(dir + f, "utf8").match(QUALIFIED_CELL) ?? [];
+      if (hits.length > 0) byCensus.set(f, hits.length);
     }
+
+    assert.deepEqual(
+      [...byCensus.entries()],
+      [["census-map.md", 4]],
+      "a census other than map now carries a verdict cell with a parenthesised qualifier, " +
+        "so the tokeniser change is no longer provably scoped to map — re-derive that census " +
+        "and say what moved, rather than widening this expectation",
+    );
+
+    // And the four are the rows the fix was written for, still reported as
+    // parsed rather than as unreadable prose.
+    const map = rowFor("map");
+    assert.equal(map.c + map.w + map.n + map.x + map.unreconciled, map.denom,
+      "census-map's parsed rows plus its unreconciled prose must still account for its denominator");
   });
 });

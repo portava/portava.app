@@ -4317,7 +4317,7 @@ that this lane does not hold.
 
 1. **The object-share route spans `memories`, a private-by-default domain.** It is
    declared PRIVATE_SOURCE in
-   `artifacts/api-server/src/domain/telegraph/policies/shareAuthorizationPolicy.ts:283#TELEGRAPH_DYNAMIC_SHARE_PRODUCERS`
+   `artifacts/api-server/src/domain/telegraph/policies/shareAuthorizationPolicy.ts:285#TELEGRAPH_DYNAMIC_SHARE_PRODUCERS`
    with a note that it does NOT call `authorizeTelegraphShare`; its real gate is
    the per-object loader refusing a memory the viewer cannot already see. Wiring
    the policy in would refuse EVERY memory share, because no derivative grant
