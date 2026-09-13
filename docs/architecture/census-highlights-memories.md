@@ -3019,10 +3019,11 @@ now so the merge is not a discovery:
   2. **The CONTROL case of the airport suite goes RED**, and it should:
      `artifacts/api-server/src/test/memoryPlannedNotExperienced.test.ts:256#the refusal is not a blanket deny`
      asserts that a past arrival DOES earn a stamp at session creation, and under their fix
-     nothing earns one at session creation. The refusal case stays green, which is exactly the
-     shape §B.3 warns about: a suite whose refusals still pass while its control no longer can
-     is proving less than it looks. Whoever merges must re-point that control at the
-     end-of-session path, not delete it.
+     nothing earns one at session creation. The refusal case stays green, and a suite whose
+     refusals still pass while its control no longer can is proving less than it looks —
+     §B.1 built four paired controls into the §25 fixtures for exactly that reason, so that
+     *"a gate that refuses everything fails all four"*. Whoever merges must re-point this
+     control at the end-of-session path, not delete it.
   3. **H239 and H4 survive the merge and get STRONGER, but their evidence in §F.1 and §F.4 is
      then stale** — it cites a seam that no longer exists. Re-read, do not re-point.
 
