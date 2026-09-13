@@ -472,3 +472,101 @@ describe("C. CX-06 / CPV2-05 — Home reports availability per section", () => {
     assert.equal(second.json.sources.startingSoon, "ok");
   });
 });
+
+/* ── D. The intent classifier is given the turns it needs to resolve a pronoun ── */
+
+/**
+ * D. C1-02 — `compass-phase1-spec.md:22` fixes the classifier's input as
+ * "last user message + last 2 turns". The shipped call passed the message
+ * ALONE, with `history` already loaded nine lines above it and not used, so the
+ * router was asked to classify a pronoun with no antecedent. The standing
+ * evaluation set's own second and third questions — "What did you mean?" and
+ * "Which one is closer?" — are precisely that case, so this is not a
+ * theoretical gap: it is two of the nine queries Compass is measured on.
+ *
+ * These cases assert the CONTRACT (what reaches the model), not the model's
+ * answer. What a real model infers from the context is an integration question
+ * a deterministic test cannot settle, and pretending otherwise would be the
+ * mock-certifies-provider mistake the framing document names.
+ */
+describe("D. C1-02 — the classifier receives the last two turns", () => {
+  async function captureClassifierMessages(
+    message: string,
+    turns: Array<{ role: "user" | "assistant"; content: string }>,
+  ): Promise<any[]> {
+    const { classify } = await import("../services/compass/CompassIntentClassifier.js");
+    const { _setTestOpenAI } = await import("../lib/openai.js");
+    let seen: any[] = [];
+    _setTestOpenAI({
+      chat: {
+        completions: {
+          create: async (req: any) => {
+            seen = req.messages;
+            return { choices: [{ message: { role: "assistant", content: '{"intent":"question","confidence":0.9}' } }] };
+          },
+        },
+      },
+    } as any);
+    try {
+      await classify(message, turns);
+    } finally {
+      _setTestOpenAI(null);
+    }
+    return seen;
+  }
+
+  it("sends the prior turns as real messages, in order, with their roles preserved", async () => {
+    const msgs = await captureClassifierMessages("Which one is closer?", [
+      { role: "user", content: "What should I do in Cebu?" },
+      { role: "assistant", content: "Two options: Temple of Leah, and Sirao Garden." },
+    ]);
+
+    assert.equal(msgs[0].role, "system", "the system rule stays first");
+    // The antecedent must be present AND attributed: "which one is closer"
+    // resolves against the ASSISTANT turn that listed the options, so a
+    // transcript flattened into one user string would lose what makes it work.
+    const assistantTurn = msgs.find((m: any) => m.role === "assistant");
+    assert.ok(assistantTurn, "the assistant turn carrying the options must reach the classifier");
+    assert.match(assistantTurn.content, /Sirao Garden/);
+    assert.equal(
+      msgs[msgs.length - 1].content, "Which one is closer?",
+      "the message being classified is last",
+    );
+  });
+
+  it("sends at most two turns, keeping the most recent", async () => {
+    const { CLASSIFIER_CONTEXT_TURNS } = await import("../services/compass/CompassIntentClassifier.js");
+    assert.equal(CLASSIFIER_CONTEXT_TURNS, 2, "the spec fixes this at two");
+
+    const msgs = await captureClassifierMessages("Add the second one.", [
+      { role: "user", content: "OLDEST — must be dropped" },
+      { role: "assistant", content: "middle turn" },
+      { role: "user", content: "most recent turn" },
+    ]);
+
+    const context = msgs.slice(1, -1);
+    assert.equal(context.length, 2, `expected exactly 2 context turns, got ${context.length}`);
+    assert.ok(
+      !JSON.stringify(context).includes("OLDEST"),
+      "the third-oldest turn must not reach the classifier — this is a bounded context, not a transcript",
+    );
+    assert.equal(context[1].content, "most recent turn");
+  });
+
+  it("with no history the call is unchanged — system + message only", async () => {
+    const msgs = await captureClassifierMessages("What should I do in Cebu?", []);
+    assert.equal(msgs.length, 2, "a first turn must not gain empty context entries");
+    assert.equal(msgs[0].role, "system");
+    assert.equal(msgs[1].content, "What should I do in Cebu?");
+  });
+
+  it("an empty-content turn is dropped rather than sent as a blank message", async () => {
+    const msgs = await captureClassifierMessages("I'm tired.", [
+      { role: "assistant", content: "" },
+      { role: "user", content: "real turn" },
+    ]);
+    const context = msgs.slice(1, -1);
+    assert.equal(context.length, 1);
+    assert.equal(context[0].content, "real turn");
+  });
+});
