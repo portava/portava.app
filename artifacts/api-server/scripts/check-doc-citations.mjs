@@ -192,7 +192,8 @@ export const COVERED = [
 // citation those rows carry. Measured count 347, so the floor is 347. Same
 // ratchet, same rule: raising it is the job, lowering it is a deliberate
 // reduction in coverage and must be argued for in the PR that does it.
-export const MIN_ANCHORED_CITATIONS = 347;
+// Four more landed with the section 24 evidence corrections in the same pass: 351.
+export const MIN_ANCHORED_CITATIONS = 351;
 
 const SKIP_DIRS = new Set(['.git', 'node_modules']);
 

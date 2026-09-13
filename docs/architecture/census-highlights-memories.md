@@ -1305,28 +1305,33 @@ row below is BBW or NB, never BAC.
 
 #### §24 Observability and quality metrics (H211–H223)
 
-**Every one of the twelve names was grepped across `.ts`, `.sql`, `.tsx` and `.md` in
-`artifacts/`, `travel-buddy-standalone/` and `docs/`.** Two occur — `place_correction_rate`
-in a code comment at `artifacts/api-server/src/services/memory/MemoryDomainService.ts:148#place_correction_rate`
-and `projection_lag` in a comment at `artifacts/api-server/src/lib/memoryOutbox.ts:233#projection_lag`
-— and in both cases the surrounding line is prose explaining that the metric would be
-useful. Every other occurrence in the whole tree is inside this census. Nothing counts,
-records, exports or alerts on any of them.
+**Every one of the twelve names was grepped across the whole worktree, excluding
+`node_modules` and `.git`.** Ten of the twelve occur in exactly two files — this census and
+`docs/specs/Portava_Highlights_Memories_Development_Architecture_Spec_v1.txt` — and nowhere
+in any source file. The other two occur in COMMENTS only: `place_correction_rate` at
+`artifacts/api-server/src/services/memory/MemoryDomainService.ts:148#place_correction_rate`
+and again at `artifacts/api-server/src/routes/memories.ts:1048#place_correction_rate`, both
+explaining why CHANGE_PLACE is a distinct command; and `projection_lag` at
+`artifacts/api-server/src/lib/memoryOutbox.ts:233#projection_lag`, plus the different token
+`projection_lag_seconds` in a comment at
+`artifacts/api-server/src/lib/mapTripProjectionWorker.ts:61#projection_lag_seconds`, which
+belongs to the Trips map worker and is not this metric. Nothing counts, records, exports or
+alerts on any of the twelve.
 
 | id | requirement | verdict | evidence |
 |---|---|---|---|
-| H211 | `candidate_confirm_rate` | NB | Zero occurrences outside this census. There is no candidate to confirm |
-| H212 | `candidate_reject_rate` | NB | Zero occurrences outside this census |
-| H213 | `candidate_split_rate` | NB | Zero occurrences; SPLIT_MEMORY is undeclared |
-| H214 | `candidate_merge_rate` | NB | Zero occurrences; MERGE_MEMORY is undeclared |
-| H215 | `place_correction_rate` | NB | Named once, in a comment at `artifacts/api-server/src/services/memory/MemoryDomainService.ts:148#place_correction_rate`, explaining why CHANGE_PLACE is a distinct command. No counter is incremented anywhere |
-| H216 | `participant_correction_rate` | NB | Zero occurrences. ADD_PERSON / REMOVE_PERSON are dispatched and counted by nothing |
-| H217 | `false_memory_rate` | NB | Zero occurrences. Requires corrected-over-surfaced inferred assertions, and neither quantity is stored |
-| H218 | `explicit_memory_without_candidate_rate` | NB | Zero occurrences |
-| H219 | `privacy_revocation_latency` | NB | Zero occurrences. `executeRevocation` produces a report and no timing (`artifacts/api-server/src/services/highlights/highlightRevocation.ts:168#REVOCATION_DESTINATIONS`) |
-| H220 | `projection_lag` | NB | Named once, in a comment at `artifacts/api-server/src/lib/memoryOutbox.ts:233#projection_lag`. `projectionStaleness` answers FRESH/STALE and emits no lag figure |
-| H221 | `resurfacing_suppression_violations` ("must be zero") | NB | Zero occurrences. Nothing counts a violation, and with 2720 unapplied the suppression set is `absent`, so a violation could not be detected if it happened |
-| H222 | `do_again_conversion` | NB | Zero occurrences, and there is no do-again (H107) |
+| H211 | `candidate_confirm_rate` | NB | Occurs only in this census and the spec; no source file mentions it. There is no candidate to confirm |
+| H212 | `candidate_reject_rate` | NB | Occurs only in this census and the spec. `evaluateEligibility` produces a rejection reason and nothing counts one |
+| H213 | `candidate_split_rate` | NB | Occurs only in this census and the spec; SPLIT_MEMORY is an undeclared command |
+| H214 | `candidate_merge_rate` | NB | Occurs only in this census and the spec; MERGE_MEMORY is an undeclared command |
+| H215 | `place_correction_rate` | NB | Named in two comments — `artifacts/api-server/src/services/memory/MemoryDomainService.ts:148#place_correction_rate` and `artifacts/api-server/src/routes/memories.ts:1048#place_correction_rate` — both saying the command exists so the metric COULD be counted. No counter is incremented anywhere |
+| H216 | `participant_correction_rate` | NB | Occurs only in this census and the spec. ADD_PERSON / REMOVE_PERSON are dispatched and counted by nothing |
+| H217 | `false_memory_rate` | NB | Occurs only in this census and the spec. It is corrected-over-surfaced inferred assertions, and neither quantity is stored anywhere |
+| H218 | `explicit_memory_without_candidate_rate` | NB | Occurs only in this census and the spec |
+| H219 | `privacy_revocation_latency` | NB | Occurs only in this census and the spec. `executeRevocation` produces a per-destination report and no timing at all (`artifacts/api-server/src/services/highlights/highlightRevocation.ts:168#REVOCATION_DESTINATIONS`) |
+| H220 | `projection_lag` | NB | Named in one comment, `artifacts/api-server/src/lib/memoryOutbox.ts:233#projection_lag`. `projectionStaleness` answers FRESH / STALE / REVOKED / NOT_REGISTERED and emits no lag figure. The `projection_lag_seconds` in `artifacts/api-server/src/lib/mapTripProjectionWorker.ts:61#projection_lag_seconds` is the Trips map worker's, not this one |
+| H221 | `resurfacing_suppression_violations` ("must be zero") | NB | Occurs only in this census and the spec. Nothing counts a violation, and with 2720 unapplied the suppression set is `absent`, so a violation could not be DETECTED if it happened — the metric §24 says must be zero is one nothing could observe being non-zero |
+| H222 | `do_again_conversion` | NB | Occurs only in this census and the spec, and there is no do-again to convert (H107) |
 | H223 | Operational logs carry memoryId, commandId, eventId, source version, engine version, reason codes, projection name, failure class | BBW | `artifacts/api-server/src/services/memory/MemoryDomainService.ts:121#auditCommand` emits `memoryId`, `commandId`, `eventId`, `reason` and `engineVersion` (`:131#engineVersion`), and deliberately nothing from the Memory's body. **Three of the eight are missing**: source version, projection name and failure class. `eventId` is always null while the kernel is off |
 
 #### §25 Replay, testing and certification (H224–H253)
