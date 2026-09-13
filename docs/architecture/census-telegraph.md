@@ -5673,10 +5673,12 @@ telegraph                      439   221   166    49    3     451  12 counted wh
 > eviction — is a defect no row in this census had ever named.** A census that
 > could only record work by moving a number would have no way to say that.
 
-**The full suite: 20,165 tests, 3 failed, 0 skipped.** One was this section's
-and is fixed — the narrowed NOT NULL guard of M19, green in isolation and red
-again under M19. The other TWO are `test/tripOpportunityProjection.test.ts`
-cases 1 and 3, and they are NOT this lane's: swapping all eight source files
+**The full suite: 20,165 tests, 20,163 passed, 2 failed, 0 skipped.** The run
+before it had three. The third was this section's — the NOT NULL guard M19
+narrows — and it is gone: fixed, green in isolation, red again under M19, and
+green in the full run at the position it had failed at. The remaining TWO are
+`test/tripOpportunityProjection.test.ts` cases 1 and 3, and they are NOT this
+lane's: swapping all eight source files
 this branch changed back to their `6d4fd1a06` content and re-running the file
 reproduces both failures exactly (16 / 2), after which the eight were restored
 and compared byte-identical. The file's own comment says why it is fragile —
@@ -5684,6 +5686,19 @@ and compared byte-identical. The file's own comment says why it is fragile —
 `fw.executable[0]` being undefined, i.e. a free window that the wall clock has
 moved out from under. Recorded rather than left as an unexplained red, and
 recorded as somebody else's rather than claimed as a pass.
+
+**CORRECTED AT INTEGRATION: on the merged branch those two are GREEN, and the
+diagnosis above is why.** This lane measured against `6d4fd1a06`. The
+integrating branch had already closed the same defect two commits earlier, in
+`53615fd72`, by freezing the clock for that describe block
+(`artifacts/api-server/src/test/tripOpportunityProjection.test.ts:189#before(() => { mock.timers.enable({ apis: ["Date"], now: NOW.getTime() }); });`).
+Executed on the merged tree at 15:52 UTC — an hour at which the unfrozen file
+had previously failed 16 / 2 — the file is **18 / 18**. So this lane's suite
+result of 20,163 passed / 2 failed is correct for the commit it was taken at
+and is NOT the number for the merged tree; the merged number is measured
+separately below the integration's own gate, not inferred from this one. The
+lane's reasoning was right and its arithmetic was right; only its base was
+older than the fix.
 
 Bookkeeping, stated because it is easy to do silently: `lib/publicIdentity.ts`
 and the three new test files were added to `CENSUS_SCOPE` for this census, and
