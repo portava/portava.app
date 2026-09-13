@@ -465,6 +465,30 @@ const loadMemory: Loader = async (client, id, viewerId) => {
   const mine = r.owner_id === viewerId;
   const visible = mine || r.visibility === "public" || allowed.includes(viewerId);
   if (!visible) return { state: UNAVAILABLE("private"), projection: null };
+  // A BLOCK OUTRANKS "public", and this loader used to be the one place on the
+  // Memory surface where it did not. §23's predicate
+  // (`services/memory/memoryReadPolicy.ts`) checks blocks in both directions,
+  // and `loadProfile` below has checked them since it was written — so a
+  // traveller who blocked somebody had that person refused their PROFILE card
+  // and served the title and city of their public MEMORY in the same chat.
+  // Highlights/Memories §10: blocking "unlinks profile identity"; §5.3's word
+  // for the outcome is `unauthorized`, the same one `loadProfile` uses.
+  //
+  // One direction only, deliberately, and it is the same direction
+  // `loadProfile` takes: the OWNER blocking the VIEWER. Adding the reverse arm
+  // would be a wider rule than this file's neighbour applies, and widening a
+  // share rule is a product decision rather than a repair of a divergence.
+  // Fail-closed: an unreadable `blocks` degrades to "unknown" rather than to
+  // "not blocked", which is what every other read in this file already does.
+  if (!mine) {
+    const { data: blocks, error: bErr } = await client
+      .from("blocks")
+      .select("blocker_id, blocked_id")
+      .eq("blocker_id", r.owner_id as string)
+      .eq("blocked_id", viewerId);
+    if (bErr) return { state: UNAVAILABLE("unknown"), projection: null };
+    if ((blocks ?? []).length > 0) return { state: UNAVAILABLE("unauthorized"), projection: null };
+  }
   return {
     state: AVAILABLE(String(r.state)),
     projection: proj(

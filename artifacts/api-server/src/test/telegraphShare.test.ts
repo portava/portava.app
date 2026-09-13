@@ -376,6 +376,45 @@ describe("§5.3 revocation — a revoked source degrades, carrying nothing", () 
     assert.equal((await resolveOne(c2, "BOOKING", BOOKING_OTHER, BOB)).available, true);
   });
 
+  /*
+   * §10 of the Highlights/Memories spec — "blocking suppresses future social
+   * resurfacing and unlinks profile identity" — and §5.3's "unauthorized".
+   *
+   * `loadProfile` has checked blocks since it was written. `loadMemory` did
+   * not, and it is the THIRD transcription of the Memory read rule in this
+   * repository: `services/memory/memoryReadPolicy.ts` is the §23 predicate and
+   * checks blocks in both directions; `routes/contentStamps.ts` and
+   * `routes/wellKnownShare.ts` say in their own comments that they mirror it;
+   * this one is a fourth reader that nobody had named, and it disagreed with
+   * the predicate on exactly one rung. The consequence is concrete: a traveller
+   * who blocked somebody still had the title and city of their PUBLIC Memory
+   * rendered into that person's chat as a share card.
+   *
+   * The control below is the same Memory with no block, so the refusal is about
+   * the block and not about the loader having quietly stopped resolving.
+   */
+  it("a Memory whose owner has blocked the viewer degrades, exactly as a profile does", async () => {
+    const c = useState({ blocked: true });
+    const r = await resolveOne(c, "MEMORY", MEMORY_PUBLIC, ALICE);
+    assert.equal(r.available, false, "a blocked viewer was served the owner's public Memory");
+    assert.equal(r.available === false && r.reason, "unauthorized");
+    assert.equal(r.projection, null);
+
+    const c2 = useState({});
+    assert.equal(
+      (await resolveOne(c2, "MEMORY", MEMORY_PUBLIC, ALICE)).available,
+      true,
+      "control: the same Memory with no block is still shareable",
+    );
+  });
+
+  it("an unreadable blocks table withholds the Memory rather than sharing it", async () => {
+    const c = useState({ blocked: true, errorTable: "blocks" });
+    const r = await resolveOne(c, "MEMORY", MEMORY_PUBLIC, ALICE);
+    assert.equal(r.available, false, "an unreadable block list must not read as 'not blocked'");
+    assert.equal(r.available === false && r.reason, "unknown");
+  });
+
   it("a profile that has blocked the viewer degrades", async () => {
     const c = useState({});
     (c as any)._db.blocks.push({ blocker_id: PROFILE_BLOCKED, blocked_id: ALICE });

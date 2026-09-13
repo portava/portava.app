@@ -178,7 +178,7 @@ before(async () => {
   app.use(express.json());
   app.use("/api", airportRouter);
   server = http.createServer(app);
-  await new Promise<void>((r) => server.listen(0, r));
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
   base = `http://127.0.0.1:${(server.address() as any).port}`;
 });
 
@@ -418,7 +418,7 @@ describe("§25 H239 — a planned meetup earns nothing without attendance", () =
     app.use(express.json());
     app.use("/api", geofenceRouter);
     gfServer = http.createServer(app);
-    await new Promise<void>((r) => gfServer.listen(0, r));
+    await new Promise<void>((r) => gfServer.listen(0, "127.0.0.1", r));
     gfBase = `http://127.0.0.1:${(gfServer.address() as any).port}`;
   });
 
