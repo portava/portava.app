@@ -143,6 +143,18 @@ export interface TranslationDisplayFields {
  */
 const DEFAULT_SOURCE_LANGUAGE = 'en';
 
+/**
+ * The language code written when NO language is known — ISO 639-2's `und`,
+ * "undetermined".
+ *
+ * Distinct from DEFAULT_SOURCE_LANGUAGE above, and the distinction is the whole
+ * point: `'en'` is a guess that a reader cannot tell from a stated preference,
+ * whereas `und` says on its face that nothing was established. `routes/messaging.ts`
+ * already writes exactly this code when a per-viewer translation read fails, so
+ * this is the tree's convention rather than a new one.
+ */
+const UNKNOWN_LANGUAGE = 'und';
+
 async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   let timer: ReturnType<typeof setTimeout>;
   const timeout = new Promise<never>((_, reject) => {
@@ -233,11 +245,31 @@ export async function translateMessageForThread(
 
   try {
     // 1. Get all thread members (other than the sender).
-    const { data: members } = await sc
+    //
+    // census T344/T363. Dropped, this read ENDED the pipeline in silence: an
+    // unreadable `message_thread_members` resolved as `data: null`, `?? []` made
+    // it "this thread has nobody else in it", and the early return below fired.
+    // No translation row was written for anybody and nothing anywhere recorded
+    // that a thread had gone untranslated — the outcome is byte-identical to a
+    // thread the sender is alone in.
+    //
+    // There is no honest row to write instead: without the roster there are no
+    // recipient ids to key one by. What the failure is owed is a LOUD, and the
+    // pipeline's own contract ("never throws") means that loud is a log at
+    // error level, the level its outer catch already uses.
+    const { data: members, error: membersErr } = await sc
       .from('message_thread_members')
       .select('user_id')
       .eq('thread_id', threadId)
       .neq('user_id', senderId);
+
+    if (membersErr) {
+      logger?.error(
+        { messageId, threadId, err: membersErr.message },
+        'thread roster unreadable — no recipient can be translated for, and this is not a solo thread',
+      );
+      return;
+    }
 
     const recipientIds: string[] = (members ?? []).map((m: any) => m.user_id);
     if (recipientIds.length === 0) return;
@@ -291,10 +323,29 @@ export async function translateMessageForThread(
     // 3. Fetch recipient language preferences.
     // preferred_language (user-chosen in Settings) takes priority over
     // preferred_message_language (legacy auto-translate field).
-    const { data: profiles } = await sc
+    //
+    // ── THE OTHER END OF THE SAME DEFECT §16 FIXED FOR THE SENDER ────────────
+    // census T344/T363, named by census-telegraph §16.4 as the consequence that
+    // lane found inside its own file and did not fix. With the error dropped,
+    // an unreadable `profiles` gave EVERY recipient the map's default —
+    // `preferredLanguage: 'en'`, `autoTranslate: true` — and §16.4 read that as
+    // a degradation rather than a false claim. Executing it shows it is a false
+    // claim: when the source language is also 'en', which is the common case,
+    // the same-language arm below writes `status: 'skipped'` with
+    // `target_language: 'en'` for each recipient, and that row asserts, durably
+    // and queryably, that this recipient reads English and needed nothing. Not
+    // one byte about that recipient was read.
+    const { data: profiles, error: profilesErr } = await sc
       .from('profiles')
       .select('id, preferred_language, preferred_message_language, auto_translate_messages')
       .in('id', recipientIds);
+
+    if (profilesErr) {
+      logger?.warn(
+        { messageId, threadId, recipients: recipientIds.length, err: profilesErr.message },
+        'recipient language preferences unreadable — recording failed translations, not skipped ones',
+      );
+    }
 
     const profileMap: Record<string, { preferredLanguage: string; autoTranslate: boolean }> = {};
     for (const p of profiles ?? []) {
@@ -308,6 +359,28 @@ export async function translateMessageForThread(
 
     // 4. Process each recipient.
     for (const recipientId of recipientIds) {
+      // The read FAILED, so nothing is known about this recipient's language or
+      // their auto-translate setting. `failed` is §18's own word for "we did not
+      // translate this", it is what `buildDisplayFields` already renders as the
+      // untouched original with no banner — so what the reader SEES is unchanged
+      // — and `error_message` carries which failure it was. `target_language`
+      // is NOT NULL and no preference was read, so it takes `und`, the code this
+      // tree already writes for an undetermined language in the same situation
+      // (`routes/messaging.ts`, the per-viewer translation read).
+      if (profilesErr) {
+        await upsertTranslation(sc, {
+          messageId,
+          recipientId,
+          sourceLanguage,
+          targetLanguage: UNKNOWN_LANGUAGE,
+          translatedBody: null,
+          provider: null,
+          status: 'failed',
+          errorMessage: 'recipient_preferences_unreadable',
+        });
+        continue;
+      }
+
       const prefs = profileMap[recipientId] ?? { preferredLanguage: 'en', autoTranslate: true };
       const targetLanguage = prefs.preferredLanguage;
 

@@ -110,14 +110,33 @@ export async function syncTripChatMembers(
   }
 
   // Get accepted trip members (owner + member, not invited).
-  const { data: tripMembers } = await sc
+  //
+  // ── AN UNREADABLE ROSTER IS NOT AN EMPTY ROSTER ────────────────────────────
+  // census T344/T363. This is the input to the removal step below. With the
+  // error dropped it was also the input to `acceptedIds.size === 0`, and that
+  // early return is the only reason this file did not do what `lib/chatSync.ts`
+  // did — evict the whole crew. It is an accident, not a guard: it cannot tell
+  // "this trip has no accepted members" from "the table is unreadable", and it
+  // answers BOTH by handing the caller a thread id, which says the roster was
+  // reconciled. `routes/messaging.ts:3248` then serves the trip chat on that
+  // id. Refusing is the only answer supported by a read that did not happen.
+  const { data: tripMembers, error: tripMembersErr } = await sc
     .from('trip_members')
     .select('user_id')
     .eq('trip_id', tripId)
     .in('role', ['owner', 'member']);
 
+  if (tripMembersErr) {
+    throw new Error(
+      `syncTripChatMembers: accepted-member read from trip_members failed for trip ${tripId}: ` +
+        `${tripMembersErr.message} — refusing to reconcile a roster this read could not see`,
+    );
+  }
+
   const acceptedIds = new Set(((tripMembers ?? []) as any[]).map((m) => m.user_id as string));
 
+  // A genuinely empty accepted set. Distinct from the refusal above: the read
+  // succeeded and the trip really has nobody left to reconcile.
   if (acceptedIds.size === 0) return threadId;
 
   // Telegraph §13.2 `member.joined`. Who was ALREADY here is read before the
@@ -164,11 +183,24 @@ export async function syncTripChatMembers(
   }
 
   // Mark any thread members no longer in the accepted set as left.
-  const { data: activeMembers } = await sc
+  //
+  // Dropped, this read failed in the other direction from the roster read
+  // above: an unreadable `message_thread_members` produced an empty `toRemove`,
+  // so a member the trip had removed kept access to the crew thread and nothing
+  // anywhere said so. Removal that silently does not happen is the same defect
+  // as removal that wrongly does.
+  const { data: activeMembers, error: activeMembersErr } = await sc
     .from('message_thread_members')
     .select('user_id')
     .eq('thread_id', threadId)
     .is('left_at', null);
+
+  if (activeMembersErr) {
+    throw new Error(
+      `syncTripChatMembers: active-member read from message_thread_members failed for trip ${tripId}: ` +
+        `${activeMembersErr.message} — refusing rather than reporting nobody to remove`,
+    );
+  }
 
   const toRemove = ((activeMembers ?? []) as any[])
     .map((m) => m.user_id as string)
@@ -262,10 +294,22 @@ export async function syncCircleChatMembers(
   }
 
   // Get circle members: owner + all accepted circle_memberships.
-  const { data: circleMembers } = await sc
+  //
+  // The trip branch's accidental `size === 0` shield does not exist here: the
+  // owner is always in the set, so an unreadable `circle_memberships` produced
+  // a set of exactly one and the removal step below evicted EVERY OTHER MEMBER
+  // from the circle chat. census T344/T363.
+  const { data: circleMembers, error: circleMembersErr } = await sc
     .from('circle_memberships')
     .select('other_id')
     .eq('user_id', circleOwnerId);
+
+  if (circleMembersErr) {
+    throw new Error(
+      `syncCircleChatMembers: member read from circle_memberships failed for circle ${circleOwnerId}: ` +
+        `${circleMembersErr.message} — refusing to reconcile a circle down to its owner alone`,
+    );
+  }
 
   const memberIds = new Set<string>([
     circleOwnerId,
@@ -309,12 +353,20 @@ export async function syncCircleChatMembers(
     }
   }
 
-  // Mark any thread members no longer in the circle as left.
-  const { data: activeMembers } = await sc
+  // Mark any thread members no longer in the circle as left. Bound for the same
+  // reason as the trip branch's active-member read.
+  const { data: activeMembers, error: activeMembersErr } = await sc
     .from('message_thread_members')
     .select('user_id')
     .eq('thread_id', threadId)
     .is('left_at', null);
+
+  if (activeMembersErr) {
+    throw new Error(
+      `syncCircleChatMembers: active-member read from message_thread_members failed for circle ${circleOwnerId}: ` +
+        `${activeMembersErr.message} — refusing rather than reporting nobody to remove`,
+    );
+  }
 
   const toRemove = ((activeMembers ?? []) as any[])
     .map((m) => m.user_id as string)

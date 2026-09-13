@@ -53,7 +53,7 @@ import { resolveConversationCapabilities } from '../domain/telegraph/policies/co
 import { z } from 'zod';
 import { requireUser, sendError } from '../lib/http';
 import { canMessage } from '../lib/messagingPermissions';
-import { nameVisibilitySet, sanitizeIdentity, resolveHandle, presentedName } from '../lib/publicIdentity';
+import { nameVisibilitySet, sanitizeIdentity, resolveHandle, presentedName, actorHandleFrom } from '../lib/publicIdentity';
 import { getServiceClient } from '../lib/supabase';
 import { resolveInteractionPermissions } from '../services/interactionPermissions.js';
 import { isKillSwitchEngaged } from '../lib/featureFlags.js';
@@ -2141,6 +2141,21 @@ router.get('/threads/:threadId/messages', async (req, res) => {
 
   // Fetch reply_to_id values and quoted context.
   // Wrapped in try/catch: silently skipped if migration 0057 is not yet applied.
+  //
+  // ── THE HALF §14 LEFT ON THE WIRE ────────────────────────────────────────
+  // census T344/T363. §14 made both reads below LOG, and §14.6 recorded the
+  // limit of that in the same breath: "a reply whose quote could not be read is
+  // still indistinguishable on the wire from a message that quoted nothing".
+  // The log is for us; the payload is what the client acts on, and the payload
+  // said the same thing in both worlds. These two flags are what carries the
+  // difference out to the caller.
+  //
+  // They are kept apart because they degrade different claims. `reply_to_id`
+  // unreadable means we do not know WHICH messages are replies, so `replyToId`
+  // itself may not be reported. The quoted bodies unreadable means we know the
+  // linkage and cannot show the quote.
+  let replyLinkageUnreadable = false;
+  let replyQuotesUnreadable = false;
   let replyToIdMap: Record<string, string | null> = {};
   let replyContextMap: Record<string, { body: string; senderName: string | null }> = {};
   try {
@@ -2158,6 +2173,7 @@ router.get('/threads/:threadId/messages', async (req, res) => {
         // the difference can survive is the log.
         req.log.warn({ err: replyIdErr, threadId },
           'thread read: reply_to_id unreadable — replies will render without their quote');
+        replyLinkageUnreadable = true;
       }
       if (!replyIdErr && replyIdRows) {
         for (const r of replyIdRows as any[]) {
@@ -2176,6 +2192,7 @@ router.get('/threads/:threadId/messages', async (req, res) => {
           if (quotedErr) {
             req.log.warn({ err: quotedErr, threadId },
               'thread read: quoted reply context unreadable — quotes omitted, not invented');
+            replyQuotesUnreadable = true;
           }
           // Universal display-name rule: quoted sender shows @handle unless opted in.
           const qAllowed = await nameVisibilitySet(sc, ((quotedRows as any[]) ?? []).map((q: any) => q.sender_id));
@@ -2192,7 +2209,15 @@ router.get('/threads/:threadId/messages', async (req, res) => {
         }
       }
     }
-  } catch { /* migration 0057 not applied — reply context unavailable */ }
+  } catch (replyCtxErr) {
+    // Migration 0057 not applied is the case this catch was written for, and it
+    // is a legitimate deploy state. Anything else reaching here is not, and the
+    // block swallowed both without distinction: the caller could not tell a
+    // thread with no replies from a thread whose reply context threw.
+    req.log.warn({ err: replyCtxErr, threadId },
+      'thread read: reply context unavailable — replies will render without their quote');
+    replyLinkageUnreadable = true;
+  }
 
   const messages = rows.map((m) => {
     const p = m.profile ?? {};
@@ -2242,9 +2267,28 @@ router.get('/threads/:threadId/messages', async (req, res) => {
       // Rich-text span metadata (absent for deleted messages)
       ...(spans ? { tags: spans.tags, hashtagUsages: spans.hashtagUsages } : {}),
       // Reply threading (populated after migration 0057_reply_to_messages.sql)
-      replyToId: replyToIdMap[m.id] ?? null,
-      replyToBody: replyToIdMap[m.id] ? (replyContextMap[replyToIdMap[m.id]!]?.body ?? null) : null,
-      replyToSenderName: replyToIdMap[m.id] ? (replyContextMap[replyToIdMap[m.id]!]?.senderName ?? null) : null,
+      //
+      // census T344/T363. The three fields below are OMITTED rather than sent
+      // as null whenever the read that would have filled them failed, and are
+      // replaced by `replyContext: 'unavailable'`. §14 drew this line for
+      // `tripCity` and the reason is the same: `undefined` is "not known" and
+      // `null` is a positive claim — here, "this message quoted nothing" and
+      // "there is no quoted body to show you". A `null` quote is a REAL state
+      // (the quoted message is deleted, or sits outside this member's §14.3
+      // history window) and must stay distinguishable from a failed read.
+      //
+      // `replyContext` is additive and absent in the normal case, the same
+      // posture §14 took with `previewTranslationStatus`: a marker that is
+      // always present says nothing.
+      ...(replyLinkageUnreadable
+        ? { replyContext: 'unavailable' as const }
+        : replyToIdMap[m.id] && replyQuotesUnreadable
+          ? { replyToId: replyToIdMap[m.id], replyContext: 'unavailable' as const }
+          : {
+              replyToId: replyToIdMap[m.id] ?? null,
+              replyToBody: replyToIdMap[m.id] ? (replyContextMap[replyToIdMap[m.id]!]?.body ?? null) : null,
+              replyToSenderName: replyToIdMap[m.id] ? (replyContextMap[replyToIdMap[m.id]!]?.senderName ?? null) : null,
+            }),
       // Media fields (migration 0152_messages_media.sql).
       //
       // Telegraph §7.2, census T79: a deleted message is removed from NORMAL
@@ -2711,12 +2755,39 @@ router.post('/threads/:threadId/messages', async (req, res) => {
         logger: req.log,
       });
       if (taggedIds.length > 0) {
-        const { data: taggerProfile } = await sc
+        // census T344/T363, the third of §15.2's named consequences and the one
+        // §16.4 declined with its reason written down: this read used
+        // `.single()`, which errors when NO ROW MATCHES as well as when the
+        // table is unreadable, so binding its error would have moved the
+        // conflation one step along instead of removing it. `.maybeSingle()`
+        // separates the two, and `actorHandleFrom` is the one place the three
+        // worlds are told apart — the same shape as `senderLanguageFrom`.
+        //
+        // WHAT EACH WORLD NOW SAYS, and why the third needs its own sentence.
+        // The template renders `@${taggerHandle ?? 'someone'} mentioned you`,
+        // so simply passing nothing would have printed `@someone` — the same
+        // claim, made by the template instead of the route. `'someone'` is TRUE
+        // of a tagger who has no handle and FALSE of a `profiles` outage, where
+        // the tagger may well have one and we did not read it. The unreadable
+        // arm therefore supplies its own title, which names nobody and asserts
+        // only what is in evidence: a mention happened, in a message.
+        //
+        // NOT TAKEN, and left open deliberately: whether the product wants the
+        // unreadable case to look different to the user at all, or to carry a
+        // retry. `taggerHandleUnreadable` goes in `metadata` — which is what
+        // `NotificationService.create` PERSISTS; `params` only feeds the
+        // template and is not stored — so that decision can later be made from
+        // data rather than from memory.
+        const { data: taggerProfile, error: taggerProfileErr } = await sc
           .from('profiles')
           .select('handle, username')
           .eq('id', user.id)
-          .single();
-        const taggerHandle = resolveHandle(taggerProfile as any) ?? 'someone';
+          .maybeSingle();
+        const tagger = actorHandleFrom(taggerProfile as any, taggerProfileErr);
+        if (tagger.unreadable) {
+          req.log.warn({ err: taggerProfileErr, messageId: m.id },
+            'mention notification: tagger profile unreadable — naming nobody rather than @someone');
+        }
         const notifSvc    = new NotificationService(sc);
         const notifRouter  = new NotificationRouter(sc);
         await Promise.allSettled(
@@ -2727,7 +2798,18 @@ router.post('/threads/:threadId/messages', async (req, res) => {
               actorId: user.id,
               sourceType: 'message',
               sourceId: m.id,
-              params: { taggerHandle, context: `@${taggerHandle} mentioned you in a message.` },
+              ...(tagger.unreadable
+                ? {
+                    title: 'You were mentioned in a message',
+                    metadata: { taggerHandleUnreadable: true },
+                  }
+                : {}),
+              params: tagger.unreadable
+                ? { context: 'You were mentioned in a message.' }
+                : {
+                    taggerHandle: tagger.handle ?? 'someone',
+                    context: `@${tagger.handle ?? 'someone'} mentioned you in a message.`,
+                  },
             });
             if (row) await notifRouter.route(row);
           }),
