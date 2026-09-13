@@ -470,6 +470,13 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/migrations/2730_memory_derivative_registry.sql",
     "artifacts/api-server/src/test/memoriesPublicFeedPrivacy.test.ts",
     "artifacts/api-server/src/server/trips/outboxWorker.ts",
+    // WIDENED 2026-09-13 by section C, which built §16's eight Compass Memory
+    // accessors and §14's fusion boundary. Each of the three is a SUBJECT of
+    // rows this census scores (H115-H128, H5/H70/H109, H207), so a change to any
+    // of them must age the document.
+    "artifacts/api-server/src/compass/MemoryCompassTools.ts",
+    "artifacts/api-server/src/test/memoryCompassTools.test.ts",
+    "artifacts/api-server/src/test/memoryPublishPolicy.test.ts",
     "artifacts/api-server/src/services/memoryCertification/",
     "artifacts/api-server/src/test/memoryCertificationFixtures.test.ts",
     "artifacts/api-server/src/test/memoryCertificationInvariants.test.ts",

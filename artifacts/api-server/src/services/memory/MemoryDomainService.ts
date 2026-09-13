@@ -181,7 +181,23 @@ export function commandTypeForPatch(patch: {
 
 // ── §23 canEditMemory ────────────────────────────────────────────────────────
 
-export interface MemoryOwnershipRow { id: string; owner_id: string; state: string }
+export interface MemoryOwnershipRow {
+  id: string;
+  owner_id: string;
+  state: string;
+  /**
+   * The AUDIENCE columns, selected for §23's `canPublishMemory`. A PATCH that
+   * changes `visibility` or `allowedUserIds` has to be judged on the row as it
+   * WOULD be, and the merge needs the values it is not changing. Three columns
+   * on a read the handler already performs, rather than a second round trip.
+   *
+   * All three exist in the production `memories` table (0067), so no reader
+   * gains a schema dependency it did not have.
+   */
+  visibility: string | null;
+  trip_id: string | null;
+  allowed_user_ids: string[] | null;
+}
 
 /**
  * Load the Memory this command acts on, or say why not.
@@ -201,7 +217,7 @@ export async function loadMemoryForCommand(
 ): Promise<{ ok: true; row: MemoryOwnershipRow } | { ok: false; http: CommandHttpError }> {
   const { data, error } = await sc
     .from("memories")
-    .select("id, owner_id, state")
+    .select("id, owner_id, state, visibility, trip_id, allowed_user_ids")
     .eq("id", memoryId)
     .neq("state", "deleted")
     .maybeSingle();

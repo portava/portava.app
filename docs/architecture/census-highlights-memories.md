@@ -233,9 +233,9 @@ own count of §3.6, table by table.
 - **CORRECT: I disagree, in both directions.**
   - **Raw CORRECT is higher than claimed: 6.4%, not 1.1%.** The repo has more genuinely-correct
     memory-adjacent behaviour than 1.1% admits — fail-closed block filtering
-    (`routes/memories.ts:449-465`), a real tag-consent model that refuses co-ownership
-    (`routes/memories.ts:838-880`), a media-delete path that removes the storage object while the
-    Memory survives (`routes/memories.ts:758-786`), a genuine private-by-default suggestion
+    (`routes/memories.ts:263-279`), a real tag-consent model that refuses co-ownership
+    (`routes/memories.ts:669-711`), a media-delete path that removes the storage object while the
+    Memory survives (`routes/memories.ts:589-617`), a genuine private-by-default suggestion
     pipeline (`services/passport/PassportMemoryService.ts:73`, accepted at `:150`), and an
     account-deletion sweep that reaches every memory and highlight table
     (`lib/deletionDispositions.ts:152,192,352`). Calling that 1.1% undersells the repository.
@@ -259,7 +259,7 @@ for this spec (there are none).
 
 | id | Requirement | Bucket | Evidence / divergence | Attr |
 |---|---|---|---|---|
-| H1 | Canonical Memory facts independent of viewer layout and AI narrative | NB | `memories` rows are read and serialized straight to the client (`routes/memories.ts:1254`); there is no fact layer beneath a projection | |
+| H1 | Canonical Memory facts independent of viewer layout and AI narrative | NB | `memories` rows are read and serialized straight to the client (`routes/memories.ts:1108`); there is no fact layer beneath a projection | |
 | H2 | Automatic Memories private-first; publishing always a separate projection decision | BBW | `routes/stories.ts:585-620` — "save to Highlight" hard-codes `visibility: "public"` regardless of the source Story's audience (close-friends, allow-lists). Publishing is not a decision; it is a side effect | pre |
 | H3 | AI may summarize supported evidence but may not manufacture historical facts | NB | No AI path over Memories exists; no guard exists either | |
 | H4 | Planned/saved/nearby never represented as "experienced" without occurrence evidence or user confirmation | **BAC** | `routes/geofence.ts:809-861` (a stamp requires an actual check-in, then only a *suggested* memory) and `routes/location.ts:392-432` (GPS city stamp → *suggested* memory). Suggestions are inert until explicit acceptance (`services/passport/PassportMemoryService.ts:150`). Matches §6's "GPS proximity: weak alone; typically candidate-level only" | pre |
@@ -364,12 +364,12 @@ column but ships no detector.
 | H76 | Location precision ladder | BBW | Ladder at `lib/mediaLocationVisibility.ts:41`; applied to Memory reads only as a **Hidden-Gem ceiling** (`routes/memories.ts:87-107`), never as an owner-selected precision | pre |
 | H77 | Person visibility ladder (NAMED → PROFILE_LINKED → CREW_ONLY → ANONYMOUS_COUNT → HIDDEN) | BBW | `lib/publicIdentity.ts:1-18` implements 2 of the 5 rungs (name vs @handle, opt-in, fail-closed), used at `routes/memories.ts:325-333`. No CREW_ONLY, ANONYMOUS_COUNT or HIDDEN | pre |
 | H78 | Automatic Memories default PRIVATE | **BAC** | `services/passport/PassportMemoryService.ts:73` — `visibility: "private", // suggested memories are always private initially` | pre |
-| H79 | Public search queries only public derivatives, never private canonical storage plus post-query filtering | BBW | `routes/memories.ts:423-465` — the discovery feed reads canonical `memories` through the **service client** (RLS bypassed), applies `.limit()` **before** block filtering, then post-filters blocks in TypeScript. This is precisely the pattern §10 and §28.6 forbid | pre |
+| H79 | Public search queries only public derivatives, never private canonical storage plus post-query filtering | BBW | `routes/memories.ts:237-279` — the discovery feed reads canonical `memories` through the **service client** (RLS bypassed), applies `.limit()` **before** block filtering, then post-filters blocks in TypeScript. This is precisely the pattern §10 and §28.6 forbid | pre |
 | H80 | Media visibility independent from Memory visibility | NB | `memory_items` has no visibility of its own; it inherits the memory's | |
 | H81 | Publishing location must never exceed the owner's selected precision | NB | There is no owner-selected precision on a Memory; the only clamp is the gem ceiling | |
 | H82 | Temporary operational location must not leak into durable public Highlights | NB | `routes/highlights.ts:141-148` persists `location_name`/`city`/`country` verbatim with no precision control and no TTL distinct from the media's | |
-| H83 | Being tagged or referenced does not make another user a co-owner | **BAC** | `routes/memories.ts:838-880` — a tagged user may only approve/remove **their own** tag (`userId !== user.id → 403`); no edit, no visibility, no delete rights accrue. Owner-only checks at `:606-608`, `:665-670` | pre |
-| H84 | Blocking and account deletion suppress future social resurfacing and unlink identity | **BAC** | Memories feed fails **closed** on a block-lookup error rather than serving an unfiltered feed (`routes/memories.ts:449-465`); highlights filter both directions (`routes/highlights.ts:872-880`, `:38-49`); deletion reaches `memories`/`memory_likes`/`memory_saves` (`lib/deletionDispositions.ts:152`), the derived family (`:192`) and every highlight table (`:352`), executed at `services/accountDeletion/AccountDeletionService.ts:964-975` | pre |
+| H83 | Being tagged or referenced does not make another user a co-owner | **BAC** | `routes/memories.ts:669-711` — a tagged user may only approve/remove **their own** tag (`userId !== user.id → 403`); no edit, no visibility, no delete rights accrue. Owner-only checks at `:606-608`, `:665-670` | pre |
+| H84 | Blocking and account deletion suppress future social resurfacing and unlink identity | **BAC** | Memories feed fails **closed** on a block-lookup error rather than serving an unfiltered feed (`routes/memories.ts:263-279`); highlights filter both directions (`routes/highlights.ts:872-880`, `:38-49`); deletion reaches `memories`/`memory_likes`/`memory_saves` (`lib/deletionDispositions.ts:152`), the derived family (`:192`) and every highlight table (`:352`), executed at `services/accountDeletion/AccountDeletionService.ts:964-975` | pre |
 | H85 | Public sharing assumes copyability; screenshot prevention is not a privacy boundary | **BAC** | No screenshot-prevention code exists anywhere in `travel-buddy-standalone/src` or `app/` — no `ScreenCapture`, no `FLAG_SECURE`. The stance is respected by construction | — |
 
 ### §11 Sensitive context and resurfacing controls (7)
@@ -423,9 +423,9 @@ Memory search of any kind, and no embedding of any kind anywhere in the repo (th
 
 | id | Requirement | Bucket | Evidence / divergence | Attr |
 |---|---|---|---|---|
-| H115–H122 | `getMemory`, `searchMemories`, `getSharedMemories`, `getPlaceHistory`, `getTripMemories`, `getMemoryEvidence`, `createMemoryDraft`, `suggestMemoryCorrection` | NB ×8 | `compass/CompassTools.ts:94-468` defines 11 tools: `get_user_profile`, `get_current_trip`, `search_places`, `search_events`, `get_place_details`, `get_circle_activity`, `check_trip_conflicts`, `add_to_trip`, `get_whos_around`, `get_travel_compatibility`, `get_group_recommendation`. **None** is memory-facing | |
+| H115–H122 | `getMemory`, `searchMemories`, `getSharedMemories`, `getPlaceHistory`, `getTripMemories`, `getMemoryEvidence`, `createMemoryDraft`, `suggestMemoryCorrection` | NB ×8 | `compass/CompassTools.ts:105-480` defines 11 tools: `get_user_profile`, `get_current_trip`, `search_places`, `search_events`, `get_place_details`, `get_circle_activity`, `check_trip_conflicts`, `add_to_trip`, `get_whos_around`, `get_travel_compatibility`, `get_group_recommendation`. **None** is memory-facing | |
 | H123–H128 | LLM boundary: may summarize supported evidence · may propose merge/split/correction · may ask a minimal clarifying question · may not invent states/participants/identity/attendance/outcomes · may not bypass privacy policy · may not use stale history as current truth | NB ×6 | No memory-facing LLM path exists to constrain; no boundary is encoded. (`2221_compass_ai_writing_default_off.sql` is the adjacent posture, for Compass prose generally) | |
-| H129 | Compass must not mutate canonical Memory facts through prose | **BAC** | The tool set at `compass/CompassTools.ts:94` contains no Memory mutation; the only write-shaped tool is `add_to_trip` (`compass/CompassTools.ts:406`). `routes/compass.ts:2226` `forgetMemory` writes `compass_memories` (a chat store), not `memories` | — |
+| H129 | Compass must not mutate canonical Memory facts through prose | **BAC** | The tool set at `compass/CompassTools.ts:105` contains no Memory mutation; the only write-shaped tool is `add_to_trip` (`compass/CompassTools.ts:417`). `routes/compass.ts:2226` `forgetMemory` writes `compass_memories` (a chat store), not `memories` | — |
 
 ### §17 Command bus and domain events (33)
 
@@ -458,11 +458,11 @@ consumers.
 | MemoryTimelineProjection | BBW | `travel-buddy-standalone/src/lib/memoryTimeline.ts:1-13` — a pure **client-side** month grouping over `passport_memories`, declaring itself Passport §15. Not a server projection, not over Memories | pre |
 | PassportMemoryProjection | BBW | `services/passport/PassportConsumerProjections.ts` projects Passport artefacts, not Memories | pre |
 | ProfileHighlightProjection | BBW | `routes/highlights.ts:181` returns raw highlight rows filtered by viewer permission; no audience-specific projection, no field narrowing | pre |
-| TripMemoryProjection | BBW | `routes/memories.ts:1093` returns a raw list for a trip | pre |
+| TripMemoryProjection | BBW | `routes/memories.ts:947` returns a raw list for a trip | pre |
 | PlaceMemoryProjection | NB | | |
 | PeopleMemoryProjection | NB | | |
 | CompassMemoryProjection | BBW | `compass/ProjectedMemoryPrompt.ts:110-125` feeds Compass from `memory_rediscover`/`memory_retrieve` — derived preferences, not Memory facts | pre |
-| PublicMemoryProjection | BBW | `routes/memories.ts:423` is a canonical read, not a derivative (see H79) | pre |
+| PublicMemoryProjection | BBW | `routes/memories.ts:237` is a canonical read, not a derivative (see H79) | pre |
 | SearchEmbedding | NB | No embeddings exist | |
 | NarrativeDerivative | NB | | |
 | MapTrailDerivative | BBW | `lib/mapProducers/memoryProducer.ts:182` emits viewer-scoped map objects from `memory_remembers_for_user` — derived preferences, not a spatial presentation of Memories | pre |
@@ -475,7 +475,7 @@ consumers.
 | H175 | Client operation ids + server idempotency on the sync command | NB | `Idempotency-Key` handling exists for `routes/intel.ts:149` and `routes/mapObservations.ts:926`; no memory route reads it | |
 | H176 | Memory can exist before all media uploads complete | **BAC** | `routes/memories.ts:340-405` creates a Memory with no items; items are added independently at `:681` | — |
 | H177 | A failed media upload does not invalidate already-saved Memory facts | **BAC** | Same separation: item insert failure returns `db_error` at `:719` and leaves the Memory intact | — |
-| H178 | Concurrent edits resolve at command/field level, not blind row last-write-wins | NB | `routes/memories.ts:609-640` builds a partial patch but applies it unconditionally; no version, no `If-Match`, no conflict detection | |
+| H178 | Concurrent edits resolve at command/field level, not blind row last-write-wins | NB | `routes/memories.ts:440-471` builds a partial patch but applies it unconditionally; no version, no `If-Match`, no conflict detection | |
 | H179 | Late evidence may raise confidence but must not overwrite explicit edits | NB | No evidence and no confidence exist | |
 | H180 | Cross-device uploads/notes converge on one Memory/Episode | NB | | |
 
@@ -483,11 +483,11 @@ consumers.
 
 | id | Requirement | Bucket | Evidence / divergence | Attr |
 |---|---|---|---|---|
-| H181 | Staged pipeline: ingest metadata → fingerprint → cheap association → thumbnail → expensive analysis | BBW | A staged pipeline exists for `post_media` (`2046_phash_dedup.sql`, moderation/processing status guarded at `2158_post_media_write_boundary.sql:41`). **Memory media bypasses all of it**: `routes/memories.ts:708-716` inserts a client-supplied `media_url` straight into `memory_items` with no `media_assets` row, no fingerprint, no moderation state | pre |
+| H181 | Staged pipeline: ingest metadata → fingerprint → cheap association → thumbnail → expensive analysis | BBW | A staged pipeline exists for `post_media` (`2046_phash_dedup.sql`, moderation/processing status guarded at `2158_post_media_write_boundary.sql:41`). **Memory media bypasses all of it**: `routes/memories.ts:539-547` inserts a client-supplied `media_url` straight into `memory_items` with no `media_assets` row, no fingerprint, no moderation state | pre |
 | H182 | Distinct original / viewer / card / tiny signed renditions | NB | `lib/mediaAssets.ts:151` carries `thumbnail_path`/`thumbnail_url` only — two tiers, not four | |
 | H183 | Perceptual fingerprints detect duplicate imports without filename dependence | BBW | `2046_phash_dedup.sql` implements pHash — for `post_media`. `memory_items` has no `phash` column and never enters that path | pre |
 | H184 | Video scenes as logical segments without duplicating originals | NB | `highlights.video_duration_seconds` is a length cap (`routes/highlights.ts:128-138`), not segmentation | |
-| H185 | Face recognition must not be a dependency for People Memories | **BAC** | People on a Memory are `memory_tags` — an explicit social-graph primitive with consent (`routes/memories.ts:392-402`, `:838`). No face-recognition code exists in the repo | — |
+| H185 | Face recognition must not be a dependency for People Memories | **BAC** | People on a Memory are `memory_tags` — an explicit social-graph primitive with consent (`routes/memories.ts:206-216`, `:838`). No face-recognition code exists in the repo | — |
 
 ### §21 Deletion, forgetting and revocation (8)
 
@@ -496,9 +496,9 @@ consumers.
 | H186 | Archive: retain canonical, remove from normal browsing | **BAC** | `0067_memories.sql:22` permits `archived`; PATCH accepts it (`routes/memories.ts:244`); the feed filters `state='published'` (`:427`) so archived drops out of browsing while single-fetch by the owner still returns it (`:520` filters only `state != 'deleted'`) | pre |
 | H187 | Do not resurface (retain + search privately, suppress proactive resurfacing) | NB | No such control on a Memory | |
 | H188 | Do not personalize (retain, exclude from inference) | NB | | |
-| H189 | Make private: revoke public derivatives and public indexing, retain the Memory | BBW | PATCH visibility works (`routes/memories.ts:613`) but revokes nothing — there are no derivatives or indexes to revoke, and no cache invalidation on the memories path (contrast `routes/highlights.ts:5`, which does invalidate the Compass cache) | pre |
-| H190 | Delete Memory: revoke derivatives, remove indexes/embeddings, purge canonical/eligible evidence | BBW | `routes/memories.ts:672` writes `state:"deleted"` and stops. The media bytes stay publicly served — documented in the repo's own words at `services/accountDeletion/AccountDeletionService.ts:565-570` | pre |
-| H191 | Delete media asset: remove asset and derivatives; the Memory survives | **BAC** | `routes/memories.ts:758-786` deletes the row first, then removes the storage object, and refuses any path outside the owner's `memories/{userId}/` prefix. The Memory is untouched | pre |
+| H189 | Make private: revoke public derivatives and public indexing, retain the Memory | BBW | PATCH visibility works (`routes/memories.ts:444`) but revokes nothing — there are no derivatives or indexes to revoke, and no cache invalidation on the memories path (contrast `routes/highlights.ts:5`, which does invalidate the Compass cache) | pre |
+| H190 | Delete Memory: revoke derivatives, remove indexes/embeddings, purge canonical/eligible evidence | BBW | `routes/memories.ts:503` writes `state:"deleted"` and stops. The media bytes stay publicly served — documented in the repo's own words at `services/accountDeletion/AccountDeletionService.ts:565-570` | pre |
+| H191 | Delete media asset: remove asset and derivatives; the Memory survives | **BAC** | `routes/memories.ts:589-617` deletes the row first, then removes the storage object, and refuses any path outside the owner's `memories/{userId}/` prefix. The Memory is untouched | pre |
 | H192 | Revocation propagates to public projection, search index, embedding, profile Highlight, Trip story, Passport reference, cached narrative and share links | NB | None of those destinations exists to propagate to | |
 | H193 | Deletion observable, retryable, dead-lettered on repeated downstream failure | BBW | `AccountDeletionService` has named, reported steps (`:576`, `:973-975`) — but that is account deletion. Per-Memory deletion has no step, no report, no retry, no dead letter | pre |
 
@@ -520,7 +520,7 @@ spec's model has been started. H197 "never fabricate trip/place/participant/visi
 | H203 | Search/index workers consume privacy-filtered event payloads, not raw rows | NB | No such workers | |
 | H204 | Truth level and inference provenance are server-controlled; clients may assert but not forge "verified" | **CV** | `2150_passport_memories_write_boundary.sql` revokes `verification_level`, `source_type`, `source_id`, `suggestion_reason`, `plan_id`, `trip_id`, `place_id` from `anon`/`authenticated` — exactly the requirement, and it proves the hole by execution. But the file's own header reads "⚠ STAGED. Apply to portava-ci ONLY. DO NOT APPLY TO PRODUCTION without the owner's explicit approval". Whether production is protected is a live-state question | pre |
 | H205 | `canReadMemory(userId, memoryId, surface)` | BBW | `routes/memories.ts:123` `canViewMemory(sc, memory, viewerId)` — **no `surface` parameter**, so one verdict serves the feed, the profile listing and the single fetch alike | pre |
-| H206 | `canEditMemory(userId, memoryId)` | **BAC** | `routes/memories.ts:606-608` — owner-only, checked against a fresh read, before any patch is composed | pre |
+| H206 | `canEditMemory(userId, memoryId)` | **BAC** | `routes/memories.ts:437-439` — owner-only, checked against a fresh read, before any patch is composed | pre |
 | H207 | `canPublishMemory(userId, memoryId, audience)` | NB | Publishing is a `visibility` write with no audience predicate | |
 | H208 | `canSeeExactLocation(userId, memoryId)` | BBW | `routes/memories.ts:87-107` `gemProtectMemoryRow` — owner bypass plus a fail-closed Hidden-Gem ceiling. It answers "is this coordinate on a protected gem", not "may this viewer see this Memory's exact location under the owner's policy" | pre |
 | H209 | `canSeeParticipant(userId, memoryId, participantId)` | NB | Tag rows are returned to any permitted viewer | |
@@ -585,7 +585,7 @@ entity merge after Memory creation · timezone/date-line edges) — **all 9 NOT-
 |---|---|---|---|---|
 | §28.3 | Never query a semantic substitute for an unknown canonical place/person and pretend it is the requested entity | NB | No semantic retrieval exists; no guard exists either | |
 | §28.10 | Never route public-world intelligence directly from private Memory without consent/eligibility/anonymization | **BAC** | The only path from derived memory to a shared surface is `lib/mapProducers/memoryProducer.ts:182`, which calls `memory_remembers_for_user(p_user_id: viewerId)` — strictly the viewer's own memory, on the viewer's own map. Nothing feeds memory into world intelligence | — |
-| §28.11 | Never swallow projection/schema failures into plausible-looking empty history without structured error state | **BAC** | `routes/memories.ts:449-465` — a block-lookup error returns `db_error`, explicitly rejecting `data ?? []` because that "yields an empty set → nothing filtered → blocked content leaks". `loadMemoryGemContext` (`:66-78`) records `determined:false` and coarsens rather than silently passing | pre |
+| §28.11 | Never swallow projection/schema failures into plausible-looking empty history without structured error state | **BAC** | `routes/memories.ts:263-279` — a block-lookup error returns `db_error`, explicitly rejecting `data ?? []` because that "yields an empty set → nothing filtered → blocked content leaks". `loadMemoryGemContext` (`:66-78`) records `determined:false` and coarsens rather than silently passing | pre |
 | §28.16 | Always preserve original user voice and original-language text in summaries/translations | NB | No summarization of Memories exists | |
 | §28.17 | Always provide a deterministic fallback renderer when AI presentation fails | NB | No AI presentation exists; `renderer_version` is absent from `highlights` | |
 
@@ -672,7 +672,7 @@ policies but cannot see the application query.
    Stories clone" as a non-goal, and §12 defines Highlights as *projections over Memories or
    Episodes*. `routes/highlights.ts:116` creates a highlight from a raw `mediaUrl` with no source.
    Until a Highlight has a source Memory, §12, §18 and half of §21 have nothing to attach to.
-2. **The discovery feed is the exact anti-pattern §10 and §28.6 name.** `routes/memories.ts:423-465`
+2. **The discovery feed is the exact anti-pattern §10 and §28.6 name.** `routes/memories.ts:237-279`
    reads canonical storage through a service client, limits before filtering, and post-filters in
    TypeScript. It is also a correctness bug independent of the spec: the `.limit(n)` runs before the
    block filter, so a page shrinks by however many blocked owners it contained.
@@ -680,7 +680,7 @@ policies but cannot see the application query.
    violates §1 ("publishing is always a separate projection decision") and §10 ("publishing must
    never exceed the owner's selected precision") in a single insert.
 4. **Memory media bypasses the media pipeline entirely.** `memory_items` takes a client-supplied
-   URL with no `media_assets` row, no pHash, no moderation state (`routes/memories.ts:708-716`),
+   URL with no `media_assets` row, no pHash, no moderation state (`routes/memories.ts:539-547`),
    while `post_media` has all three. §20 assumes one pipeline.
 
 ---
@@ -696,8 +696,8 @@ body gave them.
 | Claim | Verified? | Where |
 | --- | --- | --- |
 | A command boundary with idempotency keys, per-attempt audit, transactional outbox | **In code, yes. In production, no.** | `lib/memoryCommandBus.ts:281` (11 command types), `:434` `IDEMPOTENCY_KEY_HEADER`, `:440` envelope reader, `:470` `executeMemoryCommand`; `lib/memoryOutbox.ts:67-79` (§17's fourteen event names verbatim); `services/memory/MemoryDomainService.ts:121` `auditCommand`, `:338` `dispatchMemoryCommand`. The kernel tables and `public.memory_kernel_execute` are migrations **2710 / 2711, NOT applied**. |
-| The flag is seeded FALSE | **Stronger than that — the row does not exist.** | 2710 seeds `memory_kernel_enabled`; 2710 is unapplied, so the production flag set (`lib/capability/snapshots/20260908-production-schema.json`) contains no such key, and `isFlagEnabled` is fail-closed. Every memory write in production is the legacy direct write, audited only by a log line marked `durable:false` (`MemoryDomainService.ts:344-354`). |
-| Seven routes cross the boundary | **Yes** | `routes/memories.ts:645#CREATE_MEMORY` (CREATE), `:1051` (PATCH → ARCHIVE / CONFIRM / CHANGE_VISIBILITY / CHANGE_PLACE / UPDATE via `commandTypeForPatch` in `MemoryDomainService.ts`), `routes/memories.ts:1127#DELETE_MEMORY` (DELETE), `:1198#ADD_MEDIA` (ADD_MEDIA), `:1288#REMOVE_MEDIA` (REMOVE_MEDIA), `:1437#ADD_PERSON` (ADD_PERSON / REMOVE_PERSON) |
+| The flag is seeded FALSE | **Stronger than that — the row does not exist.** | 2710 seeds `memory_kernel_enabled`; 2710 is unapplied, so the production flag set (`lib/capability/snapshots/20260908-production-schema.json`) contains no such key, and `isFlagEnabled` is fail-closed. Every memory write in production is the legacy direct write, audited only by a log line marked `durable:false` (`MemoryDomainService.ts:360-370`). |
+| Seven routes cross the boundary | **Yes** | `routes/memories.ts:476#CREATE_MEMORY` (CREATE), `:1051` (PATCH → ARCHIVE / CONFIRM / CHANGE_VISIBILITY / CHANGE_PLACE / UPDATE via `commandTypeForPatch` in `MemoryDomainService.ts`), `routes/memories.ts:981#DELETE_MEMORY` (DELETE), `:1052#ADD_MEDIA` (ADD_MEDIA), `:1142#REMOVE_MEDIA` (REMOVE_MEDIA), `:1291#ADD_PERSON` (ADD_PERSON / REMOVE_PERSON) |
 | MERGE / SPLIT / PIN / UNPIN / PUBLISH_HIGHLIGHT / HIDE_HIGHLIGHT / SET_RESURFACING_POLICY are **not** declared | **Yes, and the code says why** | `lib/memoryCommandBus.ts:306-313` — `MEMORY_COMMAND_TYPES_NOT_DECLARED`, each with its reason. They stay NOT-BUILT. |
 | `memoryProjections/**` — registry, evidence, episodes, significance, graph | **Yes, and reachable from nothing** | `evidence.ts:246, 435`; `episodeDetection.ts:244`; `significance.ts:162`; `memoryGraph.ts:246`; `projectionRegistry.ts:501`; `derivativeRegistry.ts:287`. **No route or lib outside `src/test/` imports any of them** — grepped across `src/routes/`, `src/lib/`, `src/services/` and `src/scripts/` at this commit. |
 | `memoryRetrieval/**` | **Yes, test-only** | `searchMemories.ts:169`, namespace table at `:49`. Same reachability finding. |
@@ -728,7 +728,7 @@ has yet been protected.
 
 | id | Was | Now | Evidence at `cdfff599` | Attr |
 |---|---|---|---|---|
-| H84 | BAC | **BBW** | **A false green, corrected.** Blocking half stands (`routes/memories.ts:449-465`, `routes/highlights.ts:872-880`). Deletion half is false: `highlights`, `highlight_likes`, `highlight_reports`, `highlight_views` are in `UNCLASSIFIED_BACKLOG` (`lib/deletionDispositions.ts:366-369`), `highlight_replies` in `DENOMINATOR_CORRECTION_BACKLOG` (`:569`); `AccountDeletionService.ts:100-104` confirms. `memories` / `memory_likes` / `memory_saves` remain genuinely cascaded (`:152`). | pre |
+| H84 | BAC | **BBW** | **A false green, corrected.** Blocking half stands (`routes/memories.ts:263-279`, `routes/highlights.ts:872-880`). Deletion half is false: `highlights`, `highlight_likes`, `highlight_reports`, `highlight_views` are in `UNCLASSIFIED_BACKLOG` (`lib/deletionDispositions.ts:366-369`), `highlight_replies` in `DENOMINATOR_CORRECTION_BACKLOG` (`:569`); `AccountDeletionService.ts:100-104` confirms. `memories` / `memory_likes` / `memory_saves` remain genuinely cascaded (`:152`). | pre |
 | H7 | NB | **BBW** | MemoryEvidenceService: `services/memoryProjections/evidence.ts` — normalization (`:246`), dedup (`:332`), precedence merge (`:364`), eligibility (`:435`), versioned (`:34`, `:36`). No route imports it; `memory_evidence` does not exist. | spec |
 | H8 | NB | **BBW** | EpisodeDetectionService: `episodeDetection.ts:244` `detectEpisodes`, deterministic (sorted output, digest ids), `EPISODE_DETECTOR_VERSION` (`:32`). No inputs exist — `memory_evidence` and `memory_episodes` are still absent. | spec |
 | H9 | NB | **BBW** | MemoryEligibilityService: `evidence.ts:435` `evaluateEligibility` with a closed rejection-reason set (`:391`). Test-only. | spec |
@@ -752,7 +752,7 @@ has yet been protected.
 | H99 | NB | **BBW** | `HIGHLIGHT_RANKING_FACTORS` (`highlightRanking.ts:61`) is §12's seven verbatim and `rankHighlights` (`:278`) computes them. No `ranking_score` column (2723) and no route calls it — `routes/highlights.ts` still orders by `created_at`. | spec |
 | H100 | NB | **BBW** | `manual_pin` is the first ranking factor and outranks the rest by construction. No pin column, no pin route, no pin in the client. | spec |
 | H101 | NB | **BBW** | `DIVERSITY_DIMENSIONS` (`highlightRanking.ts:74`) is trip/person/venue/activity, applied inside `rankHighlights`. Unreachable. | spec |
-| H175 | NB | **BBW** | `Idempotency-Key` is now read on the memory command routes (`lib/memoryCommandBus.ts:434, 440`; `routes/memories.ts:490`) and carried into every dispatch. The receipt table is 2710, **unapplied**, so with the kernel off a replayed key produces a second write and only a log line records the key (`MemoryDomainService.ts:344-354`). | spec |
+| H175 | NB | **BBW** | `Idempotency-Key` is now read on the memory command routes (`lib/memoryCommandBus.ts:434, 440`; `routes/memories.ts:304`) and carried into every dispatch. The receipt table is 2710, **unapplied**, so with the kernel off a replayed key produces a second write and only a log line records the key (`MemoryDomainService.ts:360-370`). | spec |
 | H187 | NB | **BBW** | `DO_NOT_RESURFACE` is declared, its surface effects are enumerated against §21's table (`highlightResurfacing.ts:157`), and it is applied to both proactive feeds. Storage unapplied (2720). Still no such control on a **Memory** — this is the Highlights surface only. | spec |
 | H188 | NB | **BBW** | `RETAIN_BUT_DO_NOT_PERSONALIZE` is separated from `DO_NOT_RESURFACE` — the body's complaint that the two were inseparable no longer holds in the vocabulary (`highlightResurfacing.ts:144-157`). Storage unapplied. | spec |
 | H192 | NB | **BBW** | `REVOCATION_DESTINATIONS` (`highlightRevocation.ts:168`) is §21's eight verbatim and `executeRevocation` (`:305`) is wired into `DELETE /highlights/:id` (`routes/highlights.ts:945`). **One of the eight is actually reached** — `cached_narrative`, and the outcome text says frankly that even that is guaranteed only for the in-process L1 cache. The rest report `not_applicable` or `not_implemented`, which the type distinguishes from success (`:180-188`). | spec |
@@ -788,13 +788,13 @@ read; the body does the same, and the counts below follow its own enumeration.
 | H115–H128 (Compass memory tools and LLM boundary) | **NB ×14** | `compass/CompassTools.ts` is unchanged — re-read at this commit, no memory-facing tool, and no memory-facing LLM path exists to constrain. |
 | §24's twelve named metrics | **NB ×12** | Re-grepped: none of the twelve names occurs in `.ts`, `.sql` or `.md`. `readMemoryCommandRejectedTotal` (`memoryCommandBus.ts:412`) is a counter, but it is not one of them. |
 | §25's 12 fixtures, 9 invariants, 9 chaos scenarios | **unchanged** | Ten new memory/highlight suites landed, but they test the new modules, not the spec's named fixtures. I declined to re-map them onto §25's list: doing so would be scoring a resemblance. |
-| H79 (public search must query a derivative, never canonical + post-filter) | **BBW** | `routes/memories.ts:423-465` is untouched by this range: still the service client over canonical `memories`, still `.limit()` before block filtering. `PublicMemoryProjection` exists in the registry and nothing routes through it. This is the single largest gap between the code that landed and the code that serves traffic. |
+| H79 (public search must query a derivative, never canonical + post-filter) | **BBW** | `routes/memories.ts:237-279` is untouched by this range: still the service client over canonical `memories`, still `.limit()` before block filtering. `PublicMemoryProjection` exists in the registry and nothing routes through it. This is the single largest gap between the code that landed and the code that serves traffic. |
 | H93 (Highlights are projections over Memories) | **BBW** | `highlight_sources` — the link that would give a Highlight a source Memory — is migration 2722, written, **unapplied**, and has no TypeScript writer. `POST /highlights` still inserts a client-supplied `mediaUrl`. |
 | H103 (Highlights remain finite) | **BBW** | A bound now exists (`routes/highlights.ts:419-420`, `FOLLOWING_FEED_DEFAULT_LIMIT`) but only behind `highlights_feed_bounded_enabled` (migration 2339), which is **not in the applied list**, so the flag has no row and `isFlagEnabled` fails closed. The following-feed is unbounded in production. |
 | H204 | **CV** | Still cannot-verify, and for a sharper reason than the body had. `2150_passport_memories_write_boundary.sql` is not among the 35 entries in `production-applied-migrations.json` — but that file's own header says it is *"a record of what WE applied, not proof of everything that is applied … a staleness tripwire, not an inventory"*. Absence there is not proof of absence in production. Resolving H204 needs a live query, which this pass did not make. |
 | H197 | **CV** | No backfill code exists in the branch. Unchanged. |
 | H2 (automatic Memories private-first) | **BBW** | `routes/stories.ts` "save to Highlight" is outside this range and still hard-codes `visibility: "public"`. |
-| H50 (Memory lifecycle machine) | **BBW** | Genuinely improved and **live**: `assertLifecycleTransition` (`memoryCommandBus.ts:253`) runs on every PATCH regardless of the kernel flag (`MemoryDomainService.ts:224`), so an illegal transition is now refused in production. It stays BBW because the stored vocabulary is still `0067`'s five and none of `CANDIDATE`, `CONFIRMED`, `MERGED`, `REJECTED` can be written. |
+| H50 (Memory lifecycle machine) | **BBW** | Genuinely improved and **live**: `assertLifecycleTransition` (`memoryCommandBus.ts:253`) runs on every PATCH regardless of the kernel flag (`MemoryDomainService.ts:240`), so an illegal transition is now refused in production. It stays BBW because the stored vocabulary is still `0067`'s five and none of `CANDIDATE`, `CONFIRMED`, `MERGED`, `REJECTED` can be written. |
 | H51 (Highlight lifecycle machine) | **BBW** | Also improved and live: `archived_at` is a real reversible archive on a column production has, and `isHighlightActive` distinguishes it from the terminal `deleted_at` (`lib/highlightPermissions.ts:95`). `DRAFT`, `PINNED` and `HIDDEN` remain unstorable (2723). |
 | H198 (owner-only by default) | **BBW** | Every memory and highlight read still runs on `getServiceClient()`; the effective default is still the TypeScript helper. What changed is that there is now exactly **one** such helper instead of five inline copies (`lib/highlightPermissions.ts:1-55`) — a real reduction in the number of places the default can drift, and not a move to the database. |
 
@@ -981,7 +981,7 @@ changed. The 154 rows that did not exist before are not "moves" and are in B.5.
 
 | id | was | now | why |
 |---|---|---|---|
-| H205 | BBW | **BAC** | §23's `canReadMemory(userId, memoryId, surface)`. Section A's body says "**no `surface` parameter**, so one verdict serves the feed, the profile listing and the single fetch alike". That is no longer the code. `artifacts/api-server/src/routes/memories.ts:190#export` declares `MemoryReadSurface = "single" \| "profile" \| "trip" \| "public_feed"`; `:198#async` takes it; and `:214#if` is the branch that makes it load-bearing — the public surface admits `visibility = 'public'` **before any relationship is consulted**, so a `custom` Memory whose allow-list contains the viewer is readable when addressed and absent from the global feed. All six call sites pass a surface. **CEILING, and it is why this is not a clean green:** the helper is module-private, and two other surfaces re-derive the rule instead of calling it — `routes/contentStamps.ts:451` and `routes/wellKnownShare.ts:523` both say in their own comments that they mirror it. One verdict now serves one route file, not the repository. |
+| H205 | BBW | **BAC** | §23's `canReadMemory(userId, memoryId, surface)`. Section A's body says "**no `surface` parameter**, so one verdict serves the feed, the profile listing and the single fetch alike". That is no longer the code. `artifacts/api-server/src/services/memory/memoryReadPolicy.ts:82#MemoryReadSurface` declares `MemoryReadSurface = "single" \| "profile" \| "trip" \| "public_feed"` (section C added a fifth, `"compass"`); `:90#canReadMemory` takes it; and `:106#public_feed` is the branch that makes it load-bearing — the public surface admits `visibility = 'public'` **before any relationship is consulted**, so a `custom` Memory whose allow-list contains the viewer is readable when addressed and absent from the global feed. All six call sites pass a surface. **CEILING, and it is why this is not a clean green:** the helper is module-private, and two other surfaces re-derive the rule instead of calling it — `routes/contentStamps.ts:451` and `routes/wellKnownShare.ts:523` both say in their own comments that they mirror it. One verdict now serves one route file, not the repository. |
 
 Two more rows keep their verdict but were graded against code that has since changed, so
 their **evidence is corrected here**. Neither is a move and neither changes a number.
@@ -989,7 +989,7 @@ their **evidence is corrected here**. Neither is a move and neither changes a nu
 - **H79** (public search must query a derivative, never canonical plus post-filtering) stays
   **BBW**, but not for section A.5's reason. A.5 says the feed is "still the service client
   over canonical `memories`, still `.limit()` before block filtering". The second half is no
-  longer true: at `artifacts/api-server/src/routes/memories.ts:716#router.get` every privacy
+  longer true: at `artifacts/api-server/src/routes/memories.ts:547#router.get` every privacy
   predicate — `state`, `visibility`, `hidden_user_ids`, the block set — now runs INSIDE the
   query and `LIMIT` applies to the already-filtered set, and a §18 `memory_public_feed`
   derivative path exists behind `memory_public_feed_projection_enabled`. What keeps it BBW is
@@ -1181,7 +1181,7 @@ production; the two that are present are name collisions with divergent schemas.
 | id | requirement | verdict | evidence |
 |---|---|---|---|
 | H107 | Do-again compiled through current-world / Temporal-Freedom engines | NB | A repository-wide grep for `doAgain`, `do_again`, `takeMeBack` and `take_me_back` across `artifacts/` and `travel-buddy-standalone/` in `.ts`, `.tsx` and `.sql` returns nothing at all — not a fixture, not a comment |
-| H108 | The eight executable actions | NB | Same grep. `add_to_trip` (`artifacts/api-server/src/compass/CompassTools.ts:406#add_to_trip`) adds a PLACE to a trip and knows nothing about a Memory |
+| H108 | The eight executable actions | NB | Same grep. `add_to_trip` (`artifacts/api-server/src/compass/CompassTools.ts:417#add_to_trip`) adds a PLACE to a trip and knows nothing about a Memory |
 | H109 | Historical / current fusion invariant | NB | No fusion path exists. The nearest artifact is the honesty note §25 now certifies (H243), which asserts the opposite direction: a historical fact must not be read as current |
 
 #### §15 Retrieval (H110–H114)
@@ -1196,7 +1196,7 @@ production; the two that are present are name collisions with divergent schemas.
 
 #### §16 Compass contract (H115–H128)
 
-`artifacts/api-server/src/compass/CompassTools.ts:98#get_user_profile` opens a list of **eleven** tools —
+`artifacts/api-server/src/compass/CompassTools.ts:109#get_user_profile` opens a list of **eleven** tools —
 `get_user_profile`, `get_current_trip`, `search_places`, `search_events`,
 `get_place_details`, `get_circle_activity`, `check_trip_conflicts`, `add_to_trip`,
 `get_whos_around`, `get_travel_compatibility`, `get_group_recommendation`. Not one is
@@ -1205,7 +1205,7 @@ constrain either.
 
 | id | requirement | verdict | evidence |
 |---|---|---|---|
-| H115 | `getMemory` | NB | Not in the eleven tools at `artifacts/api-server/src/compass/CompassTools.ts:98#get_user_profile` |
+| H115 | `getMemory` | NB | Not in the eleven tools at `artifacts/api-server/src/compass/CompassTools.ts:109#get_user_profile` |
 | H116 | `searchMemories` (Compass tool) | NB | Same. `services/memoryRetrieval/searchMemories.ts` exists and Compass cannot reach it |
 | H117 | `getSharedMemories` | NB | Same |
 | H118 | `getPlaceHistory` | NB | Same. `PlaceMemoryProjection` exists in the registry with `visit_index`; no tool reads it |
@@ -1224,7 +1224,7 @@ constrain either.
 
 Eleven of §17's seventeen commands are declared at
 `artifacts/api-server/src/lib/memoryCommandBus.ts:281#MEMORY_COMMAND_TYPES` and dispatched
-through `artifacts/api-server/src/services/memory/MemoryDomainService.ts:338#dispatchMemoryCommand`;
+through `artifacts/api-server/src/services/memory/MemoryDomainService.ts:354#dispatchMemoryCommand`;
 the other six are listed with their reasons at `:306#MEMORY_COMMAND_TYPES_NOT_DECLARED`.
 **Every declared command is BBW for one shared reason** and it is not repeated in each row:
 the durable receipt, the audit row and the event emit all live in `memory_kernel_execute`,
@@ -1244,7 +1244,7 @@ and each write is the legacy direct write with a log line marked `durable:false`
 | H135 | `SPLIT_MEMORY` | NB | Same list, same file: "nothing to split a Memory's evidence between" |
 | H136 | `ADD_MEDIA` | BBW | Declared and dispatched by `POST /memories/:id/items` |
 | H137 | `REMOVE_MEDIA` | BBW | Declared; the storage delete stays outside the command deliberately |
-| H138 | `ADD_PERSON` | BBW | Declared; authorized as consent — the tagged person only — at `artifacts/api-server/src/services/memory/MemoryDomainService.ts:279#authorizeParticipantCommand` |
+| H138 | `ADD_PERSON` | BBW | Declared; authorized as consent — the tagged person only — at `artifacts/api-server/src/services/memory/MemoryDomainService.ts:295#authorizeParticipantCommand` |
 | H139 | `REMOVE_PERSON` | BBW | Declared; owner **or** the tagged person, same function. The body's complaint that the owner could not remove a tag no longer holds |
 | H140 | `CHANGE_PLACE` | BBW | Declared, and selected by `commandTypeForPatch` precisely so a place edit is countable — the §24 metric `place_correction_rate` that would count it does not exist (H215) |
 | H141 | `CHANGE_VISIBILITY` | BBW | Declared and mapped to `memory.visibility_changed` |
@@ -1310,7 +1310,7 @@ row below is BBW or NB, never BAC.
 `docs/specs/Portava_Highlights_Memories_Development_Architecture_Spec_v1.txt` — and nowhere
 in any source file. The other two occur in COMMENTS only: `place_correction_rate` at
 `artifacts/api-server/src/services/memory/MemoryDomainService.ts:148#place_correction_rate`
-and again at `artifacts/api-server/src/routes/memories.ts:1048#place_correction_rate`, both
+and again at `artifacts/api-server/src/routes/memories.ts:902#place_correction_rate`, both
 explaining why CHANGE_PLACE is a distinct command; and `projection_lag` at
 `artifacts/api-server/src/lib/memoryOutbox.ts:233#projection_lag`, plus the different token
 `projection_lag_seconds` in a comment at
@@ -1324,7 +1324,7 @@ alerts on any of the twelve.
 | H212 | `candidate_reject_rate` | NB | Occurs only in this census and the spec. `evaluateEligibility` produces a rejection reason and nothing counts one |
 | H213 | `candidate_split_rate` | NB | Occurs only in this census and the spec; SPLIT_MEMORY is an undeclared command |
 | H214 | `candidate_merge_rate` | NB | Occurs only in this census and the spec; MERGE_MEMORY is an undeclared command |
-| H215 | `place_correction_rate` | NB | Named in two comments — `artifacts/api-server/src/services/memory/MemoryDomainService.ts:148#place_correction_rate` and `artifacts/api-server/src/routes/memories.ts:1048#place_correction_rate` — both saying the command exists so the metric COULD be counted. No counter is incremented anywhere |
+| H215 | `place_correction_rate` | NB | Named in two comments — `artifacts/api-server/src/services/memory/MemoryDomainService.ts:148#place_correction_rate` and `artifacts/api-server/src/routes/memories.ts:902#place_correction_rate` — both saying the command exists so the metric COULD be counted. No counter is incremented anywhere |
 | H216 | `participant_correction_rate` | NB | Occurs only in this census and the spec. ADD_PERSON / REMOVE_PERSON are dispatched and counted by nothing |
 | H217 | `false_memory_rate` | NB | Occurs only in this census and the spec. It is corrected-over-surfaced inferred assertions, and neither quantity is stored anywhere |
 | H218 | `explicit_memory_without_candidate_rate` | NB | Occurs only in this census and the spec |
@@ -1359,7 +1359,7 @@ gives 22 BAC, 7 BBW, 1 NB.
 | H234 | Fixture: walk-past venue that must not become a visit | **BAC** | Entry 11. Certified: the day as a whole is eligible (a ticketed visit), 2 episodes, and the paired control — the 90-second proximity ALONE — is refused with `PASS_BY_NOT_VISIT` |
 | H235 | Fixture: downloaded screenshot that must not become experienced content | **BAC** | Entry 12. Certified refused with `MEDIA_NOT_CAPTURED`; the same image re-declared as a camera capture is eligible, so the gate reads provenance rather than counting media. Mutation 2 turned it red |
 | H236 | Invariant: PRIVATE memory cannot appear in public search | **BAC** | Two surfaces, both in CI. The derivative path: HELD, `PublicMemoryProjection` emits only the published-and-public row (only_me, custom-with-allow-list, draft and deleted all absent) and the PUBLIC namespace refuses an owner-private projection on the way in. The LIVE path: `artifacts/api-server/src/test/memoriesPublicFeedPrivacy.test.ts:234#describe` asserts the same property on the real `GET /memories`, including that a `custom` Memory whose allow-list contains the viewer stays out of the global feed. Mutations 1 and 3 each turned it red |
-| H237 | Invariant: deleted memory cannot remain in Compass retrieval | BBW | HELD on the only Compass-facing memory artifact that exists: the deleted Memory leaves `CompassMemoryProjection`, its registration is revoked with an emptied payload, and reading the revoked derivative refuses with `derivative_revoked` rather than returning an empty page. **BBW because the named surface does not exist** — `artifacts/api-server/src/compass/CompassTools.ts:98#get_user_profile` declares no memory tool |
+| H237 | Invariant: deleted memory cannot remain in Compass retrieval | BBW | HELD on the only Compass-facing memory artifact that exists: the deleted Memory leaves `CompassMemoryProjection`, its registration is revoked with an emptied payload, and reading the revoked derivative refuses with `derivative_revoked` rather than returning an empty page. **BBW because the named surface does not exist** — `artifacts/api-server/src/compass/CompassTools.ts:109#get_user_profile` declares no memory tool |
 | H238 | Invariant: rejected candidate cannot become a Highlight | NB | `NO_SURFACE`. The rejection half is real and asserted; the second half has nothing to assert against, because nothing turns a candidate into a Highlight — `highlight_sources` is 2722, unapplied, with no writer, and `POST /highlights` inserts a client-supplied `mediaUrl`. The suite asserts this exact status at `artifacts/api-server/src/test/memoryCertificationInvariants.test.ts:117#reports` so it can never drift into looking like a pass |
 | H239 | Invariant: planned activity without occurrence cannot earn a visit Memory/Stamp | BBW | HELD: PLANNED+SAVED alone is refused with `PLANNED_OR_SAVED_ONLY` and the same set plus one OCCURRED record is eligible, so the refusal is the intent rule and not a blanket deny. BBW because it is proved on `evidence.ts`, which no route imports; the live stamp path enforces the rule by requiring a real check-in (H4) and is not covered by this test |
 | H240 | Invariant: blocked person cannot be newly resurfaced through shared-memory recommendations | **BAC** | HELD on a module a route imports, and the live half was already covered: `HIDE_PERSON_FROM_RESURFACING` suppresses exactly its subject across proactive resurfacing and recap, does not leak to another participant, and an UNREADABLE preference set suppresses rather than serving. `artifacts/api-server/src/test/memoriesBlockFailClosed.test.ts:109#describe` covers the live feed's fail-closed block filter. **Ceiling: 2720 is unapplied, so in production the set is `absent` and suppresses nothing** |
@@ -1401,7 +1401,7 @@ phases 0–4, and nothing about whether the phases themselves are done.
 |---|---|---|---|
 | H262 | §28.3 — never query a semantic substitute for an unknown canonical place or person and pretend it is the requested entity | NB | Graded on the surface where a violation would live (rule 7). No semantic retrieval over Memories exists — the only scorer is deterministic token overlap and it may not add a row — and no guard exists either, so this is NOT-BUILT rather than assumed-satisfied |
 | H263 | §28.10 — never route public-world intelligence directly from private Memory without consent, eligibility and anonymization | **BAC** | The only path from derived memory to any shared surface is `artifacts/api-server/src/lib/mapProducers/memoryProducer.ts:13#memory_remembers_for_user`, and the RPC is called with the VIEWER's own id — strictly the viewer's own memory on the viewer's own map. Nothing feeds memory into world intelligence. Re-read at this commit |
-| H264 | §28.11 — never swallow projection or schema failures into plausible-looking empty history without a structured error state | **BAC** | `artifacts/api-server/src/routes/memories.ts:769#req.log.error` returns `db_error` on a block-lookup failure rather than serving an unfiltered feed, and `loadMemoryGemContext` records `determined: false` and coarsens rather than passing silently. §25's `PROJECTION_WORKER_OUTAGE` (H247) now makes the same rule executable one layer down: an unreadable registry refuses with a named reason instead of returning zero rows |
+| H264 | §28.11 — never swallow projection or schema failures into plausible-looking empty history without a structured error state | **BAC** | `artifacts/api-server/src/routes/memories.ts:600#req.log.error` returns `db_error` on a block-lookup failure rather than serving an unfiltered feed, and `loadMemoryGemContext` records `determined: false` and coarsens rather than passing silently. §25's `PROJECTION_WORKER_OUTAGE` (H247) now makes the same rule executable one layer down: an unreadable registry refuses with a named reason instead of returning zero rows |
 | H265 | §28.16 — always preserve original user voice and original-language text in summaries and translations | NB | No summarization of Memories exists to preserve anything through. `NarrativeDerivative` is `NOT_CONFIGURED` (H172) |
 | H266 | §28.17 — always provide a deterministic fallback renderer when AI presentation fails | NB | No AI presentation exists. `renderer_version` appears only in the header comment of the unapplied `artifacts/api-server/src/migrations/2723_highlight_class_lifecycle_and_pin.sql:8#renderer_version` and in a comment in `services/highlights/highlightLifecycle.ts` |
 
@@ -1474,7 +1474,7 @@ edited none of them. Each was read, not skimmed:
 
 Section B's §16 paragraph said `CompassTools.ts` "opens a list of **eleven** tools" and named
 them. **That was true at `254e1876` and is false on the merged tree.** The literal array at
-`artifacts/api-server/src/compass/CompassTools.ts:94#COMPASS_TOOL_DEFINITIONS` now holds
+`artifacts/api-server/src/compass/CompassTools.ts:105#COMPASS_TOOL_DEFINITIONS` now holds
 **twenty-five** entries and spreads eight more at `:467#TELEGRAPH_COMPASS_TOOL_DEFINITIONS`,
 so the real figure is **thirty-three**. The twenty-two added since section B measured are
 `get_freedom_windows`, `get_route_chain`, `get_today_state`, `get_crew_state`,
@@ -1507,11 +1507,11 @@ row, and the wording each one supports was re-read at the new line before it was
 
 | citation | was | now | why |
 |---|---|---|---|
-| the eleven-tool list (×3 rows) | `CompassTools.ts:83#name` | `CompassTools.ts:98#get_user_profile` | `:83` had drifted onto a comment. **It was passing `check:doc-citations` anyway**, because the anchor was the single token `name` and line 83 reads "…the Telegraph spec names." A one-word anchor is a substring lottery; the replacement anchors on the tool name itself. |
-| `add_to_trip` | `CompassTools.ts:157#name` | `CompassTools.ts:406#add_to_trip` | Same defect, worse outcome: `:157` is now `get_place_details`, and `#name` matched it happily. |
-| the tool array (§16 rows) | `CompassTools.ts:62-210` | `CompassTools.ts:94-468` | The array's real extent on the merged tree. |
-| H129's tool set | `CompassTools.ts:62` | `CompassTools.ts:94` | Same. |
-| H129's write-shaped tool | `:158` | `CompassTools.ts:406` | Bare `:158` also named no file; now fully qualified. |
+| the eleven-tool list (×3 rows) | `CompassTools.ts:83#name` | `CompassTools.ts:109#get_user_profile` | `:83` had drifted onto a comment. **It was passing `check:doc-citations` anyway**, because the anchor was the single token `name` and line 83 reads "…the Telegraph spec names." A one-word anchor is a substring lottery; the replacement anchors on the tool name itself. |
+| `add_to_trip` | `CompassTools.ts:168#name` | `CompassTools.ts:417#add_to_trip` | Same defect, worse outcome: `:157` is now `get_place_details`, and `#name` matched it happily. |
+| the tool array (§16 rows) | `CompassTools.ts:62-221` | `CompassTools.ts:105-480` | The array's real extent on the merged tree. |
+| H129's tool set | `CompassTools.ts:62` | `CompassTools.ts:105` | Same. |
+| H129's write-shaped tool | `:158` | `CompassTools.ts:417` | Bare `:158` also named no file; now fully qualified. |
 | H129's `forgetMemory` | `routes/compass.ts:2150` | `routes/compass.ts:2226` | +76 lines above it; the call is unchanged. |
 | H4's GPS city stamp | `routes/location.ts:334-374` | `routes/location.ts:392-432` | +58 lines above it; the block is unchanged. |
 | the `passport_memories_enabled` gate | `routes/location.ts:357` | `routes/location.ts:419` | The mechanical +58 lands on `});`, which is what `:357` had been pointing at too. A sentence about a flag read should not point at a closing paren, so this one goes to the line that names the flag. |
