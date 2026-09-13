@@ -160,210 +160,24 @@ function protectMemoryRow(
 // routes are intentionally ungated (backend is live).
 
 // ── Visibility helpers ─────────────────────────────────────────────────────────
+//
+// §23's `canReadMemory(userId, memoryId, surface)`, the accepted-crew rule and
+// the bidirectional block check MOVED to `services/memory/memoryReadPolicy.ts`.
+// Nothing in the ladder changed; what changed is that it is no longer
+// module-private, which was the CEILING census-highlights-memories H205 stated
+// on itself. §16's Compass accessors now call the same function rather than
+// adding a fourth transcription of the rule to the repository.
+import {
+  VISIBILITY_VALUES,
+  canReadMemory,
+  canPublishMemory,
+  acceptedCrewOfTrip,
+  isBlocked,
+  type MemoryReadSurface,
+} from "../services/memory/memoryReadPolicy.js";
 
-const VISIBILITY_VALUES = ["public", "friends_only", "trip_crew", "circle_only", "only_me", "custom"] as const;
-type MemoryVisibility = (typeof VISIBILITY_VALUES)[number];
+export type { MemoryReadSurface };
 
-/**
- * The surface a read is being served on. Spec v1 §23 names the policy function
- * `canReadMemory(userId, memoryId, surface)` — the surface is part of the
- * signature because one verdict must not serve every surface.
- *
- *   "single"      GET /memories/:id — a direct, addressed read. The full
- *                 audience ladder applies: an allow-listed viewer of a `custom`
- *                 Memory, a mutual follower of a `friends_only` one and a crew
- *                 member of a `trip_crew` one may all read it here.
- *   "profile"     GET /users/:userId/memories — same ladder; the viewer asked
- *                 for one named owner.
- *   "trip"        GET /trips/:tripId/memory — same ladder, scoped to a trip.
- *   "public_feed" GET /memories — the discovery surface, and the reason this
- *                 parameter exists. It is a PUBLIC surface: nothing but
- *                 `visibility = 'public'` is admissible on it, no matter what
- *                 relationship the viewer has to the owner. A `custom` Memory
- *                 whose allow-list happens to contain the viewer must not
- *                 appear in a global feed — being permitted to see something
- *                 when you ask for it is not the same as having it pushed at
- *                 you among strangers' content. §10 states the general form:
- *                 canonical storage and public projections are separate, and
- *                 the public surface gets the narrower rule.
- */
-export type MemoryReadSurface = "single" | "profile" | "trip" | "public_feed";
-
-/**
- * Spec v1 §23 `canReadMemory(userId, memoryId, surface)`.
- *
- * Determines whether `viewerId` can read a memory row given raw DB data, ON THE
- * NAMED SURFACE. Always returns true for the owner.
- */
-async function canReadMemory(
-  sc: any,
-  memory: any,
-  viewerId: string | null,
-  surface: MemoryReadSurface,
-): Promise<boolean> {
-  if (viewerId === memory.owner_id) return true;
-  if (memory.state !== "published") return false;
-
-  const vis: MemoryVisibility = memory.visibility ?? "only_me";
-
-  if (vis === "only_me") return false;
-
-  // The public surface admits exactly one visibility class, before any
-  // relationship is consulted. Everything below this line is the addressed-read
-  // ladder and must not run for the feed.
-  if (surface === "public_feed") {
-    if (vis !== "public") return false;
-    const hiddenOnFeed: string[] = memory.hidden_user_ids ?? [];
-    return !(viewerId != null && hiddenOnFeed.includes(viewerId));
-  }
-
-  if (!viewerId) return vis === "public";
-
-  // A hidden viewer is denied for EVERY visibility mode. The hide list used to be
-  // consulted only in the 'custom' branch, so a user the owner hid could still
-  // read the memory when it was public / friends_only / trip_crew / circle_only
-  // (audit MEM·M1). Owner already returned true above, so this never self-hides.
-  const hidden: string[] = memory.hidden_user_ids ?? [];
-  if (hidden.includes(viewerId)) return false;
-
-  if (vis === "public") return true;
-
-  if (vis === "custom") {
-    const allowed: string[] = memory.allowed_user_ids ?? [];
-    if (allowed.includes(viewerId)) return true;
-    return false;
-  }
-
-  // EVERY GATE READ BELOW BINDS AND INSPECTS `.error`.
-  //
-  // supabase-js RESOLVES on a database error, so the old `Boolean(data)` /
-  // `if (!data) return false` forms turned an unreadable follow graph, crew or
-  // circle into a confident "not permitted". The DENIAL is right — withholding
-  // is the safe answer — but it was indistinguishable from a real one at every
-  // level: no different value, no log, nothing an operator could see. These are
-  // the four entries routes/memories.ts carries on the unchecked-reads ledger.
-  //
-  // The verdict is deliberately unchanged (still `false`), because this helper
-  // is called per-row across the discovery feed and the profile listing, where
-  // a per-row "undecidable" has no honest rendering. What changes is that the
-  // failure is now VISIBLE.
-  const denyUnreadable = (table: string, err: unknown): false => {
-    logger.error(
-      { err, table, memoryId: memory?.id, viewerId, visibility: vis, surface },
-      "memories: visibility gate read failed — withholding the memory (indistinguishable from a real deny in the response)",
-    );
-    return false;
-  };
-
-  if (vis === "friends_only") {
-    const { data, error } = await sc
-      .from("user_follows")
-      .select("following_id")
-      .eq("follower_id", memory.owner_id)
-      .eq("following_id", viewerId)
-      .maybeSingle();
-    if (error) return denyUnreadable("user_follows", error);
-    if (!data) return false;
-    const { data: back, error: backErr } = await sc
-      .from("user_follows")
-      .select("following_id")
-      .eq("follower_id", viewerId)
-      .eq("following_id", memory.owner_id)
-      .maybeSingle();
-    if (backErr) return denyUnreadable("user_follows", backErr);
-    return Boolean(back);
-  }
-
-  if (vis === "trip_crew") {
-    if (!memory.trip_id) return false;
-    // THE OLD PREDICATE WAS `trip_members WHERE trip_id = … AND user_id = viewer`
-    // AND NOTHING ELSE — no role filter, no status filter, and no check on the
-    // MEMORY OWNER at all. Any row admitted: role='invited' (never accepted the
-    // invitation), status='removed' (thrown off the trip), any role whatsoever.
-    // requireTripMember (lib/http.ts, the definition of record) accepts
-    //     role IN (owner, co_host, member, viewer)
-    //     AND (status IS NULL OR status = 'accepted')
-    // and falls back to trips.owner_id when no row exists. Migration 2530
-    // repaired the identical shape in the RLS policy behind highlights;
-    // routes/highlights.ts and routes/stories.ts carry the app-side rule. This
-    // is the third copy, and it was the loosest of the three.
-    const crew = await acceptedCrewOfTrip(sc, memory.trip_id);
-    if (!crew.ok) return denyUnreadable("trip_members", crew.error);
-    return crew.ids.has(viewerId) && crew.ids.has(memory.owner_id as string);
-  }
-
-  if (vis === "circle_only") {
-    const { data, error } = await sc
-      .from("circle_memberships")
-      .select("other_id")
-      .eq("user_id", memory.owner_id)
-      .eq("other_id", viewerId)
-      .maybeSingle();
-    if (error) return denyUnreadable("circle_memberships", error);
-    return Boolean(data);
-  }
-
-  return false;
-}
-
-/* ============================================================================
- * Trip crew — requireTripMember's rule, the third app-side copy.
- *
- * See the note in canReadMemory's trip_crew branch. The rule is duplicated
- * rather than imported because that is already this repo's shape for it
- * (lib/circleAccessGuard.ts, lib/mediaEligibility.ts, routes/geofence.ts,
- * routes/highlights.ts, routes/stories.ts); one home for all of them is worth
- * doing and is not this change.
- *
- * FAIL CLOSED: both reads check `.error` and the caller withholds.
- * ============================================================================ */
-const ACCEPTED_TRIP_ROLES = new Set(["owner", "co_host", "member", "viewer"]);
-
-function isAcceptedMembershipRow(r: { role?: string | null; status?: string | null }): boolean {
-  if (!r.role || !ACCEPTED_TRIP_ROLES.has(r.role)) return false;
-  return r.status == null || r.status === "accepted";
-}
-
-/**
- * The accepted crew of `tripId` — accepted trip_members rows, plus the
- * trips.owner_id fallback when the owner holds no row (the row wins when one
- * exists, so an owner whose own row says status='removed' is NOT crew).
- */
-async function acceptedCrewOfTrip(
-  sc: any,
-  tripId: string,
-): Promise<{ ok: true; ids: Set<string> } | { ok: false; error: unknown }> {
-  const [rows, trip] = await Promise.all([
-    sc.from("trip_members").select("user_id, role, status").eq("trip_id", tripId),
-    sc.from("trips").select("owner_id").eq("id", tripId).maybeSingle(),
-  ]);
-  if (rows.error) return { ok: false, error: rows.error };
-  if (trip.error) return { ok: false, error: trip.error };
-  const ids = new Set<string>();
-  const rowUsers = new Set<string>();
-  for (const r of (rows.data ?? []) as any[]) {
-    rowUsers.add(r.user_id as string);
-    if (isAcceptedMembershipRow(r)) ids.add(r.user_id as string);
-  }
-  const ownerId = (trip.data as any)?.owner_id as string | null | undefined;
-  if (ownerId && !rowUsers.has(ownerId)) ids.add(ownerId);
-  return { ok: true, ids };
-}
-
-/** Check blocks in both directions. Returns true if blocked. */
-async function isBlocked(sc: any, a: string, b: string): Promise<boolean> {
-  if (a === b) return false;
-  const [r1, r2] = await Promise.all([
-    sc.from("blocks").select("blocked_id").eq("blocker_id", a).eq("blocked_id", b).maybeSingle(),
-    sc.from("blocks").select("blocker_id").eq("blocker_id", b).eq("blocked_id", a).maybeSingle(),
-  ]);
-  // Fail CLOSED: if either block lookup errors we cannot prove the two users are
-  // unblocked, so treat them as blocked. supabase-js resolves (does not throw)
-  // on a DB error, so an unchecked error here would silently read as "not
-  // blocked" and leak the owner's memory content to a blocked viewer.
-  if (r1.error || r2.error) return true;
-  return Boolean(r1.data) || Boolean(r2.data);
-}
 
 /**
  * The viewer's block set, in both directions, as an explicit result.
@@ -597,6 +411,23 @@ router.post("/memories", async (req, res) => {
   // vocabulary is what lets the event payload carry a §5 `to_state` rather than
   // the legacy column value.
   const createState = lifecycleStateOf(d.state);
+
+  // §23 `canPublishMemory(userId, memoryId, audience)`. It refuses only the
+  // audiences canReadMemory could deliver to NOBODY - a crew audience with no
+  // trip, a crew audience whose owner is not accepted crew, and a custom
+  // audience with an empty list - so a user is never told their Memory is
+  // shared with people it reaches none of. See
+  // services/memory/memoryReadPolicy.ts for why those three and no others.
+  const publishable = await canPublishMemory(
+    sc,
+    user.id,
+    { owner_id: user.id, trip_id: d.tripId ?? null, allowed_user_ids: d.allowedUserIds },
+    d.visibility,
+  );
+  if (!publishable.ok) {
+    sendError(res, "conflict", publishable.message, { exposeDetail: true, reason: publishable.reason });
+    return;
+  }
 
   const precisionEnabled = await isFlagEnabled(sc, "memory_location_precision_enabled");
 
@@ -1018,6 +849,29 @@ router.patch("/memories/:id", async (req, res) => {
   // no table that does not exist.
   const lifecycle = guardLifecycle(existing.state, d.state);
   if (!lifecycle.ok) { sendCommandFailure(req, res, lifecycle); return; }
+
+  // §23 `canPublishMemory`, on the row AS IT WOULD BE. Evaluating the merged
+  // row and not just `d.visibility` is the whole point: emptying an allow-list
+  // while leaving the visibility field alone silently reduces the audience to
+  // nobody without `visibility` appearing in the patch at all. Skipped entirely
+  // when neither input is touched, so an unrelated caption edit costs no extra
+  // read.
+  if (d.visibility !== undefined || d.allowedUserIds !== undefined) {
+    const merged = {
+      id: existing.id as string,
+      owner_id: existing.owner_id as string,
+      trip_id: (existing.trip_id as string | null) ?? null,
+      allowed_user_ids: d.allowedUserIds !== undefined
+        ? d.allowedUserIds
+        : ((existing.allowed_user_ids as string[] | null) ?? []),
+    };
+    const audience = d.visibility !== undefined ? d.visibility : (existing.visibility as string | null);
+    const publishable = await canPublishMemory(sc, user.id, merged, audience);
+    if (!publishable.ok) {
+      sendError(res, "conflict", publishable.message, { exposeDetail: true, reason: publishable.reason });
+      return;
+    }
+  }
 
   const patch: Record<string, unknown> = {};
   if (d.title !== undefined) patch.title = d.title;

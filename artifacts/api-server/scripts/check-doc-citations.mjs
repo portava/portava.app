@@ -216,7 +216,7 @@ export const COVERED = [
 // all 13 by re-reading the anchor at the cited line, and the 106 UNANCHORED
 // citations into the same three files moved silently and are still wrong. The
 // ceiling below did NOT fall this pass; §12.4 says why.
-export const MIN_ANCHORED_CITATIONS = 1701;
+export const MIN_ANCHORED_CITATIONS = 1705;
 
 // ---------------------------------------------------------------------------
 // THE FULL-ANCHOR PASS, and why it is a SECOND pass rather than a wider ANCHOR
@@ -299,7 +299,12 @@ export const MIN_FULL_ANCHOR_CITATIONS = 1574;
 // census-compass and census-telegraph that were ALREADY wrong at HEAD —
 // `:18` a blank line, `:81` a ` */`, `:152` a `  }`. The ratchet's own
 // direction, twice on the day it was added.
-export const MAX_UNANCHORED_CITATIONS = 6491;
+// LOWERED 2026-09-13 by section C, 6491 -> 6490. A ceiling that may only fall has to be
+// pulled down when it falls, or the one citation of headroom it just gained is headroom
+// for the next unanchored one. The single citation is census-telegraph's
+// `routes/memories.ts:1858`, which this pass had to repoint anyway because the file
+// shrank past it, and which got an anchor on the way.
+export const MAX_UNANCHORED_CITATIONS = 6490;
 
 // Exported so src/test/docCitations.test.ts walks the same tree: a second
 // checkout under .claude/worktrees/ (an agent's) carries stale copies of every

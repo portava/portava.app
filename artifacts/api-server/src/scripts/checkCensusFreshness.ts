@@ -474,6 +474,29 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/migrations/2730_memory_derivative_registry.sql",
     "artifacts/api-server/src/test/memoriesPublicFeedPrivacy.test.ts",
     "artifacts/api-server/src/server/trips/outboxWorker.ts",
+    // WIDENED 2026-09-13 by section C, which built §16's eight Compass Memory
+    // accessors and §14's fusion boundary. Each of the three is a SUBJECT of
+    // rows this census scores (H115-H128, H5/H70/H109, H207), so a change to any
+    // of them must age the document.
+    //
+    // Two more, added when check:census-scope-coverage put this document at
+    // 95.6% against its 96% floor and named four files. Two of the four are
+    // genuinely NOT graded here and are left out: `domain/trips/commands/tripKernel.ts`
+    // and `compass/TelegraphConversationTools.ts` are each cited exactly once, in
+    // a sentence saying the thing in them belongs to another lane. The other two
+    // are subjects:
+    //   lib/openai.ts — section C.2 rests its whole §16 reachability argument on
+    //     what that module does when the API key is absent. If it changes to hard
+    //     fail, or to a client that works without one, fourteen C rows change
+    //     their ceiling and possibly their verdict.
+    //   test/storyHighlightVisibility.test.ts — H2's evidence that the Story-to-
+    //     Highlight audience escalation is closed AND covered. Deleting it would
+    //     not change the code, and would change what this census can claim.
+    "artifacts/api-server/src/lib/openai.ts",
+    "artifacts/api-server/src/test/storyHighlightVisibility.test.ts",
+    "artifacts/api-server/src/compass/MemoryCompassTools.ts",
+    "artifacts/api-server/src/test/memoryCompassTools.test.ts",
+    "artifacts/api-server/src/test/memoryPublishPolicy.test.ts",
     "artifacts/api-server/src/services/memoryCertification/",
     "artifacts/api-server/src/test/memoryCertificationFixtures.test.ts",
     "artifacts/api-server/src/test/memoryCertificationInvariants.test.ts",
