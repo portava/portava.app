@@ -19,7 +19,29 @@ import React from 'react';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 
 import { LayoverSafeReturnCard } from '../LayoverSafeReturnCard.tsx';
+import { useSafeReturnAbort } from '../useSafeReturnAbort.ts';
 import type { LayoverOverview } from '../../../services/layover.ts';
+
+/**
+ * The card no longer owns the abort: `useSafeReturnAbort` does, because the
+ * footer CTA and the map's airport element fire the SAME one (census L42,
+ * L123). This harness is the screen's half of that arrangement, and it is
+ * deliberately the real hook rather than a stub — every claim below is still
+ * "the press reaches `/return-now`", not "the press calls a spy".
+ */
+function CardUnderTest(props: {
+  overview: LayoverOverview; nowMs: number; canAbort: boolean; onAborted?: () => void;
+}) {
+  const abort = useSafeReturnAbort(props.overview.session.id, props.onAborted);
+  return (
+    <LayoverSafeReturnCard
+      overview={props.overview}
+      nowMs={props.nowMs}
+      canAbort={props.canAbort}
+      abort={abort}
+    />
+  );
+}
 
 // NOTE: intentionally exhaustive — requireActual on lib/supabase.ts constructs a
 // real Supabase client through SecureStoreAdapter, which needs native modules.
@@ -205,7 +227,7 @@ function returnNowCalls() {
 
 test('the RETURN TO AIRPORT press POSTs to /return-now for this session', async () => {
   fetchSpy.mockResolvedValue(jsonResponse(200, ABORT_OK_BODY));
-  await render(<LayoverSafeReturnCard overview={overviewFixture()} nowMs={CERTIFIED_MS} canAbort />);
+  await render(<CardUnderTest overview={overviewFixture()} nowMs={CERTIFIED_MS} canAbort />);
 
   fireEvent.press(screen.getByTestId('return-to-airport-btn'));
 
@@ -218,7 +240,7 @@ test('the RETURN TO AIRPORT press POSTs to /return-now for this session', async 
 
 test('a double tap fires exactly one request', async () => {
   fetchSpy.mockResolvedValue(jsonResponse(200, ABORT_OK_BODY));
-  await render(<LayoverSafeReturnCard overview={overviewFixture()} nowMs={CERTIFIED_MS} canAbort />);
+  await render(<CardUnderTest overview={overviewFixture()} nowMs={CERTIFIED_MS} canAbort />);
 
   // Two presses in the SAME frame — invoked straight off the element so both
   // land before React can commit `busy`, which is the situation a state-only
@@ -242,7 +264,7 @@ test('a double tap fires exactly one request', async () => {
 
 test('a successful abort renders the hard return time, the time left and what was cancelled', async () => {
   fetchSpy.mockResolvedValue(jsonResponse(200, ABORT_OK_BODY));
-  await render(<LayoverSafeReturnCard overview={overviewFixture()} nowMs={CERTIFIED_MS} canAbort />);
+  await render(<CardUnderTest overview={overviewFixture()} nowMs={CERTIFIED_MS} canAbort />);
 
   fireEvent.press(screen.getByTestId('return-to-airport-btn'));
 
@@ -257,7 +279,7 @@ test('a successful abort renders the hard return time, the time left and what wa
 
 test('a 500 partial abort still shows the return contract, not a generic error', async () => {
   fetchSpy.mockResolvedValue(jsonResponse(500, ABORT_PARTIAL_BODY));
-  await render(<LayoverSafeReturnCard overview={overviewFixture()} nowMs={CERTIFIED_MS} canAbort />);
+  await render(<CardUnderTest overview={overviewFixture()} nowMs={CERTIFIED_MS} canAbort />);
 
   fireEvent.press(screen.getByTestId('return-to-airport-btn'));
 
@@ -275,7 +297,7 @@ test('an already-ended session (400) is reported as ended, not as a retryable er
   fetchSpy.mockResolvedValue(
     jsonResponse(400, { error: 'invalid_payload', message: 'This layover is already completed.' }),
   );
-  await render(<LayoverSafeReturnCard overview={overviewFixture()} nowMs={CERTIFIED_MS} canAbort />);
+  await render(<CardUnderTest overview={overviewFixture()} nowMs={CERTIFIED_MS} canAbort />);
 
   fireEvent.press(screen.getByTestId('return-to-airport-btn'));
 
@@ -286,7 +308,7 @@ test('an already-ended session (400) is reported as ended, not as a retryable er
 
 test('offline keeps the last certified deadline on screen instead of blanking it', async () => {
   fetchSpy.mockRejectedValue(new TypeError('Network request failed'));
-  await render(<LayoverSafeReturnCard overview={overviewFixture()} nowMs={CERTIFIED_MS} canAbort />);
+  await render(<CardUnderTest overview={overviewFixture()} nowMs={CERTIFIED_MS} canAbort />);
 
   fireEvent.press(screen.getByTestId('return-to-airport-btn'));
 
@@ -298,7 +320,7 @@ test('offline keeps the last certified deadline on screen instead of blanking it
 
 test('a fresh bundle shows the deadline as live, with no staleness caption', async () => {
   await render(
-    <LayoverSafeReturnCard
+    <CardUnderTest
       overview={overviewFixture()}
       nowMs={CERTIFIED_MS + 5 * 60_000}
       canAbort
@@ -310,7 +332,7 @@ test('a fresh bundle shows the deadline as live, with no staleness caption', asy
 
 test('past staleAfter the deadline is relabelled and captioned with its age', async () => {
   await render(
-    <LayoverSafeReturnCard
+    <CardUnderTest
       overview={overviewFixture()}
       nowMs={CERTIFIED_MS + 40 * 60_000}
       canAbort
@@ -326,7 +348,7 @@ test('past staleAfter the deadline is relabelled and captioned with its age', as
 // ── §2.1 certification is on screen ──────────────────────────────────────────
 
 test('the certification line names when the answer was computed and by which rules', async () => {
-  await render(<LayoverSafeReturnCard overview={overviewFixture()} nowMs={CERTIFIED_MS} canAbort />);
+  await render(<CardUnderTest overview={overviewFixture()} nowMs={CERTIFIED_MS} canAbort />);
   const line = screen.getByTestId('safe-return-certification');
   const text = (line.props.children as unknown[]).join('');
   expect(text).toContain('engine 2026.09.02-3');
@@ -343,7 +365,7 @@ test('the certified return state, not the local clock, drives the headline', asy
     ...ov,
     safeReturn: { ...ov.safeReturn, returnState: 'CONNECTION_AT_RISK', primaryAction: 'recover_connection' },
   };
-  await render(<LayoverSafeReturnCard overview={escalated} nowMs={CERTIFIED_MS} canAbort />);
+  await render(<CardUnderTest overview={escalated} nowMs={CERTIFIED_MS} canAbort />);
   expect(screen.getByTestId('safe-return-title').props.children).toBe('Your connection is at risk');
   expect(screen.getByTestId('safe-return-state').props.children).toBe('CONNECTION AT RISK');
 });
@@ -351,7 +373,7 @@ test('the certified return state, not the local clock, drives the headline', asy
 test('a non-active session offers no abort control at all', async () => {
   const ov = overviewFixture();
   const ended: LayoverOverview = { ...ov, session: { ...ov.session, status: 'completed' } };
-  await render(<LayoverSafeReturnCard overview={ended} nowMs={CERTIFIED_MS} canAbort={false} />);
+  await render(<CardUnderTest overview={ended} nowMs={CERTIFIED_MS} canAbort={false} />);
   expect(screen.queryByTestId('return-to-airport-btn')).toBeNull();
   expect(screen.getByTestId('safe-return-inactive')).toBeTruthy();
 });

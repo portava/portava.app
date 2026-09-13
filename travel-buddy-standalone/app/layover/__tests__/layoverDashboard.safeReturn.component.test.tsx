@@ -25,7 +25,7 @@
  * other test in the repository would stay green.
  */
 import React from 'react';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react-native';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 
 import LayoverDashboardScreen from '../[id].tsx';
 
@@ -69,7 +69,19 @@ jest.mock('../../../src/components/layover/LayoverPlanSection', () => ({ Layover
 // NOTE: intentional stub — see above.
 jest.mock('../../../src/components/layover/LayoverRecsSection', () => ({ LayoverRecsSection: () => null }));
 // NOTE: intentional stub — see above.
-jest.mock('../../../src/components/layover/LayoverMapCard', () => ({ LayoverMapCard: () => null }));
+// NOT a null stub: the map card's own test proves it can BE a return CTA
+// anchor, and this one proves the screen actually hands it one. A component
+// that could anchor the CTA but is passed no return facts anchors nothing —
+// the same reachability argument this whole file exists for (census L123).
+jest.mock('../../../src/components/layover/LayoverMapCard', () => {
+  const { View } = require('react-native');
+  return {
+    LayoverMapCard: (props: any) => {
+      (global as any).__mapCardProps = props;
+      return <View testID="layover-map-card-stub" />;
+    },
+  };
+});
 // NOTE: intentional stub — see above.
 jest.mock('../../../src/components/layover/LayoverPeopleSection', () => ({ LayoverPeopleSection: () => null }));
 
@@ -430,3 +442,96 @@ test('"Not now" dismisses the explanation and asks the OS for nothing', async ()
   expect(layoverService.setReturnDeadline).not.toHaveBeenCalled();
   expect(notifications.scheduleLocalNotificationAt).not.toHaveBeenCalled();
 });
+
+// ══════════════════════════════════════════════════════════════════════════
+// §5 L42 — "RETURN_SOON → RETURN_NOW: switch primary CTA to Return to Airport"
+//
+// The footer held "Remind me / Ask locals / End" in every posture, which §5's
+// row recorded as "No CTA ever switches" and §13.4 declined to fix because
+// doing it honestly meant lifting the abort out of the card. It is lifted
+// (`useSafeReturnAbort`), so the footer's primary slot can fire the SAME
+// abort the card does, and the contract it returns still lands in one place.
+//
+// The switch is keyed on the server's `returnRoutePrimary`. That matters: a
+// footer that re-derived RETURN_NOW from a local clock would be a second
+// opinion about the one number a traveller acts on.
+// ══════════════════════════════════════════════════════════════════════════
+
+test('L42 — at RETURN_NOW the primary footer control IS Return to airport', async () => {
+  (global as any).__overview = overview(true);
+  await render(<LayoverDashboardScreen />);
+
+  await waitFor(() => expect(screen.getByTestId('layover-footer-return-now')).toBeTruthy());
+  // And the control it replaced is gone: a reminder is a promise about a
+  // future that has arrived.
+  expect(screen.queryByTestId('layover-remind-me')).toBeNull();
+});
+
+test('L42 — in a NORMAL posture the footer is unchanged', async () => {
+  (global as any).__overview = overview(false);
+  await render(<LayoverDashboardScreen />);
+
+  await waitFor(() => expect(screen.getByTestId('layover-remind-me')).toBeTruthy());
+  expect(screen.queryByTestId('layover-footer-return-now')).toBeNull();
+});
+
+test('L42 — the footer CTA fires the SAME abort, not a second one', async () => {
+  layoverService.returnToAirportNow.mockClear();
+  (global as any).__overview = overview(true);
+  await render(<LayoverDashboardScreen />);
+
+  await waitFor(() => expect(screen.getByTestId('layover-footer-return-now')).toBeTruthy());
+  fireEvent.press(screen.getByTestId('layover-footer-return-now'));
+
+  await waitFor(() => expect(layoverService.returnToAirportNow).toHaveBeenCalledTimes(1));
+  expect(layoverService.returnToAirportNow).toHaveBeenCalledWith('sess-1');
+});
+
+test('L42 — the card and the footer share one controller, so two taps are one POST', async () => {
+  // The double-press guard lives in the hook, not in either control. If each
+  // control owned its own abort this would be 2.
+  layoverService.returnToAirportNow.mockClear();
+  // A DEFERRED, not a timer: the abort must still be in flight when the second
+  // control is pressed, and the test must not leave a pending promise behind
+  // for the next one.
+  let release: (v: unknown) => void = () => {};
+  layoverService.returnToAirportNow.mockImplementation(
+    () => new Promise((resolve) => { release = resolve; }),
+  );
+  (global as any).__overview = overview(true);
+  await render(<LayoverDashboardScreen />);
+
+  await waitFor(() => expect(screen.getByTestId('layover-footer-return-now')).toBeTruthy());
+  fireEvent.press(screen.getByTestId('layover-footer-return-now'));
+  fireEvent.press(screen.getByTestId('return-to-airport-btn'));
+
+  await waitFor(() => expect(layoverService.returnToAirportNow).toHaveBeenCalledTimes(1));
+  await act(async () => { release({ kind: 'offline' }); });
+  layoverService.returnToAirportNow.mockImplementation(async () => ({ kind: 'offline' }));
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// §13 L123 — the map's airport element is HANDED the return facts
+// ══════════════════════════════════════════════════════════════════════════
+
+test('L123 — the screen passes the certified return anchor to the map card', async () => {
+  (global as any).__mapCardProps = null;
+  (global as any).__overview = overview(false);
+  await render(<LayoverDashboardScreen />);
+
+  await waitFor(() => expect((global as any).__mapCardProps).toBeTruthy());
+  const anchor = (global as any).__mapCardProps.airportReturn;
+  expect(anchor).toBeTruthy();
+  // The SERVER's numbers, not a local re-derivation.
+  expect(anchor.hardReturnTime).toBe(HARD_RETURN);
+  expect(anchor.minutesToHardReturn).toBe(220);
+  expect(anchor.returnState).toBe('NORMAL');
+  expect(anchor.canReturn).toBe(true);
+
+  // And the action is the screen's ONE abort, not a second POST of its own.
+  layoverService.returnToAirportNow.mockClear();
+  await act(async () => { anchor.onReturnNow(); });
+  await waitFor(() => expect(layoverService.returnToAirportNow).toHaveBeenCalledTimes(1));
+  expect(layoverService.returnToAirportNow).toHaveBeenCalledWith('sess-1');
+});
+

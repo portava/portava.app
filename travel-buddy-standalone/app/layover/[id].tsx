@@ -25,7 +25,7 @@ import {
 } from 'react-native';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { ArrowLeft, Bell, BellRing, Power, Send } from 'lucide-react-native';
+import { ArrowLeft, Bell, BellRing, Plane, Power, Send } from 'lucide-react-native';
 import { color, space, radius, type as t, avatar } from '../../src/theme/tokens';
 import { ConfirmSheet } from '../../src/components/ui/ConfirmSheet';
 import {
@@ -57,6 +57,7 @@ import { LayoverRecsSection } from '../../src/components/layover/LayoverRecsSect
 import { LayoverMapCard } from '../../src/components/layover/LayoverMapCard';
 import { LayoverPeopleSection } from '../../src/components/layover/LayoverPeopleSection';
 import { LayoverSafeReturnCard } from '../../src/components/layover/LayoverSafeReturnCard';
+import { useSafeReturnAbort } from '../../src/components/layover/useSafeReturnAbort';
 import { LayoverCompassCard } from '../../src/components/layover/LayoverCompassCard';
 import { LayoverFlightChangeCard } from '../../src/components/layover/LayoverFlightChangeCard';
 import { fmtClock } from '../../src/components/layover/layoverFormat';
@@ -109,6 +110,10 @@ export default function LayoverDashboardScreen() {
     return () => clearInterval(timer);
   }, [id, sessionStatus]);
 
+  // §15.1's abort, lifted out of `LayoverSafeReturnCard` so that more than one
+  // control can fire it (census L42, L123). Declared here, above every early
+  // return, because a hook may not be called conditionally. `reloadAfterAbort`
+  // is defined after `load` and read through a ref-free callback below.
   const showToast = useCallback((msg: string) => {
     setToast(msg);
     setTimeout(() => setToast(null), 3200);
@@ -142,6 +147,11 @@ export default function LayoverDashboardScreen() {
   }, [id, loadPresence]);
 
   useEffect(() => { load(); }, [load]);
+
+  // The abort cancels landside stops and may flip the session status, so the
+  // screen must re-read rather than keep rendering the plan it just cleared.
+  const reloadAfterAbort = useCallback(() => { void load(true); }, [load]);
+  const returnAbort = useSafeReturnAbort(id, reloadAfterAbort);
 
   const canEdit = overview?.session.status === 'active';
   const city = overview
@@ -334,11 +344,21 @@ export default function LayoverDashboardScreen() {
       overview={overview}
       nowMs={nowMs}
       canAbort={!!canEdit}
-      // The abort cancels landside stops and may flip the session status, so the
-      // screen must re-read rather than keep rendering the plan it just cleared.
-      onAborted={() => load(true)}
+      abort={returnAbort}
     />
   );
+  // §13 L123 — what the map's airport element needs in order to be the return
+  // CTA's anchor. Every field is the server's certified posture; the action is
+  // the SAME controller the card holds, so a second entry point cannot produce
+  // a second contract.
+  const airportReturn = {
+    hardReturnTime: win.hardReturnTime,
+    minutesToHardReturn: overview.safeReturn?.minutesToHardReturn ?? null,
+    returnState: overview.safeReturn?.returnState ?? win.returnState ?? null,
+    canReturn: !!canEdit,
+    busy: returnAbort.busy,
+    onReturnNow: returnAbort.run,
+  };
   // `?.` against a required field on purpose: the type says the server always
   // sends `safeReturn`, and getLayoverOverview warns loudly when it does not —
   // but a missing field must degrade the LAYOUT, not blank the whole dashboard.
@@ -455,7 +475,7 @@ export default function LayoverDashboardScreen() {
               addingRecId={addingRecId}
               onAddToPlan={handleAddRec}
             />
-            <LayoverMapCard airport={airport} stops={stops} />
+            <LayoverMapCard airport={airport} stops={stops} airportReturn={airportReturn} />
             <LayoverPeopleSection
               city={city ?? null}
               shareEnabled={overview.share.enabled}
@@ -472,20 +492,48 @@ export default function LayoverDashboardScreen() {
       </ScrollView>
       </KeyboardSafeScrollView>
 
-      {/* Sticky footer */}
+      {/* Sticky footer.
+
+          §5 L42: *"RETURN_SOON → RETURN_NOW … side effect = switch primary CTA
+          to Return to Airport."* The primary slot held "Remind me" in every
+          posture, which is the wrong offer at the one moment it matters: a
+          reminder is a promise about the future, and the future has arrived.
+          The switch is keyed on the SERVER's `returnRoutePrimary` — the same
+          certified boolean that hoists the abort card — so the footer and the
+          layout cannot disagree, and nothing here re-derives a state from a
+          clock. It fires the screen's one abort controller, so the RETURN
+          CONTRACT still appears in exactly one place: the card above, which is
+          hoisted to the top in this very posture. */}
       {canEdit && (
         <View style={[styles.footer, { paddingBottom: insets.bottom + space.sm }]}>
-          <Pressable
-            style={[styles.footerBtn, reminderBusy && styles.footerBtnDim]}
-            onPress={handleReminder}
-            disabled={reminderBusy}
-            testID="layover-remind-me"
-          >
-            {overview.returnReminderAt
-              ? <BellRing size={17} color={color.success} />
-              : <Bell size={17} color={color.ink} />}
-            <Text style={styles.footerBtnText}>{overview.returnReminderAt ? 'Reminder set' : 'Remind me'}</Text>
-          </Pressable>
+          {returnCardFirst ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Return to airport now"
+              accessibilityState={{ disabled: returnAbort.busy }}
+              style={[styles.footerBtn, styles.footerReturn, returnAbort.busy && styles.footerBtnDim]}
+              onPress={returnAbort.run}
+              disabled={returnAbort.busy}
+              testID="layover-footer-return-now"
+            >
+              {returnAbort.busy
+                ? <ActivityIndicator size="small" color={color.signal} />
+                : <Plane size={17} color={color.signal} />}
+              <Text style={[styles.footerBtnText, { color: color.signal }]}>Return to airport</Text>
+            </Pressable>
+          ) : (
+            <Pressable
+              style={[styles.footerBtn, reminderBusy && styles.footerBtnDim]}
+              onPress={handleReminder}
+              disabled={reminderBusy}
+              testID="layover-remind-me"
+            >
+              {overview.returnReminderAt
+                ? <BellRing size={17} color={color.success} />
+                : <Bell size={17} color={color.ink} />}
+              <Text style={styles.footerBtnText}>{overview.returnReminderAt ? 'Reminder set' : 'Remind me'}</Text>
+            </Pressable>
+          )}
           <Pressable style={styles.footerBtn} onPress={handleTelegraph}>
             <Send size={17} color={color.ink} />
             <Text style={styles.footerBtnText}>Ask locals</Text>
@@ -556,6 +604,7 @@ const styles = StyleSheet.create({
   backLink:  { padding: space.sm },
   backLinkText: { ...t.small, color: color.mute, textDecorationLine: 'underline' },
 
+  footerReturn: { backgroundColor: 'rgba(255,77,46,0.10)', borderRadius: radius.md },
   endedBanner: { backgroundColor: 'rgba(200,133,26,0.12)', borderRadius: radius.md, padding: space.md },
   endedText: { ...t.small, color: color.warn, fontWeight: '600' },
 

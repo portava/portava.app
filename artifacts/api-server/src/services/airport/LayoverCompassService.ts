@@ -59,6 +59,7 @@ import {
   type FeasibilitySession,
   type LayoverFeasibilityRecord,
 } from "./LayoverFeasibility.js";
+import { planFitTotals, planFitVerdict, type PlanFitStop } from "./LayoverPlanFit.js";
 import { formatLocalTime } from "./AirportTime.js";
 import { sanitizeCompassAnswer } from "./LayoverPrivacyGuard.js";
 
@@ -634,19 +635,24 @@ export function runLayoverTool(
       });
 
     case "simulatePlan": {
-      const candidate = Array.isArray(args.candidateSet)
-        ? (args.candidateSet as Array<{ durationMin?: number; travelMin?: number; insideAirport?: boolean }>)
+      const candidate: PlanFitStop[] = Array.isArray(args.candidateSet)
+        ? (args.candidateSet as PlanFitStop[])
         : (ctx.stops ?? []);
-      const planned = candidate.reduce(
-        (sum, s) => sum + (Number(s.durationMin) || 0) + (Number(s.travelMin) || 0), 0,
-      );
-      const lastOutside = [...candidate].reverse().find((s) => !s.insideAirport);
-      const neededMin = planned + (lastOutside ? (Number(lastOutside.travelMin) || 0) : 0);
+      // The same arithmetic and the same refusal as `computePlanFit` — through
+      // the same module, so this tool cannot answer a question about a plan
+      // differently from the screen the traveller is looking at (census L47).
+      // A leg nobody stated is not a zero-minute leg, so `neededMin` is a lower
+      // bound and `fitsWindow` is false unless every leg is stated.
+      const totals = planFitTotals(candidate);
+      const fit = planFitVerdict(totals, r.envelope.usableMinutes);
       return ok({
-        neededMin,
+        neededMin: totals.neededMin,
         usableMinutes: r.envelope.usableMinutes,
-        fitsWindow: neededMin <= r.envelope.usableMinutes,
-        overflowMin: Math.max(0, neededMin - r.envelope.usableMinutes),
+        fitsWindow: fit === "fits",
+        fit,
+        unstatedTravelStops: totals.unstatedTravelStops,
+        neededMinIsLowerBound: totals.neededMinIsLowerBound,
+        overflowMin: Math.max(0, totals.neededMin - r.envelope.usableMinutes),
         backByTime: r.deadline.hardReturnTime.toISOString(),
       });
     }

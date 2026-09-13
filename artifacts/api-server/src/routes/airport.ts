@@ -49,6 +49,10 @@ import { postPlainThreadMessage } from "../lib/threadMessage.js";
 import { isPostPublished } from "../lib/postVisibility.js";
 import { nameVisibilitySet, presentedName } from "../lib/publicIdentity.js";
 import {
+  planFitTotals,
+  planFitVerdict,
+} from "../services/airport/LayoverPlanFit.js";
+import {
   resolveByIata,
   resolveByGps,
   resolveByCity,
@@ -1319,8 +1323,13 @@ function stopRowToJson(row: any) {
     title:            row.title,
     description:      row.description ?? null,
     stopOrder:        row.stop_order ?? 0,
-    durationMin:      row.duration_min ?? 30,
-    travelMin:        row.travel_min ?? 0,
+    // 0 means NOBODY SAID, and nothing downstream may read it as a measured
+    // figure. `duration_min ?? 30` used to hand a row with no duration a
+    // thirty-minute one; `computePlanFit` refuses to certify a plan on either
+    // of these instead (census L47). Both columns are NOT NULL today, so this
+    // is the defensive half of the same rule the landside zero carries.
+    durationMin:      row.duration_min != null ? Number(row.duration_min) : 0,
+    travelMin:        row.travel_min   != null ? Number(row.travel_min)   : 0,
     placeId:          row.place_id ?? null,
     recommendationId: row.recommendation_id ?? null,
     lat:              row.lat != null ? Number(row.lat) : null,
@@ -1395,24 +1404,38 @@ async function stopsOr503(sc: any, res: any, sessionId: string): Promise<any[] |
   return r.stops;
 }
 
-/** Does the planned itinerary fit inside the usable window? */
+/**
+ * Does the planned itinerary fit inside the usable window?
+ *
+ * §6.1's invariant is `expected_airport_return_at <= hard_return_by`, and this
+ * is the only place the layover surface answers it for a whole plan. It used
+ * to sum `(s.durationMin ?? 0) + (s.travelMin ?? 0)`, which charged an unstated
+ * journey ZERO MINUTES — twice, because the ride back is approximated from the
+ * same leg — and then reported `fitsWindow: true`. That is a certification made
+ * out of a figure nobody measured, on the verdict a traveller uses to decide
+ * whether a stop fits (census L47).
+ *
+ * The arithmetic and the three-valued answer live in `LayoverPlanFit` so that
+ * this route, the Compass `simulatePlan` tool and the crew branch solver cannot
+ * hold three different opinions about the same plan. `fitsWindow` is kept on
+ * the wire because clients read it; it now carries the narrower claim.
+ */
 function computePlanFit(record: LayoverFeasibilityRecord, stops: any[]) {
   const window = record.envelope;
-  const totalPlannedMin = stops.reduce(
-    (sum, s) => sum + (s.durationMin ?? 0) + (s.travelMin ?? 0), 0,
-  );
-  // Approximate the ride back as the travel time of the last outside stop.
-  const lastOutside = [...stops].reverse().find((s) => !s.insideAirport);
-  const returnTravelMin = lastOutside ? (lastOutside.travelMin ?? 0) : 0;
-  const neededMin = totalPlannedMin + returnTravelMin;
+  const totals = planFitTotals(stops);
+  const fit = planFitVerdict(totals, window.usableMinutes);
   return {
-    totalPlannedMin,
-    returnTravelMin,
-    neededMin,
-    usableMinutes: window.usableMinutes,
-    fitsWindow:    neededMin <= window.usableMinutes,
-    overflowMin:   Math.max(0, neededMin - window.usableMinutes),
-    backByTime:    window.hardReturnTime.toISOString(),
+    totalPlannedMin: totals.totalPlannedMin,
+    returnTravelMin: totals.returnTravelMin,
+    neededMin:       totals.neededMin,
+    usableMinutes:   window.usableMinutes,
+    fitsWindow:      fit === "fits",
+    fit,
+    unstatedTravelStops:   totals.unstatedTravelStops,
+    unstatedDurationStops: totals.unstatedDurationStops,
+    neededMinIsLowerBound: totals.neededMinIsLowerBound,
+    overflowMin:     Math.max(0, totals.neededMin - window.usableMinutes),
+    backByTime:      window.hardReturnTime.toISOString(),
   };
 }
 
@@ -1666,7 +1689,11 @@ const stopCreateSchema = z.object({
   title:         z.string().min(1).max(200),
   description:   z.string().max(500).optional().nullable(),
   durationMin:   z.number().int().min(5).max(720),
-  travelMin:     z.number().int().min(0).max(240).optional().default(0),
+  // NO `.default(0)`. That default is where a journey nobody had measured
+  // became a measured zero (census L47): the column is NOT NULL, so the
+  // unknown had to die somewhere, and it died here silently. It is now absent
+  // until `landsideTravelRefusal` decides whether absence is allowed.
+  travelMin:     z.number().int().min(0).max(240).optional(),
   locationLabel: z.string().max(300).optional().nullable(),
   insideAirport: z.boolean().optional().default(false),
   lat:           z.number().min(-90).max(90).optional().nullable(),
@@ -1675,6 +1702,25 @@ const stopCreateSchema = z.object({
 });
 const stopUpdateSchema = stopCreateSchema.partial();
 const MAX_STOPS = 12;
+
+/**
+ * The one rule that keeps `layover_plan_stops` free of fabricated legs: a stop
+ * OUTSIDE the airport must arrive with a travel time.
+ *
+ * `travel_min INTEGER NOT NULL DEFAULT 0` cannot store "unstated", so the
+ * choice at the write boundary is between storing a zero that later reads as a
+ * measurement and refusing the write. Refusing is the honest one — the stop is
+ * the traveller's own, they know roughly how far it is, and `computePlanFit`
+ * would otherwise be asked to certify a plan whose journeys were never stated.
+ * Airside stops need nothing: their zero is a fact.
+ *
+ * Returns the message to refuse with, or `null` when the write may proceed.
+ */
+function landsideTravelRefusal(insideAirport: boolean, travelMin: number | null | undefined): string | null {
+  if (insideAirport) return null;
+  if (typeof travelMin === "number" && travelMin > 0) return null;
+  return "A stop outside the airport needs a travel time — how long it takes to get there.";
+}
 
 /** Shared guard: flag on, session exists & owned. Returns null after replying. */
 async function requireOwnedSession(req: any, res: any): Promise<{ sc: any; user: any; session: LayoverSession } | null> {
@@ -1725,6 +1771,9 @@ router.post("/airport/sessions/:id/stops", async (req, res) => {
     return;
   }
 
+  const travelRefusal = landsideTravelRefusal(parsed.data.insideAirport, parsed.data.travelMin);
+  if (travelRefusal) { sendError(res, "invalid_payload", travelRefusal); return; }
+
   // `existing.length` is BOTH the cap check and the new row's stop_order, so an
   // unreadable read would bypass the 12-stop limit and write a duplicate order.
   const existing = await stopsOr503(sc, res, session.id);
@@ -1740,7 +1789,8 @@ router.post("/airport/sessions/:id/stops", async (req, res) => {
     description:    parsed.data.description ?? null,
     stop_order:     existing.length,
     duration_min:   parsed.data.durationMin,
-    travel_min:     parsed.data.travelMin,
+    // Airside: 0 is the fact. Landside: the refusal above guarantees a figure.
+    travel_min:     parsed.data.insideAirport ? 0 : parsed.data.travelMin,
     location_label: parsed.data.locationLabel ?? null,
     inside_airport: parsed.data.insideAirport,
     lat:            parsed.data.lat ?? null,
@@ -1793,13 +1843,30 @@ router.post("/airport/sessions/:id/stops/from-recommendation", async (req, res) 
     return;
   }
 
+  // The card's own silence must not become the plan's measured zero. A landside
+  // recommendation with no travel time is refused for the same reason a manual
+  // landside stop without one is (census L47); the `?? 0` / `?? 30` here were
+  // the from-recommendation copy of that laundering.
+  const recInside = Boolean((rec as any).inside_airport);
+  const recTravel = Number((rec as any).travel_time_min);
+  const recDwell  = Number((rec as any).activity_time_min);
+  const recRefusal = landsideTravelRefusal(recInside, Number.isFinite(recTravel) ? recTravel : null);
+  if (recRefusal) {
+    sendError(res, "invalid_payload", "This idea has no travel time yet, so it cannot be timed into a plan.");
+    return;
+  }
+  if (!Number.isFinite(recDwell) || recDwell <= 0) {
+    sendError(res, "invalid_payload", "This idea has no duration yet, so it cannot be timed into a plan.");
+    return;
+  }
+
   const { error } = await sc.from("layover_plan_stops").insert({
     session_id:        session.id,
     title:             (rec as any).title,
     description:       (rec as any).description ?? null,
     stop_order:        existing.length,
-    duration_min:      Math.min(720, Math.max(5, (rec as any).activity_time_min ?? 30)),
-    travel_min:        Math.min(240, Math.max(0, (rec as any).travel_time_min ?? 0)),
+    duration_min:      Math.min(720, Math.max(5, recDwell)),
+    travel_min:        recInside ? 0 : Math.min(240, recTravel),
     location_label:    (rec as any).location_label ?? null,
     inside_airport:    Boolean((rec as any).inside_airport),
     place_id:          (rec as any).place_id ?? null,
@@ -1825,6 +1892,32 @@ router.patch("/airport/sessions/:id/stops/:stopId", async (req, res) => {
 
   const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
   const d = parsed.data;
+
+  // The landside rule has to be checked against the MERGED row, not the patch:
+  // `insideAirport: false` on its own turns a lawful airside 0 into an unstated
+  // landside one, and `travelMin: 0` on its own erases a stated leg. Either
+  // would put the plan-fit verdict back on a journey nobody measured (L47), so
+  // the current row is read first and the rule applied to what the row WOULD
+  // become. An unreadable read refuses rather than guessing at the merge.
+  const existingStop = await sc
+    .from("layover_plan_stops")
+    .select("travel_min, inside_airport")
+    .eq("id", req.params.stopId)
+    .eq("session_id", session.id)
+    .maybeSingle();
+  if (existingStop.error) {
+    sendError(res, "degraded_unavailable", "Your layover plan could not be loaded. Please try again."); return;
+  }
+  if (!existingStop.data) { sendError(res, "not_found", "Stop not found"); return; }
+  const mergedInside = d.insideAirport !== undefined
+    ? d.insideAirport : Boolean((existingStop.data as any).inside_airport);
+  const mergedTravelRaw = d.travelMin !== undefined
+    ? d.travelMin : Number((existingStop.data as any).travel_min);
+  const patchRefusal = landsideTravelRefusal(
+    mergedInside, Number.isFinite(Number(mergedTravelRaw)) ? Number(mergedTravelRaw) : null,
+  );
+  if (patchRefusal) { sendError(res, "invalid_payload", patchRefusal); return; }
+
   if (d.title         !== undefined) patch.title          = d.title;
   if (d.description   !== undefined) patch.description    = d.description;
   if (d.durationMin   !== undefined) patch.duration_min   = d.durationMin;
@@ -1833,6 +1926,9 @@ router.patch("/airport/sessions/:id/stops/:stopId", async (req, res) => {
   if (d.insideAirport !== undefined) patch.inside_airport = d.insideAirport;
   if (d.lat           !== undefined) patch.lat            = d.lat;
   if (d.lng           !== undefined) patch.lng            = d.lng;
+  // Moving a stop airside makes its landside leg meaningless; leaving the old
+  // figure would keep charging the plan for a journey that is no longer taken.
+  if (d.insideAirport === true && d.travelMin === undefined) patch.travel_min = 0;
 
   const { data: updated, error } = await sc
     .from("layover_plan_stops")

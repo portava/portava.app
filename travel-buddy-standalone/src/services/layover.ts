@@ -138,7 +138,21 @@ export interface PlanFit {
   returnTravelMin: number;
   neededMin: number;
   usableMinutes: number;
+  /** Narrow claim: TRUE only when `fit === 'fits'`. */
   fitsWindow: boolean;
+  /**
+   * §6.1's plan-level answer, three-valued because the server refuses to
+   * certify a total that omits a leg nobody stated (census L47). `over` is
+   * certain — even the lower bound overflows; `unknown` means the plan may fit
+   * and has not been measured; `fits` means every leg is stated and it does.
+   */
+  fit: 'fits' | 'over' | 'unknown';
+  /** Landside stops whose journey is not a stated figure. */
+  unstatedTravelStops: number;
+  /** Stops whose dwell time is not a stated figure. */
+  unstatedDurationStops: number;
+  /** TRUE when `neededMin` omits a leg, so the real total is larger. */
+  neededMinIsLowerBound: boolean;
   overflowMin: number;
   backByTime: string;
 }
