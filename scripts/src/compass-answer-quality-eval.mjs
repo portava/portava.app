@@ -1,13 +1,40 @@
 #!/usr/bin/env node
 /**
  * Standing 9-question Compass answer-quality eval (docs/compass/master-roadmap.md).
- * Requires: dev API server running and Replit OpenAI AI integration enabled.
- * Usage: node scripts/src/compass-answer-quality-eval.mjs
+ *
+ * THIS SCRIPT USED TO ASSERT NOTHING. It looped the nine questions, printed a
+ * record each, printed a summary and returned — exiting non-zero only if
+ * something threw. Nine honest fallbacks and nine grounded, correct answers
+ * produced the same exit code, so "the eval ran" could be reported as evidence
+ * when it was only a transcript. The acceptance criteria now live in
+ * ./compass-eval-criteria.mjs, are unit-tested against synthetic transcripts
+ * with no provider present, and decide this process's exit code.
+ *
+ * EXIT CODES, following the convention the rest of this repository's checkers use:
+ *   0  PASS        every machine criterion green AND all twelve measures judged pass
+ *   1  FAIL        a machine criterion is red, or a measure was judged fail
+ *   2  INCOMPLETE  machine criteria green, at least one measure unjudged.
+ *                  NOT a pass. A run cannot certify its own semantic quality.
+ *
+ * Requires: a WRITABLE Supabase project (this script creates and deletes an
+ * ephemeral auth user), an API server on API_BASE_URL, COMPASS_ENABLED true on
+ * that project, and a model provider. docs/compass/nine-query-eval-runbook.md
+ * names all five and where each is read. NEVER point this at production.
+ *
+ * Usage: node scripts/src/compass-answer-quality-eval.mjs [--adjudication <file.json>]
  */
+import {
+  evaluateTierA, evaluateTierB, verdictOf, formatReport, EXIT_CODE,
+} from "./compass-eval-criteria.mjs";
+import { readFileSync } from "node:fs";
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
-const API = "http://localhost:80/api"; // compass routes are single-prefix: /api/compass/ask
+// Hardcoding this to localhost:80 is why the eval had only ever run on one
+// machine: port 80 needs privilege or a proxy, and nothing could point it
+// elsewhere. Env-configurable, same default, so an existing invocation is
+// unchanged.
+const API = process.env.COMPASS_EVAL_API_BASE_URL ?? "http://localhost:80/api"; // compass routes are single-prefix: /api/compass/ask
 
 const QUESTIONS = [
   "What should I do in Cebu?",
@@ -49,6 +76,8 @@ async function askCompass(accessToken, prompt, conversationId) {
   try { body = JSON.parse(text); } catch { body = { _raw: text.slice(0, 800) }; }
   return { status: res.status, body };
 }
+
+let exitCode = EXIT_CODE.FAIL;
 
 async function main() {
   if (!SUPABASE_URL || !SERVICE_KEY) throw new Error("Missing SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY");
@@ -111,6 +140,10 @@ async function main() {
         q,
         status,
         ms,
+        // Recorded PER QUESTION, not just tracked in the loop: the criteria need
+        // to see whether one id held across all nine, and a variable that gets
+        // overwritten cannot show that.
+        conversationId: conversationId ?? null,
         fallbackReason: body.fallbackReason ?? body.fallback_reason ?? null,
         isFallback: body.fallback ?? false,
         message: message.slice(0, 600),
@@ -138,6 +171,18 @@ async function main() {
       console.log(`  intent: ${JSON.stringify(r.intent)}`);
       console.log();
     }
+
+    // ── The verdict. This is the part that was missing. ───────────────────────
+    const adjIdx = process.argv.indexOf("--adjudication");
+    let adjudication = null;
+    if (adjIdx !== -1 && process.argv[adjIdx + 1]) {
+      adjudication = JSON.parse(readFileSync(process.argv[adjIdx + 1], "utf8"));
+    }
+    const tierA = evaluateTierA(results);
+    const tierB = evaluateTierB(adjudication);
+    const verdict = verdictOf(tierA, tierB);
+    console.log(formatReport(tierA, tierB, verdict));
+    exitCode = EXIT_CODE[verdict];
   } finally {
     console.log("Deleting ephemeral user", userId);
     await sb(`/auth/v1/admin/users/${userId}`, { method: "DELETE" }).catch(e =>
@@ -146,7 +191,11 @@ async function main() {
   }
 }
 
-main().catch(e => {
+main().then(() => {
+  // The cleanup in `finally` must run before we exit, which is why the code is
+  // set there and read here rather than thrown.
+  process.exit(exitCode);
+}).catch(e => {
   console.error(e);
-  process.exit(1);
+  process.exit(EXIT_CODE.FAIL);
 });

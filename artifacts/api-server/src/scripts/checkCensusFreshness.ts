@@ -1648,6 +1648,11 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/lib/prompts/compass-v1.ts",
     "artifacts/api-server/src/test/compass-ui-blocks.test.ts",
     "scripts/src/compass-answer-quality-eval.mjs",
+    // Added 2026-09-13 with §14: the eval's acceptance criteria and their
+    // tests. CPH-EVAL is graded on whether a run can produce a verdict, so a
+    // change to what decides that verdict must age this census.
+    "scripts/src/compass-eval-criteria.mjs",
+    "scripts/src/compass-eval-criteria.test.mjs",
     "artifacts/api-server/src/services/compass/CompassIntentClassifier.ts",
     "artifacts/api-server/src/services/compass/CompassConversationService.ts",
     "artifacts/api-server/src/test/compass-autopilot.test.ts",

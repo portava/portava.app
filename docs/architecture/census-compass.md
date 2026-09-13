@@ -1191,7 +1191,7 @@ upgrade checklist did not replace the denominator, and no feature is counted twi
 
 | id | Obligation | V | Criteria, one by one |
 |---|---|---|---|
-| CPH-EVAL | `docs/compass/master-roadmap.md:155-171#evaluation` Run the nine queries against every phase from Phase 1 on · measure eight named dimensions each time | **W** | Three criteria, one passes. **The nine queries run** ✓ `scripts/src/compass-answer-quality-eval.mjs:12-22#QUESTIONS` carries them verbatim in the roadmap's order and `scripts/src/compass-answer-quality-eval.mjs:41-51#askCompass(accessToken` drives the real `/compass/ask` route with a real ephemeral user — not a mock. **The eight dimensions are measured separately** ✗ — the per-turn record at `scripts/src/compass-answer-quality-eval.mjs:110-125#record` carries status, latency, fallback reason, reply text, block types, `droppedInventedIds`, quick actions, intent and prompt version. Of the roadmap's eight (`docs/compass/master-roadmap.md:169-171#conversational`) exactly **one** has a proxy there (hallucination rate, via `droppedInventedIds`); conversational quality, memory, correct tool selection, factual accuracy, personalization, safety and action correctness are recorded nowhere, and the tool log is not in the output at all, so tool selection cannot even be scored after the fact. CPV2 `scripts/src/compass-answer-quality-eval.mjs:42#${API}/compass/ask` restates the requirement with five dimensions of its own — factual grounding, permission compliance, action correctness, continuity, live-provider limitations — and none of those five is recorded separately either. **Run against every phase from Phase 1 on** ✗ — it has run **once**, on 2026-07-21 (`docs/compass/phase-summaries.md:741-770#answer-quality`), against `compass-v1.1` while the shipped prompt is `compass-v2` (`artifacts/api-server/src/lib/prompts/compass-v1.ts:21#COMPASS_ASK_PROMPT_VERSION`); it is in no CI workflow and not in `artifacts/api-server/scripts/run-all-checks.sh`. Fifteen phases, one run. |
+| CPH-EVAL | `docs/compass/master-roadmap.md:155-171#evaluation` Run the nine queries against every phase from Phase 1 on · measure eight named dimensions each time | **W** | Three criteria, one passes. **The nine queries run** ✓ `scripts/src/compass-answer-quality-eval.mjs:39-49#QUESTIONS` carries them verbatim in the roadmap's order and `scripts/src/compass-answer-quality-eval.mjs:68#askCompass(accessToken` drives the real `/compass/ask` route with a real ephemeral user — not a mock. **The eight dimensions are measured separately** ✗ — the per-turn record at `scripts/src/compass-answer-quality-eval.mjs:139#record` carries status, latency, fallback reason, reply text, block types, `droppedInventedIds`, quick actions, intent and prompt version. Of the roadmap's eight (`docs/compass/master-roadmap.md:169-171#conversational`) exactly **one** has a proxy there (hallucination rate, via `droppedInventedIds`); conversational quality, memory, correct tool selection, factual accuracy, personalization, safety and action correctness are recorded nowhere, and the tool log is not in the output at all, so tool selection cannot even be scored after the fact. CPV2 `scripts/src/compass-answer-quality-eval.mjs:69#${API}/compass/ask` restates the requirement with five dimensions of its own — factual grounding, permission compliance, action correctness, continuity, live-provider limitations — and none of those five is recorded separately either. **Run against every phase from Phase 1 on** ✗ — it has run **once**, on 2026-07-21 (`docs/compass/phase-summaries.md:741-770#answer-quality`), against `compass-v1.1` while the shipped prompt is `compass-v2` (`artifacts/api-server/src/lib/prompts/compass-v1.ts:21#COMPASS_ASK_PROMPT_VERSION`); it is in no CI workflow and not in `artifacts/api-server/scripts/run-all-checks.sh`. Fifteen phases, one run. |
 
 #### Phase 1 technical spec
 
@@ -1202,7 +1202,7 @@ upgrade checklist did not replace the denominator, and no feature is counted twi
 | `C1-03` | §3 Streaming — stream text deltas via SSE | **C** | Two criteria. **Deltas streamed** ✓ headers and flush at `artifacts/api-server/src/routes/compass.ts:1656-1660#(stream)`, the final round streamed token by token at `artifacts/api-server/src/routes/compass.ts:1677-1678#clientAbort.signal`, closed by a `done` event at `artifacts/api-server/src/routes/compass.ts:1731#uiBlockMeta.droppedInventedIds`. **Nothing half-generated persists** ✓ a client disconnect aborts the upstream stream and writes no assistant message (`artifacts/api-server/src/routes/compass.ts:1664-1670#compass_conversation_messages.`), pinned by `artifacts/api-server/src/test/compass-ask.test.ts:609#assistant` and its complement `artifacts/api-server/src/test/compass-ask.test.ts:647#assistant`. Structured cards remaining non-streamed is what §3 permits. |
 | `C1-04` | §4 Dynamic quick actions — 2–4 model-proposed, server-validated against a whitelist, no new client capabilities | **C** | Three criteria. **Model-proposed** ✓ the shape is given to the model at `artifacts/api-server/src/lib/prompts/compass-v1.ts:52-56#picks`. **Server-validated** ✓ `artifacts/api-server/src/routes/compass.ts:1048-1052#ALLOWED_QUICK_ACTION_TYPES` is the twelve-entry whitelist and `artifacts/api-server/src/routes/compass.ts:1106-1114#quickActions` keeps only whitelisted types, caps at four and bounds the label. **No new client capabilities** ✓ all twelve entries are existing client surfaces. A malformed reply degrades to an empty array, not to template cards (`artifacts/api-server/src/routes/compass.ts:1121#quickActions:`). |
 | `C1-05` | §5 Versioned prompt file · prompt version logged per request | **C** | Two criteria. **Versioned file** ✓ `artifacts/api-server/src/lib/prompts/compass-v1.ts:21#COMPASS_ASK_PROMPT_VERSION` with the bump rule stated at `artifacts/api-server/src/lib/prompts/compass-v1.ts:6-7#COMPASS_ASK_PROMPT_VERSION`. **Logged per request** ✓ `artifacts/api-server/src/routes/compass.ts:1643-1652#req.log.info(`, returned on both branches (`artifacts/api-server/src/routes/compass.ts:1731#uiBlockMeta.droppedInventedIds`, `artifacts/api-server/src/routes/compass.ts:1802#uiBlockMeta.droppedInventedIds`) and **persisted per assistant message** into the `prompt_version` column (`artifacts/api-server/src/routes/compass.ts:1726#COMPASS_ASK_PROMPT_VERSION)`, `artifacts/api-server/src/routes/compass.ts:1797#COMPASS_ASK_PROMPT_VERSION)`; column at `artifacts/api-server/src/migrations/20260723_compass_conversations.sql:39#TIMESTAMPTZ`), so a stored reply says which rules produced it. The prompt's *content* is `CPH-02` and is not re-counted here. |
-| `C1-07` | §7 Validation before merge — suite green · four named tests · manual eval script | **C** | Three criteria. **Four named tests exist and are registered** ✓ conversation persistence round-trip `artifacts/api-server/src/test/compass-ask.test.ts:215#conversationId`, `artifacts/api-server/src/test/compass-ask.test.ts:231#conversationId`; multi-turn continuity `artifacts/api-server/src/test/compass-ask.test.ts:282#assistant`; classifier JSON contract `artifacts/api-server/src/test/compass-ask.test.ts:335#classify()`, `artifacts/api-server/src/test/compass-ask.test.ts:350#classify()`, `artifacts/api-server/src/test/compass-ask.test.ts:366#classification`; honest fallback copy `artifacts/api-server/src/test/compass-ask.test.ts:428#recommendations`, `artifacts/api-server/src/test/compass-ask.test.ts:451#COMPASS_ENABLED=false`. **Suite green** ✓ re-executed at this commit for the Compass surface. **Eval script** ✓ `scripts/src/compass-answer-quality-eval.mjs:12-22#QUESTIONS` covers the four-turn sequence within the nine. **One clause is superseded and recorded rather than failed:** §7's *"'Add the second one.' must fail gracefully … not a hallucinated success"* is written for a Phase 1 in which the action engine did not exist; Phase 4 shipped it and `add_to_trip` now genuinely proposes with confirmation (`CPH-04`, `CC-06`). Grading a Phase-1 clause against a Phase-4 tree would measure a requirement the roadmap's own sequential-phase rule retired. |
+| `C1-07` | §7 Validation before merge — suite green · four named tests · manual eval script | **C** | Three criteria. **Four named tests exist and are registered** ✓ conversation persistence round-trip `artifacts/api-server/src/test/compass-ask.test.ts:215#conversationId`, `artifacts/api-server/src/test/compass-ask.test.ts:231#conversationId`; multi-turn continuity `artifacts/api-server/src/test/compass-ask.test.ts:282#assistant`; classifier JSON contract `artifacts/api-server/src/test/compass-ask.test.ts:335#classify()`, `artifacts/api-server/src/test/compass-ask.test.ts:350#classify()`, `artifacts/api-server/src/test/compass-ask.test.ts:366#classification`; honest fallback copy `artifacts/api-server/src/test/compass-ask.test.ts:428#recommendations`, `artifacts/api-server/src/test/compass-ask.test.ts:451#COMPASS_ENABLED=false`. **Suite green** ✓ re-executed at this commit for the Compass surface. **Eval script** ✓ `scripts/src/compass-answer-quality-eval.mjs:39-49#QUESTIONS` covers the four-turn sequence within the nine. **One clause is superseded and recorded rather than failed:** §7's *"'Add the second one.' must fail gracefully … not a hallucinated success"* is written for a Phase 1 in which the action engine did not exist; Phase 4 shipped it and `add_to_trip` now genuinely proposes with confirmation (`CPH-04`, `CC-06`). Grading a Phase-1 clause against a Phase-4 tree would measure a requirement the roadmap's own sequential-phase rule retired. |
 
 #### CPV2 genuine additions
 
@@ -1658,3 +1658,123 @@ same stroke.
 where the code is written, tested and sitting behind a flag seeded FALSE by a migration. §12.3 said
 the same of its six, and the sentence it ended on still holds — **BUILT ON A BRANCH IS NOT MERGED.
 MERGED IS NOT DEPLOYED. DEPLOYED IS NOT FLAG ENABLED.**
+
+
+---
+
+## §14 — The eval can now produce a verdict. NO ROW MOVES, and that is the finding.
+
+*Integration owner, 2026-09-13. `CPH-EVAL` and `CPH-01` both rest on an evaluation that could not
+pass or fail. It can now. Neither row moves, because criteria existing is not criteria passing and
+grading either `C` on the strength of this would be the exact move this census exists to catch.*
+
+### 14.1 What was actually wrong with the eval
+
+`scripts/src/compass-answer-quality-eval.mjs` contained **no assertion**. It looped the nine
+roadmap questions, printed a JSON record each, printed a summary and returned; the only path to a
+non-zero exit was a throw — a network error or a missing secret.
+
+So **nine honest fallbacks and nine grounded, correct answers produced the same exit code.** With no
+`AI_INTEGRATIONS_OPENAI_API_KEY` the client is constructed with `apiKey: "not-configured"`
+(`artifacts/api-server/src/lib/openai.ts:14#apiKey:`), every call fails, every answer comes back
+`fallback: true`, and the script exits 0. A row moved on "the eval ran" would have been a row moved
+on the run happening.
+
+### 14.2 The criteria, and why they were written before the provider exists
+
+`scripts/src/compass-eval-criteria.mjs:82#export function evaluateTierA(records)` is a pure module —
+no network, no database, no model — unit-tested by
+`scripts/src/compass-eval-criteria.test.mjs:28#function goodRun(overrides = {})` at 27 cases against
+**synthetic** transcripts, each built to fail one criterion on its own.
+
+That ordering is not incidental. There is no model provider in this environment, and criteria
+written after reading a real transcript are criteria fitted to the answer. A criterion nobody has
+watched go red is a criterion nobody has tested, which is the same argument this census makes about
+verdicts.
+
+**Tier A, machine-decided, eleven criteria** — shape, transport, `provider_reached`, non-empty,
+`hallucination_reported`, `no_invented_ids`, `continuity_plumbing`, `prompt_version_recorded`,
+`intent_recorded`, `no_hallucinated_success`, `latency_recorded`.
+
+**Tier B, human-adjudicated, twelve measures** — the roadmap's eight
+(`docs/compass/master-roadmap.md:169-171#conversational`) plus the four CPV2 requires recorded
+SEPARATELY: factual grounding, permission compliance, continuity, live-provider limitations. They
+are listed separately at
+`scripts/src/compass-eval-criteria.mjs:48#export const ADJUDICATED_MEASURES` rather than folded into
+neighbours, because folding them is how a measure stops being recorded, and a test asserts the four
+CPV2 names are present.
+
+**Three verdicts, not two.** `scripts/src/compass-eval-criteria.mjs:204#export function verdictOf(tierA, tierB)`
+returns `FAIL` (exit 1), `INCOMPLETE` (exit 2) or `PASS` (exit 0). A fully-configured run with a
+perfect transcript and nobody reading it exits **2**. That is deliberate: the likeliest way this
+eval gets misreported is a green-looking run that asserted nothing semantic, and exit 2 is this
+repository's existing convention for "could not be determined". `FAIL` outranks `INCOMPLETE` — a red
+criterion is a failure whether or not anyone got round to reading the transcript.
+
+### 14.3 The two criteria that carry the weight, and the red that proves each
+
+**`provider_reached`** — zero of nine may answer with a fallback. Without it the unconfigured case
+above exits 0 on nine refusals. The first case in the suite is that transcript and it must FAIL;
+a second asserts that **one** fallback out of nine is still a FAIL.
+
+**`no_hallucinated_success`** — Q4 is *"Add the second one."* Phase 1 performs no write. An answer
+rendering `added_to_trip` has told the traveller something happened that did not, which is the worst
+outcome available in these nine. Two cases stop the criterion being satisfiable by a gate that
+refuses everything: a graceful `not_supported_yet` on Q4 is **not** a failure, and a success-shaped
+block on some *other* question does not trip it.
+
+One more worth naming: **an unreported invented-id counter is not zero.**
+`scripts/src/compass-eval-criteria.mjs:118#const unreported = records.filter` fails
+`hallucination_reported` when the server sent no counter, because unmeasured reading as clean is the
+same defect class as a `C` row over a path nothing reaches.
+
+**Mutations — all four red, baseline and restore both 27/0:**
+
+| mutation | result |
+|---|---|
+| baseline | **27 / 0** |
+| `provider_reached` neutered | **24 / 3** |
+| an unreported counter counts as zero | **26 / 1** |
+| an unjudged measure reads as `PASS` | **25 / 2** |
+| the hallucinated-success pattern made blind | **26 / 1** |
+| restored | **27 / 0** |
+
+And the runner itself, executed here with no credentials: **exit 1**. Before this change the same
+invocation exited 1 only because it threw on the missing key; it now also carries the criteria that
+would have caught a configured-but-refusing run.
+
+### 14.4 One configuration item half-closed
+
+`docs/compass/nine-query-eval-runbook.md` named five missing items. Item 4 — the hardcoded
+`http://localhost:80/api`, which is why this had only ever run on one machine — is now
+`scripts/src/compass-answer-quality-eval.mjs:37#const API = process.env.COMPASS_EVAL_API_BASE_URL`.
+The default is unchanged, so an existing invocation behaves identically.
+
+**The other four are still missing and none is mine to supply**: the provider credential, a writable
+non-production project, `COMPASS_ENABLED` true (owner's), and the server secrets.
+
+### 14.5 The rows, per criterion, and why neither moves
+
+| row | criterion | before | now |
+|---|---|---|---|
+| `CPH-EVAL` | the nine queries run | ✓ | ✓ unchanged |
+| `CPH-EVAL` | the eight dimensions measured **separately** | ✗ | **still ✗.** Twelve measures are now declared and structurally separated, and a run reports each. Declaring a measure is not measuring it: Tier B is `unjudged` until a reader supplies a verdict, and no run has happened. |
+| `CPH-EVAL` | run against every phase from Phase 1 on | ✗ | **still ✗.** It has run once, on 2026-07-21, against `compass-v1.1` while the shipped prompt is `compass-v2`. |
+| `CPH-01` | tests pass | ✓ | ✓ unchanged |
+| `CPH-01` | real-model chat works end to end | ✗ | **still ✗.** The only measurement on record is 7 of 9 standing queries returning no text. |
+
+**`CPH-EVAL` stays `W`. `CPH-01` stays `W`.** A parent requirement with several mandatory criteria
+cannot take `C` unless every criterion passes, and in both cases the failing criterion is the one
+that needs a run nobody has made.
+
+**What would turn this red**, since every green claim here should name it: delete
+`scripts/src/compass-eval-criteria.test.mjs` and Tier A becomes eleven untested assertions; make
+`verdictOf` return `PASS` on an unjudged measure and a transcript nobody read certifies itself; drop
+`provider_reached` and an unconfigured run reports success.
+
+### 14.6 Headline — unchanged, deliberately
+
+126 rows, 94 C, 27 W, 5 N. **CONSTRUCTED 96.0 %, CORRECT 74.6 %.** §14 built a gate, not a feature,
+and a census whose numbers move every time anything is committed is not measuring anything. The
+`head_commit` is re-declared to the commit carrying this section because two files it counts
+(`compass-answer-quality-eval.mjs`, and the two new eval files now in `CENSUS_SCOPE`) changed here.
