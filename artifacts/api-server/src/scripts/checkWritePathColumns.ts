@@ -165,6 +165,15 @@ const ALLOWLIST = new Set<string>([
   // branch reaches main. Remove once 2783 is applied there.
   "trip_goals.scope",
   "trip_goals.weight",
+  //
+  // Telegraph §12–§22 (2810 — the message kernel): messages.lifecycle_state is
+  // written by server/telegraph/commandRoute's typed door, which is the ONLY
+  // writer, and it is behind a flag seeded FALSE. Absent from portava-ci until
+  // this branch reaches main. It is also carried by
+  // checkMissingLiveColumns' allowlist, which reads the live schema from the
+  // other direction — both entries come out together when 2810's apply is
+  // certified, and leaving one behind is the mistake to watch for.
+  "messages.lifecycle_state",
 ]);
 
 // Tables that are not real live relations and should be skipped entirely
@@ -207,6 +216,18 @@ const SKIP_TABLES = new Set<string>([
   // branch reaches main. Remove once 2794 is applied to the live schema.
   "trip_meeting_checkpoints",
   "trip_meeting_checkpoint_participants",
+  //
+  // Telegraph §12–§22, 2811 (message_reactions) and 2812
+  // (telegraph_report_evidence) — the same pending-apply state, and the same
+  // rule: applying an unmerged branch's migrations to the shared CI database
+  // would leave it ahead of main with no commit accounting for it.
+  // message_reactions is written only by server/telegraph/commandRoute's
+  // typed door; telegraph_report_evidence only by services/telegraphReportEvidence
+  // at report time. Both sit behind flags seeded FALSE, so neither is reachable
+  // on any deployment today — which is also why T283/T284 read W and not C.
+  // Remove each once its apply is certified in docs/migrations.md.
+  "message_reactions",
+  "telegraph_report_evidence",
 ]);
 
 // ── Unresolvable-site allowlist ───────────────────────────────────────────────
@@ -230,6 +251,30 @@ const UNRESOLVED_ALLOWLIST = new Map<string, number>([
   // upsert at its line ~893 builds `rows` by map, so the payload is a name,
   // not a literal. One site, unchanged by the move.
   ["src/domain/trips/services/tripReadiness.ts|upsert|payload not statically resolvable", 1],
+  // ── Telegraph §1–§11 and §12–§22: the typed-envelope shape ────────────────
+  // These lanes route every write through a validated envelope, so the payload
+  // handed to supabase is a NAME (`validated.payload`, `row`, `patch`) rather
+  // than an object literal, and the select lists are built from exported column
+  // constants rather than written inline. That is the same construction the
+  // Trips kernel uses and it is the reason the extractor cannot see them — the
+  // trade is deliberate: a literal at every call site is resolvable here and
+  // duplicates the schema at a dozen sites instead of naming it once.
+  //
+  // WHAT THIS COSTS, stated rather than waved at: each of these is a blind spot
+  // where a phantom column could reach the database unseen by THIS check. What
+  // still covers them is the zod schema the envelope validates against, the
+  // migration's own postconditions, and check:missing-live-columns reading the
+  // live schema from the other direction.
+  ["src/domain/telegraph/policies/conversationCapabilityPolicy.ts|select|select list not statically resolvable", 1],
+  ["src/routes/messaging.ts|insert|payload partially resolvable", 1],
+  ["src/routes/telegraphCoordination.ts|select|select list not statically resolvable", 1],
+  ["src/routes/telegraphKinds.ts|select|select list not statically resolvable", 1],
+  ["src/routes/telegraphLifecycle.ts|select|select list not statically resolvable", 1],
+  ["src/routes/telegraphLifecycle.ts|update|payload not statically resolvable", 2],
+  ["src/routes/telegraphMemory.ts|insert|payload not statically resolvable", 1],
+  ["src/routes/telegraphMemory.ts|select|select list not statically resolvable", 2],
+  ["src/server/telegraph/readReceiptsRoute.ts|select|select list not statically resolvable", 1],
+  ["src/services/telegraphSearch.ts|select|select list not statically resolvable", 1],
   // ── Dynamic table names (adminGeocode — runtime table dispatch) ───────────
   ["src/routes/adminGeocode.ts|select|dynamic table name", 2],
   ["src/routes/adminGeocode.ts|update|dynamic table name", 2],
@@ -425,7 +470,9 @@ const UNRESOLVED_ALLOWLIST = new Map<string, number>([
   //
   // Select lists composed at runtime.
   ["src/routes/memories.ts|select|select list not statically resolvable", 6],
-  ["src/routes/messaging.ts|select|select list not statically resolvable", 4],
+  // 4 → 5: the §12–§22 lane added one more select built from a column constant
+  // (the needs-action read). Bumped consciously rather than by regeneration.
+  ["src/routes/messaging.ts|select|select list not statically resolvable", 5],
   ["src/routes/adminFeatured.ts|select|select list not statically resolvable", 1],
   //
   // Payloads built at runtime.

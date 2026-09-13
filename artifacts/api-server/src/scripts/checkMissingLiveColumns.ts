@@ -164,6 +164,36 @@ const ALLOWLIST = new Set<string>([
   "trip_commitments.at_risk_reason",        // 2785 — §7.2 derived at-risk state
   "trip_commitments.at_risk_at",            // 2785
   "trip_commitments.at_risk_shortfall_minutes", // 2785
+
+  // ── Pending live apply: Telegraph §12–§22 batch, 2810 / 2813 ───────────────
+  // The §12.1/§13.3/§17.1 message kernel (2810) and §22's request origin (2813).
+  // Every one is declared by a migration on this branch and absent from
+  // portava-ci, because applying an unmerged branch's migrations to the shared
+  // CI database would leave it ahead of main with no commit accounting for it —
+  // the same rule that keeps the schema-drift audit red here by design.
+  //
+  // WHAT IS AND IS NOT BROKEN WHILE THESE ARE ALLOWLISTED, stated rather than
+  // implied: every reader of these columns is behind a flag seeded FALSE, so no
+  // traveler reaches one today. The two that would matter the moment the flags
+  // go on are message_requests.origin_* (a request with no origin renders as
+  // "they say", which is what the census records) and messages.lifecycle_state
+  // (unsend has nothing to write to). Remove each entry once its apply is
+  // certified in docs/migrations.md — NOT when the migration merges.
+  "messages.sequence",                       // 2810 — the per-thread order §12.1 names
+  "messages.client_message_id",              // 2810 — the sender's id, for dedupe
+  "messages.idempotency_key",                // 2810 — one canonical row per key
+  "messages.content_ref",                    // 2810 — body indirection
+  "messages.lifecycle_state",                // 2810 — §7's unsend/deleted states
+  "message_threads.last_sequence",           // 2810 — the thread's high-water mark
+  "message_threads.policy_id",               // 2810 — §14.1's capability policy
+  "message_threads.policy_version",          // 2810 — bumped when the policy changes
+  "message_thread_members.visible_from_sequence",  // 2810 — §14.3's history bound
+  "message_thread_members.visible_until_sequence", // 2810 — a departed member's bound
+  "message_thread_members.delivered_sequence",     // 2810 — §7.3 receipts
+  "message_thread_members.seen_sequence",          // 2810 — §7.3 receipts
+  "message_requests.origin_type",            // 2813 — §22 how this request reached you
+  "message_requests.origin_id",              // 2813 — the referent, when there is one
+  "message_requests.origin_verified",        // 2813 — whether the server checked it
 ]);
 
 // ── Superseded / known-drifted migration files ────────────────────────────────
