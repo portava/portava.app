@@ -530,17 +530,85 @@ export async function createLayoverSession(payload: CreateSessionPayload): Promi
   return res.json();
 }
 
+/**
+ * §11.1 as the server published it for one edit.
+ *
+ * `ran: false` is the COMMON case and is not a failure: most edits move nothing
+ * the eleven-type vocabulary can describe, and the server names which. The
+ * screen shows the reason rather than inventing "nothing changed", because
+ * "nothing changed" is a claim and a refusal is not.
+ */
+export type ReplanOutcome =
+  | { ran: false; reason: string; detail: string }
+  | {
+      ran: true;
+      wiringVersion: string;
+      replannerVersion: string;
+      event: {
+        eventId: string;
+        eventType: string;
+        occurredAt: string;
+        receivedAt: string;
+        source: string;
+        dedupKey: string;
+        confidence: string;
+      };
+      diff: {
+        verdictChanged: boolean;
+        returnStateChanged: boolean;
+        tierChanged: boolean;
+        usableMinutesDelta: number;
+        /** Positive = the deadline moved LATER (more freedom). */
+        deadlineDeltaMinutes: number;
+        candidatesGained: string[];
+        candidatesLost: string[];
+        reasonCodesAdded: string[];
+        reasonCodesRemoved: string[];
+      };
+      invalidation: {
+        noLongerFeasible: string[];
+        staleCertification: string[];
+        newInputHash: string;
+      };
+      opportunity: { why: string[]; reasonCodes: string[] } | null;
+      notify: { notify: false; reason: string } | { notify: true; priority: 'high' | 'normal'; reason: string };
+      disruptionState: string;
+      certification: LayoverCertification;
+      reasonCodes: string[];
+      snapshotPersisted: false;
+      snapshotUnavailableReason: string;
+      counts: { impacted: number; replanned: number; skipped: number; notifications: number };
+    };
+
+export interface SessionUpdateResult {
+  session: LayoverSession;
+  replan: ReplanOutcome;
+}
+
+/**
+ * PATCH the session and read back what the replanner made of the edit.
+ *
+ * The `replan` half is additive on the server, so an older server answers
+ * without it; that is reported as an explicit refusal rather than left
+ * undefined, so a caller cannot mistake "this build does not replan" for
+ * "nothing changed".
+ */
 export async function updateLayoverSession(
   sessionId: string,
   updates: Partial<CreateSessionPayload>,
-): Promise<LayoverSession> {
+): Promise<SessionUpdateResult> {
   const res = await authedFetch(airportUrl('sessions', sessionId), {
     method: 'PATCH',
     body: JSON.stringify(updates),
   });
   if (!res.ok) throw new Error(`Failed to update layover session: ${res.status}`);
   const json = await res.json();
-  return json.session;
+  const replan: ReplanOutcome = json.replan ?? {
+    ran: false,
+    reason: 'not_published',
+    detail: 'this server did not publish a replan decision',
+  };
+  return { session: json.session, replan };
 }
 
 export async function getRecommendations(sessionId: string): Promise<LayoverRecommendation[]> {

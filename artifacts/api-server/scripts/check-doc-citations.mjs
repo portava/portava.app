@@ -209,7 +209,14 @@ export const COVERED = [
 // RAISED 2026-09-13 from 1532 to the merged tree's measurement after §11.2 of
 // census-layover anchored 31 citations (14 mechanically, 17 by re-reading the
 // claim). Raising is the job; the number is what the checker counts, not a guess.
-export const MIN_ANCHORED_CITATIONS = 1640;
+// RAISED AGAIN 2026-09-13 from 1640 by census-layover §12, which wrote 61 new
+// citations and anchored every one, and repointed 13 EXISTING anchors that its
+// own edits to routes/airport.ts and two client files had displaced. That
+// repointing is the argument for the anchor form in one line: the check named
+// all 13 by re-reading the anchor at the cited line, and the 106 UNANCHORED
+// citations into the same three files moved silently and are still wrong. The
+// ceiling below did NOT fall this pass; §12.4 says why.
+export const MIN_ANCHORED_CITATIONS = 1701;
 
 // ---------------------------------------------------------------------------
 // THE FULL-ANCHOR PASS, and why it is a SECOND pass rather than a wider ANCHOR
@@ -242,7 +249,11 @@ export const MIN_ANCHORED_CITATIONS = 1640;
 // coverage and must be justified in the PR that does it.
 // RAISED 2026-09-13 from 1319 for the same reason — every one of those 31 is
 // backticked, so all 31 landed in the whole-anchor population too.
-export const MIN_FULL_ANCHOR_CITATIONS = 1513;
+// RAISED AGAIN 2026-09-13 from 1513 by census-layover §12: every citation it
+// wrote is backticked with the path spelled out, after ten of them were first
+// written as bare `:NNN#anchor` continuations with a space in the anchor — the
+// shape §11.2 taught this file to refuse, and the refusal caught all ten.
+export const MIN_FULL_ANCHOR_CITATIONS = 1574;
 
 // ---------------------------------------------------------------------------
 // THE CEILING, and why a floor on the good form was not enough

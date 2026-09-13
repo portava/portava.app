@@ -11,6 +11,13 @@
  *
  * The heavy sibling sections are stubbed; LayoverSafeReturnCard and
  * LayoverCompassCard are NOT — they are what is under test here.
+ *
+ * WIDENED 2026-09-13: LayoverFlightChangeCard joins them, for the same reason
+ * and with a sharper edge. It is the ONLY thing on this tree that produces a
+ * §11 event, so the whole eight-step replanner is reachable by exactly one
+ * component being in exactly one tree. A card that stopped being mounted would
+ * take the pipeline back to having no caller outside `src/test/`, and every
+ * other test in the repository would stay green.
  */
 import React from 'react';
 import { render, screen, waitFor } from '@testing-library/react-native';
@@ -160,6 +167,10 @@ jest.mock('../../../src/services/layover', () => ({
   setShareCityStatus: jest.fn(async () => null),
   returnToAirportNow: jest.fn(async () => ({ kind: 'offline' })),
   askCompass: jest.fn(async () => null),
+  updateLayoverSession: jest.fn(async () => ({
+    session: (global as any).__overview.session,
+    replan: { ran: false, reason: 'window_unchanged', detail: 'no feasibility input moved' },
+  })),
 }));
 
 beforeEach(() => {
@@ -216,4 +227,14 @@ test('a NORMAL posture leaves the card below the hero, with the plan it aborts',
   await waitFor(() => expect(screen.getByTestId('layover-safe-return-card')).toBeTruthy());
   const order = testIdOrder();
   expect(order.indexOf('layover-safe-return-card')).toBeGreaterThan(order.indexOf('layover-hero-stub'));
+});
+
+test('the dashboard mounts the flight-change card — the §11 ingest reaches a traveller', async () => {
+  (global as any).__overview = overview(false);
+  await render(<LayoverDashboardScreen />);
+
+  await waitFor(() => expect(screen.getByTestId('layover-flight-change-card')).toBeTruthy());
+  // The producer control itself, not just the card frame.
+  expect(screen.getByTestId('flight-shift-60')).toBeTruthy();
+  expect(screen.getByTestId('flight-shift--15')).toBeTruthy();
 });

@@ -97,6 +97,14 @@ import {
   USER_HIDDEN_RECOMMENDATION_STATUS,
 } from "../services/airport/LayoverRecommendationService.js";
 import { answerLayoverQuestion } from "../services/airport/LayoverCompassService.js";
+// §11's pipeline had no caller outside its own test. This is the caller: a
+// traveller's own flight-time edit, normalised into a canonical event and run
+// through steps 1-8. See services/airport/LayoverReplanService.ts.
+import {
+  replanForWindowChange,
+  recordReplanDecision,
+  candidatesFromStops,
+} from "../services/airport/LayoverReplanService.js";
 import {
   evaluateSharingGate,
   publishableUserIds,
@@ -704,8 +712,54 @@ router.patch("/airport/sessions/:id", async (req, res) => {
     logger.warn({ sessionId: session.id }, "layover trip mirror skipped — airport profile unreadable");
   }
 
-  res.json({ ok: true, session });
+  // §11.1, driven by the one event producer that exists on this tree: the
+  // traveller. An edit that moved the window IS `flight.arrival_delayed` or
+  // `flight.departure_delayed`, and the replanner decides what changed rather
+  // than the client re-deriving it from two overviews. Everything below is
+  // ADDITIVE to the response and cannot fail the edit, which has committed.
+  const replan = await replanAfterSessionEdit({
+    sc, userId: user.id, before: current, after: session,
+    airport: airportForMirror.ok ? airportForMirror.airport : null,
+  });
+
+  res.json({ ok: true, session, replan });
 });
+
+/**
+ * The §11 ingest: one traveller edit → one canonical event → steps 1-8 → a
+ * decision the traveller can read and a §20 record the ledger keeps.
+ *
+ * Never throws and never fails the edit. Every path that cannot produce an
+ * honest replan returns a NAMED refusal instead of a partial one, because the
+ * client renders what it is given and "nothing changed" is a claim.
+ */
+async function replanAfterSessionEdit(args: {
+  sc: any;
+  userId: string;
+  before: LayoverSession;
+  after: LayoverSession;
+  airport: AirportProfile | null;
+}): Promise<{ ran: false; reason: string; detail: string } | { ran: true } & Record<string, unknown>> {
+  if (!args.airport) {
+    return { ran: false, reason: "airport_unreadable", detail: "the airport profile could not be read" };
+  }
+  const stopsRead = await loadStops(args.sc, args.after.id);
+  if (!stopsRead.ok) {
+    return { ran: false, reason: "plan_unreadable", detail: "the plan stops could not be read" };
+  }
+  const result = replanForWindowChange({
+    airport: args.airport,
+    airportRef: args.airport.iataCode,
+    before: args.before,
+    after: args.after,
+    status: args.after.status,
+    candidates: candidatesFromStops(stopsRead.stops),
+    nowMs: Date.now(),
+  });
+  if (!result.ran) return { ran: false, reason: result.reason, detail: result.detail };
+  await recordReplanDecision(args.sc, args.userId, result.publication, result.decision);
+  return { ran: true, ...result.publication };
+}
 
 // ── GET /api/airport/sessions/:id/recommendations ────────────────────────────
 
