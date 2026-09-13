@@ -218,18 +218,24 @@ describe("B. CH-03 — an experience node whose Memory is gone is revoked", () =
     // world model for good, because the builder no longer writes those rows but
     // an inherited one is never asked about again. The surviving sweep decides
     // through `isPublicWorldMemory`, the same predicate the builder gates its
-    // write on, so `mem-friends` below is doomed. Under the discarded predicate
-    // this test reads nodesDeleted: 5 instead of 6 and the node survives.
+    // write on, so ALL FOUR named audiences below are doomed — and all four are
+    // fixtured, because two of them would only have proved half the ladder.
+    // MEASURED, not asserted: replacing `isPublicWorldMemory` with the discarded
+    // `visibility !== "only_me"` makes this case read nodesDeleted: 3 against the
+    // expected 7 — every one of the four named audiences survives the sweep.
     const store: Record<string, Row[]> = {
       compass_graph_nodes: [
         NODE("n1", "mem-private"), NODE("n2", "mem-draft"), NODE("n3", "mem-friends"),
         NODE("n4", "mem-crew"), NODE("n5", "mem-archived"), NODE("n6", "mem-public"),
+        NODE("n7", "mem-circle"), NODE("n8", "mem-custom"),
       ],
       memories: [
         { id: "mem-private", state: "published", visibility: "only_me" },
         { id: "mem-draft", state: "draft", visibility: "public" },
         { id: "mem-friends", state: "published", visibility: "friends_only" },
         { id: "mem-crew", state: "published", visibility: "trip_crew" },
+        { id: "mem-circle", state: "published", visibility: "circle_only" },
+        { id: "mem-custom", state: "published", visibility: "custom" },
         { id: "mem-archived", state: "archived", visibility: "public" },
         { id: "mem-public", state: "published", visibility: "public" },
       ],
@@ -237,8 +243,8 @@ describe("B. CH-03 — an experience node whose Memory is gone is revoked", () =
     };
     const { client } = makeFake(store);
     const r = await reconcileExperienceNodes(client);
-    assert.equal(r.examined, 6);
-    assert.equal(r.nodesDeleted, 5, "only the `public`, `published` Memory keeps its node");
+    assert.equal(r.examined, 8);
+    assert.equal(r.nodesDeleted, 7, "only the `public`, `published` Memory keeps its node");
     assert.deepEqual(store.compass_graph_nodes!.map((n) => n.node_key), ["mem-public"]);
   });
 
