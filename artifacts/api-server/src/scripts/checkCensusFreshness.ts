@@ -708,7 +708,12 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/test/memoryLifecycle.test.ts",
     "artifacts/api-server/src/test/memoryProjectionSchedulerTiming.test.ts",
     "artifacts/api-server/src/migrations/2182_close_authz_rpc_oracle.sql",
-  ],
+      // ADDED 2026-09-13 by the integration owner, at the lane's request: §H rests
+    // on what these three suites assert, so an edit to one must age the census.
+    "artifacts/api-server/src/test/memoryProfileLocationProtection.test.ts",
+    "artifacts/api-server/src/test/memoryPatchConcurrency.test.ts",
+    "artifacts/api-server/src/test/highlightProfilePrecisionClamp.test.ts",
+],
   // Trust has NO SPEC — its 52 requirements are 20 inbound obligations from
   // other surfaces' specs plus 32 contracts its own code asserts. That makes the
   // scope wider than one directory: the rows about whether OTHER surfaces

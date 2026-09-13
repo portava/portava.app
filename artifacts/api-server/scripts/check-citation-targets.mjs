@@ -77,7 +77,7 @@ import {
 } from './check-doc-citations.mjs';
 
 /** Measured 2026-09-13. CEILING — may only fall. */
-export const MAX_DEAD_TARGETS = 294;
+export const MAX_DEAD_TARGETS = 293;
 
 /** Pinned to a commit by its own declaration; its lines must not track HEAD. */
 const PINNED_DOCS = new Set(['docs/architecture/mobile-reachability-ledger.md']);
