@@ -304,12 +304,16 @@ export async function filterEligibleMediaCandidates(
   //
   // "Not interested" and "Hide" on the Media options sheet are the two rows a
   // non-owner sees FIRST, and until now neither hid anything: both POSTed to
-  // /media/:id/report, which filed a moderation report and returned. The
-  // canonical store `post_hides` (migration 0116, UNIQUE (user_id, post_id), in
-  // production) was READ by routes/pulse.ts to suppress a viewer's hidden posts
-  // and WRITTEN by nothing in the tree — Pulse honoured a list nothing could add
-  // to. The report route now writes it; this is the read that makes the two
-  // media surfaces honour it too, and it lands here rather than on each caller
+  // /media/:id/report, which filed a moderation report and returned.
+  //
+  // The store was never the missing piece. `post_hides` (migration 0116,
+  // UNIQUE (user_id, post_id), in production) is written by
+  // POST /api/posts/:postId/hide and read by THREE feeds — the following feed
+  // and the global feed in routes/posts.ts, and routes/pulse.ts — with a client
+  // service and a Pulse-card entry point. Media was bypassing a working
+  // feature, not compensating for an absent one. The report route now writes it
+  // through the same lib/postHide writer; this is the read that makes the media
+  // surfaces honour it too, and it lands here rather than on each caller
   // because this function is the one choke point every media candidate crosses:
   // the legacy Watch and Grid feeds (routes/mediaFeed.ts) and, through
   // MediaProjectionService.projectCandidatesProtected, all six World-shell

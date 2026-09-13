@@ -74,7 +74,11 @@ interface FakeTables {
 
 function makeClient(tables: FakeTables = {}) {
   const inserted: Array<{ table: string; row: any }> = [];
-  const upserted: Array<{ table: string; row: any }> = [];
+  // `opts` is recorded, not just `row`: the conflict target IS the idempotency
+  // contract that POST /posts/:postId/hide and the media hide now share, and a
+  // fake that only captures the row cannot see it drift. postHide.test.ts's own
+  // fake does not capture it, which is why M8 leaves that suite green.
+  const upserted: Array<{ table: string; row: any; opts?: any }> = [];
   const updated: Array<{ table: string; patch: any }> = [];
 
   function builder(table: string) {
@@ -89,7 +93,7 @@ function makeClient(tables: FakeTables = {}) {
     const b: any = {
       select() { return b; },
       insert(row: any) { inserted.push({ table, row }); return b; },
-      upsert(row: any) { upserted.push({ table, row }); return b; },
+      upsert(row: any, opts?: any) { upserted.push({ table, row, opts }); return b; },
       update(patch: any) { updated.push({ table, patch }); return b; },
       delete() { return b; },
       eq(col: string, val: any) { filters.push((r) => r[col] === val); return b; },
@@ -220,6 +224,20 @@ describe("POST /media/:id/report — viewer preference", () => {
     assert.equal(res.body.hidden, true);
     assert.equal(client._inserted.filter((r: any) => r.table === "reports").length, 0);
     assert.equal(client._upserted.filter((r: any) => r.table === "post_hides").length, 1);
+  });
+
+  it("writes through the SAME idempotency contract as POST /posts/:postId/hide", async () => {
+    // `post_hides` was a working feature before Media touched it — one writer
+    // (POST /posts/:postId/hide), three readers, a client service and a Pulse
+    // card entry point. Media was bypassing it, not replacing it, so both routes
+    // now go through lib/postHide. The conflict target IS the idempotency
+    // contract: get it wrong on one caller and a second tap becomes a 500 on a
+    // gesture whose whole point is that repeating it is harmless.
+    await post(client, POST_ID, { reason: "not_interested" });
+    const hide = client._upserted.find((r: any) => r.table === "post_hides");
+    assert.ok(hide, "expected an upsert into post_hides");
+    assert.equal(hide.opts?.onConflict, "user_id,post_id");
+    assert.equal(hide.opts?.ignoreDuplicates, true);
   });
 
   it("a preference on a GEM files nothing and never moves report_count", async () => {

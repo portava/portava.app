@@ -29,6 +29,14 @@
  * should look" signal HiddenGemModerationService is written to protect from
  * weaponisation.
  *
+ * AND IT HID NOTHING, THOUGH THE HIDE WAS ALREADY BUILT. `POST /api/posts/
+ * :postId/hide` (routes/posts.ts) writes `post_hides`; the following feed, the
+ * global feed and Pulse all read it; `services/posts.ts hidePost` calls it from
+ * the Pulse feed card; `src/test/postHide.test.ts` covers it. The same gesture
+ * worked on a Pulse card and did not work on the Media tab. That is worse than
+ * an unbuilt feature: it is a divergent duplicate of a working one, pointed at
+ * the moderation queue. Both routes now write through lib/postHide.
+ *
  * ── THE THREE INTENTS ────────────────────────────────────────────────────────
  * A reason string arriving at a media surface is one of three things, and they
  * must not share a destination:

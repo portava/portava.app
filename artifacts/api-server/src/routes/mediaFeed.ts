@@ -51,6 +51,7 @@ import {
   reportSeverityFor,
 } from "../lib/reportReasons.js";
 import { reportRateLimit } from "../lib/rateLimit.js";
+import { hidePostForViewer } from "../lib/postHide.js";
 import { nameVisibilitySet } from "../lib/publicIdentity.js";
 import {
   loadRestrictiveGems,
@@ -1086,9 +1087,14 @@ router.get("/media/gems-feed", asyncHandler(async (req, res) => {
 // evidence-preserved, never deleted — against another user's content. On a gem
 // it inserted `hidden_gem_reports` and incremented `hidden_gems.report_count`,
 // the very signal HiddenGemModerationService.resolveGemReport documents as
-// needing protection from weaponisation. And it hid nothing: `post_hides` is
-// read by routes/pulse.ts to suppress a viewer's hidden posts and, before this
-// change, was written by nothing anywhere in the tree.
+// needing protection from weaponisation. And it hid nothing — while a WORKING
+// hide existed a few hundred lines away: `POST /api/posts/:postId/hide`
+// (routes/posts.ts) writes `post_hides`, three readers honour it (the following
+// feed and the global feed in routes/posts.ts, and routes/pulse.ts), the client
+// calls it from the Pulse feed card, and src/test/postHide.test.ts covers it.
+// Media did not lack a hide; Media pointed its own two hide gestures at the
+// moderation queue instead of at the feature. The write below now goes through
+// lib/postHide, the one writer both routes share.
 //
 // The split, fail-closed at the end:
 //   PREFERENCE ('not_interested' | 'hide_from_feed')
@@ -1180,17 +1186,14 @@ router.post("/media/:id/report", asyncHandler(async (req, res) => {
 
   if (intent === "preference") {
     // ── Viewer preference: the viewer's own hide list, not the queue ────────
-    // post_hides is UNIQUE (user_id, post_id) (migration 0116), so a second tap
-    // is idempotent rather than a duplicate row or a 500.
-    const { error: hideErr } = await sc
-      .from("post_hides")
-      .upsert(
-        { user_id: user.id, post_id: id },
-        { onConflict: "user_id,post_id", ignoreDuplicates: true },
-      );
-    if (hideErr) {
-      req.log.error({ err: hideErr }, "media/:id/report (hide) failed");
-      sendError(res, "db_error", hideErr.message);
+    // The SAME writer POST /posts/:postId/hide uses, deliberately: this is the
+    // pre-existing hide feature Media had been bypassing, not a new one, and
+    // two copies of an idempotent upsert drift on the conflict target — which
+    // is the idempotency contract. lib/postHide.ts argues it in full.
+    const hidden = await hidePostForViewer(sc, user.id, id);
+    if (!hidden.ok) {
+      req.log.error({ err: hidden.message }, "media/:id/report (hide) failed");
+      sendError(res, "db_error", hidden.message);
       return;
     }
     res.json({ ok: true, alreadyReported: false, hidden: true, store: "post_hides" });

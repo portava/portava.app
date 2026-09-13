@@ -935,11 +935,14 @@ export async function loadMediaRankingFlags(
  * READ WITH NO WRITER, and every feed was ranked as though nobody had ever
  * hidden anything.
  *
- * It could not have had a writer, either: the client's "Not interested" and
- * "Hide" both POSTed to /media/:id/report, which filed a moderation report and
- * wrote no hide anywhere. `post_hides` (0116, UNIQUE (user_id, post_id)) is the
- * canonical store and was read only by routes/pulse.ts. Now that the report
- * route writes it, this counts it: `notInterestedCount` is the number of
+ * The store was there the whole time and the MEDIA surfaces were not using it:
+ * `post_hides` (0116, UNIQUE (user_id, post_id)) has been written by
+ * POST /api/posts/:postId/hide and read by three feeds (the following and
+ * global feeds in routes/posts.ts, and routes/pulse.ts), while Media's own
+ * "Not interested" and "Hide" POSTed to /media/:id/report — filing a moderation
+ * report and hiding nothing. So the rows existed, from Pulse, and this loader
+ * simply never asked for them. Now that the media report route writes the same
+ * store too, this counts it: `notInterestedCount` is the number of
  * DISTINCT viewers who have hidden the item, which is exactly the population
  * the penalty's `hideR = notInterestedCount / totalImpressionCount` expects.
  */

@@ -1231,27 +1231,27 @@ All five changes are on surfaces a user reaches today. None needs a migration; n
 behind a flag.
 
 1. **The report endpoint now separates three intents.** New module
-   `artifacts/api-server/src/lib/reportReasons.ts:111#if (VIEWER_PREFERENCE_REASONS.has(r)) return "preference";`
+   `artifacts/api-server/src/lib/reportReasons.ts:119#if (VIEWER_PREFERENCE_REASONS.has(r)) return "preference";`
    classifies a reason as preference, abuse, gem-place-mismatch or unknown, and the endpoint
    dispatches on it at
-   `artifacts/api-server/src/routes/mediaFeed.ts:1134#const intent = classifyMediaReportReason(reason);`.
+   `artifacts/api-server/src/routes/mediaFeed.ts:1140#const intent = classifyMediaReportReason(reason);`.
    A preference on a post upserts `post_hides`
-   (`artifacts/api-server/src/routes/mediaFeed.ts:1185#const { error: hideErr } = await sc`)
+   (`artifacts/api-server/src/routes/mediaFeed.ts:1193#const hidden = await hidePostForViewer(sc, user.id, id);`)
    and files nothing; a preference on a gem files nothing at all
-   (`artifacts/api-server/src/routes/mediaFeed.ts:1154#res.json({ ok: true, alreadyReported: false, hidden: false, store: "none" });`),
+   (`artifacts/api-server/src/routes/mediaFeed.ts:1160#res.json({ ok: true, alreadyReported: false, hidden: false, store: "none" });`),
    because production has no per-viewer gem hide store — doing nothing beats filing an
    accusation. An unknown reason is refused instead of defaulted, and `reason` is now
-   required: `artifacts/api-server/src/routes/mediaFeed.ts:1125#reason: z.string().min(1).max(100),`.
+   required: `artifacts/api-server/src/routes/mediaFeed.ts:1131#reason: z.string().min(1).max(100),`.
 2. **A real report now carries the real contract.** Rate limit, a duplicate check that
    fails closed the way `reportGem`'s does
-   (`artifacts/api-server/src/routes/mediaFeed.ts:1210#const { data: existingReport, error: existingErr } = await sc`),
+   (`artifacts/api-server/src/routes/mediaFeed.ts:1213#const { data: existingReport, error: existingErr } = await sc`),
    and a computed severity
-   (`artifacts/api-server/src/routes/mediaFeed.ts:1239#severity: reportSeverityFor(reason),`).
+   (`artifacts/api-server/src/routes/mediaFeed.ts:1242#severity: reportSeverityFor(reason),`).
    The vocabulary is now one list, imported by both writers of the `reports` table:
    `artifacts/api-server/src/routes/reports.ts:30#import { REPORT_REASON_CODES, reportSeverityFor }`
    and `artifacts/api-server/src/routes/reports.ts:119#const severity = reportSeverityFor(reason_code);`.
 3. **The hide now hides.** A viewer-hide gate in the one choke point every media candidate
-   crosses — `artifacts/api-server/src/lib/mediaEligibility.ts:351#if (hiddenPostIds.has(c.id)) return false;`
+   crosses — `artifacts/api-server/src/lib/mediaEligibility.ts:355#if (hiddenPostIds.has(c.id)) return false;`
    — so Watch, Grid and, through `projectCandidatesProtected`, all six World-shell builders
    honour it. Fail-soft, like the mute gate beside it and unlike the block gate: losing it
    costs a preference, not a safety decision.
@@ -1378,3 +1378,136 @@ measurement. Read §0's attribution number as measured at `68ed59d9` and untouch
    `CENSUS_STALENESS_ACKNOWLEDGED.json` with a per-file argument. One Wall citation — W7's
    `post_saves` anchor — moved by 110 lines and was repointed, not deleted. The
    anchored-citation check is what found it, which is the check working.
+
+---
+
+## 10. CORRECTION to §9.1 — the hide was already built, and Media was bypassing it
+
+**§9.1 states something false, and this section is the correction rather than a
+deletion.** The sentence was:
+
+> **Nothing was hidden.** `post_hides` … was written by **nothing anywhere in the tree**.
+> Pulse honoured a list no surface could add to.
+
+Both halves are wrong. At `3eaf2436f`, `post_hides` had **one writer and three readers**:
+
+| | Where |
+| --- | --- |
+| WRITER | `POST /api/posts/:postId/hide` — `artifacts/api-server/src/routes/posts.ts:2619#router.post("/posts/:postId/hide"`, an idempotent upsert on the same conflict target §9 later duplicated |
+| READER | the following feed — `artifacts/api-server/src/routes/posts.ts:1238#.from("post_hides")` |
+| READER | the global feed — `artifacts/api-server/src/routes/posts.ts:1380#.from("post_hides")` |
+| READER | Pulse — `artifacts/api-server/src/routes/pulse.ts:157#const { data: hiddenRows } = await sc` |
+| CLIENT | `travel-buddy-standalone/src/services/posts.ts:652#export async function hidePost` , called from `travel-buddy-standalone/src/components/PulseFeedCard.tsx:141#const ok = await hidePost(item.id);` |
+| TEST | `artifacts/api-server/src/test/postHide.test.ts:5#- Authenticated user can hide a post (upserts into post_hides, returns { hidden: true })` |
+
+### 10.1 How the error was made, because the method is the point
+
+The absence was established with
+`grep -rn "post_hides" src migrations | grep -v "\.test\." | head -20`. The writer sorted
+past the cut. **An absence asserted from a truncated list is not a measurement**, and §7's
+first method caveat already says this document settles every "nothing writes X" by opening
+call sites rather than by counting greps — a rule I stated and then broke in the same
+document. The two "nothing writes X" claims §7 names (`media_assets`,
+`media_intent_signals`) were settled properly; this third one was not, and it is the one I
+added.
+
+It is the same defect class §9 exists to catch, arriving by the same route: a confident
+sentence, an anchored citation, and a check underneath it that was never run.
+
+### 10.2 The corrected finding is worse, not weaker
+
+Portava has a **complete, reachable, tested hide feature**: a route, three feed readers, a
+client service and a UI entry point on the Pulse card. Tapping "Hide" on a Pulse card
+worked. Tapping "Hide" on the **Media** tab — the same gesture, two rows above "Report" in
+the same options sheet — posted to `/api/media/:id/report` and filed a moderation report
+instead.
+
+So Media did not lack a hide. Media built a **divergent duplicate of a working feature and
+pointed it at the moderation queue**. "The feature was never built" would be a gap; this is
+a bypass, and a bypass is worse, because the working path's existence is what makes the
+wrong one look finished.
+
+### 10.3 Does MD105's verdict move? No — re-derived.
+
+The W at `3eaf2436f` rested on four things. The false one was **decoration on the first,
+not load-bearing**, and each of the surviving three is independently sufficient:
+
+| Leg | Status |
+| --- | --- |
+| Preference taps filed moderation reports on both the post and the gem surface | Holds, and §10.2 strengthens it |
+| The report half diverged from the contract: `.default("spam")`, no severity, no rate limit, no duplicate check | Holds — re-verified at `routes/mediaFeed.ts` on the base |
+| The "Not Relevant" ranking penalty read three fields no producer in `src` set | Holds — `hideRate` and `notInterestedCount` are consumed and set by nothing; `adminCompass`'s `hideRatePct` is a different field off `hide_category` |
+| *"`post_hides` had no writer"* | **FALSE — withdrawn** |
+
+The C after the repair never depended on the withdrawn leg either. What it needs is that
+the media path now writes the store and that the media surfaces honour it: the report route
+writes through `artifacts/api-server/src/lib/postHide.ts:49#export async function hidePostForViewer`,
+the gate at `artifacts/api-server/src/lib/mediaEligibility.ts:355#if (hiddenPostIds.has(c.id)) return false;`
+reads it, and the ranker counts it. Mutations M2, M4 and M8 hold all three red.
+
+**No verdict moves.** MD105 stays **C**, re-derived on the corrected premises; MD273,
+MD269, MD283, MD351 and MD112 are untouched by this correction — none of them cited
+`post_hides`.
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| MD105 | C | C | Unchanged. §9.7's W→C is re-derived in §10.3 with the false premise removed; the three surviving legs each carry it on their own. |
+
+### 10.4 Two writers by choice, or one writer by design
+
+§9 wrote a second three-line upsert into `post_hides` rather than reaching the existing
+hide path — which, at the time, it did not know existed. Left alone that would be two
+copies of an idempotency contract, and the conflict target **is** the contract: get
+`onConflict`/`ignoreDuplicates` wrong on one caller and a second tap becomes a 500 on a
+gesture whose entire point is that repeating it is harmless. That is the same drift that
+had already put two different moderation deny-lists in two files (§9.3).
+
+So this section extracts `artifacts/api-server/src/lib/postHide.ts:58#{ onConflict: "user_id,post_id", ignoreDuplicates: true },`
+and routes **both** callers through it —
+`artifacts/api-server/src/routes/posts.ts:2637#const hidden = await hidePostForViewer(sc, user.id, postId);`
+and `artifacts/api-server/src/routes/mediaFeed.ts:1193#const hidden = await hidePostForViewer(sc, user.id, id);`.
+**Two routes reach the hide, by choice; one writer, in one file.** A new case,
+`the media hide "writes through the SAME idempotency contract as POST /posts/:postId/hide"`,
+asserts the conflict target rather than only the row.
+
+### 10.5 Mutation M8
+
+| Mutation | What it did | What went red |
+| --- | --- | --- |
+| M8 | change the shared writer's conflict target to `post_id` and `ignoreDuplicates: false` | `writes through the SAME idempotency contract as POST /posts/:postId/hide` — 1 of 27; `postHide.test.ts` stayed green, which is the point: its own fake never inspected the options, so the contract was unasserted on BOTH callers until now |
+
+Applied, run, reverted, `cmp` byte-identical. 27 cases in `mediaReportIntent`, 4 in
+`postHide`, all green after revert.
+
+### 10.6 Restated headline — unchanged by this correction
+
+> | Measure | Value |
+> | --- | --- |
+> | Denominator (testable requirements) | **450** |
+> | BUILT-AND-CORRECT | **288** |
+> | BUILT-BUT-WRONG | **73** |
+> | NOT-BUILT | **87** |
+> | CANNOT-VERIFY | **2** |
+> | **CONSTRUCTED%** = (C+W)/450 | **361 / 450 = 80.2 %** |
+> | **CORRECT%** (raw) = C/450 | **288 / 450 = 64.0 %** |
+>
+> Identical to §9.8. A correction that withdraws a premise without moving a verdict must
+> not move the number either, and saying so is part of the correction.
+
+### 10.7 What §9 got right, kept verbatim because it still applies
+
+§9's closing observation stands and this section is its best illustration: **six rows of a
+288-row C column were re-read and four were wrong.** The honest reading was never "four
+rows were wrong" — it was "nobody has checked the other 282, and the sample says that
+matters." §10 adds the second half: the re-reader is in the sample too. One of the three
+supporting claims under the pass's own headline finding was false, it was anchored,
+authoritative and wrong for one commit, and it was caught by a reviewer rather than by any
+check in this repository. Nothing here can check whether a stated absence was actually
+searched for.
+
+**Citations repointed, not deleted.** §9's anchors into `routes/mediaFeed.ts` moved when
+§10 changed that file, and §9.5.1's citation of the inline upsert names code §10 replaced.
+Both were repointed at the lines the code now occupies, and `census-wall.md` W7's
+`post_saves` anchor moved a second time and was repointed again. `check:doc-citations`
+found every one of them, which is the third time in two sections that an anchored citation
+has earned its keep.

@@ -51,6 +51,7 @@ import { NotificationRouter } from "../services/notifications/NotificationRouter
 import { isKillSwitchEngaged } from "../lib/featureFlags.js";
 import { processImage, makeThumbnail, makeFeedVariant, computePHash } from "../lib/mediaProcessing.js";
 import { stripVideoLocationMetadata } from "../lib/videoMetadata.js";
+import { hidePostForViewer } from "../lib/postHide.js";
 import {
   guardUploadRequest,
   verifyUploadedBytes,
@@ -2625,11 +2626,16 @@ router.post("/posts/:postId/hide", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
-  // Upsert to be idempotent — hiding the same post twice is fine
-  const { error } = await sc
-    .from("post_hides")
-    .upsert({ user_id: user.id, post_id: postId }, { onConflict: "user_id,post_id", ignoreDuplicates: true });
-  if (error) { sendError(res, "db_error", error.message); return; }
+  // Upsert to be idempotent — hiding the same post twice is fine.
+  //
+  // Routed through lib/postHide so this endpoint and the Media options sheet's
+  // "Not interested"/"Hide" share ONE writer. Media used to post those two
+  // gestures to /media/:id/report instead, which filed a moderation report and
+  // hid nothing; when that was corrected the choice was a second copy of this
+  // upsert or one function, and the conflict target is the idempotency contract,
+  // so it is one function. See lib/postHide.ts.
+  const hidden = await hidePostForViewer(sc, user.id, postId);
+  if (!hidden.ok) { sendError(res, "db_error", hidden.message); return; }
 
   res.status(200).json({ hidden: true });
 });
