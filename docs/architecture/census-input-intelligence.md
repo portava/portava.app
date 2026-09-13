@@ -2014,10 +2014,9 @@ offset and never by nearest candidate — and every one now carries an ANCHOR so
 the next move is loud.
 
 The measurement, so the claim is checkable: before this pass the document held 49
-resolved citations into `routes/discoverySearch.ts`, of which 20 were anchored
-(all 20 still resolve — the §8.3 anchors surviving a 263-line shift is the anchor
-form earning its keep) and **29 were unanchored. All 29 were wrong.** After it,
-every citation into the file is anchored and holds.
+resolved citations into `routes/discoverySearch.ts`, of which 20 were anchored —
+all 20 still resolve, across a 263-line shift — and **29 were unanchored. All 29
+were wrong.** After it, every citation into the file is anchored and holds.
 
 | cited row | old pointer (dead) | now | what the old pointer actually named at HEAD |
 | --- | --- | --- | --- |
